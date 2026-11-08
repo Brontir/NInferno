@@ -234,6 +234,7 @@ struct Task {
         for (const std::uint32_t c : contexts) { asked = std::max(asked, c); }
         return asked;
     }
+
     // The long request's prompt: the asked context less the answer, up to kLongPrompt; 0 where it
     // would not be longer than the short request's (the worth then prices the short one alone).
     [[nodiscard]] std::uint32_t long_prompt() const noexcept {

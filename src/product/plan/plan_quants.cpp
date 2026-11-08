@@ -699,7 +699,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         task.concurrency    = std::max<std::uint32_t>(inputs.options.max_concurrency, 1);
         const std::uint32_t context =
             ask.context != 0 ? ask.context : runtime::quant_own_targets(ask).front();
-        task.contexts      = {context};
+        task.contexts           = {context};
         row.request_long_prompt = task.long_prompt();
         row.estimate_depth = std::max<std::uint32_t>(512, context / 4);
         row.estimate = choice::speed_of(model, card, q, c, task.concurrency, row.estimate_depth,
@@ -1273,16 +1273,17 @@ Json quant_plan_json(const QuantPlan& plan) {
                         {"largest", row.largest}};
         item["plan"] = row.planned.plan.planned ? planned_json(row.planned, false) : Json(nullptr);
         if (row.estimate) {
-            item["estimate"] = {{"decode_tok_s", round_to(row.estimate->decode_per_stream, 0.1)},
-                                {"prefill_tok_s", round_to(row.estimate->prefill, 1.0)},
-                                {"depth", row.estimate_depth},
-                                {"drafter", row.estimate_drafter},
-                                {"request_seconds", round_to(row.request_seconds, 0.001)},
-                                {"prompt", choice::kRequestPrompt},
-                                {"answer", choice::kRequestAnswer},
-                                {"long_prompt", row.request_long_prompt},
-                                {"transferred", row.estimate->transferred},
-                                {"speed_basis", std::string(choice::speed_basis_name(row.estimate->basis))}};
+            item["estimate"] = {
+                {"decode_tok_s", round_to(row.estimate->decode_per_stream, 0.1)},
+                {"prefill_tok_s", round_to(row.estimate->prefill, 1.0)},
+                {"depth", row.estimate_depth},
+                {"drafter", row.estimate_drafter},
+                {"request_seconds", round_to(row.request_seconds, 0.001)},
+                {"prompt", choice::kRequestPrompt},
+                {"answer", choice::kRequestAnswer},
+                {"long_prompt", row.request_long_prompt},
+                {"transferred", row.estimate->transferred},
+                {"speed_basis", std::string(choice::speed_basis_name(row.estimate->basis))}};
         } else {
             item["estimate"] = nullptr;
         }

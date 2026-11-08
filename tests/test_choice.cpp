@@ -388,9 +388,9 @@ void prefills_pay_tail_calls(const json& fixture) {
     const double t2   = prompt / ch::speed_of(two, cf, q, c, 1, prompt, prompt).prefill;
     check(std::abs((t2 - t0) - 2 * step) < 1e-9 * t2, "two tail calls add two decode steps to a prefill");
     ch::Task task;
-    task.prompt   = prompt;
-    task.answer   = 1;
-    task.contexts = {task.prompt + task.answer}; // no long request in the mix: the one request's time
+    task.prompt     = prompt;
+    task.answer     = 1;
+    task.contexts   = {task.prompt + task.answer}; // no long request: the one request's time
     const double r0 = ch::request_seconds(none, cf, q, c, task);
     const double r2 = ch::request_seconds(two, cf, q, c, task);
     check(std::abs((r2 - r0) - 2 * step) < 1e-9 * r2, "and to a request's time");
@@ -886,9 +886,9 @@ void decides_by_generation(const json& fixture) {
     check(std::abs(short_prompt - 0.409 / 0.813) < 1e-6, "a short prompt fills only its own tokens of the chunk");
     // A 1280-token prompt at chunk 1024: one whole chunk and a 256-token call, each at its rate.
     ch::Task t1280;
-    t1280.prompt   = 1280;
-    t1280.answer   = 1;
-    t1280.contexts = {1281}; // no long request in the mix
+    t1280.prompt       = 1280;
+    t1280.answer       = 1;
+    t1280.contexts     = {1281}; // no long request in the mix
     const double whole = ch::speed_of(linears, bw, q, fast, 1, 1280, 1024).prefill;
     const double rest  = ch::speed_of(linears, bw, q, fast, 1, 1280, 256).prefill;
     const double dec   = ch::speed_of(linears, bw, q, fast, 1, 1280.5, 1280).decode_per_stream;
@@ -1038,7 +1038,7 @@ void chooses_the_chunk(const json& fixture) {
     Bench b{model_of(m35), card_of(fixture.at("cards").at("RTX 4090")), {quant_of("UD-IQ3_XXS", m35.at("quants").at("UD-IQ3_XXS"))}};
     b.model.recurrent = true;
     ch::Task task;
-    task.contexts = {2560}; // an ask whose request mix is the 2048-token prompt alone
+    task.contexts  = {2560}; // an ask whose request mix is the 2048-token prompt alone
     const auto own = [&b](const ch::Candidate& c) -> std::uint32_t {
         // The workspace grows with the chunk: a wider one holds a little less context.
         const double room = 20e9 - b.quants[0].weight_bytes - 4e5 * c.chunk;
@@ -1078,23 +1078,27 @@ void chooses_the_chunk(const json& fixture) {
 // stays.
 void prices_the_request_mix(const json& fixture) {
     const json& m35 = fixture.at("models").at("Qwen3.6-35B-A3B");
-    Bench b{model_of(m35), card_of(fixture.at("cards").at("RTX 4090")), {quant_of("UD-IQ3_XXS", m35.at("quants").at("UD-IQ3_XXS"))}};
+    Bench b{model_of(m35),
+            card_of(fixture.at("cards").at("RTX 4090")),
+            {quant_of("UD-IQ3_XXS", m35.at("quants").at("UD-IQ3_XXS"))}};
     b.model.recurrent = true;
-    const auto own = [&b](const ch::Candidate& c) -> std::uint32_t {
+    const auto own    = [&b](const ch::Candidate& c) -> std::uint32_t {
         const double room = 20e9 - b.quants[0].weight_bytes - 4e5 * c.chunk;
         return room > 0 ? static_cast<std::uint32_t>(room / b.model.kv_bytes_per_token(c.kv)) : 0;
     };
     ch::Task asked;
     asked.contexts = {32768};
-    check(asked.long_prompt() == 32768 - ch::kRequestAnswer && asked.long_prompt() < ch::kLongPrompt,
+    check(asked.long_prompt() == 32768 - ch::kRequestAnswer &&
+              asked.long_prompt() < ch::kLongPrompt,
           "a 32K ask: the long request's prompt is the context less the answer");
     ch::Task wide;
     wide.contexts = {131072};
-    check(wide.long_prompt() == ch::kLongPrompt, "the long request stops at the benchmark's 24K prompt");
+    check(wide.long_prompt() == ch::kLongPrompt,
+          "the long request stops at the benchmark's 24K prompt");
     ch::Task small;
     small.contexts = {2560};
     check(small.long_prompt() == 0, "a 2560-token ask has no long request");
-    const auto allowed = ch::allowed_axes(b.model, KvCacheStorage::Int8Group64);
+    const auto allowed   = ch::allowed_axes(b.model, KvCacheStorage::Int8Group64);
     const ch::Choice big = ch::choose(b.model, b.card, b.quants[0], allowed, {}, asked, own);
     check(big.chosen && chosen(big).candidate.kv == KvCacheStorage::Int8Group64 &&
               chosen(big).candidate.state == RecurrentStateStorage::FP16,
@@ -1105,11 +1109,15 @@ void prices_the_request_mix(const json& fixture) {
           "a 2560-token ask: KV bf16, state f32");
     // The mix is the geometric mean of the two requests, weighted by the benchmark's counts.
     const ch::Candidate c = chosen(big).candidate;
-    const double shorter  = ch::single_request_seconds(b.model, b.card, b.quants[0], c, asked, asked.prompt);
-    const double longer   = ch::single_request_seconds(b.model, b.card, b.quants[0], c, asked, asked.long_prompt());
-    const double expected = std::exp((ch::kMixShortRequests * std::log(shorter) + ch::kMixLongRequests * std::log(longer)) /
-                                     (ch::kMixShortRequests + ch::kMixLongRequests));
-    check(std::abs(ch::request_seconds(b.model, b.card, b.quants[0], c, asked) - expected) < 1e-12 * expected,
+    const double shorter =
+        ch::single_request_seconds(b.model, b.card, b.quants[0], c, asked, asked.prompt);
+    const double longer =
+        ch::single_request_seconds(b.model, b.card, b.quants[0], c, asked, asked.long_prompt());
+    const double expected = std::exp(
+        (ch::kMixShortRequests * std::log(shorter) + ch::kMixLongRequests * std::log(longer)) /
+        (ch::kMixShortRequests + ch::kMixLongRequests));
+    check(std::abs(ch::request_seconds(b.model, b.card, b.quants[0], c, asked) - expected) <
+              1e-12 * expected,
           "the request mix is the weighted geometric mean of the short and the long request");
     check(big.why.find("request mix: 20 of 2048+512, 6 of 32256+512 tokens") != std::string::npos,
           "the reason names the mix");

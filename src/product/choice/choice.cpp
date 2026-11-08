@@ -1414,8 +1414,9 @@ double worth_band(const CardFacts& card) noexcept {
     return 0;
 }
 
-double single_request_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
-                              const Candidate& candidate, const Task& task, std::uint32_t prompt) {
+double single_request_seconds(const ModelFacts& model, const CardFacts& card,
+                              const QuantOption& quant, const Candidate& candidate,
+                              const Task& task, std::uint32_t prompt) {
     const double middle = prompt + task.answer / 2.0;
     const Speed speed   = speed_of(model, card, quant, candidate, task.concurrency, middle, prompt);
     if (speed.prefill <= 0 || speed.decode_per_stream <= 0) { return INFINITY; }
@@ -1428,9 +1429,10 @@ double single_request_seconds(const ModelFacts& model, const CardFacts& card, co
     bool transferred          = false;
     const double tiled        = candidate.activations == ActivationMode::Exact
                                     ? 0
-                                    : prefill_attention_tiled_seconds(model, card, candidate.kv, prompt, chunk,
-                                                                      &transferred);
-    double prefill_seconds    = tiled > 0 ? tiled : attention_seconds(model, card, prompt, transferred);
+                                    : prefill_attention_tiled_seconds(model, card, candidate.kv, prompt,
+                                                                      chunk, &transferred);
+    double prefill_seconds =
+        tiled > 0 ? tiled : attention_seconds(model, card, prompt, transferred);
     prefill_seconds += tail_calls_seconds(model, card, quant, candidate, prompt);
     if (whole > 0) { prefill_seconds += whole / linear_prefill(model, card, quant, route, chunk, transferred); }
     if (rest > 0) { prefill_seconds += rest / linear_prefill(model, card, quant, route, rest, transferred); }
@@ -1449,10 +1451,13 @@ double request_seconds(const ModelFacts& model, const CardFacts& card, const Qua
 
 std::string request_mix_text(const Task& task) {
     const std::string answer = "+" + std::to_string(task.answer);
-    if (task.long_prompt() == 0) { return "a " + std::to_string(task.prompt) + answer + "-token request"; }
+    if (task.long_prompt() == 0) {
+        return "a " + std::to_string(task.prompt) + answer + "-token request";
+    }
     return "the request mix: " + std::to_string(static_cast<int>(kMixShortRequests)) + " of " +
-           std::to_string(task.prompt) + answer + ", " + std::to_string(static_cast<int>(kMixLongRequests)) +
-           " of " + std::to_string(task.long_prompt()) + answer + " tokens";
+           std::to_string(task.prompt) + answer + ", " +
+           std::to_string(static_cast<int>(kMixLongRequests)) + " of " +
+           std::to_string(task.long_prompt()) + answer + " tokens";
 }
 
 bool accuracy_decides(std::string_view generation, std::string_view family, std::string* why) {
@@ -1759,16 +1764,18 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     out.context = settled;
     for (Scored& s : out.scored) { s.fits = s.own_context >= settled; }
     const Scored& c = out.scored[*chosen];
-    out.why = quant.label + ": every stream holds " + std::to_string(settled) + " tokens; KV " + std::string(kv_cache_storage_name(c.candidate.kv)) + ", activations " +
-              activation_name(c.candidate.activations) +
-              (out.by_worth ? ": the best worth on the " + std::string(generation_of(card)) +
-                                  " reference card (" + fixed(c.decision_seconds, 2) + " s on " +
-                                  request_mix_text(task) + " there, KLD " + fixed(c.accuracy.kld, 4) + ")"
-                            : ": the family's defaults (" + defaults_why + ")") +
-              (out.chunk_by_speed ? "; chunk " + std::to_string(c.candidate.chunk) +
-                                        ": the fastest prefill on the reference card"
-                                  : "") +
-              (model.drafters.empty() ? std::string() : "; speculation " + c.drafter);
+    out.why =
+        quant.label + ": every stream holds " + std::to_string(settled) + " tokens; KV " +
+        std::string(kv_cache_storage_name(c.candidate.kv)) + ", activations " +
+        activation_name(c.candidate.activations) +
+        (out.by_worth ? ": the best worth on the " + std::string(generation_of(card)) +
+                            " reference card (" + fixed(c.decision_seconds, 2) + " s on " +
+                            request_mix_text(task) + " there, KLD " + fixed(c.accuracy.kld, 4) + ")"
+                      : ": the family's defaults (" + defaults_why + ")") +
+        (out.chunk_by_speed ? "; chunk " + std::to_string(c.candidate.chunk) +
+                                  ": the fastest prefill on the reference card"
+                            : "") +
+        (model.drafters.empty() ? std::string() : "; speculation " + c.drafter);
     // The coupled storages' other values beside the chosen (to explain them; never chosen).
     std::vector<Candidate> variants;
     if (model.recurrent && !pins.state) {
