@@ -491,6 +491,10 @@ Program::retained_device_kv_pages(const ContinuationHandle& continuation) const 
     return impl_->retained_device_kv_pages(continuation);
 }
 
+DeviceKVPages Program::retained_device_kv_pages(const SharedPrefixHandle& shared) const noexcept {
+    return impl_->retained_device_kv_pages(shared);
+}
+
 ReleaseResult Program::release_continuation(ContinuationHandle&& continuation) noexcept {
     return impl_->release_continuation(std::move(continuation));
 }

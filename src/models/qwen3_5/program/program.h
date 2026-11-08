@@ -1014,6 +1014,8 @@ public:
     // Device KV pages releasing this cached owner would return to the pools.
     [[nodiscard]] DeviceKVPages
     retained_device_kv_pages(const ContinuationHandle& continuation) const noexcept;
+    [[nodiscard]] DeviceKVPages
+    retained_device_kv_pages(const SharedPrefixHandle& shared) const noexcept;
     [[nodiscard]] ReleaseResult release_continuation(ContinuationHandle&& continuation) noexcept;
     [[nodiscard]] ReleaseResult release_shared_prefix(SharedPrefixHandle&& shared) noexcept;
     void fail_all_cleanup() noexcept;

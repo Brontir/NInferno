@@ -1666,6 +1666,16 @@ ProgramImpl::retained_device_kv_pages(const ContinuationHandle& continuation) co
     } catch (...) { return {}; }
 }
 
+qwen3_5::DeviceKVPages
+ProgramImpl::retained_device_kv_pages(const SharedPrefixHandle& shared) const noexcept {
+    if (!valid_shared_prefix(shared)) { return {}; }
+    try {
+        const detail::PhysicalResources owned =
+            owner_exclusive_resources(shared_prefix_states[ContractAccess::index(shared)]);
+        return {.main = owned.device.main_kv_pages, .backend = owned.device.backend_kv_pages};
+    } catch (...) { return {}; }
+}
+
 void ProgramImpl::ensure_sequence_kv_mapped(SequenceState& sequence, std::uint32_t main_tokens,
                                             std::uint32_t backend_tokens) {
     if (!sequence.kv || main_tokens > capacity || backend_tokens > capacity) {

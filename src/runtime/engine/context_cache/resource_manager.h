@@ -1065,12 +1065,24 @@ public:
     }
 
     // Device KV for an active sequence whose lease (EngineOptions::kv_lease_window) ran out of pool
-    // space, so a live answer is not cut short while cached context holds the pool. Releases idle
-    // private continuations (catalogued, no active edge), the lowest retention class first and the
-    // longest unused within it, skipping owners that hold none of the short pool's pages, until the
-    // pages are covered or none is left. Returns the owners released.
-    std::uint32_t reclaim_device_kv_for_lease(Program& program, std::uint32_t main_pages,
-                                              std::uint32_t backend_pages) {
+    // space, so a live answer is not cut short while cached context holds the pool (#495).
+    // `full` is the pages the whole lease window wants, `minimum` what resuming it needs at least.
+    // Idle private continuations (catalogued, no active edge) go first, against `full`: the lowest
+    // retention class first and the longest unused within it. Idle shared prefixes (catalogued, no
+    // active edge, no transaction pin: admission's eligibility) go only for `minimum`, so a
+    // credited system prompt is never destroyed to widen an optional window; their order is
+    // shared_eviction_key. Owners that hold none of the short pool's pages are skipped, and a
+    // shared prefix a retained private entry aliases frees none (the Program counts exclusive
+    // pages), so it goes only after that entry. Known gaps, left to follow-ups: admission can
+    // demote a shared prefix to Host (DemoteSharedToHost) where this releases it outright, and two
+    // idle owners that alias each other with no exclusive pages are not released. Returns the
+    // owners released.
+    std::uint32_t reclaim_device_kv_for_lease(Program& program, std::uint32_t full_main,
+                                              std::uint32_t full_backend,
+                                              std::uint32_t minimum_main,
+                                              std::uint32_t minimum_backend) {
+        const std::uint32_t main_pages    = full_main;
+        const std::uint32_t backend_pages = full_backend;
         if (!std::holds_alternative<std::monostate>(transaction_)) { return 0; }
         std::uint64_t freed_main    = 0;
         std::uint64_t freed_backend = 0;
@@ -1078,9 +1090,12 @@ public:
         while (freed_main < main_pages || freed_backend < backend_pages) {
             const bool need_main    = freed_main < main_pages;
             const bool need_backend = freed_backend < backend_pages;
+            const auto helps        = [&](const auto& pages) {
+                return (need_main && pages.main != 0) || (need_backend && pages.backend != 0);
+            };
             std::optional<std::uint32_t> victim;
             std::tuple<std::uint32_t, std::uint64_t, std::uint64_t> best{};
-            std::uint32_t victim_main = 0, victim_backend = 0;
+            std::uint64_t victim_main = 0, victim_backend = 0;
             for (std::uint32_t slot = 0; slot < catalog_count_; ++slot) {
                 const CatalogEntry& entry = catalog_[slot];
                 if (entry.state != CatalogState::Catalogued || !entry.handle ||
@@ -1088,9 +1103,7 @@ public:
                     continue;
                 }
                 const auto pages = program.retained_device_kv_pages(*entry.handle);
-                if (!((need_main && pages.main != 0) || (need_backend && pages.backend != 0))) {
-                    continue;
-                }
+                if (!helps(pages)) { continue; }
                 std::uint64_t last_hit = 0;
                 for (const CheckpointObservation& seen : entry.observations) {
                     last_hit = std::max(last_hit, seen.observation.last_hit_epoch);
@@ -1104,19 +1117,57 @@ public:
                     victim_backend = pages.backend;
                 }
             }
+            if (victim) {
+                CatalogEntry& entry             = catalog_[*victim];
+                const std::uint32_t checkpoints = continuation_checkpoint_count(entry.summary);
+                const std::uint64_t id          = entry.id;
+                if (program.release_continuation(std::move(*entry.handle)).status !=
+                    ConsumeStatus::Consumed) {
+                    break;
+                }
+                erase_session_if_owner(id);
+                clear_catalog_entry(entry);
+                rebuild_prefix_index();
+                saturating_increment(context_stats_.pressure_private_owners_evicted);
+                record_checkpoint_drops(context_stats_, checkpoints);
+                freed_main += victim_main;
+                freed_backend += victim_backend;
+                ++released;
+                continue;
+            }
+            // No private continuation left to give: a catalog-only shared prefix, for the minimum.
+            const bool shared_main    = freed_main < minimum_main;
+            const bool shared_backend = freed_backend < minimum_backend;
+            if (!shared_main && !shared_backend) { break; }
+            SharedEvictionKey shared_best{};
+            for (std::uint32_t slot = 0; slot < shared_catalog_count_; ++slot) {
+                const SharedCatalogEntry& entry = shared_catalog_[slot];
+                if (entry.state != SharedCatalogState::Catalogued || !entry.handle ||
+                    entry.transaction_pins != 0 || shared_active_edge_count(slot) != 0) {
+                    continue;
+                }
+                const auto pages = program.retained_device_kv_pages(*entry.handle);
+                if (!((shared_main && pages.main != 0) || (shared_backend && pages.backend != 0))) {
+                    continue;
+                }
+                const SharedEvictionKey key = shared_eviction_key(entry);
+                if (!victim || key < shared_best) {
+                    victim         = slot;
+                    shared_best    = key;
+                    victim_main    = pages.main;
+                    victim_backend = pages.backend;
+                }
+            }
             if (!victim) { break; }
-            CatalogEntry& entry              = catalog_[*victim];
-            const std::uint32_t checkpoints  = continuation_checkpoint_count(entry.summary);
-            const std::uint64_t id           = entry.id;
-            if (program.release_continuation(std::move(*entry.handle)).status !=
+            SharedCatalogEntry& entry = shared_catalog_[*victim];
+            if (program.release_shared_prefix(std::move(*entry.handle)).status !=
                 ConsumeStatus::Consumed) {
                 break;
             }
-            erase_session_if_owner(id);
-            clear_catalog_entry(entry);
+            clear_shared_entry(entry);
             rebuild_prefix_index();
-            saturating_increment(context_stats_.pressure_private_owners_evicted);
-            record_checkpoint_drops(context_stats_, checkpoints);
+            saturating_increment(context_stats_.pressure_shared_owners_evicted);
+            record_checkpoint_drops(context_stats_, 1U);
             freed_main += victim_main;
             freed_backend += victim_backend;
             ++released;
@@ -1399,6 +1450,20 @@ private:
         bool explicit_credit              = false;
         std::uint64_t credit_expiry_epoch = 0;
     };
+
+    // The order the lease releases idle shared prefixes in, least valuable first: what rebuilding
+    // the prefix would cost (the lead of admission's GuidanceCost::key, estimated_total_ns), then
+    // the leading hit terms of that key (selected hits, explicit credit, newest hit), then id.
+    // Admission itself does not sort by this key: it hands the same fields to the pressure search
+    // as owner policy and prices the whole target. It mirrors only the order of those terms.
+    using SharedEvictionKey =
+        std::tuple<std::uint64_t, std::uint64_t, bool, std::uint64_t, std::uint64_t>;
+
+    [[nodiscard]] SharedEvictionKey shared_eviction_key(const SharedCatalogEntry& entry) const {
+        return {cost_model_.prefill_ns(entry.summary.checkpoint.rebuild_work),
+                entry.observation.selected_hit_count, entry.explicit_credit,
+                entry.observation.last_hit_epoch, entry.id};
+    }
 
     enum class SessionIndexState : std::uint8_t {
         Empty,

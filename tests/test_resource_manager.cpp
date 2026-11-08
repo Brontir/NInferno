@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdint>
 #include <iostream>
+#include <map>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -287,6 +288,11 @@ struct FakeSharedPrefixHandle {
     FakeSharedPrefixHandle& operator=(FakeSharedPrefixHandle&&) noexcept = default;
     FakeSharedPrefixHandle(const FakeSharedPrefixHandle&)                = delete;
     FakeSharedPrefixHandle& operator=(const FakeSharedPrefixHandle&)     = delete;
+};
+
+struct FakeDeviceKVPages {
+    std::uint32_t main    = 0;
+    std::uint32_t backend = 0;
 };
 
 struct FakeSequenceHandle {
@@ -1145,6 +1151,27 @@ public:
         return FakeReleaseResult{.status = ConsumeStatus::Consumed};
     }
 
+    // Device KV pages releasing a cached owner returns: retained_main_pages each, none for a shared
+    // prefix a private entry still aliases (the real Program counts exclusive pages only).
+    [[nodiscard]] FakeDeviceKVPages
+    retained_device_kv_pages(const FakeContinuationHandle&) const noexcept {
+        return FakeDeviceKVPages{.main = retained_main_pages};
+    }
+
+    [[nodiscard]] FakeDeviceKVPages
+    retained_device_kv_pages(const FakeSharedPrefixHandle& shared) const noexcept {
+        const auto found = shared_pages.find(shared.id);
+        return found != shared_pages.end() ? found->second
+                                           : FakeDeviceKVPages{.main = retained_main_pages};
+    }
+
+    [[nodiscard]] FakeReleaseResult
+    release_shared_prefix(FakeSharedPrefixHandle&& shared) noexcept {
+        released_shared_prefixes.push_back(shared.id);
+        advance_revision();
+        return FakeReleaseResult{.status = ConsumeStatus::Consumed};
+    }
+
     [[nodiscard]] ProgramResourceRevision resource_revision() const noexcept { return revision_; }
 
     [[nodiscard]] FakePhysicalUsage physical_usage() const noexcept { return usage; }
@@ -1212,6 +1239,10 @@ public:
     std::vector<std::uint64_t> started_action_ids;
     std::vector<std::uint32_t> selected_shared_capture_frontiers;
     std::vector<std::uint32_t> released_continuations;
+    std::vector<std::uint32_t> released_shared_prefixes;
+    std::uint32_t retained_main_pages = 1;
+    // Pages a shared prefix returns by its id; an alias to a retained owner is {0, 0}.
+    std::map<std::uint32_t, FakeDeviceKVPages> shared_pages;
 
 private:
     void advance_revision() noexcept {
@@ -3598,6 +3629,139 @@ void test_capture_decision_targets_are_bounded_over_scenarios() {
     (void)finish_active(manager, program, active);
 }
 
+namespace {
+
+// A catalogued shared prefix (explicit boundary 91) and the private continuation its seed request
+// left. Both owners are idle on return.
+void seed_idle_shared_and_private(FakeManager& manager, FakeProgram& program) {
+    constexpr auto kExplicit = ninferno::SharedCandidateEvidence::ExplicitBoundary;
+    const ActiveRequest seed = start_active(manager, program, 91, shared_base(91, kExplicit), 1);
+    publish_shared_capture(manager, program, seed, 91, kExplicit, 31);
+    (void)finish_active(manager, program, seed);
+}
+
+} // namespace
+
+// The KV lease releases idle private continuations first, then a catalog-only shared prefix, and
+// counts both as admission's pressure plan does (#495).
+void test_lease_reclaim_releases_idle_shared_prefix_after_private() {
+    { // One page short: the private continuation covers it; the shared prefix stays.
+        FakeManager manager = make_manager(1, 3, 1);
+        FakeProgram program;
+        seed_idle_shared_and_private(manager, program);
+        require(manager.reclaim_device_kv_for_lease(program, 1, 0, 1, 0) == 1 &&
+                    program.released_continuations.size() == 1 &&
+                    program.released_shared_prefixes.empty(),
+                "a lease short by one page did not stop at the private continuation");
+    }
+    { // Two pages short: private first, then the catalog-only shared prefix.
+        FakeManager manager = make_manager(1, 3, 1);
+        FakeProgram program;
+        seed_idle_shared_and_private(manager, program);
+        RuntimeStats before;
+        manager.populate_runtime_stats(program, before);
+        require(manager.reclaim_device_kv_for_lease(program, 2, 0, 2, 0) == 2 &&
+                    program.released_continuations.size() == 1 &&
+                    program.released_shared_prefixes.size() == 1,
+                "a lease short by two pages did not release the idle shared prefix after the "
+                "private continuation");
+        RuntimeStats after;
+        manager.populate_runtime_stats(program, after);
+        require(
+            after.pressure_private_owners_evicted == before.pressure_private_owners_evicted + 1 &&
+                after.pressure_shared_owners_evicted == before.pressure_shared_owners_evicted + 1,
+            "lease reclaim did not count the evicted private and shared owners");
+        // Nothing evictable is left.
+        require(manager.reclaim_device_kv_for_lease(program, 1, 0, 1, 0) == 0,
+                "lease reclaim released an owner after the catalog was empty");
+    }
+    { // A shared prefix a retained private entry aliases frees no pages: it is not released.
+        FakeManager manager = make_manager(1, 3, 1);
+        FakeProgram program;
+        seed_idle_shared_and_private(manager, program);
+        program.shared_pages[1] = {};
+        require(manager.reclaim_device_kv_for_lease(program, 2, 0, 2, 0) == 1 &&
+                    program.released_shared_prefixes.empty(),
+                "lease reclaim released a shared prefix that frees no pages");
+    }
+}
+
+// A shared prefix a running request holds is not released for a lease.
+void test_lease_reclaim_keeps_shared_prefix_with_active_edge() {
+    FakeManager manager = make_manager(2, 3, 1);
+    FakeProgram program;
+    seed_idle_shared_and_private(manager, program);
+    program.report_shared_source_summary = true;
+    const ActiveRequest holder           = start_active(manager, program, 91, make_base(91), 2);
+    RuntimeStats stats;
+    manager.populate_runtime_stats(program, stats);
+    require(stats.shared_active_references == 1,
+            "the running request did not hold the shared prefix");
+    (void)manager.reclaim_device_kv_for_lease(program, 8, 8, 8, 8);
+    require(program.released_shared_prefixes.empty(),
+            "lease reclaim released a shared prefix with an active edge");
+    (void)finish_active(manager, program, holder);
+}
+
+// The shared tier answers to the minimum a lease needs, not to the optional rest of its window.
+void test_lease_reclaim_shared_tier_only_for_minimum() {
+    FakeManager manager = make_manager(1, 3, 1);
+    FakeProgram program;
+    seed_idle_shared_and_private(manager, program);
+    // Full is two pages short, the minimum none: the private entry goes, the shared prefix stays.
+    require(manager.reclaim_device_kv_for_lease(program, 2, 0, 0, 0) == 1 &&
+                program.released_continuations.size() == 1 &&
+                program.released_shared_prefixes.empty(),
+            "the shared tier ran for pages only the optional window wanted");
+    // The minimum short as well: now the shared prefix goes.
+    require(manager.reclaim_device_kv_for_lease(program, 2, 0, 1, 0) == 1 &&
+                program.released_shared_prefixes.size() == 1,
+            "the shared tier did not run for the minimum");
+}
+
+// Shared prefixes go in the order of shared_eviction_key: cheapest to rebuild, then fewest hits,
+// then no credit; only owners that free pages of the short pool are considered.
+void test_lease_reclaim_shared_order_and_backend_pool() {
+    constexpr auto kExplicit  = ninferno::SharedCandidateEvidence::ExplicitBoundary;
+    constexpr auto kAutomatic = ninferno::SharedCandidateEvidence::DefaultAutomatic;
+    const auto publish        = [](FakeManager& manager, FakeProgram& program, std::uint32_t key,
+                            ninferno::SharedCandidateEvidence evidence, std::uint32_t frontier,
+                            std::uint64_t order) {
+        const ActiveRequest request =
+            start_active(manager, program, key, shared_base(key, evidence, frontier), order);
+        publish_shared_capture(manager, program, request, key, evidence, key, frontier);
+        (void)finish_active(manager, program, request);
+    };
+    {
+        FakeManager manager = make_manager(1, 6, 3);
+        FakeProgram program;
+        publish(manager, program, 201, kExplicit, 64, 1);  // shared id 1: credited, long
+        publish(manager, program, 202, kAutomatic, 16, 2); // id 2: short rebuild
+        publish(manager, program, 203, kAutomatic, 64, 3); // id 3: long rebuild
+        const ActiveRequest reuse = start_active(manager, program, 203, make_base(203), 4);
+        (void)finish_active(manager, program, reuse); // one selected hit on id 3
+        program.retained_main_pages = 0;              // private entries free nothing
+        for (std::uint32_t id = 1; id <= 3; ++id) {
+            program.shared_pages[id] = FakeDeviceKVPages{.main = 1};
+        }
+        require(manager.reclaim_device_kv_for_lease(program, 3, 0, 3, 0) == 3 &&
+                    program.released_shared_prefixes == std::vector<std::uint32_t>({2, 1, 3}),
+                "shared prefixes were not released cheapest rebuild first, then fewest hits");
+    }
+    { // The short pool is the backend one: only a prefix that holds backend pages is released.
+        FakeManager manager = make_manager(1, 6, 2);
+        FakeProgram program;
+        publish(manager, program, 211, kAutomatic, 64, 1);
+        publish(manager, program, 212, kAutomatic, 64, 2);
+        program.retained_main_pages = 0;
+        program.shared_pages[1]     = FakeDeviceKVPages{.main = 1};
+        program.shared_pages[2]     = FakeDeviceKVPages{.backend = 1};
+        require(manager.reclaim_device_kv_for_lease(program, 0, 1, 0, 1) == 1 &&
+                    program.released_shared_prefixes == std::vector<std::uint32_t>({2}),
+                "a backend-short lease did not release the prefix that holds backend pages");
+    }
+}
+
 void test_shared_fanout_keeps_owner_edges_live_across_summary_refresh() {
     FakeManager manager = make_manager(2, 3, 1);
     FakeProgram program;
@@ -4307,6 +4471,14 @@ int main() {
              test_engine_candidate_keeps_credited_shared_slot);
     run_test("engine candidate keeps a reused shared slot",
              test_engine_candidate_keeps_shared_slot_that_was_reused);
+    run_test("lease reclaim releases idle shared prefix after private",
+             test_lease_reclaim_releases_idle_shared_prefix_after_private);
+    run_test("lease reclaim keeps shared prefix with active edge",
+             test_lease_reclaim_keeps_shared_prefix_with_active_edge);
+    run_test("lease reclaim shared tier only for the minimum",
+             test_lease_reclaim_shared_tier_only_for_minimum);
+    run_test("lease reclaim shared order and backend pool",
+             test_lease_reclaim_shared_order_and_backend_pool);
     run_test("observed shared independent domains",
              test_observed_shared_candidate_requires_independent_domains);
     run_test("zero-prefill private promotion",
