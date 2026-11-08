@@ -1419,7 +1419,8 @@ They may also be grouped in a Responses namespace:
   would end the agent's turn and lose the parallel calls beside it. Declared names pick the call
   region first, so a quoted example of an undeclared call does not displace a declared call after
   it. Llama 3's JSON form, whose call opens like any JSON answer, still needs a declared name.
-- `allowed_tools` with mode `auto` filters that set without changing declaration order.
+- `allowed_tools` with mode `auto` filters that set without changing declaration order (unless the
+  server runs with `--tool-order sorted`, which renders every set sorted by name).
   `tool_choice:"none"` disables structured tool output even when the history contains earlier calls.
 - Function definitions are request configuration rather than conversation Items. They must be sent
   again on tool-result turns.
@@ -1438,7 +1439,8 @@ They may also be grouped in a Responses namespace:
 - Deferred loading, output schemas, and caller restrictions that exclude direct invocation are
   rejected because their semantics cannot be honored.
 - Tools may also arrive as `additional_tools` input Items (`{"type": "additional_tools", "tools":
-  [...]}`, as Codex sends them). Their tools join the request's `tools`, in input order, and the
+  [...]}`, as Codex sends them). Their tools join the request's `tools`, in input order (sorted by
+  name under `--tool-order sorted`), and the
   Item makes no message. A later Item may define a tool or namespace again. The latest definition
   replaces the earlier one where it stands, and a namespace keeps the description it was first
   declared with.
