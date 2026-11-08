@@ -1190,6 +1190,9 @@ std::string drafter_content_identity(const ConvertOptions& options) {
     auto resources = options.resources;
     std::sort(resources.begin(), resources.end());
     for (const auto& [role, path] : resources) {
+        // A drafter never reads the chat template: a target with another one (a default target and
+        // a custom-template target share the drafter) is the same drafter.
+        if (role == "chat_template.jinja") { continue; }
         parts.push_back({"--resource " + role, content_identity(path), path.filename().string()});
     }
     std::string text;

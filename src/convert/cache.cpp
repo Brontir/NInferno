@@ -11,6 +11,8 @@
 #include "core/sys.h"
 
 #include <algorithm>
+#include <cerrno>
+#include <chrono>
 #include <fstream>
 #include <iterator>
 #include <map>
@@ -223,6 +225,36 @@ bool source_changed(const std::filesystem::path& artifact, const std::string& st
     for (const auto& [name, facts] : recorded) {
         const bool weights = name.ends_with(".safetensors") || name.ends_with(".gguf");
         if (!weights && !current.contains(name)) { return true; }
+    }
+    return false;
+}
+
+bool conversion_in_progress(const std::filesystem::path& directory) {
+    namespace fs          = std::filesystem;
+    constexpr auto kYoung = std::chrono::hours(1); // as ArtifactWriter::kStaleAge
+    std::error_code ec;
+    const auto held = [&](const fs::path& file) {
+        const int fd = sys::open(file, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) { return false; }
+        const bool busy = sys::lock(fd, false) != 0 && errno == EWOULDBLOCK;
+        sys::close(fd);
+        return busy;
+    };
+    for (auto it = fs::recursive_directory_iterator(directory, ec);
+         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        std::error_code e;
+        if (!it->is_regular_file(e) || it->is_symlink(e)) { continue; }
+        const auto name = it->path().filename().string();
+        if (name == ".convert.lock") {
+            if (held(it->path())) { return true; }
+        } else if (name.size() > 4 && name[0] == '.' && name.ends_with(".tmp")) {
+            const auto written = fs::last_write_time(it->path(), e);
+            if (held(it->path()) || (!e && fs::file_time_type::clock::now() - written < kYoung)) {
+                return true;
+            }
+        } else if (name.ends_with(".partial")) {
+            return true;
+        }
     }
     return false;
 }

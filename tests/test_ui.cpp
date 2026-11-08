@@ -3,6 +3,7 @@
 
 #include "artifact/fixture.h"
 #include "convert/acquire.h"
+#include "convert/cache.h"
 #include "core/sys.h"
 #include "spec/fingerprint.h"
 #include "spec/profile.h"
@@ -1170,6 +1171,37 @@ void test_delete_options() {
     check(res && res->status == 200, "the optioned conversion is deleted first");
     check(!fs::exists(custom) && fs::exists(commit / "m.dense_bf16.ninferno"),
           "its directory (lock included) goes, the default stays");
+
+    // A conversion still being written has no .ninferno yet, only its lock (held) and a young
+    // temporary: it is not an empty directory. Deleting the default must leave it, the commit and
+    // the repository (the snapshot it reads).
+    {
+        fs::remove_all(root);
+        fs::create_directories(commit / "options-aaaaaaaaaaaa");
+        fs::create_directories(root / "hub/models--org--m/snapshots" / std::string(40, 'c'));
+        std::ofstream(root / "hub/models--org--m/snapshots" / std::string(40, 'c') /
+                      "model.safetensors")
+            << "w";
+        std::ofstream(commit / "m.dense_bf16.ninferno") << "x";
+        std::ofstream(commit / "m.dense_bf16.ninferno.conversion.json") << "{}";
+        const auto lock = commit / "options-aaaaaaaaaaaa" / ".convert.lock";
+        std::ofstream(commit / "options-aaaaaaaaaaaa" / ".m.dense_bf16.ninferno.AbC123.tmp") << "t";
+        const int fd = ninferno::sys::open(lock, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+        check(fd >= 0 && ninferno::sys::lock(fd, false) == 0, "the test holds a conversion's lock");
+        res = remove(commit / "m.dense_bf16.ninferno");
+        check(res && res->status == 200, "the default is deleted while another conversion runs");
+        check(fs::exists(lock) && fs::exists(commit) &&
+                  fs::exists(root / "hub/models--org--m/snapshots" / std::string(40, 'c') /
+                             "model.safetensors"),
+              "a running conversion, its commit and the snapshot it reads stay");
+        // The lock released, the temporary young: still taken for a writer without locks.
+        ninferno::sys::close(fd);
+        check(ninferno::convert::conversion_in_progress(commit),
+              "a young temporary is a conversion in progress");
+        fs::remove(commit / "options-aaaaaaaaaaaa" / ".m.dense_bf16.ninferno.AbC123.tmp");
+        check(!ninferno::convert::conversion_in_progress(commit),
+              "an unlocked lock file alone is not");
+    }
 
     server.stop();
     thread.join();

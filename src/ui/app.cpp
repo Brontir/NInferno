@@ -2042,6 +2042,9 @@ std::uint64_t App::delete_artifact(const fs::path& requested) {
         // which lives below it in options-<hash>/ (hence the recursive look: a running model may
         // be serving it).
         const auto conversions_left = [&](const fs::path& dir) {
+            // A conversion still being written has no .ninferno yet (only its lock and a
+            // temporary): it counts, or the snapshot it reads would go with the directory.
+            if (convert::conversion_in_progress(dir)) { return true; }
             for (const auto& entry : fs::recursive_directory_iterator(dir, ec)) {
                 if (entry.path().extension() == ".ninferno" &&
                     manifest.find(entry.path().filename().string()) == std::string::npos) {
@@ -2065,7 +2068,7 @@ std::uint64_t App::delete_artifact(const fs::path& requested) {
             freed += tree_bytes(dir);
             fs::remove_all(dir, ec);
         }
-        bool left = false;
+        bool left = convert::conversion_in_progress(repo_dir / "ninferno");
         for (const auto& entry : fs::recursive_directory_iterator(repo_dir / "ninferno", ec)) {
             if (entry.is_regular_file(ec) && entry.path().extension() == ".ninferno" &&
                 !facts(entry.path()).drafter) {

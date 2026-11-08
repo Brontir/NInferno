@@ -794,6 +794,8 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                     others = true;
                 }
             }
+            // A conversion still being written below has no .ninferno file yet.
+            others = others || conversion_in_progress(dir);
             if (!others) { fs::remove_all(dir, ec); }
             say(options, "removed the old conversion " + artifact.string() +
                              (others ? " (other conversions of that commit stay)" : ""));

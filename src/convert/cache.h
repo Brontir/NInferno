@@ -79,6 +79,12 @@ void stamp_source(const std::filesystem::path& artifact, const std::string& stam
 [[nodiscard]] bool source_changed(const std::filesystem::path& artifact, const std::string& stamp);
 // Removes an artifact and its sidecars (<artifact>.conversion.json, .speculation.json, ...).
 void remove_artifact(const std::filesystem::path& artifact);
+// Whether a conversion may be running (or resumable) anywhere under `directory`: a
+// `.convert.lock` another process holds (try-lock), a hidden `.<file>.XXXXXX.tmp` its writer holds
+// locked or written within the last hour (a writer without locks), or a `<file>.partial`. A
+// directory whose only content is such a conversion has no .ninferno file yet, and must not be
+// taken for empty: removing it would delete the snapshot being read and the file being written.
+[[nodiscard]] bool conversion_in_progress(const std::filesystem::path& directory);
 
 struct CachedArtifact {
     std::filesystem::path path; // the artifact to load

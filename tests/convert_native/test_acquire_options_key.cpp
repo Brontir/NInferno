@@ -246,9 +246,18 @@ int main() {
         a.resources.emplace_back("chat_template.jinja", root / "custom.jinja");
         b.resources.emplace_back("chat_template.jinja", root / "other.jinja");
         check(cv::drafter_options_key(a).empty(), "copied resources are not in the path");
-        check(cv::drafter_content_identity(a) != cv::drafter_content_identity(b) &&
-                  cv::drafter_content_identity(a) != cv::drafter_content_identity(plain_drafter),
-              "a drafter converted with another template has another identity");
+        // A drafter never reads the template: a default target and a custom-template target share
+        // one drafter instead of converting each other's again.
+        check(cv::drafter_content_identity(a) == cv::drafter_content_identity(b) &&
+                  cv::drafter_content_identity(a) == cv::drafter_content_identity(plain_drafter),
+              "the target's chat template is not part of a drafter's identity");
+        cv::ConvertOptions t1, t2;
+        write_text(root / "tok1.json", "{}");
+        write_text(root / "tok2.json", "{ }");
+        t1.resources.emplace_back("tokenizer.json", root / "tok1.json");
+        t2.resources.emplace_back("tokenizer.json", root / "tok2.json");
+        check(cv::drafter_content_identity(t1) != cv::drafter_content_identity(t2),
+              "another tokenizer is another identity");
         check(cv::drafter_content_identity(tiny) != cv::drafter_content_identity(plain_drafter),
               "and with another flag");
     }

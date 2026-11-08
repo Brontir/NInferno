@@ -33,8 +33,11 @@ std::string file_identity(const fs::path& path) {
         data.resize(static_cast<std::size_t>(in.gcount()));
         return sha256_hex(data);
     };
-    return "size:" + std::to_string(size) + ",head:" + part(0, kHeadBytes) +
-           ",tail:" + part(size - kTailBytes, kTailBytes);
+    // The modification time too: most edits of a large file land outside the parts hashed.
+    const auto written = fs::last_write_time(path, ec);
+    return "size:" + std::to_string(size) +
+           ",mtime:" + std::to_string(ec ? 0 : written.time_since_epoch().count()) +
+           ",head:" + part(0, kHeadBytes) + ",tail:" + part(size - kTailBytes, kTailBytes);
 }
 
 } // namespace
