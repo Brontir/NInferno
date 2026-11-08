@@ -349,7 +349,7 @@ RenderedChat CompiledChatTemplate::render_once(const std::vector<ChatMessage>& m
             if (message.tool_calls.empty() ||
                 std::all_of(message.parts.begin(), message.parts.end(),
                             [](const auto& part) { return part.text.empty(); })) {
-                value["thinking"]  = message.reasoning_content;
+                value["thinking"]   = message.reasoning_content;
                 origin.thinking_tag = tag(pointer + "/thinking");
             }
         }

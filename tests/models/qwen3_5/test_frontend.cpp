@@ -1383,10 +1383,10 @@ int test_reasoning_reaches_thinking_field() {
         "'<|end|>' }}"
         "{%- else -%}{{- '<|start|>user<|message|>' + message.content + '<|end|>' }}{%- endif %}"
         "{%- endfor -%}{%- if add_generation_prompt -%}<|start|>assistant{%- endif -%}");
-    auto call = chat_message(ninferno::ChatRole::Assistant, "");
+    auto call              = chat_message(ninferno::ChatRole::Assistant, "");
     call.reasoning_content = "plan";
     call.tool_calls.push_back({.name = "calc", .arguments_json = "{}"});
-    auto second = call;
+    auto second              = call;
     second.reasoning_content = "step two";
     const auto user          = chat_message(ninferno::ChatRole::User, "q");
     const auto result        = chat_message(ninferno::ChatRole::Tool, "912");
@@ -1399,19 +1399,20 @@ int test_reasoning_reaches_thinking_field() {
                            "a tool-call turn's reasoning did not reach the template as thinking");
     // The next step of the loop extends the previous prompt: the cache keeps its prefix.
     const auto two = harmony.render({user, call, result, second, result});
-    failures += check(two.text.starts_with(one.text.substr(0, one.text.size() - std::string("<|start|>assistant").size())) &&
+    failures += check(two.text.starts_with(one.text.substr(
+                          0, one.text.size() - std::string("<|start|>assistant").size())) &&
                           two.text.find("analysis<|message|>step two<|end|>") != std::string::npos,
                       "the next tool step did not extend the previous prompt");
     // A tool-call turn with content and reasoning keeps rendering its content as the analysis.
-    auto both    = call;
+    auto both               = call;
     both.parts.front().text = "spoken";
-    const auto mixed = harmony.render({user, both, result});
+    const auto mixed        = harmony.render({user, both, result});
     failures += check(mixed.text.find("analysis<|message|>spoken<|end|>") != std::string::npos &&
                           mixed.text.find("plan") == std::string::npos,
                       "a tool-call turn with content and reasoning changed its rendering");
     // A later final answer drops the analysis, as the template defines.
-    const auto answered = harmony.render(
-        {user, call, result, chat_message(ninferno::ChatRole::Assistant, "done")});
+    const auto answered =
+        harmony.render({user, call, result, chat_message(ninferno::ChatRole::Assistant, "done")});
     failures += check(answered.text.find("plan") == std::string::npos,
                       "reasoning before a final answer was rendered");
     return failures;
