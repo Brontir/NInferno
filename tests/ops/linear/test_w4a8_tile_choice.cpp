@@ -22,6 +22,7 @@
 namespace {
 
 using namespace ninferno;
+using namespace ninferno::test;
 namespace generic = ninferno::ops::detail::generic;
 namespace ch      = ninferno::product::choice;
 using ops::LinearPolicy;
