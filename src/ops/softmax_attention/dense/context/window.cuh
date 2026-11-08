@@ -11,10 +11,10 @@ namespace ninferno::ops {
 // The window: the last `window` context entries (keys as cached) and the query block.
 template <class Geometry>
 struct ContextWindowPolicy : ContextAttentionPolicy<Geometry> {
-    using Geo       = Geometry;
-    int window      = 0;
-    int key_block   = 32; // the kernel's tile height
-    int first       = 0;  // the first window entry: max(length - window, 0)
+    using Geo     = Geometry;
+    int window    = 0;
+    int key_block = 32; // the kernel's tile height
+    int first     = 0;  // the first window entry: max(length - window, 0)
 
     // The window's tiles start at a multiple of the tile height: a tile that straddled a page
     // boundary would read its second page's rows from the physical page after the first (the
@@ -72,7 +72,8 @@ __launch_bounds__(128, 2) __global__
                                       int max_context, int split_capacity, int window,
                                       __nv_bfloat16* __restrict__ out) {
     const int length = context_length[static_cast<int>(blockIdx.z)];
-    // ContextWindowPolicy::context_count: the window's tiles start at a multiple of the tile height.
+    // ContextWindowPolicy::context_count: the window's tiles start at a multiple of the tile
+    // height.
     const int count = length - (max(length - window, 0) / KeyBlock) * KeyBlock;
     context_query_reduce_body<Tokens, KeyBlock, Geo>(partial_acc, partial_m, partial_l, length,
                                                      count, valid_columns, max_context,

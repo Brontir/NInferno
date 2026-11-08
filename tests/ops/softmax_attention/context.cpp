@@ -790,7 +790,8 @@ struct WindowRow {
 };
 
 int run_window_case(int tokens, const std::vector<WindowRow>& rows, int window,
-                    MappingPattern mapping_pattern = MappingPattern::Fragmented, bool int8 = false) {
+                    MappingPattern mapping_pattern = MappingPattern::Fragmented,
+                    bool int8                      = false) {
     const int batch = static_cast<int>(rows.size());
     int max_length  = 1;
     bool all_inside = true;
@@ -798,14 +799,14 @@ int run_window_case(int tokens, const std::vector<WindowRow>& rows, int window,
         max_length = std::max(max_length, row.length);
         all_inside = all_inside && row.length <= window;
     }
-    const int logical_pages  = (max_length + kPage - 1) / kPage;
-    const int logical_stride = (logical_pages * kPage + 127) / 128 * 128;
-    const int row_pages      = 2 * logical_pages + 1;
-    const int physical_pages = batch * row_pages;
-    const std::size_t row_q  = static_cast<std::size_t>(kD) * kQHeads * tokens;
-    const std::size_t row_kv = static_cast<std::size_t>(kD) * kKVHeads * tokens;
+    const int logical_pages   = (max_length + kPage - 1) / kPage;
+    const int logical_stride  = (logical_pages * kPage + 127) / 128 * 128;
+    const int row_pages       = 2 * logical_pages + 1;
+    const int physical_pages  = batch * row_pages;
+    const std::size_t row_q   = static_cast<std::size_t>(kD) * kQHeads * tokens;
+    const std::size_t row_kv  = static_cast<std::size_t>(kD) * kKVHeads * tokens;
     const std::size_t row_ctx = static_cast<std::size_t>(kD) * logical_stride * kKVHeads;
-    const auto seed           = static_cast<unsigned>(tokens * 131 + max_length * 17 + window + batch);
+    const auto seed = static_cast<unsigned>(tokens * 131 + max_length * 17 + window + batch);
 
     std::vector<float> q(row_q * batch), query_k(row_kv * batch), query_v(row_kv * batch);
     std::vector<float> context_k(row_ctx * batch), context_v(row_ctx * batch);
@@ -841,10 +842,10 @@ int run_window_case(int tokens, const std::vector<WindowRow>& rows, int window,
         const std::vector<std::int32_t> mapping(
             tables.begin() + static_cast<std::ptrdiff_t>(b * logical_pages),
             tables.begin() + static_cast<std::ptrdiff_t>((b + 1) * logical_pages));
-        scatter_context_mapping(physical_k, slice(context_k), logical_stride,
-                                logical_pages * kPage, mapping, physical_pages);
-        scatter_context_mapping(physical_v, slice(context_v), logical_stride,
-                                logical_pages * kPage, mapping, physical_pages);
+        scatter_context_mapping(physical_k, slice(context_k), logical_stride, logical_pages * kPage,
+                                mapping, physical_pages);
+        scatter_context_mapping(physical_v, slice(context_v), logical_stride, logical_pages * kPage,
+                                mapping, physical_pages);
     }
 
     // The int8 pool: the codes and scales, and the dequantized values the kernel stages become
@@ -856,15 +857,14 @@ int run_window_case(int tokens, const std::vector<WindowRow>& rows, int window,
         for (int b = 0; b < batch; ++b) {
             for (int position = 0; position < rows[static_cast<std::size_t>(b)].length;
                  ++position) {
-                const int page = tables[static_cast<std::size_t>(b * logical_pages +
-                                                                 position / kPage)];
+                const int page =
+                    tables[static_cast<std::size_t>(b * logical_pages + position / kPage)];
                 for (int kv_head = 0; kv_head < kKVHeads; ++kv_head) {
                     for (int d = 0; d < kD; ++d) {
                         const std::size_t from =
                             physical_context_index(d, kv_head, position, page, physical_pages);
-                        const std::size_t to =
-                            static_cast<std::size_t>(b) * row_ctx +
-                            context_index(d, kv_head, position, logical_stride);
+                        const std::size_t to = static_cast<std::size_t>(b) * row_ctx +
+                                               context_index(d, kv_head, position, logical_stride);
                         context_k[to] = k8.dequant[from];
                         context_v[to] = v8.dequant[from];
                     }
@@ -875,9 +875,9 @@ int run_window_case(int tokens, const std::vector<WindowRow>& rows, int window,
 
     std::vector<double> reference(row_q * batch, 0.0);
     for (int b = 0; b < batch; ++b) {
-        const int length = rows[static_cast<std::size_t>(b)].length;
-        const int valid  = rows[static_cast<std::size_t>(b)].valid;
-        const int first  = std::max(length - window, 0);
+        const int length     = rows[static_cast<std::size_t>(b)].length;
+        const int valid      = rows[static_cast<std::size_t>(b)].valid;
+        const int first      = std::max(length - window, 0);
         const std::size_t qb = static_cast<std::size_t>(b) * row_q;
         const std::size_t kb = static_cast<std::size_t>(b) * row_kv;
         const std::size_t cb = static_cast<std::size_t>(b) * row_ctx;
@@ -912,15 +912,15 @@ int run_window_case(int tokens, const std::vector<WindowRow>& rows, int window,
         valids.push_back(rows[static_cast<std::size_t>(b)].valid);
         table_rows.push_back(b);
     }
-    DeviceBuffer d_q        = to_device(bf16_bits(q));
-    DeviceBuffer d_query_k  = to_device(bf16_bits(query_k));
-    DeviceBuffer d_query_v  = to_device(bf16_bits(query_v));
-    DeviceBuffer d_tables   = to_device(tables);
-    DeviceBuffer d_length   = to_device_i32(lengths);
-    DeviceBuffer d_valid    = to_device_i32(valids);
-    DeviceBuffer d_row      = to_device_i32(table_rows);
-    DeviceBuffer d_k = int8 ? to_device(k8.codes) : to_device(bf16_bits(physical_k));
-    DeviceBuffer d_v = int8 ? to_device(v8.codes) : to_device(fp16_bits(physical_v));
+    DeviceBuffer d_q       = to_device(bf16_bits(q));
+    DeviceBuffer d_query_k = to_device(bf16_bits(query_k));
+    DeviceBuffer d_query_v = to_device(bf16_bits(query_v));
+    DeviceBuffer d_tables  = to_device(tables);
+    DeviceBuffer d_length  = to_device_i32(lengths);
+    DeviceBuffer d_valid   = to_device_i32(valids);
+    DeviceBuffer d_row     = to_device_i32(table_rows);
+    DeviceBuffer d_k       = int8 ? to_device(k8.codes) : to_device(bf16_bits(physical_k));
+    DeviceBuffer d_v       = int8 ? to_device(v8.codes) : to_device(fp16_bits(physical_v));
     DeviceBuffer d_k_scale = int8 ? to_device(k8.scales) : to_device(tables);
     DeviceBuffer d_v_scale = int8 ? to_device(v8.scales) : to_device(tables);
     GuardedDeviceBuffer d_out(row_q * batch * sizeof(std::uint16_t));
@@ -980,26 +980,27 @@ int run_window_case(int tokens, const std::vector<WindowRow>& rows, int window,
                                        valid_tensor, row_tensor, kGeometry, kScale, context,
                                        envelope, plain_workspace, plain_tensor, nullptr);
         cuda_synchronize();
-        failures += verify_reduction(
-            (label + " against the plain op").c_str(),
-            from_device_bf16(d_out.data(), row_q * batch),
-            [&] {
-                const auto plain = from_device_bf16(d_plain.data(), row_q * batch);
-                return std::vector<double>(plain.begin(), plain.end());
-            }(),
-            kContextQueryBf16Criterion);
+        failures += verify_reduction((label + " against the plain op").c_str(),
+                                     from_device_bf16(d_out.data(), row_q * batch),
+                                     [&] {
+                                         const auto plain =
+                                             from_device_bf16(d_plain.data(), row_q * batch);
+                                         return std::vector<double>(plain.begin(), plain.end());
+                                     }(),
+                                     kContextQueryBf16Criterion);
     }
     return failures;
 }
 
 int run_window_cases() {
     int failures = 0;
-    failures += run_window_case(1, {{50, 1}}, 64);                   // L <= W: the plain op
-    failures += run_window_case(4, {{64, 4}, {10, 4}}, 64);          // both inside
+    failures += run_window_case(1, {{50, 1}}, 64);          // L <= W: the plain op
+    failures += run_window_case(4, {{64, 4}, {10, 4}}, 64); // both inside
     failures += run_window_case(1, {{300, 1}}, 64);
-    failures += run_window_case(4, {{300, 4}}, 100, MappingPattern::Offset); // W not a tile multiple
+    failures +=
+        run_window_case(4, {{300, 4}}, 100, MappingPattern::Offset); // W not a tile multiple
     failures += run_window_case(8, {{1000, 8}}, 128);
-    failures += run_window_case(8, {{1000, 5}}, 130);                // inert columns
+    failures += run_window_case(8, {{1000, 5}}, 130); // inert columns
     failures += run_window_case(16, {{700, 16}}, 256);
     failures += run_window_case(2, {{5000, 2}}, 2048);
     failures += run_window_case(8, {{4097, 8}}, 1);
@@ -1009,8 +1010,8 @@ int run_window_cases() {
     failures += run_window_case(16, {{500, 16}, {70, 16}}, 64);
     if (kD == 128) {
         failures += run_window_case(8, {{1000, 8}}, 128, MappingPattern::Fragmented, true);
-        failures += run_window_case(4, {{300, 4}, {40, 4}, {65, 2}}, 64, MappingPattern::Offset,
-                                    true);
+        failures +=
+            run_window_case(4, {{300, 4}, {40, 4}, {65, 2}}, 64, MappingPattern::Offset, true);
         failures += run_window_case(2, {{50, 2}}, 64, MappingPattern::Fragmented, true);
     }
     return failures;

@@ -37,23 +37,23 @@ Json config(const Json& rope, int positions = 131072, bool sliding = false) {
     Json r          = rope;
     r["rotary_dim"] = 64;
     r["inv_freq"]   = freq;
-    Json out = {{"model_type", "dflash"},
-            {"hidden_size", 2880},
-            {"num_hidden_layers", 8},
-            {"num_target_layers", 24},
-            {"num_attention_heads", 64},
-            {"num_key_value_heads", 8},
-            {"head_dim", 64},
-            {"intermediate_size", 7680},
-            {"block_size", 8},
-            {"rope_theta", 150000.0},
-            {"rms_norm_eps", 1e-5},
-            {"layer_types", layers},
-            {"rope", r},
-            {"dflash_config",
-             {{"target_layer_ids", {1, 6, 11, 16, 21}},
-              {"mask_token_id", 200000},
-              {"sliding_attention_mask", "block"}}}};
+    Json out        = {{"model_type", "dflash"},
+                       {"hidden_size", 2880},
+                       {"num_hidden_layers", 8},
+                       {"num_target_layers", 24},
+                       {"num_attention_heads", 64},
+                       {"num_key_value_heads", 8},
+                       {"head_dim", 64},
+                       {"intermediate_size", 7680},
+                       {"block_size", 8},
+                       {"rope_theta", 150000.0},
+                       {"rms_norm_eps", 1e-5},
+                       {"layer_types", layers},
+                       {"rope", r},
+                       {"dflash_config",
+                        {{"target_layer_ids", {1, 6, 11, 16, 21}},
+                         {"mask_token_id", 200000},
+                         {"sliding_attention_mask", "block"}}}};
     if (positions != 0) { out["max_position_embeddings"] = positions; }
     if (sliding) { out["sliding_window"] = 2048; }
     return out;
@@ -76,7 +76,7 @@ int main() {
                            {"original_max_position_embeddings", 4096}};
     const Json told     = {{"rope_type", "yarn"}, {"attention_scaling", scaling}};
     // The gate: original below the positions, a drafter without a sliding layer.
-    Json equal = recorded;
+    Json equal                                = recorded;
     equal["original_max_position_embeddings"] = 131072;
     check(parse_dflash_config(config(equal)).full_window == 0, "original == max: no window");
     check(parse_dflash_config(config(recorded, 0)).full_window == 0,
@@ -95,7 +95,11 @@ int main() {
     check(parse_dflash_config(config({{"rope_type", "yarn"}, {"attention_scaling", 1.0}}))
                   .full_window == 0,
           "a YaRN rope of factor 1 has none");
-    if (failures == 0) { std::cout << "dflash config: PASS
-"; }
-    return failures == 0 ? 0 : 1;
-}
+    if (failures == 0) {
+        std::cout << "dflash config: PASS
+                     "; }
+                    return failures ==
+                0
+            ? 0
+            : 1;
+    }

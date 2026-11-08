@@ -110,7 +110,8 @@ DFlashConfig parse_dflash_config(const artifact::Json& c) {
         }
         out.rope_attention_scaling = json_positive_float(rope, "attention_scaling");
         out.rope_scaled            = true;
-        window_candidate = yarn_original_length(rope, out.max_positions, out.rope_attention_scaling);
+        window_candidate =
+            yarn_original_length(rope, out.max_positions, out.rope_attention_scaling);
     } else {
         for (std::int32_t i = 0; i < out.head_dim; i += 2) {
             const float exponent = static_cast<float>(i) / static_cast<float>(out.head_dim);

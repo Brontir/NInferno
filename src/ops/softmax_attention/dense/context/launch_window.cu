@@ -12,9 +12,8 @@ constexpr const char* kOp = "context_window_attention";
 
 template <class Geo>
 void window_launch_profile(const ContextCall& c, std::int32_t window,
-                           const ContextAttentionPlan& plan, Tensor& partial_acc,
-                           Tensor& partial_m, Tensor& partial_l, Tensor& out,
-                           cudaStream_t stream) {
+                           const ContextAttentionPlan& plan, Tensor& partial_acc, Tensor& partial_m,
+                           Tensor& partial_l, Tensor& out, cudaStream_t stream) {
     dispatch_tokens<Geo>(c.q.ne[2], kOp, [&]<int Tokens, int Warps>() {
         require_split_plan(plan, Warps, kOp);
         select_key_block<Tokens, Warps>(plan, kOp, [&]<int KeyBlock>() {
@@ -58,8 +57,8 @@ void context_window_launch(const Tensor& q, const Tensor& query_k, const Tensor&
                            const PagedKVBatchLayerView& context, const ContextAttentionPlan& plan,
                            Tensor& partial_acc, Tensor& partial_m, Tensor& partial_l, Tensor& out,
                            cudaStream_t stream) {
-    const ContextCall call{q,       query_k,       query_v, context_lengths,
-                           valid_columns, table_rows, context, scale};
+    const ContextCall call{q,          query_k, query_v, context_lengths, valid_columns,
+                           table_rows, context, scale};
     switch (plan.profile) {
     case ContextAttentionProfile::D128Q32K8:
         window_launch_profile<ContextQueryD128>(call, window, plan, partial_acc, partial_m,

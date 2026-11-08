@@ -200,7 +200,8 @@ __launch_bounds__(128) __global__ void context_fold_reduce_kernel(
         return tiles > 0 ? min(tiles, capacity) : 1;
     };
     float window_lse, window_value, far_lse, far_value;
-    // The window's tiles start at a multiple of the tile height (ContextWindowPolicy::context_count).
+    // The window's tiles start at a multiple of the tile height
+    // (ContextWindowPolicy::context_count).
     const int window_begin = max(length - window, 0);
     const int window_count = length - (window_begin / window_key_block) * window_key_block;
     fold_branch<Tokens, Geo>(window_acc, window_m, window_l,

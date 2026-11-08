@@ -114,9 +114,8 @@ void launch_window_partial_by_storage(const ContextCall& c, const ContextAttenti
             c, plan, Geo::Hkv, SmemBytes + kContextQueryInt8StageBytes<Geo::D, KeyBlock>, window,
             partial_acc, partial_m, partial_l, stream);
     } else {
-        launch_window_partial<Kernel, __nv_bfloat16, __half>(c, plan, Geo::Hkv, SmemBytes, window,
-                                                             partial_acc, partial_m, partial_l,
-                                                             stream);
+        launch_window_partial<Kernel, __nv_bfloat16, __half>(
+            c, plan, Geo::Hkv, SmemBytes, window, partial_acc, partial_m, partial_l, stream);
     }
 }
 

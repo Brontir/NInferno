@@ -22,8 +22,8 @@ void fold_branch_launch(const ContextCall& c, std::int32_t window, const Context
             launch_window_partial_by_storage<
                 Geo, KeyBlock, &context_fold_partial_kernel<Geo, Tokens, Warps, KeyBlock, Far>,
                 &context_fold_partial_kernel<Geo, Tokens, Warps, KeyBlock, Far, std::int8_t,
-                                             std::int8_t>>(c, plan, window, partial_acc,
-                                                           partial_m, partial_l, stream);
+                                             std::int8_t>>(c, plan, window, partial_acc, partial_m,
+                                                           partial_l, stream);
         });
     });
 }
@@ -56,8 +56,8 @@ void context_fold_launch(const Tensor& q, const Tensor& query_k, const Tensor& q
                          const PagedKVBatchLayerView& context, const ContextFoldPlan& plan,
                          FoldPartials& window, FoldPartials& far, Tensor& q_far, Tensor& out,
                          cudaStream_t stream) {
-    const ContextCall call{q,       query_k,       query_v, context_lengths,
-                           valid_columns, table_rows, context, scale};
+    const ContextCall call{q,          query_k, query_v, context_lengths, valid_columns,
+                           table_rows, context, scale};
     fold_branch_launch<false>(call, fold.window, plan.window, window.acc, window.m, window.l,
                               stream);
     dispatch_tokens<ContextQueryD128>(q.ne[2], kOp, [&]<int Tokens, int>() {
