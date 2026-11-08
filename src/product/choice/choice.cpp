@@ -807,9 +807,10 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
                                                                          : nullptr;
             const double rounds =
                 narrow != nullptr
-                    ? w4a8_tiles::work(static_cast<std::int64_t>(std::ceil(l.n / kW4a8KquantRows)),
-                                       static_cast<std::int64_t>(std::ceil(tokens)),
-                                       static_cast<int>(sms), *narrow)
+                    ? w4a8_tiles::work(
+                          static_cast<std::int64_t>(std::ceil(l.n / kW4a8KquantRows)),
+                          static_cast<std::int64_t>(std::ceil(tokens)), static_cast<int>(sms),
+                          w4a8_tiles::residency(smem_per_sm_of_cc(card.major, card.minor)), *narrow)
                     : std::ceil(std::ceil(l.n / kW4a8KquantRows) *
                                 std::ceil(tokens / kW4a8KquantTokens) / sms);
             clocks += l.per_token * rounds * (cost->c0 + l.k * step);

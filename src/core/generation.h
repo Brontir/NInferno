@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+
 // The generation row: what an SM of one card generation does per clock, and the per-generation
 // constants the route cost model was fitted with. A card is everything its query reports (SMs,
 // clocks, bus, shared memory, residency: DeviceClass) plus the row of its compute capability; no
@@ -154,6 +156,17 @@ struct FittedRouteScales {
 // sm_120: the RTX 50 boards (w4a8_ws_extra, w4a8_ws_wins).
 [[nodiscard]] constexpr bool gb20x_cc(int major, int minor) noexcept {
     return major == 12 && minor == 0;
+}
+
+// Shared memory of one SM (CUDA programming guide, compute capability tables): what limits how many
+// CTAs of a kernel are resident on it (w4a8_tiles::residency). The architecture's value, not a
+// board's.
+[[nodiscard]] constexpr std::size_t smem_per_sm_of_cc(int major, int minor) noexcept {
+    const int cc = major * 10 + minor;
+    return cc == 75               ? 64 * 1024
+           : cc == 80 || cc == 87 ? 164 * 1024
+           : cc >= 90 && cc < 120 ? 228 * 1024
+                                  : 100 * 1024;
 }
 // Major 12, the consumer Blackwell SM (the R8 rules' SM-count edge between the RTX 5080 and 5090).
 [[nodiscard]] constexpr bool consumer_blackwell_major(int major) noexcept {

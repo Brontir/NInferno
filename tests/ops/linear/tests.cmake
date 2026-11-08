@@ -127,6 +127,12 @@ ninferno_add_op_test(ninferno_selector_golden_test
 target_compile_definitions(ninferno_selector_golden_test PRIVATE
   NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden")
 
+# Blackwell's Q4_K / Q6_K W4A8 tile choice against core/w4a8_tiles.h and the product's estimate
+# (DECISIONS 75), 129..512 tokens on a 70-SM and a 170-SM board.
+ninferno_add_op_test(ninferno_w4a8_tile_choice_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_w4a8_tile_choice.cpp"
+  LIBRARIES ninferno_linear_test_support ninferno_product_choice)
+
 # The generic path's dense tuner: tuned at the first eager call, within the activation class, R8
 # decode bytes kept, the cache file read back, nothing timed inside a graph capture.
 ninferno_add_op_test(ninferno_dense_tune_test

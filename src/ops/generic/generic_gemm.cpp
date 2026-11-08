@@ -1200,6 +1200,29 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                                                      : rmma_index(1, 8, 1, 1);
 }
 
+// What heuristic_w4a8 reads of the device for the 64 x 64 tile's choice (core/w4a8_tiles.h):
+// measured on Blackwell (sm_120) only, with the SMs and the CTAs of each tile its shared memory
+// holds.
+namespace {
+struct W4a8TileDevice {
+    bool blackwell = false;
+    int sms        = 1;
+    w4a8_tiles::Residency residency{0, 0};
+};
+
+const W4a8TileDevice& w4a8_tile_device() {
+    static PerDevice<W4a8TileDevice> cache;
+    static const W4a8TileDevice none;
+    try {
+        return cache.get([](int) {
+            const auto& d = device_class();
+            return W4a8TileDevice{gb20x_cc(d.major, d.minor), d.sms,
+                                  w4a8_tiles::residency(d.smem_per_sm)};
+        });
+    } catch (const std::exception&) { return none; }
+}
+} // namespace
+
 int heuristic_w4a8(const Problem& problem, const Weight& weight, std::int32_t tokens) {
     constexpr int k32x128 = 0, k128x128 = 2, k128x64 = 3, k64x64 = 4, k128x64ws = 5;
     // 17..32 tokens (verify of a 16-token draft, short prompts): 32 tokens by 128 rows wastes less of
@@ -1261,15 +1284,10 @@ int heuristic_w4a8(const Problem& problem, const Weight& weight, std::int32_t to
                                                : problem.qtype == QType::GGML_Q6_K
                                                    ? &w4a8_tiles::kQ6k
                                                    : nullptr;
-        // Blackwell only: the two tiles' costs were read on the RTX 5090 and 5070 Ti (sm_120).
-        bool blackwell = false;
-        try {
-            const auto& d = device_class();
-            blackwell     = gb20x_cc(d.major, d.minor);
-        } catch (const std::exception&) {}
-        if (narrow != nullptr && blackwell &&
+        const W4a8TileDevice& device         = w4a8_tile_device();
+        if (narrow != nullptr && device.blackwell &&
             w4a8_tiles::narrow_wins((problem.n + rows_per_cta - 1) / rows_per_cta, tokens,
-                                    sm_count(), *narrow)) {
+                                    device.sms, device.residency, *narrow)) {
             return k64x64;
         }
         return k128x64ws;

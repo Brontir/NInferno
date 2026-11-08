@@ -755,10 +755,7 @@ DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int m
                              : cc == 80 || cc == 87      ? 163 * 1024
                              : cc >= 90 && cc < 120      ? 227 * 1024
                                                          : 99 * 1024;
-    d.smem_per_sm          = cc == 75                  ? 64 * 1024
-                             : cc == 80 || cc == 87      ? 164 * 1024
-                             : cc >= 90 && cc < 120      ? 228 * 1024
-                                                         : 100 * 1024;
+    d.smem_per_sm             = smem_per_sm_of_cc(major, minor);
     d.max_threads_per_sm   = cc == 75 ? 1024 : cc == 80 || (cc >= 90 && cc < 120) ? 2048 : 1536;
     d.max_blocks_per_sm    = cc == 75 ? 16 : cc == 86 ? 16 : cc == 89 ? 24 : 32;
     d.registers_per_sm     = 64 * 1024;
