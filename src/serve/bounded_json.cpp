@@ -94,6 +94,8 @@ class ValueCounter {
 public:
     explicit ValueCounter(std::size_t limit) : limit_(limit) {}
 
+    [[nodiscard]] std::size_t values() const noexcept { return values_; }
+
     [[nodiscard]] bool exceeded() const noexcept { return exceeded_; }
 
     [[nodiscard]] bool too_deep() const noexcept { return too_deep_; }
@@ -152,15 +154,21 @@ private:
 
 } // namespace
 
-JsonTextStatus check_bounded_json(std::string_view text, std::size_t max_values) {
+JsonTextStatus check_bounded_json(std::string_view text, std::size_t max_values,
+                                  std::size_t* values_seen) {
     ValueCounter counter(max_values);
     bool parsed = false;
     try {
         parsed = RequestJson::sax_parse(text, &counter);
     } catch (const std::exception&) { return JsonTextStatus::Invalid; }
+    if (values_seen != nullptr) { *values_seen = counter.values(); }
     if (counter.exceeded()) { return JsonTextStatus::TooManyValues; }
     if (counter.too_deep()) { return JsonTextStatus::TooDeep; }
     return parsed ? JsonTextStatus::Ok : JsonTextStatus::Invalid;
+}
+
+void note_parse_size(std::size_t values) noexcept {
+    large_parse_seen = large_parse_seen || values >= kLargeValueCount;
 }
 
 JsonTextStatus parse_bounded_json(std::string_view text, std::size_t max_values, RequestJson& out) {

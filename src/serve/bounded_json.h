@@ -27,6 +27,12 @@ enum class JsonTextStatus { Ok, Invalid, TooManyValues, TooDeep };
 // the body limit can be measured. Used for text that is kept as it is and parsed later (a replayed
 // tool call's arguments, which the chat template parses): Invalid is not an error here, since the
 // renderer shows text that is not JSON as it is.
-[[nodiscard]] JsonTextStatus check_bounded_json(std::string_view text, std::size_t max_values);
+// `values_seen`, when given, receives how many values were counted.
+[[nodiscard]] JsonTextStatus check_bounded_json(std::string_view text, std::size_t max_values,
+                                                std::size_t* values_seen = nullptr);
+
+// Records that the calling thread is about to build, or has built, a document of `values` values,
+// for take_large_parse_seen (the chat template parses replayed tool-call arguments on its own).
+void note_parse_size(std::size_t values) noexcept;
 
 } // namespace ninferno::serve
