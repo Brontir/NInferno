@@ -72,6 +72,7 @@ int main() {
         httplib::Request slow;
         slow.method = "POST";
         slow.path   = "/v1/chat/completions";
+        slow.set_header("Content-Length", "100");
         httplib::Response slow_response;
         slow_response.status = 408;
         const auto handled   = ninferno::serve::handle_unrendered_http_error(
