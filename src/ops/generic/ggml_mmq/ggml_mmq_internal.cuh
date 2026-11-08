@@ -24,11 +24,22 @@
     } while (0)
 
 // The 80- and 96-column tiles are built only for the architectures whose generation takes them
-// (core/generation.h mmq_work_tiles); the others never launch them.
+// (core/generation.h mmq_work_tiles); the others never launch them. The device pass cannot call
+// the generation table, so the one range it holds is spelled here and checked against the table.
+namespace ninferno::ops::ggml_mmq::detail {
+[[nodiscard]] __host__ __device__ constexpr bool work_tiles_arch(int cc) { return cc >= 810 && cc < 890; }
+constexpr bool work_tiles_arch_matches_table() {
+    for (int cc = 700; cc <= 1210; cc += 10) {
+        if (work_tiles_arch(cc) != mmq_work_tiles_measured(cc / 100, cc / 10 % 10)) return false;
+    }
+    return true;
+}
+static_assert(work_tiles_arch_matches_table());
+} // namespace ninferno::ops::ggml_mmq::detail
 #if defined(__CUDA_ARCH__)
-#    define NINFERNO_MMQ_SKIP_SPECIALIZATION(J)                                                    \
-        (((J) == 80 || (J) == 96) &&                                                               \
-         !::ninferno::mmq_work_tiles_measured(__CUDA_ARCH__ / 100, __CUDA_ARCH__ / 10 % 10))
+#define NINFERNO_MMQ_SKIP_SPECIALIZATION(J) \
+    (((J) == 80 || (J) == 96) && \
+     !::ninferno::ops::ggml_mmq::detail::work_tiles_arch(__CUDA_ARCH__))
 #endif
 
 #include "ggml-cuda/common.cuh"
