@@ -183,6 +183,15 @@ const char* finish_reason(ninferno::FinishReason reason) {
     return "stop";
 }
 
+const char* chat_finish_reason(const GenerationOutcome& outcome) {
+    // Published calls end the turn with tool_calls, unless the output was cut short: then the
+    // client must see length, as for a turn whose only call was cut (the complete calls stay).
+    if (!outcome.tool_calls.empty() && !ninferno::finish_reason_cuts_output(outcome.finish_reason)) {
+        return "tool_calls";
+    }
+    return finish_reason(outcome.finish_reason);
+}
+
 std::vector<ToolCall>
 materialize_tool_calls(const std::vector<ninferno::GeneratedToolCall>& generated) {
     return tool_calls_of(generated, [](std::size_t) { return new_openai_chat_tool_call_id(); });
@@ -300,8 +309,7 @@ std::string make_chat_completion_response(const OpenAIChatResponseIdentity& iden
               {"logprobs", outcome.logprobs ? Json{{"content", openai_logprob_content(*outcome.logprobs)},
                                                    {"refusal", nullptr}}
                                             : Json(nullptr)},
-              {"finish_reason",
-               has_tool_calls ? Json("tool_calls") : Json(finish_reason(outcome.finish_reason))}}});
+              {"finish_reason", Json(chat_finish_reason(outcome))}}});
     payload["usage"]   = usage_json(usage_from(outcome));
     payload["timings"] = timings_json(outcome_timings(outcome));
     return payload.dump();
@@ -470,8 +478,7 @@ std::vector<std::string> OpenAIChatStream::finish(const GenerationOutcome& outco
                          nullptr, output_timings));
     }
     // The terminal event carries the final timings unless the usage chunk that follows does.
-    const char* reason =
-        outcome.tool_calls.empty() ? finish_reason(outcome.finish_reason) : "tool_calls";
+    const char* reason = chat_finish_reason(outcome);
     events.push_back(
         stream_event(Json::object(), reason, include_usage_ ? Json(nullptr) : final_timings));
     if (include_usage_) {

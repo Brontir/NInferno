@@ -1219,6 +1219,14 @@ enum class FinishReason : std::uint8_t {
     return "unknown";
 }
 
+// The output was cut short rather than finished by the model or a stop declaration: an output
+// limit, the context capacity, or a repetition loop. A turn cut this way reports `length` /
+// `max_tokens` even when it carries complete tool calls (the unfinished one is dropped).
+[[nodiscard]] constexpr bool finish_reason_cuts_output(FinishReason reason) noexcept {
+    return reason == FinishReason::OutputLimit || reason == FinishReason::ContextCapacity ||
+           reason == FinishReason::Repetition;
+}
+
 struct OutputDelta {
     OutputChannel channel = OutputChannel::Content;
     std::string text;

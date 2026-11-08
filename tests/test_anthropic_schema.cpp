@@ -856,6 +856,34 @@ int test_tool_call_presentation() {
     }
     failures += check(saw_edit_start && saw_arguments && saw_tool_stop,
                       "Anthropic stream did not terminate the recovered Edit as tool_use");
+
+    // A turn the output was cut short in keeps its complete calls but reports the cut, not tool_use.
+    const std::pair<ninferno::FinishReason, const char*> cuts[] = {
+        {ninferno::FinishReason::OutputLimit, "max_tokens"},
+        {ninferno::FinishReason::Repetition, "max_tokens"},
+        {ninferno::FinishReason::ContextCapacity, "model_context_window_exceeded"}};
+    for (const auto& [reason, expected] : cuts) {
+        outcome.finish_reason = reason;
+        const Json cut = Json::parse(make_anthropic_messages_response(identity, outcome));
+        failures += check(cut.at("stop_reason") == expected && cut.at("content").size() == 2 &&
+                              cut.at("content").at(1).at("type") == "tool_use",
+                          "a cut Anthropic turn reports the cut and keeps its complete calls");
+    }
+    outcome.finish_reason = ninferno::FinishReason::OutputLimit;
+    AnthropicMessagesStream cut_stream(identity, 10);
+    std::vector<std::string> cut_events{cut_stream.start()};
+    for (std::string& wire : cut_stream.content_delta(outcome.text)) {
+        cut_events.push_back(std::move(wire));
+    }
+    for (std::string& wire : cut_stream.finish(outcome)) { cut_events.push_back(std::move(wire)); }
+    bool saw_max_tokens = false;
+    for (const std::string& wire : cut_events) {
+        const Json event = parse_event(wire);
+        if (event.at("type") == "message_delta") {
+            saw_max_tokens = event.at("delta").at("stop_reason") == "max_tokens";
+        }
+    }
+    failures += check(saw_max_tokens, "a cut Anthropic stream ends with max_tokens, not tool_use");
     return failures;
 }
 

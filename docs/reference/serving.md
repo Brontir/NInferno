@@ -2601,7 +2601,12 @@ Compatible prefixes are reused for both text and multimodal histories unless the
 ### Finish reasons, tools and usage
 
 - Output-limit and context-capacity finishes map to `length` / `max_tokens`. Ordinary model or
-  string stops map to `stop` / `end_turn`.
+  string stops map to `stop` / `end_turn`. A turn with tool calls reports `tool_calls` /
+  `tool_use`, unless the output was cut short (output limit, context capacity, a repetition loop):
+  then it reports `length` / `max_tokens` (`model_context_window_exceeded` for the context) and
+  still carries the calls that were complete, as Responses does with `incomplete`. A client that
+  runs calls only on `tool_calls` / `tool_use` thus does not run a cut turn's calls and can retry
+  with a larger limit.
 - Function tools are rendered into the model prompt and generated calls are parsed into protocol
   responses. NInferno does not execute tools. It enforces client JSON Schema through constrained
   decoding only where stated above (forced or `strict` tool calls and JSON `response_format`).

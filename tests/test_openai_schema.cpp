@@ -1321,6 +1321,22 @@ int test_aggregate_response() {
         call["id"].get<std::string>().starts_with("call_") && call["function"]["name"] == "Edit" &&
             !Json::parse(call["function"]["arguments"].get<std::string>()).contains("replace_all"),
         "OpenAI adapter owns wire tool-call identifiers");
+
+    // A turn the output was cut short in keeps its complete calls but is not a finished one:
+    // length, whether the limit, the context or a repetition loop ended it.
+    for (const auto cut : {ninferno::FinishReason::OutputLimit,
+                           ninferno::FinishReason::ContextCapacity,
+                           ninferno::FinishReason::Repetition}) {
+        outcome.finish_reason = cut;
+        response              = Json::parse(make_chat_completion_response(identity(), outcome));
+        failures += check(response["choices"][0]["finish_reason"] == "length" &&
+                              response["choices"][0]["message"]["tool_calls"].size() == 1,
+                          "a cut turn reports length and keeps its complete calls");
+    }
+    outcome.finish_reason = ninferno::FinishReason::StopString;
+    response              = Json::parse(make_chat_completion_response(identity(), outcome));
+    failures += check(response["choices"][0]["finish_reason"] == "tool_calls",
+                      "a stop string after complete calls still reports tool_calls");
     return failures;
 }
 
@@ -1390,6 +1406,15 @@ int test_stream_response() {
             parse_sse(tool_events[1])["choices"][0]["finish_reason"] == "tool_calls" &&
             !parse_sse(tool_events[1])["choices"][0]["delta"].contains("role"),
         "stream encoder owns stable OpenAI tool-call shape; a call-only turn carries the role");
+
+    OpenAIChatStream cut_stream(identity(), false);
+    (void)cut_stream.start();
+    tool_outcome.finish_reason                = ninferno::FinishReason::OutputLimit;
+    const std::vector<std::string> cut_events = cut_stream.finish(tool_outcome);
+    failures += check(
+        !parse_sse(cut_events[0])["choices"][0]["delta"]["tool_calls"].empty() &&
+            parse_sse(cut_events[1])["choices"][0]["finish_reason"] == "length",
+        "a streamed turn cut by the output limit keeps its calls and reports length");
     return failures;
 }
 
