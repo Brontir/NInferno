@@ -1193,11 +1193,13 @@ int test_previous_response_call_graph() {
 
     OpenAIResponsesCreateRequest missing_parent = request;
     missing_parent.prompt.previous_response_id  = "resp_missing";
-    failures += check(api_code([&] {
-                          (void)resolve_openai_responses_prompt(missing_parent.prompt, store,
-                                                                "resp_new", true);
-                      }) == "response_not_found",
-                      "missing parent response is reported precisely");
+    const ApiError missing = api_error([&] {
+        (void)resolve_openai_responses_prompt(missing_parent.prompt, store, "resp_new", true);
+    });
+    failures += check(missing.status == 400 && missing.code == "previous_response_not_found" &&
+                          missing.type == "invalid_request_error" &&
+                          missing.param == "previous_response_id",
+                      "a missing parent response is the 400 clients retry on");
     return failures;
 }
 

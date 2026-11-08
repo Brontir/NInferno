@@ -1552,8 +1552,10 @@ Resource behavior:
 | `POST /v1/responses/{id}/cancel` | explicitly fails because background execution is unsupported |
 | `POST /v1/responses/compact` | explicitly fails with `compaction_not_supported` |
 
-- `store:false` Responses cannot be retrieved or used as `previous_response_id`. LRU eviction and
-  explicit deletion also make an ID unavailable.
+- `store:false` Responses cannot be retrieved or used as `previous_response_id`. LRU eviction,
+  explicit deletion and a restart (the store is in process memory) also make an ID unavailable.
+  Naming one as `previous_response_id` fails with status 400 and `previous_response_not_found`,
+  the answer on which OpenAI clients resend the full input without it.
 - A request whose input and `previous_response_id` context alone exceed the configured store
   capacity fails with `response_store_capacity_exceeded` and status 400 before generation. One whose
   output then makes the Response larger than the store is answered unstored: the Response says
@@ -2625,9 +2627,10 @@ Compatible prefixes are reused for both text and multimodal histories unless the
 | 400 | (no code; `param` names the field) | a sampling value out of range: `temperature` [0,2] (Chat, Responses) or [0,1] (Messages), `top_p` and `min_p` [0,1], `top_k` [0,64], penalties [-2,2] |
 | 401 | `invalid_api_key` | missing or wrong key with `--api-key` set (Anthropic shape on `/v1/messages`) |
 | 400 | `invalid_assistant_history`, `invalid_tool_history` | unrepresentable Responses history |
+| 400 | `previous_response_not_found` | `previous_response_id` names a Response the store no longer has (a restart, an eviction, a `DELETE`, or `store: false`), on Create and `input_tokens`; OpenAI clients then retry once with the full input |
 | 400 | `response_store_capacity_exceeded` | the request's input and context are larger than the response store (an answer that outgrows it after generation is returned unstored) |
 | 403 | `cross_origin_request` | request with `Origin` while `--cors` is off |
-| 404 | `response_not_found` | unknown stored Response |
+| 404 | `response_not_found` | unknown stored Response on `GET`, `DELETE` or `input_items` of `/v1/responses/{id}` |
 | 404 | `not_found` | a path no endpoint serves (JSON body naming the endpoints) |
 | 413 | `request_too_large` | body above `--max-request-mib` |
 | 415 | `unsupported_content_encoding` | compressed request body |
