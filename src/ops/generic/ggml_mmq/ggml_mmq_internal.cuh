@@ -95,12 +95,13 @@ Launch select_launch(int rows, int columns, int k) {
     const DeviceFacts& device = device_facts();
     Launch best;
     double best_cost = 1e300;
-    for (const int J : mmq_columns::kTiles) {
+    const bool work_table = mmq_columns::uses_work_table(device.cc / 100, device.cc / 10 % 10);
+    for (const int J : mmq_columns::tiles(device.cc / 100, device.cc / 10 % 10)) {
         const ggml_cuda_mmq_config config = ggml_cuda_mmq_get_config(type, J, false, device.cc);
         if (config.type == GGML_TYPE_COUNT) continue;
         const std::size_t shared = mmq_get_nbytes_shared(config, device.cc);
         if (shared > device.shared_per_block_optin) continue;
-        const double cost = mmq_columns::work(columns, J);
+        const double cost = mmq_columns::launch_cost(columns, J, work_table);
         if (cost < best_cost) {
             best_cost     = cost;
             best.k_vram   = config.K_vram;
@@ -208,9 +209,6 @@ void product_impl(const Planes& w, int blocks_per_row, int rows, int k, const vo
     case 96:
         return launch<type, 96>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
                                 out_column_stride, f, stream);
-    case 112:
-        return launch<type, 112>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
-                                 out_column_stride, f, stream);
     case 128:
         return launch<type, 128>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
                                  out_column_stride, f, stream);

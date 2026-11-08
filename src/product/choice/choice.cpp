@@ -807,15 +807,8 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         }
         for (double done = 0; done < tokens; done += kMmqSliceTokens) {
             const double t = std::min(kMmqSliceTokens, tokens - done);
-            // The column tile whose tiles cost least (core/mmq_columns.h), as ggml_mmq takes it.
-            int width         = mmq_columns::kTile;
-            double least_work = 1e300;
-            for (const int j : mmq_columns::kTiles) {
-                if (const double w = mmq_columns::work(static_cast<int>(t), j); w < least_work) {
-                    width      = j;
-                    least_work = w;
-                }
-            }
+            // The column tile the kernel's table takes (core/mmq_columns.h).
+            const int width = mmq_columns::pick(static_cast<int>(t), card.major, card.minor);
             const double columns = width;
             const double tiles = std::ceil(n / kMmqTile) * std::ceil(t / columns);
             const double waves = std::ceil(tiles / sms);
