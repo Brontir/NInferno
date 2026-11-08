@@ -88,8 +88,8 @@ int run_bf16_moe_projection() {
         }
         if (bad != 0) {
             std::cerr << "FAIL: BF16 MoE MTP " << name << ": " << bad
-                      << " values
-                         "; }
+                      << " values\n";
+        }
                 failures += bad != 0;
         };
         // Parent row order: query, key, gate, value.
@@ -161,8 +161,7 @@ int main() {
         ++failures;
     }
     if (cuda_unavailable()) {
-        std::cout << "SKIP (device part): no usable CUDA device
-                     ";
+        std::cout << "SKIP (device part): no usable CUDA device\n";
     } else {
         failures += run_bf16_moe_projection();
     }
