@@ -21,13 +21,16 @@ namespace {
 
 constexpr int kVecWarps = 4;
 
-// Resident CTAs per SM the kernel is bounded to (__launch_bounds__' minimum; 0: no bound). The plain
-// instance of 4 columns takes 85 registers where 3 take 72 (sm_86 / sm_89, CUDA 13), which is 5 CTAs
-// of 128 threads on a 64K-register SM instead of 7, and its grid, sized to the resident CTAs, then
-// needs a second round on a shape of 480..512 row pairs. The bound holds it to the registers of 3
-// columns. Only that instance carries one: any bound makes the compiler spend more registers (110
-// for 3 columns) on the instances it is given to.
-constexpr int kVecMinBlocks(int columns) { return columns == 4 ? 7 : 0; }
+// Resident CTAs per SM the kernel is bounded to (__launch_bounds__' minimum; 0: no bound). The
+// runtime-K instance of 4 columns takes 85 registers where 3 take 72 (sm_86 / sm_89, CUDA 13), which
+// is 5 CTAs of 128 threads on a 64K-register SM instead of 7, and its grid, sized to the resident
+// CTAs, then needs a second round on a shape of 480..512 row pairs. The bound holds it to the
+// registers of 3 columns, which it fits without a spill. The other instances are left alone: a
+// bound makes the compiler spend more registers on every instance it is given to (110 for 3 columns),
+// and the unrolled-K and gated instances of 4 columns spill (8 to 240 bytes) under 72.
+constexpr int kVecMinBlocks(int columns, int ks, bool gated) {
+    return columns == 4 && ks == 0 && !gated ? 7 : 0;
+}
 
 struct Slice {
     int w[8];
@@ -631,7 +634,7 @@ __device__ __forceinline__ void store(const VecOut& o, int row, int column, floa
 // and up rows, one row per warp), a separate instance as ninfer-all's Fused one: the plain product
 // keeps no gated branches or second-plane state in its loop.
 template <ggml_type type, int T, int KS, bool Gated>
-__launch_bounds__(kVecWarps * 32, kVecMinBlocks(T)) __global__ void vec_kernel(VecArgs p) {
+__launch_bounds__(kVecWarps * 32, kVecMinBlocks(T, KS, Gated)) __global__ void vec_kernel(VecArgs p) {
     using D                 = Decoder<type>;
     constexpr int kTable    = D::kTableWords > 0 ? D::kTableWords : 4;
     constexpr int kPerBlock = D::kBlockValues / 32;
