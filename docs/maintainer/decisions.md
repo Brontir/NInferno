@@ -1666,11 +1666,12 @@ fewest tiles, a row joins by its own grid.
 **Measured** (A B A B, three rounds of four requests, the same binary with `old` and `new` tables):
 RTX 5090 (f 0.10) 144..160-token prompts 25.1..25.3 -> 20.9..21.0 ms (-17 %), 136 -13 %, 176..192
 -11 %, 264..288 -13 %, 320 -8 %, 96 -8 %; 200..224 -2 %, 256, 384, 512 unchanged; the 136..256 mix
-25.3 -> 23.2 ms (-8.3 %). RTX 3060 and 3090 (earlier A B A B against master, f 0.43 and without
-J = 112; the picks of f 0.20 differ from those at 289..320 and 448 only): 3060 136..160 tokens
-141.9..143.0 -> 114.4..115.6 ms (-19 %), 168..192 -14..-12.6 %, 264 / 288 -11 / -13.6 %, mix
-145.1 -> 133.2 ms (-8.2 %, predicted -7.8 % before the measurement); 3090 144..160 59.9..60.2 ->
-48.9..48.8 ms (-18.5 %), 176..192 -12.5 %, 264..288 -13.1 %; unchanged at 128, 200..256, 320+.
+25.3 -> 23.2 ms (-8.3 %). RTX 3090 (f 0.20, the final table): 144..160 59.8..59.9 -> 48.5..48.6 ms
+(-18.8 %), 136 -15.8 %, 176..192 -12.5..-12.9 %, 264..288 -13.3 %, 320 -5.6 %, 96 -10.5 %, 448
+-2.9 %; 128, 200..256, 384, 512 unchanged; the 136..256 mix 60.4 -> 55.1 ms (-8.7 %). RTX 3060
+(against master, f 0.43 and without J = 112, whose picks differ from f 0.20 only at 289..320 and
+448): 136..160 tokens 141.9..143.0 -> 114.4..115.6 ms (-19 %), 168..192 -14..-12.6 %, 264 / 288
+-11 / -13.6 %, mix 145.1 -> 133.2 ms (-8.2 %, predicted -7.8 % before the measurement).
 
 **Widths.** 80 and 96 carry the gain. J = 112 was 6 % slower than 128 for one tile of 97..112 columns
 on the RTX 3060 (99.8 against 93.8 ms) while the model priced it cheaper, and the 5090's grid shows
