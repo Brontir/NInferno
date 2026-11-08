@@ -40,6 +40,7 @@ static_assert(pick(144, 12, 0) == 80 && pick(192, 12, 0) == 96 && pick(224, 12, 
               pick(256, 12, 0) == 128 && pick(16, 12, 0) == 16);
 static_assert(pick(144, 8, 9) == 128 && pick(192, 8, 9) == 128 && pick(16, 8, 9) == 16 &&
               pick(144, 7, 5) == 128);
+
 constexpr bool within_fixup_bound() {
     for (int c = 1; c <= 512; ++c) {
         int bound = 16;
