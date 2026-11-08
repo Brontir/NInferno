@@ -1091,15 +1091,19 @@ std::vector<std::string> refresh_changed_drafters(const fs::path& target_artifac
             const bool given    = d.value("status", std::string()) == "attached";
             if (!given && !fs::exists(artifact + ".conversion.json")) { continue; }
             const auto name = d.value("name", std::string());
-            if (const auto fp = spec::artifact_vocab_fingerprint(artifact);
-                fp && !target_fingerprint.empty() && fp->value != target_fingerprint) {
-                d["compatible"] = false;
-                d["reason"]     = "the drafter's vocabulary " + fp->value +
-                              " differs from the target's " + target_fingerprint;
-                d["status"]     = "incompatible: " + d["reason"].get<std::string>();
-            } else {
-                // Its status (converted, cached, attached) is kept: only the file changed.
-                d["artifact_id"] = spec::artifact_id_hex(artifact);
+            try {
+                if (const auto fp = spec::artifact_vocab_fingerprint(artifact);
+                    fp && !target_fingerprint.empty() && fp->value != target_fingerprint) {
+                    d["compatible"] = false;
+                    d["reason"]     = "the drafter's vocabulary " + fp->value +
+                                  " differs from the target's " + target_fingerprint;
+                    d["status"]     = "incompatible: " + d["reason"].get<std::string>();
+                } else {
+                    // Its status (converted, cached, attached) is kept: only the file changed.
+                    d["artifact_id"] = spec::artifact_id_hex(artifact);
+                }
+            } catch (const std::exception&) {
+                continue; // its vocabulary cannot be read: left to an attach, the others go on
             }
             refreshed.push_back(name);
         }
