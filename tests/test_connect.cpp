@@ -14,6 +14,7 @@
 //   untrusted certificate, or one for another name, is refused before anything is sent.
 #include "connect/connector.h"
 #include "connect/link.h"
+#include "connect/stream_buffer.h"
 
 #include <httplib.h>
 #include <nghttp2/nghttp2.h>
@@ -29,6 +30,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -718,9 +720,48 @@ void test_refused_key_stops_every_slot() {
     expect(ended && worker.rc.get() == 3, "a refused key ends every slot of the router, the run with 3");
 }
 
+// #517: a stream whose buffer never drains (the producer refills it as the router reads) kept
+// every consumed byte. The producer here appends whenever fewer than `cap` bytes are unread, as the
+// forwarding thread does, and the consumer takes in chunks of another size; a hundred times the cap
+// goes through and the storage stays within a small multiple of it, with every byte in order.
+void test_stream_buffer_reclaims_consumed_bytes() {
+    constexpr std::size_t cap = 64 * 1024, produce = 4096, total = 100 * cap;
+    nc::StreamBuffer buffer;
+    std::size_t made = 0, taken = 0, peak = 0;
+    bool in_order = true;
+    std::string out(3000, ' ');
+    while (taken < total) {
+        while (made < total && buffer.unread() < cap) {
+            std::string chunk(produce, ' ');
+            for (char& c : chunk) { c = static_cast<char>((made++ * 31) >> 3); }
+            buffer.append(chunk.data(), chunk.size());
+            peak = std::max(peak, buffer.stored());
+        }
+        const std::size_t n = buffer.take(out.data(), out.size());
+        for (std::size_t i = 0; i < n; ++i) {
+            in_order = in_order && out[i] == static_cast<char>(((taken + i) * 31) >> 3);
+        }
+        taken += n;
+    }
+    expect(in_order && taken == total, "stream buffer: bytes lost or reordered");
+    expect(peak <= 3 * cap, "stream buffer kept consumed bytes: stored " + std::to_string(peak) +
+                                " for a cap of " + std::to_string(cap));
+    expect(buffer.unread() == 0 && buffer.stored() == 0, "stream buffer: not empty at the end");
+
+    nc::StreamBuffer small;
+    small.assign("hello");
+    char two[2];
+    expect(small.take(two, 2) == 2 && two[0] == 'h' && small.unread() == 3,
+           "stream buffer: partial take");
+    expect(small.take(out.data(), out.size()) == 3 && std::string(out.data(), 3) == "llo" &&
+               small.unread() == 0 && small.take(out.data(), out.size()) == 0,
+           "stream buffer: drain and empty take");
+}
+
 } // namespace
 
 int main() {
+    test_stream_buffer_reclaims_consumed_bytes();
     test_urls();
     test_registration_and_streams();
     test_reset_closes_the_engine_connection();
