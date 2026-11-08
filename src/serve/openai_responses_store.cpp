@@ -3,6 +3,7 @@
 #include "core/checked.h"
 
 #include <algorithm>
+#include <atomic>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -47,6 +48,22 @@ std::size_t openai_response_input_bytes(const OpenAIResponseContext& previous,
         bytes = checked_add(bytes, sizeof(nlohmann::json) + item.dump().size(), "input accounting");
     }
     return bytes;
+}
+
+OpenAIResponseContextNode::~OpenAIResponseContextNode() {
+    // An ancestor no one else owns gives up its own parent before it is destroyed, so each
+    // destruction finds an empty parent and none nests. One another owner still holds ends the
+    // walk: that owner releases the rest the same way. The nodes are made non-const
+    // (append_openai_response_context), so taking the parent of a const view is defined.
+    std::shared_ptr<const OpenAIResponseContextNode> next = std::move(parent);
+    while (next && next.use_count() == 1) {
+        // use_count() is a relaxed load: the fence orders this node's writes after the release by
+        // whichever thread dropped the last other owner.
+        std::atomic_thread_fence(std::memory_order_acquire);
+        auto& owned = const_cast<OpenAIResponseContextNode&>(*next);
+        std::shared_ptr<const OpenAIResponseContextNode> after = std::move(owned.parent);
+        next                                                   = std::move(after);
+    }
 }
 
 OpenAIResponseContext append_openai_response_context(OpenAIResponseContext parent,
