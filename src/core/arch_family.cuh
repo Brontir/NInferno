@@ -14,5 +14,7 @@
 #elif defined(__CUDA_ARCH__) && defined(__CUDA_ARCH_FEAT_SM100_ALL)
 #    define NINFERNO_ARCH_FAMILY_SPECIFIC 1000
 #else
+// With nvcc 12.8, sm_101a (Thor, renamed sm_110 in 13.0) defines only __CUDA_ARCH_FEAT_SM101_ALL, so it
+// takes the portable path: safe, and not a supported target.
 #    define NINFERNO_ARCH_FAMILY_SPECIFIC 0
 #endif
