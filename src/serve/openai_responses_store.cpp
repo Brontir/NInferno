@@ -3,6 +3,7 @@
 #include "core/checked.h"
 
 #include <algorithm>
+#include <atomic>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -56,6 +57,9 @@ OpenAIResponseContextNode::~OpenAIResponseContextNode() {
     // (append_openai_response_context), so taking the parent of a const view is defined.
     std::shared_ptr<const OpenAIResponseContextNode> next = std::move(parent);
     while (next && next.use_count() == 1) {
+        // use_count() is a relaxed load: the fence orders this node's writes after the release by
+        // whichever thread dropped the last other owner.
+        std::atomic_thread_fence(std::memory_order_acquire);
         auto& owned = const_cast<OpenAIResponseContextNode&>(*next);
         std::shared_ptr<const OpenAIResponseContextNode> after = std::move(owned.parent);
         next                                                   = std::move(after);
