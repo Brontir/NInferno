@@ -89,7 +89,7 @@ RequestJson parse_json_body(const httplib::Request& request);
 // 429/503. The pool therefore must never close an accepted connection without a response. It keeps
 // a worker for every request the Engine may hold, headroom for requests the Engine rejects at once
 // and for idle keep-alive connections (each holds a worker until its keep-alive timeout), and it
-// queues a few accepted sockets beyond that. A socket past the queue is answered 503 by
+// queues some accepted sockets beyond that (Linux; elsewhere all of them). A socket past the queue is answered 503 by
 // answer_overloaded_connection, never dropped, and never left waiting without bound behind
 // workers that slow senders hold.
 struct HttpWorkerPlan {
@@ -114,7 +114,10 @@ struct HealthReply {
 // full (the pool runs on the accepting thread and must not block): a `GET /health` is answered
 // with `health()`, so a liveness probe is not failed by a pool that slow senders have filled, and
 // anything else gets HTTP 503 with Retry-After, server_busy, and the connection closes. The
-// request line is only peeked at (waiting at most a few milliseconds for it), never read.
+// request line is peeked at without waiting (the listening socket defers accept until it has
+// arrived) and what has arrived is then dropped, so closing does not reset the connection under the
+// answer. /health here answers for the Engine (liveness), not for the pool: a saturated pool is not
+// an unhealthy server. Linux only; elsewhere the queue stays unbounded and this is never called.
 void answer_overloaded_connection(socket_t socket, const std::function<HealthReply()>& health);
 
 [[nodiscard]] HttpWorkerPlan plan_http_workers(std::uint32_t max_concurrency,

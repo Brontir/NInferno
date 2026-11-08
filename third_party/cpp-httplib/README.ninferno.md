@@ -18,6 +18,8 @@ Local change, marked "NInferno patch": `Server::set_overload_handler`. It is cal
 thread with a connection the task queue refused (it was full), before the socket is closed, so the
 server can answer it instead of dropping it silently (`answer_overloaded_connection`).
 
+Both patches are in httplib's own formatting; CI's clang-format check skips `third_party/`.
+
 Since v0.65.0 upstream closes the connection after any response carrying `Connection: close`
 (RFC 9112 §9.6), which v0.54.1 needed a second local change for.
 

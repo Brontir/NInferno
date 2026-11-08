@@ -2388,12 +2388,13 @@ public:
   // `min_bytes_per_sec` times the window; else the read stops and the request
   // is answered 408. The read timeout alone never fires for a peer that
   // delivers a byte every few seconds. 0 turns the check off.
-  Server& set_request_body_min_rate(size_t min_bytes_per_sec, time_t window_msec = 10000);
+  Server &set_request_body_min_rate(size_t min_bytes_per_sec,
+                                    time_t window_msec = 10000);
 
   // NInferno patch: called on the accepting thread with a connection the task
   // queue refused (it was full), before the socket is shut down and closed.
   // It may write a short answer; it must not block.
-  Server& set_overload_handler(std::function<void(socket_t)> handler);
+  Server &set_overload_handler(std::function<void(socket_t)> handler);
 
   Server &set_compress(bool on);
 
@@ -2473,7 +2474,7 @@ protected:
   time_t idle_interval_usec_ = CPPHTTPLIB_IDLE_INTERVAL_USECOND;
   size_t payload_max_length_ = CPPHTTPLIB_PAYLOAD_MAX_LENGTH;
   size_t body_min_bytes_per_sec_ = 0; // NInferno patch
-  time_t body_rate_window_msec_  = 10000;
+  time_t body_rate_window_msec_ = 10000;
   std::function<void(socket_t)> overload_handler_; // NInferno patch
   bool compress_ = true;
   bool static_file_compression_ = false;
@@ -14007,15 +14008,16 @@ inline Server &Server::set_idle_interval(time_t sec, time_t usec) {
   return *this;
 }
 
-inline Server& Server::set_request_body_min_rate(size_t min_bytes_per_sec, time_t window_msec) {
-    body_min_bytes_per_sec_ = min_bytes_per_sec;
-    body_rate_window_msec_  = window_msec > 0 ? window_msec : 1;
-    return *this;
+inline Server &Server::set_request_body_min_rate(size_t min_bytes_per_sec,
+                                                 time_t window_msec) {
+  body_min_bytes_per_sec_ = min_bytes_per_sec;
+  body_rate_window_msec_ = window_msec > 0 ? window_msec : 1;
+  return *this;
 }
 
-inline Server& Server::set_overload_handler(std::function<void(socket_t)> handler) {
-    overload_handler_ = std::move(handler);
-    return *this;
+inline Server &Server::set_overload_handler(std::function<void(socket_t)> handler) {
+  overload_handler_ = std::move(handler);
+  return *this;
 }
 
 inline Server &Server::set_payload_max_length(size_t length) {
@@ -14340,88 +14342,82 @@ namespace detail {
 // that way), and fails the reads once a window has grown too little.
 class MinRateStream final : public Stream {
 public:
-    MinRateStream(Stream& inner, size_t min_bytes_per_sec, time_t window_msec)
-        : inner_(inner), min_bytes_per_sec_(min_bytes_per_sec), window_msec_(window_msec),
-          window_start_(std::chrono::steady_clock::now()) {}
+  MinRateStream(Stream &inner, size_t min_bytes_per_sec, time_t window_msec)
+      : inner_(inner), min_bytes_per_sec_(min_bytes_per_sec),
+        window_msec_(window_msec),
+        window_start_(std::chrono::steady_clock::now()) {}
 
-    bool too_slow() const { return too_slow_; }
+  bool too_slow() const { return too_slow_; }
 
-    bool is_readable() const override { return inner_.is_readable(); }
+  bool is_readable() const override { return inner_.is_readable(); }
+  bool wait_readable() const override { return inner_.wait_readable(); }
+  bool wait_writable() const override { return inner_.wait_writable(); }
+  bool is_peer_alive() const override { return inner_.is_peer_alive(); }
 
-    bool wait_readable() const override { return inner_.wait_readable(); }
-
-    bool wait_writable() const override { return inner_.wait_writable(); }
-
-    bool is_peer_alive() const override { return inner_.is_peer_alive(); }
-
-    ssize_t read(char* ptr, size_t size) override {
-        if (too_slow_) { return -1; }
-        auto n = inner_.read(ptr, size);
-        if (n > 0) {
-            received_ += static_cast<size_t>(n);
-            check();
-            if (too_slow_) {
-                error_ = Error::Read;
-                return -1;
-            }
-        }
-        return n;
+  ssize_t read(char *ptr, size_t size) override {
+    if (too_slow_) { return -1; }
+    auto n = inner_.read(ptr, size);
+    if (n > 0) {
+      received_ += static_cast<size_t>(n);
+      check();
+      if (too_slow_) {
+        error_ = Error::Read;
+        return -1;
+      }
     }
-
-    ssize_t write(const char* ptr, size_t size) override { return inner_.write(ptr, size); }
-
-    void get_remote_ip_and_port(std::string& ip, int& port) const override {
-        inner_.get_remote_ip_and_port(ip, port);
-    }
-
-    void get_local_ip_and_port(std::string& ip, int& port) const override {
-        inner_.get_local_ip_and_port(ip, port);
-    }
-
-    socket_t socket() const override { return inner_.socket(); }
-
-    time_t duration() const override { return inner_.duration(); }
-
-    void set_read_timeout(time_t sec, time_t usec = 0) override {
-        inner_.set_read_timeout(sec, usec);
-    }
-
-    void set_max_timeout(time_t msec) override { inner_.set_max_timeout(msec); }
-
-    void set_read_interrupt(std::function<bool()> interrupted) override {
-        inner_.set_read_interrupt(std::move(interrupted));
-    }
-
-    const char* buffered_data(size_t& size) const override { return inner_.buffered_data(size); }
-
-    void consume_buffered(size_t size) override {
-        inner_.consume_buffered(size);
-        received_ += size;
-        check();
-    }
+    return n;
+  }
+  ssize_t write(const char *ptr, size_t size) override {
+    return inner_.write(ptr, size);
+  }
+  void get_remote_ip_and_port(std::string &ip, int &port) const override {
+    inner_.get_remote_ip_and_port(ip, port);
+  }
+  void get_local_ip_and_port(std::string &ip, int &port) const override {
+    inner_.get_local_ip_and_port(ip, port);
+  }
+  socket_t socket() const override { return inner_.socket(); }
+  time_t duration() const override { return inner_.duration(); }
+  void set_read_timeout(time_t sec, time_t usec = 0) override {
+    inner_.set_read_timeout(sec, usec);
+  }
+  void set_max_timeout(time_t msec) override { inner_.set_max_timeout(msec); }
+  void set_read_interrupt(std::function<bool()> interrupted) override {
+    inner_.set_read_interrupt(std::move(interrupted));
+  }
+  const char *buffered_data(size_t &size) const override {
+    return inner_.buffered_data(size);
+  }
+  void consume_buffered(size_t size) override {
+    inner_.consume_buffered(size);
+    received_ += size;
+    check();
+  }
 
 private:
-    void check() {
-        auto now          = std::chrono::steady_clock::now();
-        auto elapsed_msec = static_cast<time_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(now - window_start_).count());
-        if (elapsed_msec < window_msec_) { return; }
-        if (received_ - window_start_bytes_ <
-            min_bytes_per_sec_ * static_cast<size_t>(elapsed_msec) / 1000) {
-            too_slow_ = true;
-            return;
-        }
-        window_start_       = now;
-        window_start_bytes_ = received_;
+  void check() {
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed_msec = static_cast<time_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(now -
+                                                              window_start_)
+            .count());
+    if (elapsed_msec < window_msec_) { return; }
+    if (received_ - window_start_bytes_ <
+        min_bytes_per_sec_ * static_cast<size_t>(elapsed_msec) / 1000) {
+      too_slow_ = true;
+      return;
     }
+    window_start_ = now;
+    window_start_bytes_ = received_;
+  }
 
-    Stream& inner_;
-    size_t min_bytes_per_sec_;
-    time_t window_msec_;
-    std::chrono::steady_clock::time_point window_start_;
-    size_t received_           = 0;
-    size_t window_start_bytes_ = 0;
-    bool too_slow_             = false;
+  Stream &inner_;
+  size_t min_bytes_per_sec_;
+  time_t window_msec_;
+  std::chrono::steady_clock::time_point window_start_;
+  size_t received_ = 0;
+  size_t window_start_bytes_ = 0;
+  bool too_slow_ = false;
 };
 
 } // namespace detail
@@ -14431,79 +14427,82 @@ inline bool Server::read_content(Stream &strm, Request &req, Response &res) {
   FormFiles::iterator cur_file;
   auto is_text_field = false;
   size_t count = 0;
-  detail::MinRateStream limited(strm, body_min_bytes_per_sec_, body_rate_window_msec_);
-  Stream& body_strm = body_min_bytes_per_sec_ > 0 ? static_cast<Stream&>(limited) : strm;
+  detail::MinRateStream limited(strm, body_min_bytes_per_sec_,
+                                body_rate_window_msec_);
+  Stream &body_strm =
+      body_min_bytes_per_sec_ > 0 ? static_cast<Stream &>(limited) : strm;
   if (read_content_core(
           body_strm, req, res,
           // Regular
-          [&](const char* buf, size_t n) {
-              // Prevent arithmetic overflow when checking sizes.
-              // Avoid computing (req.body.size() + n) directly because
-              // adding two unsigned `size_t` values can wrap around and
-              // produce a small result instead of indicating overflow.
-              // Instead, check using subtraction: ensure `n` does not
-              // exceed the remaining capacity `max_size() - size()`.
-              if (req.body.size() >= req.body.max_size() ||
-                  n > req.body.max_size() - req.body.size()) {
-                  return false;
-              }
+          [&](const char *buf, size_t n) {
+            // Prevent arithmetic overflow when checking sizes.
+            // Avoid computing (req.body.size() + n) directly because
+            // adding two unsigned `size_t` values can wrap around and
+            // produce a small result instead of indicating overflow.
+            // Instead, check using subtraction: ensure `n` does not
+            // exceed the remaining capacity `max_size() - size()`.
+            if (req.body.size() >= req.body.max_size() ||
+                n > req.body.max_size() - req.body.size()) {
+              return false;
+            }
 
-              // Limit decompressed body size to payload_max_length_ to protect
-              // against "zip bomb" attacks where a small compressed payload
-              // decompresses to a massive size.
-              if (payload_max_length_ > 0 && (req.body.size() >= payload_max_length_ ||
-                                              n > payload_max_length_ - req.body.size())) {
-                  return false;
-              }
+            // Limit decompressed body size to payload_max_length_ to protect
+            // against "zip bomb" attacks where a small compressed payload
+            // decompresses to a massive size.
+            if (payload_max_length_ > 0 &&
+                (req.body.size() >= payload_max_length_ ||
+                 n > payload_max_length_ - req.body.size())) {
+              return false;
+            }
 
-              req.body.append(buf, n);
-              return true;
+            req.body.append(buf, n);
+            return true;
           },
           // Multipart FormData
-          [&](const FormData& file) {
-              if (CPPHTTPLIB_MULTIPART_FORM_DATA_FILE_MAX_COUNT > 0 &&
-                  count++ == CPPHTTPLIB_MULTIPART_FORM_DATA_FILE_MAX_COUNT) {
-                  output_error_log(Error::TooManyFormDataFiles, &req);
-                  return false;
-              }
-
-              if (file.filename.empty()) {
-                  cur_field = req.form.fields.emplace(
-                      file.name, FormField{file.name, file.content, file.headers});
-                  is_text_field = true;
-              } else {
-                  cur_file      = req.form.files.emplace(file.name, file);
-                  is_text_field = false;
-              }
-              return true;
-          },
-          [&](const char* buf, size_t n) {
-              if (is_text_field) {
-                  auto& content = cur_field->second.content;
-                  if (content.size() + n > content.max_size()) { return false; }
-                  content.append(buf, n);
-              } else {
-                  auto& content = cur_file->second.content;
-                  if (content.size() + n > content.max_size()) { return false; }
-                  content.append(buf, n);
-              }
-              return true;
-          })) {
-      const auto& content_type = req.get_header_value("Content-Type");
-      if (detail::case_ignore::equal(detail::extract_media_type(content_type),
-                                     "application/x-www-form-urlencoded")) {
-          if (CPPHTTPLIB_FORM_URL_ENCODED_PAYLOAD_MAX_LENGTH > 0 &&
-              req.body.size() > CPPHTTPLIB_FORM_URL_ENCODED_PAYLOAD_MAX_LENGTH) {
-              res.status = StatusCode::PayloadTooLarge_413; // NOTE: should be 414?
-              output_error_log(Error::ExceedMaxPayloadSize, &req);
+          [&](const FormData &file) {
+            if (CPPHTTPLIB_MULTIPART_FORM_DATA_FILE_MAX_COUNT > 0 &&
+                count++ == CPPHTTPLIB_MULTIPART_FORM_DATA_FILE_MAX_COUNT) {
+              output_error_log(Error::TooManyFormDataFiles, &req);
               return false;
-          }
-          detail::parse_query_text(req.body, req.params);
+            }
+
+            if (file.filename.empty()) {
+              cur_field = req.form.fields.emplace(
+                  file.name, FormField{file.name, file.content, file.headers});
+              is_text_field = true;
+            } else {
+              cur_file = req.form.files.emplace(file.name, file);
+              is_text_field = false;
+            }
+            return true;
+          },
+          [&](const char *buf, size_t n) {
+            if (is_text_field) {
+              auto &content = cur_field->second.content;
+              if (content.size() + n > content.max_size()) { return false; }
+              content.append(buf, n);
+            } else {
+              auto &content = cur_file->second.content;
+              if (content.size() + n > content.max_size()) { return false; }
+              content.append(buf, n);
+            }
+            return true;
+          })) {
+    const auto &content_type = req.get_header_value("Content-Type");
+    if (detail::case_ignore::equal(detail::extract_media_type(content_type),
+                                   "application/x-www-form-urlencoded")) {
+      if (CPPHTTPLIB_FORM_URL_ENCODED_PAYLOAD_MAX_LENGTH > 0 &&
+          req.body.size() > CPPHTTPLIB_FORM_URL_ENCODED_PAYLOAD_MAX_LENGTH) {
+        res.status = StatusCode::PayloadTooLarge_413; // NOTE: should be 414?
+        output_error_log(Error::ExceedMaxPayloadSize, &req);
+        return false;
       }
-      return true;
+      detail::parse_query_text(req.body, req.params);
+    }
+    return true;
   }
   if (body_min_bytes_per_sec_ > 0 && limited.too_slow()) {
-      res.status = StatusCode::RequestTimeout_408;
+    res.status = StatusCode::RequestTimeout_408;
   }
   return false;
 }

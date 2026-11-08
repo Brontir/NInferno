@@ -5,7 +5,6 @@
 
 #if defined(__linux__)
 #    include <netinet/tcp.h>
-#    include <poll.h>
 #    include <sys/socket.h>
 #endif
 
@@ -24,6 +23,7 @@ constexpr int kKeepAliveIdleSeconds                = 10;
 constexpr int kKeepAliveIntervalSeconds            = 3;
 constexpr int kKeepAliveProbeCount                 = 3;
 constexpr unsigned int kTcpUserTimeoutMilliseconds = 15000;
+constexpr int kDeferAcceptSeconds                  = 3;
 
 template <class T>
 void set_socket_option(socket_t socket, int level, int option, const T& value) noexcept {
@@ -90,17 +90,12 @@ bool SseTransport::poll(Clock::time_point now) {
 
 void answer_overloaded_connection(socket_t socket, const std::function<HealthReply()>& health) {
 #if defined(__linux__)
-    // A client sends its request line at once; a few milliseconds cover a slow first packet, and
-    // a silent connection costs the accepting thread no more than that.
-    constexpr int kRequestLineWaitMilliseconds = 5;
+    // The listening socket defers accept until the request has arrived (configure_http_server_socket),
+    // so the request line is there; what is not buffered is a connection that sent nothing for the
+    // deferral time, and that is answered like any other. The peek costs the accepting thread no wait.
     std::array<char, 16> head{};
-    pollfd readable{socket, POLLIN, 0};
-    std::size_t peeked = 0;
-    if (::poll(&readable, 1, kRequestLineWaitMilliseconds) > 0) {
-        const ssize_t got = ::recv(socket, head.data(), head.size(), MSG_PEEK | MSG_DONTWAIT);
-        if (got > 0) { peeked = static_cast<std::size_t>(got); }
-    }
-    const std::string_view line(head.data(), peeked);
+    const ssize_t peeked_bytes = ::recv(socket, head.data(), head.size(), MSG_PEEK | MSG_DONTWAIT);
+    const std::string_view line(head.data(), peeked_bytes > 0 ? static_cast<std::size_t>(peeked_bytes) : 0);
     const bool is_health =
         line.starts_with("GET /health") && line.size() > 11 && (line[11] == ' ' || line[11] == '?');
     std::string status_line;
@@ -116,10 +111,17 @@ void answer_overloaded_connection(socket_t socket, const std::function<HealthRep
     }
     std::string answer = "HTTP/1.1 " + status_line + "\r\nContent-Type: application/json\r\n";
     if (status_line[0] != '2') { answer += "Retry-After: 5\r\n"; }
-    answer +=
-        "Connection: close\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
+    answer += "Connection: close\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
     // The socket is fresh: the answer fits its send buffer, and a full one drops it.
     (void)::send(socket, answer.data(), answer.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
+    // Closing with unread data sends a reset that can destroy the answer at the client: read what
+    // has arrived (the request, as far as it is here) and drop it.
+    std::array<char, 4096> sink{};
+    for (std::size_t drained = 0; drained < (1u << 20);) {
+        const ssize_t got = ::recv(socket, sink.data(), sink.size(), MSG_DONTWAIT);
+        if (got <= 0) { break; }
+        drained += static_cast<std::size_t>(got);
+    }
 #else
     (void)socket;
     (void)health;
@@ -130,13 +132,20 @@ HttpWorkerPlan plan_http_workers(std::uint32_t max_concurrency,
                                  std::uint32_t max_pending_requests) noexcept {
     // Rejections in flight and idle keep-alive sockets; threads cost only their stacks.
     constexpr std::size_t kMinimumHeadroom = 32;
-    // Connections that wait for a worker. Few enough that a waiter is served within seconds once
-    // the workers turn over, and the rest are refused at once (answer_overloaded_connection).
-    constexpr std::size_t kQueuedConnections = 16;
     const std::size_t engine_held =
         static_cast<std::size_t>(max_concurrency) + static_cast<std::size_t>(max_pending_requests);
-    return HttpWorkerPlan{.threads    = engine_held + std::max(kMinimumHeadroom, engine_held),
-                          .max_queued = kQueuedConnections};
+    const std::size_t threads = engine_held + std::max(kMinimumHeadroom, engine_held);
+#if defined(__linux__)
+    // Connections that wait for a worker: half the pool again, at least 16. A bench or an SDK pool
+    // that opens a few dozen connections at once waits for workers as before, while a waiter is
+    // served within seconds when the workers turn over; the rest are refused at once
+    // (answer_overloaded_connection), which only Linux supports (it needs the request to be
+    // buffered at accept time, see configure_http_server_socket).
+    constexpr std::size_t kMinimumQueued = 16;
+    return HttpWorkerPlan{.threads = threads, .max_queued = std::max(kMinimumQueued, threads / 2)};
+#else
+    return HttpWorkerPlan{.threads = threads, .max_queued = 0};
+#endif
 }
 
 bool ExecutorStallMonitor::update(const ninferno::RuntimeStats& stats,
@@ -177,6 +186,10 @@ void configure_http_server_socket(socket_t socket) noexcept {
     set_socket_option(socket, IPPROTO_TCP, TCP_KEEPINTVL, kKeepAliveIntervalSeconds);
     set_socket_option(socket, IPPROTO_TCP, TCP_KEEPCNT, kKeepAliveProbeCount);
     set_socket_option(socket, IPPROTO_TCP, TCP_USER_TIMEOUT, kTcpUserTimeoutMilliseconds);
+    // A connection is handed to the server once its first bytes have arrived (or after this many
+    // seconds): a worker or a queue place is not spent on a client that has sent nothing, and a
+    // refused connection's request line can be read without waiting (answer_overloaded_connection).
+    set_socket_option(socket, IPPROTO_TCP, TCP_DEFER_ACCEPT, kDeferAcceptSeconds);
 #endif
 }
 

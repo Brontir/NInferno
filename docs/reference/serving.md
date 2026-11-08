@@ -631,11 +631,15 @@ line and on every refused request (a 4xx before generation is logged too).
   (16 KiB/s) over every 10-second window, counting the bytes of chunk framing as well, otherwise
   the server answers HTTP 408 `request_body_too_slow` and closes the connection. A sender that
   trickles a body therefore holds a worker for about ten seconds, not for as long as it likes.
-- The worker pool is finite (49 workers by default) and queues at most 16 more connections. A
-  connection past the queue is answered at once on the accepting thread: `GET /health` with the
-  health answer, anything else with HTTP 503, `Retry-After: 5` and code `server_busy`. Senders
-  that fill the pool therefore cannot make the server unreachable to a liveness probe, and nobody
-  waits in an unbounded queue. A connection that is queued waits for a worker to free up, which
+- The worker pool is finite (49 workers by default) and, on Linux, queues at most half as many
+  more connections (at least 16). A connection past the queue is answered at once on the accepting
+  thread: `GET /health` with the health answer, anything else with HTTP 503, `Retry-After: 5` and
+  code `server_busy`. Senders that fill the pool therefore cannot make the server unreachable to a
+  liveness probe, and nobody waits in an unbounded queue. That `/health` answer reports the Engine
+  (liveness): a saturated pool does not make it unhealthy. Linux accepts a connection once its
+  first bytes have arrived (`TCP_DEFER_ACCEPT`, 3 s), so a client that connects and sends nothing
+  holds neither a worker nor a queue place. On other systems the queue is unbounded as before and
+  only the body rate applies. A connection that is queued waits for a worker to free up, which
   takes seconds. On a network where clients are hostile, a buffering reverse proxy in front still
   helps: it sends the body to NInferno only once it has received all of it.
 - A peer whose TCP stack remains connected and acknowledges data cannot be distinguished from a

@@ -619,12 +619,13 @@ int test_slow_request_body_is_cut_off() {
 
 // Slow senders that fill the worker pool and its queue must not make the server unreachable
 // (#526): a connection past the queue is answered at once, /health with the health answer and the
-// rest with 503 and Retry-After. Two workers and one queue slot are held by silent connections.
+// rest with 503 and Retry-After. Two workers and one queue slot are held by stalled requests.
 int test_overloaded_pool_still_answers() {
     using namespace std::chrono_literals;
     httplib::Server server;
     server.new_task_queue = [] { return new httplib::ThreadPool(2, 2, 1); };
     server.set_read_timeout(5, 0);
+    server.set_socket_options(ninferno::serve::configure_http_server_socket);
     server.set_overload_handler([](socket_t socket) {
         ninferno::serve::answer_overloaded_connection(socket, [] {
             return ninferno::serve::HealthReply{.status = 200, .body = R"({"status":"ok"})"};
@@ -668,7 +669,12 @@ int test_overloaded_pool_still_answers() {
 
     std::vector<int> silent;
     for (int i = 0; i < 3; ++i) {
-        silent.push_back(connect_to());
+        // A request that stops in its headers: it holds its worker until the read timeout. (A
+        // connection that sent nothing is not even accepted, see TCP_DEFER_ACCEPT.)
+        const int fd = connect_to();
+        const std::string partial = "GET /slow HTTP/1.1\r\nHo";
+        (void)::send(fd, partial.data(), partial.size(), MSG_NOSIGNAL);
+        silent.push_back(fd);
         std::this_thread::sleep_for(100ms);
     }
     int failures             = 0;
