@@ -613,7 +613,9 @@ prefix, with the same behavior, errors, and request IDs.
 Every OpenAI-compatible response carries an `x-request-id` header, including streaming and
 error responses: the client's own `X-Request-Id` when it sends one that is a plain token (letters,
 digits, `-`, `_`, `.`, `:`; at most 128 characters), else one the server makes. Anthropic endpoints
-use their separate `request-id` contract. The server's log names that id on each request's start
+answer in their own `request-id` header (and an error body's `request_id`) by the same rule, so a
+gateway that sends one `X-Request-Id` for both dialects finds every request in the log; without
+one they carry a `req_…` id the server makes. The server's log names that id on each request's start
 line and on every refused request (a 4xx before generation is logged too).
 
 ### Keep-alive and dead peers
@@ -1708,7 +1710,8 @@ pages (`document_too_large`).
 
 ### Errors and streaming
 
-- Every Messages response carries a `request-id` header. Error bodies also carry `request_id` and use
+- Every Messages response carries a `request-id` header: the client's own `X-Request-Id` when it is
+  a plain token, as on the OpenAI paths ([request IDs](#request-ids)), else a `req_…` id. Error bodies also carry `request_id` and use
   Anthropic error categories.
 - Local admission overload maps to HTTP 529 and queue/media timeouts to HTTP 504.
 - Streaming owns the full Anthropic block lifecycle for Thinking, text, and tool use.

@@ -20,6 +20,19 @@
 #include <utility>
 
 namespace ninferno::serve {
+
+// A client's own X-Request-Id names the request when it is a plain token (as vLLM takes it), so
+// its logs and ours share it; else the server mints one.
+std::string request_id_of(const httplib::Request& request, std::string minted) {
+    std::string client = request.get_header_value("x-request-id");
+    if (client.empty() || client.size() > 128) { return minted; }
+    const bool plain = std::all_of(client.begin(), client.end(), [](char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '-' || c == '_' ||
+               c == '.' || c == ':';
+    });
+    return plain ? client : minted;
+}
+
 namespace {
 
 bool is_anthropic_path(std::string_view path) {
@@ -62,21 +75,9 @@ bool is_openai_path(std::string_view path) {
            endpoint.starts_with("/responses");
 }
 
-// A client's own X-Request-Id names the request when it is a plain token (as vLLM takes it), so
-// its logs and ours share it; else the server mints one.
-bool usable_client_request_id(std::string_view id) noexcept {
-    if (id.empty() || id.size() > 128) { return false; }
-    return std::all_of(id.begin(), id.end(), [](char c) {
-        return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '-' || c == '_' ||
-               c == '.' || c == ':';
-    });
-}
-
 void ensure_openai_request_id(const httplib::Request& request, httplib::Response& response) {
     if (!is_openai_path(request.path) || response.has_header("x-request-id")) { return; }
-    const std::string client = request.get_header_value("x-request-id");
-    response.set_header("x-request-id",
-                        usable_client_request_id(client) ? client : new_openai_request_id());
+    response.set_header("x-request-id", request_id_of(request, new_openai_request_id()));
 }
 
 // The id of every response (x-request-id on the OpenAI paths, request-id on Anthropic's), set once
@@ -84,7 +85,7 @@ void ensure_openai_request_id(const httplib::Request& request, httplib::Response
 void ensure_request_id(const httplib::Request& request, httplib::Response& response) {
     ensure_openai_request_id(request, response);
     if (is_anthropic_path(request.path) && !response.has_header("request-id")) {
-        response.set_header("request-id", new_anthropic_request_id());
+        response.set_header("request-id", request_id_of(request, new_anthropic_request_id()));
     }
 }
 

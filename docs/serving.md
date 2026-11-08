@@ -370,7 +370,8 @@ curl http://127.0.0.1:8080/v1/models -H 'Authorization: Bearer local-secret'
   `server_draining`; a stream stops.
 - At start the server checks the release manifest once in the background and logs a newer release;
   `NINFERNO_UPDATE_CHECK=0` turns that off, `NINFERNO_UPDATE_URL` names another manifest.
-- Every OpenAI response has an `x-request-id` header. Anthropic responses use `request-id`.
+- Every OpenAI response has an `x-request-id` header. Anthropic responses use `request-id`. Both take
+  the client's own `X-Request-Id` when it is a plain token.
 - Logs go to stderr, one line per event, with a throughput summary every 5 s
   (`--log-stats-interval-ms`). They never contain prompts or generated text.
 - `--request-log-jsonl FILE` writes one JSON record per event for measurement. The format is in the

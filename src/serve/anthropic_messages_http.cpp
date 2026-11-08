@@ -16,7 +16,7 @@
 namespace ninferno::serve {
 
 void HttpServer::handle_count_tokens(const httplib::Request& req, httplib::Response& res) {
-    const std::string request_id = new_anthropic_request_id();
+    const std::string request_id = request_id_of(req, new_anthropic_request_id());
     res.set_header("request-id", request_id);
     try {
         const AnthropicCountTokensRequest request =
@@ -36,7 +36,7 @@ void HttpServer::handle_count_tokens(const httplib::Request& req, httplib::Respo
 }
 
 void HttpServer::handle_messages(const httplib::Request& req, httplib::Response& res) {
-    const std::string request_id = new_anthropic_request_id();
+    const std::string request_id = request_id_of(req, new_anthropic_request_id());
     res.set_header("request-id", request_id);
 
     AnthropicMessagesRequest request;
