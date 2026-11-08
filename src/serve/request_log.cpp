@@ -438,6 +438,8 @@ const char* prefix_reuse_path_name(ninferno::PrefixReusePath path) {
         return "private_long_anchor";
     case ninferno::PrefixReusePath::SharedStablePrefix:
         return "shared_stable_prefix";
+    case ninferno::PrefixReusePath::PrivateTruncatedEndpoint:
+        return "private_truncated_endpoint";
     }
     return "unknown";
 }
@@ -779,6 +781,9 @@ std::string format_throughput_json(const std::string& server_instance_id, std::u
                                                       current.private_long_anchor_selections)},
               {"shared_stable_prefix", monotonic_delta(previous.shared_stable_prefix_selections,
                                                        current.shared_stable_prefix_selections)},
+              {"private_truncated_endpoint",
+               monotonic_delta(previous.private_truncated_endpoint_selections,
+                               current.private_truncated_endpoint_selections)},
               {"reused_prompt_tokens",
                monotonic_delta(previous.reused_prompt_tokens, current.reused_prompt_tokens)}}},
         {"last_selection", Json{{"frontier_tokens", current.last_selected_frontier_tokens}}},

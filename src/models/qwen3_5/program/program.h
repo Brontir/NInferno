@@ -908,6 +908,21 @@ public:
         const PreparedPrompt& prompt, const RequestBasePlan& base, runtime::LaneId destination,
         const ContinuationHandle* source, const SharedPrefixHandle* shared_source,
         std::optional<runtime::CheckpointRef> checkpoint, bool must_retain_private_source);
+    // Attention-only models (no linear or ring state, no drafter) can serve a prompt from a
+    // resident endpoint's KV cut back to the longest neutral frontier the two share.
+    [[nodiscard]] bool supports_truncated_reuse() const noexcept;
+    // An upper bound of the frontier a truncated reuse of this private endpoint can restore the
+    // prompt at, from the digests of the two ledgers alone (a binary search over the 64-token
+    // grid, no allocation); 0 when the endpoint cannot serve the prompt below its own frontier.
+    [[nodiscard]] std::uint32_t truncated_reuse_bound(const RequestBasePlan& base,
+                                                      const ContinuationHandle& source) const;
+    // inspect_admission of a private source's endpoint checkpoint for a prompt which diverges
+    // below the endpoint (PrefixReusePath::PrivateTruncatedEndpoint); none when no frontier
+    // qualifies.
+    [[nodiscard]] std::optional<AdmissionCandidate>
+    inspect_truncated_admission(const PreparedPrompt& prompt, const RequestBasePlan& base,
+                                runtime::LaneId destination, const ContinuationHandle& source,
+                                runtime::CheckpointRef endpoint, bool must_retain_private_source);
     [[nodiscard]] std::optional<ResourcePlan> seal_identity(const AdmissionCandidate& candidate,
                                                             const PreparedPrompt& prompt,
                                                             runtime::FinalScheduleIntent intent);

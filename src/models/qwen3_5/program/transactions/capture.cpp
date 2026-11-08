@@ -1024,6 +1024,8 @@ ActiveCaptureResult ProgramImpl::publish_active_capture(ActiveCaptureTransaction
         shared.state    = transaction.source_state;
         shared.identity = transaction.group.identity;
         shared.frontier = transaction.group.frontier;
+        shared.prefill_exact_frontier =
+            std::min(sequence.prefill_exact_frontier, transaction.group.frontier);
         // As a private checkpoint's: zero when the drafter keeps no Backend KV of its own (Gemma 4's
         // assistant reads the target's), so a restore does not ask for pages no store holds.
         shared.backend_frontier = backend_kv_frontier(transaction.group.frontier);

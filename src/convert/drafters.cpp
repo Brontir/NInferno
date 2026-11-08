@@ -798,6 +798,7 @@ std::vector<std::pair<std::string, fs::path>> fetch_companions(DrafterPlan& plan
     std::vector<std::pair<std::string, fs::path>> out;
     for (auto& d : plan.drafters) {
         if (d.decl.kind == "mtp" || d.decl.component.empty() || !d.supported) { continue; }
+        bool fetching = true;
         try {
             check_remote(plan.target, d, options);
             if (!d.compatible) {
@@ -812,6 +813,7 @@ std::vector<std::pair<std::string, fs::path>> fetch_companions(DrafterPlan& plan
             log_line(options.log, "companion drafter " + d.decl.repo + " -> component " +
                                       d.decl.component);
             const auto fetched = fetch_model(d.decl.repo, fetch);
+            fetching           = false;
             d.commit           = fetched.commit;
             d.status           = "fetched";
             // A GGUF drafter is its file: its snapshot directory holds no model to a directory
@@ -820,11 +822,24 @@ std::vector<std::pair<std::string, fs::path>> fetch_companions(DrafterPlan& plan
             out.emplace_back(d.decl.component,
                              d.decl.gguf.empty() ? fetched.snapshot : fetched.model);
         } catch (const std::exception& error) {
-            d.status = std::string("failed: ") + error.what();
+            d.status       = std::string("failed: ") + error.what();
+            d.fetch_failed = fetching;
             log_line(options.log, "  " + d.status);
         }
     }
     return out;
+}
+
+void carry_failures(DrafterPlan& plan, const std::vector<PlannedDrafter>& failed) {
+    for (auto& d : plan.drafters) {
+        const auto it = std::find_if(failed.begin(), failed.end(), [&](const PlannedDrafter& f) {
+            return f.decl.name == d.decl.name;
+        });
+        if (it != failed.end() && d.status.empty()) {
+            d.status       = it->status;
+            d.fetch_failed = it->fetch_failed;
+        }
+    }
 }
 
 DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
@@ -893,6 +908,7 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
             }
             continue;
         }
+        bool fetching = false;
         try {
             const auto local = options.drafter_artifacts.find(d.decl.name);
             if (local != options.drafter_artifacts.end()) {
@@ -925,6 +941,7 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
                 d.status = "failed: no repository declared";
                 continue;
             }
+            fetching = true;
             check_remote(plan.target, d, options);
             if (!d.compatible) {
                 d.status = "incompatible: " + d.reason;
@@ -935,6 +952,7 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
             log_line(options.log, "drafter " + d.decl.name + ": " + d.decl.repo +
                                       (d.decl.revision.empty() ? "" : "@" + d.decl.revision.substr(0, 12)));
             const auto fetched = fetch_model(d.decl.repo, fetch);
+            fetching           = false;
             d.commit           = fetched.commit;
             const auto dir =
                 fetched.snapshot.parent_path().parent_path() / "ninferno" / fetched.commit;
@@ -994,6 +1012,9 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
                 fs::exists(convert_options.out.string() + ".conversion.json")) {
                 d.status = "cached";
             } else {
+                // A conversion that stopped half way left the output in place without its report
+                // (convert() renames it in first): removed, or every start would fail on it.
+                if (fs::exists(convert_options.out)) { remove_artifact(convert_options.out); }
                 const auto result = convert(convert_options);
                 log_line(options.log, "  wrote " + convert_options.out.string() + " in " +
                                           std::to_string(result.seconds).substr(0, 5) + " s");
@@ -1013,7 +1034,8 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
                 }
             }
         } catch (const std::exception& error) {
-            d.status = std::string("failed: ") + error.what();
+            d.status       = std::string("failed: ") + error.what();
+            d.fetch_failed = fetching;
             log_line(options.log, "  " + d.status);
         }
     }

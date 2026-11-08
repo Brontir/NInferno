@@ -2,6 +2,7 @@
 #include "models/qwen3_5/program/context_clock.h"
 #include "models/qwen3_5/program/context_work.h"
 #include "models/qwen3_5/program/context.h"
+#include "models/qwen3_5/program/debug_hooks.h"
 
 #include <algorithm>
 #include <array>
@@ -485,7 +486,9 @@ void ProgramImpl::prepare_consumed_source(MaterializationTransaction& transactio
         }
     };
 
-    if (source.endpoint_valid && source.execution_frontier > details.reuse_base) {
+    // The truncated endpoint's StateImage is the one the active sequence takes over.
+    if (source.endpoint_valid && source.execution_frontier > details.reuse_base &&
+        details.reuse != ReusePath::PrivateTruncatedEndpoint) {
         const StateImageHandle endpoint = source.state.read;
         source.endpoint_valid           = false;
         source.state                    = {};
@@ -502,7 +505,7 @@ void ProgramImpl::prepare_consumed_source(MaterializationTransaction& transactio
                                   static_cast<std::ptrdiff_t>(index - 1U));
         release_if_unreferenced(state);
     }
-    if (details.reuse == ReusePath::PrivateEndpoint &&
+    if (is_endpoint_reuse(details.reuse) &&
         details.rewrite_disposition != RewriteCheckpointDisposition::RetainExisting &&
         source.rewrite_state) {
         const StateImageHandle rewrite = *source.rewrite_state;
@@ -511,6 +514,18 @@ void ProgramImpl::prepare_consumed_source(MaterializationTransaction& transactio
         source.rewrite_checkpoint        = {};
         source.rewrite_checkpoint_hidden = {};
         release_if_unreferenced(rewrite);
+    }
+
+    if (details.reuse == ReusePath::PrivateTruncatedEndpoint) {
+        // The source keeps its endpoint and all its KV until the sequence activates (the
+        // activation truncates it to the frontier): a materialization aborted from here leaves a
+        // source whose summary still describes its rows. Only the checkpoints above the frontier
+        // went (they stay valid without it).
+        refresh_state_views(source);
+        const detail::PhysicalResources removed =
+            checked_resource_difference(before, owner_exclusive_resources(source));
+        (void)checked_resource_difference(details.demand.final_removed, removed);
+        return;
     }
 
     struct TruncateTarget {
@@ -588,6 +603,8 @@ void ProgramImpl::prepare_consumed_source(MaterializationTransaction& transactio
         target.addresses->set_checkpoint_requirement(target.address, target.frontier);
     }
     source.text_kv_valid = details.reuse_base;
+    source.prefill_exact_frontier =
+        runtime_support::restored_prefill_exact(source.prefill_exact_frontier, details.reuse_base);
     if (speculative_backend == SpeculativeBackend::Mtp) {
         source.mtp_kv_valid = detail::backend_frontier_at(speculative_backend, details.reuse_base);
     } else if (is_masked_draft_backend(speculative_backend)) {
@@ -1832,6 +1849,10 @@ ProgramImpl::progress_materialization_transaction(runtime::CancellationFlagView 
         out.shared_victims = std::move(transaction.shared_pressure_results);
     };
     const auto abort_transaction = [&]() {
+        if (transaction.source_prepared && transaction.plan && transaction.plan->impl_ != nullptr &&
+            transaction.plan->impl_->reuse == ReusePath::PrivateTruncatedEndpoint) {
+            ++transaction.operations.truncated_source_aborts;
+        }
         release_materialization_staging(transaction);
         transaction.terminal      = true;
         out.status                = runtime::ContextTransactionStatus::Aborted;
@@ -2108,7 +2129,11 @@ ProgramImpl::progress_materialization_transaction(runtime::CancellationFlagView 
 
     if (!transaction.source_prepared) {
         prepare_consumed_source(transaction);
-        if (cancellation.requested()) { transaction.cancel_pending = true; }
+        if (cancellation.requested() ||
+            (transaction.plan->impl_->reuse == ReusePath::PrivateTruncatedEndpoint &&
+             debug::take_abort_truncated_after_source_preparation())) {
+            transaction.cancel_pending = true;
+        }
         if (transaction.cancel_pending) {
             abort_transaction();
             return out;

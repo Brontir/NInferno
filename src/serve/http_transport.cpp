@@ -105,7 +105,7 @@ bool ExecutorStallMonitor::update(const ninferno::RuntimeStats& stats,
         stats.state_forks + stats.state_restores + stats.root_selections +
         stats.private_endpoint_selections + stats.private_turn_closure_selections +
         stats.private_response_replay_selections + stats.private_long_anchor_selections +
-        stats.shared_stable_prefix_selections;
+        stats.shared_stable_prefix_selections + stats.private_truncated_endpoint_selections;
     const bool busy = stats.running_requests != 0 || stats.waiting_requests != 0 ||
                       stats.materializing_requests != 0;
     if (!seen_ || progress != progress_ || !busy) {

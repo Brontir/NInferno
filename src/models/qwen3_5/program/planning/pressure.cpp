@@ -311,10 +311,12 @@ detail::PhysicalResources pressure_residual(detail::PhysicalResources deficit,
 
 } // namespace
 
-std::optional<AdmissionCandidate> ProgramImpl::inspect_admission(
-    const PreparedPromptData& prompt, const RequestBasePlan& base, runtime::LaneId destination,
-    const ContinuationHandle* source, const SharedPrefixHandle* shared_source,
-    std::optional<runtime::CheckpointRef> checkpoint, bool must_retain_private_source) {
+std::optional<AdmissionCandidate>
+ProgramImpl::inspect_admission(const PreparedPromptData& prompt, const RequestBasePlan& base,
+                               runtime::LaneId destination, const ContinuationHandle* source,
+                               const SharedPrefixHandle* shared_source,
+                               std::optional<runtime::CheckpointRef> checkpoint,
+                               bool must_retain_private_source, bool truncated_endpoint) {
     const std::uint32_t lane = destination.value;
     if (lane >= max_concurrency) { throw std::out_of_range("admission lane is out of range"); }
     if (requests[lane].lifecycle != Lifecycle::Empty ||
@@ -340,8 +342,9 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_admission(
         shared_state = &shared_prefix_states[ContractAccess::index(*shared_source)];
     }
 
-    std::optional<AdmissionCandidate> plan = inspect_lane(
-        lane, prompt, base, source_state, shared_state, checkpoint, must_retain_private_source);
+    std::optional<AdmissionCandidate> plan =
+        inspect_lane(lane, prompt, base, source_state, shared_state, checkpoint,
+                     must_retain_private_source, truncated_endpoint);
     if (!plan) { return std::nullopt; }
     plan->impl_->destination       = destination;
     plan->impl_->destination_epoch = lane_epochs[lane];
@@ -431,7 +434,7 @@ ProgramImpl::materialization_source_protection(const ResourceCandidateState& adm
             // exclusive ones as the sequence's): one a shared prefix also references becomes the
             // sequence's when this admission's pressure releases that prefix, a transfer the
             // projection prices (#315). A consumed endpoint keeps every anchor.
-            const bool endpoint_consumed = admission.reuse == ReusePath::PrivateEndpoint;
+            const bool endpoint_consumed = is_endpoint_reuse(admission.reuse);
             if (is_rewrite_checkpoint_restore(admission.reuse) || endpoint_consumed) {
                 const auto append_optional_state = [&](StateImageHandle state) {
                     if (!state_store->valid(state) || state_exclusive_to_sequence(source, state) ||
@@ -451,7 +454,9 @@ ProgramImpl::materialization_source_protection(const ResourceCandidateState& adm
                     append_optional_state(*source.rewrite_state);
                 }
                 for (const LongAnchorCheckpoint& anchor : source.long_anchors) {
-                    if (endpoint_consumed || anchor.frontier <= admission.reuse_base) {
+                    // A truncated endpoint drops the anchors above its frontier at the start.
+                    if ((admission.reuse == ReusePath::PrivateEndpoint) ||
+                        anchor.frontier <= admission.reuse_base) {
                         append_optional_state(anchor.state);
                     }
                 }
@@ -2569,6 +2574,47 @@ detail::PhysicalResources ProgramImpl::admission_capacity() const noexcept {
                 .kv_bytes    = host_kv_arena ? host_kv_arena->capacity_bytes() : 0U,
             },
     };
+}
+
+bool ProgramImpl::supports_truncated_reuse() const noexcept {
+    const qwen3_5::StateImageSpec& spec = state_images->host_layout().spec;
+    return speculative_backend == SpeculativeBackend::None && spec.linear.layers == 0 &&
+           spec.rings.empty() && !spec.dflash_local;
+}
+
+std::uint32_t ProgramImpl::truncated_reuse_bound(const RequestBasePlan& base,
+                                                 const ContinuationHandle& handle) const {
+    if (!supports_truncated_reuse() || base.impl_ == nullptr || !valid_continuation(handle)) {
+        return 0;
+    }
+    const SequenceState& source = continuation_states[ContractAccess::index(handle)];
+    const qwen3_5::detail::PrefixShortlistDigests& request = base.impl_->prefix_digests;
+    if (!source.endpoint_valid || source.prefix_digests.size() == 0 || request.size() == 0 ||
+        base.impl_->summary.prompt_tokens < 2) {
+        return 0;
+    }
+    constexpr std::uint32_t grid = 64;
+    const std::uint32_t top = std::min({source.execution_frontier, source.prefill_exact_frontier,
+                                        static_cast<std::uint32_t>(source.prefix_digests.size()),
+                                        static_cast<std::uint32_t>(request.size()),
+                                        base.impl_->summary.prompt_tokens - 1U});
+    const auto same         = [&](std::uint32_t frontier) {
+        return source.prefix_digests.at(frontier) == request.at(frontier);
+    };
+    std::uint32_t low  = (runtime_support::kTruncatedReuseMinimumTokens + grid - 1U) / grid;
+    std::uint32_t high = top / grid;
+    if (high < low || !same(low * grid)) { return 0; }
+    // The digests are rolling: equal at a frontier means equal below it, so the predicate falls
+    // monotonically with the frontier.
+    while (low < high) {
+        const std::uint32_t middle = low + (high - low + 1U) / 2U;
+        if (same(middle * grid)) {
+            low = middle;
+        } else {
+            high = middle - 1U;
+        }
+    }
+    return std::min(top, low * grid + grid - 1U);
 }
 
 bool ProgramImpl::isolated_request_feasible(const RequestBasePlan& base) const noexcept {

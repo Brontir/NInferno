@@ -25,6 +25,10 @@ public:
 
     [[nodiscard]] std::size_t size() const noexcept { return token_types_.size(); }
 
+    [[nodiscard]] std::span<const std::uint32_t> rewrite_execution_frontiers() const noexcept {
+        return rewrite_execution_frontiers_;
+    }
+
     [[nodiscard]] bool matches(const PreparedPromptData& prompt, std::size_t count) const;
     [[nodiscard]] bool equals(const ResidentPrefixIdentity& other) const;
     [[nodiscard]] bool prefix_equals(const ResidentPrefixIdentity& other, std::size_t count) const;

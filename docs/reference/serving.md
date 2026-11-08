@@ -54,8 +54,14 @@ searched.
 - A GGUF hub model's separate drafters (a separate download: Gemma 4's assistant, a Qwen DFlash
   drafter) are an axis of the configuration choice: a start attaches them when the choice on this
   GPU drafts with one (the plan before the download), and not otherwise. `--with-drafters` always
-  attaches them. A checkpoint's drafters are attached either way. A quantization once converted
-  with them keeps them: a later start reuses that conversion and serves them.
+  attaches them, and so does `--spec dflash` or `dflash2`; both require every drafter: one that
+  cannot be fetched, converted or attached (offline with no copy in the cache, say) stops the
+  start. When only the choice drafts, such a drafter is a `WARN` line instead. It names the
+  drafter and the reason; for a failed fetch it says how to get the drafter (unset
+  `HF_HUB_OFFLINE` or go online, or `hf download` its repository ahead); and the model is served
+  without it, with speculative decoding off, so replies are slower. The next online start tries
+  the drafter again. A checkpoint's drafters are attached either way. A quantization once
+  converted with them keeps them: a later start reuses that conversion and serves them.
 
 Refusals come before any weight is downloaded. Each says what to do instead:
 
@@ -1771,7 +1777,7 @@ contract.
 | `--json` | with `--plan`: print it as JSON | off |
 | `--no-load` | with `--plan`: plan without loading or downloading the weights and without a GPU, from the model's header or config ([the plan without the weights](#the-plan-without-the-weights)) | off |
 | `--plan-device NAME` | with `--plan --no-load`: plan for a named board of the PCI-ID table (`"RTX 4090"`, `0x2684`, then `,headless`/`,display`, `,linux`/`,wddm`) instead of the CUDA device | the CUDA device |
-| `--with-drafters` | always attach the drafters of a GGUF hub model (a separate download) | attached when the choice drafts with one |
+| `--with-drafters` | always attach the drafters of a GGUF hub model (a separate download), and fail the start when one cannot be had | attached when the choice drafts with one |
 | `--model-id ID` | override the public OpenAI model alias | the artifact's `metadata.name`, else its file name; a Hugging Face id when serving one |
 | `--chat-template FILE` | local Jinja chat template | the artifact's |
 | `--device N\|pci:BUSID\|GPU-UUID` | the GPU: N counts GPUs in PCI bus order, as nvidia-smi does (0 first); `pci:0000:01:00.0` or `GPU-<uuid>` (`nvidia-smi -L`) names one board. | `0` |
@@ -2090,8 +2096,19 @@ By default the server persistently reports aggregate activity every five seconds
 
 The pretty completion record shows `cache N (P%, path)` using readable path labels. JSONL retains the
 exact `prefix_cache_hit_tokens` and `prefix_reuse_path` fields. Machine paths are `root`,
-`private_endpoint`, `private_turn_closure`, `private_response_replay`, `private_long_anchor`, and
-`shared_stable_prefix`.
+`private_endpoint`, `private_turn_closure`, `private_response_replay`, `private_long_anchor`,
+`shared_stable_prefix`, and `private_truncated_endpoint`.
+
+`private_truncated_endpoint` is for models whose layers are all attention (a dense Qwen3, for
+example: no linear layers, no sliding window, no drafter). A prompt which diverges inside the last
+message of a cached conversation reuses that conversation's cache up to the divergence (at least
+256 tokens, leaving a suffix of 17 or more tokens, or ending at a message boundary) and prefills the
+rest. Only the rows the earlier request's own prefill wrote are reused. Under `--activations exact`
+the answer equals a cold prefill's byte for byte; under the default (`fast`) the tokens usually
+match but the logprobs can move: the int8 matrix kernel splits K by the slice width, so a prefill
+resumed off a slice boundary gets other last bits (issue #492). Hybrid and sliding-window models
+(Qwen3.5, Gemma 4) keep the other paths: for them reuse needs a turn boundary, an identical prompt,
+or a shared prefix at the end of a message.
 
 ## 13. Execution behavior
 

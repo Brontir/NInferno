@@ -2,6 +2,7 @@
 #include "product/speculative_options.h"
 #include "serve/cache_hint.h"
 #include "serve/generation_service.h"
+#include "serve/model_source.h"
 #include "serve/serve_options.h"
 #include "serve/translate.h"
 
@@ -1051,6 +1052,31 @@ int main() {
                       "an open bind with a key warned");
     failures += check(open_bind_warning("0.0.0.0", 8080, false).starts_with("no API key on 0.0.0.0:8080"),
                       "an open bind without a key did not warn");
+
+    // A hub start's separate drafters: required when the user named them, attached when only the
+    // automatic choice drafts (a missing one is then a warning), the default otherwise.
+    {
+        using ninferno::convert::Drafters;
+        const auto plain = parse({"ninferno-serve", "org/m-GGUF"});
+        failures += check(hub_drafters(plain, false) == Drafters::Default &&
+                              hub_drafters(plain, true) == Drafters::Attach,
+                          "no flag: the choice's drafter is attached, not required");
+        failures += check(hub_drafters(parse({"ninferno-serve", "org/m-GGUF", "--with-drafters"}),
+                                       false) == Drafters::Require,
+                          "--with-drafters requires the drafters");
+        for (const char* backend : {"dflash", "dflash2"}) {
+            failures +=
+                check(hub_drafters(parse({"ninferno-serve", "org/m-GGUF", "--spec", backend}),
+                                   true) == Drafters::Require,
+                      "--spec naming a separate drafter's backend requires it");
+        }
+        failures +=
+            check(hub_drafters(parse({"ninferno-serve", "org/m-GGUF", "--spec", "auto"}), true) ==
+                          Drafters::Attach &&
+                      hub_drafters(parse({"ninferno-serve", "org/m-GGUF", "--spec", "none"}),
+                                   false) == Drafters::Default,
+                  "--spec auto / none name no drafter");
+    }
 
     if (failures == 0) { std::cout << "ok\n"; }
     return failures == 0 ? 0 : 1;

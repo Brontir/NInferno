@@ -65,6 +65,8 @@ struct PlannedDrafter {
     std::vector<std::string> checks; // "ok ..." / "FAIL ..." / "note ..."
     std::string reason;              // why it is not usable ("" when usable)
     std::string status;   // embedded, converted, cached, attached, incompatible, failed: ...
+    bool fetch_failed =
+        false;            // status is "failed" and the fetch was what failed (not a conversion)
     std::string artifact; // the converted drafter
     std::string artifact_id;
     std::string commit;
@@ -162,6 +164,12 @@ fetch_companions(DrafterPlan& plan, const AttachOptions& options);
 // writes <target_artifact>.speculation.json, a drafter that failed (an unreachable hub, an
 // offline cache without its file) listed as failed: the others serve meanwhile. Returns the
 // updated plan.
+// Puts the failures of an earlier step (fetch_companions, then a conversion that failed) into a
+// plan made again from the converted artifact, by drafter name: attach_drafters keeps a status it
+// is given for a component the artifact lacks, so the manifest records the failure and
+// drafters_incomplete() has the next run retry it, instead of the artifact merely lacking it.
+void carry_failures(DrafterPlan& plan, const std::vector<PlannedDrafter>& failed);
+
 DrafterPlan attach_drafters(DrafterPlan plan, const std::filesystem::path& target_artifact,
                             const AttachOptions& options);
 

@@ -86,6 +86,8 @@ struct ContextOperationCounts {
     std::uint64_t pressure_spill_pages   = 0;
     std::uint64_t partial_tail_cow_pages = 0;
     std::uint64_t historical_fork_hits   = 0;
+    // A materialization of a truncated endpoint aborted after its source was prepared.
+    std::uint64_t truncated_source_aborts = 0;
 };
 
 enum class Readiness : std::uint8_t {
