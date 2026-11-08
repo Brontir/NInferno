@@ -95,11 +95,6 @@ int main() {
     check(parse_dflash_config(config({{"rope_type", "yarn"}, {"attention_scaling", 1.0}}))
                   .full_window == 0,
           "a YaRN rope of factor 1 has none");
-    if (failures == 0) {
-        std::cout << "dflash config: PASS
-                     "; }
-                    return failures ==
-                0
-            ? 0
-            : 1;
-    }
+    if (failures == 0) { std::cout << "dflash config: PASS\n"; }
+    return failures == 0 ? 0 : 1;
+}
