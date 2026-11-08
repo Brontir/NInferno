@@ -85,11 +85,24 @@ std::uint32_t plan_context_ceiling(const EngineOptions& options, std::uint32_t n
     return ceiling;
 }
 
-bool plan_host_states_configured(const ContextCacheOptions& cache,
-                                 std::uint32_t default_host_state_slots, bool integrated) {
-    return cache.enabled &&
-           (cache.host_tier_automatic ? default_host_state_slots != 0 && !integrated
-                                      : cache.host_state_slots != 0);
+std::uint32_t default_private_continuations(std::uint32_t concurrency) {
+    return std::max(2U * concurrency, concurrency + 8U);
+}
+
+HostTierSpec resolve_host_tier_spec(const ContextCacheOptions& cache, std::uint32_t concurrency,
+                                    bool integrated) {
+    if (!cache.enabled) { return {}; }
+    if (!cache.host_tier_automatic) {
+        return {.sizing   = HostTierSizing::Explicit,
+                .slots    = cache.host_state_slots,
+                .kv_bytes = cache.host_kv_capacity_bytes};
+    }
+    if (integrated) { return {.sizing = HostTierSizing::Automatic}; }
+    const std::uint32_t private_continuations =
+        cache.max_private_continuations.value_or(default_private_continuations(concurrency));
+    return {.sizing   = HostTierSizing::Automatic,
+            .slots    = std::max(cache.host_state_slots, 2U * private_continuations),
+            .kv_bytes = cache.host_kv_capacity_bytes};
 }
 
 PlanAxes plan_axes(const EngineOptions& options, std::uint32_t native_context,
@@ -480,11 +493,9 @@ EngineOptions normalized_for_plan(EngineOptions options, const PlanModelFacts& m
         return options;
     }
     const std::uint32_t concurrency = options.max_concurrency;
-    const std::uint32_t private_continuations =
-        cache.max_private_continuations.value_or(std::max(2U * concurrency, concurrency + 8U));
-    if (cache.host_tier_automatic) {
-        cache.host_state_slots = std::max(cache.host_state_slots, 2U * private_continuations);
-    }
+    // (The count stays unset here as it was: construction resolves it.)
+    const HostTierSpec tier = resolve_host_tier_spec(cache, concurrency, false);
+    if (tier.sizing == HostTierSizing::Automatic) { cache.host_state_slots = tier.slots; }
     return options;
 }
 
@@ -562,13 +573,13 @@ DryRunPlan dry_run_plan(const PlanModelFacts& model, const PlanDeviceFacts& devi
 
     ContextCacheOptions& cache = options.context_cache;
     // An automatic Host tier on a GPU sharing the host's memory is off (construct_or_plan).
-    const std::uint32_t default_host_slots = cache.host_state_slots;
-    if (cache.enabled && cache.host_tier_automatic && device.integrated) {
-        cache.host_state_slots       = 0;
-        cache.host_kv_capacity_bytes = 0;
+    const HostTierSpec tier =
+        resolve_host_tier_spec(cache, options.max_concurrency, device.integrated);
+    if (tier.sizing == HostTierSizing::Automatic) {
+        cache.host_state_slots       = tier.slots;
+        cache.host_kv_capacity_bytes = static_cast<std::size_t>(tier.kv_bytes);
     }
-    const bool host_states =
-        plan_host_states_configured(cache, default_host_slots, device.integrated);
+    const bool host_states            = tier.slots != 0;
     const std::uint64_t class_reserve = plan_class_reserve(
         device.total_bytes, device.paravirtual, device.drives_display, device.integrated);
     out.axes    = plan_axes(options, model.native_context, host_states, class_reserve);

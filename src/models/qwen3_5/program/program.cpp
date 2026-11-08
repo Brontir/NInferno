@@ -528,7 +528,8 @@ SequencePlanner make_sequence_planner(const detail::ModelExecution& model, Devic
 
 std::unique_ptr<Program> create_program(const detail::ModelExecution& model, SequencePlan&& plan,
                                         DeviceContext& device,
-                                        const StartupObserver& startup_observer) {
+                                        const StartupObserver& startup_observer,
+                                        HostTierPins host_pins) {
     if (plan.impl_ == nullptr) { throw std::invalid_argument("sequence plan is empty"); }
     if (plan.impl_->model != &model) {
         throw std::invalid_argument("sequence plan belongs to another model instance");
@@ -536,7 +537,8 @@ std::unique_ptr<Program> create_program(const detail::ModelExecution& model, Seq
     if (plan.impl_->multiprocessor_count != device.multiprocessor_count()) {
         throw std::invalid_argument("sequence plan device capacity does not match execution");
     }
-    auto impl = std::make_unique<detail::ProgramImpl>(model, *plan.impl_, device, startup_observer);
+    auto impl = std::make_unique<detail::ProgramImpl>(model, *plan.impl_, device, startup_observer,
+                                                      std::move(host_pins));
     plan.impl_.reset();
     return std::unique_ptr<Program>(new Program(std::move(impl)));
 }

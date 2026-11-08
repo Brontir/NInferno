@@ -49,20 +49,20 @@ std::uint32_t normalized_private_capacity(const ContextCacheOptions& options) {
 } // namespace
 
 ProgramImpl::ProgramImpl(const ModelExecution& model_in, const SequencePlanImpl& plan,
-                         DeviceContext& device_in, const StartupObserver& startup_observer)
+                         DeviceContext& device_in, const StartupObserver& startup_observer,
+                         HostTierPins&& host_pins)
     : model(model_in), device(device_in), capacity(plan.capacity), kv_capacity(plan.kv_capacity),
       max_concurrency(plan.max_concurrency), context_cache(plan.context_cache),
       continuation_capacity(normalized_private_capacity(plan.context_cache)),
       shared_prefix_capacity(plan.context_cache.max_shared_prefixes.value_or(0)),
       prefill_chunk(plan.prefill_chunk), kv_lease_window(plan.kv_lease_window),
-      draft_window(plan.draft_window),
-      default_draft_depth(plan.default_draft_depth), speculative_backend(plan.speculative_backend),
-      kv_storage(plan.kv_storage), proposal_head(plan.proposal_head), draft_width(plan.draft_width),
+      draft_window(plan.draft_window), default_draft_depth(plan.default_draft_depth),
+      speculative_backend(plan.speculative_backend), kv_storage(plan.kv_storage),
+      proposal_head(plan.proposal_head), draft_width(plan.draft_width),
       watchdog_policy{plan.acceptance_floor, plan.watchdog_window, plan.watchdog_min_rounds},
-      shared_trip_floor(plan.shared_trip_floor),
-      copy_window_drafts(plan.ngram_draft_tokens), copy_min_match(plan.ngram_min_match),
-      default_step_down(plan.step_down), speculation_load(plan.load),
-      speculation_context_limit(plan.context_limit),
+      shared_trip_floor(plan.shared_trip_floor), copy_window_drafts(plan.ngram_draft_tokens),
+      copy_min_match(plan.ngram_min_match), default_step_down(plan.step_down),
+      speculation_load(plan.load), speculation_context_limit(plan.context_limit),
       speculative_batch_limit(plan.speculative_batch_limit), vision_enabled(plan.features.vision),
       use_cuda_graph(plan.use_cuda_graph), causal_scoring(plan.causal_scoring),
       kv_payload_bytes(plan.persistent.kv_payload_bytes),
@@ -151,15 +151,28 @@ ProgramImpl::ProgramImpl(const ModelExecution& model_in, const SequencePlanImpl&
     const std::uint64_t pinned_host_bytes =
         host_image_bytes * plan.context_cache.host_state_slots +
         static_cast<std::uint64_t>(plan.context_cache.host_kv_capacity_bytes);
-    // What the startup's measurement holds pinned for this tier (PinnedHostBuffer::claim, #473) is
-    // pinned already and out of MemAvailable: the check is of what more this pins.
-    // A held buffer counts only where its size is the one the pool claims (an exact match).
+    // The pins the engine measured for this tier (host_pins) are pinned already and out of
+    // MemAvailable: the check is of what more this pins itself.
     const std::uint64_t host_state_total = host_image_bytes * plan.context_cache.host_state_slots;
     const auto host_kv_total =
         static_cast<std::uint64_t>(plan.context_cache.host_kv_capacity_bytes);
+    if ((host_pins.states && host_state_total == 0) || (host_pins.kv && host_kv_total == 0)) {
+        throw std::logic_error("the Host tier's pins are for a tier the plan does not have");
+    }
+    // The engine pinned what the plan measured; the finalized plan must ask for those sizes.
+    if ((host_pins.states && host_pins.states->size() != host_state_total) ||
+        (host_pins.kv && host_pins.kv->size() != host_kv_total)) {
+        throw std::logic_error(
+            "the Host tier's pins do not match the finalized plan: StateImages pinned " +
+            std::to_string(host_pins.states ? host_pins.states->size() : 0) + " B, planned " +
+            std::to_string(host_state_total) + " B (" +
+            std::to_string(plan.context_cache.host_state_slots) + " x " +
+            std::to_string(host_image_bytes) + "); Host KV pinned " +
+            std::to_string(host_pins.kv ? host_pins.kv->size() : 0) + " B, planned " +
+            std::to_string(host_kv_total) + " B");
+    }
     const std::uint64_t to_pin =
-        (host_state_total != 0 && held_pinned_host(host_state_total) ? 0 : host_state_total) +
-        (host_kv_total != 0 && held_pinned_host(host_kv_total) ? 0 : host_kv_total);
+        (host_pins.states ? 0 : host_state_total) + (host_pins.kv ? 0 : host_kv_total);
     if (to_pin != 0) {
         if (const std::optional<HostMemory> memory = read_host_memory()) {
             require_pinned_host_fits(
@@ -180,7 +193,8 @@ ProgramImpl::ProgramImpl(const ModelExecution& model_in, const SequencePlanImpl&
         StartupPhaseScope host_state_phase(startup_observer, StartupPhase::HostStatePin,
                                            StartupProgressUnit::Bytes, host_state_bytes);
         host_state_images = std::make_unique<qwen3_5::HostStatePool>(
-            state_images->host_layout(), plan.context_cache.host_state_slots);
+            state_images->host_layout(), plan.context_cache.host_state_slots,
+            std::move(host_pins.states));
         host_state_phase.complete(host_state_bytes, host_state_bytes);
     }
     const std::uint64_t logical_state_capacity =
@@ -255,7 +269,8 @@ ProgramImpl::ProgramImpl(const ModelExecution& model_in, const SequencePlanImpl&
             static_cast<std::uint64_t>(plan.context_cache.host_kv_capacity_bytes));
         host_kv_arena = std::make_unique<HostKVArena>(
             plan.context_cache.host_kv_capacity_bytes,
-            std::span<const HostKVPageLayout>(layouts.data(), layouts.size()));
+            std::span<const HostKVPageLayout>(layouts.data(), layouts.size()),
+            std::move(host_pins.kv));
         host_kv_phase.complete(
             static_cast<std::uint64_t>(plan.context_cache.host_kv_capacity_bytes),
             static_cast<std::uint64_t>(plan.context_cache.host_kv_capacity_bytes));

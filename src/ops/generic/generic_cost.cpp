@@ -1,50 +1,20 @@
-// The route cost model (#refactor B1): price_routes prices every admitted route of a call of 17
+// The route cost model (refactor B1): price_routes prices every admitted route of a call of 17
 // tokens or more by the roofline of its tiles on the device's facts (the A16 tiles here, the A8
 // ones in a8_candidates), cost_route takes the cheapest. Its constants and their provenance:
 // route_cost_constants.h.
-#include "ops/generic/generic_gemm.h"
-#include "core/per_device.h"
-#include "ops/common/arch_limits.h"
-#include "ops/common/native_nvfp4.h"
-
 #include "core/device_class.h"
 #include "core/generation.h"
-#include "core/measured_boards.h"
-#include "core/tensor.h"
-#include "core/layout.h"
-#include "ninferno/ops/prefill_routes.h"
-#include "ops/common/route_probe.h"
 #include "ops/generic/generic_gemm_internal.h"
-#include "ops/generic/generic_select_internal.h"
-#include "ops/generic/route_cost_constants.h"
 #include "ops/generic/generic_ggml_internal.h"
 #include "ops/generic/generic_schedules.h"
+#include "ops/generic/generic_select_internal.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
-#include "ops/generic/r8_decode_table.h"
-#include "ops/generic/route_table.h"
-#include "ops/linear/nvfp4/nvfp4_a4_plan.h"
-#include "ops/route_pins.h"
-
-#include <cuda_bf16.h>
+#include "ops/generic/route_cost_constants.h"
 
 #include <algorithm>
-#include <functional>
-#include <array>
-#include <atomic>
-#include <bit>
-#include <cstdio>
-#include <cstdlib>
-#include <fstream>
-#include <mutex>
-#include <optional>
-#include <set>
-#include <span>
-#include <tuple>
 #include <cmath>
 #include <cstdint>
-#include <stdexcept>
-#include <string>
-#include <string_view>
+#include <optional>
 
 namespace ninferno::ops::detail::generic {
 

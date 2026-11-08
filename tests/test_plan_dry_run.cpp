@@ -211,6 +211,76 @@ EngineOptions serve_like(std::uint32_t context, std::uint32_t streams) {
 
 // ---- 1. The seams: the dry run's ladder is the one a start builds from the same functions.
 
+// The Host tier's one resolution (resolve_host_tier_spec), shared by the start and the dry run:
+// over concurrency x integrated x off / explicit / automatic, with and without an explicit
+// private-continuation count, and the same answer before and after normalization.
+void test_host_tier_spec() {
+    for (std::uint32_t concurrency = 1; concurrency <= 8; ++concurrency) {
+        for (const bool integrated : {false, true}) {
+            const std::string where = "concurrency " + std::to_string(concurrency) +
+                                      (integrated ? " integrated" : " discrete") + ": ";
+            const std::uint32_t default_private = std::max(2U * concurrency, concurrency + 8U);
+            check(rt::default_private_continuations(concurrency) == default_private,
+                  where + "default private continuations");
+
+            ninferno::ContextCacheOptions off;
+            off.enabled = false;
+            const rt::HostTierSpec disabled =
+                rt::resolve_host_tier_spec(off, concurrency, integrated);
+            check(disabled.sizing == rt::HostTierSizing::Off && disabled.slots == 0 &&
+                      disabled.kv_bytes == 0,
+                  where + "a disabled cache has no Host tier");
+            off.host_tier_automatic = true;
+            check(rt::resolve_host_tier_spec(off, concurrency, integrated).sizing ==
+                      rt::HostTierSizing::Off,
+                  where + "a disabled cache is off whichever way the tier is sized");
+
+            // Explicit: the options' numbers, kept, on any card.
+            for (const std::uint32_t slots : {0U, 3U, 40U}) {
+                ninferno::ContextCacheOptions cache;
+                cache.host_tier_automatic    = false;
+                cache.host_state_slots       = slots;
+                cache.host_kv_capacity_bytes = slots * (1ULL << 20);
+                const rt::HostTierSpec spec =
+                    rt::resolve_host_tier_spec(cache, concurrency, integrated);
+                check(spec.sizing == rt::HostTierSizing::Explicit && spec.slots == slots &&
+                          spec.kv_bytes == slots * (1ULL << 20),
+                      where + "an explicit tier is kept");
+            }
+
+            // Automatic: twice the private continuations at least; none on an integrated GPU.
+            for (const std::optional<std::uint32_t> privates :
+                 {std::optional<std::uint32_t>(), std::optional<std::uint32_t>(concurrency),
+                  std::optional<std::uint32_t>(40U)}) {
+                for (const std::uint32_t slots : {0U, ninferno::kDefaultHostStateSlots, 100U}) {
+                    ninferno::ContextCacheOptions cache;
+                    cache.host_tier_automatic       = true;
+                    cache.host_state_slots          = slots;
+                    cache.max_private_continuations = privates;
+                    const rt::HostTierSpec spec =
+                        rt::resolve_host_tier_spec(cache, concurrency, integrated);
+                    check(spec.sizing == rt::HostTierSizing::Automatic,
+                          where + "an automatic tier stays automatic");
+                    if (integrated) {
+                        check(spec.slots == 0 && spec.kv_bytes == 0,
+                              where + "an automatic tier is sized to nothing on an integrated GPU");
+                        continue;
+                    }
+                    const std::uint32_t want =
+                        std::max(slots, 2U * privates.value_or(default_private));
+                    check(spec.slots == want, where + "an automatic tier keeps two states a "
+                                                      "conversation at least");
+                    check(spec.kv_bytes == cache.host_kv_capacity_bytes,
+                          where + "an automatic tier keeps the KV default");
+                    cache.host_state_slots = spec.slots; // normalization writes it back
+                    check(rt::resolve_host_tier_spec(cache, concurrency, false).slots == spec.slots,
+                          where + "the resolution is the same after normalization");
+                }
+            }
+        }
+    }
+}
+
 // Every stream holds a context of its own on a non-survival rung (the rule's own fit).
 bool own_fit(const rt::DryRunPlan& plan) {
     const rt::DryRunRung* chosen = plan.chosen();
@@ -234,8 +304,8 @@ void test_seams() {
             options.recurrent_state_automatic      = false;
             options.context_cache.host_state_slots = std::max(
                 options.context_cache.host_state_slots, 2U * std::max(2U * streams, streams + 8U));
-            const bool host_states = rt::plan_host_states_configured(
-                options.context_cache, options.context_cache.host_state_slots, false);
+            const bool host_states =
+                rt::resolve_host_tier_spec(options.context_cache, streams, false).slots != 0;
             const rt::PlanAxes axes =
                 rt::plan_axes(options, model.native_context, host_states,
                               rt::plan_class_reserve(device.total_bytes, false, false, false));
@@ -1698,6 +1768,7 @@ int main() {
         std::ofstream(path) << doc.dump();
         ninferno::spec::Registry::use_file(path);
     }
+    test_host_tier_spec();
     test_seams();
     test_family_table();
     test_launch_options_match_serve();
