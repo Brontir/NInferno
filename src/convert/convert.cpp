@@ -244,7 +244,6 @@ void for_elements(const WeightJob& job, std::uint64_t begin, std::uint64_t end, 
 // and a commit thread makes each completed prefix durable before its sources are punched.
 class Executor {
 public:
-
     Executor(std::vector<const Checkpoint*> stores, const Plan& plan, ArtifactWriter& writer,
              std::vector<std::uint32_t> order, unsigned threads, bool keep_cache,
              Committer* committer = nullptr, std::uint64_t window = 0)

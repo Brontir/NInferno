@@ -103,7 +103,7 @@ void on_terminate_signal(int number) {
 #else
 void on_signal(int number) {
     unlink_registered();
-    struct sigaction action {};
+    struct sigaction action{};
     action.sa_handler = SIG_DFL;
     sigemptyset(&action.sa_mask);
     sigaction(number, &action, nullptr);
@@ -307,8 +307,7 @@ std::size_t ArtifactWriter::remove_stale_temporaries(const std::filesystem::path
         // segment of 8 MiB, a mapped run's 256 MiB writeback), which moves the modification time
         // within minutes even on a slow disk. Younger than `min_age` is never stale.
         const auto written = std::filesystem::last_write_time(it->path(), status);
-        if (status ||
-            std::filesystem::file_time_type::clock::now() - written < min_age) {
+        if (status || std::filesystem::file_time_type::clock::now() - written < min_age) {
             continue;
         }
         candidates.push_back(it->path());

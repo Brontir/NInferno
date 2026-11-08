@@ -121,7 +121,7 @@ int main() {
     {
         const pid_t pid = fork();
         if (pid == 0) {
-            struct sigaction custom {};
+            struct sigaction custom{};
             custom.sa_sigaction = [](int, siginfo_t*, void*) {};
             sigemptyset(&custom.sa_mask);
             sigaddset(&custom.sa_mask, SIGUSR1);
@@ -131,19 +131,21 @@ int main() {
             const auto dir = root / "preserve";
             fs::create_directories(dir);
             cv::ArtifactWriter writer(dir / "a.ninferno", small_layout("a.ninferno"));
-            struct sigaction now {};
+            struct sigaction now{};
             sigaction(SIGINT, nullptr, &now);
-            struct sigaction term {};
+            struct sigaction term{};
             sigaction(SIGTERM, nullptr, &term);
-            const bool kept = now.sa_sigaction == custom.sa_sigaction &&
-                              (now.sa_flags & (SA_SIGINFO | SA_RESTART)) == (SA_SIGINFO | SA_RESTART) &&
-                              sigismember(&now.sa_mask, SIGUSR1) == 1 && term.sa_handler == SIG_IGN;
+            const bool kept =
+                now.sa_sigaction == custom.sa_sigaction &&
+                (now.sa_flags & (SA_SIGINFO | SA_RESTART)) == (SA_SIGINFO | SA_RESTART) &&
+                sigismember(&now.sa_mask, SIGUSR1) == 1 && term.sa_handler == SIG_IGN;
             _exit(kept ? 0 : 1);
         }
         int status = 0;
         waitpid(pid, &status, 0);
-        check(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-              "a writer leaves the application's SIGINT handler and an ignored SIGTERM as they are");
+        check(
+            WIFEXITED(status) && WEXITSTATUS(status) == 0,
+            "a writer leaves the application's SIGINT handler and an ignored SIGTERM as they are");
     }
 
     // A dead writer's temporary (SIGKILL) is removed by the next conversion of the same file, once
@@ -187,10 +189,12 @@ int main() {
         cv::ArtifactWriter first(dir / "a.ninferno", small_layout("a.ninferno"));
         check(temporaries(dir).size() == 1, "the first writer has a temporary");
         make_old(temporaries(dir).front());
-        check(cv::ArtifactWriter::remove_stale_temporaries(dir, {"a.ninferno"}, std::chrono::seconds(0)) == 0,
+        check(cv::ArtifactWriter::remove_stale_temporaries(dir, {"a.ninferno"},
+                                                           std::chrono::seconds(0)) == 0,
               "a direct sweep skips a locked one");
         {
-            cv::ArtifactWriter second(dir / "a.ninferno.part-0001", small_layout("a.ninferno.part-0001"));
+            cv::ArtifactWriter second(dir / "a.ninferno.part-0001",
+                                      small_layout("a.ninferno.part-0001"));
             check(temporaries(dir).size() == 2, "a second writer leaves the live temporary");
             second.finish({});
         }
@@ -221,7 +225,8 @@ int main() {
         check(cv::ArtifactWriter::remove_stale_temporaries(dir, names) == 2,
               "old temporaries of the entry and of a part go");
         check(fs::exists(other), "an old temporary of a name not written stays");
-        check(cv::ArtifactWriter::remove_stale_temporaries(dir, {"y.ninferno"}) == 1, "and goes for its own name");
+        check(cv::ArtifactWriter::remove_stale_temporaries(dir, {"y.ninferno"}) == 1,
+              "and goes for its own name");
     }
 
     fs::remove_all(root);
