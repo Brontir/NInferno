@@ -174,8 +174,7 @@ int main() {
             };
             std::cout << "K=" << k << " T=" << t << " fused " << mb(r.fused) << " separate "
                       << mb(r.separate) << " runs "
-                      << (c[0].status == Status::Selected ? "fused" : "separate") << '
-';
+                      << (c[0].status == Status::Selected ? "fused" : "separate") << '\n';
         }
     }
     if (failures != 0) {
