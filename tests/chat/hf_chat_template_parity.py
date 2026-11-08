@@ -130,6 +130,13 @@ DIALOGS = {
                                        "function": {"name": "get_weather", "arguments": CALL_ARGS}}]},
                       {"role": "tool", "tool_call_id": "c1", "content": "result one"},
                       {"role": "tool", "tool_call_id": "c2", "content": "result two"}],
+    # gpt-oss keeps this turn's analysis (no final answer follows) and reads it from `thinking`.
+    "tool_loop_reasoning": [{"role": "user", "content": "Weather in Paris?"},
+                            {"role": "assistant", "content": "",
+                             "reasoning_content": "Need the tool, then compare with Rome.",
+                             "tool_calls": [{"id": "call_1", "type": "function",
+                                             "function": {"name": "get_weather", "arguments": CALL_ARGS}}]},
+                            {"role": "tool", "tool_call_id": "call_1", "content": "sunny"}],
     "past_reasoning": [{"role": "user", "content": "First question"},
                        {"role": "assistant", "content": "First answer",
                         "reasoning_content": "I think about the first question."},

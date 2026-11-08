@@ -693,7 +693,8 @@ llama.cpp-style base URLs.
 - User `image_url` parts, tool-result `image_url` parts used by compatible clients, and the User
   `video_url` extension, using HTTP(S) or data URIs. Image detail `auto`, `low` and `high` (or
   omitted) all take the fixed Vision preprocessing profile.
-- Assistant `reasoning_content` and `reasoning` history aliases.
+- Assistant `reasoning_content` and `reasoning` history aliases. A template also sees the
+  reasoning as `thinking`, as in transformers (gpt-oss keeps a tool-call turn's analysis from it).
 - Assistant tool-call history, tool-result messages, and legacy function-call history. Results
   returned out of order (by clients that run the calls concurrently) are rendered in the order of
   their calls when their `tool_call_id`s all name calls of that assistant turn.

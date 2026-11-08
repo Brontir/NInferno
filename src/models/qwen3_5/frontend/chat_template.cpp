@@ -40,6 +40,7 @@ struct ContentSource {
     std::vector<std::uint32_t> part_tags;
     std::vector<std::optional<std::size_t>> part_media;
     std::uint32_t reasoning_tag = 0;
+    std::uint32_t thinking_tag  = 0;
 };
 
 void merge_option(Json& context, std::string_view key, const Json& value) {
@@ -340,6 +341,17 @@ RenderedChat CompiledChatTemplate::render_once(const std::vector<ChatMessage>& m
         if (!message.reasoning_content.empty()) {
             value["reasoning_content"] = message.reasoning_content;
             origin.reasoning_tag       = tag(pointer + "/reasoning_content");
+            // transformers' apply_chat_template also hands the reasoning to the template as
+            // `thinking`, the field the gpt-oss template reads to keep a tool-call turn's analysis
+            // (the one place harmony keeps CoT in inference). Templates that read only
+            // reasoning_content never see it. That template refuses a tool-call turn carrying both
+            // content and thinking; such a turn keeps rendering its content as the analysis.
+            if (message.tool_calls.empty() ||
+                std::all_of(message.parts.begin(), message.parts.end(),
+                            [](const auto& part) { return part.text.empty(); })) {
+                value["thinking"]  = message.reasoning_content;
+                origin.thinking_tag = tag(pointer + "/thinking");
+            }
         }
         if (!message.tool_calls.empty()) {
             value["tool_calls"] = Json::array();
@@ -484,6 +496,7 @@ RenderedChat CompiledChatTemplate::render_once(const std::vector<ChatMessage>& m
         };
         for (const auto& region : output.regions) {
             if (region.tag == origin.tag || region.tag == origin.reasoning_tag ||
+                region.tag == origin.thinking_tag ||
                 std::find(origin.part_tags.begin(), origin.part_tags.end(), region.tag) !=
                     origin.part_tags.end()) {
                 include({region.begin, region.end});
