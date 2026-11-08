@@ -349,19 +349,17 @@ std::string dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memor
     static std::map<std::string, std::string> digests;
     const auto found = digests.find(b.name);
     if (found == digests.end() || !reads.empty()) digests[b.name] = facts_digest(reads);
-    const auto first = body.find('
-') + 1;
-    return body.substr(0, first) + "# facts " + digests[b.name] + "
-" + body.substr(first);
+    const auto first = body.find('\n') + 1;
+    return body.substr(0, first) + "# facts " + digests[b.name] + "\n" + body.substr(first);
 }
 
 // The digest line of a dump.
 std::string digest_of(const std::string& dump) {
-    constexpr std::string_view tag = "
-#facts ";
-        const auto at = dump.find(tag);
-    return at == std::string::npos ? "" : dump.substr(at + tag.size(), dump.find('
-', at + 1) - at - tag.size());
+    constexpr std::string_view tag = "\n# facts ";
+    const auto at                  = dump.find(tag);
+    if (at == std::string::npos) return "";
+    const auto from = at + tag.size();
+    return dump.substr(from, dump.find('\n', from) - from);
 }
 
 // A board whose register-MMA price rests on the compiled kernels' registers and spill
@@ -444,8 +442,7 @@ int run_clock_invariance(const GoldenBoard& b) {
         return 0; // unknown ids are priced from the driver's values
     const auto body = [](const std::string& dump) {
         std::size_t at = 0; // past the header lines (the facts line is the first dump's only)
-        while (at < dump.size() && dump[at] == '#') at = dump.find('
-', at) + 1;
+        while (at < dump.size() && dump[at] == '#') at = dump.find('\n', at) + 1;
         return dump.substr(at);
     };
     const std::string stock = body(dump_board(b));
