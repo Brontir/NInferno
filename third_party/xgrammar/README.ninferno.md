@@ -16,7 +16,7 @@ Bundled third-party headers, unchanged:
   see `3rdparty/dlpack/LICENSE`.
 
 The committed `include/` and `cpp/` files (including `cpp/support/`) are upstream files, unchanged
-but for two local changes (below).
+but for the local changes below.
 Python bindings (`python/`, `cpp/tvm_ffi/`), the web and Swift packages, documentation, tests,
 googletest and cpptrace are intentionally omitted. The local `CMakeLists.txt` builds the same
 static library source set as upstream's `xgrammar` target, without network access at configure
@@ -67,6 +67,15 @@ Local change: `cpp/fsm.cc`, `FSMWithStartEnd::Optional`, marked "NInferno (xgram
 fresh accepting start enters the group at its head, so an optional group's tail is not reachable
 without its head (v0.2.7 admitted "1.2rc" for `^[0-9]+\.[0-9]+(-[a-z]+)?$` and "a" for `(a+b)?`).
 The form of the open upstream PR mlc-ai/xgrammar#1032; drop it once that is merged and released.
+
+Local change: `cpp/grammar_compiler.cc`, `GrammarCompilerSub::MultiThreadCompileGrammar`, marked
+"NInferno local change": the compile reads the cancel flag of the NInferno-owned
+`ninferno/compile_cancel.{h,cc}` scope active on its thread, skips the remaining token-mask
+computations once it is set and throws `CompileCancelled` after the workers are idle. Upstream has
+no way to stop a compile, and a pattern with nested bounded repetitions keeps all of a compile's
+threads busy for minutes. `src/structured/constraint.cpp` sets the flag when the last request
+waiting for a compile has timed out. When updating, re-apply the checks and run
+`ninferno_structured_output_test` (`cancel_contract`).
 
 To update: replace `include/`, `cpp/`, the two bundled headers and the license files from the new
 tag, keep this file and `CMakeLists.txt`, and re-run the structured-output unit tests

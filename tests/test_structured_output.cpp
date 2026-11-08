@@ -10,7 +10,6 @@
 #include <nlohmann/json.hpp>
 
 #include <chrono>
-#include <cstdio>
 #include <cstdint>
 #include <initializer_list>
 #include <iostream>
@@ -322,8 +321,8 @@ GrammarVocabulary large_vocabulary() {
 }
 
 // A compile that times out is cancelled: it frees the only compiler slot soon after the request
-// gave up instead of running to the end. The pattern unrolls to hundreds of thousands of states, so
-// finishing it takes far longer than the whole test allows.
+// gave up instead of running to the end. The pattern unrolls to thousands of states, each with a mask pass over the vocabulary, so
+// finishing it takes seconds, far longer than the slot checks below wait.
 void cancel_contract() {
     CompilerOptions options;
     options.max_concurrent  = 1;
@@ -333,13 +332,7 @@ void cancel_contract() {
     OutputConstraintSpec slow;
     slow.kind       = OutputConstraintKind::JsonSchema;
     slow.definition = R"({"type":"string","pattern":"^(([a-z]{1,30}){1,30}){1,10}$"})";
-    const auto t0 = std::chrono::steady_clock::now();
     const std::string first = expect_error(compiler, slow);
-    std::cerr << "first " << first << " "
-              << std::chrono::duration_cast<std::chrono::milliseconds>(
-                     std::chrono::steady_clock::now() - t0)
-                     .count()
-              << " ms" << std::endl;
     check(first == "constraint_compile_timeout", "slow compile times out: " + first);
 
     // The same request again starts a new compile (the abandoned one left the table) and times out
