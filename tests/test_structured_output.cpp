@@ -331,8 +331,8 @@ void cancel_contract() {
     options.compile_timeout = std::chrono::milliseconds(300);
     const ConstraintCompiler compiler(large_vocabulary(), options);
     OutputConstraintSpec slow;
-    slow.kind       = OutputConstraintKind::Regex;
-    slow.definition = "^(([a-z]{1,100}){1,100}){1,100}$";
+    slow.kind       = OutputConstraintKind::JsonSchema;
+    slow.definition = R"({"type":"string","pattern":"^(([a-z]{1,30}){1,30}){1,10}$"})";
     const auto t0 = std::chrono::steady_clock::now();
     const std::string first = expect_error(compiler, slow);
     std::cerr << "first " << first << " "
