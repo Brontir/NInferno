@@ -240,11 +240,14 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
     // payload over the n output rows, so the bytes of a CTA stay rows x K x bpw.
     const double sets = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
     // The register-MMA terms below are verified for the decoders with per-sub-block scales (the
-    // K-quants and the codebook i-quants, has_subblock_scales) on the RTX 3060, 4090 and 5090;
-    // the others keep their old price (with the terms they lost 5..15 % of regret). OPEN: the
-    // plain decoders (BF16, Q8_0, Q4_0 .. IQ4_NL, TQ1_0 / TQ2_0, the group-scaled, FP8 and FP4
-    // formats) want their own measurement before they take the terms.
-    const bool heavy_decoder = has_subblock_scales(problem.qtype);
+    // K-quants and the codebook i-quants, has_subblock_scales) on tensor-core BF16 parts: the RTX
+    // 3060, 4090 and 5090 (in the fit) and the 4070 Ti, 4060 Ti and 5070 Ti (held out). The others
+    // keep their old price (with the terms they lost 5..15 % of regret). OPEN: the plain decoders
+    // (BF16, Q8_0, Q4_0 .. IQ4_NL, TQ1_0 / TQ2_0, the group-scaled, FP8 and FP4 formats) want
+    // their own measurement before they take the terms. Where the BF16 MMA is emulated (Turing,
+    // Volta) the terms made the Quadro GV100 worse (geomean 1.108 -> 1.155, worst 1.57 -> 1.80)
+    // and the RTX 2080 Ti's tail worse, so those parts keep the old price too.
+    const bool heavy_decoder = has_subblock_scales(problem.qtype) && !emulated;
     const double regs_sm     = d.registers_per_sm;
     // The CTAs of `threads` threads one SM holds: its thread and CTA limits, and for these decoders
     // the registers per thread of the compiled kernel (allocated per warp in units of
