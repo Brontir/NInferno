@@ -1266,8 +1266,7 @@ int heuristic_w4a8(const Problem& problem, const Weight& weight, std::int32_t to
         try {
             const auto& d = device_class();
             blackwell     = gb20x_cc(d.major, d.minor);
-        } catch (const std::exception&) {
-        }
+        } catch (const std::exception&) {}
         if (narrow != nullptr && blackwell &&
             w4a8_tiles::narrow_wins((problem.n + rows_per_cta - 1) / rows_per_cta, tokens,
                                     sm_count(), *narrow)) {
