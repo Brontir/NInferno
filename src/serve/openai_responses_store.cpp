@@ -49,6 +49,19 @@ std::size_t openai_response_input_bytes(const OpenAIResponseContext& previous,
     return bytes;
 }
 
+OpenAIResponseContextNode::~OpenAIResponseContextNode() {
+    // An ancestor no one else owns gives up its own parent before it is destroyed, so each
+    // destruction finds an empty parent and none nests. One another owner still holds ends the
+    // walk: that owner releases the rest the same way. The nodes are made non-const
+    // (append_openai_response_context), so taking the parent of a const view is defined.
+    std::shared_ptr<const OpenAIResponseContextNode> next = std::move(parent);
+    while (next && next.use_count() == 1) {
+        auto& owned = const_cast<OpenAIResponseContextNode&>(*next);
+        std::shared_ptr<const OpenAIResponseContextNode> after = std::move(owned.parent);
+        next = std::move(after);
+    }
+}
+
 OpenAIResponseContext append_openai_response_context(OpenAIResponseContext parent,
                                                      std::vector<ChatTurn> turns) {
     auto node         = std::make_shared<OpenAIResponseContextNode>();

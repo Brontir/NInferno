@@ -19,6 +19,11 @@
 namespace ninferno::serve {
 
 struct OpenAIResponseContextNode {
+    // Releases the ancestors this node owns alone one after another, not by recursion: a chain of
+    // continuations is as deep as the store's byte budget allows (two nodes a response), deeper than
+    // a thread's stack would take nested destructors (#519).
+    ~OpenAIResponseContextNode();
+
     std::shared_ptr<const OpenAIResponseContextNode> parent;
     std::vector<ChatTurn> turns;
     std::size_t owned_bytes      = 0;

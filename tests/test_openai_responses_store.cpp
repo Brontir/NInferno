@@ -131,6 +131,34 @@ int test_input_admission() {
     return failures;
 }
 
+// A continuation chain far deeper than a thread's stack takes nested destructors is released,
+// whether the store drops it (erase) or its last outside owner does (#519).
+int test_deep_context_release() {
+    int failures            = 0;
+    constexpr int kDepth    = 400000;
+    const auto deep_context = [] {
+        OpenAIResponseContext context;
+        for (int i = 0; i < kDepth; ++i) {
+            context = append_openai_response_context(
+                std::move(context), {text_turn(ninferno::ChatRole::User, "x")});
+        }
+        return context;
+    };
+    OpenAIResponsesStore store(16, std::size_t{1} << 30);
+    failures += check(store.put(record("resp_deep", deep_context())), "a deep chain is stored");
+    failures += check(store.erase("resp_deep"), "a deep chain is erased");
+    OpenAIResponseContext alone = deep_context();
+    const OpenAIResponseContext middle = [&] {
+        OpenAIResponseContext node = alone;
+        for (int i = 0; i < kDepth / 2; ++i) { node = node->parent; }
+        return node;
+    }();
+    alone.reset();
+    failures += check(middle && middle->cumulative_turns == kDepth / 2,
+                      "an ancestor another owner holds survives its descendants");
+    return failures;
+}
+
 } // namespace
 
 int main() {
@@ -139,6 +167,7 @@ int main() {
     failures += test_lru_and_delete();
     failures += test_oversized_record();
     failures += test_input_admission();
+    failures += test_deep_context_release();
     if (failures == 0) { std::cout << "ok\n"; }
     return failures == 0 ? 0 : 1;
 }
