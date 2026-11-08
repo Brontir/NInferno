@@ -1549,3 +1549,89 @@ mdecl3.sh, queued); a rate for V100 boards transfers by SMs x reference clock; V
 by its own linears' class (rest_weights), its routed banks at kMoeRoutedEta's Ada shares capped by the
 file's class rate (the same SMs decode them; no census); the 8 extra small
 kernels a Qwen step are not launches the model counts (about 40 us, 0.3 %).
+
+
+## 73. The worth prices the benchmark's request mix (#507, 08.11, measured)
+
+**Decision.** A configuration's worth is -[(20/26) ln T(short) + (6/26) ln T(long)] - 25 KLD
+(choice.cpp request_seconds; choice_constants.h kMixShortRequests, kMixLongRequests, kLongPrompt).
+Short is the request the worth priced alone before: a 2048-token prompt and a 512-token answer. Long
+is a prompt of the asked context less the answer, up to the benchmark's 24576 tokens, and the same
+answer; where the ask leaves no prompt longer than 2048 (a context of 2560 or less), the long request
+is dropped and the short one stands. The asked context is the largest of the task's contexts (the
+scorer prices every candidate once, for the contexts in turn). The plan's `choice.task` carries
+`long_prompt` and the two weights; its `why` reads "N s on the request mix: 20 of 2048+512, 6 of
+L+512 tokens"; the quant rows' `estimate.request_seconds` is the same mix for the asked context.
+
+**Why.** On the RTX 4060 Ti with Qwen3.6-35B-A3B UD-IQ3_XXS, one stream, the choice kept BF16 KV
+and an FP32 state, and the user who asked for 32K of context got the default that is 1.58 ms a step
+slower there than INT8 KV and an F16 state (issue #507: KV 1.270 -> 2.611 ms and the state 0.242 ->
+0.484 ms a step at 32K against 0.089 -> 0.184 ms and the same state at 2304 tokens; decode 97.8 against
+84.7 tok/s at 32K, 110.6 against 106.7 at 2304). The speed model is right (on the RTX 4090 it runs
+10-20 % over the measured difference at 2.3K and 22K); the request it priced is the gap: one
+2048 + 512 request decodes at a depth of 2304 whatever the context asked, and there BF16 / FP32
+wins by 0.0025 worth (INT8 / F16 wins by +0.018 at 8192 and +0.025 at a 32K request). The asked
+context is the only statement the user makes about their requests.
+
+**The weights.** 20 and 6 are the request counts of the project's published benchmark
+(docs/performance/methodology.md, tools/bench/perf_matrix.py: twenty short chats answered with up to
+512 tokens, six prompts of about 24K tokens), the mix DECISIONS 50 takes the weights of our
+decisions from. A convention from the benchmark, not a fit. The mean is geometric, as the worth is
+in ln T: a configuration 10 % faster on either request gains the same, whatever the request's
+length.
+
+**Not A, not B** (the study of 11 models x 7 cards x {8K, 32K, 131K} x C {1, 4}):
+- A, the short request decoded at a depth of max(2304, asked / 4): not a request anyone sends (the
+  prefill of 2048 and a decode at the depth of a prompt it never read). It changed one decision of the
+  grid (the one C changes at 32K below), and only by the depth it was given.
+- B, one request whose prompt is half the asked context (at least 2048): at 131K it prices a prompt of
+  65536 for every chat. Qwen3.6-35B-A3B on the 4060 Ti at 131K dropped its DFlash drafter (decode at
+  the plan's displayed depth, a quarter of the asked context, 244.6 -> 97.3 tok/s, a plain FP8 KV in its place); at C = 4 it took the larger
+  quantization where the benchmark's chats do not need it (Qwen3.5-9B on the 4070 Ti at 8192: Q6_K ->
+  Q8_0, decode 60.1 -> 49.6 tok/s, KLD 0.0104 -> 0.0042; on the 4060 Ti at 131K UD-Q5_K_XL -> Q8_0);
+  and it moved Qwen3.5-4B / 9B at 131K from INT8 to FP8 KV, on the cost of a 65536-token prompt no
+  chat sends.
+
+**Scope.** The worth decides only where a generation has a reference card and the constants behind the
+accuracy terms rest on two cards: the Ada reference card (RTX 4090) today. Every other board keeps the
+family's defaults; the worth is still computed there for the estimate it shows (`request_seconds`
+changes everywhere, the choice only on Ada).
+
+**Changed defaults** (all 462 groups of the study, 26 decisions change; the rest are the same). The
+4060 Ti 32K row of Qwen3.6 is the quant of the grid (UD-Q3_K_S), whose default is INT8 already;
+the issue's UD-IQ3_XXS case is pinned in tests/test_choice.cpp
+(prices_the_request_mix) on the Ada reference card's facts (the RTX 4090, whose decision every Ada board
+takes; not on a 4060 Ti board): a 32K ask chooses KV int8 / state f16 / chunk 4096, a 2560 ask keeps
+BF16 / FP32. A 4060 Ti's `--plan` for it gives the same (checked on 08.11).
+
+| Model | Card | Context | C | Before | After |
+|---|---|---|---|---|---|
+| Qwen3.6-35B-A3B | 4090 | 32768 | 1 | KV bf16, state f32, chunk 2048 | KV int8, state f16, chunk 4096 |
+| Qwen3.6-35B-A3B | 4070 Ti | 32768 | 4 | KV int8, chunk 1024 | KV fp8, chunk 2048 (a near tie, below) |
+| Qwen3.6-35B-A3B | 4060 Ti | 8192 / 32768 / 131072 | 1 | chunk 2048 | chunk 4096 |
+| Qwen3.6-35B-A3B | 4060 Ti | 131072 | 4 | chunk 2048 | chunk 4096 |
+| Qwen3.6-35B-A3B | 4070 Ti | 8192 | 1, 4 | chunk 2048 | chunk 4096 |
+| Qwen3.6-35B-A3B | 4070 Ti | 32768 / 131072 | 1 | chunk 2048 | chunk 4096 |
+| Qwen3.6-35B-A3B | 4090 | 8192 | 1, 4 | chunk 2048 | chunk 4096 |
+| Qwen3.6-35B-A3B | 4090 | 32768 | 4 | chunk 2048 | chunk 4096 |
+| Qwen3.6-35B-A3B | 4090 | 131072 | 1 | chunk 2048 | chunk 4096 |
+| gemma-4-26B-A4B | 4060 Ti | 8192 / 32768 / 131072 | 1 | chunk 2048 | chunk 4096 |
+| gemma-4-26B-A4B | 4070 Ti | 8192 / 32768 | 1 | chunk 2048 | chunk 4096 |
+| gemma-4-26B-A4B | 4090 | 8192 / 32768 / 131072 | 1 | chunk 2048 | chunk 4096 |
+| Nemotron-3.5-30B-A3B | 4090 | 131072 | 1 | chunk 2048 | chunk 4096 |
+| gpt-oss-20b | 4060 Ti | 8192 | 1 | chunk 1024 | chunk 2048 |
+| gpt-oss-20b | 4090 | 8192 | 1, 4 | chunk 1024 | chunk 2048 |
+
+The chunk changes are the MoE chunk shares (kMoeChunkShare): a 24K prompt fills the wide chunk
+that a 2048-token prompt only half fills, so the prefill of the long request picks it by speed (worth
++0.0001 .. +0.0055; a chunk has no accuracy term). Their decode at the plan's displayed depth and KLD do not
+change. The KV and state changes: the 4090 at 32K, decode at the plan's displayed depth (a quarter of the asked context, 8192 here) 484.0 -> 502.2 tok/s for
+KLD 0.0238 -> 0.0250 (the speed gain is worth more at lambda 25); the 4070 Ti at 32K with four
+streams (UD-IQ1_M), 127.1 -> 126.8 tok/s and KLD 0.8898 -> 0.8903, is a near tie, checked on
+08.11 with `--plan` (resolution 0.0226 in worth): the chunk 2048 wins by speed on the long prompt, but
+INT8 KV with a 2048 chunk (and with 4096) does not hold 32768 tokens for four streams (`no_fit`, own
+context 0: the wider chunk's workspace), so FP8's bytes buy the chunk. Against the pick, INT8 alone
+(chunk 2048, does not fit) is +0.0165, the chunk 1024 with FP8 -0.0173 (`within_resolution`), K8V4
+-0.0451; the old pick, INT8 with chunk 1024, is about -0.001 (the sum of the two single-axis gaps; not
+scored on its own): inside the resolution, the point estimate decides. Dense models, the other families and every card without a reference card keep their
+defaults (Qwen3-8B, Qwen3.5-4B / 9B, Qwen3.8-27B, gemma-4-31B and -12b, Muse-Glimmer: no change).

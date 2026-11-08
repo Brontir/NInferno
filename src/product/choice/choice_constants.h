@@ -36,12 +36,17 @@
 // quantization's own term adds on top (its combination with them is not measured).
 //
 // The trade. One number, kAccuracyWeight: a configuration's worth is -ln(T) - lambda KLD, T the
-// seconds of a typical request (kRequestPrompt tokens in, kRequestAnswer out). lambda 25 makes
-// 0.001 KLD worth 2.5 % of the request's time: where two configurations cost about the same, the
-// more accurate wins; where one is much faster, it wins. The exact route (0.0040 KLD better than
-// the product default on 9B) thus wins only where it costs under about 11 % of a request's time
-// (it costs 26 % on the RTX 4070 Ti, 38 % on the 5070 Ti at 2048 + 512 tokens). At lambda 50 the
-// 4070 Ti's two were within 0.01 of each other: no clear "about the same".
+// seconds of the request mix (DECISIONS 73): the geometric mean of a short request (kRequestPrompt
+// tokens in, kRequestAnswer out) and a long one (the asked context less the answer, up to
+// kLongPrompt, in), weighted by the benchmark's request counts (kMixShortRequests,
+// kMixLongRequests). Pricing the short request alone put the decode at a depth of 2304 tokens
+// whatever context the user asked, and the KV and state codecs, which cost bytes in proportion to
+// the depth, lost to BF16 where an asked 32K context made them win (#507). lambda 25 makes 0.001
+// KLD worth 2.5 % of the request's time: where two configurations cost about the same, the more
+// accurate wins; where one is much faster, it wins. The exact route (0.0040 KLD better than the
+// product default on 9B) thus wins only where it costs under about 11 % of a request's time (it
+// costs 26 % on the RTX 4070 Ti, 38 % on the 5070 Ti at 2048 + 512 tokens). At lambda 50 the 4070
+// Ti's two were within 0.01 of each other: no clear "about the same".
 
 #include "core/cost_constants.h"
 #include "ninferno/types.h"
@@ -900,8 +905,17 @@ inline constexpr QuantKldPoint kQuantKld[] = {
 // ---- The trade.
 
 inline constexpr double kAccuracyWeight      = 25.0; // lambda: 0.001 KLD = 2.5 % of a request's time
-inline constexpr std::uint32_t kRequestPrompt = 2048;
-inline constexpr std::uint32_t kRequestAnswer = 512;
+inline constexpr std::uint32_t kRequestPrompt = 2048; // the short request: a chat
+inline constexpr std::uint32_t kRequestAnswer = 512;  // the answer of either request
+// The request mix (DECISIONS 73; a convention from the published benchmark, not Fitted): the worth
+// weighs the short request's ln(T) by the number of short chats the benchmark sends (20 prompts,
+// docs/performance/methodology.md) and the long request's by its long prompts (6, of about 24K
+// tokens: tools/bench/perf_matrix.py). The long request is a prompt of the context asked less the
+// answer, up to the benchmark's 24K (kLongPrompt); none where the ask is no longer than the short
+// one.
+inline constexpr double kMixShortRequests  = 20;
+inline constexpr double kMixLongRequests   = 6;
+inline constexpr std::uint32_t kLongPrompt = 24576;
 // No fixed time per request: a mixed workload (8 sampled example tasks, 96-512 answer tokens) left
 // 0.135 s a request unexplained on the RTX 4090's host and none on the 4070 Ti's (with it the 4070
 // Ti's estimates went from +3 % to +8 %): it is the host's (launch and HTTP latency), which no GPU

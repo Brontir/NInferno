@@ -11,7 +11,7 @@ without the flags, `ninferno-serve --plan --no-load`, and ninferno-ui's `/api/pl
 |---|---|---|
 | Model facts | layers by kind, KV heads and widths, window, recurrent state, experts, active parameters, weight bytes per quantization | config.json / GGUF header / artifact (`product/plan/plan_facts.h`) |
 | Card facts | compute capability, SMs, reference clock, DRAM rate, FP4 tensor cores, free memory | PCI-ID facts (`core/data/gpu_facts.json`), `core/generation.h`; the clock and the DRAM rate feed only the estimates shown, never a decision (below) |
-| Task | context each stream holds of its own, streams, a typical request (prompt, answer tokens) | the user (defaults 32K, 1, 2048 + 512) |
+| Task | context each stream holds of its own, streams, the request mix: a short request (2048 + 512 tokens) and a long one (the asked context less 512, up to 24576), weighted 20 : 6 as the benchmark's chats and long prompts (DECISIONS 73) | the user (defaults 32K, 1, 2048 + 512) |
 | Pins | `--quant`, `--kv-dtype`, `--activations`, `--state-dtype`, `--sliding-kv-dtype`, `--prefill-chunk` | the user's flags |
 | Constants | decode and prefill efficiencies per generation and kind, KV read and exact-route factors, KLD terms, the accuracy weight | measured once on the lab's stands (`choice_constants.h` names each source) |
 
@@ -60,8 +60,9 @@ their options as given.
 
 ## The rule
 
-Among the candidates that fit, the largest worth `-ln(T) - lambda * KLD` wins (`lambda` 25: 0.001
-KLD is worth 2.5 % of a request's time). Where two candidates cost about the same, the more accurate
+Among the candidates that fit, the largest worth `-ln(T) - lambda * KLD` wins (`T` the seconds of the
+request mix, the geometric mean of the short and the long request weighted 20 : 6, DECISIONS 73;
+`lambda` 25: 0.001 KLD is worth 2.5 % of a request's time). Where two candidates cost about the same, the more accurate
 one wins; where one is much faster, it wins. Ties: the longer own context, then the listing's order.
 
 `choose` decides at one quantization: a listing row's weights. Which row a listing serves is the
@@ -160,8 +161,9 @@ the RTX 4070 Ti and 4090 and Qwen3.6-35B-A3B on the 4090 lie within 6 % of `kMoe
 (0.635, 0.813, 0.952, 1.0 at 16, 32, 64, 128 tokens per expert); decode does not move. A dense
 model's prefill moves under 5 % from 512 tokens on. So an MoE's candidates take the chunks 1024,
 2048 and 4096 (the widest: the ladder may still narrow it); a prompt fills only its own tokens of
-a chunk, so with the default 2048-token request the 2048 chunk is the widest that pays, and a
-wider one only costs workspace. A chunk has no accuracy term (under `--activations fast` where a
+a chunk, so with a 2048-token request alone the 2048 chunk is the widest that pays, and a
+wider one only costs workspace; the request mix's 24K prompt fills 4096 (a 32K ask on the Ada
+reference card takes it). A chunk has no accuracy term (under `--activations fast` where a
 prompt is cut may move the answer's bytes, not its error), so it is decided by speed on the
 reference card alone, behind its own gate, not the accuracy one.
 

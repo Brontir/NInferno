@@ -1414,27 +1414,50 @@ double worth_band(const CardFacts& card) noexcept {
     return 0;
 }
 
-double request_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
-                       const Candidate& candidate, const Task& task) {
-    const double middle = task.prompt + task.answer / 2.0;
-    const Speed speed   = speed_of(model, card, quant, candidate, task.concurrency, middle, task.prompt);
+double single_request_seconds(const ModelFacts& model, const CardFacts& card,
+                              const QuantOption& quant, const Candidate& candidate,
+                              const Task& task, std::uint32_t prompt) {
+    const double middle = prompt + task.answer / 2.0;
+    const Speed speed   = speed_of(model, card, quant, candidate, task.concurrency, middle, prompt);
     if (speed.prefill <= 0 || speed.decode_per_stream <= 0) { return INFINITY; }
     // The prompt's linears run as whole chunks and a final partial one, each at its own rate (an
     // MoE's prefill depends on how full a chunk is); its attention runs over the whole prompt.
     const Route route         = route_of(quant, candidate.activations, card);
     const std::uint32_t chunk = std::max<std::uint32_t>(candidate.chunk, 1);
-    const std::uint32_t whole = task.prompt / chunk * chunk;
-    const std::uint32_t rest  = task.prompt - whole;
+    const std::uint32_t whole = prompt / chunk * chunk;
+    const std::uint32_t rest  = prompt - whole;
     bool transferred          = false;
     const double tiled        = candidate.activations == ActivationMode::Exact
                                     ? 0
-                                    : prefill_attention_tiled_seconds(model, card, candidate.kv, task.prompt, chunk,
-                                                                      &transferred);
-    double prefill_seconds    = tiled > 0 ? tiled : attention_seconds(model, card, task.prompt, transferred);
-    prefill_seconds += tail_calls_seconds(model, card, quant, candidate, task.prompt);
+                                    : prefill_attention_tiled_seconds(model, card, candidate.kv, prompt,
+                                                                      chunk, &transferred);
+    double prefill_seconds =
+        tiled > 0 ? tiled : attention_seconds(model, card, prompt, transferred);
+    prefill_seconds += tail_calls_seconds(model, card, quant, candidate, prompt);
     if (whole > 0) { prefill_seconds += whole / linear_prefill(model, card, quant, route, chunk, transferred); }
     if (rest > 0) { prefill_seconds += rest / linear_prefill(model, card, quant, route, rest, transferred); }
     return prefill_seconds + task.answer / speed.decode_per_stream;
+}
+
+double request_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
+                       const Candidate& candidate, const Task& task) {
+    const double shorter = single_request_seconds(model, card, quant, candidate, task, task.prompt);
+    const std::uint32_t long_prompt = task.long_prompt();
+    if (long_prompt == 0) { return shorter; }
+    const double longer = single_request_seconds(model, card, quant, candidate, task, long_prompt);
+    const double weight = kMixLongRequests / (kMixShortRequests + kMixLongRequests);
+    return std::exp((1 - weight) * std::log(shorter) + weight * std::log(longer));
+}
+
+std::string request_mix_text(const Task& task) {
+    const std::string answer = "+" + std::to_string(task.answer);
+    if (task.long_prompt() == 0) {
+        return "a " + std::to_string(task.prompt) + answer + "-token request";
+    }
+    return "the request mix: " + std::to_string(static_cast<int>(kMixShortRequests)) + " of " +
+           std::to_string(task.prompt) + answer + ", " +
+           std::to_string(static_cast<int>(kMixLongRequests)) + " of " +
+           std::to_string(task.long_prompt()) + answer + " tokens";
 }
 
 bool accuracy_decides(std::string_view generation, std::string_view family, std::string* why) {
@@ -1709,9 +1732,22 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     };
     // Each stream's own context in turn (a pinned one, or Auto's steps): the first that holds an
     // eligible candidate takes its best.
+    // The request mix is priced at the context being tried: its long prompt is the context less
+    // the answer, so a step below the largest asked (Auto's 16K, 8K) prices a shorter one, never a
+    // prompt the stream cannot hold. The candidates were scored at the largest asked context; a
+    // step whose long prompt differs scores them again.
     std::optional<std::size_t> chosen;
     std::uint32_t settled = 0;
+    Task priced           = task;
     for (const std::uint32_t context : task.contexts) {
+        Task at     = task;
+        at.contexts = {context};
+        if (at.long_prompt() != priced.long_prompt()) {
+            for (Scored& s : out.scored) {
+                s = score(model, card, ref, quant, s.candidate, at, own_context);
+            }
+            priced = at;
+        }
         for (std::size_t i = 0; i < out.scored.size(); ++i) {
             const Scored& s = out.scored[i];
             if (!eligible(s) || s.own_context < context) { continue; }
@@ -1741,13 +1777,14 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     out.context = settled;
     for (Scored& s : out.scored) { s.fits = s.own_context >= settled; }
     const Scored& c = out.scored[*chosen];
-    out.why = quant.label + ": every stream holds " + std::to_string(settled) + " tokens; KV " + std::string(kv_cache_storage_name(c.candidate.kv)) + ", activations " +
+    out.why = quant.label + ": every stream holds " + std::to_string(settled) + " tokens; KV " +
+              std::string(kv_cache_storage_name(c.candidate.kv)) + ", activations " +
               activation_name(c.candidate.activations) +
-              (out.by_worth ? ": the best worth on the " + std::string(generation_of(card)) +
-                                  " reference card (" + fixed(c.decision_seconds, 2) + " s a " +
-                                  std::to_string(task.prompt) + "+" + std::to_string(task.answer) +
-                                  "-token request there, KLD " + fixed(c.accuracy.kld, 4) + ")"
-                            : ": the family's defaults (" + defaults_why + ")") +
+              (out.by_worth
+                   ? ": the best worth on the " + std::string(generation_of(card)) +
+                         " reference card (" + fixed(c.decision_seconds, 2) + " s on " +
+                         request_mix_text(priced) + " there, KLD " + fixed(c.accuracy.kld, 4) + ")"
+                   : ": the family's defaults (" + defaults_why + ")") +
               (out.chunk_by_speed ? "; chunk " + std::to_string(c.candidate.chunk) +
                                         ": the fastest prefill on the reference card"
                                   : "") +
@@ -1775,7 +1812,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         }
     }
     for (const Candidate& v : variants) {
-        Scored s  = score(model, card, ref, quant, v, task, own_context);
+        Scored s  = score(model, card, ref, quant, v, priced, own_context);
         s.variant = true;
         s.fits    = s.own_context >= settled;
         out.scored.push_back(std::move(s));

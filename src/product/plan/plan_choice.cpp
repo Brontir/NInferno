@@ -677,19 +677,26 @@ std::string choice_line(const ServedChoice& served) {
     }
     if (s.candidate.chunk != choice::kDefaultChunk) { out << ", chunk " << s.candidate.chunk; }
     out << std::fixed << std::setprecision(1) << " | " << s.speed.decode_per_stream
-        << " tok/s decode, " << std::setprecision(0) << s.speed.prefill << " prefill ("
-        << served.prompt_tail_calls << " tail calls), KLD "
+        << " tok/s decode, " << std::setprecision(0) << s.speed.prefill
+        << " prefill at the short request (" << served.prompt_tail_calls << " tail calls), KLD "
         << std::setprecision(4) << s.accuracy.kld << " (estimates) | " << served.choice.why;
     return out.str();
 }
 
 Json choice_json(const ServedChoice& served) {
+    // The mix the chosen request time was priced on: an automatic context that settled below its
+    // first target re-scored at the settled one (choose()).
+    choice::Task priced = served.task;
+    if (served.choice.context != 0) { priced.contexts = {served.choice.context}; }
     Json out = {{"task",
                  {{"context", served.choice.context},
                   {"contexts", served.task.contexts},
                   {"concurrency", served.task.concurrency},
                   {"prompt", served.task.prompt},
                   {"answer", served.task.answer},
+                  {"long_prompt", priced.long_prompt()},
+                  {"mix_short_requests", choice::kMixShortRequests},
+                  {"mix_long_requests", choice::kMixLongRequests},
                   {"accuracy_weight", served.task.accuracy_weight}}},
                 {"why", served.choice.why},
                 {"by_worth", served.choice.by_worth},
