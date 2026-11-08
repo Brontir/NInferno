@@ -26,6 +26,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <iterator>
 #include <optional>
@@ -152,9 +153,64 @@ constexpr const char* kBuildSet =
     "full";
 #endif
 
-std::filesystem::path golden_path(const GoldenBoard& b) {
-    return std::filesystem::path(NINFERNO_SELECTOR_GOLDEN_DIR) / kBuildSet /
-           (std::string(b.name) + ".txt");
+// The compiled facts the register-MMA price reads (registers, spill, latency form and threads of
+// every K-quant / codebook kernel the selector describes: rmma_resources) as a 64-bit FNV-1a
+// digest. They are the build's: nvcc 12.8 and 13.x allocate registers differently for the same
+// source (up to a third apart for one kernel, #556), and the price turns them into resident CTAs
+// per SM, so another toolchain can move a tile choice with no change of source or spec. A golden
+// of a board priced from them is therefore keyed by the digest of the facts it was made on; the
+// choices stay deterministic for one set of kernels on every machine. Runs on the host device.
+std::string kernel_facts_digest() {
+    static const std::string digest = [] {
+        std::uint64_t h = 1469598103934665603ULL;
+        const auto mix  = [&h](std::uint64_t v) {
+            for (int i = 0; i < 8; ++i) {
+                h ^= (v >> (8 * i)) & 0xFFU;
+                h *= 1099511628211ULL;
+            }
+        };
+        void* const payload = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
+        for (const QType qtype : kFormats) {
+            if (!has_subblock_scales(qtype)) continue;
+            const auto host = quantized_weight::make_patterned_weight(qtype, 4096, 4096, 7U, {});
+            const Weight w  = host.device_weight(payload);
+            if (!generic::supports(w)) continue;
+            mix(static_cast<std::uint64_t>(qtype));
+            for (int i = 0; i < generic::rmma_schedule_count(); ++i) {
+                for (const generic::Epilogue epilogue :
+                     {generic::Epilogue::Store, generic::Epilogue::SwiGlu}) {
+                    // The latency form and the plain one are told apart by the width.
+                    for (const std::int32_t t : {1, 4, 17, 32, 256}) {
+                        const auto r = generic::rmma_resources(i, w, epilogue, t);
+                        mix(r ? static_cast<std::uint64_t>(r->registers) : 0xFFFFU);
+                        if (!r) continue;
+                        mix(r->local_bytes);
+                        mix(static_cast<std::uint64_t>(r->threads) * 2 +
+                            (r->latency_variant ? 1U : 0U));
+                    }
+                }
+            }
+        }
+        std::ostringstream out;
+        out << std::hex << std::setfill('0') << std::setw(16) << h;
+        return out.str().substr(0, 12);
+    }();
+    return digest;
+}
+
+// A board whose register-MMA price rests on the compiled kernels' registers and spill
+// (rmma_terms_measured, generic_cost.cpp) keeps a golden per set of kernel facts:
+// <board>.<digest>.txt. An unkeyed <board>.txt is read as a fallback (a file made before the
+// digest existed); --update writes the keyed one and removes the unkeyed.
+bool facts_keyed(const GoldenBoard& b) { return rmma_terms_measured(b.major, b.minor); }
+
+std::filesystem::path golden_path(const GoldenBoard& b, bool keyed_only = true) {
+    const auto dir = std::filesystem::path(NINFERNO_SELECTOR_GOLDEN_DIR) / kBuildSet;
+    if (!facts_keyed(b)) return dir / (std::string(b.name) + ".txt");
+    const auto keyed = dir / (std::string(b.name) + "." + kernel_facts_digest() + ".txt");
+    const auto plain = dir / (std::string(b.name) + ".txt");
+    return keyed_only || std::filesystem::exists(keyed) || !std::filesystem::exists(plain) ? keyed
+                                                                                       : plain;
 }
 
 // One board's choices, a line per (format, policy, epilogue, shape, profile) and run of widths
@@ -294,7 +350,9 @@ std::string dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memor
 // NINFERNO_BUILD_ARCH, which the host runs): another compute capability keeps other counts. Its
 // golden is therefore reproducible only on a build of the board's own compute capability; for any
 // other build it is skipped (neither written, compared nor run for clock invariance), and a set
-// holds the file only for the capabilities its builds are made for. The decisions are the
+// holds the file only for the capabilities its builds are made for. On its own capability the
+// file is keyed by the digest of the kernels' facts (kernel_facts_digest: another nvcc compiles
+// other registers, #556). The decisions are the
 // selector's and route_query's own: nothing in the product changes for the test.
 bool host_kernels_differ(const GoldenBoard& b) {
     if (!rmma_terms_measured(b.major, b.minor)) return false;
@@ -308,7 +366,7 @@ int run_board(const GoldenBoard& b, bool update) {
         return 0;
     }
     const std::string now = dump_board(b);
-    const auto path       = golden_path(b);
+    const auto path       = golden_path(b, update);
     if (update) {
         // The directory may not exist yet in a fresh checkout; a write that fails is a failure.
         std::filesystem::create_directories(path.parent_path());
