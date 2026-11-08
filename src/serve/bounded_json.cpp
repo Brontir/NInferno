@@ -9,7 +9,7 @@ namespace ninferno::serve {
 namespace {
 
 // Set on a thread that has built a large document since it last released memory.
-thread_local bool large_parse_seen = false;
+thread_local bool large_parse_seen     = false;
 constexpr std::size_t kLargeTextBytes  = 1u << 20;
 constexpr std::size_t kLargeValueCount = 10'000;
 
@@ -28,6 +28,7 @@ public:
     [[nodiscard]] bool exceeded() const noexcept { return exceeded_; }
 
     [[nodiscard]] bool too_deep() const noexcept { return too_deep_; }
+
     [[nodiscard]] std::size_t values() const noexcept { return values_; }
 
     bool null() { return admit() && Base::null(); }
@@ -94,26 +95,39 @@ public:
     explicit ValueCounter(std::size_t limit) : limit_(limit) {}
 
     [[nodiscard]] bool exceeded() const noexcept { return exceeded_; }
+
     [[nodiscard]] bool too_deep() const noexcept { return too_deep_; }
 
     bool null() { return admit(); }
+
     bool boolean(bool) { return admit(); }
+
     bool number_integer(RequestJson::number_integer_t) { return admit(); }
+
     bool number_unsigned(RequestJson::number_unsigned_t) { return admit(); }
+
     bool number_float(RequestJson::number_float_t, const std::string&) { return admit(); }
+
     bool string(std::string&) { return admit(); }
+
     bool binary(RequestJson::binary_t&) { return admit(); }
+
     bool start_object(std::size_t) { return admit() && enter(); }
+
     bool end_object() {
         --depth_;
         return true;
     }
+
     bool start_array(std::size_t) { return admit() && enter(); }
+
     bool end_array() {
         --depth_;
         return true;
     }
+
     bool key(std::string&) { return admit(); }
+
     bool parse_error(std::size_t, const std::string&, const nlohmann::detail::exception&) {
         return false;
     }
@@ -123,6 +137,7 @@ private:
         exceeded_ = exceeded_ || ++values_ > limit_;
         return !exceeded_;
     }
+
     bool enter() noexcept {
         too_deep_ = too_deep_ || ++depth_ > kMaximumRequestJsonDepth;
         return !too_deep_;
@@ -153,7 +168,7 @@ JsonTextStatus parse_bounded_json(std::string_view text, std::size_t max_values,
     // Text this big, or a document this many nodes, leaves freed pieces behind; count it whether or
     // not the parse succeeds. A short text of many values (a 0.9 MiB body can hold 450,000) counts
     // by its values, once they are built.
-    large_parse_seen = large_parse_seen || text.size() >= kLargeTextBytes;
+    large_parse_seen       = large_parse_seen || text.size() >= kLargeTextBytes;
     const auto note_values = [&] {
         large_parse_seen = large_parse_seen || builder.values() >= kLargeValueCount;
     };

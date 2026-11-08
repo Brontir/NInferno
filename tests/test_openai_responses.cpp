@@ -1588,13 +1588,12 @@ int test_input_item_limit() {
     std::string many = "[";
     for (int i = 0; i < 50; ++i) { many += i == 0 ? "0" : ",0"; }
     many += "]";
-    const Json call_body =
-        Json{{"model", "qwen"},
-             {"input", Json::array({Json{{"type", "function_call"},
-                                         {"call_id", "call_1"},
-                                         {"name", "f"},
-                                         {"arguments", many}}})}};
-    RequestLimits few_values = limits();
+    const Json call_body       = Json{{"model", "qwen"},
+                                      {"input", Json::array({Json{{"type", "function_call"},
+                                                                  {"call_id", "call_1"},
+                                                                  {"name", "f"},
+                                                                  {"arguments", many}}})}};
+    RequestLimits few_values   = limits();
     few_values.max_json_values = 40;
     failures += check(api_code([&] {
                           (void)parse_openai_responses_create_request(call_body, few_values);

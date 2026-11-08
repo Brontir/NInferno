@@ -95,9 +95,9 @@ void append_stop_strings(const RequestJson& value, std::string param, bool singl
 // A 400 (code too_many_messages) when a request's `field` list holds more than
 // limits.max_messages entries.
 void check_message_count(std::size_t count, const RequestLimits& limits, const char* field);
-// A 400 (code request_json_too_large) when the arguments of a replayed tool call in `turns` hold more
-// JSON values than limits.max_json_values or nest too deep. They are kept as text and parsed again
-// by the chat template, so they are measured here, without building a document.
+// A 400 (code request_json_too_large) when the arguments of a replayed tool call in `turns` hold
+// more JSON values than limits.max_json_values or nest too deep. They are kept as text and parsed
+// again by the chat template, so they are measured here, without building a document.
 void check_history_call_arguments(const std::vector<ChatTurn>& turns, const RequestLimits& limits,
                                   const char* field);
 

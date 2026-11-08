@@ -416,15 +416,17 @@ int test_constrained_decoding_extensions() {
         const Json function{{"name", "f"}, {"arguments", many}};
         Json assistant{{"role", "assistant"}, {"content", nullptr}};
         if (std::string(key) == "tool_calls") {
-            assistant[key] = Json::array({Json{{"id", "c1"}, {"type", "function"}, {"function", function}}});
+            assistant[key] =
+                Json::array({Json{{"id", "c1"}, {"type", "function"}, {"function", function}}});
         } else {
             assistant[key] = function;
         }
         history["messages"].push_back(assistant);
         const ApiError error =
             api_error([&] { (void)parse_chat_completion_request(history, few_values, false); });
-        failures += check(error.status == 400 && error.code == "request_json_too_large",
-                          std::string("assistant ") + key + " arguments over the value limit are accepted");
+        failures +=
+            check(error.status == 400 && error.code == "request_json_too_large",
+                  std::string("assistant ") + key + " arguments over the value limit are accepted");
     }
 
     Json two                = base_request();
