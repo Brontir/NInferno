@@ -554,8 +554,15 @@ void retry_failed_drafter() {
     expect(refused["drafters"][0]["status"] == "cached" &&
                refused["drafters"][0]["artifact_id"] == "00",
            "a refused replacement leaves the entry as it was");
+    // The refused file is named on the entry, so an attach converts it again instead of taking it
+    // for its cache.
+    expect(refused["drafters"][0].value("refused_artifact_id", std::string()) == id,
+           "the refused file's id is kept on the entry");
     wanted = ninferno::spec::artifact_vocab_fingerprint(drafter.entry).value().value;
     expect(refresh().size() == 1, "the next start takes a replacement that passes");
+    const auto taken = Json::parse(read_text(ninferno::spec::manifest_path(artifact)));
+    expect(!taken["drafters"][0].contains("refused_artifact_id"),
+           "a replacement taken clears the refusal");
     // The production checks describe the target: one that cannot be read refreshes nothing.
     with(manifest("{}", entry("cached", "00")));
     expect(cv::refresh_changed_drafters(artifact).empty(),

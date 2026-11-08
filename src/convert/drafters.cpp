@@ -842,6 +842,26 @@ void carry_failures(DrafterPlan& plan, const std::vector<PlannedDrafter>& failed
     }
 }
 
+namespace {
+
+// The id of the file the refresh refused for drafter `name` of the target's manifest, "" where
+// none was refused (or there is no manifest to say).
+std::string refused_id(const fs::path& target_artifact, const std::string& name) {
+    try {
+        const auto path = spec::manifest_path(target_artifact);
+        if (!fs::exists(path)) { return {}; }
+        const auto manifest = Json::parse(read_file(path));
+        for (const auto& d : manifest.at("drafters")) {
+            if (d.value("name", std::string()) == name) {
+                return d.value("refused_artifact_id", std::string());
+            }
+        }
+    } catch (const std::exception&) {}
+    return {};
+}
+
+} // namespace
+
 DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
                             const AttachOptions& options) {
     const auto components = artifact_components(target_artifact);
@@ -1008,10 +1028,19 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
             const std::string quant =
                 convert_options.drafter_quant.empty() ? "" : "." + convert_options.drafter_quant;
             convert_options.out = dir / (stem + "." + d.decl.recipe + quant + suffix + ".ninferno");
-            if (fs::exists(convert_options.out) &&
+            // A file the refresh refused (refresh_changed_drafters: another drafter written at this
+            // path) is no cache: converted again from the checkpoint just fetched.
+            const std::string refused_file = refused_id(target_artifact, d.decl.name);
+            const bool refused = !refused_file.empty() && fs::exists(convert_options.out) &&
+                                 refused_file == spec::artifact_id_hex(convert_options.out);
+            if (!refused && fs::exists(convert_options.out) &&
                 fs::exists(convert_options.out.string() + ".conversion.json")) {
                 d.status = "cached";
             } else {
+                if (refused) {
+                    log_line(options.log, "  " + convert_options.out.string() +
+                                              " failed the drafter checks: converted again");
+                }
                 // A conversion that stopped half way left the output in place without its report
                 // (convert() renames it in first): removed, or every start would fail on it.
                 if (fs::exists(convert_options.out)) { remove_artifact(convert_options.out); }
@@ -1116,6 +1145,7 @@ std::vector<std::string> refresh_changed_drafters(const fs::path& target_artifac
             return d.compatible;
         };
         const DrafterCheck& compatible = check ? check : attach_checks;
+        bool refused_any               = false;
         for (auto& d : manifest.at("drafters")) {
             if (!changed_since_attach(d, false)) { continue; }
             // As attach_drafters takes a cached drafter: the file and its conversion report at
@@ -1127,14 +1157,28 @@ std::vector<std::string> refresh_changed_drafters(const fs::path& target_artifac
             // A file the checks refuse, or cannot read, is left as it is: the start serves without
             // it ("changed since attach") and the next one looks at the file again, so a later
             // replacement that passes is taken.
+            // The refused file's id is kept on the entry (refused_artifact_id), so an attach does not
+            // take that file for a cache of the drafter (attach_drafters converts it again).
+            bool changed = false;
             try {
-                if (!compatible(d, artifact)) { continue; }
+                const auto id = spec::artifact_id_hex(artifact);
+                if (!compatible(d, artifact)) {
+                    if (d.value("refused_artifact_id", std::string()) != id) {
+                        d["refused_artifact_id"] = id;
+                        refused_any              = true;
+                    }
+                    continue;
+                }
                 // Its status (converted, cached, attached) is kept: only the file changed.
-                d["artifact_id"] = spec::artifact_id_hex(artifact);
+                d["artifact_id"] = id;
+                d.erase("refused_artifact_id");
+                changed = true;
             } catch (const std::exception&) { continue; }
-            refreshed.push_back(d.value("name", std::string()));
+            if (changed) { refreshed.push_back(d.value("name", std::string())); }
         }
-        if (!refreshed.empty()) { write_file_atomic(path, manifest.dump(1) + '\n'); }
+        if (!refreshed.empty() || refused_any) {
+            write_file_atomic(path, manifest.dump(1) + '\n');
+        }
     } catch (const std::exception&) {} // an unreadable manifest: drafters_incomplete() plans again
     return refreshed;
 }
