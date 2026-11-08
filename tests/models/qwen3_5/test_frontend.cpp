@@ -2025,8 +2025,8 @@ ninferno::PromptInput none_input(std::optional<bool> thinking) {
 // tool_choice none with tools declared bans the template's call opener and closer (one token
 // each), so the model answers in text; the prompt stays the tool-enabled one. Where the opener is
 // not a token of the vocabulary, or the calls are on, or no tools are declared, nothing is banned.
-// The reasoning markers are banned too where the prompt leaves no reasoning to open or close
-// (thinking declined), and only then: a model that may reason needs them.
+// The reasoning markers are not banned, thinking declined or not: the turn ends at one outside
+// reasoning (test_none_ends_at_structural_tokens).
 int test_disabled_tool_calls_ban_the_opener() {
     const FrontendResources with_opener = resources_with_opener();
     const auto input = [](bool calls, bool discarded, bool tools) {
@@ -2052,11 +2052,9 @@ int test_disabled_tool_calls_ban_the_opener() {
     failures += check(none.summary().banned_tokens == banned,
                       "tool_choice none did not ban the Qwen XML call opener and closer tokens");
     const auto declined = frontend.prepare(none_input(false));
-    failures += check(declined.summary().banned_tokens ==
-                          std::vector<int>{kOpenerId, kCloserId, 248068, 248069},
-                      "tool_choice none with thinking declined left the reasoning markers open");
-    failures += check(frontend.prepare(none_input(true)).summary().banned_tokens == banned,
-                      "tool_choice none banned the reasoning markers of a model that may reason");
+    failures += check(declined.summary().banned_tokens == banned &&
+                          frontend.prepare(none_input(true)).summary().banned_tokens == banned,
+                      "tool_choice none banned a reasoning marker (the turn ends at one instead)");
     failures += check(FrontendFactory::inspect(none).token_ids ==
                           FrontendFactory::inspect(automatic).token_ids,
                       "banning the opener changed the prompt");

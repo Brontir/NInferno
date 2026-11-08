@@ -764,19 +764,21 @@ llama.cpp-style base URLs.
   `<|tool_call>`, `[TOOL_CALLS]`, `<|tool_call|>`, `<function_calls>`) and its closer
   (`</tool_call>`, `<tool_call|>`, `</function_calls>`), and the template's tool-result opener and
   closer (`<tool_response>`, `<|tool_response>`, ...), get a `logit_bias` of -100 when the
-  template's tokenizer encodes each as one token. Where the request leaves no reasoning to open
-  (thinking off), the template's reasoning markers (`<think>`, `</think>`, `<|channel>`,
-  `<channel|>`) are banned the same way. A `logit_bias` of your own for such a token is replaced
-  by the ban. A model refused its call would otherwise write the next structural token it knows
-  (a bare reasoning marker, looped to `max_tokens`, or a tool-result opener). Where the model may
-  still reason, those markers are not banned (the reasoning span needs them), and outside
-  reasoning the first of them ends the turn: the text written before it is the answer, the marker
-  is not published, and `finish_reason` is `stop`. An answer that is only such markup is
-  therefore an empty `content` (with `finish_reason` `stop`), never markup. Syntaxes without such
-  an opener (gpt-oss harmony, Atem, Llama 3 JSON) are not steered; a call they write anyway is
-  cut out of the answer, as is one written as plain text (a Qwen model kept from `<tool_call>` can
-  still write a bare `<function=...>` or a bare `{"name": "...", "arguments": ...}` object naming
-  a declared tool, which are cut too).
+  template's tokenizer encodes each as one token. A `logit_bias` of your own for such a token is
+  replaced by the ban. A model refused its call would otherwise write the next structural token it
+  knows. Its reasoning markers (`<think>`, `</think>`, `<|channel>`, `<channel|>`) are not banned
+  (a model that may reason needs them, and one that may not uses them as the way out of a
+  refused call, where banned they leave filler that looks like an answer); outside reasoning, the
+  first marker of the call, tool-result or reasoning kind ends the turn instead: the text written
+  before it is the answer, the marker is not published, and `finish_reason` is `stop`. A refused
+  call that leaves only markup is therefore an empty `content` with `finish_reason` `stop`, never
+  markup. An output that repeats a period of up to 12 tokens four times in a row ends as
+  `--repetition-stop` does (`finish_reason` `length`) even where the server sets none, so a
+  filler loop does not run to `max_tokens`. Syntaxes without such an opener (gpt-oss harmony,
+  Atem, Llama 3 JSON) are not steered; a call they write anyway is cut out of the answer, as is
+  one written as plain text (a Qwen model kept from `<tool_call>` can still write a bare
+  `<function=...>`, and a bare `{"name": "...", "arguments": ...}` object or Gemma 4 `call:...`
+  naming a declared tool, which are cut too).
 - `strict:true`, whose arguments the same constraint holds to the declared JSON Schema in every
   call syntax ([key order](#key-order-under-an-output-constraint)), and
   `parallel_tool_calls:false`, under which generation stops after the first call.

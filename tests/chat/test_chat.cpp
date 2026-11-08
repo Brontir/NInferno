@@ -716,6 +716,16 @@ int test_bare_json_call_dropped() {
                               "JSON that is no discarded call was cut: " + body);
         }
     }
+    // Gemma 4's bare call, "call:NAME{...}" with no opener, under none: nothing of it is shown.
+    {
+        const auto discarded =
+            ninferno::chat::build_tool_call_output_contract(tools, true, ToolCallFormat::Gemma4, true);
+        ninferno::chat::ToolCallOutputDecoder decoder(discarded, 64);
+        const std::string visible = decoder.feed("call:weather{city:<|\"|>Oslo<|\"|>,days:1}</body>");
+        const auto end            = decoder.finish();
+        failures += check(visible.empty() && trim_ws(end.content).empty(),
+                          "a bare Gemma 4 call under none was shown: " + visible + end.content);
+    }
     return failures;
 }
 

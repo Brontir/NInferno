@@ -37,9 +37,10 @@ struct OutputConventions {
     // Special tokens that the reasoning and tool-call parsers read; they reach the presentation.
     std::vector<TokenId> structural_tokens;  // sorted
     // The tokens that cannot begin or continue an answer when the call is refused (tool_choice
-    // none): the tool-call and tool-result markers, and the reasoning markers' special tokens (a
-    // marker spelled as one special token plus plain text, as Gemma 4's <|channel>thought, is
-    // its head). Both sorted; empty where the tokenizer has no such token.
+    // none): the tool-call and tool-result markers (banned in the prompt), and the reasoning
+    // markers' tokens (a marker spelled as one special token plus plain text, as Gemma 4's
+    // <|channel>thought, is its head), which end the turn outside reasoning. Both sorted; empty
+    // where the tokenizer has no such token.
     std::vector<TokenId> call_tokens;
     std::vector<TokenId> reasoning_tokens;
 

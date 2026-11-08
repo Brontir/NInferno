@@ -57,8 +57,8 @@ struct ToolCallOutputContract {
     ToolCallFormat format       = ToolCallFormat::QwenXml;
     // The calls are read only to be dropped (tool_choice none). A model kept from the call opener
     // may write its call as bare JSON, {"name": NAME, ...}, with no opener before it: for a
-    // syntax whose calls are JSON (ToolCallSyntax::bare_json_call), that text, with a declared
-    // tool's name, opens the call region as the opener would.
+    // syntax that has a call header (ToolCallSyntax::bare_call_header), that header and a declared
+    // tool's name open the call region as the opener would.
     bool discarded = false;
 
     [[nodiscard]] bool declares(std::string_view name) const noexcept;
@@ -99,9 +99,13 @@ public:
     // region. The default: whitespace, an optional lead() and whitespace, then open(). A syntax
     // whose region opens with a header that names the function overrides it.
     [[nodiscard]] virtual ToolCallStart match_start(std::string_view held) const;
-    // Whether a call of this syntax is a JSON object {"name": NAME, ...} inside its open marker,
-    // so that the object without the marker is a call too (ToolCallOutputContract::discarded).
-    [[nodiscard]] virtual bool bare_json_call() const noexcept { return false; }
+    // The header a call of this syntax begins with right after its open marker ({"name": " for
+    // JSON calls, call: for Gemma 4's), followed by a declared tool's name. A model kept from the
+    // open marker may write the call without it: under ToolCallOutputContract::discarded, that
+    // header and a declared name open the call region as the marker would. Empty: none.
+    [[nodiscard]] virtual std::span<const std::string_view> bare_call_header() const noexcept {
+        return {};
+    }
     // The name a call cut off by the output limit had begun to write: `body` follows open().
     // nullopt when the body does not begin this syntax's call header (then the region is not a
     // call, e.g. prose quoting the marker); else the name bytes written so far (empty while the
@@ -182,8 +186,8 @@ public:
 private:
     std::shared_ptr<const ToolCallOutputContract> contract_;
     const ToolCallSyntax* syntax_ = nullptr;  // the contract format's syntax
-    // The region began as a bare JSON call (ToolCallOutputContract::discarded): a syntax that
-    // cannot read one back (Qwen XML) drops the region instead of showing it.
+    // The region began as a bare call (ToolCallOutputContract::discarded): when the syntax
+    // cannot read it back, the region is dropped instead of shown.
     bool bare_region_ = false;
     // Bytes that may still begin the call region (ToolCallSyntax::match_start).
     std::string held_;

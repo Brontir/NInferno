@@ -3,8 +3,10 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
@@ -1037,7 +1039,7 @@ namespace {
 // call the output limit cut off: nullopt when the body leaves the header, an empty name while
 // the body ends inside the header.
 std::optional<ToolCallSyntax::CutCallName>
-cut_name_after_header(std::string_view body, std::initializer_list<std::string_view> header) {
+cut_name_after_header(std::string_view body, std::span<const std::string_view> header) {
     std::size_t pos = 0;
     for (const std::string_view part : header) {
         while (pos < body.size() && is_format_whitespace(body[pos])) { ++pos; }
@@ -1059,6 +1061,11 @@ cut_name_after_header(std::string_view body, std::initializer_list<std::string_v
                                        .complete = end < body.size()};
 }
 
+std::optional<ToolCallSyntax::CutCallName>
+cut_name_after_header(std::string_view body, std::initializer_list<std::string_view> header) {
+    return cut_name_after_header(body, std::span<const std::string_view>(header.begin(), header.size()));
+}
+
 } // namespace
 
 ToolCallStart ToolCallSyntax::match_start(std::string_view held) const {
@@ -1067,19 +1074,16 @@ ToolCallStart ToolCallSyntax::match_start(std::string_view held) const {
 
 namespace {
 
-// Whether held bytes begin a bare JSON call, {"name": NAME, ...}, with NAME a declared tool's:
-// Complete once the name is whole (its closing quote written), Partial while the bytes can still
+// Whether held bytes begin a bare call (the syntax's call header, then a declared tool's name):
+// Complete once the name is whole (a byte after it written), Partial while the bytes can still
 // become that.
-CallStart bare_json_start(std::string_view held, const ToolCallOutputContract& contract) {
-    const auto cut = cut_name_after_header(held, {"{", "\"name\"", ":", "\""});
+CallStart bare_call_start(std::string_view held, std::span<const std::string_view> header,
+                          const ToolCallOutputContract& contract) {
+    const auto cut = cut_name_after_header(held, header);
     if (!cut) { return CallStart::No; }
     if (cut->name.empty()) { return cut->complete ? CallStart::No : CallStart::Partial; }
     if (cut->complete) {
-        // The byte after the name must be the closing quote.
-        const std::size_t end = static_cast<std::size_t>(cut->name.data() - held.data()) +
-                                cut->name.size();
-        return held[end] == '"' && contract.declares(cut->name) ? CallStart::Complete
-                                                                : CallStart::No;
+        return contract.declares(cut->name) ? CallStart::Complete : CallStart::No;
     }
     return std::any_of(contract.tools.begin(), contract.tools.end(),
                        [&](const ToolCallOutputContract::Tool& tool) {
@@ -1107,13 +1111,14 @@ std::string ToolCallOutputDecoder::feed(std::string_view text) {
     }
 
     // The held bytes against the syntax's call start, and where the syntax has bare JSON calls
-    // and they are being dropped, against a bare call too (bare_json_start).
+    // and they are being dropped, against a bare call too (bare_call_start).
     bool bare = false;
     const auto match = [&](std::string_view held) {
         bare              = false;
         CallStart matched = syntax_->match_start(held);
-        if (matched == CallStart::No && contract_->discarded && syntax_->bare_json_call()) {
-            matched = bare_json_start(held, *contract_);
+        if (matched == CallStart::No && contract_->discarded &&
+            !syntax_->bare_call_header().empty()) {
+            matched = bare_call_start(held, syntax_->bare_call_header(), *contract_);
             bare    = matched != CallStart::No;
         }
         return matched;
@@ -1131,7 +1136,7 @@ std::string ToolCallOutputDecoder::feed(std::string_view text) {
         if (start == CallStart::Complete) {
             // A bare call is read as the call the syntax's opener would have opened.
             bare_region_ = bare;
-            tool_region_ = bare ? std::string(syntax_->open()) + "\n" + held_ : std::move(held_);
+            tool_region_ = bare ? std::string(syntax_->open()) + held_ : std::move(held_);
             held_.clear();
             tool_region_.append(text.substr(index + 1));
             saw_tool_marker_ = true;
@@ -1432,10 +1437,14 @@ std::string calls_structural_tag(std::span<const ToolCallConstraintTool> tools,
     return OrderedJson{{"type", "structural_tag"}, {"format", std::move(format)}}.dump();
 }
 
+constexpr std::array<std::string_view, 4> kBareJsonHeader = {"{", "\"name\"", ":", "\""};
+
 class QwenXmlSyntax final : public ToolCallSyntax {
 public:
     [[nodiscard]] std::string_view open() const noexcept override { return kToolOpen; }
-    [[nodiscard]] bool bare_json_call() const noexcept override { return true; }
+    [[nodiscard]] std::span<const std::string_view> bare_call_header() const noexcept override {
+        return kBareJsonHeader;
+    }
 
     [[nodiscard]] std::string_view close() const noexcept override { return kToolClose; }
 
@@ -1482,7 +1491,9 @@ public:
 class HermesJsonSyntax final : public ToolCallSyntax {
 public:
     [[nodiscard]] std::string_view open() const noexcept override { return kToolOpen; }
-    [[nodiscard]] bool bare_json_call() const noexcept override { return true; }
+    [[nodiscard]] std::span<const std::string_view> bare_call_header() const noexcept override {
+        return kBareJsonHeader;
+    }
 
     [[nodiscard]] std::string_view close() const noexcept override { return kToolClose; }
     [[nodiscard]] std::optional<CutCallName> cut_call_name(std::string_view body) const override {
@@ -1561,6 +1572,10 @@ public:
 
 
     [[nodiscard]] std::string_view open() const noexcept override { return kOpen; }
+    [[nodiscard]] std::span<const std::string_view> bare_call_header() const noexcept override {
+        static constexpr std::array<std::string_view, 1> kHeader = {kCall};
+        return kHeader;
+    }
 
     [[nodiscard]] std::string_view close() const noexcept override { return kClose; }
     [[nodiscard]] std::optional<CutCallName> cut_call_name(std::string_view body) const override {

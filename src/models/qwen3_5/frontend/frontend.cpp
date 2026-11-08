@@ -1230,25 +1230,14 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
         // request's), and the model is kept from the markup of a call turn, so it answers in
         // text. The call opener and closer go, and the tool-result opener and closer: kept from
         // opening a call, a model writes the next structural token it knows (Gemma 4's
-        // <|tool_response>). The reasoning markers go where the prompt leaves no reasoning to
-        // open or close (thinking declined, or a template without any); where the model may
-        // still reason, the output ends at one outside reasoning (OutputStart::answer_only),
-        // since the token is needed for the span itself. Only a marker that is one special
-        // token (or a special token and plain text, for a reasoning opener) can be banned; the
-        // other syntaxes keep the cut alone.
-        const OutputConventions& output = *impl_->output;
-        result.answer_only              = true;
-        result.banned_tokens            = output.call_tokens;
-        const bool may_reason =
-            result.starts_in_reasoning || (result.reasoning_open_allowed && !result.reasoning_declined);
-        if (!may_reason) {
-            result.banned_tokens.insert(result.banned_tokens.end(), output.reasoning_tokens.begin(),
-                                        output.reasoning_tokens.end());
-        }
-        std::sort(result.banned_tokens.begin(), result.banned_tokens.end());
-        result.banned_tokens.erase(
-            std::unique(result.banned_tokens.begin(), result.banned_tokens.end()),
-            result.banned_tokens.end());
+        // <|tool_response>). The reasoning markers cannot be banned: a model that may reason
+        // needs them, and one that may not (thinking declined) uses them as the clean way out
+        // (Gemma 4 writes an empty thought, Qwen3 a stray close) where banned they leave
+        // junk filler that looks like an answer (measured, #516). The output ends at one of them
+        // outside reasoning instead (OutputStart::answer_only). Only a marker that is one token
+        // can be banned; the other syntaxes keep the cut alone.
+        result.answer_only   = true;
+        result.banned_tokens = impl_->output->call_tokens;
     }
     result.identity.reusable = true;
     result.context_cache     = prepare_context_cache(

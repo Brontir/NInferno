@@ -539,7 +539,7 @@ public:
           thinking_control_tokens(std::move(thinking_control_tokens_)),
           conventions(std::move(conventions_)),
           preserve_special(output.raw || output.preserve_special_tokens),
-          end_at_structural(start.answer_only && !output.raw && !output.preserve_special_tokens),
+          end_at_structural(start.answer_only && !output.raw),
           split_reasoning(start.in_reasoning && !output.raw),
           tool_contract(output.raw ? nullptr : std::move(tool_call_output_)),
           tool_name_max_length(output.tool_name_max_length),
