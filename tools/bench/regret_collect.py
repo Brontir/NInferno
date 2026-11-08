@@ -126,6 +126,7 @@ def collect(selected_csvs, pass_csvs, board, model, revision, build_id, holdout,
     passes = {}
     protocols = {}  # (problem, T) -> {protocol: the passes that timed it so}
     boards = set()
+    runs = set()
     for i, (sel_path, path) in enumerate(zip(selected_csvs, pass_csvs), 1):
         rows = read_rows(path, KEY + ("route", "median_us"))
         sel_rows = read_rows(sel_path, KEY + ("selected",))
@@ -135,6 +136,10 @@ def collect(selected_csvs, pass_csvs, board, model, revision, build_id, holdout,
         if run != sel_run:
             raise ValueError(f"{sel_path} and {path} come from different runs "
                              f"({sel_run or 'unnamed'}, {run or 'unnamed'})")
+        # The same run given twice is one pass, not two that agree.
+        if run is not None and run in runs:
+            raise ValueError(f"{path}: run {run} is given more than once")
+        runs.add(run)
         boards |= {b for b in (identity(path, rows, "device"),
                                identity(sel_path, sel_rows, "device")) if b}
         timed = {}

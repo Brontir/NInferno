@@ -140,6 +140,11 @@ class Collect(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "different runs"):
             self.collect_new([(sel, routes)])
 
+    def test_one_run_given_twice_refused(self):
+        pair = self.new_pass(1, "x-1", [(4, "rmma.a", 5, "copies", 64)])
+        with self.assertRaisesRegex(ValueError, "more than once"):
+            self.collect_new([pair, pair])
+
     def test_passes_of_different_boards_refused(self):
         rows = [(4, "rmma.a", 5, "copies", 64)]
         with self.assertRaisesRegex(ValueError, "more than one board"):
