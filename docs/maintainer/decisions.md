@@ -1635,3 +1635,42 @@ context 0: the wider chunk's workspace), so FP8's bytes buy the chunk. Against t
 -0.0451; the old pick, INT8 with chunk 1024, is about -0.001 (the sum of the two single-axis gaps; not
 scored on its own): inside the resolution, the point estimate decides. Dense models, the other families and every card without a reference card keep their
 defaults (Qwen3-8B, Qwen3.5-4B / 9B, Qwen3.8-27B, gemma-4-31B and -12b, Muse-Glimmer: no change).
+
+## 74. ggml's matrix kernel takes the column tile of least work (#524, 08.11, measured)
+
+**Decision.** A prefill product on ggml's matrix kernel (GgmlMmq: Q4_K, Q6_K and the other ggml
+formats on the cards where `mmq_prefill_pays`) takes the column tile whose tiles cost least,
+ceil(t / J) x (0.43 + 0.57 J / 128) of a 128-column tile's K steps, the narrower on a tie, among
+J = 16, 32, 64, 80, 96, 112, 128 (core/mmq_columns.h; the kernel's `select_launch` and the estimate's
+`mmq_linears_seconds` read the one table). Before: J = 16, 32, 64, 128 and the fewest tiles, so
+129..256 columns ran two 128-column tiles.
+
+**Why.** The tile is 128 weight rows x J tokens over the whole K; the weight rows' decode is the
+same for every J and the MMA work is in J, so a tile costs a fixed part plus a part in J (DECISIONS
+69). A slice of 144 columns on two 128-column tiles pays for 256; two 80-column tiles pay for 1.57
+of 2.0 tile steps. On the RTX 3060 (Qwen3-8B Q4_K_M, `--no-prefix-reuse`, A B A B, four requests
+a point) the prompt of 136..160 tokens took 141.7..142.8 ms and now takes 114.3..115.5 ms (-19 %), 168..192
+tokens 143.4..144.7 -> 122.8..126.6 (-14..-12.5 %), 200..224 144.7..146.6 -> 134..138 (-7.5..-6 %),
+264..320 187..203 -> 167..190, 448 255 -> 239; 232..256, 352..384, 512 and longer slices that fill
+their tiles are unchanged (to 0.1 %). Predicted from the model before the measurement (a 128-column
+tile step 53 ms from the 128 / 256 rows): 144 tokens 118.3 (measured 114.4), 192 128.9 (126.6), 320
+188.7 (189.8), 640 316 (321.6): within 4 ms; the model underprices narrow tiles a little (measured
+80-column tile: 0.72 of a 128's at two tiles, 0.79 modelled). The 136..256 mix of the issue: mean
+145.0 -> 131.2 ms (-9.5 %, predicted -7.8 %).
+
+**Which widths.** A forced-J grid on the RTX 3060 (8 widths x 21 slice sizes, N = 16..512) gives
+the staircase of every width; the model's pick equals the grid's best width at 18 of 20 slice sizes
+and the sum over N = 17..512 falls 6.5 % with 80, 96 and 112 added (80: 129..160 columns, 96: 161..192
+and 257..288, 112: 193..224, 289..320, 417..448); 48 adds 0.1 % and is not instantiated. Each width
+costs about 0.4 MB of object code and 2.2 s of compile a format and architecture (Q4_K: 0.50 -> 0.88
+MB, 5.1 -> 7.3 s; the sm_86 `ninferno-serve` 266.6 -> 273.1 MB) over 18 formats. Open: J = 112 is
+6 % slower than 128 for a slice of 97..112 columns (one tile: 99.8 against 93.8 ms), the model prices
+it 7 % cheaper; J = 16 took 69 ms against 61 for J = 32 at 16 columns (one card each).
+
+**Numerics.** A product's sums depend on the column tile count (stream-k splits the K steps
+differently), as they already did between a slice of 128 and 256 columns or a prefill chunk of 128 and
+1024: on natural text the mean |logprob| difference between the old and new tiles is 0.000-0.03, that
+between the old build's chunks 128 and 1024 0.003-0.026.
+
+**Not done.** Blackwell's `heuristic_w4a8` (the producer-warp 128 x 64 tile from 128 tokens) steps
+the same way (RTX 5060 Ti 104 -> 107 ms from 144 to 256 tokens) and was not measured here.
