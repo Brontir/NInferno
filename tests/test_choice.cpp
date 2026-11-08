@@ -388,15 +388,15 @@ void prefills_pay_tail_calls(const json& fixture) {
     const double t2   = prompt / ch::speed_of(two, cf, q, c, 1, prompt, prompt).prefill;
     check(std::abs((t2 - t0) - 2 * step) < 1e-9 * t2, "two tail calls add two decode steps to a prefill");
     ch::Task task;
-    task.prompt = prompt;
-    task.answer = 1;
-    const double r0 = ch::request_seconds(none, cf, q, c, task);
-    const double r2 = ch::request_seconds(two, cf, q, c, task);
+    task.prompt     = prompt;
+    task.answer     = 1;
+    const double r0 = ch::single_request_seconds(none, cf, q, c, task, task.prompt);
+    const double r2 = ch::single_request_seconds(two, cf, q, c, task, task.prompt);
     check(std::abs((r2 - r0) - 2 * step) < 1e-9 * r2, "and to a request's time");
     ch::Candidate drafted = c;
     drafted.drafter       = 1;
-    const double d0 = ch::request_seconds(none, cf, q, drafted, task);
-    const double d2 = ch::request_seconds(two, cf, q, drafted, task);
+    const double d0       = ch::single_request_seconds(none, cf, q, drafted, task, task.prompt);
+    const double d2       = ch::single_request_seconds(two, cf, q, drafted, task, task.prompt);
     check(std::abs((d2 - d0) - 2 * step) < 1e-9 * d2, "a drafted candidate's tail calls are plain decode steps");
     std::cout << "tail calls: a decode step " << step * 1e3 << " ms, 2K prefill " << prompt / t0 << " -> "
               << prompt / t2 << " tok/s\n";
@@ -885,12 +885,13 @@ void decides_by_generation(const json& fixture) {
     check(std::abs(short_prompt - 0.409 / 0.813) < 1e-6, "a short prompt fills only its own tokens of the chunk");
     // A 1280-token prompt at chunk 1024: one whole chunk and a 256-token call, each at its rate.
     ch::Task t1280;
-    t1280.prompt = 1280;
-    t1280.answer = 1;
+    t1280.prompt       = 1280;
+    t1280.answer       = 1;
     const double whole = ch::speed_of(linears, bw, q, fast, 1, 1280, 1024).prefill;
     const double rest  = ch::speed_of(linears, bw, q, fast, 1, 1280, 256).prefill;
     const double dec   = ch::speed_of(linears, bw, q, fast, 1, 1280.5, 1280).decode_per_stream;
-    check(std::abs(ch::request_seconds(linears, bw, q, fast, t1280) - (1024 / whole + 256 / rest + 1 / dec)) < 1e-9,
+    check(std::abs(ch::single_request_seconds(linears, bw, q, fast, t1280, t1280.prompt) -
+                   (1024 / whole + 256 / rest + 1 / dec)) < 1e-9,
           "the final partial chunk at its own rate");
 }
 
@@ -1036,6 +1037,7 @@ void chooses_the_chunk(const json& fixture) {
     Bench b{model_of(m35), card_of(fixture.at("cards").at("RTX 4090")), {quant_of("UD-IQ3_XXS", m35.at("quants").at("UD-IQ3_XXS"))}};
     b.model.recurrent = true;
     ch::Task task;
+    task.contexts  = {2560}; // an ask whose request mix is the 2048-token prompt alone
     const auto own = [&b](const ch::Candidate& c) -> std::uint32_t {
         // The workspace grows with the chunk: a wider one holds a little less context.
         const double room = 20e9 - b.quants[0].weight_bytes - 4e5 * c.chunk;
@@ -1067,6 +1069,79 @@ void chooses_the_chunk(const json& fixture) {
     b.card = card_of(fixture.at("cards").at("RTX 5070 Ti"));
     const ch::Choice bw = ch::choose(b.model, b.card, b.quants[0], ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), {}, task, own);
     check(bw.chosen && chosen(bw).candidate.chunk == 1024, "Blackwell: the default chunk");
+}
+
+// The worth prices the benchmark's request mix (#507, DECISIONS 73): a 32K ask puts a 24K prompt
+// into it, where INT8 KV and a half-precision state win on the Ada reference card (their bytes
+// cost in proportion to the depth); an ask of 2560 tokens has no long request, and BF16 / FP32
+// stays.
+void prices_the_request_mix(const json& fixture) {
+    const json& m35 = fixture.at("models").at("Qwen3.6-35B-A3B");
+    Bench b{model_of(m35),
+            card_of(fixture.at("cards").at("RTX 4090")),
+            {quant_of("UD-IQ3_XXS", m35.at("quants").at("UD-IQ3_XXS"))}};
+    b.model.recurrent = true;
+    const auto own    = [&b](const ch::Candidate& c) -> std::uint32_t {
+        const double room = 20e9 - b.quants[0].weight_bytes - 4e5 * c.chunk;
+        return room > 0 ? static_cast<std::uint32_t>(room / b.model.kv_bytes_per_token(c.kv)) : 0;
+    };
+    ch::Task asked;
+    asked.contexts = {32768};
+    ch::Task middle;
+    middle.contexts = {16384};
+    check(middle.long_prompt() == 16384 - ch::kRequestAnswer,
+          "a 16K ask: the long request's prompt is the context less the answer");
+    check(asked.long_prompt() == ch::kLongPrompt,
+          "a 32K ask: the long request stops at the benchmark's 24K prompt");
+    ch::Task small;
+    small.contexts = {2560};
+    check(small.long_prompt() == 0, "a 2560-token ask has no long request");
+    const auto allowed   = ch::allowed_axes(b.model, KvCacheStorage::Int8Group64);
+    const ch::Choice big = ch::choose(b.model, b.card, b.quants[0], allowed, {}, asked, own);
+    check(big.chosen && chosen(big).candidate.kv == KvCacheStorage::Int8Group64 &&
+              chosen(big).candidate.state == RecurrentStateStorage::FP16,
+          "a 32K ask: KV int8, state f16");
+    check(big.chosen && chosen(big).candidate.chunk == 4096,
+          "a 32K ask: the 24K prompt fills the 4096 chunk");
+    const ch::Choice little = ch::choose(b.model, b.card, b.quants[0], allowed, {}, small, own);
+    check(little.chosen && chosen(little).candidate.kv == KvCacheStorage::BFloat16 &&
+              chosen(little).candidate.state == RecurrentStateStorage::FP32,
+          "a 2560-token ask: KV bf16, state f32");
+    // The mix is the geometric mean of the two requests, weighted by the benchmark's counts.
+    const ch::Candidate c = chosen(big).candidate;
+    const double shorter =
+        ch::single_request_seconds(b.model, b.card, b.quants[0], c, asked, asked.prompt);
+    const double longer =
+        ch::single_request_seconds(b.model, b.card, b.quants[0], c, asked, asked.long_prompt());
+    const double expected = std::exp(
+        (ch::kMixShortRequests * std::log(shorter) + ch::kMixLongRequests * std::log(longer)) /
+        (ch::kMixShortRequests + ch::kMixLongRequests));
+    check(std::abs(ch::request_seconds(b.model, b.card, b.quants[0], c, asked) - expected) <
+              1e-12 * expected,
+          "the request mix is the weighted geometric mean of the short and the long request");
+    check(big.why.find("request mix: 20 of 2048+512, 6 of 24576+512 tokens") != std::string::npos,
+          "the reason names the mix");
+    // Auto's steps: where only 8K fits, the long request is priced at 8192 less the answer, the
+    // step being tried, never at the 24K of the largest step.
+    ch::Task automatic;
+    automatic.contexts     = {32768, 16384, 8192};
+    const auto little_room = [](const ch::Candidate&) -> std::uint32_t {
+        return 8192;
+    }; // every candidate holds 8K only
+    const ch::Choice steps =
+        ch::choose(b.model, b.card, b.quants[0], allowed, {}, automatic, little_room);
+    ch::Task pinned_8k;
+    pinned_8k.contexts = {8192};
+    const ch::Choice eight =
+        ch::choose(b.model, b.card, b.quants[0], allowed, {}, pinned_8k, little_room);
+    check(steps.chosen && steps.context == 8192, "automatic steps settle on the 8K that fits");
+    check(steps.chosen && eight.chosen &&
+              chosen(steps).decision_seconds == chosen(eight).decision_seconds &&
+              chosen(steps).candidate.kv == chosen(eight).candidate.kv,
+          "the 8K step prices the mix as an 8192 ask does");
+    check(steps.why.find("6 of 7680+512 tokens") != std::string::npos &&
+              steps.why.find("24576") == std::string::npos,
+          "the reason prices the long request at 8192 less the answer");
 }
 
 // A coarse quantization does not make a switch's error free: the quantization's term adds on top
@@ -2131,6 +2206,7 @@ int main() {
     steps_before_the_floor(fixture);
     weighs_the_quantizations(fixture);
     chooses_the_chunk(fixture);
+    prices_the_request_mix(fixture);
     coarse_quant_keeps_kv(fixture);
     explains_the_state(fixture);
     contradictory_pins(fixture);

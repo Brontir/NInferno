@@ -190,9 +190,15 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
         throw std::invalid_argument("generic linear: token extent exceeds the grid");
     const auto smem = static_cast<std::size_t>(args.spread_smem);
     if (KernelResources* described = kernel_describe_target()) {
-        cudaFuncAttributes attributes{};
-        CUDA_CHECK(
-            cudaFuncGetAttributes(&attributes, rmma_kernel<Decoder, Schedule, E, Latency, AddSums>));
+        // One read per kernel instance and device (a static per template instantiation: bounded by
+        // the instances, not by the calls): the cost model describes up to 20 schedules a call.
+        static PerDevice<cudaFuncAttributes> kept;
+        const cudaFuncAttributes& attributes = kept.get([](int) {
+            cudaFuncAttributes a{};
+            CUDA_CHECK(
+                cudaFuncGetAttributes(&a, rmma_kernel<Decoder, Schedule, E, Latency, AddSums>));
+            return a;
+        });
         describe_kernel(*described, attributes, dim3(grid.x, grid.y, Schedule::kCluster),
                         Schedule::kThreads, smem, Latency);
         return;

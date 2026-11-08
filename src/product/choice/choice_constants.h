@@ -6,28 +6,30 @@
 // Speed. A decode step of C rows at context n takes
 //   t0 + (W(C) + C n b_kv k_kv + 2 C s + C min(n, window) b_ring) / (eta_dram BW)
 //      + C 2 P / (eta_compute peak_s8) f_route
-// and a prefill of n tokens takes n 2 P / (eta_prefill share peak_route) + F_att(n) / (eta_attention
-// peak_bf16) seconds (choice.cpp attention_seconds, linear_prefill): W(C) the weights C rows read
-// (an MoE's routed experts as concurrent rows, routed independently, add them: DECISIONS 65),
-// b_kv the full layers' KV bytes a token, s a lane's recurrent state (read and written), b_ring a
-// sliding ring's bytes a token, P the active parameters (plan_facts.cpp: the layers a token runs
-// and the output head), BW the board's DRAM rate, peak the generation row's tensor rate times SMs
-// times the reference clock (core/generation.h), F_att(n) the attention flops of the prompt over
-// itself (full layers over every earlier token, sliding ones over the window), share an MoE chunk's
-// share of the saturated rate (kMoeChunkShare; 1 for a dense model). k_kv and f_route are what a KV
-// codec's read and the exact route cost on a generation beyond their bytes and flops.
+// and a prefill of n tokens takes n 2 P / (eta_prefill share peak_route) + F_att(n) /
+// (eta_attention peak_bf16) seconds (choice.cpp attention_seconds, linear_prefill): W(C) the
+// weights C rows read (an MoE's routed experts as concurrent rows, routed independently, add them:
+// DECISIONS 65), b_kv the full layers' KV bytes a token, s a lane's recurrent state (read and
+// written), b_ring a sliding ring's bytes a token, P the active parameters (plan_facts.cpp: the
+// layers a token runs and the output head), BW the board's DRAM rate, peak the generation row's
+// tensor rate times SMs times the reference clock (core/generation.h), F_att(n) the attention flops
+// of the prompt over itself (full layers over every earlier token, sliding ones over the window),
+// share an MoE chunk's share of the saturated rate (kMoeChunkShare; 1 for a dense model). k_kv and
+// f_route are what a KV codec's read and the exact route cost on a generation beyond their bytes
+// and flops.
 //
 // Fitted (a one-off fit, 2026-10-23) on 49 decode and 15 prefill points of Qwen3.5-9B
 // Q4_K_M, Qwen3.8-27B UD-IQ3_XXS / UD-Q4_K_XL and Qwen3.6-35B-A3B UD-IQ3_XXS / UD-Q4_K_M on the
 // RTX 2080 Ti, 4070 Ti, 4090 and 5070 Ti (run_calib.sh, run_sw.sh, docs/performance/runs):
 // decode 5.2 % rms (worst 15.5 %). The prefill: refitted 2026-10-27 with its attention term
 // (tools/fits/prefill/fit_prefill.py on tools/fits/data/prefill/rows.json: 82 points, Qwen3.5
-// 9B, Qwen3.8 27B, Gemma 4 12B / 26B-A4B / 31B, Qwen3.6 35B-A3B at ~2K / 7K / 21K-token prompts on the
-// RTX 2080 Ti, 3060, 4060 Ti, 4070 Ti, 4090, 5070 Ti, 5090, and the 22K points of
-// tests/fixtures/choice/speed_measured.json): from 7K tokens on, dense 6.4 % rms (worst 18.7 %), MoE
-// 8.3 % (18.9 %); a request's fixed time (10-190 ms: HTTP, a decode step) is not modeled, so at 2K the
-// estimate runs up to 30 % above a measured prompt rate. The Quadro GV100 (Volta) is left out: its
-// Gemma 4 attention (heads of 512) runs 4 times slower than its Qwen one, the two disagree.
+// 9B, Qwen3.8 27B, Gemma 4 12B / 26B-A4B / 31B, Qwen3.6 35B-A3B at ~2K / 7K / 21K-token prompts on
+// the RTX 2080 Ti, 3060, 4060 Ti, 4070 Ti, 4090, 5070 Ti, 5090, and the 22K points of
+// tests/fixtures/choice/speed_measured.json): from 7K tokens on, dense 6.4 % rms (worst 18.7 %),
+// MoE 8.3 % (18.9 %); a request's fixed time (10-190 ms: HTTP, a decode step) is not modeled, so at
+// 2K the estimate runs up to 30 % above a measured prompt rate. The Quadro GV100 (Volta) is left
+// out: its Gemma 4 attention (heads of 512) runs 4 times slower than its Qwen one, the two
+// disagree.
 //
 // Accuracy. KLD against the exact reference (--activations exact, BF16 KV, FP32 state) on the
 // fixed corpus (ninferno-perplexity --quick, eval/corpora/perplexity-1m), one term per switch;
@@ -36,12 +38,17 @@
 // quantization's own term adds on top (its combination with them is not measured).
 //
 // The trade. One number, kAccuracyWeight: a configuration's worth is -ln(T) - lambda KLD, T the
-// seconds of a typical request (kRequestPrompt tokens in, kRequestAnswer out). lambda 25 makes
-// 0.001 KLD worth 2.5 % of the request's time: where two configurations cost about the same, the
-// more accurate wins; where one is much faster, it wins. The exact route (0.0040 KLD better than
-// the product default on 9B) thus wins only where it costs under about 11 % of a request's time
-// (it costs 26 % on the RTX 4070 Ti, 38 % on the 5070 Ti at 2048 + 512 tokens). At lambda 50 the
-// 4070 Ti's two were within 0.01 of each other: no clear "about the same".
+// seconds of the request mix (DECISIONS 73): the geometric mean of a short request (kRequestPrompt
+// tokens in, kRequestAnswer out) and a long one (the asked context less the answer, up to
+// kLongPrompt, in), weighted by the benchmark's request counts (kMixShortRequests,
+// kMixLongRequests). Pricing the short request alone put the decode at a depth of 2304 tokens
+// whatever context the user asked, and the KV and state codecs, which cost bytes in proportion to
+// the depth, lost to BF16 where an asked 32K context made them win (#507). lambda 25 makes 0.001
+// KLD worth 2.5 % of the request's time: where two configurations cost about the same, the more
+// accurate wins; where one is much faster, it wins. The exact route (0.0040 KLD better than the
+// product default on 9B) thus wins only where it costs under about 11 % of a request's time (it
+// costs 26 % on the RTX 4070 Ti, 38 % on the 5070 Ti at 2048 + 512 tokens). At lambda 50 the 4070
+// Ti's two were within 0.01 of each other: no clear "about the same".
 
 #include "core/cost_constants.h"
 #include "ninferno/types.h"
@@ -900,8 +907,17 @@ inline constexpr QuantKldPoint kQuantKld[] = {
 // ---- The trade.
 
 inline constexpr double kAccuracyWeight      = 25.0; // lambda: 0.001 KLD = 2.5 % of a request's time
-inline constexpr std::uint32_t kRequestPrompt = 2048;
-inline constexpr std::uint32_t kRequestAnswer = 512;
+inline constexpr std::uint32_t kRequestPrompt = 2048; // the short request: a chat
+inline constexpr std::uint32_t kRequestAnswer = 512;  // the answer of either request
+// The request mix (DECISIONS 73; a convention from the published benchmark, not Fitted): the worth
+// weighs the short request's ln(T) by the number of short chats the benchmark sends (20 prompts,
+// docs/performance/methodology.md) and the long request's by its long prompts (6, of about 24K
+// tokens: tools/bench/perf_matrix.py). The long request is a prompt of the context asked less the
+// answer, up to the benchmark's 24K (kLongPrompt); none where the ask is no longer than the short
+// one.
+inline constexpr double kMixShortRequests  = 20;
+inline constexpr double kMixLongRequests   = 6;
+inline constexpr std::uint32_t kLongPrompt = 24576;
 // No fixed time per request: a mixed workload (8 sampled example tasks, 96-512 answer tokens) left
 // 0.135 s a request unexplained on the RTX 4090's host and none on the 4070 Ti's (with it the 4070
 // Ti's estimates went from +3 % to +8 %): it is the host's (launch and HTTP latency), which no GPU

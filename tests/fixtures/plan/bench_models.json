@@ -39,6 +39,45 @@
   "weight_bytes": 5021827072,
   "window": 0
  },
+ "ggml-org/gpt-oss-20b-GGUF": {
+  "architecture": "gpt-oss",
+  "ffn_active": 11520,
+  "full_key_dim": 64,
+  "full_kv_heads_total": 96,
+  "full_layers": 12,
+  "full_value_dim": 64,
+  "hidden": 2880,
+  "model_type": "moe_decoder",
+  "native_context": 131072,
+  "params": 20905574400.0,
+  "recurrent_conv_bytes": 0,
+  "recurrent_layers": 0,
+  "recurrent_state_elements": 0,
+  "shape": {
+   "active_params": 3604930560.0,
+   "base_model": "",
+   "builtin_mtp": false,
+   "experts": 32,
+   "experts_per_token": 4,
+   "hidden_size": 2880,
+   "num_hidden_layers": 24,
+   "routed_expert_params": 19110297600.0,
+   "vocab_size": 201088,
+   "weight_formats": [
+    "fp32",
+    "mxfp4",
+    "q8_g32_fp16"
+   ]
+  },
+  "sliding_key_dim": 64,
+  "sliding_kv_heads_total": 96,
+  "sliding_layers": 12,
+  "sliding_value_dim": 64,
+  "vocab": 201088,
+  "weight_basis": "gguf_tensors",
+  "weight_bytes": 12096558336,
+  "window": 128
+ },
  "openai/gpt-oss-20b": {
   "architecture": "GptOssForCausalLM",
   "ffn_active": 11520,
