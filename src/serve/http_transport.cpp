@@ -101,8 +101,8 @@ void answer_overloaded_connection(socket_t socket, const std::function<HealthRep
         if (got > 0) { peeked = static_cast<std::size_t>(got); }
     }
     const std::string_view line(head.data(), peeked);
-    const bool is_health = line.starts_with("GET /health") && line.size() > 11 &&
-                           (line[11] == ' ' || line[11] == '?');
+    const bool is_health =
+        line.starts_with("GET /health") && line.size() > 11 && (line[11] == ' ' || line[11] == '?');
     std::string status_line;
     std::string body;
     if (is_health) {
@@ -111,12 +111,13 @@ void answer_overloaded_connection(socket_t socket, const std::function<HealthRep
         body                    = reply.body;
     } else {
         status_line = "503 Service Unavailable";
-        body        = R"({"error":{"message":"the server has no free connection worker; retry shortly",)"
-                      R"("type":"server_error","code":"server_busy"}})";
+        body = R"({"error":{"message":"the server has no free connection worker; retry shortly",)"
+               R"("type":"server_error","code":"server_busy"}})";
     }
     std::string answer = "HTTP/1.1 " + status_line + "\r\nContent-Type: application/json\r\n";
     if (status_line[0] != '2') { answer += "Retry-After: 5\r\n"; }
-    answer += "Connection: close\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
+    answer +=
+        "Connection: close\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
     // The socket is fresh: the answer fits its send buffer, and a full one drops it.
     (void)::send(socket, answer.data(), answer.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
 #else

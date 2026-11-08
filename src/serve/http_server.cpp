@@ -394,8 +394,9 @@ HttpServer::HttpServer(ServeOptions options, std::shared_ptr<spdlog::logger> log
     server_.set_tcp_nodelay(true);
     server_.set_socket_options(configure_http_server_socket);
     server_.set_payload_max_length(options_.max_request_bytes);
-    server_.set_overload_handler(
-        [this](socket_t socket) { answer_overloaded_connection(socket, [this] { return health_reply(); }); });
+    server_.set_overload_handler([this](socket_t socket) {
+        answer_overloaded_connection(socket, [this] { return health_reply(); });
+    });
     server_.set_request_body_min_rate(
         static_cast<std::size_t>(options_.request_body_min_kib_per_sec) << 10,
         static_cast<time_t>(kRequestBodyRateWindow.count()));
@@ -404,10 +405,10 @@ HttpServer::HttpServer(ServeOptions options, std::shared_ptr<spdlog::logger> log
 
 HealthReply HttpServer::health_reply() const {
     const bool available = service_ != nullptr && service_->is_available();
-    const char* status   = !available             ? "unavailable"
-                           : draining_.load()     ? "draining"
-                           : stalled_.load()      ? "stalled"
-                                                  : "ok";
+    const char* status   = !available         ? "unavailable"
+                           : draining_.load() ? "draining"
+                           : stalled_.load()  ? "stalled"
+                                              : "ok";
     nlohmann::json body{{"status", status}, {"active_requests", active_requests_.load()}};
     if (service_ != nullptr) {
         const ninferno::RuntimeStats stats = service_->runtime_stats();

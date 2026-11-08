@@ -334,8 +334,8 @@ int test_successor_binds_over_time_wait() {
 // occupy every worker of the planned pool and more; one real request must still be answered.
 int test_worker_plan_answers_every_connection() {
     const ninferno::serve::HttpWorkerPlan plan = ninferno::serve::plan_http_workers(1, 1);
-    int failures = check(plan.threads >= 2 && plan.max_queued >= 8,
-                         "HTTP worker plan does not queue the connections it was sized for");
+    int failures                               = check(plan.threads >= 2 && plan.max_queued >= 8,
+                                                       "HTTP worker plan does not queue the connections it was sized for");
 
     httplib::Server server;
     server.new_task_queue = [plan] {
@@ -560,9 +560,9 @@ int test_slow_request_body_is_cut_off() {
                 if (fd >= 0) { ::close(fd); }
                 return outcome;
             }
-            const auto start       = std::chrono::steady_clock::now();
-            const std::string head = "POST /echo HTTP/1.1\r\nHost: 127.0.0.1\r\n" +
-                                     framing + "\r\n\r\n" + prefix;
+            const auto start = std::chrono::steady_clock::now();
+            const std::string head =
+                "POST /echo HTTP/1.1\r\nHost: 127.0.0.1\r\n" + framing + "\r\n\r\n" + prefix;
             (void)::send(fd, head.data(), head.size(), MSG_NOSIGNAL);
             for (const auto& [bytes, pause] : pieces) {
                 const std::string piece(bytes, fill);
@@ -655,8 +655,7 @@ int test_overloaded_pool_still_answers() {
     const auto get = [&](const std::string& path) {
         const int fd = connect_to();
         if (fd < 0) { return std::string(); }
-        const std::string request =
-            "GET " + path + " HTTP/1.1\r\nHost: x\r\n\r\n";
+        const std::string request = "GET " + path + " HTTP/1.1\r\nHost: x\r\n\r\n";
         (void)::send(fd, request.data(), request.size(), MSG_NOSIGNAL);
         std::string received;
         char buffer[512];
@@ -672,8 +671,8 @@ int test_overloaded_pool_still_answers() {
         silent.push_back(connect_to());
         std::this_thread::sleep_for(100ms);
     }
-    int failures = 0;
-    const auto start = std::chrono::steady_clock::now();
+    int failures             = 0;
+    const auto start         = std::chrono::steady_clock::now();
     const std::string health = get("/health");
     failures += check(health.find(" 200 ") != std::string::npos &&
                           health.find(R"({"status":"ok"})") != std::string::npos,
