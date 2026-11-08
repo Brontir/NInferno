@@ -21,11 +21,12 @@ namespace {
 
 constexpr int kVecWarps = 4;
 
-// Resident CTAs per SM the kernel is bounded to, as __launch_bounds__' minimum: the registers of the
+// Resident CTAs per SM the kernel is bounded to, as __launch_bounds__' minimum (0: no bound, the
+// compiler's own choice; any bound at all makes it spend more registers on the other instances): the registers of the
 // plain instance of 3 columns (72 on sm_86 / sm_89: 7 CTAs of 128 threads on a 64K-register SM).
 // The 4-column instance, left alone, takes 85 (5 CTAs), and its grid, sized to the resident CTAs,
 // then needs a second round on a shape of 480..512 row pairs.
-constexpr int kVecMinBlocks(int columns) { return columns == 4 ? 7 : 1; }
+constexpr int kVecMinBlocks(int columns) { return columns == 4 ? 7 : 0; }
 
 struct Slice {
     int w[8];
