@@ -174,10 +174,13 @@ public:
     // complete calls before its last open marker are then the turn's calls, and that last,
     // unfinished call's markup is dropped (diagnostics.cut_calls_dropped).
     //
-    // `stop_matched`: a caller's stop string ended the output. The stop may have swallowed only a
-    // call's closing markup, so a call that is complete up to it is still closed (as when the stop
-    // token ends it); `cut_off` then drops what stays unfinished.
-    [[nodiscard]] Terminal finish(bool cut_off = false, bool stop_matched = false);
+    // `stop_text`: a caller's stop string ended the output of a forced call (the answer is calls
+    // only). The stop may have swallowed only the end of a call, so a call that is complete up to
+    // it is closed and kept; everything else of the region that is not a complete call is dropped
+    // and counted (diagnostics.cut_calls_dropped), never returned as text. For a syntax without a
+    // close marker the complete calls of the region go with it.
+    [[nodiscard]] Terminal finish(bool cut_off = false,
+                                  std::optional<std::string_view> stop_text = std::nullopt);
 
 private:
     std::shared_ptr<const ToolCallOutputContract> contract_;

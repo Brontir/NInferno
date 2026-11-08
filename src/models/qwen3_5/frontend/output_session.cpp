@@ -1000,10 +1000,13 @@ PublishedOutput OutputSession::commit_preview() {
         // unfinished as a call the limit cut off, and the forced answer is never the call's markup.
         const bool forced_stop = impl_->finish_reason == FinishReason::StopString &&
                                  impl_->tool_contract && impl_->tool_contract->forced_calls;
+        const std::optional<std::string> stop_text =
+            forced_stop ? std::optional<std::string>(matched_stop_string().value_or(""))
+                        : std::nullopt;
         chat::ToolCallOutputDecoder::Terminal terminal = impl_->tool_call_output.finish(
             impl_->finish_reason == FinishReason::OutputLimit ||
                 impl_->finish_reason == FinishReason::ContextCapacity || forced_stop,
-            forced_stop);
+            stop_text ? std::optional<std::string_view>(*stop_text) : std::nullopt);
         impl_->tool_calls                              = std::move(terminal.tool_calls);
         impl_->tool_call_parse                         = terminal.diagnostics;
         // The model ended the turn with its stop token inside a thinking span it never closed, so

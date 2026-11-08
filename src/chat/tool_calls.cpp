@@ -1101,7 +1101,22 @@ std::string ToolCallOutputDecoder::feed(std::string_view text) {
     return visible;
 }
 
-ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool cut_off, bool stop_matched) {
+namespace {
+
+// Whether a stop string that ended a call region swallowed (the start of) `closer`: its text, past
+// leading whitespace, shares at least three bytes ("</f") with the closer's start. A shorter or
+// different stop ("<parameter", "\n<") also matches between a call's parts, where closing would
+// publish a call with parameters missing.
+bool stop_swallows(std::string_view stop, std::string_view closer) {
+    while (!stop.empty() && is_format_whitespace(stop.front())) { stop.remove_prefix(1); }
+    const std::size_t shared = std::min(stop.size(), closer.size());
+    return shared >= 3 && stop.substr(0, shared) == closer.substr(0, shared);
+}
+
+} // namespace
+
+ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool cut_off,
+                                                              std::optional<std::string_view> stop_text) {
     if (finished_) { throw std::logic_error("tool-call output decoder is already finished"); }
     finished_ = true;
     if (!contract_) { return {}; }
@@ -1119,7 +1134,8 @@ ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool cut_off, bool
     // Qwen XML: the stop token ended the turn after the last call's closed parameter, before its
     // </function> (vLLM closes such a call at the end of the stream too). The call is closed; one
     // the output limit cut off is not, since more of its parameters may have followed.
-    if ((!cut_off || stop_matched) && saw_tool_marker_ &&
+    // A stop string can end the call the same way when it matches in the closing markup alone.
+    if ((!cut_off || (stop_text && stop_swallows(*stop_text, kFunctionClose))) && saw_tool_marker_ &&
         contract_->format == ToolCallFormat::QwenXml) {
         std::string closed = rtrim_format_whitespace(tool_region_);
         if (closed.ends_with(kParamClose)) {
@@ -1129,6 +1145,35 @@ ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool cut_off, bool
             }
             ParsedToolCallOutput completed =
                 syntax_->parse(closed, max_tool_name_length_, *contract_);
+            if (completed.is_tool_call_response && !completed.tool_calls.empty()) {
+                held_.clear();
+                tool_region_.clear();
+                completed.diagnostics.closed_calls = 1;
+                return Terminal{.content     = std::move(completed.content),
+                                .tool_calls  = std::move(completed.tool_calls),
+                                .diagnostics = completed.diagnostics};
+            }
+        }
+    }
+    // A forced call's stop string that swallowed only the markup closing a call whose body is
+    // complete: the call is closed and kept (Qwen's </tool_call> after its </function>, every
+    // other syntax's own close marker).
+    if (stop_text && saw_tool_marker_) {
+        std::string closed = rtrim_format_whitespace(tool_region_);
+        bool closes        = false;
+        if (contract_->format == ToolCallFormat::QwenXml) {
+            if (closed.ends_with(kFunctionClose) && stop_swallows(*stop_text, kToolClose) &&
+                closed.find(kToolOpen) != std::string::npos) {
+                closed.append("\n").append(kToolClose);
+                closes = true;
+            }
+        } else if (!syntax_->close().empty() && stop_swallows(*stop_text, syntax_->close()) &&
+                   !closed.ends_with(syntax_->close())) {
+            closed.append(syntax_->close());
+            closes = true;
+        }
+        if (closes) {
+            ParsedToolCallOutput completed = syntax_->parse(closed, max_tool_name_length_, *contract_);
             if (completed.is_tool_call_response && !completed.tool_calls.empty()) {
                 held_.clear();
                 tool_region_.clear();
@@ -1195,6 +1240,18 @@ ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool cut_off, bool
                                 .diagnostics = complete.diagnostics};
             }
         }
+    }
+
+    // A forced call's stop string left a region that is no complete call (a syntax without a close
+    // marker, or a region the cut above could not place): its markup is not the answer, so it is
+    // dropped and counted, never returned as text.
+    if (stop_text && saw_tool_marker_) {
+        held_.clear();
+        tool_region_.clear();
+        ToolCallParseDiagnostics diagnostics = parsed.diagnostics;
+        diagnostics.fallback_reason          = ToolCallParseFallbackReason::None;
+        diagnostics.cut_calls_dropped        = 1;
+        return Terminal{.content = {}, .tool_calls = {}, .diagnostics = diagnostics};
     }
 
     std::string tail = std::move(held_);
