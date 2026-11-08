@@ -8,8 +8,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "bench"))
 import regret_collect as collect
 import selection_regret as regret
 
-HEAD = "format,compute,epilogue,n,k,T,route,median_us\n"
-SELECTED_HEAD = "format,compute,epilogue,n,k,T,asked,selected\n"
+HEAD = "format,compute,epilogue,n,k,T,route,median_us,run,device,protocol,calls,samples\n"
+SELECTED_HEAD = "format,compute,epilogue,n,k,T,asked,selected,run,device\n"
+
+
+def stamp(text, run, sweep):
+    """Rows as route_tune writes them: each names its run and board, a sweep row its protocol."""
+    tail = f",{run},ga106:28sm" + (",flushed,1,15" if sweep else "")
+    return "".join(line + tail + "\n" for line in text.splitlines() if line)
 
 
 class Collect(unittest.TestCase):
@@ -26,8 +32,10 @@ class Collect(unittest.TestCase):
         return path
 
     def run_collect(self, passes, selected, qualified="generic linear and route class tests"):
-        sel = [self.write(f"sel{i}.csv", SELECTED_HEAD + selected) for i in range(len(passes))]
-        routes = [self.write(f"p{i}.csv", HEAD + text) for i, text in enumerate(passes, 1)]
+        sel = [self.write(f"sel{i}.csv", SELECTED_HEAD + stamp(selected, f"r{i}", False))
+               for i in range(1, len(passes) + 1)]
+        routes = [self.write(f"p{i}.csv", HEAD + stamp(text, f"r{i}", True))
+                  for i, text in enumerate(passes, 1)]
         return collect.collect(sel, routes, "held-board", "held-model", "rev", "build", "both",
                                ["fit-board"], ["fit-model"], qualified)
 
@@ -88,17 +96,19 @@ class Collect(unittest.TestCase):
 
     def test_passes_with_different_selections_refused(self):
         rows = "q8,a16,store,64,64,1,rmma.a,5\nq8,a16,store,64,64,1,rmma.b,6\n"
-        a = self.write("sa.csv", SELECTED_HEAD + "q8,a16,store,64,64,1,rmma.a,rmma.a\n")
-        b = self.write("sb.csv", SELECTED_HEAD + "q8,a16,store,64,64,1,rmma.a,rmma.b\n")
+        a = self.write("sa.csv", SELECTED_HEAD + stamp("q8,a16,store,64,64,1,rmma.a,rmma.a", "r1",
+                                                       False))
+        b = self.write("sb.csv", SELECTED_HEAD + stamp("q8,a16,store,64,64,1,rmma.a,rmma.b", "r2",
+                                                       False))
+        a2 = self.write("sa2.csv", SELECTED_HEAD + stamp("q8,a16,store,64,64,1,rmma.a,rmma.a", "r2",
+                                                         False))
+        p1 = self.write("p1.csv", HEAD + stamp(rows, "r1", True))
+        p2 = self.write("p2.csv", HEAD + stamp(rows, "r2", True))
         with self.assertRaises(ValueError):
-            collect.collect([a, b], [self.write("p1.csv", HEAD + rows)], "b", "m", "r", "i",
-                            "both", [], [], "q")
+            collect.collect([a, b], [p1, p2], "b", "m", "r", "i", "both", [], [], "q")
         with self.assertRaises(ValueError):  # one selection for two passes
-            collect.collect([a], [self.write("p1.csv", HEAD + rows), self.write("p2.csv", HEAD + rows)],
-                            "b", "m", "r", "i", "both", [], [], "q")
-        doc = collect.collect([a, a], [self.write("p1.csv", HEAD + rows),
-                                       self.write("p2.csv", HEAD + rows)],
-                              "b", "m", "r", "i", "both", [], [], "q")
+            collect.collect([a], [p1, p2], "b", "m", "r", "i", "both", [], [], "q")
+        doc = collect.collect([a, a2], [p1, p2], "b", "m", "r", "i", "both", [], [], "q")
         self.assertIn("A16Only", doc["cases"][0]["numerical_contract"])
         self.assertIn("speed route profile", doc["cases"][0]["workload"])
 
@@ -151,11 +161,13 @@ class Collect(unittest.TestCase):
             self.collect_new([self.new_pass(1, "x-1", rows),
                               self.new_pass(2, "x-2", rows, device="ad106:34sm")])
 
-    def test_old_files_report_an_unknown_protocol(self):
-        rows = "q8,a16,store,64,64,4,rmma.a,5\n"
-        doc = self.run_collect([rows], "q8,a16,store,64,64,4,rmma.a,rmma.a\n")
-        self.assertIn("timing protocol unknown", doc["cases"][0]["workload"])
-        self.assertNotIn("L2 flushed", doc["cases"][0]["workload"])
+    def test_files_without_provenance_refused(self):
+        old_sel = self.write("old_sel.csv", "format,compute,epilogue,n,k,T,asked,selected\n"
+                                            "q8,a16,store,64,64,4,rmma.a,rmma.a\n")
+        old_routes = self.write("old_p.csv", "format,compute,epilogue,n,k,T,route,median_us\n"
+                                             "q8,a16,store,64,64,4,rmma.a,5\n")
+        with self.assertRaisesRegex(ValueError, "missing columns"):
+            collect.collect([old_sel], [old_routes], "b", "m", "r", "i", "both", [], [], "q")
 
     def test_short_row_exits_2(self):
         sel = self.write("sel.csv", SELECTED_HEAD + "q8,a16\n")

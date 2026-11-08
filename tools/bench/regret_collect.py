@@ -15,8 +15,8 @@ on this board; the statement is copied into the document. Without it every candi
 Each row names its run, board and timing protocol (#518): a pass's --selected-out and --routes-out
 must come from one run, every file from one board, and a case's passes from one protocol ("copies":
 consecutive calls over weight copies, a decode width under --rotate 1; "flushed": one call after
-the L2 flush), or the files are refused. CSVs written before these columns are accepted with the
-protocol "unknown", never assumed flushed.
+the L2 flush), or the files are refused. A CSV without these columns (written before route_tune
+named them) is refused: its passes could not be told apart.
 """
 import argparse
 import csv
@@ -67,22 +67,25 @@ def case_id(key):
 POLICY = {"a16": "A16Only", "a8": "AllowA8", "a4": "AllowA4"}
 
 
+ROUTE_COLUMNS = KEY + ("route", "median_us", "run", "device", "protocol", "calls", "samples")
+SELECTED_COLUMNS = KEY + ("selected", "run", "device")
+
+
 def identity(path, rows, column):
-    """The one value a file's rows give `column` (its run or board), or None for a file written
-    before route_tune named it."""
+    """The one value a file's rows give `column` (its run or board)."""
     values = {(row.get(column) or "").strip() for row in rows}
-    if values == {""} or not values:
-        return None
+    if not values:
+        raise ValueError(f"{path}: no rows")
     if len(values) != 1 or "" in values:
         raise ValueError(f"{path}: rows from more than one {column} ({', '.join(sorted(values))})")
     return values.pop()
 
 
 def protocol_of(row):
-    """How a row's time was taken: (protocol, calls per sample, samples), or unknown."""
-    protocol = (row.get("protocol") or "").strip()
-    if not protocol:
-        return ("unknown", None, None)
+    """How a row's time was taken: (protocol, calls per sample, samples)."""
+    protocol = row["protocol"].strip()
+    if protocol not in ("copies", "flushed"):
+        raise ValueError(f"unknown timing protocol {protocol!r}")
     return (protocol, int(row["calls"]), int(row["samples"]))
 
 
@@ -91,16 +94,14 @@ def describe(protocol):
     if kind == "copies":
         return (f"{calls} consecutive calls over weight copies (2x L2 or 128 MiB) between one event "
                 f"pair, median of {samples} samples")
-    if kind == "flushed":
-        return f"one call after an L2 flush, median of {samples} samples"
-    return "timing protocol unknown (CSV without route_tune's protocol columns)"
+    return f"one call after an L2 flush, median of {samples} samples"
 
 
 def read_selections(paths):
     selected = None
     for path in paths:
         run = {}
-        for row in read_rows(path, KEY + ("selected",)):
+        for row in read_rows(path, SELECTED_COLUMNS):
             key = key_of(row)
             route = row["selected"].strip()
             if key in run and run[key] != route:
@@ -128,20 +129,17 @@ def collect(selected_csvs, pass_csvs, board, model, revision, build_id, holdout,
     boards = set()
     runs = set()
     for i, (sel_path, path) in enumerate(zip(selected_csvs, pass_csvs), 1):
-        rows = read_rows(path, KEY + ("route", "median_us"))
-        sel_rows = read_rows(sel_path, KEY + ("selected",))
+        rows = read_rows(path, ROUTE_COLUMNS)
+        sel_rows = read_rows(sel_path, SELECTED_COLUMNS)
         run, sel_run = identity(path, rows, "run"), identity(sel_path, sel_rows, "run")
-        # A pass's selection and its sweep are one route_tune run; a file without the column
-        # (written before it) cannot be paired by it.
+        # A pass's selection and its sweep are one route_tune run.
         if run != sel_run:
-            raise ValueError(f"{sel_path} and {path} come from different runs "
-                             f"({sel_run or 'unnamed'}, {run or 'unnamed'})")
+            raise ValueError(f"{sel_path} and {path} come from different runs ({sel_run}, {run})")
         # The same run given twice is one pass, not two that agree.
-        if run is not None and run in runs:
+        if run in runs:
             raise ValueError(f"{path}: run {run} is given more than once")
         runs.add(run)
-        boards |= {b for b in (identity(path, rows, "device"),
-                               identity(sel_path, sel_rows, "device")) if b}
+        boards |= {identity(path, rows, "device"), identity(sel_path, sel_rows, "device")}
         timed = {}
         for row in rows:
             us = float(row["median_us"])
@@ -185,7 +183,7 @@ def collect(selected_csvs, pass_csvs, board, model, revision, build_id, holdout,
             "id": case_id(key), "board": board, "model": model,
             "workload": f"route_tune {fmt} {compute} {epilogue} n={n} k={k} T={t}, policy "
                         f"{POLICY.get(compute, compute)}, speed route profile, " +
-                        describe(next(iter(protocols.get(key, {("unknown", None, None): 0})))),
+                        (describe(next(iter(protocols[key]))) if key in protocols else "no route timed"),
             "numerical_contract": f"{compute} activations under {POLICY.get(compute, compute)}",
             "selected": selected[key], "candidates": candidates,
         })
@@ -198,8 +196,7 @@ def collect(selected_csvs, pass_csvs, board, model, revision, build_id, holdout,
     }
     if qualified:
         document["qualification"] = qualified
-    if boards:
-        document["device"] = boards.pop()  # route_tune's device class id, as every row named it
+    document["device"] = boards.pop()  # route_tune's device class id, as every row named it
     return document
 
 
