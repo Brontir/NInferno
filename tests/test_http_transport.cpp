@@ -583,9 +583,9 @@ int test_slow_request_body_is_cut_off() {
             }
             outcome.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - start);
-        outcome.status = received.substr(0, received.find("\r\n"));
-        ::close(fd);
-        return outcome;
+            outcome.status = received.substr(0, received.find("\r\n"));
+            ::close(fd);
+            return outcome;
         };
 
     int failures = 0;
