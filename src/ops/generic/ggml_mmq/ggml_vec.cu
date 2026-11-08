@@ -24,14 +24,15 @@ constexpr int kVecWarps = 4;
 // The runtime-K plain instance of 4 columns has a twin bounded to 7 resident CTAs per SM
 // (__launch_bounds__' minimum), the registers of 3 columns: unbounded it takes 85 registers where 3
 // take 72 (sm_86 / sm_89, CUDA 13), which is 5 CTAs of 128 threads on a 64K-register SM instead of
-// 7. The grid is sized to the resident CTAs, so the launch takes the twin when that saves a round of
-// row groups (480..512 groups on an 82-SM card: 2 rounds against 1) and the instance as it is
+// 7. The grid is sized to the resident CTAs, so the launch takes the twin when that saves a round
+// of row groups (480..512 groups on an 82-SM card: 2 rounds against 1) and the instance as it is
 // otherwise (1024 groups on 128 SMs: 2 rounds either way, the tail longer with more slots). The
 // other instances have no twin: a bound makes the compiler spend more registers on every instance
 // it is given to (110 for 3 columns), and the unrolled-K and gated ones spill under 72.
 constexpr bool kVecHasBoundedTwin(int columns, int ks, bool gated) {
     return columns == 4 && ks == 0 && !gated;
 }
+
 constexpr int kVecBoundedBlocks = 7;
 
 struct Slice {
