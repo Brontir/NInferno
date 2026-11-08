@@ -440,7 +440,10 @@ public:
             // would only add planning work.
             std::uint32_t best_reuse = 0;
             for (const Candidate& candidate : candidates) {
-                best_reuse = std::max(best_reuse, candidate.plan.summary().reusable_prompt_tokens);
+                if (candidate.plan) {
+                    best_reuse =
+                        std::max(best_reuse, candidate.plan->summary().reusable_prompt_tokens);
+                }
             }
             std::erase_if(
                 screens, [&](const TruncatedScreen& screen) { return screen.bound <= best_reuse; });
