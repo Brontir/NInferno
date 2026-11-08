@@ -1,9 +1,10 @@
 // The W4A8 tile choice of Blackwell's Q4_K and Q6_K prefill (DECISIONS 75, core/w4a8_tiles.h):
 // heuristic_w4a8 takes the 64 x 64 tile exactly where the shared function says its tiles cost less
-// (or the grid is under half the SMs, the rule that predates it), over 129..512 tokens on a 70-SM
-// and a 170-SM board and the shapes of Qwen3.5 9B's linears; and the product's estimate
-// (product/choice prefill_linears_seconds) prices the tile the kernel runs: its cost ratio
-// between T tokens and 128 is the kernel's tile work ratio. Host only (substituted DeviceClass).
+// (or the grid is under half the SMs, the rule that predates it), over 129..512 tokens on 70-, 36-
+// and 170-SM boards and the shapes of Qwen3.5 9B's linears; and the product's estimate
+// (product/choice prefill_linears_seconds, on the boards that prefill on the W4A8 tiles) prices the
+// tile the kernel runs: its cost ratio between T tokens and 128 is the kernel's tile work ratio.
+// Host only (substituted DeviceClass).
 #include "ops/quantized_weight.h"
 
 #include "core/device_class.h"
@@ -43,10 +44,12 @@ struct TestBoard {
     std::uint32_t pci;
     int sms;
     double clock_hz, dram;
+    bool estimated; // the board prefills on the W4A8 tiles (the 5090 takes ggml's matrix kernel)
 };
 
-constexpr TestBoard kBoards[] = {{"RTX 5070 Ti", 0x2C05, 70, 2.452e9, 896e9},
-                                 {"RTX 5090", 0x2B85, 170, 2.407e9, 1792e9}};
+constexpr TestBoard kBoards[] = {{"RTX 5070 Ti", 0x2C05, 70, 2.452e9, 896e9, true},
+                                 {"RTX 5060 Ti", 0x2D04, 36, 2.572e9, 448e9, true},
+                                 {"RTX 5090", 0x2B85, 170, 2.407e9, 1792e9, false}};
 
 struct Shape {
     generic::Epilogue epilogue;
@@ -101,7 +104,7 @@ int main() {
                 };
                 const double base_work = kernel_work(128);
                 const double base_cost = ch::prefill_linears_seconds(model, card, quant, 128);
-                check(base_cost > 0, std::string(b.name) + ": the estimate prices 128 tokens");
+                check(!b.estimated || base_cost > 0, std::string(b.name) + ": the estimate prices 128 tokens");
                 for (int t = 129; t <= 512; ++t) {
                     const int pick               = generic::heuristic_w4a8(problem, w, t);
                     const std::int64_t wide_ctas = rt * ((t + 127) / 128);
