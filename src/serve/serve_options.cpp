@@ -116,8 +116,7 @@ std::string serve_usage_text(const char* argv0) {
            "       --max-request-mib defaults to 384 and is enforced before JSON parsing\n"
            "       --request-body-min-kib-per-sec defaults to " +
            std::to_string(kDefaultRequestBodyMinKibPerSec) +
-           "; a request body arriving slower than that over 10 s is a 408 (0: no limit)
-           "
+           "; a request body arriving slower than that over 10 s is a 408 (0: no limit)\n"
            "       --max-request-messages defaults to " +
            std::to_string(kDefaultMaxRequestMessages) +
            "; a request with more messages (Responses: input Items) is a 400\n"

@@ -561,15 +561,9 @@ int test_slow_request_body_is_cut_off() {
                 return outcome;
             }
             const auto start       = std::chrono::steady_clock::now();
-            const std::string head = "POST /echo HTTP/1.1
-                                     Host : 127.0.0.1 Content -
-                                     Length
-                : " +
-                  std::to_string(length) +
-                  "
-
-                  ";
-                  (void)::send(fd, head.data(), head.size(), MSG_NOSIGNAL);
+            const std::string head = "POST /echo HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: " +
+                                     std::to_string(length) + "\r\n\r\n";
+            (void)::send(fd, head.data(), head.size(), MSG_NOSIGNAL);
             for (const auto& [bytes, pause] : pieces) {
                 const std::string piece(bytes, 'x');
                 if (::send(fd, piece.data(), piece.size(), MSG_NOSIGNAL) < 0) { break; }
@@ -589,8 +583,7 @@ int test_slow_request_body_is_cut_off() {
             }
             outcome.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - start);
-        outcome.status = received.substr(0, received.find("
-"));
+        outcome.status = received.substr(0, received.find("\r\n"));
         ::close(fd);
         return outcome;
         };
