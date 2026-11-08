@@ -145,6 +145,16 @@ std::optional<ChainPrice> separate_chain(std::int32_t n, std::int32_t k, std::in
 // before. One that is two launches (K = 5120 up to 85 columns: the single-weight SIMT kernel twice,
 // 8 rows by 4 columns a CTA) saves none, and the chains differ only in how often the tiles
 // re-request the weights, so the one requesting fewer bytes runs; a tie keeps the fused kernel.
+//
+// This is a narrow override for one schedule (TwoSimtR8C4), not yet a general price: a one-launch
+// schedule's saving, the MMA tile's efficiency and the split-K partials are unpriced, so those keep
+// the fused kernel (the follow-up of #310 prices them; the measured misses are listed there). The
+// separate side is priced only where the shape's table runs the call with a tile the device's MMA
+// takes natively, so the numeric contract of the two calls is the SIMT pair's (A16 sums of the
+// same products) and Volta/Turing keep the fused kernel. A call's summation order already depends
+// on its width in this pair (SIMT up to 85 columns, MMA tiles beyond) and in linear() (the shape's
+// table), so the choice adds a width boundary at 5 columns, not a new kind of width dependence;
+// output exactness is unchanged (the invariant profile keeps the fused kernel: unpriced).
 bool chain_prefers_fused(std::int32_t n, std::int32_t k, std::int32_t tokens) {
     const auto fused    = fused_chain(n, k, tokens);
     const auto separate = separate_chain(n, k, tokens);
