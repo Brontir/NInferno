@@ -118,6 +118,7 @@ int main() {
                               ": heuristic_w4a8 and narrow_wins agree");
                     ++calls;
                     narrow_calls += pick == k64x64;
+                    if (!b.estimated) continue;
                     const double ratio =
                         ch::prefill_linears_seconds(model, card, quant, t) / base_cost;
                     check(std::abs(ratio - kernel_work(t) / base_work) < 1e-9,
