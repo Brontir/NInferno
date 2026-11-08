@@ -212,7 +212,8 @@ struct Profile {
     std::uint32_t context_limit = 0;
     std::vector<DrafterRecord> drafters;
     std::vector<Measurement> measurements;
-    std::vector<std::string> skipped; // configurations the time budget left out
+    // Configurations left out: by the time budget, or refused by the Engine (with its message).
+    std::vector<std::string> skipped;
     std::optional<RuntimeDisable> disabled;
 };
 
