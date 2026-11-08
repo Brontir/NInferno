@@ -157,8 +157,8 @@ int route_tune_main(int argc, char** argv) {
             std::snprintf(hex, sizeof(hex), "%08x%08x", entropy(), entropy());
             return file_key + "-" + hex;
         }();
-        // The board itself, not only its class: two GPUs of one chip and SM count share device.id(),
-        // their UUIDs differ.
+        // The board itself, not only its class: two GPUs of one chip and SM count share
+        // device.id(), their UUIDs differ.
         const std::string device_id =
             device.id() + (uuid_known(device.identity) ? " " + uuid_text(device.identity) : "");
         std::ofstream routes_csv;
