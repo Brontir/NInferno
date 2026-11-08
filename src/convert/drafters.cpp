@@ -1255,6 +1255,11 @@ ManifestState read_manifest_state(const fs::path& artifact) {
             // A variant ("<name>.<variant>") is optional; a drafter itself is retried, whatever
             // quantization its kind gives it.
             if (d.value("name", std::string()).find('.') != std::string::npos) { continue; }
+            // A bundle's drafter whose file changed and was refused by the refresh is lost like a
+            // failed one: only the checkpoint's declaration plans it again.
+            if (status != "attached" && state.bundle_planned && changed_since_attach(d, true)) {
+                state.bundle_failed = true;
+            }
             if (status.starts_with("failed")) {
                 state.failed        = true;
                 state.bundle_failed = state.bundle_planned;

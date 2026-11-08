@@ -697,6 +697,22 @@ void retry_failed_drafter() {
         expect(!state_of("", failed_variant).failed, "a failed variant is not a failure");
     }
     {
+        // A bundle's drafter whose file is gone (or was refused by the refresh) cannot be planned
+        // again without the checkpoint: --with-drafters fails on it (#503 review).
+        const std::string changed =
+            R"({"name": "dflash", "status": "cached", "artifact": "/nowhere/dflash.ninferno",
+                "artifact_id": "00"})";
+        const auto bundle = state_of(declaration, changed);
+        expect(bundle.changed && bundle.bundle_failed && cv::drafters_incomplete(bundle),
+               "a changed drafter of a bundle's plan is lost like a failed one");
+        expect(cv::decide_drafters(cv::Drafters::Require, false, false, bundle, false).kind ==
+                   cv::DrafterActionKind::Fail,
+               "--with-drafters fails on a bundle's changed drafter once the download is gone");
+        const auto registry_plan = state_of("", changed);
+        expect(registry_plan.changed && !registry_plan.bundle_failed,
+               "a registry plan's changed drafter is planned again, not failed");
+    }
+    {
         const std::string lacking = R"({"name": "dflash2", "status": "not in the artifact: x"})";
         const auto checkpoint     = state_of(R"("target": {"gguf_source": false}, )", lacking);
         expect(checkpoint.missing_companion && cv::drafters_incomplete(checkpoint),

@@ -194,7 +194,9 @@ struct ManifestState {
     // The plan is the checkpoint's own declaration (ninferno_speculation.json), which cannot be
     // made again without that download.
     bool bundle_planned = false;
-    bool bundle_failed  = false;      // bundle_planned and a drafter of it failed
+    // bundle_planned and a drafter of it failed, or its file changed since attach (the refresh
+    // keeps a file that no longer passes the checks out)
+    bool bundle_failed = false;
     std::vector<std::string> lineage; // the target's base models the plan matched by
 };
 

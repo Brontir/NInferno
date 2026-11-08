@@ -361,7 +361,8 @@ DrafterAction decide_drafters(Drafters mode, bool gguf, bool download_present,
         // A plan the checkpoint's own declaration made cannot be made again without that
         // download: kept as it is, and a drafter of it that failed fails --with-drafters.
         if (manifest.bundle_failed && mode == Drafters::Require) {
-            return {Kind::Fail, "failed and its download was removed: fetch the model again"};
+            return {Kind::Fail, "failed (or its file no longer passes the checks) and its download "
+                                "was removed: fetch the model again"};
         }
         // A checkpoint's companion the artifact lacks is converted into it, which needs the
         // download too. A GGUF's is missing when its components were named without it: fetching
