@@ -32,6 +32,19 @@
 //                   tile runs 25-35 % slower even in whole waves (RTX 4090, 4080 SUPER); the other
 //                   generations are unmeasured and keep the plain launch
 
+//   mmq_work_tiles  ggml's matrix kernel also instantiates the 80- and 96-column tiles and takes
+//                   the column tile of least work, ceil(columns / J) x (0.43 + 0.57 J / 128), instead
+//                   of the fewest tiles of 16, 32, 64, 128 (core/mmq_columns.h, DECISIONS 74). The
+//                   rule: a tile is a fixed part (its 128 weight rows' decode, the same for every J)
+//                   plus a part in J (the MMA, the y tile's loads), and narrower tiles pay while the
+//                   part in J is large enough that the padding they save outweighs the fixed part
+//                   they repeat. On GA10x the int8 MMA alone is 4096 of a Q4_K tile's 10600 SM-clocks
+//                   a 256-value K step (1024 MMAs of 4096 MACs at 1024 MACs a clock), the measured
+//                   part in J 57 % of it. A generation with a higher MMA rate (ga100: s8 4096) has
+//                   a smaller part in J and a larger fixed share, so fewer widths pay; Ada has the
+//                   GA10x rates but was not run over the widths. A measured preference (RTX 3060,
+//                   3090), not carried by a lent row.
+
 //
 // What a lent row carries (#300): generation_row answers every compute capability, lending the
 // newest (or the oldest) row to one the table does not know, so that the code runs there. Beside
@@ -45,7 +58,7 @@
 //                prefill pays, i8 replaces the q4a8 kernels, board distances) is not carried
 //   fitted       w4a8_eff_scale, a16_cost_scale: route_tune fits of the boards above; not carried
 //                (fitted_route_scales: nullopt), the comparisons they price not made
-//   preference   mmq_candidate, attention_chain: a measured A/B; not carried
+//   preference   mmq_candidate, attention_chain, mmq_work_tiles: a measured A/B; not carried
 //                (mmq_candidate_measured, attention_chain_measured)
 // A generation newer than the table therefore runs the routes every board runs (A16 prefill, the
 // plain attention launch) until a row of its own is added.
@@ -67,6 +80,7 @@ struct GenerationRow {
     double a16_cost_scale  = 1.0;
     bool mmq_candidate     = false;
     bool attention_chain   = false;
+    bool mmq_work_tiles    = false;
 };
 
 inline constexpr GenerationRow kGenerations[] = {
@@ -74,7 +88,7 @@ inline constexpr GenerationRow kGenerations[] = {
     {7, 0, 4, "volta", 1536.0, 0.0, false, 1.0, 1.11, true},
     {7, 5, 9, "turing", 1536.0, 2048.0, false, 1.0, 1.11, true},
     {8, 0, 0, "ga100", 2048.0, 4096.0, true, 0.46, 1.64, false},
-    {8, 1, 8, "ga10x", 512.0, 2048.0, false, 1.0, 1.11, true},
+    {8, 1, 8, "ga10x", 512.0, 2048.0, false, 1.0, 1.11, true, false, true},
     {8, 9, 9, "ada", 512.0, 2048.0, false, 1.0, 1.11, true},
     {9, 0, 9, "hopper", 2048.0, 4096.0, true, 0.46, 1.64, false},
     {10, 0, 9, "gb100", 2048.0, 4096.0, true, 0.46, 1.64, false},
@@ -134,6 +148,12 @@ struct FittedRouteScales {
 // generation of the table's own; a lent row does not carry it (#300).
 [[nodiscard]] constexpr bool mmq_candidate_measured(int major, int minor) noexcept {
     return generation_known(major, minor) && generation_row(major, minor).mmq_candidate;
+}
+
+// Whether ggml's matrix kernel takes the column tile of least work on compute capability
+// major.minor (mmq_work_tiles, a measured preference): only on a generation of the table's own.
+[[nodiscard]] constexpr bool mmq_work_tiles_measured(int major, int minor) noexcept {
+    return generation_known(major, minor) && generation_row(major, minor).mmq_work_tiles;
 }
 
 // The compute capabilities the generic selector's measured rules name (generic_gemm.cpp). A

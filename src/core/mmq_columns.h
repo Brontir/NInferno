@@ -10,12 +10,13 @@
 // a fixed part plus a part in J (DECISIONS 69, 74).
 //
 // Two tables. Everywhere: J = 16, 32, 64, 128 and the fewest tiles, the narrower on a tie (the
-// choice before DECISIONS 74). GA10x (sm_86: RTX 3060 / 3090, A10), where DECISIONS 74's grid
-// measured every width: J = 16, 32, 64, 80, 96, 128 and the least work ceil(columns / J) x
-// step_share(J). The fixed share of the step_share is the RTX 4060 Ti's Q4_K 64-column tile (0.43);
-// the RTX 3060's own Q4_K grid agrees with the picks it makes. No other card or format has been
-// run over the widths, so no other card takes them: a card or format that is measured joins by
-// its own table here.
+// choice before DECISIONS 74). Where the generation row says mmq_work_tiles (core/generation.h:
+// GA10x, whose grid DECISIONS 74 ran on the RTX 3060 and 3090): J = 16, 32, 64, 80, 96, 128 and
+// the least work ceil(columns / J) x step_share(J). The fixed share in step_share is DECISIONS 69's
+// 0.43; the grids of the two cards are in DECISIONS 74. No other generation or format has been run
+// over the widths: a generation that is measured joins by its row.
+
+#include "core/generation.h"
 
 #include <cmath>
 #include <span>
@@ -28,7 +29,7 @@ inline constexpr int kTilesGa10x[]      = {16, 32, 64, 80, 96, 128};
 inline constexpr double kTileFixed      = 0.43;
 
 [[nodiscard]] constexpr bool uses_work_table(int major, int minor) noexcept {
-    return major == 8 && minor == 6;
+    return mmq_work_tiles_measured(major, minor);
 }
 
 [[nodiscard]] constexpr std::span<const int> tiles(int major, int minor) noexcept {

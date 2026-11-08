@@ -972,6 +972,11 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
 #ifndef NINFERNO_MMQ_PDL_ENTRY
 #define NINFERNO_MMQ_PDL_ENTRY()
 #endif
+// A specialization no card of the architecture being compiled launches is skipped (the caller
+// decides; the default builds every one).
+#ifndef NINFERNO_MMQ_SKIP_SPECIALIZATION
+#define NINFERNO_MMQ_SKIP_SPECIALIZATION(J) false
+#endif
 
 template <ggml_type type, int J, bool fallback, ggml_prec prec_src1 = GGML_PREC_Q8>
 __launch_bounds__(ggml_cuda_mmq_get_nthreads(type, J, fallback, prec_src1), ggml_cuda_mmq_get_occupancy(type, J, fallback, prec_src1))
@@ -985,7 +990,8 @@ static __global__ void mul_mat_q(
         const uint3 ntx, const ggml_planes planes = ggml_planes{}) {
 
     // Skip unused template specializations for faster compilation:
-    if (ggml_cuda_mmq_get_config(type, J, fallback, prec_src1).type == GGML_TYPE_COUNT) {
+    if (ggml_cuda_mmq_get_config(type, J, fallback, prec_src1).type == GGML_TYPE_COUNT ||
+        NINFERNO_MMQ_SKIP_SPECIALIZATION(J)) {
         NO_DEVICE_CODE;
         return;
     }
@@ -1268,6 +1274,10 @@ static __global__ void mul_mat_q_stream_k_fixup(
         float * __restrict__ tmp_last_tile, const uint3 blocks_per_ne00, const int nrows_x, const int ncols_dst,
         const int stride_col_dst, const uint3 nchannels_y, const int stride_channel_dst, const uint3 nsamples_y,
         const int stride_sample_dst, const uint3 ntx) {
+    if (NINFERNO_MMQ_SKIP_SPECIALIZATION(J)) {
+        NO_DEVICE_CODE;
+        return;
+    }
     NINFERNO_MMQ_PDL_ENTRY();
     constexpr int warp_size       = ggml_cuda_get_physical_warp_size();
     constexpr int nwarps          = (ggml_cuda_mmq_get_nthreads(type, J, fallback, prec_src1) / 2) / warp_size;

@@ -24,7 +24,7 @@ extern "C" void ggml_abort(const char* file, int line, const char* fmt, ...) {
 }
 
 #define NINFERNO_GGML_MMQ_EXTERN(TYPE)                                                             \
-    extern template std::size_t ninferno::ops::ggml_mmq::detail::fixup_bytes_impl<TYPE>(int, int, int); \
+    extern template std::size_t ninferno::ops::ggml_mmq::detail::fixup_bytes_impl<TYPE>(int, int, int);     extern template int ninferno::ops::ggml_mmq::detail::column_tile_impl<TYPE>(int, int, int);    \
     extern template void ninferno::ops::ggml_mmq::detail::product_impl<TYPE>(                      \
         const ninferno::ops::ggml_mmq::Planes&, int, int, int, const void*, int, float*,           \
         std::int64_t, void*, cudaStream_t)
@@ -282,6 +282,13 @@ void product(Type type, const Planes& weight, int blocks_per_row, int rows, int 
                             out_column_stride, fixup, stream)
     switch (type) { NINFERNO_GGML_MMQ_CASES(NINFERNO_PRODUCT) }
 #undef NINFERNO_PRODUCT
+    throw std::invalid_argument("ggml mmq: unknown block format");
+}
+
+int column_tile(Type type, int rows, int columns, int k) {
+#define NINFERNO_TILE(T) detail::column_tile_impl<T>(rows, columns, k)
+    switch (type) { NINFERNO_GGML_MMQ_CASES(NINFERNO_TILE) }
+#undef NINFERNO_TILE
     throw std::invalid_argument("ggml mmq: unknown block format");
 }
 
