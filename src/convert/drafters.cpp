@@ -1047,7 +1047,7 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
     // The registry the drafters were planned from: another one (an update that names a new
     // drafter) has drafters_incomplete() plan them again.
     manifest["registry_sha256"] = spec::Registry::builtin().source_sha256();
-    const auto path = spec::manifest_path(target_artifact);
+    const auto path             = spec::manifest_path(target_artifact);
     write_file_atomic(path, manifest.dump(1) + '\n');
     log_line(options.log, "speculation manifest " + path.string());
     return plan;
