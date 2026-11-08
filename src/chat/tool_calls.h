@@ -194,6 +194,11 @@ private:
     bool bare_region_ = false;
     // Non-whitespace text has been published: a bare call is cut only where it begins the answer.
     bool emitted_text_ = false;
+    // Calls read out of closed bare regions, and bare regions dropped unreadable.
+    std::vector<GeneratedToolCall> bare_calls_;
+    std::uint32_t bare_dropped_ = 0;
+    std::string settle_bare();
+    Terminal finish_region(bool cut_off);
     // Bytes that may still begin the call region (ToolCallSyntax::match_start).
     std::string held_;
     std::string tool_region_;

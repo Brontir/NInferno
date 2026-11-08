@@ -1997,10 +1997,10 @@ int test_disabled_tool_calls_keep_the_prompt() {
 constexpr int kOpenerId = 248058;
 constexpr int kCloserId = 248059;
 
-FrontendResources resources_with_opener() {
+FrontendResources resources_with_opener(bool special_opener = false) {
     FrontendResources with_opener = resources();
     auto tokenizer                = nlohmann::json::parse(with_opener.tokenizer_json);
-    tokenizer["added_tokens"].push_back(added(kOpenerId, "<tool_call>"));
+    tokenizer["added_tokens"].push_back(added(kOpenerId, "<tool_call>", special_opener));
     tokenizer["added_tokens"].push_back(added(kCloserId, "</tool_call>"));
     with_opener.tokenizer_json = tokenizer.dump();
     auto config                = nlohmann::json::parse(with_opener.tokenizer_config_json);
@@ -2120,6 +2120,20 @@ int test_none_ends_at_structural_tokens() {
         failures += check(decision.accepted_tokens == 2 &&
                               decision.finish_reason == ninferno::FinishReason::StopToken,
                           "the call opener after the reasoning did not end the turn");
+    }
+    // A control (special) token ends the turn after text too.
+    {
+        const Frontend special_frontend = make_frontend(resources_with_opener(true), false);
+        auto prompt  = special_frontend.prepare(none_input(false));
+        auto session = special_frontend.make_output_session(prompt, stop);
+        const auto decision = session.preview_model(
+            std::array<ninferno::TokenId, 3>{kHello, kOpenerId, kHello}, 64,
+            ninferno::FinishReason::OutputLimit);
+        const auto output = session.commit_preview();
+        failures += check(decision.accepted_tokens == 2 &&
+                              decision.finish_reason == ninferno::FinishReason::StopToken &&
+                              content(output) == "helloST",
+                          "a control token after text did not end the turn");
     }
     // Rounds: the rule reads the state of earlier rounds (reasoning closed in the first).
     {

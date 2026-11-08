@@ -782,7 +782,13 @@ llama.cpp-style base URLs.
   call they write anyway is cut out of the answer, as is one written as plain text (a Qwen model
   kept from `<tool_call>` can still write a bare `<function=...>`). A bare `{"name": "...",
   "arguments": ...}` object naming a declared tool (Hermes JSON) or Gemma 4's `call:...` is cut
-  only where it begins the answer, never under `response_format`, and the text after it stays.
+  only where it begins the answer, never under `response_format`, and the text after it stays
+  (streamed as it comes; a second bare call after the first stays text). The leading object is a
+  call only when its top-level keys are `name` plus exactly one of `arguments` and `parameters`
+  (and optionally `id`, `type`); a tool definition, a router object or a lookup result is text, as
+  is a fenced ```` ```json ```` block. An answer that is exactly a call object at its start is thus
+  treated as a call and cut. A stray `</think>` that begins a thinking-off answer ends it, so
+  that answer is empty; a real answer after it is not kept.
 - `strict:true`, whose arguments the same constraint holds to the declared JSON Schema in every
   call syntax ([key order](#key-order-under-an-output-constraint)), and
   `parallel_tool_calls:false`, under which generation stops after the first call.

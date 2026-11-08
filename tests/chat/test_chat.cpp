@@ -744,6 +744,40 @@ int test_bare_json_call_dropped() {
         const auto partial = run(R"({"name": "weat)", true);
         failures += check(partial.first.empty() && partial.second == 0,
                           "a partial bare call at the output limit was shown: " + partial.first);
+        // Only name plus exactly one of arguments/parameters is a call: a tool definition, a
+        // lookup result and a router object followed by text that says "arguments" are text.
+        const std::string definition =
+            R"({"name": "weather", "description": "City weather.", "parameters": {"type": "object"}})";
+        const auto defined = run(definition, false);
+        failures += check(defined.first == definition && defined.second == 0,
+                          "a tool definition was cut: " + defined.first);
+        const std::string lookup = R"({"name": "weather", "result": {"arguments": 1}})";
+        const auto looked        = run(lookup, false);
+        failures += check(looked.first == lookup && looked.second == 0,
+                          "an object with a nested arguments key was cut: " + looked.first);
+        const std::string routed_text = router + "\nThe arguments of the call are above.";
+        const auto routed_more        = run(routed_text, false);
+        failures += check(routed_more.first == routed_text && routed_more.second == 0,
+                          "a router object followed by text was cut: " + routed_more.first);
+        // A call cut off inside its arguments is dropped; a router object cut off is text.
+        const auto cut_call = run(call.substr(0, call.size() - 12), true);
+        failures += check(cut_call.first.empty() && cut_call.second == 0,
+                          "a bare call cut inside its arguments was shown: " + cut_call.first);
+        const auto cut_router = run(router.substr(0, router.size() - 8), true);
+        failures += check(cut_router.first == router.substr(0, router.size() - 8) &&
+                              cut_router.second == 0,
+                          "a router object cut at the limit was dropped: " + cut_router.first);
+        // The text after a call streams as it comes, not at the end.
+        ninferno::chat::ToolCallOutputDecoder streaming(discarded, 64);
+        std::string live = streaming.feed(call);
+        live += streaming.feed("\nAfter the call.");
+        failures += check(live == "\nAfter the call.",
+                          "the text after a bare call waited for the end: " + live);
+        (void)streaming.finish();
+        // A second bare call after the first stays text.
+        const auto twice = run(call + "\n" + call, false);
+        failures += check(twice.first == "\n" + call && twice.second == 1,
+                          "a second bare call was cut: " + twice.first);
     }
     // Gemma 4's bare call, "call:NAME{...}" with no opener, under none: nothing of it is shown.
     {
@@ -751,10 +785,11 @@ int test_bare_json_call_dropped() {
             tools, true, ToolCallFormat::Gemma4, true);
         ninferno::chat::ToolCallOutputDecoder decoder(discarded, 64);
         const std::string visible =
-            decoder.feed("call:weather{city:<|\"|>Oslo<|\"|>,days:1}</body>");
+            decoder.feed("call:weather{city:<|\"|>Oslo}<|\"|>,days:1} and then prose.");
         const auto end = decoder.finish();
-        failures += check(visible.empty() && trim_ws(end.content).empty(),
-                          "a bare Gemma 4 call under none was shown: " + visible + end.content);
+        failures += check(visible + end.content == " and then prose." && end.tool_calls.size() == 1,
+                          "a bare Gemma 4 call under none was shown or lost its text: " + visible +
+                              end.content);
     }
     return failures;
 }
