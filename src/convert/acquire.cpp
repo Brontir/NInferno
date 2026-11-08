@@ -246,6 +246,35 @@ bool wants_drafters(const AcquireOptions& options) {
     return options.drafters == Drafters::Attach || options.drafters == Drafters::Require;
 }
 
+// A reused artifact's drafters whose file here was written again since attach take its new id
+// (drafters.h, refresh_changed_drafters): nothing is fetched, whatever the start asks of drafters.
+std::string required_text(const AcquireOptions& options);
+
+void refresh_drafters(const AcquireOptions& options, const fs::path& artifact) {
+    if (options.drafters == Drafters::Off) { return; }
+    for (const auto& name : refresh_changed_drafters(artifact)) {
+        say(options, "drafter " + name +
+                         ": its file was written again since attach; the "
+                         "manifest takes it as it is now");
+    }
+    // A drafter the user gave that the refresh could not take (its file gone, unreadable or
+    // refused by the checks) is served without, and no plan restores it: a start that requires
+    // its drafters stops instead. (Another drafter is planned and attached again.)
+    if (options.drafters == Drafters::Require) {
+        auto changed = given_drafters_changed(artifact);
+        // Given again now (--drafter-artifact NAME=FILE): the attach takes the new file.
+        std::erase_if(changed, [&](const std::string& name) {
+            return options.drafter_artifacts.contains(name);
+        });
+        if (!changed.empty()) {
+            throw std::runtime_error("drafter " + changed.front() + " of " + artifact.string() +
+                                     " (given with --drafter-artifact) is gone or no longer "
+                                     "passes the checks since it was attached (" +
+                                     required_text(options) + ")");
+        }
+    }
+}
+
 // How to fetch a drafter ahead of time, for the warning: its repository, the commit the registry
 // pins (drafter_fetch asks for it) and the GGUF file it names.
 struct FetchAdvice {
@@ -783,6 +812,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 // A plan the checkpoint's own declaration (ninferno_speculation.json) made cannot
                 // be made again without that download: kept as it is, and a drafter of it that
                 // failed fails --with-drafters.
+                refresh_drafters(options, *kept);
                 bool bundle_planned = false, bundle_failed = false;
                 try {
                     std::ifstream stream(spec::manifest_path(*kept));
@@ -1063,6 +1093,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
             remove_artifact(out.artifact);
         }
         if (complete(out.artifact, false)) {
+            refresh_drafters(options, out.artifact);
             const bool attach_again = gguf ? drafters_incomplete(out.artifact)
                                            : !fs::exists(spec::manifest_path(out.artifact));
             if (drafters_on && attach_again) {
