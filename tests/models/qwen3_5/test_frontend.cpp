@@ -2004,7 +2004,7 @@ FrontendResources resources_with_opener(bool special_opener = false) {
     tokenizer["added_tokens"].push_back(added(kCloserId, "</tool_call>"));
     with_opener.tokenizer_json = tokenizer.dump();
     auto config                = nlohmann::json::parse(with_opener.tokenizer_config_json);
-    config["added_tokens_decoder"][std::to_string(kOpenerId)] = decoder_added("<tool_call>");
+    config["added_tokens_decoder"][std::to_string(kOpenerId)] = decoder_added("<tool_call>", special_opener);
     config["added_tokens_decoder"][std::to_string(kCloserId)] = decoder_added("</tool_call>");
     with_opener.tokenizer_config_json                         = config.dump();
     return with_opener;
