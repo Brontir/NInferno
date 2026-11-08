@@ -456,8 +456,7 @@ int run_window_case(int tokens, int context_length, int window,
                                     reference, kContextQueryBf16Criterion);
     failures += d_out.verify_guards((label + " output guards").c_str());
     if (workspace.used() != 0 || workspace.peak_used() > workspace_bytes) {
-        std::cerr << label << ": workspace high-water mismatch
-";
+        std::cerr << label << ": workspace high-water mismatch\n";
         ++failures;
     }
     return failures;
