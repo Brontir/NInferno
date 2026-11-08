@@ -39,7 +39,7 @@ void context_attention_launch(const Tensor& q, const Tensor& query_k, const Tens
                               Tensor& partial_m, Tensor& partial_l, Tensor& out,
                               cudaStream_t stream);
 
-// context_window_attention (fold.cuh): the last `window` context rows alone, split.
+// context_window_attention (window.cuh): the last `window` context rows alone, split.
 [[nodiscard]] ContextAttentionPlan
 context_window_resolve_plan(ContextAttentionProfile profile, std::int32_t tokens,
                             ContextAttentionExecutionEnvelope envelope, std::int32_t window);

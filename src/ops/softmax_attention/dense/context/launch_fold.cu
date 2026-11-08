@@ -10,7 +10,7 @@ namespace {
 
 constexpr const char* kOp = "context_fold_attention";
 
-// One branch partials over its plan (always split: the merge reads both branches partials).
+// One branch's partials over its plan (always split: the merge reads both branches' partials).
 template <bool Far>
 void fold_branch_launch(const ContextCall& c, std::int32_t window, const ContextAttentionPlan& plan,
                         Tensor& partial_acc, Tensor& partial_m, Tensor& partial_l,
