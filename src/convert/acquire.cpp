@@ -280,6 +280,18 @@ void not_attached(const AcquireOptions& options, const std::string& what, std::s
     say(options, line);
 }
 
+// Why a Require start fails without its drafter. --with-drafters says so and that the flag can be
+// left out; a --spec backend names the drafter it runs, and the ways out.
+std::string required_text(const AcquireOptions& options) {
+    if (options.required_by.empty() || options.required_by == "--with-drafters") {
+        return "--with-drafters requires every drafter; without the flag the model is served "
+               "without it";
+    }
+    return "the selected " + options.required_by +
+           " needs its drafter: go online or fetch it ahead of time, or start with --spec none "
+           "(or --spec mtp, where the model has MTP layers)";
+}
+
 // Every drafter planned for the model that failed to be fetched, converted or attached, or that
 // does not fit the target. Under --with-drafters (Require) that is an error. Under Attach (the
 // automatic choice drafts) it is a warning, and the model is served without the drafter.
@@ -291,9 +303,8 @@ void require_drafters(const DrafterPlan& plan, const AcquireOptions& options) {
             continue;
         }
         if (options.drafters == Drafters::Require) {
-            throw std::runtime_error("drafter " + d.decl.name + " " + d.status +
-                                     " (--with-drafters requires every drafter; without the "
-                                     "flag the model is served without it)");
+            throw std::runtime_error("drafter " + d.decl.name + " " + d.status + " (" +
+                                     required_text(options) + ")");
         }
         // Only a failed fetch is cured by the network or a copy in the cache; a full disk, a
         // conversion error or a drafter that does not fit the model is not.
@@ -788,8 +799,8 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 if (bundle_planned && bundle_failed && options.drafters == Drafters::Require) {
                     throw std::runtime_error(
                         "a drafter of " + kept->string() +
-                        " failed and its download was removed: fetch the model again "
-                        "(--with-drafters requires every drafter)");
+                        " failed and its download was removed: fetch the model again (" +
+                        required_text(options) + ")");
                 }
                 if (bundle_planned && bundle_failed && options.drafters == Drafters::Attach) {
                     not_attached(options, "a drafter of " + kept->string(),

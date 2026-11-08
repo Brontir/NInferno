@@ -64,6 +64,9 @@ struct AcquireOptions {
     ConvertOptions convert;
     bool components_given = false;    // convert.components was named by the caller
     Drafters drafters     = Drafters::Default;
+    // Under Drafters::Require, what required them: "--with-drafters" (empty means that) or the
+    // backend the user selected ("--spec dflash"). The error names it.
+    std::string required_by;
     std::string model_id;             // the registry's id of the model (default: the repository)
     std::map<std::string, std::filesystem::path> drafter_artifacts;
     std::filesystem::path repository; // source tree for shortlist rankings

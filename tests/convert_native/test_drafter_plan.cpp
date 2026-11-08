@@ -546,6 +546,27 @@ void automatic_drafter_missing() {
                "a companion the artifact lacks is warned of too", lines[4]);
     }
 
+    // Required by the selected backend, not by the flag: the error says so and offers the ways
+    // out, and does not blame --with-drafters.
+    options.drafters    = cv::Drafters::Require;
+    options.required_by = "--spec dflash";
+    std::string message;
+    try {
+        cv::check_attached_drafters(plan, options);
+    } catch (const std::exception& error) { message = error.what(); }
+    expect(message.find("the selected --spec dflash needs its drafter") != std::string::npos &&
+               message.find("--spec none") != std::string::npos &&
+               message.find("--spec mtp") != std::string::npos &&
+               message.find("--with-drafters") == std::string::npos,
+           "a --spec backend's error names the backend, not --with-drafters", message);
+    options.required_by.clear();
+    message.clear();
+    try {
+        cv::check_attached_drafters(plan, options);
+    } catch (const std::exception& error) { message = error.what(); }
+    expect(message.find("--with-drafters requires every drafter") != std::string::npos,
+           "the flag's error is as before", message);
+
     lines.clear();
     options.drafters = cv::Drafters::Default;
     cv::check_attached_drafters(plan, options);

@@ -8,6 +8,7 @@
 #include "core/ascii.h"
 #include "core/host_memory.h"
 #include "core/sys.h"
+#include "product/speculative_options.h"
 
 #include <algorithm>
 #include <chrono>
@@ -145,15 +146,23 @@ void check_fits(const ServeOptions& options, const convert::FetchPlan& fetch,
 
 } // namespace
 
+std::string drafters_required_by(const ServeOptions& options) {
+    if (options.with_drafters) { return "--with-drafters"; }
+    // --spec dflash / dflash2 runs a separate drafter; one given with --drafter replaces the
+    // published one, which then need not be fetched.
+    const SpeculativeBackend backend = options.speculative.backend;
+    if ((backend == SpeculativeBackend::DFlash || backend == SpeculativeBackend::DFlash2) &&
+        options.speculative.drafter.empty()) {
+        return std::string("--spec ") + product::speculative_backend_name(backend);
+    }
+    return {};
+}
+
 convert::Drafters hub_drafters(const ServeOptions& options, bool attach) {
     // Named by the user (--with-drafters, or a --spec backend that runs a separate drafter):
     // required. Only the automatic choice drafts: attached when it can be, else the model is
     // served without the drafter, with a warning.
-    const SpeculativeBackend backend = options.speculative.backend;
-    if (options.with_drafters || backend == SpeculativeBackend::DFlash ||
-        backend == SpeculativeBackend::DFlash2) {
-        return convert::Drafters::Require;
-    }
+    if (!drafters_required_by(options).empty()) { return convert::Drafters::Require; }
     return attach ? convert::Drafters::Attach : convert::Drafters::Default;
 }
 
