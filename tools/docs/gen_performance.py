@@ -32,6 +32,7 @@ feed the summary line and the level-3 comparison, never the speed tables.
 from __future__ import annotations
 
 import argparse
+import datetime
 import difflib
 import json
 import re
@@ -236,7 +237,8 @@ def best_long(settings):
 
 
 def summary_ratio(speed, refs):
-    """[(gpu, model, single ratio, multi ratio)] against the reference engine on the same weights."""
+    """[(key, kind, ratio, reference speculation, date of our row, our row is older)] against the reference engine on the same
+    weights: our best setting over the reference's best row of the same quantization."""
     out = []
     for key, rs in refs.items():
         if key not in speed:
@@ -250,8 +252,20 @@ def summary_ratio(speed, refs):
             if same:
                 ref = max(same, key=lambda r: r["value"])
                 if ref["value"] > 0:
-                    out.append((key, kind, ours["value"] / ref["value"]))
+                    out.append((key, kind, ours["value"] / ref["value"], ref_spec(ref), day(ours),
+                                stale_ours(day(ours), day(ref))))
     return out
+
+
+def ref_spec(r):
+    """The reference row's speculation as shown: "off", or "mtp ×4"."""
+    spec = r.get("spec") or "none"
+    return "off" if spec == "none" else f"{spec} ×{r['draft_tokens']}" if r.get("draft_tokens") else spec
+
+
+def stale_ours(day_, ref_day_):
+    """True when our row is more than a day older than the reference row it is divided by."""
+    return (datetime.date.fromisoformat(ref_day_) - datetime.date.fromisoformat(day_)).days > 1
 
 
 # --- level 1: README and the matrix ---------------------------------------------------------------
@@ -320,20 +334,40 @@ def stamp(recs, base):
     return f"<sub>Measured {when}{ver} · [methodology]({base}methodology.md)</sub>"
 
 
+def span_text(vals):
+    lo, hi = min(vals), max(vals)
+    return f"×{lo:.1f}" if abs(hi - lo) < 0.05 else f"×{lo:.1f}–{hi:.1f}"
+
+
 def summary_line(gpus, models, speed, refs, base):
+    """The ranges against llama.cpp, apart for the pairs where it speculated (its best row used a drafter)
+    and where it ran plain because no drafter file was cached for the model."""
     ratios = summary_ratio(speed, refs)
     if not ratios:
         return []
-    out = []
-    for kind, what in (("single", "one stream"), ("multi", "all streams under load")):
-        vals = [v for _, k, v in ratios if k == kind]
-        if vals:
-            lo, hi = min(vals), max(vals)
-            span = f"×{lo:.1f}" if abs(hi - lo) < 0.05 else f"×{lo:.1f}–{hi:.1f}"
-            out.append(f"{span} {what}")
-    pairs = len({k for k, _, _ in ratios})
-    return [f"**Against llama.cpp on the same GGUF and GPU:** {', '.join(out)} "
-            f"({pairs} GPU × model pairs, [details]({base}README.md#against-llamacpp))."]
+    pairs = {k: {} for k, *_ in ratios}
+    for key, kind, v, spec, _, _ in ratios:
+        pairs[key][kind] = (v, spec)
+    groups = {True: [], False: []}  # did llama.cpp's best row speculate?
+    for d in pairs.values():
+        groups[any(spec != "off" for _, spec in d.values())].append(d)
+
+    def text(ds):
+        out = []
+        for kind, what in (("single", "one stream"), ("multi", "all streams")):
+            vals = [d[kind][0] for d in ds if kind in d]
+            if vals:
+                out.append(f"{span_text(vals)} {what}")
+        return ", ".join(out)
+
+    parts = []
+    if groups[True]:
+        parts.append(f"{text(groups[True])} against llama.cpp with its own MTP ({len(groups[True])} pairs)")
+    if groups[False]:
+        parts.append(f"{text(groups[False])} where llama.cpp has no drafter file for the model and runs plain "
+                     f"({len(groups[False])} pairs)")
+    return [f"**Against llama.cpp on the same GGUF and GPU:** {'; '.join(parts)} "
+            f"([details]({base}README.md#against-llamacpp))."]
 
 
 def readme_blocks(gpus, models, speed, refs):
@@ -358,16 +392,33 @@ def page_index(gpus, models, speed, refs):
     ratios = summary_ratio(speed, refs)
     if ratios:
         lines += ["", "## Against llama.cpp", "",
-                  "NInferno's tokens per second over llama.cpp's, on the same GGUF file and GPU.", "",
-                  "| GPU | Model | One stream | All streams |", "|---|---|---:|---:|"]
+                  "NInferno's tokens per second over llama.cpp's, on the same GGUF file and GPU: our best "
+                  "setting over llama.cpp's best row (its own MTP where an MTP file of the model was cached, "
+                  "else plain).", "",
+                  "| GPU | Model | llama.cpp speculation | One stream | All streams |", "|---|---|---|---:|---:|"]
         by = defaultdict(dict)
-        for key, kind, v in ratios:
-            by[key][kind] = v
+        for key, kind, v, spec, ours_day, stale in ratios:
+            by[key][kind] = (v, spec, ours_day, stale)
+        old_days = set()
         for g in sort_present(gpus, {k[0] for k in by}):
             for m in sort_present(models, {k[1] for k in by if k[0] == g}):
                 d = by[(g, m)]
-                lines.append(f"| {gpus[g]['name']} | [{models[m]['name']}](runs/{g}/{m}.md) | "
-                             + " | ".join(f"×{d[k]:.1f}" if k in d else "–" for k in ("single", "multi")) + " |")
+                specs = [d[k][1] for k in ("single", "multi") if k in d]
+                spec = specs[0] if len(set(specs)) == 1 else " / ".join(specs)
+                cells = []
+                for k in ("single", "multi"):
+                    if k not in d:
+                        cells.append("–")
+                        continue
+                    v, _, ours_day, stale = d[k]
+                    if stale:
+                        old_days.add(ours_day)
+                    cells.append(f"×{v:.1f}" + ("†" if stale else ""))
+                lines.append(f"| {gpus[g]['name']} | [{models[m]['name']}](runs/{g}/{m}.md) | {spec} | "
+                             + " | ".join(cells) + " |")
+        if old_days:
+            lines += ["", f"† The NInferno row is from {', '.join(sorted(old_days))}, before the llama.cpp row; "
+                          "it has not been re-measured."]
     return "\n".join(lines + [""])
 
 
@@ -435,6 +486,38 @@ def page_model(m, gpus, models, speed):
 
 # --- level 3: one GPU x one model -----------------------------------------------------------------
 
+class Notes:
+    """Footnotes of a page: mark(text) returns the marker to append to a cell, lines() the list below."""
+    SIGNS = "‡§¶*"
+
+    def __init__(self):
+        self.texts = []
+
+    def mark(self, text):
+        if not text:
+            return ""
+        if text not in self.texts:
+            self.texts.append(text)
+        return self.SIGNS[self.texts.index(text) % len(self.SIGNS)]
+
+    def lines(self):
+        return ["", *[f"{self.SIGNS[i % len(self.SIGNS)]} {t}" for i, t in enumerate(self.texts)]]             if self.texts else []
+
+
+def llama_note(r):
+    """Why a llama.cpp row ran with less than the default context or batch (its flags say how)."""
+    flags = r.get("flags") or ""
+    notes = []
+    np_, ctx = re.search(r"-np (\d+)", flags), re.search(r"-c (\d+)", flags)
+    if np_ and ctx and int(np_.group(1)) > 1 and int(ctx.group(1)) // int(np_.group(1)) < 8192:
+        notes.append(f"llama.cpp ran out of memory at the default context; {int(ctx.group(1)) // int(np_.group(1))} "
+                     "tokens per slot")
+    ub = re.search(r"-ub (\d+)", flags)
+    if ub and int(ub.group(1)) != 2048:
+        notes.append(f"llama.cpp ran out of memory at the default batch; physical batch {ub.group(1)}")
+    return "; ".join(notes)
+
+
 def page_run(g, m, gpus, models, speed, refs, quality):
     settings = speed[(g, m)]
     gi, mi = gpus[g], models[m]
@@ -459,18 +542,28 @@ def page_run(g, m, gpus, models, speed, refs, quality):
               "| Weights | Speculation | KV | Activations | " + " | ".join(head[c[0]].format(c[1]) for c in cells)
               + " | Measured |",
               "|---|---|---|---|" + "---:|" * len(cells) + "---|"]
+    notes = Notes()
     for s in sorted(settings):
         recs = settings[s].values()
         lines.append("| " + " | ".join([weights(s[0], link=False), s[1], s[2], s[3]]
-                                        + [fmt(settings[s][c]["value"]) if c in settings[s] else "–" for c in cells]
+                                        + [fmt(settings[s][c]["value"]) + notes.mark(settings[s][c].get("note"))
+                                           if c in settings[s] else "–" for c in cells]
                                         + [max(day(r) for r in recs)]) + " |")
     ref = refs.get((g, m), [])
     if ref:
         lines += ["", "## Against llama.cpp", "",
-                  "| Engine | Weights | Concurrency | tok/s | Measured |", "|---|---|---:|---:|---|"]
-        for r in sorted(ref, key=lambda r: (r["recipe"], r.get("concurrency", 1))):
-            lines.append(f"| {r['engine']} {r.get('version', '')}".rstrip() + f" | {quant(r['recipe'])} | "
-                         f"{r.get('concurrency', 1)} | {fmt(r['value'])} | {day(r)} |")
+                  "| Engine | Weights | Speculation | Measurement | tok/s | Measured |", "|---|---|---|---|---:|---|"]
+        what = {"prefill": lambda r: f"Prefill {prompt_k(r)}K", "decode": lambda r: f"Decode @{prompt_k(r)}K",
+                "decode_aggregate": lambda r: f"C={r.get('concurrency', 1)}"}
+        order = {"prefill": 0, "decode": 1, "decode_aggregate": 2}
+        for r in sorted(ref, key=lambda r: (r["recipe"], r.get("spec") or "", order.get(r["metric"], 3),
+                                            r.get("concurrency", 1))):
+            spec = r.get("spec") or "none"
+            spec = "off" if spec == "none" else f"{spec} ×{r['draft_tokens']}" if r.get("draft_tokens") else spec
+            lines.append(f"| {r['engine']} {r.get('version', '')}".rstrip() + f" | {quant(r['recipe'])} | {spec} | "
+                         f"{what.get(r['metric'], lambda r: r['metric'])(r)}{notes.mark(llama_note(r))} | "
+                         f"{fmt(r['value'])} | {day(r)} |")
+    lines += notes.lines()
     q = quality.get((g, m), [])
     if q:
         lines += ["", "## Quality", ""]
@@ -542,8 +635,8 @@ def page_run(g, m, gpus, models, speed, refs, quality):
     for mj in mach:
         mm = json.loads(mj)
         w = mm.get("power_limit_w")
-        lines.append(f"- {mm['gpu_name']}: driver {mm.get('driver', '?')}, CUDA {mm.get('cuda', '?')}"
-                     + (f", power limit {w:g} W" if w else "") + ".")
+        parts = [f"driver {mm.get('driver') or '?'}"] + ([f"CUDA {mm['cuda']}"] if mm.get("cuda") else [])             + ([f"power limit {w:g} W"] if w else [])
+        lines.append(f"- {mm['gpu_name']}: {', '.join(parts)}.")
     versions = sorted({r["version"] for r in recs if r.get("version")})
     if versions:
         lines.append(f"- NInferno {', '.join(versions)}.")
@@ -551,6 +644,10 @@ def page_run(g, m, gpus, models, speed, refs, quality):
     flags = sorted({r["flags"] for r in recs if r.get("flags")})
     if flags:
         lines += ["", "Server flags of the measured settings:", "", "```", *flags, "```"]
+    ref_flags = sorted({(r["engine"], r.get("version"), r["flags"].strip()) for r in ref if r.get("flags")})
+    if ref_flags:
+        lines += ["", "llama.cpp command-line flags of the reference rows (after `llama-server -m <GGUF>`):", "",
+                  "```", *[f"{f}    # {e} {v}" for e, v, f in ref_flags], "```"]
     return "\n".join(lines + [""])
 
 
