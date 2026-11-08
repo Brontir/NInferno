@@ -69,7 +69,10 @@ pid_t spawn_writer(const fs::path& target) {
     }
     close(ready[1]);
     char byte = 0;
-    if (read(ready[0], &byte, 1) != 1) { std::cerr << "child did not start\n"; std::exit(2); }
+    if (read(ready[0], &byte, 1) != 1) {
+        std::cerr << "child did not start\n";
+        std::exit(2);
+    }
     close(ready[0]);
     return pid;
 }
@@ -87,7 +90,8 @@ void write_text(const fs::path& path, const std::string& text) {
 } // namespace
 
 int main() {
-    const fs::path root = fs::temp_directory_path() / ("ninferno_writer_tmp_" + std::to_string(getpid()));
+    const fs::path root =
+        fs::temp_directory_path() / ("ninferno_writer_tmp_" + std::to_string(getpid()));
     fs::remove_all(root);
     fs::create_directories(root);
 
@@ -100,7 +104,7 @@ int main() {
         kill(pid, SIGKILL);
         check(wait_signal(pid) == SIGKILL, "the child died of SIGKILL");
         check(temporaries(dir).size() == 1, "SIGKILL leaves the temporary");
-        write_text(dir / ".notes.abcdef.tmp", "not an artifact, keep");  // looks like one, is not
+        write_text(dir / ".notes.abcdef.tmp", "not an artifact, keep"); // looks like one, is not
         write_text(dir / ".x.tmp", "short name, keep");
         {
             cv::ArtifactWriter writer(dir / "b.ninferno", small_layout("b.ninferno"));

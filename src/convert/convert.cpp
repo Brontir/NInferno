@@ -2027,8 +2027,8 @@ ConvertResult convert(const ConvertOptions& options) {
     for (const auto& job : plan.weights) { output_bytes.push_back(job.geometry.bytes); }
     if (!options.consume_source) {
         // Before the free-space check: what an interrupted run left would be counted against it.
-        const auto directory =
-            options.out.parent_path().empty() ? std::filesystem::path(".") : options.out.parent_path();
+        const auto directory = options.out.parent_path().empty() ? std::filesystem::path(".")
+                                                                 : options.out.parent_path();
         if (const auto stale = ArtifactWriter::remove_stale_temporaries(directory)) {
             log("removed " + std::to_string(stale) + " leftover temporary file" +
                 (stale == 1 ? "" : "s") + " of interrupted conversions in " + directory.string());
