@@ -274,8 +274,10 @@ bool volta_hmma_codec(WeightCodec codec) {
 int volta_hmma_k_multiple(WeightCodec codec) { return codec == WeightCodec::Q8 ? 64 : 256; }
 
 bool volta_hmma_takes(WeightCodec codec, const GemmArgs& args) {
-    // join_previous asks for a programmatic dependent launch, which sm_70 does not have: stream
-    // order already runs the call after the one before it (a segmented projection's later parts).
+    // A join (Call::join_previous) needs programmatic dependent launch, which sm_70 does not have;
+    // the segmented chain asks for one only after a call that released, so a later part of a
+    // segmented projection takes this kernel (and the lane-local GEMV, which refuses a join) as a
+    // separate call does.
     if (args.lane_local == 0 || args.tokens < kVoltaHmmaMinTokens ||
         args.tokens > kVoltaHmmaMaxTokens) {
         return false;

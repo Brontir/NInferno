@@ -3345,7 +3345,7 @@ std::uint64_t ggml_mmq_fallback_count() noexcept {
     return mmq_fallbacks.load(std::memory_order_relaxed);
 }
 
-std::uint64_t joined_launch_count() noexcept {
+std::uint64_t instrumentation_joined_launches() noexcept {
     return joined_launches.load(std::memory_order_relaxed);
 }
 
@@ -3532,7 +3532,10 @@ LaunchOverlap launch_overlap(const ResolvedRoute& resolved, Epilogue epilogue, i
         return epilogue == Epilogue::Store ? OverlapRefusal::None : OverlapRefusal::Epilogue;
     };
     LaunchOverlap out;
+    // The pre-quantized R8 form does not join either: its quantizer and kernel launch in stream
+    // order (generic_r8.cuh kPre), so a join flag would only claim an overlap that never happens.
     out.join = joinable(join_asked);
+    if (out.join == OverlapRefusal::None && r8_pre) out.join = OverlapRefusal::PrequantizedR8;
     // The pre-quantized R8 form does not release: the next call's quantizer could take the
     // workspace it still reads (its kernel ignores the flag too, generic_r8.cuh kPre). Without
     // PDL nothing starts early (run_route keeps the kernel's flag, a no-op there).

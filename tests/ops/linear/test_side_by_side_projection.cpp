@@ -77,7 +77,8 @@ std::uint64_t granted_joins(const std::vector<Weight>& weights, ops::LinearPolic
                                    .workspace_free = std::numeric_limits<std::size_t>::max()};
         const g::ResolvedRoute resolved = g::resolve_route(
             g::select_route(problem, w, t, ops::prefill_routes_active()), w, layout);
-        return g::launch_overlap(resolved, g::Epilogue::Store, t, join_asked, release_asked, true);
+        return g::launch_overlap(resolved, g::Epilogue::Store, t, join_asked, release_asked,
+                                 ninferno::device_class().features.pdl);
     };
     std::uint64_t joins = 0;
     for (std::size_t i = 1; i < weights.size(); ++i) {
@@ -91,7 +92,7 @@ std::uint64_t granted_joins(const std::vector<Weight>& weights, ops::LinearPolic
 
 // One layer's projections of x [K, T]: separately, then side by side; the outputs must match.
 int check(const std::vector<Slice>& slices, std::int32_t k, std::int32_t t,
-          ops::LinearPolicy policy, std::uint32_t seed, int& admitted) {
+          ops::LinearPolicy policy, std::uint32_t seed, int& admitted, bool direct = false) {
     std::string label = "[";
     for (std::size_t i = 0; i < slices.size(); ++i) {
         label += (i ? " " : "") + std::string(name(slices[i].qtype)) + ":" +
@@ -116,12 +117,12 @@ int check(const std::vector<Slice>& slices, std::int32_t k, std::int32_t t,
     }
     // What the dense pass would do with these weights: join them only where every one admits it.
     for (std::size_t i = 0; i < slices.size(); ++i) {
-        if (!ops::detail::side_by_side_admits(weights[i], policy, t)) {
+        if (!direct && !ops::detail::side_by_side_admits(weights[i], policy, t)) {
             std::cout << "refused " << label << ": output " << i << "\n";
             return 0;
         }
     }
-    ++admitted;
+    if (!direct) ++admitted;
     const auto activation = make_linear_activation(k, t, seed + 7U, ActivationCompute::A16);
     DeviceBuffer x(activation.size() * 2);
     x.copy_from_host(activation.data(), x.bytes);
@@ -156,11 +157,11 @@ int check(const std::vector<Slice>& slices, std::int32_t k, std::int32_t t,
     for (std::size_t i = 0; i < slices.size(); ++i) {
         ops::linear(tx, weights[i], ts[i], policy, workspace, nullptr);
     }
-    const std::uint64_t joins_before = ops::detail::generic::joined_launch_count();
+    const std::uint64_t joins_before = ops::detail::generic::instrumentation_joined_launches();
     ops::segmented_projection(tx, segmented, outputs, workspace, nullptr);
     cuda_check(cudaDeviceSynchronize(), "run");
     // The chain joins exactly where the launches release (the rule, not a flag of its own).
-    const std::uint64_t launched = ops::detail::generic::joined_launch_count() - joins_before;
+    const std::uint64_t launched = ops::detail::generic::instrumentation_joined_launches() - joins_before;
     const std::uint64_t grants   = granted_joins(weights, policy, t);
     if (launched != grants) {
         std::cerr << "FAIL " << label << ": " << launched << " joined launches, the rule grants "
@@ -245,6 +246,27 @@ int main() {
                                           ops::LinearPolicy::AllowA4}) {
                     failures += check(layer, 2048, t, policy, seed++, admitted);
                 }
+            }
+        }
+    }
+    // The chain by itself, admission skipped: on a device without PDL it must join nothing (it
+    // asked every later call to join before #309's chain rule, whatever the launches granted), and
+    // wherever it runs the joins are the rule's.
+    {
+        std::uint32_t seed = 901;
+        int unused         = 0;
+        const std::vector<std::vector<Slice>> chains = {
+            {{f32, 1024}, {f32, 256}, {b16, 256}, {f32, 1024}},
+            {{q8, 1536}, {q8, 768}},
+            {{k4, 1024}, {k4, 256}, {k6, 256}},
+        };
+        for (const auto& chain : chains) {
+            const bool runs = std::ranges::all_of(chain, [](const Slice& slice) {
+                return qtype_runs(slice.qtype, "direct chain");
+            });
+            if (!runs) continue;
+            for (const std::int32_t t : {1, 3, 4}) {
+                failures += check(chain, 2048, t, ops::LinearPolicy::A16Only, seed++, unused, true);
             }
         }
     }
