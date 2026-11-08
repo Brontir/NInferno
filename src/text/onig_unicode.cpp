@@ -8,19 +8,17 @@
 namespace ninferno::text::onig_unicode {
 namespace {
 
-static_assert(UTF8PROC_CATEGORY_CN == 0 && UTF8PROC_CATEGORY_LU == 1 &&
-                  UTF8PROC_CATEGORY_LL == 2 && UTF8PROC_CATEGORY_CS == 28 &&
-                  UTF8PROC_CATEGORY_CO == 29,
+static_assert(UTF8PROC_CATEGORY_CN == 0 && UTF8PROC_CATEGORY_LU == 1 && UTF8PROC_CATEGORY_LL == 2 &&
+                  UTF8PROC_CATEGORY_CS == 28 && UTF8PROC_CATEGORY_CO == 29,
               "onig_unicode_tables.h numbers categories like utf8proc_category_t");
 
 const CategoryRange* find_range(char32_t cp) noexcept {
     const auto* first = std::begin(kOnigCategoryRanges);
     const auto* last  = std::end(kOnigCategoryRanges);
     if (cp < first->first) { return nullptr; }
-    const auto* it = std::upper_bound(first, last, static_cast<std::uint32_t>(cp),
-                                      [](std::uint32_t value, const CategoryRange& range) {
-                                          return value < range.first;
-                                      });
+    const auto* it = std::upper_bound(
+        first, last, static_cast<std::uint32_t>(cp),
+        [](std::uint32_t value, const CategoryRange& range) { return value < range.first; });
     --it;
     return cp <= it->last ? it : nullptr;
 }

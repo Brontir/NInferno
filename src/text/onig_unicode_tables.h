@@ -20,6 +20,7 @@ struct CategoryRange {
     std::uint8_t category;  // utf8proc_category_t value
 };
 
+// clang-format off
 inline constexpr CategoryRange kOnigCategoryRanges[] = {
     {0x295, 0x295, 2},  // Ll
     {0x88F, 0x88F, 0},  // Cn
@@ -70,5 +71,6 @@ inline constexpr CategoryRange kOnigCategoryRanges[] = {
     {0x2CEA2, 0x2CEAD, 0},  // Cn
     {0x323B0, 0x33479, 0},  // Cn
 };
+// clang-format on
 
 } // namespace ninferno::text::onig_unicode

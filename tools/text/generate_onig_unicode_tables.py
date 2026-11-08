@@ -143,11 +143,12 @@ def main() -> int:
         "    std::uint8_t category;  // utf8proc_category_t value",
         "};",
         "",
+        "// clang-format off",
         "inline constexpr CategoryRange kOnigCategoryRanges[] = {",
     ]
     for first, last, category in ranges:
         lines.append(f"    {{0x{first:X}, 0x{last:X}, {CATEGORIES.index(category)}}},  // {category}")
-    lines += ["};", "", "} // namespace ninferno::text::onig_unicode", ""]
+    lines += ["};", "// clang-format on", "", "} // namespace ninferno::text::onig_unicode", ""]
     args.output.write_text("\n".join(lines), encoding="utf-8", newline="\n")
     print(f"{len(ranges)} ranges, {count} code points -> {args.output}", file=sys.stderr)
     return 0

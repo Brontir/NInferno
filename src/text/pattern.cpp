@@ -57,9 +57,7 @@ const std::vector<Range>& space_ranges() {
     return ranges;
 }
 
-char32_t simple_fold(char32_t cp) {
-    return onig_unicode::to_lower(onig_unicode::to_upper(cp));
-}
+char32_t simple_fold(char32_t cp) { return onig_unicode::to_lower(onig_unicode::to_upper(cp)); }
 
 // A set of code points: union of ranges, general categories and nested (typically
 // complemented) sets, optionally complemented itself.
@@ -88,8 +86,7 @@ struct CharSet {
         if (!in && icase) {
             for (const char32_t variant :
                  {onig_unicode::to_lower(cp), onig_unicode::to_upper(cp), simple_fold(cp)}) {
-                if (variant != cp &&
-                    contains(variant, bit(onig_unicode::category(variant)))) {
+                if (variant != cp && contains(variant, bit(onig_unicode::category(variant)))) {
                     in = true;
                     break;
                 }
@@ -933,8 +930,7 @@ std::vector<ByteSpan> Pattern::find_all(std::string_view text) const {
         const char32_t cp  = decode_utf8(bytes + offset, length);
         cps.push_back(cp);
         // ASCII never reaches the category test (sets keep a bitmap for it).
-        categories.push_back(cp < 128 ? 0U
-                                      : bit(onig_unicode::category(cp)));
+        categories.push_back(cp < 128 ? 0U : bit(onig_unicode::category(cp)));
         offsets.push_back(offset);
         offset += length;
     }
