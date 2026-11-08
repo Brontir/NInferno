@@ -177,7 +177,7 @@ private:
     artifact::ArtifactId id_{};
     std::vector<std::uint64_t> prefixes_;
     std::vector<int> fds_;
-    std::vector<int> slots_; // the temporaries' places in the signal handler's list
+    std::vector<void*> slots_; // the temporaries' places in the signal handler's table
     std::vector<Mapping> mappings_;
     std::vector<std::filesystem::path> temporary_;
     std::vector<std::filesystem::path> published_;

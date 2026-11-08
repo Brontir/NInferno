@@ -15,6 +15,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <mutex>
+#include <new>
 #include <thread>
 
 #include <openssl/evp.h>
@@ -50,14 +52,18 @@ constexpr std::uint64_t kDirectBlock = 4096;
 // handler of the application, an ignored signal and SA_SIGINFO handlers are left as they are). The
 // handler unlinks every registered file and re-raises the signal with the default action, so the
 // exit status is the one an unhandled signal gives. On Windows a console control handler covers
-// Ctrl+C, Ctrl+Break, closing the console, logoff and shutdown; it removes the files and lets the
-// default action go on, and SIGTERM (raise) is handled as on POSIX.
+// Ctrl+C, Ctrl+Break, closing the console, logoff and shutdown; it removes the files and returns
+// FALSE, so the handlers installed before it and the default action go on. Windows cannot list the
+// handlers of an application, so unlike POSIX it is installed whatever the application has set;
+// returning FALSE keeps that harmless, and SIGTERM (raise) is handled only over its default.
 //
-// A handler cannot allocate or lock: the slots are fixed buffers, and each carries a sequence
-// number, odd while its name is being written or cleared. The handler copies a name and uses the
-// copy only if the sequence did not move meanwhile, so a slot being reused is skipped, never
-// read torn.
-constexpr std::size_t kSlotCount  = 256;
+// A handler cannot allocate or lock: the table is made of chunks of fixed slots, a chunk is
+// allocated (outside any handler, under a mutex) when the slots in use fill the ones there are and
+// is never freed, so the handler only reads. Each slot carries a sequence number, odd while its
+// name is being written or cleared; the handler copies a name and uses the copy only if the
+// sequence did not move meanwhile, so a slot being reused is skipped, never read torn.
+constexpr std::size_t kChunkSlots = 256;
+constexpr std::size_t kMaxChunks  = 64;
 constexpr std::size_t kSlotLength = 4096;
 
 struct TemporarySlot {
@@ -66,33 +72,42 @@ struct TemporarySlot {
     std::filesystem::path::value_type name[kSlotLength]; // name[0] == 0: nothing registered
 };
 
-TemporarySlot g_slots[kSlotCount];
+struct SlotChunk {
+    TemporarySlot slots[kChunkSlots];
+};
+
+std::atomic<SlotChunk*> g_chunks[kMaxChunks];
+std::mutex g_chunk_mutex;
 
 void unlink_registered() {
     std::filesystem::path::value_type copy[kSlotLength];
-    for (auto& slot : g_slots) {
-        const unsigned before = slot.sequence.load(std::memory_order_acquire);
-        if ((before & 1U) != 0 || slot.name[0] == 0) { continue; }
-        std::size_t length = 0;
-        while (length + 1 < kSlotLength && slot.name[length] != 0) {
-            copy[length] = slot.name[length];
-            ++length;
-        }
-        copy[length] = 0;
-        std::atomic_thread_fence(std::memory_order_acquire);
-        if (slot.sequence.load(std::memory_order_relaxed) != before) { continue; }
+    for (auto& holder : g_chunks) {
+        SlotChunk* chunk = holder.load(std::memory_order_acquire);
+        if (chunk == nullptr) { break; }
+        for (auto& slot : chunk->slots) {
+            const unsigned before = slot.sequence.load(std::memory_order_acquire);
+            if ((before & 1U) != 0 || slot.name[0] == 0) { continue; }
+            std::size_t length = 0;
+            while (length + 1 < kSlotLength && slot.name[length] != 0) {
+                copy[length] = slot.name[length];
+                ++length;
+            }
+            copy[length] = 0;
+            std::atomic_thread_fence(std::memory_order_acquire);
+            if (slot.sequence.load(std::memory_order_relaxed) != before) { continue; }
 #ifdef _WIN32
-        _wunlink(copy);
+            _wunlink(copy);
 #else
-        ::unlink(copy);
+            ::unlink(copy);
 #endif
+        }
     }
 }
 
 #ifdef _WIN32
 BOOL WINAPI on_console_control(DWORD) {
     unlink_registered();
-    return FALSE; // the default action (end the process) goes on
+    return FALSE; // the handlers installed before this one and the default action go on
 }
 
 void on_terminate_signal(int number) {
@@ -132,30 +147,47 @@ void install_signal_cleanup() {
     });
 }
 
-// The slot holding `path`, or -1 (none free, or the name too long: a temporary is then removed
-// by the stale sweep of a later run instead).
-int register_temporary(const std::filesystem::path& path) {
-    const auto& native = path.native();
-    if (native.size() >= kSlotLength) { return -1; }
-    install_signal_cleanup();
-    for (std::size_t i = 0; i < kSlotCount; ++i) {
-        bool expected = false;
-        if (!g_slots[i].used.compare_exchange_strong(expected, true)) { continue; }
-        g_slots[i].sequence.fetch_add(1);
-        std::copy(native.begin(), native.end(), g_slots[i].name);
-        g_slots[i].name[native.size()] = 0;
-        g_slots[i].sequence.fetch_add(1);
-        return static_cast<int>(i);
+// Claims a free slot of the chunks there are, else adds a chunk; nullptr when the table is full
+// or a chunk cannot be allocated.
+TemporarySlot* claim_slot() {
+    const std::lock_guard lock(g_chunk_mutex);
+    for (auto& holder : g_chunks) {
+        SlotChunk* chunk = holder.load(std::memory_order_acquire);
+        if (chunk == nullptr) {
+            chunk = new (std::nothrow) SlotChunk;
+            if (chunk == nullptr) { return nullptr; }
+            for (auto& slot : chunk->slots) { slot.name[0] = 0; }
+            holder.store(chunk, std::memory_order_release);
+        }
+        for (auto& slot : chunk->slots) {
+            bool expected = false;
+            if (slot.used.compare_exchange_strong(expected, true)) { return &slot; }
+        }
     }
-    return -1;
+    return nullptr;
 }
 
-void unregister_temporary(int slot) noexcept {
-    if (slot < 0) { return; }
-    g_slots[slot].sequence.fetch_add(1);
-    g_slots[slot].name[0] = 0;
-    g_slots[slot].sequence.fetch_add(1);
-    g_slots[slot].used.store(false);
+// The slot holding `path`, or nullptr (the table is full, or the name is too long: a temporary
+// is then removed by the stale sweep of a later run instead).
+TemporarySlot* register_temporary(const std::filesystem::path& path) {
+    const auto& native = path.native();
+    if (native.size() >= kSlotLength) { return nullptr; }
+    install_signal_cleanup();
+    TemporarySlot* slot = claim_slot();
+    if (slot == nullptr) { return nullptr; }
+    slot->sequence.fetch_add(1);
+    std::copy(native.begin(), native.end(), slot->name);
+    slot->name[native.size()] = 0;
+    slot->sequence.fetch_add(1);
+    return slot;
+}
+
+void unregister_temporary(TemporarySlot* slot) noexcept {
+    if (slot == nullptr) { return; }
+    slot->sequence.fetch_add(1);
+    slot->name[0] = 0;
+    slot->sequence.fetch_add(1);
+    slot->used.store(false);
 }
 
 // Whether `name` is a temporary of one of `filenames`: "." + file name + "." + six letters or
@@ -897,7 +929,7 @@ void ArtifactWriter::finish(const std::function<std::string()>& seal) {
         temporary_.clear();
         for (const int fd : fds_) { sys::close(fd); }
         fds_.clear();
-        for (const int slot : slots_) { unregister_temporary(slot); }
+        for (void* slot : slots_) { unregister_temporary(static_cast<TemporarySlot*>(slot)); }
         slots_.clear();
         finished_ = true;
     } catch (...) {
@@ -928,7 +960,7 @@ void ArtifactWriter::abort() noexcept {
         }
         for (const auto& path : published_) { std::filesystem::remove(path, ignored); }
     }
-    for (const int slot : slots_) { unregister_temporary(slot); }
+    for (void* slot : slots_) { unregister_temporary(static_cast<TemporarySlot*>(slot)); }
     slots_.clear();
     temporary_.clear();
     published_.clear();
