@@ -95,14 +95,14 @@ struct LinearCandidate {
 [[nodiscard]] std::optional<double> linear_q8_requested_bytes(const Weight& weight,
                                                               std::int32_t tokens);
 
-// ops::linear_pair's implementations for one call (#310): the fused Q8 pair kernel ("fused:q8_pair",
-// its two registered geometries in the converter's RowSplit Q8_G32 layout) and the two separate
-// linear() calls ("separate", A16 as linear_pair's contract has it), each with the candidates of
-// its two calls (`parts`: linear_candidates of each weight, the first then the second). Selected:
-// the one linear_pair runs; the fused kernel is Unavailable with what lacks where it does not
-// apply (Dominated where it applies but its chain requests more bytes than the two calls' and
-// fuses nothing); the separate calls are Inadmissible ("fused") where the fused kernel takes the
-// pair, Unavailable where the shapes differ or linear() runs nothing for a weight.
+// ops::linear_pair's implementations for one call (#310): the fused Q8 pair kernel
+// ("fused:q8_pair", its two registered geometries in the converter's RowSplit Q8_G32 layout) and
+// the two separate linear() calls ("separate", A16 as linear_pair's contract has it), each with the
+// candidates of its two calls (`parts`: linear_candidates of each weight, the first then the
+// second). Selected: the one linear_pair runs; the fused kernel is Unavailable with what lacks
+// where it does not apply (Dominated where it applies but its chain requests more bytes than the
+// two calls' and fuses nothing); the separate calls are Inadmissible ("fused") where the fused
+// kernel takes the pair, Unavailable where the shapes differ or linear() runs nothing for a weight.
 struct LinearPairCandidate {
     std::string id;
     LinearCandidate::Status status = LinearCandidate::Status::Unavailable;
