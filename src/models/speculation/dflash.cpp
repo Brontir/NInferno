@@ -83,8 +83,8 @@ DFlashConfig parse_dflash_config(const artifact::Json& c) {
         out.rope_attention_scaling = json_positive_float(rope, "attention_scaling");
         out.rope_scaled            = true;
         if (rope.contains("original_max_position_embeddings")) {
-            out.full_window = static_cast<std::int32_t>(
-                json_dimension(rope, "original_max_position_embeddings"));
+            out.full_window =
+                static_cast<std::int32_t>(json_dimension(rope, "original_max_position_embeddings"));
         } else if (rope.value("rope_type", std::string()) == "yarn" && out.max_positions != 0 &&
                    out.rope_attention_scaling > 1.0F) {
             // An artifact converted before the original length was recorded: YaRN's default

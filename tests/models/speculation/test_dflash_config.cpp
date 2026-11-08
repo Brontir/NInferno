@@ -28,8 +28,10 @@ Json config(const Json& rope) {
     Json layers = Json::array();
     for (int i = 0; i < 8; ++i) { layers.push_back("full_attention"); }
     Json freq = Json::array();
-    for (int i = 0; i < 32; ++i) { freq.push_back(std::pow(150000.0, -static_cast<double>(i) / 32)); }
-    Json r        = rope;
+    for (int i = 0; i < 32; ++i) {
+        freq.push_back(std::pow(150000.0, -static_cast<double>(i) / 32));
+    }
+    Json r          = rope;
     r["rotary_dim"] = 64;
     r["inv_freq"]   = freq;
     return {{"model_type", "dflash"},
