@@ -355,7 +355,7 @@ std::string make_prometheus_metrics(const ninferno::RuntimeStats& stats,
                "# TYPE ninferno_server_info gauge\nninferno_server_info{server_instance_id=\"" +
                process.instance_id + "\"} 1\n";
         metric("process_start_time_seconds", "gauge",
-               "Start time of the process since unix epoch in seconds.",
+               "Time this server process started serving, since unix epoch in seconds.",
                static_cast<double>(process.started_unix_us) / 1e6);
     }
     return out;
