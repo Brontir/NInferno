@@ -90,12 +90,14 @@ bool SseTransport::poll(Clock::time_point now) {
 
 void answer_overloaded_connection(socket_t socket, const std::function<HealthReply()>& health) {
 #if defined(__linux__)
-    // The listening socket defers accept until the request has arrived
-    // (configure_http_server_socket), so the request line is there; what is not buffered is a
-    // connection that sent nothing for the deferral time, and that is answered like any other. The
-    // peek costs the accepting thread no wait.
+    // The listening socket defers accept until bytes have arrived (configure_http_server_socket),
+    // so a request's first bytes are normally there; the peek costs the accepting thread no wait.
     std::array<char, 16> head{};
     const ssize_t peeked_bytes = ::recv(socket, head.data(), head.size(), MSG_PEEK | MSG_DONTWAIT);
+    // A connection with no bytes yet is a pooled or idle one a proxy opened ahead (Envoy, HAProxy):
+    // closing it with no response is an ordinary idle close that the proxy retries on another
+    // connection, where a 503 nobody asked for would be passed on as an error.
+    if (peeked_bytes <= 0) { return; }
     const std::string_view line(head.data(),
                                 peeked_bytes > 0 ? static_cast<std::size_t>(peeked_bytes) : 0);
     const bool is_health =
@@ -118,7 +120,8 @@ void answer_overloaded_connection(socket_t socket, const std::function<HealthRep
     // The socket is fresh: the answer fits its send buffer, and a full one drops it.
     (void)::send(socket, answer.data(), answer.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
     // Closing with unread data sends a reset that can destroy the answer at the client: read what
-    // has arrived (the request, as far as it is here) and drop it.
+    // has arrived (a small request is all here) and drop it. Bytes that arrive after this still
+    // reset the connection, as for any server that answers before it has read the request.
     std::array<char, 4096> sink{};
     for (std::size_t drained = 0; drained < (1u << 20);) {
         const ssize_t got = ::recv(socket, sink.data(), sink.size(), MSG_DONTWAIT);
@@ -189,9 +192,12 @@ void configure_http_server_socket(socket_t socket) noexcept {
     set_socket_option(socket, IPPROTO_TCP, TCP_KEEPINTVL, kKeepAliveIntervalSeconds);
     set_socket_option(socket, IPPROTO_TCP, TCP_KEEPCNT, kKeepAliveProbeCount);
     set_socket_option(socket, IPPROTO_TCP, TCP_USER_TIMEOUT, kTcpUserTimeoutMilliseconds);
-    // A connection is handed to the server once its first bytes have arrived (or after this many
-    // seconds): a worker or a queue place is not spent on a client that has sent nothing, and a
-    // refused connection's request line can be read without waiting (answer_overloaded_connection).
+    // A connection is handed to the server once its first bytes have arrived, or, if none do, when
+    // the kernel's SYN-ACK retransmit after this many seconds finds it still silent (Linux takes
+    // about 3-7 s): a client that connects and says nothing waits that long for a worker or a queue
+    // place instead of taking one at once. A client that has sent one byte is accepted at once, so
+    // a refused connection's request line is normally, not always, there to read without waiting
+    // (answer_overloaded_connection); one that is not there gets the same 503 or close.
     set_socket_option(socket, IPPROTO_TCP, TCP_DEFER_ACCEPT, kDeferAcceptSeconds);
 #endif
 }

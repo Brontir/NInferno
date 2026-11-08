@@ -617,6 +617,46 @@ int test_slow_request_body_is_cut_off() {
     return failures;
 }
 
+// What a refused connection gets (#526): a connection with no bytes yet is closed unanswered, as an
+// idle pooled connection of a proxy should be (the proxy retries); one with a request gets 503, its
+// request is drained so the close does not reset the answer, and /health gets the health answer.
+int test_overload_answer_by_connection() {
+    int failures = 0;
+    const auto health = [] {
+        return ninferno::serve::HealthReply{.status = 200, .body = R"({"status":"ok"})"};
+    };
+    // Returns what the client end received after the server end was answered, and whether the
+    // server end still held unread bytes.
+    const auto answer = [&](const std::string& request, bool& drained) {
+        int pair[2];
+        if (::socketpair(AF_UNIX, SOCK_STREAM, 0, pair) != 0) { return std::string("socketpair"); }
+        if (!request.empty()) { (void)::send(pair[1], request.data(), request.size(), MSG_NOSIGNAL); }
+        ninferno::serve::answer_overloaded_connection(pair[0], health);
+        char byte;
+        drained = ::recv(pair[0], &byte, 1, MSG_DONTWAIT) <= 0;
+        std::string received;
+        char buffer[512];
+        for (ssize_t got; (got = ::recv(pair[1], buffer, sizeof(buffer), MSG_DONTWAIT)) > 0;) {
+            received.append(buffer, static_cast<std::size_t>(got));
+        }
+        ::close(pair[0]);
+        ::close(pair[1]);
+        return received;
+    };
+    bool drained = false;
+    failures += check(answer("", drained).empty(),
+                      "a connection with no bytes was answered instead of closed");
+    const std::string busy = answer("POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\n\r\n", drained);
+    failures += check(busy.find(" 503 ") != std::string::npos &&
+                          busy.find("Retry-After: 5") != std::string::npos && drained,
+                      "a connection with a request was not answered 503 with its request drained");
+    const std::string ok = answer("GET /health HTTP/1.1\r\n\r\n", drained);
+    failures += check(ok.find(" 200 ") != std::string::npos &&
+                          ok.find(R"({"status":"ok"})") != std::string::npos,
+                      "/health on a refused connection was not answered with the health reply");
+    return failures;
+}
+
 // Slow senders that fill the worker pool and its queue must not make the server unreachable
 // (#526): a connection past the queue is answered at once, /health with the health answer and the
 // rest with 503 and Retry-After. Two workers and one queue slot are held by stalled requests.
@@ -741,6 +781,7 @@ int main() {
     failures += test_error_connection_reuse();
     failures += test_slow_request_body_is_cut_off();
     failures += test_overloaded_pool_still_answers();
+    failures += test_overload_answer_by_connection();
     failures += test_ambiguous_framing_is_refused("Content-Length: 5\r\nContent-Length: 6\r\n",
                                                   "hello", "two Content-Length fields");
     failures += test_ambiguous_framing_is_refused("Content-Length: 5, 5\r\n", "hello",

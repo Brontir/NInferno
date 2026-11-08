@@ -396,7 +396,10 @@ HttpServer::HttpServer(ServeOptions options, std::shared_ptr<spdlog::logger> log
     server_.set_socket_options(configure_http_server_socket);
     server_.set_payload_max_length(options_.max_request_bytes);
     server_.set_overload_handler([this](socket_t socket) {
-        answer_overloaded_connection(socket, [this] { return health_reply(); });
+        // Runs on the accepting thread, which must survive whatever the health answer throws.
+        try {
+            answer_overloaded_connection(socket, [this] { return health_reply(); });
+        } catch (...) {}
     });
     server_.set_request_body_min_rate(
         static_cast<std::size_t>(options_.request_body_min_kib_per_sec) << 10,

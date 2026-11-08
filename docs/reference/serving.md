@@ -638,10 +638,19 @@ line and on every refused request (a 4xx before generation is logged too).
   thread: `GET /health` with the health answer, anything else with HTTP 503, `Retry-After: 5` and
   code `server_busy`. Senders that fill the pool therefore cannot make the server unreachable to a
   liveness probe, and nobody waits in an unbounded queue. That `/health` answer reports the Engine
-  (liveness): a saturated pool does not make it unhealthy. Linux accepts a connection once its
-  first bytes have arrived (`TCP_DEFER_ACCEPT`, 3 s), so a client that connects and sends nothing
-  holds neither a worker nor a queue place. On other systems the queue is unbounded as before and
-  only the body rate applies. A connection that is queued waits for a worker to free up, which
+  (liveness): a saturated pool does not make it unhealthy. A past-the-queue connection that has sent
+  no bytes yet (a connection a proxy opened ahead and keeps idle) is closed without an answer, which
+  proxies treat as an ordinary idle close and retry; only a connection with request bytes gets the
+  503. A 503 is written before the request is read: a small request is read and dropped so the
+  client sees the answer, a large one still in flight may reset the connection.
+  - Linux hands a connection to the server when its first bytes arrive (`TCP_DEFER_ACCEPT`); a
+    client that connects and says nothing is handed over by the kernel's SYN-ACK retransmit
+    after about 3-7 s, so it waits that long instead of taking a worker at once.
+  - The queue size is a choice, not a limit of the design: half the pool, at least 16, so the default
+    pool holds 49 workers and 24 queued connections, 73 in all. A client or SDK pool beyond that is
+    answered 503 with `Retry-After: 5`, which the OpenAI and Anthropic SDKs retry. A bench that opens
+    more connections than that at once should lower its concurrency or retry.
+  - On other systems the queue is unbounded as before and only the body rate applies. A connection that is queued waits for a worker to free up, which
   takes seconds. On a network where clients are hostile, a buffering reverse proxy in front still
   helps: it sends the body to NInferno only once it has received all of it.
 - A peer whose TCP stack remains connected and acknowledges data cannot be distinguished from a
