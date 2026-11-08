@@ -1092,8 +1092,7 @@ void record_projection_route(const char* op, const char* route, std::int32_t tok
     std::lock_guard lock(s.mutex);
     if (!s.seen.insert({op, route, tokens, n, k}).second) return;
     std::ofstream(path, std::ios::app)
-        << op << ' ' << route << ' ' << tokens << ' ' << n << ' ' << k << '
-';
+        << op << ' ' << route << ' ' << tokens << ' ' << n << ' ' << k << '\n';
 }
 
 bool w4a8_ws_supports(QType q) {
