@@ -104,7 +104,8 @@ int main() {
                 };
                 const double base_work = kernel_work(128);
                 const double base_cost = ch::prefill_linears_seconds(model, card, quant, 128);
-                check(!b.estimated || base_cost > 0, std::string(b.name) + ": the estimate prices 128 tokens");
+                check(!b.estimated || base_cost > 0,
+                      std::string(b.name) + ": the estimate prices 128 tokens");
                 for (int t = 129; t <= 512; ++t) {
                     const int pick               = generic::heuristic_w4a8(problem, w, t);
                     const std::int64_t wide_ctas = rt * ((t + 127) / 128);
