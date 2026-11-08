@@ -1,6 +1,7 @@
 #include "serve/request_validation.h"
 
 #include "chat/tool_calls.h"
+#include "serve/bounded_json.h"
 
 #include <algorithm>
 #include <cctype>
@@ -121,6 +122,28 @@ void check_message_count(std::size_t count, const RequestLimits& limits, const c
                     " entries; this server accepts at most " + std::to_string(limits.max_messages) +
                     " (--max-request-messages)",
                 field, "too_many_messages");
+}
+
+void check_history_call_arguments(const std::vector<ChatTurn>& turns, const RequestLimits& limits,
+                                  const char* field) {
+    for (const ChatTurn& turn : turns) {
+        for (const ToolCall& call : turn.tool_calls) {
+            switch (check_bounded_json(call.arguments_json, limits.max_json_values)) {
+            case JsonTextStatus::TooManyValues:
+                bad_request("the arguments of tool call '" + ascii_preview(call.name) +
+                                "' hold more than " + std::to_string(limits.max_json_values) +
+                                " values (--max-request-json-values)",
+                            field, "request_json_too_large");
+            case JsonTextStatus::TooDeep:
+                bad_request("the arguments of tool call '" + ascii_preview(call.name) +
+                                "' nest deeper than " + std::to_string(kMaximumRequestJsonDepth) +
+                                " levels",
+                            field);
+            case JsonTextStatus::Ok:
+            case JsonTextStatus::Invalid: break;
+            }
+        }
+    }
 }
 
 ninferno::product::media_acquire::Source media_source(std::string value, std::string_view field,

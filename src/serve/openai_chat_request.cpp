@@ -582,6 +582,7 @@ void parse_messages(const Json& body, const RequestLimits& limits, GenerationReq
     for (std::size_t index = 0; index < messages.size(); ++index) {
         output.messages.push_back(parse_message(messages.at(index), index));
     }
+    check_history_call_arguments(output.messages, limits, "messages");
     order_tool_results(output.messages);
 }
 

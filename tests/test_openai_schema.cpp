@@ -409,6 +409,24 @@ int test_constrained_decoding_extensions() {
                           std::string(wide_case.param) + " text with too many values is accepted");
     }
 
+    // The arguments of a replayed tool call are kept as text for the chat template to parse: they
+    // are measured at the request (#527).
+    for (const char* key : {"tool_calls", "function_call"}) {
+        Json history = base_request();
+        const Json function{{"name", "f"}, {"arguments", many}};
+        Json assistant{{"role", "assistant"}, {"content", nullptr}};
+        if (std::string(key) == "tool_calls") {
+            assistant[key] = Json::array({Json{{"id", "c1"}, {"type", "function"}, {"function", function}}});
+        } else {
+            assistant[key] = function;
+        }
+        history["messages"].push_back(assistant);
+        const ApiError error =
+            api_error([&] { (void)parse_chat_completion_request(history, few_values, false); });
+        failures += check(error.status == 400 && error.code == "request_json_too_large",
+                          std::string("assistant ") + key + " arguments over the value limit are accepted");
+    }
+
     Json two                = base_request();
     two["response_format"]  = Json{{"type", "json_object"}};
     two["guided_regex"]     = "[a-z]+";

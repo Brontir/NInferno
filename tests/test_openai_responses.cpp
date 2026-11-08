@@ -1582,6 +1582,29 @@ int test_input_item_limit() {
     failures +=
         check(api_code([&] { (void)parse_openai_responses_create_request(body, narrow); }).empty(),
               "Responses input at the message limit is accepted");
+
+    // #527: a replayed call's arguments are kept as text and parsed again by the chat template, so
+    // `[0,0,...` as arguments is measured at the request, not built there.
+    std::string many = "[";
+    for (int i = 0; i < 50; ++i) { many += i == 0 ? "0" : ",0"; }
+    many += "]";
+    const Json call_body =
+        Json{{"model", "qwen"},
+             {"input", Json::array({Json{{"type", "function_call"},
+                                         {"call_id", "call_1"},
+                                         {"name", "f"},
+                                         {"arguments", many}}})}};
+    RequestLimits few_values = limits();
+    few_values.max_json_values = 40;
+    failures += check(api_code([&] {
+                          (void)parse_openai_responses_create_request(call_body, few_values);
+                      }) == "request_json_too_large",
+                      "function_call arguments over the value limit are accepted");
+    few_values.max_json_values = 60;
+    failures += check(api_code([&] {
+                          (void)parse_openai_responses_create_request(call_body, few_values);
+                      }).empty(),
+                      "function_call arguments within the value limit are refused");
     return failures;
 }
 

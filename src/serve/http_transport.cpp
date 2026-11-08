@@ -32,17 +32,9 @@ void set_socket_option(socket_t socket, int level, int option, const T& value) n
 }
 #endif
 
-// Set on a worker thread that has parsed a large body since it last released memory.
-thread_local bool large_body_seen = false;
-// Smaller bodies leave too little behind to be worth walking every arena.
-constexpr std::size_t kLargeBodyBytes = 1u << 20;
-
 } // namespace
 
 RequestJson parse_json_body(const httplib::Request& request, const RequestLimits& limits) {
-    // A body this big leaves the pieces of its document in this thread's malloc arena, whether the
-    // parse succeeds or is stopped at a limit after building up to it (see release_request_memory).
-    if (request.body.size() >= kLargeBodyBytes) { large_body_seen = true; }
     RequestJson body;
     switch (parse_bounded_json(request.body, limits.max_json_values, body)) {
     case JsonTextStatus::Ok:
@@ -61,8 +53,7 @@ RequestJson parse_json_body(const httplib::Request& request, const RequestLimits
 }
 
 void release_request_memory() noexcept {
-    if (!large_body_seen) { return; }
-    large_body_seen = false;
+    if (!take_large_parse_seen()) { return; }
 #if defined(__GLIBC__)
     (void)::malloc_trim(0);
 #endif

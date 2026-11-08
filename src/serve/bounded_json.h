@@ -18,4 +18,15 @@ enum class JsonTextStatus { Ok, Invalid, TooManyValues, TooDeep };
 [[nodiscard]] JsonTextStatus parse_bounded_json(std::string_view text, std::size_t max_values,
                                                 RequestJson& out);
 
+// Whether the calling thread has built a document that left a lot of freed memory in its malloc
+// arena (one of 10,000 values or more, built from text of 1 MiB or more, or stopped at a limit
+// after building up to it) since the last call; the call clears it. See release_request_memory.
+[[nodiscard]] bool take_large_parse_seen() noexcept;
+
+// The same bounds, checked without building the document: nothing is allocated, so any text up to
+// the body limit can be measured. Used for text that is kept as it is and parsed later (a replayed
+// tool call's arguments, which the chat template parses): Invalid is not an error here, since the
+// renderer shows text that is not JSON as it is.
+[[nodiscard]] JsonTextStatus check_bounded_json(std::string_view text, std::size_t max_values);
+
 } // namespace ninferno::serve
