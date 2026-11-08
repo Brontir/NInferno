@@ -1854,7 +1854,8 @@ not take at startup.
   NVFP4 with BF16 activations on its tiled route); on RTX 50 (FP4 tensor cores) decode stays BF16,
   and so does speculative verify on the layers with native NVFP4 kernels (generic-path shapes take
   int8 from 17 tokens), while GPUs without FP4 tensor cores use int8 there too. Qwen 3.5/3.6 MoE
-  NVFP4 experts held at eight bits run the generic MoE.
+  NVFP4 experts held at eight bits run the generic MoE. GGUF block weights depend on where a
+  prompt was cut, as under `fast` (#492).
 
 ### Context cache
 
