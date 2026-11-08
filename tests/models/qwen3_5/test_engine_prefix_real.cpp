@@ -1,9 +1,11 @@
 #include "ninferno/engine.h"
 #include "real_artifact.h"
 #include "kv_cache_storage.h"
+#include "models/qwen3_5/program/debug_hooks.h"
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -2360,6 +2362,8 @@ int exercise_vision_engines(const char* artifact) {
     return exercise_vision(engine, true);
 }
 
+int exercise_truncated_endpoint(const char* artifact);
+
 int exercise_artifact(const char* artifact) {
     // Own engines, independent of the shared-engine cases below.
     if (const int result = exercise_concurrent_wave_host_tier_admission(artifact); result != 0) {
@@ -2399,6 +2403,7 @@ int exercise_artifact(const char* artifact) {
                                   "no vision component (text-only artifact)");
     }
     if (const int result = exercise_host_restore(artifact); result != 0) { return result; }
+    if (const int result = exercise_truncated_endpoint(artifact); result != 0) { return result; }
     {
         // Production C=1/H=1 topology: repeated exact use promotes the shared prefix under one
         // cache Device slot; its Fork/Restore and the later ResponseReplay must then rotate
@@ -2536,11 +2541,296 @@ int exercise_attention_integration(const char* artifact) {
     return 0;
 }
 
+// #485: an attention-only model serves a prompt which diverges inside a resident endpoint's last
+// message from that endpoint's KV, cut back to a neutral frontier; a model with linear layers or
+// sliding rings reuses nothing there. Under the Exact activations the answer equals a cold
+// prefill's bit for bit; under the default (Fast) activations a request's bytes depend on how its
+// prompt was cut (ActivationMode), so the test holds the greedy tokens and the logprobs to a
+// tolerance only.
+std::string random_words(std::uint64_t seed, std::uint32_t count) {
+    std::string text;
+    std::uint64_t state = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+    for (std::uint32_t index = 0; index < count; ++index) {
+        state                      = state * 6364136223846793005ULL + 1442695040888963407ULL;
+        const std::uint32_t length = 3U + static_cast<std::uint32_t>((state >> 33U) % 5U);
+        if (!text.empty()) { text.push_back(' '); }
+        for (std::uint32_t letter = 0; letter < length; ++letter) {
+            state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+            text.push_back(
+                static_cast<char>('a' + static_cast<std::uint32_t>((state >> 33U) % 26U)));
+        }
+    }
+    return text;
+}
+
+bool same_generation(const ninferno::GenerationResult& left,
+                     const ninferno::GenerationResult& right) {
+    if (left.generated_token_ids != right.generated_token_ids ||
+        left.logprobs.size() != right.logprobs.size()) {
+        std::cerr << "  tokens differ:";
+        for (const ninferno::TokenId token : left.generated_token_ids) {
+            std::cerr << ' ' << token;
+        }
+        std::cerr << " |";
+        for (const ninferno::TokenId token : right.generated_token_ids) {
+            std::cerr << ' ' << token;
+        }
+        std::cerr << '\n';
+        return false;
+    }
+    for (std::size_t index = 0; index < left.logprobs.size(); ++index) {
+        const ninferno::GeneratedLogprob& a = left.logprobs[index];
+        const ninferno::GeneratedLogprob& b = right.logprobs[index];
+        if (a.token != b.token || a.logprob != b.logprob || a.top.size() != b.top.size()) {
+            std::cerr << "  logprob " << index << " differs: " << a.logprob << " vs " << b.logprob
+                      << '\n';
+            return false;
+        }
+        for (std::size_t alternative = 0; alternative < a.top.size(); ++alternative) {
+            if (a.top[alternative].token != b.top[alternative].token ||
+                a.top[alternative].logprob != b.top[alternative].logprob) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// Under the default (Fast) activations a request's bytes depend on how its prompt was cut
+// (ActivationMode): the logprobs of eight greedy tokens of random words move by about 0.1 between
+// a reuse and a cold prefill, the tokens do not. Fast is held to the tokens and to 0.25; Exact
+// is held to the same bytes.
+bool close_generation(const ninferno::GenerationResult& left,
+                      const ninferno::GenerationResult& right, float tolerance) {
+    if (left.generated_token_ids != right.generated_token_ids ||
+        left.logprobs.size() != right.logprobs.size()) {
+        std::cerr << "  tokens differ:";
+        for (const ninferno::TokenId token : left.generated_token_ids) {
+            std::cerr << ' ' << token;
+        }
+        std::cerr << " |";
+        for (const ninferno::TokenId token : right.generated_token_ids) {
+            std::cerr << ' ' << token;
+        }
+        std::cerr << '\n';
+        return false;
+    }
+    float worst = 0.0F;
+    for (std::size_t index = 0; index < left.logprobs.size(); ++index) {
+        const float delta = left.logprobs[index].logprob - right.logprobs[index].logprob;
+        worst             = std::max(worst, delta < 0 ? -delta : delta);
+    }
+    std::cerr << "  largest logprob difference " << worst << '\n';
+    return worst <= tolerance;
+}
+
+int exercise_truncated_endpoint_mode(const char* artifact, ninferno::ActivationMode mode,
+                                     std::uint32_t source_tail_words) {
+    ninferno::EngineOptions options;
+    options.artifact_path                    = artifact;
+    options.max_context                      = 12288;
+    options.kv_capacity                      = ninferno::KvCapacityPolicy::explicit_capacity(12288);
+    options.prefill_chunk                    = 1024;
+    options.activations                      = mode;
+    options.speculative.backend              = ninferno::SpeculativeBackend::None;
+    options.enable_vision                    = false;
+    options.max_concurrency                  = 1;
+    options.max_pending_requests             = 1;
+    options.context_cache.device_state_slots = 4;
+    options.context_cache.max_private_continuations         = 3;
+    options.context_cache.max_shared_prefixes               = 0;
+    options.context_cache.max_long_anchors_per_continuation = 0;
+    ninferno::Engine engine(std::move(options));
+    // What the Program says it can do: attention layers only, no sliding window, no drafter.
+    const bool attention_only = engine.load_summary().truncated_prefix_reuse;
+
+    const std::string base_text   = random_words(1, 1500);
+    const std::string longer_text = base_text + ' ' + random_words(2, 300);
+    // The source request: the shared message, then words of its own after the divergence.
+    const std::string source_text =
+        source_tail_words == 0 ? base_text : base_text + ' ' + random_words(3, source_tail_words);
+    const auto request = [&](bool reuse) {
+        ninferno::RequestOptions out    = fixed_output(8, reuse);
+        out.execution.sampling.logprobs = 3;
+        return out;
+    };
+    const auto run = [&](const std::string& text, std::string session, bool reuse) {
+        const ninferno::CacheRetentionHint retention =
+            session.empty() ? ninferno::CacheRetentionHint::Disposable
+                            : ninferno::CacheRetentionHint::LiveSession;
+        return engine.generate(engine.prepare(pressure_turn(text, std::move(session), retention)),
+                               request(reuse));
+    };
+    const std::uint32_t base_tokens =
+        engine.count_tokens(pressure_turn(base_text, "", ninferno::CacheRetentionHint::Disposable));
+    std::cout << "  base prompt " << base_tokens << " tokens\n";
+
+    int failures      = 0;
+    const char* label = mode == ninferno::ActivationMode::Exact ? "exact" : "fast";
+    const auto expect = [&](bool ok, const char* what) {
+        if (!ok) {
+            std::cerr << "truncated endpoint (" << label << "): " << what << '\n';
+            ++failures;
+        }
+    };
+    const bool exact_mode  = mode == ninferno::ActivationMode::Exact;
+    const auto expect_same = [&](const ninferno::GenerationResult& left,
+                                 const ninferno::GenerationResult& right, const char* what) {
+        expect(exact_mode ? same_generation(left, right) : close_generation(left, right, 0.25F),
+               what);
+    };
+    const auto check_reuse = [&](const ninferno::GenerationResult& result, const char* what) {
+        std::cout << "  " << label << ": reused " << result.reused_prompt_tokens
+                  << " prompt tokens\n";
+        if (attention_only) {
+            expect(result.prefix_reuse_path == ninferno::PrefixReusePath::PrivateTruncatedEndpoint,
+                   what);
+            expect(result.reused_prompt_tokens >= 256,
+                   "the truncated frontier is below the 256-token minimum");
+        } else {
+            expect(result.reused_prompt_tokens == 0 &&
+                       result.prefix_reuse_path == ninferno::PrefixReusePath::Root,
+                   "a model with linear layers reused an in-message append");
+        }
+    };
+
+    // B diverges inside A's decoded answer: only the rows A's prefill wrote are reused (its
+    // decode rows are computed on other routes), so the frontier stays inside A's prompt.
+    {
+        const auto tokens_of = [](std::uint64_t seed, std::uint32_t count) {
+            std::vector<ninferno::TokenId> out;
+            std::uint64_t state = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+            for (std::uint32_t index = 0; index < count; ++index) {
+                state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+                out.push_back(static_cast<ninferno::TokenId>(1000U + (state >> 33U) % 19000U));
+            }
+            return out;
+        };
+        const auto run_tokens = [&](std::vector<ninferno::TokenId> tokens, bool reuse) {
+            return engine.generate(engine.prepare_tokens(std::move(tokens)), request(reuse));
+        };
+        const std::vector<ninferno::TokenId> prompt = tokens_of(11, 1500);
+        const ninferno::GenerationResult answered   = run_tokens(prompt, true);
+        std::vector<ninferno::TokenId> diverging    = prompt;
+        diverging.insert(diverging.end(), answered.generated_token_ids.begin(),
+                         answered.generated_token_ids.begin() + 4);
+        const std::vector<ninferno::TokenId> tail = tokens_of(12, 300);
+        diverging.insert(diverging.end(), tail.begin(), tail.end());
+        const ninferno::GenerationResult inside = run_tokens(diverging, true);
+        const ninferno::GenerationResult cold   = run_tokens(diverging, false);
+        std::cout << "  " << label << ": diverging inside the answer reused "
+                  << inside.reused_prompt_tokens << " of a " << prompt.size() << "-token prompt\n";
+        expect(attention_only ? inside.reused_prompt_tokens == prompt.size()
+                              : inside.reused_prompt_tokens == 0,
+               "a divergence inside the decoded answer reused rows past the prefill's");
+        expect_same(inside, cold, "the reuse below a decoded answer differs from cold");
+    }
+
+    // Cold references (no prefix reuse at all).
+    const ninferno::GenerationResult cold_longer = run(longer_text, "", false);
+    expect(cold_longer.reused_prompt_tokens == 0, "the cold reference reused a prefix");
+    // The cold prefill is itself reproducible (the control for the comparisons below).
+    expect(same_generation(run(longer_text, "", false), cold_longer),
+           "two cold prefills of one prompt differ");
+
+    // The same session appends in its message: the endpoint is consumed, truncated.
+    const ninferno::GenerationResult first = run(source_text, "truncated-a", true);
+    expect(first.reused_prompt_tokens == 0, "the first request reused a prefix");
+    const ninferno::GenerationResult second = run(longer_text, "truncated-a", true);
+    check_reuse(second, "same-session append did not take the truncated endpoint");
+    expect(!attention_only || second.reused_prompt_tokens < base_tokens,
+           "the first append reused past the shared message");
+    expect_same(second, cold_longer, "the truncated reuse differs from a cold prefill");
+
+    // Again: the second request's own endpoint serves the same prompt.
+    const ninferno::GenerationResult third = run(longer_text, "truncated-a", true);
+    expect(third.reused_prompt_tokens > second.reused_prompt_tokens || !attention_only,
+           "the repeated request did not reuse more than the first append");
+    expect_same(third, cold_longer, "the repeated request differs from a cold prefill");
+
+    // Another session retains the source: pages [0, f) are forked and the source is untouched.
+    const ninferno::GenerationResult source = run(source_text, "truncated-b", true);
+    expect(!exact_mode || same_generation(source, first),
+           "the base request changed after truncated reuse");
+    const ninferno::GenerationResult forked      = run(longer_text + " end", "truncated-c", true);
+    const ninferno::GenerationResult cold_forked = run(longer_text + " end", "", false);
+    check_reuse(forked, "another session's append did not take the truncated endpoint");
+    expect_same(forked, cold_forked, "the retained truncated reuse differs from cold");
+    const ninferno::GenerationResult after = run(source_text, "truncated-d", true);
+    expect(!exact_mode || same_generation(after, first),
+           "the source changed after a retained truncated reuse");
+
+    // A request without a session never consumes another client's endpoint on a shared prefix.
+    const ninferno::GenerationResult own_before     = run(longer_text, "truncated-e", true);
+    const ninferno::GenerationResult anonymous      = run(longer_text + " tail", "", true);
+    const ninferno::GenerationResult cold_anonymous = run(longer_text + " tail", "", false);
+    check_reuse(anonymous, "a sessionless request did not fork the shared prefix");
+    expect_same(anonymous, cold_anonymous, "the sessionless truncated reuse differs from cold");
+    const ninferno::GenerationResult own_after = run(longer_text, "truncated-e", true);
+    expect(own_after.reused_prompt_tokens >= own_before.reused_prompt_tokens,
+           "a sessionless request consumed the endpoint of a session");
+    expect_same(own_after, cold_longer, "the session's endpoint changed after a sessionless fork");
+
+    // A materialization cancelled right after its truncated source was prepared (the window the
+    // Engine's own cancellation cannot hit, so a test hook cancels there) leaves a source whose
+    // summary still describes its rows: the session's next request takes the truncated endpoint
+    // again and matches a cold prefill. Run twice: the second source is another session's.
+    if (exact_mode && attention_only) {
+        for (std::uint32_t round = 0; round < 2; ++round) {
+            const std::string session = "cancelled-" + std::to_string(round);
+            (void)run(source_text, session, true);
+            const std::uint64_t aborts_before = engine.runtime_stats().truncated_source_aborts;
+            ninferno::models::qwen3_5::debug::abort_truncated_after_source_preparation = 1;
+            bool ended_cancelled                                                       = false;
+            try {
+                const ninferno::GenerationResult cancelled = run(longer_text, session, true);
+                ended_cancelled = cancelled.finish_reason == ninferno::FinishReason::Cancelled &&
+                                  cancelled.generated_token_ids.empty();
+            } catch (const ninferno::RequestError& error) {
+                if (error.kind() != ninferno::RequestErrorKind::Cancelled) { throw; }
+                ended_cancelled = true;
+            }
+            expect(ninferno::models::qwen3_5::debug::abort_truncated_after_source_preparation == 0,
+                   "the hook did not fire: no truncated materialization was prepared");
+            expect(ended_cancelled,
+                   "the aborted materialization did not end the request as cancelled");
+            expect(engine.runtime_stats().truncated_source_aborts == aborts_before + 1,
+                   "no abort after source preparation was counted");
+            const ninferno::GenerationResult next = run(longer_text, session, true);
+            expect(next.prefix_reuse_path == ninferno::PrefixReusePath::PrivateTruncatedEndpoint &&
+                       next.reused_prompt_tokens >= 256,
+                   "a source aborted after preparation no longer serves a truncated reuse");
+            expect(same_generation(next, cold_longer),
+                   "a request after an aborted truncated reuse differs from cold");
+        }
+    }
+    return failures;
+}
+
+int exercise_truncated_endpoint(const char* artifact) {
+    int failures = 0;
+    for (const ninferno::ActivationMode mode :
+         {ninferno::ActivationMode::Fast, ninferno::ActivationMode::Exact}) {
+        // The source ends at the shared message, or goes on past the divergence for a few calls.
+        for (const std::uint32_t tail_words : {0U, 400U}) {
+            failures += exercise_truncated_endpoint_mode(artifact, mode, tail_words);
+        }
+    }
+    return failures == 0 ? 0 : 1;
+}
+
 int run_scenarios() {
     const char* artifact = std::getenv("NINFERNO_TEST_ARTIFACT");
     if (!artifact || !*artifact) {
         std::cout << "skip: NINFERNO_TEST_ARTIFACT is not set\n";
         return 77;
+    }
+    // The truncated-endpoint case needs no drafter: it is the dense and hybrid models' own.
+    if (const char* only = std::getenv("NINFERNO_PREFIX_REAL_SCENARIO");
+        only != nullptr && std::string_view(only) == "truncated-endpoint") {
+        const int truncated = exercise_truncated_endpoint(artifact);
+        if (truncated == 0) { std::cout << "ok\n"; }
+        return truncated;
     }
     // Every prefix case drafts with MTP; an artifact without it has nothing to run here.
     if (!ninferno::test::real_artifact(artifact).mtp) {

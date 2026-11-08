@@ -1429,6 +1429,9 @@ enum class PrefixReusePath : std::uint8_t {
     PrivateResponseReplay,
     PrivateLongAnchor,
     SharedStablePrefix,
+    // A resident endpoint of an attention-only model, cut back to a neutral frontier below the
+    // common prefix of its ledger and the prompt (#485).
+    PrivateTruncatedEndpoint,
 };
 
 // Why bounded pressure planning stopped for the materialization decision committed to one request.
@@ -1780,6 +1783,7 @@ struct RuntimeStats {
     std::uint64_t private_response_replay_selections = 0;
     std::uint64_t private_long_anchor_selections     = 0;
     std::uint64_t shared_stable_prefix_selections    = 0;
+    std::uint64_t private_truncated_endpoint_selections = 0;
     std::uint64_t reused_prompt_tokens               = 0;
     std::uint32_t last_selected_frontier_tokens      = 0;
 
@@ -1832,6 +1836,9 @@ struct RuntimeStats {
     std::uint64_t pressure_maximal_fallback_selections = 0;
     std::uint32_t shared_active_references             = 0;
     std::uint64_t historical_fork_hits                 = 0;
+    // Truncated-endpoint materializations aborted after their source was prepared (a diagnostic
+    // for the tests: the source must then be whole).
+    std::uint64_t truncated_source_aborts              = 0;
     double actual_context_transfer_seconds             = 0.0;
 };
 
@@ -1929,6 +1936,10 @@ struct LoadSummary {
     // Steps an ordinary decode round runs, and the machine fact that default follows: the
     // process's CPU bandwidth quota (0: none). Both enter the decision fingerprint.
     std::uint32_t decode_steps_per_round = 1;
+    // Every layer keeps per-token state only (attention, no sliding window) and nothing drafts: a
+    // prompt which diverges inside a cached endpoint reuses its KV up to the divergence
+    // (PrefixReusePath::PrivateTruncatedEndpoint).
+    bool truncated_prefix_reuse          = false;
     std::uint64_t cpu_quota_us           = 0;
     std::uint64_t cpu_quota_period_us    = 0;
     double load_seconds                = 0.0;

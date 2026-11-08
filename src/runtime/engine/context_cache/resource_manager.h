@@ -329,16 +329,48 @@ public:
         candidates.push_back(Candidate{.plan = std::move(*root)});
 
         if (cache_enabled_) {
+            // A program whose layers all keep per-token state (attention only) serves a prompt
+            // which diverges below a resident endpoint from that endpoint's KV, cut back to a
+            // neutral frontier of the common prefix. The digest shortlist cannot name that
+            // frontier: the Program screens every catalogued endpoint without allocating
+            // (truncated_reuse_bound), and only the best few are inspected in full.
+            const bool truncated_reuse = program.supports_truncated_reuse();
+
+            struct TruncatedScreen {
+                PrefixIndexEntry index;
+                std::uint32_t bound = 0;
+                bool same_session   = false;
+            };
+
+            std::vector<TruncatedScreen> screens;
             for (const PrefixIndexEntry& index : prefix_index_) {
                 if (!valid_prefix_index_entry(index)) { continue; }
                 const std::optional<PrefixShortlistKey> incoming =
                     base.prefix_shortlist_key(index.key.frontier);
-                if (!incoming || *incoming != index.key) { continue; }
+                const bool exact_digest = incoming && *incoming == index.key;
+                const bool truncated    = !exact_digest && truncated_reuse && !index.shared &&
+                                       index.checkpoint.kind == CheckpointKind::SessionEndpoint;
+                if (!exact_digest && !truncated) { continue; }
 
                 if (!index.shared) {
                     const CatalogEntry& entry = catalog_[index.slot];
                     if (entry.state != CatalogState::Catalogued || !entry.handle ||
                         private_has_active_edge(index.slot)) {
+                        continue;
+                    }
+                    if (truncated) {
+                        const std::uint32_t bound =
+                            program.truncated_reuse_bound(base, *entry.handle);
+                        if (bound != 0) {
+                            screens.push_back(TruncatedScreen{
+                                .index = index,
+                                .bound = bound,
+                                .same_session =
+                                    entry.session && base.context_cache().session_key &&
+                                    *entry.session == *base.context_cache().session_key &&
+                                    base.context_cache().update_session_index,
+                            });
+                        }
                         continue;
                     }
                     const bool retain =
@@ -399,6 +431,56 @@ public:
                             .checkpoint = index.checkpoint,
                         },
                     .source_key = index.key,
+                });
+            }
+
+            // The truncated candidates, best first: the request's own session before another,
+            // then the longer common prefix. A longer exact or shared hit may be on the Host or
+            // need pressure while a shorter Device-resident truncated one is cheaper, so no token
+            // count dominates: the planner prices them all. Two are inspected in full, more would
+            // only add planning work.
+            std::stable_sort(screens.begin(), screens.end(),
+                             [](const TruncatedScreen& left, const TruncatedScreen& right) {
+                                 return std::tie(right.same_session, right.bound) <
+                                        std::tie(left.same_session, left.bound);
+                             });
+            constexpr std::size_t kTruncatedInspections = 2;
+            if (screens.size() > kTruncatedInspections) { screens.resize(kTruncatedInspections); }
+            for (const TruncatedScreen& screen : screens) {
+                const PrefixIndexEntry& index = screen.index;
+                const CatalogEntry& entry     = catalog_[index.slot];
+                // A source of another session, or of none, is never consumed on a guess that the
+                // two share a conversation: only the request's own session truncates its endpoint,
+                // any other forks pages [0, f).
+                const bool retain                      = !screen.same_session;
+                std::optional<AdmissionCandidate> plan = program.inspect_truncated_admission(
+                    prompt, base, *destination, *entry.handle, index.checkpoint, retain);
+                if (!plan) { continue; }
+                if (plan->summary().reusable_prompt_tokens == 0 ||
+                    (retain &&
+                     plan->identity_assessment().source_mode != PrivateSourceMode::Retain)) {
+                    throw std::logic_error("Program returned an invalid truncated candidate");
+                }
+                const bool current_session_binding =
+                    current_session_cell &&
+                    session_index_[*current_session_cell].slot == index.slot &&
+                    session_index_[*current_session_cell].owner_id == entry.id &&
+                    session_index_[*current_session_cell].revision == entry.revision;
+                // The candidate restores below its endpoint: the endpoint's digest is no resident
+                // key of this request's, and no shared capture is based on it.
+                candidates.push_back(Candidate{
+                    .plan                    = std::move(*plan),
+                    .current_session_binding = current_session_binding,
+                    .private_source          = private_capability(index.slot),
+                    .selected_observation =
+                        PolicyObservationKey{
+                            .shared     = false,
+                            .slot       = index.slot,
+                            .owner_id   = entry.id,
+                            .revision   = entry.revision,
+                            .checkpoint = index.checkpoint,
+                        },
+                    .source_key = std::nullopt,
                 });
             }
         }
@@ -1312,6 +1394,7 @@ public:
         out.pressure_maximal_fallback_selections =
             context_stats_.pressure_maximal_fallback_selections;
         out.historical_fork_hits            = context_stats_.historical_fork_hits;
+        out.truncated_source_aborts         = context_stats_.truncated_source_aborts;
         out.actual_context_transfer_seconds = context_stats_.actual_context_transfer_seconds;
 
         const auto usage                     = program.physical_usage();
@@ -1445,6 +1528,10 @@ private:
         LaneId destination;
         std::optional<CatalogCapability> private_source;
         PrivateSourceMode source_mode = PrivateSourceMode::ConsumeToActive;
+        // The selected path is a truncated endpoint: a retained source was forked below its
+        // endpoint by a request which only shares a prefix with it, not the branch a conversation
+        // left.
+        bool truncated_reuse = false;
         std::optional<CatalogCapability> shared_source;
         std::uint32_t publication_slot = kInvalidCatalogSlot;
         std::vector<OwnerClaim> private_claims;
@@ -2563,9 +2650,11 @@ private:
 
     [[nodiscard]] MaterializationRecord take_materialization_record(Choice& choice) {
         return MaterializationRecord{
-            .destination          = choice.destination_,
-            .private_source       = choice.private_source_,
-            .source_mode          = choice.source_mode_,
+            .destination     = choice.destination_,
+            .private_source  = choice.private_source_,
+            .source_mode     = choice.source_mode_,
+            .truncated_reuse = choice.plan_ && choice.plan_->summary().prefix_reuse_path ==
+                                                   PrefixReusePath::PrivateTruncatedEndpoint,
             .shared_source        = choice.shared_source_,
             .publication_slot     = choice.publication_slot_,
             .private_claims       = std::move(choice.private_claims_),
@@ -3196,7 +3285,8 @@ private:
                 // edit, or a turn whose replayed reply re-tokenized): what it still holds past
                 // the reuse point serves only a return to it, so it yields first under pressure.
                 // A named session's index entry moves through demote_replaced_session instead.
-                if (retained_private_source && !source.session) {
+                // A truncated fork leaves the source as it was: its owner returns to it.
+                if (retained_private_source && !source.session && !record->truncated_reuse) {
                     source.retention = RetentionClass::Disposable;
                     for (CheckpointObservation& observation : source.observations) {
                         observation.observation = {.retention_class = RetentionClass::Disposable};
@@ -3744,6 +3834,7 @@ private:
         context_stats_.pressure_spill_pages += result.operations.pressure_spill_pages;
         context_stats_.partial_tail_cow_pages += result.operations.partial_tail_cow_pages;
         context_stats_.historical_fork_hits += result.operations.historical_fork_hits;
+        context_stats_.truncated_source_aborts += result.operations.truncated_source_aborts;
     }
 
     std::uint32_t lane_count_           = 0;

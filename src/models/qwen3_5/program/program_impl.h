@@ -22,6 +22,7 @@
 #include "models/qwen3_5/program/storage/state_store.h"
 #include "models/qwen3_5/program/prefix_identity.h"
 #include "models/qwen3_5/program/planning/resource_projection.h"
+#include "models/qwen3_5/program/planning/prefill_exact.h"
 #include "models/qwen3_5/execution/text.h"
 #include "models/qwen3_5/execution/vision.h"
 #include "models/qwen3_5/program/vision_prefill.h"
@@ -47,6 +48,12 @@ using RewriteCheckpointKind = qwen3_5::RewriteCheckpointKind;
 using RewriteCheckpointSpec = qwen3_5::RewriteCheckpointSpec;
 
 using ReusePath = ninferno::PrefixReusePath;
+
+// A restore that consumes (or forks) the resident endpoint's own StateImage: the endpoint itself,
+// or its KV cut back to a frontier below it (supports_truncated_reuse models).
+[[nodiscard]] constexpr bool is_endpoint_reuse(ReusePath path) noexcept {
+    return path == ReusePath::PrivateEndpoint || path == ReusePath::PrivateTruncatedEndpoint;
+}
 
 [[nodiscard]] constexpr bool is_rewrite_checkpoint_restore(ReusePath path) noexcept {
     return path == ReusePath::PrivateTurnClosure || path == ReusePath::PrivateResponseReplay;
@@ -410,6 +417,12 @@ struct SequenceState {
     qwen3_5::detail::PrefixShortlistDigests prefix_digests;
     std::int32_t rope_delta               = 0;
     std::uint32_t text_kv_valid           = 0;
+    // The end of the leading Text KV region whose rows a cold prefill wrote (calls of a prompt's
+    // execution, not the T = 1 decode routes, whose bytes differ). Never above text_kv_valid. A
+    // root starts at 0 and grows with its prefill chunks; a restore at `base` keeps
+    // min(source value, base), so the next prefill chunk extends it exactly when `base` lay inside
+    // the exact region; decode and forced-token rows leave it behind text_kv_valid.
+    std::uint32_t prefill_exact_frontier  = 0;
     std::uint32_t mtp_kv_valid            = 0;
     std::uint32_t dflash_context_frontier = 0;
     std::array<TokenId, qwen3_5::kMtpDecodeMaximumDrafts> mtp_drafts{};
@@ -428,7 +441,9 @@ struct SharedPrefixState {
     StateImageHandle state;
     std::shared_ptr<const PreparedCaptureIdentity> identity;
     std::uint32_t frontier         = 0;
-    std::uint32_t backend_frontier = 0;
+    // As SequenceState::prefill_exact_frontier, of the captured rows [0, frontier).
+    std::uint32_t prefill_exact_frontier = 0;
+    std::uint32_t backend_frontier       = 0;
     std::int32_t rope_delta        = 0;
     bool tail_hidden_valid         = false;
     runtime::PrefillWork rebuild_work;
@@ -552,10 +567,17 @@ public:
                                                   std::uint32_t first_target,
                                                   const ScoreDetailRequest& request,
                                                   ScoreDetail& detail);
-    [[nodiscard]] std::optional<AdmissionCandidate> inspect_admission(
-        const PreparedPromptData& prompt, const RequestBasePlan& base, runtime::LaneId destination,
-        const ContinuationHandle* source, const SharedPrefixHandle* shared_source,
-        std::optional<runtime::CheckpointRef> checkpoint, bool must_retain_private_source);
+    [[nodiscard]] std::optional<AdmissionCandidate>
+    inspect_admission(const PreparedPromptData& prompt, const RequestBasePlan& base,
+                      runtime::LaneId destination, const ContinuationHandle* source,
+                      const SharedPrefixHandle* shared_source,
+                      std::optional<runtime::CheckpointRef> checkpoint,
+                      bool must_retain_private_source, bool truncated_endpoint = false);
+    // Only attention layers keep per-token state: no linear layers, no sliding rings, no DFlash
+    // local state, no drafter. The KV of such a sequence is valid for any shorter prefix.
+    [[nodiscard]] bool supports_truncated_reuse() const noexcept;
+    [[nodiscard]] std::uint32_t truncated_reuse_bound(const RequestBasePlan& base,
+                                                      const ContinuationHandle& source) const;
     [[nodiscard]] std::optional<AdmissionCandidate> seal_materialization(
         const AdmissionCandidate& admission, const PreparedPromptData& prompt,
         std::span<const ContinuationHandle* const> pressure_owners,
@@ -1072,7 +1094,8 @@ private:
     [[nodiscard]] std::optional<AdmissionCandidate>
     inspect_lane(std::uint32_t lane, const PreparedPromptData& prompt, const RequestBasePlan& base,
                  const SequenceState* source, const SharedPrefixState* shared_source,
-                 std::optional<runtime::CheckpointRef> checkpoint, bool must_retain_private_source);
+                 std::optional<runtime::CheckpointRef> checkpoint, bool must_retain_private_source,
+                 bool truncated_endpoint = false);
     [[nodiscard]] StartResult start_request(MaterializationTransaction& transaction);
     void prepare_materialization(MaterializationTransaction& transaction);
     void enqueue_materialization_transfers(MaterializationTransaction& transaction);

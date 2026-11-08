@@ -90,6 +90,8 @@ const char* prefix_reuse_path_name(ninferno::PrefixReusePath path) noexcept {
         return "long anchor";
     case ninferno::PrefixReusePath::SharedStablePrefix:
         return "shared prefix";
+    case ninferno::PrefixReusePath::PrivateTruncatedEndpoint:
+        return "truncated endpoint";
     }
     return "unknown";
 }

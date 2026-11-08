@@ -2096,8 +2096,19 @@ By default the server persistently reports aggregate activity every five seconds
 
 The pretty completion record shows `cache N (P%, path)` using readable path labels. JSONL retains the
 exact `prefix_cache_hit_tokens` and `prefix_reuse_path` fields. Machine paths are `root`,
-`private_endpoint`, `private_turn_closure`, `private_response_replay`, `private_long_anchor`, and
-`shared_stable_prefix`.
+`private_endpoint`, `private_turn_closure`, `private_response_replay`, `private_long_anchor`,
+`shared_stable_prefix`, and `private_truncated_endpoint`.
+
+`private_truncated_endpoint` is for models whose layers are all attention (a dense Qwen3, for
+example: no linear layers, no sliding window, no drafter). A prompt which diverges inside the last
+message of a cached conversation reuses that conversation's cache up to the divergence (at least
+256 tokens, leaving a suffix of 17 or more tokens, or ending at a message boundary) and prefills the
+rest. Only the rows the earlier request's own prefill wrote are reused. Under `--activations exact`
+the answer equals a cold prefill's byte for byte; under the default (`fast`) the tokens usually
+match but the logprobs can move: the int8 matrix kernel splits K by the slice width, so a prefill
+resumed off a slice boundary gets other last bits (issue #492). Hybrid and sliding-window models
+(Qwen3.5, Gemma 4) keep the other paths: for them reuse needs a turn boundary, an identical prompt,
+or a shared prefix at the end of a message.
 
 ## 13. Execution behavior
 

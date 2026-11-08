@@ -271,6 +271,24 @@ std::optional<AdmissionCandidate> Program::inspect_admission(
                                     shared_source, checkpoint, must_retain_private_source);
 }
 
+bool Program::supports_truncated_reuse() const noexcept {
+    return impl_->supports_truncated_reuse();
+}
+
+std::uint32_t Program::truncated_reuse_bound(const RequestBasePlan& base,
+                                             const ContinuationHandle& source) const {
+    return impl_->truncated_reuse_bound(base, source);
+}
+
+std::optional<AdmissionCandidate>
+Program::inspect_truncated_admission(const PreparedPrompt& prompt, const RequestBasePlan& base,
+                                     runtime::LaneId destination, const ContinuationHandle& source,
+                                     runtime::CheckpointRef endpoint,
+                                     bool must_retain_private_source) {
+    return impl_->inspect_admission(PreparedPromptAccess::view(prompt), base, destination, &source,
+                                    nullptr, endpoint, must_retain_private_source, true);
+}
+
 std::optional<ResourcePlan> Program::seal_identity(const AdmissionCandidate& admission,
                                                    const PreparedPrompt& prompt,
                                                    runtime::FinalScheduleIntent intent) {

@@ -123,6 +123,8 @@ bool report_has_activity(const ThroughputReport& report) {
                report.previous.private_long_anchor_selections ||
            report.current.shared_stable_prefix_selections !=
                report.previous.shared_stable_prefix_selections ||
+           report.current.private_truncated_endpoint_selections !=
+               report.previous.private_truncated_endpoint_selections ||
            report.current.state_moves != report.previous.state_moves ||
            report.current.state_forks != report.previous.state_forks ||
            report.current.state_restores != report.previous.state_restores ||

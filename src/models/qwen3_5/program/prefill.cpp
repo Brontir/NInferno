@@ -494,8 +494,9 @@ void ProgramImpl::start_sequence(std::uint32_t lane, SequenceState& sequence,
             ordered_reset(sequence);
             sequence.ledger.clear();
             sequence.prefix_digests.clear();
-            sequence.text_kv_valid = 0;
-            sequence.mtp_kv_valid  = 0;
+            sequence.text_kv_valid          = 0;
+            sequence.prefill_exact_frontier = 0;
+            sequence.mtp_kv_valid           = 0;
         } else if (preserving_source) {
             const SequenceState* private_source =
                 transaction.has_source ? &continuation_states[transaction.source_index] : nullptr;
@@ -508,6 +509,12 @@ void ProgramImpl::start_sequence(std::uint32_t lane, SequenceState& sequence,
             if (!sequence.kv || source_text_frontier < base) {
                 throw std::logic_error("retained prefix has incomplete Text KV");
             }
+            // The fork holds the source's rows below `base`: exact where the source's were (a
+            // shared prefix is captured inside a prefill, so all of it is).
+            sequence.prefill_exact_frontier = runtime_support::restored_prefill_exact(
+                private_source != nullptr ? private_source->prefill_exact_frontier
+                                          : shared_source->prefill_exact_frontier,
+                base);
             sequence.text_kv_valid = base;
             if (speculative_backend == SpeculativeBackend::Mtp) {
                 const std::uint32_t mtp_base       = base == 0 ? 0 : base - 1U;
@@ -548,7 +555,7 @@ void ProgramImpl::start_sequence(std::uint32_t lane, SequenceState& sequence,
             }
             refresh_state_views(sequence);
             bind_sequence_kv(sequence);
-        } else if (request_plan.reuse == ReusePath::PrivateEndpoint) {
+        } else if (is_endpoint_reuse(request_plan.reuse)) {
             if (!state_store->valid(sequence.state.read) ||
                 sequence.state.read != sequence.state.write || sequence.state.fork_pending ||
                 state_store->role(sequence.state.read) != StateImageRole::CheckpointImmutable) {
@@ -587,6 +594,8 @@ void ProgramImpl::start_sequence(std::uint32_t lane, SequenceState& sequence,
             resize_sequence_kv_entitlement(sequence, request_plan.text_kv_page_entitlement,
                                            request_plan.backend_kv_page_entitlement);
             sequence.text_kv_valid = base;
+            sequence.prefill_exact_frontier =
+                runtime_support::restored_prefill_exact(sequence.prefill_exact_frontier, base);
             sequence.ledger.resize(base);
             sequence.prefix_digests.truncate(base);
             reserve_state_entitlement(sequence, state_slots);
@@ -617,6 +626,8 @@ void ProgramImpl::start_sequence(std::uint32_t lane, SequenceState& sequence,
             }
             activate_consumed_state(checkpoint);
             sequence.text_kv_valid = base;
+            sequence.prefill_exact_frontier =
+                runtime_support::restored_prefill_exact(sequence.prefill_exact_frontier, base);
             if (speculative_backend == SpeculativeBackend::Mtp) {
                 const std::uint32_t mtp_base = base == 0 ? 0 : base - 1;
                 if (!request_plan.prepare_mtp || sequence.mtp_kv_valid < mtp_base) {
@@ -1253,7 +1264,10 @@ runtime::PrefillStepResult ProgramImpl::advance_prefill(SequenceState& sequence,
                 staged.cursor += result.processed_tokens;
                 processed_prompt_tokens += result.processed_tokens;
                 remaining -= result.processed_tokens;
-                final_chunk_tokens     = result.processed_tokens;
+                final_chunk_tokens = result.processed_tokens;
+                // A prefill call extends the exact region only when it starts inside it.
+                sequence.prefill_exact_frontier = runtime_support::prefill_exact_after_call(
+                    sequence.prefill_exact_frontier, sequence.text_kv_valid, staged.cursor);
                 sequence.text_kv_valid = staged.cursor;
                 // A call that ends on its split frontier with the capture output bound writes the
                 // hidden of its last token into the destination image's continuation slot (the
@@ -1317,9 +1331,13 @@ runtime::PrefillStepResult ProgramImpl::advance_prefill(SequenceState& sequence,
         } else {
             mark_workspace_usage(workspace_plan.ordinary_round);
             if (!sequence.tail_hidden_valid) {
-                static constexpr const char* kPaths[] = {
-                    "root", "private endpoint", "private turn closure", "private response replay",
-                    "private long anchor", "shared stable prefix"};
+                static constexpr const char* kPaths[] = {"root",
+                                                         "private endpoint",
+                                                         "private turn closure",
+                                                         "private response replay",
+                                                         "private long anchor",
+                                                         "shared stable prefix",
+                                                         "private truncated endpoint"};
                 const auto path = static_cast<std::size_t>(staged.reuse);
                 throw std::logic_error(
                     std::string("zero-suffix reuse has no target tail hidden (") +
@@ -1387,6 +1405,8 @@ runtime::PrefillStepResult ProgramImpl::advance_prefill(SequenceState& sequence,
         sequence.prefix_identity.append_generated(1, sequence.rope_delta);
         sequence.prefix_digests.append_generated(std::span<const TokenId>(host_tokens, 1),
                                                  sequence.rope_delta);
+        sequence.prefill_exact_frontier = runtime_support::prefill_exact_after_call(
+            sequence.prefill_exact_frontier, sequence.text_kv_valid, prompt_tokens);
         sequence.text_kv_valid = prompt_tokens;
         if (staged.prepare_mtp) {
             if (sequence.mtp_kv_valid != prompt_tokens) {
