@@ -151,7 +151,7 @@ std::vector<WarmUpClassProbe> make_probes() {
         probes.push_back({shape_name("q8 linear_pair", shape), [rows, k](std::int32_t cols) {
                               // Where the chain price hands the call to the two linear() calls
                               // the fused kernel does not run; their warm-up is linear's.
-                              if (!op::linear_pair_runs_fused(rows, k, cols)) { return -1; }
+                              if (!op::linear_pair_runs_fused(rows, k, cols)) { return std::int64_t{-1}; }
                               const op::Q8PairProblem problem{rows, k, k, cols};
                               const op::Q8PairPlan plan = op::q8_pair_resolve_plan(problem);
                               return class_value(static_cast<int>(plan.schedule),
