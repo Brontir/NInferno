@@ -306,6 +306,20 @@ void busy_contract() {
     check(expect_error(busy, spec) == "constraint_compiler_busy", "no free compiler slot");
 }
 
+// The test vocabulary plus every three-letter lowercase word: a compile does per-state work over
+// the whole vocabulary, so a larger one makes an expensive pattern slow, as a real vocabulary does.
+GrammarVocabulary large_vocabulary() {
+    GrammarVocabulary out = vocabulary();
+    for (char a = 'a'; a <= 'z'; ++a) {
+        for (char b = 'a'; b <= 'z'; ++b) {
+            for (char c = 'a'; c <= 'z'; ++c) { out.token_bytes.push_back(std::string{a, b, c}); }
+        }
+    }
+    out.token_domain = static_cast<std::uint32_t>(out.token_bytes.size());
+    out.special.resize(out.token_bytes.size(), false);
+    return out;
+}
+
 // A compile that times out is cancelled: it frees the only compiler slot soon after the request
 // gave up instead of running to the end. The pattern unrolls to hundreds of thousands of states, so
 // finishing it takes far longer than the whole test allows.
@@ -314,11 +328,14 @@ void cancel_contract() {
     options.max_concurrent  = 1;
     options.compile_threads = 2;
     options.compile_timeout = std::chrono::milliseconds(300);
-    const ConstraintCompiler compiler(vocabulary(), options);
+    const ConstraintCompiler compiler(large_vocabulary(), options);
     OutputConstraintSpec slow;
     slow.kind       = OutputConstraintKind::Regex;
     slow.definition = "^(([a-z]{1,100}){1,100}){1,100}$";
+    const auto t0 = std::chrono::steady_clock::now();
     const std::string first = expect_error(compiler, slow);
+    std::fprintf(stderr, "first %s %lld ms
+", first.c_str(), (long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-t0).count());
     check(first == "constraint_compile_timeout", "slow compile times out: " + first);
 
     // The same request again starts a new compile (the abandoned one left the table) and times out
