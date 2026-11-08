@@ -8,11 +8,15 @@
 // reference id sequence must decode to exactly the reference string. Exit status is non-zero
 // on any mismatch. Without arguments only the built-in refusal and pattern checks run.
 
+#include "text/onig_unicode.h"
+#include "text/onig_unicode_tables.h"
 #include "text/pattern.h"
 #include "text/tokenizer.h"
 #include "support/files.h"
 
 #include <nlohmann/json.hpp>
+
+#include <utf8proc/utf8proc.h>
 
 #include <algorithm>
 #include <chrono>
@@ -306,6 +310,110 @@ bool check_patterns() {
     return ok;
 }
 
+// Code points assigned or re-categorised in Unicode 17 must be classed as Unicode 16 does,
+// because tokenizers' Oniguruma is Unicode 16.0.0. The pieces below are what tokenizers 0.23.3
+// cuts the Qwen3 and gpt-oss split regexes into (tools/text/pretokenizer_unicode_cases.py).
+bool check_unicode_tables() {
+    namespace onig = ninferno::text::onig_unicode;
+    bool ok        = true;
+
+    // The table is exactly the code points where utf8proc (Unicode 17) and Unicode 16 differ.
+    std::size_t differing = 0;
+    for (char32_t cp = 0; cp <= 0x10FFFF; ++cp) {
+        if (cp >= 0xD800 && cp <= 0xDFFF) { continue; }
+        if (onig::category(cp) != utf8proc_category(static_cast<utf8proc_int32_t>(cp))) {
+            ++differing;
+        }
+    }
+    if (differing != 4804 || onig::differing_code_points() != 4804) {
+        std::cout << "  UNICODE TABLE covers " << differing << " code points, expected 4804\n";
+        ok = false;
+    }
+    // U+0295 was Ll in Unicode 16 (Lo since 17); the rest are unassigned (Cn) in 16.
+    for (const char32_t cp : {0xC5C, 0xCDC, 0xA7CE, 0x323B0, 0x33479, 0x10ED0}) {
+        ok &= onig::category(cp) == UTF8PROC_CATEGORY_CN;
+    }
+    ok &= onig::category(0x295) == UTF8PROC_CATEGORY_LL;
+    // The ends of Ext I (Unicode 15) and the code point after Ext J are not in the table.
+    ok &= onig::category(0x323AF) == UTF8PROC_CATEGORY_LO;
+    ok &= onig::category(0x3347A) == UTF8PROC_CATEGORY_CN;
+    ok &= std::string(onig::kOnigUnicodeVersion) == "16.0.0";
+    // Tripwire: a utf8proc update changes what the table is a difference against; regenerate
+    // it with tools/text/generate_onig_unicode_tables.py and update the count above.
+    if (std::string(utf8proc_unicode_version()) != onig::kUtf8procUnicodeVersion) {
+        std::cout << "  UTF8PROC is Unicode " << utf8proc_unicode_version()
+                  << ", table made against " << onig::kUtf8procUnicodeVersion
+                  << ": regenerate onig_unicode_tables.h\n";
+        ok = false;
+    }
+    // Unicode 17 gave U+A7D3 and U+A7D5 capitals (U+A7D2, U+A7D4); in 16 they map to themselves.
+    for (const char32_t cp : {0xA7D3, 0xA7D5}) {
+        ok &= onig::to_upper(cp) == cp && onig::to_lower(cp) == cp;
+    }
+    // New in 17, so without case maps in 16: capitals A7D2/A7D4, A7CE/A7CF, 16EA0/16EBB.
+    for (const char32_t cp : {0xA7D2, 0xA7D4, 0xA7CE, 0xA7CF, 0x16EA0, 0x16EBB}) {
+        ok &= onig::to_upper(cp) == cp && onig::to_lower(cp) == cp;
+    }
+    // The table's one old code point, U+0295, has no case maps either way.
+    ok &= onig::to_upper(0x295) == 0x295 && onig::to_lower(0x295) == 0x295;
+    ok &= onig::to_upper('a') == 'A' && onig::to_lower(0x10D) == 0x10D &&
+          onig::to_upper(0x10D) == 0x10C;
+    if (!ok) { std::cout << "  UNICODE TABLE boundary categories wrong\n"; }
+
+    const char* const kQwen3 =
+        R"((?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+)";
+    const char* const kGptOss =
+        R"([^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n/]*|\s*[\r\n]+|\s+(?!\S)|\s+)";
+
+    struct Case {
+        const char* regex;
+        std::string text;
+        std::vector<std::string> pieces;
+    };
+
+    const std::vector<Case> cases = {
+#include "pretokenizer_unicode_cases.inc"
+    };
+
+    // (?i) over non-ASCII literals, as tokenizers 0.23.3 matches them: U+00E9 folds with
+    // U+00C9; U+A7D3 does not fold with U+A7D2, nor U+A7CF with U+A7CE (unassigned in 16).
+    struct Fold {
+        const char* regex;
+        std::string text;
+        bool matches;
+    };
+
+    const std::vector<Fold> folds = {
+        {R"((?i:\x{E9}))", "\xC3\x89", true},
+        {R"((?i:\x{A7D3}))", "\xEA\x9F\x93", true},
+        {R"((?i:\x{A7D3}))", "\xEA\x9F\x92", false},
+        {R"((?i:\x{A7CF}))", "\xEA\x9F\x8E", false},
+    };
+    for (const Fold& f : folds) {
+        const bool matched = !Pattern(f.regex).find_all(f.text).empty();
+        if (matched != f.matches) {
+            std::cout << "  UNICODE (?i) " << f.regex << " on " << escaped(f.text) << " gave "
+                      << matched << "\n";
+            ok = false;
+        }
+    }
+    for (const Case& c : cases) {
+        const Pattern pattern(c.regex);
+        std::vector<std::string> got;
+        for (const auto& span : pattern.find_all(c.text)) {
+            got.push_back(c.text.substr(span.begin, span.end - span.begin));
+        }
+        if (got != c.pieces) {
+            std::cout << "  UNICODE 17 PIECES " << (c.regex == kQwen3 ? "qwen3 " : "gpt-oss ")
+                      << escaped(c.text) << " gave";
+            for (const auto& m : got) { std::cout << " " << escaped(m); }
+            std::cout << "\n";
+            ok = false;
+        }
+    }
+    return ok;
+}
+
 } // namespace
 
 // The special ids a TemplateProcessing puts before a document (what a causal score starts every
@@ -331,6 +439,7 @@ bool check_template_prefix() {
 int main(int argc, char** argv) {
     bool ok = true;
     ok &= check_patterns();
+    ok &= check_unicode_tables();
     ok &= check_template_prefix();
     ok &= check_refusals();
     ok &= check_overflow_check();

@@ -41,7 +41,13 @@ struct AddedToken {
 //   decoder:        null, ByteLevel, Metaspace, Replace, ByteFallback, Fuse, Strip, Sequence
 //   truncation, padding: ignored, as transformers does by default (encode never truncates or
 //                   pads; the engine enforces the context limit itself).
-// Regex patterns go through text::Pattern, which refuses constructs outside its subset.
+// Regex patterns go through text::Pattern, which refuses constructs outside its subset. Its
+// \p{..} classes use Unicode 16.0.0, the tables of the Oniguruma that tokenizers 0.23 bundles
+// (text/onig_unicode.h), not the Unicode 17 of the bundled utf8proc. The Punctuation
+// pre-tokenizer and single_word added tokens classify through utf8proc (tokenizers uses other
+// libraries there, whose tables are not reproduced). The Lowercase normalizer uses the case
+// tables of the Rust standard library the tokenizers wheel was built with: the 0.23.3 wheel
+// lowercases U+A7CE (new in Unicode 17), as utf8proc does, but that follows the toolchain.
 //
 // Instances are immutable after construction and safe to share between threads.
 class Tokenizer {
