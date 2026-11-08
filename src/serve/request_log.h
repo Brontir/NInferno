@@ -82,6 +82,7 @@ public:
     [[nodiscard]] const std::string& server_instance_id() const noexcept {
         return server_instance_id_;
     }
+
     // When this process started serving (the time in its server_instance_id), in Unix microseconds.
     [[nodiscard]] std::int64_t server_started_unix_us() const noexcept { return started_unix_us_; }
 
