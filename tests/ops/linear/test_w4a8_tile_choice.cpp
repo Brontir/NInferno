@@ -37,14 +37,14 @@ void check(bool ok, const std::string& what) {
 
 constexpr int k64x64 = 4; // generic_schedules.h: W4A8 schedule 4
 
-struct Board {
+struct TestBoard {
     const char* name;
     std::uint32_t pci;
     int sms;
     double clock_hz, dram;
 };
 
-constexpr Board kBoards[] = {{"RTX 5070 Ti", 0x2C05, 70, 2.452e9, 896e9},
+constexpr TestBoard kBoards[] = {{"RTX 5070 Ti", 0x2C05, 70, 2.452e9, 896e9},
                              {"RTX 5090", 0x2B85, 170, 2.407e9, 1792e9}};
 
 struct Shape {
@@ -64,7 +64,7 @@ int main() {
     constexpr std::uint64_t kMiB = 1024 * 1024;
     void* const payload          = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
     long narrow_calls = 0, calls = 0;
-    for (const Board& b : kBoards) {
+    for (const TestBoard& b : kBoards) {
         DeviceClass d = synthetic_device_class(b.pci, 12, 0, b.sms, 64 * kMiB, 16 * 1024 * kMiB);
         const ScopedDeviceClass scoped(d);
         const w4a8_tiles::Residency res = w4a8_tiles::residency(d.smem_per_sm);
