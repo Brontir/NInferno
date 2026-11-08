@@ -89,6 +89,12 @@ struct AcquireOptions {
     // model is filled in here.
     ConvertOptions convert;
     bool components_given = false;    // convert.components was named by the caller
+    // A chat template the caller applies itself when it runs the model (ninferno-serve
+    // --chat-template). A model that ships a template is converted as it is, to the default
+    // conversion: a template baked into the artifact would stay in the cache for every later
+    // run without it. Only a model that ships none (a base model) is converted with this one as
+    // its chat_template.jinja resource, since a conversion needs one; that is a content option.
+    std::filesystem::path chat_template;
     Drafters drafters     = Drafters::Default;
     // Under Drafters::Require, what required them: "--with-drafters" (empty means that) or the
     // backend the user selected ("--spec dflash"). The error names it.
@@ -197,13 +203,22 @@ void check_attached_drafters(const DrafterPlan& plan, const AcquireOptions& opti
 
 // The options of a conversion that change what is written, as the kept artifact must know them
 // (#553): vocabulary, drafter quantization, name, resources (by the SHA-256 of their bytes),
-// extra sources, components, proposal settings, ranking, file size, layout, the maintainer and
-// scale flags, no drafters, drafter artifacts, a model id, no base tokenizer files, --include. ""
-// when every one is at its default: that conversion is the model's official one, kept at
-// <commit>/<stem>.<recipe>.ninferno as before. Otherwise a short hash of those options, and
-// `described` (when given) their list, one "name value" per line, for the user.
+// sources (by content: see content_identity), extra sources, components, proposal settings,
+// ranking, file size, layout, the maintainer and scale flags, no drafters, drafter artifacts, a
+// model id, no base tokenizer files, --include. "" when every one is at its default: that
+// conversion is the model's official one, kept at <commit>/<stem>.<recipe>.ninferno as before.
+// Otherwise a short hash of those options, and `described` (when given) their list, one "name
+// value" per line, for the user. What the key is judged against: `repo` (a --model-id equal to it
+// is no option), `snapshot` (a
+// --resource identical to the snapshot's own file is none either; known once fetched).
+struct OptionsKeyContext {
+    std::string repo;
+    std::filesystem::path snapshot;
+};
+
 [[nodiscard]] std::string content_options_key(const AcquireOptions& options,
-                                              std::string* described = nullptr);
+                                              std::string* described           = nullptr,
+                                              const OptionsKeyContext& context = {});
 // Where the kept conversions of a commit with the options `key` live: `commit_dir` itself for the
 // default (key ""), else its subdirectory options-<key>, so a conversion with other options never
 // takes the place of the default one (and a default run never serves it).

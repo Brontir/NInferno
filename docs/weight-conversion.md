@@ -63,13 +63,17 @@ python3 -m tools.convert \
   command again reuses it. The kept artifact is found by commit, quant and recipe. A flag that
   changes what is written (`--components`, `--layout`, `--vocab`, `--drafter-quant`, `--name`,
   `--resource`, `--source`, `--proposal`, `--include`, `--no-drafters`, `--max-file-bytes`,
-  `--round-tiny-scales`, ...; `ninferno-serve --chat-template` and `--round-tiny-scales` too) keeps
+  `--round-tiny-scales`, ...; `ninferno-serve --round-tiny-scales` too) keeps
   its conversion apart, in `ninferno/<commit>/options-<hash>/` beside the default one. The hash
-  covers every such option (a resource by the bytes of its file), `<artifact>.options` lists them,
+  covers every such option (a resource, `--source` and `--drafter-artifact` by the content of their files; a file over 64 MiB by its size, its first 16 MiB and its last MiB), in a canonical form (`--include` sorted, `--vocab native`, a `--model-id` equal to the repository, a resource identical to the snapshot's own file are the defaults), `<artifact>.options` lists them,
   and the log says "converted earlier with ..." when a rerun reuses it. A rerun with the same
   options reuses that conversion; a run without them converts the model's default one, or reuses
   it, and never takes the other. Conversions made before this rule stay where they are, as the
-  default. An explicit `--out` is never reused. `--model` needs `--out`.
+  default. A drafter converted separately follows the same rule for `--round-tiny-scales`,
+  `--maintainer-quantize` and `--max-file-bytes` (its own `options-<hash>/`), and one converted with
+  other copied resources (a different template) is converted again. A `--drafter-quant` equal to the
+  registry's declared value is still an option of its own. An explicit `--out` is never reused.
+  `--model` needs `--out`.
 - Before any weight is downloaded, a hub model is checked against one rule set
   (`convert/support.h`), the same one the plan without weights and the UI's search use. It reads
   only what the hub shows: the model card (task, library, gated, the hub's part of `config.json`,

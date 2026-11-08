@@ -1921,6 +1921,7 @@ Json App::local_json() {
                        {"params", params_label(repo.empty() ? name.stem : repo + " " + name.stem)},
                        {"quant", name.quant},
                        {"vision", f.vision},
+                       {"options", conversion_options(path)},
                        {"mtp", f.mtp || fs::exists(path.string() + ".speculation.json", ec)},
                        {"size_gib", gib2(fs::file_size(path, ec))},
                        {"modified", iso_time(fs::last_write_time(path, ec))},
@@ -1970,6 +1971,15 @@ Json App::local_json() {
             {"total_gib", std::round(total * 100) / 100},
             {"originals_gib", std::round(originals * 100) / 100},
             {"keep_originals", options_.keep_originals}};
+}
+
+std::string conversion_options(const fs::path& artifact) {
+    std::ifstream in(artifact.string() + ".options");
+    std::string line, out;
+    while (std::getline(in, line)) {
+        if (!line.empty()) { out += (out.empty() ? "" : ", ") + line; }
+    }
+    return out;
 }
 
 fs::path App::local_artifact(const std::string& repo, const std::string& quant) {
@@ -2026,22 +2036,34 @@ std::uint64_t App::delete_artifact(const fs::path& requested) {
         }
     }
     if (!repo_dir.empty()) {
-        // Its commit's directory holding no conversion but the drafters its manifest names:
+        // A directory holding no conversion but the drafters the removed one's manifest names is
         // removed whole, as the converter removes a replaced conversion (acquire.cpp). Another
-        // quantization of the commit keeps it.
-        const auto commit_dir = path.parent_path();
-        if (commit_dir.parent_path() == repo_dir / "ninferno") {
-            bool others = false;
-            for (const auto& entry : fs::directory_iterator(commit_dir, ec)) {
+        // quantization of the commit keeps it, and so does a conversion with options of its own,
+        // which lives below it in options-<hash>/ (hence the recursive look: a running model may
+        // be serving it).
+        const auto conversions_left = [&](const fs::path& dir) {
+            for (const auto& entry : fs::recursive_directory_iterator(dir, ec)) {
                 if (entry.path().extension() == ".ninferno" &&
                     manifest.find(entry.path().filename().string()) == std::string::npos) {
-                    others = true;
+                    return true;
                 }
             }
-            if (!others) {
-                freed += tree_bytes(commit_dir);
-                fs::remove_all(commit_dir, ec);
+            return false;
+        };
+        auto dir = path.parent_path();
+        // The last conversion of an options-<hash>/ directory takes the directory with it (its
+        // lock file, its drafters); the commit's directory is looked at next.
+        if (dir.filename().string().rfind("options-", 0) == 0 &&
+            dir.parent_path().parent_path() == repo_dir / "ninferno") {
+            if (!conversions_left(dir)) {
+                freed += tree_bytes(dir);
+                fs::remove_all(dir, ec);
             }
+            dir = dir.parent_path();
+        }
+        if (dir.parent_path() == repo_dir / "ninferno" && !conversions_left(dir)) {
+            freed += tree_bytes(dir);
+            fs::remove_all(dir, ec);
         }
         bool left = false;
         for (const auto& entry : fs::recursive_directory_iterator(repo_dir / "ninferno", ec)) {

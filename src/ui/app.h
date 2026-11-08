@@ -184,6 +184,10 @@ struct ArtifactName {
 // "Qwen3_5ForCausalLM" -> "qwen3_5"; "Gemma4ForConditionalGeneration" -> "gemma4".
 [[nodiscard]] std::string short_architecture(const std::string& architecture);
 
+// The options a conversion with options of its own was made with ("--vocab q8, --name x"), from
+// <artifact>.options; "" for the default conversion (and for a drafter's record).
+[[nodiscard]] std::string conversion_options(const std::filesystem::path& artifact);
+
 // Whether `path` may be deleted through the UI: a .ninferno file under the hub cache's
 // models--*/ninferno/ or under one of `model_dirs`.
 [[nodiscard]] bool deletable_artifact(const std::filesystem::path& path,

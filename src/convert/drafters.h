@@ -227,6 +227,18 @@ given_drafters_changed(const std::filesystem::path& target_artifact);
 using DrafterCheck =
     std::function<bool(const nlohmann::json& entry, const std::filesystem::path& drafter)>;
 
+// The options a separately converted drafter was made with that its file name does not carry
+// (#553). drafter_options_key: --round-tiny-scales, --maintainer-quantize and --max-file-bytes;
+// "" when all are default: the drafter then lives where earlier versions put it, in <commit>/, else
+// in <commit>/options-<key>/. The recipe, quantization and proposal rows are in the name.
+// drafter_content_identity: those and the resources copied from the target, by content (a custom
+// template), as lines; the conversion records it beside the drafter (<file>.options), and a cached
+// drafter whose record differs is converted again. A drafter without a record (converted before)
+// is kept.
+[[nodiscard]] std::string drafter_options_key(const ConvertOptions& options,
+                                              std::string* described = nullptr);
+[[nodiscard]] std::string drafter_content_identity(const ConvertOptions& options);
+
 // The manifest's drafters attached from a file here that was written again since (another
 // conversion of the same drafter at the same path: its id is no longer the recorded one) take the
 // file's new id, as attach_drafters takes a cached one, once the file passes `check` (empty: the

@@ -79,6 +79,7 @@ int main() {
         {"rows per chunk", [](auto& o) { o.convert.rows_per_chunk = 64; }},
         {"quant", [](auto& o) { o.fetch.quant = "Q4_K_M"; }},
         {"vision", [](auto& o) { o.vision = true; }},
+        {"runtime chat template", [&](auto& o) { o.chat_template = root / "custom.jinja"; }},
         {"reuse", [](auto& o) { o.reuse = true; }},
         {"with drafters", [](auto& o) { o.drafters = cv::Drafters::Require; }},
         {"drafters attach", [](auto& o) { o.drafters = cv::Drafters::Attach; }},
@@ -172,6 +173,107 @@ int main() {
         write_text(root / "copy" / "custom.jinja", "edited");
         check(cv::content_options_key(a) != cv::content_options_key(b),
               "an edited template is another key");
+    }
+
+
+    // Canonical forms: the same selection spelled another way is the same key.
+    {
+        cv::AcquireOptions a, b;
+        a.fetch.include = {"*.gguf", "*.json"};
+        b.fetch.include = {"*.json", "*.gguf", "*.json"};
+        check(!cv::content_options_key(a).empty(), "--include is an option");
+        check(cv::content_options_key(a) == cv::content_options_key(b),
+              "--include in another order, repeated, is the same key");
+        cv::AcquireOptions native;
+        native.convert.vocab = "native";
+        check(cv::content_options_key(native).empty(), "--vocab native is the default");
+        cv::AcquireOptions id;
+        id.model_id = "org/m";
+        check(!cv::content_options_key(id).empty(), "--model-id of another name is an option");
+        cv::AcquireOptions same;
+        same.model_id = "org/m";
+        cv::OptionsKeyContext context;
+        context.repo = "org/m";
+        check(cv::content_options_key(same, nullptr, context).empty(),
+              "--model-id equal to the repository is the default");
+        // A resource that is the snapshot's own file is no option.
+        write_text(root / "snapshot" / "chat_template.jinja", "{{ messages }} CUSTOM");
+        cv::AcquireOptions own;
+        own.convert.resources.emplace_back("chat_template.jinja", root / "custom.jinja");
+        context.snapshot = root / "snapshot";
+        check(cv::content_options_key(own, nullptr, context).empty(),
+              "a --resource identical to the snapshot's file is the default");
+        cv::AcquireOptions other;
+        other.convert.resources.emplace_back("chat_template.jinja", root / "other.jinja");
+        check(!cv::content_options_key(other, nullptr, context).empty(),
+              "a --resource that differs from the snapshot's file is an option");
+    }
+    // A source or drafter artifact is keyed by its content, not its time or place.
+    {
+        write_text(root / "src1" / "a.bin", "aaaa");
+        write_text(root / "src2" / "a.bin", "aaaa");
+        cv::AcquireOptions a, b;
+        a.convert.sources.emplace_back("vision", root / "src1");
+        b.convert.sources.emplace_back("vision", root / "src2");
+        check(cv::content_options_key(a) == cv::content_options_key(b),
+              "a source is keyed by its content, not its path");
+        write_text(root / "src2" / "a.bin", "aaab");
+        check(cv::content_options_key(a) != cv::content_options_key(b),
+              "a source with another byte is another key");
+    }
+    // The caller's own chat template (serve --chat-template) is applied at run time: no option.
+    {
+        cv::AcquireOptions options;
+        options.chat_template = root / "custom.jinja";
+        check(cv::content_options_key(options).empty(), "a runtime chat template is no option");
+    }
+    // The drafter cache: flags give a directory of their own, the copied resources only an
+    // identity the conversion records.
+    {
+        cv::ConvertOptions plain_drafter;
+        check(cv::drafter_options_key(plain_drafter).empty(), "a default drafter keeps its path");
+        cv::ConvertOptions tiny;
+        tiny.round_tiny_scales = true;
+        cv::ConvertOptions maintainer;
+        maintainer.maintainer_quantize = true;
+        cv::ConvertOptions big;
+        big.max_file_bytes = 1ULL << 30;
+        const auto k1      = cv::drafter_options_key(tiny);
+        const auto k2      = cv::drafter_options_key(maintainer);
+        const auto k3      = cv::drafter_options_key(big);
+        check(!k1.empty() && !k2.empty() && !k3.empty() && k1 != k2 && k2 != k3 && k1 != k3,
+              "each drafter flag has a key of its own");
+        cv::ConvertOptions a, b;
+        a.resources.emplace_back("chat_template.jinja", root / "custom.jinja");
+        b.resources.emplace_back("chat_template.jinja", root / "other.jinja");
+        check(cv::drafter_options_key(a).empty(), "copied resources are not in the path");
+        check(cv::drafter_content_identity(a) != cv::drafter_content_identity(b) &&
+                  cv::drafter_content_identity(a) != cv::drafter_content_identity(plain_drafter),
+              "a drafter converted with another template has another identity");
+        check(cv::drafter_content_identity(tiny) != cv::drafter_content_identity(plain_drafter),
+              "and with another flag");
+    }
+    // The download removed: a start finds the default conversion of the commit, and an
+    // optioned one beside it (in options-<hash>/) is neither found nor in the way.
+    {
+        const auto cache = root / "hub";
+        const auto repo  = cache / "models--org--m";
+        const std::string commit(40, 'c');
+        write_text(repo / "refs" / "main", commit);
+        const auto dir = repo / "ninferno" / commit;
+        write_text(dir / "m-Q8_0.dense_bf16.ninferno", "default");
+        write_text(dir / "m-Q8_0.dense_bf16.ninferno.conversion.json", "{}");
+        write_text(dir / "options-0123456789ab" / "m-Q8_0.dense_bf16.ninferno", "optioned");
+        write_text(dir / "options-0123456789ab" / "m-Q8_0.dense_bf16.ninferno.conversion.json",
+                   "{}");
+        const auto kept = cv::kept_artifact(cache, "org/m", "", "", "");
+        check(kept && *kept == dir / "m-Q8_0.dense_bf16.ninferno",
+              "the removed-download lookup finds the default conversion");
+        // A start with a runtime template only (key "") reuses that one: no download for it.
+        cv::AcquireOptions serve;
+        serve.chat_template = root / "custom.jinja";
+        check(cv::content_options_key(serve).empty() && kept,
+              "so a start with a runtime template needs no download");
     }
 
     // Default, then an option: the second run converts into its own entry, the default stays.
