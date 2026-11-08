@@ -210,7 +210,7 @@ std::filesystem::path golden_path(const GoldenBoard& b, bool keyed_only = true) 
     const auto keyed = dir / (std::string(b.name) + "." + kernel_facts_digest() + ".txt");
     const auto plain = dir / (std::string(b.name) + ".txt");
     return keyed_only || std::filesystem::exists(keyed) || !std::filesystem::exists(plain) ? keyed
-                                                                                       : plain;
+                                                                                           : plain;
 }
 
 // One board's choices, a line per (format, policy, epilogue, shape, profile) and run of widths
