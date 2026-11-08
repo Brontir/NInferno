@@ -936,6 +936,12 @@ the same ordered tool call. NInferno does not canonicalize semantically equivale
 reorders members, inserts defaults, or otherwise rewrites a tool object, the changed rendered input
 does not match the model-held endpoint and can reuse only an earlier exact checkpoint.
 
+A request's tools render in the order it sends them, whatever earlier requests sent, so the same
+request renders the same prompt on any process and after a restart. A client whose tools arrive in
+varying order (MCP servers that finish registering in another order) can start the server with
+`--tool-order sorted`: every order of one set then renders sorted by name and keeps the cached
+prefix. A request with a duplicate name or a cache boundary after a tool keeps its own order.
+
 ### Key order under an output constraint
 
 A grammar that holds an object's optional properties to their schema order, each skippable, loses
@@ -1915,6 +1921,7 @@ not take at startup.
 | `--frequency-penalty F` | process-level frequency-penalty override | unset |
 | `--seed N` | fixed seed when a request omits one | fresh random seed per request |
 | `--greedy` | force exact argmax for all requests | off |
+| `--tool-order request\|sorted` | `sorted` renders a request's tools sorted by name, so that a client that sends one set in varying order (MCP servers registering in another order) keeps its cached prefix; a request with a duplicate name or a cache boundary after a tool keeps its order | `request` |
 
 ### Media
 

@@ -206,59 +206,38 @@ ninferno::SamplingOverrides resolve_sampling_overrides(const SamplingParams& req
     return sampling;
 }
 
-// Clients send the same tools in the order their MCP servers finished registering, which can
-// differ from one request (or client restart) to the next, and the template renders the tool
-// list before the system prompt: one swap moves the shared prefix back thousands of tokens and
-// the conversation is read again. The first request of a set of tool names
-// renders as sent; a later one with the same names in another order takes that first order.
-// A request with an explicit cache boundary after a tool, a duplicate name or a single tool
-// keeps the client's order.
-void stabilize_tool_order(std::vector<const ToolDefinition*>& tools) {
+// --tool-order sorted: clients that send the same tools in the order their MCP servers finished
+// registering, which can differ from one request (or client restart) to the next, would move the
+// shared prefix back thousands of tokens on every swap, as the template renders the tool list before
+// the system prompt. Sorted by name, every order of one set renders the same prompt, on any process
+// and after a restart; nothing is remembered between requests. A request with an explicit cache
+// boundary after a tool or a duplicate name keeps the client's order, as does the default (the
+// order apply_chat_template renders).
+void sort_tools(std::vector<const ToolDefinition*>& tools) {
     if (tools.size() < 2) { return; }
-    std::vector<std::string> names;
-    names.reserve(tools.size());
-    for (const ToolDefinition* tool : tools) {
-        if (tool->cache_boundary_after) { return; }
-        names.push_back(tool->name);
+    if (std::any_of(tools.begin(), tools.end(),
+                    [](const ToolDefinition* tool) { return tool->cache_boundary_after; })) {
+        return;
     }
-    std::vector<std::string> key = names;
-    std::sort(key.begin(), key.end());
-    if (std::adjacent_find(key.begin(), key.end()) != key.end()) { return; }
-
-    constexpr std::size_t kRememberedSets = 64;
-    // Most recently used first: a tool-name set and the order it was first seen in.
-    static std::mutex mutex;
-    static std::list<std::pair<std::vector<std::string>, std::vector<std::string>>> orders;
-    std::vector<std::string> first;
-    {
-        const std::lock_guard lock(mutex);
-        const auto seen = std::find_if(orders.begin(), orders.end(),
-                                       [&](const auto& entry) { return entry.first == key; });
-        if (seen == orders.end()) {
-            orders.emplace_front(std::move(key), std::move(names));
-            if (orders.size() > kRememberedSets) { orders.pop_back(); }
-            return;
-        }
-        orders.splice(orders.begin(), orders, seen);
-        first = seen->second;
-    }
-    std::vector<const ToolDefinition*> ordered;
-    ordered.reserve(tools.size());
-    for (const std::string& name : first) {
-        const auto named = [&](const ToolDefinition* tool) { return tool->name == name; };
-        ordered.push_back(*std::find_if(tools.begin(), tools.end(), named));
-    }
-    tools = std::move(ordered);
+    std::vector<const ToolDefinition*> sorted = tools;
+    std::stable_sort(sorted.begin(), sorted.end(),
+                     [](const ToolDefinition* a, const ToolDefinition* b) { return a->name < b->name; });
+    const auto same_name = [](const ToolDefinition* a, const ToolDefinition* b) {
+        return a->name == b->name;
+    };
+    if (std::adjacent_find(sorted.begin(), sorted.end(), same_name) != sorted.end()) { return; }
+    tools = std::move(sorted);
 }
 
 // tool_choice none keeps the declarations (vLLM's default too): dropping them changed the prompt
 // from the first byte after the system turn, and a compaction or summary turn of an agent lost the
 // whole cached conversation. Calls are not read back then.
-std::vector<const ToolDefinition*> effective_tools(const GenerationRequest& request) {
+std::vector<const ToolDefinition*> effective_tools(const GenerationRequest& request,
+                                                   bool sorted) {
     std::vector<const ToolDefinition*> tools;
     tools.reserve(request.tools.size());
     for (const ToolDefinition& tool : request.tools) { tools.push_back(&tool); }
-    stabilize_tool_order(tools);
+    if (sorted) { sort_tools(tools); }
     return tools;
 }
 
@@ -370,7 +349,8 @@ ResolvedPromptSemantics resolve_prompt_semantics(const GenerationRequest& reques
     result.preserve_for_reuse =
         !result.preserve_thinking && result.enable_thinking == false &&
         std::none_of(request.messages.begin(), request.messages.end(), reasoned);
-    result.vision = server.enable_vision;
+    result.vision     = server.enable_vision;
+    result.sort_tools = server.sort_tools;
     return result;
 }
 
@@ -485,7 +465,7 @@ ninferno::PromptInput to_prompt_input(const GenerationRequest& request,
         semantics.preserve_for_reuse ? std::optional<bool>(true) : semantics.preserve_thinking;
     input.options.chat_template_kwargs_json        = semantics.chat_template_kwargs_json;
     input.options.add_vision_id                    = false;
-    const std::vector<const ToolDefinition*> tools = effective_tools(request);
+    const std::vector<const ToolDefinition*> tools = effective_tools(request, semantics.sort_tools);
     input.options.tool_calls_enabled               = request.uses_tools();
     // tool_choice none: a call written anyway is cut out of the answer, not shown as markup.
     input.options.tool_calls_discarded = !tools.empty() && !request.uses_tools();

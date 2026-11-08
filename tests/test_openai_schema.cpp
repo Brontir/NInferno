@@ -554,21 +554,40 @@ int test_tools() {
     failures += check(prompt(automatic.generation).options.tool_jsons.size() == 1,
                       "auto tools reach PromptInput");
 
-    // A tool set that comes back in another order renders in the order it was first seen.
-    const auto rendered_names = [&](const Json& request) {
+    // The tools render in the request's order, whatever an earlier request sent (#514); with
+    // --tool-order sorted, every order of one set renders sorted by name.
+    const auto rendered_names = [&](const Json& request, bool sorted) {
+        const OpenAIChatRequest parsed = parse(request);
+        ServeOptions server;
+        server.sort_tools = sorted;
         std::vector<std::string> names;
-        for (const std::string& tool : prompt(parse(request).generation).options.tool_jsons) {
+        for (const std::string& tool :
+             to_prompt_input(parsed.generation,
+                             resolve_prompt_semantics(parsed.generation, server), {})
+                 .options.tool_jsons) {
             names.push_back(Json::parse(tool).at("function").at("name").get<std::string>());
         }
         return names;
     };
+    const std::vector<std::string> sorted_names = {"order_alpha", "order_beta", "order_mid"};
+    const std::vector<std::string> sent_names   = {"order_beta", "order_alpha", "order_mid"};
     Json reordered     = base_request();
-    reordered["tools"] = Json::array({function_tool("order_alpha"), function_tool("order_beta")});
-    const std::vector<std::string> first_order = rendered_names(reordered);
-    reordered["tools"] = Json::array({function_tool("order_beta"), function_tool("order_alpha")});
-    failures += check(first_order == std::vector<std::string>{"order_alpha", "order_beta"} &&
-                          rendered_names(reordered) == first_order,
-                      "a reordered tool set keeps the order it was first seen in");
+    reordered["tools"] = Json::array({function_tool("order_alpha"), function_tool("order_beta"),
+                                      function_tool("order_mid")});
+    failures += check(rendered_names(reordered, false) == sorted_names,
+                      "the first tool set renders in its order");
+    reordered["tools"] = Json::array({function_tool("order_beta"), function_tool("order_alpha"),
+                                      function_tool("order_mid")});
+    failures += check(rendered_names(reordered, false) == sent_names,
+                      "a reordered tool set renders in its own order, not the one seen first");
+    failures += check(rendered_names(reordered, true) == sorted_names,
+                      "--tool-order sorted renders every order of a set sorted by name");
+    Json duplicate     = base_request();
+    duplicate["tools"] = Json::array({function_tool("order_beta"), function_tool("order_alpha"),
+                                      function_tool("order_beta")});
+    failures += check(rendered_names(duplicate, true) ==
+                          std::vector<std::string>{"order_beta", "order_alpha", "order_beta"},
+                      "a duplicate name keeps the request's order under --tool-order sorted");
 
     body["tools"][0]["future_item_field"]                 = "ignored";
     body["tools"][0]["function"]["future_function_field"] = "ignored";
