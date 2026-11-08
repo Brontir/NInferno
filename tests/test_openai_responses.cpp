@@ -1193,7 +1193,7 @@ int test_previous_response_call_graph() {
 
     OpenAIResponsesCreateRequest missing_parent = request;
     missing_parent.prompt.previous_response_id  = "resp_missing";
-    const ApiError missing = api_error([&] {
+    const ApiError missing                      = api_error([&] {
         (void)resolve_openai_responses_prompt(missing_parent.prompt, store, "resp_new", true);
     });
     failures += check(missing.status == 400 && missing.code == "previous_response_not_found" &&
