@@ -356,14 +356,13 @@ int main() {
             parse({"ninferno-serve", "model.ninferno", "--tool-order", "sorted"}).sort_tools &&
             !parse({"ninferno-serve", "model.ninferno", "--tool-order", "request"}).sort_tools,
         "--tool-order request|sorted, request by default");
-    failures += check(!defaults.drop_tools_under_none &&
-                          parse({"ninferno-serve", "model.ninferno", "--tool-choice-none",
-                                 "drop-tools"})
-                              .drop_tools_under_none &&
-                          !parse({"ninferno-serve", "model.ninferno", "--tool-choice-none",
-                                  "steer"})
-                               .drop_tools_under_none,
-                      "--tool-choice-none steer|drop-tools, steer by default");
+    failures +=
+        check(!defaults.drop_tools_under_none &&
+                  parse({"ninferno-serve", "model.ninferno", "--tool-choice-none", "drop-tools"})
+                      .drop_tools_under_none &&
+                  !parse({"ninferno-serve", "model.ninferno", "--tool-choice-none", "steer"})
+                       .drop_tools_under_none,
+              "--tool-choice-none steer|drop-tools, steer by default");
     bool unknown_tool_choice_none_rejected = false;
     try {
         (void)parse({"ninferno-serve", "model.ninferno", "--tool-choice-none", "ignore"});

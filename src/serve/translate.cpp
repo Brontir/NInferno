@@ -468,8 +468,8 @@ ninferno::PromptInput to_prompt_input(const GenerationRequest& request,
         semantics.preserve_for_reuse ? std::optional<bool>(true) : semantics.preserve_thinking;
     input.options.chat_template_kwargs_json        = semantics.chat_template_kwargs_json;
     input.options.add_vision_id                    = false;
-    std::vector<const ToolDefinition*> tools = effective_tools(request, semantics.sort_tools);
-    const bool tools_refused                 = !tools.empty() && !request.uses_tools();
+    std::vector<const ToolDefinition*> tools       = effective_tools(request, semantics.sort_tools);
+    const bool tools_refused                       = !tools.empty() && !request.uses_tools();
     if (tools_refused && semantics.drop_tools_under_none) {
         // vLLM's none: the model is not told about tools at all.
         tools.clear();

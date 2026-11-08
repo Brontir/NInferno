@@ -2192,11 +2192,11 @@ int test_none_gemma_channel_head_token() {
     };
     int failures = 0;
     {
-        auto prompt  = frontend.prepare(input(false));
-        auto session = frontend.make_output_session(prompt, stop);
+        auto prompt         = frontend.prepare(input(false));
+        auto session        = frontend.make_output_session(prompt, stop);
         const auto decision = session.preview_model(std::array<ninferno::TokenId, 2>{kChannel, 1},
                                                     64, ninferno::FinishReason::OutputLimit);
-        const auto output = session.commit_preview();
+        const auto output   = session.commit_preview();
         failures += check(decision.accepted_tokens == 1 &&
                               decision.finish_reason == ninferno::FinishReason::StopToken &&
                               channel_text(output, ninferno::OutputChannel::Content).empty(),
@@ -2211,16 +2211,18 @@ int test_none_gemma_channel_head_token() {
         tokens.push_back(kClosed);
         tokens.push_back(kChannel);
         tokens.push_back(1);
-        auto prompt   = frontend.prepare(input(true));
-        auto session  = frontend.make_output_session(prompt, stop);
-        const auto decision = session.preview_model(tokens, 64, ninferno::FinishReason::OutputLimit);
-        const auto output   = session.commit_preview();
-        failures += check(decision.accepted_tokens == reasoning_tokens + 2 &&
-                              decision.finish_reason == ninferno::FinishReason::StopToken &&
-                              channel_text(output, ninferno::OutputChannel::Content).empty() &&
-                              channel_text(output, ninferno::OutputChannel::Reasoning)
-                                      .find("weigh it") != std::string::npos,
-                          "thinking on: the opener or the second <|channel> was mishandled");
+        auto prompt  = frontend.prepare(input(true));
+        auto session = frontend.make_output_session(prompt, stop);
+        const auto decision =
+            session.preview_model(tokens, 64, ninferno::FinishReason::OutputLimit);
+        const auto output = session.commit_preview();
+        failures +=
+            check(decision.accepted_tokens == reasoning_tokens + 2 &&
+                      decision.finish_reason == ninferno::FinishReason::StopToken &&
+                      channel_text(output, ninferno::OutputChannel::Content).empty() &&
+                      channel_text(output, ninferno::OutputChannel::Reasoning).find("weigh it") !=
+                          std::string::npos,
+                  "thinking on: the opener or the second <|channel> was mishandled");
     }
     return failures;
 }

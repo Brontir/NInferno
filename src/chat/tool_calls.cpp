@@ -1249,7 +1249,7 @@ std::string ToolCallOutputDecoder::settle_bare() {
             }
         }
     }
-    std::size_t start           = 0;
+    std::size_t start = 0;
     skip_format_whitespace(body, start);
     const std::optional<std::size_t> end = json ? json_value_end(body, start) : bare_call_end(body);
     if (!end) { return {}; }
@@ -1310,8 +1310,9 @@ ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish_region(bool cut_of
                 call = call || key == "arguments" || key == "parameters";
             }
             // A cut inside the key itself ("argu") is a call that had begun its arguments.
-            call = call || (!partial.empty() && (std::string_view("arguments").starts_with(partial) ||
-                                                 std::string_view("parameters").starts_with(partial)));
+            call =
+                call || (!partial.empty() && (std::string_view("arguments").starts_with(partial) ||
+                                              std::string_view("parameters").starts_with(partial)));
         }
         ToolCallParseDiagnostics diagnostics;
         if (call) {
