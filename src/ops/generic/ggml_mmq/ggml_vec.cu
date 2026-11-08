@@ -782,7 +782,7 @@ void vec_launch_ks(const VecArgs& args, cudaStream_t stream) {
         const int twin_slots = vec_slots<type, T, KS, Gated, true>();
         const auto rounds    = [&](int n) { return (groups + n - 1) / n; };
         // Conservative on purpose: see kVecHasBoundedTwin.
-        const bool take      = g_vec_instance == VecInstance::Twin ||
+        const bool take = g_vec_instance == VecInstance::Twin ||
                           (g_vec_instance == VecInstance::Auto && twin_slots > 0 &&
                            rounds(twin_slots) < rounds(slots));
         if (take) {

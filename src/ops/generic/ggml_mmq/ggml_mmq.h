@@ -132,7 +132,8 @@ struct VecOut {
 void vec_quantize_activation(const __nv_bfloat16* x, int ldx, int k, int columns, void* out,
                              cudaStream_t stream);
 // Which instance of the 4-column runtime-K plain kernel a launch takes: Auto lets the launch choose
-// (the bounded twin when it saves a round and does not spill), the others force one. For tests only: no production caller sets it.
+// (the bounded twin when it saves a round and does not spill), the others force one. For tests
+// only: no production caller sets it.
 enum class VecInstance : std::uint8_t { Auto, Plain, Twin };
 
 class ScopedVecInstance {
