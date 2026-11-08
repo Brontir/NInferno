@@ -37,7 +37,7 @@ Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *
 
 ## Measurement
 
-- NVIDIA GeForce RTX 5090: driver 615.71.09, CUDA None, power limit 575 W.
+- NVIDIA GeForce RTX 5090: driver 615.71.09, power limit 575 W.
 - NInferno 0.1.0.
 - How each number is taken: [methodology](../../methodology.md).
 
@@ -50,4 +50,12 @@ Server flags of the measured settings:
 --max-context 32768 --max-concurrency 4 --spec none 
 --max-context 32768 --max-concurrency 8 --spec mtp --draft-tokens 5 
 --max-context 32768 --max-concurrency 8 --spec none 
+```
+
+llama.cpp command-line flags of the reference rows (after `llama-server -m <GGUF>`):
+
+```
+-ngl 99 -fa on -np 1 -c 32768 -b 2048 -ub 2048    # llama.cpp b12198
+-ngl 99 -fa on -np 4 -c 131072 -b 2048 -ub 2048    # llama.cpp b12198
+-ngl 99 -fa on -np 8 -c 262144 -b 2048 -ub 2048    # llama.cpp b12198
 ```

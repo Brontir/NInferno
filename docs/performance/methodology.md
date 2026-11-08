@@ -62,6 +62,32 @@ answered with up to 512 tokens. C client workers send them concurrently, worker 
   `greedy_match`; see [perplexity](../perplexity.md)) are shown where the data has them and never
   enter the speed tables.
 
+## Speculation under load
+
+`--spec auto` runs the measured load table, and for a pair that was not measured it stops drafting from two
+requests at once. For C=4 and C=8 the speculative setting was therefore also run with the startup's own
+choice forced (`--spec X --draft-tokens D`), and the page shows the faster of the two for each cell. Only
+that faster row is kept in `bench.jsonl`; the slower runs are in the measurement logs, not in the data.
+A cell with a footnote marker explains a result that needs one.
+
+## llama.cpp reference rows
+
+The reference rows run `llama-server` (release tag in the row's `version`) on the same GGUF file and GPU,
+with the same prompts, repeats and metrics, and the command-line flags listed on each run page:
+
+- `-ngl 99 -fa on -b 2048 -ub 2048`. 2048 was the best physical batch on the RTX 5090 (512: 15.7K, 1024:
+  18.0K, 2048: 18.9K, 4096: 16.9K tok/s prefill on gpt-oss-20b).
+- One slot per stream (`-np C`). The context is 32768 for one stream (the 24K-token prompts need it) and
+  8192 tokens per slot for C=4 and C=8 (the short chats need under 1K). When a start ran out of memory, the
+  batch was lowered (1024, 512, 256) and, for a few C=8 runs, the context to 2048 tokens per slot. A row
+  that needed either is marked on its run page.
+- Speculation: `--spec-type draft-mtp` only where an MTP GGUF of the model in the same quantization was
+  cached on the stand, with the `--spec-draft-n-max` that was fastest in a short sweep. Everywhere else
+  llama.cpp runs plain. The Speculation column of the index says which; the summary line keeps the two
+  groups apart. DFlash drafters were not converted for llama.cpp.
+- The ratio in the index divides our best setting by the best llama.cpp row of the same quantization. A
+  dagger marks a ratio whose NInferno row is older than the llama.cpp row.
+
 ## Reproducing a row
 
 ```bash

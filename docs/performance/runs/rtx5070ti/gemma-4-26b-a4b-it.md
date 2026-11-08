@@ -33,11 +33,10 @@ Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *
 | llama.cpp b12198 | UD-IQ3_XXS | off | Decode @24K | 153 | 2026-11-08 |
 | llama.cpp b12198 | UD-IQ3_XXS | off | C=1 | 185 | 2026-11-08 |
 | llama.cpp b12198 | UD-IQ3_XXS | off | C=4 | 405 | 2026-11-08 |
-| llama.cpp b12198 | UD-IQ3_XXS | off | C=8 | 0.0 | 2026-11-08 |
 
 ## Measurement
 
-- NVIDIA GeForce RTX 5070 Ti: driver 615.71.09, CUDA None, power limit 300 W.
+- NVIDIA GeForce RTX 5070 Ti: driver 615.71.09, power limit 300 W.
 - NInferno 0.1.0.
 - How each number is taken: [methodology](../../methodology.md).
 
@@ -50,4 +49,11 @@ Server flags of the measured settings:
 --max-context 32768 --max-concurrency 4 --spec none 
 --max-context 32768 --max-concurrency 8 
 --max-context 32768 --max-concurrency 8 --spec none 
+```
+
+llama.cpp command-line flags of the reference rows (after `llama-server -m <GGUF>`):
+
+```
+-ngl 99 -fa on -np 1 -c 32768 -b 2048 -ub 2048    # llama.cpp b12198
+-ngl 99 -fa on -np 4 -c 32768 -b 2048 -ub 2048    # llama.cpp b12198
 ```

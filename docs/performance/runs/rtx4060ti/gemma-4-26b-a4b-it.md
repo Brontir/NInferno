@@ -33,12 +33,14 @@ Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *
 | llama.cpp b12198 | UD-IQ3_XXS | off | Decode @24K | 63.0 | 2026-11-08 |
 | llama.cpp b12198 | UD-IQ3_XXS | off | C=1 | 80.8 | 2026-11-08 |
 | llama.cpp b12198 | UD-IQ3_XXS | off | C=4 | 197 | 2026-11-08 |
-| llama.cpp b12198 | UD-IQ3_XXS | off | C=8 | 216 | 2026-11-08 |
+| llama.cpp b12198 | UD-IQ3_XXS | off | C=8‡ | 216 | 2026-11-08 |
+
+‡ llama.cpp ran out of memory at the default batch; physical batch 1024
 
 ## Measurement
 
 - NVIDIA GeForce RTX 4060 Ti: driver 570.211.01, CUDA 12.8, power limit 165 W.
-- NVIDIA GeForce RTX 4060 Ti: driver 615.71.09, CUDA None, power limit 165 W.
+- NVIDIA GeForce RTX 4060 Ti: driver 615.71.09, power limit 165 W.
 - NInferno 0.1.0.
 - How each number is taken: [methodology](../../methodology.md).
 
@@ -50,4 +52,12 @@ Server flags of the measured settings:
 --max-context 32768 --max-concurrency 4 
 --max-context 32768 --max-concurrency 4 --spec none 
 --max-context 32768 --max-concurrency 8 --spec none 
+```
+
+llama.cpp command-line flags of the reference rows (after `llama-server -m <GGUF>`):
+
+```
+-ngl 99 -fa on -np 1 -c 32768 -b 2048 -ub 2048    # llama.cpp b12198
+-ngl 99 -fa on -np 4 -c 32768 -b 2048 -ub 2048    # llama.cpp b12198
+-ngl 99 -fa on -np 8 -c 65536 -b 1024 -ub 1024    # llama.cpp b12198
 ```

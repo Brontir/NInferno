@@ -21,28 +21,30 @@ Tokens per second, models converted by `ninferno-serve` from Hugging Face as pub
 
 ## Against llama.cpp
 
-NInferno's tokens per second over llama.cpp's, on the same GGUF file and GPU.
+NInferno's tokens per second over llama.cpp's, on the same GGUF file and GPU: our best setting over llama.cpp's best row (its own MTP where an MTP file of the model was cached, else plain).
 
-| GPU | Model | One stream | All streams |
-|---|---|---:|---:|
-| RTX 5090 | [Qwen3.8-27B](runs/rtx5090/qwen3.8-27b.md) | ×2.5 | ×3.0 |
-| RTX 5090 | [Qwen3.6-35B-A3B](runs/rtx5090/qwen3.6-35b-a3b.md) | ×1.8 | ×2.1 |
-| RTX 5090 | [Gemma 4 26B-A4B](runs/rtx5090/gemma-4-26b-a4b-it.md) | ×2.6 | ×2.5 |
-| RTX 5090 | [gpt-oss-20b](runs/rtx5090/gpt-oss-20b.md) | ×1.5 | ×2.2 |
-| RTX 5070 Ti | [Qwen3.6-35B-A3B](runs/rtx5070ti/qwen3.6-35b-a3b.md) | ×2.2 | ×1.9 |
-| RTX 5070 Ti | [Gemma 4 26B-A4B](runs/rtx5070ti/gemma-4-26b-a4b-it.md) | ×1.9 | ×2.2 |
-| RTX 5070 Ti | [gpt-oss-20b](runs/rtx5070ti/gpt-oss-20b.md) | ×1.3 | ×1.7 |
-| RTX 4070 Ti | [Qwen3.8-27B](runs/rtx4070ti/qwen3.8-27b.md) | ×2.0 | ×2.0 |
-| RTX 4070 Ti | [Qwen3.5-9B](runs/rtx4070ti/qwen3.5-9b.md) | ×1.4 | ×0.9 |
-| RTX 4070 Ti | [Qwen3.5-4B](runs/rtx4070ti/qwen3.5-4b.md) | ×1.5 | ×1.3 |
-| RTX 4060 Ti 16 GB | [Qwen3.8-27B](runs/rtx4060ti/qwen3.8-27b.md) | ×2.1 | ×1.9 |
-| RTX 4060 Ti 16 GB | [Qwen3.6-35B-A3B](runs/rtx4060ti/qwen3.6-35b-a3b.md) | ×2.1 | ×1.6 |
-| RTX 4060 Ti 16 GB | [Gemma 4 26B-A4B](runs/rtx4060ti/gemma-4-26b-a4b-it.md) | ×1.6 | ×1.4 |
-| RTX 4060 Ti 16 GB | [gpt-oss-20b](runs/rtx4060ti/gpt-oss-20b.md) | ×1.2 | ×1.8 |
-| RTX 3090 | [Qwen3.6-35B-A3B](runs/rtx3090/qwen3.6-35b-a3b.md) | ×1.4 | ×1.6 |
-| RTX 3090 | [gpt-oss-20b](runs/rtx3090/gpt-oss-20b.md) | ×1.2 | ×1.6 |
-| RTX 3060 | [Qwen3.5-9B](runs/rtx3060/qwen3.5-9b.md) | ×1.4 | ×1.1 |
-| RTX 3060 | [Qwen3.5-4B](runs/rtx3060/qwen3.5-4b.md) | ×2.1 | ×2.0 |
-| RTX 2080 Ti | [Qwen3.8-27B](runs/rtx2080ti/qwen3.8-27b.md) | ×2.0 | ×1.9 |
-| RTX 2080 Ti | [Qwen3.5-9B](runs/rtx2080ti/qwen3.5-9b.md) | ×1.6 | ×1.5 |
-| RTX 2080 Ti | [Qwen3.5-4B](runs/rtx2080ti/qwen3.5-4b.md) | ×1.7 | ×2.0 |
+| GPU | Model | llama.cpp speculation | One stream | All streams |
+|---|---|---|---:|---:|
+| RTX 5090 | [Qwen3.8-27B](runs/rtx5090/qwen3.8-27b.md) | off | ×2.5 | ×3.0 |
+| RTX 5090 | [Qwen3.6-35B-A3B](runs/rtx5090/qwen3.6-35b-a3b.md) | mtp ×2 | ×1.8 | ×2.1 |
+| RTX 5090 | [Gemma 4 26B-A4B](runs/rtx5090/gemma-4-26b-a4b-it.md) | off | ×2.6 | ×2.5 |
+| RTX 5090 | [gpt-oss-20b](runs/rtx5090/gpt-oss-20b.md) | off | ×1.5 | ×2.2 |
+| RTX 5070 Ti | [Qwen3.6-35B-A3B](runs/rtx5070ti/qwen3.6-35b-a3b.md) | off | ×2.2 | ×1.9 |
+| RTX 5070 Ti | [Gemma 4 26B-A4B](runs/rtx5070ti/gemma-4-26b-a4b-it.md) | off | ×1.9 | ×2.2 |
+| RTX 5070 Ti | [gpt-oss-20b](runs/rtx5070ti/gpt-oss-20b.md) | off | ×1.3 | ×1.7 |
+| RTX 4070 Ti | [Qwen3.8-27B](runs/rtx4070ti/qwen3.8-27b.md) | off | ×2.0† | ×2.0 |
+| RTX 4070 Ti | [Qwen3.5-9B](runs/rtx4070ti/qwen3.5-9b.md) | mtp ×4 | ×1.4 | ×0.9 |
+| RTX 4070 Ti | [Qwen3.5-4B](runs/rtx4070ti/qwen3.5-4b.md) | mtp ×4 | ×1.5 | ×1.3 |
+| RTX 4060 Ti 16 GB | [Qwen3.8-27B](runs/rtx4060ti/qwen3.8-27b.md) | off | ×2.1† | ×1.9 |
+| RTX 4060 Ti 16 GB | [Qwen3.6-35B-A3B](runs/rtx4060ti/qwen3.6-35b-a3b.md) | off | ×2.1 | ×1.6 |
+| RTX 4060 Ti 16 GB | [Gemma 4 26B-A4B](runs/rtx4060ti/gemma-4-26b-a4b-it.md) | off | ×1.6† | ×1.4† |
+| RTX 4060 Ti 16 GB | [gpt-oss-20b](runs/rtx4060ti/gpt-oss-20b.md) | off | ×1.2 | ×1.8 |
+| RTX 3090 | [Qwen3.6-35B-A3B](runs/rtx3090/qwen3.6-35b-a3b.md) | mtp ×3 | ×1.4 | ×1.6 |
+| RTX 3090 | [gpt-oss-20b](runs/rtx3090/gpt-oss-20b.md) | off | ×1.2 | ×1.6 |
+| RTX 3060 | [Qwen3.5-9B](runs/rtx3060/qwen3.5-9b.md) | mtp ×3 / mtp ×4 | ×1.4 | ×1.1 |
+| RTX 3060 | [Qwen3.5-4B](runs/rtx3060/qwen3.5-4b.md) | off | ×2.1 | ×2.0 |
+| RTX 2080 Ti | [Qwen3.8-27B](runs/rtx2080ti/qwen3.8-27b.md) | off | ×2.0† | ×1.9 |
+| RTX 2080 Ti | [Qwen3.5-9B](runs/rtx2080ti/qwen3.5-9b.md) | mtp ×4 | ×1.6 | ×1.5 |
+| RTX 2080 Ti | [Qwen3.5-4B](runs/rtx2080ti/qwen3.5-4b.md) | mtp ×4 | ×1.7 | ×2.0 |
+
+† The NInferno row is from 2026-10-19, before the llama.cpp row; it has not been re-measured.

@@ -27,7 +27,7 @@ Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *
 
 ## Measurement
 
-- NVIDIA GeForce RTX 5070 Ti: driver 615.71.09, CUDA None, power limit 300 W.
+- NVIDIA GeForce RTX 5070 Ti: driver 615.71.09, power limit 300 W.
 - NInferno 0.1.0.
 - How each number is taken: [methodology](../../methodology.md).
 
