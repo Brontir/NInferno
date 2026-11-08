@@ -1444,14 +1444,8 @@ int test_text_survives_unrelated_refusal() {
         "{%- for m in messages -%}"
         "{%- if m.role == 'system' and not loop.first -%}"
         "{{- raise_exception('System message must be at the beginning.') -}}{%- endif -%}"
-        "<|im_start|>{{ m.role }}
-{
-        { m.content }}{
-        % if m.tool_calls %}[call]{
-        % endif %}"
-        "<|im_end|>
-{
-        % -endfor - %}");
+        "<|im_start|>{{ m.role }}\n{{ m.content }}{% if m.tool_calls %}[call]{% endif %}"
+        "<|im_end|>\n{%- endfor -%}");
     auto turn              = chat_message(ninferno::ChatRole::Assistant, "spoken text");
     turn.reasoning_content = "plan";
     turn.tool_calls.push_back({.name = "calc", .arguments_json = "{}"});
