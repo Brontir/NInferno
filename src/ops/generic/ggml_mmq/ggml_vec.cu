@@ -21,16 +21,18 @@ namespace {
 
 constexpr int kVecWarps = 4;
 
-// Resident CTAs per SM the kernel is bounded to (__launch_bounds__' minimum; 0: no bound). The
-// runtime-K instance of 4 columns takes 85 registers where 3 take 72 (sm_86 / sm_89, CUDA 13),
-// which is 5 CTAs of 128 threads on a 64K-register SM instead of 7, and its grid, sized to the
-// resident CTAs, then needs a second round on a shape of 480..512 row pairs. The bound holds it to
-// the registers of 3 columns, which it fits without a spill. The other instances are left alone: a
-// bound makes the compiler spend more registers on every instance it is given to (110 for 3
-// columns), and the unrolled-K and gated instances of 4 columns spill (8 to 240 bytes) under 72.
-constexpr int kVecMinBlocks(int columns, int ks, bool gated) {
-    return columns == 4 && ks == 0 && !gated ? 7 : 0;
+// The runtime-K plain instance of 4 columns has a twin bounded to 7 resident CTAs per SM
+// (__launch_bounds__' minimum), the registers of 3 columns: unbounded it takes 85 registers where 3
+// take 72 (sm_86 / sm_89, CUDA 13), which is 5 CTAs of 128 threads on a 64K-register SM instead of
+// 7. The grid is sized to the resident CTAs, so the launch takes the twin when that saves a round of
+// row groups (480..512 groups on an 82-SM card: 2 rounds against 1) and the instance as it is
+// otherwise (1024 groups on 128 SMs: 2 rounds either way, the tail longer with more slots). The
+// other instances have no twin: a bound makes the compiler spend more registers on every instance
+// it is given to (110 for 3 columns), and the unrolled-K and gated ones spill under 72.
+constexpr bool kVecHasBoundedTwin(int columns, int ks, bool gated) {
+    return columns == 4 && ks == 0 && !gated;
 }
+constexpr int kVecBoundedBlocks = 7;
 
 struct Slice {
     int w[8];
@@ -633,8 +635,8 @@ __device__ __forceinline__ void store(const VecOut& o, int row, int column, floa
 // KS: the static K the slice loop unrolls over, or 0 for the runtime K. Gated: the SwiGlu pair (gate
 // and up rows, one row per warp), a separate instance as ninfer-all's Fused one: the plain product
 // keeps no gated branches or second-plane state in its loop.
-template <ggml_type type, int T, int KS, bool Gated>
-__launch_bounds__(kVecWarps * 32, kVecMinBlocks(T, KS, Gated)) __global__
+template <ggml_type type, int T, int KS, bool Gated, bool Bounded = false>
+__launch_bounds__(kVecWarps * 32, Bounded ? kVecBoundedBlocks : 0) __global__
     void vec_kernel(VecArgs p) {
     using D                 = Decoder<type>;
     constexpr int kTable    = D::kTableWords > 0 ? D::kTableWords : 4;
@@ -731,28 +733,46 @@ __launch_bounds__(kVecWarps * 32, kVecMinBlocks(T, KS, Gated)) __global__
     }
 }
 
-template <ggml_type type, int T, int KS, bool Gated>
-void vec_launch_ks(const VecArgs& args, cudaStream_t stream) {
+template <ggml_type type, int T, int KS, bool Gated, bool Bounded>
+int vec_slots() {
     // Per device: a process may drive GPUs of different chips.
     static PerDevice<int> per_device;
     const int resident = per_device.get([](int) {
         int blocks = 0;
-        check(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks, vec_kernel<type, T, KS, Gated>,
-                                                            kVecWarps * 32, 0),
+        check(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                  &blocks, vec_kernel<type, T, KS, Gated, Bounded>, kVecWarps * 32, 0),
               "vector occupancy");
         return std::max(blocks, 1);
     });
-    const int per_block = kVecWarps * (Gated ? 1 : 2);
-    const int groups    = (args.rows + per_block - 1) / per_block;
-    const int blocks    = std::min(groups, resident * device_facts().sm_count);
+    return resident * device_facts().sm_count;
+}
+
+template <ggml_type type, int T, int KS, bool Gated, bool Bounded>
+void vec_launch_grid(const VecArgs& args, int groups, int slots, cudaStream_t stream) {
+    const int blocks = std::min(groups, slots);
     if (LaunchShape* described = describe_target()) {
-        describe_launch(*described, reinterpret_cast<const void*>(vec_kernel<type, T, KS, Gated>),
+        describe_launch(*described,
+                        reinterpret_cast<const void*>(vec_kernel<type, T, KS, Gated, Bounded>),
                         dim3(blocks), dim3(kVecWarps * 32), 0);
         return;
     }
     check(pdl::launch_dependent({dim3(blocks), dim3(kVecWarps * 32), 0, stream},
-                                vec_kernel<type, T, KS, Gated>, args),
+                                vec_kernel<type, T, KS, Gated, Bounded>, args),
           "vector product launch");
+}
+
+template <ggml_type type, int T, int KS, bool Gated>
+void vec_launch_ks(const VecArgs& args, cudaStream_t stream) {
+    const int per_block = kVecWarps * (Gated ? 1 : 2);
+    const int groups    = (args.rows + per_block - 1) / per_block;
+    const int slots     = vec_slots<type, T, KS, Gated, false>();
+    if constexpr (kVecHasBoundedTwin(T, KS, Gated)) {
+        const int twin_slots = vec_slots<type, T, KS, Gated, true>();
+        if ((groups + twin_slots - 1) / twin_slots < (groups + slots - 1) / slots) {
+            return vec_launch_grid<type, T, KS, Gated, true>(args, groups, twin_slots, stream);
+        }
+    }
+    vec_launch_grid<type, T, KS, Gated, false>(args, groups, slots, stream);
 }
 
 // The K of the 27B and 35B text matrices are unrolled; any other K runs the loop.
