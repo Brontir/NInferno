@@ -387,6 +387,28 @@ int test_constrained_decoding_extensions() {
                           std::string(deep_case.param) + " text nesting 200 levels is not refused");
     }
 
+    // JSON carried as text is also bounded in values (#527): `[0,0,...]` costs as much as a text
+    // as it does in the body, and the body's count sees one string.
+    std::string many = "[";
+    for (int i = 0; i < 50; ++i) { many += i == 0 ? "0" : ",0"; }
+    many += "]";
+    RequestLimits few_values = limits();
+    few_values.max_json_values = 40;
+    for (const DeepCase& wide_case :
+         {DeepCase{"guided_json", Json("{\"a\":" + many + "}"), "guided_json"},
+          DeepCase{"structured_outputs", Json{{"json", "{\"a\":" + many + "}"}},
+                   "structured_outputs.json"},
+          DeepCase{"structured_outputs", Json{{"structural_tag", many}},
+                   "structured_outputs.structural_tag"}}) {
+        Json wide              = base_request();
+        wide[wide_case.field]  = wide_case.value;
+        const ApiError error =
+            api_error([&] { (void)parse_chat_completion_request(wide, few_values, false); });
+        failures += check(error.status == 400 && error.param == wide_case.param &&
+                              error.code == "request_json_too_large",
+                          std::string(wide_case.param) + " text with too many values is accepted");
+    }
+
     Json two                = base_request();
     two["response_format"]  = Json{{"type", "json_object"}};
     two["guided_regex"]     = "[a-z]+";

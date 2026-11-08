@@ -90,12 +90,14 @@ RequestJson parse_json_body(const httplib::Request& request, const RequestLimits
 // A worker thread that parsed a large body has built and freed a document in its own malloc arena;
 // glibc keeps such fragmented memory resident, and every worker keeps its own share (about half of
 // the peak, measured in #527), so the process grows by one share per worker that ever served a big
-// body. This hands it back, on the calling thread, if that thread parsed one since the last call.
+// body. This hands it back (malloc_trim walks every arena) if the calling thread parsed one since
+// the last call.
 void release_request_memory() noexcept;
 
 // The pool's task queue: httplib's thread pool, running release_request_memory() after each
 // connection a worker served, when its request, its parsed document and its connection are gone
-// and the response has long been sent.
+// and the response has long been sent. A keep-alive connection is one such connection: it trims when
+// it ends (the keep-alive timeout is seconds), and the thread's next big body reuses the memory.
 class WorkerQueue final : public httplib::TaskQueue {
 public:
     explicit WorkerQueue(std::size_t threads, std::size_t max_queued)

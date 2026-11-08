@@ -1,7 +1,7 @@
 #include "serve/output_constraint_request.h"
 
+#include "serve/bounded_json.h"
 #include "serve/request_validation.h"
-#include "text/json_depth.h"
 
 #include <algorithm>
 #include <string>
@@ -79,29 +79,42 @@ std::string require_string(const Json& value, const std::string& param, const ch
     return value.get<std::string>();
 }
 
-// JSON a field carries as text was not under the body's depth check.
-void refuse_deep_text_json(const Json& parsed, const std::string& param) {
-    if (text::json_nests_deeper_than(parsed, kMaximumRequestJsonDepth)) {
+// JSON a field carries as text is parsed under the same bounds as the body, each field with the
+// whole value budget (a request holds one constraint): it is one string to the body's count, and
+// `[0,0,...]` as text is as costly as it is as a body. nullopt: not JSON.
+std::optional<Json> parse_text_json(const std::string& text, const std::string& param,
+                                    std::size_t max_values) {
+    Json parsed;
+    switch (parse_bounded_json(text, max_values, parsed)) {
+    case JsonTextStatus::Ok: return parsed;
+    case JsonTextStatus::TooManyValues:
+        bad_request(param + " holds more than " + std::to_string(max_values) +
+                        " values (--max-request-json-values)",
+                    param, "request_json_too_large");
+    case JsonTextStatus::TooDeep:
         bad_request(param + " nests deeper than " + std::to_string(kMaximumRequestJsonDepth) +
                         " levels",
                     param);
+    case JsonTextStatus::Invalid: break;
     }
+    return std::nullopt;
 }
 
-OutputConstraintRequest schema_value_request(const Json& value, const std::string& param) {
+OutputConstraintRequest schema_value_request(const Json& value, const std::string& param,
+                                             std::size_t max_values) {
     OutputConstraintRequest out;
     out.kind  = Kind::JsonSchema;
     out.param = param;
     if (value.is_object()) {
         out.definition = value.dump();
     } else if (value.is_string()) {
-        const Json parsed = Json::parse(value.get<std::string>(), nullptr, false);
-        if (parsed.is_discarded() || !parsed.is_object()) {
+        const std::optional<Json> parsed =
+            parse_text_json(value.get<std::string>(), param, max_values);
+        if (!parsed || !parsed->is_object()) {
             bad_request(param + " must be a JSON Schema object or its JSON text", param,
                         "invalid_schema");
         }
-        refuse_deep_text_json(parsed, param);
-        out.definition = parsed.dump();
+        out.definition = parsed->dump();
     } else {
         bad_request(param + " must be a JSON Schema object or its JSON text", param);
     }
@@ -122,15 +135,15 @@ OutputConstraintRequest choice_request(const Json& value, const std::string& par
     return out;
 }
 
-OutputConstraintRequest structural_tag_request(const Json& value, const std::string& param) {
+OutputConstraintRequest structural_tag_request(const Json& value, const std::string& param,
+                                               std::size_t max_values) {
     OutputConstraintRequest out;
     out.kind  = Kind::StructuralTag;
     out.param = param;
     if (value.is_object()) {
         out.definition = value.dump();
     } else if (value.is_string() && !value.get_ref<const std::string&>().empty()) {
-        const Json parsed = Json::parse(value.get<std::string>(), nullptr, false);
-        if (!parsed.is_discarded()) { refuse_deep_text_json(parsed, param); }
+        (void)parse_text_json(value.get<std::string>(), param, max_values);
         out.definition = value.get<std::string>();
     } else {
         bad_request(param + " must be a structural-tag object or its JSON text", param);
@@ -138,7 +151,8 @@ OutputConstraintRequest structural_tag_request(const Json& value, const std::str
     return out;
 }
 
-std::optional<OutputConstraintRequest> parse_structured_outputs_object(const Json& value) {
+std::optional<OutputConstraintRequest> parse_structured_outputs_object(const Json& value,
+                                                                       std::size_t max_values) {
     const std::string param = "structured_outputs";
     if (!value.is_object()) { bad_request("structured_outputs must be an object", param); }
     reject_unknown_members(value,
@@ -156,7 +170,7 @@ std::optional<OutputConstraintRequest> parse_structured_outputs_object(const Jso
         out = std::move(request);
     };
     if (value.contains("json") && !value.at("json").is_null()) {
-        set(schema_value_request(value.at("json"), param + ".json"));
+        set(schema_value_request(value.at("json"), param + ".json", max_values));
     }
     if (value.contains("regex") && !value.at("regex").is_null()) {
         OutputConstraintRequest request;
@@ -184,7 +198,8 @@ std::optional<OutputConstraintRequest> parse_structured_outputs_object(const Jso
         }
     }
     if (value.contains("structural_tag") && !value.at("structural_tag").is_null()) {
-        set(structural_tag_request(value.at("structural_tag"), param + ".structural_tag"));
+        set(structural_tag_request(value.at("structural_tag"), param + ".structural_tag",
+                                  max_values));
     }
     for (const char* flag :
          {"disable_fallback", "disable_any_whitespace", "disable_additional_properties"}) {
@@ -314,7 +329,8 @@ void attach_tool_call_constraint(GenerationRequest& request) {
     request.output_constraint = std::move(out);
 }
 
-std::optional<OutputConstraintRequest> parse_structured_output_extensions(const RequestJson& body) {
+std::optional<OutputConstraintRequest> parse_structured_output_extensions(const RequestJson& body,
+                                                                          std::size_t max_values) {
     std::optional<OutputConstraintRequest> out;
     const auto set = [&](std::optional<OutputConstraintRequest> request) {
         if (!request) { return; }
@@ -327,10 +343,10 @@ std::optional<OutputConstraintRequest> parse_structured_output_extensions(const 
     };
 
     if (body.contains("structured_outputs") && !body.at("structured_outputs").is_null()) {
-        set(parse_structured_outputs_object(body.at("structured_outputs")));
+        set(parse_structured_outputs_object(body.at("structured_outputs"), max_values));
     }
     if (body.contains("guided_json") && !body.at("guided_json").is_null()) {
-        set(schema_value_request(body.at("guided_json"), "guided_json"));
+        set(schema_value_request(body.at("guided_json"), "guided_json", max_values));
     }
     if (body.contains("guided_regex") && !body.at("guided_regex").is_null()) {
         OutputConstraintRequest request;

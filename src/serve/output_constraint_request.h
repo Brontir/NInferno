@@ -21,9 +21,10 @@ parse_openai_response_format(const RequestJson& format, const char* param, bool 
                                                                     const char* param);
 
 // vLLM structured_outputs and its legacy guided_* spellings, and llama.cpp's top-level grammar.
-// Returns nullopt when none is present; rejects more than one source.
+// Returns nullopt when none is present; rejects more than one source. JSON given as text is
+// parsed with at most `max_values` values (--max-request-json-values).
 [[nodiscard]] std::optional<OutputConstraintRequest>
-parse_structured_output_extensions(const RequestJson& body);
+parse_structured_output_extensions(const RequestJson& body, std::size_t max_values);
 
 // Call after tools, tool choice, parallel_tool_calls and any response format are parsed. With
 // callable tools, a response format is rejected (it would forbid every call). A strict tool, a

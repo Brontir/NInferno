@@ -1,5 +1,6 @@
 #include "serve/http_transport.h"
 
+#include "serve/bounded_json.h"
 #include "serve/request_validation.h"
 
 #if defined(__GLIBC__)
@@ -31,80 +32,6 @@ void set_socket_option(socket_t socket, int level, int option, const T& value) n
 }
 #endif
 
-// The document builder RequestJson::parse uses, which also counts the values it builds and stops
-// the parse (returns false from the SAX event) at the limit, before the next one is allocated. A
-// callback parser would do the same, but nlohmann's takes quadratic time on a long array. The base
-// class is nlohmann's internal one; a single pass costs no more than parse().
-template <class InputAdapter>
-class BoundedDomBuilder final
-    : public nlohmann::detail::json_sax_dom_parser<RequestJson, InputAdapter> {
-    using Base = nlohmann::detail::json_sax_dom_parser<RequestJson, InputAdapter>;
-
-public:
-    BoundedDomBuilder(RequestJson& root, std::size_t limit) : Base(root), limit_(limit) {}
-
-    [[nodiscard]] bool exceeded() const noexcept { return exceeded_; }
-
-    [[nodiscard]] bool too_deep() const noexcept { return too_deep_; }
-
-    bool null() { return admit() && Base::null(); }
-
-    bool boolean(bool value) { return admit() && Base::boolean(value); }
-
-    bool number_integer(RequestJson::number_integer_t value) {
-        return admit() && Base::number_integer(value);
-    }
-
-    bool number_unsigned(RequestJson::number_unsigned_t value) {
-        return admit() && Base::number_unsigned(value);
-    }
-
-    bool number_float(RequestJson::number_float_t value, const std::string& text) {
-        return admit() && Base::number_float(value, text);
-    }
-
-    bool string(std::string& value) { return admit() && Base::string(value); }
-
-    bool start_object(std::size_t elements) {
-        return admit() && enter() && Base::start_object(elements);
-    }
-
-    bool end_object() {
-        --depth_;
-        return Base::end_object();
-    }
-
-    bool start_array(std::size_t elements) {
-        return admit() && enter() && Base::start_array(elements);
-    }
-
-    bool end_array() {
-        --depth_;
-        return Base::end_array();
-    }
-
-    bool key(std::string& name) { return admit() && Base::key(name); }
-
-private:
-    // One more value (an object key counts: it is a string of its own).
-    bool admit() noexcept {
-        exceeded_ = exceeded_ || ++values_ > limit_;
-        return !exceeded_;
-    }
-
-    // One level deeper; refused past kMaximumRequestJsonDepth, before anything is built there.
-    bool enter() noexcept {
-        too_deep_ = too_deep_ || ++depth_ > kMaximumRequestJsonDepth;
-        return !too_deep_;
-    }
-
-    std::size_t limit_;
-    std::size_t values_ = 0;
-    std::size_t depth_  = 0;
-    bool exceeded_      = false;
-    bool too_deep_      = false;
-};
-
 // Set on a worker thread that has parsed a large body since it last released memory.
 thread_local bool large_body_seen = false;
 // Smaller bodies leave too little behind to be worth walking every arena.
@@ -113,27 +40,22 @@ constexpr std::size_t kLargeBodyBytes = 1u << 20;
 } // namespace
 
 RequestJson parse_json_body(const httplib::Request& request, const RequestLimits& limits) {
+    // A body this big leaves the pieces of its document in this thread's malloc arena, whether the
+    // parse succeeds or is stopped at a limit after building up to it (see release_request_memory).
+    if (request.body.size() >= kLargeBodyBytes) { large_body_seen = true; }
     RequestJson body;
-    BoundedDomBuilder<decltype(nlohmann::detail::input_adapter(request.body))> builder(
-        body, limits.max_json_values);
-    bool parsed = false;
-    try {
-        parsed = RequestJson::sax_parse(request.body, &builder);
-    } catch (const std::exception&) { bad_request("request body is not valid JSON"); }
-    if (builder.exceeded()) {
+    switch (parse_bounded_json(request.body, limits.max_json_values, body)) {
+    case JsonTextStatus::Ok: return body;
+    case JsonTextStatus::TooManyValues:
         bad_request("request JSON holds more than " + std::to_string(limits.max_json_values) +
                         " values (--max-request-json-values)",
                     {}, "request_json_too_large");
-    }
-    if (builder.too_deep()) {
+    case JsonTextStatus::TooDeep:
         bad_request("request JSON nests deeper than " + std::to_string(kMaximumRequestJsonDepth) +
                     " levels");
+    case JsonTextStatus::Invalid: break;
     }
-    if (!parsed) { bad_request("request body is not valid JSON"); }
-    // A big body leaves its document's freed pieces in this thread's malloc arena (see
-    // release_request_memory).
-    if (request.body.size() >= kLargeBodyBytes) { large_body_seen = true; }
-    return body;
+    bad_request("request body is not valid JSON");
 }
 
 void release_request_memory() noexcept {

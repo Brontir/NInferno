@@ -1,5 +1,6 @@
 add_library(ninferno_serve STATIC
   http_transport.cpp
+  bounded_json.cpp
   cache_hint.cpp
   request_validation.cpp
   openai_chat_request.cpp
