@@ -17,6 +17,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <exception>
@@ -117,14 +118,21 @@ public:
     [[nodiscard]] std::filesystem::path file_path(std::size_t index) const;
     [[nodiscard]] static std::filesystem::path partial_path(const std::filesystem::path& target);
 
-    // Removes the hidden temporaries ".<name>.XXXXXX.tmp" that interrupted conversions left in
-    // `directory` (killed, out of memory, power loss; a signal or an exception removes its own).
-    // A temporary is removed only when no writer holds it: every writer keeps an exclusive lock
-    // (flock, LockFileEx on Windows) on its temporaries until they are published or removed, so a
-    // conversion still running, in this process or another, is never touched. The constructor does
-    // this for its output directory. A file whose first
-    // bytes are neither an artifact header nor zeros is not ours and stays. Returns the count.
-    static std::size_t remove_stale_temporaries(const std::filesystem::path& directory);
+    // How old a temporary's last write must be for the sweep to take it (see below).
+    static constexpr std::chrono::seconds kStaleAge{3600};
+
+    // Removes the hidden temporaries ".<file>.XXXXXX.tmp" (of the output `filenames` only) that
+    // interrupted conversions left in `directory` (killed, out of memory, power loss; a signal or
+    // an exception removes its own). A temporary goes only when all of these hold: its writer
+    // holds no lock on it (every writer keeps an exclusive lock, flock or LockFileEx, until the
+    // files are published or removed: a conversion still running here, in this process or
+    // another, is refused), it was last written `min_age` ago (protection from a writer that
+    // locks nothing: an older NInferno, a network file system without shared locks, WSL on /mnt/c),
+    // and its first bytes are an artifact header or zeros. Sharing one output directory between
+    // hosts that do not share locks is not supported beyond that age rule. Returns the count.
+    static std::size_t remove_stale_temporaries(const std::filesystem::path& directory,
+                                                const std::vector<std::string>& filenames,
+                                                std::chrono::seconds min_age = kStaleAge);
 
 private:
     struct Mapping {

@@ -10,6 +10,7 @@
 
 #include "convert/writer.h"
 
+#include <chrono>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
@@ -85,6 +86,11 @@ void write_text(const fs::path& path, const std::string& text) {
     std::ofstream(path, std::ios::binary) << text;
 }
 
+// Two hours ago: older than the sweep's default age.
+void make_old(const fs::path& path) {
+    fs::last_write_time(path, fs::file_time_type::clock::now() - std::chrono::hours(2));
+}
+
 } // namespace
 
 int main() {
@@ -110,7 +116,39 @@ int main() {
         check(temporaries(dir).empty(), "the signal removed the temporary");
     }
 
-    // SIGKILL leaves the temporary; the next conversion into the directory removes it.
+    // The handlers of the application stay: a handler with its flags (SA_SIGINFO, SA_RESTART) and
+    // an ignored signal are not replaced when a writer registers.
+    {
+        const pid_t pid = fork();
+        if (pid == 0) {
+            struct sigaction custom {};
+            custom.sa_sigaction = [](int, siginfo_t*, void*) {};
+            sigemptyset(&custom.sa_mask);
+            sigaddset(&custom.sa_mask, SIGUSR1);
+            custom.sa_flags = SA_SIGINFO | SA_RESTART;
+            sigaction(SIGINT, &custom, nullptr);
+            std::signal(SIGTERM, SIG_IGN);
+            const auto dir = root / "preserve";
+            fs::create_directories(dir);
+            cv::ArtifactWriter writer(dir / "a.ninferno", small_layout("a.ninferno"));
+            struct sigaction now {};
+            sigaction(SIGINT, nullptr, &now);
+            struct sigaction term {};
+            sigaction(SIGTERM, nullptr, &term);
+            const bool kept = now.sa_sigaction == custom.sa_sigaction &&
+                              (now.sa_flags & (SA_SIGINFO | SA_RESTART)) == (SA_SIGINFO | SA_RESTART) &&
+                              sigismember(&now.sa_mask, SIGUSR1) == 1 && term.sa_handler == SIG_IGN;
+            _exit(kept ? 0 : 1);
+        }
+        int status = 0;
+        waitpid(pid, &status, 0);
+        check(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+              "a writer leaves the application's SIGINT handler and an ignored SIGTERM as they are");
+    }
+
+    // A dead writer's temporary (SIGKILL) is removed by the next conversion of the same file, once
+    // it is old enough; a young one is kept (a writer that holds no lock may still be writing),
+    // and so is whatever is not a temporary of the files being written.
     {
         const auto dir = root / "kill";
         fs::create_directories(dir);
@@ -118,44 +156,72 @@ int main() {
         check(temporaries(dir).size() == 1, "a live writer has one temporary");
         kill(pid, SIGKILL);
         check(wait_signal(pid) == SIGKILL, "the child died of SIGKILL");
-        check(temporaries(dir).size() == 1, "SIGKILL leaves the temporary");
+        const auto dead = temporaries(dir).front();
+        check(fs::exists(dead), "SIGKILL leaves the temporary");
         write_text(dir / ".notes.abcdef.tmp", "not an artifact, keep"); // looks like one, is not
         write_text(dir / ".x.tmp", "short name, keep");
         {
-            cv::ArtifactWriter writer(dir / "b.ninferno", small_layout("b.ninferno"));
-            // b's own temporary exists, the dead one is gone, the lookalikes stay
-            check(temporaries(dir).size() == 3, "the stale temporary was removed, lookalikes kept");
+            cv::ArtifactWriter young(dir / "a.ninferno", small_layout("a.ninferno"));
+            check(fs::exists(dead), "a temporary written a moment ago is not stale");
+        }
+        make_old(dead);
+        make_old(dir / ".notes.abcdef.tmp");
+        write_text(dir / ".other.ninferno.AbC123.tmp", std::string(8, '\0')); // another artifact's
+        make_old(dir / ".other.ninferno.AbC123.tmp");
+        {
+            cv::ArtifactWriter writer(dir / "a.ninferno", small_layout("a.ninferno"));
+            check(!fs::exists(dead), "the old temporary of the same file was removed");
+            check(fs::exists(dir / ".other.ninferno.AbC123.tmp"),
+                  "an old temporary of another file stays");
             check(fs::exists(dir / ".notes.abcdef.tmp") && fs::exists(dir / ".x.tmp"),
                   "files that are not ours stay");
         }
-        check(temporaries(dir).size() == 2, "an unfinished writer removed its own temporary");
+        check(temporaries(dir).size() == 3, "an unfinished writer removed its own temporary");
     }
 
-    // A live writer's temporary is never removed by another conversion in the directory.
+    // A live writer's temporary is never removed by another conversion in the directory, however
+    // old it looks (it holds the lock).
     {
         const auto dir = root / "live";
         fs::create_directories(dir);
         cv::ArtifactWriter first(dir / "a.ninferno", small_layout("a.ninferno"));
         check(temporaries(dir).size() == 1, "the first writer has a temporary");
-        check(cv::ArtifactWriter::remove_stale_temporaries(dir) == 0, "a direct sweep skips it");
+        make_old(temporaries(dir).front());
+        check(cv::ArtifactWriter::remove_stale_temporaries(dir, {"a.ninferno"}, std::chrono::seconds(0)) == 0,
+              "a direct sweep skips a locked one");
         {
-            cv::ArtifactWriter second(dir / "b.ninferno", small_layout("b.ninferno"));
+            cv::ArtifactWriter second(dir / "a.ninferno.part-0001", small_layout("a.ninferno.part-0001"));
             check(temporaries(dir).size() == 2, "a second writer leaves the live temporary");
             second.finish({});
         }
         check(temporaries(dir).size() == 1, "the live temporary is still there");
         first.finish({});
-        check(fs::exists(dir / "a.ninferno") && fs::exists(dir / "b.ninferno"),
+        check(fs::exists(dir / "a.ninferno") && fs::exists(dir / "a.ninferno.part-0001"),
               "both artifacts were published");
         check(temporaries(dir).empty(), "no temporary remains after publishing");
     }
 
-    // A sparse temporary whose writer died before its header (all zeros) goes too.
+    // The age and the name rule of the direct sweep; a sparse temporary whose writer died before
+    // its header (all zeros) goes too, a part file's temporary with its part's name.
     {
-        const auto dir = root / "zeros";
+        const auto dir = root / "rules";
         fs::create_directories(dir);
-        std::ofstream(dir / ".z.ninferno.AbC123.tmp", std::ios::binary).put('\0');
-        check(cv::ArtifactWriter::remove_stale_temporaries(dir) == 1, "an empty temporary goes");
+        const auto zeros = dir / ".z.ninferno.AbC123.tmp";
+        const auto part  = dir / ".z.ninferno.part-0001.QwE456.tmp";
+        const auto other = dir / ".y.ninferno.AbC123.tmp";
+        std::ofstream(zeros, std::ios::binary).put('\0');
+        std::ofstream(part, std::ios::binary).put('\0');
+        std::ofstream(other, std::ios::binary).put('\0');
+        const std::vector<std::string> names = {"z.ninferno", "z.ninferno.part-0001"};
+        check(cv::ArtifactWriter::remove_stale_temporaries(dir, names) == 0,
+              "young temporaries stay at the default age");
+        make_old(zeros);
+        make_old(part);
+        make_old(other);
+        check(cv::ArtifactWriter::remove_stale_temporaries(dir, names) == 2,
+              "old temporaries of the entry and of a part go");
+        check(fs::exists(other), "an old temporary of a name not written stays");
+        check(cv::ArtifactWriter::remove_stale_temporaries(dir, {"y.ninferno"}) == 1, "and goes for its own name");
     }
 
     fs::remove_all(root);

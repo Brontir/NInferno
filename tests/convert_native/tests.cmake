@@ -53,9 +53,12 @@ add_test(NAME ninferno_convert_content_digests_interop_test
     $<TARGET_FILE:ninferno_convert_content_digests_test>)
 
 # The writer's hidden temporaries (#552): swept when stale, kept when live, removed on SIGINT/SIGTERM.
-ninferno_add_test(ninferno_convert_writer_temporaries_test
-  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_writer_temporaries.cpp"
-  LIBRARIES ninferno_convert)
+# POSIX only (fork, kill, sigaction).
+if(NOT WIN32)
+  ninferno_add_test(ninferno_convert_writer_temporaries_test
+    SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_writer_temporaries.cpp"
+    LIBRARIES ninferno_convert)
+endif()
 
 ninferno_add_test(ninferno_convert_consume_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_consume.cpp"

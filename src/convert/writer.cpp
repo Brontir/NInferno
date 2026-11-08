@@ -20,6 +20,10 @@
 #include <openssl/evp.h>
 
 #ifdef _WIN32
+#    ifndef NOMINMAX
+#        define NOMINMAX
+#    endif
+#    include <windows.h>
 #    include <io.h>
 #else
 #    include <unistd.h>
@@ -39,50 +43,97 @@ constexpr std::uint64_t kQueueBytes    = 256ULL << 20;
 
 constexpr std::uint64_t kDirectBlock = 4096;
 
-// Temporary files of the writers alive in this process, so that SIGINT and SIGTERM can remove them
-// (an interrupted conversion otherwise leaves everything it had written in a hidden dotfile). The
-// handler is installed only if the signal had its default action when the first writer
-// registered: an application that handles the signals itself (or ignores them) keeps them. It
-// unlinks every registered file and then re-raises the signal with the default action, so the
-// exit status is the one an unhandled signal gives. Slots hold fixed buffers: a signal handler
-// cannot allocate.
+// Temporary files (and files just published) of the writers alive in this process, so that an
+// interrupt can remove them: an interrupted conversion otherwise leaves everything it had written
+// in a hidden dotfile. On POSIX the handlers for SIGINT and SIGTERM are installed only for a
+// signal that has its default action when the first writer registers (sigaction queried first: a
+// handler of the application, an ignored signal and SA_SIGINFO handlers are left as they are). The
+// handler unlinks every registered file and re-raises the signal with the default action, so the
+// exit status is the one an unhandled signal gives. On Windows a console control handler covers
+// Ctrl+C, Ctrl+Break, closing the console, logoff and shutdown; it removes the files and lets the
+// default action go on, and SIGTERM (raise) is handled as on POSIX.
+//
+// A handler cannot allocate or lock: the slots are fixed buffers, and each carries a sequence
+// number, odd while its name is being written or cleared. The handler copies a name and uses the
+// copy only if the sequence did not move meanwhile, so a slot being reused is skipped, never
+// read torn.
 constexpr std::size_t kSlotCount  = 256;
 constexpr std::size_t kSlotLength = 4096;
 
 struct TemporarySlot {
     std::atomic<bool> used{false};
-    std::atomic<bool> live{false};
-    std::filesystem::path::value_type name[kSlotLength];
+    std::atomic<unsigned> sequence{0};
+    std::filesystem::path::value_type name[kSlotLength]; // name[0] == 0: nothing registered
 };
 
 TemporarySlot g_slots[kSlotCount];
 
-void remove_registered(int signal_number) {
+void unlink_registered() {
+    std::filesystem::path::value_type copy[kSlotLength];
     for (auto& slot : g_slots) {
-        if (slot.live.load(std::memory_order_acquire)) {
-#ifdef _WIN32
-            _wunlink(slot.name);
-#else
-            ::unlink(slot.name);
-#endif
+        const unsigned before = slot.sequence.load(std::memory_order_acquire);
+        if ((before & 1U) != 0 || slot.name[0] == 0) { continue; }
+        std::size_t length = 0;
+        while (length + 1 < kSlotLength && slot.name[length] != 0) {
+            copy[length] = slot.name[length];
+            ++length;
         }
+        copy[length] = 0;
+        std::atomic_thread_fence(std::memory_order_acquire);
+        if (slot.sequence.load(std::memory_order_relaxed) != before) { continue; }
+#ifdef _WIN32
+        _wunlink(copy);
+#else
+        ::unlink(copy);
+#endif
     }
-    std::signal(signal_number, SIG_DFL);
-    std::raise(signal_number);
 }
+
+#ifdef _WIN32
+BOOL WINAPI on_console_control(DWORD) {
+    unlink_registered();
+    return FALSE; // the default action (end the process) goes on
+}
+
+void on_terminate_signal(int number) {
+    unlink_registered();
+    std::signal(number, SIG_DFL);
+    std::raise(number);
+}
+#else
+void on_signal(int number) {
+    unlink_registered();
+    struct sigaction action {};
+    action.sa_handler = SIG_DFL;
+    sigemptyset(&action.sa_mask);
+    sigaction(number, &action, nullptr);
+    std::raise(number);
+}
+#endif
 
 void install_signal_cleanup() {
     static std::once_flag once;
     std::call_once(once, [] {
+#ifdef _WIN32
+        SetConsoleCtrlHandler(on_console_control, TRUE);
+        const auto previous = std::signal(SIGTERM, on_terminate_signal);
+        if (previous != SIG_DFL && previous != SIG_ERR) { std::signal(SIGTERM, previous); }
+#else
         for (const int number : {SIGINT, SIGTERM}) {
-            const auto previous = std::signal(number, remove_registered);
-            if (previous != SIG_DFL && previous != SIG_ERR) { std::signal(number, previous); }
+            struct sigaction old {};
+            if (sigaction(number, nullptr, &old) != 0) { continue; }
+            if ((old.sa_flags & SA_SIGINFO) != 0 || old.sa_handler != SIG_DFL) { continue; }
+            struct sigaction action {};
+            action.sa_handler = on_signal;
+            sigemptyset(&action.sa_mask);
+            sigaction(number, &action, nullptr);
         }
+#endif
     });
 }
 
-// The slot holding `path`, or -1 (none free, or the name too long: that file is then removed by
-// the stale sweep of the next run instead).
+// The slot holding `path`, or -1 (none free, or the name too long: a temporary is then removed
+// by the stale sweep of a later run instead).
 int register_temporary(const std::filesystem::path& path) {
     const auto& native = path.native();
     if (native.size() >= kSlotLength) { return -1; }
@@ -90,9 +141,10 @@ int register_temporary(const std::filesystem::path& path) {
     for (std::size_t i = 0; i < kSlotCount; ++i) {
         bool expected = false;
         if (!g_slots[i].used.compare_exchange_strong(expected, true)) { continue; }
+        g_slots[i].sequence.fetch_add(1);
         std::copy(native.begin(), native.end(), g_slots[i].name);
         g_slots[i].name[native.size()] = 0;
-        g_slots[i].live.store(true, std::memory_order_release);
+        g_slots[i].sequence.fetch_add(1);
         return static_cast<int>(i);
     }
     return -1;
@@ -100,26 +152,30 @@ int register_temporary(const std::filesystem::path& path) {
 
 void unregister_temporary(int slot) noexcept {
     if (slot < 0) { return; }
-    g_slots[slot].live.store(false, std::memory_order_release);
-    g_slots[slot].used.store(false, std::memory_order_release);
+    g_slots[slot].sequence.fetch_add(1);
+    g_slots[slot].name[0] = 0;
+    g_slots[slot].sequence.fetch_add(1);
+    g_slots[slot].used.store(false);
 }
 
-// "." + name + "." + six letters or digits + ".tmp": the name create() draws for a temporary.
-bool temporary_name(const std::string& name) {
+// Whether `name` is a temporary of one of `filenames`: "." + file name + "." + six letters or
+// digits + ".tmp", the name create() draws. Only the files this writer is about to create
+// count: the directory may be anyone's (an output path "q.ninferno" is the current directory).
+bool temporary_of(const std::string& name, const std::vector<std::string>& filenames) {
     constexpr std::size_t kTail = 6 + 4; // XXXXXX.tmp
-    if (name.size() < 1 + 1 + 1 + kTail || name[0] != '.') { return false; }
-    if (name.compare(name.size() - 4, 4, ".tmp") != 0) { return false; }
-    if (name[name.size() - kTail - 1] != '.') { return false; }
+    if (name.size() < kTail || name.compare(name.size() - 4, 4, ".tmp") != 0) { return false; }
     for (std::size_t i = name.size() - kTail; i < name.size() - 4; ++i) {
         if (!std::isalnum(static_cast<unsigned char>(name[i]))) { return false; }
     }
-    return true;
+    const std::string stem = name.substr(0, name.size() - kTail);
+    return std::any_of(filenames.begin(), filenames.end(),
+                       [&](const std::string& file) { return stem == "." + file + "."; });
 }
 
 // Locks a freshly created temporary for the writer's lifetime, so that the sweep of another
 // conversion can tell a live temporary from a dead one. A sweep that got the lock first removes
 // the file under it: the name is then gone, and the caller draws another. A file system without
-// locks leaves the file unlocked, and such a sweep never removes it either.
+// locks leaves the file unlocked (the sweep's age rule protects it then).
 bool lock_temporary(int fd, const std::filesystem::path& name) {
     while (sys::lock(fd, true) != 0) {
         if (errno != EINTR) { return true; }
@@ -235,17 +291,27 @@ std::filesystem::path ArtifactWriter::partial_path(const std::filesystem::path& 
     return target.string() + ".partial";
 }
 
-std::size_t ArtifactWriter::remove_stale_temporaries(const std::filesystem::path& directory) {
+std::size_t ArtifactWriter::remove_stale_temporaries(const std::filesystem::path& directory,
+                                                     const std::vector<std::string>& filenames,
+                                                     std::chrono::seconds min_age) {
     std::size_t removed = 0;
     std::error_code error;
     std::vector<std::filesystem::path> candidates;
     for (std::filesystem::directory_iterator it(directory, error), end; !error && it != end;
          it.increment(error)) {
-        if (!temporary_name(it->path().filename().string())) { continue; }
+        if (!temporary_of(it->path().filename().string(), filenames)) { continue; }
         std::error_code status;
-        if (it->is_regular_file(status) && !it->is_symlink(status)) {
-            candidates.push_back(it->path());
+        if (!it->is_regular_file(status) || it->is_symlink(status)) { continue; }
+        // A writer that holds no lock (an older NInferno, a file system or a host that does not
+        // share locks) is told by its output: a live one writes at least every flush (a direct
+        // segment of 8 MiB, a mapped run's 256 MiB writeback), which moves the modification time
+        // within minutes even on a slow disk. Younger than `min_age` is never stale.
+        const auto written = std::filesystem::last_write_time(it->path(), status);
+        if (status ||
+            std::filesystem::file_time_type::clock::now() - written < min_age) {
+            continue;
         }
+        candidates.push_back(it->path());
     }
     for (const auto& path : candidates) {
         // A live writer holds the lock, so it is refused. A file this code did not write (neither
@@ -296,7 +362,11 @@ ArtifactWriter::ArtifactWriter(std::filesystem::path path, ArtifactLayout layout
     if (!options_.named_partial && !options_.resume) {
         const auto directory =
             path_.parent_path().empty() ? std::filesystem::path(".") : path_.parent_path();
-        (void)remove_stale_temporaries(directory);
+        std::vector<std::string> names;
+        for (std::size_t i = 0; i < layout_.files.size(); ++i) {
+            names.push_back(file_path(i).filename().string());
+        }
+        (void)remove_stale_temporaries(directory, names);
     }
     if (options_.direct && options_.resume) {
         throw std::logic_error("direct output cannot resume a partial file");
@@ -821,6 +891,8 @@ void ArtifactWriter::finish(const std::function<std::string()>& seal) {
                 throw std::runtime_error("cannot publish " + target.string() + ": " + linked.message());
             }
             published_.push_back(target);
+            // A signal during the publish removes the files already linked in.
+            slots_.push_back(register_temporary(target));
         }
         for (const auto& temporary : temporary_) { std::filesystem::remove(temporary); }
         temporary_.clear();

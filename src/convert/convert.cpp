@@ -244,15 +244,14 @@ void for_elements(const WeightJob& job, std::uint64_t begin, std::uint64_t end, 
 // and a commit thread makes each completed prefix durable before its sources are punched.
 class Executor {
 public:
-    // --threads above this is capped: more workers than tasks in flight only cost memory.
-    static constexpr unsigned kMaxThreads = 256;
 
     Executor(std::vector<const Checkpoint*> stores, const Plan& plan, ArtifactWriter& writer,
              std::vector<std::uint32_t> order, unsigned threads, bool keep_cache,
              Committer* committer = nullptr, std::uint64_t window = 0)
         : stores_(std::move(stores)), plan_(plan), writer_(writer), order_(std::move(order)),
           tasks_(make_tasks(plan, order_)),
-          threads_(threads ? std::min(threads, kMaxThreads)
+          threads_(threads ? static_cast<unsigned>(std::min<std::size_t>(
+                                 threads, std::max<std::size_t>(tasks_.size(), 1)))
                            : std::clamp(std::thread::hardware_concurrency(), 1U, 16U)),
           keep_cache_(keep_cache), committer_(committer), window_(window),
           remaining_(plan.weights.size()) {
@@ -2029,7 +2028,11 @@ ConvertResult convert(const ConvertOptions& options) {
         // Before the free-space check: what an interrupted run left would be counted against it.
         const auto directory = options.out.parent_path().empty() ? std::filesystem::path(".")
                                                                  : options.out.parent_path();
-        if (const auto stale = ArtifactWriter::remove_stale_temporaries(directory)) {
+        std::vector<std::string> names = {options.out.filename().string()};
+        for (const auto& file : layout.files) {
+            if (file.path) { names.push_back(*file.path); }
+        }
+        if (const auto stale = ArtifactWriter::remove_stale_temporaries(directory, names)) {
             log("removed " + std::to_string(stale) + " leftover temporary file" +
                 (stale == 1 ? "" : "s") + " of interrupted conversions in " + directory.string());
         }
