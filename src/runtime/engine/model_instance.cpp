@@ -1286,7 +1286,7 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                 // scope, so no other process takes the memory between (#473).
                 host_pins = HostTierPins{};
             }
-            if (host_tier.automatic && asked != 0) {
+            if (host_tier.automatic) {
                 // What the host can pin now, after the sizing: another process may have pinned
                 // since.
                 if (const std::optional<HostMemory> memory = read_host_memory()) {

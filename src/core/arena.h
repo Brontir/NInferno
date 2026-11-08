@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <optional>
+#include <utility>
 #include <stdexcept>
 #include <string>
 
@@ -141,6 +142,22 @@ private:
 struct HostTierPins {
     std::optional<PinnedHostBuffer> states; // exactly host slots * StateImage bytes
     std::optional<PinnedHostBuffer> kv;     // exactly the Host KV capacity
+
+    HostTierPins() = default;
+    HostTierPins(const HostTierPins&)            = delete;
+    HostTierPins& operator=(const HostTierPins&) = delete;
+    // A moved-from set holds nothing, and says so (states and kv disengaged), so it is never
+    // taken for pins of 0 bytes.
+    HostTierPins(HostTierPins&& other) noexcept
+        : states(std::exchange(other.states, std::nullopt)),
+          kv(std::exchange(other.kv, std::nullopt)) {}
+    HostTierPins& operator=(HostTierPins&& other) noexcept {
+        if (this != &other) {
+            states = std::exchange(other.states, std::nullopt);
+            kv     = std::exchange(other.kv, std::nullopt);
+        }
+        return *this;
+    }
 
     [[nodiscard]] std::size_t bytes() const noexcept {
         return (states ? states->size() : 0) + (kv ? kv->size() : 0);

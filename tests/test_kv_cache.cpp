@@ -437,7 +437,7 @@ int exercise_layout_and_transfer(ninferno::DeviceContext& context,
     failures += expect(reused.has_value(), label + " released Host subextent was not reusable");
 
     // Pins made beforehand (HostTierPins::kv): taken as they are, nothing pinned anew; a backing
-    // of another size is a planning bug and throws, the pins still the caller's.
+    // of another size is a planning bug and throws, and the refused pins are freed with it.
     {
         const std::size_t pinned_before = ninferno::pinned_host_bytes();
         const std::size_t bytes         = host_layout.page_stride * 8;

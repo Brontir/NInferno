@@ -220,6 +220,8 @@ int main() {
                                     "a second set pins its own");
             ninferno::HostTierPins moved = std::move(second);
             failures += expect_size(second.bytes(), 0, "a moved-from set holds nothing");
+            failures += expect_size((second.states || second.kv) ? 1 : 0, 0,
+                                    "a moved-from set has no engaged buffers");
             failures += expect_size(moved.bytes(), 1024, "the moved-to set holds the pins");
             failures += expect_size(ninferno::pinned_host_bytes(), base + 4096 + 8192 + 1024,
                                     "a move pins nothing new");

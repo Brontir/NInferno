@@ -211,7 +211,6 @@ EngineOptions serve_like(std::uint32_t context, std::uint32_t streams) {
 
 // ---- 1. The seams: the dry run's ladder is the one a start builds from the same functions.
 
-// Every stream holds a context of its own on a non-survival rung (the rule's own fit).
 // The Host tier's one resolution (resolve_host_tier_spec), shared by the start and the dry run:
 // over concurrency x integrated x off / explicit / automatic, with and without an explicit
 // private-continuation count, and the same answer before and after normalization.
@@ -282,6 +281,7 @@ void test_host_tier_spec() {
     }
 }
 
+// Every stream holds a context of its own on a non-survival rung (the rule's own fit).
 bool own_fit(const rt::DryRunPlan& plan) {
     const rt::DryRunRung* chosen = plan.chosen();
     return chosen != nullptr && !chosen->rung.survival && plan.private_contexts();

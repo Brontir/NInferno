@@ -159,6 +159,18 @@ ProgramImpl::ProgramImpl(const ModelExecution& model_in, const SequencePlanImpl&
     if ((host_pins.states && host_state_total == 0) || (host_pins.kv && host_kv_total == 0)) {
         throw std::logic_error("the Host tier's pins are for a tier the plan does not have");
     }
+    // The engine pinned what the plan measured; the finalized plan must ask for those sizes.
+    if ((host_pins.states && host_pins.states->size() != host_state_total) ||
+        (host_pins.kv && host_pins.kv->size() != host_kv_total)) {
+        throw std::logic_error(
+            "the Host tier's pins do not match the finalized plan: StateImages pinned " +
+            std::to_string(host_pins.states ? host_pins.states->size() : 0) + " B, planned " +
+            std::to_string(host_state_total) + " B (" +
+            std::to_string(plan.context_cache.host_state_slots) + " x " +
+            std::to_string(host_image_bytes) + "); Host KV pinned " +
+            std::to_string(host_pins.kv ? host_pins.kv->size() : 0) + " B, planned " +
+            std::to_string(host_kv_total) + " B");
+    }
     const std::uint64_t to_pin =
         (host_pins.states ? 0 : host_state_total) + (host_pins.kv ? 0 : host_kv_total);
     if (to_pin != 0) {
