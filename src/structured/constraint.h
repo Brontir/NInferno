@@ -22,15 +22,17 @@ struct CompilerOptions {
     // compile, waited for or not, is cancelled once it has run compile_runtime_multiple *
     // compile_timeout in total, however often it is asked for again. A cancelled compile stops at
     // its next token-mask checkpoint, frees its slot and threads, and caches nothing; a request
-    // that was waiting on it compiles afresh within its own timeout. Only the token-mask phase can
-    // be cancelled: grammar and automaton building before it runs to its end. At most
+    // that was waiting on it compiles afresh within its own timeout. Only the token-mask phase
+    // and the gaps between the build steps before it have checkpoints; a build step itself runs to
+    // its end, and a cancelled compile keeps its slot and its table entry until its worker is out,
+    // so a request for the same constraint waits for it instead of starting a second copy. At most
     // max_concurrent compiles run at once; a request that cannot start one within the timeout gets
     // "constraint_compiler_busy".
     std::chrono::milliseconds compile_timeout{10000};
-    // Total run time of one compile, in timeouts. A policy constant, not a derived one: it caps the
-    // CPU a single pathological constraint can burn at five timeouts, and a client that retries
-    // once per timeout still sees a compile that needs up to five of them finish and be cached
-    // (the first request waits one, each of the four retries one more).
+    // Total run time of one compile, in timeouts (at least 1). A policy constant, not a derived
+    // one: it caps the CPU a single pathological constraint can burn at five timeouts, and a client
+    // that retries once per timeout still sees a compile that needs up to five of them finish and
+    // be cached (the first request waits one, each of the four retries one more).
     std::uint32_t compile_runtime_multiple = 5;
     // Test hooks. checkpoint_hook runs on a compile worker thread before every cancel decision
     // (it may block); clock_ns replaces the steady clock (nanoseconds) for the run-time cap.

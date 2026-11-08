@@ -368,6 +368,14 @@ const char* const kSlowPattern = "^[a-z]{1,20}$";
 // A compile that times out keeps running while nobody needs its slot, and is cancelled once
 // another request does.
 void cancel_contract() {
+    CompilerOptions invalid;
+    invalid.compile_runtime_multiple = 0;
+    bool refused                     = false;
+    try {
+        const ConstraintCompiler refusing(vocabulary(), invalid);
+    } catch (const std::invalid_argument&) { refused = true; }
+    check(refused, "a run-time cap of zero timeouts is refused");
+
     Gate gate;
     const ConstraintCompiler compiler(large_vocabulary(), gated_options(gate));
     const std::string first = expect_error(compiler, pattern_spec(kSlowPattern));
@@ -417,6 +425,10 @@ void runtime_cap_contract() {
     // Time passes beyond the cap (five timeouts) while the worker is held; it then stops without
     // finishing the masks.
     clock += 60LL * 1000 * 1000 * 1000;
+    // The cancelled compile is still running (held at the gate), so a retry waits for it instead of
+    // starting a second copy: it times out, it does not even find a free slot.
+    check(expect_error(compiler, spec) == "constraint_compile_timeout",
+          "a retry waits for the cancelled compile");
     gate.release();
     std::string last = "constraint_compile_timeout";
     for (int attempt = 0; attempt < 100 && last != "accepted"; ++attempt) {

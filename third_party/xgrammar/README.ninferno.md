@@ -73,8 +73,9 @@ Local change: `cpp/grammar_compiler.cc`, `GrammarCompilerSub::MultiThreadCompile
 `ninferno/compile_cancel.{h,cc}` scope active on its thread before each token-mask computation,
 skips the remaining ones once it answers true and throws `CompileCancelled` after the workers are idle. Upstream has
 no way to stop a compile, and a pattern with nested bounded repetitions keeps all of a compile's
-threads busy for minutes. The grammar and automaton building before the mask loop has no
-checkpoint. `src/structured/constraint.cpp` supplies the check. When updating, re-apply the checks and run
+threads busy for minutes. Checkpoints sit after the optimizer and the tag-dispatch step and
+in the mask loop; a build step itself runs to its end (about 26 ms of a 62 s compile for the
+issue's pattern). `src/structured/constraint.cpp` supplies the check. When updating, re-apply the checks and run
 `ninferno_structured_output_test` (`cancel_contract`).
 
 To update: replace `include/`, `cpp/`, the two bundled headers and the license files from the new

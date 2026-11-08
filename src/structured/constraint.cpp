@@ -382,11 +382,9 @@ struct ConstraintCompiler::Impl : std::enable_shared_from_this<ConstraintCompile
     // Requests waiting for a compile slot that is taken.
     std::atomic<std::uint32_t> slot_waiters{0};
 
-    // Caller holds inflight_mutex.
-    void cancel_locked(InflightTable::iterator it) {
-        it->second->cancel.store(true, std::memory_order_relaxed);
-        inflight.erase(it);
-    }
+    // A cancelled compile stays in the table until its worker is out (it may still be in the part
+    // of the compile that cannot be stopped, holding a slot): a request for the key waits for it
+    // instead of starting a second copy, then compiles afresh.
 
     // A request needs a slot: stop the orphan that has run longest.
     void cancel_oldest_orphan() {
@@ -394,13 +392,15 @@ struct ConstraintCompiler::Impl : std::enable_shared_from_this<ConstraintCompile
         auto oldest = inflight.end();
         for (auto it = inflight.begin(); it != inflight.end(); ++it) {
             const std::int64_t since = it->second->orphaned_ns.load(std::memory_order_relaxed);
-            if (since != 0 &&
+            if (since != 0 && !it->second->cancel.load(std::memory_order_relaxed) &&
                 (oldest == inflight.end() ||
                  since < oldest->second->orphaned_ns.load(std::memory_order_relaxed))) {
                 oldest = it;
             }
         }
-        if (oldest != inflight.end()) { cancel_locked(oldest); }
+        if (oldest != inflight.end()) {
+            oldest->second->cancel.store(true, std::memory_order_relaxed);
+        }
     }
 
     // Removes the key's entry if it still belongs to `job` (a cancelled job may have been
@@ -413,21 +413,13 @@ struct ConstraintCompiler::Impl : std::enable_shared_from_this<ConstraintCompile
     }
 
     // The compile's checkpoint question, asked from its worker threads: stop now? The run-time cap
-    // latches into `cancel` and takes the entry out of the table, like a cancel by a request.
+    // latches into `cancel`, like a cancel by a request.
     bool stop_requested(const std::string& key, const std::shared_ptr<Inflight>& job) {
         if (options.checkpoint_hook) { options.checkpoint_hook(); }
         if (job->cancel.load(std::memory_order_relaxed)) { return true; }
         if (now_ns() - job->started_ns <= job->run_limit_ns) { return false; }
-        if (!job->cancel.exchange(true, std::memory_order_relaxed)) {
-            finish_inflight(key, job.get());
-        }
+        job->cancel.store(true, std::memory_order_relaxed);
         return true;
-    }
-
-    // Whether a table entry may still be joined: not cancelled and within its run-time cap.
-    [[nodiscard]] bool joinable(const Inflight& job) const {
-        return !job.cancel.load(std::memory_order_relaxed) &&
-               now_ns() - job.started_ns <= job.run_limit_ns;
     }
 
     // A waiting request stops waiting for a compile that has not finished.
@@ -436,8 +428,9 @@ struct ConstraintCompiler::Impl : std::enable_shared_from_this<ConstraintCompile
         if (--job->waiters != 0) { return; }
         const auto it = inflight.find(key);
         if (it == inflight.end() || it->second != job) { return; }
+        if (job->cancel.load(std::memory_order_relaxed)) { return; }
         if (slot_waiters.load(std::memory_order_relaxed) != 0) {
-            cancel_locked(it);
+            job->cancel.store(true, std::memory_order_relaxed);
         } else {
             job->orphaned_ns.store(now_ns(), std::memory_order_relaxed);
         }
@@ -609,6 +602,9 @@ struct ConstraintCompiler::Impl : std::enable_shared_from_this<ConstraintCompile
 
 ConstraintCompiler::ConstraintCompiler(GrammarVocabulary vocabulary, CompilerOptions options)
     : impl_(std::make_shared<Impl>()) {
+    if (options.compile_runtime_multiple < 1) {
+        throw std::invalid_argument("compile_runtime_multiple must be at least 1");
+    }
     impl_->shared  = make_shared_vocabulary(std::move(vocabulary));
     impl_->options = options;
 }
@@ -683,12 +679,7 @@ ConstraintCompiler::compile(const OutputConstraintSpec& spec) const {
         const auto job = std::make_shared<Impl::Inflight>();
         {
             std::lock_guard lock(impl_->inflight_mutex);
-            auto it = impl_->inflight.find(key);
-            if (it != impl_->inflight.end() && !impl_->joinable(*it->second)) {
-                it->second->cancel.store(true, std::memory_order_relaxed);
-                impl_->inflight.erase(it);
-                it = impl_->inflight.end();
-            }
+            const auto it = impl_->inflight.find(key);
             if (it != impl_->inflight.end()) {
                 running = it->second;
                 ++running->waiters;
@@ -736,18 +727,23 @@ ConstraintCompiler::compile(const OutputConstraintSpec& spec) const {
 
         try {
             std::thread([impl = impl_, spec, key, promise, job]() mutable {
+                std::shared_ptr<const CompiledConstraint> built;
+                std::exception_ptr error;
                 try {
                     const ninferno_xgrammar::CompileCancelScope cancel_scope(
                         [impl, key, job] { return impl->stop_requested(key, job); });
-                    auto built = impl->build_and_compile(spec);
+                    built = impl->build_and_compile(spec);
                     impl->insert(key, built);
-                    promise->set_value(std::move(built));
-                } catch (...) {
-                    try {
-                        promise->set_exception(std::current_exception());
-                    } catch (...) {}
-                }
+                } catch (...) { error = std::current_exception(); }
+                // Out of the table before the answer, so a request woken by a cancel starts afresh.
                 impl->finish_inflight(key, job.get());
+                try {
+                    if (error) {
+                        promise->set_exception(error);
+                    } else {
+                        promise->set_value(std::move(built));
+                    }
+                } catch (...) {}
                 {
                     std::lock_guard lock(impl->slot_mutex);
                     --impl->active;
