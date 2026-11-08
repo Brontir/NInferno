@@ -1299,7 +1299,7 @@ response contains typed `output` Items.
 | `reasoning.summary` | omitted, `null`, or any string; every string requests the same fixed protocol placeholder without changing model execution, and the original value is echoed in the response |
 | `chat_template_kwargs` | template parameters as a JSON object; standard options merge with typed fields |
 | `preserve_thinking` | alias for `chat_template_kwargs.preserve_thinking`; conflicting values are rejected |
-| `text.format` | omitted, `{"type":"text"}`, `{"type":"json_object"}` or `{"type":"json_schema", "name", "schema", ...}` (`name` required; strict or not), enforced as Chat Completions' `response_format` is ([constrained output](#constrained-output)); `client.responses.parse(text_format=...)` returns the parsed object |
+| `text.format` | omitted, `{"type":"text"}`, `{"type":"json_object"}` or `{"type":"json_schema", "name", "schema", ...}` (`name` required; strict or not), enforced as Chat Completions' `response_format` is ([constrained output](#constrained-output)); `client.responses.parse(text_format=...)` returns a Response whose `output_parsed` is the parsed object |
 | `tools` | direct function definitions or namespace groups containing function definitions; see [Function tools](#function-tools) |
 | `tool_choice` | `auto`, `none`, `required`, a named `{"type":"function","name"}` or `{"type":"custom","name"}`, or function-only `allowed_tools` with mode `auto` or `required`; `required` and a named tool are enforced by a constraint (an empty `allowed_tools` set leaves nothing to force); a namespaced selection carries both `namespace` and `name` |
 | `parallel_tool_calls` | `true` by default; `false` is enforced: the output stops after the first call |
