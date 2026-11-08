@@ -395,8 +395,8 @@ void prefills_pay_tail_calls(const json& fixture) {
     check(std::abs((r2 - r0) - 2 * step) < 1e-9 * r2, "and to a request's time");
     ch::Candidate drafted = c;
     drafted.drafter       = 1;
-    const double d0 = ch::single_request_seconds(none, cf, q, drafted, task, task.prompt);
-    const double d2 = ch::single_request_seconds(two, cf, q, drafted, task, task.prompt);
+    const double d0       = ch::single_request_seconds(none, cf, q, drafted, task, task.prompt);
+    const double d2       = ch::single_request_seconds(two, cf, q, drafted, task, task.prompt);
     check(std::abs((d2 - d0) - 2 * step) < 1e-9 * d2, "a drafted candidate's tail calls are plain decode steps");
     std::cout << "tail calls: a decode step " << step * 1e3 << " ms, 2K prefill " << prompt / t0 << " -> "
               << prompt / t2 << " tok/s\n";
@@ -890,7 +890,8 @@ void decides_by_generation(const json& fixture) {
     const double whole = ch::speed_of(linears, bw, q, fast, 1, 1280, 1024).prefill;
     const double rest  = ch::speed_of(linears, bw, q, fast, 1, 1280, 256).prefill;
     const double dec   = ch::speed_of(linears, bw, q, fast, 1, 1280.5, 1280).decode_per_stream;
-    check(std::abs(ch::single_request_seconds(linears, bw, q, fast, t1280, t1280.prompt) - (1024 / whole + 256 / rest + 1 / dec)) < 1e-9,
+    check(std::abs(ch::single_request_seconds(linears, bw, q, fast, t1280, t1280.prompt) -
+                   (1024 / whole + 256 / rest + 1 / dec)) < 1e-9,
           "the final partial chunk at its own rate");
 }
 
@@ -1100,7 +1101,8 @@ void prices_the_request_mix(const json& fixture) {
     check(big.chosen && chosen(big).candidate.kv == KvCacheStorage::Int8Group64 &&
               chosen(big).candidate.state == RecurrentStateStorage::FP16,
           "a 32K ask: KV int8, state f16");
-    check(big.chosen && chosen(big).candidate.chunk == 4096, "a 32K ask: the 24K prompt fills the 4096 chunk");
+    check(big.chosen && chosen(big).candidate.chunk == 4096,
+          "a 32K ask: the 24K prompt fills the 4096 chunk");
     const ch::Choice little = ch::choose(b.model, b.card, b.quants[0], allowed, {}, small, own);
     check(little.chosen && chosen(little).candidate.kv == KvCacheStorage::BFloat16 &&
               chosen(little).candidate.state == RecurrentStateStorage::FP32,
@@ -1122,14 +1124,19 @@ void prices_the_request_mix(const json& fixture) {
     // Auto's steps: where only 8K fits, the long request is priced at 8192 less the answer, the
     // step being tried, never at the 24K of the largest step.
     ch::Task automatic;
-    automatic.contexts = {32768, 16384, 8192};
-    const auto little_room = [](const ch::Candidate&) -> std::uint32_t { return 8192; }; // every candidate holds 8K only
-    const ch::Choice steps = ch::choose(b.model, b.card, b.quants[0], allowed, {}, automatic, little_room);
+    automatic.contexts     = {32768, 16384, 8192};
+    const auto little_room = [](const ch::Candidate&) -> std::uint32_t {
+        return 8192;
+    }; // every candidate holds 8K only
+    const ch::Choice steps =
+        ch::choose(b.model, b.card, b.quants[0], allowed, {}, automatic, little_room);
     ch::Task pinned_8k;
     pinned_8k.contexts = {8192};
-    const ch::Choice eight = ch::choose(b.model, b.card, b.quants[0], allowed, {}, pinned_8k, little_room);
+    const ch::Choice eight =
+        ch::choose(b.model, b.card, b.quants[0], allowed, {}, pinned_8k, little_room);
     check(steps.chosen && steps.context == 8192, "automatic steps settle on the 8K that fits");
-    check(steps.chosen && eight.chosen && chosen(steps).decision_seconds == chosen(eight).decision_seconds &&
+    check(steps.chosen && eight.chosen &&
+              chosen(steps).decision_seconds == chosen(eight).decision_seconds &&
               chosen(steps).candidate.kv == chosen(eight).candidate.kv,
           "the 8K step prices the mix as an 8192 ask does");
     check(steps.why.find("6 of 7680+512 tokens") != std::string::npos &&
