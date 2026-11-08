@@ -173,7 +173,11 @@ public:
     // the output. When the call region does not parse, the
     // complete calls before its last open marker are then the turn's calls, and that last,
     // unfinished call's markup is dropped (diagnostics.cut_calls_dropped).
-    [[nodiscard]] Terminal finish(bool cut_off = false);
+    //
+    // `stop_matched`: a caller's stop string ended the output. The stop may have swallowed only a
+    // call's closing markup, so a call that is complete up to it is still closed (as when the stop
+    // token ends it); `cut_off` then drops what stays unfinished.
+    [[nodiscard]] Terminal finish(bool cut_off = false, bool stop_matched = false);
 
 private:
     std::shared_ptr<const ToolCallOutputContract> contract_;

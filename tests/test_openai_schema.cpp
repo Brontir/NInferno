@@ -630,6 +630,16 @@ int test_tools() {
                       "named tool choice is enforced by a tool-call constraint");
     failures += check(prompt(parse(body).generation).options.tool_calls_forced,
                       "a named tool choice marks the prompt's calls as forced");
+    body["tool_choice"] =
+        Json{{"type", "allowed_tools"},
+             {"allowed_tools",
+              Json{{"mode", "required"},
+                   {"tools", Json::array({Json{{"type", "function"}, {"name", "weather"}}})}}}};
+    failures += check(prompt(parse(body).generation).options.tool_calls_forced,
+                      "allowed_tools mode required marks the prompt's calls as forced");
+    body["tool_choice"]["allowed_tools"]["mode"] = "auto";
+    failures += check(!prompt(parse(body).generation).options.tool_calls_forced,
+                      "allowed_tools mode auto does not force calls");
     body["tool_choice"] = Json{{"type", "function"}, {"function", Json{{"name", "missing"}}}};
     failures += check(api_error([&] { (void)parse(body); }).param == "tool_choice",
                       "named tool choice must name a declared tool");
@@ -1327,6 +1337,15 @@ int test_aggregate_response() {
         call["id"].get<std::string>().starts_with("call_") && call["function"]["name"] == "Edit" &&
             !Json::parse(call["function"]["arguments"].get<std::string>()).contains("replace_all"),
         "OpenAI adapter owns wire tool-call identifiers");
+
+    // A call dropped as unfinished (a stop string in a forced call) means the turn is not a
+    // finished set of calls: the stop is reported, the complete calls stay.
+    outcome.finish_reason                 = ninferno::FinishReason::StopString;
+    outcome.tool_call_parse.cut_calls_dropped = 1;
+    response = Json::parse(make_chat_completion_response(identity(), outcome));
+    failures += check(response["choices"][0]["finish_reason"] == "stop" &&
+                          response["choices"][0]["message"]["tool_calls"].size() == 1,
+                      "a turn that dropped a call reports stop and keeps the complete calls");
     return failures;
 }
 

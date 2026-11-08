@@ -856,6 +856,16 @@ int test_tool_call_presentation() {
     }
     failures += check(saw_edit_start && saw_arguments && saw_tool_stop,
                       "Anthropic stream did not terminate the recovered Edit as tool_use");
+
+    // A call dropped as unfinished (a stop sequence in a forced call): the stop is reported and the
+    // complete calls stay.
+    outcome.finish_reason                     = ninferno::FinishReason::StopString;
+    outcome.matched_stop_string               = "STOP";
+    outcome.tool_call_parse.cut_calls_dropped = 1;
+    const Json dropped = Json::parse(make_anthropic_messages_response(identity, outcome));
+    failures += check(dropped.at("stop_reason") == "stop_sequence" &&
+                          dropped.at("stop_sequence") == "STOP" && dropped.at("content").size() == 2,
+                      "a turn that dropped a call reports its stop sequence and keeps the calls");
     return failures;
 }
 

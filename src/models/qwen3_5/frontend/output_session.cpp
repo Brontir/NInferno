@@ -996,13 +996,14 @@ PublishedOutput OutputSession::commit_preview() {
         }
     }
     if (impl_->state.terminal) {
+        // The caller's stop string matched inside a forced call: what it left unfinished is as
+        // unfinished as a call the limit cut off, and the forced answer is never the call's markup.
+        const bool forced_stop = impl_->finish_reason == FinishReason::StopString &&
+                                 impl_->tool_contract && impl_->tool_contract->forced_calls;
         chat::ToolCallOutputDecoder::Terminal terminal = impl_->tool_call_output.finish(
             impl_->finish_reason == FinishReason::OutputLimit ||
-            impl_->finish_reason == FinishReason::ContextCapacity ||
-            // The caller's stop string matched inside a forced call: it is as unfinished as
-            // one the limit cut off, and the forced answer is never the call's markup.
-            (impl_->finish_reason == FinishReason::StopString && impl_->tool_contract &&
-             impl_->tool_contract->forced_calls));
+                impl_->finish_reason == FinishReason::ContextCapacity || forced_stop,
+            forced_stop);
         impl_->tool_calls                              = std::move(terminal.tool_calls);
         impl_->tool_call_parse                         = terminal.diagnostics;
         // The model ended the turn with its stop token inside a thinking span it never closed, so

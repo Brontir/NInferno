@@ -132,6 +132,13 @@ struct GenerationOutcome {
     GenerationMetrics metrics;
 };
 
+// The calls end the turn: complete calls were published and none was dropped as unfinished. A turn
+// that lost a call to a cut (a stop string in a forced call) reports its stop instead, so a client
+// does not run the calls believing they are all there were.
+[[nodiscard]] inline bool calls_end_turn(const GenerationOutcome& outcome) noexcept {
+    return !outcome.tool_calls.empty() && outcome.tool_call_parse.cut_calls_dropped == 0;
+}
+
 struct StreamSink {
     std::function<void(const ninferno::GenerationStart& start)> on_start;
     std::function<void(const ninferno::PromptProgress& progress)> on_progress;

@@ -1101,7 +1101,7 @@ std::string ToolCallOutputDecoder::feed(std::string_view text) {
     return visible;
 }
 
-ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool cut_off) {
+ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool cut_off, bool stop_matched) {
     if (finished_) { throw std::logic_error("tool-call output decoder is already finished"); }
     finished_ = true;
     if (!contract_) { return {}; }
@@ -1119,7 +1119,8 @@ ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool cut_off) {
     // Qwen XML: the stop token ended the turn after the last call's closed parameter, before its
     // </function> (vLLM closes such a call at the end of the stream too). The call is closed; one
     // the output limit cut off is not, since more of its parameters may have followed.
-    if (!cut_off && saw_tool_marker_ && contract_->format == ToolCallFormat::QwenXml) {
+    if ((!cut_off || stop_matched) && saw_tool_marker_ &&
+        contract_->format == ToolCallFormat::QwenXml) {
         std::string closed = rtrim_format_whitespace(tool_region_);
         if (closed.ends_with(kParamClose)) {
             closed.append("\n").append(kFunctionClose);
