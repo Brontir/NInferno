@@ -69,9 +69,12 @@ PassFacts parse_pass(const Json& doc) {
 }
 
 // A pass over `rows` rows of each of `streams` requests decoded together.
-double pass_cost(const PassFacts& p, std::int32_t rows, double kappa, std::int32_t streams = 1) {
+// `per_stream` moves once a pass for each request, whatever its rows (the target's passes only).
+double pass_cost(const PassFacts& p, std::int32_t rows, double kappa, std::int32_t streams = 1,
+                 const StreamBytes& per_stream = {}) {
     const double active = p.experts > 0 ? double(p.experts_used) / double(p.experts) : 1.0;
-    const double bytes  = p.bytes + p.expert_bytes * moe_read_fraction(p, rows, streams);
+    const double bytes  = p.bytes + p.expert_bytes * moe_read_fraction(p, rows, streams) +
+                          double(streams) * per_stream.per_pass();
     const double ops    = 2.0 * double(rows) * double(streams) * (p.params + p.expert_params * active);
     return bytes + kappa * ops;
 }
@@ -192,14 +195,15 @@ CardRates card_rates_of_board(std::uint32_t pci_device_id) {
 
 std::optional<double> round_cost(const RoundFacts& facts, const SpecConfig& config, double kappa,
                                  const ProposalRows& head_rows, double launch_bytes,
-                                 const RoundLaunches& launches, std::int32_t streams) {
+                                 const RoundLaunches& launches, std::int32_t streams,
+                                 const StreamBytes& per_stream) {
     if (!config.enabled() || config.k < 1 || streams < 1) { return std::nullopt; }
     const std::string mode = mode_name(config.mode);
     const auto d           = facts.drafters.find(mode);
     if (d == facts.drafters.end()) { return std::nullopt; }
     const DraftFacts& draft_facts = d->second;
-    const double plain            = pass_cost(facts.target, 1, kappa, streams);
-    const double verify           = pass_cost(facts.target, config.k + 1, kappa, streams);
+    const double plain            = pass_cost(facts.target, 1, kappa, streams, per_stream);
+    const double verify = pass_cost(facts.target, config.k + 1, kappa, streams, per_stream);
     const double passes           = draft_facts.per_draft ? double(config.k) : 1.0;
     double head                   = 0;
     if (draft_facts.head) {
@@ -215,13 +219,15 @@ std::optional<double> round_cost(const RoundFacts& facts, const SpecConfig& conf
     return (verify + draft) / plain;
 }
 
-double plain_step_cost(const RoundFacts& facts, double kappa, std::int32_t streams) {
-    return pass_cost(facts.target, 1, kappa, streams);
+double plain_step_cost(const RoundFacts& facts, double kappa, std::int32_t streams,
+                       const StreamBytes& per_stream) {
+    return pass_cost(facts.target, 1, kappa, streams, per_stream);
 }
 
 std::optional<double> load_gain(const RoundFacts& facts, const SpecConfig& config, double kappa,
                                 double speedup, std::int32_t streams, const ProposalRows& head_rows,
-                                double launch_bytes, const RoundLaunches& launches) {
+                                double launch_bytes, const RoundLaunches& launches,
+                                const StreamBytes& per_stream) {
     if (streams < 1 || speedup <= 0) { return std::nullopt; }
     if (streams == 1) { return speedup; }
     if (streams * (config.k + 1) > kPricedVerifyRows) { return std::nullopt; }
@@ -230,8 +236,9 @@ std::optional<double> load_gain(const RoundFacts& facts, const SpecConfig& confi
         streams * d->second.rows > std::max(kPricedVerifyRows, d->second.rows)) {
         return std::nullopt;
     }
-    const auto one   = round_cost(facts, config, kappa, head_rows, launch_bytes, launches, 1);
-    const auto joint = round_cost(facts, config, kappa, head_rows, launch_bytes, launches, streams);
+    const auto one   = round_cost(facts, config, kappa, head_rows, launch_bytes, launches, 1, per_stream);
+    const auto joint =
+        round_cost(facts, config, kappa, head_rows, launch_bytes, launches, streams, per_stream);
     if (!one || !joint || *one <= 0 || *joint <= 0) { return std::nullopt; }
     return speedup * *one / *joint;
 }

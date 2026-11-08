@@ -305,6 +305,45 @@ int main() {
             expect(std::abs(pass(2) / pass(1) - 1.212) < 0.03 * 1.212,
                    "the two-request plain step within 3 % of its graph durations (RTX 4090)");
         }
+        // Each request's own bytes (StreamBytes, #303). Facts from the model's shapes, written
+        // before the measurement: Qwen3.5-9B has 24 recurrent layers of 32 value heads x 128 x 128
+        // (FP32: 50.3 MB a request, read and written each pass) and 8 full-attention layers of 4 KV
+        // heads x 256 (BF16: 32 KiB a token); Qwen3.6-35B-A3B 30 recurrent layers of the same state
+        // (62.9 MB) and 10 full-attention layers of 2 KV heads x 256 (20 KiB a token). At the
+        // measuring prompts' context (about 300 tokens) the KV is under 0.2 % of a step.
+        {
+            const sp::StreamBytes q9{24.0 * 32 * 128 * 128 * 4, 32768.0 * 300};
+            const sp::StreamBytes q35{30.0 * 32 * 128 * 128 * 4, 20480.0 * 300};
+            const auto& d = full_head_pair(kQ9, "ad104:60sm");
+            const auto& m = full_head_pair("unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm");
+            const double k5070 = sp::card_rates_of_board(0x2C05).kappa();
+            const double k4060 = sp::card_rates_of_board(0x2805).kappa();
+            const double k4090 = sp::card_rates_of_board(0x2684).kappa();
+            const auto ratio = [](const sp::RoundFacts& f, double k, const sp::StreamBytes& s) {
+                return sp::plain_step_cost(f, k, 2, s) / sp::plain_step_cost(f, k, 1, s);
+            };
+            std::printf("plain step at two requests / one: Qwen3.5-9B RTX 5070 Ti %.4f (weights only "
+                        "%.4f), RTX 4060 Ti %.4f (%.4f); Qwen3.6-35B-A3B RTX 4090 %.4f (%.4f)
+",
+                        ratio(*d.round_facts, k5070, q9), ratio(*d.round_facts, k5070, {}),
+                        ratio(*d.round_facts, k4060, q9), ratio(*d.round_facts, k4060, {}),
+                        ratio(*m.round_facts, k4090, q35), ratio(*m.round_facts, k4090, {}));
+            // A request's bytes only add: the ratio stays above one and below two, the state of
+            // one request makes the second request dearer by its own share, and a stream of no
+            // bytes is the weights-only price.
+            expect(near(ratio(*d.round_facts, k5070, {}), ratio(*d.round_facts, k5070, sp::StreamBytes{0, 0}), 1e-12),
+                   "no per-stream bytes: the weights-only price");
+            expect(ratio(*d.round_facts, k5070, q9) > ratio(*d.round_facts, k5070, {}) ||
+                       ratio(*d.round_facts, k5070, {}) > 2,
+                   "a request's own bytes raise a dense step's price at two requests");
+            const auto g0 = sp::load_gain(*d.round_facts, sp::SpecConfig::parse("mtp:3"), k5070, 2.0, 2);
+            const auto g1 = sp::load_gain(*d.round_facts, sp::SpecConfig::parse("mtp:3"), k5070, 2.0, 2,
+                                          {}, 0, {}, q9);
+            expect(g0 && g1 && *g1 != *g0, "per-stream bytes move the load gain");
+            std::printf("mtp:3 load gain at C=2 of 2.0: Qwen3.5-9B RTX 5070 Ti %.4f (weights only %.4f)
+",
+                        g1 ? *g1 : 0.0, g0 ? *g0 : 0.0);
+        }
         // Against a measurement (reported, not held: the load cells ran another engine build
         // and corpus than the pair's one-request rounds): Gemma 4 26B A4B QAT UD-Q4_K_XL with its
         // MTP on the RTX 5080, C = 2 over plain at C = 2, bound 2 610.0 / 388.0 and bound 3

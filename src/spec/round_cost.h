@@ -77,6 +77,20 @@ struct PassFacts {
     friend bool operator==(const PassFacts&, const PassFacts&) = default;
 };
 
+// What each request decoded brings that the weights do not (#303): bytes of its own that every pass
+// over its rows moves, which the weights' bytes, read once, do not grow with. From the model's
+// shapes (runtime::plan_state_bytes, plan_kv_bytes_per_token), not the weights' headers: a
+// recurrent layer's state is read and written back once a pass (state_bytes x 2), the full-attention
+// layers' KV at the request's context is read once (kv_bytes). Left out (0): the sliding-window ring, the
+// per-row state snapshots a verify may keep, a drafter's own KV; and the requests' turnover.
+struct StreamBytes {
+    double state_bytes = 0; // recurrent state, resident per request (as stored: FP32 or BF16)
+    double kv_bytes    = 0; // full-attention KV a pass reads per request, at its context
+
+    [[nodiscard]] double per_pass() const noexcept { return 2.0 * state_bytes + kv_bytes; }
+    friend bool operator==(const StreamBytes&, const StreamBytes&) = default;
+};
+
 // A drafter's pass: rows a pass runs over, and whether a round runs one per draft (MTP) or one;
 // and the target's output head as the drafter runs it, apart: per draft over the pass's rows (the
 // target's own MTP layers), or once a round over the k drafted rows only (DFlash: the target's
@@ -217,16 +231,20 @@ struct CardRates {
 // launches and the plain step's are added (each launch_bytes).
 // `streams` requests decode together (#303): their round verifies streams x (k + 1) rows in one
 // pass and drafts streams x the drafter's rows at once, against a plain step of streams rows; the
-// launches are one round's either way.
+// launches are one round's either way. `per_stream`: each request's own bytes the target's passes
+// (the plain step and the verify; not the drafter's, whose recurrent state and KV are not in its
+// facts) move on top of the weights, streams times each.
 [[nodiscard]] std::optional<double> round_cost(const RoundFacts& facts, const SpecConfig& config,
                                                double kappa, const ProposalRows& head_rows = {},
                                                double launch_bytes          = 0,
                                                const RoundLaunches& launches = {},
-                                               std::int32_t streams         = 1);
+                                               std::int32_t streams         = 1,
+                                               const StreamBytes& per_stream = {});
 
 // The plain decode step of `streams` requests decoded together, in bytes-equivalent (the
 // denominator of round_cost at `streams`); its ratio to one request's is the step's price at load.
-[[nodiscard]] double plain_step_cost(const RoundFacts& facts, double kappa, std::int32_t streams);
+[[nodiscard]] double plain_step_cost(const RoundFacts& facts, double kappa, std::int32_t streams,
+                                     const StreamBytes& per_stream = {});
 
 // The verify rows within which the round cost was measured against the cards (DECISIONS 53, and
 // kSmallTEta's fit): from 12 rows verify kernels change tiles. A joint verify of more rows is not
@@ -241,12 +259,13 @@ inline constexpr std::int32_t kPricedVerifyRows = 8;
 // pass (DFlash's block of 16 rows at C >= 2: tiles change past ~12 rows), or either round is not
 // priced. An MoE's experts are read as different streams route them, apart (moe_read_fraction).
 // The KV and attention bytes and each stream's recurrent state, which grow with C in both, are
-// left out as in R_1 (the GDN state is ~3 % of an MoE step; at long context the gain is priced
-// low); so are the requests' turnover between steps, which a load cell's tok/s holds.
+// priced when `per_stream` names them (StreamBytes) and left out as in R_1 when it does not; so
+// are the requests' turnover between steps, which a load cell's tok/s holds.
 [[nodiscard]] std::optional<double> load_gain(const RoundFacts& facts, const SpecConfig& config,
                                               double kappa, double speedup, std::int32_t streams,
                                               const ProposalRows& head_rows = {},
                                               double launch_bytes          = 0,
-                                              const RoundLaunches& launches = {});
+                                              const RoundLaunches& launches = {},
+                                              const StreamBytes& per_stream = {});
 
 } // namespace ninferno::spec
