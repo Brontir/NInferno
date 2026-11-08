@@ -58,7 +58,10 @@ void nvfp4_dispatch(const Tensor& x, const Weight& weight, Tensor& out, LinearPo
     }
     note_shape_activations(
         x.ne[1], allows_a4(policy) ? std::optional(PrefillRoute::W4a4) : std::nullopt, a4);
-    generic::record_projection_route("linear", a4 ? "a4" : "a16", x.ne[1], weight.n, weight.k);
+    // A16Only is the exact contract's A16; any other policy's A16 is the tuned one.
+    generic::record_projection_route(
+        "linear", a4 ? "a4" : policy == LinearPolicy::A16Only ? "a16_exact" : "a16", x.ne[1],
+        weight.n, weight.k);
     if (!a4) return shape.a16(x, weight, out, stream);
     if (workspace == nullptr)
         throw std::invalid_argument("nvfp4 A4 linear requires caller workspace");

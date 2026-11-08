@@ -64,7 +64,9 @@ Nvfp4LinearSwiGluRoute resolve_route(LinearPolicy policy, std::int32_t tokens) {
     return Nvfp4LinearSwiGluRoute::FusedA4;
 }
 
-const char* route_name(Nvfp4LinearSwiGluRoute route) {
+// ExactA16 outside A16Only is the verify band (nvfp4_verify_exact): the exact kernel at 2..8 tokens
+// under a policy that is not the exact contract, recorded as a16_verify.
+const char* route_name(Nvfp4LinearSwiGluRoute route, LinearPolicy policy) {
     switch (route) {
     case Nvfp4LinearSwiGluRoute::DecodeFusedA16:
         return "decode_fused_a16";
@@ -77,7 +79,7 @@ const char* route_name(Nvfp4LinearSwiGluRoute route) {
     case Nvfp4LinearSwiGluRoute::LinearA16Post:
         return "linear_a16_post";
     case Nvfp4LinearSwiGluRoute::ExactA16:
-        return "a16_exact";
+        return policy == LinearPolicy::A16Only ? "a16_exact" : "a16_verify";
     }
     return "?";
 }
@@ -136,7 +138,7 @@ void nvfp4_linear_swiglu_dispatch(const Tensor& x, const Weight& weight, Tensor&
                                   LinearPolicy policy, WorkspaceArena& workspace,
                                   cudaStream_t stream) {
     const Nvfp4LinearSwiGluRoute route = resolve_route(policy, x.ne[1]);
-    generic::record_projection_route("linear_swiglu", route_name(route), x.ne[1], weight.n,
+    generic::record_projection_route("linear_swiglu", route_name(route, policy), x.ne[1], weight.n,
                                      weight.k);
     switch (route) {
     case Nvfp4LinearSwiGluRoute::DecodeFusedA16:

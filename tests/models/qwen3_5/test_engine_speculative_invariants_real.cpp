@@ -27,14 +27,20 @@
 // compared up to the reference's end of turn (past it the continuation is out of distribution),
 // and every divergence is scored at the end with a CausalScoring engine on the shared prefix, as
 // the determinism test does: a log-probability gap above kBugGap between the two candidates
-// fails, smaller gaps are reported. That failure holds where the activation mode promises width
-// invariance (exact; int8, which is clean on the artifacts measured). Fast promises none: an
+// fails, smaller gaps are reported. The test runs in exact activations (the default): only exact
+// promises that speculation equals plain decode, the width of a call changing no bit
+// (deterministic-decisions.md), so there a decisive gap is a defect.
+//
+// NINFERNO_TEST_ACTIVATIONS=fast (the second ctest entry) and int8 promise no width invariance: an
 // NVFP4 projection takes A4 or A16 by the call's width (a plain decode step 1 token, a verify
-// 2..8 exact A16, a batch or a prefill row group A4), so the reference and a batched candidate sit
-// on different sides of that choice and the scorer, whose own prompt-row call is a third width,
-// ranks their tokens up to 1.6 nats apart (#440: Qwen3.8-27B NVFP4, RTX 5090; exact is clean and
-// ranks the reference's token first). Under fast a decisive gap is therefore reported as a WARN
-// naming this reason. NINFERNO_TEST_ACTIVATIONS=exact runs the contract on such an artifact, and
+// 2..8 the exact kernel, a batch or a prefill row group A4; int8 changes the thresholds, not the
+// dependence), so the reference and a batched candidate sit on different sides of that choice and
+// the scorer, whose own prompt-row call is a third width, ranks their tokens up to 1.6 nats
+// apart (#440: Qwen3.8-27B NVFP4, RTX 5090; exact is clean and ranks the reference's token
+// first). There a decisive gap is a WARN naming this reason, but it stays a BUG when the scorer's
+// own view of the same mode ranks the reference's token above the candidate's: the candidate
+// then chose a token the scorer rates far below the reference's, which a route switch alone
+// (either side can land on the better one) does not explain.
 // NINFERNO_PROJECTION_RECORD=FILE lists the (route, T) the projections took.
 #include "ninferno/engine.h"
 #include "real_artifact.h"
@@ -120,15 +126,15 @@ const std::vector<ninferno::TokenId> kPrompt{
 };
 
 // NINFERNO_TEST_ACTIVATIONS=fast|int8|exact: the activation mode of every engine this test builds
-// (the scorer included); default fast, the product's. Fast promises no width invariance (an NVFP4
-// projection takes A4 or A16 by the call's width), exact does.
+// (the scorer included); default exact, the only mode that promises width invariance (fast and
+// int8 take an NVFP4 projection's A4 or A16 route by the call's width).
 ninferno::ActivationMode test_activations() {
     const char* value = std::getenv("NINFERNO_TEST_ACTIVATIONS");
-    if (value == nullptr || *value == '\0' || std::string(value) == "fast") {
-        return ninferno::ActivationMode::Fast;
+    if (value == nullptr || *value == '\0' || std::string(value) == "exact") {
+        return ninferno::ActivationMode::Exact;
     }
+    if (std::string(value) == "fast") { return ninferno::ActivationMode::Fast; }
     if (std::string(value) == "int8") { return ninferno::ActivationMode::Int8; }
-    if (std::string(value) == "exact") { return ninferno::ActivationMode::Exact; }
     throw std::invalid_argument("NINFERNO_TEST_ACTIVATIONS: fast, int8 or exact");
 }
 
@@ -683,18 +689,22 @@ int score_divergences(const char* artifact) {
         const double lp_candidate = score(d.candidate[d.at]);
         const double gap          = std::abs(lp_reference - lp_candidate);
         const bool decisive       = gap > kBugGap;
-        const bool invariant      = test_activations() != ninferno::ActivationMode::Fast;
+        const bool invariant      = test_activations() == ninferno::ActivationMode::Exact;
+        // The candidate chose a token the scorer rates far below the reference's.
+        const bool candidate_worse = lp_reference > lp_candidate;
+        const bool bug             = decisive && (invariant || candidate_worse);
         std::cout << "divergence " << d.label << " at " << d.at << ": reference "
                   << d.reference[d.at] << " (" << lp_reference << "), candidate "
                   << d.candidate[d.at] << " (" << lp_candidate << "), gap " << gap << ' '
                   << (gap <= kNearTieGap ? "near-tie"
                       : !decisive        ? "WARN: not a near-tie"
-                      : invariant        ? "BUG: decisive"
-                                         : "WARN: decisive under fast activations, which take A4 "
-                                           "or A16 by call width and promise no width invariance "
+                      : bug              ? "BUG: decisive"
+                                         : "WARN: decisive, but this activation mode takes A4 or "
+                                           "A16 by call width and promises no width invariance, "
+                                           "and the scorer ranks the candidate first "
                                            "(NINFERNO_TEST_ACTIVATIONS=exact judges the contract)")
                   << '\n';
-        bugs += decisive && invariant ? 1 : 0;
+        bugs += bug ? 1 : 0;
     }
     return bugs;
 }
