@@ -484,6 +484,11 @@ void retry_failed_drafter() {
     expect(with("{" + registry + R"("drafters": [{"name": "assistant", "status": "converted",
                 "artifact": ")" + gone + R"(", "artifact_id": "00"}]})"),
            "an attached drafter whose artifact is gone: attaching is to do");
+    // A drafter the user gave (--drafter-artifact) is not planned again when its file is gone: a
+    // plan without that flag would drop the entry.
+    expect(!with("{" + registry + R"("drafters": [{"name": "mine", "status": "attached",
+                "artifact": ")" + gone + R"(", "artifact_id": "00"}]})"),
+           "a given drafter whose file is gone keeps its entry: nothing to plan");
     const auto other = dir / "other.ninferno";
     std::ofstream(other) << "not an artifact";
     expect(with("{" + registry + R"("drafters": [{"name": "assistant", "status": "converted",

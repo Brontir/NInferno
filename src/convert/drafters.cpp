@@ -1195,8 +1195,10 @@ bool drafters_incomplete(const fs::path& target_artifact) {
         const auto& drafters = manifest.at("drafters");
         const bool gguf      = manifest.value("target", Json::object()).value("gguf_source", false);
         return std::any_of(drafters.begin(), drafters.end(), [&](const Json& d) {
-            if (changed_since_attach(d, true)) { return true; }
             const auto status = d.value("status", std::string());
+            // A file the user gave (--drafter-artifact) is not planned again: a plan made without
+            // that flag would drop the entry, which the refresh takes back once its file passes.
+            if (status != "attached" && changed_since_attach(d, true)) { return true; }
             // A variant ("<name>.<variant>") is optional; a drafter itself is retried, whatever
             // quantization its kind gives it, and so is a companion a checkpoint's artifact lacks
             // (the target is converted again with it while its download is there; a GGUF's never
