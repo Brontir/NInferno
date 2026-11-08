@@ -1,0 +1,11 @@
+# The nvcc the release archives are built with (tools/release/package.sh refuses another), and the
+# facts digest of its register-MMA kernels for each facts-priced golden board (#556): the golden
+# file <set>/<board>.<digest>.txt must exist. Other toolkits keep files of their own beside these.
+release 13.4
+base/rtx3090 613e4a31a35a
+base/a10 c180c3754514
+full/rtx5090 abb3f9fd8ca5
+full/rtx5080 abb3f9fd8ca5
+full/rtx5070ti 9632b1590253
+full/rtx5060ti 9632b1590253
+full/unknown-sm120-48sm b23acbc641b7

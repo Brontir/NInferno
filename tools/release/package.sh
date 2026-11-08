@@ -45,20 +45,16 @@ NVCC=${CUDACXX:-$(command -v nvcc || echo /usr/local/cuda/bin/nvcc)}
 CUDA=$("$NVCC" --version | sed -n 's/.*release \([0-9.]*\).*/\1/p')
 # The selector's choices on sm_86 and sm_120 follow the registers this nvcc compiles for the register-MMA
 # kernels (#556: deterministic per binary, the release's toolchain fixes them). The toolkit is pinned
-# and tests/ops/linear/selector_golden/release_toolchain.txt names the facts digests of that
-# release; the golden files of those digests must exist for every facts-priced board.
+# and tests/ops/linear/selector_golden/release_toolchain.txt names the facts digest of each facts-priced
+# board for that release; the golden files of those digests must exist.
 GOLDEN=$ROOT/tests/ops/linear/selector_golden
 PINNED=$(sed -n 's/^release \([0-9.]*\)$/\1/p' "$GOLDEN/release_toolchain.txt")
 [ -n "$PINNED" ] || { echo "package.sh: $GOLDEN/release_toolchain.txt names no release" >&2; exit 1; }
 [ "$CUDA" = "$PINNED" ] || { echo "package.sh: nvcc $CUDA, the release is pinned to $PINNED (selector goldens, #556)" >&2; exit 1; }
-for set_boards in "base:rtx3090 a10" "full:rtx5090 rtx5080 rtx5070ti rtx5060ti unknown-sm120-48sm"; do
-  set=${set_boards%%:*}
-  digest=$(sed -n "s/^$set \([0-9a-f]*\)$/\1/p" "$GOLDEN/release_toolchain.txt")
-  for board in ${set_boards#*:}; do
-    [ -n "$digest" ] && [ -f "$GOLDEN/$set/$board.$digest.txt" ] || {
-      echo "package.sh: no selector golden $set/$board.<digest> for the pinned toolchain $PINNED" >&2; exit 1; }
-  done
-done
+while read -r board digest; do
+  [ -f "$GOLDEN/$board.$digest.txt" ] || {
+    echo "package.sh: no selector golden $board.$digest.txt for the pinned toolchain $PINNED" >&2; exit 1; }
+done < <(grep -E '^(base|full)/' "$GOLDEN/release_toolchain.txt")
 
 first=""
 engines=""
