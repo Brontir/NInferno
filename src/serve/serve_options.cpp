@@ -47,6 +47,7 @@ std::string serve_usage_text(const char* argv0) {
            "[--health-stall-ms N] [--device N|pci:BUSID|GPU-UUID] "
            "[--context-cost-presets FILE] "
            "[--max-request-mib N] [--max-request-messages N] "
+           "[--max-request-json-values N] "
            "[--media-cache-mib N] [--media-live-mib N] "
            "[--media-preprocess-threads N] "
            "[--device-state-slots N] [--host-state-slots N] [--host-kv-mib N] "
@@ -116,6 +117,9 @@ std::string serve_usage_text(const char* argv0) {
            "       --max-request-messages defaults to " +
            std::to_string(kDefaultMaxRequestMessages) +
            "; a request with more messages (Responses: input Items) is a 400\n"
+           "       --max-request-json-values defaults to " +
+           std::to_string(kDefaultMaxRequestJsonValues) +
+           "; a body whose JSON holds more values (about 100 bytes of memory each) is a 400\n"
            "       --media-cache-mib defaults to 1024; 0 disables retained media reuse\n"
            "       --media-live-mib defaults to 2048 and bounds all live BF16 patch payloads\n"
            "       --media-preprocess-threads defaults to 0 (auto, at most 16 workers)\n"
@@ -389,6 +393,13 @@ ServeOptions parse_serve_options(int argc, char** argv) {
                 throw std::invalid_argument("--max-request-messages is out of range");
             }
             options.max_request_messages = static_cast<std::size_t>(messages);
+        } else if (arg == "--max-request-json-values") {
+            const std::uint64_t values =
+                parse_u64(require_value("--max-request-json-values"), "max-request-json-values");
+            if (values == 0 || values > std::numeric_limits<std::uint32_t>::max()) {
+                throw std::invalid_argument("--max-request-json-values is out of range");
+            }
+            options.max_request_json_values = static_cast<std::size_t>(values);
         } else if (arg == "--media-cache-mib") {
             options.media_cache_bytes = mib("--media-cache-mib", true);
         } else if (arg == "--media-live-mib") {

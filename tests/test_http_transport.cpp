@@ -155,6 +155,48 @@ int test_json_nesting_limit() {
     return failures;
 }
 
+// A body of many small values is refused at --max-request-json-values while it is parsed, before the
+// document is built (#527): `{}` is three bytes of text and about 25 times that in memory, so the
+// body size alone does not bound the parse. Scalars, containers and object keys all count.
+int test_json_value_limit() {
+    const auto parse_with = [](std::string body, std::size_t limit) -> std::string {
+        httplib::Request request;
+        request.body = std::move(body);
+        ninferno::serve::RequestLimits limits;
+        limits.max_json_values = limit;
+        try {
+            (void)ninferno::serve::parse_json_body(request, limits);
+            return "ok";
+        } catch (const ninferno::serve::ApiException& exception) {
+            return exception.error().code;
+        }
+    };
+    const auto objects = [](std::size_t count) {
+        std::string body = "[";
+        for (std::size_t i = 0; i < count; ++i) { body += i == 0 ? "{}" : ",{}"; }
+        return body + "]";
+    };
+    int failures = 0;
+    // The array and its 1,000 objects are 1,001 values.
+    failures += check(parse_with(objects(1000), 1001) == "ok",
+                      "a body exactly at the value limit was refused");
+    failures += check(parse_with(objects(1000), 1000) == "request_json_too_large",
+                      "a body one value over the limit was accepted");
+    failures += check(parse_with(R"({"a":1,"b":[true,null,"x"]})", 7) == "ok" &&
+                          parse_with(R"({"a":1,"b":[true,null,"x"]})", 6) == "request_json_too_large",
+                      "object keys, scalars and containers are not all counted as values");
+    failures += check(parse_with("{not json", 100) != "ok" &&
+                          parse_with("{not json", 100) != "request_json_too_large",
+                      "invalid JSON was reported as too large");
+    // A 16 MiB body of empty objects is refused at the default limit without building them: the
+    // refusal costs about the limit, not 25 times the body.
+    const std::string big = objects(5'000'000);
+    failures += check(parse_with(big, ninferno::serve::kDefaultMaxRequestJsonValues) ==
+                          "request_json_too_large",
+                      "a body of five million values was accepted at the default limit");
+    return failures;
+}
+
 int test_sse_response_headers() {
     httplib::Response response;
     ninferno::serve::prepare_sse_response(response);
@@ -550,7 +592,7 @@ int test_executor_stall_monitor() {
 int main() {
     int failures = test_sse_transport() + test_sse_response_headers() +
                    test_prompt_json_member_order() + test_executor_stall_monitor() +
-                   test_json_nesting_limit();
+                   test_json_nesting_limit() + test_json_value_limit();
 #if defined(__linux__)
     failures += test_inherited_socket_liveness();
     failures += test_worker_plan_answers_every_connection();

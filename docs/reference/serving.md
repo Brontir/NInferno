@@ -1792,6 +1792,7 @@ contract.
 | `--api-key-file PATH` | the same key read from a file (one line) | unset; `NINFERNO_API_KEY` when neither is given |
 | `--cors` | permissive browser CORS headers | off |
 | `--max-request-mib N` | body-size limit before JSON parsing (a body nesting arrays and objects deeper than 128 levels is refused with HTTP 400) | `384` |
+| `--max-request-json-values N` | most JSON values (scalars, arrays, objects, object keys) a request body may hold; more is HTTP 400 `request_json_too_large`, stopped while the body is parsed. Each value costs about 100 bytes of memory whatever its text size, so this, not `--max-request-mib`, bounds the parse | `1000000` |
 | `--max-request-messages N` | most messages in one request (Responses: `input` Items); more is HTTP 400 `too_many_messages` before the prompt is parsed or rendered | `16384` |
 | `--drain-timeout-ms N` | longest wait for requests in flight after SIGTERM/SIGINT | `60000` |
 | `--health-stall-ms N` | `/health` is 503 while the Engine has work and makes no progress this long; `0` off | `60000` |
@@ -2151,9 +2152,15 @@ rides on the round's own synchronization.
 
 ### Input and output memory
 
-Input memory is bounded by the outstanding-request count and the per-request `--max-request-mib`
-limit. Media requests additionally share one preparation permit, so a waiting media request retains
-the same cancellation and timeout deadline. Model output is bounded by the same finite request count
+A request body is parsed into a document before admission, on an HTTP worker, so up to one parse per
+worker (49 by default) runs at once, not one per admission slot. Raw bytes are bounded by
+`--max-request-mib`, but a body of many small values costs far more than its size (`{}` is three
+bytes of text and about 80 bytes in memory, a factor of 25), so the number of values is bounded as
+well: `--max-request-json-values` (1,000,000, about 100 MB per parse). A request with large media
+has few values, and its bytes are held once. Lower the limit to bound the sum on a small host. When
+a request with a large body ends, the server returns the freed memory of its worker thread to the
+operating system. Media requests additionally share one preparation permit, so a waiting media
+request retains the same cancellation and timeout deadline. Model output is bounded by the same finite request count
 and each request's effective output-token limit. Output callbacks and network serialization run
 outside the GPU executor and do not delay formation of the next batch.
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "serve/generation_service.h"
+#include "serve/request.h"
 #include "serve/request_json.h"
 
 #include <httplib.h>
@@ -80,8 +81,17 @@ void render_and_write(SseTransport& transport, Render&& render) {
     } catch (const std::exception& exception) { throw ResponseRenderFailure(exception.what()); }
 }
 
-RequestJson parse_json_body(const httplib::Request& request);
+// The request body as JSON. Refused with a 400 when it is not JSON, nests deeper than
+// kMaximumRequestJsonDepth, or holds more than limits.max_json_values values: the count is taken
+// while the document is built and stops the parse at the limit.
+RequestJson parse_json_body(const httplib::Request& request, const RequestLimits& limits = {});
 [[nodiscard]] bool client_disconnected(const httplib::Request& request);
+
+// Called on the worker thread once a request's handler has returned. A request whose body was large
+// has built and freed a parsed document in this thread's malloc arena; glibc keeps such fragmented
+// memory resident, and every worker keeps its own share (about half of the peak, measured in #527),
+// so the process grows by one share per worker that ever served a big body. This hands it back.
+void release_request_memory(const httplib::Request& request) noexcept;
 
 // The HTTP worker pool in front of the Engine. Admission belongs to the Engine alone: it runs
 // max_concurrency requests, holds max_pending_requests more, and answers the rest with an honest

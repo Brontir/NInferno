@@ -3,6 +3,9 @@
 #include "serve/request_validation.h"
 #include "text/json_depth.h"
 
+#if defined(__GLIBC__)
+#    include <malloc.h>
+#endif
 #if defined(__linux__)
 #    include <netinet/tcp.h>
 #    include <sys/socket.h>
@@ -29,18 +32,48 @@ void set_socket_option(socket_t socket, int level, int option, const T& value) n
 }
 #endif
 
+// Thrown from the parse callback to stop a document at the value limit.
+class JsonValueLimitExceeded final : public std::exception {};
+
 } // namespace
 
-RequestJson parse_json_body(const httplib::Request& request) {
+RequestJson parse_json_body(const httplib::Request& request, const RequestLimits& limits) {
     RequestJson body;
+    std::size_t values = 0;
     try {
-        body = RequestJson::parse(request.body);
+        // The callback only counts: every value is kept. A container counts when it opens, so a
+        // body of empty objects stops at the limit rather than after it is built.
+        body = RequestJson::parse(
+            request.body,
+            [&](int, RequestJson::parse_event_t event, RequestJson&) {
+                if (event == RequestJson::parse_event_t::object_end ||
+                    event == RequestJson::parse_event_t::array_end) {
+                    return true;
+                }
+                if (++values > limits.max_json_values) { throw JsonValueLimitExceeded(); }
+                return true;
+            });
+    } catch (const JsonValueLimitExceeded&) {
+        bad_request("request JSON holds more than " + std::to_string(limits.max_json_values) +
+                        " values (--max-request-json-values)",
+                    {}, "request_json_too_large");
     } catch (const std::exception&) { bad_request("request body is not valid JSON"); }
     if (text::json_nests_deeper_than(body, kMaximumRequestJsonDepth)) {
         bad_request("request JSON nests deeper than " + std::to_string(kMaximumRequestJsonDepth) +
                     " levels");
     }
     return body;
+}
+
+void release_request_memory(const httplib::Request& request) noexcept {
+    // Smaller bodies leave too little behind to be worth walking every arena.
+    constexpr std::size_t kMinimumBodyBytes = 1u << 20;
+#if defined(__GLIBC__)
+    if (request.body.size() >= kMinimumBodyBytes) { (void)::malloc_trim(0); }
+#else
+    (void)request;
+    (void)kMinimumBodyBytes;
+#endif
 }
 
 bool client_disconnected(const httplib::Request& request) { return request.is_connection_closed(); }

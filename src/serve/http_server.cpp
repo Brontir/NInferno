@@ -384,6 +384,8 @@ HttpServer::HttpServer(ServeOptions options, std::shared_ptr<spdlog::logger> log
     server_.set_tcp_nodelay(true);
     server_.set_socket_options(configure_http_server_socket);
     server_.set_payload_max_length(options_.max_request_bytes);
+    server_.set_post_routing_handler(
+        [](const httplib::Request& request, httplib::Response&) { release_request_memory(request); });
     register_routes();
 }
 
@@ -854,7 +856,8 @@ std::string HttpServer::router_report_frame(const GenerationOutcome& outcome) co
 
 RequestLimits HttpServer::request_limits() const noexcept {
     return RequestLimits{.default_max_tokens = options_.default_max_tokens,
-                         .max_messages       = options_.max_request_messages};
+                         .max_messages       = options_.max_request_messages,
+                         .max_json_values    = options_.max_request_json_values};
 }
 
 bool HttpServer::reject_while_draining(const httplib::Request& req, httplib::Response& res) {
