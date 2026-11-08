@@ -182,6 +182,9 @@ public:
 private:
     std::shared_ptr<const ToolCallOutputContract> contract_;
     const ToolCallSyntax* syntax_ = nullptr;  // the contract format's syntax
+    // The region began as a bare JSON call (ToolCallOutputContract::discarded): a syntax that
+    // cannot read one back (Qwen XML) drops the region instead of showing it.
+    bool bare_region_ = false;
     // Bytes that may still begin the call region (ToolCallSyntax::match_start).
     std::string held_;
     std::string tool_region_;

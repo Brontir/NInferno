@@ -668,6 +668,8 @@ int test_bare_json_call_dropped() {
     for (const ToolCallFormat format : {ToolCallFormat::HermesJson, ToolCallFormat::QwenXml}) {
         const auto discarded =
             ninferno::chat::build_tool_call_output_contract(tools, true, format, true);
+        // Qwen XML cannot read a JSON call back: its region is dropped, not shown.
+        const std::size_t expected_calls = format == ToolCallFormat::HermesJson ? 1U : 0U;
         const std::string call =
             "{\n  \"name\": \"weather\",\n  \"arguments\": {\"city\": \"Oslo\", \"days\": 1}\n}";
         for (const bool bytewise : {false, true}) {
@@ -681,7 +683,8 @@ int test_bare_json_call_dropped() {
             }
             const auto end = decoder.finish();
             failures += check(trim_ws(visible).empty() && trim_ws(end.content).empty() &&
-                                  end.tool_calls.size() == 1 && end.tool_calls[0].name == "weather",
+                                  end.tool_calls.size() == expected_calls &&
+                                  (expected_calls == 0 || end.tool_calls[0].name == "weather"),
                               "a bare JSON call under none was shown or lost");
         }
         // Prose before it stays; the call is the same.
@@ -689,7 +692,7 @@ int test_bare_json_call_dropped() {
         const std::string shown = prose.feed("It is sunny.\n" + call);
         const auto prose_end    = prose.finish();
         failures += check(shown == "It is sunny." && prose_end.content.empty() &&
-                              prose_end.tool_calls.size() == 1,
+                              prose_end.tool_calls.size() == expected_calls,
                           "prose before a bare JSON call was changed");
         // The output limit cut the call off: dropped, not shown as markup.
         ninferno::chat::ToolCallOutputDecoder cut(discarded, 64);

@@ -1130,6 +1130,7 @@ std::string ToolCallOutputDecoder::feed(std::string_view text) {
         }
         if (start == CallStart::Complete) {
             // A bare call is read as the call the syntax's opener would have opened.
+            bare_region_ = bare;
             tool_region_ = bare ? std::string(syntax_->open()) + "\n" + held_ : std::move(held_);
             held_.clear();
             tool_region_.append(text.substr(index + 1));
@@ -1154,6 +1155,16 @@ ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool cut_off) {
         return Terminal{.content     = std::move(parsed.content),
                         .tool_calls  = std::move(parsed.tool_calls),
                         .diagnostics = parsed.diagnostics};
+    }
+    if (bare_region_ && saw_tool_marker_ && !parsed.is_tool_call_response) {
+        // A bare JSON call the syntax cannot read back, under tool_choice none: the model wrote a
+        // call, which is not the answer either.
+        held_.clear();
+        tool_region_.clear();
+        ToolCallParseDiagnostics diagnostics = parsed.diagnostics;
+        diagnostics.fallback_reason          = ToolCallParseFallbackReason::None;
+        diagnostics.cut_calls_dropped        = 1;
+        return Terminal{.content = {}, .tool_calls = {}, .diagnostics = diagnostics};
     }
     // Qwen XML: the stop token ended the turn after the last call's closed parameter, before its
     // </function> (vLLM closes such a call at the end of the stream too). The call is closed; one
