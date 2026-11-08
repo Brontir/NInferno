@@ -227,8 +227,8 @@ struct Task {
     std::uint32_t answer      = kRequestAnswer;
     double accuracy_weight    = kAccuracyWeight;
 
-    // The context the worth is priced at: the largest asked (every candidate is scored once, for
-    // the contexts in turn).
+    // The context the worth is priced at: the largest asked (choose() scores every candidate at
+    // it, and again at a step it settles on below it).
     [[nodiscard]] std::uint32_t asked_context() const noexcept {
         std::uint32_t asked = 0;
         for (const std::uint32_t c : contexts) { asked = std::max(asked, c); }

@@ -684,13 +684,17 @@ std::string choice_line(const ServedChoice& served) {
 }
 
 Json choice_json(const ServedChoice& served) {
+    // The mix the chosen request time was priced on: an automatic context that settled below its
+    // first target re-scored at the settled one (choose()).
+    choice::Task priced = served.task;
+    if (served.choice.context != 0) { priced.contexts = {served.choice.context}; }
     Json out = {{"task",
                  {{"context", served.choice.context},
                   {"contexts", served.task.contexts},
                   {"concurrency", served.task.concurrency},
                   {"prompt", served.task.prompt},
                   {"answer", served.task.answer},
-                  {"long_prompt", served.task.long_prompt()},
+                  {"long_prompt", priced.long_prompt()},
                   {"mix_short_requests", choice::kMixShortRequests},
                   {"mix_long_requests", choice::kMixLongRequests},
                   {"accuracy_weight", served.task.accuracy_weight}}},
