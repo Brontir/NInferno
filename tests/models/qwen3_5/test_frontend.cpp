@@ -1,3 +1,4 @@
+#include "chat/tool_calls.h"
 #include "models/qwen3_5/frontend/frontend.h"
 #include "models/qwen3_5/frontend/resources.h"
 
