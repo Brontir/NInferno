@@ -661,6 +661,15 @@ int run_resources(bool detail) {
                              std::to_string(r->registers) + ", grid " + std::to_string(r->grid_x) +
                              "x" + std::to_string(r->grid_y));
                     }
+                    // A slice of a fused weight describes the call's rows, not the parent's: half
+                    // the rows launch fewer row blocks (the grid is the call's).
+                    if (r->grid_x >= 2) {
+                        const auto slice =
+                            generic::rmma_resources(i, w, generic::Epilogue::Store, t, shape.n / 2);
+                        if (!slice || slice->grid_x >= r->grid_x || slice->registers <= 0) {
+                            fail(at + ": a half-rows slice does not launch the call's own grid");
+                        }
+                    }
                     if (detail) {
                         std::cout << at << ": " << r->registers << " registers, " << r->local_bytes
                                   << " B local, " << r->static_smem << " B smem, grid " << r->grid_x

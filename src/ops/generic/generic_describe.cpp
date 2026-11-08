@@ -27,7 +27,7 @@ ScopedKernelDescribe::ScopedKernelDescribe(KernelResources& out) noexcept : prev
 ScopedKernelDescribe::~ScopedKernelDescribe() { t_describe = previous_; }
 
 std::optional<KernelResources> rmma_resources(int schedule, const Weight& w, Epilogue epilogue,
-                                              std::int32_t tokens) {
+                                              std::int32_t tokens, std::int32_t rows) {
     if (schedule < 0 || schedule >= rmma_schedule_count() || !rmma_schedule_launchable(schedule) ||
         tokens < 1 || !supports(w)) {
         return std::nullopt;
@@ -38,7 +38,7 @@ std::optional<KernelResources> rmma_resources(int schedule, const Weight& w, Epi
         return std::nullopt;
     }
     GemmArgs args = weight_args(w);
-    args.rows     = epilogue == Epilogue::SwiGlu ? w.n / 2 : w.n;
+    args.rows       = rows > 0 ? rows : (epilogue == Epilogue::SwiGlu ? w.n / 2 : w.n);
     args.tokens   = tokens;
     args.ldx      = w.k;
     args.lane_local = invariant_routes_active() ? 0 : 1;

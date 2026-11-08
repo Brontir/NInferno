@@ -703,9 +703,11 @@ struct KernelResources {
 // not compiled for the weight's codec or the build (rmma_refusal's NotCompiled, CodecTile), the
 // generic path does not read the weight, or K is off the codec's step (the call runs scalar). On a
 // device without tensor mma.sync the HMMA and GEMV routes Volta takes are not described.
+// `rows` is the call's output rows (a slice of a fused weight has fewer than the weight's stored
+// ones; SwiGLU: the gate rows); 0 takes the weight's own.
 [[nodiscard]] std::optional<KernelResources> rmma_resources(int schedule, const Weight& weight,
-                                                            Epilogue epilogue,
-                                                            std::int32_t tokens);
+                                                            Epilogue epilogue, std::int32_t tokens,
+                                                            std::int32_t rows = 0);
 
 // The same for R8 schedule `schedule`: the R8 kernel run_route launches for the call, its
 // in-kernel quantization or, at verify widths where the format has it, its pre-quantized form
