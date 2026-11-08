@@ -2136,8 +2136,8 @@ int test_steering_after_tool_result_keeps_the_prefix() {
     while (common < plain.size() && common < steered.size() && plain[common] == steered[common]) {
         ++common;
     }
-    // Only the tail after the tool result's content (its close and the generation prompt, bytes of a
-    // toy vocabulary) differs.
+    // Only the tail after the tool result's content (its close and the generation prompt, bytes of
+    // a toy vocabulary) differs.
     return check(steered.size() > plain.size() && common + 70 >= plain.size(),
                  "the steering line after a tool result changed the rendered prompt before it");
 }

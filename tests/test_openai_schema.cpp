@@ -615,7 +615,7 @@ int test_tools() {
             none_parsed.generation, resolve_prompt_semantics(none_parsed.generation, drop), {});
         failures +=
             check(dropped.options.tool_jsons.empty() && dropped.options.tool_calls_discarded &&
-                              dropped.options.refused_tool_jsons.size() == 1 &&
+                      dropped.options.refused_tool_jsons.size() == 1 &&
                       last_text(dropped).find("Tools are unavailable") == std::string::npos,
                   "--tool-choice-none drop-tools kept the tools or the steering line");
         failures += check(last_text(prompt(automatic.generation)).find("Tools are unavailable") ==
