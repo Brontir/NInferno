@@ -1586,7 +1586,7 @@ length.
   grid (the one C changes at 32K below), and only by the depth it was given.
 - B, one request whose prompt is half the asked context (at least 2048): at 131K it prices a prompt of
   65536 for every chat. Qwen3.6-35B-A3B on the 4060 Ti at 131K dropped its DFlash drafter (decode at
-  the priced depth 244.6 -> 97.3 tok/s, a plain FP8 KV in its place); at C = 4 it took the larger
+  the plan's displayed depth, a quarter of the asked context, 244.6 -> 97.3 tok/s, a plain FP8 KV in its place); at C = 4 it took the larger
   quantization where the benchmark's chats do not need it (Qwen3.5-9B on the 4070 Ti at 8192: Q6_K ->
   Q8_0, decode 60.1 -> 49.6 tok/s, KLD 0.0104 -> 0.0042; on the 4060 Ti at 131K UD-Q5_K_XL -> Q8_0);
   and it moved Qwen3.5-4B / 9B at 131K from INT8 to FP8 KV, on the cost of a 65536-token prompt no
@@ -1599,13 +1599,15 @@ changes everywhere, the choice only on Ada).
 
 **Changed defaults** (all 462 groups of the study, 26 decisions change; the rest are the same). The
 4060 Ti 32K row of Qwen3.6 is the quant of the grid (UD-Q3_K_S), whose default is INT8 already;
-the issue's UD-IQ3_XXS case on the 4060 Ti is pinned in tests/test_choice.cpp
-(prices_the_request_mix: a 32K ask chooses KV int8 / state f16, a 2560 ask keeps BF16 / FP32).
+the issue's UD-IQ3_XXS case is pinned in tests/test_choice.cpp
+(prices_the_request_mix) on the Ada reference card's facts (the RTX 4090, whose decision every Ada board
+takes; not on a 4060 Ti board): a 32K ask chooses KV int8 / state f16 / chunk 4096, a 2560 ask keeps
+BF16 / FP32. A 4060 Ti's `--plan` for it gives the same (checked on 08.11).
 
 | Model | Card | Context | C | Before | After |
 |---|---|---|---|---|---|
 | Qwen3.6-35B-A3B | 4090 | 32768 | 1 | KV bf16, state f32, chunk 2048 | KV int8, state f16, chunk 4096 |
-| Qwen3.6-35B-A3B | 4070 Ti | 32768 | 4 | KV int8, chunk 1024 | KV fp8, chunk 2048 |
+| Qwen3.6-35B-A3B | 4070 Ti | 32768 | 4 | KV int8, chunk 1024 | KV fp8, chunk 2048 (a near tie, below) |
 | Qwen3.6-35B-A3B | 4060 Ti | 8192 / 32768 / 131072 | 1 | chunk 2048 | chunk 4096 |
 | Qwen3.6-35B-A3B | 4060 Ti | 131072 | 4 | chunk 2048 | chunk 4096 |
 | Qwen3.6-35B-A3B | 4070 Ti | 8192 | 1, 4 | chunk 2048 | chunk 4096 |
@@ -1622,8 +1624,14 @@ the issue's UD-IQ3_XXS case on the 4060 Ti is pinned in tests/test_choice.cpp
 
 The chunk changes are the MoE chunk shares (kMoeChunkShare): a 24K prompt fills the wide chunk
 that a 2048-token prompt only half fills, so the prefill of the long request picks it by speed (worth
-+0.0001 .. +0.0055; a chunk has no accuracy term). Their decode at the priced depth and KLD do not
-change. The KV and state changes: the 4090 at 32K, decode at the priced depth 484.0 -> 502.2 tok/s for
++0.0001 .. +0.0055; a chunk has no accuracy term). Their decode at the plan's displayed depth and KLD do not
+change. The KV and state changes: the 4090 at 32K, decode at the plan's displayed depth (a quarter of the asked context, 8192 here) 484.0 -> 502.2 tok/s for
 KLD 0.0238 -> 0.0250 (the speed gain is worth more at lambda 25); the 4070 Ti at 32K with four
-streams, 127.1 -> 126.8 tok/s and KLD 0.8898 -> 0.8903 (the chunk is the gain). Dense models, the other families and every card without a reference card keep their
+streams (UD-IQ1_M), 127.1 -> 126.8 tok/s and KLD 0.8898 -> 0.8903, is a near tie, checked on
+08.11 with `--plan` (resolution 0.0226 in worth): the chunk 2048 wins by speed on the long prompt, but
+INT8 KV with a 2048 chunk (and with 4096) does not hold 32768 tokens for four streams (`no_fit`, own
+context 0: the wider chunk's workspace), so FP8's bytes buy the chunk. Against the pick, INT8 alone
+(chunk 2048, does not fit) is +0.0165, the chunk 1024 with FP8 -0.0173 (`within_resolution`), K8V4
+-0.0451; the old pick, INT8 with chunk 1024, is about -0.001 (the sum of the two single-axis gaps; not
+scored on its own): inside the resolution, the point estimate decides. Dense models, the other families and every card without a reference card keep their
 defaults (Qwen3-8B, Qwen3.5-4B / 9B, Qwen3.8-27B, gemma-4-31B and -12b, Muse-Glimmer: no change).
