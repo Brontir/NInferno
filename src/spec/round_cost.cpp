@@ -74,7 +74,7 @@ double pass_cost(const PassFacts& p, std::int32_t rows, double kappa, std::int32
                  const StreamBytes& per_stream = {}) {
     const double active = p.experts > 0 ? double(p.experts_used) / double(p.experts) : 1.0;
     const double bytes  = p.bytes + p.expert_bytes * moe_read_fraction(p, rows, streams) +
-                          double(streams) * per_stream.per_pass();
+                         double(streams) * per_stream.per_pass();
     const double ops    = 2.0 * double(rows) * double(streams) * (p.params + p.expert_params * active);
     return bytes + kappa * ops;
 }
@@ -236,7 +236,8 @@ std::optional<double> load_gain(const RoundFacts& facts, const SpecConfig& confi
         streams * d->second.rows > std::max(kPricedVerifyRows, d->second.rows)) {
         return std::nullopt;
     }
-    const auto one   = round_cost(facts, config, kappa, head_rows, launch_bytes, launches, 1, per_stream);
+    const auto one =
+        round_cost(facts, config, kappa, head_rows, launch_bytes, launches, 1, per_stream);
     const auto joint =
         round_cost(facts, config, kappa, head_rows, launch_bytes, launches, streams, per_stream);
     if (!one || !joint || *one <= 0 || *joint <= 0) { return std::nullopt; }

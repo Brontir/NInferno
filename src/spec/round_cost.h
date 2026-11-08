@@ -80,14 +80,16 @@ struct PassFacts {
 // What each request decoded brings that the weights do not (#303): bytes of its own that every pass
 // over its rows moves, which the weights' bytes, read once, do not grow with. From the model's
 // shapes (runtime::plan_state_bytes, plan_kv_bytes_per_token), not the weights' headers: a
-// recurrent layer's state is read and written back once a pass (state_bytes x 2), the full-attention
-// layers' KV at the request's context is read once (kv_bytes). Left out (0): the sliding-window ring, the
-// per-row state snapshots a verify may keep, a drafter's own KV; and the requests' turnover.
+// recurrent layer's state is read and written back once a pass (state_bytes x 2), the
+// full-attention layers' KV at the request's context is read once (kv_bytes). Left out (0): the
+// sliding-window ring, the per-row state snapshots a verify may keep, a drafter's own KV; and the
+// requests' turnover.
 struct StreamBytes {
     double state_bytes = 0; // recurrent state, resident per request (as stored: FP32 or BF16)
     double kv_bytes    = 0; // full-attention KV a pass reads per request, at its context
 
     [[nodiscard]] double per_pass() const noexcept { return 2.0 * state_bytes + kv_bytes; }
+
     friend bool operator==(const StreamBytes&, const StreamBytes&) = default;
 };
 
@@ -236,9 +238,9 @@ struct CardRates {
 // facts) move on top of the weights, streams times each.
 [[nodiscard]] std::optional<double> round_cost(const RoundFacts& facts, const SpecConfig& config,
                                                double kappa, const ProposalRows& head_rows = {},
-                                               double launch_bytes          = 0,
+                                               double launch_bytes           = 0,
                                                const RoundLaunches& launches = {},
-                                               std::int32_t streams         = 1,
+                                               std::int32_t streams          = 1,
                                                const StreamBytes& per_stream = {});
 
 // The plain decode step of `streams` requests decoded together, in bytes-equivalent (the
@@ -261,11 +263,9 @@ inline constexpr std::int32_t kPricedVerifyRows = 8;
 // The KV and attention bytes and each stream's recurrent state, which grow with C in both, are
 // priced when `per_stream` names them (StreamBytes) and left out as in R_1 when it does not; so
 // are the requests' turnover between steps, which a load cell's tok/s holds.
-[[nodiscard]] std::optional<double> load_gain(const RoundFacts& facts, const SpecConfig& config,
-                                              double kappa, double speedup, std::int32_t streams,
-                                              const ProposalRows& head_rows = {},
-                                              double launch_bytes          = 0,
-                                              const RoundLaunches& launches = {},
-                                              const StreamBytes& per_stream = {});
+[[nodiscard]] std::optional<double>
+load_gain(const RoundFacts& facts, const SpecConfig& config, double kappa, double speedup,
+          std::int32_t streams, const ProposalRows& head_rows = {}, double launch_bytes = 0,
+          const RoundLaunches& launches = {}, const StreamBytes& per_stream = {});
 
 } // namespace ninferno::spec
