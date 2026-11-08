@@ -74,7 +74,7 @@ int main() {
         slow.path   = "/v1/chat/completions";
         httplib::Response slow_response;
         slow_response.status = 408;
-        const auto handled = ninferno::serve::handle_unrendered_http_error(
+        const auto handled   = ninferno::serve::handle_unrendered_http_error(
             ninferno::serve::ServeOptions{}, slow, slow_response);
         failures += check(handled == httplib::Server::HandlerResponse::Handled &&
                               !slow_response.keep_alive_after_error &&

@@ -280,7 +280,8 @@ httplib::Server::HandlerResponse handle_unrendered_http_error(const ServeOptions
         error.message = "request body exceeds the configured payload limit of " +
                         std::to_string(options.max_request_bytes) + " bytes";
     } else if (response.status == 408) {
-        // The library stops reading a request body that grew too slowly (set_request_body_min_rate).
+        // The library stops reading a request body that grew too slowly
+        // (set_request_body_min_rate).
         error.status  = 408;
         error.type    = "invalid_request_error";
         error.code    = "request_body_too_slow";

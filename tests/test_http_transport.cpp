@@ -543,53 +543,57 @@ int test_slow_request_body_is_cut_off() {
         bool closed = false;
         std::chrono::milliseconds elapsed{0};
     };
-    const auto exchange = [&](std::size_t length,
-                              const std::vector<std::pair<std::size_t, std::chrono::milliseconds>>&
-                                  pieces) {
-        Outcome outcome;
-        const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-        sockaddr_in address{};
-        address.sin_family      = AF_INET;
-        address.sin_port        = htons(static_cast<std::uint16_t>(port));
-        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        timeval timeout{5, 0};
-        if (fd < 0 || ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0 ||
-            ::connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
-            if (fd >= 0) { ::close(fd); }
-            return outcome;
-        }
-        const auto start = std::chrono::steady_clock::now();
-        const std::string head = "POST /echo HTTP/1.1
-Host: 127.0.0.1
-Content-Length: " +
-                                 std::to_string(length) + "
 
-";
-        (void)::send(fd, head.data(), head.size(), MSG_NOSIGNAL);
-        for (const auto& [bytes, pause] : pieces) {
-            const std::string piece(bytes, 'x');
-            if (::send(fd, piece.data(), piece.size(), MSG_NOSIGNAL) < 0) { break; }
-            // The pause ends early when the server has already answered.
-            pollfd readable{fd, POLLIN, 0};
-            if (::poll(&readable, 1, static_cast<int>(pause.count())) > 0) { break; }
-        }
-        std::string received;
-        char buffer[512];
-        for (;;) {
-            const ssize_t got = ::recv(fd, buffer, sizeof(buffer), 0);
-            if (got <= 0) {
-                outcome.closed = got == 0;
-                break;
+    const auto exchange =
+        [&](std::size_t length,
+            const std::vector<std::pair<std::size_t, std::chrono::milliseconds>>& pieces) {
+            Outcome outcome;
+            const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+            sockaddr_in address{};
+            address.sin_family      = AF_INET;
+            address.sin_port        = htons(static_cast<std::uint16_t>(port));
+            address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            timeval timeout{5, 0};
+            if (fd < 0 ||
+                ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0 ||
+                ::connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+                if (fd >= 0) { ::close(fd); }
+                return outcome;
             }
-            received.append(buffer, static_cast<std::size_t>(got));
-        }
-        outcome.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - start);
+            const auto start       = std::chrono::steady_clock::now();
+            const std::string head = "POST /echo HTTP/1.1
+                                     Host : 127.0.0.1 Content -
+                                     Length
+                : " +
+                  std::to_string(length) +
+                  "
+
+                  ";
+                  (void)::send(fd, head.data(), head.size(), MSG_NOSIGNAL);
+            for (const auto& [bytes, pause] : pieces) {
+                const std::string piece(bytes, 'x');
+                if (::send(fd, piece.data(), piece.size(), MSG_NOSIGNAL) < 0) { break; }
+                // The pause ends early when the server has already answered.
+                pollfd readable{fd, POLLIN, 0};
+                if (::poll(&readable, 1, static_cast<int>(pause.count())) > 0) { break; }
+            }
+            std::string received;
+            char buffer[512];
+            for (;;) {
+                const ssize_t got = ::recv(fd, buffer, sizeof(buffer), 0);
+                if (got <= 0) {
+                    outcome.closed = got == 0;
+                    break;
+                }
+                received.append(buffer, static_cast<std::size_t>(got));
+            }
+            outcome.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - start);
         outcome.status = received.substr(0, received.find("
 "));
         ::close(fd);
         return outcome;
-    };
+        };
 
     int failures = 0;
     std::vector<std::pair<std::size_t, std::chrono::milliseconds>> trickle(100, {1, 50ms});
