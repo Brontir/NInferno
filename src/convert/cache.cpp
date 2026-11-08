@@ -9,6 +9,7 @@
 
 #include "core/cache_file.h"
 #include "core/sys.h"
+#include "spec/manifest.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -227,6 +228,18 @@ bool source_changed(const std::filesystem::path& artifact, const std::string& st
         if (!weights && !current.contains(name)) { return true; }
     }
     return false;
+}
+
+std::set<std::filesystem::path> manifest_drafter_files(const std::filesystem::path& artifact) {
+    std::set<std::filesystem::path> out;
+    const auto manifest = spec::read_manifest(spec::manifest_path(artifact));
+    if (!manifest) { return out; }
+    std::error_code ec;
+    for (const auto& drafter : manifest->drafters) {
+        if (drafter.artifact.empty()) { continue; }
+        out.insert(std::filesystem::weakly_canonical(drafter.artifact, ec));
+    }
+    return out;
 }
 
 bool conversion_in_progress(const std::filesystem::path& directory) {

@@ -222,6 +222,13 @@ struct OptionsKeyContext {
 [[nodiscard]] std::string content_options_key(const AcquireOptions& options,
                                               std::string* described           = nullptr,
                                               const OptionsKeyContext& context = {});
+// kept_artifact for a request: the conversion made with `options`, else, for a request with a
+// chat_template, the one made with it as the chat_template.jinja resource (a model that ships no
+// template: the key is known only after the fetch, which is what a removed download cannot do).
+[[nodiscard]] std::optional<std::filesystem::path>
+kept_for_options(const std::filesystem::path& cache, const std::string& repo,
+                 const std::string& revision, const AcquireOptions& options,
+                 const OptionsKeyContext& context = {});
 // Where the kept conversions of a commit with the options `key` live: `commit_dir` itself for the
 // default (key ""), else its subdirectory options-<key>, so a conversion with other options never
 // takes the place of the default one (and a default run never serves it).

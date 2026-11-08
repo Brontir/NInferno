@@ -297,6 +297,31 @@ int main() {
         const auto kept_default = cv::kept_artifact(cache, "org/m", "", "", "");
         check(kept_default && *kept_default == dir / "m-Q8_0.dense_bf16.ninferno",
               "the default lookup still finds the default");
+        // A base model ships no template: its conversion with --chat-template has the template as
+        // a resource, so it lives under that key. With the download removed, the same start
+        // (the key before the fetch knows no resource) still finds it; another template or none
+        // does not.
+        const auto base_dir = cache / "models--org--base";
+        write_text(base_dir / "refs" / "main", commit);
+        cv::AcquireOptions baked;
+        baked.convert.resources.emplace_back("chat_template.jinja", root / "custom.jinja");
+        const auto baked_key = cv::content_options_key(baked);
+        write_text(base_dir / "ninferno" / commit / ("options-" + baked_key) /
+                       "m-Q8_0.dense_bf16.ninferno",
+                   "base");
+        write_text(base_dir / "ninferno" / commit / ("options-" + baked_key) /
+                       "m-Q8_0.dense_bf16.ninferno.conversion.json",
+                   "{}");
+        cv::AcquireOptions request;
+        request.chat_template = root / "custom.jinja";
+        const auto found      = cv::kept_for_options(cache, "org/base", "", request);
+        check(found && found->parent_path().filename() == "options-" + baked_key,
+              "a removed download is found for the template-baked conversion of a base model");
+        cv::AcquireOptions other_template;
+        other_template.chat_template = root / "other.jinja";
+        check(!cv::kept_for_options(cache, "org/base", "", other_template),
+              "but not for another template");
+        check(!cv::kept_for_options(cache, "org/base", "", cv::AcquireOptions{}), "nor for none");
         // A start with a runtime template only (key "") reuses that one: no download for it.
         cv::AcquireOptions serve;
         serve.chat_template = root / "custom.jinja";

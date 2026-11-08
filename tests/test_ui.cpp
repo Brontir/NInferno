@@ -1175,6 +1175,24 @@ void test_delete_options() {
     check(!fs::exists(custom) && fs::exists(commit / "m.dense_bf16.ninferno"),
           "its directory (lock included) goes, the default stays");
 
+    // The default has a speculation manifest naming its drafter (and itself, as the target): an
+    // optioned sibling of the same file name is no drafter of it, whatever the text of the
+    // manifest says. Deleting the default leaves the sibling and the commit.
+    {
+        make();
+        const auto drafter = commit / "d.dflash.ninferno";
+        std::ofstream(drafter) << "x";
+        const auto manifest = std::string("{\"schema\":1,\"target\":{\"artifact\":\"") +
+                              (commit / "m.dense_bf16.ninferno").string() +
+                              "\"},\"drafters\":[{\"name\":\"d\",\"artifact\":\"" +
+                              drafter.string() + "\"}]}";
+        std::ofstream(commit / "m.dense_bf16.ninferno.speculation.json") << manifest;
+        res = remove(commit / "m.dense_bf16.ninferno");
+        check(res && res->status == 200, "the default with a manifest is deleted");
+        check(fs::exists(custom / "m.dense_bf16.ninferno") && fs::exists(commit),
+              "an optioned sibling of the same name is not taken for the manifest's drafter");
+    }
+
     // A conversion still being written has no .ninferno yet, only its lock (held) and a young
     // temporary: it is not an empty directory. Deleting the default must leave it, the commit and
     // the repository (the snapshot it reads).

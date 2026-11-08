@@ -767,6 +767,24 @@ std::string content_options_key(const AcquireOptions& options, std::string* desc
     return options_key(parts, described);
 }
 
+std::optional<fs::path> kept_for_options(const fs::path& cache, const std::string& repo,
+                                         const std::string& revision, const AcquireOptions& options,
+                                         const OptionsKeyContext& context) {
+    const auto& c = options.convert;
+    if (auto kept = kept_artifact(cache, repo, revision, options.fetch.quant, c.recipe,
+                                  content_options_key(options, nullptr, context))) {
+        return kept;
+    }
+    // A model that ships no chat template is converted with the caller's as its resource, which
+    // makes the conversion an optioned one only once the model is fetched (acquire_model); the
+    // key before the fetch does not know. Looked for under that key too.
+    if (options.chat_template.empty()) { return std::nullopt; }
+    AcquireOptions baked = options;
+    baked.convert.resources.emplace_back("chat_template.jinja", options.chat_template);
+    return kept_artifact(cache, repo, revision, options.fetch.quant, c.recipe,
+                         content_options_key(baked, nullptr, context));
+}
+
 fs::path conversion_directory(const fs::path& commit_dir, const std::string& key) {
     return key.empty() ? commit_dir : commit_dir / ("options-" + key);
 }
@@ -787,19 +805,17 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 return;
             }
             const auto dir = artifact.parent_path();
-            std::string manifest;
-            if (std::ifstream in(spec::manifest_path(artifact)); in) {
-                manifest.assign(std::istreambuf_iterator<char>(in), {});
-            }
+            const auto drafter_files = manifest_drafter_files(artifact);
             remove_artifact(artifact);
             std::error_code ec;
             bool others = false;
             // Recursive: a conversion with options of its own lives in options-<hash>/ below, and
             // may be serving; it stays, with the commit it belongs to.
             for (const auto& entry : fs::recursive_directory_iterator(dir, ec)) {
-                const auto name = entry.path().filename().string();
+                // By path, not by name: a conversion with options of its own below has the same
+                // file name as the one replaced.
                 if (entry.path().extension() == ".ninferno" &&
-                    manifest.find(name) == std::string::npos) {
+                    !drafter_files.contains(fs::weakly_canonical(entry.path(), ec))) {
                     others = true;
                 }
             }
@@ -831,8 +847,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
             (is_hugging_face_hub(options.fetch.hub))) {
             const auto cache =
                 options.fetch.cache.empty() ? default_hub_cache() : options.fetch.cache;
-            auto kept = kept_artifact(cache, repo, revision, options.fetch.quant,
-                                      convert_options.recipe, variant_key);
+            auto kept = kept_for_options(cache, repo, revision, options, key_context);
             // A branch or a tag may have moved since its weights came here, whether their download
             // was converted and removed (the kept artifact) or is still in the cache. They stay
             // unless the user asks for the new commit (a download of many gigabytes): the start

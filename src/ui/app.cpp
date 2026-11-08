@@ -2019,10 +2019,7 @@ std::uint64_t App::delete_artifact(const fs::path& requested) {
     }
     std::uint64_t freed = 0;
     // Its speculation manifest names the drafters converted for it (read before the sidecars go).
-    std::string manifest;
-    if (std::ifstream in(spec::manifest_path(path)); in) {
-        manifest.assign(std::istreambuf_iterator<char>(in), {});
-    }
+    const auto drafter_files = convert::manifest_drafter_files(path);
     // The file and its sidecars (<artifact>.conversion.json, .speculation.json, ...).
     const auto prefix = path.filename().string();
     for (const auto& entry : fs::directory_iterator(path.parent_path(), ec)) {
@@ -2053,8 +2050,9 @@ std::uint64_t App::delete_artifact(const fs::path& requested) {
             // temporary): it counts, or the snapshot it reads would go with the directory.
             if (convert::conversion_in_progress(dir)) { return true; }
             for (const auto& entry : fs::recursive_directory_iterator(dir, ec)) {
+                // By path: an optioned sibling has the same name as the default conversion.
                 if (entry.path().extension() == ".ninferno" &&
-                    manifest.find(entry.path().filename().string()) == std::string::npos) {
+                    !drafter_files.contains(fs::weakly_canonical(entry.path(), ec))) {
                     return true;
                 }
             }

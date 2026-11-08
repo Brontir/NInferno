@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -85,6 +86,13 @@ void remove_artifact(const std::filesystem::path& artifact);
 // directory whose only content is such a conversion has no .ninferno file yet, and must not be
 // taken for empty: removing it would delete the snapshot being read and the file being written.
 [[nodiscard]] bool conversion_in_progress(const std::filesystem::path& directory);
+
+// The drafter files `artifact`'s speculation manifest names (<artifact>.speculation.json), as
+// canonical paths: the drafters converted for it, which go with it. Compared by path, never by
+// file name: a conversion with options of its own beside it has the same name in its own
+// options-<hash>/ directory and is no drafter of it. Empty without a manifest.
+[[nodiscard]] std::set<std::filesystem::path>
+manifest_drafter_files(const std::filesystem::path& artifact);
 
 struct CachedArtifact {
     std::filesystem::path path; // the artifact to load
