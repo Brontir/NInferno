@@ -1837,7 +1837,13 @@ not take at startup.
   (the GGUF block formats Q4_0/Q4_1/Q5_0/Q5_1, Q8_0, the K-quants Q2_K..Q6_K, IQ4_NL/IQ4_XS and
   the codebook i-quants IQ3_XXS/IQ3_S/IQ2_XXS/IQ2_XS/IQ2_S/IQ1_S/IQ1_M; MXFP4; u4; not the output
   head; `kept_block_policy`), int8 activations. The ternary and two-bit TQ1_0, TQ2_0, Q1_0 and
-  Q2_0 keep BF16 activations. The answer can depend on the load.
+  Q2_0 keep BF16 activations. The answer can depend on the load, and on where a prompt was cut:
+  ggml's int8 matrix kernel runs a prefill call 512 tokens at a time and splits the sum over K
+  across SMs by how many columns a slice has (stream-k), so a token in a slice of another width
+  gets other last bits. A cold prefill cuts at whole 512-token slices of each prefill chunk; a
+  prefill resumed from the cache at another point (a turn boundary, a long anchor, the end of an
+  earlier answer) does not. In our checks the tokens stayed the same and the logprobs moved by up
+  to 0.13 (#492); `--activations exact` gives the same bytes at any cut.
 - `int8` (Qwen; other families refuse it at startup): eight bits. Every quantized linear may take
   int8 activations where its route has them and none takes four, whatever the artifact recorded:
   the sites it kept BF16 (heads and embeddings recorded BF16 excepted) and the NVFP4 weights
