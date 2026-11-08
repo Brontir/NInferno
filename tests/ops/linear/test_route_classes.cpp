@@ -597,9 +597,8 @@ int run_summation_orders() {
 int run_column_tiles() {
     int devices = 0;
     if (cudaGetDeviceCount(&devices) != cudaSuccess || devices == 0) {
-        std::cout << "column tiles: CUDA unavailable; skipped
-                     ";
-            return 0;
+        std::cout << "column tiles: CUDA unavailable; skipped\n";
+        return 0;
     }
     const DeviceClass& d = device_class();
     int failures = 0, checked = 0;
@@ -614,19 +613,14 @@ int run_column_tiles() {
             ++checked;
             if (taken != picked && failures++ < 10) {
                 std::cerr << "column tile: type " << static_cast<int>(type) << " columns "
-                          << columns << " takes " << taken << ", the table picks " << picked << '
-';
+                          << columns << " takes " << taken << ", the table picks " << picked
+                          << '\n';
             }
         }
     }
     std::cout << "column tiles: " << checked << " products on sm_" << d.major << d.minor << ", "
-              << failures
-              << " differ from the table
-                 ";
-                return failures ==
-            0
-        ? 0
-        : 1;
+              << failures << " differ from the table\n";
+    return failures == 0 ? 0 : 1;
 }
 
 // #298: the register-MMA kernels' compiled resources on this device (rmma_resources, the launch
