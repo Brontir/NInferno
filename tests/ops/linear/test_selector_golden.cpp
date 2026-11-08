@@ -206,6 +206,7 @@ std::string facts_digest(std::vector<generic::RmmaFactRead> reads) {
 struct IndexEntry {
     std::string board, digest, file, nvcc;
 };
+
 struct Index {
     std::vector<std::string> kept; // comment lines and the release line, as they stand
     std::string release;
@@ -249,14 +250,17 @@ void save_index(Index index) {
 // lock.
 struct IndexLock {
     std::filesystem::path path = golden_dir() / ".facts_index.lock";
+
     IndexLock() {
         for (int i = 0; i < 600 && !std::filesystem::create_directory(path); ++i)
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
+
     ~IndexLock() {
         std::error_code ignored;
         std::filesystem::remove(path, ignored);
     }
+
     IndexLock(const IndexLock&)            = delete;
     IndexLock& operator=(const IndexLock&) = delete;
 };
@@ -506,9 +510,10 @@ int run_board(const GoldenBoard& b, bool update) {
             const std::string name = item.path().filename().string();
             if (name.rfind(prefix, 0) != 0 || item.path().extension() != ".txt") continue;
             const std::string used = name.substr(prefix.size(), name.size() - prefix.size() - 4);
-            const bool kept        = std::any_of(
-                index.entries.begin(), index.entries.end(),
-                [&](const IndexEntry& e) { return e.board == board_key(b) && e.file == used; });
+            const bool kept =
+                std::any_of(index.entries.begin(), index.entries.end(), [&](const IndexEntry& e) {
+                    return e.board == board_key(b) && e.file == used;
+                });
             if (!kept) std::filesystem::remove(item.path());
         }
         save_index(index);
