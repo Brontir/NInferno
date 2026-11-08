@@ -257,8 +257,15 @@ struct IndexLock {
                                  "); remove it if that process is gone");
     }
 
+    // Whether the lock is still this process's (a stale-lock recovery elsewhere may have taken it).
+    [[nodiscard]] bool still_held() const {
+        long pid = 0;
+        std::ifstream(owner) >> pid;
+        return held && pid == own_pid();
+    }
+
     ~IndexLock() {
-        if (!held) return;
+        if (!still_held()) return; // never remove another process's lock
         std::error_code ignored;
         std::filesystem::remove(owner, ignored);
         std::filesystem::remove(dir, ignored);
@@ -417,16 +424,36 @@ std::string dump_body(const GoldenBoard& b, double sm_scale, double memory_scale
     return out.str();
 }
 
-// The board's dump with its facts line (a facts-priced board). The first dump of a board in a
-// process reads the kernels' facts; a repeat is answered from the selector's per-device cache
-// without reading, so the digest is kept per board.
+// The board's dump with its facts line (a facts-priced board). The digest is the shared probe's
+// (selector_facts.h), the one a release computes of its own engine, so the dump must read no fact
+// the probe does not: the probe runs first, then the board's first dump in this process is read
+// under a sink (a fact the selector's cache answers without reading was the probe's own), and
+// every fact it read must be the probe's. A repeat dump is answered from that cache.
 std::string dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memory_scale = 1.0) {
-    const std::string body = dump_body(b, sm_scale, memory_scale);
-    if (!facts_keyed(b)) return body;
-    // The digest is the shared probe's (selector_facts.h), the one a release computes of its own
-    // engine; it throws where the price reads no facts.
+    if (!facts_keyed(b)) return dump_body(b, sm_scale, memory_scale);
     static std::map<std::string, std::string> digests;
-    if (digests.find(b.name) == digests.end()) digests[b.name] = generic::selector_facts_digest(b);
+    std::string body;
+    if (digests.find(b.name) == digests.end()) {
+        const auto probe = generic::selector_facts_probe(b); // throws where it reads none
+        std::vector<generic::RmmaFactRead> dumped;
+        {
+            const generic::ScopedRmmaFactsSink sink(dumped);
+            body = dump_body(b, sm_scale, memory_scale);
+        }
+        for (const auto& key : generic::rmma_fact_keys(dumped)) {
+            if (probe.count(key) == 0) {
+                throw std::runtime_error(std::string(b.name) +
+                                         ": the dump read a kernel fact the release probe does " +
+                                         "not (format " + std::to_string(std::get<0>(key)) +
+                                         ", schedule " + std::to_string(std::get<1>(key)) +
+                                         ", epilogue " + std::to_string(std::get<2>(key)) +
+                                         "): widen selector_facts_probe's shapes or widths");
+            }
+        }
+        digests[b.name] = generic::facts_digest(probe);
+    } else {
+        body = dump_body(b, sm_scale, memory_scale);
+    }
     const auto first = body.find('\n') + 1;
     return body.substr(0, first) + "# facts " + digests[b.name] + "\n" + body.substr(first);
 }
@@ -494,6 +521,10 @@ int run_board(const GoldenBoard& b, bool update) {
             return e.board == board_key(b) && e.nvcc == NINFERNO_NVCC_VERSION;
         });
         index.entries.push_back({board_key(b), d, holder, NINFERNO_NVCC_VERSION});
+        if (!lock.still_held()) {
+            std::cerr << b.name << ": lost the index lock; facts_index.txt left unchanged\n";
+            return 1;
+        }
         // The board's files no entry uses any more.
         const std::string prefix = std::string(b.name) + ".";
         for (const auto& item : std::filesystem::directory_iterator(path.parent_path())) {
@@ -545,14 +576,12 @@ int run_board(const GoldenBoard& b, bool update) {
     was_text << in.rdbuf();
     const std::string was_cmp = facts_keyed(b) ? without_facts(was_text.str()) : was_text.str();
     const std::string now_cmp = facts_keyed(b) ? without_facts(now) : now;
-    std::stringstream was;
-    was << was_cmp;
     if (was_cmp == now_cmp) {
         std::cout << b.name << ": choices as the golden file\n";
         return 0;
     }
     // The first lines that differ, from both sides.
-    std::istringstream a(was.str()), c(now_cmp);
+    std::istringstream a(was_cmp), c(now_cmp);
     std::string la, lc;
     int shown = 0, line = 0;
     while (shown < 20) {

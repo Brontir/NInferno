@@ -7,6 +7,8 @@
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/route_query.h"
 
+#include <cuda_runtime.h>
+
 #include <cstdio>
 #include <exception>
 #include <iomanip>
@@ -30,18 +32,19 @@ DeviceClass board_device_class(const FactsBoard& b, double sm_scale, double memo
 
 bool board_prices_from_facts(const FactsBoard& b) { return rmma_terms_measured(b.major, b.minor); }
 
-namespace {
-
-// FNV-1a over the distinct (format, schedule, epilogue, registers, spill, threads, latency form)
-// tuples read, in sorted order: what the prices took, not a sample of the kernels.
-std::string digest_of_reads(const std::vector<RmmaFactRead>& reads) {
-    using Key = std::tuple<int, int, int, int, std::size_t, int, bool>;
-    std::set<Key> keys;
+std::set<RmmaFactKey> rmma_fact_keys(const std::vector<RmmaFactRead>& reads) {
+    std::set<RmmaFactKey> keys;
     for (const auto& r : reads) {
         keys.emplace(static_cast<int>(r.qtype), r.schedule, static_cast<int>(r.epilogue),
                      r.facts.registers, r.facts.local_bytes, r.facts.threads,
                      r.facts.latency_variant);
     }
+    return keys;
+}
+
+// FNV-1a over the distinct facts, in sorted order: what the prices took, not a sample of the
+// kernels.
+std::string facts_digest(const std::set<RmmaFactKey>& keys) {
     std::uint64_t h = 1469598103934665603ULL;
     const auto mix  = [&h](std::uint64_t v) {
         for (int i = 0; i < 8; ++i) {
@@ -61,15 +64,12 @@ std::string digest_of_reads(const std::vector<RmmaFactRead>& reads) {
     return out.str().substr(0, 12);
 }
 
-} // namespace
-
-std::string selector_facts_digest(const FactsBoard& board) {
-    // The formats the register-MMA terms are verified for (has_subblock_scales).
-    constexpr QType kFormats[] = {QType::GGML_Q4_K,    QType::GGML_Q5_K,   QType::GGML_Q6_K,
-                                  QType::GGML_Q3_K,    QType::GGML_Q2_K,   QType::GGML_IQ4_XS,
-                                  QType::GGML_IQ3_XXS, QType::GGML_IQ3_S,  QType::GGML_IQ2_S,
-                                  QType::GGML_IQ2_XXS, QType::GGML_IQ2_XS, QType::GGML_IQ1_S,
-                                  QType::GGML_IQ1_M};
+std::set<RmmaFactKey> selector_facts_probe(const FactsBoard& board) {
+    // Every format the register-MMA terms are kept for (has_subblock_scales), a new one included.
+    std::vector<QType> formats;
+    for (int v = 0; v < 256; ++v) {
+        if (has_subblock_scales(static_cast<QType>(v))) formats.push_back(static_cast<QType>(v));
+    }
 
     struct Shape {
         std::int32_t n, k;
@@ -81,8 +81,7 @@ std::string selector_facts_digest(const FactsBoard& board) {
     std::vector<RmmaFactRead> reads;
     {
         const ScopedRmmaFactsSink sink(reads);
-        for (const QType qtype : kFormats) {
-            if (!has_subblock_scales(qtype)) continue;
+        for (const QType qtype : formats) {
             for (const Shape shape : kShapes) {
                 for (const Epilogue epilogue :
                      {Epilogue::Store, Epilogue::AddResidual, Epilogue::SwiGlu}) {
@@ -102,7 +101,11 @@ std::string selector_facts_digest(const FactsBoard& board) {
         throw std::runtime_error(std::string(board.name) +
                                  ": the price read no compiled kernel facts");
     }
-    return digest_of_reads(reads);
+    return rmma_fact_keys(reads);
+}
+
+std::string selector_facts_digest(const FactsBoard& board) {
+    return facts_digest(selector_facts_probe(board));
 }
 
 } // namespace ninferno::ops::detail::generic
@@ -111,22 +114,52 @@ namespace ninferno::tools {
 
 int selector_facts_main(int, char**) {
     namespace generic = ninferno::ops::detail::generic;
+    // The kernels are this build's (the SASS of NINFERNO_BUILD_ARCH): their boards are those of
+    // that compute capability, whatever GPU reads them.
+    constexpr int kMajor = NINFERNO_BUILD_ARCH / 10, kMinor = NINFERNO_BUILD_ARCH % 10;
+#ifdef NINFERNO_BUILD_ARCH_SPECIFIC
+    constexpr bool kExactMinor = true; // an "a"/"f" target runs on its own minor only
+#else
+    constexpr bool kExactMinor = false;
+#endif
     try {
-        const DeviceClass host = device_class();
-        int printed            = 0;
+        bool any_board = false;
         for (const auto& board : generic::kFactsBoards) {
-            if (!generic::board_prices_from_facts(board) || board.major != host.major ||
-                board.minor != host.minor) {
+            any_board = any_board || (generic::board_prices_from_facts(board) &&
+                                      board.major == kMajor && board.minor == kMinor);
+        }
+        if (!any_board) {
+            std::fprintf(stderr, "selector-facts: this build (sm_%d) prices no board from facts\n",
+                         NINFERNO_BUILD_ARCH);
+            return 2;
+        }
+        // The first GPU that runs this build's kernels.
+        int count = 0, chosen = -1;
+        if (cudaGetDeviceCount(&count) != cudaSuccess) count = 0;
+        for (int d = 0; d < count && chosen < 0; ++d) {
+            int major = 0, minor = 0;
+            if (cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, d) !=
+                    cudaSuccess ||
+                cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, d) !=
+                    cudaSuccess) {
+                continue;
+            }
+            if (major == kMajor && (kExactMinor ? minor == kMinor : minor >= kMinor)) chosen = d;
+        }
+        if (chosen < 0) {
+            std::fprintf(stderr, "selector-facts: no GPU runs this build's sm_%d kernels\n",
+                         NINFERNO_BUILD_ARCH);
+            return 2;
+        }
+        if (cudaSetDevice(chosen) != cudaSuccess) {
+            throw std::runtime_error("cannot select GPU " + std::to_string(chosen));
+        }
+        for (const auto& board : generic::kFactsBoards) {
+            if (!generic::board_prices_from_facts(board) || board.major != kMajor ||
+                board.minor != kMinor) {
                 continue;
             }
             std::printf("%s %s\n", board.name, generic::selector_facts_digest(board).c_str());
-            ++printed;
-        }
-        if (printed == 0) {
-            std::fprintf(stderr,
-                         "selector-facts: no facts-priced golden board for this GPU (sm_%d%d)\n",
-                         host.major, host.minor);
-            return 2;
         }
         return 0;
     } catch (const std::exception& error) {

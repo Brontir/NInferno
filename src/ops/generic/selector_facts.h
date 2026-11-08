@@ -9,9 +9,14 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <set>
 #include <string>
+#include <tuple>
+#include <vector>
 
 namespace ninferno::ops::detail::generic {
+
+struct RmmaFactRead; // generic_gemm.h: one read the price made (ScopedRmmaFactsSink)
 
 // Datasheet numbers as the CUDA device query reports them (boost SM clock, memory clock = data
 // rate / 2, bus width).
@@ -50,9 +55,21 @@ inline constexpr FactsBoard kFactsBoards[] = {
 // Whether the board's register-MMA price reads compiled kernel facts (rmma_terms_measured).
 [[nodiscard]] bool board_prices_from_facts(const FactsBoard& board);
 
-// The digest (12 hex digits) of the register-MMA kernels' registers, spill, threads and latency
-// form the price of `board` reads over the K-quant and codebook formats, shapes, epilogues and
-// widths of a fixed probe, on this device's build. Throws where the price reads none.
+// One fact the price read: (format, schedule, epilogue, registers, spill bytes, threads, latency
+// form).
+using RmmaFactKey = std::tuple<int, int, int, int, std::size_t, int, bool>;
+
+// The distinct facts of a ScopedRmmaFactsSink's record.
+[[nodiscard]] std::set<RmmaFactKey> rmma_fact_keys(const std::vector<RmmaFactRead>& reads);
+
+// The facts the register-MMA price of `board` reads over every format with sub-block scales
+// (has_subblock_scales), a fixed set of shapes, epilogues and widths, on this build's kernels.
+// The selector golden test checks that its dumps read no fact outside this set. Throws where the
+// price reads none.
+[[nodiscard]] std::set<RmmaFactKey> selector_facts_probe(const FactsBoard& board);
+
+// The digest (12 hex digits) of a set of facts, and of the probe's.
+[[nodiscard]] std::string facts_digest(const std::set<RmmaFactKey>& keys);
 [[nodiscard]] std::string selector_facts_digest(const FactsBoard& board);
 
 } // namespace ninferno::ops::detail::generic
@@ -60,8 +77,10 @@ inline constexpr FactsBoard kFactsBoards[] = {
 namespace ninferno::tools {
 
 // `ninferno-serve selector-facts`: one line "<board> <digest>" for each facts-priced golden board
-// of the current GPU's compute capability, from this build's own kernels. Exit 2 where there is
-// none (no GPU of a facts-priced generation).
+// of this build's compute capability (NINFERNO_BUILD_ARCH), from its own kernels, read on the
+// first GPU that runs them (the same major and an equal or higher minor; the same minor for an
+// architecture-specific build). Exit 2 where this build prices no board from facts or no GPU runs
+// its kernels (a release then reports the check as not run); 1 on any other error.
 int selector_facts_main(int argc, char** argv);
 
 } // namespace ninferno::tools

@@ -61,20 +61,25 @@ done
 # The facts of the kernels this tree compiled, from its own engine on a GPU of that generation
 # (`ninferno-serve selector-facts`, the probe the selector goldens are keyed by), against the
 # release entries of facts_index.txt: a flag, a source or a compiler build that changed the
-# kernels is caught here, not by the toolkit's name. No such GPU: the release stops, unless
-# NINFERNO_SKIP_FACTS_CHECK=1 (then say so in the release notes).
+# kernels is caught here, not by the toolkit's name. No GPU that runs them (exit 2): the release
+# stops, unless NINFERNO_SKIP_FACTS_CHECK=1 (then say so in the release notes); any other failure
+# stops it always.
 check_selector_facts() {
-  local arch=$1 bin=$2 set out board want got
-  if [ "$arch" = 86 ]; then set=base; else set=full; fi
-  if ! out=$("$bin" selector-facts); then
-    if [ "${NINFERNO_SKIP_FACTS_CHECK:-0}" = 1 ]; then
-      echo "package.sh: WARNING: the selector facts of sm_$arch were not checked (NINFERNO_SKIP_FACTS_CHECK=1)" >&2
-      return 0
-    fi
-    echo "package.sh: 'ninferno-serve selector-facts' failed for sm_$arch: it needs a GPU of that generation on this machine" >&2
+  local arch=$1 bin=$2 kind out status board boards want got
+  if [ "$arch" = 86 ]; then kind=base; else kind=full; fi
+  out=$("$bin" selector-facts) && status=0 || status=$?
+  if [ "$status" = 2 ] && [ "${NINFERNO_SKIP_FACTS_CHECK:-0}" = 1 ]; then
+    echo "package.sh: WARNING: the selector facts of sm_$arch were not checked (NINFERNO_SKIP_FACTS_CHECK=1)" >&2
+    return 0
+  fi
+  if [ "$status" = 2 ]; then
+    echo "package.sh: 'ninferno-serve selector-facts' found no GPU that runs the sm_$arch kernels on this machine" >&2
     exit 1
   fi
-  for board in $(awk -v s="$set" '$1 ~ "^" s "/" {print $1}' "$GOLDEN/facts_index.txt" | sort -u); do
+  [ "$status" = 0 ] || { echo "package.sh: 'ninferno-serve selector-facts' failed for sm_$arch (exit $status)" >&2; exit 1; }
+  boards=$(awk -v s="$kind" '$1 ~ "^" s "/" {print $1}' "$GOLDEN/facts_index.txt" | sort -u)
+  [ -n "$boards" ] || { echo "package.sh: facts_index.txt has no $kind/ entries to check sm_$arch against" >&2; exit 1; }
+  for board in $boards; do
     want=$(awk -v b="$board" -v v="$PINNED" '$1 == b && $4 == v {print $2}' "$GOLDEN/facts_index.txt")
     got=$(awk -v n="${board#*/}" '$1 == n {print $2}' <<< "$out")
     [ -n "$want" ] && [ "$want" = "$got" ] || {
