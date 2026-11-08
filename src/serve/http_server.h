@@ -3,6 +3,7 @@
 #include "serve/cache_hint.h"
 #include "serve/generation_service.h"
 #include "serve/operational_log.h"
+#include "serve/http_transport.h"
 #include "serve/openai_responses_store.h"
 #include "serve/request_log.h"
 #include "serve/serve_options.h"
