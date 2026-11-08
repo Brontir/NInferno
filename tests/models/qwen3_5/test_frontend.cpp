@@ -2091,7 +2091,7 @@ int test_none_drop_tools_keeps_the_contract() {
                       "drop-tools lost the output contract that cuts a written call");
     ninferno::chat::ToolCallOutputDecoder decoder(contract, 64);
     const std::string shown =
-        decoder.feed(R"(<tool_call>{"name": "inspect", "arguments": {}}</tool_call>)");
+        decoder.feed("<tool_call>\n<function=inspect>\n</function>\n</tool_call>");
     const auto end = decoder.finish();
     failures += check(shown.empty() && end.content.empty() && end.tool_calls.size() == 1,
                       "drop-tools returned a written call verbatim");
@@ -2136,8 +2136,9 @@ int test_steering_after_tool_result_keeps_the_prefix() {
     while (common < plain.size() && common < steered.size() && plain[common] == steered[common]) {
         ++common;
     }
-    // Only the tail after the tool result's content (its close and the generation prompt) differs.
-    return check(steered.size() > plain.size() && common + 16 >= plain.size(),
+    // Only the tail after the tool result's content (its close and the generation prompt, bytes of a
+    // toy vocabulary) differs.
+    return check(steered.size() > plain.size() && common + 70 >= plain.size(),
                  "the steering line after a tool result changed the rendered prompt before it");
 }
 
