@@ -1132,7 +1132,9 @@ std::vector<std::string> refresh_changed_drafters(const fs::path& target_artifac
             const auto name    = entry.value("name", std::string());
             const auto planned = std::find_if(plan->drafters.begin(), plan->drafters.end(),
                                               [&](const PlannedDrafter& p) { return p.decl.name == name; });
-            PlannedDrafter d   = planned != plan->drafters.end() ? *planned : PlannedDrafter();
+            // A bundle's drafter is its declaration's, never the registry's (whose stale-target
+            // refusal the bundle's plan bypassed): a fresh one, checked by its taps.
+            PlannedDrafter d = planned != plan->drafters.end() && !bundle ? *planned : PlannedDrafter();
             d.decl             = spec::parse_drafter(entry);
             d.checks.clear();
             if (planned == plan->drafters.end() || bundle ||
