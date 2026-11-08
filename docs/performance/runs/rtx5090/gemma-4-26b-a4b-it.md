@@ -4,16 +4,16 @@
 
 ## Best launch
 
-One stream, 464 tok/s:
+One stream, 604 tok/s:
 
 ```bash
-ninferno-serve unsloth/gemma-4-26B-A4B-it-GGUF --quant UD-Q4_K_XL --with-drafters --spec mtp --draft-tokens 6
+ninferno-serve unsloth/gemma-4-26B-A4B-it-GGUF --quant UD-Q4_K_XL --with-drafters --spec mtp --draft-tokens 5
 ```
 
-8 concurrent chats, 1,349 tok/s over all streams:
+8 concurrent chats, 1,530 tok/s over all streams:
 
 ```bash
-ninferno-serve unsloth/gemma-4-26B-A4B-it-GGUF --quant UD-Q4_K_XL --with-drafters --spec mtp --draft-tokens 6 --max-concurrency 8
+ninferno-serve unsloth/gemma-4-26B-A4B-it-GGUF --quant UD-Q4_K_XL --with-drafters --spec mtp --draft-tokens 5 --max-concurrency 8
 ```
 
 ## Every setting measured
@@ -22,12 +22,22 @@ Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *
 
 | Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
 |---|---|---|---|---:|---:|---:|---:|---:|---|
-| `unsloth/gemma-4-26B-A4B-it-GGUF` UD-Q4_K_XL | mtp ×6 | auto | fast | 15,102 | 431 | 464 | 1,034 | 1,349 | 2026-10-19 |
-| `unsloth/gemma-4-26B-A4B-it-GGUF` UD-Q4_K_XL | off | auto | fast | 15,028 | 301 | 332 | 681 | 904 | 2026-10-19 |
+| `unsloth/gemma-4-26B-A4B-it-GGUF` UD-Q4_K_XL | mtp ×5 | auto | fast | 16,860 | 562 | 604 | 1,163 | 1,530 | 2026-11-08 |
+| `unsloth/gemma-4-26B-A4B-it-GGUF` UD-Q4_K_XL | off | auto | fast | 16,877 | 325 | 346 | 798 | 1,072 | 2026-11-08 |
+
+## Against llama.cpp
+
+| Engine | Weights | Speculation | Measurement | tok/s | Measured |
+|---|---|---|---|---:|---|
+| llama.cpp b12198 | UD-Q4_K_XL | off | Prefill 24K | 13,532 | 2026-11-08 |
+| llama.cpp b12198 | UD-Q4_K_XL | off | Decode @24K | 205 | 2026-11-08 |
+| llama.cpp b12198 | UD-Q4_K_XL | off | C=1 | 232 | 2026-11-08 |
+| llama.cpp b12198 | UD-Q4_K_XL | off | C=4 | 547 | 2026-11-08 |
+| llama.cpp b12198 | UD-Q4_K_XL | off | C=8 | 604 | 2026-11-08 |
 
 ## Measurement
 
-- NVIDIA GeForce RTX 5090: driver 595.84, CUDA 13.2, power limit 575 W.
+- NVIDIA GeForce RTX 5090: driver 615.71.09, CUDA None, power limit 575 W.
 - NInferno 0.1.0.
 - How each number is taken: [methodology](../../methodology.md).
 
@@ -35,9 +45,9 @@ Server flags of the measured settings:
 
 ```
 --max-context 32768 --max-concurrency 1 
---max-context 32768 --max-concurrency 1 --spec none
---max-context 32768 --max-concurrency 4 
---max-context 32768 --max-concurrency 4 --spec none
---max-context 32768 --max-concurrency 8 
---max-context 32768 --max-concurrency 8 --spec none
+--max-context 32768 --max-concurrency 1 --spec none 
+--max-context 32768 --max-concurrency 4 --spec mtp --draft-tokens 5 
+--max-context 32768 --max-concurrency 4 --spec none 
+--max-context 32768 --max-concurrency 8 --spec mtp --draft-tokens 5 
+--max-context 32768 --max-concurrency 8 --spec none 
 ```

@@ -23,11 +23,22 @@ Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *
 | Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
 |---|---|---|---|---:|---:|---:|---:|---:|---|
 | `unsloth/gemma-4-26B-A4B-it-GGUF` UD-IQ3_XXS | mtp ×5 | auto | fast | 3,158 | 119 | 127 | 294 | – | 2026-10-19 |
-| `unsloth/gemma-4-26B-A4B-it-GGUF` UD-IQ3_XXS | off | auto | fast | 3,161 | 83.3 | 92.5 | 211 | 263 | 2026-10-19 |
+| `unsloth/gemma-4-26B-A4B-it-GGUF` UD-IQ3_XXS | off | auto | fast | 3,658 | 85.3 | 93.2 | 217 | 264 | 2026-11-08 |
+
+## Against llama.cpp
+
+| Engine | Weights | Speculation | Measurement | tok/s | Measured |
+|---|---|---|---|---:|---|
+| llama.cpp b12198 | UD-IQ3_XXS | off | Prefill 24K | 3,131 | 2026-11-08 |
+| llama.cpp b12198 | UD-IQ3_XXS | off | Decode @24K | 63.0 | 2026-11-08 |
+| llama.cpp b12198 | UD-IQ3_XXS | off | C=1 | 80.8 | 2026-11-08 |
+| llama.cpp b12198 | UD-IQ3_XXS | off | C=4 | 197 | 2026-11-08 |
+| llama.cpp b12198 | UD-IQ3_XXS | off | C=8 | 216 | 2026-11-08 |
 
 ## Measurement
 
 - NVIDIA GeForce RTX 4060 Ti: driver 570.211.01, CUDA 12.8, power limit 165 W.
+- NVIDIA GeForce RTX 4060 Ti: driver 615.71.09, CUDA None, power limit 165 W.
 - NInferno 0.1.0.
 - How each number is taken: [methodology](../../methodology.md).
 
@@ -35,8 +46,8 @@ Server flags of the measured settings:
 
 ```
 --max-context 32768 --max-concurrency 1 
---max-context 32768 --max-concurrency 1 --spec none
+--max-context 32768 --max-concurrency 1 --spec none 
 --max-context 32768 --max-concurrency 4 
---max-context 32768 --max-concurrency 4 --spec none
---max-context 32768 --max-concurrency 8 --spec none
+--max-context 32768 --max-concurrency 4 --spec none 
+--max-context 32768 --max-concurrency 8 --spec none 
 ```

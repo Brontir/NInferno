@@ -10,7 +10,7 @@ One stream, 104 tok/s:
 ninferno-serve unsloth/Qwen3.8-27B-GGUF --quant UD-IQ2_XXS --with-drafters --spec dflash2 --draft-tokens 7
 ```
 
-8 concurrent chats, 216 tok/s over all streams:
+8 concurrent chats, 241 tok/s over all streams:
 
 ```bash
 ninferno-serve unsloth/Qwen3.8-27B-GGUF --quant UD-IQ2_XXS --spec none --max-concurrency 8
@@ -23,7 +23,17 @@ Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *
 | Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
 |---|---|---|---|---:|---:|---:|---:|---:|---|
 | `unsloth/Qwen3.8-27B-GGUF` UD-IQ2_XXS | dflash2 ×7 | auto | fast | 1,688 | 112 | 104 | – | – | 2026-10-19 |
-| `unsloth/Qwen3.8-27B-GGUF` UD-IQ2_XXS | off | auto | fast | 1,709 | 51.6 | 55.8 | 179 | 216 | 2026-10-19 |
+| `unsloth/Qwen3.8-27B-GGUF` UD-IQ2_XXS | off | auto | fast | 1,713 | 52.5 | 59.2 | 187 | 241 | 2026-11-08 |
+
+## Against llama.cpp
+
+| Engine | Weights | Speculation | Measurement | tok/s | Measured |
+|---|---|---|---|---:|---|
+| llama.cpp b12198 | UD-IQ2_XXS | off | Prefill 24K | 1,456 | 2026-11-08 |
+| llama.cpp b12198 | UD-IQ2_XXS | off | Decode @24K | 44.7 | 2026-11-08 |
+| llama.cpp b12198 | UD-IQ2_XXS | off | C=1 | 51.1 | 2026-11-08 |
+| llama.cpp b12198 | UD-IQ2_XXS | off | C=4 | 122 | 2026-11-08 |
+| llama.cpp b12198 | UD-IQ2_XXS | off | C=8 | 116 | 2026-11-08 |
 
 ## Measurement
 
@@ -35,7 +45,7 @@ Server flags of the measured settings:
 
 ```
 --max-context 32768 --max-concurrency 1 
---max-context 32768 --max-concurrency 1 --spec none
---max-context 32768 --max-concurrency 4 --spec none
---max-context 32768 --max-concurrency 8 --spec none
+--max-context 32768 --max-concurrency 1 --spec none 
+--max-context 32768 --max-concurrency 4 --spec none 
+--max-context 32768 --max-concurrency 8 --spec none 
 ```

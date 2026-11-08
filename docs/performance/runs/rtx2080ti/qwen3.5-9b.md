@@ -4,13 +4,13 @@
 
 ## Best launch
 
-One stream, 91.7 tok/s:
+One stream, 165 tok/s:
 
 ```bash
-ninferno-serve unsloth/Qwen3.5-9B-GGUF --quant Q4_K_M --spec none
+ninferno-serve unsloth/Qwen3.5-9B-GGUF --quant Q4_K_M --with-drafters --spec dflash --draft-tokens 7
 ```
 
-8 concurrent chats, 334 tok/s over all streams:
+8 concurrent chats, 397 tok/s over all streams:
 
 ```bash
 ninferno-serve unsloth/Qwen3.5-9B-GGUF --quant Q4_K_M --spec none --max-concurrency 8
@@ -22,18 +22,37 @@ Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *
 
 | Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
 |---|---|---|---|---:|---:|---:|---:|---:|---|
-| `unsloth/Qwen3.5-9B-GGUF` Q4_K_M | off | auto | fast | 2,322 | 83.6 | 91.7 | 259 | 334 | 2026-10-19 |
+| `unsloth/Qwen3.5-9B-GGUF` Q4_K_M | dflash ×7 | auto | fast | 2,127 | 151 | 165 | 279 | 189 | 2026-11-08 |
+| `unsloth/Qwen3.5-9B-GGUF` Q4_K_M | off | auto | fast | 2,363 | 87.0 | 95.0 | 279 | 397 | 2026-11-08 |
+
+## Against llama.cpp
+
+| Engine | Weights | Speculation | Measurement | tok/s | Measured |
+|---|---|---|---|---:|---|
+| llama.cpp b12198 | Q4_K_M | mtp ×4 | Prefill 24K | 1,915 | 2026-11-08 |
+| llama.cpp b12198 | Q4_K_M | mtp ×4 | Decode @24K | 111 | 2026-11-08 |
+| llama.cpp b12198 | Q4_K_M | mtp ×4 | C=1 | 105 | 2026-11-08 |
+| llama.cpp b12198 | Q4_K_M | mtp ×4 | C=4 | 245 | 2026-11-08 |
+| llama.cpp b12198 | Q4_K_M | mtp ×4 | C=8 | 258 | 2026-11-08 |
+| llama.cpp b12198 | Q4_K_M | off | Prefill 24K | 2,134 | 2026-11-08 |
+| llama.cpp b12198 | Q4_K_M | off | Decode @24K | 73.6 | 2026-11-08 |
+| llama.cpp b12198 | Q4_K_M | off | C=1 | 80.7 | 2026-11-08 |
+| llama.cpp b12198 | Q4_K_M | off | C=4 | 196 | 2026-11-08 |
+| llama.cpp b12198 | Q4_K_M | off | C=8 | 199 | 2026-11-08 |
 
 ## Measurement
 
-- NVIDIA GeForce RTX 2080 Ti: driver 580.178.04, CUDA 13.0, power limit 240 W.
+- NVIDIA GeForce RTX 2080 Ti: driver 615.71.09, CUDA None, power limit 260 W.
 - NInferno 0.1.0.
 - How each number is taken: [methodology](../../methodology.md).
 
 Server flags of the measured settings:
 
 ```
---max-context 32768 --max-concurrency 1 --spec none
---max-context 32768 --max-concurrency 4 --spec none
---max-context 32768 --max-concurrency 8 --spec none
+--max-context 32768 --max-concurrency 1 
+--max-context 32768 --max-concurrency 1 --spec none 
+--max-context 32768 --max-concurrency 4 
+--max-context 32768 --max-concurrency 4 --spec none 
+--max-context 32768 --max-concurrency 8 --spec dflash --draft-tokens 7 
+--max-context 32768 --max-concurrency 8 --spec none 
 ```

@@ -4,13 +4,13 @@
 
 ## Best launch
 
-One stream, 588 tok/s:
+One stream, 680 tok/s:
 
 ```bash
 ninferno-serve unsloth/Qwen3.6-35B-A3B-GGUF --quant UD-Q4_K_M --with-drafters --spec dflash --draft-tokens 7
 ```
 
-8 concurrent chats, 1,526 tok/s over all streams:
+8 concurrent chats, 1,412 tok/s over all streams:
 
 ```bash
 ninferno-serve unsloth/Qwen3.6-35B-A3B-GGUF --quant UD-Q4_K_M --with-drafters --spec dflash --draft-tokens 7 --max-concurrency 8
@@ -22,12 +22,32 @@ Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *
 
 | Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
 |---|---|---|---|---:|---:|---:|---:|---:|---|
-| `unsloth/Qwen3.6-35B-A3B-GGUF` UD-Q4_K_M | dflash ×7 | auto | fast | 18,032 | 593 | 588 | 1,249 | 1,526 | 2026-10-19 |
-| `unsloth/Qwen3.6-35B-A3B-GGUF` UD-Q4_K_M | off | auto | fast | 18,496 | 344 | 378 | 955 | 1,215 | 2026-10-19 |
+| `unsloth/Qwen3.6-35B-A3B-GGUF` UD-Q4_K_M | dflash ×7 | auto | fast | 18,950 | 633 | 680 | 1,177 | 1,412 | 2026-11-08 |
+| `unsloth/Qwen3.6-35B-A3B-GGUF` UD-Q4_K_M | off | auto | fast | 19,395 | 381 | 410 | 1,053 | 1,361 | 2026-11-08 |
+
+## Against llama.cpp
+
+| Engine | Weights | Speculation | Measurement | tok/s | Measured |
+|---|---|---|---|---:|---|
+| llama.cpp b12198 | UD-Q4_K_M | mtp ×2 | Prefill 24K | 11,902 | 2026-11-08 |
+| llama.cpp b12198 | UD-Q4_K_M | mtp ×3 | Prefill 24K | 11,904 | 2026-11-08 |
+| llama.cpp b12198 | UD-Q4_K_M | mtp ×2 | Decode @24K | 387 | 2026-11-08 |
+| llama.cpp b12198 | UD-Q4_K_M | mtp ×3 | Decode @24K | 368 | 2026-11-08 |
+| llama.cpp b12198 | UD-Q4_K_M | mtp ×2 | C=1 | 388 | 2026-11-08 |
+| llama.cpp b12198 | UD-Q4_K_M | mtp ×3 | C=1 | 351 | 2026-11-08 |
+| llama.cpp b12198 | UD-Q4_K_M | mtp ×2 | C=4 | 591 | 2026-11-08 |
+| llama.cpp b12198 | UD-Q4_K_M | mtp ×3 | C=4 | 605 | 2026-11-08 |
+| llama.cpp b12198 | UD-Q4_K_M | mtp ×2 | C=8 | 687 | 2026-11-08 |
+| llama.cpp b12198 | UD-Q4_K_M | mtp ×3 | C=8 | 679 | 2026-11-08 |
+| llama.cpp b12198 | UD-Q4_K_M | off | Prefill 24K | 15,187 | 2026-11-08 |
+| llama.cpp b12198 | UD-Q4_K_M | off | Decode @24K | 246 | 2026-11-08 |
+| llama.cpp b12198 | UD-Q4_K_M | off | C=1 | 264 | 2026-11-08 |
+| llama.cpp b12198 | UD-Q4_K_M | off | C=4 | 548 | 2026-11-08 |
+| llama.cpp b12198 | UD-Q4_K_M | off | C=8 | 607 | 2026-11-08 |
 
 ## Measurement
 
-- NVIDIA GeForce RTX 5090: driver 595.84, CUDA 13.2, power limit 575 W.
+- NVIDIA GeForce RTX 5090: driver 615.71.09, CUDA None, power limit 575 W.
 - NInferno 0.1.0.
 - How each number is taken: [methodology](../../methodology.md).
 
@@ -35,9 +55,9 @@ Server flags of the measured settings:
 
 ```
 --max-context 32768 --max-concurrency 1 
---max-context 32768 --max-concurrency 1 --spec none
---max-context 32768 --max-concurrency 4 
---max-context 32768 --max-concurrency 4 --spec none
---max-context 32768 --max-concurrency 8 
---max-context 32768 --max-concurrency 8 --spec none
+--max-context 32768 --max-concurrency 1 --spec none 
+--max-context 32768 --max-concurrency 4 --spec dflash --draft-tokens 7 
+--max-context 32768 --max-concurrency 4 --spec none 
+--max-context 32768 --max-concurrency 8 --spec dflash --draft-tokens 7 
+--max-context 32768 --max-concurrency 8 --spec none 
 ```

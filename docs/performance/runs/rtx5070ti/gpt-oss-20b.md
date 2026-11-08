@@ -4,16 +4,16 @@
 
 ## Best launch
 
-One stream, 225 tok/s:
+One stream, 299 tok/s:
 
 ```bash
-ninferno-serve openai/gpt-oss-20b --with-drafters --spec dflash --draft-tokens 6
+ninferno-serve ggml-org/gpt-oss-20b-GGUF --with-drafters --spec dflash --draft-tokens 7
 ```
 
-8 concurrent chats, 568 tok/s over all streams:
+8 concurrent chats, 654 tok/s over all streams:
 
 ```bash
-ninferno-serve openai/gpt-oss-20b --spec none --max-concurrency 8
+ninferno-serve ggml-org/gpt-oss-20b-GGUF --spec none --max-concurrency 8
 ```
 
 ## Every setting measured
@@ -22,8 +22,20 @@ Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *
 
 | Weights | Speculation | KV | Activations | Prefill 24K | Decode @24K | C=1 | C=4 | C=8 | Measured |
 |---|---|---|---|---:|---:|---:|---:|---:|---|
-| `openai/gpt-oss-20b` | dflash ×6 | auto | fast | 9,054 | 172 | 225 | – | – | 2026-10-19 |
-| `openai/gpt-oss-20b` | off | auto | fast | 10,696 | 177 | 182 | 423 | 568 | 2026-10-19 |
+| `ggml-org/gpt-oss-20b-GGUF` | dflash ×7 | auto | fast | 11,179 | 232 | 299 | 521 | – | 2026-11-08 |
+| `ggml-org/gpt-oss-20b-GGUF` | off | auto | fast | 11,115 | 239 | 263 | 511 | 654 | 2026-11-08 |
+| `openai/gpt-oss-20b` | dflash ×7 | auto | fast | 10,548 | 174 | 250 | 496 | 565 | 2026-11-08 |
+| `openai/gpt-oss-20b` | off | auto | fast | 10,838 | 180 | 191 | 426 | 569 | 2026-11-08 |
+
+## Against llama.cpp
+
+| Engine | Weights | Speculation | Measurement | tok/s | Measured |
+|---|---|---|---|---:|---|
+| llama.cpp b12198 | gpt-oss-20b-GGUF | off | Prefill 24K | 9,927 | 2026-11-08 |
+| llama.cpp b12198 | gpt-oss-20b-GGUF | off | Decode @24K | 195 | 2026-11-08 |
+| llama.cpp b12198 | gpt-oss-20b-GGUF | off | C=1 | 224 | 2026-11-08 |
+| llama.cpp b12198 | gpt-oss-20b-GGUF | off | C=4 | 382 | 2026-11-08 |
+| llama.cpp b12198 | gpt-oss-20b-GGUF | off | C=8 | 379 | 2026-11-08 |
 
 ## Measurement
 
@@ -35,7 +47,10 @@ Server flags of the measured settings:
 
 ```
 --max-context 32768 --max-concurrency 1 
---max-context 32768 --max-concurrency 1 --spec none
---max-context 32768 --max-concurrency 4 --spec none
---max-context 32768 --max-concurrency 8 --spec none
+--max-context 32768 --max-concurrency 1 --spec none 
+--max-context 32768 --max-concurrency 4 
+--max-context 32768 --max-concurrency 4 --spec dflash --draft-tokens 7 
+--max-context 32768 --max-concurrency 8 
+--max-context 32768 --max-concurrency 8 --spec dflash --draft-tokens 7 
+--max-context 32768 --max-concurrency 8 --spec none 
 ```

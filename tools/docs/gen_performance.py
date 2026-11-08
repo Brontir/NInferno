@@ -467,10 +467,16 @@ def page_run(g, m, gpus, models, speed, refs, quality):
     ref = refs.get((g, m), [])
     if ref:
         lines += ["", "## Against llama.cpp", "",
-                  "| Engine | Weights | Concurrency | tok/s | Measured |", "|---|---|---:|---:|---|"]
-        for r in sorted(ref, key=lambda r: (r["recipe"], r.get("concurrency", 1))):
-            lines.append(f"| {r['engine']} {r.get('version', '')}".rstrip() + f" | {quant(r['recipe'])} | "
-                         f"{r.get('concurrency', 1)} | {fmt(r['value'])} | {day(r)} |")
+                  "| Engine | Weights | Speculation | Measurement | tok/s | Measured |", "|---|---|---|---|---:|---|"]
+        what = {"prefill": lambda r: f"Prefill {prompt_k(r)}K", "decode": lambda r: f"Decode @{prompt_k(r)}K",
+                "decode_aggregate": lambda r: f"C={r.get('concurrency', 1)}"}
+        order = {"prefill": 0, "decode": 1, "decode_aggregate": 2}
+        for r in sorted(ref, key=lambda r: (r["recipe"], r.get("spec") or "", order.get(r["metric"], 3),
+                                            r.get("concurrency", 1))):
+            spec = r.get("spec") or "none"
+            spec = "off" if spec == "none" else f"{spec} ×{r['draft_tokens']}" if r.get("draft_tokens") else spec
+            lines.append(f"| {r['engine']} {r.get('version', '')}".rstrip() + f" | {quant(r['recipe'])} | {spec} | "
+                         f"{what.get(r['metric'], lambda r: r['metric'])(r)} | {fmt(r['value'])} | {day(r)} |")
     q = quality.get((g, m), [])
     if q:
         lines += ["", "## Quality", ""]
