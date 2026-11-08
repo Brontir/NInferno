@@ -473,7 +473,9 @@ ninferno::PromptInput to_prompt_input(const GenerationRequest& request,
     if (tools_refused && semantics.drop_tools_under_none) {
         // vLLM's none: the model is not told about tools at all.
         tools.clear();
-    } else if (tools_refused && !request.continuation && !input.messages.empty()) {
+    } else if (tools_refused &&
+               request.continuation == ninferno::PromptContinuationMode::NewAssistantTurn &&
+               !input.messages.empty()) {
         // The declarations stay (the cached prefix), and the model is told once more, where it
         // answers, that they cannot be used: both templates that declare tools in the system
         // prompt otherwise lead the model to a call it is then refused.
