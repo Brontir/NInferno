@@ -21,6 +21,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cmath>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -178,7 +179,8 @@ void reused_lineage() {
     cv::ManifestState manifest;
     manifest.lineage = {"org/muse"};
     auto bare        = cv::plan_drafters(muse(), registry());
-    expect(bare.source == "none", "an artifact described without its lineage matches no entry");
+    expect(bare.matched_by != "lineage",
+           "an artifact described without its lineage is not matched through it");
     auto t = cv::reused_target(muse(), manifest);
     expect(t.lineage == manifest.lineage, "the manifest's base models are the target's lineage");
     auto plan = cv::plan_drafters(t, registry());
@@ -534,7 +536,13 @@ void retry_failed_drafter() {
            "a drafter file that cannot be read is not refreshed (an attach plans it again)");
     // A drafter file here written again since (its id is no longer the recorded one) takes its new
     // id, whatever the start asks of drafters: nothing is fetched, the other entries are kept.
-    const ninferno::test::artifact_fixture::Fixture drafter;
+    // The fixture's tokenizer.json is not a tokenizer: a vocabulary the fingerprint can read.
+    ninferno::test::artifact_fixture::Fixture drafter;
+    const std::string tokenizer = R"({"model": {"vocab": {"a": 0, "b": 1}}})";
+    for (std::size_t i = 0; i < tokenizer.size(); ++i) {
+        drafter.payload[i] = std::byte(tokenizer[i]);
+    }
+    drafter.root["objects"][0]["bytes"] = tokenizer.size();
     drafter.write();
     std::ofstream(drafter.entry.string() + ".conversion.json") << "{}";
     const auto id    = ninferno::spec::artifact_id_hex(drafter.entry);
