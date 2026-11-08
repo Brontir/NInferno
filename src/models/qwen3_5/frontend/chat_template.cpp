@@ -359,8 +359,8 @@ RenderedChat CompiledChatTemplate::render_once(const std::vector<ChatMessage>& m
             origin.reasoning_tag       = tag(pointer + "/reasoning_content");
             // The reasoning also reaches the template as `thinking`, the field the gpt-oss template
             // reads to keep a tool-call turn's analysis (the one place harmony keeps CoT in
-            // inference); recent transformers fills it the same way. Templates that read only
-            // reasoning_content never see it.
+            // inference). This alias is NInferno's adapter, not the template's input as the client
+            // sent it. Templates that read only reasoning_content never see it.
             value["thinking"]   = message.reasoning_content;
             origin.thinking_tag = tag(pointer + "/thinking");
         }
