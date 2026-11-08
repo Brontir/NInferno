@@ -290,20 +290,20 @@ std::string dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memor
 }
 
 // A board whose register-MMA price rests on the compiled kernels' registers and spill
-// (rmma_terms_measured, generic_cost.cpp) is priced with the HOST GPU's kernels: the SASS of
-// another compute capability keeps other counts. Its golden is therefore reproducible only on a
-// host of the board's own compute capability; elsewhere it is skipped (neither written nor
-// compared), and a set holds the file only for the capabilities its builds run on. The decisions
-// are the selector's and route_query's own: nothing in the product changes for the test.
+// (rmma_terms_measured, generic_cost.cpp) is priced with the BUILD's kernels (the SASS of
+// NINFERNO_BUILD_ARCH, which the host runs): another compute capability keeps other counts. Its
+// golden is therefore reproducible only on a build of the board's own compute capability; for any
+// other build it is skipped (neither written, compared nor run for clock invariance), and a set
+// holds the file only for the capabilities its builds are made for. The decisions are the
+// selector's and route_query's own: nothing in the product changes for the test.
 bool host_kernels_differ(const GoldenBoard& b) {
     if (!rmma_terms_measured(b.major, b.minor)) return false;
-    const DeviceClass& host = device_class();
-    return host.major != b.major || host.minor != b.minor;
+    return b.major != NINFERNO_BUILD_ARCH / 10 || b.minor != NINFERNO_BUILD_ARCH % 10;
 }
 
 int run_board(const GoldenBoard& b, bool update) {
     if (host_kernels_differ(b)) {
-        std::cout << b.name << ": skipped, its register-MMA price needs a host of sm_" << b.major
+        std::cout << b.name << ": skipped, its register-MMA price needs a build for sm_" << b.major
                   << b.minor << " kernels\n";
         return 0;
     }
@@ -359,7 +359,8 @@ int run_board(const GoldenBoard& b, bool update) {
 // clock more than half a grid step (2.2 %) below the row's is another board under the id (a
 // slower memory) and is read on purpose; the variants stay inside that step.
 int run_clock_invariance(const GoldenBoard& b) {
-    if (b.pci_device_id == 0) return 0; // unknown ids are priced from the driver's values
+    if (b.pci_device_id == 0 || host_kernels_differ(b))
+        return 0; // unknown ids are priced from the driver's values
     const auto body = [](const std::string& dump) { return dump.substr(dump.find('\n') + 1); };
     const std::string stock = body(dump_board(b));
     constexpr struct {

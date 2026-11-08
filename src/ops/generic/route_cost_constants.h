@@ -57,7 +57,8 @@ inline constexpr Scalar kRmmaHeavySaturatingWarps{
 // number backs it, so it is fitted, one value per generation on both of its cards together
 // (cost-model replica, mean geomean regret of the two cards over 12/16/24/32/48):
 //   sm_86  (GA10x):  RTX 3060 + RTX 3090 -> 32 (3060 1.068, 3090 1.098; master 1.165, 1.174)
-//   sm_120 (GB20x):  RTX 5090 + RTX 5070 Ti -> 24 (1.047, 1.041; master 1.135, 1.080)
+//   sm_120 (GB20x):  RTX 5090 + RTX 5070 Ti -> 24 (1.047, 1.041; master 1.135, 1.080); the 24 comes
+//                    from the replica and was not re-timed on the cards
 inline constexpr Scalar kL2BytesPerSmClockGa10x{
     {32.0}, Provenance::Fitted, "l2_bytes_per_sm_clock_ga10x"};
 inline constexpr Scalar kL2BytesPerSmClockGb20x{

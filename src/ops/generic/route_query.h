@@ -7,12 +7,14 @@
 // give (the route time model that builds on this query), not a classification here: the kernel a
 // route launches can depend on the call (Volta's HMMA verify, ggml MMQ's column tile).
 //
-// Nothing is read but `device`, the build and the route tables on disk: the query substitutes the
-// class for the call (ScopedDeviceClass), and the selector's per-device state keeps a substitute's
-// answers apart by its content (core/per_device.h, ops/route_table.cpp; routes timed on the device
-// by the dense tuner are not a foreign substitute's). A weight is described by its format and
-// shape alone, in the layout the converter stores it in (default_weight_layout); its bytes are
-// never read.
+// Nothing is read but `device`, the build and the route tables on disk, with one exception: at 17
+// tokens or more a gated register-MMA price (rmma_terms_measured) reads the registers and spill of
+// the HOST GPU's compiled kernels (rmma_resources), whatever board the query substitutes. The query
+// substitutes the class for the call (ScopedDeviceClass), and the selector's per-device state keeps
+// a substitute's answers apart by its content (core/per_device.h, ops/route_table.cpp; routes timed
+// on the device by the dense tuner are not a foreign substitute's). A weight is described by its
+// format and shape alone, in the layout the converter stores it in (default_weight_layout); its
+// bytes are never read.
 
 #include "core/device_class.h"
 #include "core/weight.h"

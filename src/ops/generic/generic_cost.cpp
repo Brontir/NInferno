@@ -140,12 +140,13 @@ namespace {
 // What the compiled register-MMA kernel of a schedule keeps per thread, from the build itself
 // (rmma_resources: the launch described for this call's rows and tokens, never run): its registers
 // decide how many CTAs one SM's register file holds, its local memory is the spill. It rests on
-// the build's kernels (each golden set is a build) and on the host device's: the answer is the
-// running GPU's, so the selector golden test prices a gated board only on a host of its own
-// compute capability. A process without a device, or a schedule the build does not hold for the
-// weight, has none and is priced by threads alone. Not cached here: the launch the call picks
-// (latency, wide, add-sums variant) follows its grid, tokens and profile, the described launch is a
-// kernel-attribute query, and the selector memoizes its answer per problem.
+// the build's kernels and on the host device's: the answer is the running GPU's. Nothing is cached
+// here, and the selector keeps no memo of its own (select_route runs on every launch, and at 17
+// tokens or more outside the prefill profile prices every schedule): what is cached is the kernel
+// attribute read, once per kernel instance and device (launch_rmma_kernel, bounded by the template
+// instances), so a priced call is a describe-mode dispatch, not a driver query per schedule. A
+// process without a device, or a schedule the build does not hold for the weight, has none and is
+// priced by threads alone.
 struct RmmaKept {
     int registers;
     double local_bytes;
