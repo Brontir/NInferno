@@ -263,10 +263,14 @@ bool attn_input_proj_fused_supported(QType parent_qtype, std::int32_t input_rows
         input_rows == kPairHidden && query_rows == kPairQRows && key_value_rows == kPairKvRows;
     switch (parent_qtype) {
     case QType::BF16:
-    case QType::FP8_E4M3FN_ROW_BF16: return pair_geometry;
-    case QType::NVFP4: return pair_geometry && detail::kNativeNvfp4;
-    case QType::Q8_G32_FP16: return input_rows == 2048 && query_rows == 4096 && key_value_rows == 512;
-    default: return false;
+    case QType::FP8_E4M3FN_ROW_BF16:
+        return pair_geometry;
+    case QType::NVFP4:
+        return pair_geometry && detail::kNativeNvfp4;
+    case QType::Q8_G32_FP16:
+        return input_rows == 2048 && query_rows == 4096 && key_value_rows == 512;
+    default:
+        return false;
     }
 }
 

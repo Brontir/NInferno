@@ -72,7 +72,7 @@ int run_bf16_moe_projection() {
     execution::mtp_projection(x, parameters, config, q, g, k, v, workspace, nullptr);
     cuda_synchronize();
 
-    int failures = 0;
+    int failures          = 0;
     const auto check_part = [&](const char* name, GuardedBf16Tensor& out, std::int32_t rows,
                                 std::int32_t first_row) {
         const auto actual = out.values();
@@ -86,17 +86,19 @@ int run_bf16_moe_projection() {
                 if (std::abs(got - expected) > 1e-2 * std::abs(expected) + 1e-2) { ++bad; }
             }
         }
-        if (bad != 0) { std::cerr << "FAIL: BF16 MoE MTP " << name << ": " << bad << " values
-"; }
-        failures += bad != 0;
-    };
-    // Parent row order: query, key, gate, value.
-    check_part("query", query, q_rows, 0);
-    check_part("key", key, kv_rows, q_rows);
-    check_part("gate", gate, q_rows, q_rows + kv_rows);
-    check_part("value", value, kv_rows, 2 * q_rows + kv_rows);
-    return failures;
-}
+        if (bad != 0) {
+            std::cerr << "FAIL: BF16 MoE MTP " << name << ": " << bad
+                      << " values
+                         "; }
+                failures += bad != 0;
+        };
+        // Parent row order: query, key, gate, value.
+        check_part("query", query, q_rows, 0);
+        check_part("key", key, kv_rows, q_rows);
+        check_part("gate", gate, q_rows, q_rows + kv_rows);
+        check_part("value", value, kv_rows, 2 * q_rows + kv_rows);
+        return failures;
+    }
 
 } // namespace
 
@@ -152,14 +154,15 @@ int main() {
     try {
         const auto bytes = execution::mtp_projection_workspace_bytes(
             packed(QType::BF16, 14336, 5120), AttentionConfig{28, 0, 256}, 1, 8);
-        check(bytes >= std::size_t(14336) * 8 * 2, "an unregistered split reserves the packed output");
+        check(bytes >= std::size_t(14336) * 8 * 2,
+              "an unregistered split reserves the packed output");
     } catch (const std::exception& e) {
         std::cerr << "FAIL: unregistered split refused: " << e.what() << '\n';
         ++failures;
     }
     if (cuda_unavailable()) {
         std::cout << "SKIP (device part): no usable CUDA device
-";
+                     ";
     } else {
         failures += run_bf16_moe_projection();
     }
