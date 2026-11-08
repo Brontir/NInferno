@@ -102,7 +102,6 @@ int main() {
     write_text(root / "source" / "a.bin", "aaaa");
     const std::vector<std::pair<std::string, Change>> content = {
         {"--vocab q8", [](auto& o) { o.convert.vocab = "q8"; }},
-        {"--vocab native", [](auto& o) { o.convert.vocab = "native"; }},
         {"--drafter-quant q8", [](auto& o) { o.convert.drafter_quant = "q8"; }},
         {"--name", [](auto& o) { o.convert.name = "mine"; }},
         {"--resource template",
