@@ -135,7 +135,7 @@ namespace {
 bool serves_at(const std::filesystem::path& artifact, int revision) {
     return revision >= kCacheRevision ||
            (revision >= 3 && !unquantized_drafter_attention(artifact) &&
-            !default_head_outdated(artifact, revision) && !drafter_rope_without_original(artifact));
+            !default_head_outdated(artifact, revision));
 }
 
 } // namespace

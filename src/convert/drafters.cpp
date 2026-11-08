@@ -1033,8 +1033,11 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
             const std::string refused_file = refused_id(target_artifact, d.decl.name);
             const bool refused = !refused_file.empty() && fs::exists(convert_options.out) &&
                                  refused_file == spec::artifact_id_hex(convert_options.out);
+            // A drafter converted before its YaRN rope recorded the original context length is
+            // converted again (DFlashConfig::full_window).
             if (!refused && fs::exists(convert_options.out) &&
-                fs::exists(convert_options.out.string() + ".conversion.json")) {
+                fs::exists(convert_options.out.string() + ".conversion.json") &&
+                !drafter_rope_without_original(convert_options.out)) {
                 d.status = "cached";
             } else {
                 if (refused) {

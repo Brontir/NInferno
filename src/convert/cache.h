@@ -39,15 +39,14 @@ namespace ninferno::convert {
 //    again.
 // 8: a head serving MTP and DFlash leads with MTP's own rows (proposal.drafter_rows), which MTP
 //    reads alone: Qwen artifacts whose head serves both without them are converted again.
-// 9: a DFlash drafter with a YaRN rope records the context length it was scaled from, which bounds
-//    the rows its full layers read: only artifacts with such a drafter are converted again.
-inline constexpr int kCacheRevision = 9;
+inline constexpr int kCacheRevision = 8;
 
 // Whether an artifact carries the defect revisions 4 and 5 fixed: its report binds a DFlash /
 // DFlash2 companion drafter's attention query unquantized (bf16, fp16, fp32).
 [[nodiscard]] bool unquantized_drafter_attention(const std::filesystem::path& artifact);
-// Whether an artifact carries the defect revision 9 fixed: a DFlash drafter with a YaRN rope that
-// does not record its original context length.
+// Whether a drafter artifact predates the original context length a YaRN rope records (#549): a
+// DFlash drafter whose YaRN rope lacks original_max_position_embeddings, which bounds the rows its
+// full layers read. A separately cached drafter has no revision stamp: it is converted again.
 [[nodiscard]] bool drafter_rope_without_original(const std::filesystem::path& artifact);
 // Whether an artifact at `revision` lacks the default proposal head revisions 6 to 8 give: its
 // report is a Qwen target's (qwen3_5_text, qwen3_5_moe_text) with MTP layers or a DFlash
