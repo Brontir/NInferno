@@ -25,10 +25,8 @@ bool fused(const MtpProjectionParameters& parameters) {
     case QType::BF16:
     case QType::NVFP4:
     case QType::FP8_E4M3FN_ROW_BF16:
-    case QType::Q8_G32_FP16:
-        return true;
-    default:
-        return false;
+    case QType::Q8_G32_FP16: return true;
+    default: return false;
     }
 }
 

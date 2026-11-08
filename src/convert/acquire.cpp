@@ -818,8 +818,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                     std::ifstream stream(spec::manifest_path(*kept));
                     if (stream) {
                         const OJson manifest = OJson::parse(stream);
-                        bundle_planned =
-                            manifest.value("matched_by", std::string()) == "declaration";
+                        bundle_planned = manifest.value("matched_by", std::string()) == "declaration";
                         for (const auto& d : manifest.value("drafters", OJson::array())) {
                             bundle_failed |=
                                 d.value("name", std::string()).find('.') == std::string::npos &&
