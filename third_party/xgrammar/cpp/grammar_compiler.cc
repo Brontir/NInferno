@@ -19,7 +19,7 @@
 #include <variant>
 #include <vector>
 
-#include "compile_cancel.h"  // NInferno local change (see README.ninferno.md)
+#include "compile_cancel.h" // NInferno local change (see README.ninferno.md)
 #include "compiled_grammar_impl.h"
 #include "earley_parser.h"
 #include "fsm.h"
@@ -1127,26 +1127,20 @@ CompiledGrammar GrammarCompilerSub::MultiThreadCompileGrammar(Grammar grammar_un
   // NInferno local change (see README.ninferno.md): a cancelled compile skips the remaining mask
   // computations and throws once the workers are idle. Worker tasks never throw.
   const ninferno_xgrammar::CompileCancelCheck cancel = ninferno_xgrammar::current_compile_cancel();
-  auto cancelled = [cancel]() { return cancel && cancel(); };
+  auto cancelled                                     = [cancel]() { return cancel && cancel(); };
 
   auto add_adaptive_token_mask = [&, cancelled](const ParserState& state, bool is_root_rule) {
-    if (cancelled()) {
-      return;
-    }
-    auto grammar_matcher = GrammarMatcherForTokenMaskCache(
-        compiled_grammar_impl->grammar,
-        state,
-        tag_dispatch_rule_id_to_second_slicing_bitset,
-        tokenizer_info_,
-        rule_level_cache_
-    );
-    auto cur_adaptive_token_mask_cache = grammar_matcher.GetAdaptiveTokenMask(is_root_rule);
-    if (max_threads_ > 1) {
-      std::lock_guard<std::mutex> lock(adaptive_token_mask_cache_mutex.value());
-      compiled_grammar_impl->adaptive_token_mask_cache[state] = cur_adaptive_token_mask_cache;
-    } else {
-      compiled_grammar_impl->adaptive_token_mask_cache[state] = cur_adaptive_token_mask_cache;
-    }
+      if (cancelled()) { return; }
+      auto grammar_matcher = GrammarMatcherForTokenMaskCache(
+          compiled_grammar_impl->grammar, state, tag_dispatch_rule_id_to_second_slicing_bitset,
+          tokenizer_info_, rule_level_cache_);
+      auto cur_adaptive_token_mask_cache = grammar_matcher.GetAdaptiveTokenMask(is_root_rule);
+      if (max_threads_ > 1) {
+          std::lock_guard<std::mutex> lock(adaptive_token_mask_cache_mutex.value());
+          compiled_grammar_impl->adaptive_token_mask_cache[state] = cur_adaptive_token_mask_cache;
+      } else {
+          compiled_grammar_impl->adaptive_token_mask_cache[state] = cur_adaptive_token_mask_cache;
+      }
   };
 
   auto add_task_adaptive_token_mask = [&](const ParserState& state, bool is_root_rule) {
@@ -1164,31 +1158,25 @@ CompiledGrammar GrammarCompilerSub::MultiThreadCompileGrammar(Grammar grammar_un
 
   for (int32_t rule_id = 0; rule_id < static_cast<int>(compiled_grammar_impl->grammar->NumRules());
        ++rule_id) {
-    if (cancelled()) {
-      break;
-    }
-    auto rule = compiled_grammar_impl->grammar->GetRule(rule_id);
-    const auto& rule_fsm = compiled_grammar_impl->grammar->per_rule_fsms[rule_id];
-    XGRAMMAR_DCHECK(rule_fsm.has_value());
-    auto cur_stack_element =
-        ParserState(rule_id, rule.body_expr_id, 0, ParserState::kNoPrevInputPos, 0);
-    std::unordered_set<int> reachable_states;
-    rule_fsm->GetFsm().GetReachableStates(&reachable_states);
-    for (int i : reachable_states) {
-      cur_stack_element.element_id = i;
-      if (!rule_fsm->GetFsm().IsScanableState(i)) {
-        continue;
+      if (cancelled()) { break; }
+      auto rule            = compiled_grammar_impl->grammar->GetRule(rule_id);
+      const auto& rule_fsm = compiled_grammar_impl->grammar->per_rule_fsms[rule_id];
+      XGRAMMAR_DCHECK(rule_fsm.has_value());
+      auto cur_stack_element =
+          ParserState(rule_id, rule.body_expr_id, 0, ParserState::kNoPrevInputPos, 0);
+      std::unordered_set<int> reachable_states;
+      rule_fsm->GetFsm().GetReachableStates(&reachable_states);
+      for (int i : reachable_states) {
+          cur_stack_element.element_id = i;
+          if (!rule_fsm->GetFsm().IsScanableState(i)) { continue; }
+          add_task_adaptive_token_mask(cur_stack_element, rule_id == root_rule_id);
       }
-      add_task_adaptive_token_mask(cur_stack_element, rule_id == root_rule_id);
-    }
   }
 
   if (max_threads_ > 1) {
     thread_pool->Join();
   }
-  if (cancelled()) {
-    throw ninferno_xgrammar::CompileCancelled();
-  }
+  if (cancelled()) { throw ninferno_xgrammar::CompileCancelled(); }
 
   return CompiledGrammar(compiled_grammar_impl);
 }
