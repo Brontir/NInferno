@@ -11,6 +11,12 @@ route_tune does not check results. A candidate is `ok` only with --qualified, wh
 build's route correctness tests (ninferno_linear_generic_test, ninferno_route_classes_test) passed
 on this board; the statement is copied into the document. Without it every candidate is
 `unmeasured` and the evaluator reports the cases incomplete.
+
+Each row names its run, board and timing protocol (#518): a pass's --selected-out and --routes-out
+must come from one run, every file from one board, and a case's passes from one protocol ("copies":
+consecutive calls over weight copies, a decode width under --rotate 1; "flushed": one call after
+the L2 flush), or the files are refused. CSVs written before these columns are accepted with the
+protocol "unknown", never assumed flushed.
 """
 import argparse
 import csv
@@ -61,6 +67,35 @@ def case_id(key):
 POLICY = {"a16": "A16Only", "a8": "AllowA8", "a4": "AllowA4"}
 
 
+def identity(path, rows, column):
+    """The one value a file's rows give `column` (its run or board), or None for a file written
+    before route_tune named it."""
+    values = {(row.get(column) or "").strip() for row in rows}
+    if values == {""} or not values:
+        return None
+    if len(values) != 1 or "" in values:
+        raise ValueError(f"{path}: rows from more than one {column} ({', '.join(sorted(values))})")
+    return values.pop()
+
+
+def protocol_of(row):
+    """How a row's time was taken: (protocol, calls per sample, samples), or unknown."""
+    protocol = (row.get("protocol") or "").strip()
+    if not protocol:
+        return ("unknown", None, None)
+    return (protocol, int(row["calls"]), int(row["samples"]))
+
+
+def describe(protocol):
+    kind, calls, samples = protocol
+    if kind == "copies":
+        return (f"{calls} consecutive calls over weight copies (2x L2 or 128 MiB) between one event "
+                f"pair, median of {samples} samples")
+    if kind == "flushed":
+        return f"one call after an L2 flush, median of {samples} samples"
+    return "timing protocol unknown (CSV without route_tune's protocol columns)"
+
+
 def read_selections(paths):
     selected = None
     for path in paths:
@@ -89,16 +124,35 @@ def collect(selected_csvs, pass_csvs, board, model, revision, build_id, holdout,
                          "one per pass")
     selected = read_selections(selected_csvs)
     passes = {}
-    for i, path in enumerate(pass_csvs, 1):
+    protocols = {}  # (problem, T) -> {protocol: the passes that timed it so}
+    boards = set()
+    for i, (sel_path, path) in enumerate(zip(selected_csvs, pass_csvs), 1):
+        rows = read_rows(path, KEY + ("route", "median_us"))
+        sel_rows = read_rows(sel_path, KEY + ("selected",))
+        run, sel_run = identity(path, rows, "run"), identity(sel_path, sel_rows, "run")
+        # A pass's selection and its sweep are one route_tune run; a file without the column
+        # (written before it) cannot be paired by it.
+        if run != sel_run:
+            raise ValueError(f"{sel_path} and {path} come from different runs "
+                             f"({sel_run or 'unnamed'}, {run or 'unnamed'})")
+        boards |= {b for b in (identity(path, rows, "device"),
+                               identity(sel_path, sel_rows, "device")) if b}
         timed = {}
-        for row in read_rows(path, KEY + ("route", "median_us")):
+        for row in rows:
             us = float(row["median_us"])
             at = (key_of(row), row["route"].strip())
             # route_tune times a (route, T) once per run: a repeat is two runs in one file.
             if at in timed:
                 raise ValueError(f"{path}: {case_id(at[0])} {at[1]} timed twice in one pass")
             timed[at] = us
+            protocols.setdefault(at[0], {}).setdefault(protocol_of(row), set()).add(f"p{i}")
         passes[f"p{i}"] = timed
+    if len(boards) > 1:
+        raise ValueError("passes from more than one board: " + ", ".join(sorted(boards)))
+    for key, seen in protocols.items():
+        if len(seen) > 1:
+            kinds = "; ".join(f"{describe(p)} in {', '.join(sorted(ps))}" for p, ps in seen.items())
+            raise ValueError(f"{case_id(key)} was timed with different protocols: {kinds}")
     cases = []
     for key in sorted(selected, key=lambda k: (k[:5], int(k[5]))):
         routes = sorted({r for timed in passes.values() for (k, r) in timed if k == key})
@@ -125,8 +179,8 @@ def collect(selected_csvs, pass_csvs, board, model, revision, build_id, holdout,
         cases.append({
             "id": case_id(key), "board": board, "model": model,
             "workload": f"route_tune {fmt} {compute} {epilogue} n={n} k={k} T={t}, policy "
-                        f"{POLICY.get(compute, compute)}, speed route profile, L2 flushed, median "
-                        "of the run's samples",
+                        f"{POLICY.get(compute, compute)}, speed route profile, " +
+                        describe(next(iter(protocols.get(key, {("unknown", None, None): 0})))),
             "numerical_contract": f"{compute} activations under {POLICY.get(compute, compute)}",
             "selected": selected[key], "candidates": candidates,
         })
@@ -139,6 +193,8 @@ def collect(selected_csvs, pass_csvs, board, model, revision, build_id, holdout,
     }
     if qualified:
         document["qualification"] = qualified
+    if boards:
+        document["device"] = boards.pop()  # route_tune's device class id, as every row named it
     return document
 
 

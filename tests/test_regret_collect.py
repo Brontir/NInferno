@@ -102,6 +102,56 @@ class Collect(unittest.TestCase):
         self.assertIn("A16Only", doc["cases"][0]["numerical_contract"])
         self.assertIn("speed route profile", doc["cases"][0]["workload"])
 
+    # #518: route_tune names each row's run, board and timing protocol.
+    NEW_HEAD = "format,compute,epilogue,n,k,T,route,median_us,run,device,protocol,calls,samples\n"
+    NEW_SELECTED_HEAD = "format,compute,epilogue,n,k,T,asked,selected,run,device\n"
+
+    def new_pass(self, i, run, rows, device="ga106:28sm"):
+        routes = "".join(f"q8,a16,store,64,64,{t},{r},{us},{run},{device},{p},{c},15\n"
+                         for t, r, us, p, c in rows)
+        sel = "".join(f"q8,a16,store,64,64,{t},rmma.a,rmma.a,{run},{device}\n"
+                      for t in sorted({row[0] for row in rows}))
+        return (self.write(f"nsel{i}.csv", self.NEW_SELECTED_HEAD + sel),
+                self.write(f"np{i}.csv", self.NEW_HEAD + routes))
+
+    def collect_new(self, pairs):
+        return collect.collect([s for s, _ in pairs], [r for _, r in pairs], "b", "m", "r", "i",
+                               "both", [], [], "q")
+
+    def test_protocol_is_reported_per_case(self):
+        rows = [(4, "rmma.a", 5, "copies", 64), (4, "rmma.b", 6, "copies", 64),
+                (24, "rmma.a", 50, "flushed", 1), (24, "rmma.b", 40, "flushed", 1)]
+        doc = self.collect_new([self.new_pass(1, "x-1", rows), self.new_pass(2, "x-2", rows)])
+        work = {c["id"]: c["workload"] for c in doc["cases"]}
+        self.assertIn("64 consecutive calls over weight copies", work["q8.a16.store.n64.k64.T4"])
+        self.assertIn("one call after an L2 flush", work["q8.a16.store.n64.k64.T24"])
+        self.assertEqual(doc["device"], "ga106:28sm")
+
+    def test_passes_with_different_protocols_refused(self):
+        rotated = [(4, "rmma.a", 5, "copies", 64)]
+        flushed = [(4, "rmma.a", 7, "flushed", 1)]
+        with self.assertRaisesRegex(ValueError, "different protocols"):
+            self.collect_new([self.new_pass(1, "x-1", rotated), self.new_pass(2, "x-2", flushed)])
+
+    def test_files_of_different_runs_refused(self):
+        rows = [(4, "rmma.a", 5, "copies", 64)]
+        sel, _ = self.new_pass(1, "x-1", rows)
+        _, routes = self.new_pass(2, "x-2", rows)
+        with self.assertRaisesRegex(ValueError, "different runs"):
+            self.collect_new([(sel, routes)])
+
+    def test_passes_of_different_boards_refused(self):
+        rows = [(4, "rmma.a", 5, "copies", 64)]
+        with self.assertRaisesRegex(ValueError, "more than one board"):
+            self.collect_new([self.new_pass(1, "x-1", rows),
+                              self.new_pass(2, "x-2", rows, device="ad106:34sm")])
+
+    def test_old_files_report_an_unknown_protocol(self):
+        rows = "q8,a16,store,64,64,4,rmma.a,5\n"
+        doc = self.run_collect([rows], "q8,a16,store,64,64,4,rmma.a,rmma.a\n")
+        self.assertIn("timing protocol unknown", doc["cases"][0]["workload"])
+        self.assertNotIn("L2 flushed", doc["cases"][0]["workload"])
+
     def test_short_row_exits_2(self):
         sel = self.write("sel.csv", SELECTED_HEAD + "q8,a16\n")
         routes = self.write("p1.csv", HEAD + "q8,a16,store,64,64,1,rmma.a,5\n")
