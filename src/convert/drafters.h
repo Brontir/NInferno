@@ -178,14 +178,20 @@ DrafterPlan attach_drafters(DrafterPlan plan, const std::filesystem::path& targe
 // listing a published drafter as failed (its own quantizations do not count).
 [[nodiscard]] bool drafters_incomplete(const std::filesystem::path& target_artifact);
 
+// Whether a manifest entry's drafter file passes the checks an attach runs on it.
+using DrafterCheck =
+    std::function<bool(const nlohmann::json& entry, const std::filesystem::path& drafter)>;
+
 // The manifest's drafters attached from a file here that was written again since (another
 // conversion of the same drafter at the same path: its id is no longer the recorded one) take the
-// file's new id, as attach_drafters takes a cached one, or are marked incompatible when its
-// vocabulary no longer matches the target's. Nothing is fetched or converted and the other entries
-// are kept as they are. Every start reuses an artifact through this, whatever it asks of drafters:
-// the choice reads the manifest, and a drafter dropped as changed would keep it plain for good.
-// Returns the names refreshed.
-std::vector<std::string> refresh_changed_drafters(const std::filesystem::path& target_artifact);
+// file's new id, as attach_drafters takes a cached one, once the file passes `check` (empty: the
+// checks an attach runs, check_drafter against the target and the drafter's declaration). A file
+// that does not pass is left as it is, and looked at again by the next start. Nothing is fetched or
+// converted and the other entries are kept as they are. Every start reuses an artifact through
+// this, whatever it asks of drafters: the choice reads the manifest, and a drafter dropped as
+// changed would keep it plain for good. Returns the names refreshed.
+std::vector<std::string> refresh_changed_drafters(const std::filesystem::path& target_artifact,
+                                                  const DrafterCheck& check = {});
 
 // A shortlist ranking by file name: tools/spec/rankings (and tools/freq_corpus/fixtures/ranking) of
 // `repository`, then the rankings installed beside this binary, then the tree it was built from.

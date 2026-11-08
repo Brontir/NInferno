@@ -1074,14 +1074,41 @@ bool changed_since_attach(const Json& d, bool gone) {
 
 } // namespace
 
-std::vector<std::string> refresh_changed_drafters(const fs::path& target_artifact) {
+std::vector<std::string> refresh_changed_drafters(const fs::path& target_artifact,
+                                                  const DrafterCheck& check) {
     std::vector<std::string> refreshed;
     const auto path = spec::manifest_path(target_artifact);
     if (!fs::exists(path)) { return refreshed; }
     try {
         auto manifest = Json::parse(read_file(path));
-        const auto target_fingerprint =
-            manifest.value("target", Json::object()).value("vocab_fingerprint", std::string());
+        // The checks an attach runs (check_drafter: architecture, kind, engine, vocabulary, the
+        // geometry it taps), against the target described once and the drafter's declaration as
+        // the target's plan names it; only when a drafter changed.
+        std::optional<DrafterPlan> plan;
+        const DrafterCheck attach_checks = [&](const Json& entry, const fs::path& drafter) {
+            if (!plan) {
+                const auto target = manifest.value("target", Json::object());
+                auto described    = describe_artifact(target_artifact, target.value("repo", ""));
+                if (described.lineage.empty() && target.contains("lineage")) {
+                    described.lineage = target.at("lineage").get<std::vector<std::string>>();
+                }
+                plan = plan_drafters(std::move(described));
+            }
+            const auto name    = entry.value("name", std::string());
+            const auto planned = std::find_if(plan->drafters.begin(), plan->drafters.end(),
+                                              [&](const PlannedDrafter& p) { return p.decl.name == name; });
+            if (planned == plan->drafters.end()) { return false; }
+            PlannedDrafter d = *planned;
+            d.checks.clear();
+            if (entry.value("status", std::string()) == "attached") {
+                d.taps_only   = true; // given, as attach_drafters takes it
+                d.unvalidated = false;
+            }
+            const auto fp = spec::artifact_vocab_fingerprint(drafter);
+            check_drafter(plan->target, artifact_config(drafter), fp ? fp->value : "", d);
+            return d.compatible;
+        };
+        const DrafterCheck& compatible = check ? check : attach_checks;
         for (auto& d : manifest.at("drafters")) {
             if (!changed_since_attach(d, false)) { continue; }
             // As attach_drafters takes a cached drafter: the file and its conversion report at
@@ -1090,22 +1117,15 @@ std::vector<std::string> refresh_changed_drafters(const fs::path& target_artifac
             const auto artifact = d.at("artifact").get<std::string>();
             const bool given    = d.value("status", std::string()) == "attached";
             if (!given && !fs::exists(artifact + ".conversion.json")) { continue; }
-            const auto name = d.value("name", std::string());
+            // A file the checks refuse, or cannot read, is left as it is: the start serves without
+            // it ("changed since attach") and the next one looks at the file again, so a later
+            // replacement that passes is taken.
             try {
-                if (const auto fp = spec::artifact_vocab_fingerprint(artifact);
-                    fp && !target_fingerprint.empty() && fp->value != target_fingerprint) {
-                    d["compatible"] = false;
-                    d["reason"]     = "the drafter's vocabulary " + fp->value +
-                                  " differs from the target's " + target_fingerprint;
-                    d["status"]     = "incompatible: " + d["reason"].get<std::string>();
-                } else {
-                    // Its status (converted, cached, attached) is kept: only the file changed.
-                    d["artifact_id"] = spec::artifact_id_hex(artifact);
-                }
-            } catch (const std::exception&) {
-                continue; // its vocabulary cannot be read: left to an attach, the others go on
-            }
-            refreshed.push_back(name);
+                if (!compatible(d, artifact)) { continue; }
+                // Its status (converted, cached, attached) is kept: only the file changed.
+                d["artifact_id"] = spec::artifact_id_hex(artifact);
+            } catch (const std::exception&) { continue; }
+            refreshed.push_back(d.value("name", std::string()));
         }
         if (!refreshed.empty()) { write_file_atomic(path, manifest.dump(1) + '\n'); }
     } catch (const std::exception&) {} // an unreadable manifest: drafters_incomplete() plans again
