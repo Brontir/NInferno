@@ -132,6 +132,15 @@ struct GenerationOutcome {
     GenerationMetrics metrics;
 };
 
+// The output was cut short rather than finished by the model or a stop declaration: an output
+// limit, the context capacity, or a repetition loop. A turn cut this way reports `length` /
+// `max_tokens` even when it carries complete tool calls (the unfinished one is dropped).
+[[nodiscard]] inline bool output_was_cut(const GenerationOutcome& outcome) noexcept {
+    return outcome.finish_reason == ninferno::FinishReason::OutputLimit ||
+           outcome.finish_reason == ninferno::FinishReason::ContextCapacity ||
+           outcome.finish_reason == ninferno::FinishReason::Repetition;
+}
+
 struct StreamSink {
     std::function<void(const ninferno::GenerationStart& start)> on_start;
     std::function<void(const ninferno::PromptProgress& progress)> on_progress;

@@ -49,7 +49,7 @@ struct StopPresentation {
 StopPresentation stop_presentation(const GenerationOutcome& outcome) {
     // Published calls end the turn with tool_use, unless the output was cut short: then the client
     // must see max_tokens (or the context window), as for a turn whose only call was cut.
-    if (!outcome.tool_calls.empty() && !ninferno::finish_reason_cuts_output(outcome.finish_reason)) {
+    if (!outcome.tool_calls.empty() && !output_was_cut(outcome)) {
         return StopPresentation{.reason = "tool_use"};
     }
     switch (outcome.finish_reason) {

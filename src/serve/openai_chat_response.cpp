@@ -186,7 +186,7 @@ const char* finish_reason(ninferno::FinishReason reason) {
 const char* chat_finish_reason(const GenerationOutcome& outcome) {
     // Published calls end the turn with tool_calls, unless the output was cut short: then the
     // client must see length, as for a turn whose only call was cut (the complete calls stay).
-    if (!outcome.tool_calls.empty() && !ninferno::finish_reason_cuts_output(outcome.finish_reason)) {
+    if (!outcome.tool_calls.empty() && !output_was_cut(outcome)) {
         return "tool_calls";
     }
     return finish_reason(outcome.finish_reason);
