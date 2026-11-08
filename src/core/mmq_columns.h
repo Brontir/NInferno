@@ -58,7 +58,7 @@ inline constexpr double kTileFixed      = 0.43;
     const bool work    = uses_work_table(major, minor);
     const double fixed = mmq_tile_fixed_of(major, minor);
     int best           = 0;
-    double least    = 1e300;
+    double least       = 1e300;
     for (const int j : tiles(major, minor)) {
         if (const double c = launch_cost(columns, j, work, fixed); c < least) {
             least = c;

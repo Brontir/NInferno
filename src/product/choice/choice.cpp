@@ -812,7 +812,9 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
             const double columns = width;
             const double tiles = std::ceil(n / kMmqTile) * std::ceil(t / columns);
             const double waves = std::ceil(tiles / sms);
-            const double k_step  = l.k * step * mmq_columns::step_share(width, mmq_tile_fixed_of(card.major, card.minor));
+            const double k_step =
+                l.k * step *
+                mmq_columns::step_share(width, mmq_tile_fixed_of(card.major, card.minor));
             if (100 * tiles >= 90 * sms * waves) {
                 clocks += grids * l.per_token * waves * (cost->c0 + k_step);
             } else { // stream-k: the SMs share the tiles' K steps; the fixup adds the split tiles

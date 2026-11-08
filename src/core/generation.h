@@ -156,6 +156,7 @@ struct FittedRouteScales {
 [[nodiscard]] constexpr bool mmq_work_tiles_measured(int major, int minor) noexcept {
     return generation_known(major, minor) && generation_row(major, minor).mmq_work_tiles;
 }
+
 // The fixed share of a column tile's K step on that generation (mmq_tile_fixed): the part that does
 // not scale with the tile's columns; DECISIONS 69's 0.43 where the row has none of its own.
 [[nodiscard]] constexpr double mmq_tile_fixed_of(int major, int minor) noexcept {

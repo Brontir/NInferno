@@ -118,8 +118,8 @@ template <ggml_type type>
 Launch select_launch(int rows, int columns, int k) {
     const DeviceFacts& device = device_facts();
     Launch best;
-    double best_cost      = 1e300;
-    const bool work_table = mmq_columns::uses_work_table(device.cc / 100, device.cc / 10 % 10);
+    double best_cost        = 1e300;
+    const bool work_table   = mmq_columns::uses_work_table(device.cc / 100, device.cc / 10 % 10);
     const double tile_fixed = mmq_tile_fixed_of(device.cc / 100, device.cc / 10 % 10);
     for (const int J : mmq_columns::tiles(device.cc / 100, device.cc / 10 % 10)) {
         const ggml_cuda_mmq_config config = ggml_cuda_mmq_get_config(type, J, false, device.cc);
