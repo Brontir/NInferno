@@ -2133,6 +2133,15 @@ int check_steered_prefix(const fi::CompiledChatTemplate& compiled, const std::st
         return check(false, (label + ": the tool result was not rendered").c_str());
     }
     const std::size_t content_end = end + kResult.size();
+    std::size_t diverge           = 0;
+    while (diverge < plain.size() && diverge < steered.size() && plain[diverge] == steered[diverge]) {
+        ++diverge;
+    }
+    if (diverge < content_end) {
+        std::fprintf(stderr, "%s diverges at %zu of %zu: plain [%s] steered [%s]\n", label.c_str(),
+                     diverge, content_end, plain.substr(diverge, 80).c_str(),
+                     steered.substr(diverge, 80).c_str());
+    }
     return check(
         steered.size() > plain.size() &&
             steered.compare(0, content_end, plain, 0, content_end) == 0 &&
