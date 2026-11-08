@@ -11,6 +11,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <mutex>
+#include <condition_variable>
+#include <atomic>
 #include <cstdint>
 #include <initializer_list>
 #include <iostream>
@@ -328,59 +331,100 @@ OutputConstraintSpec pattern_spec(const std::string& pattern) {
     return spec;
 }
 
-// A compile that times out keeps running while nobody needs its slot, and is cancelled once
-// another request does. The pattern unrolls to thousands of states, each with a mask pass over the
-// vocabulary, so finishing it takes seconds, far longer than the test waits.
-void cancel_contract() {
+// Holds a compile at its first checkpoint until the test lets it go, so a "slow" compile is slow by
+// construction and the tests depend on no wall-clock race.
+class Gate {
+public:
+    void wait() {
+        std::unique_lock lock(mutex_);
+        cv_.wait_for(lock, std::chrono::seconds(60), [&] { return open_; });
+    }
+    void release() {
+        {
+            std::lock_guard lock(mutex_);
+            open_ = true;
+        }
+        cv_.notify_all();
+    }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    bool open_ = false;
+};
+
+CompilerOptions gated_options(Gate& gate) {
     CompilerOptions options;
     options.max_concurrent  = 1;
     options.compile_threads = 2;
-    options.compile_timeout = std::chrono::milliseconds(300);
-    const ConstraintCompiler compiler(large_vocabulary(), options);
-    const OutputConstraintSpec slow = pattern_spec("^(([a-z]{1,30}){1,30}){1,10}$");
-    const std::string first         = expect_error(compiler, slow);
-    check(first == "constraint_compile_timeout", "slow compile times out: " + first);
+    options.compile_timeout = std::chrono::milliseconds(100);
+    options.checkpoint_hook = [&gate] { gate.wait(); };
+    return options;
+}
 
-    // An ordinary schema needs the only slot: the orphan is cancelled and gives it up. The steps
-    // before the mask loop cannot be cancelled, so a loaded machine may answer busy a few times.
+const char* const kSlowPattern = "^[a-z]{1,20}$";
+
+// A compile that times out keeps running while nobody needs its slot, and is cancelled once
+// another request does.
+void cancel_contract() {
+    Gate gate;
+    const ConstraintCompiler compiler(large_vocabulary(), gated_options(gate));
+    const std::string first = expect_error(compiler, pattern_spec(kSlowPattern));
+    check(first == "constraint_compile_timeout", "gated compile times out: " + first);
+
+    // An ordinary schema needs the only slot: the orphan is cancelled on its behalf. Its worker is
+    // held at the gate, so this request itself finds the slot still taken.
     OutputConstraintSpec simple;
     simple.kind = OutputConstraintKind::JsonObject;
-    bool freed  = false;
-    for (int attempt = 0; attempt < 40 && !freed; ++attempt) {
+    check(expect_error(compiler, simple) == "constraint_compiler_busy",
+          "the slot stays taken while the orphan is held");
+    gate.release();
+    bool freed = false;
+    for (int attempt = 0; attempt < 100 && !freed; ++attempt) {
         const std::string code = expect_error(compiler, simple);
         freed                  = code == "accepted";
         if (!freed && code != "constraint_compiler_busy") { check(false, "unexpected: " + code); }
     }
-    check(freed, "an orphaned compile released its slot to a waiting request");
+    check(freed, "the cancelled orphan released its slot to the waiting request");
 }
 
-// A compile that overruns the timeout by a little is not thrown away: it finishes in the
-// background and the client's retry finds it cached.
+// A compile that overruns the timeout is not thrown away: it finishes in the background and the
+// client's retry finds it.
 void orphan_result_contract() {
-    const std::string pattern = "^(([a-z]{1,8}){1,8}){1,3}$";
-    // How long the compile takes on this machine, with a timeout it cannot hit.
-    CompilerOptions measure;
-    measure.compile_threads = 2;
-    measure.compile_timeout = std::chrono::seconds(120);
-    const auto begin        = std::chrono::steady_clock::now();
-    (void)ConstraintCompiler(large_vocabulary(), measure).compile(pattern_spec(pattern));
-    const auto took = std::chrono::steady_clock::now() - begin;
-
-    // A timeout of a third of that: the first request gives up, the orphan (allowed four more
-    // timeouts) finishes, and a retry returns it without compiling again.
-    CompilerOptions options = measure;
-    options.compile_timeout =
-        std::max(std::chrono::milliseconds(1),
-                 std::chrono::duration_cast<std::chrono::milliseconds>(took / 3));
-    const ConstraintCompiler compiler(large_vocabulary(), options);
-    const std::string first = expect_error(compiler, pattern_spec(pattern));
-    check(first == "constraint_compile_timeout" || first == "accepted",
-          "overrunning compile: " + first);
-    std::string last = first;
-    for (int attempt = 0; attempt < 50 && last != "accepted"; ++attempt) {
-        last = expect_error(compiler, pattern_spec(pattern));
+    Gate gate;
+    const ConstraintCompiler compiler(large_vocabulary(), gated_options(gate));
+    const OutputConstraintSpec spec = pattern_spec(kSlowPattern);
+    check(expect_error(compiler, spec) == "constraint_compile_timeout", "gated compile times out");
+    gate.release();
+    std::string last = "constraint_compile_timeout";
+    for (int attempt = 0; attempt < 100 && last != "accepted"; ++attempt) {
+        last = expect_error(compiler, spec);
     }
     check(last == "accepted", "the retry of an overrunning compile succeeds");
+}
+
+// A compile that ran past its total run-time cap is cancelled however often it is asked for, caches
+// nothing, and the next request compiles the constraint whole.
+void runtime_cap_contract() {
+    Gate gate;
+    std::atomic<std::int64_t> clock{1};
+    CompilerOptions options = gated_options(gate);
+    options.clock_ns        = [&clock] { return clock.load(); };
+    const ConstraintCompiler compiler(large_vocabulary(), options);
+    const OutputConstraintSpec spec = pattern_spec(kSlowPattern);
+    check(expect_error(compiler, spec) == "constraint_compile_timeout", "gated compile times out");
+    // Time passes beyond the cap (five timeouts) while the worker is held; it then stops without
+    // finishing the masks.
+    clock += 60LL * 1000 * 1000 * 1000;
+    gate.release();
+    std::string last = "constraint_compile_timeout";
+    for (int attempt = 0; attempt < 100 && last != "accepted"; ++attempt) {
+        last = expect_error(compiler, spec);
+    }
+    check(last == "accepted", "a request after the cap compiles afresh");
+    // The cached constraint is complete: a matching text walks through it.
+    RequestConstraint request(compiler.compile(spec), false);
+    walk_text(request, "\"abc\"", "constraint compiled after a capped one");
 }
 
 void json_walk_contract(const ConstraintCompiler& compiler) {
@@ -1395,6 +1439,7 @@ int main() {
     busy_contract();
     cancel_contract();
     orphan_result_contract();
+    runtime_cap_contract();
     json_walk_contract(compiler);
     other_kinds_contract(compiler);
     structural_tag_whitespace_contract(compiler);

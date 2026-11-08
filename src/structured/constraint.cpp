@@ -351,7 +351,8 @@ struct ConstraintCompiler::Impl : std::enable_shared_from_this<ConstraintCompile
     std::condition_variable slot_cv;
     std::uint32_t active = 0;
 
-    static std::int64_t steady_ns() {
+    [[nodiscard]] std::int64_t now_ns() const {
+        if (options.clock_ns) { return options.clock_ns(); }
         return std::chrono::duration_cast<std::chrono::nanoseconds>(
                    std::chrono::steady_clock::now().time_since_epoch())
             .count();
@@ -365,18 +366,14 @@ struct ConstraintCompiler::Impl : std::enable_shared_from_this<ConstraintCompile
     // compile, and its worker stops at the next checkpoint, freeing its slot and its threads.
     struct Inflight {
         std::shared_future<std::shared_ptr<const CompiledConstraint>> result;
+        // The stop decision, once made (by a request that needs the slot, or by the run-time cap)
+        // it never reverts: a compile that skipped a mask must not be finished or cached.
         std::atomic<bool> cancel{false};
         std::uint32_t waiters = 0; // guarded by inflight_mutex
-        // Steady-clock nanoseconds when the last waiter left, 0 while someone waits; and the
-        // orphan time after which the compile is cancelled.
+        // Clock nanoseconds when the last waiter left, 0 while someone waits.
         std::atomic<std::int64_t> orphaned_ns{0};
-        std::int64_t orphan_limit_ns = 0;
-
-        [[nodiscard]] bool should_stop() const {
-            if (cancel.load(std::memory_order_relaxed)) { return true; }
-            const std::int64_t since = orphaned_ns.load(std::memory_order_relaxed);
-            return since != 0 && steady_ns() - since > orphan_limit_ns;
-        }
+        std::int64_t started_ns    = 0;
+        std::int64_t run_limit_ns  = 0;
     };
 
     using InflightTable = std::unordered_map<std::string, std::shared_ptr<Inflight>>;
@@ -415,6 +412,24 @@ struct ConstraintCompiler::Impl : std::enable_shared_from_this<ConstraintCompile
         }
     }
 
+    // The compile's checkpoint question, asked from its worker threads: stop now? The run-time cap
+    // latches into `cancel` and takes the entry out of the table, like a cancel by a request.
+    bool stop_requested(const std::string& key, const std::shared_ptr<Inflight>& job) {
+        if (options.checkpoint_hook) { options.checkpoint_hook(); }
+        if (job->cancel.load(std::memory_order_relaxed)) { return true; }
+        if (now_ns() - job->started_ns <= job->run_limit_ns) { return false; }
+        if (!job->cancel.exchange(true, std::memory_order_relaxed)) {
+            finish_inflight(key, job.get());
+        }
+        return true;
+    }
+
+    // Whether a table entry may still be joined: not cancelled and within its run-time cap.
+    [[nodiscard]] bool joinable(const Inflight& job) const {
+        return !job.cancel.load(std::memory_order_relaxed) &&
+               now_ns() - job.started_ns <= job.run_limit_ns;
+    }
+
     // A waiting request stops waiting for a compile that has not finished.
     void leave_inflight(const std::string& key, const std::shared_ptr<Inflight>& job) {
         std::lock_guard lock(inflight_mutex);
@@ -424,7 +439,7 @@ struct ConstraintCompiler::Impl : std::enable_shared_from_this<ConstraintCompile
         if (slot_waiters.load(std::memory_order_relaxed) != 0) {
             cancel_locked(it);
         } else {
-            job->orphaned_ns.store(steady_ns(), std::memory_order_relaxed);
+            job->orphaned_ns.store(now_ns(), std::memory_order_relaxed);
         }
     }
 
@@ -645,96 +660,118 @@ ConstraintCompiler::compile(const OutputConstraintSpec& spec) const {
     if (auto hit = impl_->cached(key)) { return hit; }
 
     const auto deadline = std::chrono::steady_clock::now() + options.compile_timeout;
-    const auto wait_for = [&](const std::shared_ptr<Impl::Inflight>& job) {
-        if (job->result.wait_until(deadline) != std::future_status::ready) {
+    const auto timed_out = [&] {
+        return OutputConstraintError("constraint_compile_timeout",
+                                     "grammar compilation did not finish within " +
+                                         std::to_string(options.compile_timeout.count()) + " ms");
+    };
+    const auto wait_for = [&](const std::string& key, const std::shared_ptr<Impl::Inflight>& job) {
+        if (job->result.wait_until(deadline) != std::future_status::ready &&
+            job->result.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
             impl_->leave_inflight(key, job);
-            throw OutputConstraintError(
-                "constraint_compile_timeout",
-                "grammar compilation did not finish within " +
-                    std::to_string(options.compile_timeout.count()) + " ms");
+            throw timed_out();
         }
         return job->result.get();
     };
 
-    auto promise = std::make_shared<std::promise<std::shared_ptr<const CompiledConstraint>>>();
-    std::shared_ptr<Impl::Inflight> running;
-    const auto job = std::make_shared<Impl::Inflight>();
-    {
-        std::lock_guard lock(impl_->inflight_mutex);
-        if (const auto it = impl_->inflight.find(key); it != impl_->inflight.end()) {
-            running = it->second;
-            ++running->waiters;
-            running->orphaned_ns.store(0, std::memory_order_relaxed);
-        } else {
-            job->result          = promise->get_future().share();
-            job->waiters         = 1;
-            job->orphan_limit_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                       options.compile_timeout * options.orphan_timeout_multiple)
-                                       .count();
-            impl_->inflight.emplace(key, job);
-        }
-    }
-    if (running) { return wait_for(running); }
-    // This call compiles the key; every way out before the thread owns it answers the waiters.
-    const auto abandon = [&](std::exception_ptr error) {
-        try {
-            promise->set_exception(error);
-        } catch (...) {}
-        impl_->finish_inflight(key, job.get());
-    };
-    {
-        std::unique_lock lock(impl_->slot_mutex);
-        // All slots taken: an orphaned compile (nobody waits for it) gives its slot up.
-        const bool full = impl_->active >= options.max_concurrent;
-        if (full) {
-            impl_->slot_waiters.fetch_add(1, std::memory_order_relaxed);
-            lock.unlock();
-            impl_->cancel_oldest_orphan();
-            lock.lock();
-        }
-        const bool got = impl_->slot_cv.wait_until(
-            lock, deadline, [&] { return impl_->active < options.max_concurrent; });
-        if (full) { impl_->slot_waiters.fetch_sub(1, std::memory_order_relaxed); }
-        if (!got) {
-            const OutputConstraintError busy("constraint_compiler_busy",
-                                             "no grammar compiler slot became free in time");
-            lock.unlock();
-            abandon(std::make_exception_ptr(busy));
-            throw busy;
-        }
-        ++impl_->active;
-    }
-
-    try {
-        std::thread([impl = impl_, spec, key, promise, job]() mutable {
-            try {
-                const ninferno_xgrammar::CompileCancelScope cancel_scope(
-                    [job] { return job->should_stop(); });
-                auto built = impl->build_and_compile(spec);
-                impl->insert(key, built);
-                promise->set_value(std::move(built));
-            } catch (...) {
-                try {
-                    promise->set_exception(std::current_exception());
-                } catch (...) {}
-            }
-            impl->finish_inflight(key, job.get());
-            {
-                std::lock_guard lock(impl->slot_mutex);
-                --impl->active;
-            }
-            impl->slot_cv.notify_one();
-        }).detach();
-    } catch (...) {
+    // One try: join the compile of the key or start it. A compile that was cancelled under the
+    // request (it ran into the run-time cap) throws CompileCancelled, and the request tries again
+    // with whatever time it has left.
+    const auto attempt = [&]() -> std::shared_ptr<const CompiledConstraint> {
+        auto promise = std::make_shared<std::promise<std::shared_ptr<const CompiledConstraint>>>();
+        std::shared_ptr<Impl::Inflight> running;
+        const auto job = std::make_shared<Impl::Inflight>();
         {
-            std::lock_guard lock(impl_->slot_mutex);
-            --impl_->active;
+            std::lock_guard lock(impl_->inflight_mutex);
+            auto it = impl_->inflight.find(key);
+            if (it != impl_->inflight.end() && !impl_->joinable(*it->second)) {
+                it->second->cancel.store(true, std::memory_order_relaxed);
+                impl_->inflight.erase(it);
+                it = impl_->inflight.end();
+            }
+            if (it != impl_->inflight.end()) {
+                running = it->second;
+                ++running->waiters;
+                running->orphaned_ns.store(0, std::memory_order_relaxed);
+            } else {
+                job->result       = promise->get_future().share();
+                job->waiters      = 1;
+                job->started_ns   = impl_->now_ns();
+                job->run_limit_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                        options.compile_timeout * options.compile_runtime_multiple)
+                                        .count();
+                impl_->inflight.emplace(key, job);
+            }
         }
-        impl_->slot_cv.notify_one();
-        abandon(std::current_exception());
-        throw;
+        if (running) { return wait_for(key, running); }
+        // This call compiles the key; every way out before the thread owns it answers the waiters.
+        const auto abandon = [&](std::exception_ptr error) {
+            try {
+                promise->set_exception(error);
+            } catch (...) {}
+            impl_->finish_inflight(key, job.get());
+        };
+        {
+            std::unique_lock lock(impl_->slot_mutex);
+            // All slots taken: an orphaned compile (nobody waits for it) gives its slot up.
+            const bool full = impl_->active >= options.max_concurrent;
+            if (full) {
+                impl_->slot_waiters.fetch_add(1, std::memory_order_relaxed);
+                lock.unlock();
+                impl_->cancel_oldest_orphan();
+                lock.lock();
+            }
+            const bool got = impl_->slot_cv.wait_until(
+                lock, deadline, [&] { return impl_->active < options.max_concurrent; });
+            if (full) { impl_->slot_waiters.fetch_sub(1, std::memory_order_relaxed); }
+            if (!got) {
+                const OutputConstraintError busy("constraint_compiler_busy",
+                                                 "no grammar compiler slot became free in time");
+                lock.unlock();
+                abandon(std::make_exception_ptr(busy));
+                throw busy;
+            }
+            ++impl_->active;
+        }
+
+        try {
+            std::thread([impl = impl_, spec, key, promise, job]() mutable {
+                try {
+                    const ninferno_xgrammar::CompileCancelScope cancel_scope(
+                        [impl, key, job] { return impl->stop_requested(key, job); });
+                    auto built = impl->build_and_compile(spec);
+                    impl->insert(key, built);
+                    promise->set_value(std::move(built));
+                } catch (...) {
+                    try {
+                        promise->set_exception(std::current_exception());
+                    } catch (...) {}
+                }
+                impl->finish_inflight(key, job.get());
+                {
+                    std::lock_guard lock(impl->slot_mutex);
+                    --impl->active;
+                }
+                impl->slot_cv.notify_one();
+            }).detach();
+        } catch (...) {
+            {
+                std::lock_guard lock(impl_->slot_mutex);
+                --impl_->active;
+            }
+            impl_->slot_cv.notify_one();
+            abandon(std::current_exception());
+            throw;
+        }
+        return wait_for(key, job);
+    };
+    for (;;) {
+        try {
+            return attempt();
+        } catch (const ninferno_xgrammar::CompileCancelled&) {
+            if (std::chrono::steady_clock::now() >= deadline) { throw timed_out(); }
+        }
     }
-    return wait_for(job);
 }
 
 struct ConstraintMatcher::State {

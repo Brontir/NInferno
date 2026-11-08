@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string_view>
 
@@ -17,18 +18,24 @@ struct CompilerOptions {
     std::size_t max_choices          = 4096;
     // A compile that does not finish in time returns "constraint_compile_timeout". It then keeps
     // running with nobody waiting (an orphan) and caches its result, so a client's retry finds it.
-    // An orphan is cancelled, oldest first, as soon as another request needs a compile slot, and
-    // in any case once it has run orphan_timeout_multiple * compile_timeout without a taker; its
-    // worker then stops at the next token-mask checkpoint and frees its slot and threads. A
-    // request for the same constraint that arrives meanwhile waits on it again. Only the
-    // token-mask phase can be cancelled: grammar and automaton building before it runs to its end.
-    // At most max_concurrent compiles run at once; a request that cannot start one within the
-    // timeout gets "constraint_compiler_busy".
+    // An orphan is cancelled, oldest first, as soon as another request needs a compile slot. Any
+    // compile, waited for or not, is cancelled once it has run compile_runtime_multiple *
+    // compile_timeout in total, however often it is asked for again. A cancelled compile stops at
+    // its next token-mask checkpoint, frees its slot and threads, and caches nothing; a request
+    // that was waiting on it compiles afresh within its own timeout. Only the token-mask phase can
+    // be cancelled: grammar and automaton building before it runs to its end. At most
+    // max_concurrent compiles run at once; a request that cannot start one within the timeout gets
+    // "constraint_compiler_busy".
     std::chrono::milliseconds compile_timeout{10000};
-    // A compile that finishes within (1 + this) * compile_timeout still serves the retry of the
-    // request that gave up on it; a longer one would time out on every retry anyway, and its
-    // threads are better spent elsewhere.
-    std::uint32_t orphan_timeout_multiple = 4;
+    // Total run time of one compile, in timeouts. A policy constant, not a derived one: it caps the
+    // CPU a single pathological constraint can burn at five timeouts, and a client that retries
+    // once per timeout still sees a compile that needs up to five of them finish and be cached
+    // (the first request waits one, each of the four retries one more).
+    std::uint32_t compile_runtime_multiple = 5;
+    // Test hooks. checkpoint_hook runs on a compile worker thread before every cancel decision
+    // (it may block); clock_ns replaces the steady clock (nanoseconds) for the run-time cap.
+    std::function<void()> checkpoint_hook;
+    std::function<std::int64_t()> clock_ns;
     std::uint32_t max_concurrent = 4;
     // Compiled constraints are cached by their exact spec up to this many bytes.
     std::size_t cache_bytes = 512ULL << 20U;
