@@ -335,8 +335,11 @@ void cancel_contract() {
     slow.definition = "^(([a-z]{1,100}){1,100}){1,100}$";
     const auto t0 = std::chrono::steady_clock::now();
     const std::string first = expect_error(compiler, slow);
-    std::fprintf(stderr, "first %s %lld ms
-", first.c_str(), (long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-t0).count());
+    std::cerr << "first " << first << " "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(
+                     std::chrono::steady_clock::now() - t0)
+                     .count()
+              << " ms" << std::endl;
     check(first == "constraint_compile_timeout", "slow compile times out: " + first);
 
     // The same request again starts a new compile (the abandoned one left the table) and times out
