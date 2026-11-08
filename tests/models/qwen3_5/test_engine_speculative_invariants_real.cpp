@@ -629,7 +629,7 @@ ninferno::EngineOptions scorer_options(const char* artifact) {
 // test ends without its cases. A view of one position under the activation mode set.
 int probe_scores(const char* artifact, const char* ids,
                  const std::vector<ninferno::TokenId>& reference) {
-    const char* at_text = std::getenv("NINFERNO_TEST_PROBE_AT");
+    const char* at_text  = std::getenv("NINFERNO_TEST_PROBE_AT");
     const std::size_t at = at_text != nullptr && *at_text != '\0' ? std::stoul(at_text) : 1;
     ninferno::Engine scorer(scorer_options(artifact));
     std::vector<ninferno::TokenId> prefix = kPrompt;
@@ -638,7 +638,8 @@ int probe_scores(const char* artifact, const char* ids,
     std::string list = ids;
     for (std::size_t from = 0; from < list.size();) {
         const std::size_t comma = list.find(',', from);
-        const auto token        = static_cast<ninferno::TokenId>(std::stoul(list.substr(from, comma - from)));
+        const auto token =
+            static_cast<ninferno::TokenId>(std::stoul(list.substr(from, comma - from)));
         std::vector<ninferno::TokenId> sequence = prefix;
         sequence.push_back(token);
         std::cout << "probe at " << at << " token " << token << ": "
@@ -705,7 +706,8 @@ int main() {
         plain_96 =
             plain.generate(plain.prepare_tokens(kPrompt), greedy_options(96)).generated_token_ids;
     }
-    if (const char* ids = std::getenv("NINFERNO_TEST_PROBE_TOKENS"); ids != nullptr && *ids != '\0') {
+    if (const char* ids = std::getenv("NINFERNO_TEST_PROBE_TOKENS");
+        ids != nullptr && *ids != '\0') {
         return probe_scores(artifact, ids, plain_reference);
     }
     if (!ninferno::test::real_artifact(artifact).mtp) {
