@@ -204,9 +204,18 @@ void reused_gguf_source() {
     manifest.gguf_source = true;
     expect(cv::reused_target(described, manifest).gguf_source,
            "a GGUF's artifact, whose source path is no .gguf file, is a GGUF's by its manifest");
-    manifest.exists = manifest.parsed = manifest.registry_current = true;
-    manifest.failed                                               = true;
-    expect(cv::decide_drafters(cv::Drafters::Default, true, false, manifest, false).kind ==
+    // A failed drafter makes the manifest incomplete: attached again only if the source is not a
+    // GGUF, which the default start does not draft.
+    manifest.exists           = true;
+    manifest.parsed           = true;
+    manifest.registry_current = true;
+    manifest.failed           = true;
+    const auto action         = [&](bool gguf) {
+        return cv::decide_drafters(cv::Drafters::Default, gguf, false, manifest, false).kind;
+    };
+    expect(action(described.gguf_source) == cv::DrafterActionKind::Attach,
+           "the artifact alone would be taken for a checkpoint's");
+    expect(action(cv::reused_target(described, manifest).gguf_source) ==
                cv::DrafterActionKind::Nothing,
            "a GGUF's shards with a failed drafter are not drafted by default");
     described.gguf_source = true;
