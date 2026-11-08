@@ -1,7 +1,6 @@
 #include "serve/http_transport.h"
 
 #include "serve/request_validation.h"
-#include "text/json_depth.h"
 
 #if defined(__GLIBC__)
 #    include <malloc.h>
@@ -45,6 +44,7 @@ public:
     BoundedDomBuilder(RequestJson& root, std::size_t limit) : Base(root), limit_(limit) {}
 
     [[nodiscard]] bool exceeded() const noexcept { return exceeded_; }
+    [[nodiscard]] bool too_deep() const noexcept { return too_deep_; }
 
     bool null() { return admit() && Base::null(); }
 
@@ -64,9 +64,23 @@ public:
 
     bool string(std::string& value) { return admit() && Base::string(value); }
 
-    bool start_object(std::size_t elements) { return admit() && Base::start_object(elements); }
+    bool start_object(std::size_t elements) {
+        return admit() && enter() && Base::start_object(elements);
+    }
 
-    bool start_array(std::size_t elements) { return admit() && Base::start_array(elements); }
+    bool end_object() {
+        --depth_;
+        return Base::end_object();
+    }
+
+    bool start_array(std::size_t elements) {
+        return admit() && enter() && Base::start_array(elements);
+    }
+
+    bool end_array() {
+        --depth_;
+        return Base::end_array();
+    }
 
     bool key(std::string& name) { return admit() && Base::key(name); }
 
@@ -77,10 +91,23 @@ private:
         return !exceeded_;
     }
 
+    // One level deeper; refused past kMaximumRequestJsonDepth, before anything is built there.
+    bool enter() noexcept {
+        too_deep_ = too_deep_ || ++depth_ > kMaximumRequestJsonDepth;
+        return !too_deep_;
+    }
+
     std::size_t limit_;
     std::size_t values_ = 0;
+    std::size_t depth_  = 0;
     bool exceeded_      = false;
+    bool too_deep_      = false;
 };
+
+// Set on a worker thread that has parsed a large body since it last released memory.
+thread_local bool large_body_seen = false;
+// Smaller bodies leave too little behind to be worth walking every arena.
+constexpr std::size_t kLargeBodyBytes = 1u << 20;
 
 } // namespace
 
@@ -97,23 +124,30 @@ RequestJson parse_json_body(const httplib::Request& request, const RequestLimits
                         " values (--max-request-json-values)",
                     {}, "request_json_too_large");
     }
-    if (!parsed) { bad_request("request body is not valid JSON"); }
-    if (text::json_nests_deeper_than(body, kMaximumRequestJsonDepth)) {
+    if (builder.too_deep()) {
         bad_request("request JSON nests deeper than " + std::to_string(kMaximumRequestJsonDepth) +
                     " levels");
     }
+    if (!parsed) { bad_request("request body is not valid JSON"); }
+    // A big body leaves its document's freed pieces in this thread's malloc arena (see
+    // release_request_memory).
+    if (request.body.size() >= kLargeBodyBytes) { large_body_seen = true; }
     return body;
 }
 
-void release_request_memory(const httplib::Request& request) noexcept {
-    // Smaller bodies leave too little behind to be worth walking every arena.
-    constexpr std::size_t kMinimumBodyBytes = 1u << 20;
+void release_request_memory() noexcept {
+    if (!large_body_seen) { return; }
+    large_body_seen = false;
 #if defined(__GLIBC__)
-    if (request.body.size() >= kMinimumBodyBytes) { (void)::malloc_trim(0); }
-#else
-    (void)request;
-    (void)kMinimumBodyBytes;
+    (void)::malloc_trim(0);
 #endif
+}
+
+bool WorkerQueue::enqueue(std::function<void()> connection) {
+    return pool_.enqueue([connection = std::move(connection)] {
+        connection();
+        release_request_memory();
+    });
 }
 
 bool client_disconnected(const httplib::Request& request) { return request.is_connection_closed(); }

@@ -130,7 +130,7 @@ int test_json_nesting_limit() {
         httplib::Request request;
         request.body = std::move(body);
         try {
-            (void)ninferno::serve::parse_json_body(request);
+            (void)ninferno::serve::parse_json_body(request, {});
             return true;
         } catch (const std::exception&) { return false; }
     };
@@ -209,7 +209,7 @@ int test_prompt_json_member_order() {
     request.body =
         R"({"model":"claude-local","tools":[{"name":"probe","input_schema":{"type":"object","properties":{"zeta":{"type":"string"},"alpha":{"type":"object","properties":{"yankee":{"type":"integer"},"bravo":{"type":"boolean"}}}}}}],"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"probe","input":{"zeta":"last","alpha":{"yankee":2,"bravo":true}}}]}],"max_tokens":32})";
 
-    const auto parsed = ninferno::serve::parse_json_body(request);
+    const auto parsed = ninferno::serve::parse_json_body(request, {});
     return check(
         parsed.at("tools").at(0).at("input_schema").at("properties").dump() ==
                 R"({"zeta":{"type":"string"},"alpha":{"type":"object","properties":{"yankee":{"type":"integer"},"bravo":{"type":"boolean"}}}})" &&

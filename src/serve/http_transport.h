@@ -82,16 +82,32 @@ void render_and_write(SseTransport& transport, Render&& render) {
 }
 
 // The request body as JSON. Refused with a 400 when it is not JSON, nests deeper than
-// kMaximumRequestJsonDepth, or holds more than limits.max_json_values values: the count is taken
-// while the document is built and stops the parse at the limit.
-RequestJson parse_json_body(const httplib::Request& request, const RequestLimits& limits = {});
+// kMaximumRequestJsonDepth, or holds more than limits.max_json_values values: both are counted
+// while the document is built and stop the parse at the limit.
+RequestJson parse_json_body(const httplib::Request& request, const RequestLimits& limits);
 [[nodiscard]] bool client_disconnected(const httplib::Request& request);
 
-// Called on the worker thread once a request's handler has returned. A request whose body was large
-// has built and freed a parsed document in this thread's malloc arena; glibc keeps such fragmented
-// memory resident, and every worker keeps its own share (about half of the peak, measured in #527),
-// so the process grows by one share per worker that ever served a big body. This hands it back.
-void release_request_memory(const httplib::Request& request) noexcept;
+// A worker thread that parsed a large body has built and freed a document in its own malloc arena;
+// glibc keeps such fragmented memory resident, and every worker keeps its own share (about half of
+// the peak, measured in #527), so the process grows by one share per worker that ever served a big
+// body. This hands it back, on the calling thread, if that thread parsed one since the last call.
+void release_request_memory() noexcept;
+
+// The pool's task queue: httplib's thread pool, running release_request_memory() after each
+// connection a worker served, when its request, its parsed document and its connection are gone
+// and the response has long been sent.
+class WorkerQueue final : public httplib::TaskQueue {
+public:
+    explicit WorkerQueue(std::size_t threads, std::size_t max_queued)
+        : pool_(threads, threads, max_queued) {}
+
+    bool enqueue(std::function<void()> connection) override;
+    void shutdown() override { pool_.shutdown(); }
+    void on_idle() override { pool_.on_idle(); }
+
+private:
+    httplib::ThreadPool pool_;
+};
 
 // The HTTP worker pool in front of the Engine. Admission belongs to the Engine alone: it runs
 // max_concurrency requests, holds max_pending_requests more, and answers the rest with an honest
