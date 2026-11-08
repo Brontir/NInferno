@@ -109,8 +109,7 @@ int main() {
     const auto drafter_report = [&](const std::string& name, const std::string& extra) {
         const auto path = dir / (name + ".ninferno");
         std::ofstream(path) << "x";
-        std::ofstream(path.string() + ".revision")
-            << 8 << "\n";
+        std::ofstream(path.string() + ".revision") << 8 << "\n";
         std::ofstream(path.string() + ".conversion.json")
             << R"({"components": {"text": {"config": {"model_type": "dflash", "rope": )"
             << R"({"rope_type": "yarn")" << extra << R"(}}}}, "methods": []})";
