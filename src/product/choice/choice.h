@@ -34,6 +34,7 @@
 
 #include "ninferno/types.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -216,13 +217,31 @@ struct QuantOption {
 [[nodiscard]] double worth_band(const CardFacts& card) noexcept;
 
 // What the user asks: the context each stream holds of its own (the contexts in turn: a pinned
-// one, or Auto's targets runtime::quant_own_targets gives), the streams, the request shape.
+// one, or Auto's targets runtime::quant_own_targets gives), the streams, the request shape. The
+// request is a mix (DECISIONS 73): the short one (prompt + answer) and a long one whose prompt
+// fills the asked context (long_prompt).
 struct Task {
     std::vector<std::uint32_t> contexts = {32768};
     std::uint32_t concurrency = 1;
     std::uint32_t prompt      = kRequestPrompt;
     std::uint32_t answer      = kRequestAnswer;
     double accuracy_weight    = kAccuracyWeight;
+
+    // The context the worth is priced at: the largest asked (every candidate is scored once, for
+    // the contexts in turn).
+    [[nodiscard]] std::uint32_t asked_context() const noexcept {
+        std::uint32_t asked = 0;
+        for (const std::uint32_t c : contexts) { asked = std::max(asked, c); }
+        return asked;
+    }
+    // The long request's prompt: the asked context less the answer, up to kLongPrompt; 0 where it
+    // would not be longer than the short request's (the worth then prices the short one alone).
+    [[nodiscard]] std::uint32_t long_prompt() const noexcept {
+        const std::uint32_t asked = asked_context();
+        const std::uint32_t room  = asked > answer ? asked - answer : 0;
+        const std::uint32_t lp    = std::min(room, kLongPrompt);
+        return lp > prompt ? lp : 0;
+    }
 };
 
 // What the user pinned with flags; the choice keeps it.
@@ -285,9 +304,21 @@ struct Speed {
 
 // One request of `prompt` tokens in and `answer` out on one stream of `concurrency`: the prompt at
 // the prefill rate, the answer at the decode rate at the middle of its window.
+[[nodiscard]] double single_request_seconds(const ModelFacts& model, const CardFacts& card,
+                                            const QuantOption& quant, const Candidate& candidate,
+                                            const Task& task, std::uint32_t prompt);
+
+// The task's request mix (DECISIONS 73): the geometric mean of the short request (task.prompt) and
+// the long one (task.long_prompt()) weighted by kMixShortRequests and kMixLongRequests, so that
+// ln of it is the weighted mean of the two requests' ln(T), the time the worth prices. The short
+// request alone where the task has no long one.
 [[nodiscard]] double request_seconds(const ModelFacts& model, const CardFacts& card,
                                      const QuantOption& quant, const Candidate& candidate,
                                      const Task& task);
+
+// The mix in words, for a reason or a listing: "a 2048+512-token request" without a long one, else
+// "the request mix: 20 of 2048+512 tokens, 6 of 24576+512".
+[[nodiscard]] std::string request_mix_text(const Task& task);
 
 // Which measured constant sets rest on two lab cards (choice_constants.h) and so may decide. The
 // defaults are the constants'; a caller never sets them (a test opens or closes them to check what

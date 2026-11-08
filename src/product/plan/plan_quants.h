@@ -230,14 +230,17 @@ struct QuantRow {
     // The choice model's speed at the plan's storages (product/choice/choice.h): one stream of the
     // asked ones decoding at `estimate_depth` tokens in its window (a quarter of the asked context,
     // under Auto of its first step min(native, 32K); the same for every row, so the rows compare;
-    // at least 512: an empty context flatters decode), the prefill, and the seconds of a
-    // typical request (choice::kRequestPrompt + kRequestAnswer tokens). Not set for a row not planned.
+    // at least 512: an empty context flatters decode), the prefill, and the seconds of the request
+    // mix (choice::request_seconds: a kRequestPrompt + kRequestAnswer request and, in the geometric
+    // mean, a request_long_prompt + kRequestAnswer one; 0: the short one alone). Not set for a row
+    // not planned.
     std::optional<choice::Speed> estimate;
     std::uint32_t estimate_depth = 0;
     // The drafter the estimate decodes with ("dflash:7"), "" when it counts none: plain decode,
     // or a drafter the plan serves whose gain no measurement gives (the choice's drafter axis).
     std::string estimate_drafter;
     double request_seconds       = 0;
+    std::uint32_t request_long_prompt = 0;
     // The plan counts a default proposal head whose size its own header did not give (the
     // parsed header's head taken as this row's).
     bool proposal_head_assumed = false;
