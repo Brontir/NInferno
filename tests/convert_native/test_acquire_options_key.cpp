@@ -43,6 +43,7 @@ using Change = std::function<void(cv::AcquireOptions&)>;
 // directory already holds the artifact, and says which it did.
 struct Cache {
     fs::path commit;
+
     bool convert(const cv::AcquireOptions& options, const std::string& label) {
         const auto key  = cv::content_options_key(options);
         const auto file = cv::conversion_directory(commit, key) / "model.dense_bf16.ninferno";
@@ -50,6 +51,7 @@ struct Cache {
         write_text(file, label);
         return true;
     }
+
     std::string served(const cv::AcquireOptions& options) const {
         const auto file = cv::conversion_directory(commit, cv::content_options_key(options)) /
                           "model.dense_bf16.ninferno";
@@ -113,12 +115,12 @@ int main() {
         {"--source", [&](auto& o) { o.convert.sources.emplace_back("vision", root / "source"); }},
         {"--components text,mtp",
          [](auto& o) {
-             o.components_given = true;
+             o.components_given   = true;
              o.convert.components = "text,mtp";
          }},
         {"--components text",
          [](auto& o) {
-             o.components_given = true;
+             o.components_given   = true;
              o.convert.components = "text";
          }},
         {"--proposal", [](auto& o) { o.convert.proposal = true; }},
@@ -179,7 +181,8 @@ int main() {
         custom.convert.resources.emplace_back("chat_template.jinja", root / "custom.jinja");
         check(cache.convert(plain, "default"), "default: converts");
         check(cache.convert(custom, "custom template"), "then --chat-template: converts again");
-        check(cache.served(plain) == "default", "the default entry is still the default conversion");
+        check(cache.served(plain) == "default",
+              "the default entry is still the default conversion");
         check(cache.served(custom) == "custom template",
               "the template entry is the custom conversion");
         check(!cache.convert(plain, "never"), "a later default run reuses the default conversion");

@@ -714,11 +714,13 @@ std::string file_identity(const fs::path& path) {
 std::string content_options_key(const AcquireOptions& options, std::string* described) {
     const ConvertOptions defaults;
     const auto& c = options.convert;
+
     struct Part {
         std::string name, value, shown;
     };
+
     std::vector<Part> parts;
-    const auto add = [&](const std::string& name, const std::string& value,
+    const auto add    = [&](const std::string& name, const std::string& value,
                          const std::string& shown) { parts.push_back({name, value, shown}); };
     const auto simple = [&](const std::string& name, const std::string& value) {
         add(name, value, value);
@@ -730,17 +732,23 @@ std::string content_options_key(const AcquireOptions& options, std::string* desc
     if (c.name) { simple("--name", *c.name); }
     auto resources = c.resources;
     std::sort(resources.begin(), resources.end());
-    for (const auto& [role, path] : resources) { add("--resource " + role, file_identity(path), utf8_file_name(path)); }
+    for (const auto& [role, path] : resources) {
+        add("--resource " + role, file_identity(path), utf8_file_name(path));
+    }
     auto sources = c.sources;
     std::sort(sources.begin(), sources.end());
-    for (const auto& [name, path] : sources) { add("--source " + name, path_fingerprint(path), utf8_file_name(path)); }
+    for (const auto& [name, path] : sources) {
+        add("--source " + name, path_fingerprint(path), utf8_file_name(path));
+    }
     if (options.components_given) { simple("--components", c.components); }
     if (c.proposal) { simple("--proposal", ""); }
     if (c.proposal_rows != defaults.proposal_rows) {
         simple("--proposal-rows", std::to_string(c.proposal_rows));
     }
     if (!c.proposal_default) { simple("--no-proposal", ""); }
-    if (!c.ranking.empty()) { add("--ranking", file_identity(c.ranking), utf8_file_name(c.ranking)); }
+    if (!c.ranking.empty()) {
+        add("--ranking", file_identity(c.ranking), utf8_file_name(c.ranking));
+    }
     if (c.max_file_bytes != defaults.max_file_bytes) {
         simple("--max-file-bytes", std::to_string(c.max_file_bytes));
     }
@@ -760,10 +768,12 @@ std::string content_options_key(const AcquireOptions& options, std::string* desc
     std::string identity;
     std::string text;
     for (const auto& part : parts) {
-        identity += part.name + "=" + part.value + "
-";
-        text += part.name + (part.shown.empty() ? "" : " " + part.shown) + "
-";
+        identity += part.name + "=" + part.value +
+                    "
+                    ";
+                    text += part.name + (part.shown.empty() ? "" : " " + part.shown) +
+                            "
+                            ";
     }
     if (described) { *described = text; }
     return sha256_hex(identity).substr(0, 12);
@@ -1067,11 +1077,11 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
     // Beside the hub cache's snapshots, per commit (a URL: beside the file); the file is named
     // <model stem>.<recipe>.ninferno once the recipe is known.
     const bool default_out = convert_options.out.empty();
-    const auto directory = conversion_directory(
-        fetched.commit.empty()
-            ? fetched.snapshot
-            : fetched.snapshot.parent_path().parent_path() / "ninferno" / fetched.commit,
-        options_key);
+    const auto directory =
+        conversion_directory(fetched.commit.empty() ? fetched.snapshot
+                                                    : fetched.snapshot.parent_path().parent_path() /
+                                                          "ninferno" / fetched.commit,
+                             options_key);
     const std::string stem = fs::is_regular_file(fetched.model) ? fetched.model.stem().string()
                                                                 : std::string("model");
     RecipeChoice choice;
@@ -1135,18 +1145,17 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
         if (c == '
 ') {
             options_line += ", ";
-        } else {
-            options_line += c;
-        }
     }
-    if (options_line.size() >= 2) { options_line.resize(options_line.size() - 2); }
-    const std::string converted_earlier =
-        options_key.empty() ? " (converted earlier)"
-                            : " (converted earlier with " + options_line + ")";
-    if (!options_key.empty()) {
-        say(options, "conversion options of their own, kept apart from the default conversion: " +
-                         options_line);
-    }
+    else { options_line += c; }
+}
+
+if (options_line.size() >= 2) { options_line.resize(options_line.size() - 2); }
+const std::string converted_earlier =
+    options_key.empty() ? " (converted earlier)" : " (converted earlier with " + options_line + ")";
+if (!options_key.empty()) {
+    say(options,
+        "conversion options of their own, kept apart from the default conversion: " + options_line);
+}
     // A GGUF model carries no checkpoint to plan from: its drafters are planned for the converted
     // artifact (its text component's architecture and geometry, its tokenizer), once converted.
     // They are attached when asked for (a separate download, 1.6 GB for Muse Glimmer's DFlash);
