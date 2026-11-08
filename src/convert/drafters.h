@@ -173,10 +173,49 @@ void carry_failures(DrafterPlan& plan, const std::vector<PlannedDrafter>& failed
 DrafterPlan attach_drafters(DrafterPlan plan, const std::filesystem::path& target_artifact,
                             const AttachOptions& options);
 
-// Whether attaching to `target_artifact` is still to do: no manifest, an unreadable one, one planned
-// from another drafter registry than this build's (an update may name a new drafter), or one
-// listing a published drafter as failed (its own quantizations do not count).
+// What an artifact's speculation manifest (<artifact>.speculation.json) says about its drafters,
+// read once for every decision that follows from it.
+struct ManifestState {
+    bool exists = false; // the file is there
+    bool parsed = false; // and is JSON with a drafters list
+    // Planned from this build's drafter registry (an update may name a new drafter).
+    bool registry_current = false;
+    // A drafter attached from a file that is gone, unreadable or written again since (its id is no
+    // longer the recorded one); a file the user gave (status "attached") does not count, as no
+    // plan restores it.
+    bool changed = false;
+    // A published drafter listed as failed: a variant ("<name>.<variant>", its own quantization)
+    // is optional and does not count.
+    bool failed = false;
+    // A companion the artifact lacks ("not in the artifact"): a checkpoint's is converted in again
+    // while its download is there, a GGUF's never holds one.
+    bool missing_companion = false;
+    bool gguf_source       = false; // the target was converted from a GGUF model
+    // The plan is the checkpoint's own declaration (ninferno_speculation.json), which cannot be
+    // made again without that download.
+    bool bundle_planned = false;
+    // bundle_planned and a drafter of it failed, or its file changed since attach (the refresh
+    // keeps a file that no longer passes the checks out)
+    bool bundle_failed = false;
+    std::vector<std::string> lineage; // the target's base models the plan matched by
+};
+
+[[nodiscard]] ManifestState read_manifest_state(const std::filesystem::path& artifact);
+
+// Whether attaching is still to do: no manifest, an unreadable one, one planned from another
+// drafter registry than this build's (an update may name a new drafter), or one listing a published
+// drafter as failed (its own quantizations do not count).
+[[nodiscard]] bool drafters_incomplete(const ManifestState& state);
+
+// The same for `target_artifact`, read from disk.
 [[nodiscard]] bool drafters_incomplete(const std::filesystem::path& target_artifact);
+
+// A kept artifact (its download removed) described for planning again: what the artifact says,
+// with what its manifest recorded of the model it cannot be read from any more: the base models of
+// the model card (describe_artifact reads none), so that a fine-tune keeps the drafter its lineage
+// matched, and that it was converted from a GGUF (a directory of GGUF shards leaves no .gguf path
+// in the artifact), as a start with the download present knows it.
+[[nodiscard]] DrafterTarget reused_target(DrafterTarget described, const ManifestState& manifest);
 
 // The manifest's drafters the user gave (--drafter-artifact) whose file is gone, unreadable or no
 // longer the one recorded (one the refresh did not take): no plan restores them, and a start
