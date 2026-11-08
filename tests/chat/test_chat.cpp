@@ -692,9 +692,9 @@ int test_bare_json_call_dropped() {
         ninferno::chat::ToolCallOutputDecoder prose(discarded, 64);
         const std::string shown = prose.feed("It is sunny.\n" + call);
         const auto prose_end    = prose.finish();
-        failures += check(shown == "It is sunny." && prose_end.content.empty() &&
-                              prose_end.tool_calls.size() == expected_calls,
-                          "prose before a bare JSON call was changed");
+        failures += check(shown + prose_end.content == "It is sunny.\n" + call &&
+                              prose_end.tool_calls.empty(),
+                          "a bare JSON call after prose was cut");
         // The output limit cut the call off: dropped, not shown as markup.
         ninferno::chat::ToolCallOutputDecoder cut(discarded, 64);
         const std::string cut_shown = cut.feed(call.substr(0, call.size() - 20));

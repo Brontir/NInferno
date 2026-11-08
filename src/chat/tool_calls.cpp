@@ -1188,7 +1188,11 @@ ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool cut_off) {
             // object that is no call (a router's {"name": ..., "reason": ...}) is text.
             std::size_t pos = 0;
             skip_format_whitespace(body, pos);
-            if (const auto end = json_value_end(body, pos)) {
+            const auto end = json_value_end(body, pos);
+            // A call carries its arguments; {"name": ..., "reason": ...} is some other object.
+            const std::string_view object = end ? body.substr(pos, *end - pos) : std::string_view{};
+            if (end && (object.find("\"arguments\"") != std::string_view::npos ||
+                        object.find("\"parameters\"") != std::string_view::npos)) {
                 ParsedToolCallOutput one =
                     syntax_->parse(std::string(syntax_->open()) + std::string(body.substr(0, *end)),
                                    max_tool_name_length_, *contract_);
