@@ -134,10 +134,13 @@ struct AcquiredModel {
 
 // The "kept" case above: the artifact under `cache` (the hub cache root) for `repo` at the commit
 // its ref `revision` ("" for main) names, when that commit's snapshot is gone and exactly one
-// complete artifact there matches `quant` (and `recipe` when given); nullopt otherwise.
+// complete artifact there matches `quant` (and `recipe` when given); nullopt otherwise. `key` (a
+// content_options_key, "" for the default conversion) names the conversion looked for: the
+// commit's directory itself, or its options-<key>/ for one made with options of its own.
 [[nodiscard]] std::optional<std::filesystem::path>
 kept_artifact(const std::filesystem::path& cache, const std::string& repo,
-              const std::string& revision, const std::string& quant, const std::string& recipe);
+              const std::string& revision, const std::string& quant, const std::string& recipe,
+              const std::string& key = {});
 
 // The one complete conversion in `commit_dir` (<cache>/models--org--name/ninferno/<commit>)
 // that matches `quant` (any, a label, or a width: "4bit") and `recipe` (any when empty); nullopt

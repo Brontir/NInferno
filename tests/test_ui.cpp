@@ -1122,6 +1122,9 @@ void test_delete_options() {
         }
         std::ofstream(custom / "m.dense_bf16.ninferno.options") << "--vocab q8\n--name mine\n";
     };
+    check(is_default_conversion(commit / "m.dense_bf16.ninferno") &&
+              !is_default_conversion(custom / "m.dense_bf16.ninferno"),
+          "a plain launch looks at default conversions only");
     make();
     check(conversion_options(custom / "m.dense_bf16.ninferno") == "--vocab q8, --name mine",
           "the options of an optioned conversion are listed");

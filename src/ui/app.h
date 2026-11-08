@@ -188,6 +188,11 @@ struct ArtifactName {
 // <artifact>.options; "" for the default conversion (and for a drafter's record).
 [[nodiscard]] std::string conversion_options(const std::filesystem::path& artifact);
 
+// Whether `artifact` is a default conversion: not one made with options of its own, which the
+// converter keeps in <commit>/options-<hash>/. A plain launch of a repository serves only
+// default conversions; the others are chosen by their path.
+[[nodiscard]] bool is_default_conversion(const std::filesystem::path& artifact);
+
 // Whether `path` may be deleted through the UI: a .ninferno file under the hub cache's
 // models--*/ninferno/ or under one of `model_dirs`.
 [[nodiscard]] bool deletable_artifact(const std::filesystem::path& path,

@@ -277,6 +277,26 @@ int main() {
         const auto kept = cv::kept_artifact(cache, "org/m", "", "", "");
         check(kept && *kept == dir / "m-Q8_0.dense_bf16.ninferno",
               "the removed-download lookup finds the default conversion");
+        // The same start with content options finds the conversion made with them, not the
+        // default one: after the download was removed, no download either.
+        cv::AcquireOptions tiny;
+        tiny.convert.round_tiny_scales = true;
+        const auto tiny_key            = cv::content_options_key(tiny);
+        write_text(dir / ("options-" + tiny_key) / "m-Q8_0.dense_bf16.ninferno", "tiny");
+        write_text(dir / ("options-" + tiny_key) / "m-Q8_0.dense_bf16.ninferno.conversion.json",
+                   "{}");
+        const auto kept_tiny = cv::kept_artifact(cache, "org/m", "", "", "", tiny_key);
+        check(kept_tiny &&
+                  *kept_tiny == dir / ("options-" + tiny_key) / "m-Q8_0.dense_bf16.ninferno",
+              "the removed-download lookup finds the conversion with the same options");
+        cv::AcquireOptions components;
+        components.components_given   = true;
+        components.convert.components = "text";
+        check(!cv::kept_artifact(cache, "org/m", "", "", "", cv::content_options_key(components)),
+              "and none for options it was not made with");
+        const auto kept_default = cv::kept_artifact(cache, "org/m", "", "", "");
+        check(kept_default && *kept_default == dir / "m-Q8_0.dense_bf16.ninferno",
+              "the default lookup still finds the default");
         // A start with a runtime template only (key "") reuses that one: no download for it.
         cv::AcquireOptions serve;
         serve.chat_template = root / "custom.jinja";

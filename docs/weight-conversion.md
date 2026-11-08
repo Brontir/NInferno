@@ -67,7 +67,7 @@ python3 -m tools.convert \
   its conversion apart, in `ninferno/<commit>/options-<hash>/` beside the default one. The hash
   covers every such option (a resource, `--source` and `--drafter-artifact` by the content of their files; a file over 64 MiB by its size, its first 16 MiB and its last MiB), in a canonical form (`--include` sorted, `--vocab native`, a `--model-id` equal to the repository, a resource identical to the snapshot's own file are the defaults), `<artifact>.options` lists them,
   and the log says "converted earlier with ..." when a rerun reuses it. A rerun with the same
-  options reuses that conversion; a run without them converts the model's default one, or reuses
+  options reuses that conversion (also when its download was removed: the lookup of the kept conversion names the options too, and ninferno-ui's plain launch of a repository serves default conversions only); a run without them converts the model's default one, or reuses
   it, and never takes the other. Conversions made before this rule stay where they are, as the
   default. A drafter converted separately follows the same rule for `--round-tiny-scales`,
   `--maintainer-quantize` and `--max-file-bytes` (its own `options-<hash>/`), and one converted with

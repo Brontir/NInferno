@@ -1982,12 +1982,19 @@ std::string conversion_options(const fs::path& artifact) {
     return out;
 }
 
+bool is_default_conversion(const fs::path& artifact) {
+    return artifact.parent_path().filename().string().rfind("options-", 0) != 0;
+}
+
 fs::path App::local_artifact(const std::string& repo, const std::string& quant) {
     std::error_code ec;
     const auto dir = hub_root() / hub_repo_directory(repo) / "ninferno";
     if (!fs::is_directory(dir, ec)) { return {}; }
     for (const auto& entry : fs::recursive_directory_iterator(dir, ec)) {
         if (!entry.is_regular_file(ec) || entry.path().extension() != ".ninferno") { continue; }
+        // A plain launch of the repository serves its default conversion, never one made with
+        // --round-tiny-scales, --components, ... (options-<hash>/).
+        if (!is_default_conversion(entry.path())) { continue; }
         const auto f = facts(entry.path());
         if (!f.readable || f.drafter) { continue; }
         if (quant.empty() || artifact_name(entry.path().filename().string()).quant == quant) {

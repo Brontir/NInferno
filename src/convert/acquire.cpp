@@ -482,15 +482,24 @@ std::optional<fs::path> converted_artifact(const fs::path& commit_dir, const std
     return found.front().first;
 }
 
+// The commit a kept conversion belongs to: its directory's name, or its parent's for one in
+// options-<hash>/.
+static std::string commit_of(const fs::path& artifact) {
+    const auto dir = artifact.parent_path();
+    return dir.filename().string().rfind("options-", 0) == 0 ? dir.parent_path().filename().string()
+                                                             : dir.filename().string();
+}
+
 std::optional<fs::path> kept_artifact(const fs::path& cache, const std::string& repo,
                                       const std::string& revision, const std::string& quant,
-                                      const std::string& recipe) {
+                                      const std::string& recipe, const std::string& key) {
     const auto root   = cache / hub_repo_directory(repo);
     const auto commit = local_commit(root, revision);
     if (!commit) { return std::nullopt; }
     std::error_code ec;
     if (fs::exists(root / "snapshots" / *commit, ec)) { return std::nullopt; } // the usual path
-    return converted_artifact(root / "ninferno" / *commit, quant, recipe);
+    return converted_artifact(conversion_directory(root / "ninferno" / *commit, key), quant,
+                              recipe);
 }
 
 namespace {
@@ -816,14 +825,14 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
     std::string pinned_quant; // the exact quantization of the GGUF model there
     if (!url && !options.fetch_only) {
         const auto [repo, revision] = split_spec(spec, options.fetch);
-        // The download removed, its conversion kept: only the default conversion is found that
-        // way; one with other options needs its source again.
-        if (options.reuse && convert_options.out.empty() && variant_key.empty() &&
+        // The download removed, its conversion kept: the one with these options is found that way
+        // (the default's directory, or its options-<hash>/).
+        if (options.reuse && convert_options.out.empty() &&
             (is_hugging_face_hub(options.fetch.hub))) {
             const auto cache =
                 options.fetch.cache.empty() ? default_hub_cache() : options.fetch.cache;
             auto kept = kept_artifact(cache, repo, revision, options.fetch.quant,
-                                      convert_options.recipe);
+                                      convert_options.recipe, variant_key);
             // A branch or a tag may have moved since its weights came here, whether their download
             // was converted and removed (the kept artifact) or is still in the cache. They stay
             // unless the user asks for the new commit (a download of many gigabytes): the start
@@ -836,7 +845,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
             const fs::path repo_dir = cache / hub_repo_directory(repo);
             std::string held_commit; // the commit of the weights here, when the ref names one
             if (kept) {
-                held_commit = kept->parent_path().filename().string();
+                held_commit = commit_of(*kept);
             } else if (const auto commit = local_commit(repo_dir, revision)) {
                 // Only a snapshot holding the model this start asks for (its quantization, every
                 // shard, the projector a --vision start takes): another quantization of the old
@@ -937,7 +946,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 out.recipe           = base.substr(base.rfind('.') + 1);
                 out.reused           = true;
                 out.fetched.repo     = repo;
-                out.fetched.commit   = kept->parent_path().filename().string();
+                out.fetched.commit   = commit_of(*kept);
                 out.fetched.snapshot = kept->parent_path();
                 out.fetched.model    = *kept;
                 out.fetched.offline  = true;
