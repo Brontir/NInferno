@@ -6,28 +6,30 @@
 // Speed. A decode step of C rows at context n takes
 //   t0 + (W(C) + C n b_kv k_kv + 2 C s + C min(n, window) b_ring) / (eta_dram BW)
 //      + C 2 P / (eta_compute peak_s8) f_route
-// and a prefill of n tokens takes n 2 P / (eta_prefill share peak_route) + F_att(n) / (eta_attention
-// peak_bf16) seconds (choice.cpp attention_seconds, linear_prefill): W(C) the weights C rows read
-// (an MoE's routed experts as concurrent rows, routed independently, add them: DECISIONS 65),
-// b_kv the full layers' KV bytes a token, s a lane's recurrent state (read and written), b_ring a
-// sliding ring's bytes a token, P the active parameters (plan_facts.cpp: the layers a token runs
-// and the output head), BW the board's DRAM rate, peak the generation row's tensor rate times SMs
-// times the reference clock (core/generation.h), F_att(n) the attention flops of the prompt over
-// itself (full layers over every earlier token, sliding ones over the window), share an MoE chunk's
-// share of the saturated rate (kMoeChunkShare; 1 for a dense model). k_kv and f_route are what a KV
-// codec's read and the exact route cost on a generation beyond their bytes and flops.
+// and a prefill of n tokens takes n 2 P / (eta_prefill share peak_route) + F_att(n) /
+// (eta_attention peak_bf16) seconds (choice.cpp attention_seconds, linear_prefill): W(C) the
+// weights C rows read (an MoE's routed experts as concurrent rows, routed independently, add them:
+// DECISIONS 65), b_kv the full layers' KV bytes a token, s a lane's recurrent state (read and
+// written), b_ring a sliding ring's bytes a token, P the active parameters (plan_facts.cpp: the
+// layers a token runs and the output head), BW the board's DRAM rate, peak the generation row's
+// tensor rate times SMs times the reference clock (core/generation.h), F_att(n) the attention flops
+// of the prompt over itself (full layers over every earlier token, sliding ones over the window),
+// share an MoE chunk's share of the saturated rate (kMoeChunkShare; 1 for a dense model). k_kv and
+// f_route are what a KV codec's read and the exact route cost on a generation beyond their bytes
+// and flops.
 //
 // Fitted (a one-off fit, 2026-10-23) on 49 decode and 15 prefill points of Qwen3.5-9B
 // Q4_K_M, Qwen3.8-27B UD-IQ3_XXS / UD-Q4_K_XL and Qwen3.6-35B-A3B UD-IQ3_XXS / UD-Q4_K_M on the
 // RTX 2080 Ti, 4070 Ti, 4090 and 5070 Ti (run_calib.sh, run_sw.sh, docs/performance/runs):
 // decode 5.2 % rms (worst 15.5 %). The prefill: refitted 2026-10-27 with its attention term
 // (tools/fits/prefill/fit_prefill.py on tools/fits/data/prefill/rows.json: 82 points, Qwen3.5
-// 9B, Qwen3.8 27B, Gemma 4 12B / 26B-A4B / 31B, Qwen3.6 35B-A3B at ~2K / 7K / 21K-token prompts on the
-// RTX 2080 Ti, 3060, 4060 Ti, 4070 Ti, 4090, 5070 Ti, 5090, and the 22K points of
-// tests/fixtures/choice/speed_measured.json): from 7K tokens on, dense 6.4 % rms (worst 18.7 %), MoE
-// 8.3 % (18.9 %); a request's fixed time (10-190 ms: HTTP, a decode step) is not modeled, so at 2K the
-// estimate runs up to 30 % above a measured prompt rate. The Quadro GV100 (Volta) is left out: its
-// Gemma 4 attention (heads of 512) runs 4 times slower than its Qwen one, the two disagree.
+// 9B, Qwen3.8 27B, Gemma 4 12B / 26B-A4B / 31B, Qwen3.6 35B-A3B at ~2K / 7K / 21K-token prompts on
+// the RTX 2080 Ti, 3060, 4060 Ti, 4070 Ti, 4090, 5070 Ti, 5090, and the 22K points of
+// tests/fixtures/choice/speed_measured.json): from 7K tokens on, dense 6.4 % rms (worst 18.7 %),
+// MoE 8.3 % (18.9 %); a request's fixed time (10-190 ms: HTTP, a decode step) is not modeled, so at
+// 2K the estimate runs up to 30 % above a measured prompt rate. The Quadro GV100 (Volta) is left
+// out: its Gemma 4 attention (heads of 512) runs 4 times slower than its Qwen one, the two
+// disagree.
 //
 // Accuracy. KLD against the exact reference (--activations exact, BF16 KV, FP32 state) on the
 // fixed corpus (ninferno-perplexity --quick, eval/corpora/perplexity-1m), one term per switch;
