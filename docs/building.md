@@ -8,9 +8,9 @@ code, to target a GPU architecture the releases do not carry, or to make a Docke
 Requirements: x86-64 Linux (Windows: [Windows](windows.md)), an NVIDIA GPU and driver, a CUDA
 toolkit that knows your GPU (CUDA 12.8, 13.2 and 13.4 are the validated ones; `121a` and `120f` need
 12.9 or later, and a `70` build needs 12.8, since CUDA 13 no longer compiles for Volta), CMake
-3.28+ (`120f` needs CMake 3.31.8 / 4.0.2+), a C++20 compiler, Ninja, `pkg-config`, FFmpeg development libraries (`libavformat`,
-`libavcodec`, `libavutil`, `libswscale`), `libcurl` 7.85+ and OpenSSL's `libcrypto` (on Debian and
-Ubuntu: `libssl-dev`). A `70` (V100) build also needs `git` and network access while configuring: it
+3.28+ (`120f` needs CMake 3.31.8 / 4.0.2+), a C++20 compiler, Ninja, `pkg-config`, FFmpeg
+development libraries (`libavformat`, `libavcodec`, `libavutil`, `libswscale`), `libcurl` 7.85+ and
+OpenSSL's `libcrypto` (on Debian and Ubuntu: `libssl-dev`). A `70` (V100) build also needs `git` and network access while configuring: it
 fetches NVIDIA's header-only CUTLASS (or point `-DFETCHCONTENT_SOURCE_DIR_CUTLASS` at a local
 checkout of tag v4.4.2). Configuring also downloads the page's chat window (llama-ui) from Hugging
 Face; offline, it warns after the download times out, and `-DNINFERNO_UI_CHAT=OFF` skips it.
