@@ -26,7 +26,8 @@ param(
     [string]$Version = "",
     [string]$Vcpkg = $env:VCPKG_ROOT,
     [string]$Cuda70 = "",
-    [int]$Jobs = 0
+    [int]$Jobs = 0,
+    [switch]$SkipFactsCheck
 )
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path "$PSScriptRoot\..\..\..").Path
@@ -63,6 +64,24 @@ if ([version]$nvccVersion -ne [version]$pinned) { throw "nvcc $nvccVersion, the 
 $ErrorActionPreference = 'Continue'
 $installed = if ($env:VCPKG_INSTALLED_DIR) { $env:VCPKG_INSTALLED_DIR } else { "$Root\vcpkg_installed" }
 $parallel = if ($Jobs -gt 0) { @('--parallel', $Jobs) } else { @('--parallel') }
+# The facts of the kernels a tree compiled, from its own engine (`ninferno-serve selector-facts`, the
+# probe the selector goldens are keyed by), against the release entries of facts_index.txt (#556).
+# It needs a GPU of that generation on this machine; -SkipFactsCheck says it was not checked.
+function Test-SelectorFacts([string]$arch, [string]$exe) {
+    $set = if ($arch -eq '86') { 'base' } else { 'full' }
+    $out = & $exe selector-facts
+    if ($LASTEXITCODE -ne 0) {
+        if ($SkipFactsCheck) { Write-Warning "the selector facts of sm_$arch were not checked (-SkipFactsCheck)"; return }
+        throw "ninferno-serve selector-facts failed for sm_$arch: it needs a GPU of that generation on this machine"
+    }
+    $got = @{}
+    $out | ForEach-Object { $name, $digest = $_ -split ' '; $got[$name] = $digest }
+    Get-Content "$Root\tests\ops\linear\selector_golden\facts_index.txt" | Where-Object { $_ -match "^$set/(\S+) (\S+) \S+ $([regex]::Escape($pinned))$" } | ForEach-Object {
+        $board = $Matches[1]; $want = $Matches[2]
+        if ($got[$board] -ne $want) { throw "sm_$arch kernels give facts '$($got[$board])' for $board, the release entry is '$want' (selector goldens, #556)" }
+    }
+}
+
 $engines = @()
 $first = $null
 foreach ($arch in $ArchList) {
@@ -102,6 +121,7 @@ foreach ($arch in $ArchList) {
             throw "share\ninferno\llama-ui\index.html missing: configure with network access (NINFERNO_UI_CHAT)"
         }
     }
+    if ($arch -eq '86' -or $arch -eq '120a') { Test-SelectorFacts $arch "$build\apps\ninferno-serve.exe" }
     Copy-Item "$build\apps\ninferno-serve.exe" "$Stage\bin\ninferno-serve-sm$arch.exe"
     $engines += [ordered]@{ tag = $arch; arch = [int]($arch -replace '[^0-9]', ''); specific = [bool]($arch -match '[af]$'); ptx = $ptx }
 }

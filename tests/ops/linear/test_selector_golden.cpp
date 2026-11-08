@@ -21,20 +21,20 @@
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
+#include "ops/generic/selector_facts.h"
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <iomanip>
 #include <iostream>
 #include <map>
 #include <iterator>
 #include <optional>
-#include <set>
 #include <stdexcept>
 #include <sstream>
 #include <string>
@@ -42,6 +42,12 @@
 #include <thread>
 #include <tuple>
 #include <vector>
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <signal.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -50,35 +56,8 @@ using namespace ninferno::test;
 namespace generic = ninferno::ops::detail::generic;
 using ops::LinearPolicy;
 
-// Datasheet numbers as the CUDA device query reports them (boost SM clock, memory clock = data
-// rate / 2, bus width).
-struct GoldenBoard {
-    const char* name;
-    std::uint32_t pci_device_id;
-    int major, minor, sms;
-    std::size_t l2_mib, memory_gib;
-    int sm_clock_mhz, memory_clock_mhz, bus_bits;
-};
-
-constexpr GoldenBoard kBoards[] = {
-    {"rtx5090", 0x2B85, 12, 0, 170, 96, 32, 2407, 14001, 512},
-    {"rtx5080", 0x2C02, 12, 0, 84, 64, 16, 2617, 15001, 256},
-    {"rtx5070ti", 0x2C05, 12, 0, 70, 48, 16, 2452, 14001, 256},
-    {"rtx5060ti", 0x2D04, 12, 0, 36, 32, 16, 2572, 14001, 128},
-    {"rtx4090", 0x2684, 8, 9, 128, 72, 24, 2520, 10501, 384},
-    {"rtx4060ti", 0x2805, 8, 9, 34, 32, 16, 2535, 9001, 128},
-    {"l4", 0x27B8, 8, 9, 58, 48, 24, 2040, 6251, 192},
-    {"rtx3090", 0x2204, 8, 6, 82, 6, 24, 1695, 9751, 384},
-    {"a10", 0x2236, 8, 6, 72, 6, 24, 1695, 6251, 384},
-    {"a100", 0x20B0, 8, 0, 108, 40, 40, 1410, 1215, 5120},
-    {"rtx2080ti", 0x1E07, 7, 5, 68, 5, 11, 1545, 7000, 352},
-    {"v100", 0x1DB5, 7, 0, 80, 6, 32, 1530, 877, 4096},
-    // Not targets, but the rows where spellings of one generation fact used to disagree.
-    {"h100-sxm", 0x2330, 9, 0, 132, 50, 80, 1980, 2619, 5120},
-    {"b300", 0, 10, 3, 148, 126, 268, 2032, 3996, 8192},
-    {"gb10-spark", 0, 12, 1, 48, 24, 128, 2418, 4266, 256},
-    {"unknown-sm120-48sm", 0, 12, 0, 48, 32, 12, 2500, 14001, 192},
-};
+using GoldenBoard = generic::FactsBoard;
+constexpr const auto& kBoards = generic::kFactsBoards;
 
 constexpr QType kFormats[] = {
     QType::BF16,
@@ -171,36 +150,7 @@ constexpr const char* kBuildSet =
 // "# facts <digest>"; selector_golden/facts_index.txt maps (board, digest) to the file holding the
 // choices and records the nvcc each was made with. A toolchain with other facts and no entry fails
 // and names its digest; --update rewrites the entry of its own nvcc.
-bool facts_keyed(const GoldenBoard& b) { return rmma_terms_measured(b.major, b.minor); }
-
-// FNV-1a over the distinct (format, schedule, epilogue, registers, spill, threads, latency form)
-// tuples read, in sorted order: what the prices took, not a sample of the kernels.
-std::string facts_digest(std::vector<generic::RmmaFactRead> reads) {
-    using Key = std::tuple<int, int, int, int, std::size_t, int, bool>;
-    std::set<Key> keys;
-    for (const auto& r : reads) {
-        keys.emplace(static_cast<int>(r.qtype), r.schedule, static_cast<int>(r.epilogue),
-                     r.facts.registers, r.facts.local_bytes, r.facts.threads,
-                     r.facts.latency_variant);
-    }
-    std::uint64_t h = 1469598103934665603ULL;
-    const auto mix  = [&h](std::uint64_t v) {
-        for (int i = 0; i < 8; ++i) {
-            h ^= (v >> (8 * i)) & 0xFFU;
-            h *= 1099511628211ULL;
-        }
-    };
-    for (const auto& [q, s, e, regs, local, threads, latency] : keys) {
-        for (const std::uint64_t v :
-             {std::uint64_t(q), std::uint64_t(s), std::uint64_t(e), std::uint64_t(regs),
-              std::uint64_t(local), std::uint64_t(threads), std::uint64_t(latency)}) {
-            mix(v);
-        }
-    }
-    std::ostringstream out;
-    out << std::hex << std::setfill('0') << std::setw(16) << h;
-    return out.str().substr(0, 12);
-}
+bool facts_keyed(const GoldenBoard& b) { return generic::board_prices_from_facts(b); }
 
 // facts_index.txt: which file holds the choices for which facts digest and nvcc (see the file).
 struct IndexEntry {
@@ -246,19 +196,72 @@ void save_index(Index index) {
         out << e.board << " " << e.digest << " " << e.file << " " << e.nvcc << "\n";
 }
 
-// --update of several boards at once (one process each) rewrites one index: a directory is the
-// lock.
+long own_pid() {
+#ifdef _WIN32
+    return static_cast<long>(_getpid());
+#else
+    return static_cast<long>(getpid());
+#endif
+}
+
+// Whether a process is certainly gone (POSIX; elsewhere a lock is never judged stale).
+bool process_gone(long pid) {
+#ifdef _WIN32
+    (void)pid;
+    return false;
+#else
+    return kill(static_cast<pid_t>(pid), 0) != 0 && errno == ESRCH;
+#endif
+}
+
+// --update of several boards at once (one process each) rewrites one index: a directory holding
+// its owner's pid is the lock. It is waited for 60 s; a lock whose owner no longer exists is
+// removed (renamed away first, so one waiter wins); the destructor removes only a lock this
+// process took. Without the lock the constructor throws.
 struct IndexLock {
-    std::filesystem::path path = golden_dir() / ".facts_index.lock";
+    std::filesystem::path dir   = golden_dir() / ".facts_index.lock";
+    std::filesystem::path owner = dir / "owner";
+    bool held                   = false;
 
     IndexLock() {
-        for (int i = 0; i < 600 && !std::filesystem::create_directory(path); ++i)
+        const long me = own_pid();
+        long last_owner = 0;
+        for (int i = 0; i < 600; ++i) {
+            if (std::filesystem::create_directory(dir)) {
+                std::ofstream(owner) << me << "\n";
+                held = true;
+                return;
+            }
+            long pid = 0;
+            std::ifstream(owner) >> pid;
+            last_owner = pid;
+            if (pid > 0 && process_gone(pid)) {
+                const auto grave = dir.string() + ".stale" + std::to_string(me);
+                std::error_code ec;
+                std::filesystem::rename(dir, grave, ec);
+                if (!ec) {
+                    long moved = 0;
+                    std::ifstream(std::filesystem::path(grave) / "owner") >> moved;
+                    if (moved == pid) {
+                        std::filesystem::remove_all(grave, ec);
+                    } else {
+                        std::filesystem::rename(grave, dir, ec); // a live lock: give it back
+                    }
+                }
+                continue;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        throw std::runtime_error("cannot take " + dir.string() + " within 60 s (held by pid " +
+                                 std::to_string(last_owner) +
+                                 "); remove it if that process is gone");
     }
 
     ~IndexLock() {
+        if (!held) return;
         std::error_code ignored;
-        std::filesystem::remove(path, ignored);
+        std::filesystem::remove(owner, ignored);
+        std::filesystem::remove(dir, ignored);
     }
 
     IndexLock(const IndexLock&)            = delete;
@@ -290,12 +293,7 @@ std::filesystem::path golden_file(const GoldenBoard& b, const std::string& diges
 // One board's choices, a line per (format, policy, epilogue, shape, profile) and run of widths
 // with the same route and workspace. The scales multiply the clocks the driver reports.
 std::string dump_body(const GoldenBoard& b, double sm_scale, double memory_scale) {
-    DeviceClass d = synthetic_device_class(b.pci_device_id, b.major, b.minor, b.sms,
-                                           b.l2_mib * kMiB, b.memory_gib * 1024 * kMiB);
-    d.sm_clock_khz     = static_cast<int>(b.sm_clock_mhz * 1000 * sm_scale);
-    d.memory_clock_khz = static_cast<int>(b.memory_clock_mhz * 1000 * memory_scale);
-    d.memory_bus_bits  = b.bus_bits;
-    d.facts            = machine_facts_of(d); // as the query derives them from these values
+    const DeviceClass d = generic::board_device_class(b, sm_scale, memory_scale);
     const ScopedDeviceClass scoped(d);
     std::ostringstream out;
     out << "# " << b.name << " " << device_class().id() << " " << device_class().arch() << '\n';
@@ -423,20 +421,12 @@ std::string dump_body(const GoldenBoard& b, double sm_scale, double memory_scale
 // process reads the kernels' facts; a repeat is answered from the selector's per-device cache
 // without reading, so the digest is kept per board.
 std::string dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memory_scale = 1.0) {
-    std::vector<generic::RmmaFactRead> reads;
-    std::string body;
-    {
-        const generic::ScopedRmmaFactsSink sink(reads);
-        body = dump_body(b, sm_scale, memory_scale);
-    }
+    const std::string body = dump_body(b, sm_scale, memory_scale);
     if (!facts_keyed(b)) return body;
+    // The digest is the shared probe's (selector_facts.h), the one a release computes of its own
+    // engine; it throws where the price reads no facts.
     static std::map<std::string, std::string> digests;
-    const auto found = digests.find(b.name);
-    if (found == digests.end() && reads.empty()) {
-        throw std::runtime_error(std::string(b.name) +
-                                 ": the dump read no compiled kernel facts (the price took none)");
-    }
-    if (!reads.empty()) digests[b.name] = facts_digest(reads);
+    if (digests.find(b.name) == digests.end()) digests[b.name] = generic::selector_facts_digest(b);
     const auto first = body.find('\n') + 1;
     return body.substr(0, first) + "# facts " + digests[b.name] + "\n" + body.substr(first);
 }
