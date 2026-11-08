@@ -1238,7 +1238,7 @@ ManifestState read_manifest_state(const fs::path& artifact) {
     if (!fs::exists(path)) { return state; }
     state.exists = true;
     try {
-        const auto manifest = Json::parse(read_file(path));
+        const auto manifest    = Json::parse(read_file(path));
         state.bundle_planned   = manifest.value("matched_by", std::string()) == "declaration";
         state.registry_current = manifest.value("registry_sha256", std::string()) ==
                                  spec::Registry::builtin().source_sha256();
