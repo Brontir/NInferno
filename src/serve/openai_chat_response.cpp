@@ -295,14 +295,14 @@ std::string make_chat_completion_response(const OpenAIChatResponseIdentity& iden
     }
 
     Json payload       = base_payload(identity, "chat.completion");
-    payload["choices"] = Json::array(
-        {Json{{"index", 0},
-              {"message", std::move(message)},
-              {"logprobs", outcome.logprobs ? Json{{"content", openai_logprob_content(*outcome.logprobs)},
-                                                   {"refusal", nullptr}}
-                                            : Json(nullptr)},
-              {"finish_reason",
-               calls_end ? Json("tool_calls") : Json(finish_reason(outcome.finish_reason))}}});
+    payload["choices"] = Json::array({Json{
+        {"index", 0},
+        {"message", std::move(message)},
+        {"logprobs", outcome.logprobs ? Json{{"content", openai_logprob_content(*outcome.logprobs)},
+                                             {"refusal", nullptr}}
+                                      : Json(nullptr)},
+        {"finish_reason",
+         calls_end ? Json("tool_calls") : Json(finish_reason(outcome.finish_reason))}}});
     payload["usage"]   = usage_json(usage_from(outcome));
     payload["timings"] = timings_json(outcome_timings(outcome));
     return payload.dump();

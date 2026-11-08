@@ -1340,7 +1340,7 @@ int test_aggregate_response() {
 
     // A call dropped as unfinished (a stop string in a forced call) means the turn is not a
     // finished set of calls: the stop is reported, the complete calls stay.
-    outcome.finish_reason                 = ninferno::FinishReason::StopString;
+    outcome.finish_reason                     = ninferno::FinishReason::StopString;
     outcome.tool_call_parse.cut_calls_dropped = 1;
     response = Json::parse(make_chat_completion_response(identity(), outcome));
     failures += check(response["choices"][0]["finish_reason"] == "stop" &&
