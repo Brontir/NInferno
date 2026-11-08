@@ -15,9 +15,11 @@ struct CompilerOptions {
     // Largest accepted schema, regex, grammar or structural-tag text, and choice list.
     std::size_t max_definition_bytes = 256U * 1024U;
     std::size_t max_choices          = 4096;
-    // A compile that does not finish in time returns "constraint_compile_timeout"; its worker
-    // finishes in the background and its result is discarded. At most max_concurrent compiles run
-    // at once; a request that cannot start one within the timeout gets "constraint_compiler_busy".
+    // A compile that does not finish in time returns "constraint_compile_timeout". Once no request
+    // waits for it any more it is cancelled: its worker stops at the next token-mask checkpoint,
+    // frees its slot and its threads, and the result is discarded. At most max_concurrent compiles
+    // run at once; a request that cannot start one within the timeout gets
+    // "constraint_compiler_busy".
     std::chrono::milliseconds compile_timeout{10000};
     std::uint32_t max_concurrent = 4;
     // Compiled constraints are cached by their exact spec up to this many bytes.

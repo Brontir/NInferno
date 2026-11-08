@@ -306,6 +306,36 @@ void busy_contract() {
     check(expect_error(busy, spec) == "constraint_compiler_busy", "no free compiler slot");
 }
 
+// A compile that times out is cancelled: it frees the only compiler slot soon after the request
+// gave up instead of running to the end. The pattern unrolls to hundreds of thousands of states, so
+// finishing it takes far longer than the whole test allows.
+void cancel_contract() {
+    CompilerOptions options;
+    options.max_concurrent  = 1;
+    options.compile_threads = 2;
+    options.compile_timeout = std::chrono::milliseconds(300);
+    const ConstraintCompiler compiler(vocabulary(), options);
+    OutputConstraintSpec slow;
+    slow.kind       = OutputConstraintKind::Regex;
+    slow.definition = "^(([a-z]{1,100}){1,100}){1,100}$";
+    check(expect_error(compiler, slow) == "constraint_compile_timeout", "slow compile times out");
+
+    // The same request again starts a new compile (the abandoned one left the table) and times out
+    // the same way instead of waiting on the cancelled one.
+    check(expect_error(compiler, slow) == "constraint_compile_timeout", "retry times out again");
+
+    // The slot comes back within a few seconds; an ordinary schema then compiles.
+    OutputConstraintSpec simple;
+    simple.kind = OutputConstraintKind::JsonObject;
+    bool freed  = false;
+    for (int attempt = 0; attempt < 20 && !freed; ++attempt) {
+        const std::string code = expect_error(compiler, simple);
+        freed                  = code == "accepted";
+        if (!freed && code != "constraint_compiler_busy") { check(false, "unexpected: " + code); }
+    }
+    check(freed, "timed-out compile released its slot");
+}
+
 void json_walk_contract(const ConstraintCompiler& compiler) {
     const Json schema = Json::parse(R"({"type":"object","properties":{
         "name":{"type":"string"},"n":{"type":"integer","minimum":0},"ok":{"type":"boolean"}},
@@ -1316,6 +1346,7 @@ int main() {
     schema_policy_contract();
     compile_error_contract(compiler);
     busy_contract();
+    cancel_contract();
     json_walk_contract(compiler);
     other_kinds_contract(compiler);
     structural_tag_whitespace_contract(compiler);

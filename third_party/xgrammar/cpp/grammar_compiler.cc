@@ -6,6 +6,7 @@
 #include <xgrammar/compiler.h>
 
 #include <algorithm>
+#include <atomic>
 #include <bitset>
 #include <cctype>
 #include <cstddef>
@@ -18,6 +19,7 @@
 #include <variant>
 #include <vector>
 
+#include "compile_cancel.h"  // NInferno local change (see README.ninferno.md)
 #include "compiled_grammar_impl.h"
 #include "earley_parser.h"
 #include "fsm.h"
@@ -1122,7 +1124,15 @@ CompiledGrammar GrammarCompilerSub::MultiThreadCompileGrammar(Grammar grammar_un
     adaptive_token_mask_cache_mutex.emplace();
   }
 
-  auto add_adaptive_token_mask = [&](const ParserState& state, bool is_root_rule) {
+  // NInferno local change (see README.ninferno.md): a cancelled compile skips the remaining mask
+  // computations and throws once the workers are idle. Worker tasks never throw.
+  const std::atomic<bool>* cancel = ninferno_xgrammar::current_compile_cancel();
+  auto cancelled = [cancel]() { return cancel != nullptr && cancel->load(std::memory_order_relaxed); };
+
+  auto add_adaptive_token_mask = [&, cancelled](const ParserState& state, bool is_root_rule) {
+    if (cancelled()) {
+      return;
+    }
     auto grammar_matcher = GrammarMatcherForTokenMaskCache(
         compiled_grammar_impl->grammar,
         state,
@@ -1154,6 +1164,9 @@ CompiledGrammar GrammarCompilerSub::MultiThreadCompileGrammar(Grammar grammar_un
 
   for (int32_t rule_id = 0; rule_id < static_cast<int>(compiled_grammar_impl->grammar->NumRules());
        ++rule_id) {
+    if (cancelled()) {
+      break;
+    }
     auto rule = compiled_grammar_impl->grammar->GetRule(rule_id);
     const auto& rule_fsm = compiled_grammar_impl->grammar->per_rule_fsms[rule_id];
     XGRAMMAR_DCHECK(rule_fsm.has_value());
@@ -1172,6 +1185,9 @@ CompiledGrammar GrammarCompilerSub::MultiThreadCompileGrammar(Grammar grammar_un
 
   if (max_threads_ > 1) {
     thread_pool->Join();
+  }
+  if (cancelled()) {
+    throw ninferno_xgrammar::CompileCancelled();
   }
 
   return CompiledGrammar(compiled_grammar_impl);
