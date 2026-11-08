@@ -184,8 +184,8 @@ WorkspacePlan build_workspace_plan(const execution::Parameters& parameters,
         auto core = layout.scope();
         mtp_stem(layout, tokens, false);
         (void)workspace::mtp_attention_projection(layout, config, tokens);
-        scratch(layout, execution::mtp_projection_workspace_bytes(parameters.mtp->projection,
-                                                                  tokens, tokens));
+        scratch(layout, execution::mtp_projection_workspace_bytes(
+                            parameters.mtp->projection, *config.attention, tokens, tokens));
         (void)workspace::mtp_attention_results(layout, config, tokens);
         scratch(layout, ops::causal_softmax_attention_workspace_capacity_bytes(
                             {dimension(config.attention->head_dim),
@@ -334,7 +334,8 @@ WorkspacePlan build_workspace_plan(const execution::Parameters& parameters,
                 mtp_stem(layout, tokens, false);
                 (void)workspace::mtp_attention_projection(layout, config, tokens);
                 scratch(layout, execution::mtp_projection_workspace_bytes(
-                                    parameters.mtp->projection, tokens, tokens));
+                                    parameters.mtp->projection, *config.attention, tokens,
+                                    tokens));
                 (void)workspace::mtp_attention_results(layout, config, tokens);
                 scratch(layout,
                         ops::causal_softmax_attention_workspace_capacity_bytes(

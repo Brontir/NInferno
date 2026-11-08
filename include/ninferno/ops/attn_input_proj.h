@@ -54,6 +54,17 @@ void attn_input_proj(const Tensor& x, const Weight& query_key_weight,
                      WorkspaceArena* workspace, cudaStream_t stream);
 
 /**
+ * Whether a single parent of `parent_qtype` with this geometry (input width, query rows, key rows;
+ * the value rows equal the key rows, so the parent has 2 * (query_rows + key_value_rows) rows) is
+ * one of the registered forms of attn_input_proj below. The fused kernels hard-code the head
+ * split, so a parent with the right total but another split is not supported. A caller whose
+ * parent is not supported sizes and runs its own linear projection instead of this Op.
+ */
+[[nodiscard]] bool attn_input_proj_fused_supported(QType parent_qtype, std::int32_t input_rows,
+                                                   std::int32_t query_rows,
+                                                   std::int32_t key_value_rows);
+
+/**
  * Computes the single-parent Q/K/output-gate/V projection.
  *
  * The parent stores rows in physical order query, key, output gate, value while the public output
