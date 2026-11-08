@@ -764,9 +764,9 @@ int test_bare_json_call_dropped() {
         failures += check(cut_call.first.empty() && cut_call.second == 0,
                           "a bare call cut inside its arguments was shown: " + cut_call.first);
         const auto cut_router = run(router.substr(0, router.size() - 8), true);
-        failures += check(cut_router.first == router.substr(0, router.size() - 8) &&
-                              cut_router.second == 0,
-                          "a router object cut at the limit was dropped: " + cut_router.first);
+        failures +=
+            check(cut_router.first == router.substr(0, router.size() - 8) && cut_router.second == 0,
+                  "a router object cut at the limit was dropped: " + cut_router.first);
         // The text after a call streams as it comes, not at the end.
         ninferno::chat::ToolCallOutputDecoder streaming(discarded, 64);
         std::string live = streaming.feed(call);

@@ -1231,16 +1231,15 @@ std::string ToolCallOutputDecoder::settle_bare() {
     const bool json             = syntax_->bare_call_header().front() == "{";
     std::size_t start           = 0;
     skip_format_whitespace(body, start);
-    const std::optional<std::size_t> end =
-        json ? json_value_end(body, start) : bare_call_end(body);
+    const std::optional<std::size_t> end = json ? json_value_end(body, start) : bare_call_end(body);
     if (!end) { return {}; }
     const std::string object(body.substr(0, *end));
     std::string rest(body.substr(*end));
     std::string visible;
     if (!json || is_bare_call_object(object)) {
-        ParsedToolCallOutput one = syntax_->parse(
-            std::string(syntax_->open()) + object + (json ? "" : std::string(syntax_->close())),
-            max_tool_name_length_, *contract_);
+        ParsedToolCallOutput one = syntax_->parse(std::string(syntax_->open()) + object +
+                                                      (json ? "" : std::string(syntax_->close())),
+                                                  max_tool_name_length_, *contract_);
         if (one.is_tool_call_response) {
             for (GeneratedToolCall& call : one.tool_calls) {
                 bare_calls_.push_back(std::move(call));
