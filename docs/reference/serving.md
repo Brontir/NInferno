@@ -729,7 +729,11 @@ llama.cpp-style base URLs.
   Completions only: Responses refuses it as an unknown parameter, Anthropic Messages ignores it
   with the unknown-field warning.
 - Up to sixteen stop strings, applied to the answer only (a stop never ends a thinking model's
-  reasoning). Empty strings mean none and are dropped.
+  reasoning). Empty strings mean none and are dropped. Under `tool_choice` `required` or a named
+  function, a stop string that matches inside a call ends the output like any other stop, but the
+  unfinished call is dropped (counted as `cut_calls_dropped` in the request log), not returned as
+  text: the answer is empty or holds only the calls that were complete before the stop. With
+  `tool_choice` `auto` the unfinished markup stays text, like any malformed call.
 - The thinking switch as `enable_thinking`, `chat_template_kwargs.enable_thinking`, Ollama's `think`
   and `thinking: {"type": "enabled" | "disabled"}`; conflicting values are refused. A chat template
   that renders the same prompt either way (gpt-oss's harmony template, which always reasons) has no
