@@ -364,7 +364,8 @@ struct ConstraintCompiler::Impl : std::enable_shared_from_this<ConstraintCompile
     std::mutex inflight_mutex;
     std::unordered_map<std::string, std::shared_ptr<Inflight>> inflight;
 
-    // Removes the key's entry if it still belongs to `job` (a cancelled job may have been replaced).
+    // Removes the key's entry if it still belongs to `job` (a cancelled job may have been
+    // replaced).
     void finish_inflight(const std::string& key, const Inflight* job) {
         std::lock_guard lock(inflight_mutex);
         if (const auto it = inflight.find(key); it != inflight.end() && it->second.get() == job) {

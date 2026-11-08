@@ -321,8 +321,9 @@ GrammarVocabulary large_vocabulary() {
 }
 
 // A compile that times out is cancelled: it frees the only compiler slot soon after the request
-// gave up instead of running to the end. The pattern unrolls to thousands of states, each with a mask pass over the vocabulary, so
-// finishing it takes seconds, far longer than the slot checks below wait.
+// gave up instead of running to the end. The pattern unrolls to thousands of states, each with a
+// mask pass over the vocabulary, so finishing it takes seconds, far longer than the slot checks
+// below wait.
 void cancel_contract() {
     CompilerOptions options;
     options.max_concurrent  = 1;
@@ -330,8 +331,8 @@ void cancel_contract() {
     options.compile_timeout = std::chrono::milliseconds(300);
     const ConstraintCompiler compiler(large_vocabulary(), options);
     OutputConstraintSpec slow;
-    slow.kind       = OutputConstraintKind::JsonSchema;
-    slow.definition = R"({"type":"string","pattern":"^(([a-z]{1,30}){1,30}){1,10}$"})";
+    slow.kind               = OutputConstraintKind::JsonSchema;
+    slow.definition         = R"({"type":"string","pattern":"^(([a-z]{1,30}){1,30}){1,10}$"})";
     const std::string first = expect_error(compiler, slow);
     check(first == "constraint_compile_timeout", "slow compile times out: " + first);
 
