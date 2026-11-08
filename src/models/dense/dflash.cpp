@@ -532,10 +532,9 @@ void DenseExecution::propose(program::DFlashBatchContext& state, std::int32_t ba
                                               work, attention, s);
             } else if (dc.full_window > 0) {
                 // The drafter's full layers read its trained length (DFlashConfig::full_window).
-                ops::context_window_attention(query, key, value, frontiers, valid, full_rows,
-                                              geometry, scale, dc.full_window,
-                                              state.dflash.full_batch_layer(index), envelopes.full,
-                                              work, attention, s);
+                ops::context_window_attention(
+                    query, key, value, frontiers, valid, full_rows, geometry, scale, dc.full_window,
+                    state.dflash.full_batch_layer(index), envelopes.full, work, attention, s);
             } else {
                 ops::context_softmax_attention(query, key, value, frontiers, valid, full_rows,
                                                geometry, scale,
