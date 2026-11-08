@@ -45,7 +45,7 @@ struct TestBoard {
 };
 
 constexpr TestBoard kBoards[] = {{"RTX 5070 Ti", 0x2C05, 70, 2.452e9, 896e9},
-                             {"RTX 5090", 0x2B85, 170, 2.407e9, 1792e9}};
+                                 {"RTX 5090", 0x2B85, 170, 2.407e9, 1792e9}};
 
 struct Shape {
     generic::Epilogue epilogue;
