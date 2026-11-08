@@ -10,8 +10,6 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
-#include <list>
-#include <mutex>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -208,11 +206,11 @@ ninferno::SamplingOverrides resolve_sampling_overrides(const SamplingParams& req
 
 // --tool-order sorted: clients that send the same tools in the order their MCP servers finished
 // registering, which can differ from one request (or client restart) to the next, would move the
-// shared prefix back thousands of tokens on every swap, as the template renders the tool list before
-// the system prompt. Sorted by name, every order of one set renders the same prompt, on any process
-// and after a restart; nothing is remembered between requests. A request with an explicit cache
-// boundary after a tool or a duplicate name keeps the client's order, as does the default (the
-// order apply_chat_template renders).
+// shared prefix back thousands of tokens on every swap, as the template renders the tool list
+// before the system prompt. Sorted by name, every order of one set renders the same prompt, on any
+// process and after a restart; nothing is remembered between requests. A request with an explicit
+// cache boundary after a tool or a duplicate name keeps the client's order, as does the default
+// (the order apply_chat_template renders).
 void sort_tools(std::vector<const ToolDefinition*>& tools) {
     if (tools.size() < 2) { return; }
     if (std::any_of(tools.begin(), tools.end(),
@@ -220,8 +218,9 @@ void sort_tools(std::vector<const ToolDefinition*>& tools) {
         return;
     }
     std::vector<const ToolDefinition*> sorted = tools;
-    std::stable_sort(sorted.begin(), sorted.end(),
-                     [](const ToolDefinition* a, const ToolDefinition* b) { return a->name < b->name; });
+    std::stable_sort(
+        sorted.begin(), sorted.end(),
+        [](const ToolDefinition* a, const ToolDefinition* b) { return a->name < b->name; });
     const auto same_name = [](const ToolDefinition* a, const ToolDefinition* b) {
         return a->name == b->name;
     };
@@ -232,8 +231,7 @@ void sort_tools(std::vector<const ToolDefinition*>& tools) {
 // tool_choice none keeps the declarations (vLLM's default too): dropping them changed the prompt
 // from the first byte after the system turn, and a compaction or summary turn of an agent lost the
 // whole cached conversation. Calls are not read back then.
-std::vector<const ToolDefinition*> effective_tools(const GenerationRequest& request,
-                                                   bool sorted) {
+std::vector<const ToolDefinition*> effective_tools(const GenerationRequest& request, bool sorted) {
     std::vector<const ToolDefinition*> tools;
     tools.reserve(request.tools.size());
     for (const ToolDefinition& tool : request.tools) { tools.push_back(&tool); }

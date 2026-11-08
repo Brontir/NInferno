@@ -562,8 +562,8 @@ int test_tools() {
         server.sort_tools = sorted;
         std::vector<std::string> names;
         for (const std::string& tool :
-             to_prompt_input(parsed.generation,
-                             resolve_prompt_semantics(parsed.generation, server), {})
+             to_prompt_input(parsed.generation, resolve_prompt_semantics(parsed.generation, server),
+                             {})
                  .options.tool_jsons) {
             names.push_back(Json::parse(tool).at("function").at("name").get<std::string>());
         }
@@ -572,19 +572,19 @@ int test_tools() {
     const std::vector<std::string> sorted_names = {"order_alpha", "order_beta", "order_mid"};
     const std::vector<std::string> sent_names   = {"order_beta", "order_alpha", "order_mid"};
     Json reordered     = base_request();
-    reordered["tools"] = Json::array({function_tool("order_alpha"), function_tool("order_beta"),
-                                      function_tool("order_mid")});
+    reordered["tools"]                          = Json::array(
+        {function_tool("order_alpha"), function_tool("order_beta"), function_tool("order_mid")});
     failures += check(rendered_names(reordered, false) == sorted_names,
                       "the first tool set renders in its order");
-    reordered["tools"] = Json::array({function_tool("order_beta"), function_tool("order_alpha"),
-                                      function_tool("order_mid")});
+    reordered["tools"] = Json::array(
+        {function_tool("order_beta"), function_tool("order_alpha"), function_tool("order_mid")});
     failures += check(rendered_names(reordered, false) == sent_names,
                       "a reordered tool set renders in its own order, not the one seen first");
     failures += check(rendered_names(reordered, true) == sorted_names,
                       "--tool-order sorted renders every order of a set sorted by name");
     Json duplicate     = base_request();
-    duplicate["tools"] = Json::array({function_tool("order_beta"), function_tool("order_alpha"),
-                                      function_tool("order_beta")});
+    duplicate["tools"] = Json::array(
+        {function_tool("order_beta"), function_tool("order_alpha"), function_tool("order_beta")});
     failures += check(rendered_names(duplicate, true) ==
                           std::vector<std::string>{"order_beta", "order_alpha", "order_beta"},
                       "a duplicate name keeps the request's order under --tool-order sorted");
