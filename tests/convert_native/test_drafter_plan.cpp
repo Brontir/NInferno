@@ -511,8 +511,9 @@ void retry_failed_drafter() {
     const auto refreshed = cv::refresh_changed_drafters(artifact);
     expect(refreshed.size() == 1 && refreshed[0] == "assistant", "the changed drafter is refreshed");
     const auto after = Json::parse(read_text(ninferno::spec::manifest_path(artifact)));
-    expect(after["drafters"][0]["artifact_id"] == id && after["drafters"][0]["status"] == "cached",
-           "the refreshed drafter takes the file's id, as a cached attach");
+    expect(after["drafters"][0]["artifact_id"] == id &&
+               after["drafters"][0]["status"] == "converted",
+           "the refreshed drafter takes the file's id and keeps its status");
     expect(after["drafters"][1]["status"] == "failed: SSL connect error",
            "another drafter's failure is kept for its retry");
     expect(cv::refresh_changed_drafters(artifact).empty(), "refreshed once: nothing more to do");
@@ -531,6 +532,12 @@ void retry_failed_drafter() {
     std::filesystem::remove(drafter.entry.string() + ".conversion.json");
     with(manifest("{}", entry("cached", "00")));
     expect(cv::refresh_changed_drafters(artifact).empty(), "no conversion report: not refreshed");
+    // A file the user gave (--drafter-artifact) has no conversion report and stays theirs.
+    with(manifest("{}", entry("attached", "00")));
+    expect(cv::refresh_changed_drafters(artifact).size() == 1, "a given drafter file is refreshed");
+    const auto given = Json::parse(read_text(ninferno::spec::manifest_path(artifact)));
+    expect(given["drafters"][0]["status"] == "attached" && given["drafters"][0]["artifact_id"] == id,
+           "a given drafter keeps its status and takes the file's id");
 }
 
 // A drafter that cannot be had stops a start that asked for it (--with-drafters) and is a warning

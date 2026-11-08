@@ -1085,19 +1085,21 @@ std::vector<std::string> refresh_changed_drafters(const fs::path& target_artifac
         for (auto& d : manifest.at("drafters")) {
             if (!changed_since_attach(d, false)) { continue; }
             // As attach_drafters takes a cached drafter: the file and its conversion report at
-            // the path that names the drafter's commit, recipe, quantization and shortlist.
+            // the path that names the drafter's commit, recipe, quantization and shortlist. A file
+            // the user gave (--drafter-artifact, "attached") is theirs: taken as it is now.
             const auto artifact = d.at("artifact").get<std::string>();
-            if (!fs::exists(artifact + ".conversion.json")) { continue; }
+            const bool given    = d.value("status", std::string()) == "attached";
+            if (!given && !fs::exists(artifact + ".conversion.json")) { continue; }
             const auto name = d.value("name", std::string());
             if (const auto fp = spec::artifact_vocab_fingerprint(artifact);
                 fp && !target_fingerprint.empty() && fp->value != target_fingerprint) {
                 d["compatible"] = false;
-                d["reason"]     = "the converted drafter's vocabulary " + fp->value +
+                d["reason"]     = "the drafter's vocabulary " + fp->value +
                               " differs from the target's " + target_fingerprint;
                 d["status"]     = "incompatible: " + d["reason"].get<std::string>();
             } else {
+                // Its status (converted, cached, attached) is kept: only the file changed.
                 d["artifact_id"] = spec::artifact_id_hex(artifact);
-                d["status"]      = "cached";
             }
             refreshed.push_back(name);
         }
