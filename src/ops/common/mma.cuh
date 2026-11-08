@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/arch_family.cuh"
 #include "ops/common/memory.cuh"
 
 #include <cuda_fp16.h>
@@ -498,8 +499,8 @@ __device__ __forceinline__ void mma_s8_k16(int& c0, int& c1, int& c2, int& c3, u
 // Blackwell (sm_120a, sm_121a, sm_120f), which nvcc marks with __CUDA_ARCH_FAMILY_SPECIFIC__ (1200
 // for sm_120a and sm_120f, 1210 for sm_121a); a plain sm_120 or a later generation's plain
 // target compiles the portable forms instead.
-#if defined(__CUDA_ARCH__) && defined(__CUDA_ARCH_FAMILY_SPECIFIC__) &&                            \
-    __CUDA_ARCH_FAMILY_SPECIFIC__ >= 1200 && __CUDA_ARCH_FAMILY_SPECIFIC__ < 1300
+#if defined(__CUDA_ARCH__) && NINFERNO_ARCH_FAMILY_SPECIFIC >= 1200 &&                             \
+    NINFERNO_ARCH_FAMILY_SPECIFIC < 1300
 #    define NINFERNO_SM120_BLOCK_SCALED_MMA 1
 #else
 #    define NINFERNO_SM120_BLOCK_SCALED_MMA 0

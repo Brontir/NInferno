@@ -14,8 +14,8 @@ if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
   set(CMAKE_CUDA_ARCHITECTURES 120a CACHE STRING "CUDA architectures to build")
 endif()
 # 120f (the sm_12x family target, every consumer Blackwell including later members) and 121a
-# build the full engine too: its kernels gate on the sm_12x family (__CUDA_ARCH_FAMILY_SPECIFIC__
-# 1200 or 1210).
+# build the full engine too: its kernels gate on the sm_12x family (NINFERNO_ARCH_FAMILY_SPECIFIC,
+# core/arch_family.cuh: 1200 or 1210).
 set(NINFERNO_FULL_CUDA_ARCHS "120a" "121a" "120f")
 set(NINFERNO_CUDA_ARCHS ${NINFERNO_FULL_CUDA_ARCHS} "89" "86" "80" "75" "70")
 if(NOT CMAKE_CUDA_ARCHITECTURES IN_LIST NINFERNO_CUDA_ARCHS)
