@@ -22,12 +22,15 @@ namespace {
     bad_request(std::move(message), "input", "invalid_value");
 }
 
-[[noreturn]] void response_not_found(const std::string& id) {
-    ApiError error{.status  = 404,
+// A parent the store no longer has (a restart, an eviction, a DELETE, or store:false): 400
+// previous_response_not_found, the answer on which OpenAI clients retry once with the full input
+// and no previous_response_id. The resource endpoints keep 404 response_not_found.
+[[noreturn]] void previous_response_not_found(const std::string& id) {
+    ApiError error{.status  = 400,
                    .type    = "invalid_request_error",
-                   .message = "response '" + ascii_preview(id) + "' not found",
+                   .message = "Previous response with id '" + ascii_preview(id) + "' not found.",
                    .param   = "previous_response_id",
-                   .code    = "response_not_found"};
+                   .code    = "previous_response_not_found"};
     throw ApiException(std::move(error));
 }
 
@@ -152,7 +155,7 @@ resolve_openai_responses_prompt(const OpenAIResponsesPromptRequest& request,
     std::shared_ptr<const StoredOpenAIResponse> parent_record;
     if (request.previous_response_id) {
         parent_record = store.get(*request.previous_response_id);
-        if (!parent_record) { response_not_found(*request.previous_response_id); }
+        if (!parent_record) { previous_response_not_found(*request.previous_response_id); }
         resolved.parent = parent_record->context;
     }
 
