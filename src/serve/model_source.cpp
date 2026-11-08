@@ -145,6 +145,18 @@ void check_fits(const ServeOptions& options, const convert::FetchPlan& fetch,
 
 } // namespace
 
+convert::Drafters hub_drafters(const ServeOptions& options, bool attach) {
+    // Named by the user (--with-drafters, or a --spec backend that runs a separate drafter):
+    // required. Only the automatic choice drafts: attached when it can be, else the model is
+    // served without the drafter, with a warning.
+    const SpeculativeBackend backend = options.speculative.backend;
+    if (options.with_drafters || backend == SpeculativeBackend::DFlash ||
+        backend == SpeculativeBackend::DFlash2) {
+        return convert::Drafters::Require;
+    }
+    return attach ? convert::Drafters::Attach : convert::Drafters::Default;
+}
+
 ModelSource resolve_model_source(const ServeOptions& options,
                                  const std::function<void(const std::string&)>& log) {
     const std::string& name = options.model_source;
@@ -212,7 +224,8 @@ ModelSource resolve_model_source(const ServeOptions& options,
         drafters = hub_start_attaches_drafters(options, log);
     }
     if (drafters && !options.with_drafters && log) {
-        log("drafters | the choice drafts with a separate drafter: attached (a separate download)");
+        log("drafters | the choice drafts with a separate drafter: it will be attached (a separate "
+            "download)");
     }
     acquire.fetch.log      = log;
     acquire.convert.recipe            = options.recipe;
@@ -225,13 +238,7 @@ ModelSource resolve_model_source(const ServeOptions& options,
     acquire.reuse          = true;
     acquire.repository     = fs::current_path();
     acquire.log            = log;
-    // Named by the user: required. Only the automatic choice drafts: attached when it can be,
-    // else the model is served without the drafter, with a warning.
-    if (options.with_drafters) {
-        acquire.drafters = convert::Drafters::Require;
-    } else if (drafters) {
-        acquire.drafters = convert::Drafters::Attach;
-    }
+    acquire.drafters       = hub_drafters(options, drafters);
     acquire.keep_replaced = options.keep_replaced;
     // Also for the quantization chosen above: that choice is for an idle card of this class,
     // this check for the memory free now.

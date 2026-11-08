@@ -246,24 +246,36 @@ bool wants_drafters(const AcquireOptions& options) {
     return options.drafters == Drafters::Attach || options.drafters == Drafters::Require;
 }
 
+// How to fetch a drafter ahead of time, for the warning: its repository, the commit the registry
+// pins (drafter_fetch asks for it) and the GGUF file it names.
+struct FetchAdvice {
+    std::string repo;
+    std::string revision;
+    std::string gguf;
+};
+
 // The model is served without drafters it attached nothing of. Under Attach (the automatic
-// choice drafts, the user gave no flag) this is a warning that says what it costs and how to get
+// choice drafts, the user gave no flag) this is a warning that says what it costs, and, when
+// `advice` is given (the drafter's fetch failed, so a download or a network cures it), how to get
 // the drafter; otherwise a plain line, as a checkpoint's drafters always were.
-void not_attached(const AcquireOptions& options, const std::string& what, const std::string& why,
-                  bool fetch_helps = true, const std::string& repo = std::string()) {
+void not_attached(const AcquireOptions& options, const std::string& what, std::string why,
+                  bool plural, const FetchAdvice* advice = nullptr) {
+    while (!why.empty() && (why.back() == '.' || why.back() == ' ')) { why.pop_back(); }
     if (options.drafters != Drafters::Attach) {
         say(options, what + ": " + why);
         return;
     }
-    std::string line = "warning: " + what + ": " + why +
-                       ". The model is served without it: plain decoding, slower on one stream.";
-    // A failed fetch is cured by the network or a copy in the cache; a drafter that does not fit
-    // the model is not.
-    if (fetch_helps) {
-        line += " Go online and start again, or fetch " +
-                (repo.empty() ? std::string("the drafter's repository") : repo) +
-                " ahead of time (hf download " + (repo.empty() ? std::string("REPO_ID") : repo) +
-                ").";
+    std::string line = "warning: " + what + ": " + why + ". The model is served without " +
+                       (plural ? "them" : "it") +
+                       ", with speculative decoding off: replies are slower.";
+    if (advice != nullptr && !advice->repo.empty()) {
+        const bool offline = why.find("HF_HUB_OFFLINE") != std::string::npos;
+        line += std::string(offline ? " Unset HF_HUB_OFFLINE and start again"
+                                    : " Go online and start again") +
+                ", or fetch the drafter ahead of time: hf download " + advice->repo;
+        if (!advice->revision.empty()) { line += " --revision " + advice->revision; }
+        if (!advice->gguf.empty()) { line += " --include \"" + advice->gguf + "*\""; }
+        line += ".";
     }
     say(options, line);
 }
@@ -283,11 +295,11 @@ void require_drafters(const DrafterPlan& plan, const AcquireOptions& options) {
                                      " (--with-drafters requires every drafter; without the "
                                      "flag the model is served without it)");
         }
-        // A companion absent from the artifact follows from its fetch having failed, which has
-        // its warning: said once.
-        if (d.status.starts_with("not in the artifact")) { continue; }
-        not_attached(options, "drafter " + d.decl.name, d.status, d.status.starts_with("failed"),
-                     d.decl.repo);
+        // Only a failed fetch is cured by the network or a copy in the cache; a full disk, a
+        // conversion error or a drafter that does not fit the model is not.
+        const FetchAdvice advice{d.decl.repo, d.decl.revision, d.decl.gguf};
+        not_attached(options, "drafter " + d.decl.name, d.status, false,
+                     d.fetch_failed ? &advice : nullptr);
     }
 }
 
@@ -779,6 +791,12 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                         " failed and its download was removed: fetch the model again "
                         "(--with-drafters requires every drafter)");
                 }
+                if (bundle_planned && bundle_failed && options.drafters == Drafters::Attach) {
+                    not_attached(options, "a drafter of " + kept->string(),
+                                 "it failed and its download was removed (fetch the model "
+                                 "again to retry it)",
+                                 false);
+                }
                 if (options.drafters != Drafters::Off && drafters_incomplete(*kept) &&
                     !bundle_planned) {
                     try {
@@ -799,7 +817,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                         }
                     } catch (const std::exception& error) {
                         if (options.drafters == Drafters::Require) { throw; }
-                        not_attached(options, "drafters not attached", error.what());
+                        not_attached(options, "drafters not attached", error.what(), true);
                     }
                 }
                 return out;
@@ -939,17 +957,23 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
         convert_options.components_auto = true;
     }
     const std::string model_id = options.model_id.empty() ? fetched.repo : options.model_id;
+    // The companions convert_gguf_companions could not fetch or convert in. The plan made from
+    // the artifact afterwards has them missing; this carries the failure into it, so the manifest
+    // lists them as failed (the next run tries again) and one warning names the cause.
+    std::vector<PlannedDrafter> companion_failures;
     // Whatever fails here, the model itself is served as it was before drafters were planned.
     const auto attach_to_artifact = [&] {
         try {
             const auto target = describe_gguf_artifact(out.artifact, model_id, fetched.model);
-            out.drafters      = attach_drafters(plan_drafters(target), out.artifact, attach);
+            auto plan         = plan_drafters(target);
+            carry_failures(plan, companion_failures);
+            out.drafters = attach_drafters(std::move(plan), out.artifact, attach);
             require_drafters(*out.drafters, options);
         } catch (const std::exception& error) {
             // Asked for by name (--with-drafters): a drafter that cannot be attached is an error,
             // not a model served slower without it.
             if (options.drafters == Drafters::Require) { throw; }
-            not_attached(options, "drafters not attached", error.what());
+            not_attached(options, "drafters not attached", error.what(), true);
         }
     };
     // A GGUF model's companion drafters (Qwen3.8's DFlash2) are components of the artifact, planned
@@ -959,6 +983,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                                              const std::string& quant) {
         std::vector<std::pair<std::string, fs::path>> companions;
         std::string declared_quant;
+        std::vector<PlannedDrafter> fetched_companions;
         try {
             auto plan =
                 plan_drafters(describe_gguf_artifact(out.artifact, model_id, fetched.model));
@@ -970,15 +995,18 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 return; // converted with its companion already
             }
             companions = fetch_companions(plan, attach);
-            require_drafters(plan, options);
+            if (options.drafters == Drafters::Require) { require_drafters(plan, options); }
             for (const auto& d : plan.drafters) {
                 if (d.status == "fetched" && !d.decl.component.empty()) {
                     declared_quant = d.decl.quant;
+                    fetched_companions.push_back(d);
+                } else if (d.status.starts_with("failed") || d.status.starts_with("incompatible")) {
+                    companion_failures.push_back(d); // warned by attach_to_artifact
                 }
             }
         } catch (const std::exception& error) {
             if (options.drafters == Drafters::Require) { throw; }
-            not_attached(options, "companion drafters not planned", error.what());
+            not_attached(options, "companion drafters not planned", error.what(), true);
         }
         if (companions.empty()) { return; }
         ConvertOptions with = text_only;
@@ -993,7 +1021,16 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
             out.conversion = convert(with);
         } catch (const std::exception& error) {
             if (options.drafters == Drafters::Require) { throw; }
-            not_attached(options, "companion drafters not converted in", error.what());
+            if (options.drafters == Drafters::Attach) {
+                // Said by attach_to_artifact, which finds them missing from the artifact.
+                for (auto d : fetched_companions) {
+                    d.status       = std::string("failed: ") + error.what();
+                    d.fetch_failed = false;
+                    companion_failures.push_back(std::move(d));
+                }
+            } else {
+                say(options, std::string("companion drafters not converted in: ") + error.what());
+            }
             remove_artifact(out.artifact);
             out.conversion = convert(text_only);
         }
@@ -1069,7 +1106,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                         }
                     } catch (const std::exception& error) {
                         if (options.drafters == Drafters::Require) { throw; }
-                        not_attached(options, "drafters not attached", error.what());
+                        not_attached(options, "drafters not attached", error.what(), true);
                     }
                     return out;
                 }

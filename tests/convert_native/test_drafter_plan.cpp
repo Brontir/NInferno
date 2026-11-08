@@ -473,23 +473,36 @@ void retry_failed_drafter() {
 
 // A drafter that cannot be had stops a start that asked for it (--with-drafters) and is a warning
 // for a start whose automatic choice drafts: served without it, the line naming the drafter, the
-// reason, how to get it and what it costs. A drafter that is fine says nothing.
+// reason and what it costs, and, only for a failed fetch, how to get the drafter. A drafter that
+// is fine says nothing.
 void automatic_drafter_missing() {
     cv::DrafterPlan plan;
     cv::PlannedDrafter missing;
-    missing.decl.name = "dflash";
-    missing.decl.repo = "z-lab/Qwen3.5-4B-DFlash";
-    missing.status    = "failed: HF_HUB_OFFLINE is set; no snapshot in the cache";
+    missing.decl.name     = "dflash";
+    missing.decl.repo     = "z-lab/Qwen3.5-4B-DFlash";
+    missing.decl.revision = "9a1996ccf887b79ab3af4fcbf8c1d1f4b5658bcf";
+    missing.decl.gguf     = "dflash-muse-Q4_K_M";
+    missing.status        = "failed: HF_HUB_OFFLINE is set; no snapshot in the cache.";
+    missing.fetch_failed  = true;
+    cv::PlannedDrafter disk;
+    disk.decl.name = "assistant";
+    disk.decl.repo = "google/gemma-4-12B-it-assistant";
+    disk.status    = "failed: needs 3.1 GiB more in the hub cache";
+    cv::PlannedDrafter nowhere;
+    nowhere.decl.name    = "nowhere";
+    nowhere.status       = "failed: no repository declared";
+    nowhere.fetch_failed = true; // whatever the flag says, no repository means no advice
     cv::PlannedDrafter odd;
-    odd.decl.name = "assistant";
-    odd.decl.repo = "google/gemma-4-12B-it-assistant";
+    odd.decl.name = "odd";
+    odd.decl.repo = "org/odd";
     odd.status    = "incompatible: vocabulary differs";
+    cv::PlannedDrafter lacking;
+    lacking.decl.name = "lacking";
+    lacking.status    = "not in the artifact: convert the target with --components";
     cv::PlannedDrafter fine;
-    fine.decl.name            = "mtp";
-    fine.status               = "embedded";
-    cv::PlannedDrafter absent = missing; // the same drafter once more, as the artifact lacks it
-    absent.status             = "not in the artifact: convert the target with --components";
-    plan.drafters             = {fine, missing, odd, absent};
+    fine.decl.name = "mtp";
+    fine.status    = "embedded";
+    plan.drafters  = {fine, missing, disk, nowhere, odd, lacking};
 
     std::vector<std::string> lines;
     cv::AcquireOptions options;
@@ -510,20 +523,27 @@ void automatic_drafter_missing() {
     } catch (const std::exception& error) {
         expect(false, "the automatic choice's missing drafter threw", error.what());
     }
-    expect(lines.size() == 2, "one warning per drafter left out", std::to_string(lines.size()));
-    if (lines.size() == 2) {
+    expect(lines.size() == 5, "one warning per drafter left out", std::to_string(lines.size()));
+    if (lines.size() == 5) {
         const auto has = [&](const std::string& line, const std::string& part) {
             return line.find(part) != std::string::npos;
         };
         expect(line_starts_warning(lines[0]) && has(lines[0], "drafter dflash") &&
-                   has(lines[0], "HF_HUB_OFFLINE") &&
-                   has(lines[0], "hf download z-lab/Qwen3.5-4B-DFlash") &&
-                   has(lines[0], "plain decoding") && has(lines[0], "Go online"),
+                   has(lines[0], "HF_HUB_OFFLINE") && has(lines[0], "Unset HF_HUB_OFFLINE") &&
+                   has(lines[0], "hf download z-lab/Qwen3.5-4B-DFlash --revision 9a1996cc") &&
+                   has(lines[0], "--include \"dflash-muse-Q4_K_M*\"") &&
+                   has(lines[0], "speculative decoding off") && !has(lines[0], ".."),
                "the fetch failure's warning names the drafter, the reason, the cure and the cost",
                lines[0]);
-        expect(line_starts_warning(lines[1]) && has(lines[1], "incompatible") &&
-                   !has(lines[1], "hf download"),
-               "an incompatible drafter's warning offers no download", lines[1]);
+        expect(has(lines[1], "needs 3.1 GiB") && !has(lines[1], "hf download") &&
+                   !has(lines[1], "REPO_ID"),
+               "a full disk gets no download advice", lines[1]);
+        expect(!has(lines[2], "hf download") && !has(lines[2], "REPO_ID"),
+               "no repository: no download advice", lines[2]);
+        expect(has(lines[3], "incompatible") && !has(lines[3], "hf download"),
+               "an incompatible drafter gets no download advice", lines[3]);
+        expect(has(lines[4], "drafter lacking") && has(lines[4], "not in the artifact"),
+               "a companion the artifact lacks is warned of too", lines[4]);
     }
 
     lines.clear();
@@ -532,6 +552,45 @@ void automatic_drafter_missing() {
     options.drafters = cv::Drafters::Off;
     cv::check_attached_drafters(plan, options);
     expect(lines.empty(), "a checkpoint's default and --no-drafters say nothing here");
+}
+
+// A GGUF model's companion drafter whose fetch failed is listed as failed in the manifest, so
+// the next run retries it; left to the plan made from the artifact it would read "not in the
+// artifact", which a GGUF never retries.
+void companion_failure_is_retried() {
+    const TempDir scratch("ninferno_drafter_plan_companion");
+    const auto artifact = scratch.path() / "model.ninferno";
+    cv::DrafterPlan plan;
+    cv::PlannedDrafter companion;
+    companion.decl.name      = "dflash";
+    companion.decl.component = "dflash";
+    plan.drafters            = {companion};
+    plan.target.gguf_source  = true;
+
+    cv::PlannedDrafter failed = companion;
+    failed.status             = "failed: HF_HUB_OFFLINE is set";
+    failed.fetch_failed       = true;
+    const auto retried        = [&](const cv::DrafterPlan& made) {
+        auto manifest               = made.to_json();
+        manifest["registry_sha256"] = ninferno::spec::Registry::builtin().source_sha256();
+        std::ofstream(ninferno::spec::manifest_path(artifact)) << manifest.dump(1);
+        return cv::drafters_incomplete(artifact);
+    };
+
+    auto lacking               = plan;
+    lacking.drafters[0].status = "not in the artifact: convert the target with --components";
+    expect(!retried(lacking), "a GGUF's missing companion alone is not retried (the cause)");
+
+    cv::carry_failures(plan, {failed});
+    expect(plan.drafters[0].status == failed.status && plan.drafters[0].fetch_failed,
+           "the failure is carried into the plan made from the artifact");
+    expect(retried(plan), "the carried failure is retried by the next run");
+
+    cv::DrafterPlan other       = lacking; // a drafter of another name keeps its own status
+    other.drafters[0].decl.name = "other";
+    cv::carry_failures(other, {failed});
+    expect(other.drafters[0].status.starts_with("not in the artifact"),
+           "a failure carries only to the drafter of its name");
 }
 
 } // namespace
@@ -547,6 +606,7 @@ int main() {
     checkpoint_mtp();
     retry_failed_drafter();
     automatic_drafter_missing();
+    companion_failure_is_retried();
     if (failures == 0) { std::cout << "drafter plan: ok\n"; }
     return failures == 0 ? 0 : 1;
 }

@@ -16,6 +16,7 @@
 // A path that exists wins over a hub id of the same spelling. Nothing else on the machine is
 // searched.
 
+#include "convert/acquire.h"
 #include "serve/serve_options.h"
 
 #include <functional>
@@ -36,6 +37,11 @@ struct ModelSource {
     std::uint32_t planned_context = 0;
     double convert_seconds = 0.0;
 };
+
+// How a hub start treats the model's separate drafters: Require when the user named them
+// (--with-drafters, or --spec dflash / dflash2), Attach when only the automatic choice drafts
+// (`attach`), else the default. A drafter that is Attach and cannot be had is a warning.
+[[nodiscard]] convert::Drafters hub_drafters(const ServeOptions& options, bool attach);
 
 // Throws std::runtime_error naming what the argument is not, or why the model cannot be served
 // and what would serve it.

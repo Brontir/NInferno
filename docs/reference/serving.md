@@ -54,12 +54,14 @@ searched.
 - A GGUF hub model's separate drafters (a separate download: Gemma 4's assistant, a Qwen DFlash
   drafter) are an axis of the configuration choice: a start attaches them when the choice on this
   GPU drafts with one (the plan before the download), and not otherwise. `--with-drafters` always
-  attaches them and requires every one: a drafter that cannot be fetched, converted or attached
-  (offline with no copy in the cache, say) stops the start. When only the choice drafts, such a
-  drafter is a `WARN` line instead (it names the drafter and the reason, and says to go online or
-  to fetch the drafter's repository ahead with `hf download`), and the model is served without it:
-  plain decoding, slower on one stream. A checkpoint's drafters are attached either way. A quantization once converted
-  with them keeps them: a later start reuses that conversion and serves them.
+  attaches them, and so does `--spec dflash` or `dflash2`; both require every drafter: one that
+  cannot be fetched, converted or attached (offline with no copy in the cache, say) stops the
+  start. When only the choice drafts, such a drafter is a `WARN` line instead. It names the
+  drafter and the reason; for a failed fetch it says how to get the drafter (unset
+  `HF_HUB_OFFLINE` or go online, or `hf download` its repository ahead); and the model is served
+  without it, with speculative decoding off, so replies are slower. The next online start tries
+  the drafter again. A checkpoint's drafters are attached either way. A quantization once
+  converted with them keeps them: a later start reuses that conversion and serves them.
 
 Refusals come before any weight is downloaded. Each says what to do instead:
 
