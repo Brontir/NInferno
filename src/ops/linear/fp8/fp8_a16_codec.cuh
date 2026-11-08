@@ -2,6 +2,7 @@
 
 // Exact E4M3-to-BF16 operand widening shared by the small-T and GEMM A16 routes.
 
+#include "core/arch_family.cuh"
 #include "ops/common/fp8_e4m3.cuh"
 
 #include <cuda_bf16.h>
@@ -23,7 +24,7 @@ __device__ __forceinline__ unsigned fp8_e4m3x2_bf16_fields(unsigned packed) {
 
 __device__ __forceinline__ unsigned fp8_e4m3x2_to_bf16x2_bits(unsigned packed) {
 #if (__CUDACC_VER_MAJOR__ > 13 || (__CUDACC_VER_MAJOR__ == 13 && __CUDACC_VER_MINOR__ >= 2)) &&    \
-    defined(__CUDA_ARCH_FAMILY_SPECIFIC__) && __CUDA_ARCH_FAMILY_SPECIFIC__ >= 1000
+    NINFERNO_ARCH_FAMILY_SPECIFIC >= 1000
     // PTX 9.2 exposes the native pair widening, on the architecture- and family-specific targets
     // from sm_100 (ptxas refuses it for sm_89 and a plain target's PTX).
     unsigned result;
