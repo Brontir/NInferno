@@ -975,7 +975,7 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
 // A specialization no card of the architecture being compiled launches is skipped (the caller
 // decides; the default builds every one).
 #ifndef NINFERNO_MMQ_SKIP_SPECIALIZATION
-#define NINFERNO_MMQ_SKIP_SPECIALIZATION(J) false
+#    define NINFERNO_MMQ_SKIP_SPECIALIZATION(J) false
 #endif
 
 template <ggml_type type, int J, bool fallback, ggml_prec prec_src1 = GGML_PREC_Q8>

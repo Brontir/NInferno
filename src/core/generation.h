@@ -33,17 +33,17 @@
 //                   generations are unmeasured and keep the plain launch
 
 //   mmq_work_tiles  ggml's matrix kernel also instantiates the 80- and 96-column tiles and takes
-//                   the column tile of least work, ceil(columns / J) x (0.43 + 0.57 J / 128), instead
-//                   of the fewest tiles of 16, 32, 64, 128 (core/mmq_columns.h, DECISIONS 74). The
-//                   rule: a tile is a fixed part (its 128 weight rows' decode, the same for every J)
-//                   plus a part in J (the MMA, the y tile's loads), and narrower tiles pay while the
-//                   part in J is large enough that the padding they save outweighs the fixed part
-//                   they repeat. On GA10x the int8 MMA alone is 4096 of a Q4_K tile's 10600 SM-clocks
-//                   a 256-value K step (1024 MMAs of 4096 MACs at 1024 MACs a clock), the measured
-//                   part in J 57 % of it. A generation with a higher MMA rate (ga100: s8 4096) has
-//                   a smaller part in J and a larger fixed share, so fewer widths pay; Ada has the
-//                   GA10x rates but was not run over the widths. A measured preference (RTX 3060,
-//                   3090), not carried by a lent row.
+//                   the column tile of least work, ceil(columns / J) x (0.43 + 0.57 J / 128),
+//                   instead of the fewest tiles of 16, 32, 64, 128 (core/mmq_columns.h, DECISIONS
+//                   74). The rule: a tile is a fixed part (its 128 weight rows' decode, the same
+//                   for every J) plus a part in J (the MMA, the y tile's loads), and narrower tiles
+//                   pay while the part in J is large enough that the padding they save outweighs
+//                   the fixed part they repeat. On GA10x the int8 MMA alone is 4096 of a Q4_K
+//                   tile's 10600 SM-clocks a 256-value K step (1024 MMAs of 4096 MACs at 1024 MACs
+//                   a clock), the measured part in J 57 % of it. A generation with a higher MMA
+//                   rate (ga100: s8 4096) has a smaller part in J and a larger fixed share, so
+//                   fewer widths pay; Ada has the GA10x rates but was not run over the widths. A
+//                   measured preference (RTX 3060, 3090), not carried by a lent row.
 
 //
 // What a lent row carries (#300): generation_row answers every compute capability, lending the
@@ -53,8 +53,8 @@
 //   capability   what the device can execute: not in this table (DeviceFeatures, the query)
 //   rate         bf16, s8: the analytic tensor rate a cost model ranks routes with (lent: an
 //                assumed rate, the ranking said to rest on it)
-//   kind         fp32acc_full_rate: which measured kind of tensor core the generation is; a lent row
-//                has none (fp32acc_full_rate_of: nullopt), and what rests on the kind (int8
+//   kind         fp32acc_full_rate: which measured kind of tensor core the generation is; a lent
+//                row has none (fp32acc_full_rate_of: nullopt), and what rests on the kind (int8
 //                prefill pays, i8 replaces the q4a8 kernels, board distances) is not carried
 //   fitted       w4a8_eff_scale, a16_cost_scale: route_tune fits of the boards above; not carried
 //                (fitted_route_scales: nullopt), the comparisons they price not made

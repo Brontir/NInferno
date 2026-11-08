@@ -598,30 +598,35 @@ int run_column_tiles() {
     int devices = 0;
     if (cudaGetDeviceCount(&devices) != cudaSuccess || devices == 0) {
         std::cout << "column tiles: CUDA unavailable; skipped
-";
-        return 0;
+                     ";
+            return 0;
     }
     const DeviceClass& d = device_class();
     int failures = 0, checked = 0;
     using ninferno::ops::ggml_mmq::Type;
-    for (const Type type : {Type::Q4_K, Type::Q5_K, Type::Q6_K, Type::IQ4_XS, Type::IQ3_XXS, Type::IQ3_S,
-                            Type::Q4_0, Type::Q4_1, Type::Q5_0, Type::Q5_1, Type::IQ4_NL, Type::Q2_K,
-                            Type::Q3_K, Type::IQ2_XXS, Type::IQ2_XS, Type::IQ2_S, Type::IQ1_S}) {
+    for (const Type type :
+         {Type::Q4_K, Type::Q5_K, Type::Q6_K, Type::IQ4_XS, Type::IQ3_XXS, Type::IQ3_S, Type::Q4_0,
+          Type::Q4_1, Type::Q5_0, Type::Q5_1, Type::IQ4_NL, Type::Q2_K, Type::Q3_K, Type::IQ2_XXS,
+          Type::IQ2_XS, Type::IQ2_S, Type::IQ1_S}) {
         for (int columns = 1; columns <= 512; ++columns) {
             const int picked = ninferno::mmq_columns::pick(columns, d.major, d.minor);
             const int taken  = ninferno::ops::ggml_mmq::column_tile(type, 4096, columns, 4096);
             ++checked;
             if (taken != picked && failures++ < 10) {
-                std::cerr << "column tile: type " << static_cast<int>(type) << " columns " << columns
-                          << " takes " << taken << ", the table picks " << picked << '
+                std::cerr << "column tile: type " << static_cast<int>(type) << " columns "
+                          << columns << " takes " << taken << ", the table picks " << picked << '
 ';
             }
         }
     }
     std::cout << "column tiles: " << checked << " products on sm_" << d.major << d.minor << ", "
-              << failures << " differ from the table
-";
-    return failures == 0 ? 0 : 1;
+              << failures
+              << " differ from the table
+                 ";
+                return failures ==
+            0
+        ? 0
+        : 1;
 }
 
 // #298: the register-MMA kernels' compiled resources on this device (rmma_resources, the launch

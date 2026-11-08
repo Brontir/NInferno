@@ -475,16 +475,24 @@ struct MmqIqStep {
     double step;
     int cards;
 };
+
 inline constexpr MmqIqStep kMmqIqStep[] = {
-    {"ga10x", "ggml_iq3_xxs", 40.7, 1}, {"ga10x", "ggml_iq3_s", 41.2, 1},
-    {"ga10x", "ggml_iq2_xxs", 38.7, 1}, {"ga10x", "ggml_iq2_xs", 51.1, 1},
-    {"ga10x", "ggml_iq2_s", 50.5, 1},   {"ga10x", "ggml_iq1_s", 44.1, 1},
-    // The RTX 4090's census of the same files (stream-k: its fixups counted with their calls), IQ4_XS
-    // at 38.3 (15.69 ms a G weight): IQ2_XXS 16.43 / 16.21, IQ1_S 18.1 / 18.27, IQ2_S 21.57 / 21.36,
-    // IQ2_XS 21.18 / 21.9, IQ3_XXS 17.29 / 17.4, IQ3_S 18.08 (one file); Q3_K's 51.0 against its 51.5.
-    {"ada", "ggml_iq3_xxs", 42.3, 1},   {"ada", "ggml_iq3_s", 44.1, 1},
-    {"ada", "ggml_iq2_xxs", 39.8, 1},   {"ada", "ggml_iq2_xs", 52.6, 1},
-    {"ada", "ggml_iq2_s", 52.4, 1},     {"ada", "ggml_iq1_s", 44.4, 1},
+    {"ga10x", "ggml_iq3_xxs", 40.7, 1},
+    {"ga10x", "ggml_iq3_s", 41.2, 1},
+    {"ga10x", "ggml_iq2_xxs", 38.7, 1},
+    {"ga10x", "ggml_iq2_xs", 51.1, 1},
+    {"ga10x", "ggml_iq2_s", 50.5, 1},
+    {"ga10x", "ggml_iq1_s", 44.1, 1},
+    // The RTX 4090's census of the same files (stream-k: its fixups counted with their calls),
+    // IQ4_XS at 38.3 (15.69 ms a G weight): IQ2_XXS 16.43 / 16.21, IQ1_S 18.1 / 18.27, IQ2_S 21.57
+    // / 21.36, IQ2_XS 21.18 / 21.9, IQ3_XXS 17.29 / 17.4, IQ3_S 18.08 (one file); Q3_K's 51.0
+    // against its 51.5.
+    {"ada", "ggml_iq3_xxs", 42.3, 1},
+    {"ada", "ggml_iq3_s", 44.1, 1},
+    {"ada", "ggml_iq2_xxs", 39.8, 1},
+    {"ada", "ggml_iq2_xs", 52.6, 1},
+    {"ada", "ggml_iq2_s", 52.4, 1},
+    {"ada", "ggml_iq1_s", 44.4, 1},
 };
 // Where MMQ does not pay (measured::kMmqPrefillPays: the RTX 5070 Ti as the 5060 Ti) a dense
 // K-quant prefills on the W4A8 tiles (generic_gemm.cpp: Q4_K and Q6_K the producer-warp 128 x 64

@@ -26,9 +26,9 @@
 // The 80- and 96-column tiles are built only for the architectures whose generation takes them
 // (core/generation.h mmq_work_tiles); the others never launch them.
 #if defined(__CUDA_ARCH__)
-#define NINFERNO_MMQ_SKIP_SPECIALIZATION(J) \
-    (((J) == 80 || (J) == 96) && \
-     !::ninferno::mmq_work_tiles_measured(__CUDA_ARCH__ / 100, __CUDA_ARCH__ / 10 % 10))
+#    define NINFERNO_MMQ_SKIP_SPECIALIZATION(J)                                                    \
+        (((J) == 80 || (J) == 96) &&                                                               \
+         !::ninferno::mmq_work_tiles_measured(__CUDA_ARCH__ / 100, __CUDA_ARCH__ / 10 % 10))
 #endif
 
 #include "ggml-cuda/common.cuh"
@@ -235,8 +235,8 @@ void product_impl(const Planes& w, int blocks_per_row, int rows, int k, const vo
 } // namespace ninferno::ops::ggml_mmq::detail
 
 #define NINFERNO_GGML_MMQ_INSTANCE(TYPE)                                                           \
-    template std::size_t ninferno::ops::ggml_mmq::detail::fixup_bytes_impl<TYPE>(int, int, int);        \
-    template int ninferno::ops::ggml_mmq::detail::column_tile_impl<TYPE>(int, int, int); \
+    template std::size_t ninferno::ops::ggml_mmq::detail::fixup_bytes_impl<TYPE>(int, int, int);   \
+    template int ninferno::ops::ggml_mmq::detail::column_tile_impl<TYPE>(int, int, int);           \
     template void ninferno::ops::ggml_mmq::detail::product_impl<TYPE>(                             \
         const ninferno::ops::ggml_mmq::Planes&, int, int, int, const void*, int, float*,           \
         std::int64_t, void*, cudaStream_t)
