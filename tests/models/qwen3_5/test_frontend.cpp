@@ -1361,7 +1361,8 @@ int test_rewrite_checkpoint_trace() {
 
 // The gpt-oss template keeps a tool-call turn's analysis when no final answer follows it, and
 // reads it from `thinking`; the frontend fills that field from reasoning_content (recent
-// transformers does the same). The template below is the part of openai/gpt-oss-20b's that decides this.
+// transformers does the same). The template below is the part of openai/gpt-oss-20b's that decides
+// this.
 int test_reasoning_reaches_thinking_field() {
     const auto harmony = fi::CompiledChatTemplate::resolve(
         "{%- for message in messages -%}{%- if message.role == 'assistant' -%}"
@@ -1370,7 +1371,8 @@ int test_reasoning_reaches_thinking_field() {
         "{%- for later in messages[loop.index:] %}{%- if later.role == 'assistant' and "
         "'tool_calls' not in later %}{%- set future.found = true %}{%- endif %}{%- endfor %}"
         "{%- set call = message.tool_calls[0].function %}"
-        "{%- if message.content and message.thinking %}{{- raise_exception('Cannot pass both content and thinking') }}"
+        "{%- if message.content and message.thinking %}{{- raise_exception('Cannot pass both "
+        "content and thinking') }}"
         "{%- elif message.content and not future.found %}"
         "{{- '<|start|>assistant<|channel|>analysis<|message|>' + message.content + '<|end|>' }}"
         "{%- elif message.thinking and not future.found %}"
@@ -1424,14 +1426,14 @@ int test_reasoning_reaches_thinking_field() {
     failures += check(answered.text.find("plan") == std::string::npos,
                       "reasoning before a final answer was rendered");
     // A tool-call turn with text only (the commentary preamble) gets its boundary after the call.
-    auto spoken            = chat_message(ninferno::ChatRole::Assistant, "spoken");
+    auto spoken = chat_message(ninferno::ChatRole::Assistant, "spoken");
     spoken.tool_calls.push_back({.name = "calc", .arguments_json = "{}"});
-    const auto text_turn = harmony.render({user, spoken, result}, marked);
-    const std::size_t text_call =
-        text_turn.text.find("<|call|>") + std::string("<|call|>").size();
-    failures += check(text_turn.cache_boundaries.size() == 1 && text_turn.cache_boundaries[0] &&
-                          *text_turn.cache_boundaries[0] == text_call,
-                      "a cache marker after a text-only tool-call turn did not land after its call");
+    const auto text_turn        = harmony.render({user, spoken, result}, marked);
+    const std::size_t text_call = text_turn.text.find("<|call|>") + std::string("<|call|>").size();
+    failures +=
+        check(text_turn.cache_boundaries.size() == 1 && text_turn.cache_boundaries[0] &&
+                  *text_turn.cache_boundaries[0] == text_call,
+              "a cache marker after a text-only tool-call turn did not land after its call");
     return failures;
 }
 
@@ -1443,9 +1445,13 @@ int test_text_survives_unrelated_refusal() {
         "{%- if m.role == 'system' and not loop.first -%}"
         "{{- raise_exception('System message must be at the beginning.') -}}{%- endif -%}"
         "<|im_start|>{{ m.role }}
-{{ m.content }}{% if m.tool_calls %}[call]{% endif %}"
+{
+        { m.content }}{
+        % if m.tool_calls %}[call]{
+        % endif %}"
         "<|im_end|>
-{%- endfor -%}");
+{
+        % -endfor - %}");
     auto turn              = chat_message(ninferno::ChatRole::Assistant, "spoken text");
     turn.reasoning_content = "plan";
     turn.tool_calls.push_back({.name = "calc", .arguments_json = "{}"});

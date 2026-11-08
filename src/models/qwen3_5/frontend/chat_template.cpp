@@ -527,8 +527,9 @@ RenderedChat CompiledChatTemplate::render_once(const std::vector<ChatMessage>& m
         // writes the call as an assistant block of its own) is not part of what that block's end
         // closes: the boundary is proven by a prefix render instead.
         if (!messages[i].tool_calls.empty() && conventions_.turns &&
-            std::string_view(output.text).substr(block.end).starts_with(
-                conventions_.turns->open + role_name(ChatRole::Assistant))) {
+            std::string_view(output.text)
+                .substr(block.end)
+                .starts_with(conventions_.turns->open + role_name(ChatRole::Assistant))) {
             (void)prefix(i + 1);
             continue;
         }
