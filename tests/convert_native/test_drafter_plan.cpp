@@ -13,6 +13,8 @@
 #include "convert/acquire.h"
 #include "convert/drafters.h"
 
+#include "artifact/fixture.h"
+#include "spec/fingerprint.h"
 #include "spec/manifest.h"
 #include "support/temp_dir.h"
 
@@ -480,6 +482,26 @@ void retry_failed_drafter() {
     expect(with("{" + registry + R"("drafters": [{"name": "assistant", "status": "converted",
                 "artifact": ")" + other.string() + R"(", "artifact_id": "00"}]})"),
            "an attached drafter whose artifact cannot be read: attaching is to do");
+    expect(!cv::drafters_changed_since_attach(artifact),
+           "a drafter file that cannot be read is not attached again without asking");
+    // A drafter file here written again since (its id is no longer the recorded one) is attached
+    // again even by a start that asks for no drafters (a GGUF's default): nothing is fetched.
+    const ninferno::test::artifact_fixture::Fixture drafter;
+    drafter.write();
+    const auto id       = ninferno::spec::artifact_id_hex(drafter.entry);
+    const auto attached = [&](const std::string& recorded) {
+        return "{" + registry + R"("drafters": [{"name": "assistant", "status": "cached",
+                "artifact": ")" + drafter.entry.string() + R"(", "artifact_id": ")" + recorded +
+               R"("}]})";
+    };
+    expect(!with(attached(id)), "an attached drafter of the recorded id: nothing to do");
+    expect(!cv::drafters_changed_since_attach(artifact), "the recorded id: not changed");
+    expect(with(attached("00")), "a drafter written again since: attaching is to do");
+    expect(cv::drafters_changed_since_attach(artifact), "a drafter written again since: changed");
+    std::string failed = attached("00");
+    failed.replace(failed.find("cached"), 6, "failed: x");
+    std::ofstream(ninferno::spec::manifest_path(artifact)) << failed;
+    expect(!cv::drafters_changed_since_attach(artifact), "a failed drafter was never attached");
 }
 
 // A drafter that cannot be had stops a start that asked for it (--with-drafters) and is a warning

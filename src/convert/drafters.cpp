@@ -1053,6 +1053,38 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
     return plan;
 }
 
+namespace {
+
+// Whether a manifest's drafter was attached from a file (not a component of the target) and that
+// file was written again since (another conversion of it, a newer revision): it no longer matches
+// the id the manifest recorded, so the start would serve plain on every run ("changed since
+// attach"). `gone` counts a missing or unreadable file too.
+bool changed_since_attach(const Json& d, bool gone) {
+    const auto status   = d.value("status", std::string());
+    const auto artifact = d.value("artifact", std::string());
+    const bool attached = status == "embedded" || status == "converted" || status == "cached" ||
+                          status == "attached";
+    if (!attached || artifact.empty()) { return false; }
+    std::error_code error;
+    if (!fs::is_regular_file(artifact, error)) { return gone; }
+    try {
+        return spec::artifact_id_hex(artifact) != d.value("artifact_id", std::string());
+    } catch (const std::exception&) { return gone; }
+}
+
+} // namespace
+
+bool drafters_changed_since_attach(const fs::path& target_artifact) {
+    const auto path = spec::manifest_path(target_artifact);
+    if (!fs::exists(path)) { return false; }
+    try {
+        const auto manifest  = Json::parse(read_file(path));
+        const auto& drafters = manifest.at("drafters");
+        return std::any_of(drafters.begin(), drafters.end(),
+                           [](const Json& d) { return changed_since_attach(d, false); });
+    } catch (const std::exception&) { return false; }
+}
+
 bool drafters_incomplete(const fs::path& target_artifact) {
     const auto path = spec::manifest_path(target_artifact);
     if (!fs::exists(path)) { return true; }
@@ -1065,20 +1097,8 @@ bool drafters_incomplete(const fs::path& target_artifact) {
         const auto& drafters = manifest.at("drafters");
         const bool gguf      = manifest.value("target", Json::object()).value("gguf_source", false);
         return std::any_of(drafters.begin(), drafters.end(), [&](const Json& d) {
+            if (changed_since_attach(d, true)) { return true; }
             const auto status = d.value("status", std::string());
-            // An attached drafter whose artifact is gone or was written again (another conversion
-            // of it, a newer revision) no longer matches the id the manifest recorded: the start
-            // would serve plain on every run ("changed since attach"), so it is attached again.
-            const auto artifact = d.value("artifact", std::string());
-            const bool attached = status == "embedded" || status == "converted" ||
-                                  status == "cached" || status == "attached";
-            if (attached && !artifact.empty()) {
-                try {
-                    if (spec::artifact_id_hex(artifact) != d.value("artifact_id", std::string())) {
-                        return true;
-                    }
-                } catch (const std::exception&) { return true; }
-            }
             // A variant ("<name>.<variant>") is optional; a drafter itself is retried, whatever
             // quantization its kind gives it, and so is a companion a checkpoint's artifact lacks
             // (the target is converted again with it while its download is there; a GGUF's never

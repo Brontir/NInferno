@@ -178,6 +178,12 @@ DrafterPlan attach_drafters(DrafterPlan plan, const std::filesystem::path& targe
 // listing a published drafter as failed (its own quantizations do not count).
 [[nodiscard]] bool drafters_incomplete(const std::filesystem::path& target_artifact);
 
+// Whether a drafter the manifest attached from a file here was written again since (its id is no
+// longer the recorded one; a file that is gone does not count). Attaching it again downloads
+// nothing, so a GGUF model's start does it even when the choice asks for no drafters: the choice
+// reads the manifest, and a drafter dropped as changed would otherwise keep it plain for good.
+[[nodiscard]] bool drafters_changed_since_attach(const std::filesystem::path& target_artifact);
+
 // A shortlist ranking by file name: tools/spec/rankings (and tools/freq_corpus/fixtures/ranking) of
 // `repository`, then the rankings installed beside this binary, then the tree it was built from.
 [[nodiscard]] std::optional<std::filesystem::path>

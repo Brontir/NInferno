@@ -1065,13 +1065,22 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
         if (complete(out.artifact, false)) {
             const bool attach_again = gguf ? drafters_incomplete(out.artifact)
                                            : !fs::exists(spec::manifest_path(out.artifact));
-            if (drafters_on && attach_again) {
+            // A GGUF model's drafter attached earlier and written again since (drafters.h): the
+            // choice, reading the manifest, would see it dropped and never ask for it, so it is
+            // attached again from the file here, with nothing fetched.
+            const bool reattach = gguf && !drafters_on && options.drafters == Drafters::Default &&
+                                  drafters_changed_since_attach(out.artifact);
+            if ((drafters_on || reattach) && attach_again) {
                 if (gguf) {
                     // Converted before its drafters could be attached, or one failed: its
                     // companions are converted in and the others attached now.
                     out.reused = true;
                     say(options, "artifact " + out.artifact.string() + " (converted earlier)");
-                    if (!options.components_given) {
+                    if (reattach) {
+                        say(options, "drafters | attached again: a drafter's file was written "
+                                     "again since it was attached");
+                    }
+                    if (!options.components_given && !reattach) {
                         auto text_only          = convert_options;
                         text_only.drafter_quant = std::string();
                         convert_gguf_companions(text_only, convert_options.drafter_quant);
