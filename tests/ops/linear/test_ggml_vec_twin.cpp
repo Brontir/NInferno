@@ -125,27 +125,36 @@ LaunchShape describe(const Problem& p, const Device& d, VecInstance which) {
     return shape;
 }
 
-// Median time of one launch, microseconds: 15 batches of 10 launches. Only with
-// NINFERNO_VEC_TWIN_TIMING=1 (the measuring board must be idle).
+// Median time of one launch, microseconds, the L2 flushed before each (a launch repeated on a hot
+// 72 MB L2 would not be the DRAM-bound decode launch). Only with NINFERNO_VEC_TWIN_TIMING=1 (the
+// measuring board must be idle).
 double time_us(const Problem& p, const Device& d, VecInstance which) {
     ScopedVecInstance force(which);
+    int device = 0, l2 = 0;
+    cuda(cudaGetDevice(&device), "device");
+    cuda(cudaDeviceGetAttribute(&l2, cudaDevAttrL2CacheSize, device), "l2 size");
+    const std::size_t flush_bytes = std::size_t(l2) * 3;
+    void* flush                   = nullptr;
+    cuda(cudaMalloc(&flush, flush_bytes), "flush");
     cudaEvent_t a, b;
     cuda(cudaEventCreate(&a), "event");
     cuda(cudaEventCreate(&b), "event");
-    for (int i = 0; i < 5; ++i) product(p, d);
+    for (int i = 0; i < 3; ++i) product(p, d);
     std::vector<double> t;
-    for (int rep = 0; rep < 15; ++rep) {
+    for (int rep = 0; rep < 41; ++rep) {
+        cuda(cudaMemset(flush, rep, flush_bytes), "flush");
         cuda(cudaEventRecord(a), "record");
-        for (int i = 0; i < 10; ++i) product(p, d);
+        product(p, d);
         cuda(cudaEventRecord(b), "record");
         cuda(cudaEventSynchronize(b), "sync");
         float ms = 0;
         cuda(cudaEventElapsedTime(&ms, a, b), "elapsed");
-        t.push_back(1000.0 * ms / 10);
+        t.push_back(1000.0 * ms);
     }
     std::sort(t.begin(), t.end());
     cudaEventDestroy(a);
     cudaEventDestroy(b);
+    cudaFree(flush);
     return t[t.size() / 2];
 }
 
