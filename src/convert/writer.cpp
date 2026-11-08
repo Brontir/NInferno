@@ -208,8 +208,21 @@ bool temporary_of(const std::string& name, const std::vector<std::string>& filen
 // conversion can tell a live temporary from a dead one. A sweep that got the lock first removes
 // the file under it: the name is then gone, and the caller draws another. A file system without
 // locks leaves the file unlocked (the sweep's age rule protects it then).
+std::atomic<int (*)(int, bool)> g_lock_override{nullptr}; // tests only
+
+int lock_file(int fd, bool wait) {
+    const auto function = g_lock_override.load();
+    return function != nullptr ? function(fd, wait) : sys::lock(fd, wait);
+}
+
+// Whether a failed lock means the file system cannot lock at all (as opposed to "held").
+bool lock_unsupported(int error) {
+    return error == ENOLCK || error == EOPNOTSUPP || error == ENOSYS || error == EINVAL ||
+           error == ENOTSUP;
+}
+
 bool lock_temporary(int fd, const std::filesystem::path& name) {
-    while (sys::lock(fd, true) != 0) {
+    while (lock_file(fd, true) != 0) {
         if (errno != EINTR) { return true; }
     }
     std::error_code ignored;
@@ -323,6 +336,10 @@ std::filesystem::path ArtifactWriter::partial_path(const std::filesystem::path& 
     return target.string() + ".partial";
 }
 
+void ArtifactWriter::set_lock_for_test(int (*function)(int fd, bool wait)) {
+    g_lock_override.store(function);
+}
+
 std::size_t ArtifactWriter::remove_stale_temporaries(const std::filesystem::path& directory,
                                                      const std::vector<std::string>& filenames,
                                                      std::chrono::seconds min_age) {
@@ -350,7 +367,11 @@ std::size_t ArtifactWriter::remove_stale_temporaries(const std::filesystem::path
         const int fd = sys::open(path, O_RDONLY | O_CLOEXEC);
         if (fd < 0) { continue; }
         bool gone = false;
-        if (sys::lock(fd, false) == 0) {
+        // A file system without locks (ENOLCK, EOPNOTSUPP: some network mounts) cannot say who
+        // holds the file: the age and name rules alone decide there, as for a writer that locks
+        // nothing.
+        const bool locked = lock_file(fd, false) == 0;
+        if (locked || lock_unsupported(errno)) {
             std::byte head[8]{};
             const auto got = sys::pread(fd, head, sizeof(head), 0);
             const std::byte zeros[8]{};
@@ -445,21 +466,43 @@ void ArtifactWriter::create(std::size_t index) {
         name = partial_path(target).string();
         fd   = sys::open(name, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
     } else {
-        // A name a sweep removed between the create and the lock is drawn again.
+        // The name is drawn and listed for the signal handler before the file exists, so a
+        // signal at any moment after it appears finds it (unlinking a name not there yet does no
+        // harm). A name taken, or removed by a sweep between the create and the lock, is drawn
+        // again.
+        static const char letters[] =
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
         for (int attempt = 0; attempt < 16; ++attempt) {
-            name = (target.parent_path() / ("." + target.filename().string() + ".XXXXXX.tmp"))
-                       .string();
-            fd = sys::create_unique(name, 4);
-            if (fd < 0 || lock_temporary(fd, name)) { break; }
-            sys::close(fd);
-            fd    = -1;
-            errno = EEXIST;
+            unsigned char noise[6];
+            if (!sys::random_bytes(noise, sizeof(noise))) {
+                errno = EIO;
+                break;
+            }
+            std::string suffix;
+            for (const auto byte : noise) { suffix += letters[byte % 62]; }
+            name =
+                (target.parent_path() / ("." + target.filename().string() + "." + suffix + ".tmp"))
+                    .string();
+            TemporarySlot* slot = register_temporary(name);
+            fd                  = sys::open(name, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+            if (fd >= 0 && lock_temporary(fd, name)) {
+                slots_.push_back(slot);
+                break;
+            }
+            int error = errno;
+            if (fd >= 0) {
+                sys::close(fd);
+                fd    = -1;
+                error = EEXIST;
+            }
+            unregister_temporary(slot);
+            errno = error;
+            if (error != EEXIST) { break; }
         }
     }
     if (fd < 0) { throw std::runtime_error("cannot create " + name + ": " + sys::error_text(errno)); }
     fds_.push_back(fd);
     temporary_.emplace_back(name);
-    if (!options_.named_partial) { slots_.push_back(register_temporary(temporary_.back())); }
     if (sys::truncate(fd, static_cast<std::int64_t>(file_length(index))) != 0) {
         throw std::runtime_error("cannot size " + name);
     }

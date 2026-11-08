@@ -10,6 +10,7 @@
 
 #include "convert/writer.h"
 
+#include <cerrno>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
@@ -84,6 +85,17 @@ int wait_signal(pid_t pid) {
 
 void write_text(const fs::path& path, const std::string& text) {
     std::ofstream(path, std::ios::binary) << text;
+}
+
+// File systems that cannot lock (ENOLCK, EOPNOTSUPP) and one where the lock is held (EWOULDBLOCK).
+int lock_unsupported(int, bool) {
+    errno = ENOLCK;
+    return -1;
+}
+
+int lock_busy(int, bool) {
+    errno = EWOULDBLOCK;
+    return -1;
 }
 
 // Two hours ago: older than the sweep's default age.
@@ -227,6 +239,28 @@ int main() {
         check(fs::exists(other), "an old temporary of a name not written stays");
         check(cv::ArtifactWriter::remove_stale_temporaries(dir, {"y.ninferno"}) == 1,
               "and goes for its own name");
+    }
+
+    // Where the file system cannot lock, the age and name rules alone decide (a held lock, on the
+    // other hand, protects an old file).
+    {
+        const auto dir   = root / "nolock";
+        const auto stale = dir / ".n.ninferno.AbC123.tmp";
+        const auto young = dir / ".n.ninferno.QwE456.tmp";
+        fs::create_directories(dir);
+        std::ofstream(stale, std::ios::binary).put('\0');
+        std::ofstream(young, std::ios::binary).put('\0');
+        make_old(stale);
+        cv::ArtifactWriter::set_lock_for_test(lock_busy);
+        check(cv::ArtifactWriter::remove_stale_temporaries(dir, {"n.ninferno"}) == 0 &&
+                  fs::exists(stale),
+              "a held lock protects an old temporary");
+        cv::ArtifactWriter::set_lock_for_test(lock_unsupported);
+        check(cv::ArtifactWriter::remove_stale_temporaries(dir, {"n.ninferno"}) == 1,
+              "without locks an old temporary is swept");
+        check(!fs::exists(stale) && fs::exists(young),
+              "and a young one stays, whether or not the file system locks");
+        cv::ArtifactWriter::set_lock_for_test(nullptr);
     }
 
     fs::remove_all(root);

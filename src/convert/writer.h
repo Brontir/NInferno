@@ -121,11 +121,16 @@ public:
     // How old a temporary's last write must be for the sweep to take it (see below).
     static constexpr std::chrono::seconds kStaleAge{3600};
 
+    // Replaces the lock call (sys::lock) of the writer and the sweep; nullptr restores it. For
+    // tests of file systems that cannot lock.
+    static void set_lock_for_test(int (*function)(int fd, bool wait));
+
     // Removes the hidden temporaries ".<file>.XXXXXX.tmp" (of the output `filenames` only) that
     // interrupted conversions left in `directory` (killed, out of memory, power loss; a signal or
     // an exception removes its own). A temporary goes only when all of these hold: its writer
-    // holds no lock on it (every writer keeps an exclusive lock, flock or LockFileEx, until the
-    // files are published or removed: a conversion still running here, in this process or
+    // holds no lock on it (on a file system that cannot lock at all, ENOLCK or EOPNOTSUPP, the age
+    // and name rules alone decide; every writer keeps an exclusive lock, flock or LockFileEx, until
+    // the files are published or removed: a conversion still running here, in this process or
     // another, is refused), it was last written `min_age` ago (protection from a writer that
     // locks nothing: an older NInferno, a network file system without shared locks, WSL on /mnt/c),
     // and its first bytes are an artifact header or zeros. Sharing one output directory between
