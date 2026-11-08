@@ -729,10 +729,10 @@ void test_stream_buffer_reclaims_consumed_bytes() {
     nc::StreamBuffer buffer;
     std::size_t made = 0, taken = 0, peak = 0;
     bool in_order = true;
-    std::string out(3000, ' ');
+    std::string out(3000, '\0');
     while (taken < total) {
         while (made < total && buffer.unread() < cap) {
-            std::string chunk(produce, ' ');
+            std::string chunk(produce, '\0');
             for (char& c : chunk) { c = static_cast<char>((made++ * 31) >> 3); }
             buffer.append(chunk.data(), chunk.size());
             peak = std::max(peak, buffer.stored());
