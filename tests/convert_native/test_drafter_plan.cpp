@@ -24,6 +24,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -36,6 +37,11 @@ namespace {
 int failures = 0;
 
 bool line_starts_warning(const std::string& line) { return line.starts_with("warning: "); }
+
+std::string read_text(const std::filesystem::path& path) {
+    std::ifstream stream(path);
+    return {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+}
 
 void expect(bool condition, const std::string& what, const std::string& detail = "") {
     if (!condition) {
@@ -482,26 +488,49 @@ void retry_failed_drafter() {
     expect(with("{" + registry + R"("drafters": [{"name": "assistant", "status": "converted",
                 "artifact": ")" + other.string() + R"(", "artifact_id": "00"}]})"),
            "an attached drafter whose artifact cannot be read: attaching is to do");
-    expect(!cv::drafters_changed_since_attach(artifact),
-           "a drafter file that cannot be read is not attached again without asking");
-    // A drafter file here written again since (its id is no longer the recorded one) is attached
-    // again even by a start that asks for no drafters (a GGUF's default): nothing is fetched.
+    expect(cv::refresh_changed_drafters(artifact).empty(),
+           "a drafter file that cannot be read is not refreshed (an attach plans it again)");
+    // A drafter file here written again since (its id is no longer the recorded one) takes its new
+    // id, whatever the start asks of drafters: nothing is fetched, the other entries are kept.
     const ninferno::test::artifact_fixture::Fixture drafter;
     drafter.write();
-    const auto id       = ninferno::spec::artifact_id_hex(drafter.entry);
-    const auto attached = [&](const std::string& recorded) {
-        return "{" + registry + R"("drafters": [{"name": "assistant", "status": "cached",
-                "artifact": ")" + drafter.entry.string() + R"(", "artifact_id": ")" + recorded +
-               R"("}]})";
+    std::ofstream(drafter.entry.string() + ".conversion.json") << "{}";
+    const auto id    = ninferno::spec::artifact_id_hex(drafter.entry);
+    const auto entry = [&](const std::string& status, const std::string& recorded) {
+        return R"({"name": "assistant", "status": ")" + status + R"(", "artifact": ")" +
+               drafter.entry.string() + R"(", "artifact_id": ")" + recorded + R"("})";
     };
-    expect(!with(attached(id)), "an attached drafter of the recorded id: nothing to do");
-    expect(!cv::drafters_changed_since_attach(artifact), "the recorded id: not changed");
-    expect(with(attached("00")), "a drafter written again since: attaching is to do");
-    expect(cv::drafters_changed_since_attach(artifact), "a drafter written again since: changed");
-    std::string failed = attached("00");
-    failed.replace(failed.find("cached"), 6, "failed: x");
-    std::ofstream(ninferno::spec::manifest_path(artifact)) << failed;
-    expect(!cv::drafters_changed_since_attach(artifact), "a failed drafter was never attached");
+    const auto manifest = [&](const std::string& target, const std::string& drafters) {
+        return "{" + registry + R"("target": )" + target + R"(, "drafters": [)" + drafters + "]}";
+    };
+    const std::string companion = R"({"name": "dflash2", "status": "failed: SSL connect error"})";
+    expect(!with(manifest("{}", entry("cached", id))), "the recorded id: nothing to do");
+    expect(cv::refresh_changed_drafters(artifact).empty(), "the recorded id: nothing refreshed");
+    expect(with(manifest("{}", entry("converted", "00") + ", " + companion)),
+           "a drafter written again since: attaching is to do");
+    const auto refreshed = cv::refresh_changed_drafters(artifact);
+    expect(refreshed.size() == 1 && refreshed[0] == "assistant", "the changed drafter is refreshed");
+    const auto after = Json::parse(read_text(ninferno::spec::manifest_path(artifact)));
+    expect(after["drafters"][0]["artifact_id"] == id && after["drafters"][0]["status"] == "cached",
+           "the refreshed drafter takes the file's id, as a cached attach");
+    expect(after["drafters"][1]["status"] == "failed: SSL connect error",
+           "another drafter's failure is kept for its retry");
+    expect(cv::refresh_changed_drafters(artifact).empty(), "refreshed once: nothing more to do");
+    // Its vocabulary no longer the target's: incompatible, not attached.
+    if (const auto fp = ninferno::spec::artifact_vocab_fingerprint(drafter.entry)) {
+        with(manifest(R"({"vocab_fingerprint": "v1:another"})", entry("cached", "00")));
+        expect(cv::refresh_changed_drafters(artifact).size() == 1, "refreshed as incompatible");
+        const auto refused = Json::parse(read_text(ninferno::spec::manifest_path(artifact)));
+        expect(refused["drafters"][0]["status"].get<std::string>().starts_with("incompatible"),
+               "a drafter of another vocabulary is incompatible");
+    }
+    // Never attached (failed), or without its conversion report (a conversion stopped half way):
+    // left to an attach.
+    with(manifest("{}", entry("failed: x", "00")));
+    expect(cv::refresh_changed_drafters(artifact).empty(), "a failed drafter was never attached");
+    std::filesystem::remove(drafter.entry.string() + ".conversion.json");
+    with(manifest("{}", entry("cached", "00")));
+    expect(cv::refresh_changed_drafters(artifact).empty(), "no conversion report: not refreshed");
 }
 
 // A drafter that cannot be had stops a start that asked for it (--with-drafters) and is a warning

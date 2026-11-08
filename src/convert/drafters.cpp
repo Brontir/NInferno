@@ -1074,15 +1074,36 @@ bool changed_since_attach(const Json& d, bool gone) {
 
 } // namespace
 
-bool drafters_changed_since_attach(const fs::path& target_artifact) {
+std::vector<std::string> refresh_changed_drafters(const fs::path& target_artifact) {
+    std::vector<std::string> refreshed;
     const auto path = spec::manifest_path(target_artifact);
-    if (!fs::exists(path)) { return false; }
+    if (!fs::exists(path)) { return refreshed; }
     try {
-        const auto manifest  = Json::parse(read_file(path));
-        const auto& drafters = manifest.at("drafters");
-        return std::any_of(drafters.begin(), drafters.end(),
-                           [](const Json& d) { return changed_since_attach(d, false); });
-    } catch (const std::exception&) { return false; }
+        auto manifest = Json::parse(read_file(path));
+        const auto target_fingerprint =
+            manifest.value("target", Json::object()).value("vocab_fingerprint", std::string());
+        for (auto& d : manifest.at("drafters")) {
+            if (!changed_since_attach(d, false)) { continue; }
+            // As attach_drafters takes a cached drafter: the file and its conversion report at
+            // the path that names the drafter's commit, recipe, quantization and shortlist.
+            const auto artifact = d.at("artifact").get<std::string>();
+            if (!fs::exists(artifact + ".conversion.json")) { continue; }
+            const auto name = d.value("name", std::string());
+            if (const auto fp = spec::artifact_vocab_fingerprint(artifact);
+                fp && !target_fingerprint.empty() && fp->value != target_fingerprint) {
+                d["compatible"] = false;
+                d["reason"]     = "the converted drafter's vocabulary " + fp->value +
+                              " differs from the target's " + target_fingerprint;
+                d["status"]     = "incompatible: " + d["reason"].get<std::string>();
+            } else {
+                d["artifact_id"] = spec::artifact_id_hex(artifact);
+                d["status"]      = "cached";
+            }
+            refreshed.push_back(name);
+        }
+        if (!refreshed.empty()) { write_file_atomic(path, manifest.dump(1) + '\n'); }
+    } catch (const std::exception&) {} // an unreadable manifest: drafters_incomplete() plans again
+    return refreshed;
 }
 
 bool drafters_incomplete(const fs::path& target_artifact) {

@@ -246,6 +246,16 @@ bool wants_drafters(const AcquireOptions& options) {
     return options.drafters == Drafters::Attach || options.drafters == Drafters::Require;
 }
 
+// A reused artifact's drafters whose file here was written again since attach take its new id
+// (drafters.h, refresh_changed_drafters): nothing is fetched, whatever the start asks of drafters.
+void refresh_drafters(const AcquireOptions& options, const fs::path& artifact) {
+    if (options.drafters == Drafters::Off) { return; }
+    for (const auto& name : refresh_changed_drafters(artifact)) {
+        say(options, "drafter " + name + ": its file was written again since attach; the "
+                                         "manifest takes it as it is now");
+    }
+}
+
 // How to fetch a drafter ahead of time, for the warning: its repository, the commit the registry
 // pins (drafter_fetch asks for it) and the GGUF file it names.
 struct FetchAdvice {
@@ -783,6 +793,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 // A plan the checkpoint's own declaration (ninferno_speculation.json) made cannot
                 // be made again without that download: kept as it is, and a drafter of it that
                 // failed fails --with-drafters.
+                refresh_drafters(options, *kept);
                 bool bundle_planned = false, bundle_failed = false;
                 try {
                     std::ifstream stream(spec::manifest_path(*kept));
@@ -1063,24 +1074,16 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
             remove_artifact(out.artifact);
         }
         if (complete(out.artifact, false)) {
+            refresh_drafters(options, out.artifact);
             const bool attach_again = gguf ? drafters_incomplete(out.artifact)
                                            : !fs::exists(spec::manifest_path(out.artifact));
-            // A GGUF model's drafter attached earlier and written again since (drafters.h): the
-            // choice, reading the manifest, would see it dropped and never ask for it, so it is
-            // attached again from the file here, with nothing fetched.
-            const bool reattach = gguf && !drafters_on && options.drafters == Drafters::Default &&
-                                  drafters_changed_since_attach(out.artifact);
-            if ((drafters_on || reattach) && attach_again) {
+            if (drafters_on && attach_again) {
                 if (gguf) {
                     // Converted before its drafters could be attached, or one failed: its
                     // companions are converted in and the others attached now.
                     out.reused = true;
                     say(options, "artifact " + out.artifact.string() + " (converted earlier)");
-                    if (reattach) {
-                        say(options, "drafters | attached again: a drafter's file was written "
-                                     "again since it was attached");
-                    }
-                    if (!options.components_given && !reattach) {
+                    if (!options.components_given) {
                         auto text_only          = convert_options;
                         text_only.drafter_quant = std::string();
                         convert_gguf_companions(text_only, convert_options.drafter_quant);
