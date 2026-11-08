@@ -1,5 +1,7 @@
 #include "connect/tunnel.h"
 
+#include "connect/stream_buffer.h"
+
 #include <httplib.h>
 #include <nghttp2/nghttp2.h>
 
@@ -85,8 +87,7 @@ struct Stream {
     bool head_ready = false;
     int status      = 0;
     std::vector<std::pair<std::string, std::string>> response_headers;
-    std::string out;
-    std::size_t out_off   = 0;
+    StreamBuffer out;
     bool upstream_done    = false;
     bool upstream_failed  = false; // the engine's answer broke off after its head
     bool cancelled        = false;
@@ -100,7 +101,7 @@ struct Stream {
     std::atomic<bool> worker_finished{false};
     std::thread worker;
 
-    [[nodiscard]] std::size_t buffered() const noexcept { return out.size() - out_off; }
+    [[nodiscard]] std::size_t buffered() const noexcept { return out.unread(); }
 };
 
 // An answer the worker gives itself (the engine unreachable, a body too large), as the engine's
@@ -109,8 +110,8 @@ void local_answer(Stream& s, int status, std::string_view message) {
     std::lock_guard lock(s.mu);
     s.status = status;
     s.response_headers = {{"content-type", "application/json"}};
-    s.out = R"({"error":{"message":")" + std::string(message) + R"(","type":"ninferno_connect"}})";
-    s.out_off       = 0;
+    s.out.assign(R"({"error":{"message":")" + std::string(message) +
+                 R"(","type":"ninferno_connect"}})");
     s.head_ready    = true;
     s.upstream_done = true;
 }
@@ -396,12 +397,8 @@ private:
             s.deferred = true;
             return NGHTTP2_ERR_DEFERRED;
         }
-        const std::size_t n = std::min(length, available);
-        std::memcpy(buf, s.out.data() + s.out_off, n);
-        s.out_off += n;
-        if (s.out_off == s.out.size()) {
-            s.out.clear();
-            s.out_off = 0;
+        const std::size_t n = s.out.take(reinterpret_cast<char*>(buf), length);
+        if (s.buffered() == 0) {
             if (s.upstream_done && !s.upstream_failed) { *flags |= NGHTTP2_DATA_FLAG_EOF; }
         }
         s.room.notify_all();

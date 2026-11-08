@@ -8,8 +8,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "bench"))
 import regret_collect as collect
 import selection_regret as regret
 
-HEAD = "format,compute,epilogue,n,k,T,route,median_us\n"
-SELECTED_HEAD = "format,compute,epilogue,n,k,T,asked,selected\n"
+HEAD = "format,compute,epilogue,n,k,T,route,median_us,run,device,protocol,calls,samples\n"
+SELECTED_HEAD = "format,compute,epilogue,n,k,T,asked,selected,run,device\n"
+
+
+def stamp(text, run, sweep):
+    """Rows as route_tune writes them: each names its run and board, a sweep row its protocol."""
+    tail = f",{run},ga106:28sm" + (",flushed,1,15" if sweep else "")
+    return "".join(line + tail + "\n" for line in text.splitlines() if line)
 
 
 class Collect(unittest.TestCase):
@@ -26,8 +32,10 @@ class Collect(unittest.TestCase):
         return path
 
     def run_collect(self, passes, selected, qualified="generic linear and route class tests"):
-        sel = [self.write(f"sel{i}.csv", SELECTED_HEAD + selected) for i in range(len(passes))]
-        routes = [self.write(f"p{i}.csv", HEAD + text) for i, text in enumerate(passes, 1)]
+        sel = [self.write(f"sel{i}.csv", SELECTED_HEAD + stamp(selected, f"r{i}", False))
+               for i in range(1, len(passes) + 1)]
+        routes = [self.write(f"p{i}.csv", HEAD + stamp(text, f"r{i}", True))
+                  for i, text in enumerate(passes, 1)]
         return collect.collect(sel, routes, "held-board", "held-model", "rev", "build", "both",
                                ["fit-board"], ["fit-model"], qualified)
 
@@ -88,19 +96,78 @@ class Collect(unittest.TestCase):
 
     def test_passes_with_different_selections_refused(self):
         rows = "q8,a16,store,64,64,1,rmma.a,5\nq8,a16,store,64,64,1,rmma.b,6\n"
-        a = self.write("sa.csv", SELECTED_HEAD + "q8,a16,store,64,64,1,rmma.a,rmma.a\n")
-        b = self.write("sb.csv", SELECTED_HEAD + "q8,a16,store,64,64,1,rmma.a,rmma.b\n")
+        a = self.write("sa.csv", SELECTED_HEAD + stamp("q8,a16,store,64,64,1,rmma.a,rmma.a", "r1",
+                                                       False))
+        b = self.write("sb.csv", SELECTED_HEAD + stamp("q8,a16,store,64,64,1,rmma.a,rmma.b", "r2",
+                                                       False))
+        a2 = self.write("sa2.csv", SELECTED_HEAD + stamp("q8,a16,store,64,64,1,rmma.a,rmma.a", "r2",
+                                                         False))
+        p1 = self.write("p1.csv", HEAD + stamp(rows, "r1", True))
+        p2 = self.write("p2.csv", HEAD + stamp(rows, "r2", True))
         with self.assertRaises(ValueError):
-            collect.collect([a, b], [self.write("p1.csv", HEAD + rows)], "b", "m", "r", "i",
-                            "both", [], [], "q")
+            collect.collect([a, b], [p1, p2], "b", "m", "r", "i", "both", [], [], "q")
         with self.assertRaises(ValueError):  # one selection for two passes
-            collect.collect([a], [self.write("p1.csv", HEAD + rows), self.write("p2.csv", HEAD + rows)],
-                            "b", "m", "r", "i", "both", [], [], "q")
-        doc = collect.collect([a, a], [self.write("p1.csv", HEAD + rows),
-                                       self.write("p2.csv", HEAD + rows)],
-                              "b", "m", "r", "i", "both", [], [], "q")
+            collect.collect([a], [p1, p2], "b", "m", "r", "i", "both", [], [], "q")
+        doc = collect.collect([a, a2], [p1, p2], "b", "m", "r", "i", "both", [], [], "q")
         self.assertIn("A16Only", doc["cases"][0]["numerical_contract"])
         self.assertIn("speed route profile", doc["cases"][0]["workload"])
+
+    # #518: route_tune names each row's run, board and timing protocol.
+    NEW_HEAD = "format,compute,epilogue,n,k,T,route,median_us,run,device,protocol,calls,samples\n"
+    NEW_SELECTED_HEAD = "format,compute,epilogue,n,k,T,asked,selected,run,device\n"
+
+    def new_pass(self, i, run, rows, device="ga106:28sm"):
+        routes = "".join(f"q8,a16,store,64,64,{t},{r},{us},{run},{device},{p},{c},15\n"
+                         for t, r, us, p, c in rows)
+        sel = "".join(f"q8,a16,store,64,64,{t},rmma.a,rmma.a,{run},{device}\n"
+                      for t in sorted({row[0] for row in rows}))
+        return (self.write(f"nsel{i}.csv", self.NEW_SELECTED_HEAD + sel),
+                self.write(f"np{i}.csv", self.NEW_HEAD + routes))
+
+    def collect_new(self, pairs):
+        return collect.collect([s for s, _ in pairs], [r for _, r in pairs], "b", "m", "r", "i",
+                               "both", [], [], "q")
+
+    def test_protocol_is_reported_per_case(self):
+        rows = [(4, "rmma.a", 5, "copies", 64), (4, "rmma.b", 6, "copies", 64),
+                (24, "rmma.a", 50, "flushed", 1), (24, "rmma.b", 40, "flushed", 1)]
+        doc = self.collect_new([self.new_pass(1, "x-1", rows), self.new_pass(2, "x-2", rows)])
+        work = {c["id"]: c["workload"] for c in doc["cases"]}
+        self.assertIn("64 consecutive calls over weight copies", work["q8.a16.store.n64.k64.T4"])
+        self.assertIn("one call after an L2 flush", work["q8.a16.store.n64.k64.T24"])
+        self.assertEqual(doc["device"], "ga106:28sm")
+
+    def test_passes_with_different_protocols_refused(self):
+        rotated = [(4, "rmma.a", 5, "copies", 64)]
+        flushed = [(4, "rmma.a", 7, "flushed", 1)]
+        with self.assertRaisesRegex(ValueError, "different protocols"):
+            self.collect_new([self.new_pass(1, "x-1", rotated), self.new_pass(2, "x-2", flushed)])
+
+    def test_files_of_different_runs_refused(self):
+        rows = [(4, "rmma.a", 5, "copies", 64)]
+        sel, _ = self.new_pass(1, "x-1", rows)
+        _, routes = self.new_pass(2, "x-2", rows)
+        with self.assertRaisesRegex(ValueError, "different runs"):
+            self.collect_new([(sel, routes)])
+
+    def test_one_run_given_twice_refused(self):
+        pair = self.new_pass(1, "x-1", [(4, "rmma.a", 5, "copies", 64)])
+        with self.assertRaisesRegex(ValueError, "more than once"):
+            self.collect_new([pair, pair])
+
+    def test_passes_of_different_boards_refused(self):
+        rows = [(4, "rmma.a", 5, "copies", 64)]
+        with self.assertRaisesRegex(ValueError, "more than one board"):
+            self.collect_new([self.new_pass(1, "x-1", rows),
+                              self.new_pass(2, "x-2", rows, device="ad106:34sm")])
+
+    def test_files_without_provenance_refused(self):
+        old_sel = self.write("old_sel.csv", "format,compute,epilogue,n,k,T,asked,selected\n"
+                                            "q8,a16,store,64,64,4,rmma.a,rmma.a\n")
+        old_routes = self.write("old_p.csv", "format,compute,epilogue,n,k,T,route,median_us\n"
+                                             "q8,a16,store,64,64,4,rmma.a,5\n")
+        with self.assertRaisesRegex(ValueError, "missing columns"):
+            collect.collect([old_sel], [old_routes], "b", "m", "r", "i", "both", [], [], "q")
 
     def test_short_row_exits_2(self):
         sel = self.write("sel.csv", SELECTED_HEAD + "q8,a16\n")

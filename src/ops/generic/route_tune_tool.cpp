@@ -149,12 +149,25 @@ int route_tune_main(int argc, char** argv) {
                 custom_points.push_back(std::stoi(item));
             }
         }
+        // Every row names the run that wrote it and the board it ran on, so a collector pairs a
+        // pass's --routes-out with its own --selected-out and never mixes boards (#518).
+        const std::string run_id = [&] {
+            std::random_device entropy;
+            char hex[17];
+            std::snprintf(hex, sizeof(hex), "%08x%08x", entropy(), entropy());
+            return file_key + "-" + hex;
+        }();
+        // The board itself, not only its class: two GPUs of one chip and SM count share
+        // device.id(), their UUIDs differ.
+        const std::string device_id =
+            device.id() + (uuid_known(device.identity) ? " " + uuid_text(device.identity) : "");
         std::ofstream routes_csv;
         if (opt.count("--routes-out")) {
             routes_csv.open(opt["--routes-out"]);
             if (!routes_csv) throw std::runtime_error("cannot open " + opt["--routes-out"]);
             routes_csv << "format,compute,epilogue,n,k,T,route,median_us,model_us,registers,"
-                          "local_bytes,weight_bytes,activation_bytes,output_bytes\n";
+                          "local_bytes,weight_bytes,activation_bytes,output_bytes,run,device,"
+                          "protocol,calls,samples\n";
         }
         // The route the production path runs at each band point (#301): select_route's choice
         // with the tables this device loads, resolved for the contiguous call and this workspace,
@@ -163,7 +176,7 @@ int route_tune_main(int argc, char** argv) {
         if (opt.count("--selected-out")) {
             selected_csv.open(opt["--selected-out"]);
             if (!selected_csv) throw std::runtime_error("cannot open " + opt["--selected-out"]);
-            selected_csv << "format,compute,epilogue,n,k,T,asked,selected,select_ns\n";
+            selected_csv << "format,compute,epilogue,n,k,T,asked,selected,select_ns,run,device\n";
         }
         const int select_reps = opt.count("--select-reps") ? std::stoi(opt["--select-reps"]) : 0;
         const bool a8_candidates = opt.count("--a8-candidates") && opt["--a8-candidates"] == "1";
@@ -387,7 +400,14 @@ int route_tune_main(int argc, char** argv) {
                     } else {
                         routes_csv << ",,";
                     }
-                    routes_csv << '\n';
+                    // How the sample was timed (#518): "copies", consecutive calls over `calls`
+                    // weight copies between one event pair (a decode width under --rotate 1), or
+                    // "flushed", one call after the L2 flush; the median of `samples` of them.
+                    const bool rotated = over_copies && !spare.empty();
+                    routes_csv << ',' << run_id << ',' << device_id << ','
+                               << (rotated ? "copies" : "flushed") << ','
+                               << (rotated ? 1 + spare.size() : std::size_t{1}) << ',' << samples
+                               << '\n';
                 }
                 return us; // microseconds
             };
@@ -475,9 +495,10 @@ int route_tune_main(int argc, char** argv) {
                         generic::resolve_route(asked, w.weight, layout).executed;
                     time_route(ran, t);
                     selected_csv << generic::qtype_name(p.qtype) << ',' << row_compute << ','
-                                 << generic::epilogue_name(p.epilogue) << ',' << p.n << ','
-                                 << p.k << ',' << t << ',' << generic::route_name(asked) << ','
-                                 << generic::route_name(ran) << ',' << select_ns << '\n';
+                                 << generic::epilogue_name(p.epilogue) << ',' << p.n << ',' << p.k
+                                 << ',' << t << ',' << generic::route_name(asked) << ','
+                                 << generic::route_name(ran) << ',' << select_ns << ',' << run_id
+                                 << ',' << device_id << '\n';
                 }
                 std::printf("%s %s %s n=%d k=%d T=%d best=%s %.2f us\n",
                             generic::qtype_name(p.qtype), generic::compute_class_name(p.compute),
