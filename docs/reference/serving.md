@@ -1301,7 +1301,7 @@ response contains typed `output` Items.
 | `preserve_thinking` | alias for `chat_template_kwargs.preserve_thinking`; conflicting values are rejected |
 | `text.format` | omitted, `{"type":"text"}`, `{"type":"json_object"}` or `{"type":"json_schema", "name", "schema", ...}` (`name` required; strict or not), enforced as Chat Completions' `response_format` is ([constrained output](#constrained-output)); `client.responses.parse(text_format=...)` returns the parsed object |
 | `tools` | direct function definitions or namespace groups containing function definitions; see [Function tools](#function-tools) |
-| `tool_choice` | `auto`, `none`, `required`, a named `{"type":"function","name"}` or `{"type":"custom","name"}`, or function-only `allowed_tools` with mode `auto` or `required`; `required` and a named tool are enforced by a constraint; a namespaced selection carries both `namespace` and `name` |
+| `tool_choice` | `auto`, `none`, `required`, a named `{"type":"function","name"}` or `{"type":"custom","name"}`, or function-only `allowed_tools` with mode `auto` or `required`; `required` and a named tool are enforced by a constraint (an empty `allowed_tools` set leaves nothing to force); a namespaced selection carries both `namespace` and `name` |
 | `parallel_tool_calls` | `true` by default; `false` is enforced: the output stops after the first call |
 | `max_tool_calls` | non-negative integer accepted as a hosted-tool no-op; NInferno does not execute hosted tools |
 | `truncation` | omitted or `disabled`; overlong input fails instead of silently dropping Items |
@@ -1416,7 +1416,8 @@ They may also be grouped in a Responses namespace:
   region first, so a quoted example of an undeclared call does not displace a declared call after
   it. Llama 3's JSON form, whose call opens like any JSON answer, still needs a declared name.
 - `allowed_tools` with mode `auto` filters that set without changing declaration order; mode
-  `required` also forces a call among them.
+  `required` also forces a call among them (an empty `tools` list leaves no tool to call, and the
+  answer is unconstrained text).
   `tool_choice:"none"` disables structured tool output even when the history contains earlier calls.
 - Function definitions are request configuration rather than conversation Items. They must be sent
   again on tool-result turns.
