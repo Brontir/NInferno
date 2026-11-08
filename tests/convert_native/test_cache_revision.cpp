@@ -102,8 +102,8 @@ int main() {
           "a Q8 drafter without a proposal head at revision 4 is converted again");
     check(!cache_current(artifact(dir, "rev5", 5, "dflash/layers/0/attention/query", "q8_g32_fp16")),
           "a companion without a proposal head at revision 5 is converted again");
-    check(cache_current(artifact(dir, "new", 8, "dflash/layers/0/attention/query", "bf16")),
-          "revision 8 is current");
+    check(cache_current(artifact(dir, "new", kCacheRevision, "dflash/layers/0/attention/query", "bf16")),
+          "the current revision is current");
     // Revision 9: a YaRN DFlash drafter (gpt-oss's) records its original context length, which
     // bounds the rows its full layers read (#549).
     const auto drafter_report = [&](const std::string& name, const std::string& extra) {
