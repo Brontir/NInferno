@@ -87,15 +87,16 @@ int main() {
         return 77;
     }
     const std::uintptr_t a = std::uintptr_t{1} << 32, b = std::uintptr_t{1} << 34;
-    for (const std::int32_t t : {1, 4, 17, 512}) {
+    for (const std::int32_t t : {1, 4, 5, 17, 85, 86, 512}) {
         const std::string at = " T=" + std::to_string(t);
         // The fused kernel's geometry: the chain with fewer requested bytes runs (a tie keeps the
         // fused kernel); the other stays listed, not taken.
         {
             const Described f(QType::Q8_G32_FP16, 1024, 5120, a), s(QType::Q8_G32_FP16, 1024, 5120, b);
             const auto c = ops::detail::linear_pair_candidates(f.weight, s.weight, t);
-            const auto r     = ops::detail::linear_pair_requested_bytes(f.weight, s.weight, t);
-            const bool fused = !(r.fused && r.separate) || *r.fused <= *r.separate;
+            // Up to 85 columns the pair is the single-weight SIMT kernel twice with a 4-column
+            // tile; from 5 columns on the shape's own tiles request the weights fewer times.
+            const bool fused = t < 5 || t > 85;
             check(c.size() == 2 && c[0].id == "fused:q8_pair" &&
                       c[0].status == (fused ? Status::Selected : Status::Dominated) &&
                       c[1].id == "separate" &&
@@ -138,10 +139,9 @@ int main() {
         {
             const Rows f(6144, 2048, 4096, a), s(f, 5120);
             const auto c = ops::detail::linear_pair_candidates(f.weight, s.weight, t);
-            const auto r     = ops::detail::linear_pair_requested_bytes(f.weight, s.weight, t);
-            const bool fused = !(r.fused && r.separate) || *r.fused <= *r.separate;
-            check(c.size() == 2 && c[0].status == (fused ? Status::Selected : Status::Dominated) &&
-                      c[1].status == (fused ? Status::Inadmissible : Status::Selected),
+            // One launch (decode, split-K or one tiled MMA) saves a launch: it keeps the call.
+            check(c.size() == 2 && c[0].status == Status::Selected &&
+                      c[1].status == Status::Inadmissible,
                   "1024x2048 Q8, K/V row views:" + describe(c) + at);
         }
         // A fragment-order pair: linear() refuses each weight, so neither path runs.

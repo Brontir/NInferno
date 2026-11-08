@@ -127,18 +127,17 @@ std::optional<ChainPrice> separate_chain(const Weight& first_weight, const Weigh
 }
 
 // Whether the call runs the fused kernel: its domain, and then the cheaper chain where both are
-// priced. The fused kernel's schedule can be the two single-weight launches again with a narrower
-// tile (K = 5120 up to 85 columns: 8 rows by 4 columns), re-requesting the weights more often than
-// the shape's own table does; a tie keeps the fused kernel (one launch where it fuses).
+// priced and the fusing saves nothing. A fused schedule that is one launch saves a launch (and its
+// drain and ramp) against the two calls, which a bytes law does not price, so it keeps the call as
+// before. One that is two launches (K = 5120 up to 85 columns: the single-weight SIMT kernel twice,
+// 8 rows by 4 columns a CTA) saves none, and the chains differ only in how often the tiles
+// re-request the weights, so the one requesting fewer bytes runs; a tie keeps the fused kernel.
 bool fused_pair(const Weight& first_weight, const Weight& second_weight, std::int32_t tokens) {
     if (!fused_domain(first_weight, second_weight)) { return false; }
     const auto fused    = fused_chain(first_weight, tokens);
     const auto separate = separate_chain(first_weight, second_weight, tokens);
-    if (!fused || !separate) { return true; }
-    if (separate->requested_bytes != fused->requested_bytes) {
-        return fused->requested_bytes < separate->requested_bytes;
-    }
-    return fused->launches <= separate->launches;
+    if (!fused || !separate || fused->launches < separate->launches) { return true; }
+    return fused->requested_bytes <= separate->requested_bytes;
 }
 
 void require_same_logical_shape(const Weight& first_weight, const Weight& second_weight) {
