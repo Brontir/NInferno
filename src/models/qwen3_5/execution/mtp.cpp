@@ -19,21 +19,21 @@ std::size_t rows_linear_bytes(const LinearParameters& p, std::int32_t first, std
 // Whether the fused Q/K/gate/V projection (attn_input_proj) reads the packed parent: its formats.
 // A published GGUF's blocks (ggml K- and I-quants: an MoE model's MTP layer from unsloth's
 // UD-IQ3_S) run the generic linear and the split instead.
-bool fused(const MtpProjectionParameters& parameters) {
+// A format alone is not enough: the Op is registered for two geometries (the 27B's [14336,5120]
+// and the 35B-A3B's [9216,2048]), so an MoE layer stored in BF16, NVFP4 or FP8 (nvidia's and
+// RedHatAI's NVFP4 releases keep the MTP layer BF16) also takes the generic linear.
+bool fused(const MtpProjectionParameters& parameters, const AttentionConfig& config) {
     if (parameters.rows) { return false; }
-    switch (parameters.packed->weight.qtype) {
-    case QType::BF16:
-    case QType::NVFP4:
-    case QType::FP8_E4M3FN_ROW_BF16:
-    case QType::Q8_G32_FP16: return true;
-    default: return false;
-    }
+    return ops::attn_input_proj_fused_supported(
+        parameters.packed->weight.qtype, parameters.packed->weight.k,
+        dimension(config.query_width()), dimension(config.key_width()));
 }
 
 } // namespace
 
 std::size_t mtp_projection_workspace_bytes(const MtpProjectionParameters& parameters,
-                                           std::int32_t first, std::int32_t last) {
+                                           const AttentionConfig& config, std::int32_t first,
+                                           std::int32_t last) {
     if (!parameters.packed) {
         // Separate parents: Q and gate one Linear each, K and V one pair (no workspace).
         const auto& rows = *parameters.rows;
@@ -42,7 +42,7 @@ std::size_t mtp_projection_workspace_bytes(const MtpProjectionParameters& parame
     }
     const auto& p = *parameters.packed;
     const auto& w = p.weight;
-    if (fused(parameters)) {
+    if (fused(parameters, config)) {
         return ops::attn_input_proj_workspace_capacity_bytes(w.qtype, w.n, w.k, p.policy, first,
                                                              last);
     }
@@ -63,7 +63,7 @@ std::size_t mtp_kv_workspace_bytes(const MtpProjectionParameters& parameters,
     WorkspaceLayoutBuilder layout;
     (void)layout.alloc(DType::BF16, {dimension(config.query_width()), last});
     (void)layout.alloc(DType::BF16, {dimension(config.query_width()), last});
-    (void)layout.alloc_bytes(mtp_projection_workspace_bytes(parameters, first, last));
+    (void)layout.alloc_bytes(mtp_projection_workspace_bytes(parameters, config, first, last));
     return layout.peak_bytes(1);
 }
 
@@ -81,7 +81,7 @@ std::size_t mtp_query_gate_workspace_bytes(const MtpProjectionParameters& parame
     WorkspaceLayoutBuilder layout;
     (void)layout.alloc(DType::BF16, {dimension(config.key_width()), last});
     (void)layout.alloc(DType::BF16, {dimension(config.key_width()), last});
-    (void)layout.alloc_bytes(mtp_projection_workspace_bytes(parameters, first, last));
+    (void)layout.alloc_bytes(mtp_projection_workspace_bytes(parameters, config, first, last));
     return layout.peak_bytes(1);
 }
 
@@ -94,7 +94,7 @@ void mtp_projection(const Tensor& hidden, const MtpProjectionParameters& paramet
         return;
     }
     const auto& p = *parameters.packed;
-    if (fused(parameters)) {
+    if (fused(parameters, config)) {
         ops::attn_input_proj(hidden, p.weight, query, gate, key, value, p.policy, workspace,
                              stream);
         return;
