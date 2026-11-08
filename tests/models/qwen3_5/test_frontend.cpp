@@ -2143,6 +2143,10 @@ int check_steered_prefix(const fi::CompiledChatTemplate& compiled, const std::st
                      diverge, content_end, plain.substr(diverge, 80).c_str(),
                      steered.substr(diverge, 80).c_str());
     }
+    if (steered.find(kLine, content_end) == std::string::npos) {
+        std::fprintf(stderr, "%s tail: plain [%s] steered [%s]%c", label.c_str(),
+                     plain.substr(content_end).c_str(), steered.substr(content_end).c_str(), 10);
+    }
     return check(
         steered.size() > plain.size() &&
             steered.compare(0, content_end, plain, 0, content_end) == 0 &&
