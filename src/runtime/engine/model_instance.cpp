@@ -413,16 +413,15 @@ EngineOptions normalize_engine_options(EngineOptions options) {
     // requests run at once, and a descriptor costs a catalog entry and an address space, the KV
     // and states staying bounded by their own capacities (four rotating agents at C1 re-prefilled
     // 17 % less with 9 than with 2).
-    const std::uint64_t default_private =
-        std::max<std::uint64_t>(2ULL * concurrency, static_cast<std::uint64_t>(concurrency) + 8U);
     cache.max_private_continuations =
-        cache.max_private_continuations.value_or(static_cast<std::uint32_t>(default_private));
+        cache.max_private_continuations.value_or(default_private_continuations(concurrency));
     // An automatic Host tier keeps two StateImages a conversation (its endpoint and the turn an
     // edit returns to) rather than a fixed eight: with four rotating agents eight states left each
     // only an old anchor between its turns. The Host fit still scales it to what the host pins.
-    if (cache.host_tier_automatic) {
-        cache.host_state_slots = std::max(cache.host_state_slots,
-                                          2U * *cache.max_private_continuations);
+    // (resolve_host_tier_spec: the dry run's too.)
+    if (const HostTierSpec tier = resolve_host_tier_spec(cache, concurrency, false);
+        tier.sizing == HostTierSizing::Automatic) {
+        cache.host_state_slots = tier.slots;
     }
     // A shared prefix is reusable with a complete StateImage (Device or Host) and its KV, each
     // bounded by its own capacity; its descriptor costs a catalog entry and an address space (a
@@ -681,15 +680,17 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
     // An automatic Host tier is fitted to what the host can pin before anything is planned over it
     // (its KV pages widen the logical page tables).
     ContextCacheOptions& cache = resolved.context_cache;
-    HostTierResolution host_tier{.automatic        = cache.enabled && cache.host_tier_automatic,
+    const HostTierSpec host_spec =
+        resolve_host_tier_spec(cache, resolved.max_concurrency, device.props.integrated != 0);
+    HostTierResolution host_tier{.automatic        = host_spec.sizing == HostTierSizing::Automatic,
                                  .default_slots    = cache.host_state_slots,
                                  .default_kv_bytes = cache.host_kv_capacity_bytes};
-    if (host_tier.automatic && device.props.integrated != 0) {
+    if (host_tier.automatic) {
         // A GPU that shares the host's memory (DGX Spark's GB10, Jetson): a Host tier would pin
         // the memory the Device pool draws on and copy pages within it, so an automatic one is
-        // off; an explicit one is kept.
-        cache.host_state_slots       = 0;
-        cache.host_kv_capacity_bytes = 0;
+        // off (zero here); an explicit one is kept.
+        cache.host_state_slots       = host_spec.slots;
+        cache.host_kv_capacity_bytes = static_cast<std::size_t>(host_spec.kv_bytes);
     }
     // The pinning a rung declares (rung_cost): the Host tier as the options and the platform
     // configure it. The fit below sizes an automatic tier to what the host can pin now
@@ -725,25 +726,16 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
     // so the fingerprint does not follow host memory pressure. A host that can pin no StateImage
     // then keeps no cached state beyond the active lanes on a rung without Device states, as
     // --device-state-slots 0 --host-state-slots 0 would.
-    const bool host_states_configured =
-        cache.enabled &&
-        (host_tier.automatic ? host_tier.default_slots != 0 && device.props.integrated == 0
-                             : cache.host_state_slots != 0);
+    const bool host_states_configured  = host_spec.slots != 0;
     const std::uint32_t states_minimum = host_states_configured ? 0U : 1U;
     // The ladder's rungs set these from here on.
     // (A refused or no longer fitting automatic Host tier is halved in it too:
     // pinning_device_bytes.)
     EngineOptions unfitted = resolved;
 
-    // The Host tier pins the warm-up holds for the Program (pinning_device_bytes): whatever it
-    // did not claim is freed when construction ends, by a refusal too.
-    struct HeldPinsRelease {
-        HeldPinsRelease()                                  = default;
-        HeldPinsRelease(const HeldPinsRelease&)            = delete;
-        HeldPinsRelease& operator=(const HeldPinsRelease&) = delete;
-
-        ~HeldPinsRelease() { release_held_pinned_host(); }
-    } const held_pins_release;
+    // The pins of the Host tier (pinning_device_bytes), held for the Program that takes them;
+    // freed with this construction when it ends before, a refusal too.
+    HostTierPins host_pins;
     // Whether the driver holds the plan's CUDA graph memory (the kernel warm-up below).
     bool graph_memory_held = false;
     // The longest decode round a request asks for: the widest launch window and its target
@@ -1250,7 +1242,7 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                 : 0;
         return {states, tier.enabled ? tier.host_kv_capacity_bytes : 0};
     };
-    // The pins are kept (hold_pinned_host) for the Program to claim, so a server started beside
+    // The pins are kept (host_pins) for the Program to take, so a server started beside
     // others on one host keeps the memory its plan measured instead of losing it to them before
     // it pins again (#473: eight one-GPU servers started together, each sizing its automatic
     // tier from the same MemAvailable; half died on the second pin).
@@ -1275,7 +1267,6 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
     // Whether the Host tier's pins are held for the Program (pinning_device_bytes ran).
     bool host_tier_pinned           = false;
     const auto pinning_device_bytes = [&]() {
-        release_held_pinned_host();
         host_tier_pinned = true;
         // One process of the host at a time reads what it can pin and pins it, so a server
         // started beside others sees their pins in MemAvailable (HostPinLock); taken only where
@@ -1284,12 +1275,18 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
         for (;;) {
             const std::pair<std::size_t, std::size_t> sizes = host_tier_sizes();
             const std::uint64_t asked = static_cast<std::uint64_t>(sizes.first) + sizes.second;
-            if (asked == 0) { return std::pair{sizes, std::size_t{0}}; }
+            if (asked == 0) {
+                host_pins = HostTierPins{};
+                return std::pair{sizes, std::size_t{0}};
+            }
             if (!pin_lock) {
                 pin_lock.emplace();
                 host_tier.pin_unserialized = !pin_lock->held();
+                // The rung moved: the old pins go and the new ones are made inside this one lock
+                // scope, so no other process takes the memory between (#473).
+                host_pins = HostTierPins{};
             }
-            if (host_tier.automatic && asked != 0) {
+            if (host_tier.automatic) {
                 // What the host can pin now, after the sizing: another process may have pinned
                 // since.
                 if (const std::optional<HostMemory> memory = read_host_memory()) {
@@ -1303,13 +1300,11 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
             }
             const std::size_t before = current_free_device_bytes();
             try {
-                std::optional<PinnedHostBuffer> states;
-                std::optional<PinnedHostBuffer> kv;
-                if (sizes.first != 0) { states.emplace(sizes.first); }
-                if (sizes.second != 0) { kv.emplace(sizes.second); }
+                HostTierPins made;
+                if (sizes.first != 0) { made.states.emplace(sizes.first); }
+                if (sizes.second != 0) { made.kv.emplace(sizes.second); }
                 const std::size_t after = current_free_device_bytes();
-                if (states) { hold_pinned_host(std::move(*states)); }
-                if (kv) { hold_pinned_host(std::move(*kv)); }
+                host_pins               = std::move(made);
                 return std::pair{sizes, before > after ? before - after : std::size_t{0}};
             } catch (const PinnedHostError& error) {
                 if (!host_tier.automatic) {
@@ -1601,8 +1596,9 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
     instance->kernel_warm_up         = warm_up;
     instance->plan                   = std::move(plan);
     StartupPhaseScope program(options.startup_observer, StartupPhase::ProgramInitialize);
-    instance->program = models::qwen3_5::create_program(*instance->execution, std::move(sequence),
-                                                        device, options.startup_observer);
+    instance->program =
+        models::qwen3_5::create_program(*instance->execution, std::move(sequence), device,
+                                        options.startup_observer, std::move(host_pins));
     device.synchronize();
     program.complete();
     instance->kv_capacity_resolution.available_after_startup_bytes = current_free_device_bytes();

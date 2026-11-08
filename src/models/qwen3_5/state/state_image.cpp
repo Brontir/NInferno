@@ -340,14 +340,26 @@ TransferWork dflash_local_transfer_work(const StateImageHostLayout& layout) {
                         .copy_operations = static_cast<std::uint32_t>(operations)};
 }
 
-HostStatePool::HostStatePool(StateImageHostLayout layout, std::uint32_t capacity)
+HostStatePool::HostStatePool(StateImageHostLayout layout, std::uint32_t capacity,
+                             std::optional<PinnedHostBuffer> backing)
     : layout_(std::move(layout)), slots_(capacity), free_slots_(capacity), free_count_(capacity) {
     if (!same_host_layout(layout_, plan_host_state_image(layout_.spec))) {
         throw std::invalid_argument("HostStatePool image layout is invalid");
     }
     const std::size_t bytes =
         checked_mul(layout_.image_bytes, capacity, "HostStatePool backing size overflow");
-    if (bytes != 0) { backing_.emplace(PinnedHostBuffer::claim(bytes)); }
+    if (backing) {
+        // The pins the engine measured are exactly this pool's size: another size is a planning
+        // bug, not a reason to pin a second time beside them. A pool of no bytes takes no pins.
+        if (bytes == 0) { throw std::logic_error("HostStatePool of 0 bytes was given a backing"); }
+        if (backing->size() != bytes) {
+            throw std::logic_error("HostStatePool backing of " + std::to_string(backing->size()) +
+                                   " bytes does not match its " + std::to_string(bytes) + " bytes");
+        }
+        backing_ = std::move(backing);
+    } else if (bytes != 0) {
+        backing_.emplace(bytes);
+    }
     for (std::uint32_t index = 0; index < capacity; ++index) {
         free_slots_[index] = capacity - 1U - index;
     }

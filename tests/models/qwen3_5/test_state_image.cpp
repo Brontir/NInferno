@@ -1,3 +1,4 @@
+#include "core/arena.h"
 #include "core/device.h"
 #include "models/qwen3_5/state/state_image.h"
 #include "support/cuda.h"
@@ -9,6 +10,8 @@
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -228,6 +231,33 @@ void test_host_roundtrip(bool dflash, ninferno::DeviceContext& device, bool dfla
            "HostStatePool reuse advances generation");
     expect(!host.release(stale), "HostStatePool rejects stale release");
     expect(host.release(*reused), "HostStatePool releases the reused slot");
+
+    // Pins made beforehand (HostTierPins::states): the pool takes them and pins nothing new; a
+    // backing of another size is refused (the pins the engine measured are the pool's size).
+    const std::size_t image_bytes = planned.layout.host.image_bytes;
+    const std::size_t pinned_base = ninferno::pinned_host_bytes();
+    {
+        std::optional<ninferno::PinnedHostBuffer> made(std::in_place, image_bytes * 2);
+        void* const made_data = made->data();
+        q36::HostStatePool backed(planned.layout.host, 2, std::move(made));
+        expect(ninferno::pinned_host_bytes() == pinned_base + image_bytes * 2,
+               "a backed HostStatePool pins nothing new");
+        const auto slot              = backed.allocate();
+        const std::byte* const first = static_cast<const std::byte*>(made_data);
+        const std::byte* const data  = slot ? backed.writable_view(*slot).data : nullptr;
+        expect(data != nullptr && data >= first && data < first + image_bytes * 2,
+               "a backed HostStatePool serves slots inside the given pins");
+    }
+    expect(ninferno::pinned_host_bytes() == pinned_base,
+           "a backed HostStatePool unpins its backing");
+    bool wrong_size_refused = false;
+    try {
+        q36::HostStatePool wrong(
+            planned.layout.host, 2,
+            std::optional<ninferno::PinnedHostBuffer>(std::in_place, image_bytes * 2 + 4096));
+    } catch (const std::logic_error&) { wrong_size_refused = true; }
+    expect(wrong_size_refused, "a HostStatePool backing of another size throws std::logic_error");
+    expect(ninferno::pinned_host_bytes() == pinned_base, "the refused backing is freed");
 }
 
 // A pool of sliding-window rings without linear state: every slot operation moves the rings, and

@@ -119,7 +119,10 @@ struct HostStateSlotHandle {
  */
 class HostStatePool {
 public:
-    HostStatePool(StateImageHostLayout layout, std::uint32_t capacity);
+    // `backing`: pins made beforehand (HostTierPins::states), exactly capacity * image_bytes (else
+    // std::logic_error); none: the pool pins its own.
+    HostStatePool(StateImageHostLayout layout, std::uint32_t capacity,
+                  std::optional<PinnedHostBuffer> backing = std::nullopt);
 
     HostStatePool(const HostStatePool&)            = delete;
     HostStatePool& operator=(const HostStatePool&) = delete;

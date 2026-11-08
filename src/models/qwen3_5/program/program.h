@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/arena.h"
 #include "ninferno/score_detail.h"
 #include "ninferno/types.h"
 #include "runtime/contract/execution.h"
@@ -1028,7 +1029,8 @@ private:
     std::unique_ptr<detail::ProgramImpl> impl_;
 
     friend std::unique_ptr<Program> create_program(const detail::ModelExecution&, SequencePlan&&,
-                                                   DeviceContext&, const StartupObserver&);
+                                                   DeviceContext&, const StartupObserver&,
+                                                   HostTierPins);
 };
 
 namespace detail {
@@ -1198,6 +1200,7 @@ struct RuntimeContractAccess {
 
 [[nodiscard]] std::unique_ptr<Program> create_program(const detail::ModelExecution& model,
                                                       SequencePlan&& plan, DeviceContext& device,
-                                                      const StartupObserver& startup_observer);
+                                                      const StartupObserver& startup_observer,
+                                                      HostTierPins host_pins = {});
 
 } // namespace ninferno::models::qwen3_5

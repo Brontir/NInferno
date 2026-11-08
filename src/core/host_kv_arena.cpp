@@ -187,7 +187,8 @@ void HostKVAllocation::disarm() noexcept {
 }
 
 HostKVArena::HostKVArena(std::size_t capacity_bytes,
-                         std::span<const HostKVPageLayout> supported_layouts)
+                         std::span<const HostKVPageLayout> supported_layouts,
+                         std::optional<PinnedHostBuffer> backing)
     : capacity_bytes_(capacity_bytes),
       layouts_(supported_layouts.begin(), supported_layouts.end()) {
     for (std::size_t index = 0; index < layouts_.size(); ++index) {
@@ -201,12 +202,24 @@ HostKVArena::HostKVArena(std::size_t capacity_bytes,
             }
         }
     }
-    if (capacity_bytes_ == 0) { return; }
+    if (capacity_bytes_ == 0) {
+        if (backing) { throw std::logic_error("Host KV arena backing for a zero capacity"); }
+        return;
+    }
     if (layouts_.empty()) {
         throw std::invalid_argument("Non-empty Host KV arena requires supported page layouts");
     }
 
-    backing_.emplace(PinnedHostBuffer::claim(capacity_bytes_));
+    if (backing) {
+        if (backing->size() != capacity_bytes_) {
+            throw std::logic_error("Host KV arena backing of " + std::to_string(backing->size()) +
+                                   " bytes does not match its capacity of " +
+                                   std::to_string(capacity_bytes_) + " bytes");
+        }
+        backing_ = std::move(backing);
+    } else {
+        backing_.emplace(capacity_bytes_);
+    }
     const auto smallest = std::min_element(
         layouts_.begin(), layouts_.end(), [](const HostKVPageLayout& a, const HostKVPageLayout& b) {
             return a.page_stride < b.page_stride;

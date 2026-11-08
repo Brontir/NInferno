@@ -543,7 +543,7 @@ public:
     };
 
     ProgramImpl(const ModelExecution& model, const SequencePlanImpl& plan, DeviceContext& device,
-                const StartupObserver& startup_observer);
+                const StartupObserver& startup_observer, HostTierPins&& host_pins);
     ~ProgramImpl() noexcept;
 
     [[nodiscard]] RequestBasePlan plan_request(const PreparedPromptData& prompt,
