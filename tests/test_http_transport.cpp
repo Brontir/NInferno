@@ -621,7 +621,7 @@ int test_slow_request_body_is_cut_off() {
 // idle pooled connection of a proxy should be (the proxy retries); one with a request gets 503, its
 // request is drained so the close does not reset the answer, and /health gets the health answer.
 int test_overload_answer_by_connection() {
-    int failures = 0;
+    int failures      = 0;
     const auto health = [] {
         return ninferno::serve::HealthReply{.status = 200, .body = R"({"status":"ok"})"};
     };
@@ -630,7 +630,9 @@ int test_overload_answer_by_connection() {
     const auto answer = [&](const std::string& request, bool& drained) {
         int pair[2];
         if (::socketpair(AF_UNIX, SOCK_STREAM, 0, pair) != 0) { return std::string("socketpair"); }
-        if (!request.empty()) { (void)::send(pair[1], request.data(), request.size(), MSG_NOSIGNAL); }
+        if (!request.empty()) {
+            (void)::send(pair[1], request.data(), request.size(), MSG_NOSIGNAL);
+        }
         ninferno::serve::answer_overloaded_connection(pair[0], health);
         char byte;
         drained = ::recv(pair[0], &byte, 1, MSG_DONTWAIT) <= 0;
@@ -646,7 +648,8 @@ int test_overload_answer_by_connection() {
     bool drained = false;
     failures += check(answer("", drained).empty(),
                       "a connection with no bytes was answered instead of closed");
-    const std::string busy = answer("POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\n\r\n", drained);
+    const std::string busy =
+        answer("POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\n\r\n", drained);
     failures += check(busy.find(" 503 ") != std::string::npos &&
                           busy.find("Retry-After: 5") != std::string::npos && drained,
                       "a connection with a request was not answered 503 with its request drained");

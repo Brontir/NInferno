@@ -117,8 +117,9 @@ struct HealthReply {
 // request line is peeked at without waiting (the listening socket defers accept until bytes have
 // arrived) and what has arrived is then dropped, so closing does not reset the connection under the
 // answer of a small request. A connection with no bytes at all gets no answer: it is closed, as an
-// idle pooled connection of a proxy is, and the proxy retries on another. /health here answers for the Engine (liveness), not for the pool: a saturated pool is not
-// an unhealthy server. Linux only; elsewhere the queue stays unbounded and this is never called.
+// idle pooled connection of a proxy is, and the proxy retries on another. /health here answers for
+// the Engine (liveness), not for the pool: a saturated pool is not an unhealthy server. Linux only;
+// elsewhere the queue stays unbounded and this is never called.
 void answer_overloaded_connection(socket_t socket, const std::function<HealthReply()>& health);
 
 [[nodiscard]] HttpWorkerPlan plan_http_workers(std::uint32_t max_concurrency,
