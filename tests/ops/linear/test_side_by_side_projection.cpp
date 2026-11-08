@@ -65,7 +65,7 @@ const char* name(QType q) {
 // side_by_side_admits resolved). The last call releases nothing.
 std::uint64_t granted_joins(const std::vector<Weight>& weights, ops::LinearPolicy policy,
                             std::int32_t t) {
-    namespace g = ops::detail::generic;
+    namespace g        = ops::detail::generic;
     const auto overlap = [&](const Weight& w, bool join_asked, bool release_asked) {
         const g::Problem problem{w.qtype, policy, w.n, w.k, g::Epilogue::Store};
         const g::CallLayout layout{.x_aligned16    = true,
@@ -163,8 +163,8 @@ int check(const std::vector<Slice>& slices, std::int32_t k, std::int32_t t,
     const std::uint64_t launched = ops::detail::generic::joined_launch_count() - joins_before;
     const std::uint64_t grants   = granted_joins(weights, policy, t);
     if (launched != grants) {
-        std::cerr << "FAIL " << label << ": " << launched
-                  << " joined launches, the rule grants " << grants << std::endl;
+        std::cerr << "FAIL " << label << ": " << launched << " joined launches, the rule grants "
+                  << grants << std::endl;
         return 1;
     }
 
