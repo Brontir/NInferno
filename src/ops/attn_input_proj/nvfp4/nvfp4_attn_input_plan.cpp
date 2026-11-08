@@ -40,10 +40,14 @@ Nvfp4AttnInputRoute resolve_route(LinearPolicy policy, std::int32_t tokens) {
 
 const char* route_name(Nvfp4AttnInputRoute route) {
     switch (route) {
-    case Nvfp4AttnInputRoute::A16: return "a16";
-    case Nvfp4AttnInputRoute::A16Exact: return "a16_exact";
-    case Nvfp4AttnInputRoute::A4: return "a4";
-    case Nvfp4AttnInputRoute::W4A8: return "w4a8";
+    case Nvfp4AttnInputRoute::A16:
+        return "a16";
+    case Nvfp4AttnInputRoute::A16Exact:
+        return "a16_exact";
+    case Nvfp4AttnInputRoute::A4:
+        return "a4";
+    case Nvfp4AttnInputRoute::W4A8:
+        return "w4a8";
     }
     return "?";
 }

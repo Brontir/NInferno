@@ -1076,6 +1076,7 @@ struct RecordedProjections {
     std::mutex mutex;
     std::set<std::tuple<std::string, std::string, std::int32_t, std::int32_t, std::int32_t>> seen;
 };
+
 RecordedProjections& recorded_projections() {
     static RecordedProjections state;
     return state;
@@ -1083,8 +1084,8 @@ RecordedProjections& recorded_projections() {
 
 } // namespace
 
-void record_projection_route(const char* op, const char* route, std::int32_t tokens,
-                             std::int32_t n, std::int32_t k) {
+void record_projection_route(const char* op, const char* route, std::int32_t tokens, std::int32_t n,
+                             std::int32_t k) {
     static const char* path = std::getenv("NINFERNO_PROJECTION_RECORD");
     if (path == nullptr || *path == 0) return;
     RecordedProjections& s = recorded_projections();

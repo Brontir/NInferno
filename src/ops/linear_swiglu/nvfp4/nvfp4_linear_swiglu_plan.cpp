@@ -65,12 +65,18 @@ Nvfp4LinearSwiGluRoute resolve_route(LinearPolicy policy, std::int32_t tokens) {
 
 const char* route_name(Nvfp4LinearSwiGluRoute route) {
     switch (route) {
-    case Nvfp4LinearSwiGluRoute::DecodeFusedA16: return "decode_fused_a16";
-    case Nvfp4LinearSwiGluRoute::SmallTFusedA16: return "small_t_fused_a16";
-    case Nvfp4LinearSwiGluRoute::FusedA4: return "fused_a4";
-    case Nvfp4LinearSwiGluRoute::TmaFusedA4: return "tma_fused_a4";
-    case Nvfp4LinearSwiGluRoute::LinearA16Post: return "linear_a16_post";
-    case Nvfp4LinearSwiGluRoute::ExactA16: return "a16_exact";
+    case Nvfp4LinearSwiGluRoute::DecodeFusedA16:
+        return "decode_fused_a16";
+    case Nvfp4LinearSwiGluRoute::SmallTFusedA16:
+        return "small_t_fused_a16";
+    case Nvfp4LinearSwiGluRoute::FusedA4:
+        return "fused_a4";
+    case Nvfp4LinearSwiGluRoute::TmaFusedA4:
+        return "tma_fused_a4";
+    case Nvfp4LinearSwiGluRoute::LinearA16Post:
+        return "linear_a16_post";
+    case Nvfp4LinearSwiGluRoute::ExactA16:
+        return "a16_exact";
     }
     return "?";
 }

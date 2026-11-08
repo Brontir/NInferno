@@ -48,9 +48,12 @@ Nvfp4LinearAddRoute resolve_route(std::int32_t output_rows, std::int32_t input_r
 
 const char* route_name(Nvfp4LinearAddRoute route) {
     switch (route) {
-    case Nvfp4LinearAddRoute::A16: return "a16";
-    case Nvfp4LinearAddRoute::A16Exact: return "a16_exact";
-    case Nvfp4LinearAddRoute::A4: return "a4";
+    case Nvfp4LinearAddRoute::A16:
+        return "a16";
+    case Nvfp4LinearAddRoute::A16Exact:
+        return "a16_exact";
+    case Nvfp4LinearAddRoute::A4:
+        return "a4";
     }
     return "?";
 }

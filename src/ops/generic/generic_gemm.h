@@ -1213,7 +1213,7 @@ void linear_geglu(const Tensor& x, const Weight& gate_up, Tensor& out, LinearPol
 // projection dispatch took, appended as "<op> <route> <T> <N> <K>". A debug trace of the
 // width-dependent route choice (A4 or A16 by call width) that NINFERNO_ROUTE_RECORD, which holds
 // generic-path problems only, does not show. Off (no file), a call costs one test.
-void record_projection_route(const char* op, const char* route, std::int32_t tokens,
-                             std::int32_t n, std::int32_t k);
+void record_projection_route(const char* op, const char* route, std::int32_t tokens, std::int32_t n,
+                             std::int32_t k);
 
 } // namespace ninferno::ops::detail::generic
