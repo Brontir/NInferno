@@ -2,12 +2,18 @@
 // one descriptor, kRouteCostConstants: every entry has a unique name, a provenance and values in
 // the range of its kind (a fraction in (0, 1], every other kind positive and finite). `--list`
 // prints them, the fitted ones first: the numbers the model still takes from route_tune timings
-// instead of deriving them. No GPU.
+// instead of deriving them. The header's own text is read too: every constant it defines must be
+// in the descriptor and every listed one defined, so a new one cannot bypass the checks by being
+// left out. No GPU.
 
 #include "ops/generic/route_cost_constants.h"
 
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <regex>
 #include <set>
 #include <string>
 #include <string_view>
@@ -28,6 +34,49 @@ const char* provenance_name(rc::Provenance p) {
     return "?";
 }
 
+// The header's text: the constants it declares (any `const` or `constexpr` declaration of a name
+// kX, whatever its type is spelled as, over any spacing or line breaks; the descriptor itself
+// aside) and the ones its descriptor lists (`listed(kX, ...)` inside kRouteCostConstants), as two
+// sets of names. Each declared constant must be listed and each listed one declared: a missing
+// entry is named, not hidden behind a count. The header names every constant kX for this.
+struct HeaderNames {
+    std::set<std::string> defined, listed;
+    bool read = false;
+};
+
+HeaderNames header_names() {
+    HeaderNames out;
+    const std::filesystem::path header =
+        std::filesystem::path(NINFERNO_SOURCE_DIR) / "src/ops/generic/route_cost_constants.h";
+    std::ifstream in(header);
+    if (!in) {
+        std::fprintf(stderr, "cannot read %s\n", header.string().c_str());
+        return out;
+    }
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    // Comments may name constants too; drop them first (block comments, then line comments).
+    text = std::regex_replace(text, std::regex(R"(/\*[\s\S]*?\*/)"), "");
+    text = std::regex_replace(text, std::regex(R"(//[^\n]*)"), "");
+    const std::regex definition(R"(\b(?:constexpr|const)\b[^;{}=()]*?\b(k[A-Z]\w*)\s*[{(=\[])");
+    for (std::sregex_iterator it(text.begin(), text.end(), definition), end; it != end; ++it) {
+        if ((*it)[1] != "kRouteCostConstants") out.defined.insert((*it)[1].str());
+    }
+    const std::string::size_type start = text.find("kRouteCostConstants[]");
+    if (start == std::string::npos) {
+        std::fprintf(stderr, "no kRouteCostConstants[] in %s\n", header.string().c_str());
+        return out;
+    }
+    const std::regex listing(R"(\blisted\s*\(\s*(k\w+))");
+    for (std::sregex_iterator
+             it(text.begin() + static_cast<std::ptrdiff_t>(start), text.end(), listing),
+         end;
+         it != end; ++it) {
+        out.listed.insert((*it)[1].str());
+    }
+    out.read = true;
+    return out;
+}
+
 bool in_range(rc::Kind kind, double v) {
     if (!std::isfinite(v) || v <= 0.0) return false;
     return kind != rc::Kind::Fraction || v <= 1.0;
@@ -36,7 +85,24 @@ bool in_range(rc::Kind kind, double v) {
 } // namespace
 
 int main(int argc, char** argv) {
-    int failures = 0;
+    int failures             = 0;
+    const HeaderNames header = header_names();
+    if (!header.read) ++failures;
+    for (const auto& name : header.defined) {
+        if (header.listed.count(name) != 0) continue;
+        std::fprintf(stderr, "%s is defined but not listed in kRouteCostConstants\n", name.c_str());
+        ++failures;
+    }
+    for (const auto& name : header.listed) {
+        if (header.defined.count(name) != 0) continue;
+        std::fprintf(stderr, "%s is listed but not declared in the header\n", name.c_str());
+        ++failures;
+    }
+    if (header.listed.size() != std::size(rc::kRouteCostConstants)) {
+        std::fprintf(stderr, "the header lists %zu names, kRouteCostConstants holds %zu\n",
+                     header.listed.size(), std::size(rc::kRouteCostConstants));
+        ++failures;
+    }
     std::set<std::string_view> names;
     std::size_t fitted = 0;
     for (const auto& c : rc::kRouteCostConstants) {
