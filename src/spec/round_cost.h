@@ -84,6 +84,11 @@ struct PassFacts {
 // full-attention layers' KV at the request's context is read once (kv_bytes). Left out (0): the
 // sliding-window ring, the per-row state snapshots a verify may keep, a drafter's own KV; and the
 // requests' turnover.
+// Checked (2026-11-08, plain decode, per-request rate of two requests at once over one alone):
+// Qwen3.5-9B Q4_K_M on the RTX 5070 Ti, 1.077 measured (three servers, nine prompts each way);
+// the step at two requests 1.046 from the weights alone, 1.065 with these bytes. Qwen3.6-35B-A3B on
+// the RTX 4090 (graph durations, 1.212): 1.210 from the weights alone, 1.256 with them. Not yet a
+// rule: it closes a dense target's gap by two thirds and opens an MoE target's by 3.6 %.
 struct StreamBytes {
     double state_bytes = 0; // recurrent state, resident per request (as stored: FP32 or BF16)
     double kv_bytes    = 0; // full-attention KV a pass reads per request, at its context
