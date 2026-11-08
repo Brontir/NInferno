@@ -102,7 +102,9 @@ public:
         : pool_(threads, threads, max_queued) {}
 
     bool enqueue(std::function<void()> connection) override;
+
     void shutdown() override { pool_.shutdown(); }
+
     void on_idle() override { pool_.on_idle(); }
 
 private:

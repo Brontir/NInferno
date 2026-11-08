@@ -44,6 +44,7 @@ public:
     BoundedDomBuilder(RequestJson& root, std::size_t limit) : Base(root), limit_(limit) {}
 
     [[nodiscard]] bool exceeded() const noexcept { return exceeded_; }
+
     [[nodiscard]] bool too_deep() const noexcept { return too_deep_; }
 
     bool null() { return admit() && Base::null(); }
