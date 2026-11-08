@@ -10,6 +10,7 @@
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <cstdio>
 #include <cstdint>
 #include <initializer_list>
 #include <iostream>
