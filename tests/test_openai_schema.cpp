@@ -606,6 +606,8 @@ int test_tools() {
                           none_prompt.options.tool_jsons.size() == none.generation.tools.size() &&
                           !none_prompt.options.tool_jsons.empty(),
                       "tool_choice none did not keep the declarations with calls disabled");
+    failures += check(!none_prompt.options.tool_calls_forced,
+                      "tool_choice none does not force calls");
 
     using Requirement   = ninferno::ToolCallRequirement;
     const auto tool_constraint = [&](const Json& request_body) {
@@ -619,11 +621,15 @@ int test_tools() {
                   required_calls->tool_requirement == Requirement::Required &&
                   required_calls->param == "tools",
               "required tool choice is enforced by a tool-call constraint");
+    failures += check(prompt(parse(body).generation).options.tool_calls_forced,
+                      "required tool choice marks the prompt's calls as forced");
     body["tool_choice"] = Json{{"type", "function"}, {"function", Json{{"name", "weather"}}}};
     auto named_call     = tool_constraint(body);
     failures += check(named_call && named_call->tool_requirement == Requirement::Named &&
                           named_call->named_tool == "weather",
                       "named tool choice is enforced by a tool-call constraint");
+    failures += check(prompt(parse(body).generation).options.tool_calls_forced,
+                      "a named tool choice marks the prompt's calls as forced");
     body["tool_choice"] = Json{{"type", "function"}, {"function", Json{{"name", "missing"}}}};
     failures += check(api_error([&] { (void)parse(body); }).param == "tool_choice",
                       "named tool choice must name a declared tool");
