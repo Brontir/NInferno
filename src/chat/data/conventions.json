@@ -181,6 +181,7 @@
             "close": "<|end|>",
             "canonical_close": "",
             "budget_control": "",
+            "refuses_text_with_thinking": "Cannot pass both content and thinking",
             "content_open": [
                 "<|start|>assistant<|channel|>final<|message|>",
                 "<|channel|>final<|message|>"

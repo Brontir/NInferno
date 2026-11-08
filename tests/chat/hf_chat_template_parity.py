@@ -217,6 +217,10 @@ def hf_messages(messages):
             message["role"] = "system"
         if message.get("content") is None:
             message["content"] = ""
+        # NInferno's adapter also hands a past reasoning to the template as `thinking`, the field
+        # the gpt-oss template reads (recent transformers fills it too; older ones do not).
+        if message.get("reasoning_content") and "thinking" not in message:
+            message["thinking"] = message["reasoning_content"]
         for call in message.get("tool_calls") or []:
             arguments = call["function"]["arguments"]
             if isinstance(arguments, str):
