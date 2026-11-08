@@ -794,33 +794,21 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 // be made again without that download: kept as it is, and a drafter of it that
                 // failed fails --with-drafters.
                 refresh_drafters(options, *kept);
-                bool bundle_planned = false, bundle_failed = false;
-                try {
-                    std::ifstream stream(spec::manifest_path(*kept));
-                    if (stream) {
-                        const OJson manifest = OJson::parse(stream);
-                        bundle_planned = manifest.value("matched_by", std::string()) == "declaration";
-                        for (const auto& d : manifest.value("drafters", OJson::array())) {
-                            bundle_failed |=
-                                d.value("name", std::string()).find('.') == std::string::npos &&
-                                d.value("status", std::string()).starts_with("failed");
-                        }
-                    }
-                } catch (const std::exception&) {}
-                if (bundle_planned && bundle_failed && options.drafters == Drafters::Require) {
+                const auto state = read_manifest_state(*kept);
+                if (state.bundle_failed && options.drafters == Drafters::Require) {
                     throw std::runtime_error(
                         "a drafter of " + kept->string() +
                         " failed and its download was removed: fetch the model again (" +
                         required_text(options) + ")");
                 }
-                if (bundle_planned && bundle_failed && options.drafters == Drafters::Attach) {
+                if (state.bundle_failed && options.drafters == Drafters::Attach) {
                     not_attached(options, "a drafter of " + kept->string(),
                                  "it failed and its download was removed (fetch the model "
                                  "again to retry it)",
                                  false);
                 }
-                if (options.drafters != Drafters::Off && drafters_incomplete(*kept) &&
-                    !bundle_planned) {
+                if (options.drafters != Drafters::Off && drafters_incomplete(state) &&
+                    !state.bundle_planned) {
                     try {
                         const auto target = describe_artifact(
                             *kept, options.model_id.empty() ? repo : options.model_id);

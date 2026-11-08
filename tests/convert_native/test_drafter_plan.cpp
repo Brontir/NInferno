@@ -538,6 +538,68 @@ void retry_failed_drafter() {
     const auto given = Json::parse(read_text(ninferno::spec::manifest_path(artifact)));
     expect(given["drafters"][0]["status"] == "attached" && given["drafters"][0]["artifact_id"] == id,
            "a given drafter keeps its status and takes the file's id");
+
+    // What the manifest says, read once: a bundle's plan and its failed drafter, a failed variant,
+    // the target's lineage and source.
+    const auto state_of = [&](const std::string& head, const std::string& drafters) {
+        std::ofstream(ninferno::spec::manifest_path(artifact))
+            << "{" << head << registry << R"("drafters": [)" << drafters << "]}";
+        return cv::read_manifest_state(artifact);
+    };
+    const std::string failed_dflash = R"({"name": "dflash", "status": "failed: x"})";
+    const std::string failed_variant =
+        R"({"name": "dflash.q8", "quant": "q8", "status": "failed: x"})";
+    const std::string declaration = R"("matched_by": "declaration", )";
+    std::filesystem::remove(ninferno::spec::manifest_path(artifact));
+    expect(!cv::read_manifest_state(artifact).exists, "no manifest: it does not exist");
+    {
+        const auto state = state_of("", failed_dflash);
+        expect(state.exists && state.parsed && state.registry_current && state.failed &&
+                   !state.bundle_planned && !state.bundle_failed,
+               "a failed drafter of a registry plan");
+    }
+    {
+        const auto state = state_of(declaration, failed_dflash);
+        expect(state.bundle_planned && state.bundle_failed && state.failed,
+               "a failed drafter of a bundle's plan");
+        expect(cv::drafters_incomplete(state), "a failed bundle drafter: attaching is to do");
+    }
+    {
+        const auto state = state_of(declaration, R"({"name": "dflash", "status": "converted"})");
+        expect(state.bundle_planned && !state.bundle_failed && !cv::drafters_incomplete(state),
+               "a bundle's plan with nothing failed");
+    }
+    {
+        const auto state = state_of(declaration, failed_variant);
+        expect(state.bundle_planned && !state.bundle_failed && !state.failed &&
+                   !cv::drafters_incomplete(state),
+               "a failed variant of a bundle's plan is optional");
+        expect(!state_of("", failed_variant).failed, "a failed variant is not a failure");
+    }
+    {
+        const std::string lacking = R"({"name": "dflash2", "status": "not in the artifact: x"})";
+        const auto checkpoint     = state_of(R"("target": {"gguf_source": false}, )", lacking);
+        expect(checkpoint.missing_companion && cv::drafters_incomplete(checkpoint),
+               "a checkpoint's missing companion is retried");
+        const auto gguf = state_of(R"("target": {"gguf_source": true}, )", lacking);
+        expect(gguf.gguf_source && gguf.missing_companion && !cv::drafters_incomplete(gguf),
+               "a GGUF's missing companion is not retried");
+    }
+    {
+        const auto state = state_of(R"("target": {"lineage": ["org/base", 3, "org/other"]}, )", "");
+        expect(state.lineage == std::vector<std::string>({"org/base", "org/other"}),
+               "the target's lineage is read from the manifest");
+    }
+    {
+        std::ofstream(ninferno::spec::manifest_path(artifact))
+            << R"({"registry_sha256": "0000", "matched_by": "declaration", "drafters": []})";
+        const auto state = cv::read_manifest_state(artifact);
+        expect(state.parsed && !state.registry_current && cv::drafters_incomplete(state),
+               "another registry's bundle plan: attaching is to do");
+        std::ofstream(ninferno::spec::manifest_path(artifact)) << "{";
+        const auto broken = cv::read_manifest_state(artifact);
+        expect(broken.exists && !broken.parsed && !broken.bundle_failed, "an unreadable manifest");
+    }
 }
 
 // A drafter that cannot be had stops a start that asked for it (--with-drafters) and is a warning

@@ -1108,29 +1108,45 @@ std::vector<std::string> refresh_changed_drafters(const fs::path& target_artifac
     return refreshed;
 }
 
-bool drafters_incomplete(const fs::path& target_artifact) {
-    const auto path = spec::manifest_path(target_artifact);
-    if (!fs::exists(path)) { return true; }
+ManifestState read_manifest_state(const fs::path& artifact) {
+    ManifestState state;
+    const auto path = spec::manifest_path(artifact);
+    if (!fs::exists(path)) { return state; }
+    state.exists = true;
     try {
         const auto manifest = Json::parse(read_file(path));
-        if (manifest.value("registry_sha256", std::string()) !=
-            spec::Registry::builtin().source_sha256()) {
-            return true;
+        state.bundle_planned   = manifest.value("matched_by", std::string()) == "declaration";
+        state.registry_current = manifest.value("registry_sha256", std::string()) ==
+                                 spec::Registry::builtin().source_sha256();
+        const auto target = manifest.value("target", Json::object());
+        state.gguf_source = target.value("gguf_source", false);
+        for (const auto& base : target.value("lineage", Json::array())) {
+            if (base.is_string()) { state.lineage.push_back(base.get<std::string>()); }
         }
-        const auto& drafters = manifest.at("drafters");
-        const bool gguf      = manifest.value("target", Json::object()).value("gguf_source", false);
-        return std::any_of(drafters.begin(), drafters.end(), [&](const Json& d) {
-            if (changed_since_attach(d, true)) { return true; }
+        for (const auto& d : manifest.at("drafters")) {
+            if (changed_since_attach(d, true)) { state.changed = true; }
             const auto status = d.value("status", std::string());
             // A variant ("<name>.<variant>") is optional; a drafter itself is retried, whatever
-            // quantization its kind gives it, and so is a companion a checkpoint's artifact lacks
-            // (the target is converted again with it while its download is there; a GGUF's never
-            // holds one).
-            return d.value("name", std::string()).find('.') == std::string::npos &&
-                   (status.starts_with("failed") ||
-                    (!gguf && status.starts_with("not in the artifact")));
-        });
-    } catch (const std::exception&) { return true; }
+            // quantization its kind gives it.
+            if (d.value("name", std::string()).find('.') != std::string::npos) { continue; }
+            if (status.starts_with("failed")) {
+                state.failed        = true;
+                state.bundle_failed = state.bundle_planned;
+            }
+            if (status.starts_with("not in the artifact")) { state.missing_companion = true; }
+        }
+        state.parsed = true;
+    } catch (const std::exception&) {}
+    return state;
+}
+
+bool drafters_incomplete(const ManifestState& state) {
+    return !state.parsed || !state.registry_current || state.changed || state.failed ||
+           (!state.gguf_source && state.missing_companion);
+}
+
+bool drafters_incomplete(const fs::path& target_artifact) {
+    return drafters_incomplete(read_manifest_state(target_artifact));
 }
 
 } // namespace ninferno::convert
