@@ -644,10 +644,12 @@ bool grammar_accepts(
 // between a call's parts closes nothing.
 int test_forced_stop_cut() {
     int failures = 0;
+
     struct Sample {
         ToolCallFormat format;
         std::string call; // one complete call
     };
+
     const Sample samples[] = {
         {ToolCallFormat::QwenXml,
          "<tool_call>\n<function=weather>\n<parameter=city>\nOslo\n</parameter>\n"
@@ -655,16 +657,18 @@ int test_forced_stop_cut() {
         {ToolCallFormat::HermesJson,
          "<tool_call>\n{\"name\": \"weather\", \"arguments\": {\"city\": \"Oslo\", \"days\": 2}}\n"
          "</tool_call>"},
-        {ToolCallFormat::Gemma4, "<|tool_call>call:weather{city:<|\"|>Oslo<|\"|>,days:2}<tool_call|>"},
+        {ToolCallFormat::Gemma4,
+         "<|tool_call>call:weather{city:<|\"|>Oslo<|\"|>,days:2}<tool_call|>"},
         {ToolCallFormat::MistralJson, "[TOOL_CALLS]weather[ARGS]{\"city\": \"Oslo\", \"days\": 2}"},
         {ToolCallFormat::Llama3Json,
          "{\"name\": \"weather\", \"parameters\": {\"city\": \"Oslo\", \"days\": 2}}"},
         {ToolCallFormat::Harmony,
          "<|start|>assistant<|channel|>commentary to=functions.weather <|constrain|>json"
          "<|message|>{\"city\": \"Oslo\", \"days\": 2}<|call|>"},
-        {ToolCallFormat::Pythonic, "<function_calls>weather(city=\"Oslo\", days=2)</function_calls>"},
-        {ToolCallFormat::GraniteJson,
-         "<|tool_call|>[{\"name\": \"weather\", \"arguments\": {\"city\": \"Oslo\", \"days\": 2}}]"},
+        {ToolCallFormat::Pythonic,
+         "<function_calls>weather(city=\"Oslo\", days=2)</function_calls>"},
+        {ToolCallFormat::GraniteJson, "<|tool_call|>[{\"name\": \"weather\", \"arguments\": "
+                                      "{\"city\": \"Oslo\", \"days\": 2}}]"},
         {ToolCallFormat::Atem,
          " to=weather<|message|><atem:function_calls>\n<atem:invoke name=\"weather\">\n"
          "<atem:parameter name=\"city\">Oslo</atem:parameter>\n"
@@ -691,15 +695,16 @@ int test_forced_stop_cut() {
     const auto qwen = [&](const std::string& text, std::string_view stop) {
         return decode(ToolCallFormat::QwenXml, text, stop);
     };
-    const std::string open = "<tool_call>\n<function=weather>\n<parameter=city>\nOslo\n</parameter>\n"
-                             "<parameter=days>\n2\n</parameter>\n";
+    const std::string open =
+        "<tool_call>\n<function=weather>\n<parameter=city>\nOslo\n</parameter>\n"
+        "<parameter=days>\n2\n</parameter>\n";
     // The stop matched the closing markup alone: the call is complete and kept.
     for (const std::string_view stop : {"</function>", "\n</function>", "</fun"}) {
         const auto closed = qwen(open, stop);
-        failures += check(closed.tool_calls.size() == 1 && closed.content.empty() &&
-                              closed.diagnostics.cut_calls_dropped == 0,
-                          "a stop in the closing markup lost a complete Qwen call: " +
-                              std::string(stop));
+        failures +=
+            check(closed.tool_calls.size() == 1 && closed.content.empty() &&
+                      closed.diagnostics.cut_calls_dropped == 0,
+                  "a stop in the closing markup lost a complete Qwen call: " + std::string(stop));
     }
     const auto tool_close = qwen(open + "</function>\n", "</tool_call>");
     failures += check(tool_close.tool_calls.size() == 1 && tool_close.content.empty(),
@@ -714,14 +719,15 @@ int test_forced_stop_cut() {
                           "a stop between parameters closed a Qwen call: " + std::string(stop));
     }
     // The other syntaxes with a close marker close the same way.
-    const auto hermes =
-        decode(ToolCallFormat::HermesJson,
-               "<tool_call>\n{\"name\": \"weather\", \"arguments\": {\"city\": \"Oslo\", \"days\": 2}}\n",
-               "</tool_call>");
+    const auto hermes = decode(
+        ToolCallFormat::HermesJson,
+        "<tool_call>\n{\"name\": \"weather\", \"arguments\": {\"city\": \"Oslo\", \"days\": 2}}\n",
+        "</tool_call>");
     failures += check(hermes.tool_calls.size() == 1 && hermes.content.empty(),
                       "a stop on </tool_call> lost a complete Hermes call");
-    const auto gemma = decode(ToolCallFormat::Gemma4,
-                              "<|tool_call>call:weather{city:<|\"|>Oslo<|\"|>,days:2}", "<tool_call|>");
+    const auto gemma =
+        decode(ToolCallFormat::Gemma4, "<|tool_call>call:weather{city:<|\"|>Oslo<|\"|>,days:2}",
+               "<tool_call|>");
     failures += check(gemma.tool_calls.size() == 1 && gemma.content.empty() &&
                           gemma.diagnostics.cut_calls_dropped == 0,
                       "a stop on <tool_call|> lost a complete Gemma call");

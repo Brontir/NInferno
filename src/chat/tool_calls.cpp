@@ -1115,8 +1115,8 @@ bool stop_swallows(std::string_view stop, std::string_view closer) {
 
 } // namespace
 
-ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool cut_off,
-                                                              std::optional<std::string_view> stop_text) {
+ToolCallOutputDecoder::Terminal
+ToolCallOutputDecoder::finish(bool cut_off, std::optional<std::string_view> stop_text) {
     if (finished_) { throw std::logic_error("tool-call output decoder is already finished"); }
     finished_ = true;
     if (!contract_) { return {}; }
@@ -1135,8 +1135,8 @@ ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool cut_off,
     // </function> (vLLM closes such a call at the end of the stream too). The call is closed; one
     // the output limit cut off is not, since more of its parameters may have followed.
     // A stop string can end the call the same way when it matches in the closing markup alone.
-    if ((!cut_off || (stop_text && stop_swallows(*stop_text, kFunctionClose))) && saw_tool_marker_ &&
-        contract_->format == ToolCallFormat::QwenXml) {
+    if ((!cut_off || (stop_text && stop_swallows(*stop_text, kFunctionClose))) &&
+        saw_tool_marker_ && contract_->format == ToolCallFormat::QwenXml) {
         std::string closed = rtrim_format_whitespace(tool_region_);
         if (closed.ends_with(kParamClose)) {
             closed.append("\n").append(kFunctionClose);
@@ -1173,7 +1173,8 @@ ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool cut_off,
             closes = true;
         }
         if (closes) {
-            ParsedToolCallOutput completed = syntax_->parse(closed, max_tool_name_length_, *contract_);
+            ParsedToolCallOutput completed =
+                syntax_->parse(closed, max_tool_name_length_, *contract_);
             if (completed.is_tool_call_response && !completed.tool_calls.empty()) {
                 held_.clear();
                 tool_region_.clear();

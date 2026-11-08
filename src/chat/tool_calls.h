@@ -179,7 +179,7 @@ public:
     // it is closed and kept; everything else of the region that is not a complete call is dropped
     // and counted (diagnostics.cut_calls_dropped), never returned as text. For a syntax without a
     // close marker the complete calls of the region go with it.
-    [[nodiscard]] Terminal finish(bool cut_off = false,
+    [[nodiscard]] Terminal finish(bool cut_off                              = false,
                                   std::optional<std::string_view> stop_text = std::nullopt);
 
 private:
