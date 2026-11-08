@@ -2189,7 +2189,8 @@ private:
                     instance_.program->device_kv_lease_shortfall(*request->sequence)) {
                 if (!transaction) {
                     (void)resources_.reclaim_device_kv_for_lease(
-                        *instance_.program, shortfall->full.main, shortfall->full.backend);
+                        *instance_.program, shortfall->full.main, shortfall->full.backend,
+                        shortfall->minimum.main, shortfall->minimum.backend);
                 }
                 if (transaction || !instance_.program->resume_device_kv_lease(*request->sequence)) {
                     short_lane[lane] = true;
