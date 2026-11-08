@@ -1695,6 +1695,30 @@ the 128-token tiles' padding exceeds the pair's extra over 2 x 0.5: 129..192 and
 the grid fills the SMs less than about twice over; from 193 tokens (four 64-token tiles, 4 x 0.58)
 and at a multiple of 128 the producer-warp tile wins.
 
+**Residencies from shared memory.** The counts of CTAs an SM holds are not assumed: smem_per_sm / (a
+CTA's shared memory + the 1 KiB the hardware reserves it). The classic tile's buffers are 2 x (64 +
+64) x (128 + 32) = 40 KiB, the producer ring at most 99 KiB (Q4_K's 90 KiB): on an sm_120 SM of 100
+KiB that is 2 and 1, the counts the costs were read at (`w4a8_tiles::residency`, static_asserts: a
+164 KiB SM would hold 4 and 1). On a board whose counts differ the classic tile is not priced and
+the producer-warp tile stays. Threads and registers were not found binding (128 threads a CTA, 64 K
+registers); whether they leave room for a third classic CTA was not read, no board with more shared
+memory being measured. The kernel reads the device once per device (`PerDevice`).
+
+**What the choice rests on.** `pair` (1.16 Q4_K, 1.24 Q6_K, the cards agreeing) decides every call of
+more than one pass: that is where 129..192 and 257..320 tokens gain. A call of one pass (the classic
+CTAs not more than the SMs: busy 1 against 1) rests on `single` alone, 0.98 (Q4_K) against 1.0, a
+2 % margin: fitted per card it is 0.95 (RTX 5090) and 1.02 (RTX 5070 Ti), so the 5070 Ti's own fit
+would flip those calls, at about a tie's cost; Q6_K's 0.84 / 0.85 does not flip. The producer-warp
+tile's step also grows with the tokens in its last tile (RTX 5070 Ti, Q4_K 4096 x 4096: T = 64 41.0 us
+and T = 128 43.0 for one tile; T = 136 77.8 and T = 256 84.0 for two, +8 %). Three points do not give
+its fixed and per-token parts, so the step is held constant, which biases the choice toward the
+producer-warp tile (a gain missed, never a loss taken). A grid under half the SMs takes the classic
+tile at any width (the rule that predates this one, for every format); the estimate prices it the
+same way (a one-pass classic CTA at `single` < 1 against the producer-warp tile's one round), and
+`ninferno_w4a8_tile_choice_test` checks over 129..512 tokens, a 70-SM and a 170-SM board and five
+shapes that `heuristic_w4a8` takes the classic tile exactly where the shared function (or that
+rule) says, and that the estimate's cost ratio against 128 tokens is the kernel's tile work ratio.
+
 **Kernel check, both cards.** `ninferno-serve route-tune --a8-candidates 1` timed every W4A8 tile of
 Qwen3.5 9B's Q4_K and Q6_K shapes (N = 1024..12288, K = 4096 and 12288, six epilogue/shape classes) at
 T = 64..512 on the RTX 5090 (170 SMs) and RTX 5070 Ti (70 SMs). The two constants (single, pair),
