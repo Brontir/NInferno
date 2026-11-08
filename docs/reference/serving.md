@@ -762,12 +762,21 @@ llama.cpp-style base URLs.
   agent's compaction or summary) reuses the conversation's cached prefix. No output is read back
   as a call then, and the model is kept from opening one: the syntax's call opener (`<tool_call>`,
   `<|tool_call>`, `[TOOL_CALLS]`, `<|tool_call|>`, `<function_calls>`) and its closer
-  (`</tool_call>`, `<tool_call|>`, `</function_calls>`) get a `logit_bias` of -100 when the template's tokenizer encodes each as one token, so the answer
-  is text. A `logit_bias` of your own for that
-  token is replaced by the ban. Syntaxes without such an opener (gpt-oss harmony, Atem, Llama 3
-  JSON) are not steered; a call they write anyway is cut out of the answer, as is one written as
-  plain text (a Qwen model kept from `<tool_call>` can still write a bare `<function=...>`, which
-  is cut too).
+  (`</tool_call>`, `<tool_call|>`, `</function_calls>`), and the template's tool-result opener and
+  closer (`<tool_response>`, `<|tool_response>`, ...), get a `logit_bias` of -100 when the
+  template's tokenizer encodes each as one token. Where the request leaves no reasoning to open
+  (thinking off), the template's reasoning markers (`<think>`, `</think>`, `<|channel>`,
+  `<channel|>`) are banned the same way. A `logit_bias` of your own for such a token is replaced
+  by the ban. A model refused its call would otherwise write the next structural token it knows
+  (a bare reasoning marker, looped to `max_tokens`, or a tool-result opener). Where the model may
+  still reason, those markers are not banned (the reasoning span needs them), and outside
+  reasoning the first of them ends the turn: the text written before it is the answer, the marker
+  is not published, and `finish_reason` is `stop`. An answer that is only such markup is
+  therefore an empty `content` (with `finish_reason` `stop`), never markup. Syntaxes without such
+  an opener (gpt-oss harmony, Atem, Llama 3 JSON) are not steered; a call they write anyway is
+  cut out of the answer, as is one written as plain text (a Qwen model kept from `<tool_call>` can
+  still write a bare `<function=...>` or a bare `{"name": "...", "arguments": ...}` object naming
+  a declared tool, which are cut too).
 - `strict:true`, whose arguments the same constraint holds to the declared JSON Schema in every
   call syntax ([key order](#key-order-under-an-output-constraint)), and
   `parallel_tool_calls:false`, under which generation stops after the first call.

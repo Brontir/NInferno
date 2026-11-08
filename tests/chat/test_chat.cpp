@@ -652,8 +652,7 @@ bool grammar_accepts(
 }
 
 std::string trim_ws(std::string text) {
-    const auto space = [](char byte) { return byte == ' ' || byte == '
-' || byte == '	'; };
+    const auto space = [](char byte) { return byte == ' ' || byte == '\n' || byte == '\t'; };
     while (!text.empty() && space(text.back())) { text.pop_back(); }
     std::size_t begin = 0;
     while (begin < text.size() && space(text[begin])) { ++begin; }
@@ -670,15 +669,10 @@ int test_bare_json_call_dropped() {
         const auto discarded =
             ninferno::chat::build_tool_call_output_contract(tools, true, format, true);
         const std::string call =
-            "{
-  \"name\": \"weather\",
-  \"arguments\": {\"city\": \"Oslo\", \"days\": 1}
-}";
+            "{\n  \"name\": \"weather\",\n  \"arguments\": {\"city\": \"Oslo\", \"days\": 1}\n}";
         for (const bool bytewise : {false, true}) {
             ninferno::chat::ToolCallOutputDecoder decoder(discarded, 64);
-            const std::string text = "
-
-" + call;
+            const std::string text = "\n\n" + call;
             std::string visible;
             if (bytewise) {
                 for (const char byte : text) { visible += decoder.feed(std::string_view(&byte, 1)); }
@@ -692,9 +686,8 @@ int test_bare_json_call_dropped() {
         }
         // Prose before it stays; the call is the same.
         ninferno::chat::ToolCallOutputDecoder prose(discarded, 64);
-        std::string shown = prose.feed("It is sunny.
-" + call);
-        const auto prose_end = prose.finish();
+        const std::string shown = prose.feed("It is sunny.\n" + call);
+        const auto prose_end    = prose.finish();
         failures += check(shown == "It is sunny." && prose_end.content.empty() &&
                               prose_end.tool_calls.size() == 1,
                           "prose before a bare JSON call was changed");
@@ -714,8 +707,8 @@ int test_bare_json_call_dropped() {
               std::pair{ninferno::chat::build_tool_call_output_contract(tools, true, format),
                         call}}) {
             ninferno::chat::ToolCallOutputDecoder text_only(contract_used, 64);
-            std::string shown_text = text_only.feed(body);
-            const auto text_end    = text_only.finish();
+            const std::string shown_text = text_only.feed(body);
+            const auto text_end          = text_only.finish();
             failures += check(shown_text + text_end.content == body && text_end.tool_calls.empty(),
                               "JSON that is no discarded call was cut: " + body);
         }
