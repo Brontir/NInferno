@@ -351,6 +351,16 @@ int main() {
         (void)parse({"ninferno-serve", "model.ninferno", "--activations", "a4"});
     } catch (const std::invalid_argument&) { unknown_activations_rejected = true; }
     failures += check(unknown_activations_rejected, "--activations accepted an unknown mode");
+    failures += check(
+        !defaults.sort_tools &&
+            parse({"ninferno-serve", "model.ninferno", "--tool-order", "sorted"}).sort_tools &&
+            !parse({"ninferno-serve", "model.ninferno", "--tool-order", "request"}).sort_tools,
+        "--tool-order request|sorted, request by default");
+    bool unknown_tool_order_rejected = false;
+    try {
+        (void)parse({"ninferno-serve", "model.ninferno", "--tool-order", "first-seen"});
+    } catch (const std::invalid_argument&) { unknown_tool_order_rejected = true; }
+    failures += check(unknown_tool_order_rejected, "--tool-order accepted an unknown order");
     failures += check(serve_usage_text("ninferno-serve").find("--activations exact|fast") !=
                           std::string::npos,
                       "serve help omits --activations");

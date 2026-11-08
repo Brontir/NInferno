@@ -576,6 +576,8 @@ std::string format_server_start_json(
              {"server_overrides", overrides_json(options.sampling_overrides)},
              {"omitted_seed", "random"},
              {"greedy", options.greedy}};
+    // It changes the rendered prompt, so a replay from the log needs it.
+    record["tool_order"] = options.sort_tools ? "sorted" : "request";
     record["memory"] =
         Json{{"weights", arena_json(memory.weights)},
              {"sequence", arena_json(memory.sequence)},

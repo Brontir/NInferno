@@ -936,6 +936,12 @@ the same ordered tool call. NInferno does not canonicalize semantically equivale
 reorders members, inserts defaults, or otherwise rewrites a tool object, the changed rendered input
 does not match the model-held endpoint and can reuse only an earlier exact checkpoint.
 
+A request's tools render in the order it sends them, whatever earlier requests sent, so the same
+request renders the same prompt on any process and after a restart. A client whose tools arrive in
+varying order (MCP servers that finish registering in another order) can start the server with
+`--tool-order sorted`: every order of one set then renders sorted by name and keeps the cached
+prefix. A request with a duplicate name or a cache boundary after a tool keeps its own order.
+
 ### Key order under an output constraint
 
 A grammar that holds an object's optional properties to their schema order, each skippable, loses
@@ -1413,7 +1419,8 @@ They may also be grouped in a Responses namespace:
   would end the agent's turn and lose the parallel calls beside it. Declared names pick the call
   region first, so a quoted example of an undeclared call does not displace a declared call after
   it. Llama 3's JSON form, whose call opens like any JSON answer, still needs a declared name.
-- `allowed_tools` with mode `auto` filters that set without changing declaration order.
+- `allowed_tools` with mode `auto` filters that set without changing declaration order (unless the
+  server runs with `--tool-order sorted`, which renders every set sorted by name).
   `tool_choice:"none"` disables structured tool output even when the history contains earlier calls.
 - Function definitions are request configuration rather than conversation Items. They must be sent
   again on tool-result turns.
@@ -1432,7 +1439,8 @@ They may also be grouped in a Responses namespace:
 - Deferred loading, output schemas, and caller restrictions that exclude direct invocation are
   rejected because their semantics cannot be honored.
 - Tools may also arrive as `additional_tools` input Items (`{"type": "additional_tools", "tools":
-  [...]}`, as Codex sends them). Their tools join the request's `tools`, in input order, and the
+  [...]}`, as Codex sends them). Their tools join the request's `tools`, in input order (sorted by
+  name under `--tool-order sorted`), and the
   Item makes no message. A later Item may define a tool or namespace again. The latest definition
   replaces the earlier one where it stands, and a namespace keeps the description it was first
   declared with.
@@ -1917,6 +1925,7 @@ not take at startup.
 | `--frequency-penalty F` | process-level frequency-penalty override | unset |
 | `--seed N` | fixed seed when a request omits one | fresh random seed per request |
 | `--greedy` | force exact argmax for all requests | off |
+| `--tool-order request\|sorted` | `sorted` renders a request's tools sorted by name, so that a client that sends one set in varying order (MCP servers registering in another order) keeps its cached prefix; a request with a duplicate name or a cache boundary after a tool keeps its order | `request` |
 
 ### Media
 
