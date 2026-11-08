@@ -274,8 +274,16 @@ int main(int argc, char** argv) {
         }
         // The model named on the command line, as an artifact: fetched and converted first when
         // it is a hub id or a checkpoint (serve/model_source.h).
-        const ninferno::serve::ModelSource source = ninferno::serve::resolve_model_source(
-            options, [&](const std::string& line) { logger->info("model | {}", line); });
+        const ninferno::serve::ModelSource source =
+            ninferno::serve::resolve_model_source(options, [&](const std::string& line) {
+                // A line the acquisition marks "warning: " (a drafter left out) is a WARN line.
+                constexpr std::string_view kWarning = "warning: ";
+                if (line.starts_with(kWarning)) {
+                    logger->warn("model | {}", line.substr(kWarning.size()));
+                } else {
+                    logger->info("model | {}", line);
+                }
+            });
         options.artifact_path = source.artifact_path;
         // The quantization was chosen for each stream's own context: the start keeps it as the
         // ceiling of its automatic context (a busy card still steps down a rung).

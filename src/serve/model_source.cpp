@@ -8,6 +8,7 @@
 #include "core/ascii.h"
 #include "core/host_memory.h"
 #include "core/sys.h"
+#include "product/speculative_options.h"
 
 #include <algorithm>
 #include <chrono>
@@ -145,6 +146,26 @@ void check_fits(const ServeOptions& options, const convert::FetchPlan& fetch,
 
 } // namespace
 
+std::string drafters_required_by(const ServeOptions& options) {
+    if (options.with_drafters) { return "--with-drafters"; }
+    // --spec dflash / dflash2 runs a separate drafter; one given with --drafter replaces the
+    // published one, which then need not be fetched.
+    const SpeculativeBackend backend = options.speculative.backend;
+    if ((backend == SpeculativeBackend::DFlash || backend == SpeculativeBackend::DFlash2) &&
+        options.speculative.drafter.empty()) {
+        return std::string("--spec ") + product::speculative_backend_name(backend);
+    }
+    return {};
+}
+
+convert::Drafters hub_drafters(const ServeOptions& options, bool attach) {
+    // Named by the user (--with-drafters, or a --spec backend that runs a separate drafter):
+    // required. Only the automatic choice drafts: attached when it can be, else the model is
+    // served without the drafter, with a warning.
+    if (!drafters_required_by(options).empty()) { return convert::Drafters::Require; }
+    return attach ? convert::Drafters::Attach : convert::Drafters::Default;
+}
+
 ModelSource resolve_model_source(const ServeOptions& options,
                                  const std::function<void(const std::string&)>& log) {
     const std::string& name = options.model_source;
@@ -212,7 +233,8 @@ ModelSource resolve_model_source(const ServeOptions& options,
         drafters = hub_start_attaches_drafters(options, log);
     }
     if (drafters && !options.with_drafters && log) {
-        log("drafters | the choice drafts with a separate drafter: attached (a separate download)");
+        log("drafters | the choice drafts with a separate drafter: it will be attached (a separate "
+            "download)");
     }
     acquire.fetch.log      = log;
     acquire.convert.recipe            = options.recipe;
@@ -225,7 +247,7 @@ ModelSource resolve_model_source(const ServeOptions& options,
     acquire.reuse          = true;
     acquire.repository     = fs::current_path();
     acquire.log            = log;
-    if (drafters) { acquire.with_drafters = true; }
+    acquire.drafters       = hub_drafters(options, drafters);
     acquire.keep_replaced = options.keep_replaced;
     // Also for the quantization chosen above: that choice is for an idle card of this class,
     // this check for the memory free now.
