@@ -190,7 +190,7 @@ struct DecoderState {
     std::string content_header_pending;
     bool awaiting_content_header   = false;
     // Non-whitespace content has been published.
-    bool content_started           = false;
+    bool content_started = false;
     // A reasoning close was written where no reasoning is open and the answer has not begun.
     bool stray_close_seen          = false;
     bool in_reasoning              = false;
