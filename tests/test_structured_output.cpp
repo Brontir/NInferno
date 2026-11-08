@@ -339,6 +339,7 @@ public:
         std::unique_lock lock(mutex_);
         cv_.wait_for(lock, std::chrono::seconds(60), [&] { return open_; });
     }
+
     void release() {
         {
             std::lock_guard lock(mutex_);

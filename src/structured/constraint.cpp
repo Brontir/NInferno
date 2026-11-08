@@ -372,8 +372,8 @@ struct ConstraintCompiler::Impl : std::enable_shared_from_this<ConstraintCompile
         std::uint32_t waiters = 0; // guarded by inflight_mutex
         // Clock nanoseconds when the last waiter left, 0 while someone waits.
         std::atomic<std::int64_t> orphaned_ns{0};
-        std::int64_t started_ns    = 0;
-        std::int64_t run_limit_ns  = 0;
+        std::int64_t started_ns   = 0;
+        std::int64_t run_limit_ns = 0;
     };
 
     using InflightTable = std::unordered_map<std::string, std::shared_ptr<Inflight>>;
