@@ -1402,6 +1402,7 @@ public:
         out.pressure_maximal_fallback_selections =
             context_stats_.pressure_maximal_fallback_selections;
         out.historical_fork_hits            = context_stats_.historical_fork_hits;
+        out.truncated_source_aborts         = context_stats_.truncated_source_aborts;
         out.actual_context_transfer_seconds = context_stats_.actual_context_transfer_seconds;
 
         const auto usage                     = program.physical_usage();
@@ -1535,6 +1536,10 @@ private:
         LaneId destination;
         std::optional<CatalogCapability> private_source;
         PrivateSourceMode source_mode = PrivateSourceMode::ConsumeToActive;
+        // The selected path is a truncated endpoint: a retained source was forked below its
+        // endpoint by a request which only shares a prefix with it, not the branch a conversation
+        // left.
+        bool truncated_reuse = false;
         std::optional<CatalogCapability> shared_source;
         std::uint32_t publication_slot = kInvalidCatalogSlot;
         std::vector<OwnerClaim> private_claims;
@@ -2653,9 +2658,11 @@ private:
 
     [[nodiscard]] MaterializationRecord take_materialization_record(Choice& choice) {
         return MaterializationRecord{
-            .destination          = choice.destination_,
-            .private_source       = choice.private_source_,
-            .source_mode          = choice.source_mode_,
+            .destination     = choice.destination_,
+            .private_source  = choice.private_source_,
+            .source_mode     = choice.source_mode_,
+            .truncated_reuse = choice.plan_ && choice.plan_->summary().prefix_reuse_path ==
+                                                   PrefixReusePath::PrivateTruncatedEndpoint,
             .shared_source        = choice.shared_source_,
             .publication_slot     = choice.publication_slot_,
             .private_claims       = std::move(choice.private_claims_),
@@ -3286,7 +3293,8 @@ private:
                 // edit, or a turn whose replayed reply re-tokenized): what it still holds past
                 // the reuse point serves only a return to it, so it yields first under pressure.
                 // A named session's index entry moves through demote_replaced_session instead.
-                if (retained_private_source && !source.session) {
+                // A truncated fork leaves the source as it was: its owner returns to it.
+                if (retained_private_source && !source.session && !record->truncated_reuse) {
                     source.retention = RetentionClass::Disposable;
                     for (CheckpointObservation& observation : source.observations) {
                         observation.observation = {.retention_class = RetentionClass::Disposable};
@@ -3834,6 +3842,7 @@ private:
         context_stats_.pressure_spill_pages += result.operations.pressure_spill_pages;
         context_stats_.partial_tail_cow_pages += result.operations.partial_tail_cow_pages;
         context_stats_.historical_fork_hits += result.operations.historical_fork_hits;
+        context_stats_.truncated_source_aborts += result.operations.truncated_source_aborts;
     }
 
     std::uint32_t lane_count_           = 0;

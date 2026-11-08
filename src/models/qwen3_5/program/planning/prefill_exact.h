@@ -37,9 +37,9 @@ inline constexpr std::uint32_t kTruncatedReuseMinimumTokens = 256;
 // The largest frontier at or below `frontier` where an ungridded prefill (a family with no scan
 // grid: execution::ungridded_call_tokens) may end a call without changing any byte of the prompt's
 // execution, or none. Every call of a segment but a lone short segment is at least
-// kPrefillMinTokens long (a tail that would be narrower is avoided by stopping short), so only the
-// suffix is constrained: a restore leaves at least kPrefillMinTokens tokens before the end of its
-// segment, unless it is a static frontier of the prompt (every execution splits there) or the
+// kNeutralMinTokens (17) long (a tail that would be narrower is avoided by stopping short), so only
+// the suffix is constrained: a restore leaves at least kNeutralMinTokens tokens before the end of
+// its segment, unless it is a static frontier of the prompt (every execution splits there) or the
 // prompt end. The 64-token grid of neutral_prefill_frontier belongs to the Gated DeltaNet scan and
 // does not apply.
 [[nodiscard]] constexpr std::optional<std::uint32_t>

@@ -2719,9 +2719,8 @@ int exercise_truncated_endpoint_mode(const char* artifact, ninferno::ActivationM
         const ninferno::GenerationResult cold   = run_tokens(diverging, false);
         std::cout << "  " << label << ": diverging inside the answer reused "
                   << inside.reused_prompt_tokens << " of a " << prompt.size() << "-token prompt\n";
-        expect(inside.reused_prompt_tokens <= prompt.size() &&
-                   (attention_only ? inside.reused_prompt_tokens >= 256
-                                   : inside.reused_prompt_tokens == 0),
+        expect(attention_only ? inside.reused_prompt_tokens == prompt.size()
+                              : inside.reused_prompt_tokens == 0,
                "a divergence inside the decoded answer reused rows past the prefill's");
         expect_same(inside, cold, "the reuse below a decoded answer differs from cold");
     }
@@ -2772,23 +2771,46 @@ int exercise_truncated_endpoint_mode(const char* artifact, ninferno::ActivationM
     expect_same(own_after, cold_longer, "the session's endpoint changed after a sessionless fork");
 
     // A cancellation at each of the first polls of a truncated reuse leaves a source whose summary
-    // still describes its rows: the session's next request reuses it and matches a cold prefill.
+    // still describes its rows: the session's next request takes the truncated endpoint again and
+    // matches a cold prefill. Some of the cancellations must land after the source was prepared
+    // (RuntimeStats::truncated_source_aborts), where the rows used to be cut already.
     if (exact_mode && attention_only) {
-        for (std::uint32_t polls = 0; polls < 10; ++polls) {
+        std::uint64_t aborted_after_preparation = 0;
+        for (std::uint32_t polls = 0; polls < 24; ++polls) {
             const std::string session = "cancelled-" + std::to_string(polls);
             (void)run(source_text, session, true);
+            const std::uint64_t aborts_before = engine.runtime_stats().truncated_source_aborts;
             std::atomic<std::uint32_t> seen{0};
+            bool before_publication = false;
             try {
-                (void)engine.generate(
+                const ninferno::GenerationResult cancelled = engine.generate(
                     engine.prepare(pressure_turn(longer_text, session,
                                                  ninferno::CacheRetentionHint::LiveSession)),
                     request(true), nullptr,
                     ninferno::CancellationView([&] { return seen++ >= polls; }));
-            } catch (const std::exception&) {}
+                before_publication = cancelled.finish_reason == ninferno::FinishReason::Cancelled &&
+                                     cancelled.generated_token_ids.empty();
+            } catch (const ninferno::RequestError& error) {
+                if (error.kind() != ninferno::RequestErrorKind::Cancelled) { throw; }
+                before_publication = true;
+            }
+            const std::uint64_t aborts =
+                engine.runtime_stats().truncated_source_aborts - aborts_before;
+            aborted_after_preparation += aborts;
             const ninferno::GenerationResult next = run(longer_text, session, true);
             expect(same_generation(next, cold_longer),
                    "a request after a cancelled truncated reuse differs from cold");
+            if (before_publication || aborts != 0) {
+                expect(next.prefix_reuse_path ==
+                               ninferno::PrefixReusePath::PrivateTruncatedEndpoint &&
+                           next.reused_prompt_tokens >= 256,
+                       "a source aborted before publication no longer serves a truncated reuse");
+            }
         }
+        std::cout << "  " << label << ": " << aborted_after_preparation
+                  << " cancellations aborted a prepared truncated source\n";
+        expect(aborted_after_preparation != 0,
+               "no cancellation landed after the truncated source was prepared");
     }
     return failures;
 }

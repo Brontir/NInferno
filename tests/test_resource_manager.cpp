@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <map>
 #include <chrono>
 #include <cstdint>
 #include <iostream>
@@ -735,10 +736,17 @@ public:
     std::optional<std::uint32_t> truncated_bound;
     std::uint32_t truncated_inspections = 0;
 
+    std::map<std::uint32_t, std::uint32_t> truncated_bound_by_source;
+
     [[nodiscard]] std::uint32_t
     truncated_reuse_bound(const FakeRequestBasePlan&,
-                          const FakeContinuationHandle&) const noexcept {
-        return supports_truncated ? truncated_bound.value_or(truncated_frontier.value_or(0)) : 0U;
+                          const FakeContinuationHandle& source) const noexcept {
+        if (!supports_truncated) { return 0U; }
+        if (const auto found = truncated_bound_by_source.find(source.id);
+            found != truncated_bound_by_source.end()) {
+            return found->second;
+        }
+        return truncated_bound.value_or(truncated_frontier.value_or(0));
     }
 
     [[nodiscard]] bool supports_truncated_reuse() const noexcept { return supports_truncated; }
@@ -4198,12 +4206,15 @@ void test_truncated_endpoint_is_never_consumed_across_sessions() {
     program.truncated_frontier    = 8;
     const ActiveRequest anonymous = start_active(manager, program, 7, make_base(7), 1);
     (void)finish_active(manager, program, anonymous);
-    const ActiveRequest fork = start_active(manager, program, 7, make_base(9), 2);
+    const RetentionClass before = manager.catalog_retention(0);
+    const ActiveRequest fork    = start_active(manager, program, 7, make_base(9), 2);
     require(program.started_source_mode == PrivateSourceMode::Retain &&
                 program.started_source_id == anonymous.sequence.id,
             "a sessionless request consumed a sessionless endpoint");
     require(manager.catalog_state(0) == FakeManager::CatalogState::Catalogued,
             "the retained sessionless source left the catalog");
+    require(manager.catalog_retention(0) == before,
+            "a truncated fork demoted the source it shares a prefix with");
     (void)finish_active(manager, program, fork, 16);
 
     // A session names the endpoint of its own conversation only when the index is advanced.
@@ -4231,19 +4242,31 @@ void test_many_truncated_endpoints_are_screened_before_inspection() {
     program.supports_truncated = true;
     program.truncated_frontier = 8;
     std::uint32_t own_id       = 0;
+    std::vector<std::uint32_t> ids;
     for (std::uint32_t index = 0; index < kEndpoints; ++index) {
         const ActiveRequest seed = start_active(
             manager, program, 7, make_base(7, FakeCacheSessionKey{index + 1}), index + 1);
         if (index + 1 == 4) { own_id = seed.sequence.id; }
+        ids.push_back(seed.sequence.id);
         (void)finish_active(manager, program, seed);
     }
+    // The later the endpoint, the longer its screened prefix, but the request's own session (the
+    // fourth) comes first whatever the others reach.
+    for (std::uint32_t index = 0; index < kEndpoints; ++index) {
+        program.truncated_bound_by_source[ids[index]] = 8 + index;
+    }
     program.truncated_inspections = 0;
+    program.inspected_private_sources.clear();
     auto inspection =
         manager.inspect(program, FakePreparedPrompt{7}, make_base(9, FakeCacheSessionKey{4}), 100);
     require(inspection.choice && inspection.choice->summary().reusable_prompt_tokens == 8,
             "a request among many endpoints reused nothing");
     require(program.truncated_inspections == 2,
             "more than the best two truncated endpoints were inspected in full");
+    require(program.inspected_private_sources.size() == 2 &&
+                program.inspected_private_sources[0] == own_id &&
+                program.inspected_private_sources[1] == ids[kEndpoints - 1],
+            "the own session, then the longest foreign prefix, were not inspected first");
     program.abort_start = true;
     (void)manager.reserve_materialization(program, std::move(*inspection.choice),
                                           FakePreparedPrompt{7}, {});

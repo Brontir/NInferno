@@ -1848,6 +1848,10 @@ ProgramImpl::progress_materialization_transaction(runtime::CancellationFlagView 
         out.shared_victims = std::move(transaction.shared_pressure_results);
     };
     const auto abort_transaction = [&]() {
+        if (transaction.source_prepared && transaction.plan && transaction.plan->impl_ != nullptr &&
+            transaction.plan->impl_->reuse == ReusePath::PrivateTruncatedEndpoint) {
+            ++transaction.operations.truncated_source_aborts;
+        }
         release_materialization_staging(transaction);
         transaction.terminal      = true;
         out.status                = runtime::ContextTransactionStatus::Aborted;

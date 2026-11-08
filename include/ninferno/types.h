@@ -1836,6 +1836,9 @@ struct RuntimeStats {
     std::uint64_t pressure_maximal_fallback_selections = 0;
     std::uint32_t shared_active_references             = 0;
     std::uint64_t historical_fork_hits                 = 0;
+    // Truncated-endpoint materializations aborted after their source was prepared (a diagnostic
+    // for the tests: the source must then be whole).
+    std::uint64_t truncated_source_aborts              = 0;
     double actual_context_transfer_seconds             = 0.0;
 };
 
