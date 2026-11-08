@@ -46,6 +46,15 @@ Nvfp4LinearAddRoute resolve_route(std::int32_t output_rows, std::int32_t input_r
                                                            : Nvfp4LinearAddRoute::A16;
 }
 
+const char* route_name(Nvfp4LinearAddRoute route) {
+    switch (route) {
+    case Nvfp4LinearAddRoute::A16: return "a16";
+    case Nvfp4LinearAddRoute::A16Exact: return "a16_exact";
+    case Nvfp4LinearAddRoute::A4: return "a4";
+    }
+    return "?";
+}
+
 
 } // namespace
 
@@ -66,6 +75,7 @@ void nvfp4_linear_add_dispatch(const Tensor& x, const Weight& weight, Tensor& re
                                LinearPolicy policy, WorkspaceArena& workspace,
                                cudaStream_t stream) {
     const Nvfp4LinearAddRoute route = resolve_route(weight.n, weight.k, policy, x.ne[1]);
+    generic::record_projection_route("linear_add", route_name(route), x.ne[1], weight.n, weight.k);
     if (route == Nvfp4LinearAddRoute::A16Exact) {
         nvfp4_linear_add_exact_launch(x, weight, residual, stream);
         return;

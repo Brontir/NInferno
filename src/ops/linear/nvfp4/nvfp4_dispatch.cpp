@@ -4,6 +4,7 @@
 #include "ops/linear/nvfp4/nvfp4_shapes.h"
 #include "ops/linear/nvfp4/nvfp4_format.h"
 #include "ops/common/route_probe.h"
+#include "ops/generic/generic_gemm.h"
 #include "ops/route_pins.h"
 #include <array>
 #include <stdexcept>
@@ -57,6 +58,7 @@ void nvfp4_dispatch(const Tensor& x, const Weight& weight, Tensor& out, LinearPo
     }
     note_shape_activations(
         x.ne[1], allows_a4(policy) ? std::optional(PrefillRoute::W4a4) : std::nullopt, a4);
+    generic::record_projection_route("linear", a4 ? "a4" : "a16", x.ne[1], weight.n, weight.k);
     if (!a4) return shape.a16(x, weight, out, stream);
     if (workspace == nullptr)
         throw std::invalid_argument("nvfp4 A4 linear requires caller workspace");

@@ -233,6 +233,7 @@ never for timing. Graph-captured passes are skipped.
 | `NINFERNO_DENSE_DUMP_ROWS` | `lo:hi` | Only these absolute positions. Default: all. |
 | `NINFERNO_SCORE_LOGITS` | file path | `ninferno-perplexity` on Qwen3.5: appends each scored column's logits over the public vocabulary as FP32, for comparing distributions with a reference. |
 | `NINFERNO_SCORE_ARGMAX` | file path | The same, the argmax id per scored column, for top-1 agreement. |
+| `NINFERNO_PROJECTION_RECORD` | file path | Appends every distinct specialized NVFP4 projection call (attention input, GDN input, linear-add, SwiGLU, plain linear) as `<op> <route> <T> <N> <K>`: the route a call of that width took (`a4`, `a16`, `a16_exact`, `w4a8`, fused variants). Shows the width-dependent A4/A16 choice that `NINFERNO_ROUTE_RECORD` (generic path only) does not. |
 | `NINFERNO_ROUTE_RECORD` | file path | Appends every distinct problem that reaches the generic GEMM path, in `ninferno_route_tune --shapes` format, so a model's shapes come from running it (see [bench/README.md](../../bench/README.md)). |
 
 ### Fault injection

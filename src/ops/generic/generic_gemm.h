@@ -1209,4 +1209,11 @@ void linear_relu2(const Tensor& x, const Weight& w, Tensor& out, LinearPolicy po
 void linear_geglu(const Tensor& x, const Weight& gate_up, Tensor& out, LinearPolicy policy,
                   WorkspaceArena* workspace, cudaStream_t stream);
 
+// Under NINFERNO_PROJECTION_RECORD=<file>: each distinct (op, route, T, N, K) a specialized
+// projection dispatch took, appended as "<op> <route> <T> <N> <K>". A debug trace of the
+// width-dependent route choice (A4 or A16 by call width) that NINFERNO_ROUTE_RECORD, which holds
+// generic-path problems only, does not show. Off (no file), a call costs one test.
+void record_projection_route(const char* op, const char* route, std::int32_t tokens,
+                             std::int32_t n, std::int32_t k);
+
 } // namespace ninferno::ops::detail::generic

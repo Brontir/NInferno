@@ -37,6 +37,16 @@ Nvfp4GdnInputRoute resolve_route(LinearPolicy policy, std::int32_t tokens) {
     throw std::invalid_argument("nvfp4 gdn_input_proj: unsupported policy");
 }
 
+const char* route_name(Nvfp4GdnInputRoute route) {
+    switch (route) {
+    case Nvfp4GdnInputRoute::A16: return "a16";
+    case Nvfp4GdnInputRoute::A16Exact: return "a16_exact";
+    case Nvfp4GdnInputRoute::A4: return "a4";
+    case Nvfp4GdnInputRoute::W4A8: return "w4a8";
+    }
+    return "?";
+}
+
 
 } // namespace
 
@@ -67,6 +77,7 @@ void nvfp4_gdn_input_dispatch(const Tensor& x, const Weight& weight, Tensor& qkv
         (workspace == nullptr || !generic::owned_prefill_w4a8(weight, policy, x.ne[1]))) {
         route = Nvfp4GdnInputRoute::A16;
     }
+    generic::record_projection_route("gdn_input", route_name(route), x.ne[1], weight.n, weight.k);
     if (route == Nvfp4GdnInputRoute::A16Exact) {
         nvfp4_gdn_input_exact_launch(x, weight, qkv, z, stream);
         return;

@@ -63,6 +63,18 @@ Nvfp4LinearSwiGluRoute resolve_route(LinearPolicy policy, std::int32_t tokens) {
     return Nvfp4LinearSwiGluRoute::FusedA4;
 }
 
+const char* route_name(Nvfp4LinearSwiGluRoute route) {
+    switch (route) {
+    case Nvfp4LinearSwiGluRoute::DecodeFusedA16: return "decode_fused_a16";
+    case Nvfp4LinearSwiGluRoute::SmallTFusedA16: return "small_t_fused_a16";
+    case Nvfp4LinearSwiGluRoute::FusedA4: return "fused_a4";
+    case Nvfp4LinearSwiGluRoute::TmaFusedA4: return "tma_fused_a4";
+    case Nvfp4LinearSwiGluRoute::LinearA16Post: return "linear_a16_post";
+    case Nvfp4LinearSwiGluRoute::ExactA16: return "a16_exact";
+    }
+    return "?";
+}
+
 template <class Allocator>
 Nvfp4A4Workspace allocate_fused_workspace(Allocator& allocator, std::int32_t tokens) {
     return allocate_nvfp4_a4_workspace(allocator, tokens, Nvfp4N34816K5120::kInputRows);
@@ -116,7 +128,10 @@ std::size_t nvfp4_linear_swiglu_workspace_capacity_bytes(LinearPolicy policy,
 void nvfp4_linear_swiglu_dispatch(const Tensor& x, const Weight& weight, Tensor& out,
                                   LinearPolicy policy, WorkspaceArena& workspace,
                                   cudaStream_t stream) {
-    switch (resolve_route(policy, x.ne[1])) {
+    const Nvfp4LinearSwiGluRoute route = resolve_route(policy, x.ne[1]);
+    generic::record_projection_route("linear_swiglu", route_name(route), x.ne[1], weight.n,
+                                     weight.k);
+    switch (route) {
     case Nvfp4LinearSwiGluRoute::DecodeFusedA16:
         nvfp4_linear_swiglu_decode_launch(x, weight, out, stream);
         return;
