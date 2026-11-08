@@ -695,7 +695,7 @@ std::shared_ptr<const OutputConventions> output_conventions(const chat::ChatConv
         std::unique(result->structural_tokens.begin(), result->structural_tokens.end()),
         result->structural_tokens.end());
     // Kept in the markers' order (the opener first): the prompt bans them in this order.
-    result->call_tokens = marker_tokens(tokenizer, chat.non_answer_markers(), false);
+    result->call_tokens      = marker_tokens(tokenizer, chat.non_answer_markers(), false);
     result->reasoning_tokens = marker_tokens(tokenizer, chat.reasoning_markers(), true);
     for (std::vector<TokenId>* tokens : {&result->call_tokens, &result->reasoning_tokens}) {
         std::sort(tokens->begin(), tokens->end());

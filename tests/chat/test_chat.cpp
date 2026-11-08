@@ -80,8 +80,8 @@ int test_conventions() {
                               std::vector<std::string>{"<|channel>thought", "<channel|>"},
                       "gemma non-answer markers");
     failures += check(hermes.non_answer_markers() ==
-                          std::vector<std::string>{"<tool_call>", "</tool_call>",
-                                                   "<tool_response>", "</tool_response>"},
+                          std::vector<std::string>{"<tool_call>", "</tool_call>", "<tool_response>",
+                                                   "</tool_response>"},
                       "hermes non-answer markers");
 
     const auto llama = resolve_conventions(
@@ -662,7 +662,7 @@ std::string trim_ws(std::string text) {
 // tool_choice none (a discarded contract): a model kept from the call opener may write its call as
 // bare JSON with a declared tool's name; that is cut out like the opener's call, not shown.
 int test_bare_json_call_dropped() {
-    int failures = 0;
+    int failures                         = 0;
     const std::vector<std::string> tools = {tool_definition("weather", kWeatherSchema),
                                             tool_definition("note", Json{{"type", "object"}})};
     for (const ToolCallFormat format : {ToolCallFormat::HermesJson, ToolCallFormat::QwenXml}) {
@@ -677,7 +677,9 @@ int test_bare_json_call_dropped() {
             const std::string text = "\n\n" + call;
             std::string visible;
             if (bytewise) {
-                for (const char byte : text) { visible += decoder.feed(std::string_view(&byte, 1)); }
+                for (const char byte : text) {
+                    visible += decoder.feed(std::string_view(&byte, 1));
+                }
             } else {
                 visible = decoder.feed(text);
             }
@@ -718,11 +720,12 @@ int test_bare_json_call_dropped() {
     }
     // Gemma 4's bare call, "call:NAME{...}" with no opener, under none: nothing of it is shown.
     {
-        const auto discarded =
-            ninferno::chat::build_tool_call_output_contract(tools, true, ToolCallFormat::Gemma4, true);
+        const auto discarded = ninferno::chat::build_tool_call_output_contract(
+            tools, true, ToolCallFormat::Gemma4, true);
         ninferno::chat::ToolCallOutputDecoder decoder(discarded, 64);
-        const std::string visible = decoder.feed("call:weather{city:<|\"|>Oslo<|\"|>,days:1}</body>");
-        const auto end            = decoder.finish();
+        const std::string visible =
+            decoder.feed("call:weather{city:<|\"|>Oslo<|\"|>,days:1}</body>");
+        const auto end = decoder.finish();
         failures += check(visible.empty() && trim_ws(end.content).empty(),
                           "a bare Gemma 4 call under none was shown: " + visible + end.content);
     }

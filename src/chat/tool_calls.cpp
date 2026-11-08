@@ -1063,7 +1063,8 @@ cut_name_after_header(std::string_view body, std::span<const std::string_view> h
 
 std::optional<ToolCallSyntax::CutCallName>
 cut_name_after_header(std::string_view body, std::initializer_list<std::string_view> header) {
-    return cut_name_after_header(body, std::span<const std::string_view>(header.begin(), header.size()));
+    return cut_name_after_header(body,
+                                 std::span<const std::string_view>(header.begin(), header.size()));
 }
 
 } // namespace
@@ -1112,7 +1113,7 @@ std::string ToolCallOutputDecoder::feed(std::string_view text) {
 
     // The held bytes against the syntax's call start, and where the syntax has bare JSON calls
     // and they are being dropped, against a bare call too (bare_call_start).
-    bool bare = false;
+    bool bare        = false;
     const auto match = [&](std::string_view held) {
         bare              = false;
         CallStart matched = syntax_->match_start(held);
@@ -1442,6 +1443,7 @@ constexpr std::array<std::string_view, 4> kBareJsonHeader = {"{", "\"name\"", ":
 class QwenXmlSyntax final : public ToolCallSyntax {
 public:
     [[nodiscard]] std::string_view open() const noexcept override { return kToolOpen; }
+
     [[nodiscard]] std::span<const std::string_view> bare_call_header() const noexcept override {
         return kBareJsonHeader;
     }
@@ -1491,6 +1493,7 @@ public:
 class HermesJsonSyntax final : public ToolCallSyntax {
 public:
     [[nodiscard]] std::string_view open() const noexcept override { return kToolOpen; }
+
     [[nodiscard]] std::span<const std::string_view> bare_call_header() const noexcept override {
         return kBareJsonHeader;
     }
@@ -1572,6 +1575,7 @@ public:
 
 
     [[nodiscard]] std::string_view open() const noexcept override { return kOpen; }
+
     [[nodiscard]] std::span<const std::string_view> bare_call_header() const noexcept override {
         static constexpr std::array<std::string_view, 1> kHeader = {kCall};
         return kHeader;

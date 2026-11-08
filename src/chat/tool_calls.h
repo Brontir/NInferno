@@ -99,6 +99,7 @@ public:
     // region. The default: whitespace, an optional lead() and whitespace, then open(). A syntax
     // whose region opens with a header that names the function overrides it.
     [[nodiscard]] virtual ToolCallStart match_start(std::string_view held) const;
+
     // The header a call of this syntax begins with right after its open marker ({"name": " for
     // JSON calls, call: for Gemma 4's), followed by a declared tool's name. A model kept from the
     // open marker may write the call without it: under ToolCallOutputContract::discarded, that

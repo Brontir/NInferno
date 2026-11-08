@@ -1995,6 +1995,7 @@ int test_disabled_tool_calls_keep_the_prompt() {
 // The test vocabulary with Qwen's call opener and closer added as tokens.
 constexpr int kOpenerId = 248058;
 constexpr int kCloserId = 248059;
+
 FrontendResources resources_with_opener() {
     FrontendResources with_opener = resources();
     auto tokenizer                = nlohmann::json::parse(with_opener.tokenizer_json);
@@ -2068,21 +2069,20 @@ int test_disabled_tool_calls_ban_the_opener() {
     return failures;
 }
 
-
 // tool_choice none: outside reasoning, a call or reasoning marker ends the turn (the model has left
 // the answer for markup), with the text before it kept and the marker not published; inside
 // reasoning the markers are the span's own.
 int test_none_ends_at_structural_tokens() {
     const Frontend frontend = make_frontend(resources_with_opener(), false);
     ninferno::StopPolicy stop;
-    constexpr ninferno::TokenId kHello = 1;  // "helloST"
+    constexpr ninferno::TokenId kHello = 1; // "helloST"
     constexpr ninferno::TokenId kThink = 248068;
     constexpr ninferno::TokenId kClose = 248069;
     int failures                       = 0;
-    const auto run = [&](const ninferno::PromptInput& input,
+    const auto run                     = [&](const ninferno::PromptInput& input,
                          std::vector<ninferno::TokenId> tokens) {
-        auto prompt  = frontend.prepare(input);
-        auto session = frontend.make_output_session(prompt, stop);
+        auto prompt   = frontend.prepare(input);
+        auto session  = frontend.make_output_session(prompt, stop);
         auto decision = session.preview_model(tokens, 64, ninferno::FinishReason::OutputLimit);
         return std::pair{decision, session.commit_preview()};
     };
@@ -2114,10 +2114,10 @@ int test_none_ends_at_structural_tokens() {
     }
     // Calls enabled (auto): the same tokens are not an end.
     {
-        ninferno::PromptInput input = none_input(true);
+        ninferno::PromptInput input        = none_input(true);
         input.options.tool_calls_discarded = false;
         input.options.tool_calls_enabled   = true;
-        const auto [decision, output] = run(input, {kHello, kClose, kHello, kThink, kHello});
+        const auto [decision, output]      = run(input, {kHello, kClose, kHello, kThink, kHello});
         failures += check(decision.accepted_tokens == 5 && !decision.finished(),
                           "tool calls enabled ended the turn at a structural token");
     }
