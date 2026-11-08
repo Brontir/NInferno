@@ -2161,8 +2161,9 @@ has few values, and its bytes are held once. Lower the limit to bound the sum on
 a request that built a large document ends (text of 1 MiB or more, or 10,000 or more values, a
 parse that was stopped at the limit included), the server returns the freed memory of its worker
 thread to the operating system once its connection ends. Replayed tool-call arguments are kept as
-text and parsed by the chat template, so all of them share one budget of `--max-request-json-values`. Media requests additionally share one preparation permit, so a waiting media
-request retains the same cancellation and timeout deadline. Model output is bounded by the same finite request count
+text and parsed by the chat template, so all of them share one budget of
+`--max-request-json-values`. Media requests additionally share one preparation permit, so a waiting
+media request retains the same cancellation and timeout deadline. Model output is bounded by the same finite request count
 and each request's effective output-token limit. Output callbacks and network serialization run
 outside the GPU executor and do not delay formation of the next batch.
 
