@@ -515,6 +515,18 @@ void ProgramImpl::prepare_consumed_source(MaterializationTransaction& transactio
         release_if_unreferenced(rewrite);
     }
 
+    if (details.reuse == ReusePath::PrivateTruncatedEndpoint) {
+        // The source keeps its endpoint and all its KV until the sequence activates (the
+        // activation truncates it to the frontier): a materialization aborted from here leaves a
+        // source whose summary still describes its rows. Only the checkpoints above the frontier
+        // went (they stay valid without it).
+        refresh_state_views(source);
+        const detail::PhysicalResources removed =
+            checked_resource_difference(before, owner_exclusive_resources(source));
+        (void)checked_resource_difference(details.demand.final_removed, removed);
+        return;
+    }
+
     struct TruncateTarget {
         KVAddressSpaceStore* addresses = nullptr;
         LogicalKVPageStore* pages      = nullptr;

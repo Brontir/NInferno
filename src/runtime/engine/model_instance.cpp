@@ -1608,6 +1608,7 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
     instance->kv_capacity_resolution.available_after_startup_bytes = current_free_device_bytes();
     const models::qwen3_5::DecodePacingFacts pacing     = instance->program->decode_pacing();
     summary.decode_steps_per_round                      = pacing.steps_per_round;
+    summary.truncated_prefix_reuse = instance->program->supports_truncated_reuse();
     summary.cpu_quota_us                                = pacing.cpu_quota_us;
     summary.cpu_quota_period_us                         = pacing.cpu_period_us;
     instance->decode_round_shape.steps_per_round        = pacing.steps_per_round;

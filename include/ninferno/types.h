@@ -1933,6 +1933,10 @@ struct LoadSummary {
     // Steps an ordinary decode round runs, and the machine fact that default follows: the
     // process's CPU bandwidth quota (0: none). Both enter the decision fingerprint.
     std::uint32_t decode_steps_per_round = 1;
+    // Every layer keeps per-token state only (attention, no sliding window) and nothing drafts: a
+    // prompt which diverges inside a cached endpoint reuses its KV up to the divergence
+    // (PrefixReusePath::PrivateTruncatedEndpoint).
+    bool truncated_prefix_reuse          = false;
     std::uint64_t cpu_quota_us           = 0;
     std::uint64_t cpu_quota_period_us    = 0;
     double load_seconds                = 0.0;

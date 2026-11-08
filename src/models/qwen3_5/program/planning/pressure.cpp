@@ -2582,6 +2582,41 @@ bool ProgramImpl::supports_truncated_reuse() const noexcept {
            spec.rings.empty() && !spec.dflash_local;
 }
 
+std::uint32_t ProgramImpl::truncated_reuse_bound(const RequestBasePlan& base,
+                                                 const ContinuationHandle& handle) const {
+    if (!supports_truncated_reuse() || base.impl_ == nullptr || !valid_continuation(handle)) {
+        return 0;
+    }
+    const SequenceState& source = continuation_states[ContractAccess::index(handle)];
+    const qwen3_5::detail::PrefixShortlistDigests& request = base.impl_->prefix_digests;
+    if (!source.endpoint_valid || source.prefix_digests.size() == 0 || request.size() == 0 ||
+        base.impl_->summary.prompt_tokens < 2) {
+        return 0;
+    }
+    constexpr std::uint32_t grid = 64;
+    const std::uint32_t top = std::min({source.execution_frontier, source.prefill_exact_frontier,
+                                        static_cast<std::uint32_t>(source.prefix_digests.size()),
+                                        static_cast<std::uint32_t>(request.size()),
+                                        base.impl_->summary.prompt_tokens - 1U});
+    const auto same         = [&](std::uint32_t frontier) {
+        return source.prefix_digests.at(frontier) == request.at(frontier);
+    };
+    std::uint32_t low  = (runtime_support::kTruncatedReuseMinimumTokens + grid - 1U) / grid;
+    std::uint32_t high = top / grid;
+    if (high < low || !same(low * grid)) { return 0; }
+    // The digests are rolling: equal at a frontier means equal below it, so the predicate falls
+    // monotonically with the frontier.
+    while (low < high) {
+        const std::uint32_t middle = low + (high - low + 1U) / 2U;
+        if (same(middle * grid)) {
+            low = middle;
+        } else {
+            high = middle - 1U;
+        }
+    }
+    return std::min(top, low * grid + grid - 1U);
+}
+
 bool ProgramImpl::isolated_request_feasible(const RequestBasePlan& base) const noexcept {
     if (base.impl_ == nullptr) { return false; }
     const detail::PhysicalResources capacity = admission_capacity();

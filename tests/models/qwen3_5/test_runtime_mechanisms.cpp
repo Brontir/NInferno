@@ -646,40 +646,43 @@ void test_prefill_exact_frontier_transitions() {
     expect(rs::restored_prefill_exact(0, 128) == 0, "an empty region stays empty");
 }
 
-// The frontier a truncated endpoint reuse restores at.
+// The frontier a truncated endpoint reuse restores at: an attention-only (ungridded) model, so any
+// point of the common prefix that leaves a long enough suffix, inside the source's exact rows.
 void test_truncated_reuse_frontier() {
     namespace rs = q36::runtime_support;
     const std::span<const std::uint32_t> none;
     // A: a 6000-token prompt, exact to 6000. B shares 5800 tokens and has 7000.
-    auto f = rs::truncated_reuse_frontier(5800, 7000, none, 6000, none, 256);
-    expect(f == std::optional<std::uint32_t>(5760), "the common prefix moves down to the grid");
-    // B diverges past A's last 17 tokens: A's own tail call is not a prefill route, so the
-    // frontier keeps 17 tokens clear of A's exact end.
-    f = rs::truncated_reuse_frontier(5995, 7000, none, 6000, none, 256);
-    expect(f == std::optional<std::uint32_t>(5952),
-           "the frontier stays clear of the source's tail");
+    auto f = rs::truncated_reuse_frontier(5800, 7000, none, 6000, 256);
+    expect(f == std::optional<std::uint32_t>(5800), "the common prefix is the frontier, off grid");
+    f = rs::truncated_reuse_frontier(5995, 7000, none, 6000, 256);
+    expect(f == std::optional<std::uint32_t>(5995), "a divergence near the source's end is kept");
     // The exact region ends before the common prefix: decode rows are not reused.
-    f = rs::truncated_reuse_frontier(6500, 7000, none, 6000, none, 256);
-    expect(f == std::optional<std::uint32_t>(5952), "the exact region bounds the frontier");
-    // A prompt which is a prefix of the ledger still has a suffix to prefill.
-    f = rs::truncated_reuse_frontier(5000, 5000, none, 6000, none, 256);
-    expect(f == std::optional<std::uint32_t>(4928), "a suffix remains to produce the tail hidden");
+    f = rs::truncated_reuse_frontier(6500, 7000, none, 6000, 256);
+    expect(f == std::optional<std::uint32_t>(6000), "the exact region bounds the frontier");
+    // A prompt which is a prefix of the ledger still has a suffix of 17 tokens to prefill.
+    f = rs::truncated_reuse_frontier(5000, 5000, none, 6000, 256);
+    expect(f == std::optional<std::uint32_t>(4983), "a suffix of 17 tokens remains");
     // Too short a prefix is not worth a restore.
-    f = rs::truncated_reuse_frontier(200, 7000, none, 6000, none, 256);
-    expect(!f, "a frontier below the minimum is refused");
-    // A static frontier of the source inside its exact region splits its calls. At 5990 the call
-    // before it still covers the grid point 5952 with a long call, so the frontier stays.
-    const std::array<std::uint32_t, 1> far_static{5990};
-    f = rs::truncated_reuse_frontier(5995, 7000, none, 6000, far_static, 256);
-    expect(f == std::optional<std::uint32_t>(5952), "a far static frontier leaves the grid point");
-    // At 5960 the source's call [5952, 5960) is 8 tokens long and took a short route, so the grid
-    // point 5952 is not neutral for the source's prefill and the request reuses nothing there.
-    const std::array<std::uint32_t, 1> near_static{5960};
-    f = rs::truncated_reuse_frontier(5995, 7000, none, 6000, near_static, 256);
-    expect(!f, "a source call too short for the prefill routes bounds the frontier");
+    expect(!rs::truncated_reuse_frontier(200, 7000, none, 6000, 256), "below the minimum");
+    // A static frontier of the prompt is neutral by itself; the segment after it keeps 17 tokens.
+    const std::array<std::uint32_t, 1> inside{5990};
+    f = rs::truncated_reuse_frontier(5995, 7000, inside, 6000, 256);
+    expect(f == std::optional<std::uint32_t>(5995), "a restore past a static frontier");
+    const std::array<std::uint32_t, 1> ahead{6000};
+    f = rs::truncated_reuse_frontier(5995, 7000, ahead, 6100, 256);
+    expect(f == std::optional<std::uint32_t>(5983),
+           "a restore keeps 17 tokens before the next static frontier");
+    // The segment start is the one neutral point left when it is closer than 17 tokens: a chat
+    // whose last static frontier is off the grid keeps its whole last turn.
+    const std::array<std::uint32_t, 2> turns{5000, 5990};
+    f = rs::truncated_reuse_frontier(5995, 6000, turns, 6000, 256);
+    expect(f == std::optional<std::uint32_t>(5990), "the last static frontier is a restore point");
+    f = rs::truncated_reuse_frontier(5994, 6000, turns, 6000, 256);
+    expect(f == std::optional<std::uint32_t>(5990), "a restore past it stays inside the turn");
     // An empty exact region reuses nothing.
-    expect(!rs::truncated_reuse_frontier(5800, 7000, none, 0, none, 256),
-           "no exact rows, no reuse");
+    expect(!rs::truncated_reuse_frontier(5800, 7000, none, 0, 256), "no exact rows, no reuse");
+    expect(rs::ungridded_neutral_frontier(7000, 7000, none) == std::optional<std::uint32_t>(7000),
+           "the prompt end is neutral");
 }
 
 int main() {

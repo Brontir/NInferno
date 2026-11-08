@@ -731,7 +731,15 @@ public:
     // Program finds one (none: its exact frontier or the common prefix is too short).
     bool supports_truncated = false;
     std::optional<std::uint32_t> truncated_frontier;
+    // What the screen (truncated_reuse_bound) says; the frontier above when unset.
+    std::optional<std::uint32_t> truncated_bound;
     std::uint32_t truncated_inspections = 0;
+
+    [[nodiscard]] std::uint32_t
+    truncated_reuse_bound(const FakeRequestBasePlan&,
+                          const FakeContinuationHandle&) const noexcept {
+        return supports_truncated ? truncated_bound.value_or(truncated_frontier.value_or(0)) : 0U;
+    }
 
     [[nodiscard]] bool supports_truncated_reuse() const noexcept { return supports_truncated; }
 
@@ -4110,11 +4118,12 @@ void test_truncated_endpoint_is_offered_when_the_program_supports_it() {
     FakeProgram program;
     program.supports_truncated = true;
     program.truncated_frontier = 8;
-    const ActiveRequest seed   = start_active(manager, program, 7, make_base(7), 1);
+    const FakeCacheSessionKey session{1};
+    const ActiveRequest seed = start_active(manager, program, 7, make_base(7, session), 1);
     (void)finish_active(manager, program, seed);
 
     // The request's digest at the endpoint frontier (16) differs: no exact candidate.
-    auto inspection = manager.inspect(program, FakePreparedPrompt{7}, make_base(9), 2);
+    auto inspection = manager.inspect(program, FakePreparedPrompt{7}, make_base(9, session), 2);
     require(inspection.readiness == Readiness::Ready && inspection.choice &&
                 inspection.choice->summary().prefix_reuse_path ==
                     PrefixReusePath::PrivateTruncatedEndpoint &&
@@ -4122,7 +4131,7 @@ void test_truncated_endpoint_is_offered_when_the_program_supports_it() {
             "the endpoint was not offered truncated to the Program's frontier");
     require(program.truncated_inspections == 1, "the endpoint was not inspected once");
 
-    // It is a consumer of the endpoint like a second turn: the source is consumed.
+    // The same session names the same conversation: it consumes its endpoint like a second turn.
     program.abort_start = true;
     const auto status   = manager.reserve_materialization(program, std::move(*inspection.choice),
                                                           FakePreparedPrompt{7}, {});
@@ -4170,14 +4179,92 @@ void test_truncated_endpoint_needs_the_program_to_support_it() {
 void test_truncated_endpoint_refused_by_the_program_leaves_the_root() {
     FakeManager manager = make_manager(1, 3);
     FakeProgram program;
-    program.supports_truncated =
-        true; // the source's prefill-exact frontier is too short: no frontier
-    const ActiveRequest seed = start_active(manager, program, 7, make_base(7), 1);
+    program.supports_truncated = true;
+    program.truncated_bound    = 8; // the screen passes; the full check finds no frontier
+    const ActiveRequest seed   = start_active(manager, program, 7, make_base(7), 1);
     (void)finish_active(manager, program, seed);
     auto inspection = manager.inspect(program, FakePreparedPrompt{7}, make_base(9), 2);
     require(inspection.choice && inspection.choice->summary().reusable_prompt_tokens == 0 &&
                 program.truncated_inspections == 1,
             "a refused truncated candidate changed the selection");
+}
+
+// A sessionless source, or one of another session, is never consumed on a guess: a common system
+// prompt is no conversation. A request without a session retains a sessionless endpoint too.
+void test_truncated_endpoint_is_never_consumed_across_sessions() {
+    FakeManager manager = make_manager(2, 4);
+    FakeProgram program;
+    program.supports_truncated    = true;
+    program.truncated_frontier    = 8;
+    const ActiveRequest anonymous = start_active(manager, program, 7, make_base(7), 1);
+    (void)finish_active(manager, program, anonymous);
+    const ActiveRequest fork = start_active(manager, program, 7, make_base(9), 2);
+    require(program.started_source_mode == PrivateSourceMode::Retain &&
+                program.started_source_id == anonymous.sequence.id,
+            "a sessionless request consumed a sessionless endpoint");
+    require(manager.catalog_state(0) == FakeManager::CatalogState::Catalogued,
+            "the retained sessionless source left the catalog");
+    (void)finish_active(manager, program, fork, 16);
+
+    // A session names the endpoint of its own conversation only when the index is advanced.
+    FakeManager second = make_manager(2, 4);
+    FakeProgram other;
+    other.supports_truncated = true;
+    other.truncated_frontier = 8;
+    const FakeCacheSessionKey session{5};
+    const ActiveRequest owned = start_active(second, other, 7, make_base(7, session), 1);
+    (void)finish_active(second, other, owned);
+    FakeRequestBasePlan quiet        = make_base(9, session);
+    quiet.cache.update_session_index = false;
+    const ActiveRequest quiet_fork   = start_active(second, other, 7, quiet, 2);
+    require(other.started_source_mode == PrivateSourceMode::Retain,
+            "a request that does not advance the session index consumed its endpoint");
+    (void)finish_active(second, other, quiet_fork, 16);
+}
+
+// Many endpoints share a prefix with the request (a common system prompt): the screen is cheap and
+// only the best two are inspected in full, the request's own session first.
+void test_many_truncated_endpoints_are_screened_before_inspection() {
+    constexpr std::uint32_t kEndpoints = 6;
+    FakeManager manager                = make_manager(1, kEndpoints + 1);
+    FakeProgram program;
+    program.supports_truncated = true;
+    program.truncated_frontier = 8;
+    std::uint32_t own_id       = 0;
+    for (std::uint32_t index = 0; index < kEndpoints; ++index) {
+        const ActiveRequest seed = start_active(
+            manager, program, 7, make_base(7, FakeCacheSessionKey{index + 1}), index + 1);
+        if (index + 1 == 4) { own_id = seed.sequence.id; }
+        (void)finish_active(manager, program, seed);
+    }
+    program.truncated_inspections = 0;
+    auto inspection =
+        manager.inspect(program, FakePreparedPrompt{7}, make_base(9, FakeCacheSessionKey{4}), 100);
+    require(inspection.choice && inspection.choice->summary().reusable_prompt_tokens == 8,
+            "a request among many endpoints reused nothing");
+    require(program.truncated_inspections == 2,
+            "more than the best two truncated endpoints were inspected in full");
+    program.abort_start = true;
+    (void)manager.reserve_materialization(program, std::move(*inspection.choice),
+                                          FakePreparedPrompt{7}, {});
+    require(program.started_source_id == own_id &&
+                program.started_source_mode == PrivateSourceMode::ConsumeToActive,
+            "the request's own session was not the source it consumed");
+
+    // A bound which does not exceed what an exact candidate reuses is not inspected at all.
+    FakeManager exact = make_manager(1, 3);
+    FakeProgram exact_program;
+    exact_program.supports_truncated = true;
+    exact_program.truncated_frontier = 8;
+    const ActiveRequest first        = start_active(exact, exact_program, 7, make_base(7), 1);
+    (void)finish_active(exact, exact_program, first);
+    const ActiveRequest second = start_active(exact, exact_program, 8, make_base(8), 2);
+    (void)finish_active(exact, exact_program, second);
+    exact_program.truncated_inspections = 0;
+    auto matched = exact.inspect(exact_program, FakePreparedPrompt{8}, make_base(8), 3);
+    require(matched.choice && matched.choice->summary().reusable_prompt_tokens == 16 &&
+                exact_program.truncated_inspections == 0,
+            "a truncated bound below an exact candidate was inspected");
 }
 
 // Enumerates raw owner choices independently of the search frontier/generator and portfolio fold.
@@ -4374,6 +4461,10 @@ int main() {
              test_truncated_endpoint_is_retained_for_another_session);
     run_test("truncated endpoint needs support",
              test_truncated_endpoint_needs_the_program_to_support_it);
+    run_test("truncated endpoint across sessions",
+             test_truncated_endpoint_is_never_consumed_across_sessions);
+    run_test("many truncated endpoints",
+             test_many_truncated_endpoints_are_screened_before_inspection);
     run_test("truncated endpoint refused",
              test_truncated_endpoint_refused_by_the_program_leaves_the_root);
     run_test("stale revision is retryable", test_stale_revision_is_retryable);

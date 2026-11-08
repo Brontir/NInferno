@@ -603,7 +603,6 @@ ProgramImpl::inspect_lane(std::uint32_t lane, const PreparedPromptData& prompt,
                     runtime_support::truncated_reuse_frontier(
                         common, base.summary.prompt_tokens,
                         prompt.identity.rewrite_execution_frontiers, source->prefill_exact_frontier,
-                        source->prefix_identity.rewrite_execution_frontiers(),
                         runtime_support::kTruncatedReuseMinimumTokens);
                 if (!frontier || *frontier >= selected.frontier ||
                     !qwen3_5::detail::prefix_matches(prompt, source->ledger,
@@ -1369,8 +1368,15 @@ ProgramImpl::inspect_lane(std::uint32_t lane, const PreparedPromptData& prompt,
     final_added.device.backend_kv_pages += shared_replica_additions.device.backend_kv_pages;
     const detail::PhysicalResources reused_source{.device = conversions,
                                                   .host   = preparation_retained_host};
-    const detail::PhysicalResources early_source_release =
+    detail::PhysicalResources early_source_release =
         positive_difference(source_resources, reused_source);
+    if (plan->reuse == ReusePath::PrivateTruncatedEndpoint) {
+        // The pages above the frontier are released when the sequence activates, not before: until
+        // then an abort leaves the source whole, its endpoint still advertised over all its rows.
+        early_source_release.device.main_kv_pages    = 0;
+        early_source_release.device.backend_kv_pages = 0;
+        early_source_release.host.kv_bytes           = 0;
+    }
     plan->demand = detail::PhysicalDemand{
         .active_entitlement       = active_resources,
         .reservation_added        = reservation_added,

@@ -1331,9 +1331,13 @@ runtime::PrefillStepResult ProgramImpl::advance_prefill(SequenceState& sequence,
         } else {
             mark_workspace_usage(workspace_plan.ordinary_round);
             if (!sequence.tail_hidden_valid) {
-                static constexpr const char* kPaths[] = {
-                    "root", "private endpoint", "private turn closure", "private response replay",
-                    "private long anchor", "shared stable prefix"};
+                static constexpr const char* kPaths[] = {"root",
+                                                         "private endpoint",
+                                                         "private turn closure",
+                                                         "private response replay",
+                                                         "private long anchor",
+                                                         "shared stable prefix",
+                                                         "private truncated endpoint"};
                 const auto path = static_cast<std::size_t>(staged.reuse);
                 throw std::logic_error(
                     std::string("zero-suffix reuse has no target tail hidden (") +

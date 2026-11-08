@@ -332,9 +332,17 @@ public:
             // A program whose layers all keep per-token state (attention only) serves a prompt
             // which diverges below a resident endpoint from that endpoint's KV, cut back to a
             // neutral frontier of the common prefix. The digest shortlist cannot name that
-            // frontier, so every catalogued endpoint is offered to the Program, which checks
-            // the ledger itself.
+            // frontier: the Program screens every catalogued endpoint without allocating
+            // (truncated_reuse_bound), and only the best few are inspected in full.
             const bool truncated_reuse = program.supports_truncated_reuse();
+
+            struct TruncatedScreen {
+                PrefixIndexEntry index;
+                std::uint32_t bound = 0;
+                bool same_session   = false;
+            };
+
+            std::vector<TruncatedScreen> screens;
             for (const PrefixIndexEntry& index : prefix_index_) {
                 if (!valid_prefix_index_entry(index)) { continue; }
                 const std::optional<PrefixShortlistKey> incoming =
@@ -350,17 +358,28 @@ public:
                         private_has_active_edge(index.slot)) {
                         continue;
                     }
+                    if (truncated) {
+                        const std::uint32_t bound =
+                            program.truncated_reuse_bound(base, *entry.handle);
+                        if (bound != 0) {
+                            screens.push_back(TruncatedScreen{
+                                .index = index,
+                                .bound = bound,
+                                .same_session =
+                                    entry.session && base.context_cache().session_key &&
+                                    *entry.session == *base.context_cache().session_key &&
+                                    base.context_cache().update_session_index,
+                            });
+                        }
+                        continue;
+                    }
                     const bool retain =
                         entry.session && (!base.context_cache().session_key ||
                                           *entry.session != *base.context_cache().session_key ||
                                           !base.context_cache().update_session_index);
                     std::optional<AdmissionCandidate> plan =
-                        truncated
-                            ? program.inspect_truncated_admission(prompt, base, *destination,
-                                                                  *entry.handle, index.checkpoint,
-                                                                  retain)
-                            : program.inspect_admission(prompt, base, *destination, &*entry.handle,
-                                                        nullptr, index.checkpoint, retain);
+                        program.inspect_admission(prompt, base, *destination, &*entry.handle,
+                                                  nullptr, index.checkpoint, retain);
                     if (!plan) { continue; }
                     if (plan->summary().reusable_prompt_tokens == 0 ||
                         (retain &&
@@ -372,11 +391,7 @@ public:
                         session_index_[*current_session_cell].slot == index.slot &&
                         session_index_[*current_session_cell].owner_id == entry.id &&
                         session_index_[*current_session_cell].revision == entry.revision;
-                    // A truncated candidate restores below its endpoint: the endpoint's digest is
-                    // no resident key of this request's, and no shared capture is based on it.
-                    if (!truncated) {
-                        append_unique(provisional_demand.exact_resident_keys, index.key);
-                    }
+                    append_unique(provisional_demand.exact_resident_keys, index.key);
                     candidates.push_back(Candidate{
                         .plan                    = std::move(*plan),
                         .current_session_binding = current_session_binding,
@@ -389,7 +404,7 @@ public:
                                 .revision   = entry.revision,
                                 .checkpoint = index.checkpoint,
                             },
-                        .source_key = truncated ? std::nullopt : std::optional(index.key),
+                        .source_key = index.key,
                     });
                     continue;
                 }
@@ -416,6 +431,61 @@ public:
                             .checkpoint = index.checkpoint,
                         },
                     .source_key = index.key,
+                });
+            }
+
+            // The truncated candidates, best first: the request's own session before another,
+            // then the longer common prefix. A source whose bound does not exceed what an exact
+            // or shared candidate already reuses cannot win; two are inspected in full, more
+            // would only add planning work.
+            std::uint32_t best_reuse = 0;
+            for (const Candidate& candidate : candidates) {
+                best_reuse = std::max(best_reuse, candidate.plan.summary().reusable_prompt_tokens);
+            }
+            std::erase_if(
+                screens, [&](const TruncatedScreen& screen) { return screen.bound <= best_reuse; });
+            std::stable_sort(screens.begin(), screens.end(),
+                             [](const TruncatedScreen& left, const TruncatedScreen& right) {
+                                 return std::tie(right.same_session, right.bound) <
+                                        std::tie(left.same_session, left.bound);
+                             });
+            constexpr std::size_t kTruncatedInspections = 2;
+            if (screens.size() > kTruncatedInspections) { screens.resize(kTruncatedInspections); }
+            for (const TruncatedScreen& screen : screens) {
+                const PrefixIndexEntry& index = screen.index;
+                const CatalogEntry& entry     = catalog_[index.slot];
+                // A source of another session, or of none, is never consumed on a guess that the
+                // two share a conversation: only the request's own session truncates its endpoint,
+                // any other forks pages [0, f).
+                const bool retain                      = !screen.same_session;
+                std::optional<AdmissionCandidate> plan = program.inspect_truncated_admission(
+                    prompt, base, *destination, *entry.handle, index.checkpoint, retain);
+                if (!plan) { continue; }
+                if (plan->summary().reusable_prompt_tokens == 0 ||
+                    (retain &&
+                     plan->identity_assessment().source_mode != PrivateSourceMode::Retain)) {
+                    throw std::logic_error("Program returned an invalid truncated candidate");
+                }
+                const bool current_session_binding =
+                    current_session_cell &&
+                    session_index_[*current_session_cell].slot == index.slot &&
+                    session_index_[*current_session_cell].owner_id == entry.id &&
+                    session_index_[*current_session_cell].revision == entry.revision;
+                // The candidate restores below its endpoint: the endpoint's digest is no resident
+                // key of this request's, and no shared capture is based on it.
+                candidates.push_back(Candidate{
+                    .plan                    = std::move(*plan),
+                    .current_session_binding = current_session_binding,
+                    .private_source          = private_capability(index.slot),
+                    .selected_observation =
+                        PolicyObservationKey{
+                            .shared     = false,
+                            .slot       = index.slot,
+                            .owner_id   = entry.id,
+                            .revision   = entry.revision,
+                            .checkpoint = index.checkpoint,
+                        },
+                    .source_key = std::nullopt,
                 });
             }
         }

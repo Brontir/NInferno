@@ -576,6 +576,8 @@ public:
     // Only attention layers keep per-token state: no linear layers, no sliding rings, no DFlash
     // local state, no drafter. The KV of such a sequence is valid for any shorter prefix.
     [[nodiscard]] bool supports_truncated_reuse() const noexcept;
+    [[nodiscard]] std::uint32_t truncated_reuse_bound(const RequestBasePlan& base,
+                                                      const ContinuationHandle& source) const;
     [[nodiscard]] std::optional<AdmissionCandidate> seal_materialization(
         const AdmissionCandidate& admission, const PreparedPromptData& prompt,
         std::span<const ContinuationHandle* const> pressure_owners,
