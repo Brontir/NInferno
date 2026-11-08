@@ -1405,15 +1405,15 @@ int test_reasoning_reaches_thinking_field() {
                       "the next tool step did not extend the previous prompt");
     // A tool-call turn with text and reasoning renders its reasoning (the template can render only
     // one of them) and not the text.
-    auto both       = call;
+    auto both               = call;
     both.parts.front().text = "spoken";
-    const auto mixed = harmony.render({user, both, result});
+    const auto mixed        = harmony.render({user, both, result});
     failures += check(mixed.text == one.text,
                       "a tool-call turn with text and reasoning did not render its reasoning");
     // A marker after the tool-call turn lands after its call, not after the analysis block.
     fi::ChatRenderOptions marked;
     marked.cache_markers.push_back({.after_message_count = 2});
-    const auto cached = harmony.render({user, call, result}, marked);
+    const auto cached            = harmony.render({user, call, result}, marked);
     const std::size_t after_call = one.text.find("<|call|>") + std::string("<|call|>").size();
     failures += check(cached.cache_boundaries.size() == 1 && cached.cache_boundaries[0] &&
                           *cached.cache_boundaries[0] == after_call,

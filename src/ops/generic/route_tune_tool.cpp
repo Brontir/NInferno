@@ -475,8 +475,8 @@ int route_tune_main(int argc, char** argv) {
                         generic::resolve_route(asked, w.weight, layout).executed;
                     time_route(ran, t);
                     selected_csv << generic::qtype_name(p.qtype) << ',' << row_compute << ','
-                                 << generic::epilogue_name(p.epilogue) << ',' << p.n << ','
-                                 << p.k << ',' << t << ',' << generic::route_name(asked) << ','
+                                 << generic::epilogue_name(p.epilogue) << ',' << p.n << ',' << p.k
+                                 << ',' << t << ',' << generic::route_name(asked) << ','
                                  << generic::route_name(ran) << ',' << select_ns << '\n';
                 }
                 std::printf("%s %s %s n=%d k=%d T=%d best=%s %.2f us\n",
