@@ -2559,15 +2559,16 @@ SPEC:
 - **Dense decoders** (dense_decoder and moe_decoder artifacts: gpt-oss, Llama, Muse Glimmer, ...)
   keep their full layers' keys and values in FP8 rows by default on sm_89 and newer
   (`--kv-dtype auto`). `--kv-dtype bf16` restores BF16. Below sm_89 the software conversion makes
-  FP8 slower (RTX 3090 gpt-oss at 88K: 136 -> 91 t/s), so `auto` stays BF16 there. Their sliding
-  rings stay BF16 unless `--sliding-kv-dtype fp8`.
+  FP8 slower (RTX 3090 gpt-oss at 88K: 136 -> 91 t/s), so `auto` stays BF16 there. A dense_decoder's
+  sliding rings follow its KV cache (FP8 under FP8 KV); a moe_decoder's (gpt-oss) stay BF16 unless
+  `--sliding-kv-dtype fp8`.
 - gpt-oss-20b at about 88K context decodes 157 -> 185 t/s (RTX 4090), 159 -> 192 (RTX 5080), and 316
   -> 350 at 48K (RTX 5090), with perplexity on a book unchanged within noise (windows 256 and 2048).
   Short requests are unchanged. The prefill of a long prompt costs 2-5 % more (the attention widens
   the FP8 tiles in shared memory).
 - **Gemma 4** keeps its full layers' keys and values in FP8 by default on sm_89 and newer
-  (`--kv-dtype bf16` restores BF16). FP8 sliding rings are opt-in with `--sliding-kv-dtype fp8`;
-  the rings grow with every slot and cached state (31B: 0.78 MiB per ring row in BF16, window
+  (`--kv-dtype bf16` restores BF16), and its sliding rings follow: FP8 under FP8 KV, BF16 with
+  `--sliding-kv-dtype bf16` or under BF16 KV. The rings grow with every slot and cached state (31B: 0.78 MiB per ring row in BF16, window
   1024 + chunk - 1 rows each).
 - Measured with every layer in FP8 against BF16 (`ninferno-gemma4 score`, 32 chat windows of 2,047
   scored tokens, 65,504 in all): mean next-token NLL moves by -0.002 +- 0.018 and +0.007 +- 0.014

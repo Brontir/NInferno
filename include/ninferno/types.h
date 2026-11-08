@@ -512,9 +512,10 @@ struct EngineOptions {
     bool recurrent_state_automatic = false;
     // The sliding-window layers' rings (a sequence's StateImage): BFloat16, or Fp8E4M3Row256 (E4M3
     // codes with an FP32 scale per row, about half the bytes; Gemma 4 and dense decoders with
-    // sliding-window layers, refused elsewhere). Opt-in: Gemma 4
-    // 26B/31B next-token NLL moves by less than its standard error with every layer in FP8
-    // (docs/serving.md, FP8 keys and values).
+    // sliding-window layers, refused elsewhere). BFloat16 for a bare Engine; ninferno-serve and
+    // ninferno choose FP8 rings for Gemma 4 and dense decoders whenever their KV is FP8
+    // (choice::coupled_storages). Gemma 4 26B/31B next-token NLL moves by less than its standard
+    // error with every layer in FP8 (docs/reference/serving.md, FP8 keys and values).
     KvCacheStorage sliding_kv_cache    = KvCacheStorage::BFloat16;
     ActivationMode activations         = kDefaultActivationMode;
     // --rope-yarn-factor F: Qwen 3.5/3.6 rotate with YaRN (transformers' "yarn" rope over the
