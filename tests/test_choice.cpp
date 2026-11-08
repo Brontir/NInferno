@@ -558,13 +558,14 @@ void prefills_by_format(const json& fixture) {
         bool q41_transferred = false;
         const double q41_seconds = ch::prefill_linears_seconds(q41_model, ada, q41, 1024, &q41_transferred);
         const double q4k_seconds = ch::prefill_linears_seconds(q4k_model, ada, km, 1024);
-        // A slice of 144 tokens takes two 80-column tiles (1.57 of a 128-column tile's steps), not two
-        // 128-column ones: it costs less than a slice of 256 (two 128-column tiles) by about the tiles'
-        // difference (core/mmq_columns.h).
+        // A slice of 144 tokens takes two 80-column tiles (1.57 of a 128-column tile's steps), not
+        // two 128-column ones: it costs less than a slice of 256 (two 128-column tiles) by about
+        // the tiles' difference (core/mmq_columns.h).
         const double at_144 = ch::prefill_linears_seconds(q4k_model, ada, km, 144);
         const double at_256 = ch::prefill_linears_seconds(q4k_model, ada, km, 256);
-        check(at_144 > 0 && at_144 < 0.9 * at_256,
-              "144 tokens take narrower column tiles than 256 (two 80-column tiles against two 128)");
+        check(
+            at_144 > 0 && at_144 < 0.9 * at_256,
+            "144 tokens take narrower column tiles than 256 (two 80-column tiles against two 128)");
         const ch::CardFacts turing = card_of(fixture.at("cards").at("RTX 2080 Ti"));
         check(q41_seconds > 0 && q41_transferred && std::abs(q41_seconds / q4k_seconds - 1) < 0.05 &&
                   ch::prefill_linears_seconds(q41_model, turing, q41, 1024) == 0,

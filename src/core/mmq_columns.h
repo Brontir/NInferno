@@ -16,8 +16,8 @@
 
 namespace ninferno::mmq_columns {
 
-inline constexpr int kTile = 128; // the widest tile, the weight rows of every tile
-inline constexpr int kTiles[] = {16, 32, 64, 80, 96, 112, 128};
+inline constexpr int kTile         = 128; // the widest tile, the weight rows of every tile
+inline constexpr int kTiles[]      = {16, 32, 64, 80, 96, 112, 128};
 inline constexpr double kTileFixed = 0.43;
 
 // A J-column tile's K step against a 128-column tile's.
