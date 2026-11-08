@@ -384,8 +384,9 @@ HttpServer::HttpServer(ServeOptions options, std::shared_ptr<spdlog::logger> log
     server_.set_tcp_nodelay(true);
     server_.set_socket_options(configure_http_server_socket);
     server_.set_payload_max_length(options_.max_request_bytes);
-    server_.set_post_routing_handler(
-        [](const httplib::Request& request, httplib::Response&) { release_request_memory(request); });
+    server_.set_post_routing_handler([](const httplib::Request& request, httplib::Response&) {
+        release_request_memory(request);
+    });
     register_routes();
 }
 

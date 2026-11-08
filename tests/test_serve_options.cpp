@@ -42,11 +42,12 @@ int main() {
     int failures = 0;
 
     // #527: the limit on the values of a request body's JSON has a default and can be changed.
-    failures += check(parse({"ninferno-serve", "m.ninferno"}).max_request_json_values ==
-                              kDefaultMaxRequestJsonValues &&
-                          parse({"ninferno-serve", "m.ninferno", "--max-request-json-values", "5000"})
-                                  .max_request_json_values == 5000,
-                      "--max-request-json-values: default, overridable");
+    failures +=
+        check(parse({"ninferno-serve", "m.ninferno"}).max_request_json_values ==
+                      kDefaultMaxRequestJsonValues &&
+                  parse({"ninferno-serve", "m.ninferno", "--max-request-json-values", "5000"})
+                          .max_request_json_values == 5000,
+              "--max-request-json-values: default, overridable");
     bool zero_values_refused = false;
     try {
         (void)parse({"ninferno-serve", "m.ninferno", "--max-request-json-values", "0"});

@@ -43,16 +43,17 @@ RequestJson parse_json_body(const httplib::Request& request, const RequestLimits
     try {
         // The callback only counts: every value is kept. A container counts when it opens, so a
         // body of empty objects stops at the limit rather than after it is built.
-        body = RequestJson::parse(
-            request.body,
-            [&](int, RequestJson::parse_event_t event, RequestJson&) {
-                if (event == RequestJson::parse_event_t::object_end ||
-                    event == RequestJson::parse_event_t::array_end) {
-                    return true;
-                }
-                if (++values > limits.max_json_values) { throw JsonValueLimitExceeded(); }
-                return true;
-            });
+        body = RequestJson::parse(request.body,
+                                  [&](int, RequestJson::parse_event_t event, RequestJson&) {
+                                      if (event == RequestJson::parse_event_t::object_end ||
+                                          event == RequestJson::parse_event_t::array_end) {
+                                          return true;
+                                      }
+                                      if (++values > limits.max_json_values) {
+                                          throw JsonValueLimitExceeded();
+                                      }
+                                      return true;
+                                  });
     } catch (const JsonValueLimitExceeded&) {
         bad_request("request JSON holds more than " + std::to_string(limits.max_json_values) +
                         " values (--max-request-json-values)",

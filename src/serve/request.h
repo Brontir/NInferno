@@ -72,8 +72,8 @@ private:
 // million tiny messages does not hold a worker while the template walks it.
 inline constexpr std::size_t kDefaultMaxRequestMessages = 16384;
 // Values (scalars, arrays, objects and object keys) a request body's JSON may hold. Each becomes a
-// node of the parsed document, about 100 bytes whatever its text size (`{}` is three bytes of text),
-// so the limit bounds the memory a parse takes, which the body size in bytes does not.
+// node of the parsed document, about 100 bytes whatever its text size (`{}` is three bytes of
+// text), so the limit bounds the memory a parse takes, which the body size in bytes does not.
 inline constexpr std::size_t kDefaultMaxRequestJsonValues = 1'000'000;
 
 // Server-side context needed while parsing/validating a request.

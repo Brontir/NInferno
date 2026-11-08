@@ -43,7 +43,7 @@ void HttpServer::handle_messages(const httplib::Request& req, httplib::Response&
     AnthropicMessagesRequest request;
     try {
         const RequestLimits limits = request_limits();
-        request                   = parse_anthropic_messages_request(parse_json_body(req, limits), limits);
+        request = parse_anthropic_messages_request(parse_json_body(req, limits), limits);
     } catch (const ApiException& exception) {
         refuse(req, res, exception.error());
         return;

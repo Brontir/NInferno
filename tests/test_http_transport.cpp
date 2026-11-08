@@ -155,9 +155,9 @@ int test_json_nesting_limit() {
     return failures;
 }
 
-// A body of many small values is refused at --max-request-json-values while it is parsed, before the
-// document is built (#527): `{}` is three bytes of text and about 25 times that in memory, so the
-// body size alone does not bound the parse. Scalars, containers and object keys all count.
+// A body of many small values is refused at --max-request-json-values while it is parsed, before
+// the document is built (#527): `{}` is three bytes of text and about 25 times that in memory, so
+// the body size alone does not bound the parse. Scalars, containers and object keys all count.
 int test_json_value_limit() {
     const auto parse_with = [](std::string body, std::size_t limit) -> std::string {
         httplib::Request request;
@@ -167,9 +167,7 @@ int test_json_value_limit() {
         try {
             (void)ninferno::serve::parse_json_body(request, limits);
             return "ok";
-        } catch (const ninferno::serve::ApiException& exception) {
-            return exception.error().code;
-        }
+        } catch (const ninferno::serve::ApiException& exception) { return exception.error().code; }
     };
     const auto objects = [](std::size_t count) {
         std::string body = "[";
@@ -182,9 +180,10 @@ int test_json_value_limit() {
                       "a body exactly at the value limit was refused");
     failures += check(parse_with(objects(1000), 1000) == "request_json_too_large",
                       "a body one value over the limit was accepted");
-    failures += check(parse_with(R"({"a":1,"b":[true,null,"x"]})", 7) == "ok" &&
-                          parse_with(R"({"a":1,"b":[true,null,"x"]})", 6) == "request_json_too_large",
-                      "object keys, scalars and containers are not all counted as values");
+    failures +=
+        check(parse_with(R"({"a":1,"b":[true,null,"x"]})", 7) == "ok" &&
+                  parse_with(R"({"a":1,"b":[true,null,"x"]})", 6) == "request_json_too_large",
+              "object keys, scalars and containers are not all counted as values");
     failures += check(parse_with("{not json", 100) != "ok" &&
                           parse_with("{not json", 100) != "request_json_too_large",
                       "invalid JSON was reported as too large");
