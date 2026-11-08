@@ -1676,3 +1676,60 @@ the row decode instructions against the MMA issue rate. `heuristic_w4a8` (Blackw
 way (RTX 5060 Ti 104 -> 107 ms from 144 to 256 tokens) and is not measured here. cost_route
 (generic_cost.cpp) prices GgmlMmq with continuous 8-column steps fitted with its efficiency; it ranks
 routes, not tiles, and is left as is.
+
+## 75. Blackwell's W4A8 prefill takes the 64 x 64 tile where its tiles cost less (#524, 08.11, measured)
+
+**Decision.** `heuristic_w4a8` took the producer-warp 128 x 64 tile from 128 tokens, so a call of 129..256
+tokens ran two 128-token tiles (RTX 5060 Ti 104 -> 107 ms from 144 to 256 prompt tokens, #524). For
+Q4_K and Q6_K (the formats `w4a8_ws_wins` gives that tile on Blackwell) it now compares the two tiles'
+work (core/w4a8_tiles.h; the estimate's `mmq_linears_seconds` reads the same function) and takes the
+classic 64 x 64 tile where it is smaller. The two cost constants are not DECISIONS 69's 0.43 (that
+one is back-solved from one MMQ measurement on one card and belongs to ggml's kernel).
+
+**Facts.** Both tiles are 64 weight rows over the whole K. The producer-warp tile's producers decode
+the rows and copy the activations ahead of the MMA warps, one CTA a SM: its CTA step is the same for
+64 and 128 tokens (Q4_K 4096 x 4096: 41.0 us at T = 64, 43.0 at 128, RTX 5090 and 5070 Ti alike), and
+its work is ceil(tiles / SMs) CTAs. The classic tile (128 threads, 64 tokens, decode and MMA in the same
+warps) is 0.84-0.98 of a producer-warp CTA alone on its SM and two co-resident CTAs cost 1.16 (Q4_K) or
+1.24 (Q6_K) together, so its work is (busy / 2) pairs plus a single for an odd count. It wins where
+the 128-token tiles' padding exceeds the pair's extra over 2 x 0.5: 129..192 and 257..320 tokens, where
+the grid fills the SMs less than about twice over; from 193 tokens (four 64-token tiles, 4 x 0.58)
+and at a multiple of 128 the producer-warp tile wins.
+
+**Kernel check, both cards.** `ninferno-serve route-tune --a8-candidates 1` timed every W4A8 tile of
+Qwen3.5 9B's Q4_K and Q6_K shapes (N = 1024..12288, K = 4096 and 12288, six epilogue/shape classes) at
+T = 64..512 on the RTX 5090 (170 SMs) and RTX 5070 Ti (70 SMs). The two constants (single, pair),
+fitted per card and format, agree across the two cards: Q4_K pair 1.16 and 1.16 (single 0.95 / 1.02,
+poorly constrained), Q6_K pair 1.26 / 1.22 (single 0.85 / 0.84); jointly (0.98, 1.16) and (0.84, 1.24).
+The model names the faster tile at 235 of 240 (call, card) points (the five misses cost 0.1-0.2 %),
+and predicts the classic tile's time within 16 % (rms 5.4 % Q4_K, 2.5 % Q6_K). The cards agree to the
+microsecond on the single-wave cases (64 x 64 at 128 tokens: 36.9 us / 49.2 us for 1 / 2 CTAs a SM).
+The 5090 shows the wave effect strongest (T = 288..320: 0.64 of the producer-warp tile, grid 320 CTAs
+in one pass of 2 a SM against 192 CTAs in two waves).
+
+**Product A/B (predicted before, measured after).** Qwen3.5 9B Q4_K_M, RTX 5070 Ti (the card that
+takes W4A8 where `mmq_prefill_pays` is false), `--no-prefix-reuse`, `max_tokens 1`, unique first word,
+two servers, A B / B A interleaved, four requests a point (spread under 0.3 ms). Prediction = base -
+the kernel table's saving over the model's linears (32 SwiGLU, 32 down, 24 GDN and 8 attention
+projections of this model; the rest of the prompt unchanged):
+
+| prompt tokens | base ms | predicted ms | measured ms | change |
+|---:|---:|---:|---:|---:|
+| 136..192 | 49.6..50.5 | -1.5..-1.6 | 48.1..49.2 | -2.7..-3.1 % (-1.4..-1.5 ms) |
+| 208..256 | 50.8..51.9 | 0 | same | 0 (+-0.1 %) |
+| 288 / 320 | 67.2 / 67.7 | -1.1 | 66.2 / 66.9 | -1.4 / -1.3 % (-0.9 ms) |
+| 384..512 | 69.4..86.3 | 0 | same | 0 (+-0.1 %) |
+
+The RTX 5090 takes ggml's matrix kernel for these prompts (`mmq_prefill_pays`), so this change is
+not on its path: A/B 136..512 tokens, +-0.4 %.
+
+**Numerics.** Every W4A8 schedule sums in the one order (generic_w4a8.cuh), so the two tiles write the
+same bytes: no output changes.
+
+**Not done.** The gain is small (the tile step is 0.4 ms against a 50 ms prompt of 9B at these
+lengths): the padding of 63 tokens costs a few percent of the linears. A card with fewer SMs and bigger
+rows (RTX 5060 Ti, 36 SMs; #524's) is the case the model prices at more but was not run. Formats other
+than Q4_K and Q6_K that take the producer-warp tile on Blackwell (IQ3_XXS, IQ2_S, IQ4_XS, IQ2_XS,
+IQ2_XXS, IQ3_S) keep it: each needs its own two constants from two cards.
+Run-to-run the kernel's `w4a8_ws` step depends a little on the token count inside a tile (T = 136:
+77.8 us, T = 256: 84.0 on 4096 x 4096), which the model leaves out.
