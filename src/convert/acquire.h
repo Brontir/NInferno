@@ -62,7 +62,8 @@ enum class Drafters {
 // What acquire_model does about the drafters of an artifact it reuses.
 enum class DrafterActionKind {
     Nothing,              // serve the artifact as it is
-    Attach,               // plan from the artifact (a GGUF's from its converted text) and attach
+    Attach,               // download gone: plan from the artifact and attach; download present (a
+                          // GGUF's): attach to it without converting companions in
     CompanionsThenAttach, // a GGUF's: convert the companions in again, then attach the others
     Reconvert,            // a checkpoint's artifact converted without its drafters: convert again
     ReplanFromCheckpoint, // plan again from the download; a companion it adds converts again
@@ -75,9 +76,9 @@ struct DrafterAction {
     std::string message; // Warn and Fail: why
 };
 
-// The decision for a complete artifact, from what is known before anything is read or fetched:
-// the start's `mode`, whether the model is a GGUF, whether its download is still there, what its
-// manifest says, and whether the caller named the components. Pure.
+// The decision for a complete artifact, a pure function of the start's `mode`, whether the model
+// is a GGUF (with the download gone: what the manifest records, else what the artifact says),
+// whether its download is still there, the manifest, and whether the caller named the components.
 [[nodiscard]] DrafterAction decide_drafters(Drafters mode, bool gguf, bool download_present,
                                             const ManifestState& manifest, bool components_given);
 

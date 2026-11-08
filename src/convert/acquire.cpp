@@ -344,8 +344,10 @@ DrafterAction decide_drafters(Drafters mode, bool gguf, bool download_present,
         if (manifest.bundle_failed && mode == Drafters::Require) {
             return {Kind::Fail, "failed and its download was removed: fetch the model again"};
         }
-        // A companion the artifact lacks is converted into it, which needs the download too.
-        if (manifest.missing_companion && mode == Drafters::Require) {
+        // A checkpoint's companion the artifact lacks is converted into it, which needs the
+        // download too. A GGUF's is missing when its components were named without it: fetching
+        // the model again does not change that.
+        if (manifest.missing_companion && !gguf && mode == Drafters::Require) {
             return {Kind::Fail,
                     "is not in the artifact and its download was removed: fetch the model again"};
         }
@@ -834,19 +836,26 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 // be made again without that download: kept as it is, and a drafter of it that
                 // failed fails --with-drafters.
                 refresh_drafters(options, *kept);
-                const auto state = read_manifest_state(*kept);
+                const auto state = options.drafters == Drafters::Off ? ManifestState()
+                                                                     : read_manifest_state(*kept);
+                auto action = decide_drafters(options.drafters, state.gguf_source, false, state,
+                                              options.components_given);
                 std::optional<DrafterTarget> target;
                 std::string target_error;
-                if (options.drafters != Drafters::Off) {
+                if (action.kind == DrafterActionKind::Attach) {
+                    // The plan is made from the artifact. A GGUF the manifest does not record
+                    // (none, or one written before it did) is told by the artifact's provenance.
                     try {
                         target = reused_target(describe_artifact(*kept, options.model_id.empty()
                                                                             ? repo
                                                                             : options.model_id),
                                                state);
+                        if (target->gguf_source && !state.gguf_source) {
+                            action = decide_drafters(options.drafters, true, false, state,
+                                                     options.components_given);
+                        }
                     } catch (const std::exception& error) { target_error = error.what(); }
                 }
-                const auto action = decide_drafters(options.drafters, target && target->gguf_source,
-                                                    false, state, options.components_given);
                 if (action.kind == DrafterActionKind::Fail) {
                     throw std::runtime_error("a drafter of " + kept->string() + " " +
                                              action.message + " (" + required_text(options) + ")");
@@ -1105,9 +1114,11 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
         }
         if (complete(out.artifact, false)) {
             refresh_drafters(options, out.artifact);
-            const auto action =
-                decide_drafters(options.drafters, gguf, true, read_manifest_state(out.artifact),
-                                options.components_given);
+            const auto action = decide_drafters(options.drafters, gguf, true,
+                                                options.drafters == Drafters::Off
+                                                    ? ManifestState()
+                                                    : read_manifest_state(out.artifact),
+                                                options.components_given);
             if (action.kind == DrafterActionKind::Attach ||
                 action.kind == DrafterActionKind::CompanionsThenAttach) {
                 // A GGUF's, converted before its drafters could be attached, or one failed: its
