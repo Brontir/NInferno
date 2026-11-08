@@ -51,7 +51,7 @@
 // the session is sized to the free device memory: the largest context up to 32768, spec-tune 4096,
 // with the widest chunk up to 2048 that keeps it; see fit_session), --kv-dtype bf16|fp8|fp8-full
 // (keys and values in BF16, the default, or FP8 E4M3 with a scale per row: about half the KV bytes;
-// fp8-full on the full layers alone, as ninferno-serve keeps Gemma 4), and the
+// fp8-full on the full layers alone; ninferno-serve's default under FP8 KV is fp8, every layer), and the
 // activation profile: none (the artifact's recorded W4A4 policy), --a16 (dense projections in
 // BF16; on 26B-A4B the expert bank's prefill stays W4A4, so that profile is mixed) or --a16-full
 // (every activation in BF16, experts included). --activations exact is ninferno-serve's exact: the

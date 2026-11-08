@@ -105,7 +105,8 @@ class Target final : public speculation::DraftTarget {
 public:
     // `work` is the session's workspace, sized with workspace_bytes() among its other users.
     // kv_fp8: FP8 key and value planes on every layer (allocate_kv_planes), or with kv_fp8_full
-    // on the full layers alone (the sliding rings stay BF16, as ninferno-serve keeps them).
+    // on the full layers alone (the sliding rings stay BF16, as ninferno-serve's
+    // --sliding-kv-dtype bf16 keeps them).
     Target(const Model& model, DeviceContext& device, DeviceArena& work, std::int32_t max_context,
            std::int32_t prefill_chunk, bool kv_fp8 = false, bool kv_fp8_full = false);
 
