@@ -7,6 +7,7 @@
 #include "core/generation.h"
 #include "core/measured_boards.h"
 #include "core/tensor.h"
+#include "core/w4a8_tiles.h"
 #include "core/layout.h"
 #include "ninferno/ops/prefill_routes.h"
 #include "ops/common/route_probe.h"
@@ -1252,7 +1253,20 @@ int heuristic_w4a8(const Problem& problem, const Weight& weight, std::int32_t to
                    ? k128x64
                    : k64x64;
     }
-    if (w4a8_ws_wins(problem, weight)) return k128x64ws;
+    if (w4a8_ws_wins(problem, weight)) {
+        // Q4_K and Q6_K: the classic 64 x 64 tile where its tiles cost less than the producer-warp
+        // tile's (core/w4a8_tiles.h): 129..192 and 257..320 tokens, where two 128-token tiles pad
+        // up to 63 tokens each. The sums are the same bytes.
+        const w4a8_tiles::NarrowCost* narrow = problem.qtype == QType::GGML_Q4_K   ? &w4a8_tiles::kQ4k
+                                               : problem.qtype == QType::GGML_Q6_K ? &w4a8_tiles::kQ6k
+                                                                                   : nullptr;
+        if (narrow != nullptr &&
+            w4a8_tiles::narrow_wins((problem.n + rows_per_cta - 1) / rows_per_cta, tokens, sm_count(),
+                                    *narrow)) {
+            return k64x64;
+        }
+        return k128x64ws;
+    }
     if (w4a8_wide_q4k(problem, tokens)) return k128x128;
     return wide_format ? k128x64 : k64x64;
 }

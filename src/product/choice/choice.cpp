@@ -3,6 +3,7 @@
 #include "core/generation.h"
 #include "core/measured_boards.h"
 #include "core/mmq_columns.h"
+#include "core/w4a8_tiles.h"
 
 #include <algorithm>
 #include <cctype>
@@ -793,8 +794,19 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
                 clocks += l.per_token * std::ceil(tiles / (kW4a8Q3kResident * sms)) * l.k * step;
                 continue;
             }
-            const double tiles = std::ceil(l.n / kW4a8KquantRows) * std::ceil(tokens / kW4a8KquantTokens);
-            clocks += l.per_token * std::ceil(tiles / sms) * (cost->c0 + l.k * step);
+            // Q4_K and Q6_K take the classic 64 x 64 tile where its tiles cost less (core/w4a8_tiles.h),
+            // as the kernel's heuristic_w4a8 does; the rest the producer-warp tile's rounds.
+            const std::string_view name = l.format.empty() ? std::string_view(format == &formats[3] ? "ggml_q6_k" : format == &formats[1] ? "ggml_q4_k" : "")
+                                                           : std::string_view(l.format);
+            const w4a8_tiles::NarrowCost* narrow = name == "ggml_q4_k"   ? &w4a8_tiles::kQ4k
+                                                   : name == "ggml_q6_k" ? &w4a8_tiles::kQ6k
+                                                                         : nullptr;
+            const double rounds =
+                narrow != nullptr
+                    ? w4a8_tiles::work(static_cast<std::int64_t>(std::ceil(l.n / kW4a8KquantRows)),
+                                       static_cast<std::int64_t>(std::ceil(tokens)), static_cast<int>(sms), *narrow)
+                    : std::ceil(std::ceil(l.n / kW4a8KquantRows) * std::ceil(tokens / kW4a8KquantTokens) / sms);
+            clocks += l.per_token * rounds * (cost->c0 + l.k * step);
         }
         return with_unread(clocks / card.clock_hz);
     }
