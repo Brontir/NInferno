@@ -325,10 +325,9 @@ int main() {
             std::printf(
                 "plain step at two requests / one: Qwen3.5-9B RTX 5070 Ti %.4f (weights only "
                 "%.4f), RTX 4060 Ti %.4f (%.4f); Qwen3.6-35B-A3B RTX 4090 %.4f (%.4f)\n",
-                ratio(*d.round_facts, k5070, q9),
-                ratio(*d.round_facts, k5070, {}), ratio(*d.round_facts, k4060, q9),
-                ratio(*d.round_facts, k4060, {}), ratio(*m.round_facts, k4090, q35),
-                ratio(*m.round_facts, k4090, {}));
+                ratio(*d.round_facts, k5070, q9), ratio(*d.round_facts, k5070, {}),
+                ratio(*d.round_facts, k4060, q9), ratio(*d.round_facts, k4060, {}),
+                ratio(*m.round_facts, k4090, q35), ratio(*m.round_facts, k4090, {}));
             // A request's bytes only add: the ratio stays above one and below two, the state of
             // one request makes the second request dearer by its own share, and a stream of no
             // bytes is the weights-only price.
@@ -348,10 +347,7 @@ int main() {
             expect(g0 && g1 && *g1 != *g0, "per-stream bytes move the load gain");
             std::printf(
                 "mtp:3 load gain at C=2 of 2.0: Qwen3.5-9B RTX 5070 Ti %.4f (weights only %.4f)\n",
-                    g1
-                    ? *g1
-                    : 0.0,
-                g0 ? *g0 : 0.0);
+                g1 ? *g1 : 0.0, g0 ? *g0 : 0.0);
         }
         // Against a measurement (reported, not held: the load cells ran another engine build
         // and corpus than the pair's one-request rounds): Gemma 4 26B A4B QAT UD-Q4_K_XL with its
