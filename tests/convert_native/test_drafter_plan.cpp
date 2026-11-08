@@ -545,7 +545,12 @@ void retry_failed_drafter() {
            "a drafter file that cannot be read is not refreshed (an attach plans it again)");
     // A drafter file here written again since (its id is no longer the recorded one) takes its new
     // id, whatever the start asks of drafters: nothing is fetched, the other entries are kept.
-    // The fixture's tokenizer.json is not a tokenizer: a vocabulary the fingerprint can read.
+    // A drafter whose vocabulary cannot be read (the fixture's tokenizer.json is not a tokenizer)
+    // is left to an attach, and the others are refreshed all the same.
+    const ninferno::test::artifact_fixture::Fixture unreadable;
+    unreadable.write();
+    std::ofstream(unreadable.entry.string() + ".conversion.json") << "{}";
+    // A vocabulary the fingerprint can read.
     ninferno::test::artifact_fixture::Fixture drafter;
     const std::string tokenizer = R"({"model": {"vocab": {"a": 0, "b": 1}}})";
     for (std::size_t i = 0; i < tokenizer.size(); ++i) {
@@ -576,14 +581,21 @@ void retry_failed_drafter() {
     expect(after["drafters"][1]["status"] == "failed: SSL connect error",
            "another drafter's failure is kept for its retry");
     expect(cv::refresh_changed_drafters(artifact).empty(), "refreshed once: nothing more to do");
+    // One drafter whose vocabulary cannot be read does not stop the others' refresh.
+    const std::string bad = R"({"name": "other", "status": "cached", "artifact": ")" +
+                            unreadable.entry.string() + R"(", "artifact_id": "00"})";
+    with(manifest("{}", bad + ", " + entry("cached", "00")));
+    const auto past_bad = cv::refresh_changed_drafters(artifact);
+    expect(past_bad.size() == 1 && past_bad[0] == "assistant",
+           "a drafter of an unreadable vocabulary is skipped, the next one refreshed");
     // Its vocabulary no longer the target's: incompatible, not attached.
-    if (const auto fp = ninferno::spec::artifact_vocab_fingerprint(drafter.entry)) {
-        with(manifest(R"({"vocab_fingerprint": "v1:another"})", entry("cached", "00")));
-        expect(cv::refresh_changed_drafters(artifact).size() == 1, "refreshed as incompatible");
-        const auto refused = Json::parse(read_text(ninferno::spec::manifest_path(artifact)));
-        expect(refused["drafters"][0]["status"].get<std::string>().starts_with("incompatible"),
-               "a drafter of another vocabulary is incompatible");
-    }
+    expect(ninferno::spec::artifact_vocab_fingerprint(drafter.entry).has_value(),
+           "the drafter fixture has a vocabulary");
+    with(manifest(R"({"vocab_fingerprint": "v1:another"})", entry("cached", "00")));
+    expect(cv::refresh_changed_drafters(artifact).size() == 1, "refreshed as incompatible");
+    const auto refused = Json::parse(read_text(ninferno::spec::manifest_path(artifact)));
+    expect(refused["drafters"][0]["status"].get<std::string>().starts_with("incompatible"),
+           "a drafter of another vocabulary is incompatible");
     // Never attached (failed), or without its conversion report (a conversion stopped half way):
     // left to an attach.
     with(manifest("{}", entry("failed: x", "00")));
