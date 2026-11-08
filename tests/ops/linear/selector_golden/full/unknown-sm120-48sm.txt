@@ -7366,7 +7366,7 @@ q4k p1 store 1024x4096 prefill T=48 w4a8.64x64 ws=245760
 q4k p1 store 1024x4096 prefill T=64 w4a8.64x64 ws=327680
 q4k p1 store 1024x4096 prefill T=96 w4a8.64x64 ws=491520
 q4k p1 store 1024x4096 prefill T=128 w4a8.64x64 ws=655360
-q4k p1 store 1024x4096 prefill T=192 w4a8ws.128x64.p4 ws=983040
+q4k p1 store 1024x4096 prefill T=192 w4a8.64x64 ws=983040
 q4k p1 store 1024x4096 prefill T=256 w4a8ws.128x64.p4 ws=1310720
 q4k p1 store 1024x4096 prefill T=512 w4a8ws.128x64.p4 ws=2621440
 q4k p1 store 1024x4096 prefill T=1024 w4a8ws.128x64.p4 ws=5242880
@@ -7394,7 +7394,7 @@ q4k p1 add 1024x4096 prefill T=48 w4a8.64x64 ws=245760
 q4k p1 add 1024x4096 prefill T=64 w4a8.64x64 ws=327680
 q4k p1 add 1024x4096 prefill T=96 w4a8.64x64 ws=491520
 q4k p1 add 1024x4096 prefill T=128 w4a8.64x64 ws=655360
-q4k p1 add 1024x4096 prefill T=192 w4a8ws.128x64.p4 ws=983040
+q4k p1 add 1024x4096 prefill T=192 w4a8.64x64 ws=983040
 q4k p1 add 1024x4096 prefill T=256 w4a8ws.128x64.p4 ws=1310720
 q4k p1 add 1024x4096 prefill T=512 w4a8ws.128x64.p4 ws=2621440
 q4k p1 add 1024x4096 prefill T=1024 w4a8ws.128x64.p4 ws=5242880
@@ -7421,7 +7421,7 @@ q4k p1 swiglu 512x4096 prefill T=48 w4a8.64x64 ws=245760
 q4k p1 swiglu 512x4096 prefill T=64 w4a8.64x64 ws=327680
 q4k p1 swiglu 512x4096 prefill T=96 w4a8.64x64 ws=491520
 q4k p1 swiglu 512x4096 prefill T=128 w4a8.64x64 ws=655360
-q4k p1 swiglu 512x4096 prefill T=192 w4a8ws.128x64.p4 ws=983040
+q4k p1 swiglu 512x4096 prefill T=192 w4a8.64x64 ws=983040
 q4k p1 swiglu 512x4096 prefill T=256 w4a8ws.128x64.p4 ws=1310720
 q4k p1 swiglu 512x4096 prefill T=512 w4a8ws.128x64.p4 ws=2621440
 q4k p1 swiglu 512x4096 prefill T=1024 w4a8ws.128x64.p4 ws=5242880
@@ -7493,7 +7493,7 @@ q4k p1 store 2048x1024 prefill T=48 w4a8.64x64 ws=61440
 q4k p1 store 2048x1024 prefill T=64 w4a8.64x64 ws=81920
 q4k p1 store 2048x1024 prefill T=96 w4a8.128x64 ws=122880
 q4k p1 store 2048x1024 prefill T=128 w4a8ws.128x64.p4 ws=163840
-q4k p1 store 2048x1024 prefill T=192 w4a8ws.128x64.p4 ws=245760
+q4k p1 store 2048x1024 prefill T=192 w4a8.64x64 ws=245760
 q4k p1 store 2048x1024 prefill T=256 w4a8ws.128x64.p4 ws=327680
 q4k p1 store 2048x1024 prefill T=512 w4a8ws.128x64.p4 ws=655360
 q4k p1 store 2048x1024 prefill T=1024 w4a8ws.128x64.p4 ws=1310720
@@ -7524,7 +7524,7 @@ q4k p1 add 2048x1024 prefill T=48 w4a8.64x64 ws=61440
 q4k p1 add 2048x1024 prefill T=64 w4a8.64x64 ws=81920
 q4k p1 add 2048x1024 prefill T=96 w4a8.128x64 ws=122880
 q4k p1 add 2048x1024 prefill T=128 w4a8ws.128x64.p4 ws=163840
-q4k p1 add 2048x1024 prefill T=192 w4a8ws.128x64.p4 ws=245760
+q4k p1 add 2048x1024 prefill T=192 w4a8.64x64 ws=245760
 q4k p1 add 2048x1024 prefill T=256 w4a8ws.128x64.p4 ws=327680
 q4k p1 add 2048x1024 prefill T=512 w4a8ws.128x64.p4 ws=655360
 q4k p1 add 2048x1024 prefill T=1024 w4a8ws.128x64.p4 ws=1310720
@@ -7555,7 +7555,7 @@ q4k p1 swiglu 1024x1024 prefill T=48 w4a8.64x64 ws=61440
 q4k p1 swiglu 1024x1024 prefill T=64 w4a8.64x64 ws=81920
 q4k p1 swiglu 1024x1024 prefill T=96 w4a8.128x64 ws=122880
 q4k p1 swiglu 1024x1024 prefill T=128 w4a8ws.128x64.p4 ws=163840
-q4k p1 swiglu 1024x1024 prefill T=192 w4a8ws.128x64.p4 ws=245760
+q4k p1 swiglu 1024x1024 prefill T=192 w4a8.64x64 ws=245760
 q4k p1 swiglu 1024x1024 prefill T=256 w4a8ws.128x64.p4 ws=327680
 q4k p1 swiglu 1024x1024 prefill T=512 w4a8ws.128x64.p4 ws=655360
 q4k p1 swiglu 1024x1024 prefill T=1024 w4a8ws.128x64.p4 ws=1310720
@@ -7614,7 +7614,7 @@ q4k p1 store 4096x4096 prefill T=48 w4a8.64x64 ws=245760
 q4k p1 store 4096x4096 prefill T=64 w4a8.64x64 ws=327680
 q4k p1 store 4096x4096 prefill T=96 w4a8.128x64 ws=491520
 q4k p1 store 4096x4096 prefill T=128 w4a8ws.128x64.p4 ws=655360
-q4k p1 store 4096x4096 prefill T=192 w4a8ws.128x64.p4 ws=983040
+q4k p1 store 4096x4096 prefill T=192 w4a8.64x64 ws=983040
 q4k p1 store 4096x4096 prefill T=256 w4a8ws.128x64.p4 ws=1310720
 q4k p1 store 4096x4096 prefill T=512 w4a8ws.128x64.p4 ws=2621440
 q4k p1 store 4096x4096 prefill T=1024 w4a8ws.128x64.p4 ws=5242880
@@ -7640,7 +7640,7 @@ q4k p1 add 4096x4096 prefill T=48 w4a8.64x64 ws=245760
 q4k p1 add 4096x4096 prefill T=64 w4a8.64x64 ws=327680
 q4k p1 add 4096x4096 prefill T=96 w4a8.128x64 ws=491520
 q4k p1 add 4096x4096 prefill T=128 w4a8ws.128x64.p4 ws=655360
-q4k p1 add 4096x4096 prefill T=192 w4a8ws.128x64.p4 ws=983040
+q4k p1 add 4096x4096 prefill T=192 w4a8.64x64 ws=983040
 q4k p1 add 4096x4096 prefill T=256 w4a8ws.128x64.p4 ws=1310720
 q4k p1 add 4096x4096 prefill T=512 w4a8ws.128x64.p4 ws=2621440
 q4k p1 add 4096x4096 prefill T=1024 w4a8ws.128x64.p4 ws=5242880
@@ -7666,7 +7666,7 @@ q4k p1 swiglu 2048x4096 prefill T=48 w4a8.64x64 ws=245760
 q4k p1 swiglu 2048x4096 prefill T=64 w4a8.64x64 ws=327680
 q4k p1 swiglu 2048x4096 prefill T=96 w4a8.128x64 ws=491520
 q4k p1 swiglu 2048x4096 prefill T=128 w4a8ws.128x64.p4 ws=655360
-q4k p1 swiglu 2048x4096 prefill T=192 w4a8ws.128x64.p4 ws=983040
+q4k p1 swiglu 2048x4096 prefill T=192 w4a8.64x64 ws=983040
 q4k p1 swiglu 2048x4096 prefill T=256 w4a8ws.128x64.p4 ws=1310720
 q4k p1 swiglu 2048x4096 prefill T=512 w4a8ws.128x64.p4 ws=2621440
 q4k p1 swiglu 2048x4096 prefill T=1024 w4a8ws.128x64.p4 ws=5242880
@@ -7726,7 +7726,7 @@ q4k p1 store 6144x5120 prefill T=48 w4a8.64x64 ws=307200
 q4k p1 store 6144x5120 prefill T=64 w4a8.64x64 ws=409600
 q4k p1 store 6144x5120 prefill T=96 w4a8.128x64 ws=614400
 q4k p1 store 6144x5120 prefill T=128 w4a8ws.128x64.p4 ws=819200
-q4k p1 store 6144x5120 prefill T=192 w4a8ws.128x64.p4 ws=1228800
+q4k p1 store 6144x5120 prefill T=192 w4a8.64x64 ws=1228800
 q4k p1 store 6144x5120 prefill T=256 w4a8ws.128x64.p4 ws=1638400
 q4k p1 store 6144x5120 prefill T=512 w4a8ws.128x64.p4 ws=3276800
 q4k p1 store 6144x5120 prefill T=1024 w4a8ws.128x64.p4 ws=6553600
@@ -7756,7 +7756,7 @@ q4k p1 add 6144x5120 prefill T=48 w4a8.64x64 ws=307200
 q4k p1 add 6144x5120 prefill T=64 w4a8.64x64 ws=409600
 q4k p1 add 6144x5120 prefill T=96 w4a8.128x64 ws=614400
 q4k p1 add 6144x5120 prefill T=128 w4a8ws.128x64.p4 ws=819200
-q4k p1 add 6144x5120 prefill T=192 w4a8ws.128x64.p4 ws=1228800
+q4k p1 add 6144x5120 prefill T=192 w4a8.64x64 ws=1228800
 q4k p1 add 6144x5120 prefill T=256 w4a8ws.128x64.p4 ws=1638400
 q4k p1 add 6144x5120 prefill T=512 w4a8ws.128x64.p4 ws=3276800
 q4k p1 add 6144x5120 prefill T=1024 w4a8ws.128x64.p4 ws=6553600
@@ -7786,7 +7786,7 @@ q4k p1 swiglu 3072x5120 prefill T=48 w4a8.64x64 ws=307200
 q4k p1 swiglu 3072x5120 prefill T=64 w4a8.64x64 ws=409600
 q4k p1 swiglu 3072x5120 prefill T=96 w4a8.128x64 ws=614400
 q4k p1 swiglu 3072x5120 prefill T=128 w4a8ws.128x64.p4 ws=819200
-q4k p1 swiglu 3072x5120 prefill T=192 w4a8ws.128x64.p4 ws=1228800
+q4k p1 swiglu 3072x5120 prefill T=192 w4a8.64x64 ws=1228800
 q4k p1 swiglu 3072x5120 prefill T=256 w4a8ws.128x64.p4 ws=1638400
 q4k p1 swiglu 3072x5120 prefill T=512 w4a8ws.128x64.p4 ws=3276800
 q4k p1 swiglu 3072x5120 prefill T=1024 w4a8ws.128x64.p4 ws=6553600
@@ -7835,7 +7835,7 @@ q4k p1 store 17408x5120 prefill T=48 w4a8.64x64 ws=307200
 q4k p1 store 17408x5120 prefill T=64 w4a8.64x64 ws=409600
 q4k p1 store 17408x5120 prefill T=96 w4a8.128x64 ws=614400
 q4k p1 store 17408x5120 prefill T=128 w4a8ws.128x64.p4 ws=819200
-q4k p1 store 17408x5120 prefill T=192 w4a8ws.128x64.p4 ws=1228800
+q4k p1 store 17408x5120 prefill T=192 w4a8.64x64 ws=1228800
 q4k p1 store 17408x5120 prefill T=256 w4a8ws.128x64.p4 ws=1638400
 q4k p1 store 17408x5120 prefill T=512 w4a8ws.128x64.p4 ws=3276800
 q4k p1 store 17408x5120 prefill T=1024 w4a8ws.128x64.p4 ws=6553600
@@ -7856,7 +7856,7 @@ q4k p1 add 17408x5120 prefill T=48 w4a8.64x64 ws=307200
 q4k p1 add 17408x5120 prefill T=64 w4a8.64x64 ws=409600
 q4k p1 add 17408x5120 prefill T=96 w4a8.128x64 ws=614400
 q4k p1 add 17408x5120 prefill T=128 w4a8ws.128x64.p4 ws=819200
-q4k p1 add 17408x5120 prefill T=192 w4a8ws.128x64.p4 ws=1228800
+q4k p1 add 17408x5120 prefill T=192 w4a8.64x64 ws=1228800
 q4k p1 add 17408x5120 prefill T=256 w4a8ws.128x64.p4 ws=1638400
 q4k p1 add 17408x5120 prefill T=512 w4a8ws.128x64.p4 ws=3276800
 q4k p1 add 17408x5120 prefill T=1024 w4a8ws.128x64.p4 ws=6553600
@@ -7877,7 +7877,7 @@ q4k p1 swiglu 8704x5120 prefill T=48 w4a8.64x64 ws=307200
 q4k p1 swiglu 8704x5120 prefill T=64 w4a8.64x64 ws=409600
 q4k p1 swiglu 8704x5120 prefill T=96 w4a8.128x64 ws=614400
 q4k p1 swiglu 8704x5120 prefill T=128 w4a8ws.128x64.p4 ws=819200
-q4k p1 swiglu 8704x5120 prefill T=192 w4a8ws.128x64.p4 ws=1228800
+q4k p1 swiglu 8704x5120 prefill T=192 w4a8.64x64 ws=1228800
 q4k p1 swiglu 8704x5120 prefill T=256 w4a8ws.128x64.p4 ws=1638400
 q4k p1 swiglu 8704x5120 prefill T=512 w4a8ws.128x64.p4 ws=3276800
 q4k p1 swiglu 8704x5120 prefill T=1024 w4a8ws.128x64.p4 ws=6553600
@@ -7930,7 +7930,7 @@ q4k p1 store 5120x17408 prefill T=48 w4a8.64x64 ws=1044480
 q4k p1 store 5120x17408 prefill T=64 w4a8.64x64 ws=1392640
 q4k p1 store 5120x17408 prefill T=96 w4a8.128x64 ws=2088960
 q4k p1 store 5120x17408 prefill T=128 w4a8ws.128x64.p4 ws=2785280
-q4k p1 store 5120x17408 prefill T=192 w4a8ws.128x64.p4 ws=4177920
+q4k p1 store 5120x17408 prefill T=192 w4a8.64x64 ws=4177920
 q4k p1 store 5120x17408 prefill T=256 w4a8ws.128x64.p4 ws=5570560
 q4k p1 store 5120x17408 prefill T=512 w4a8ws.128x64.p4 ws=11141120
 q4k p1 store 5120x17408 prefill T=1024 w4a8ws.128x64.p4 ws=22282240
@@ -7951,7 +7951,7 @@ q4k p1 add 5120x17408 prefill T=48 w4a8.64x64 ws=1044480
 q4k p1 add 5120x17408 prefill T=64 w4a8.64x64 ws=1392640
 q4k p1 add 5120x17408 prefill T=96 w4a8.128x64 ws=2088960
 q4k p1 add 5120x17408 prefill T=128 w4a8ws.128x64.p4 ws=2785280
-q4k p1 add 5120x17408 prefill T=192 w4a8ws.128x64.p4 ws=4177920
+q4k p1 add 5120x17408 prefill T=192 w4a8.64x64 ws=4177920
 q4k p1 add 5120x17408 prefill T=256 w4a8ws.128x64.p4 ws=5570560
 q4k p1 add 5120x17408 prefill T=512 w4a8ws.128x64.p4 ws=11141120
 q4k p1 add 5120x17408 prefill T=1024 w4a8ws.128x64.p4 ws=22282240
@@ -7972,7 +7972,7 @@ q4k p1 swiglu 2560x17408 prefill T=48 w4a8.64x64 ws=1044480
 q4k p1 swiglu 2560x17408 prefill T=64 w4a8.64x64 ws=1392640
 q4k p1 swiglu 2560x17408 prefill T=96 w4a8.128x64 ws=2088960
 q4k p1 swiglu 2560x17408 prefill T=128 w4a8ws.128x64.p4 ws=2785280
-q4k p1 swiglu 2560x17408 prefill T=192 w4a8ws.128x64.p4 ws=4177920
+q4k p1 swiglu 2560x17408 prefill T=192 w4a8.64x64 ws=4177920
 q4k p1 swiglu 2560x17408 prefill T=256 w4a8ws.128x64.p4 ws=5570560
 q4k p1 swiglu 2560x17408 prefill T=512 w4a8ws.128x64.p4 ws=11141120
 q4k p1 swiglu 2560x17408 prefill T=1024 w4a8ws.128x64.p4 ws=22282240
@@ -8026,7 +8026,7 @@ q4k p1 store 28672x8192 prefill T=48 w4a8.64x64 ws=491520
 q4k p1 store 28672x8192 prefill T=64 w4a8.64x64 ws=655360
 q4k p1 store 28672x8192 prefill T=96 w4a8.128x64 ws=983040
 q4k p1 store 28672x8192 prefill T=128 w4a8ws.128x64.p4 ws=1310720
-q4k p1 store 28672x8192 prefill T=192 w4a8ws.128x64.p4 ws=1966080
+q4k p1 store 28672x8192 prefill T=192 w4a8.64x64 ws=1966080
 q4k p1 store 28672x8192 prefill T=256 w4a8ws.128x64.p4 ws=2621440
 q4k p1 store 28672x8192 prefill T=512 w4a8ws.128x64.p4 ws=5242880
 q4k p1 store 28672x8192 prefill T=1024 w4a8ws.128x64.p4 ws=10485760
@@ -8047,7 +8047,7 @@ q4k p1 add 28672x8192 prefill T=48 w4a8.64x64 ws=491520
 q4k p1 add 28672x8192 prefill T=64 w4a8.64x64 ws=655360
 q4k p1 add 28672x8192 prefill T=96 w4a8.128x64 ws=983040
 q4k p1 add 28672x8192 prefill T=128 w4a8ws.128x64.p4 ws=1310720
-q4k p1 add 28672x8192 prefill T=192 w4a8ws.128x64.p4 ws=1966080
+q4k p1 add 28672x8192 prefill T=192 w4a8.64x64 ws=1966080
 q4k p1 add 28672x8192 prefill T=256 w4a8ws.128x64.p4 ws=2621440
 q4k p1 add 28672x8192 prefill T=512 w4a8ws.128x64.p4 ws=5242880
 q4k p1 add 28672x8192 prefill T=1024 w4a8ws.128x64.p4 ws=10485760
@@ -8068,7 +8068,7 @@ q4k p1 swiglu 14336x8192 prefill T=48 w4a8.64x64 ws=491520
 q4k p1 swiglu 14336x8192 prefill T=64 w4a8.64x64 ws=655360
 q4k p1 swiglu 14336x8192 prefill T=96 w4a8.128x64 ws=983040
 q4k p1 swiglu 14336x8192 prefill T=128 w4a8ws.128x64.p4 ws=1310720
-q4k p1 swiglu 14336x8192 prefill T=192 w4a8ws.128x64.p4 ws=1966080
+q4k p1 swiglu 14336x8192 prefill T=192 w4a8.64x64 ws=1966080
 q4k p1 swiglu 14336x8192 prefill T=256 w4a8ws.128x64.p4 ws=2621440
 q4k p1 swiglu 14336x8192 prefill T=512 w4a8ws.128x64.p4 ws=5242880
 q4k p1 swiglu 14336x8192 prefill T=1024 w4a8ws.128x64.p4 ws=10485760
@@ -9115,7 +9115,7 @@ q6k p1 store 1024x4096 prefill T=48 w4a8.64x64 ws=245760
 q6k p1 store 1024x4096 prefill T=64 w4a8.64x64 ws=327680
 q6k p1 store 1024x4096 prefill T=96 w4a8.64x64 ws=491520
 q6k p1 store 1024x4096 prefill T=128 w4a8.64x64 ws=655360
-q6k p1 store 1024x4096 prefill T=192 w4a8ws.128x64.p4 ws=983040
+q6k p1 store 1024x4096 prefill T=192 w4a8.64x64 ws=983040
 q6k p1 store 1024x4096 prefill T=256 w4a8ws.128x64.p4 ws=1310720
 q6k p1 store 1024x4096 prefill T=512 w4a8ws.128x64.p4 ws=2621440
 q6k p1 store 1024x4096 prefill T=1024 w4a8ws.128x64.p4 ws=5242880
@@ -9143,7 +9143,7 @@ q6k p1 add 1024x4096 prefill T=48 w4a8.64x64 ws=245760
 q6k p1 add 1024x4096 prefill T=64 w4a8.64x64 ws=327680
 q6k p1 add 1024x4096 prefill T=96 w4a8.64x64 ws=491520
 q6k p1 add 1024x4096 prefill T=128 w4a8.64x64 ws=655360
-q6k p1 add 1024x4096 prefill T=192 w4a8ws.128x64.p4 ws=983040
+q6k p1 add 1024x4096 prefill T=192 w4a8.64x64 ws=983040
 q6k p1 add 1024x4096 prefill T=256 w4a8ws.128x64.p4 ws=1310720
 q6k p1 add 1024x4096 prefill T=512 w4a8ws.128x64.p4 ws=2621440
 q6k p1 add 1024x4096 prefill T=1024 w4a8ws.128x64.p4 ws=5242880
@@ -9171,7 +9171,7 @@ q6k p1 swiglu 512x4096 prefill T=48 w4a8.64x64 ws=245760
 q6k p1 swiglu 512x4096 prefill T=64 w4a8.64x64 ws=327680
 q6k p1 swiglu 512x4096 prefill T=96 w4a8.64x64 ws=491520
 q6k p1 swiglu 512x4096 prefill T=128 w4a8.64x64 ws=655360
-q6k p1 swiglu 512x4096 prefill T=192 w4a8ws.128x64.p4 ws=983040
+q6k p1 swiglu 512x4096 prefill T=192 w4a8.64x64 ws=983040
 q6k p1 swiglu 512x4096 prefill T=256 w4a8ws.128x64.p4 ws=1310720
 q6k p1 swiglu 512x4096 prefill T=512 w4a8ws.128x64.p4 ws=2621440
 q6k p1 swiglu 512x4096 prefill T=1024 w4a8ws.128x64.p4 ws=5242880
@@ -9242,7 +9242,7 @@ q6k p1 store 2048x1024 prefill T=48 w4a8.64x64 ws=61440
 q6k p1 store 2048x1024 prefill T=64 w4a8.64x64 ws=81920
 q6k p1 store 2048x1024 prefill T=96 w4a8.128x64 ws=122880
 q6k p1 store 2048x1024 prefill T=128 w4a8ws.128x64.p4 ws=163840
-q6k p1 store 2048x1024 prefill T=192 w4a8ws.128x64.p4 ws=245760
+q6k p1 store 2048x1024 prefill T=192 w4a8.64x64 ws=245760
 q6k p1 store 2048x1024 prefill T=256 w4a8ws.128x64.p4 ws=327680
 q6k p1 store 2048x1024 prefill T=512 w4a8ws.128x64.p4 ws=655360
 q6k p1 store 2048x1024 prefill T=1024 w4a8ws.128x64.p4 ws=1310720
@@ -9273,7 +9273,7 @@ q6k p1 add 2048x1024 prefill T=48 w4a8.64x64 ws=61440
 q6k p1 add 2048x1024 prefill T=64 w4a8.64x64 ws=81920
 q6k p1 add 2048x1024 prefill T=96 w4a8.128x64 ws=122880
 q6k p1 add 2048x1024 prefill T=128 w4a8ws.128x64.p4 ws=163840
-q6k p1 add 2048x1024 prefill T=192 w4a8ws.128x64.p4 ws=245760
+q6k p1 add 2048x1024 prefill T=192 w4a8.64x64 ws=245760
 q6k p1 add 2048x1024 prefill T=256 w4a8ws.128x64.p4 ws=327680
 q6k p1 add 2048x1024 prefill T=512 w4a8ws.128x64.p4 ws=655360
 q6k p1 add 2048x1024 prefill T=1024 w4a8ws.128x64.p4 ws=1310720
@@ -9304,7 +9304,7 @@ q6k p1 swiglu 1024x1024 prefill T=48 w4a8.64x64 ws=61440
 q6k p1 swiglu 1024x1024 prefill T=64 w4a8.64x64 ws=81920
 q6k p1 swiglu 1024x1024 prefill T=96 w4a8.128x64 ws=122880
 q6k p1 swiglu 1024x1024 prefill T=128 w4a8ws.128x64.p4 ws=163840
-q6k p1 swiglu 1024x1024 prefill T=192 w4a8ws.128x64.p4 ws=245760
+q6k p1 swiglu 1024x1024 prefill T=192 w4a8.64x64 ws=245760
 q6k p1 swiglu 1024x1024 prefill T=256 w4a8ws.128x64.p4 ws=327680
 q6k p1 swiglu 1024x1024 prefill T=512 w4a8ws.128x64.p4 ws=655360
 q6k p1 swiglu 1024x1024 prefill T=1024 w4a8ws.128x64.p4 ws=1310720
@@ -9368,7 +9368,7 @@ q6k p1 store 4096x4096 prefill T=48 w4a8.64x64 ws=245760
 q6k p1 store 4096x4096 prefill T=64 w4a8.64x64 ws=327680
 q6k p1 store 4096x4096 prefill T=96 w4a8.128x64 ws=491520
 q6k p1 store 4096x4096 prefill T=128 w4a8ws.128x64.p4 ws=655360
-q6k p1 store 4096x4096 prefill T=192 w4a8ws.128x64.p4 ws=983040
+q6k p1 store 4096x4096 prefill T=192 w4a8.64x64 ws=983040
 q6k p1 store 4096x4096 prefill T=256 w4a8ws.128x64.p4 ws=1310720
 q6k p1 store 4096x4096 prefill T=512 w4a8ws.128x64.p4 ws=2621440
 q6k p1 store 4096x4096 prefill T=1024 w4a8ws.128x64.p4 ws=5242880
@@ -9391,7 +9391,7 @@ q6k p1 add 4096x4096 prefill T=48 w4a8.64x64 ws=245760
 q6k p1 add 4096x4096 prefill T=64 w4a8.64x64 ws=327680
 q6k p1 add 4096x4096 prefill T=96 w4a8.128x64 ws=491520
 q6k p1 add 4096x4096 prefill T=128 w4a8ws.128x64.p4 ws=655360
-q6k p1 add 4096x4096 prefill T=192 w4a8ws.128x64.p4 ws=983040
+q6k p1 add 4096x4096 prefill T=192 w4a8.64x64 ws=983040
 q6k p1 add 4096x4096 prefill T=256 w4a8ws.128x64.p4 ws=1310720
 q6k p1 add 4096x4096 prefill T=512 w4a8ws.128x64.p4 ws=2621440
 q6k p1 add 4096x4096 prefill T=1024 w4a8ws.128x64.p4 ws=5242880
@@ -9414,7 +9414,7 @@ q6k p1 swiglu 2048x4096 prefill T=48 w4a8.64x64 ws=245760
 q6k p1 swiglu 2048x4096 prefill T=64 w4a8.64x64 ws=327680
 q6k p1 swiglu 2048x4096 prefill T=96 w4a8.128x64 ws=491520
 q6k p1 swiglu 2048x4096 prefill T=128 w4a8ws.128x64.p4 ws=655360
-q6k p1 swiglu 2048x4096 prefill T=192 w4a8ws.128x64.p4 ws=983040
+q6k p1 swiglu 2048x4096 prefill T=192 w4a8.64x64 ws=983040
 q6k p1 swiglu 2048x4096 prefill T=256 w4a8ws.128x64.p4 ws=1310720
 q6k p1 swiglu 2048x4096 prefill T=512 w4a8ws.128x64.p4 ws=2621440
 q6k p1 swiglu 2048x4096 prefill T=1024 w4a8ws.128x64.p4 ws=5242880
@@ -9473,7 +9473,7 @@ q6k p1 store 6144x5120 prefill T=48 w4a8.64x64 ws=307200
 q6k p1 store 6144x5120 prefill T=64 w4a8.64x64 ws=409600
 q6k p1 store 6144x5120 prefill T=96 w4a8.128x64 ws=614400
 q6k p1 store 6144x5120 prefill T=128 w4a8ws.128x64.p4 ws=819200
-q6k p1 store 6144x5120 prefill T=192 w4a8ws.128x64.p4 ws=1228800
+q6k p1 store 6144x5120 prefill T=192 w4a8.64x64 ws=1228800
 q6k p1 store 6144x5120 prefill T=256 w4a8ws.128x64.p4 ws=1638400
 q6k p1 store 6144x5120 prefill T=512 w4a8ws.128x64.p4 ws=3276800
 q6k p1 store 6144x5120 prefill T=1024 w4a8ws.128x64.p4 ws=6553600
@@ -9501,7 +9501,7 @@ q6k p1 add 6144x5120 prefill T=48 w4a8.64x64 ws=307200
 q6k p1 add 6144x5120 prefill T=64 w4a8.64x64 ws=409600
 q6k p1 add 6144x5120 prefill T=96 w4a8.128x64 ws=614400
 q6k p1 add 6144x5120 prefill T=128 w4a8ws.128x64.p4 ws=819200
-q6k p1 add 6144x5120 prefill T=192 w4a8ws.128x64.p4 ws=1228800
+q6k p1 add 6144x5120 prefill T=192 w4a8.64x64 ws=1228800
 q6k p1 add 6144x5120 prefill T=256 w4a8ws.128x64.p4 ws=1638400
 q6k p1 add 6144x5120 prefill T=512 w4a8ws.128x64.p4 ws=3276800
 q6k p1 add 6144x5120 prefill T=1024 w4a8ws.128x64.p4 ws=6553600
@@ -9529,7 +9529,7 @@ q6k p1 swiglu 3072x5120 prefill T=48 w4a8.64x64 ws=307200
 q6k p1 swiglu 3072x5120 prefill T=64 w4a8.64x64 ws=409600
 q6k p1 swiglu 3072x5120 prefill T=96 w4a8.128x64 ws=614400
 q6k p1 swiglu 3072x5120 prefill T=128 w4a8ws.128x64.p4 ws=819200
-q6k p1 swiglu 3072x5120 prefill T=192 w4a8ws.128x64.p4 ws=1228800
+q6k p1 swiglu 3072x5120 prefill T=192 w4a8.64x64 ws=1228800
 q6k p1 swiglu 3072x5120 prefill T=256 w4a8ws.128x64.p4 ws=1638400
 q6k p1 swiglu 3072x5120 prefill T=512 w4a8ws.128x64.p4 ws=3276800
 q6k p1 swiglu 3072x5120 prefill T=1024 w4a8ws.128x64.p4 ws=6553600
@@ -9581,7 +9581,7 @@ q6k p1 store 17408x5120 prefill T=48 w4a8.64x64 ws=307200
 q6k p1 store 17408x5120 prefill T=64 w4a8.64x64 ws=409600
 q6k p1 store 17408x5120 prefill T=96 w4a8.128x64 ws=614400
 q6k p1 store 17408x5120 prefill T=128 w4a8ws.128x64.p4 ws=819200
-q6k p1 store 17408x5120 prefill T=192 w4a8ws.128x64.p4 ws=1228800
+q6k p1 store 17408x5120 prefill T=192 w4a8.64x64 ws=1228800
 q6k p1 store 17408x5120 prefill T=256 w4a8ws.128x64.p4 ws=1638400
 q6k p1 store 17408x5120 prefill T=512 w4a8ws.128x64.p4 ws=3276800
 q6k p1 store 17408x5120 prefill T=1024 w4a8ws.128x64.p4 ws=6553600
@@ -9602,7 +9602,7 @@ q6k p1 add 17408x5120 prefill T=48 w4a8.64x64 ws=307200
 q6k p1 add 17408x5120 prefill T=64 w4a8.64x64 ws=409600
 q6k p1 add 17408x5120 prefill T=96 w4a8.128x64 ws=614400
 q6k p1 add 17408x5120 prefill T=128 w4a8ws.128x64.p4 ws=819200
-q6k p1 add 17408x5120 prefill T=192 w4a8ws.128x64.p4 ws=1228800
+q6k p1 add 17408x5120 prefill T=192 w4a8.64x64 ws=1228800
 q6k p1 add 17408x5120 prefill T=256 w4a8ws.128x64.p4 ws=1638400
 q6k p1 add 17408x5120 prefill T=512 w4a8ws.128x64.p4 ws=3276800
 q6k p1 add 17408x5120 prefill T=1024 w4a8ws.128x64.p4 ws=6553600
@@ -9623,7 +9623,7 @@ q6k p1 swiglu 8704x5120 prefill T=48 w4a8.64x64 ws=307200
 q6k p1 swiglu 8704x5120 prefill T=64 w4a8.64x64 ws=409600
 q6k p1 swiglu 8704x5120 prefill T=96 w4a8.128x64 ws=614400
 q6k p1 swiglu 8704x5120 prefill T=128 w4a8ws.128x64.p4 ws=819200
-q6k p1 swiglu 8704x5120 prefill T=192 w4a8ws.128x64.p4 ws=1228800
+q6k p1 swiglu 8704x5120 prefill T=192 w4a8.64x64 ws=1228800
 q6k p1 swiglu 8704x5120 prefill T=256 w4a8ws.128x64.p4 ws=1638400
 q6k p1 swiglu 8704x5120 prefill T=512 w4a8ws.128x64.p4 ws=3276800
 q6k p1 swiglu 8704x5120 prefill T=1024 w4a8ws.128x64.p4 ws=6553600
@@ -9683,7 +9683,7 @@ q6k p1 store 5120x17408 prefill T=48 w4a8.64x64 ws=1044480
 q6k p1 store 5120x17408 prefill T=64 w4a8.64x64 ws=1392640
 q6k p1 store 5120x17408 prefill T=96 w4a8.128x64 ws=2088960
 q6k p1 store 5120x17408 prefill T=128 w4a8ws.128x64.p4 ws=2785280
-q6k p1 store 5120x17408 prefill T=192 w4a8ws.128x64.p4 ws=4177920
+q6k p1 store 5120x17408 prefill T=192 w4a8.64x64 ws=4177920
 q6k p1 store 5120x17408 prefill T=256 w4a8ws.128x64.p4 ws=5570560
 q6k p1 store 5120x17408 prefill T=512 w4a8ws.128x64.p4 ws=11141120
 q6k p1 store 5120x17408 prefill T=1024 w4a8ws.128x64.p4 ws=22282240
@@ -9704,7 +9704,7 @@ q6k p1 add 5120x17408 prefill T=48 w4a8.64x64 ws=1044480
 q6k p1 add 5120x17408 prefill T=64 w4a8.64x64 ws=1392640
 q6k p1 add 5120x17408 prefill T=96 w4a8.128x64 ws=2088960
 q6k p1 add 5120x17408 prefill T=128 w4a8ws.128x64.p4 ws=2785280
-q6k p1 add 5120x17408 prefill T=192 w4a8ws.128x64.p4 ws=4177920
+q6k p1 add 5120x17408 prefill T=192 w4a8.64x64 ws=4177920
 q6k p1 add 5120x17408 prefill T=256 w4a8ws.128x64.p4 ws=5570560
 q6k p1 add 5120x17408 prefill T=512 w4a8ws.128x64.p4 ws=11141120
 q6k p1 add 5120x17408 prefill T=1024 w4a8ws.128x64.p4 ws=22282240
@@ -9725,7 +9725,7 @@ q6k p1 swiglu 2560x17408 prefill T=48 w4a8.64x64 ws=1044480
 q6k p1 swiglu 2560x17408 prefill T=64 w4a8.64x64 ws=1392640
 q6k p1 swiglu 2560x17408 prefill T=96 w4a8.128x64 ws=2088960
 q6k p1 swiglu 2560x17408 prefill T=128 w4a8ws.128x64.p4 ws=2785280
-q6k p1 swiglu 2560x17408 prefill T=192 w4a8ws.128x64.p4 ws=4177920
+q6k p1 swiglu 2560x17408 prefill T=192 w4a8.64x64 ws=4177920
 q6k p1 swiglu 2560x17408 prefill T=256 w4a8ws.128x64.p4 ws=5570560
 q6k p1 swiglu 2560x17408 prefill T=512 w4a8ws.128x64.p4 ws=11141120
 q6k p1 swiglu 2560x17408 prefill T=1024 w4a8ws.128x64.p4 ws=22282240
@@ -9779,7 +9779,7 @@ q6k p1 store 28672x8192 prefill T=48 w4a8.64x64 ws=491520
 q6k p1 store 28672x8192 prefill T=64 w4a8.64x64 ws=655360
 q6k p1 store 28672x8192 prefill T=96 w4a8.128x64 ws=983040
 q6k p1 store 28672x8192 prefill T=128 w4a8ws.128x64.p4 ws=1310720
-q6k p1 store 28672x8192 prefill T=192 w4a8ws.128x64.p4 ws=1966080
+q6k p1 store 28672x8192 prefill T=192 w4a8.64x64 ws=1966080
 q6k p1 store 28672x8192 prefill T=256 w4a8ws.128x64.p4 ws=2621440
 q6k p1 store 28672x8192 prefill T=512 w4a8ws.128x64.p4 ws=5242880
 q6k p1 store 28672x8192 prefill T=1024 w4a8ws.128x64.p4 ws=10485760
@@ -9800,7 +9800,7 @@ q6k p1 add 28672x8192 prefill T=48 w4a8.64x64 ws=491520
 q6k p1 add 28672x8192 prefill T=64 w4a8.64x64 ws=655360
 q6k p1 add 28672x8192 prefill T=96 w4a8.128x64 ws=983040
 q6k p1 add 28672x8192 prefill T=128 w4a8ws.128x64.p4 ws=1310720
-q6k p1 add 28672x8192 prefill T=192 w4a8ws.128x64.p4 ws=1966080
+q6k p1 add 28672x8192 prefill T=192 w4a8.64x64 ws=1966080
 q6k p1 add 28672x8192 prefill T=256 w4a8ws.128x64.p4 ws=2621440
 q6k p1 add 28672x8192 prefill T=512 w4a8ws.128x64.p4 ws=5242880
 q6k p1 add 28672x8192 prefill T=1024 w4a8ws.128x64.p4 ws=10485760
@@ -9821,7 +9821,7 @@ q6k p1 swiglu 14336x8192 prefill T=48 w4a8.64x64 ws=491520
 q6k p1 swiglu 14336x8192 prefill T=64 w4a8.64x64 ws=655360
 q6k p1 swiglu 14336x8192 prefill T=96 w4a8.128x64 ws=983040
 q6k p1 swiglu 14336x8192 prefill T=128 w4a8ws.128x64.p4 ws=1310720
-q6k p1 swiglu 14336x8192 prefill T=192 w4a8ws.128x64.p4 ws=1966080
+q6k p1 swiglu 14336x8192 prefill T=192 w4a8.64x64 ws=1966080
 q6k p1 swiglu 14336x8192 prefill T=256 w4a8ws.128x64.p4 ws=2621440
 q6k p1 swiglu 14336x8192 prefill T=512 w4a8ws.128x64.p4 ws=5242880
 q6k p1 swiglu 14336x8192 prefill T=1024 w4a8ws.128x64.p4 ws=10485760

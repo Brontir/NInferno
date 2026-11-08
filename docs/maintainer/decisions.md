@@ -1722,6 +1722,12 @@ projections of this model; the rest of the prompt unchanged):
 The RTX 5090 takes ggml's matrix kernel for these prompts (`mmq_prefill_pays`), so this change is
 not on its path: A/B 136..512 tokens, +-0.4 %.
 
+**Goldens.** The selector goldens of the sm_120 boards (RTX 5070 Ti, 5060 Ti, the unknown 48-SM
+sm_120 board) change at T = 192 only (the one prefill width in the 129..192 band they hold): Q4_K and Q6_K
+`w4a8ws.128x64.p4` -> `w4a8.64x64`, 90 lines, every one a call whose 64-token tiles cost less. The RTX
+5090 / 5080 (MMQ), the A100 and the other boards are unchanged: the choice is Blackwell's only
+(`w4a8_ws_wins` is also true on Ampere, where the tiles were not read).
+
 **Numerics.** Every W4A8 schedule sums in the one order (generic_w4a8.cuh), so the two tiles write the
 same bytes: no output changes.
 
