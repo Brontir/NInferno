@@ -437,8 +437,8 @@ inline constexpr TileCost kTileCost[] = {
 // K-quant class here, DECISIONS 69.) A mix's tiles take its label's format (Q4_K_M: Q4_K), its bits
 // a weight past that format's moving them toward Q6_K's (the mixes raise ffn_down, attn_v and the
 // like to Q5_K / Q6_K; the bits are the whole file's, its token table and head among them). A slice
-// of t tokens takes ggml's narrowest column tile with the fewest tiles (16, 32, 64 or 128: ggml_mmq
-// kColumnTiles); a J-column tile's K step is (kMmqTileFixed + (1 - kMmqTileFixed) J / 128) of a
+// of t tokens takes the column tile whose tiles cost least (core/mmq_columns.h: 16, 32, 64, 80, 96,
+// 112 or 128); a J-column tile's K step is mmq_columns::step_share(J) = 0.43 + 0.57 J / 128 of a
 // 128-column one (the RTX 4060 Ti's 64-column Q4_K tiles: 0.716).
 struct MmqTileCost {
     std::string_view generation;
@@ -483,7 +483,6 @@ inline constexpr MmqIqStep kMmqIqStep[] = {
     {"ada", "ggml_iq2_xxs", 39.8, 1},   {"ada", "ggml_iq2_xs", 52.6, 1},
     {"ada", "ggml_iq2_s", 52.4, 1},     {"ada", "ggml_iq1_s", 44.4, 1},
 };
-inline constexpr double kMmqTileFixed = 0.43;
 // Where MMQ does not pay (measured::kMmqPrefillPays: the RTX 5070 Ti as the 5060 Ti) a dense
 // K-quant prefills on the W4A8 tiles (generic_gemm.cpp: Q4_K and Q6_K the producer-warp 128 x 64
 // tile on Blackwell, w4a8_ws_wins; Q5_K the classic 128 x 64): a tile is 128 tokens x 64 weight rows

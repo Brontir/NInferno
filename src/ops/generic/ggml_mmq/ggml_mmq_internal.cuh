@@ -7,6 +7,7 @@
 #include "ggml_mmq.h"
 
 #include "core/cuda_error.h"
+#include "core/mmq_columns.h"
 #include "core/per_device.h"
 #include "core/pdl.cuh"
 
@@ -25,7 +26,6 @@
 #include "ggml-cuda/mmq.cuh"
 
 #include <climits>
-#include <cstdlib>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -75,8 +75,7 @@ inline void check(cudaError_t status, const char* what) {
     throw std::invalid_argument("ggml mmq: unknown block format");
 }
 
-// Column tiles instantiated; a product takes the cheapest set of column tiles they allow.
-inline constexpr int kColumnTiles[] = {16, 32, 48, 64, 80, 96, 112, 128};
+// Column tiles instantiated (core/mmq_columns.h): a product takes the width whose tiles cost least.
 
 struct Launch {
     int J              = 0;
@@ -96,15 +95,12 @@ Launch select_launch(int rows, int columns, int k) {
     const DeviceFacts& device = device_facts();
     Launch best;
     double best_cost = 1e300;
-    static const int forced = std::getenv("NINFERNO_MMQ_J") ? std::atoi(std::getenv("NINFERNO_MMQ_J")) : 0;
-    for (const int J : kColumnTiles) {
-        if (forced != 0 && J != forced) continue;
+    for (const int J : mmq_columns::kTiles) {
         const ggml_cuda_mmq_config config = ggml_cuda_mmq_get_config(type, J, false, device.cc);
         if (config.type == GGML_TYPE_COUNT) continue;
         const std::size_t shared = mmq_get_nbytes_shared(config, device.cc);
         if (shared > device.shared_per_block_optin) continue;
-        const int tiles   = (columns + J - 1) / J;
-        const double cost = tiles * (0.43 + 0.57 * J / 128);
+        const double cost = mmq_columns::work(columns, J);
         if (cost < best_cost) {
             best_cost     = cost;
             best.k_vram   = config.K_vram;
@@ -202,9 +198,6 @@ void product_impl(const Planes& w, int blocks_per_row, int rows, int k, const vo
                                 out_column_stride, f, stream);
     case 32:
         return launch<type, 32>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
-                                out_column_stride, f, stream);
-    case 48:
-        return launch<type, 48>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
                                 out_column_stride, f, stream);
     case 64:
         return launch<type, 64>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
