@@ -2106,12 +2106,13 @@ int test_none_drop_tools_keeps_the_contract() {
 // rendered prompt up to the end of the result's original content must be byte-identical.
 int check_steered_prefix(const fi::CompiledChatTemplate& compiled, const std::string& label) {
     constexpr std::string_view kResult = "a.txt b.txt";
-    constexpr std::string_view kLine   = "\n\nTools are unavailable for this reply; answer in plain text.";
-    const auto render                  = [&](bool steer) {
+    constexpr std::string_view kLine =
+        "\n\nTools are unavailable for this reply; answer in plain text.";
+    const auto render = [&](bool steer) {
         fi::ChatMessage tool = chat_message(ninferno::ChatRole::Tool, std::string(kResult));
         tool.tool_call_id    = "call_1";
         if (steer) { tool.parts.push_back(fi::ChatPart::text_part(std::string(kLine))); }
-        fi::ChatMessage assistant = chat_message(ninferno::ChatRole::Assistant, "");
+        fi::ChatMessage assistant   = chat_message(ninferno::ChatRole::Assistant, "");
         assistant.reasoning_content = "I should call the tool.";
         assistant.tool_calls.push_back(
             {.id = "call_1", .name = "inspect", .arguments_json = R"({"path":"."})"});
@@ -2128,7 +2129,9 @@ int check_steered_prefix(const fi::CompiledChatTemplate& compiled, const std::st
     const std::string plain   = render(false);
     const std::string steered = render(true);
     const std::size_t end     = plain.rfind(kResult);
-    if (end == std::string::npos) { return check(false, label + ": the tool result was not rendered"); }
+    if (end == std::string::npos) {
+        return check(false, label + ": the tool result was not rendered");
+    }
     const std::size_t content_end = end + kResult.size();
     return check(steered.size() > plain.size() &&
                      steered.compare(0, content_end, plain, 0, content_end) == 0 &&
@@ -2144,9 +2147,10 @@ int test_steering_after_tool_result_keeps_the_prefix() {
     if (const char* directory = std::getenv("NINFERNO_TEST_TEMPLATE_DIR")) {
         for (const auto& entry : std::filesystem::directory_iterator(directory)) {
             if (entry.path().extension() != ".jinja") { continue; }
-            failures += check_steered_prefix(
-                fi::CompiledChatTemplate::resolve(read_template_fixture(entry.path().string().c_str())),
-                entry.path().filename().string());
+            failures +=
+                check_steered_prefix(fi::CompiledChatTemplate::resolve(
+                                         read_template_fixture(entry.path().string().c_str())),
+                                     entry.path().filename().string());
         }
     }
     return failures;
