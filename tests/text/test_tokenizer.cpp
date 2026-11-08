@@ -343,9 +343,8 @@ bool check_unicode_tables() {
     if (std::string(utf8proc_unicode_version()) != onig::kUtf8procUnicodeVersion) {
         std::cout << "  UTF8PROC is Unicode " << utf8proc_unicode_version()
                   << ", table made against " << onig::kUtf8procUnicodeVersion
-                  << ": regenerate onig_unicode_tables.h" "
-";
-            ok = false;
+                  << ": regenerate onig_unicode_tables.h\n";
+        ok = false;
     }
     // Unicode 17 gave U+A7D3 and U+A7D5 capitals (U+A7D2, U+A7D4); in 16 they map to themselves.
     for (const char32_t cp : {0xA7D3, 0xA7D5}) {
