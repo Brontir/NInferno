@@ -2130,13 +2130,13 @@ int check_steered_prefix(const fi::CompiledChatTemplate& compiled, const std::st
     const std::string steered = render(true);
     const std::size_t end     = plain.rfind(kResult);
     if (end == std::string::npos) {
-        return check(false, label + ": the tool result was not rendered");
+        return check(false, (label + ": the tool result was not rendered").c_str());
     }
     const std::size_t content_end = end + kResult.size();
     return check(steered.size() > plain.size() &&
                      steered.compare(0, content_end, plain, 0, content_end) == 0 &&
                      steered.find(kLine, content_end) != std::string::npos,
-                 label + ": the steering line after a tool result changed the prompt before it");
+                 (label + ": the steering line after a tool result changed the prompt before it").c_str());
 }
 
 int test_steering_after_tool_result_keeps_the_prefix() {
