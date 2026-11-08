@@ -44,10 +44,6 @@ inline constexpr int kCacheRevision = 8;
 // Whether an artifact carries the defect revisions 4 and 5 fixed: its report binds a DFlash /
 // DFlash2 companion drafter's attention query unquantized (bf16, fp16, fp32).
 [[nodiscard]] bool unquantized_drafter_attention(const std::filesystem::path& artifact);
-// Whether a drafter artifact predates the original context length a YaRN rope records (#549): a
-// DFlash drafter whose YaRN rope lacks original_max_position_embeddings, which bounds the rows its
-// full layers read. A separately cached drafter has no revision stamp: it is converted again.
-[[nodiscard]] bool drafter_rope_without_original(const std::filesystem::path& artifact);
 // Whether an artifact at `revision` lacks the default proposal head revisions 6 to 8 give: its
 // report is a Qwen target's (qwen3_5_text, qwen3_5_moe_text) with MTP layers or a DFlash
 // companion and no proposal head, or (revision 6) MTP layers and the head revision 6 made for

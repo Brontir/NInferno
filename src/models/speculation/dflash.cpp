@@ -83,8 +83,19 @@ DFlashConfig parse_dflash_config(const artifact::Json& c) {
         out.rope_attention_scaling = json_positive_float(rope, "attention_scaling");
         out.rope_scaled            = true;
         if (rope.contains("original_max_position_embeddings")) {
-            out.full_window =
-                static_cast<std::int32_t>(json_dimension(rope, "original_max_position_embeddings"));
+            out.full_window = static_cast<std::int32_t>(
+                json_dimension(rope, "original_max_position_embeddings"));
+        } else if (rope.value("rope_type", std::string()) == "yarn" && out.max_positions != 0 &&
+                   out.rope_attention_scaling > 1.0F) {
+            // An artifact converted before the original length was recorded: YaRN's default
+            // attention factor is 0.1 ln(factor) + 1 and the factor is max / original (gpt-oss's
+            // drafter: 1.3466 -> 32, 131072 / 32 = 4096).
+            const double factor =
+                std::exp((static_cast<double>(out.rope_attention_scaling) - 1.0) / 0.1);
+            const auto original = std::llround(static_cast<double>(out.max_positions) / factor);
+            if (original >= 1 && original < out.max_positions) {
+                out.full_window = static_cast<std::int32_t>(original);
+            }
         }
     } else {
         for (std::int32_t i = 0; i < out.head_dim; i += 2) {

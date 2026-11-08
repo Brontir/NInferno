@@ -102,24 +102,8 @@ int main() {
           "a Q8 drafter without a proposal head at revision 4 is converted again");
     check(!cache_current(artifact(dir, "rev5", 5, "dflash/layers/0/attention/query", "q8_g32_fp16")),
           "a companion without a proposal head at revision 5 is converted again");
-    check(cache_current(
-              artifact(dir, "new", kCacheRevision, "dflash/layers/0/attention/query", "bf16")),
-          "the current revision is current");
-    // A YaRN DFlash drafter (gpt-oss's) records its original context length, which bounds the rows
-    // its full layers read (#549); a drafter artifact without it is converted again.
-    const auto drafter_report = [&](const std::string& name, const std::string& extra) {
-        const auto path = dir / (name + ".ninferno");
-        std::ofstream(path) << "x";
-        std::ofstream(path.string() + ".conversion.json")
-            << R"({"components": {"text": {"config": {"model_type": "dflash", "rope": )"
-            << R"({"rope_type": "yarn")" << extra << R"(}}}}, "methods": []})";
-        return path;
-    };
-    check(ninferno::convert::drafter_rope_without_original(drafter_report("yarn", "")),
-          "a YaRN DFlash drafter without its original length is converted again");
-    check(!ninferno::convert::drafter_rope_without_original(
-              drafter_report("yarn-original", R"(, "original_max_position_embeddings": 4096)")),
-          "one that records it is kept");
+    check(cache_current(artifact(dir, "new", 8, "dflash/layers/0/attention/query", "bf16")),
+          "revision 8 is current");
     // Revision 8: a head serving MTP and DFlash leads with MTP's own rows (drafter_rows).
     const std::vector<std::string> both{"mtp/layers/0/attention/query",
                                         "dflash/layers/0/attention/query", "proposal/head"};
