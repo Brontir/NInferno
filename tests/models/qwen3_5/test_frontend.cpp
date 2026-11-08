@@ -2172,19 +2172,39 @@ int test_none_ends_at_structural_tokens() {
     return failures;
 }
 
-Frontend gemma4_thinking_frontend();
-ninferno::PromptInput gemma4_prompt(std::optional<bool> thinking);
 
 // The Gemma 4 head-token path end to end: <|channel> is the special token of the reasoning opener
 // "<|channel>thought". Thinking off, a first <|channel> is markup where the answer begins and ends
 // the turn; thinking on, it opens the model's reasoning, and one after the reasoning ends the turn.
 int test_none_gemma_channel_head_token() {
-    const Frontend frontend = gemma4_thinking_frontend();
+    // Gemma 4's own template: thinking off writes the empty thought channel into the prompt.
+    const std::string gemma_template =
+        "{% for m in messages %}<|turn>{{ 'model' if m.role == 'assistant' else m.role }}\n"
+        "{{ m.content }}<turn|>\n{% endfor %}"
+        "{% if add_generation_prompt %}<|turn>model\n"
+        "{% if not enable_thinking %}<|channel>thought\n<channel|>{% endif %}{% endif %}";
+    FrontendResources source      = resources(gemma_template);
+    nlohmann::json tokenizer_json = nlohmann::json::parse(source.tokenizer_json);
+    nlohmann::json config         = nlohmann::json::parse(source.tokenizer_config_json);
+    const std::array<std::pair<int, const char*>, 4> specials{
+        {{100, "<|turn>"}, {101, "<turn|>"}, {102, "<|channel>"}, {103, "<channel|>"}}};
+    for (const auto& [id, content] : specials) {
+        tokenizer_json["added_tokens"].push_back(added(id, content, true));
+        config["added_tokens_decoder"][std::to_string(id)] = decoder_added(content, true);
+    }
+    source.tokenizer_json        = tokenizer_json.dump();
+    source.tokenizer_config_json = config.dump();
+    const Frontend frontend      = make_frontend(source, false);
     ninferno::StopPolicy stop;
     constexpr ninferno::TokenId kChannel = 102;
     constexpr ninferno::TokenId kClosed  = 103;
     const auto input                     = [](bool thinking) {
-        ninferno::PromptInput result = gemma4_prompt(thinking);
+        ninferno::PromptInput result;
+        ninferno::ChatMessage message;
+        message.role = ninferno::ChatRole::User;
+        message.parts.push_back({.text = "hi"});
+        result.messages.push_back(std::move(message));
+        result.options.enable_thinking = thinking;
         result.options.tool_jsons.push_back(
             R"({"type":"function","function":{"name":"inspect","parameters":{"type":"object"}}})");
         result.options.tool_calls_enabled   = false;
