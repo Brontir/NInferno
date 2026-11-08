@@ -207,6 +207,21 @@ int main() {
         if (want_twin) expect(got.local_bytes == 0, "a twin taken has no local memory");
         free_all(d);
     }
+    if (const char* timing = std::getenv("NINFERNO_VEC_TWIN_TIMING"); timing && *timing == '1') {
+        // Rows that put the groups just under the twin's slots (the twin saves a round on this
+        // board), and the shapes of the issue.
+        const int between = int((twin_slots * 97 / 100) * 8);
+        for (const Problem p : {Problem{between, 12288}, Problem{3840, 15360}, Problem{4096, 12288},
+                                Problem{8192, 4096}}) {
+            Device d              = make(p, false);
+            const unsigned groups = unsigned((p.rows + 7) / 8);
+            const double tp       = time_us(p, d, VecInstance::Plain);
+            const double tt       = time_us(p, d, VecInstance::Twin);
+            std::printf("TIMING rows %d k %d groups %u: plain %.1f us, twin %.1f us (%+.1f %%)\n",
+                        p.rows, p.k, groups, tp, tt, 100.0 * (tt / tp - 1.0));
+            free_all(d);
+        }
+    }
     if (failures == 0) std::cout << "ok\n";
     return failures == 0 ? 0 : 1;
 }
