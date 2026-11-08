@@ -39,6 +39,18 @@ void context_attention_launch(const Tensor& q, const Tensor& query_k, const Tens
                               Tensor& partial_m, Tensor& partial_l, Tensor& out,
                               cudaStream_t stream);
 
+// context_window_attention (fold.cuh): the last `window` context rows alone, split.
+[[nodiscard]] ContextAttentionPlan
+context_window_resolve_plan(ContextAttentionProfile profile, std::int32_t tokens,
+                            ContextAttentionExecutionEnvelope envelope, std::int32_t window);
+
+void context_window_launch(const Tensor& q, const Tensor& query_k, const Tensor& query_v,
+                           const Tensor& context_lengths, const Tensor& valid_columns,
+                           const Tensor& table_rows, float scale, std::int32_t window,
+                           const PagedKVBatchLayerView& context, const ContextAttentionPlan& plan,
+                           Tensor& partial_acc, Tensor& partial_m, Tensor& partial_l, Tensor& out,
+                           cudaStream_t stream);
+
 // FOLD (fold.cuh): the window's and the far memory's plans, each split.
 struct ContextFoldPlan {
     ContextAttentionPlan window;

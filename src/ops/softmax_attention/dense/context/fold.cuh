@@ -40,12 +40,13 @@ __device__ __forceinline__ void fold_rotate_tile(__nv_bfloat16* tile, int rows, 
     }
 }
 
-// The window: the last `window` context entries, each unrotated key turned to its own position,
-// and the query block (rotated as computed).
-template <class Geometry>
+// The window: the last `window` context entries, each unrotated key turned to its own position
+// (Rerotate; context_window_attention reads keys cached rotated and turns nothing), and the query
+// block (rotated as computed).
+template <class Geometry, bool Rerotate = true>
 struct FoldWindowPolicy : ContextAttentionPolicy<Geometry> {
     using Geo                           = Geometry;
-    static constexpr bool kRerotateKeys = true;
+    static constexpr bool kRerotateKeys = Rerotate;
     int window                          = 0;
     int key_block                       = 32; // the kernel's tile height
     int first                           = 0;  // the first window entry: max(length - window, 0)
@@ -148,6 +149,53 @@ __launch_bounds__(WarpsPerCta * 32, 2) __global__ void context_fold_partial_kern
             split_capacity, scale, partial_acc, partial_m, partial_l,
             static_cast<__nv_bfloat16*>(nullptr));
     }
+}
+
+// context_window_attention: the window alone over keys cached rotated at their own positions, no far
+// memory. The split bodies are the window branch's; the reduce is the plain one over the window's
+// tile count.
+template <class Geo, int Tokens, int WarpsPerCta, int KeyBlock, typename KT = __nv_bfloat16,
+          typename VT = __half>
+__launch_bounds__(WarpsPerCta * 32, 2) __global__ void context_window_partial_kernel(
+    const __nv_bfloat16* __restrict__ q, const __nv_bfloat16* __restrict__ query_k,
+    const __nv_bfloat16* __restrict__ query_v, const std::int32_t* __restrict__ context_length,
+    const std::int32_t* __restrict__ valid_columns, const std::int32_t* __restrict__ table_rows,
+    const KT* __restrict__ context_k, const VT* __restrict__ context_v,
+    const __half* __restrict__ context_k_scale, const __half* __restrict__ context_v_scale,
+    const std::int32_t* __restrict__ block_tables, int physical_pages, int logical_pages,
+    int max_context, int split_capacity, float scale, int window,
+    __nv_bfloat16* __restrict__ partial_acc, float* __restrict__ partial_m,
+    float* __restrict__ partial_l) {
+    const int batch  = static_cast<int>(blockIdx.z);
+    const int length = context_length[batch];
+    FoldWindowPolicy<Geo, false> policy{};
+    policy.block_table    = block_tables + static_cast<std::int64_t>(logical_pages) * table_rows[batch];
+    policy.physical_pages = physical_pages;
+    policy.logical_pages  = logical_pages;
+    policy.k_scale        = context_k_scale;
+    policy.v_scale        = context_v_scale;
+    policy.window         = window;
+    policy.key_block      = KeyBlock;
+    policy.first          = max(length - window, 0);
+    context_query_split_partial_body<FoldWindowPolicy<Geo, false>, Tokens, WarpsPerCta, KeyBlock,
+                                     false>(q, query_k, query_v, valid_columns, context_k,
+                                            context_v, policy, length, max_context, split_capacity,
+                                            scale, partial_acc, partial_m, partial_l,
+                                            static_cast<__nv_bfloat16*>(nullptr));
+}
+
+template <class Geo, int Tokens, int KeyBlock>
+__launch_bounds__(128, 2) __global__ void context_window_reduce_kernel(
+    const __nv_bfloat16* __restrict__ partial_acc, const float* __restrict__ partial_m,
+    const float* __restrict__ partial_l, const std::int32_t* __restrict__ context_length,
+    const std::int32_t* __restrict__ valid_columns, int max_context, int split_capacity, int window,
+    __nv_bfloat16* __restrict__ out) {
+    const int length = context_length[static_cast<int>(blockIdx.z)];
+    // FoldWindowPolicy::context_count: the window's tiles start at a multiple of the tile height.
+    const int count = length - (max(length - window, 0) / KeyBlock) * KeyBlock;
+    context_query_reduce_body<Tokens, KeyBlock, Geo>(partial_acc, partial_m, partial_l, length,
+                                                     count, valid_columns, max_context,
+                                                     split_capacity, out);
 }
 
 // One branch's splits of a (head, token): their log-sum-exp (natural log, in the branch's own

@@ -84,6 +84,15 @@ void copy_rows(const Tensor& packed, std::int32_t first, std::int32_t rows, Tens
                                  stream));
 }
 
+// EXPERIMENT (#549): the full layers' window, rows; 0 = every row.
+std::int32_t experimental_full_window() {
+    static const std::int32_t value = [] {
+        const char* v = std::getenv("NINFERNO_DFLASH_FULL_WINDOW");
+        return v != nullptr ? static_cast<std::int32_t>(std::atoi(v)) : 0;
+    }();
+    return value;
+}
+
 } // namespace
 
 ops::DenseQkvPrepare DenseExecution::qkv_prepare(const speculation::DFlashLayer& weights,
@@ -250,6 +259,11 @@ std::size_t DenseExecution::dflash_proposal_bytes(std::uint32_t capacity, std::i
     if (drafter_full_layers_ != 0) {
         op = std::max(op, ops::context_softmax_attention_workspace_capacity_bytes(
                               geometry, {0, capacity}, block, block, batch));
+        if (experimental_full_window() > 0) {
+            op = std::max(op, ops::context_window_attention_workspace_capacity_bytes(
+                                  geometry, {0, capacity}, experimental_full_window(), block,
+                                  block, batch));
+        }
     }
     for (const auto& layer : dw.layers) {
         if (layer.qkv) {
@@ -525,6 +539,11 @@ void DenseExecution::propose(program::DFlashBatchContext& state, std::int32_t ba
                 ops::sliding_window_attention(query, key, value, positions, valid, lanes, geometry,
                                               static_cast<std::uint32_t>(dc.sliding_window), scale,
                                               state.dflash.local_layer(index), envelopes.local,
+                                              work, attention, s);
+            } else if (experimental_full_window() > 0) {
+                ops::context_window_attention(query, key, value, frontiers, valid, full_rows,
+                                              geometry, scale, experimental_full_window(),
+                                              state.dflash.full_batch_layer(index), envelopes.full,
                                               work, attention, s);
             } else {
                 ops::context_softmax_attention(query, key, value, frontiers, valid, full_rows,
