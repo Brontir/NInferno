@@ -58,7 +58,7 @@ OpenAIResponseContextNode::~OpenAIResponseContextNode() {
     while (next && next.use_count() == 1) {
         auto& owned = const_cast<OpenAIResponseContextNode&>(*next);
         std::shared_ptr<const OpenAIResponseContextNode> after = std::move(owned.parent);
-        next = std::move(after);
+        next                                                   = std::move(after);
     }
 }
 

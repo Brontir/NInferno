@@ -139,15 +139,15 @@ int test_deep_context_release() {
     const auto deep_context = [] {
         OpenAIResponseContext context;
         for (int i = 0; i < kDepth; ++i) {
-            context = append_openai_response_context(
-                std::move(context), {text_turn(ninferno::ChatRole::User, "x")});
+            context = append_openai_response_context(std::move(context),
+                                                     {text_turn(ninferno::ChatRole::User, "x")});
         }
         return context;
     };
     OpenAIResponsesStore store(16, std::size_t{1} << 30);
     failures += check(store.put(record("resp_deep", deep_context())), "a deep chain is stored");
     failures += check(store.erase("resp_deep"), "a deep chain is erased");
-    OpenAIResponseContext alone = deep_context();
+    OpenAIResponseContext alone        = deep_context();
     const OpenAIResponseContext middle = [&] {
         OpenAIResponseContext node = alone;
         for (int i = 0; i < kDepth / 2; ++i) { node = node->parent; }
