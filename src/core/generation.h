@@ -165,9 +165,12 @@ struct FittedRouteScales {
 // are measured on compute capability major.minor. Only a generation with two or more lab cards
 // that confirm them takes them (AGENTS.md: a lab measurement enters as a fact or as a constant
 // fitted on two or more cards of a generation); every other part keeps the old price.
-//   sm_86  GA10x Ampere:       RTX 3060 (in the fit); RTX 3090 (held out: 1.136 -> 1.091)
-//   sm_120 consumer Blackwell: RTX 5090 (in the fit); RTX 5070 Ti (held out)
-// Not sm_89 (Ada): the held-out RTX 4060 Ti got worse (production worst 1.36 -> 1.85), a defect of
+//   sm_86  GA10x Ampere:       RTX 3060 + RTX 3090, the final constants fitted on both together
+//   sm_120 consumer Blackwell: RTX 5090 + RTX 5070 Ti, the final constants fitted on both together
+// The second card of each pair was first measured out of sample (#499: RTX 3090 1.136 -> 1.091);
+// after the refit neither is a held-out board for the shipped constants, and a third board of the
+// generation takes them as a transfer, not a validated fit (#301).
+// Not sm_89 (Ada): the out-of-sample RTX 4060 Ti got worse (production worst 1.36 -> 1.85), a defect of
 // the model (#501), so Ada comes back with its fix. Not sm_121 (GB10), the datacenter parts (sm_80,
 // sm_90, sm_100) or sm_87 / sm_88, nor Turing and Volta, whose BF16 MMA is emulated and which got
 // worse with the terms.
