@@ -45,28 +45,31 @@ inline constexpr Scalar kRmmaStepK{{16.0}, Provenance::Counted, "rmma_step_k"};
 // Register MMA: resident warps per SM at which the tile reaches its roofline.
 inline constexpr Scalar kRmmaSaturatingWarps{{11.0}, Provenance::Fitted, "rmma_saturating_warps"};
 // Register MMA of the K-quant and codebook decoders (#301): resident warps per SM at which the
-// tile reaches its roofline. Chosen on the regret of the RTX 3060, 4090 and 5090; taken only where
-// two or more lab cards confirm the register-MMA terms (rmma_terms_measured: sm_86 on the 3060
-// in the fit and the 3090 held out; sm_89 on the 4090 in the fit and the 4070 Ti, 4060 Ti held
-// out; sm_120 on the 5090 and the 5070 Ti held out).
-// (Two warps for
-// each of the four sub-partition schedulers is the least that can keep every scheduler fed, but the
-// step latency that would fix it is not measured here).
+// tile reaches its roofline. Two warps for each of the four sub-partition schedulers is the least
+// that can keep every scheduler fed; the step latency that would derive it is not measured here, so
+// it is fitted. The regret of both fitted generations is the same at 6 and at 8 warps (RTX 3060 +
+// RTX 3090, RTX 5090 + RTX 5070 Ti, cost-model replica). Used only where two or more lab cards
+// confirm the register-MMA terms (rmma_terms_measured: sm_86 and sm_120).
 inline constexpr Scalar kRmmaHeavySaturatingWarps{
     {8.0}, Provenance::Fitted, "rmma_heavy_saturating_warps"};
 // Register MMA, same decoders: bytes per SM clock that one SM sustains from the L2 while every SM
-// reads. Half of the 64 B/clk its L1 takes from the L2; a regression of route_tune timings of the
-// RTX 3060, 4090 and 5090 read 15..30, and the model's regret is flat across 16..32 on those
-// boards. No published number backs it, so it is fitted; one value per generation, used only on
-// the generations rmma_terms_measured names (sm_86: 3060 fit, 3090 held out; sm_89: 4090 fit,
-// 4070 Ti and 4060 Ti held out; sm_120: 5090 fit, 5070 Ti held out).
-inline constexpr Scalar kL2BytesPerSmClock{{32.0}, Provenance::Fitted, "l2_bytes_per_sm_clock"};
+// reads (the 64 B/clk port of its L1 is the ceiling; route_tune timings read 15..30). No published
+// number backs it, so it is fitted, one value per generation on both of its cards together
+// (cost-model replica, mean geomean regret of the two cards over 12/16/24/32/48):
+//   sm_86  (GA10x):  RTX 3060 + RTX 3090 -> 32 (3060 1.068, 3090 1.098; master 1.165, 1.174)
+//   sm_120 (GB20x):  RTX 5090 + RTX 5070 Ti -> 24 (1.047, 1.041; master 1.135, 1.080)
+inline constexpr Scalar kL2BytesPerSmClockGa10x{
+    {32.0}, Provenance::Fitted, "l2_bytes_per_sm_clock_ga10x"};
+inline constexpr Scalar kL2BytesPerSmClockGb20x{
+    {24.0}, Provenance::Fitted, "l2_bytes_per_sm_clock_gb20x"};
 // Register MMA, same decoders: K per step of their decoders (four lanes of one 32-value run), and
 // what a spilled register costs per step: one store and one load of its local-memory byte through
 // the L1, whose data path is 128 B per clock and SM.
 inline constexpr Scalar kRmmaHeavyStepK{{128.0}, Provenance::Counted, "rmma_heavy_step_k"};
-inline constexpr Scalar kSpillAccessesPerStep{
-    {2.0}, Provenance::Counted, "spill_accesses_per_step"};
+// The spill count is a modelling assumption (a spilled value is stored once and loaded once a
+// step; the compiler may keep it longer), so it is tagged Fitted, not Counted: it moved the regret
+// by under 0.5 % where it applies.
+inline constexpr Scalar kSpillAccessesPerStep{{2.0}, Provenance::Fitted, "spill_accesses_per_step"};
 inline constexpr Scalar kL1BytesPerSmClock{{128.0}, Provenance::Fact, "l1_bytes_per_sm_clock"};
 // The register file's allocation unit per warp (256 registers): a CUDA fact of every part the
 // model names.
@@ -154,7 +157,8 @@ inline constexpr Listed kRouteCostConstants[] = {
     listed(kRmmaStepK, Kind::Count),
     listed(kRmmaSaturatingWarps, Kind::Count),
     listed(kRmmaHeavySaturatingWarps, Kind::Count),
-    listed(kL2BytesPerSmClock, Kind::BytesPerClock),
+    listed(kL2BytesPerSmClockGa10x, Kind::BytesPerClock),
+    listed(kL2BytesPerSmClockGb20x, Kind::BytesPerClock),
     listed(kRmmaHeavyStepK, Kind::Count),
     listed(kSpillAccessesPerStep, Kind::Count),
     listed(kL1BytesPerSmClock, Kind::BytesPerClock),

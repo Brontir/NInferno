@@ -166,12 +166,13 @@ struct FittedRouteScales {
 // that confirm them takes them (AGENTS.md: a lab measurement enters as a fact or as a constant
 // fitted on two or more cards of a generation); every other part keeps the old price.
 //   sm_86  GA10x Ampere:       RTX 3060 (in the fit); RTX 3090 (held out: 1.136 -> 1.091)
-//   sm_89  Ada:                RTX 4090 (in the fit); RTX 4070 Ti, RTX 4060 Ti (held out)
 //   sm_120 consumer Blackwell: RTX 5090 (in the fit); RTX 5070 Ti (held out)
-// Not sm_121 (GB10), the datacenter parts (sm_80, sm_90, sm_100) or sm_87 / sm_88, nor Turing and
-// Volta, whose BF16 MMA is emulated and which got worse with the terms.
+// Not sm_89 (Ada): the held-out RTX 4060 Ti got worse (production worst 1.36 -> 1.85), a defect of
+// the model (#501), so Ada comes back with its fix. Not sm_121 (GB10), the datacenter parts (sm_80,
+// sm_90, sm_100) or sm_87 / sm_88, nor Turing and Volta, whose BF16 MMA is emulated and which got
+// worse with the terms.
 [[nodiscard]] constexpr bool rmma_terms_measured(int major, int minor) noexcept {
-    return (major == 8 && (minor == 6 || minor == 9)) || (major == 12 && minor == 0);
+    return (major == 8 && minor == 6) || (major == 12 && minor == 0);
 }
 
 } // namespace ninferno

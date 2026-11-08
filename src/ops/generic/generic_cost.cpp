@@ -4,9 +4,7 @@
 // route_cost_constants.h.
 #include "core/device_class.h"
 #include "core/generation.h"
-#include "core/per_device.h"
 #include "core/weight.h"
-#include "ninferno/ops/prefill_routes.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_ggml_internal.h"
@@ -18,11 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <map>
-#include <memory>
-#include <mutex>
 #include <optional>
-#include <tuple>
 
 namespace ninferno::ops::detail::generic {
 
@@ -144,49 +138,27 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
 namespace {
 
 // What the compiled register-MMA kernel of a schedule keeps per thread, from the build itself
-// (rmma_resources: the launch described, never run): its registers decide how many CTAs one SM's
-// register file holds, its local memory is the spill. It rests on the build's kernels, so the
-// answer belongs to the build (each golden set is a build); a process without a device, or a
-// schedule the build does not hold for the weight, has none and is priced by threads alone.
-// Kept per launch and device: the kernel variant the launch picks (latency, wide, add-sums) follows
-// the shape, the token count and the active route profile, and a substituted board's variants
-// follow its facts.
+// (rmma_resources: the launch described for this call's rows and tokens, never run): its registers
+// decide how many CTAs one SM's register file holds, its local memory is the spill. It rests on
+// the build's kernels (each golden set is a build) and on the host device's: the answer is the
+// running GPU's, so the selector golden test prices a gated board only on a host of its own
+// compute capability. A process without a device, or a schedule the build does not hold for the
+// weight, has none and is priced by threads alone. Not cached here: the launch the call picks
+// (latency, wide, add-sums variant) follows its grid, tokens and profile, the described launch is a
+// kernel-attribute query, and the selector memoizes its answer per problem.
 struct RmmaKept {
     int registers;
     double local_bytes;
 };
 
-struct RmmaKeptCache {
-    std::mutex mutex;
-    std::map<std::tuple<int, int, int, int, int, int, bool, bool>, std::optional<RmmaKept>> kept;
-};
-
 std::optional<RmmaKept> rmma_kept(int schedule, const Weight& weight, Epilogue epilogue,
-                                  std::int32_t tokens) {
-    static PerDevice<std::shared_ptr<RmmaKeptCache>> caches;
-    const std::shared_ptr<RmmaKeptCache>* cache = nullptr;
+                                  std::int32_t tokens, std::int32_t rows) {
     try {
-        cache = &caches.get([](int) { return std::make_shared<RmmaKeptCache>(); });
-    } catch (const std::exception&) { return std::nullopt; }
-    const auto key = std::make_tuple(schedule, static_cast<int>(weight.qtype),
-                                     static_cast<int>(epilogue), static_cast<int>(weight.n),
-                                     static_cast<int>(weight.k), static_cast<int>(tokens),
-                                     invariant_routes_active(), rmma_add_sums());
-    {
-        std::lock_guard lock((*cache)->mutex);
-        const auto it = (*cache)->kept.find(key);
-        if (it != (*cache)->kept.end()) return it->second;
-    }
-    std::optional<RmmaKept> kept;
-    try {
-        if (const auto r = rmma_resources(schedule, weight, epilogue, tokens)) {
-            kept = RmmaKept{r->registers, static_cast<double>(r->local_bytes)};
+        if (const auto r = rmma_resources(schedule, weight, epilogue, tokens, rows)) {
+            return RmmaKept{r->registers, static_cast<double>(r->local_bytes)};
         }
-    } catch (const std::exception&) {
-        return std::nullopt; // no device to ask: not cached
-    }
-    std::lock_guard lock((*cache)->mutex);
-    return (*cache)->kept.emplace(key, kept).first->second;
+    } catch (const std::exception&) {}
+    return std::nullopt;
 }
 
 } // namespace
@@ -233,7 +205,10 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
     const double peak_sm = g.bf16 * clk;
     const double bw_sm   = bw / sms;
     // What one SM reads from the L2 a second.
-    const double l2_sm = route_cost::kL2BytesPerSmClock.value() * clk;
+    const double l2_sm = (gb20x_cc(d.major, d.minor) ? route_cost::kL2BytesPerSmClockGb20x
+                                                     : route_cost::kL2BytesPerSmClockGa10x)
+                             .value() *
+                         clk;
     const double n = problem.n, k = problem.k;
     const double bpw     = static_cast<double>(weight.payload_bytes) / (n * k);
     const double max_thr = std::max(d.max_threads_per_sm, 1);
@@ -245,14 +220,15 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
     const double sets = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
     // The register-MMA terms below are verified for the decoders with per-sub-block scales (the
     // K-quants and the codebook i-quants, has_subblock_scales) on the generations where two or
-    // more lab cards confirm them (rmma_terms_measured: sm_86, Ada and consumer Blackwell sm_120). Every
+    // more lab cards confirm them (rmma_terms_measured: sm_86 and consumer Blackwell sm_120). Every
     // other part keeps its old price: Turing and Volta (emulated BF16 MMA) got worse with the
-    // terms (Quadro GV100 geomean 1.108 -> 1.155, worst 1.57 -> 1.80), and the datacenter parts have no
-    // card of their own. OPEN: the plain decoders (BF16, Q8_0, Q4_0 .. IQ4_NL, TQ1_0 /
-    // TQ2_0, the group-scaled, FP8 and FP4 formats) want their own measurement.
+    // terms (Quadro GV100 geomean 1.108 -> 1.155, worst 1.57 -> 1.80), and Ada (the 4060 Ti got
+    // worse, #501) and the parts with a single card wait. OPEN: the plain decoders (BF16, Q8_0,
+    // Q4_0 .. IQ4_NL, TQ1_0 / TQ2_0, the group-scaled, FP8 and FP4 formats) want their own
+    // measurement.
     const bool heavy_decoder =
         has_subblock_scales(problem.qtype) && rmma_terms_measured(d.major, d.minor);
-    const double regs_sm     = d.registers_per_sm;
+    const double regs_sm = d.registers_per_sm;
     // The CTAs of `threads` threads one SM holds: its thread and CTA limits, and for these decoders
     // the registers per thread of the compiled kernel (allocated per warp in units of
     // kRegAllocPerWarp). A 16-row, 32-token tile of a K-quant keeps 229 registers: two 128-thread
@@ -345,9 +321,9 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         if (!rmma_schedule_launchable(i)) continue;
         if (emulated && s.n_tiles == 8) continue;
         const double threads = 32.0 * s.warps_m * s.warps_k;
-        const auto kept      = heavy_decoder ? rmma_kept(i, weight, problem.epilogue, tokens)
-                                             : std::optional<RmmaKept>{};
-        const double occ     = rmma_occupancy(threads, kept);
+        const auto kept  = heavy_decoder ? rmma_kept(i, weight, problem.epilogue, tokens, problem.n)
+                                         : std::optional<RmmaKept>{};
+        const double occ = rmma_occupancy(threads, kept);
         const Route r{Family::RegisterMma, static_cast<std::uint8_t>(i)};
         const auto tile = *route_tile(r, problem.epilogue, tokens);
         offer(r, cost(tile.out_rows, tile.tokens, threads, tile.k_split, occ, s.warps_k, false, 1,

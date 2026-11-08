@@ -14,6 +14,7 @@
 #include "ops/quantized_weight.h"
 
 #include "core/device_class.h"
+#include "core/generation.h"
 #include "core/units.h"
 #include "core/weight.h"
 #include "ninferno/ops/prefill_routes.h"
@@ -288,7 +289,24 @@ std::string dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memor
     return out.str();
 }
 
+// A board whose register-MMA price rests on the compiled kernels' registers and spill
+// (rmma_terms_measured, generic_cost.cpp) is priced with the HOST GPU's kernels: the SASS of
+// another compute capability keeps other counts. Its golden is therefore reproducible only on a
+// host of the board's own compute capability; elsewhere it is skipped (neither written nor
+// compared), and a set holds the file only for the capabilities its builds run on. The decisions
+// are the selector's and route_query's own: nothing in the product changes for the test.
+bool host_kernels_differ(const GoldenBoard& b) {
+    if (!rmma_terms_measured(b.major, b.minor)) return false;
+    const DeviceClass& host = device_class();
+    return host.major != b.major || host.minor != b.minor;
+}
+
 int run_board(const GoldenBoard& b, bool update) {
+    if (host_kernels_differ(b)) {
+        std::cout << b.name << ": skipped, its register-MMA price needs a host of sm_" << b.major
+                  << b.minor << " kernels\n";
+        return 0;
+    }
     const std::string now = dump_board(b);
     const auto path       = golden_path(b);
     if (update) {
