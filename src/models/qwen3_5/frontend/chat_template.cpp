@@ -529,7 +529,8 @@ RenderedChat CompiledChatTemplate::render_once(const std::vector<ChatMessage>& m
         if (!messages[i].tool_calls.empty() && conventions_.turns &&
             std::string_view(output.text)
                 .substr(block.end)
-                .starts_with(std::string(conventions_.turns->open) + std::string(role_name(ChatRole::Assistant)))) {
+                .starts_with(std::string(conventions_.turns->open) +
+                             std::string(role_name(ChatRole::Assistant)))) {
             (void)prefix(i + 1);
             continue;
         }
