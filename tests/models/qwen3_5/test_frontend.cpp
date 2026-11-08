@@ -2134,7 +2134,8 @@ int check_steered_prefix(const fi::CompiledChatTemplate& compiled, const std::st
     }
     const std::size_t content_end = end + kResult.size();
     std::size_t diverge           = 0;
-    while (diverge < plain.size() && diverge < steered.size() && plain[diverge] == steered[diverge]) {
+    while (diverge < plain.size() && diverge < steered.size() &&
+           plain[diverge] == steered[diverge]) {
         ++diverge;
     }
     if (diverge < content_end) {
