@@ -745,6 +745,109 @@ void companion_failure_is_retried() {
            "a failure carries only to the drafter of its name");
 }
 
+// What acquire_model does about a reused artifact's drafters, for every start mode, source and
+// manifest. Each row lists the actions for the start modes Default, Attach, Require, Off, first
+// with the download gone, then with it present, each for a checkpoint and a GGUF model:
+// N nothing, A attach, C companions then attach, R reconvert, P replan from the checkpoint,
+// W warn, F fail.
+void decide_table() {
+    using K             = cv::DrafterActionKind;
+    const auto manifest = [](bool exists, bool current, bool failed, bool bundle,
+                             bool bundle_failed, bool missing_companion, bool gguf_source) {
+        cv::ManifestState state;
+        state.exists            = exists;
+        state.parsed            = exists;
+        state.registry_current  = current;
+        state.failed            = failed;
+        state.bundle_planned    = bundle;
+        state.bundle_failed     = bundle_failed;
+        state.missing_companion = missing_companion;
+        state.gguf_source       = gguf_source;
+        return state;
+    };
+
+    struct Row {
+        const char* name;
+        cv::ManifestState state;
+        const char* actions; // gone: checkpoint, GGUF; present: checkpoint, GGUF
+    };
+
+    const Row rows[] = {
+        {"no manifest", manifest(false, false, false, false, false, false, false),
+         "AAAN NAAN RRRN NCCN"},
+        {"complete", manifest(true, true, false, false, false, false, false),
+         "NNNN NNNN NNNN NNNN"},
+        {"another registry", manifest(true, false, false, false, false, false, false),
+         "AAAN NAAN PPPN NCCN"},
+        {"a failed drafter", manifest(true, true, true, false, false, false, false),
+         "AAAN NAAN PPPN NCCN"},
+        {"a bundle's plan, another registry",
+         manifest(true, false, false, true, false, false, false), "NNNN NNNN PPPN NCCN"},
+        {"a bundle's failed drafter", manifest(true, true, true, true, true, false, false),
+         "NWFN NWFN PPPN NCCN"},
+        {"a missing companion", manifest(true, true, false, false, false, true, false),
+         "AAAN NAAN PPPN NCCN"},
+        {"a GGUF's missing companion", manifest(true, true, false, false, false, true, true),
+         "NNNN NNNN NNNN NNNN"},
+    };
+    const cv::Drafters modes[] = {cv::Drafters::Default, cv::Drafters::Attach,
+                                  cv::Drafters::Require, cv::Drafters::Off};
+    const auto code            = [](K kind) {
+        switch (kind) {
+        case K::Nothing:
+            return 'N';
+        case K::Attach:
+            return 'A';
+        case K::CompanionsThenAttach:
+            return 'C';
+        case K::Reconvert:
+            return 'R';
+        case K::ReplanFromCheckpoint:
+            return 'P';
+        case K::Warn:
+            return 'W';
+        case K::Fail:
+            return 'F';
+        }
+        return '?';
+    };
+    for (const auto& row : rows) {
+        std::string made;
+        for (const bool present : {false, true}) {
+            for (const bool gguf : {false, true}) {
+                for (const auto mode : modes) {
+                    made += code(cv::decide_drafters(mode, gguf, present, row.state, false).kind);
+                }
+                made += ' ';
+            }
+        }
+        made.pop_back();
+        expect(made == row.actions, std::string("drafter action: ") + row.name,
+               "made " + made + ", wanted " + row.actions);
+    }
+    // A caller that named the components converts nothing in: a GGUF's artifact is attached to.
+    expect(cv::decide_drafters(cv::Drafters::Attach, true, true, rows[0].state, true).kind ==
+               K::Attach,
+           "named components: a GGUF's artifact is attached to, not converted again");
+    expect(cv::decide_drafters(cv::Drafters::Default, true, true, rows[0].state, true).kind ==
+               K::Nothing,
+           "named components: a GGUF is not drafted by default");
+    // The words of the two ways a bundle's failed drafter ends a start whose download is gone.
+    const auto fail =
+        cv::decide_drafters(cv::Drafters::Require, false, false, rows[5].state, false);
+    expect(fail.message.find("fetch the model again") != std::string::npos,
+           "a failed bundle drafter says to fetch the model again");
+    const auto warn = cv::decide_drafters(cv::Drafters::Attach, false, false, rows[5].state, false);
+    expect(warn.message.find("fetch the model again") != std::string::npos,
+           "a warned bundle drafter says to fetch the model again");
+    expect(cv::drafters_enabled(cv::Drafters::Default, false) &&
+               !cv::drafters_enabled(cv::Drafters::Default, true) &&
+               cv::drafters_enabled(cv::Drafters::Attach, true) &&
+               cv::drafters_enabled(cv::Drafters::Require, true) &&
+               !cv::drafters_enabled(cv::Drafters::Off, false),
+           "drafters are on by default for a checkpoint, when asked for a GGUF, never when off");
+}
+
 } // namespace
 
 int main() {
@@ -759,6 +862,7 @@ int main() {
     retry_failed_drafter();
     automatic_drafter_missing();
     companion_failure_is_retried();
+    decide_table();
     if (failures == 0) { std::cout << "drafter plan: ok\n"; }
     return failures == 0 ? 0 : 1;
 }
