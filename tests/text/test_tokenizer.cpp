@@ -338,6 +338,21 @@ bool check_unicode_tables() {
     ok &= onig::category(0x323AF) == UTF8PROC_CATEGORY_LO;
     ok &= onig::category(0x3347A) == UTF8PROC_CATEGORY_CN;
     ok &= std::string(onig::kOnigUnicodeVersion) == "16.0.0";
+    // Tripwire: a utf8proc update changes what the table is a difference against; regenerate
+    // it with tools/text/generate_onig_unicode_tables.py and update the count above.
+    if (std::string(utf8proc_unicode_version()) != onig::kUtf8procUnicodeVersion) {
+        std::cout << "  UTF8PROC is Unicode " << utf8proc_unicode_version() << ", table made against "
+                  << onig::kUtf8procUnicodeVersion << ": regenerate onig_unicode_tables.h
+";
+        ok = false;
+    }
+    // Unicode 17 gave U+A7D3 and U+A7D5 capitals (U+A7D2, U+A7D4); in 16 they map to themselves.
+    for (const char32_t cp : {0xA7D3, 0xA7D5}) {
+        ok &= onig::to_upper(cp) == cp && onig::to_lower(cp) == cp;
+    }
+    ok &= onig::to_upper(0xA7D2) == 0xA7D2 && onig::to_lower(0xA7D2) == 0xA7D2;
+    ok &= onig::to_upper('a') == 'A' && onig::to_lower(0x10D) == 0x10D &&
+          onig::to_upper(0x10D) == 0x10C;
     if (!ok) { std::cout << "  UNICODE TABLE boundary categories wrong\n"; }
 
     const char* const kQwen3 =

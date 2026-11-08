@@ -15,7 +15,7 @@ static_assert(UTF8PROC_CATEGORY_CN == 0 && UTF8PROC_CATEGORY_LU == 1 && UTF8PROC
 const CategoryRange* find_range(char32_t cp) noexcept {
     const auto* first = std::begin(kOnigCategoryRanges);
     const auto* last  = std::end(kOnigCategoryRanges);
-    if (cp < first->first) { return nullptr; }
+    if (cp < first->first || cp > (last - 1)->last) { return nullptr; }
     const auto* it = std::upper_bound(
         first, last, static_cast<std::uint32_t>(cp),
         [](std::uint32_t value, const CategoryRange& range) { return value < range.first; });
@@ -32,13 +32,24 @@ utf8proc_category_t category(char32_t cp) noexcept {
     return utf8proc_category(static_cast<utf8proc_int32_t>(cp));
 }
 
+const CaseMap* find_case(char32_t cp) noexcept {
+    const auto* first = std::begin(kOnigCaseMaps);
+    const auto* last  = std::end(kOnigCaseMaps);
+    const auto* it    = std::lower_bound(
+        first, last, static_cast<std::uint32_t>(cp),
+        [](const CaseMap& map, std::uint32_t value) { return map.cp < value; });
+    return it != last && it->cp == cp ? it : nullptr;
+}
+
 char32_t to_lower(char32_t cp) noexcept {
     if (find_range(cp) != nullptr) { return cp; }
+    if (const CaseMap* map = find_case(cp)) { return map->lower; }
     return static_cast<char32_t>(utf8proc_tolower(static_cast<utf8proc_int32_t>(cp)));
 }
 
 char32_t to_upper(char32_t cp) noexcept {
     if (find_range(cp) != nullptr) { return cp; }
+    if (const CaseMap* map = find_case(cp)) { return map->upper; }
     return static_cast<char32_t>(utf8proc_toupper(static_cast<utf8proc_int32_t>(cp)));
 }
 

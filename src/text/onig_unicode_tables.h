@@ -3,6 +3,10 @@
 // tokenizers 0.23) differs from Unicode 17.0.0 (bundled utf8proc 2.11), with the
 // category they have in 16.0.0. Sources: UnicodeData.txt of both versions from
 // https://www.unicode.org/Public/<version>/ucd/.
+//   UnicodeData.txt 16.0.0 sha256 ff58e5823bd095166564a006e47d111130813dcf8bf234ef79fa51a870edb48f
+//   UnicodeData.txt 17.0.0 sha256 2e1efc1dcb59c575eedf5ccae60f95229f706ee6d031835247d843c11d96470c
+// Also the code points that existed in the old version and whose simple case maps
+// changed (kOnigCaseMaps, old values; new code points keep no case maps).
 // clang-format off
 #pragma once
 
@@ -19,6 +23,12 @@ struct CategoryRange {
     std::uint32_t first;
     std::uint32_t last;
     std::uint8_t category;  // utf8proc_category_t value
+};
+
+struct CaseMap {
+    std::uint32_t cp;
+    std::uint32_t lower;
+    std::uint32_t upper;
 };
 
 inline constexpr CategoryRange kOnigCategoryRanges[] = {
@@ -70,6 +80,11 @@ inline constexpr CategoryRange kOnigCategoryRanges[] = {
     {0x2B73A, 0x2B73F, 0},  // Cn
     {0x2CEA2, 0x2CEAD, 0},  // Cn
     {0x323B0, 0x33479, 0},  // Cn
+};
+
+inline constexpr CaseMap kOnigCaseMaps[] = {
+    {0xA7D3, 0xA7D3, 0xA7D3},
+    {0xA7D5, 0xA7D5, 0xA7D5},
 };
 
 } // namespace ninferno::text::onig_unicode
