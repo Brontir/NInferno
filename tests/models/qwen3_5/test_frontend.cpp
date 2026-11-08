@@ -2187,6 +2187,7 @@ int test_none_gemma_channel_head_token() {
         ninferno::PromptInput result = gemma4_prompt(thinking);
         result.options.tool_jsons.push_back(
             R"({"type":"function","function":{"name":"inspect","parameters":{"type":"object"}}})");
+        result.options.tool_calls_enabled   = false;
         result.options.tool_calls_discarded = true;
         return result;
     };
