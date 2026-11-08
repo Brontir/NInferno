@@ -1001,6 +1001,9 @@ bool ggml_mmq_gated_pair(const Tensor& x, const PairHalf& gate, const PairHalf& 
 // Calls routed to ggml's matrix or vector kernel that ran A16 instead (a workspace short of the
 // route, an unaligned x or rows off its multiple), since the process started.
 [[nodiscard]] std::uint64_t ggml_mmq_fallback_count() noexcept;
+// Launches that ran joined to the call before them (launch_overlap's join), since the process
+// started: the segmented chain's and the tests' view of what the rule granted.
+[[nodiscard]] std::uint64_t joined_launch_count() noexcept;
 // Calls whose route ran another one with other bytes (any family: a workspace short of it, an
 // unaligned x, a shape it cannot hold), since the process started; each pair of routes is also
 // said once on stderr. A demotion that keeps the bytes (staged or NVFP4 tiled to the register MMA

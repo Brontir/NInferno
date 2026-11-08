@@ -13,6 +13,7 @@
 #include "ninferno/ops/segmented_projection.h"
 
 #include "core/arena.h"
+#include "ops/generic/generic_gemm.h"
 #include "ops/linear/linear_registry.h"
 #include "ops/linear/linear_test_common.h"
 #include "ops/op_tester.h"
@@ -21,6 +22,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -56,6 +58,35 @@ const char* name(QType q) {
            : q == QType::GGML_IQ4_XS        ? "iq4_xs"
            : q == QType::GGML_Q4_0          ? "q4_0"
                                             : "fp8_row_bf16";
+}
+
+// The joins the segmented chain is granted (#309): call i joins the call before it where that one
+// released, and a launch releases where launch_overlap says so for the route it runs (the one
+// side_by_side_admits resolved). The last call releases nothing.
+std::uint64_t granted_joins(const std::vector<Weight>& weights, ops::LinearPolicy policy,
+                            std::int32_t t) {
+    namespace g = ops::detail::generic;
+    const auto overlap = [&](const Weight& w, bool join_asked, bool release_asked) {
+        const g::Problem problem{w.qtype, policy, w.n, w.k, g::Epilogue::Store};
+        const g::CallLayout layout{.x_aligned16    = true,
+                                   .ldx            = w.k,
+                                   .tokens         = t,
+                                   .rows           = w.n,
+                                   .segments       = 1,
+                                   .epilogue       = g::Epilogue::Store,
+                                   .workspace_free = std::numeric_limits<std::size_t>::max()};
+        const g::ResolvedRoute resolved = g::resolve_route(
+            g::select_route(problem, w, t, ops::prefill_routes_active()), w, layout);
+        return g::launch_overlap(resolved, g::Epilogue::Store, t, join_asked, release_asked, true);
+    };
+    std::uint64_t joins = 0;
+    for (std::size_t i = 1; i < weights.size(); ++i) {
+        joins += overlap(weights[i - 1], false, true).releases() &&
+                         overlap(weights[i], true, false).joins()
+                     ? 1
+                     : 0;
+    }
+    return joins;
 }
 
 // One layer's projections of x [K, T]: separately, then side by side; the outputs must match.
@@ -125,8 +156,17 @@ int check(const std::vector<Slice>& slices, std::int32_t k, std::int32_t t,
     for (std::size_t i = 0; i < slices.size(); ++i) {
         ops::linear(tx, weights[i], ts[i], policy, workspace, nullptr);
     }
+    const std::uint64_t joins_before = ops::detail::generic::joined_launch_count();
     ops::segmented_projection(tx, segmented, outputs, workspace, nullptr);
     cuda_check(cudaDeviceSynchronize(), "run");
+    // The chain joins exactly where the launches release (the rule, not a flag of its own).
+    const std::uint64_t launched = ops::detail::generic::joined_launch_count() - joins_before;
+    const std::uint64_t grants   = granted_joins(weights, policy, t);
+    if (launched != grants) {
+        std::cerr << "FAIL " << label << ": " << launched
+                  << " joined launches, the rule grants " << grants << std::endl;
+        return 1;
+    }
 
     for (std::size_t i = 0; i < slices.size(); ++i) {
         const std::size_t count = static_cast<std::size_t>(slices[i].rows) * t;

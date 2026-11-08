@@ -505,6 +505,7 @@ std::optional<std::size_t> workspace_free(const DeviceArena* workspace) {
 
 std::atomic<std::uint64_t> mmq_fallbacks{0};
 std::atomic<std::uint64_t> route_demotions{0};
+std::atomic<std::uint64_t> joined_launches{0};
 
 // A demotion that keeps the bytes: the staged MMA and the NVFP4 tiled route hand a call they
 // cannot read to the register MMA of the same summation order.
@@ -3344,6 +3345,10 @@ std::uint64_t ggml_mmq_fallback_count() noexcept {
     return mmq_fallbacks.load(std::memory_order_relaxed);
 }
 
+std::uint64_t joined_launch_count() noexcept {
+    return joined_launches.load(std::memory_order_relaxed);
+}
+
 std::uint64_t route_demotion_count() noexcept {
     return route_demotions.load(std::memory_order_relaxed);
 }
@@ -3916,6 +3921,7 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
                                                  call.join_previous, call.release_next,
                                                  pdl_device());
     args.join_previous = overlap.joins() ? 1 : 0;
+    if (overlap.joins()) joined_launches.fetch_add(1, std::memory_order_relaxed);
     args.release_next  = overlap.releases() || overlap.release == OverlapRefusal::NoPdl ? 1 : 0;
     if (released != nullptr) *released = overlap.releases();
     args.pdl_prefetch = overlap.prefetches() ? 1 : 0;
