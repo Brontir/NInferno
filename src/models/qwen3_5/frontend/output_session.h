@@ -36,6 +36,12 @@ struct OutputConventions {
     std::vector<std::string> content_open;
     // Special tokens that the reasoning and tool-call parsers read; they reach the presentation.
     std::vector<TokenId> structural_tokens;  // sorted
+    // The tokens that cannot begin or continue an answer when the call is refused (tool_choice
+    // none): the tool-call and tool-result markers, and the reasoning markers' special tokens (a
+    // marker spelled as one special token plus plain text, as Gemma 4's <|channel>thought, is
+    // its head). Both sorted; empty where the tokenizer has no such token.
+    std::vector<TokenId> call_tokens;
+    std::vector<TokenId> reasoning_tokens;
 
     [[nodiscard]] bool structural(TokenId token) const noexcept;
 };
@@ -49,6 +55,11 @@ struct OutputStart {
     // anything but a line break, is it quoting the marker (code or prose about the format), not
     // ending its reasoning. Off under an output constraint, whose grammar opens at the first close.
     bool quoted_close_is_text = false;
+    // The call is refused (tool_choice none): outside reasoning, a token of
+    // OutputConventions::call_tokens or ::reasoning_tokens ends the turn instead of reaching the
+    // answer. The model has left the answer for markup (a second reasoning span, a stray close,
+    // a tool-result opener), and what follows imitates a call turn or loops to the output limit.
+    bool answer_only = false;
 };
 
 class PublishedOutput {

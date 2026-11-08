@@ -1992,23 +1992,43 @@ int test_disabled_tool_calls_keep_the_prompt() {
                  "disabled tool calls changed the prompt or still read calls back");
 }
 
+// The test vocabulary with Qwen's call opener and closer added as tokens.
+constexpr int kOpenerId = 248058;
+constexpr int kCloserId = 248059;
+FrontendResources resources_with_opener() {
+    FrontendResources with_opener = resources();
+    auto tokenizer                = nlohmann::json::parse(with_opener.tokenizer_json);
+    tokenizer["added_tokens"].push_back(added(kOpenerId, "<tool_call>"));
+    tokenizer["added_tokens"].push_back(added(kCloserId, "</tool_call>"));
+    with_opener.tokenizer_json = tokenizer.dump();
+    auto config                = nlohmann::json::parse(with_opener.tokenizer_config_json);
+    config["added_tokens_decoder"][std::to_string(kOpenerId)] = decoder_added("<tool_call>");
+    config["added_tokens_decoder"][std::to_string(kCloserId)] = decoder_added("</tool_call>");
+    with_opener.tokenizer_config_json                         = config.dump();
+    return with_opener;
+}
+
+ninferno::PromptInput none_input(std::optional<bool> thinking) {
+    ninferno::PromptInput result;
+    ninferno::ChatMessage user;
+    user.role = ninferno::ChatRole::User;
+    user.parts.push_back(ninferno::MessagePart{
+        .kind = ninferno::MessagePartKind::Text, .text = "weather?", .media = {}});
+    result.messages.push_back(std::move(user));
+    result.options.tool_jsons.push_back(
+        R"({"type":"function","function":{"name":"inspect","parameters":{"type":"object"}}})");
+    result.options.tool_calls_discarded = true;
+    result.options.enable_thinking      = thinking;
+    return result;
+}
+
 // tool_choice none with tools declared bans the template's call opener and closer (one token
 // each), so the model answers in text; the prompt stays the tool-enabled one. Where the opener is
 // not a token of the vocabulary, or the calls are on, or no tools are declared, nothing is banned.
+// The reasoning markers are banned too where the prompt leaves no reasoning to open or close
+// (thinking declined), and only then: a model that may reason needs them.
 int test_disabled_tool_calls_ban_the_opener() {
-    constexpr int kOpenerId       = 248058;
-    constexpr int kCloserId       = 248059;
-    FrontendResources with_opener = resources();
-    {
-        auto tokenizer = nlohmann::json::parse(with_opener.tokenizer_json);
-        tokenizer["added_tokens"].push_back(added(kOpenerId, "<tool_call>"));
-        tokenizer["added_tokens"].push_back(added(kCloserId, "</tool_call>"));
-        with_opener.tokenizer_json = tokenizer.dump();
-        auto config                = nlohmann::json::parse(with_opener.tokenizer_config_json);
-        config["added_tokens_decoder"][std::to_string(kOpenerId)] = decoder_added("<tool_call>");
-        config["added_tokens_decoder"][std::to_string(kCloserId)] = decoder_added("</tool_call>");
-        with_opener.tokenizer_config_json                         = config.dump();
-    }
+    const FrontendResources with_opener = resources_with_opener();
     const auto input = [](bool calls, bool discarded, bool tools) {
         ninferno::PromptInput result;
         ninferno::ChatMessage user;
@@ -2031,6 +2051,12 @@ int test_disabled_tool_calls_ban_the_opener() {
     const std::vector<int> banned = {kOpenerId, kCloserId};
     failures += check(none.summary().banned_tokens == banned,
                       "tool_choice none did not ban the Qwen XML call opener and closer tokens");
+    const auto declined = frontend.prepare(none_input(false));
+    failures += check(declined.summary().banned_tokens ==
+                          std::vector<int>{kOpenerId, kCloserId, 248068, 248069},
+                      "tool_choice none with thinking declined left the reasoning markers open");
+    failures += check(frontend.prepare(none_input(true)).summary().banned_tokens == banned,
+                      "tool_choice none banned the reasoning markers of a model that may reason");
     failures += check(FrontendFactory::inspect(none).token_ids ==
                           FrontendFactory::inspect(automatic).token_ids,
                       "banning the opener changed the prompt");
@@ -2041,6 +2067,62 @@ int test_disabled_tool_calls_ban_the_opener() {
     const Frontend plain = make_frontend(resources(), false);
     failures += check(plain.prepare(input(false, true, true)).summary().banned_tokens.empty(),
                       "an opener that is not a vocabulary token was banned");
+    return failures;
+}
+
+
+// tool_choice none: outside reasoning, a call or reasoning marker ends the turn (the model has left
+// the answer for markup), with the text before it kept and the marker not published; inside
+// reasoning the markers are the span's own.
+int test_none_ends_at_structural_tokens() {
+    const Frontend frontend = make_frontend(resources_with_opener(), false);
+    ninferno::StopPolicy stop;
+    constexpr ninferno::TokenId kHello = 1;  // "helloST"
+    constexpr ninferno::TokenId kThink = 248068;
+    constexpr ninferno::TokenId kClose = 248069;
+    int failures                       = 0;
+    const auto run = [&](const ninferno::PromptInput& input,
+                         std::vector<ninferno::TokenId> tokens) {
+        auto prompt  = frontend.prepare(input);
+        auto session = frontend.make_output_session(prompt, stop);
+        auto decision = session.preview_model(tokens, 64, ninferno::FinishReason::OutputLimit);
+        return std::pair{decision, session.commit_preview()};
+    };
+    // Thinking declined: a stray close ends the turn at once, the text before it stays.
+    {
+        const auto [decision, output] = run(none_input(false), {kHello, kClose, kHello});
+        failures += check(decision.accepted_tokens == 2 &&
+                              decision.finish_reason == ninferno::FinishReason::StopToken &&
+                              channel_text(output, ninferno::OutputChannel::Content) == "helloST" &&
+                              channel_text(output, ninferno::OutputChannel::Reasoning).empty(),
+                          "a close marker after declined thinking reached the answer");
+    }
+    // The call opener ends it too, in a request that may reason.
+    {
+        const auto [decision, output] = run(none_input(true), {kClose, kHello, kOpenerId, kHello});
+        failures += check(decision.accepted_tokens == 3 &&
+                              decision.finish_reason == ninferno::FinishReason::StopToken &&
+                              channel_text(output, ninferno::OutputChannel::Content) == "helloST",
+                          "the call opener after the reasoning did not end the turn");
+    }
+    // Thinking on: the first span is reasoning; a second opener or close after it ends the turn.
+    {
+        const auto [decision, output] =
+            run(none_input(true), {kHello, kClose, kHello, kThink, kHello});
+        failures += check(decision.accepted_tokens == 4 &&
+                              decision.finish_reason == ninferno::FinishReason::StopToken &&
+                              channel_text(output, ninferno::OutputChannel::Content) == "helloST",
+                          "a second reasoning opener reached the answer");
+    }
+    // Calls enabled (auto): the same tokens are not an end.
+    {
+        ninferno::PromptInput input = none_input(true);
+        input.options.tool_calls_discarded = false;
+        input.options.tool_calls_enabled   = true;
+        const auto [decision, output] = run(input, {kHello, kClose, kHello, kThink, kHello});
+        failures += check(decision.accepted_tokens == 5 && !decision.finished(),
+                          "tool calls enabled ended the turn at a structural token");
+    }
     return failures;
 }
 
@@ -3458,6 +3540,7 @@ int main() {
     failures += test_image_resize_rejection_policy();
     failures += test_disabled_tool_calls_keep_the_prompt();
     failures += test_disabled_tool_calls_ban_the_opener();
+    failures += test_none_ends_at_structural_tokens();
     failures += test_explicit_leading_instruction_cache_boundary();
     failures += test_last_part_boundary_at_turn_end();
     failures += test_media_admission_uses_aggregate_resources(frontend);

@@ -55,6 +55,11 @@ struct ToolCallOutputContract {
     std::vector<Tool> tools;
     bool enforce_declared_names = false;
     ToolCallFormat format       = ToolCallFormat::QwenXml;
+    // The calls are read only to be dropped (tool_choice none). A model kept from the call opener
+    // may write its call as bare JSON, {"name": NAME, ...}, with no opener before it: for a
+    // syntax whose calls are JSON (ToolCallSyntax::bare_json_call), that text, with a declared
+    // tool's name, opens the call region as the opener would.
+    bool discarded = false;
 
     [[nodiscard]] bool declares(std::string_view name) const noexcept;
 };
@@ -68,7 +73,8 @@ struct ParsedToolCallOutput {
 
 [[nodiscard]] std::shared_ptr<const ToolCallOutputContract>
 build_tool_call_output_contract(std::span<const std::string> tool_jsons, bool enabled,
-                                ToolCallFormat format = ToolCallFormat::QwenXml);
+                                ToolCallFormat format = ToolCallFormat::QwenXml,
+                                bool discarded        = false);
 
 // Whether held output bytes begin a tool-call region: not at all, possibly (a prefix of one), or
 // for certain (the region starts at the held bytes).
@@ -93,6 +99,9 @@ public:
     // region. The default: whitespace, an optional lead() and whitespace, then open(). A syntax
     // whose region opens with a header that names the function overrides it.
     [[nodiscard]] virtual ToolCallStart match_start(std::string_view held) const;
+    // Whether a call of this syntax is a JSON object {"name": NAME, ...} inside its open marker,
+    // so that the object without the marker is a call too (ToolCallOutputContract::discarded).
+    [[nodiscard]] virtual bool bare_json_call() const noexcept { return false; }
     // The name a call cut off by the output limit had begun to write: `body` follows open().
     // nullopt when the body does not begin this syntax's call header (then the region is not a
     // call, e.g. prose quoting the marker); else the name bytes written so far (empty while the

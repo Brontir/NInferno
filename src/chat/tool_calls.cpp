@@ -835,11 +835,12 @@ bool ToolCallOutputContract::declares(std::string_view name) const noexcept {
 
 std::shared_ptr<const ToolCallOutputContract>
 build_tool_call_output_contract(std::span<const std::string> tool_jsons, bool enabled,
-                                ToolCallFormat format) {
+                                ToolCallFormat format, bool discarded) {
     if (!enabled || format == ToolCallFormat::None) { return {}; }
     auto contract                    = std::make_shared<ToolCallOutputContract>();
     contract->enforce_declared_names = true;
     contract->format                 = format;
+    contract->discarded              = discarded;
     contract->tools.reserve(tool_jsons.size());
     for (const std::string& tool_json : tool_jsons) {
         const Json definition = Json::parse(tool_json, nullptr, false);
@@ -1064,6 +1065,32 @@ ToolCallStart ToolCallSyntax::match_start(std::string_view held) const {
     return match_call_start(held, lead(), open());
 }
 
+namespace {
+
+// Whether held bytes begin a bare JSON call, {"name": NAME, ...}, with NAME a declared tool's:
+// Complete once the name is whole (its closing quote written), Partial while the bytes can still
+// become that.
+CallStart bare_json_start(std::string_view held, const ToolCallOutputContract& contract) {
+    const auto cut = cut_name_after_header(held, {"{", "\"name\"", ":", "\""});
+    if (!cut) { return CallStart::No; }
+    if (cut->name.empty()) { return cut->complete ? CallStart::No : CallStart::Partial; }
+    if (cut->complete) {
+        // The byte after the name must be the closing quote.
+        const std::size_t end = static_cast<std::size_t>(cut->name.data() - held.data()) +
+                                cut->name.size();
+        return held[end] == '"' && contract.declares(cut->name) ? CallStart::Complete
+                                                                : CallStart::No;
+    }
+    return std::any_of(contract.tools.begin(), contract.tools.end(),
+                       [&](const ToolCallOutputContract::Tool& tool) {
+                           return std::string_view(tool.name).starts_with(cut->name);
+                       })
+               ? CallStart::Partial
+               : CallStart::No;
+}
+
+} // namespace
+
 ToolCallOutputDecoder::ToolCallOutputDecoder(std::shared_ptr<const ToolCallOutputContract> contract,
                                              std::size_t max_tool_name_length)
     : contract_(std::move(contract)),
@@ -1079,18 +1106,31 @@ std::string ToolCallOutputDecoder::feed(std::string_view text) {
         return {};
     }
 
+    // The held bytes against the syntax's call start, and where the syntax has bare JSON calls
+    // and they are being dropped, against a bare call too (bare_json_start).
+    bool bare = false;
+    const auto match = [&](std::string_view held) {
+        bare              = false;
+        CallStart matched = syntax_->match_start(held);
+        if (matched == CallStart::No && contract_->discarded && syntax_->bare_json_call()) {
+            matched = bare_json_start(held, *contract_);
+            bare    = matched != CallStart::No;
+        }
+        return matched;
+    };
     std::string visible;
     for (std::size_t index = 0; index < text.size(); ++index) {
         held_.push_back(text[index]);
-        CallStart start = syntax_->match_start(held_);
+        CallStart start = match(held_);
         // Publish the held bytes that can no longer begin the suffix, oldest first.
         while (start == CallStart::No) {
             visible.push_back(held_.front());
             held_.erase(0, 1);
-            start = held_.empty() ? CallStart::Partial : syntax_->match_start(held_);
+            start = held_.empty() ? CallStart::Partial : match(held_);
         }
         if (start == CallStart::Complete) {
-            tool_region_ = std::move(held_);
+            // A bare call is read as the call the syntax's opener would have opened.
+            tool_region_ = bare ? std::string(syntax_->open()) + "\n" + held_ : std::move(held_);
             held_.clear();
             tool_region_.append(text.substr(index + 1));
             saw_tool_marker_ = true;
@@ -1384,6 +1424,7 @@ std::string calls_structural_tag(std::span<const ToolCallConstraintTool> tools,
 class QwenXmlSyntax final : public ToolCallSyntax {
 public:
     [[nodiscard]] std::string_view open() const noexcept override { return kToolOpen; }
+    [[nodiscard]] bool bare_json_call() const noexcept override { return true; }
 
     [[nodiscard]] std::string_view close() const noexcept override { return kToolClose; }
 
@@ -1430,6 +1471,7 @@ public:
 class HermesJsonSyntax final : public ToolCallSyntax {
 public:
     [[nodiscard]] std::string_view open() const noexcept override { return kToolOpen; }
+    [[nodiscard]] bool bare_json_call() const noexcept override { return true; }
 
     [[nodiscard]] std::string_view close() const noexcept override { return kToolClose; }
     [[nodiscard]] std::optional<CutCallName> cut_call_name(std::string_view body) const override {

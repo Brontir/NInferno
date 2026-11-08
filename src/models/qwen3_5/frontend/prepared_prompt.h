@@ -159,8 +159,12 @@ struct PreparedPromptData {
     bool reasoning_open_allowed = false;
     bool reasoning_declined     = false;
     bool thinking_budget_control = false;
-    // The tool-call opener token a tool_choice none request must not sample (empty: none).
+    // The tokens a tool_choice none request must not sample (empty: none): the tool-call and
+    // tool-result markers, and the reasoning markers where the prompt leaves no reasoning.
     std::vector<TokenId> banned_tokens;
+    // The call is refused: the output ends at a structural token outside reasoning
+    // (OutputStart::answer_only).
+    bool answer_only = false;
     PrepareStats prepare;
 
     [[nodiscard]] std::span<const std::int32_t> position_axis(int axis) const;

@@ -539,6 +539,7 @@ public:
           thinking_control_tokens(std::move(thinking_control_tokens_)),
           conventions(std::move(conventions_)),
           preserve_special(output.raw || output.preserve_special_tokens),
+          end_at_structural(start.answer_only && !output.raw && !output.preserve_special_tokens),
           split_reasoning(start.in_reasoning && !output.raw),
           tool_contract(output.raw ? nullptr : std::move(tool_call_output_)),
           tool_name_max_length(output.tool_name_max_length),
@@ -578,7 +579,9 @@ public:
     std::shared_ptr<const std::vector<TokenId>> thinking_control_tokens;
     std::shared_ptr<const OutputConventions> conventions;
     bool preserve_special = false;
-    bool split_reasoning  = false;
+    // OutputStart::answer_only: a structural token outside reasoning ends the turn.
+    bool end_at_structural = false;
+    bool split_reasoning   = false;
     DecoderState state;
     DecoderState preview_state;
     SemanticThinkingState semantic;
@@ -727,6 +730,18 @@ runtime::OutputDecision OutputSession::preview_model(std::span<const TokenId> to
         const bool stop_token =
             std::find(impl_->policy.token_ids.begin(), impl_->policy.token_ids.end(), token) !=
             impl_->policy.token_ids.end();
+        if (!stop_token && impl_->end_at_structural && !impl_->preview_state.in_reasoning &&
+            !impl_->preview_state.awaiting_open &&
+            (std::binary_search(conventions.call_tokens.begin(), conventions.call_tokens.end(),
+                                token) ||
+             std::binary_search(conventions.reasoning_tokens.begin(),
+                                conventions.reasoning_tokens.end(), token))) {
+            // The call is refused and the model wrote markup where the answer goes: ends the
+            // turn like a stop token that is not published, with what came before kept.
+            terminalize(impl_->preview_state, impl_->policy, conventions, impl_->preview_output,
+                        count);
+            return complete(count, FinishReason::StopToken);
+        }
         DecoderState before_state;
         PublishedOutput before_output;
         if (stop_token && !impl_->policy.publish_stop_token) {

@@ -71,6 +71,18 @@ int test_conventions() {
                           gemma.reasoning->close == "<channel|>",
                       "gemma channel reasoning");
     failures += check(gemma.tools.format == ToolCallFormat::Gemma4, "gemma tools");
+    // The markers a refused call turn must not write: the call and tool-result markers, and the
+    // reasoning markers apart (none for a template whose answer opens with a header).
+    failures += check(gemma.non_answer_markers() ==
+                              std::vector<std::string>{"<|tool_call>", "<tool_call|>",
+                                                       "<|tool_response>", "<tool_response|>"} &&
+                          gemma.reasoning_markers() ==
+                              std::vector<std::string>{"<|channel>thought", "<channel|>"},
+                      "gemma non-answer markers");
+    failures += check(hermes.non_answer_markers() ==
+                          std::vector<std::string>{"<tool_call>", "</tool_call>",
+                                                   "<tool_response>", "</tool_response>"},
+                      "hermes non-answer markers");
 
     const auto llama = resolve_conventions(
         "<|start_header_id|>user<|end_header_id|>\n\nhi<|eot_id|>");
@@ -105,6 +117,8 @@ int test_conventions() {
                           harmony.reasoning->content_open.size() == 2,
                       "harmony analysis reasoning");
     failures += check(harmony.tools.format == ToolCallFormat::Harmony, "harmony tools");
+    failures += check(harmony.reasoning_markers().empty() && harmony.non_answer_markers().empty(),
+                      "harmony answer header shares the reasoning markers' tokens");
 
     // Generation stops come from the matched turn markup, the tool hand-off among them. A close
     // that ends one message of a reply (harmony's <|end|>) and the reasoning markers are inside a
@@ -637,6 +651,78 @@ bool grammar_accepts(
     return request.stats().complete;
 }
 
+std::string trim_ws(std::string text) {
+    const auto space = [](char byte) { return byte == ' ' || byte == '
+' || byte == '	'; };
+    while (!text.empty() && space(text.back())) { text.pop_back(); }
+    std::size_t begin = 0;
+    while (begin < text.size() && space(text[begin])) { ++begin; }
+    return text.substr(begin);
+}
+
+// tool_choice none (a discarded contract): a model kept from the call opener may write its call as
+// bare JSON with a declared tool's name; that is cut out like the opener's call, not shown.
+int test_bare_json_call_dropped() {
+    int failures = 0;
+    const std::vector<std::string> tools = {tool_definition("weather", kWeatherSchema),
+                                            tool_definition("note", Json{{"type", "object"}})};
+    for (const ToolCallFormat format : {ToolCallFormat::HermesJson, ToolCallFormat::QwenXml}) {
+        const auto discarded =
+            ninferno::chat::build_tool_call_output_contract(tools, true, format, true);
+        const std::string call =
+            "{
+  \"name\": \"weather\",
+  \"arguments\": {\"city\": \"Oslo\", \"days\": 1}
+}";
+        for (const bool bytewise : {false, true}) {
+            ninferno::chat::ToolCallOutputDecoder decoder(discarded, 64);
+            const std::string text = "
+
+" + call;
+            std::string visible;
+            if (bytewise) {
+                for (const char byte : text) { visible += decoder.feed(std::string_view(&byte, 1)); }
+            } else {
+                visible = decoder.feed(text);
+            }
+            const auto end = decoder.finish();
+            failures += check(trim_ws(visible).empty() && trim_ws(end.content).empty() &&
+                                  end.tool_calls.size() == 1 && end.tool_calls[0].name == "weather",
+                              "a bare JSON call under none was shown or lost");
+        }
+        // Prose before it stays; the call is the same.
+        ninferno::chat::ToolCallOutputDecoder prose(discarded, 64);
+        std::string shown = prose.feed("It is sunny.
+" + call);
+        const auto prose_end = prose.finish();
+        failures += check(shown == "It is sunny." && prose_end.content.empty() &&
+                              prose_end.tool_calls.size() == 1,
+                          "prose before a bare JSON call was changed");
+        // The output limit cut the call off: dropped, not shown as markup.
+        ninferno::chat::ToolCallOutputDecoder cut(discarded, 64);
+        const std::string cut_shown = cut.feed(call.substr(0, call.size() - 20));
+        const auto cut_end          = cut.finish(true);
+        failures += check(trim_ws(cut_shown).empty() && trim_ws(cut_end.content).empty() &&
+                              cut_end.tool_calls.empty(),
+                          "a cut-off bare JSON call was shown");
+        // JSON that is not a declared tool's call, and JSON in a request that keeps its calls
+        // (the contract not discarded), is text.
+        for (const auto& [contract_used, body] :
+             {std::pair{discarded, std::string(R"({"name": "other", "arguments": {}})")},
+              std::pair{discarded, std::string(R"({"name": "weatherx", "arguments": {}})")},
+              std::pair{discarded, std::string(R"({"id": 1, "name": "weather"})")},
+              std::pair{ninferno::chat::build_tool_call_output_contract(tools, true, format),
+                        call}}) {
+            ninferno::chat::ToolCallOutputDecoder text_only(contract_used, 64);
+            std::string shown_text = text_only.feed(body);
+            const auto text_end    = text_only.finish();
+            failures += check(shown_text + text_end.content == body && text_end.tool_calls.empty(),
+                              "JSON that is no discarded call was cut: " + body);
+        }
+    }
+    return failures;
+}
+
 // What a syntax's grammar admits, its parser turns into calls.
 int test_structural_tags() {
     int failures = 0;
@@ -1161,6 +1247,7 @@ int test_codec() {
 int main() {
     int failures = 0;
     failures += test_conventions();
+    failures += test_bare_json_call_dropped();
     failures += test_parsers();
     failures += test_streaming_decoder();
     failures += test_structural_tags();

@@ -109,6 +109,24 @@ std::vector<std::string> ChatConventions::structural_markers() const {
     return markers;
 }
 
+std::vector<std::string> ChatConventions::non_answer_markers() const {
+    std::vector<std::string> markers;
+    for (const std::string* marker :
+         {&tools.opener, &tools.closer, &tools.response_open, &tools.response_close}) {
+        if (!marker->empty()) { markers.push_back(*marker); }
+    }
+    return markers;
+}
+
+std::vector<std::string> ChatConventions::reasoning_markers() const {
+    if (!reasoning || !reasoning->content_open.empty()) { return {}; }
+    std::vector<std::string> markers;
+    for (const std::string* marker : {&reasoning->open, &reasoning->close}) {
+        if (!marker->empty()) { markers.push_back(*marker); }
+    }
+    return markers;
+}
+
 std::vector<std::string> ChatConventions::generation_stops() const {
     return turns ? turns->stops : std::vector<std::string>{};
 }

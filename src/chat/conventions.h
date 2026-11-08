@@ -94,6 +94,17 @@ struct ChatConventions {
     // even when the tokenizer marks them special.
     [[nodiscard]] std::vector<std::string> structural_markers() const;
 
+    // The markers that cannot begin or continue an answer when the call is refused (tool_choice
+    // none): the call opener and closer and the tool-result opener and closer. The reasoning
+    // markers are separate (reasoning_markers): they are not an answer either, but a model that
+    // may reason writes them.
+    [[nodiscard]] std::vector<std::string> non_answer_markers() const;
+
+    // The reasoning open and close markers; empty when the template has no reasoning, or when
+    // its answer opens with a header (harmony): that header shares its special tokens with the
+    // reasoning markers, so no token can be told apart from the answer's.
+    [[nodiscard]] std::vector<std::string> reasoning_markers() const;
+
     // The tokens that end a generated reply: the turn markup's stops. Empty when no turn markup
     // matched the template.
     [[nodiscard]] std::vector<std::string> generation_stops() const;
