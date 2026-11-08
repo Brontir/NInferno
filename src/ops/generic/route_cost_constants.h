@@ -45,7 +45,10 @@ inline constexpr Scalar kRmmaStepK{{16.0}, Provenance::Counted, "rmma_step_k"};
 // Register MMA: resident warps per SM at which the tile reaches its roofline.
 inline constexpr Scalar kRmmaSaturatingWarps{{11.0}, Provenance::Fitted, "rmma_saturating_warps"};
 // Register MMA of the K-quant and codebook decoders (#301): resident warps per SM at which the
-// tile reaches its roofline. Chosen on the regret of the RTX 3060, 4090 and 5090 (two warps for
+// tile reaches its roofline. Chosen on the regret of the RTX 3060, 4090 and 5090; taken only where
+// two or more lab cards confirm the register-MMA terms (rmma_terms_measured: sm_89 on the 4090
+// in the fit and the 4070 Ti, 4060 Ti held out; sm_120 on the 5090 and the 5070 Ti held out).
+// (Two warps for
 // each of the four sub-partition schedulers is the least that can keep every scheduler fed, but the
 // step latency that would fix it is not measured here).
 inline constexpr Scalar kRmmaHeavySaturatingWarps{
@@ -53,7 +56,9 @@ inline constexpr Scalar kRmmaHeavySaturatingWarps{
 // Register MMA, same decoders: bytes per SM clock that one SM sustains from the L2 while every SM
 // reads. Half of the 64 B/clk its L1 takes from the L2; a regression of route_tune timings of the
 // RTX 3060, 4090 and 5090 read 15..30, and the model's regret is flat across 16..32 on those
-// boards. No published number backs it, so it is fitted.
+// boards. No published number backs it, so it is fitted; one value per generation, used only on
+// the generations rmma_terms_measured names (sm_89: 4090 fit, 4070 Ti and 4060 Ti held out;
+// sm_120: 5090 fit, 5070 Ti held out).
 inline constexpr Scalar kL2BytesPerSmClock{{32.0}, Provenance::Fitted, "l2_bytes_per_sm_clock"};
 // Register MMA, same decoders: K per step of their decoders (four lanes of one 32-value run), and
 // what a spilled register costs per step: one store and one load of its local-memory byte through
