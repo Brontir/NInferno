@@ -138,6 +138,12 @@ ninferno_add_op_test(ninferno_segmented_swiglu_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_segmented_swiglu.cpp"
   LIBRARIES ninferno_linear_test_support)
 
+# The bounded twin of ggml's 4-column vector kernel: bytes equal the plain instance's, and the launch's
+# choice (twin only when it saves a round and does not spill) read from its description.
+ninferno_add_op_test(ninferno_ggml_vec_twin_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_ggml_vec_twin.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
 # Side-by-side q/k/v and gate projections (segmented, joined, spread) equal the separate ones.
 ninferno_add_op_test(ninferno_side_by_side_projection_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_side_by_side_projection.cpp"
