@@ -1007,6 +1007,10 @@ struct PromptOptions {
     // anyway is still read out of the text, so its markup never reaches the answer, and dropped
     // (the serve layer does not return it). Nothing else of the text changes.
     bool tool_calls_discarded = false;
+    // With tool_calls_discarded: a call written without its opener (a JSON object naming a
+    // declared tool, Gemma 4's call:NAME{) that begins the answer is cut too. Off under an output
+    // constraint, whose object may legitimately look like a call.
+    bool cut_bare_calls = true;
 };
 
 enum class CacheRetentionHint : std::uint8_t {

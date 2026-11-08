@@ -60,6 +60,8 @@ struct ToolCallOutputContract {
     // syntax that has a call header (ToolCallSyntax::bare_call_header), that header and a declared
     // tool's name open the call region as the opener would.
     bool discarded = false;
+    // ... and only where the call begins the answer (nothing but whitespace before it): the same
+    // JSON later in a summary, a code sample or a router object is text.
 
     [[nodiscard]] bool declares(std::string_view name) const noexcept;
 };
@@ -190,6 +192,8 @@ private:
     // The region began as a bare call (ToolCallOutputContract::discarded): when the syntax
     // cannot read it back, the region is dropped instead of shown.
     bool bare_region_ = false;
+    // Non-whitespace text has been published: a bare call is cut only where it begins the answer.
+    bool emitted_text_ = false;
     // Bytes that may still begin the call region (ToolCallSyntax::match_start).
     std::string held_;
     std::string tool_region_;

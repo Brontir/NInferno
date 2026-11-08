@@ -774,13 +774,14 @@ llama.cpp-style base URLs.
   first marker of the call, tool-result or reasoning kind ends the turn instead: the text written
   before it is the answer, the marker is not published, and `finish_reason` is `stop`. A refused
   call that leaves only markup is therefore an empty `content` with `finish_reason` `stop`, never
-  markup. An output that repeats a period of up to 12 tokens four times in a row ends as
-  `--repetition-stop` does (`finish_reason` `length`) even where the server sets none, so a
-  filler loop does not run to `max_tokens`. Syntaxes without such an opener (gpt-oss harmony,
-  Atem, Llama 3 JSON) are not steered; a call they write anyway is cut out of the answer, as is
-  one written as plain text (a Qwen model kept from `<tool_call>` can still write a bare
-  `<function=...>`, and a bare `{"name": "...", "arguments": ...}` object or Gemma 4 `call:...`
-  naming a declared tool, which are cut too).
+  markup. A reasoning tag that is plain vocabulary (Qwen's `<think>`) ends the turn only where
+  the answer begins with it; after text it is prose that may quote the tag. `ignore_eos` does not
+  change this: it keeps the model's own end-of-turn tokens from stopping the output, not this
+  rule. Syntaxes without such an opener (gpt-oss harmony, Atem, Llama 3 JSON) are not steered; a
+  call they write anyway is cut out of the answer, as is one written as plain text (a Qwen model
+  kept from `<tool_call>` can still write a bare `<function=...>`). A bare `{"name": "...",
+  "arguments": ...}` object naming a declared tool (Hermes JSON) or Gemma 4's `call:...` is cut
+  only where it begins the answer, never under `response_format`, and the text after it stays.
 - `strict:true`, whose arguments the same constraint holds to the declared JSON Schema in every
   call syntax ([key order](#key-order-under-an-output-constraint)), and
   `parallel_tool_calls:false`, under which generation stops after the first call.

@@ -694,7 +694,6 @@ std::shared_ptr<const OutputConventions> output_conventions(const chat::ChatConv
     result->structural_tokens.erase(
         std::unique(result->structural_tokens.begin(), result->structural_tokens.end()),
         result->structural_tokens.end());
-    // Kept in the markers' order (the opener first): the prompt bans them in this order.
     result->call_tokens      = marker_tokens(tokenizer, chat.non_answer_markers(), false);
     result->reasoning_tokens = marker_tokens(tokenizer, chat.reasoning_markers(), true);
     for (std::vector<TokenId>* tokens : {&result->call_tokens, &result->reasoning_tokens}) {
@@ -1124,7 +1123,8 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
     const auto tool_call_output = chat::build_tool_call_output_contract(
         options.tool_jsons,
         (options.tool_calls_enabled || options.tool_calls_discarded) && !options.tool_jsons.empty(),
-        impl_->chat_template.conventions().tools.format, options.tool_calls_discarded);
+        impl_->chat_template.conventions().tools.format,
+        options.tool_calls_discarded && options.cut_bare_calls);
     const std::optional<std::uint32_t> leading_boundary =
         leading_instruction_boundary(message_roles);
     std::vector<PromptCacheMarker> rendered_markers = cache_hints.markers;

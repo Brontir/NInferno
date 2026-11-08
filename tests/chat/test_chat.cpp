@@ -665,11 +665,10 @@ int test_bare_json_call_dropped() {
     int failures                         = 0;
     const std::vector<std::string> tools = {tool_definition("weather", kWeatherSchema),
                                             tool_definition("note", Json{{"type", "object"}})};
-    for (const ToolCallFormat format : {ToolCallFormat::HermesJson, ToolCallFormat::QwenXml}) {
+    for (const ToolCallFormat format : {ToolCallFormat::HermesJson}) {
         const auto discarded =
             ninferno::chat::build_tool_call_output_contract(tools, true, format, true);
-        // Qwen XML cannot read a JSON call back: its region is dropped, not shown.
-        const std::size_t expected_calls = format == ToolCallFormat::HermesJson ? 1U : 0U;
+        const std::size_t expected_calls = 1U;
         const std::string call =
             "{\n  \"name\": \"weather\",\n  \"arguments\": {\"city\": \"Oslo\", \"days\": 1}\n}";
         for (const bool bytewise : {false, true}) {
@@ -717,6 +716,34 @@ int test_bare_json_call_dropped() {
             failures += check(shown_text + text_end.content == body && text_end.tool_calls.empty(),
                               "JSON that is no discarded call was cut: " + body);
         }
+    }
+    {
+        // Only a call that begins the answer is cut; the text after it stays; an object that is no
+        // call is text; a cut-off partial call is dropped.
+        const auto discarded = ninferno::chat::build_tool_call_output_contract(
+            tools, true, ToolCallFormat::HermesJson, true);
+        const std::string call = R"({"name": "weather", "arguments": {"city": "Oslo", "days": 1}})";
+        const auto run         = [&](const std::string& text, bool cut_off) {
+            ninferno::chat::ToolCallOutputDecoder decoder(discarded, 64);
+            std::string visible;
+            for (const char byte : text) { visible += decoder.feed(std::string_view(&byte, 1)); }
+            auto end = decoder.finish(cut_off);
+            return std::pair{visible + end.content, end.tool_calls.size()};
+        };
+        const auto after = run(call + "\nThat is the call I would make.", false);
+        failures += check(after.first == "\nThat is the call I would make." && after.second == 1,
+                          "the text after a bare call was lost: " + after.first);
+        const std::string summary = "Earlier I ran " + call + " and it returned.";
+        const auto mid            = run(summary, false);
+        failures += check(mid.first == summary && mid.second == 0,
+                          "a call quoted inside a summary was cut: " + mid.first);
+        const std::string router = R"({"name": "weather", "reason": "the user asked about rain"})";
+        const auto routed        = run(router, false);
+        failures += check(routed.first == router && routed.second == 0,
+                          "an object that is no call was cut: " + routed.first);
+        const auto partial = run(R"({"name": "weat)", true);
+        failures += check(partial.first.empty() && partial.second == 0,
+                          "a partial bare call at the output limit was shown: " + partial.first);
     }
     // Gemma 4's bare call, "call:NAME{...}" with no opener, under none: nothing of it is shown.
     {

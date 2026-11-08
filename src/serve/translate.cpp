@@ -467,6 +467,7 @@ ninferno::PromptInput to_prompt_input(const GenerationRequest& request,
     input.options.tool_calls_enabled               = request.uses_tools();
     // tool_choice none: a call written anyway is cut out of the answer, not shown as markup.
     input.options.tool_calls_discarded = !tools.empty() && !request.uses_tools();
+    input.options.cut_bare_calls       = !request.output_constraint;
     input.options.tool_jsons.reserve(tools.size());
     for (std::size_t index = 0; index < tools.size(); ++index) {
         input.options.tool_jsons.push_back(render_tool_definition(*tools[index]));
@@ -483,9 +484,6 @@ ninferno::PromptInput to_prompt_input(const GenerationRequest& request,
         request.allow_engine_automatic_shared_prefixes;
     return input;
 }
-
-// StopPolicy::repetition_window of a tool_choice none request, when the server sets none.
-constexpr std::uint32_t kNoneRepetitionWindow = 48;
 
 ninferno::RequestOptions to_request_options(const GenerationRequest& request,
                                           const ServeOptions& server,
@@ -505,13 +503,6 @@ ninferno::RequestOptions to_request_options(const GenerationRequest& request,
     options.output.tool_name_max_length = static_cast<std::uint32_t>(request.tool_name_max_length);
     options.stop.include_model_defaults = !request.ignore_eos;
     options.stop.repetition_window      = server.repetition_stop;
-    if (options.stop.repetition_window == 0 && !effective_tools(request, false).empty() &&
-        !request.uses_tools()) {
-        // tool_choice none: a model kept from its call can fall into a filler loop that nothing
-        // else ends before max_tokens. An output that repeats a period of up to 12 tokens four
-        // times in a row ends as a repetition stop does (the server's own setting wins).
-        options.stop.repetition_window = kNoneRepetitionWindow;
-    }
     options.stop.repetition_concludes_thinking = server.repetition_concludes_thinking;
     options.stop.strings.reserve(request.stop_strings.size());
     for (const std::string& stop : request.stop_strings) {

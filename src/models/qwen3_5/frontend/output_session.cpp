@@ -189,6 +189,8 @@ struct DecoderState {
     // bytes held while they match one.
     std::string content_header_pending;
     bool awaiting_content_header   = false;
+    // Non-whitespace content has been published.
+    bool content_started           = false;
     bool in_reasoning              = false;
     bool quoted_close_is_text      = false;
     // The last reasoning byte published before think_marker_pending.
@@ -377,6 +379,11 @@ void feed_content(DecoderState& state, std::string text, const StopPolicy& polic
     std::optional<std::string> stripped = strip_content_header(state, std::move(text), headers);
     if (!stripped) { return; }
     text = std::move(*stripped);
+    if (!state.content_started) {
+        state.content_started = std::any_of(text.begin(), text.end(), [](char byte) {
+            return std::isspace(static_cast<unsigned char>(byte)) == 0;
+        });
+    }
     if (state.strip_content_leading) {
         std::size_t begin = 0;
         while (begin < text.size() && std::isspace(static_cast<unsigned char>(text[begin])) != 0) {
@@ -730,8 +737,12 @@ runtime::OutputDecision OutputSession::preview_model(std::span<const TokenId> to
         const bool stop_token =
             std::find(impl_->policy.token_ids.begin(), impl_->policy.token_ids.end(), token) !=
             impl_->policy.token_ids.end();
+        // A marker that is a control token ends the turn wherever it comes; one that is plain
+        // vocabulary (Qwen's <think> and <tool_call> are added tokens that are not special) only
+        // where it begins the answer: later it may be prose that quotes the tag.
         if (!stop_token && impl_->end_at_structural && !impl_->preview_state.in_reasoning &&
             !impl_->preview_state.awaiting_open &&
+            (decoded.special || !impl_->preview_state.content_started) &&
             (std::binary_search(conventions.call_tokens.begin(), conventions.call_tokens.end(),
                                 token) ||
              std::binary_search(conventions.reasoning_tokens.begin(),

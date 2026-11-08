@@ -2069,57 +2069,89 @@ int test_disabled_tool_calls_ban_the_opener() {
     return failures;
 }
 
-// tool_choice none: outside reasoning, a call or reasoning marker ends the turn (the model has left
-// the answer for markup), with the text before it kept and the marker not published; inside
-// reasoning the markers are the span's own.
+// tool_choice none: outside reasoning, a marker that begins the answer ends the turn (the model has
+// left the answer for markup), with the marker not published; one after text is prose that may
+// quote the tag (the test vocabulary's <think> and <tool_call> are not control tokens, as in
+// Qwen's); inside reasoning the markers are the span's own.
 int test_none_ends_at_structural_tokens() {
     const Frontend frontend = make_frontend(resources_with_opener(), false);
     ninferno::StopPolicy stop;
-    constexpr ninferno::TokenId kHello = 1; // "helloST"
+    constexpr ninferno::TokenId kHello = 1;  // "helloST"
     constexpr ninferno::TokenId kThink = 248068;
     constexpr ninferno::TokenId kClose = 248069;
     int failures                       = 0;
-    const auto run                     = [&](const ninferno::PromptInput& input,
+    const auto run = [&](const ninferno::PromptInput& input,
                          std::vector<ninferno::TokenId> tokens) {
         auto prompt   = frontend.prepare(input);
         auto session  = frontend.make_output_session(prompt, stop);
         auto decision = session.preview_model(tokens, 64, ninferno::FinishReason::OutputLimit);
         return std::pair{decision, session.commit_preview()};
     };
-    // Thinking declined: a stray close ends the turn at once, the text before it stays.
+    const auto content = [](const PublishedOutput& output) {
+        return channel_text(output, ninferno::OutputChannel::Content);
+    };
+    // Thinking declined: a stray close at the start ends the turn at once.
     {
-        const auto [decision, output] = run(none_input(false), {kHello, kClose, kHello});
-        failures += check(decision.accepted_tokens == 2 &&
+        const auto [decision, output] = run(none_input(false), {kClose, kHello});
+        failures += check(decision.accepted_tokens == 1 &&
                               decision.finish_reason == ninferno::FinishReason::StopToken &&
-                              channel_text(output, ninferno::OutputChannel::Content) == "helloST" &&
-                              channel_text(output, ninferno::OutputChannel::Reasoning).empty(),
-                          "a close marker after declined thinking reached the answer");
+                              content(output).empty(),
+                          "a close marker at the start of a declined-thinking answer reached it");
     }
-    // The call opener ends it too, in a request that may reason.
+    // After text the same tokens are prose: an answer that quotes the tag is kept whole.
     {
-        const auto [decision, output] = run(none_input(true), {kClose, kHello, kOpenerId, kHello});
+        const auto [decision, output] = run(none_input(false), {kHello, kClose, kHello, kThink});
+        failures += check(decision.accepted_tokens == 4 && !decision.finished() &&
+                              content(output).find("helloST") != std::string::npos,
+                          "an answer that quotes a reasoning tag was cut");
+    }
+    // Thinking on: the first span is reasoning; a second opener where the answer begins ends it.
+    {
+        const auto [decision, output] = run(none_input(true), {kHello, kClose, kThink, kHello});
         failures += check(decision.accepted_tokens == 3 &&
                               decision.finish_reason == ninferno::FinishReason::StopToken &&
-                              channel_text(output, ninferno::OutputChannel::Content) == "helloST",
+                              content(output).empty(),
+                          "a second reasoning opener reached the answer");
+    }
+    // The call opener at the start ends it too.
+    {
+        const auto [decision, output] = run(none_input(true), {kClose, kOpenerId, kHello});
+        failures += check(decision.accepted_tokens == 2 &&
+                              decision.finish_reason == ninferno::FinishReason::StopToken,
                           "the call opener after the reasoning did not end the turn");
     }
-    // Thinking on: the first span is reasoning; a second opener or close after it ends the turn.
+    // Rounds: the rule reads the state of earlier rounds (reasoning closed in the first).
     {
-        const auto [decision, output] =
-            run(none_input(true), {kHello, kClose, kHello, kThink, kHello});
-        failures += check(decision.accepted_tokens == 4 &&
-                              decision.finish_reason == ninferno::FinishReason::StopToken &&
-                              channel_text(output, ninferno::OutputChannel::Content) == "helloST",
-                          "a second reasoning opener reached the answer");
+        auto prompt      = frontend.prepare(none_input(true));
+        auto session     = frontend.make_output_session(prompt, stop);
+        const auto first = session.preview_model(std::array<ninferno::TokenId, 2>{kHello, kClose},
+                                                 64, ninferno::FinishReason::OutputLimit);
+        (void)session.commit_preview();
+        const auto second = session.preview_model(std::array<ninferno::TokenId, 2>{kThink, kHello},
+                                                  62, ninferno::FinishReason::OutputLimit);
+        const auto output = session.commit_preview();
+        failures += check(!first.finished() && second.accepted_tokens == 1 &&
+                              second.finish_reason == ninferno::FinishReason::StopToken &&
+                              content(output).empty(),
+                          "the end-of-turn rule lost the state across rounds");
     }
     // Calls enabled (auto): the same tokens are not an end.
     {
         ninferno::PromptInput input        = none_input(true);
         input.options.tool_calls_discarded = false;
         input.options.tool_calls_enabled   = true;
-        const auto [decision, output]      = run(input, {kHello, kClose, kHello, kThink, kHello});
-        failures += check(decision.accepted_tokens == 5 && !decision.finished(),
+        const auto [decision, output]      = run(input, {kHello, kClose, kThink, kHello});
+        failures += check(decision.accepted_tokens == 4 && !decision.finished(),
                           "tool calls enabled ended the turn at a structural token");
+    }
+    // An output constraint (response_format) leaves bare calls alone.
+    {
+        ninferno::PromptInput input  = none_input(true);
+        input.options.cut_bare_calls = false;
+        const auto prompt            = frontend.prepare(input);
+        failures += check(FrontendFactory::inspect(prompt).tool_call_output != nullptr &&
+                              !FrontendFactory::inspect(prompt).tool_call_output->discarded,
+                          "an output constraint still cut bare calls");
     }
     return failures;
 }
