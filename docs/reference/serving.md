@@ -733,7 +733,10 @@ llama.cpp-style base URLs.
   function, a stop string that matches inside a call ends the output like any other stop, but the
   unfinished call is dropped (counted as `cut_calls_dropped` in the request log), not returned as
   text: the answer is empty or holds only the calls that were complete before the stop. A call
-  that the stop left complete except for its closing markup (Qwen XML) is closed and kept. When a
+  that the stop left complete except for its closing markup is closed and kept (Qwen XML, Hermes
+  JSON, Gemma 4; only for a stop that shares three bytes with the closer it swallowed). A syntax
+  without a close marker (Mistral, Llama 3, harmony, Pythonic, Granite, Atem) loses the whole
+  call region that the stop cut, its complete calls included. When a
   call was dropped, the turn reports `stop` / `stop_sequence` even if complete calls precede it, so
   a client does not take them for all the calls the model meant to make. With
   `tool_choice` `auto` the unfinished markup stays text, like any malformed call.
