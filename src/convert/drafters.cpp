@@ -410,7 +410,7 @@ DrafterTarget describe_artifact(const fs::path& path, std::string repo) {
     if (const auto fp = spec::artifact_vocab_fingerprint(path)) { t.fingerprint = fp->value; }
     // Converted from a GGUF: the mapping records its version, or (before the versions) the source
     // path is a .gguf file (a directory of GGUF shards is not told apart; describe_gguf_artifact
-    // knows it).
+    // and reused_target know it).
     const auto& provenance = reader.directory().provenance;
     if (provenance.is_object()) {
         t.gguf_mapper = provenance.value("gguf_mapper", std::string());
@@ -1150,6 +1150,7 @@ bool drafters_incomplete(const fs::path& target_artifact) {
 }
 
 DrafterTarget reused_target(DrafterTarget described, const ManifestState& manifest) {
+    described.gguf_source = described.gguf_source || manifest.gguf_source;
     for (const auto& base : manifest.lineage) {
         if (std::find(described.lineage.begin(), described.lineage.end(), base) ==
             described.lineage.end()) {

@@ -192,6 +192,27 @@ void reused_lineage() {
            "a base model both name is listed once");
 }
 
+// A directory of GGUF shards leaves no .gguf path in the artifact: its manifest knows the model
+// was a GGUF, as a start with the download present does, so the default start does not draft it.
+void reused_gguf_source() {
+    cv::ManifestState manifest;
+    auto described = muse();
+    expect(!cv::reused_target(described, manifest).gguf_source,
+           "a checkpoint's artifact is not a GGUF's");
+    manifest.gguf_source = true;
+    expect(cv::reused_target(described, manifest).gguf_source,
+           "a GGUF's artifact, whose source path is no .gguf file, is a GGUF's by its manifest");
+    manifest.exists = manifest.parsed = manifest.registry_current = true;
+    manifest.failed                                               = true;
+    expect(cv::decide_drafters(cv::Drafters::Default, true, false, manifest, false).kind ==
+               cv::DrafterActionKind::Nothing,
+           "a GGUF's shards with a failed drafter are not drafted by default");
+    described.gguf_source = true;
+    manifest.gguf_source  = false;
+    expect(cv::reused_target(described, manifest).gguf_source,
+           "what the artifact says of its source is kept");
+}
+
 void dense_scope() {
     // A dense model the registry does not know, declaring a DFlash drafter itself.
     auto t        = muse();
@@ -875,6 +896,7 @@ int main() {
     num_target_layers();
     lineage();
     reused_lineage();
+    reused_gguf_source();
     dense_scope();
     nemotron_geometry();
     nemotron_mapper();

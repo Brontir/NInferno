@@ -208,9 +208,10 @@ struct ManifestState {
 [[nodiscard]] bool drafters_incomplete(const std::filesystem::path& target_artifact);
 
 // A kept artifact (its download removed) described for planning again: what the artifact says,
-// with what its manifest recorded of the checkpoint it cannot be read from any more: the base
-// models of the model card (describe_artifact reads none), so that a fine-tune keeps the drafter
-// its lineage matched.
+// with what its manifest recorded of the model it cannot be read from any more: the base models of
+// the model card (describe_artifact reads none), so that a fine-tune keeps the drafter its lineage
+// matched, and that it was converted from a GGUF (a directory of GGUF shards leaves no .gguf path
+// in the artifact), as a start with the download present knows it.
 [[nodiscard]] DrafterTarget reused_target(DrafterTarget described, const ManifestState& manifest);
 
 // The manifest's drafters attached from a file here that was written again since (another
