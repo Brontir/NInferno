@@ -627,17 +627,16 @@ int test_tools() {
         after_tool["tool_choice"] = "none";
         after_tool["messages"]    = Json::array(
             {Json{{"role", "user"}, {"content", "list"}},
-             Json{{"role", "assistant"},
-                  {"content", nullptr},
-                  {"tool_calls",
-                   Json::array({Json{{"id", "call_1"},
-                                     {"type", "function"},
-                                     {"function", Json{{"name", "get_weather"},
-                                                       {"arguments", "{}"}}}}})}},
-             Json{{"role", "tool"}, {"tool_call_id", "call_1"}, {"content", "sunny"}}});
-        const auto after_tool_input = to_prompt_input(
-            parse(after_tool).generation,
-            resolve_prompt_semantics(parse(after_tool).generation, steer), {});
+                Json{{"role", "assistant"},
+                     {"content", nullptr},
+                     {"tool_calls", Json::array({Json{{"id", "call_1"},
+                                                      {"type", "function"},
+                                                      {"function", Json{{"name", "get_weather"},
+                                                                        {"arguments", "{}"}}}}})}},
+                Json{{"role", "tool"}, {"tool_call_id", "call_1"}, {"content", "sunny"}}});
+        const auto after_tool_input =
+            to_prompt_input(parse(after_tool).generation,
+                            resolve_prompt_semantics(parse(after_tool).generation, steer), {});
         failures += check(after_tool_input.messages.size() == 3 &&
                               after_tool_input.messages.back().role == ninferno::ChatRole::Tool &&
                               last_text(after_tool_input) == "\n\n" + kLine,

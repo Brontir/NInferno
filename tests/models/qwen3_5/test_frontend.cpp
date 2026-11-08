@@ -2074,18 +2074,18 @@ int test_disabled_tool_calls_ban_the_opener() {
 // --tool-choice-none drop-tools: the prompt carries no declarations, but the refused ones stay the
 // output contract's, so the call opener is still banned and a call written anyway is read and cut.
 int test_none_drop_tools_keeps_the_contract() {
-    const Frontend frontend = make_frontend(resources_with_opener(), false);
-    ninferno::PromptInput dropped = none_input(false);
+    const Frontend frontend            = make_frontend(resources_with_opener(), false);
+    ninferno::PromptInput dropped      = none_input(false);
     dropped.options.refused_tool_jsons = dropped.options.tool_jsons;
     dropped.options.tool_jsons.clear();
     const auto steered_prompt = frontend.prepare(none_input(false));
     const auto dropped_prompt = frontend.prepare(std::move(dropped));
     int failures              = check(FrontendFactory::inspect(dropped_prompt).token_ids.size() <
-                                  FrontendFactory::inspect(steered_prompt).token_ids.size(),
+                                          FrontendFactory::inspect(steered_prompt).token_ids.size(),
                                       "drop-tools still sent the tool declarations");
-    failures += check(dropped_prompt.summary().banned_tokens ==
-                          std::vector<int>{kOpenerId, kCloserId},
-                      "drop-tools lost the call opener ban");
+    failures +=
+        check(dropped_prompt.summary().banned_tokens == std::vector<int>{kOpenerId, kCloserId},
+              "drop-tools lost the call opener ban");
     const auto& contract = FrontendFactory::inspect(dropped_prompt).tool_call_output;
     failures += check(contract != nullptr && contract->discarded && contract->declares("inspect"),
                       "drop-tools lost the output contract that cuts a written call");
@@ -2118,7 +2118,8 @@ int test_steering_after_tool_result_keeps_the_prefix() {
         tool.tool_call_id = "call_1";
         tool.parts.push_back({.text = "a.txt b.txt"});
         if (steer) {
-            tool.parts.push_back({.text = "\n\nTools are unavailable for this reply; answer in plain text."});
+            tool.parts.push_back(
+                {.text = "\n\nTools are unavailable for this reply; answer in plain text."});
         }
         result.messages.push_back(std::move(user));
         result.messages.push_back(std::move(assistant));

@@ -488,10 +488,10 @@ ninferno::PromptInput to_prompt_input(const GenerationRequest& request,
         // After a system or developer message nothing is added.
         ninferno::ChatMessage& last = input.messages.back();
         if (last.role == ChatRole::User || last.role == ChatRole::Tool) {
-            last.parts.push_back(ninferno::MessagePart{
-                .kind  = ninferno::MessagePartKind::Text,
-                .text  = "\n\n" + std::string(kToolsUnavailableLine),
-                .media = {}});
+            last.parts.push_back(
+                ninferno::MessagePart{.kind  = ninferno::MessagePartKind::Text,
+                                      .text  = "\n\n" + std::string(kToolsUnavailableLine),
+                                      .media = {}});
         }
     }
     input.options.tool_calls_enabled               = request.uses_tools();
@@ -500,7 +500,7 @@ ninferno::PromptInput to_prompt_input(const GenerationRequest& request,
     for (const ToolDefinition* tool : refused_tools) {
         input.options.refused_tool_jsons.push_back(render_tool_definition(*tool));
     }
-    input.options.cut_bare_calls       = !request.output_constraint;
+    input.options.cut_bare_calls = !request.output_constraint;
     input.options.tool_jsons.reserve(tools.size());
     for (std::size_t index = 0; index < tools.size(); ++index) {
         input.options.tool_jsons.push_back(render_tool_definition(*tools[index]));

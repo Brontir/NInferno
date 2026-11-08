@@ -1112,7 +1112,7 @@ std::vector<std::string> top_level_keys(std::string_view object,
                                         std::optional<std::string>* partial = nullptr) {
     std::vector<std::string> keys;
     std::size_t depth = 0;
-    char previous     = 0;  // the last byte outside strings that is not whitespace
+    char previous     = 0; // the last byte outside strings that is not whitespace
     for (std::size_t at = 0; at < object.size(); ++at) {
         const char byte = object[at];
         if (byte == '"') {

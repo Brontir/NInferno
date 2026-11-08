@@ -186,8 +186,9 @@ struct ServeOptions {
     // one set in varying order keeps its cached prefix (default: the request's order).
     bool sort_tools = false;
     // --tool-choice-none drop-tools: tool_choice none removes the tool declarations from the
-    // prompt (vLLM's opt-in --exclude-tools-when-tool-choice-none; the conversation's cached prefix is lost). Default (steer): they
-    // stay, and the last user turn ends with a line saying that tools are unavailable.
+    // prompt (vLLM's opt-in --exclude-tools-when-tool-choice-none; the conversation's cached prefix
+    // is lost). Default (steer): they stay, and the last user turn ends with a line saying that
+    // tools are unavailable.
     bool drop_tools_under_none = false;
     DecodePacingOptions pacing;          // --decode-steps, --decode-wait, --cuda-sync
     MaintainerOptions maintainer;        // --route-table ... --debug-poison-skip
