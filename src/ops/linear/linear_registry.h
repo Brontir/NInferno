@@ -113,6 +113,12 @@ struct LinearPairCandidate {
 // The bytes the CTAs of each alternative request for a call of `tokens` columns (its chain price,
 // ops/wrapper/linear_pair.cpp): the fused kernel's and the two linear() calls', nullopt where the
 // tiling of that alternative is not known (then the fused kernel keeps the call).
+// Whether linear_pair runs its fused kernel for an [n,k] pair of the converter's Q8_G32 layout at
+// `tokens` columns, by the chain price: the one predicate linear_pair's selection and the engine's
+// warm-up share (the K = 2048 geometry additionally needs the drafter's row views, which the
+// weights decide, not the shape).
+[[nodiscard]] bool linear_pair_runs_fused(std::int32_t n, std::int32_t k, std::int32_t tokens);
+
 struct LinearPairRequested {
     std::optional<double> fused;
     std::optional<double> separate;

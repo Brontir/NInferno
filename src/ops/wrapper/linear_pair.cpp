@@ -105,11 +105,11 @@ struct ChainPrice {
     int launches;
 };
 
-std::optional<ChainPrice> fused_chain(const Weight& first_weight, std::int32_t tokens) {
-    const detail::Q8PairProblem problem{first_weight.n, first_weight.k, first_weight.k, tokens};
+std::optional<ChainPrice> fused_chain(std::int32_t n_rows, std::int32_t k_in, std::int32_t tokens) {
+    const detail::Q8PairProblem problem{n_rows, k_in, k_in, tokens};
     const auto geometry = detail::q8_pair_geometry(problem);
     if (!geometry) { return std::nullopt; }
-    const double n = first_weight.n, k = first_weight.k, t = tokens;
+    const double n = n_rows, k = k_in, t = tokens;
     const double weight_bytes = 2.0 * (n * k + n * (k / 32.0) * 2.0);
     const double passes       = std::ceil(t / geometry->tile_cols);
     return ChainPrice{weight_bytes * passes +
@@ -118,26 +118,43 @@ std::optional<ChainPrice> fused_chain(const Weight& first_weight, std::int32_t t
                       geometry->launches};
 }
 
-std::optional<ChainPrice> separate_chain(const Weight& first_weight, const Weight& second_weight,
-                                         std::int32_t tokens) {
-    const auto first  = detail::linear_q8_requested_bytes(first_weight, tokens);
-    const auto second = detail::linear_q8_requested_bytes(second_weight, tokens);
-    if (!first || !second) { return std::nullopt; }
-    return ChainPrice{*first + *second, 2};
+// The two calls' chain: the weights linear() sees in the pair's domain are Q8_G32 row-split
+// [n,k] ones, so the shape alone describes them (the selection and the warm-up share this).
+std::optional<ChainPrice> separate_chain(std::int32_t n, std::int32_t k, std::int32_t tokens) {
+    Weight w;
+    w.qtype         = QType::Q8_G32_FP16;
+    w.n             = n;
+    w.k             = k;
+    w.ndim          = 2;
+    w.shape[0]      = n;
+    w.shape[1]      = k;
+    w.padded_shape[0] = n;
+    w.padded_shape[1] = k;
+    w.group         = 32;
+    w.group_size    = 32;
+    w.layout        = QuantLayout::RowSplit;
+    w.scale_dtype   = DType::FP16;
+    const auto one  = detail::linear_q8_requested_bytes(w, tokens);
+    if (!one) { return std::nullopt; }
+    return ChainPrice{2.0 * *one, 2};
 }
 
-// Whether the call runs the fused kernel: its domain, and then the cheaper chain where both are
+// Whether a call of the pair's domain runs the fused kernel: the cheaper chain where both are
 // priced and the fusing saves nothing. A fused schedule that is one launch saves a launch (and its
 // drain and ramp) against the two calls, which a bytes law does not price, so it keeps the call as
 // before. One that is two launches (K = 5120 up to 85 columns: the single-weight SIMT kernel twice,
 // 8 rows by 4 columns a CTA) saves none, and the chains differ only in how often the tiles
 // re-request the weights, so the one requesting fewer bytes runs; a tie keeps the fused kernel.
-bool fused_pair(const Weight& first_weight, const Weight& second_weight, std::int32_t tokens) {
-    if (!fused_domain(first_weight, second_weight)) { return false; }
-    const auto fused    = fused_chain(first_weight, tokens);
-    const auto separate = separate_chain(first_weight, second_weight, tokens);
+bool chain_prefers_fused(std::int32_t n, std::int32_t k, std::int32_t tokens) {
+    const auto fused    = fused_chain(n, k, tokens);
+    const auto separate = separate_chain(n, k, tokens);
     if (!fused || !separate || fused->launches < separate->launches) { return true; }
     return fused->requested_bytes <= separate->requested_bytes;
+}
+
+bool fused_pair(const Weight& first_weight, const Weight& second_weight, std::int32_t tokens) {
+    return fused_domain(first_weight, second_weight) &&
+           chain_prefers_fused(first_weight.n, first_weight.k, tokens);
 }
 
 void require_same_logical_shape(const Weight& first_weight, const Weight& second_weight) {
@@ -151,12 +168,18 @@ void require_same_logical_shape(const Weight& first_weight, const Weight& second
 
 namespace detail {
 
+bool linear_pair_runs_fused(std::int32_t n, std::int32_t k, std::int32_t tokens) {
+    return q8_pair_registered(n, k) && chain_prefers_fused(n, k, tokens);
+}
+
 LinearPairRequested linear_pair_requested_bytes(const Weight& first, const Weight& second,
                                                 std::int32_t tokens) {
     LinearPairRequested out;
     if (tokens <= 0 || !fused_domain(first, second)) { return out; }
-    if (const auto c = fused_chain(first, tokens)) { out.fused = c->requested_bytes; }
-    if (const auto c = separate_chain(first, second, tokens)) { out.separate = c->requested_bytes; }
+    if (const auto c = fused_chain(first.n, first.k, tokens)) { out.fused = c->requested_bytes; }
+    if (const auto c = separate_chain(first.n, first.k, tokens)) {
+        out.separate = c->requested_bytes;
+    }
     return out;
 }
 
