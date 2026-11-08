@@ -1,6 +1,7 @@
 #include "ninferno/engine.h"
 #include "real_artifact.h"
 #include "kv_cache_storage.h"
+#include "models/qwen3_5/program/debug_hooks.h"
 
 #include <algorithm>
 #include <array>
@@ -2770,47 +2771,38 @@ int exercise_truncated_endpoint_mode(const char* artifact, ninferno::ActivationM
            "a sessionless request consumed the endpoint of a session");
     expect_same(own_after, cold_longer, "the session's endpoint changed after a sessionless fork");
 
-    // A cancellation at each of the first polls of a truncated reuse leaves a source whose summary
-    // still describes its rows: the session's next request takes the truncated endpoint again and
-    // matches a cold prefill. Some of the cancellations must land after the source was prepared
-    // (RuntimeStats::truncated_source_aborts), where the rows used to be cut already.
+    // A materialization cancelled right after its truncated source was prepared (the window the
+    // Engine's own cancellation cannot hit, so a test hook cancels there) leaves a source whose
+    // summary still describes its rows: the session's next request takes the truncated endpoint
+    // again and matches a cold prefill. Run twice: the second source is another session's.
     if (exact_mode && attention_only) {
-        std::uint64_t aborted_after_preparation = 0;
-        for (std::uint32_t polls = 0; polls < 24; ++polls) {
-            const std::string session = "cancelled-" + std::to_string(polls);
+        for (std::uint32_t round = 0; round < 2; ++round) {
+            const std::string session = "cancelled-" + std::to_string(round);
             (void)run(source_text, session, true);
             const std::uint64_t aborts_before = engine.runtime_stats().truncated_source_aborts;
-            std::atomic<std::uint32_t> seen{0};
-            bool before_publication = false;
+            ninferno::models::qwen3_5::debug::abort_truncated_after_source_preparation = 1;
+            bool ended_cancelled                                                       = false;
             try {
-                const ninferno::GenerationResult cancelled = engine.generate(
-                    engine.prepare(pressure_turn(longer_text, session,
-                                                 ninferno::CacheRetentionHint::LiveSession)),
-                    request(true), nullptr,
-                    ninferno::CancellationView([&] { return seen++ >= polls; }));
-                before_publication = cancelled.finish_reason == ninferno::FinishReason::Cancelled &&
-                                     cancelled.generated_token_ids.empty();
+                const ninferno::GenerationResult cancelled = run(longer_text, session, true);
+                ended_cancelled = cancelled.finish_reason == ninferno::FinishReason::Cancelled &&
+                                  cancelled.generated_token_ids.empty();
             } catch (const ninferno::RequestError& error) {
                 if (error.kind() != ninferno::RequestErrorKind::Cancelled) { throw; }
-                before_publication = true;
+                ended_cancelled = true;
             }
-            const std::uint64_t aborts =
-                engine.runtime_stats().truncated_source_aborts - aborts_before;
-            aborted_after_preparation += aborts;
+            expect(ninferno::models::qwen3_5::debug::abort_truncated_after_source_preparation == 0,
+                   "the hook did not fire: no truncated materialization was prepared");
+            expect(ended_cancelled,
+                   "the aborted materialization did not end the request as cancelled");
+            expect(engine.runtime_stats().truncated_source_aborts == aborts_before + 1,
+                   "no abort after source preparation was counted");
             const ninferno::GenerationResult next = run(longer_text, session, true);
+            expect(next.prefix_reuse_path == ninferno::PrefixReusePath::PrivateTruncatedEndpoint &&
+                       next.reused_prompt_tokens >= 256,
+                   "a source aborted after preparation no longer serves a truncated reuse");
             expect(same_generation(next, cold_longer),
-                   "a request after a cancelled truncated reuse differs from cold");
-            if (before_publication || aborts != 0) {
-                expect(next.prefix_reuse_path ==
-                               ninferno::PrefixReusePath::PrivateTruncatedEndpoint &&
-                           next.reused_prompt_tokens >= 256,
-                       "a source aborted before publication no longer serves a truncated reuse");
-            }
+                   "a request after an aborted truncated reuse differs from cold");
         }
-        std::cout << "  " << label << ": " << aborted_after_preparation
-                  << " cancellations aborted a prepared truncated source\n";
-        expect(aborted_after_preparation != 0,
-               "no cancellation landed after the truncated source was prepared");
     }
     return failures;
 }

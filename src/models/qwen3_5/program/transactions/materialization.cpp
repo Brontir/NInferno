@@ -2,6 +2,7 @@
 #include "models/qwen3_5/program/context_clock.h"
 #include "models/qwen3_5/program/context_work.h"
 #include "models/qwen3_5/program/context.h"
+#include "models/qwen3_5/program/debug_hooks.h"
 
 #include <algorithm>
 #include <array>
@@ -2128,7 +2129,11 @@ ProgramImpl::progress_materialization_transaction(runtime::CancellationFlagView 
 
     if (!transaction.source_prepared) {
         prepare_consumed_source(transaction);
-        if (cancellation.requested()) { transaction.cancel_pending = true; }
+        if (cancellation.requested() ||
+            (transaction.plan->impl_->reuse == ReusePath::PrivateTruncatedEndpoint &&
+             debug::take_abort_truncated_after_source_preparation())) {
+            transaction.cancel_pending = true;
+        }
         if (transaction.cancel_pending) {
             abort_transaction();
             return out;
