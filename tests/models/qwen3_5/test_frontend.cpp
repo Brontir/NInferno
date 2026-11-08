@@ -1403,13 +1403,21 @@ int test_reasoning_reaches_thinking_field() {
                           0, one.text.size() - std::string("<|start|>assistant").size())) &&
                           two.text.find("analysis<|message|>step two<|end|>") != std::string::npos,
                       "the next tool step did not extend the previous prompt");
-    // A tool-call turn with content and reasoning keeps rendering its content as the analysis.
-    auto both               = call;
+    // A tool-call turn with text and reasoning renders its reasoning (the template can render only
+    // one of them) and not the text.
+    auto both       = call;
     both.parts.front().text = "spoken";
-    const auto mixed        = harmony.render({user, both, result});
-    failures += check(mixed.text.find("analysis<|message|>spoken<|end|>") != std::string::npos &&
-                          mixed.text.find("plan") == std::string::npos,
-                      "a tool-call turn with content and reasoning changed its rendering");
+    const auto mixed = harmony.render({user, both, result});
+    failures += check(mixed.text == one.text,
+                      "a tool-call turn with text and reasoning did not render its reasoning");
+    // A marker after the tool-call turn lands after its call, not after the analysis block.
+    fi::ChatRenderOptions marked;
+    marked.cache_markers.push_back({.after_message_count = 2});
+    const auto cached = harmony.render({user, call, result}, marked);
+    const std::size_t after_call = one.text.find("<|call|>") + std::string("<|call|>").size();
+    failures += check(cached.cache_boundaries.size() == 1 && cached.cache_boundaries[0] &&
+                          *cached.cache_boundaries[0] == after_call,
+                      "a cache marker after a tool-call turn did not land after its call");
     // A later final answer drops the analysis, as the template defines.
     const auto answered =
         harmony.render({user, call, result, chat_message(ninferno::ChatRole::Assistant, "done")});

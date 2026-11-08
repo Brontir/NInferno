@@ -41,6 +41,9 @@ struct ContentSource {
     std::vector<std::optional<std::size_t>> part_media;
     std::uint32_t reasoning_tag = 0;
     std::uint32_t thinking_tag  = 0;
+    // The turn's only tagged region is its thinking: a template that renders it as a block of its
+    // own (gpt-oss's analysis) writes the turn's tool calls outside that block.
+    bool thinking_only = false;
 };
 
 void merge_option(Json& context, std::string_view key, const Json& value) {
@@ -209,11 +212,30 @@ RenderedChat CompiledChatTemplate::render(const std::vector<ChatMessage>& messag
         // Only the first message keeps an instruction role: the stock templates also refuse a
         // second one that opens the conversation (two system messages, a Responses `instructions`
         // with a developer message: Codex). The message count stays, so cache markers hold.
+        // The reasoning of a tool-call turn that also carries text reaches the template as
+        // `thinking` next to the content, and a template that can render only one of them
+        // (gpt-oss: "Cannot pass both content and thinking") refuses the turn. The next step of
+        // the model depends on its reasoning, so the retry renders the reasoning and not the text.
+        std::vector<ChatMessage> reasoned;
+        for (std::size_t i = 0; i < messages.size(); ++i) {
+            const auto& turn = messages[i];
+            if (turn.role != ChatRole::Assistant || turn.tool_calls.empty() ||
+                turn.reasoning_content.empty() || turn.has_media() || turn.parts.empty())
+                continue;
+            if (reasoned.empty()) reasoned = messages;
+            reasoned[i].parts.clear();
+        }
+        if (!reasoned.empty()) {
+            try {
+                return render_once(reasoned, options, control);
+            } catch (const std::invalid_argument&) {}
+        }
+        const std::vector<ChatMessage>& base = reasoned.empty() ? messages : reasoned;
         const std::size_t leading = instruction(messages.front().role) ? 1 : 0;
         std::vector<ChatMessage> demoted;
         for (std::size_t i = leading; i < messages.size(); ++i) {
             if (!instruction(messages[i].role)) continue;
-            if (demoted.empty()) demoted = messages;
+            if (demoted.empty()) demoted = base;
             demoted[i].role = ChatRole::User;
         }
         // A tool the client declared without a description renders without one, exactly as
@@ -231,7 +253,7 @@ RenderedChat CompiledChatTemplate::render(const std::vector<ChatMessage>& messag
             if (!described) described = options;
             described->tool_jsons[i] = tool.dump();
         }
-        const std::vector<ChatMessage>& retried = demoted.empty() ? messages : demoted;
+        const std::vector<ChatMessage>& retried = demoted.empty() ? base : demoted;
         if (!demoted.empty()) {
             try {
                 return render_once(demoted, options, control);
@@ -344,14 +366,9 @@ RenderedChat CompiledChatTemplate::render_once(const std::vector<ChatMessage>& m
             // transformers' apply_chat_template also hands the reasoning to the template as
             // `thinking`, the field the gpt-oss template reads to keep a tool-call turn's analysis
             // (the one place harmony keeps CoT in inference). Templates that read only
-            // reasoning_content never see it. That template refuses a tool-call turn carrying both
-            // content and thinking; such a turn keeps rendering its content as the analysis.
-            if (message.tool_calls.empty() ||
-                std::all_of(message.parts.begin(), message.parts.end(),
-                            [](const auto& part) { return part.text.empty(); })) {
-                value["thinking"]   = message.reasoning_content;
-                origin.thinking_tag = tag(pointer + "/thinking");
-            }
+            // reasoning_content never see it.
+            value["thinking"]   = message.reasoning_content;
+            origin.thinking_tag = tag(pointer + "/thinking");
         }
         if (!message.tool_calls.empty()) {
             value["tool_calls"] = Json::array();
@@ -494,14 +511,17 @@ RenderedChat CompiledChatTemplate::render_once(const std::vector<ChatMessage>& m
                 extent->end   = std::max(extent->end, bytes.end);
             }
         };
+        bool other_region = false, thinking_region = false;
         for (const auto& region : output.regions) {
-            if (region.tag == origin.tag || region.tag == origin.reasoning_tag ||
-                region.tag == origin.thinking_tag ||
+            const bool thinking = region.tag == origin.thinking_tag;
+            if (region.tag == origin.tag || region.tag == origin.reasoning_tag || thinking ||
                 std::find(origin.part_tags.begin(), origin.part_tags.end(), region.tag) !=
                     origin.part_tags.end()) {
                 include({region.begin, region.end});
+                (thinking ? thinking_region : other_region) = true;
             }
         }
+        sources[i].thinking_only = thinking_region && !other_region;
         for (const auto index : origin.part_media) {
             if (index) include(layout.media_placeholders[*index].bytes);
         }
@@ -512,6 +532,12 @@ RenderedChat CompiledChatTemplate::render_once(const std::vector<ChatMessage>& m
     for (std::size_t i = 0; i < messages.size(); ++i) {
         if (!message_blocks[i]) continue;
         const auto& block = layout.messages[*message_blocks[i]];
+        // A tool call written outside the block that holds only the turn's analysis is not part
+        // of what the block's end closes: that boundary is proven by a prefix render instead.
+        if (!messages[i].tool_calls.empty() && sources[i].thinking_only) {
+            (void)prefix(i + 1);
+            continue;
+        }
         if (block.closed && block_users[*message_blocks[i]] == 1)
             result.message_boundaries[i + 1] = block.end;
         const std::string_view close = conventions_.tools.response_boundary;
