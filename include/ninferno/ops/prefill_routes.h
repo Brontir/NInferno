@@ -13,9 +13,9 @@ namespace ninferno::ops {
  * formats under int8 activations) runs a call in kMmqPrefillSlice-token slices and, when a slice's
  * tiles leave the last wave under 90 % full, splits K across SMs by the slice's tile count
  * (stream-k). A token keeps its bytes only in a slice of the same start and width, so a prefill
- * resumed at another point of a prompt can differ in the last bits (#492); turning stream-k off
- * cost 7..15 % of that kernel on the RTX 5090 and 4070 Ti. The other int8 routes (W4A8, I8, R8, the
- * vector kernel) are token-invariant.
+ * resumed at another point of a prompt can differ in the last bits (#492). Stream-k stays: it is
+ * the kernel's speed choice, and byte invariance at any cut is what BF16 (exact) activations give.
+ * The other int8 routes (W4A8, I8, R8, the vector kernel) are token-invariant.
  * Outside it (decode, speculative verify, drafters, other models) they keep their speed-tuned
  * tables: a verify pass is compared against its own draft and needs no invariance.
  *
