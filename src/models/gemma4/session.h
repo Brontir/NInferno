@@ -26,7 +26,8 @@ struct SessionOptions {
     // FP8 keys and values (E4M3 with a scale per row) instead of BF16: about half the KV bytes,
     // so fit_session finds a longer context. The MTP drafter reads the same planes.
     bool kv_fp8 = false;
-    // FP8 on the full layers alone, the sliding rings in BF16 (ninferno-serve's Gemma 4 default).
+    // FP8 on the full layers alone, the sliding rings in BF16 (ninferno-serve's --sliding-kv-dtype
+    // bf16; its default under FP8 KV is kv_fp8, every layer).
     bool kv_fp8_full = false;
     // Columns of one head pass in teacher-forced scoring (score()); the session's head slab holds
     // vocab x score_columns BF16 (128 MiB for Gemma 4 at 256). A session that never scores can
