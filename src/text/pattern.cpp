@@ -1,5 +1,7 @@
 #include "text/pattern.h"
 
+#include "text/onig_unicode.h"
+
 #include <utf8proc/utf8proc.h>
 
 #include <array>
@@ -56,8 +58,7 @@ const std::vector<Range>& space_ranges() {
 }
 
 char32_t simple_fold(char32_t cp) {
-    return static_cast<char32_t>(
-        utf8proc_tolower(utf8proc_toupper(static_cast<utf8proc_int32_t>(cp))));
+    return onig_unicode::to_lower(onig_unicode::to_upper(cp));
 }
 
 // A set of code points: union of ranges, general categories and nested (typically
@@ -86,12 +87,9 @@ struct CharSet {
         bool in = contains(cp, category_bit);
         if (!in && icase) {
             for (const char32_t variant :
-                 {static_cast<char32_t>(utf8proc_tolower(static_cast<utf8proc_int32_t>(cp))),
-                  static_cast<char32_t>(utf8proc_toupper(static_cast<utf8proc_int32_t>(cp))),
-                  simple_fold(cp)}) {
+                 {onig_unicode::to_lower(cp), onig_unicode::to_upper(cp), simple_fold(cp)}) {
                 if (variant != cp &&
-                    contains(variant, bit(utf8proc_category(static_cast<utf8proc_int32_t>(
-                                          variant))))) {
+                    contains(variant, bit(onig_unicode::category(variant)))) {
                     in = true;
                     break;
                 }
@@ -110,7 +108,7 @@ struct CharSet {
         for (CharSet& inner : nested) { inner.finalize(); }
         ascii = {};
         for (char32_t cp = 0; cp < 128; ++cp) {
-            if (slow_matches(cp, bit(utf8proc_category(static_cast<utf8proc_int32_t>(cp))))) {
+            if (slow_matches(cp, bit(onig_unicode::category(cp)))) {
                 ascii[cp >> 6U] |= std::uint64_t{1} << (cp & 63U);
             }
         }
@@ -936,7 +934,7 @@ std::vector<ByteSpan> Pattern::find_all(std::string_view text) const {
         cps.push_back(cp);
         // ASCII never reaches the category test (sets keep a bitmap for it).
         categories.push_back(cp < 128 ? 0U
-                                      : bit(utf8proc_category(static_cast<utf8proc_int32_t>(cp))));
+                                      : bit(onig_unicode::category(cp)));
         offsets.push_back(offset);
         offset += length;
     }
