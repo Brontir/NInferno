@@ -5,6 +5,8 @@
 // pair with one cvt.rn.f16x2.e2m1x2. Elsewhere CUDA's own conversion decodes each code through
 // FP6 in software, which left the FP4 KV caches at about half of INT8's decode speed on Ada.
 
+#include "core/arch_family.cuh"
+
 #include <cuda_fp16.h>
 #include <cuda_fp4.h>
 
@@ -27,8 +29,7 @@ __device__ __forceinline__ __half2 e2m1x2_to_half2_bits(std::uint32_t byte) {
 
 // The low byte of `byte` as two FP16 values, low nibble first.
 __device__ __forceinline__ __half2 e2m1x2_to_half2(std::uint32_t byte) {
-#if defined(__CUDA_ARCH_FAMILY_SPECIFIC__) && __CUDA_ARCH_FAMILY_SPECIFIC__ >= 1000 &&             \
-    __CUDA_ARCH_FAMILY_SPECIFIC__ < 1300
+#if NINFERNO_ARCH_FAMILY_SPECIFIC >= 1000 && NINFERNO_ARCH_FAMILY_SPECIFIC < 1300
     // NINFERNO-SPECIAL(arch:sm100,sm110,sm120): the families with the hardware conversion.
     return __half2(
         __nv_cvt_fp4x2_to_halfraw2(static_cast<__nv_fp4x2_storage_t>(byte & 0xffU), __NV_E2M1));

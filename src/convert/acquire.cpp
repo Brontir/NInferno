@@ -242,9 +242,7 @@ bool complete(const fs::path& artifact, bool drafters) {
 
 // Whether the start attaches the model's separate drafters: asked for by name or by the automatic
 // choice (not --no-drafters, and for a GGUF model not by default).
-bool wants_drafters(const AcquireOptions& options) {
-    return options.drafters == Drafters::Attach || options.drafters == Drafters::Require;
-}
+bool wants_drafters(Drafters mode) { return mode == Drafters::Attach || mode == Drafters::Require; }
 
 // A reused artifact's drafters whose file here was written again since attach take its new id
 // (drafters.h, refresh_changed_drafters): nothing is fetched, whatever the start asks of drafters.
@@ -325,7 +323,7 @@ std::string required_text(const AcquireOptions& options) {
 // does not fit the target. Under --with-drafters (Require) that is an error. Under Attach (the
 // automatic choice drafts) it is a warning, and the model is served without the drafter.
 void require_drafters(const DrafterPlan& plan, const AcquireOptions& options) {
-    if (!wants_drafters(options)) { return; }
+    if (!wants_drafters(options.drafters)) { return; }
     for (const auto& d : plan.drafters) {
         if (!(d.status.starts_with("failed") || d.status.starts_with("incompatible") ||
               d.status.starts_with("not in the artifact"))) {
@@ -349,6 +347,54 @@ void check_free_space(const FetchPlan& plan) { check_space(plan); }
 
 void check_attached_drafters(const DrafterPlan& plan, const AcquireOptions& options) {
     require_drafters(plan, options);
+}
+
+bool drafters_enabled(Drafters mode, bool gguf) {
+    return mode == Drafters::Default ? !gguf : mode != Drafters::Off;
+}
+
+DrafterAction decide_drafters(Drafters mode, bool gguf, bool download_present,
+                              const ManifestState& manifest, bool components_given) {
+    using Kind            = DrafterActionKind;
+    const bool incomplete = drafters_incomplete(manifest);
+    if (!download_present) {
+        // A plan the checkpoint's own declaration made cannot be made again without that
+        // download: kept as it is, and a drafter of it that failed fails --with-drafters.
+        if (manifest.bundle_failed && mode == Drafters::Require) {
+            return {Kind::Fail, "failed (or its file no longer passes the checks) and its download "
+                                "was removed: fetch the model again"};
+        }
+        // A checkpoint's companion the artifact lacks is converted into it, which needs the
+        // download too. A GGUF's is missing when its components were named without it: fetching
+        // the model again does not change that.
+        if (manifest.missing_companion && !gguf && mode == Drafters::Require) {
+            return {Kind::Fail,
+                    "is not in the artifact and its download was removed: fetch the model again"};
+        }
+        // Said under the default too (a checkpoint's drafters are on by default), so a start that
+        // serves without it never does so silently.
+        if (manifest.bundle_failed &&
+            (mode == Drafters::Attach || (mode == Drafters::Default && !gguf))) {
+            return {Kind::Warn, "it failed (or its file no longer passes the checks) and its "
+                                "download was removed (fetch the model again to retry it)"};
+        }
+        // Planned again from the artifact (a checkpoint's by default, a GGUF's when asked for).
+        if (mode != Drafters::Off && incomplete && !manifest.bundle_planned &&
+            (!gguf || wants_drafters(mode))) {
+            return {Kind::Attach, {}};
+        }
+        return {};
+    }
+    if (!drafters_enabled(mode, gguf)) { return {}; }
+    // A GGUF's manifest is missing or incomplete; a checkpoint's artifact with no manifest was
+    // converted without its drafters.
+    if (gguf ? incomplete : !manifest.exists) {
+        return {gguf ? (components_given ? Kind::Attach : Kind::CompanionsThenAttach)
+                     : Kind::Reconvert,
+                {}};
+    }
+    if (!gguf && incomplete) { return {Kind::ReplanFromCheckpoint, {}}; }
+    return {};
 }
 
 DrafterPlan plan_checkpoint_drafters(const std::filesystem::path& checkpoint,
@@ -813,49 +859,47 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 // be made again without that download: kept as it is, and a drafter of it that
                 // failed fails --with-drafters.
                 refresh_drafters(options, *kept);
-                bool bundle_planned = false, bundle_failed = false;
-                try {
-                    std::ifstream stream(spec::manifest_path(*kept));
-                    if (stream) {
-                        const OJson manifest = OJson::parse(stream);
-                        bundle_planned = manifest.value("matched_by", std::string()) == "declaration";
-                        for (const auto& d : manifest.value("drafters", OJson::array())) {
-                            bundle_failed |=
-                                d.value("name", std::string()).find('.') == std::string::npos &&
-                                d.value("status", std::string()).starts_with("failed");
-                        }
-                    }
-                } catch (const std::exception&) {}
-                if (bundle_planned && bundle_failed && options.drafters == Drafters::Require) {
-                    throw std::runtime_error(
-                        "a drafter of " + kept->string() +
-                        " failed and its download was removed: fetch the model again (" +
-                        required_text(options) + ")");
-                }
-                if (bundle_planned && bundle_failed && options.drafters == Drafters::Attach) {
-                    not_attached(options, "a drafter of " + kept->string(),
-                                 "it failed and its download was removed (fetch the model "
-                                 "again to retry it)",
-                                 false);
-                }
-                if (options.drafters != Drafters::Off && drafters_incomplete(*kept) &&
-                    !bundle_planned) {
+                const auto state = options.drafters == Drafters::Off ? ManifestState()
+                                                                     : read_manifest_state(*kept);
+                auto action = decide_drafters(options.drafters, state.gguf_source, false, state,
+                                              options.components_given);
+                std::optional<DrafterTarget> target;
+                std::string target_error;
+                if (action.kind == DrafterActionKind::Attach) {
+                    // The plan is made from the artifact. A GGUF the manifest does not record
+                    // (none, or one written before it did) is told by the artifact's provenance.
                     try {
-                        const auto target = describe_artifact(
-                            *kept, options.model_id.empty() ? repo : options.model_id);
-                        if (!target.gguf_source || wants_drafters(options)) {
-                            AttachOptions attach;
-                            attach.fetch                 = options.fetch;
-                            attach.fetch.before_download = [](const FetchPlan& plan) {
-                                check_space(plan);
-                            };
-                            attach.log               = options.log;
-                            attach.repository        = options.repository;
-                            attach.drafter_artifacts = options.drafter_artifacts;
-                            attach.conversion        = convert_options;
-                            out.drafters = attach_drafters(plan_drafters(target), *kept, attach);
-                            require_drafters(*out.drafters, options);
+                        target = reused_target(describe_artifact(*kept, options.model_id.empty()
+                                                                            ? repo
+                                                                            : options.model_id),
+                                               state);
+                        if (target->gguf_source && !state.gguf_source) {
+                            action = decide_drafters(options.drafters, true, false, state,
+                                                     options.components_given);
                         }
+                    } catch (const std::exception& error) { target_error = error.what(); }
+                }
+                if (action.kind == DrafterActionKind::Fail) {
+                    throw std::runtime_error("a drafter of " + kept->string() + " " +
+                                             action.message + " (" + required_text(options) + ")");
+                }
+                if (action.kind == DrafterActionKind::Warn) {
+                    not_attached(options, "a drafter of " + kept->string(), action.message, false);
+                }
+                if (action.kind == DrafterActionKind::Attach) {
+                    try {
+                        if (!target) { throw std::runtime_error(target_error); }
+                        AttachOptions attach;
+                        attach.fetch                 = options.fetch;
+                        attach.fetch.before_download = [](const FetchPlan& plan) {
+                            check_space(plan);
+                        };
+                        attach.log               = options.log;
+                        attach.repository        = options.repository;
+                        attach.drafter_artifacts = options.drafter_artifacts;
+                        attach.conversion        = convert_options;
+                        out.drafters = attach_drafters(plan_drafters(*target), *kept, attach);
+                        require_drafters(*out.drafters, options);
                     } catch (const std::exception& error) {
                         if (options.drafters == Drafters::Require) { throw; }
                         not_attached(options, "drafters not attached", error.what(), true);
@@ -981,8 +1025,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
     // They are attached when asked for (a separate download, 1.6 GB for Muse Glimmer's DFlash);
     // a checkpoint's by default.
     const bool gguf        = !fs::is_directory(fetched.model);
-    const bool drafters_on =
-        (options.drafters == Drafters::Default ? !gguf : options.drafters != Drafters::Off);
+    const bool drafters_on = drafters_enabled(options.drafters, gguf);
 
     fs::create_directories(convert_options.out.parent_path());
     AttachOptions attach;
@@ -1094,22 +1137,26 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
         }
         if (complete(out.artifact, false)) {
             refresh_drafters(options, out.artifact);
-            const bool attach_again = gguf ? drafters_incomplete(out.artifact)
-                                           : !fs::exists(spec::manifest_path(out.artifact));
-            if (drafters_on && attach_again) {
-                if (gguf) {
-                    // Converted before its drafters could be attached, or one failed: its
-                    // companions are converted in and the others attached now.
-                    out.reused = true;
-                    say(options, "artifact " + out.artifact.string() + " (converted earlier)");
-                    if (!options.components_given) {
-                        auto text_only          = convert_options;
-                        text_only.drafter_quant = std::string();
-                        convert_gguf_companions(text_only, convert_options.drafter_quant);
-                    }
-                    attach_to_artifact();
-                    return out;
+            const auto action = decide_drafters(options.drafters, gguf, true,
+                                                options.drafters == Drafters::Off
+                                                    ? ManifestState()
+                                                    : read_manifest_state(out.artifact),
+                                                options.components_given);
+            if (action.kind == DrafterActionKind::Attach ||
+                action.kind == DrafterActionKind::CompanionsThenAttach) {
+                // A GGUF's, converted before its drafters could be attached, or one failed: its
+                // companions are converted in and the others attached now.
+                out.reused = true;
+                say(options, "artifact " + out.artifact.string() + " (converted earlier)");
+                if (action.kind == DrafterActionKind::CompanionsThenAttach) {
+                    auto text_only          = convert_options;
+                    text_only.drafter_quant = std::string();
+                    convert_gguf_companions(text_only, convert_options.drafter_quant);
                 }
+                attach_to_artifact();
+                return out;
+            }
+            if (action.kind == DrafterActionKind::Reconvert) {
                 // A checkpoint's artifact with no manifest was converted without its drafters
                 // (--no-drafters): its MTP layers and companions are missing, so it is replaced.
                 say(options, "converting " + fetched.repo +
@@ -1123,7 +1170,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 std::optional<DrafterPlan> replanned;
                 std::string missing;
                 std::string replan_error;
-                if (drafters_on && !gguf && drafters_incomplete(out.artifact)) {
+                if (action.kind == DrafterActionKind::ReplanFromCheckpoint) {
                     try {
                         replanned = plan_drafters(describe_checkpoint(fetched.model, model_id));
                         const artifact::Reader reader(out.artifact);

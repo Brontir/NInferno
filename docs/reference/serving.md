@@ -678,8 +678,9 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 ```
 
 The request `model` may name anything: a server serves one model, so a client's own default
-(`gpt-4o`, an alias the user configured) means it. Responses carry the public model ID: the
-artifact's `metadata.name`, else its file name by default, or the explicit `--model-id` override.
+(`gpt-4o`, an alias the user configured) means it, and Chat Completions and Responses answers echo
+that `model` back. `/v1/models` lists the public model ID: the artifact's `metadata.name`, else its
+file name by default, or the explicit `--model-id` override.
 Every endpoint also answers without its `/v1` prefix (`/chat/completions`, `/models`), for
 llama.cpp-style base URLs.
 
@@ -1318,10 +1319,10 @@ response contains typed `output` Items.
 | `reasoning.summary` | omitted, `null`, or any string; every string requests the same fixed protocol placeholder without changing model execution, and the original value is echoed in the response |
 | `chat_template_kwargs` | template parameters as a JSON object; standard options merge with typed fields |
 | `preserve_thinking` | alias for `chat_template_kwargs.preserve_thinking`; conflicting values are rejected |
-| `text.format` | omitted or `{"type":"text"}` only |
+| `text.format` | omitted, `{"type":"text"}`, `{"type":"json_object"}` or `{"type":"json_schema", "name", "schema", ...}` (`name` required; strict or not), enforced as Chat Completions' `response_format` is ([constrained output](#constrained-output)); `client.responses.parse(text_format=...)` returns a Response whose `output_parsed` is the parsed object |
 | `tools` | direct function definitions or namespace groups containing function definitions; see [Function tools](#function-tools) |
-| `tool_choice` | `auto`, `none`, or function-only `allowed_tools` with mode `auto`; a namespaced selection carries both `namespace` and `name` |
-| `parallel_tool_calls` | `true` by default; `false` is accepted only when no effective tool is callable |
+| `tool_choice` | `auto`, `none`, `required`, a named `{"type":"function","name"}` or `{"type":"custom","name"}`, or function-only `allowed_tools` with mode `auto` or `required`; `required` and a named tool are enforced by a constraint (an empty `allowed_tools` set leaves nothing to force); a namespaced selection carries both `namespace` and `name` |
+| `parallel_tool_calls` | `true` by default; `false` is enforced: the output stops after the first call |
 | `max_tool_calls` | non-negative integer accepted as a hosted-tool no-op; NInferno does not execute hosted tools |
 | `truncation` | omitted or `disabled`; overlong input fails instead of silently dropping Items |
 | `top_logprobs` | `0..20`: alternatives per token in `output_text.logprobs`; nonzero asks for log probabilities as the include below does |
@@ -1338,10 +1339,11 @@ and its location in the request. The location appears both in the error `param` 
 `tools[0].function.name` or `messages[2].tool_calls[0].function.name`) and in the message text.
 
 Unsupported Create fields include Conversations, prompt templates, context management, hosted
-moderation, Structured Outputs/JSON mode, `include` values other than `reasoning.encrypted_content`,
-background execution, compaction, files/audio, and OpenAI-hosted and MCP tools. Except for the two
-explicitly documented placeholders (`reasoning.summary` and the local raw-reasoning mirror), these
-are compatibility boundaries rather than silently accepted approximations.
+moderation, `include` values other than `reasoning.encrypted_content` and
+`message.output_text.logprobs`, background execution, compaction, files/audio, and OpenAI-hosted
+and MCP tools. Except for the two explicitly documented placeholders (`reasoning.summary` and the
+local raw-reasoning mirror), these are compatibility boundaries rather than silently accepted
+approximations.
 
 ### Input Items
 
@@ -1434,7 +1436,9 @@ They may also be grouped in a Responses namespace:
   region first, so a quoted example of an undeclared call does not displace a declared call after
   it. Llama 3's JSON form, whose call opens like any JSON answer, still needs a declared name.
 - `allowed_tools` with mode `auto` filters that set without changing declaration order (unless the
-  server runs with `--tool-order sorted`, which renders every set sorted by name).
+  server runs with `--tool-order sorted`, which renders every set sorted by name); mode `required`
+  also forces a call among them (an empty `tools` list leaves no tool to call, and the answer is
+  unconstrained text).
   `tool_choice:"none"` disables structured tool output even when the history contains earlier calls.
 - Function definitions are request configuration rather than conversation Items. They must be sent
   again on tool-result turns.
