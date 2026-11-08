@@ -25,10 +25,13 @@ constexpr int kVecWarps = 4;
 // (__launch_bounds__' minimum), the registers of 3 columns: unbounded it takes 85 registers where 3
 // take 72 (sm_86 / sm_89, CUDA 13), which is 5 CTAs of 128 threads on a 64K-register SM instead of
 // 7. The grid is sized to the resident CTAs, so the launch takes the twin when that saves a round
-// of row groups (480..512 groups on an 82-SM card: 2 rounds against 1) and the instance as it is
-// otherwise (1024 groups on 128 SMs: 2 rounds either way, the tail longer with more slots). The
-// other instances have no twin: a bound makes the compiler spend more registers on every instance
-// it is given to (110 for 3 columns), and the unrolled-K and gated ones spill under 72.
+// of row groups (480..512 groups on an 82-SM card: 2 rounds against 1), and the plain instance
+// otherwise. The rule is deliberately conservative: on a 2080 Ti the twin is 11..22 % faster even
+// at shapes it does not take (the plain instance's second round runs 72 CTAs, the twin's 4), but
+// on a 4090 the same bound measured 9 % slower at 1024 groups with 2 rounds either way
+// (route-tune), and no model here explains both, so only the case with a counted saving is taken.
+// The other instances have no twin: a bound makes the compiler spend more registers on every
+// instance it is given to (110 for 3 columns), and the unrolled-K and gated ones spill under 72.
 constexpr bool kVecHasBoundedTwin(int columns, int ks, bool gated) {
     return columns == 4 && ks == 0 && !gated;
 }
@@ -778,6 +781,7 @@ void vec_launch_ks(const VecArgs& args, cudaStream_t stream) {
     if constexpr (kVecHasBoundedTwin(T, KS, Gated)) {
         const int twin_slots = vec_slots<type, T, KS, Gated, true>();
         const auto rounds    = [&](int n) { return (groups + n - 1) / n; };
+        // Conservative on purpose: see kVecHasBoundedTwin.
         const bool take      = g_vec_instance == VecInstance::Twin ||
                           (g_vec_instance == VecInstance::Auto && twin_slots > 0 &&
                            rounds(twin_slots) < rounds(slots));

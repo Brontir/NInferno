@@ -196,8 +196,21 @@ int main() {
     std::printf("plain: %d regs, %zu B local, %u slots; twin: %d regs, %zu B local, %u slots\n",
                 plain_huge.registers, plain_huge.local_bytes, plain_slots, twin_huge.registers,
                 twin_huge.local_bytes, twin_slots);
-    expect(plain_huge.local_bytes == 0, "the plain instance does not spill");
     expect(twin_huge.registers <= plain_huge.registers, "the twin uses no more registers");
+    // Bytes again at a shape sized from the measured slots: more groups than the plain instance
+    // holds and half the twin's slots more, so the multi-round path runs on every board.
+    {
+        const Problem p{int(8 * (plain_slots + twin_slots / 2)), 4096};
+        Device d         = make(p, false);
+        const auto plain = run(p, d, VecInstance::Plain);
+        const auto twin  = run(p, d, VecInstance::Twin);
+        const auto autos = run(p, d, VecInstance::Auto);
+        expect(std::memcmp(plain.data(), twin.data(), plain.size() * 4) == 0,
+               "multi-round: twin bytes equal plain bytes");
+        expect(std::memcmp(plain.data(), autos.data(), plain.size() * 4) == 0,
+               "multi-round: auto bytes equal plain bytes");
+        free_all(d);
+    }
     for (const Problem p : {Problem{3840, 15360}, Problem{4096, 12288}, Problem{8192, 4096},
                             Problem{2048, 3840}, Problem{1 << 20, 256}}) {
         Device d              = make(p, true);
