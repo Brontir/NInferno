@@ -10,12 +10,13 @@
 // a fixed part plus a part in J (DECISIONS 69, 74).
 //
 // Two tables. Everywhere: J = 16, 32, 64, 128 and the fewest tiles, the narrower on a tie (the
-// choice before DECISIONS 74). GA10x (sm_86: RTX 3060 / 3090, A10), where DECISIONS 74's grid
-// measured every width: J = 16, 32, 64, 80, 96, 128 and the least work ceil(columns / J) x
-// step_share(J). The fixed share of the step_share is the RTX 4060 Ti's Q4_K 64-column tile (0.43);
-// the RTX 3060's own Q4_K grid agrees with the picks it makes. No other card or format has been
-// run over the widths, so no other card takes them: a card or format that is measured joins by
-// its own table here.
+// choice before DECISIONS 74). Where the generation row says mmq_work_tiles (core/generation.h:
+// GA10x on the RTX 3060 and 3090, GB20x on the RTX 5090: the grids of DECISIONS 74): J = 16, 32,
+// 64, 80, 96, 128 and the least work ceil(columns / J) x step_share(J, the row's mmq_tile_fixed).
+// No other generation or format has been run over the widths: a generation that is measured joins
+// by its row.
+
+#include "core/generation.h"
 
 #include <cmath>
 #include <span>
@@ -28,7 +29,7 @@ inline constexpr int kTilesGa10x[]      = {16, 32, 64, 80, 96, 128};
 inline constexpr double kTileFixed      = 0.43;
 
 [[nodiscard]] constexpr bool uses_work_table(int major, int minor) noexcept {
-    return major == 8 && minor == 6;
+    return mmq_work_tiles_measured(major, minor);
 }
 
 [[nodiscard]] constexpr std::span<const int> tiles(int major, int minor) noexcept {
@@ -37,8 +38,8 @@ inline constexpr double kTileFixed      = 0.43;
 }
 
 // A J-column tile's K step against a 128-column tile's.
-[[nodiscard]] constexpr double step_share(int j) noexcept {
-    return kTileFixed + (1 - kTileFixed) * j / kTile;
+[[nodiscard]] constexpr double step_share(int j, double fixed = kTileFixed) noexcept {
+    return fixed + (1 - fixed) * j / kTile;
 }
 
 [[nodiscard]] constexpr int tile_count(int columns, int j) noexcept {
@@ -47,17 +48,19 @@ inline constexpr double kTileFixed      = 0.43;
 
 // The cost the launch choice minimises for covering `columns` tokens with tiles of width j on the
 // card's table: the least work (GA10x), else the fewest tiles.
-[[nodiscard]] constexpr double launch_cost(int columns, int j, bool work_table) noexcept {
-    return work_table ? tile_count(columns, j) * step_share(j) : tile_count(columns, j);
+[[nodiscard]] constexpr double launch_cost(int columns, int j, bool work_table,
+                                           double fixed = kTileFixed) noexcept {
+    return work_table ? tile_count(columns, j) * step_share(j, fixed) : tile_count(columns, j);
 }
 
 // The width the card's table takes for `columns` tokens (every width available).
 [[nodiscard]] constexpr int pick(int columns, int major, int minor) noexcept {
-    const bool work = uses_work_table(major, minor);
-    int best        = 0;
-    double least    = 1e300;
+    const bool work    = uses_work_table(major, minor);
+    const double fixed = mmq_tile_fixed_of(major, minor);
+    int best           = 0;
+    double least       = 1e300;
     for (const int j : tiles(major, minor)) {
-        if (const double c = launch_cost(columns, j, work); c < least) {
+        if (const double c = launch_cost(columns, j, work, fixed); c < least) {
             least = c;
             best  = j;
         }

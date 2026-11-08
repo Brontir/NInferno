@@ -35,10 +35,12 @@ namespace {
 namespace pins {
 using ninferno::mmq_columns::pick;
 static_assert(pick(144, 8, 6) == 80 && pick(160, 8, 6) == 80 && pick(192, 8, 6) == 96 &&
-              pick(256, 8, 6) == 128 && pick(224, 8, 6) == 128 && pick(16, 8, 6) == 16 &&
-              pick(8, 8, 6) == 16 && pick(1, 8, 6) == 16);
+              pick(224, 8, 6) == 128 && pick(256, 8, 6) == 128 && pick(16, 8, 6) == 16 &&
+              pick(8, 8, 6) == 16 && pick(1, 8, 6) == 16 && pick(320, 8, 6) == 80);
+static_assert(pick(144, 12, 0) == 80 && pick(192, 12, 0) == 96 && pick(224, 12, 0) == 80 &&
+              pick(256, 12, 0) == 128 && pick(16, 12, 0) == 16);
 static_assert(pick(144, 8, 9) == 128 && pick(192, 8, 9) == 128 && pick(16, 8, 9) == 16 &&
-              pick(144, 12, 0) == 128);
+              pick(144, 7, 5) == 128);
 
 constexpr bool within_fixup_bound() {
     for (int c = 1; c <= 512; ++c) {

@@ -34,6 +34,22 @@
 //                   tile runs 25-35 % slower even in whole waves (RTX 4090, 4080 SUPER); the other
 //                   generations are unmeasured and keep the plain launch
 
+//   mmq_work_tiles  ggml's matrix kernel also instantiates the 80- and 96-column tiles and takes
+//                   the column tile of least work, ceil(columns / J) x (0.43 + 0.57 J / 128),
+//                   instead of the fewest tiles of 16, 32, 64, 128 (core/mmq_columns.h, DECISIONS
+//                   74). The rule: a tile is a fixed part (its 128 weight rows' decode, the same
+//                   for every J) plus a part in J (the MMA, the y tile's loads), and narrower tiles
+//                   pay while the part in J is large enough that the padding they save outweighs
+//                   the fixed part they repeat. On GA10x the int8 MMA alone is 4096 of a Q4_K
+//                   tile's 10600 SM-clocks a 256-value K step (1024 MMAs of 4096 MACs at 1024 MACs
+//                   a clock). The fixed share is a measurement of the generation (mmq_tile_fixed:
+//                   the grid regret over the widths is least at 0.15-0.25 on the RTX 3060 and
+//                   3090, 0.05-0.15 on the RTX 5090; DECISIONS 74), a generation with a higher
+//                   MMA rate (ga100: s8 4096) has a smaller part in J and a larger fixed share, so
+//                   fewer widths pay. A generation joins by its own grid: Ada and Turing were not
+//                   run over the widths and keep the fewest tiles. A measured preference, not
+//                   carried by a lent row.
+
 //
 // What a lent row carries (#300): generation_row answers every compute capability, lending the
 // newest (or the oldest) row to one the table does not know, so that the code runs there. Beside
@@ -42,12 +58,12 @@
 //   capability   what the device can execute: not in this table (DeviceFeatures, the query)
 //   rate         bf16, s8: the analytic tensor rate a cost model ranks routes with (lent: an
 //                assumed rate, the ranking said to rest on it)
-//   kind         fp32acc_full_rate: which measured kind of tensor core the generation is; a lent row
-//                has none (fp32acc_full_rate_of: nullopt), and what rests on the kind (int8
+//   kind         fp32acc_full_rate: which measured kind of tensor core the generation is; a lent
+//                row has none (fp32acc_full_rate_of: nullopt), and what rests on the kind (int8
 //                prefill pays, i8 replaces the q4a8 kernels, board distances) is not carried
 //   fitted       w4a8_eff_scale, a16_cost_scale: route_tune fits of the boards above; not carried
 //                (fitted_route_scales: nullopt), the comparisons they price not made
-//   preference   mmq_candidate, attention_chain: a measured A/B; not carried
+//   preference   mmq_candidate, attention_chain, mmq_work_tiles: a measured A/B; not carried
 //                (mmq_candidate_measured, attention_chain_measured)
 // A generation newer than the table therefore runs the routes every board runs (A16 prefill, the
 // plain attention launch) until a row of its own is added.
@@ -69,6 +85,8 @@ struct GenerationRow {
     double a16_cost_scale  = 1.0;
     bool mmq_candidate     = false;
     bool attention_chain   = false;
+    bool mmq_work_tiles    = false;
+    double mmq_tile_fixed  = 0.43; // with mmq_work_tiles: the fixed share of a column tile's step
 };
 
 inline constexpr GenerationRow kGenerations[] = {
@@ -76,12 +94,12 @@ inline constexpr GenerationRow kGenerations[] = {
     {7, 0, 4, "volta", 1536.0, 0.0, false, 1.0, 1.11, true},
     {7, 5, 9, "turing", 1536.0, 2048.0, false, 1.0, 1.11, true},
     {8, 0, 0, "ga100", 2048.0, 4096.0, true, 0.46, 1.64, false},
-    {8, 1, 8, "ga10x", 512.0, 2048.0, false, 1.0, 1.11, true},
+    {8, 1, 8, "ga10x", 512.0, 2048.0, false, 1.0, 1.11, true, false, true, 0.20},
     {8, 9, 9, "ada", 512.0, 2048.0, false, 1.0, 1.11, true},
     {9, 0, 9, "hopper", 2048.0, 4096.0, true, 0.46, 1.64, false},
     {10, 0, 9, "gb100", 2048.0, 4096.0, true, 0.46, 1.64, false},
     {11, 0, 9, "thor", 512.0, 2048.0, false, 1.0, 1.11, true},
-    {12, 0, 9, "gb20x", 512.0, 2048.0, false, 1.0, 1.11, true, true},
+    {12, 0, 9, "gb20x", 512.0, 2048.0, false, 1.0, 1.11, true, true, true, 0.10},
 };
 
 // Whether the table has a row of its own for compute capability major.minor (generation_row lends
@@ -138,6 +156,19 @@ struct FittedRouteScales {
     return generation_known(major, minor) && generation_row(major, minor).mmq_candidate;
 }
 
+// Whether ggml's matrix kernel takes the column tile of least work on compute capability
+// major.minor (mmq_work_tiles, a measured preference): only on a generation of the table's own.
+[[nodiscard]] constexpr bool mmq_work_tiles_measured(int major, int minor) noexcept {
+    return generation_known(major, minor) && generation_row(major, minor).mmq_work_tiles;
+}
+
+// The fixed share of a column tile's K step on that generation (mmq_tile_fixed): the part that does
+// not scale with the tile's columns; DECISIONS 69's 0.43 where the row has none of its own.
+[[nodiscard]] constexpr double mmq_tile_fixed_of(int major, int minor) noexcept {
+    return mmq_work_tiles_measured(major, minor) ? generation_row(major, minor).mmq_tile_fixed
+                                                 : 0.43;
+}
+
 // The compute capabilities the generic selector's measured rules name (generic_gemm.cpp). A
 // generation row spans minors no board of which was measured (12.1, GB10, lies in gb20x's row),
 // so a rule measured on one capability's boards keeps that capability exactly, as written.
@@ -178,12 +209,15 @@ struct FittedRouteScales {
 // are measured on compute capability major.minor. Only a generation with two or more lab cards
 // that confirm them takes them (AGENTS.md: a lab measurement enters as a fact or as a constant
 // fitted on two or more cards of a generation); every other part keeps the old price.
-//   sm_86  GA10x Ampere:       RTX 3060 (in the fit); RTX 3090 (held out: 1.136 -> 1.091)
-//   sm_120 consumer Blackwell: RTX 5090 (in the fit); RTX 5070 Ti (held out)
-// Not sm_89 (Ada): the held-out RTX 4060 Ti got worse (production worst 1.36 -> 1.85), a defect of
-// the model (#501), so Ada comes back with its fix. Not sm_121 (GB10), the datacenter parts (sm_80,
-// sm_90, sm_100) or sm_87 / sm_88, nor Turing and Volta, whose BF16 MMA is emulated and which got
-// worse with the terms.
+//   sm_86  GA10x Ampere:       RTX 3060 + RTX 3090, the final constants fitted on both together
+//   sm_120 consumer Blackwell: RTX 5090 + RTX 5070 Ti, the final constants fitted on both together
+// The second card of each pair was first measured out of sample (#499: RTX 3090 1.136 -> 1.091);
+// after the refit neither is a held-out board for the shipped constants, and a third board of the
+// generation takes them as a transfer, not a validated fit (#301).
+// Not sm_89 (Ada): the out-of-sample RTX 4060 Ti got worse (production worst 1.36 -> 1.85), a
+// defect of the model (#501), so Ada comes back with its fix. Not sm_121 (GB10), the datacenter
+// parts (sm_80, sm_90, sm_100) or sm_87 / sm_88, nor Turing and Volta, whose BF16 MMA is emulated
+// and which got worse with the terms.
 [[nodiscard]] constexpr bool rmma_terms_measured(int major, int minor) noexcept {
     return (major == 8 && minor == 6) || (major == 12 && minor == 0);
 }

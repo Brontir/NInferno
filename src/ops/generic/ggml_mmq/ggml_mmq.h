@@ -94,6 +94,11 @@ void quantize_activation(Type type, const __nv_bfloat16* x, int ldx, int k, int 
 
 [[nodiscard]] std::size_t fixup_bound(int columns);
 
+// The column tile (J) a product of `columns` tokens launches on the current device: the kernel's
+// own choice among the widths its table (core/mmq_columns.h) holds that the device's config and
+// shared memory admit.
+[[nodiscard]] int column_tile(Type type, int rows, int columns, int k);
+
 // out[c * out_column_stride + r] = sum_k W[r, k] x[k, c] in FP32 for rows [0, rows).
 void product(Type type, const Planes& weight, int blocks_per_row, int rows, int k,
              const void* activation, int columns, float* out, std::int64_t out_column_stride,

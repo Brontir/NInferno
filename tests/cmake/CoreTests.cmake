@@ -4,6 +4,21 @@ add_executable(ninferno_public_api_test "${CMAKE_CURRENT_LIST_DIR}/../test_publi
 target_include_directories(ninferno_public_api_test PRIVATE ${PROJECT_SOURCE_DIR}/include)
 add_test(NAME ninferno_public_api_test COMMAND ninferno_public_api_test)
 
+# And each public header compiles on its own, nothing included before it (#547): one translation
+# unit sees every header after the others, so a standard name a header uses without including it
+# can arrive through an earlier one, and libstdc++ pulls names in through other headers where MSVC's
+# library does not. Built with the tests, not run.
+set(_ninferno_public_headers engine.h option_enums.h score_detail.h types.h)
+set(_ninferno_public_header_units)
+foreach(_header IN LISTS _ninferno_public_headers)
+  string(MAKE_C_IDENTIFIER "${_header}" _unit)
+  set(_source "${CMAKE_CURRENT_BINARY_DIR}/public_header_${_unit}.cpp")
+  file(GENERATE OUTPUT "${_source}" CONTENT "#include \"ninferno/${_header}\"\n")
+  list(APPEND _ninferno_public_header_units "${_source}")
+endforeach()
+add_library(ninferno_public_header_check OBJECT ${_ninferno_public_header_units})
+target_include_directories(ninferno_public_header_check PRIVATE ${PROJECT_SOURCE_DIR}/include)
+
 ninferno_add_test(ninferno_device_test       SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_device.cpp"
   LIBRARIES ninferno_core)
 
