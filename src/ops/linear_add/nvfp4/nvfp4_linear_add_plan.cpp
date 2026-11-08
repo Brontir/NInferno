@@ -2,6 +2,7 @@
 #include "core/weight.h"
 
 #include "ops/common/route_probe.h"
+#include "ops/generic/generic_gemm.h"
 #include "ops/linear/nvfp4/nvfp4_layout.h"
 
 #include <algorithm>

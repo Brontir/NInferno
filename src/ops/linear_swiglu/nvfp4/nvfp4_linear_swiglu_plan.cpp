@@ -5,6 +5,7 @@
 #include "ninferno/ops/linear.h"
 #include "ninferno/ops/silu_mul.h"
 #include "ops/common/route_probe.h"
+#include "ops/generic/generic_gemm.h"
 #include "ops/linear/nvfp4/nvfp4_layout.h"
 #include "ops/linear/nvfp4/nvfp4_a4_plan.h"
 #include "ops/linear_swiglu/nvfp4/nvfp4_linear_swiglu_a4_tma_launch.h"
