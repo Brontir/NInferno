@@ -66,6 +66,21 @@ bool unquantized_drafter_attention(const std::filesystem::path& artifact) {
     return false;
 }
 
+bool drafter_rope_without_original(const std::filesystem::path& artifact) {
+    std::ifstream stream(artifact.string() + ".conversion.json");
+    if (!stream) { return false; }
+    try {
+        const OJson report = OJson::parse(stream);
+        const auto& config = report.at("components").at("text").at("config");
+        if (config.value("model_type", std::string()) != "dflash" || !config.contains("rope")) {
+            return false;
+        }
+        const auto& rope = config.at("rope");
+        return rope.value("rope_type", std::string()) == "yarn" &&
+               !rope.contains("original_max_position_embeddings");
+    } catch (const std::exception&) { return false; }
+}
+
 bool default_head_outdated(const std::filesystem::path& artifact, int revision) {
     if (revision >= 8) { return false; }
     std::ifstream stream(artifact.string() + ".conversion.json");
@@ -120,7 +135,8 @@ namespace {
 bool serves_at(const std::filesystem::path& artifact, int revision) {
     return revision >= kCacheRevision ||
            (revision >= 3 && !unquantized_drafter_attention(artifact) &&
-            !default_head_outdated(artifact, revision));
+            !default_head_outdated(artifact, revision) &&
+            !drafter_rope_without_original(artifact));
 }
 
 } // namespace

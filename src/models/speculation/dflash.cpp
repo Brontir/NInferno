@@ -82,6 +82,10 @@ DFlashConfig parse_dflash_config(const artifact::Json& c) {
         }
         out.rope_attention_scaling = json_positive_float(rope, "attention_scaling");
         out.rope_scaled            = true;
+        if (rope.contains("original_max_position_embeddings")) {
+            out.full_window = static_cast<std::int32_t>(
+                json_dimension(rope, "original_max_position_embeddings"));
+        }
     } else {
         for (std::int32_t i = 0; i < out.head_dim; i += 2) {
             const float exponent = static_cast<float>(i) / static_cast<float>(out.head_dim);
