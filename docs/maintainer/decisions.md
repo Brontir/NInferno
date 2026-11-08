@@ -1650,13 +1650,12 @@ every J and the MMA work is in J, so a tile costs a fixed part plus a part in J 
 slice of 144 columns on two 128-column tiles pays for 256; two 80-column tiles pay 1.57 of 2.0 tile
 steps. The fixed share 0.43 is the RTX 4060 Ti's Q4_K 64-column point (DECISIONS 69), not derived
 per format or architecture: that is why only the card whose grid was run takes the widths. RTX 3060
-(Qwen3-8B Q4_K_M, `--no-prefix-reuse`, A B A B, four requests a point): 136..160-token prompts
-141.7..142.8 ms -> 114.3..115.5 (-19 %), 168..192 143.4..144.7 -> 122.8..126.6, 200..224 -> -7.5..-6 %,
-264..320 -6.5..-13 %, 448 -6.4 %; 232..256, 352..384, 512 and longer unchanged. Predicted before the
-measurement (128-column tile step 53 ms): 144 tokens 118.3 (114.4 measured), 192 128.9 (126.6), 320
-188.7 (189.8). The 136..256 mix: 145.0 -> 131.2 ms (-9.5 %, predicted -7.8 %). These numbers are
-from a build with J = 112 too; without it 200..224 and 289..320 keep part of the gain at 96 or fall back
-to 128 (not re-measured with J = 112 removed: the picks, not the timings, changed).
+(Qwen3-8B Q4_K_M, `--no-prefix-reuse`, A B A B, four requests a point, the final table
+without J = 112): 136..160-token prompts 141.9..143.0 ms -> 114.4..115.6 (-19 %), 168..192
+143.5..144.7 -> 122.8..126.5 (-14..-12.6 %), 200 -3 %, 264 -11 %, 288 -13.6 %; 208..256 and 320 and
+longer unchanged. Predicted before the measurement (128-column tile step 53 ms): 144 tokens 118.3
+(114.5 measured), 192 128.9 (126.5). The 136..256 mix: 145.1 -> 133.2 ms (-8.2 %, predicted -7.8 %).
+With J = 112 as well, 200..224, 320 and 448 had gained another 6 % and the mix -9.5 %.
 
 **Which widths.** A forced-J grid on the RTX 3060 (8 widths x 21 slice sizes, N = 16..512): the
 model's pick is the best width at 18 of 20 sizes. 80 and 96 carry most of the gain; 48 adds 0.1 %
