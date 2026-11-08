@@ -1012,6 +1012,9 @@ struct PromptOptions {
     // declared tool, Gemma 4's call:NAME{) that begins the answer is cut too. Off under an output
     // constraint, whose object may legitimately look like a call.
     bool cut_bare_calls = true;
+    // With tool_calls_discarded and no tool_jsons: the declarations the request refused and the
+    // prompt omits. They only shape how a call written anyway is read and cut.
+    std::vector<std::string> refused_tool_jsons;
 };
 
 enum class CacheRetentionHint : std::uint8_t {

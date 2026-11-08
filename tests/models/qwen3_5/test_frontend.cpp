@@ -2071,6 +2071,75 @@ int test_disabled_tool_calls_ban_the_opener() {
     return failures;
 }
 
+// --tool-choice-none drop-tools: the prompt carries no declarations, but the refused ones stay the
+// output contract's, so the call opener is still banned and a call written anyway is read and cut.
+int test_none_drop_tools_keeps_the_contract() {
+    const Frontend frontend = make_frontend(resources_with_opener(), false);
+    ninferno::PromptInput dropped = none_input(false);
+    dropped.options.refused_tool_jsons = dropped.options.tool_jsons;
+    dropped.options.tool_jsons.clear();
+    const auto steered_prompt = frontend.prepare(none_input(false));
+    const auto dropped_prompt = frontend.prepare(std::move(dropped));
+    int failures              = check(FrontendFactory::inspect(dropped_prompt).token_ids.size() <
+                                  FrontendFactory::inspect(steered_prompt).token_ids.size(),
+                                      "drop-tools still sent the tool declarations");
+    failures += check(dropped_prompt.summary().banned_tokens ==
+                          std::vector<int>{kOpenerId, kCloserId},
+                      "drop-tools lost the call opener ban");
+    const auto& contract = FrontendFactory::inspect(dropped_prompt).tool_call_output;
+    failures += check(contract != nullptr && contract->discarded && contract->declares("inspect"),
+                      "drop-tools lost the output contract that cuts a written call");
+    ninferno::chat::ToolCallOutputDecoder decoder(contract, 64);
+    const std::string shown =
+        decoder.feed(R"(<tool_call>{"name": "inspect", "arguments": {}}</tool_call>)");
+    const auto end = decoder.finish();
+    failures += check(shown.empty() && end.content.empty() && end.tool_calls.size() == 1,
+                      "drop-tools returned a written call verbatim");
+    return failures;
+}
+
+// The steering line goes at the end of the last tool result, not in a user turn after it: with
+// the Qwen template a new user turn moves the last-query index, and every assistant turn of the
+// agent loop since the real query then loses its reasoning (a re-prefill of the whole turn).
+int test_steering_after_tool_result_keeps_the_prefix() {
+    const Frontend frontend = make_frontend(resources(), false);
+    const auto input        = [](bool steer) {
+        ninferno::PromptInput result;
+        ninferno::ChatMessage user;
+        user.role = ninferno::ChatRole::User;
+        user.parts.push_back({.text = "list the directory"});
+        ninferno::ChatMessage assistant;
+        assistant.role              = ninferno::ChatRole::Assistant;
+        assistant.reasoning_content = "I should call the tool.";
+        assistant.tool_calls.push_back(
+            {.id = "call_1", .name = "inspect", .arguments_json = R"({"path":"."})"});
+        ninferno::ChatMessage tool;
+        tool.role         = ninferno::ChatRole::Tool;
+        tool.tool_call_id = "call_1";
+        tool.parts.push_back({.text = "a.txt b.txt"});
+        if (steer) {
+            tool.parts.push_back({.text = "\n\nTools are unavailable for this reply; answer in plain text."});
+        }
+        result.messages.push_back(std::move(user));
+        result.messages.push_back(std::move(assistant));
+        result.messages.push_back(std::move(tool));
+        result.options.enable_thinking = true;
+        result.options.tool_jsons.push_back(
+            R"({"type":"function","function":{"name":"inspect","parameters":{"type":"object"}}})");
+        result.options.tool_calls_enabled = false;
+        return result;
+    };
+    const auto plain   = FrontendFactory::inspect(frontend.prepare(input(false))).token_ids;
+    const auto steered = FrontendFactory::inspect(frontend.prepare(input(true))).token_ids;
+    std::size_t common = 0;
+    while (common < plain.size() && common < steered.size() && plain[common] == steered[common]) {
+        ++common;
+    }
+    // Only the tail after the tool result's content (its close and the generation prompt) differs.
+    return check(steered.size() > plain.size() && common + 16 >= plain.size(),
+                 "the steering line after a tool result changed the rendered prompt before it");
+}
+
 // tool_choice none: outside reasoning, a marker that begins the answer ends the turn (the model has
 // left the answer for markup), with the marker not published; one after text is prose that may
 // quote the tag (the test vocabulary's <think> and <tool_call> are not control tokens, as in
@@ -3662,6 +3731,8 @@ int main() {
     failures += test_disabled_tool_calls_keep_the_prompt();
     failures += test_disabled_tool_calls_ban_the_opener();
     failures += test_none_ends_at_structural_tokens();
+    failures += test_none_drop_tools_keeps_the_contract();
+    failures += test_steering_after_tool_result_keeps_the_prefix();
     failures += test_none_gemma_channel_head_token();
     failures += test_explicit_leading_instruction_cache_boundary();
     failures += test_last_part_boundary_at_turn_end();

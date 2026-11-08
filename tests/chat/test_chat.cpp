@@ -782,6 +782,15 @@ int test_bare_json_call_dropped() {
         const auto in_key = run(R"({"name": "weather", "argu)", true);
         failures += check(in_key.first.empty() && in_key.second == 0,
                           "a bare call cut inside its arguments key was shown: " + in_key.first);
+        // A cut right after the opening quote of the next key is a call that has begun; a value
+        // string at the end (an "id" being written) is not a key.
+        const auto empty_key = run(R"({"name": "weather", ")", true);
+        failures += check(empty_key.first.empty() && empty_key.second == 0,
+                          "a cut at an empty key position was shown: " + empty_key.first);
+        const std::string value_cut = R"({"name": "weather", "id": "a)";
+        const auto in_value         = run(value_cut, true);
+        failures += check(in_value.first == value_cut && in_value.second == 0,
+                          "a cut inside a string value was dropped: " + in_value.first);
         // A second bare call after the first stays text.
         const auto twice = run(call + "\n" + call, false);
         failures += check(twice.first == "\n" + call && twice.second == 1,

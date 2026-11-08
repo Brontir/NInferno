@@ -764,11 +764,14 @@ llama.cpp-style base URLs.
   keeps the declarations in the prompt, as vLLM does by default, so a turn without calls (an
   agent's compaction or summary) reuses the conversation's cached prefix. No output is read back
   as a call then. The last user turn ends with the fixed line `Tools are unavailable for this reply;
-  answer in plain text.` (after a blank line; a tool result as the last message gets it as a
-  user turn after it), because both the Qwen and Gemma 4 templates declare the tools in the system
+  answer in plain text.` (after a blank line; when the last message is a tool
+  result, at the end of that result's content, since a user turn added after it would make the
+  template re-render the reasoning of the whole agent turn; after a system or developer message
+  nothing is added). The line is always English and counts in `prompt_tokens`, `input_tokens` and
+  `count_tokens`, because both the Qwen and Gemma 4 templates declare the tools in the system
   prompt and the call is otherwise the model's near-certain next token. `--tool-choice-none
-  drop-tools` sends no declarations instead (vLLM's behaviour; the cached prefix is lost, the
-  line is not added). The model is also kept from opening a call: the syntax's call opener (`<tool_call>`,
+  drop-tools` sends no declarations instead (vLLM's opt-in `--exclude-tools-when-tool-choice-none`;
+  the cached prefix is lost, the line is not added, and a call written anyway is still cut). The model is also kept from opening a call: the syntax's call opener (`<tool_call>`,
   `<|tool_call>`, `[TOOL_CALLS]`, `<|tool_call|>`, `<function_calls>`) and its closer
   (`</tool_call>`, `<tool_call|>`, `</function_calls>`), and the template's tool-result opener and
   closer (`<tool_response>`, `<|tool_response>`, ...), get a `logit_bias` of -100 when the

@@ -620,6 +620,28 @@ int test_tools() {
         failures += check(last_text(prompt(automatic.generation)).find("Tools are unavailable") ==
                               std::string::npos,
                           "an auto request got the steering line");
+        // A tool result as the last message gets the line at the end of its content, not a new
+        // user turn after it.
+        Json after_tool           = base_request();
+        after_tool["tools"]       = Json::array({function_tool()});
+        after_tool["tool_choice"] = "none";
+        after_tool["messages"]    = Json::array(
+            {Json{{"role", "user"}, {"content", "list"}},
+             Json{{"role", "assistant"},
+                  {"content", nullptr},
+                  {"tool_calls",
+                   Json::array({Json{{"id", "call_1"},
+                                     {"type", "function"},
+                                     {"function", Json{{"name", "get_weather"},
+                                                       {"arguments", "{}"}}}}})}},
+             Json{{"role", "tool"}, {"tool_call_id", "call_1"}, {"content", "sunny"}}});
+        const auto after_tool_input = to_prompt_input(
+            parse(after_tool).generation,
+            resolve_prompt_semantics(parse(after_tool).generation, steer), {});
+        failures += check(after_tool_input.messages.size() == 3 &&
+                              after_tool_input.messages.back().role == ninferno::ChatRole::Tool &&
+                              last_text(after_tool_input) == "\n\n" + kLine,
+                          "the steering line after a tool result is not at the end of its content");
         Json no_tools           = base_request();
         no_tools["tool_choice"] = "none";
         failures += check(last_text(prompt(parse(no_tools).generation)).find("unavailable") ==

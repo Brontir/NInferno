@@ -1108,29 +1108,45 @@ namespace {
 
 // The keys of the object's top level, those whose value has begun included, in an object that may
 // be cut off anywhere.
-std::vector<std::string> top_level_keys(std::string_view object, std::string* partial = nullptr) {
+std::vector<std::string> top_level_keys(std::string_view object,
+                                        std::optional<std::string>* partial = nullptr) {
     std::vector<std::string> keys;
     std::size_t depth = 0;
+    char previous     = 0;  // the last byte outside strings that is not whitespace
     for (std::size_t at = 0; at < object.size(); ++at) {
         const char byte = object[at];
         if (byte == '"') {
             std::string text;
-            for (++at; at < object.size() && object[at] != '"'; ++at) {
+            bool closed = false;
+            for (++at; at < object.size(); ++at) {
+                if (object[at] == '"') {
+                    closed = true;
+                    break;
+                }
                 if (object[at] == '\\' && at + 1 < object.size()) { ++at; }
                 text.push_back(object[at]);
             }
-            std::size_t after = at + 1;
+            // A string is a key only at the object's top level, after its { or a comma; one after
+            // a colon is a value.
+            const bool key_position = depth == 1 && (previous == '{' || previous == ',');
+            std::size_t after       = at + 1;
             while (after < object.size() && is_format_whitespace(object[after])) { ++after; }
-            if (depth == 1 && after < object.size() && object[after] == ':') {
+            if (key_position && closed && after < object.size() && object[after] == ':') {
                 keys.push_back(std::move(text));
-            } else if (depth == 1 && after >= object.size() && partial != nullptr) {
-                // A string at the end of the cut-off object: a key whose colon has not come.
+            } else if (key_position && after >= object.size() && partial != nullptr) {
+                // The cut-off object ends in this key, its colon not yet written.
                 *partial = std::move(text);
             }
-        } else if (byte == '{' || byte == '[') {
-            ++depth;
-        } else if (byte == '}' || byte == ']') {
-            if (depth != 0) { --depth; }
+            previous = '"';
+        } else if (is_format_whitespace(byte)) {
+            continue;
+        } else {
+            if (byte == '{' || byte == '[') {
+                ++depth;
+            } else if ((byte == '}' || byte == ']') && depth != 0) {
+                --depth;
+            }
+            previous = byte;
         }
     }
     return keys;
@@ -1305,14 +1321,14 @@ ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish_region(bool cut_of
         const bool json = syntax_->bare_call_header().front() == "{";
         bool call       = !json;
         if (json) {
-            std::string partial;
+            std::optional<std::string> partial;
             for (const std::string& key : top_level_keys(body, &partial)) {
                 call = call || key == "arguments" || key == "parameters";
             }
-            // A cut inside the key itself ("argu") is a call that had begun its arguments.
-            call =
-                call || (!partial.empty() && (std::string_view("arguments").starts_with(partial) ||
-                                              std::string_view("parameters").starts_with(partial)));
+            // A cut inside the key itself ("argu", or right after the opening quote) is a call
+            // that had begun its arguments.
+            call = call || (partial && (std::string_view("arguments").starts_with(*partial) ||
+                                        std::string_view("parameters").starts_with(*partial)));
         }
         ToolCallParseDiagnostics diagnostics;
         if (call) {

@@ -1120,9 +1120,12 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
             "this model's chat template declares no tool-call syntax, so it cannot take tools; "
             "serve it with a chat template that does (--chat-template)");
     }
+    const std::vector<std::string>& contract_tools =
+        options.tool_jsons.empty() && options.tool_calls_discarded ? options.refused_tool_jsons
+                                                                   : options.tool_jsons;
     const auto tool_call_output = chat::build_tool_call_output_contract(
-        options.tool_jsons,
-        (options.tool_calls_enabled || options.tool_calls_discarded) && !options.tool_jsons.empty(),
+        contract_tools,
+        (options.tool_calls_enabled || options.tool_calls_discarded) && !contract_tools.empty(),
         impl_->chat_template.conventions().tools.format,
         options.tool_calls_discarded && options.cut_bare_calls);
     const std::optional<std::uint32_t> leading_boundary =
@@ -1225,7 +1228,7 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
         assign_text_positions(result);
     }
     (void)checked_token_count(result.token_ids.size());
-    if (options.tool_calls_discarded && !options.tool_jsons.empty()) {
+    if (options.tool_calls_discarded && !contract_tools.empty()) {
         // tool_choice none: the prompt keeps the declarations (the cached prefix is the auto
         // request's), and the model is kept from the markup of a call turn, so it answers in
         // text. The call opener and closer go, and the tool-result opener and closer: kept from
