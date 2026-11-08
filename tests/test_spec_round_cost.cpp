@@ -330,6 +330,25 @@ int main() {
                 ratio(*d.round_facts, k5070, q9), ratio(*d.round_facts, k5070, {}),
                 ratio(*d.round_facts, k4060, q9), ratio(*d.round_facts, k4060, {}),
                 ratio(*m.round_facts, k4090, q35), ratio(*m.round_facts, k4090, {}));
+            // The same in absolute time (bytes-equivalent over the card's DRAM rate), the unit a
+            // step is measured in: what the byte model says one step and the second request cost.
+            {
+                const auto ms = [](const sp::RoundFacts& f, const sp::CardRates& c, std::int32_t n,
+                                   const sp::StreamBytes& s) {
+                    return 1e3 * sp::plain_step_cost(f, c.kappa(), n, s) / c.dram_bytes_per_s;
+                };
+                const auto c5070 = sp::card_rates_of_board(0x2C05);
+                const auto c4060 = sp::card_rates_of_board(0x2805);
+                const auto c4090 = sp::card_rates_of_board(0x2684);
+                std::printf(
+                    "model step ms (C=1, C=2, state part of the second request): 9B 5070 Ti "
+                    "%.3f %.3f %.3f; 9B 4060 Ti %.3f %.3f %.3f; 35B 4090 %.3f %.3f %.3f\n",
+                    ms(*d.round_facts, c5070, 1, q9), ms(*d.round_facts, c5070, 2, q9),
+                    1e3 * q9.per_pass() / c5070.dram_bytes_per_s, ms(*d.round_facts, c4060, 1, q9),
+                    ms(*d.round_facts, c4060, 2, q9), 1e3 * q9.per_pass() / c4060.dram_bytes_per_s,
+                    ms(*m.round_facts, c4090, 1, q35), ms(*m.round_facts, c4090, 2, q35),
+                    1e3 * q35.per_pass() / c4090.dram_bytes_per_s);
+            }
             // A request's bytes only add: the ratio stays above one and below two, the state of
             // one request makes the second request dearer by its own share, and a stream of no
             // bytes is the weights-only price.
