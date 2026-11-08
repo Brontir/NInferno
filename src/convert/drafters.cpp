@@ -1077,6 +1077,31 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
     // drafter) has drafters_incomplete() plan them again.
     manifest["registry_sha256"] = spec::Registry::builtin().source_sha256();
     const auto path = spec::manifest_path(target_artifact);
+    // A drafter the user gave on an earlier start (--drafter-artifact, "attached") is kept unless
+    // this start gives that name again: a plan made again (another drafter's retry, a registry
+    // update) is made without the flag and would drop it, or put the registry's drafter of that
+    // name in its place.
+    try {
+        if (fs::exists(path)) {
+            const auto before = Json::parse(read_file(path));
+            auto& drafters    = manifest["drafters"];
+            for (const auto& old : before.value("drafters", Json::array())) {
+                const auto name = old.value("name", std::string());
+                if (old.value("status", std::string()) != "attached" || name.empty() ||
+                    options.drafter_artifacts.contains(name)) {
+                    continue;
+                }
+                const auto same = std::find_if(drafters.begin(), drafters.end(), [&](const Json& d) {
+                    return d.value("name", std::string()) == name;
+                });
+                if (same == drafters.end()) {
+                    drafters.push_back(old);
+                } else {
+                    *same = old;
+                }
+            }
+        }
+    } catch (const std::exception&) {} // an unreadable earlier manifest holds nothing to keep
     write_file_atomic(path, manifest.dump(1) + '\n');
     log_line(options.log, "speculation manifest " + path.string());
     return plan;

@@ -751,10 +751,40 @@ void companion_failure_is_retried() {
            "a failure carries only to the drafter of its name");
 }
 
+// A drafter the user gave on an earlier start is kept when the drafters are planned again without
+// that flag (another drafter's retry, a registry update); a start that gives the name again takes
+// the new mapping instead.
+void keeps_given_drafters() {
+    const ninferno::test::artifact_fixture::Fixture target;
+    target.write();
+    const auto manifest_path = ninferno::spec::manifest_path(target.entry);
+    const std::string old = R"({"drafters": [
+        {"name": "mine", "status": "attached", "artifact": "/models/mine.ninferno", "artifact_id": "ab"},
+        {"name": "assistant", "status": "failed: SSL connect error"}]})";
+    std::ofstream(manifest_path) << old;
+    (void)cv::attach_drafters(cv::DrafterPlan{}, target.entry, cv::AttachOptions{});
+    const auto kept = Json::parse(read_text(manifest_path));
+    const auto names = [](const Json& m) {
+        std::vector<std::string> out;
+        for (const auto& d : m.at("drafters")) { out.push_back(d.value("name", std::string())); }
+        return out;
+    };
+    expect(names(kept) == std::vector<std::string>{"mine"} &&
+               kept["drafters"][0]["artifact_id"] == "ab",
+           "a given drafter the new plan does not name is kept as it was");
+    std::ofstream(manifest_path) << old;
+    cv::AttachOptions again;
+    again.drafter_artifacts["mine"] = "/models/other.ninferno";
+    (void)cv::attach_drafters(cv::DrafterPlan{}, target.entry, again);
+    expect(names(Json::parse(read_text(manifest_path))).empty(),
+           "a start that gives the name again does not keep the old mapping");
+}
+
 } // namespace
 
 int main() {
     num_target_layers();
+    keeps_given_drafters();
     lineage();
     dense_scope();
     nemotron_geometry();
