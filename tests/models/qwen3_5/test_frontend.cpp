@@ -2100,7 +2100,8 @@ int test_none_drop_tools_keeps_the_contract() {
     return failures;
 }
 
-// The steering line goes at the end of the last tool result, not in a user turn after it: with
+// The steering line goes at the end of the last tool result (gpt-oss renders a result as a JSON
+// string, so the blank line there is escaped), not in a user turn after it: with
 // the Qwen template a new user turn moves the last-query index, and every assistant turn of the
 // agent loop since the real query then loses its reasoning (a re-prefill of the whole turn). The
 // rendered prompt up to the end of the result's original content must be byte-identical.
@@ -2143,14 +2144,14 @@ int check_steered_prefix(const fi::CompiledChatTemplate& compiled, const std::st
                      diverge, content_end, plain.substr(diverge, 80).c_str(),
                      steered.substr(diverge, 80).c_str());
     }
-    if (steered.find(kLine, content_end) == std::string::npos) {
+    if (steered.find(kLine.substr(2), content_end) == std::string::npos) {
         std::fprintf(stderr, "%s tail: plain [%s] steered [%s]%c", label.c_str(),
                      plain.substr(content_end).c_str(), steered.substr(content_end).c_str(), 10);
     }
     return check(
         steered.size() > plain.size() &&
             steered.compare(0, content_end, plain, 0, content_end) == 0 &&
-            steered.find(kLine, content_end) != std::string::npos,
+            steered.find(kLine.substr(2), content_end) != std::string::npos,
         (label + ": the steering line after a tool result changed the prompt before it").c_str());
 }
 
