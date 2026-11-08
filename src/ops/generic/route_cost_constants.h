@@ -1,6 +1,6 @@
 #pragma once
 
-// The constants of the route cost model (generic_gemm.cpp price_routes, a8_candidates), each
+// The constants of the route cost model (generic_cost.cpp price_routes, a8_candidates), each
 // tagged with where its value comes from:
 //   Fact     a property of the chip or of CUDA (limits, ISA), the same on every board it names;
 //   Counted  read off our own kernels' code (tile shapes, K per step, threads, shared bytes);
@@ -45,23 +45,25 @@ inline constexpr Scalar kRmmaStepK{{16.0}, Provenance::Counted, "rmma_step_k"};
 // Register MMA: resident warps per SM at which the tile reaches its roofline.
 inline constexpr Scalar kRmmaSaturatingWarps{{11.0}, Provenance::Fitted, "rmma_saturating_warps"};
 // Register MMA of the K-quant and codebook decoders (#301): resident warps per SM at which the
-// tile reaches its roofline, two for each of the four sub-partition schedulers.
+// tile reaches its roofline. Chosen on the regret of the RTX 3060, 4090 and 5090 (two warps for
+// each of the four sub-partition schedulers is the least that can keep every scheduler fed, but the
+// step latency that would fix it is not measured here).
 inline constexpr Scalar kRmmaHeavySaturatingWarps{
-    {8.0}, Provenance::Fact, "rmma_heavy_saturating_warps"};
+    {8.0}, Provenance::Fitted, "rmma_heavy_saturating_warps"};
 // Register MMA, same decoders: bytes per SM clock that one SM sustains from the L2 while every SM
 // reads. Half of the 64 B/clk its L1 takes from the L2; a regression of route_tune timings of the
-// RTX 3060, 4090 and 5090 read 15..30, and the model's regret is flat across 16..32. No published
-// number backs it, so it is fitted.
+// RTX 3060, 4090 and 5090 read 15..30, and the model's regret is flat across 16..32 on those
+// boards. No published number backs it, so it is fitted.
 inline constexpr Scalar kL2BytesPerSmClock{{32.0}, Provenance::Fitted, "l2_bytes_per_sm_clock"};
-// Register MMA, same decoders: registers per thread of a tile, 96 + 28 MT NT + 32 (MT - 1), the
-// medians of ptxas (sm_89, sm_86, sm_120) over the K-quant and i-quant decoders.
-inline constexpr Scalar kRmmaRegsBase{{96.0}, Provenance::Counted, "rmma_regs_base"};
-inline constexpr Scalar kRmmaRegsPerTile{{28.0}, Provenance::Counted, "rmma_regs_per_tile"};
-inline constexpr Scalar kRmmaRegsPerExtraRowTile{
-    {32.0}, Provenance::Counted, "rmma_regs_per_extra_row_tile"};
-// Registers one thread may hold (the ISA's 255), and the register file's allocation unit per warp
-// (256 registers): CUDA facts of every part the model names.
-inline constexpr Scalar kMaxRegsPerThread{{255.0}, Provenance::Fact, "max_regs_per_thread"};
+// Register MMA, same decoders: K per step of their decoders (four lanes of one 32-value run), and
+// what a spilled register costs per step: one store and one load of its local-memory byte through
+// the L1, whose data path is 128 B per clock and SM.
+inline constexpr Scalar kRmmaHeavyStepK{{128.0}, Provenance::Counted, "rmma_heavy_step_k"};
+inline constexpr Scalar kSpillAccessesPerStep{
+    {2.0}, Provenance::Counted, "spill_accesses_per_step"};
+inline constexpr Scalar kL1BytesPerSmClock{{128.0}, Provenance::Fact, "l1_bytes_per_sm_clock"};
+// The register file's allocation unit per warp (256 registers): a CUDA fact of every part the
+// model names.
 inline constexpr Scalar kRegAllocPerWarp{{256.0}, Provenance::Fact, "reg_alloc_per_warp"};
 // K split over a cluster: cycles per FP32 element of the partial sums.
 inline constexpr Scalar kClusterReduceCycles{{30.0}, Provenance::Fitted, "cluster_reduce_cycles"};
@@ -123,8 +125,8 @@ inline constexpr Scalar kMmqChainCycles{{4075.0}, Provenance::Fitted, "mmq_chain
 inline constexpr Scalar kMmqSliceSeconds{{18.6e-6}, Provenance::Fitted, "mmq_slice_seconds"};
 
 // What a constant measures, for the range its values must lie in: a fraction of a peak or of a
-// fill is in (0, 1]; every other kind is positive.
-enum class Kind { Fraction, Cycles, Count, Bytes, Seconds };
+// fill is in (0, 1]; every other kind is positive (BytesPerClock: bytes an SM moves a clock).
+enum class Kind { Fraction, Cycles, Count, Bytes, BytesPerClock, Seconds };
 
 struct Listed {
     std::string_view name;
@@ -146,11 +148,10 @@ inline constexpr Listed kRouteCostConstants[] = {
     listed(kRmmaStepK, Kind::Count),
     listed(kRmmaSaturatingWarps, Kind::Count),
     listed(kRmmaHeavySaturatingWarps, Kind::Count),
-    listed(kL2BytesPerSmClock, Kind::Bytes),
-    listed(kRmmaRegsBase, Kind::Count),
-    listed(kRmmaRegsPerTile, Kind::Count),
-    listed(kRmmaRegsPerExtraRowTile, Kind::Count),
-    listed(kMaxRegsPerThread, Kind::Count),
+    listed(kL2BytesPerSmClock, Kind::BytesPerClock),
+    listed(kRmmaHeavyStepK, Kind::Count),
+    listed(kSpillAccessesPerStep, Kind::Count),
+    listed(kL1BytesPerSmClock, Kind::BytesPerClock),
     listed(kRegAllocPerWarp, Kind::Count),
     listed(kClusterReduceCycles, Kind::Cycles),
     listed(kWarpReduceCycles, Kind::Cycles),

@@ -126,9 +126,22 @@ constexpr GgmlPlaneBytes ggml_plane_bytes(QType q) noexcept {
     }
 }
 
+// A ggml block format of 256-value superblocks whose sub-blocks carry their own scales (and, for
+// some, minima): the K-quants and the codebook i-quants, thirteen formats. A decoder of these
+// unpacks scales and codes per sub-block before the multiply, which is what keeps its tile's
+// registers and its issue slots busy (the register MMA's cost model prices it by them).
+// TQ1_0 and TQ2_0 are 256-value blocks too but have one scale for the whole block, so they are
+// plain; so are the 32-value formats (Q4_0 .. IQ4_NL) and Q1_0 / Q2_0.
+constexpr bool has_subblock_scales(QType q) noexcept;
+
 // Values along K per block of a ggml block format (256 for GgmlBlocks' Q4_K / Q5_K).
 constexpr std::uint32_t ggml_block_values(QType q) noexcept {
     return q == QType::GGML_Q4_K || q == QType::GGML_Q5_K ? 256 : ggml_plane_bytes(q).values;
+}
+
+constexpr bool has_subblock_scales(QType q) noexcept {
+    return is_ggml_block(q) && ggml_block_values(q) == 256 && q != QType::GGML_TQ1_0 &&
+           q != QType::GGML_TQ2_0;
 }
 
 enum class QuantLayout : std::uint16_t {
