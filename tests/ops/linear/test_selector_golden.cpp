@@ -22,17 +22,22 @@
 #include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
 
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <iterator>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -153,69 +158,54 @@ constexpr const char* kBuildSet =
     "full";
 #endif
 
-// The compiled facts the register-MMA price reads (registers, spill, latency form and threads of
-// every K-quant / codebook kernel the selector describes: rmma_resources) as a 64-bit FNV-1a
-// digest. They are the build's: nvcc 12.8 and 13.x allocate registers differently for the same
-// source (up to a third apart for one kernel, #556), and the price turns them into resident CTAs
-// per SM, so another toolchain can move a tile choice with no change of source or spec. A golden
-// of a board priced from them is therefore keyed by the digest of the facts it was made on; the
-// choices stay deterministic for one set of kernels on every machine. Runs on the host device.
-std::string kernel_facts_digest() {
-    static const std::string digest = [] {
-        std::uint64_t h = 1469598103934665603ULL;
-        const auto mix  = [&h](std::uint64_t v) {
-            for (int i = 0; i < 8; ++i) {
-                h ^= (v >> (8 * i)) & 0xFFU;
-                h *= 1099511628211ULL;
-            }
-        };
-        void* const payload = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
-        for (const QType qtype : kFormats) {
-            if (!has_subblock_scales(qtype)) continue;
-            const auto host = quantized_weight::make_patterned_weight(qtype, 4096, 4096, 7U, {});
-            const Weight w  = host.device_weight(payload);
-            if (!generic::supports(w)) continue;
-            mix(static_cast<std::uint64_t>(qtype));
-            for (int i = 0; i < generic::rmma_schedule_count(); ++i) {
-                for (const generic::Epilogue epilogue :
-                     {generic::Epilogue::Store, generic::Epilogue::SwiGlu}) {
-                    // The latency form and the plain one are told apart by the width.
-                    for (const std::int32_t t : {1, 4, 17, 32, 256}) {
-                        const auto r = generic::rmma_resources(i, w, epilogue, t);
-                        mix(r ? static_cast<std::uint64_t>(r->registers) : 0xFFFFU);
-                        if (!r) continue;
-                        mix(r->local_bytes);
-                        mix(static_cast<std::uint64_t>(r->threads) * 2 +
-                            (r->latency_variant ? 1U : 0U));
-                    }
-                }
-            }
-        }
-        std::ostringstream out;
-        out << std::hex << std::setfill('0') << std::setw(16) << h;
-        return out.str().substr(0, 12);
-    }();
-    return digest;
-}
-
 // A board whose register-MMA price rests on the compiled kernels' registers and spill
-// (rmma_terms_measured, generic_cost.cpp) keeps a golden per set of kernel facts:
-// <board>.<digest>.txt. An unkeyed <board>.txt is read as a fallback (a file made before the
-// digest existed); --update writes the keyed one and removes the unkeyed.
+// (rmma_terms_measured, generic_cost.cpp) is priced from what its build's compiler made of the
+// kernels: nvcc 12.8 and 13.x allocate other registers for the same source (up to a third apart
+// for one kernel, #556), the price turns them into resident CTAs per SM, and a tile choice can
+// move with no change of source or spec. The choices are deterministic for one binary; the
+// release's toolchain fixes them (tools/release/package.sh). Such a board's golden is therefore
+// keyed by the digest of the facts the price read while the board was dumped: the header line
+// "# facts <digest>" and the file <board>.<digest>.txt. A toolchain with other facts and no file
+// fails and names its digest.
 bool facts_keyed(const GoldenBoard& b) { return rmma_terms_measured(b.major, b.minor); }
 
-std::filesystem::path golden_path(const GoldenBoard& b, bool keyed_only = true) {
+// FNV-1a over the distinct (format, schedule, epilogue, registers, spill, threads, latency form)
+// tuples read, in sorted order: what the prices took, not a sample of the kernels.
+std::string facts_digest(std::vector<generic::RmmaFactRead> reads) {
+    using Key = std::tuple<int, int, int, int, std::size_t, int, bool>;
+    std::set<Key> keys;
+    for (const auto& r : reads) {
+        keys.emplace(static_cast<int>(r.qtype), r.schedule, static_cast<int>(r.epilogue),
+                     r.facts.registers, r.facts.local_bytes, r.facts.threads,
+                     r.facts.latency_variant);
+    }
+    std::uint64_t h = 1469598103934665603ULL;
+    const auto mix  = [&h](std::uint64_t v) {
+        for (int i = 0; i < 8; ++i) {
+            h ^= (v >> (8 * i)) & 0xFFU;
+            h *= 1099511628211ULL;
+        }
+    };
+    for (const auto& [q, s, e, regs, local, threads, latency] : keys) {
+        for (const std::uint64_t v : {std::uint64_t(q), std::uint64_t(s), std::uint64_t(e),
+                                      std::uint64_t(regs), std::uint64_t(local),
+                                      std::uint64_t(threads), std::uint64_t(latency)}) {
+            mix(v);
+        }
+    }
+    std::ostringstream out;
+    out << std::hex << std::setfill('0') << std::setw(16) << h;
+    return out.str().substr(0, 12);
+}
+
+std::filesystem::path golden_path(const GoldenBoard& b, const std::string& digest) {
     const auto dir = std::filesystem::path(NINFERNO_SELECTOR_GOLDEN_DIR) / kBuildSet;
-    if (!facts_keyed(b)) return dir / (std::string(b.name) + ".txt");
-    const auto keyed = dir / (std::string(b.name) + "." + kernel_facts_digest() + ".txt");
-    const auto plain = dir / (std::string(b.name) + ".txt");
-    return keyed_only || std::filesystem::exists(keyed) || !std::filesystem::exists(plain) ? keyed
-                                                                                           : plain;
+    return dir / (std::string(b.name) + (facts_keyed(b) ? "." + digest : std::string()) + ".txt");
 }
 
 // One board's choices, a line per (format, policy, epilogue, shape, profile) and run of widths
 // with the same route and workspace. The scales multiply the clocks the driver reports.
-std::string dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memory_scale = 1.0) {
+std::string dump_body(const GoldenBoard& b, double sm_scale, double memory_scale) {
     DeviceClass d = synthetic_device_class(b.pci_device_id, b.major, b.minor, b.sms,
                                            b.l2_mib * kMiB, b.memory_gib * 1024 * kMiB);
     d.sm_clock_khz     = static_cast<int>(b.sm_clock_mhz * 1000 * sm_scale);
@@ -345,13 +335,42 @@ std::string dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memor
     return out.str();
 }
 
+// The board's dump with its facts line (a facts-priced board). The first dump of a board in a
+// process reads the kernels' facts; a repeat is answered from the selector's per-device cache
+// without reading, so the digest is kept per board.
+std::string dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memory_scale = 1.0) {
+    std::vector<generic::RmmaFactRead> reads;
+    std::string body;
+    {
+        const generic::ScopedRmmaFactsSink sink(reads);
+        body = dump_body(b, sm_scale, memory_scale);
+    }
+    if (!facts_keyed(b)) return body;
+    static std::map<std::string, std::string> digests;
+    const auto found = digests.find(b.name);
+    if (found == digests.end() || !reads.empty()) digests[b.name] = facts_digest(reads);
+    const auto first = body.find('
+') + 1;
+    return body.substr(0, first) + "# facts " + digests[b.name] + "
+" + body.substr(first);
+}
+
+// The digest line of a dump.
+std::string digest_of(const std::string& dump) {
+    constexpr std::string_view tag = "
+# facts ";
+    const auto at                  = dump.find(tag);
+    return at == std::string::npos ? "" : dump.substr(at + tag.size(), dump.find('
+', at + 1) - at - tag.size());
+}
+
 // A board whose register-MMA price rests on the compiled kernels' registers and spill
 // (rmma_terms_measured, generic_cost.cpp) is priced with the BUILD's kernels (the SASS of
 // NINFERNO_BUILD_ARCH, which the host runs): another compute capability keeps other counts. Its
 // golden is therefore reproducible only on a build of the board's own compute capability; for any
 // other build it is skipped (neither written, compared nor run for clock invariance), and a set
 // holds the file only for the capabilities its builds are made for. On its own capability the
-// file is keyed by the digest of the kernels' facts (kernel_facts_digest: another nvcc compiles
+// file is keyed by the digest of the kernels' facts (facts_digest: another nvcc compiles
 // other registers, #556). The decisions are the
 // selector's and route_query's own: nothing in the product changes for the test.
 bool host_kernels_differ(const GoldenBoard& b) {
@@ -366,7 +385,7 @@ int run_board(const GoldenBoard& b, bool update) {
         return 0;
     }
     const std::string now = dump_board(b);
-    const auto path       = golden_path(b, update);
+    const auto path       = golden_path(b, digest_of(now));
     if (update) {
         // The directory may not exist yet in a fresh checkout; a write that fails is a failure.
         std::filesystem::create_directories(path.parent_path());
@@ -376,18 +395,13 @@ int run_board(const GoldenBoard& b, bool update) {
             std::cerr << b.name << ": cannot write " << path.string() << '\n';
             return 1;
         }
-        if (facts_keyed(b)) {
-            std::error_code ignored; // the unkeyed file of a facts-keyed board is replaced
-            std::filesystem::remove(path.parent_path() / (std::string(b.name) + ".txt"), ignored);
-        }
         std::cout << b.name << ": wrote " << path.string() << '\n';
         return 0;
     }
     std::ifstream in(path, std::ios::binary);
     if (!in) {
         std::cerr << b.name << ": no golden file " << path.string() << " (run with --update"
-                  << (facts_keyed(b) ? "; this build's compiled kernels are facts set " +
-                                           kernel_facts_digest() +
+                  << (facts_keyed(b) ? "; its kernels' compiled facts are set " + digest_of(now) +
                                            ", another toolchain keeps a file of its own"
                                      : std::string())
                   << ")\n";
@@ -428,7 +442,12 @@ int run_board(const GoldenBoard& b, bool update) {
 int run_clock_invariance(const GoldenBoard& b) {
     if (b.pci_device_id == 0 || host_kernels_differ(b))
         return 0; // unknown ids are priced from the driver's values
-    const auto body = [](const std::string& dump) { return dump.substr(dump.find('\n') + 1); };
+    const auto body = [](const std::string& dump) {
+        std::size_t at = 0; // past the header lines (the facts line is the first dump's only)
+        while (at < dump.size() && dump[at] == '#') at = dump.find('
+', at) + 1;
+        return dump.substr(at);
+    };
     const std::string stock = body(dump_board(b));
     constexpr struct {
         double sm, memory;
@@ -467,12 +486,19 @@ int main(int argc, char** argv) {
             std::cerr << "unknown board " << board << '\n';
             return 2;
         }
-        int failed = 0;
-        for (const GoldenBoard& b : kBoards) {
-            const std::string command = std::string(argv[0]) + (update ? " --update" : "") +
-                                        " --board " + b.name;
-            if (std::system(command.c_str()) != 0) ++failed;
-        }
+        // One process per board, a few at a time (each describes kernels and holds a context).
+        std::atomic<int> failed{0};
+        std::atomic<std::size_t> next{0};
+        const auto worker = [&] {
+            for (std::size_t i; (i = next++) < std::size(kBoards);) {
+                const std::string command = std::string(argv[0]) + (update ? " --update" : "") +
+                                            " --board " + kBoards[i].name;
+                if (std::system(command.c_str()) != 0) ++failed;
+            }
+        };
+        std::vector<std::thread> workers;
+        for (int i = 0; i < 6; ++i) workers.emplace_back(worker);
+        for (auto& t : workers) t.join();
         // Every board again in this one process, one after the other: the selector's per-device
         // caches and route tables keep a substitute's answers apart by its content
         // (core/per_device.h), so a board answers as it does alone (route_query.h relies on it).

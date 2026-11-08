@@ -156,6 +156,7 @@ std::optional<RmmaKept> rmma_kept(int schedule, const Weight& weight, Epilogue e
                                   std::int32_t tokens, std::int32_t rows) {
     try {
         if (const auto r = rmma_resources(schedule, weight, epilogue, tokens, rows)) {
+            note_rmma_fact_read(RmmaFactRead{weight.qtype, schedule, epilogue, *r});
             return RmmaKept{r->registers, static_cast<double>(r->local_bytes)};
         }
     } catch (const std::exception&) {}
