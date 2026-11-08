@@ -5,15 +5,23 @@
 
 #include "models/qwen3_5/execution/mtp.h"
 #include "ninferno/ops/attn_input_proj.h"
+#include "ops/direct_bf16_weight.h"
+#include "ops/input_projection_test_common.h"
+#include "ops/op_tester.h"
 
+#include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <span>
 #include <stdexcept>
 
 namespace {
 
 using namespace ninferno;
 using namespace ninferno::models::qwen3_5;
+using namespace ninferno::test;
+using namespace ninferno::test::direct_bf16_weight;
+using namespace ninferno::test::input_projection;
 
 int failures = 0;
 
@@ -40,6 +48,54 @@ bool capacity_refuses(QType qtype, std::int32_t rows, std::int32_t hidden) {
                                                             ops::LinearPolicy::A16Only, 1, 8);
     } catch (const std::invalid_argument&) { return true; }
     return false;
+}
+
+// The generic route end to end: mtp_projection over a BF16 [9216,2048] parent writes q, k, gate
+// and v (the parent's row order) equal to the FP64 dot products of its rows.
+int run_bf16_moe_projection() {
+    constexpr std::int32_t hidden = 2048, tokens = 3, q_rows = 4096, kv_rows = 512;
+    const AttentionConfig config{16, 2, 256};
+    DeviceWeight parent(make_patterned(2 * (q_rows + kv_rows), hidden, 525U));
+    execution::MtpProjectionParameters parameters;
+    parameters.packed = ops::SingleProjectionWeight{parent.view(), ops::LinearPolicy::A16Only};
+
+    const auto activation = make_bf16_activation(hidden, tokens, 77U);
+    DeviceBuffer input    = to_device(bf16_bits(activation));
+    Tensor x(input.p, DType::BF16, {hidden, tokens});
+    GuardedBf16Tensor query(q_rows, tokens), gate(q_rows, tokens), key(kv_rows, tokens),
+        value(kv_rows, tokens);
+    Tensor q = query.tensor(), g = gate.tensor(), k = key.tensor(), v = value.tensor();
+
+    const std::size_t bytes =
+        execution::mtp_projection_workspace_bytes(parameters, config, tokens, tokens);
+    WorkspaceArena workspace(bytes + (1ULL << 20));
+    execution::mtp_projection(x, parameters, config, q, g, k, v, workspace, nullptr);
+    cuda_synchronize();
+
+    int failures = 0;
+    const auto check_part = [&](const char* name, GuardedBf16Tensor& out, std::int32_t rows,
+                                std::int32_t first_row) {
+        const auto actual = out.values();
+        int bad           = 0;
+        for (std::int32_t t = 0; t < tokens; ++t) {
+            const std::span<const float> column(activation.data() + std::size_t(t) * hidden,
+                                                hidden);
+            for (std::int32_t r = 0; r < rows; ++r) {
+                const double expected = dot_fp64(parent.host, first_row + r, column);
+                const double got      = actual[std::size_t(t) * rows + r];
+                if (std::abs(got - expected) > 1e-2 * std::abs(expected) + 1e-2) { ++bad; }
+            }
+        }
+        if (bad != 0) { std::cerr << "FAIL: BF16 MoE MTP " << name << ": " << bad << " values
+"; }
+        failures += bad != 0;
+    };
+    // Parent row order: query, key, gate, value.
+    check_part("query", query, q_rows, 0);
+    check_part("key", key, kv_rows, q_rows);
+    check_part("gate", gate, q_rows, q_rows + kv_rows);
+    check_part("value", value, kv_rows, 2 * q_rows + kv_rows);
+    return failures;
 }
 
 } // namespace
@@ -100,6 +156,12 @@ int main() {
     } catch (const std::exception& e) {
         std::cerr << "FAIL: unregistered split refused: " << e.what() << '\n';
         ++failures;
+    }
+    if (cuda_unavailable()) {
+        std::cout << "SKIP (device part): no usable CUDA device
+";
+    } else {
+        failures += run_bf16_moe_projection();
     }
     return failures == 0 ? 0 : 1;
 }
