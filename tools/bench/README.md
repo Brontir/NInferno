@@ -122,7 +122,7 @@ case; its candidates are the routes timed there, and the selected route is the o
 A candidate is `ok` only with `--qualified`, the correctness tests that passed on that build and
 board; the statement is kept in the document. A route missing from a pass is `unmeasured`; a route
 timed twice in one pass, or passes whose selections differ, are refused. Every row of both CSVs
-names its run (`run`) and board (`device`), and a sweep row how it was timed (`protocol`: `copies`,
+names its run (`run`) and board (`device`: its device class and UUID), and a sweep row how it was timed (`protocol`: `copies`,
 consecutive calls over `calls` weight copies at a decode width under `--rotate 1`, or `flushed`,
 one call after the L2 flush; `samples`). A pass's two files must come from one run, all passes from
 one board, and a case's passes from one protocol, or the collector refuses them; each case's
