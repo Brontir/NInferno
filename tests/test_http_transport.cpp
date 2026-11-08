@@ -361,6 +361,8 @@ int test_worker_plan_answers_every_connection() {
         if (fd >= 0 &&
             ::connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0) {
             idle.push_back(fd);
+            // The listen backlog is small: let the accepting thread keep up on a loaded host.
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
         } else if (fd >= 0) {
             ::close(fd);
         }
