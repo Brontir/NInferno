@@ -606,8 +606,8 @@ int test_tools() {
                           none_prompt.options.tool_jsons.size() == none.generation.tools.size() &&
                           !none_prompt.options.tool_jsons.empty(),
                       "tool_choice none did not keep the declarations with calls disabled");
-    failures += check(!none_prompt.options.tool_calls_forced,
-                      "tool_choice none does not force calls");
+    failures +=
+        check(!none_prompt.options.tool_calls_forced, "tool_choice none does not force calls");
 
     using Requirement   = ninferno::ToolCallRequirement;
     const auto tool_constraint = [&](const Json& request_body) {
