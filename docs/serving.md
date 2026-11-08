@@ -83,6 +83,10 @@ For a hub id:
 - `--round-tiny-scales` passes the converter's flag (docs/weight-conversion.md): a published integer
   matrix whose only inexact binary16 scales lie below binary16's normal range is kept with them
   rounded, the report counting them. Off by default: such a model is refused, naming the flag.
+- `--chat-template FILE` and `--round-tiny-scales` change what the conversion writes, so such a
+  start converts into an `options-<hash>/` directory beside the default conversion of that commit
+  and reuses it on later starts with the same flag; a start without the flag serves the default
+  conversion and never the other.
   - A hub that cannot be reached leaves the converted weights in use, with a warning.
 
 The server checks before downloading any weight and refuses with a reason if the architecture is not

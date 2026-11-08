@@ -195,6 +195,21 @@ void accept_converted(const std::filesystem::path& commit_dir, const std::string
 // get it and what the start costs; otherwise nothing.
 void check_attached_drafters(const DrafterPlan& plan, const AcquireOptions& options);
 
+// The options of a conversion that change what is written, as the kept artifact must know them
+// (#553): vocabulary, drafter quantization, name, resources (by the SHA-256 of their bytes),
+// extra sources, components, proposal settings, ranking, file size, layout, the maintainer and
+// scale flags, no drafters, drafter artifacts, a model id, no base tokenizer files, --include. ""
+// when every one is at its default: that conversion is the model's official one, kept at
+// <commit>/<stem>.<recipe>.ninferno as before. Otherwise a short hash of those options, and
+// `described` (when given) their list, one "name value" per line, for the user.
+[[nodiscard]] std::string content_options_key(const AcquireOptions& options,
+                                              std::string* described = nullptr);
+// Where the kept conversions of a commit with the options `key` live: `commit_dir` itself for the
+// default (key ""), else its subdirectory options-<key>, so a conversion with other options never
+// takes the place of the default one (and a default run never serves it).
+[[nodiscard]] std::filesystem::path conversion_directory(const std::filesystem::path& commit_dir,
+                                                         const std::string& key);
+
 [[nodiscard]] AcquiredModel acquire_model(const std::string& spec, AcquireOptions options);
 
 // Of a repository's file names, the Vision projector a start takes under --vision (mmproj-*.gguf):

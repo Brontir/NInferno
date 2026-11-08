@@ -52,6 +52,12 @@ add_test(NAME ninferno_convert_content_digests_interop_test
   COMMAND ${Python3_EXECUTABLE} -B "${CMAKE_CURRENT_LIST_DIR}/content_digests_interop.py"
     $<TARGET_FILE:ninferno_convert_content_digests_test>)
 
+# Which Hub cache entry a conversion is (#553): content options key the kept conversion, default
+# then option and option then default. CPU, no hub.
+ninferno_add_test(ninferno_convert_acquire_options_key_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_acquire_options_key.cpp"
+  LIBRARIES ninferno_convert)
+
 ninferno_add_test(ninferno_convert_consume_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_consume.cpp"
   LIBRARIES ninferno_convert)

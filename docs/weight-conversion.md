@@ -60,10 +60,16 @@ python3 -m tools.convert \
   cache's free space is checked.
 - `--fetch` without `--out` writes the artifact to
   `<cache>/models--org--name/ninferno/<commit>/<stem>.<recipe>.ninferno`, and running the same
-  command again reuses it. The kept artifact is found by commit, quant and recipe, so a flag
-  that changes what is written (`--components`, `--layout`, `--vocab`, `--drafter-quant`,
-  `--proposal`, `--include`, `--no-drafters`, `--max-file-bytes`, ...) converts again and
-  replaces it, and an explicit `--out` is never reused. `--model` needs `--out`.
+  command again reuses it. The kept artifact is found by commit, quant and recipe. A flag that
+  changes what is written (`--components`, `--layout`, `--vocab`, `--drafter-quant`, `--name`,
+  `--resource`, `--source`, `--proposal`, `--include`, `--no-drafters`, `--max-file-bytes`,
+  `--round-tiny-scales`, ...; `ninferno-serve --chat-template` and `--round-tiny-scales` too) keeps
+  its conversion apart, in `ninferno/<commit>/options-<hash>/` beside the default one. The hash
+  covers every such option (a resource by the bytes of its file), `<artifact>.options` lists them,
+  and the log says "converted earlier with ..." when a rerun reuses it. A rerun with the same
+  options reuses that conversion; a run without them converts the model's default one, or reuses
+  it, and never takes the other. Conversions made before this rule stay where they are, as the
+  default. An explicit `--out` is never reused. `--model` needs `--out`.
 - Before any weight is downloaded, a hub model is checked against one rule set
   (`convert/support.h`), the same one the plan without weights and the UI's search use. It reads
   only what the hub shows: the model card (task, library, gated, the hub's part of `config.json`,

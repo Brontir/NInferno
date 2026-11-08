@@ -14,6 +14,7 @@
 #include "convert/support.h"
 #include "core/cache_file.h"
 #include "core/host_memory.h"
+#include "core/sha256.h"
 #include "spec/manifest.h"
 
 #include "core/sys.h"
@@ -674,6 +675,104 @@ std::optional<std::filesystem::path> gguf_projector_beside(const std::filesystem
     return best;
 }
 
+namespace {
+
+// A path as a conversion reads it, for an option's identity: a file by its size and time, a
+// directory by those of every file under it (a changed source is another option).
+std::string path_fingerprint(const fs::path& path) {
+    std::error_code ec;
+    const auto canonical = fs::weakly_canonical(path, ec);
+    std::string text     = utf8_path(ec ? path : canonical);
+    const auto describe  = [&](const fs::path& file) {
+        std::error_code e;
+        return std::to_string(fs::file_size(file, e)) + "@" +
+               std::to_string(fs::last_write_time(file, e).time_since_epoch().count());
+    };
+    if (fs::is_regular_file(path, ec)) { return text + ":" + describe(path); }
+    std::vector<std::string> files;
+    for (auto it = fs::recursive_directory_iterator(path, ec);
+         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        std::error_code e;
+        if (it->is_regular_file(e)) {
+            files.push_back(utf8_path(it->path().lexically_relative(path)) + ":" +
+                            describe(it->path()));
+        }
+    }
+    std::sort(files.begin(), files.end());
+    for (const auto& file : files) { text += "|" + file; }
+    return text;
+}
+
+// A resource or ranking file by its bytes (a template edited in place is another option).
+std::string file_identity(const fs::path& path) {
+    if (const auto digest = file_sha256_hex(path)) { return "sha256:" + *digest; }
+    return "unreadable:" + utf8_path(path);
+}
+
+} // namespace
+
+std::string content_options_key(const AcquireOptions& options, std::string* described) {
+    const ConvertOptions defaults;
+    const auto& c = options.convert;
+    struct Part {
+        std::string name, value, shown;
+    };
+    std::vector<Part> parts;
+    const auto add = [&](const std::string& name, const std::string& value,
+                         const std::string& shown) { parts.push_back({name, value, shown}); };
+    const auto simple = [&](const std::string& name, const std::string& value) {
+        add(name, value, value);
+    };
+    if (!c.vocab.empty()) { simple("--vocab", c.vocab); }
+    if (!c.drafter_quant.empty() && !c.drafter_quant_declared) {
+        simple("--drafter-quant", c.drafter_quant);
+    }
+    if (c.name) { simple("--name", *c.name); }
+    auto resources = c.resources;
+    std::sort(resources.begin(), resources.end());
+    for (const auto& [role, path] : resources) { add("--resource " + role, file_identity(path), utf8_file_name(path)); }
+    auto sources = c.sources;
+    std::sort(sources.begin(), sources.end());
+    for (const auto& [name, path] : sources) { add("--source " + name, path_fingerprint(path), utf8_file_name(path)); }
+    if (options.components_given) { simple("--components", c.components); }
+    if (c.proposal) { simple("--proposal", ""); }
+    if (c.proposal_rows != defaults.proposal_rows) {
+        simple("--proposal-rows", std::to_string(c.proposal_rows));
+    }
+    if (!c.proposal_default) { simple("--no-proposal", ""); }
+    if (!c.ranking.empty()) { add("--ranking", file_identity(c.ranking), utf8_file_name(c.ranking)); }
+    if (c.max_file_bytes != defaults.max_file_bytes) {
+        simple("--max-file-bytes", std::to_string(c.max_file_bytes));
+    }
+    if (c.maintainer_quantize) { simple("--maintainer-quantize", ""); }
+    if (c.round_tiny_scales) { simple("--round-tiny-scales", ""); }
+    if (c.expert_layout != defaults.expert_layout) {
+        simple("--layout", c.expert_layout == ExpertLayout::Frag ? "frag" : "published");
+    }
+    if (options.drafters == Drafters::Off) { simple("--no-drafters", ""); }
+    for (const auto& [name, path] : options.drafter_artifacts) {
+        add("--drafter-artifact " + name, path_fingerprint(path), utf8_file_name(path));
+    }
+    if (!options.model_id.empty()) { simple("--model-id", options.model_id); }
+    if (!options.base_tokenizer_files) { simple("--no-base-tokenizer", ""); }
+    for (const auto& pattern : options.fetch.include) { simple("--include", pattern); }
+    if (parts.empty()) { return {}; }
+    std::string identity;
+    std::string text;
+    for (const auto& part : parts) {
+        identity += part.name + "=" + part.value + "
+";
+        text += part.name + (part.shown.empty() ? "" : " " + part.shown) + "
+";
+    }
+    if (described) { *described = text; }
+    return sha256_hex(identity).substr(0, 12);
+}
+
+fs::path conversion_directory(const fs::path& commit_dir, const std::string& key) {
+    return key.empty() ? commit_dir : commit_dir / ("options-" + key);
+}
+
 AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
     AcquiredModel out;
     // MovedRef::Refetch: the old conversion goes once the new commit's artifact is there: the
@@ -710,13 +809,21 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
         }
     } replaced{{}, out, options};
     ConvertOptions& convert_options = options.convert;
+    // A conversion with options of its own is kept apart from the model's default one (#553): a
+    // later run with other options never takes it, nor replaces it.
+    std::string options_described;
+    const std::string options_key = convert_options.out.empty()
+                                        ? content_options_key(options, &options_described)
+                                        : std::string();
     const bool url = spec.starts_with("http://") || spec.starts_with("https://");
     std::string preflight_recipe;
     std::string pinned; // org/name@commit when weights of a moved ref stay (see below)
     std::string pinned_quant; // the exact quantization of the GGUF model there
     if (!url && !options.fetch_only) {
         const auto [repo, revision] = split_spec(spec, options.fetch);
-        if (options.reuse && convert_options.out.empty() &&
+        // The download removed, its conversion kept: only the default conversion is found that
+        // way; one with other options needs its source again.
+        if (options.reuse && convert_options.out.empty() && options_key.empty() &&
             (is_hugging_face_hub(options.fetch.hub))) {
             const auto cache =
                 options.fetch.cache.empty() ? default_hub_cache() : options.fetch.cache;
@@ -960,10 +1067,11 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
     // Beside the hub cache's snapshots, per commit (a URL: beside the file); the file is named
     // <model stem>.<recipe>.ninferno once the recipe is known.
     const bool default_out = convert_options.out.empty();
-    const auto directory =
+    const auto directory = conversion_directory(
         fetched.commit.empty()
             ? fetched.snapshot
-            : fetched.snapshot.parent_path().parent_path() / "ninferno" / fetched.commit;
+            : fetched.snapshot.parent_path().parent_path() / "ninferno" / fetched.commit,
+        options_key);
     const std::string stem = fs::is_regular_file(fetched.model) ? fetched.model.stem().string()
                                                                 : std::string("model");
     RecipeChoice choice;
@@ -1020,6 +1128,25 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
             directory / (stem + (vision ? ".vision." : ".") + out.recipe + ".ninferno");
     }
     out.artifact = convert_options.out;
+    // "--vocab q8, --resource chat_template.jinja custom.jinja": the options that made this
+    // conversion its own, for the log and for <artifact>.options.
+    std::string options_line;
+    for (const char c : options_described) {
+        if (c == '
+') {
+            options_line += ", ";
+        } else {
+            options_line += c;
+        }
+    }
+    if (options_line.size() >= 2) { options_line.resize(options_line.size() - 2); }
+    const std::string converted_earlier =
+        options_key.empty() ? " (converted earlier)"
+                            : " (converted earlier with " + options_line + ")";
+    if (!options_key.empty()) {
+        say(options, "conversion options of their own, kept apart from the default conversion: " +
+                         options_line);
+    }
     // A GGUF model carries no checkpoint to plan from: its drafters are planned for the converted
     // artifact (its text component's architecture and geometry, its tokenizer), once converted.
     // They are attached when asked for (a separate download, 1.6 GB for Muse Glimmer's DFlash);
@@ -1147,7 +1274,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 // A GGUF's, converted before its drafters could be attached, or one failed: its
                 // companions are converted in and the others attached now.
                 out.reused = true;
-                say(options, "artifact " + out.artifact.string() + " (converted earlier)");
+                say(options, "artifact " + out.artifact.string() + converted_earlier);
                 if (action.kind == DrafterActionKind::CompanionsThenAttach) {
                     auto text_only          = convert_options;
                     text_only.drafter_quant = std::string();
@@ -1186,7 +1313,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 }
                 if (missing.empty()) {
                     out.reused = true;
-                    say(options, "artifact " + out.artifact.string() + " (converted earlier)");
+                    say(options, "artifact " + out.artifact.string() + converted_earlier);
                     try {
                         if (!replan_error.empty()) { throw std::runtime_error(replan_error); }
                         if (replanned) {
@@ -1237,6 +1364,11 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
     } else if (drafters_on && gguf) {
         if (!options.components_given) { convert_gguf_companions(convert_options, drafter_quant); }
         attach_to_artifact();
+    }
+    if (!options_key.empty()) {
+        try {
+            write_file_atomic(out.artifact.string() + ".options", options_described);
+        } catch (const std::exception&) {} // a note for the user, not needed to reuse
     }
     return out;
 }
