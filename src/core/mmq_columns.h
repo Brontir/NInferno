@@ -11,10 +11,10 @@
 //
 // Two tables. Everywhere: J = 16, 32, 64, 128 and the fewest tiles, the narrower on a tie (the
 // choice before DECISIONS 74). Where the generation row says mmq_work_tiles (core/generation.h:
-// GA10x, whose grid DECISIONS 74 ran on the RTX 3060 and 3090): J = 16, 32, 64, 80, 96, 128 and
-// the least work ceil(columns / J) x step_share(J). The fixed share in step_share is DECISIONS 69's
-// 0.43; the grids of the two cards are in DECISIONS 74. No other generation or format has been run
-// over the widths: a generation that is measured joins by its row.
+// GA10x on the RTX 3060 and 3090, GB20x on the RTX 5090: the grids of DECISIONS 74): J = 16, 32, 64,
+// 80, 96, 128 and
+// the least work ceil(columns / J) x step_share(J, the row's mmq_tile_fixed). No other generation or
+// format has been run over the widths: a generation that is measured joins by its row.
 
 #include "core/generation.h"
 

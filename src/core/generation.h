@@ -40,10 +40,13 @@
 //                   pay while the part in J is large enough that the padding they save outweighs
 //                   the fixed part they repeat. On GA10x the int8 MMA alone is 4096 of a Q4_K
 //                   tile's 10600 SM-clocks a 256-value K step (1024 MMAs of 4096 MACs at 1024 MACs
-//                   a clock), the measured part in J 57 % of it. A generation with a higher MMA
-//                   rate (ga100: s8 4096) has a smaller part in J and a larger fixed share, so
-//                   fewer widths pay; Ada has the GA10x rates but was not run over the widths. A
-//                   measured preference (RTX 3060, 3090), not carried by a lent row.
+//                   a clock). The fixed share is a measurement of the generation (mmq_tile_fixed:
+//                   the grid regret over the widths is least at 0.15-0.25 on the RTX 3060 and
+//                   3090, 0.05-0.15 on the RTX 5090; DECISIONS 74), a generation with a higher
+//                   MMA rate (ga100: s8 4096) has a smaller part in J and a larger fixed share, so
+//                   fewer widths pay. A generation joins by its own grid: Ada and Turing were not
+//                   run over the widths and keep the fewest tiles. A measured preference, not
+//                   carried by a lent row.
 
 //
 // What a lent row carries (#300): generation_row answers every compute capability, lending the
@@ -89,12 +92,12 @@ inline constexpr GenerationRow kGenerations[] = {
     {7, 0, 4, "volta", 1536.0, 0.0, false, 1.0, 1.11, true},
     {7, 5, 9, "turing", 1536.0, 2048.0, false, 1.0, 1.11, true},
     {8, 0, 0, "ga100", 2048.0, 4096.0, true, 0.46, 1.64, false},
-    {8, 1, 8, "ga10x", 512.0, 2048.0, false, 1.0, 1.11, true, false, true, 0.25},
+    {8, 1, 8, "ga10x", 512.0, 2048.0, false, 1.0, 1.11, true, false, true, 0.20},
     {8, 9, 9, "ada", 512.0, 2048.0, false, 1.0, 1.11, true},
     {9, 0, 9, "hopper", 2048.0, 4096.0, true, 0.46, 1.64, false},
     {10, 0, 9, "gb100", 2048.0, 4096.0, true, 0.46, 1.64, false},
     {11, 0, 9, "thor", 512.0, 2048.0, false, 1.0, 1.11, true},
-    {12, 0, 9, "gb20x", 512.0, 2048.0, false, 1.0, 1.11, true, true},
+    {12, 0, 9, "gb20x", 512.0, 2048.0, false, 1.0, 1.11, true, true, true, 0.10},
 };
 
 // Whether the table has a row of its own for compute capability major.minor (generation_row lends

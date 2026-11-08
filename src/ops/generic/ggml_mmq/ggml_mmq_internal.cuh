@@ -28,11 +28,11 @@
 // the generation table, so the one range it holds is spelled here and checked against the table.
 namespace ninferno::ops::ggml_mmq::detail {
 [[nodiscard]] __host__ __device__ constexpr bool work_tiles_arch(int cc) {
-    return cc >= 810 && cc < 890;
+    return (cc >= 810 && cc < 890) || (cc >= 1200 && cc < 1300);
 }
 
 constexpr bool work_tiles_arch_matches_table() {
-    for (int cc = 700; cc <= 1210; cc += 10) {
+    for (int cc = 700; cc <= 1300; cc += 10) {
         if (work_tiles_arch(cc) != mmq_work_tiles_measured(cc / 100, cc / 10 % 10)) return false;
     }
     return true;
