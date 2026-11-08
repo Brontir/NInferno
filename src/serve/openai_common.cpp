@@ -303,7 +303,8 @@ std::string make_props(const std::string& model_id, std::uint32_t max_context,
 
 std::string make_prometheus_metrics(const ninferno::RuntimeStats& stats,
                                     std::uint32_t http_active_requests,
-                                    const ninferno::ModelMetadata& metadata) {
+                                    const ninferno::ModelMetadata& metadata,
+                                    const ServerProcess& process) {
     std::string out;
     const auto metric = [&out](const char* name, const char* type, const char* help,
                                double value) {
@@ -346,6 +347,16 @@ std::string make_prometheus_metrics(const ninferno::RuntimeStats& stats,
                "ninferno_decision_fingerprint_info{fingerprint=\"" +
                metadata.decision_fingerprint + "\",manifest=\"" + metadata.decision_manifest +
                "\",schema=\"ninferno-fingerprint/1\"} 1\n";
+    }
+    // The process's identity (serve-<pid>-<start us>: letters, digits and dashes, no escaping
+    // needed), so a scraper sees a restart, and the cache it emptied, even on an idle server.
+    if (!process.instance_id.empty()) {
+        out += "# HELP ninferno_server_info Identity of this server process (changes on restart).\n"
+               "# TYPE ninferno_server_info gauge\nninferno_server_info{server_instance_id=\"" +
+               process.instance_id + "\"} 1\n";
+        metric("process_start_time_seconds", "gauge",
+               "Time this server process started serving, since unix epoch in seconds.",
+               static_cast<double>(process.started_unix_us) / 1e6);
     }
     return out;
 }

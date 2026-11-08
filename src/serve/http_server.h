@@ -23,6 +23,10 @@
 namespace ninferno::serve {
 
 void write_openai_error(httplib::Response& response, const ApiError& error);
+
+// The request's id, on every endpoint: the client's own X-Request-Id when it is a plain token (up
+// to 128 letters, digits and -_.:), so a gateway's logs and ours share it; else `minted`.
+[[nodiscard]] std::string request_id_of(const httplib::Request& request, std::string minted);
 void write_anthropic_error(httplib::Response& response, const ApiError& error,
                            const std::string& request_id);
 

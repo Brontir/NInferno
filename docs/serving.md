@@ -156,7 +156,7 @@ time kernels on the machine, and run only in the maintainer tools.
 | `GET /health` | server | `200 {"status":"ok"}` with the load gauges; `503` when unavailable, draining or stalled; no authentication |
 | `GET /v1/models`, `GET /v1/models/{id}` | OpenAI | model alias, `max_model_len`, llama.cpp-style `meta`; `meta.published_activations`: the activation widths (16, 8, 4, unknown) the checkpoint's publisher validated, as kept-matrix counts, when it says; `meta.decision_fingerprint` and `meta.decision_manifest`: the engine's [decision fingerprint](maintainer/deterministic-decisions.md#fingerprint), with the board it runs on beside it (`meta.device_pci_bus_id`, `meta.device_uuid`); `meta.speculation`: the speculation it runs since startup and the fallback startup took |
 | `GET /props` | llama.cpp | the model alias, context, vocabulary and slots llama.cpp's web UI reads |
-| `GET /metrics` | Prometheus | llama.cpp's `llamacpp:*` token and request series, plus prompt tokens served from the cache and requests in prefill, and `ninferno_decision_fingerprint_info{fingerprint,manifest,schema} 1` |
+| `GET /metrics` | Prometheus | llama.cpp's `llamacpp:*` token and request series, plus prompt tokens served from the cache and requests in prefill, and `ninferno_decision_fingerprint_info{fingerprint,manifest,schema} 1`; `ninferno_server_info{server_instance_id} 1` and `process_start_time_seconds` change on a restart |
 | `POST /v1/chat/completions` | OpenAI Chat | streaming, tools, images, `timings` extension |
 | `POST /v1/responses` | OpenAI Responses | typed Items, SSE events, local state |
 | `POST /v1/responses/input_tokens` | OpenAI Responses | prompt token count, no generation |
@@ -370,7 +370,8 @@ curl http://127.0.0.1:8080/v1/models -H 'Authorization: Bearer local-secret'
   `server_draining`; a stream stops.
 - At start the server checks the release manifest once in the background and logs a newer release;
   `NINFERNO_UPDATE_CHECK=0` turns that off, `NINFERNO_UPDATE_URL` names another manifest.
-- Every OpenAI response has an `x-request-id` header. Anthropic responses use `request-id`.
+- Every OpenAI response has an `x-request-id` header. Anthropic responses use `request-id`. Both take
+  the client's own `X-Request-Id` when it is a plain token.
 - Logs go to stderr, one line per event, with a throughput summary every 5 s
   (`--log-stats-interval-ms`). They never contain prompts or generated text.
 - `--request-log-jsonl FILE` writes one JSON record per event for measurement. The format is in the

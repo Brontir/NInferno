@@ -73,7 +73,7 @@ std::string serve_usage_text(const char* argv0) {
            "[--no-auto-system-shared-prefix] [--trust-cache-hints] [--cache-keep-tokens N] "
            "[--cors] [--usage-chunk-choice] "
            "[--temperature F] [--top-p F] [--top-k N] [--min-p F] [--presence-penalty F] "
-           "[--frequency-penalty F] [--seed N] [--greedy]\n"
+           "[--frequency-penalty F] [--seed N] [--greedy] [--tool-order request|sorted]\n"
            "       [--log-level trace|debug|info|warning|error|critical|off]\n" +
            std::string(product::kEngineFlagsUsage) +
            "       [--drafter-registry FILE]\n"
@@ -209,6 +209,8 @@ std::string serve_usage_text(const char* argv0) {
            "       sampler defaults come from the loaded model and resolved thinking mode; "
            "server flags and request fields override individual values.\n"
            "       --greedy forces temperature 0 (exact argmax).\n"
+           "       --tool-order sorted renders a request's tools sorted by name, so that a client\n"
+           "       sending one set in varying order keeps its cached prefix (default: request).\n"
            "       --activations exact keeps BF16 activations on every quantized linear: an\n"
            "       answer does not depend on batch neighbours, prompt cuts, the prefix cache or\n"
            "       speculation; fast encodes NVFP4 activations in four bits on wide calls; int8\n"
@@ -563,6 +565,12 @@ ServeOptions parse_serve_options(int argc, char** argv) {
                        options.sampling_overrides)) {
         } else if (arg == "--greedy") {
             options.greedy = true;
+        } else if (arg == "--tool-order") {
+            const std::string order = require_value("--tool-order");
+            if (order != "request" && order != "sorted") {
+                throw std::invalid_argument("--tool-order must be request or sorted");
+            }
+            options.sort_tools = order == "sorted";
         } else if (product::parse_engine_flag(
                        arg, [&] { return require_value(arg.c_str()); }, options.pacing,
                        options.maintainer, product::TunerFlags::Refused)) {

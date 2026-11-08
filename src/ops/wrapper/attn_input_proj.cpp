@@ -257,6 +257,23 @@ std::size_t attn_input_proj_pair_workspace_capacity_bytes(std::int32_t min_token
                          kPairHidden, min_tokens, max_tokens)});
 }
 
+bool attn_input_proj_fused_supported(QType parent_qtype, std::int32_t input_rows,
+                                     std::int32_t query_rows, std::int32_t key_value_rows) {
+    const bool pair_geometry =
+        input_rows == kPairHidden && query_rows == kPairQRows && key_value_rows == kPairKvRows;
+    switch (parent_qtype) {
+    case QType::BF16:
+    case QType::FP8_E4M3FN_ROW_BF16:
+        return pair_geometry;
+    case QType::NVFP4:
+        return pair_geometry && detail::kNativeNvfp4;
+    case QType::Q8_G32_FP16:
+        return input_rows == 2048 && query_rows == 4096 && key_value_rows == 512;
+    default:
+        return false;
+    }
+}
+
 std::size_t attn_input_proj_workspace_capacity_bytes(QType parent_qtype, std::int32_t parent_rows,
                                                      std::int32_t input_rows, LinearPolicy policy,
                                                      std::int32_t min_tokens,

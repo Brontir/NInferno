@@ -39,11 +39,13 @@ std::uint64_t unix_time_ms() {
         std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
 }
 
-std::string new_server_instance_id() {
-    const auto now    = std::chrono::system_clock::now().time_since_epoch();
-    const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(now).count();
-    return "serve-" + std::to_string(sys::pid()) + '-' +
-           std::to_string(micros);
+std::int64_t unix_now_us() {
+    const auto now = std::chrono::system_clock::now().time_since_epoch();
+    return std::chrono::duration_cast<std::chrono::microseconds>(now).count();
+}
+
+std::string new_server_instance_id(std::int64_t started_unix_us) {
+    return "serve-" + std::to_string(sys::pid()) + '-' + std::to_string(started_unix_us);
 }
 
 std::filesystem::path normalized_absolute_path(const std::string& value) {
@@ -577,6 +579,8 @@ std::string format_server_start_json(
              {"server_overrides", overrides_json(options.sampling_overrides)},
              {"omitted_seed", "random"},
              {"greedy", options.greedy}};
+    // It changes the rendered prompt, so a replay from the log needs it.
+    record["tool_order"] = options.sort_tools ? "sorted" : "request";
     record["memory"] =
         Json{{"weights", arena_json(memory.weights)},
              {"sequence", arena_json(memory.sequence)},
@@ -914,7 +918,8 @@ ServerLogEnvironment query_server_log_environment(int device) {
 JsonlRequestLog::JsonlRequestLog(const std::string& path,
                                  const std::string& protected_artifact_path,
                                  std::shared_ptr<spdlog::logger> logger)
-    : path_(path), server_instance_id_(new_server_instance_id()), logger_(std::move(logger)) {
+    : path_(path), started_unix_us_(unix_now_us()),
+      server_instance_id_(new_server_instance_id(started_unix_us_)), logger_(std::move(logger)) {
     if (path_.empty()) { return; }
     if (!protected_artifact_path.empty() &&
         normalized_absolute_path(path_) == normalized_absolute_path(protected_artifact_path)) {
