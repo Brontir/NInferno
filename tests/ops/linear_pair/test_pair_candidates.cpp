@@ -1,6 +1,7 @@
 // ops::linear_pair's candidates for one call (#310, ops/linear/linear_registry.h
 // linear_pair_candidates): the fused Q8 pair kernel and the two separate A16 linear() calls, one
 // selected as linear_pair runs, each refused with why. Weights are described, never read.
+#include "core/device_class.h"
 #include "core/weight_view.h"
 #include "ops/linear/linear_registry.h"
 
@@ -95,8 +96,21 @@ int main() {
             const Described f(QType::Q8_G32_FP16, 1024, 5120, a), s(QType::Q8_G32_FP16, 1024, 5120, b);
             const auto c = ops::detail::linear_pair_candidates(f.weight, s.weight, t);
             // Up to 85 columns the pair is the single-weight SIMT kernel twice with a 4-column
-            // tile; from 5 columns on the shape's own tiles request the weights fewer times.
-            const bool fused = t < 5 || t > 85;
+            // tile; the shape's own tiles request the weights fewer times from 5 columns on, where
+            // the shape's table runs the call with tensor-core tiles the device's MMA takes. Where
+            // linear() runs the call another way (the Volta tiled route, a route table, an int8
+            // prefill) or its MMA is emulated (sm_70, sm_75) the separate side is unpriced and the
+            // fused kernel keeps the call.
+            const auto r = ops::detail::linear_pair_requested_bytes(f.weight, s.weight, t);
+            const bool owned =
+                ops::detail::linear_decision(f.weight, ninferno::ops::LinearPolicy::A16Only, t)
+                    .claim == ops::detail::LinearClaim::Owned;
+            const bool priced =
+                owned && (t <= 4 || ninferno::device_class().features.mma_bf16_native);
+            check(r.separate.has_value() == priced,
+                  "the separate side is priced where the shape's table runs it" + at);
+            const bool fused = t > 85 || !r.separate || *r.fused <= *r.separate;
+            if (priced) { check(fused == (t < 5 || t > 85), "the price flips 5..85 columns" + at); }
             check(c.size() == 2 && c[0].id == "fused:q8_pair" &&
                       c[0].status == (fused ? Status::Selected : Status::Dominated) &&
                       c[1].id == "separate" &&

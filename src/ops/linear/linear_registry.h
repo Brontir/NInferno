@@ -91,7 +91,14 @@ struct LinearCandidate {
 // any cache serves them (generic::route_traffic's law): the weights once for every column tile of
 // CTAs, the activation once for every row tile, the output once. Priced where the shape's own table
 // runs the call and gives its launch's tile (q8_launch_tile); nullopt where another implementation
-// runs it or the tile is not known.
+// runs it, the tile is not known, or the tile is an MMA one on a device whose MMA does not take
+// BF16 operands (sm_70 emulates it on FP32 FMAs, sm_75 rounds the activations to f16): its time and
+// its numerics are then not what the bytes say. The row-split Q8_G32 payload of n x k weights: one
+// code byte a value and an FP16 scale a 32.
+[[nodiscard]] inline double q8_g32_payload_bytes(double n, double k) {
+    return n * k + n * (k / 32.0) * 2.0;
+}
+
 [[nodiscard]] std::optional<double> linear_q8_requested_bytes(const Weight& weight,
                                                               std::int32_t tokens);
 
@@ -110,15 +117,15 @@ struct LinearPairCandidate {
     std::vector<LinearCandidate> parts;
 };
 
-// The bytes the CTAs of each alternative request for a call of `tokens` columns (its chain price,
-// ops/wrapper/linear_pair.cpp): the fused kernel's and the two linear() calls', nullopt where the
-// tiling of that alternative is not known (then the fused kernel keeps the call).
 // Whether linear_pair runs its fused kernel for an [n,k] pair of the converter's Q8_G32 layout at
 // `tokens` columns, by the chain price: the one predicate linear_pair's selection and the engine's
 // warm-up share (the K = 2048 geometry additionally needs the drafter's row views, which the
 // weights decide, not the shape).
 [[nodiscard]] bool linear_pair_runs_fused(std::int32_t n, std::int32_t k, std::int32_t tokens);
 
+// The bytes the CTAs of each alternative request for a call of `tokens` columns (its chain price,
+// ops/wrapper/linear_pair.cpp): the fused kernel's and the two linear() calls', nullopt where the
+// tiling of that alternative is not known (then the fused kernel keeps the call).
 struct LinearPairRequested {
     std::optional<double> fused;
     std::optional<double> separate;

@@ -25,6 +25,7 @@ Q8Launch select_q8_launch(std::int32_t n, std::int32_t k, std::int32_t t, Linear
 struct Q8LaunchTile {
     std::int32_t rows;
     std::int32_t tokens;
+    bool mma; // a tensor-core (mma.sync) tile, not the SIMT one
 };
 
 [[nodiscard]] std::optional<Q8LaunchTile> q8_launch_tile(Q8Launch launch);

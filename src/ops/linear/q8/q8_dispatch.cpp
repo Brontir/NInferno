@@ -76,19 +76,19 @@ std::optional<Q8LaunchTile> q8_launch_tile(Q8Launch launch) {
     // The launches' CTA tiles, read off their names (r<rows>_t<token columns>); a launch whose name
     // does not say (the gemv, the K-sliced MMA tiles with a warp layout in the rows) has none.
     static const std::array<std::pair<Q8Launch, Q8LaunchTile>, 13> kTiles{{
-        {launch_q8_a16_simt_r4_t4_w2_g16_s2, {4, 4}},
-        {launch_q8_a16_simt_r8_t4, {8, 4}},
-        {launch_q8_a16_simt_r8_t8, {8, 8}},
-        {launch_q8_a16_sliced_r16_t16_w8_s2, {16, 16}},
-        {launch_q8_a16_sliced_r16_t16_w4_s2, {16, 16}},
-        {launch_q8_a16_sliced_r16_t32_w4_s2, {16, 32}},
-        {launch_q8_a16_mma_r32_t64, {32, 64}},
-        {launch_q8_a16_mma_r32_t96, {32, 96}},
-        {launch_q8_a16_mma_r32_t128, {32, 128}},
-        {launch_q8_a16_mma_r48_t64, {48, 64}},
-        {launch_q8_a16_mma_r64_t96, {64, 96}},
-        {launch_q8_a16_mma_r64_t128, {64, 128}},
-        {launch_q8_a16_mma_r128_t64, {128, 64}},
+        {launch_q8_a16_simt_r4_t4_w2_g16_s2, {4, 4, false}},
+        {launch_q8_a16_simt_r8_t4, {8, 4, false}},
+        {launch_q8_a16_simt_r8_t8, {8, 8, false}},
+        {launch_q8_a16_sliced_r16_t16_w8_s2, {16, 16, true}},
+        {launch_q8_a16_sliced_r16_t16_w4_s2, {16, 16, true}},
+        {launch_q8_a16_sliced_r16_t32_w4_s2, {16, 32, true}},
+        {launch_q8_a16_mma_r32_t64, {32, 64, true}},
+        {launch_q8_a16_mma_r32_t96, {32, 96, true}},
+        {launch_q8_a16_mma_r32_t128, {32, 128, true}},
+        {launch_q8_a16_mma_r48_t64, {48, 64, true}},
+        {launch_q8_a16_mma_r64_t96, {64, 96, true}},
+        {launch_q8_a16_mma_r64_t128, {64, 128, true}},
+        {launch_q8_a16_mma_r128_t64, {128, 64, true}},
     }};
     for (const auto& [fn, tile] : kTiles) {
         if (fn == launch) { return tile; }

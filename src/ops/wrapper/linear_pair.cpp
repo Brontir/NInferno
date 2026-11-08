@@ -110,7 +110,7 @@ std::optional<ChainPrice> fused_chain(std::int32_t n_rows, std::int32_t k_in, st
     const auto geometry = detail::q8_pair_geometry(problem);
     if (!geometry) { return std::nullopt; }
     const double n = n_rows, k = k_in, t = tokens;
-    const double weight_bytes = 2.0 * (n * k + n * (k / 32.0) * 2.0);
+    const double weight_bytes = 2.0 * detail::q8_g32_payload_bytes(n, k);
     const double passes       = std::ceil(t / geometry->tile_cols);
     return ChainPrice{weight_bytes * passes +
                           k * t * 2.0 * geometry->x_row_blocks * geometry->launches +
