@@ -35,9 +35,9 @@ utf8proc_category_t category(char32_t cp) noexcept {
 const CaseMap* find_case(char32_t cp) noexcept {
     const auto* first = std::begin(kOnigCaseMaps);
     const auto* last  = std::end(kOnigCaseMaps);
-    const auto* it    = std::lower_bound(
-        first, last, static_cast<std::uint32_t>(cp),
-        [](const CaseMap& map, std::uint32_t value) { return map.cp < value; });
+    const auto* it =
+        std::lower_bound(first, last, static_cast<std::uint32_t>(cp),
+                         [](const CaseMap& map, std::uint32_t value) { return map.cp < value; });
     return it != last && it->cp == cp ? it : nullptr;
 }
 

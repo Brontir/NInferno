@@ -341,10 +341,11 @@ bool check_unicode_tables() {
     // Tripwire: a utf8proc update changes what the table is a difference against; regenerate
     // it with tools/text/generate_onig_unicode_tables.py and update the count above.
     if (std::string(utf8proc_unicode_version()) != onig::kUtf8procUnicodeVersion) {
-        std::cout << "  UTF8PROC is Unicode " << utf8proc_unicode_version() << ", table made against "
-                  << onig::kUtf8procUnicodeVersion << ": regenerate onig_unicode_tables.h
+        std::cout << "  UTF8PROC is Unicode " << utf8proc_unicode_version()
+                  << ", table made against " << onig::kUtf8procUnicodeVersion
+                  << ": regenerate onig_unicode_tables.h" "
 ";
-        ok = false;
+            ok = false;
     }
     // Unicode 17 gave U+A7D3 and U+A7D5 capitals (U+A7D2, U+A7D4); in 16 they map to themselves.
     for (const char32_t cp : {0xA7D3, 0xA7D5}) {
