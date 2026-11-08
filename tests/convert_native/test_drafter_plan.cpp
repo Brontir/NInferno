@@ -564,8 +564,14 @@ void retry_failed_drafter() {
     const auto past_bad = refresh();
     expect(past_bad.size() == 1 && past_bad[0] == "assistant",
            "a drafter of an unreadable vocabulary is skipped, the next one refreshed");
-    // A replacement the checks refuse is left as it is, never marked: the next start looks at the
-    // file again, and takes a later replacement that passes.
+    // Checks that cannot run on the file refuse it like checks that fail: its id is kept, so an
+    // attach does not take it for a cache.
+    const auto past = Json::parse(read_text(ninferno::spec::manifest_path(artifact)));
+    expect(past["drafters"][0].value("refused_artifact_id", std::string()) ==
+               ninferno::spec::artifact_id_hex(unreadable.entry),
+           "a file the checks cannot read is recorded as refused");
+    // A replacement the checks refuse keeps the entry as it was: the next start looks at the file
+    // again, and takes a later replacement that passes.
     wanted = "v1:another";
     with(manifest("{}", entry("cached", "00")));
     expect(refresh().empty(), "a replacement the checks refuse is not refreshed");

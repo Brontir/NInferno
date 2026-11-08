@@ -1178,22 +1178,28 @@ std::vector<std::string> refresh_changed_drafters(const fs::path& target_artifac
             // replacement that passes is taken.
             // The refused file's id is kept on the entry (refused_artifact_id), so an attach does
             // not take that file for a cache of the drafter (attach_drafters converts it again).
-            bool changed = false;
+            // A file whose id cannot be read is left to an attach (it is no cache either).
+            std::string id;
             try {
-                const auto id = spec::artifact_id_hex(artifact);
-                if (!compatible(d, artifact)) {
-                    if (d.value("refused_artifact_id", std::string()) != id) {
-                        d["refused_artifact_id"] = id;
-                        refused_any              = true;
-                    }
-                    continue;
-                }
-                // Its status (converted, cached, attached) is kept: only the file changed.
-                d["artifact_id"] = id;
-                d.erase("refused_artifact_id");
-                changed = true;
+                id = spec::artifact_id_hex(artifact);
             } catch (const std::exception&) { continue; }
-            if (changed) { refreshed.push_back(d.value("name", std::string())); }
+            // Checks that refuse the file or cannot run on it (no text component, a malformed
+            // config) refuse it alike.
+            bool passes = false;
+            try {
+                passes = compatible(d, artifact);
+            } catch (const std::exception&) { passes = false; }
+            if (!passes) {
+                if (d.value("refused_artifact_id", std::string()) != id) {
+                    d["refused_artifact_id"] = id;
+                    refused_any              = true;
+                }
+                continue;
+            }
+            // Its status (converted, cached, attached) is kept: only the file changed.
+            d["artifact_id"] = id;
+            d.erase("refused_artifact_id");
+            refreshed.push_back(d.value("name", std::string()));
         }
         if (!refreshed.empty() || refused_any) { write_file_atomic(path, manifest.dump(1) + '\n'); }
     } catch (const std::exception&) {} // an unreadable manifest: drafters_incomplete() plans again
