@@ -378,6 +378,7 @@ struct ConstraintCompiler::Impl : std::enable_shared_from_this<ConstraintCompile
             return since != 0 && steady_ns() - since > orphan_limit_ns;
         }
     };
+
     using InflightTable = std::unordered_map<std::string, std::shared_ptr<Inflight>>;
     std::mutex inflight_mutex;
     InflightTable inflight;
