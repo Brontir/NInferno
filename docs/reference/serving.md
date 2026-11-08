@@ -763,7 +763,12 @@ llama.cpp-style base URLs.
   (after any reasoning, a forced answer is the call or calls, with no text before them). `none`
   keeps the declarations in the prompt, as vLLM does by default, so a turn without calls (an
   agent's compaction or summary) reuses the conversation's cached prefix. No output is read back
-  as a call then, and the model is kept from opening one: the syntax's call opener (`<tool_call>`,
+  as a call then. The last user turn ends with the fixed line `Tools are unavailable for this reply;
+  answer in plain text.` (after a blank line; a tool result as the last message gets it as a
+  user turn after it), because both the Qwen and Gemma 4 templates declare the tools in the system
+  prompt and the call is otherwise the model's near-certain next token. `--tool-choice-none
+  drop-tools` sends no declarations instead (vLLM's behaviour; the cached prefix is lost, the
+  line is not added). The model is also kept from opening a call: the syntax's call opener (`<tool_call>`,
   `<|tool_call>`, `[TOOL_CALLS]`, `<|tool_call|>`, `<function_calls>`) and its closer
   (`</tool_call>`, `<tool_call|>`, `</function_calls>`), and the template's tool-result opener and
   closer (`<tool_response>`, `<|tool_response>`, ...), get a `logit_bias` of -100 when the
@@ -1951,6 +1956,7 @@ not take at startup.
 | `--seed N` | fixed seed when a request omits one | fresh random seed per request |
 | `--greedy` | force exact argmax for all requests | off |
 | `--tool-order request\|sorted` | `sorted` renders a request's tools sorted by name, so that a client that sends one set in varying order (MCP servers registering in another order) keeps its cached prefix; a request with a duplicate name or a cache boundary after a tool keeps its order | `request` |
+| `--tool-choice-none steer\|drop-tools` | `steer` keeps a `tool_choice` `none` request's tool declarations (the cached prefix) and ends its last user turn with the line `Tools are unavailable for this reply; answer in plain text.`; `drop-tools` removes the declarations (a re-prefill). Recorded in the server-start record | `steer` |
 
 ### Media
 
