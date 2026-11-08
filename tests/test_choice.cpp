@@ -1088,13 +1088,12 @@ void prices_the_request_mix(const json& fixture) {
     };
     ch::Task asked;
     asked.contexts = {32768};
-    check(asked.long_prompt() == 32768 - ch::kRequestAnswer &&
-              asked.long_prompt() < ch::kLongPrompt,
-          "a 32K ask: the long request's prompt is the context less the answer");
-    ch::Task wide;
-    wide.contexts = {131072};
-    check(wide.long_prompt() == ch::kLongPrompt,
-          "the long request stops at the benchmark's 24K prompt");
+    ch::Task middle;
+    middle.contexts = {16384};
+    check(middle.long_prompt() == 16384 - ch::kRequestAnswer,
+          "a 16K ask: the long request's prompt is the context less the answer");
+    check(asked.long_prompt() == ch::kLongPrompt,
+          "a 32K ask: the long request stops at the benchmark's 24K prompt");
     ch::Task small;
     small.contexts = {2560};
     check(small.long_prompt() == 0, "a 2560-token ask has no long request");
@@ -1119,7 +1118,7 @@ void prices_the_request_mix(const json& fixture) {
     check(std::abs(ch::request_seconds(b.model, b.card, b.quants[0], c, asked) - expected) <
               1e-12 * expected,
           "the request mix is the weighted geometric mean of the short and the long request");
-    check(big.why.find("request mix: 20 of 2048+512, 6 of 32256+512 tokens") != std::string::npos,
+    check(big.why.find("request mix: 20 of 2048+512, 6 of 24576+512 tokens") != std::string::npos,
           "the reason names the mix");
 }
 
