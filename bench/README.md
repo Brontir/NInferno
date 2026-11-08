@@ -255,7 +255,7 @@ column where the source fixes them.
 | Target | Measures | Distinctive options | W / R |
 |---|---|---|---|
 | `ninferno_linear_bench` | Pure `linear()` | see above | 3 / 20 |
-| `ninferno_linear_pair_bench` | `linear_pair()` over adjacent Q8 `[1024,K]` K/V row views of a `[6144,K]` parent | `--k 2048\|5120` | 5 / 30 |
+| `ninferno_linear_pair_bench` | `linear_pair()` over adjacent Q8 `[1024,K]` K/V row views of a `[6144,K]` parent | `--k 2048|5120`, `--alternative pair|separate` (the two `linear()` calls) | 5 / 30 |\|5120` | 5 / 30 |
 | `ninferno_linear_topk_bench` | Projection plus stable top-16 for the Q8 and FP8 full heads and the mapped Q4 optimized head, replayed in a Graph after an L2 flush | `--profile all\|q8-full\|fp8-full\|q4-optimized`, `--columns U,...` (default sweep U=1..120) | 8 / 60 |
 | `ninferno_q4_linear_swiglu_bench` | Q4 `[34816,5120] -> [17408,T]` fused SwiGLU | `--t-sweep` | 5 / 30 |
 | `ninferno_q8_linear_swiglu_bench` | Q8 fused SwiGLU | `--problem companion` (`[12288,2048]`) or `dflash2` (`[34816,5120]`) | 5 / 30 |
