@@ -920,7 +920,7 @@ void decide_table() {
         {"a bundle's plan, another registry",
          manifest(true, false, false, true, false, false, false), "NNNN NNNN PPPN NCCN"},
         {"a bundle's failed drafter", manifest(true, true, true, true, true, false, false),
-         "NWFN NWFN PPPN NCCN"},
+         "WWFN NWFN PPPN NCCN"},
         {"a missing companion", manifest(true, true, false, false, false, true, false),
          "AAFN NAAN PPPN NCCN"},
         {"a GGUF's missing companion", manifest(true, true, false, false, false, true, true),

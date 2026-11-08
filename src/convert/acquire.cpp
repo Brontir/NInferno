@@ -371,9 +371,12 @@ DrafterAction decide_drafters(Drafters mode, bool gguf, bool download_present,
             return {Kind::Fail,
                     "is not in the artifact and its download was removed: fetch the model again"};
         }
-        if (manifest.bundle_failed && mode == Drafters::Attach) {
-            return {Kind::Warn, "it failed and its download was removed (fetch the model again to "
-                                "retry it)"};
+        // Said under the default too (a checkpoint's drafters are on by default), so a start that
+        // serves without it never does so silently.
+        if (manifest.bundle_failed &&
+            (mode == Drafters::Attach || (mode == Drafters::Default && !gguf))) {
+            return {Kind::Warn, "it failed (or its file no longer passes the checks) and its "
+                                "download was removed (fetch the model again to retry it)"};
         }
         // Planned again from the artifact (a checkpoint's by default, a GGUF's when asked for).
         if (mode != Drafters::Off && incomplete && !manifest.bundle_planned &&
