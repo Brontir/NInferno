@@ -344,6 +344,11 @@ DrafterAction decide_drafters(Drafters mode, bool gguf, bool download_present,
         if (manifest.bundle_failed && mode == Drafters::Require) {
             return {Kind::Fail, "failed and its download was removed: fetch the model again"};
         }
+        // A companion the artifact lacks is converted into it, which needs the download too.
+        if (manifest.missing_companion && mode == Drafters::Require) {
+            return {Kind::Fail,
+                    "is not in the artifact and its download was removed: fetch the model again"};
+        }
         if (manifest.bundle_failed && mode == Drafters::Attach) {
             return {Kind::Warn, "it failed and its download was removed (fetch the model again to "
                                 "retry it)"};

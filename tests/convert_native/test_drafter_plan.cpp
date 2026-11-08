@@ -828,9 +828,9 @@ void decide_table() {
         {"a bundle's failed drafter", manifest(true, true, true, true, true, false, false),
          "NWFN NWFN PPPN NCCN"},
         {"a missing companion", manifest(true, true, false, false, false, true, false),
-         "AAAN NAAN PPPN NCCN"},
+         "AAFN NAFN PPPN NCCN"},
         {"a GGUF's missing companion", manifest(true, true, false, false, false, true, true),
-         "NNNN NNNN NNNN NNNN"},
+         "NNFN NNFN NNNN NNNN"},
     };
     const cv::Drafters modes[] = {cv::Drafters::Default, cv::Drafters::Attach,
                                   cv::Drafters::Require, cv::Drafters::Off};
@@ -882,6 +882,20 @@ void decide_table() {
     const auto warn = cv::decide_drafters(cv::Drafters::Attach, false, false, rows[5].state, false);
     expect(warn.message.find("fetch the model again") != std::string::npos,
            "a warned bundle drafter says to fetch the model again");
+    // --with-drafters on a model whose download is gone and whose companion is not in the
+    // artifact (a GGUF's Qwen3.8 DFlash2): the way out is to fetch the model again.
+    const auto lacking =
+        cv::decide_drafters(cv::Drafters::Require, true, false, rows[7].state, false);
+    expect(lacking.kind == K::Fail &&
+               lacking.message.find("not in the artifact") != std::string::npos &&
+               lacking.message.find("fetch the model again") != std::string::npos,
+           "a missing companion fails --with-drafters, saying to fetch the model again",
+           lacking.message);
+    auto both              = rows[5].state;
+    both.missing_companion = true;
+    expect(cv::decide_drafters(cv::Drafters::Require, true, false, both, false)
+               .message.starts_with("failed"),
+           "a failed drafter is reported before a missing companion");
     expect(cv::drafters_enabled(cv::Drafters::Default, false) &&
                !cv::drafters_enabled(cv::Drafters::Default, true) &&
                cv::drafters_enabled(cv::Drafters::Attach, true) &&
