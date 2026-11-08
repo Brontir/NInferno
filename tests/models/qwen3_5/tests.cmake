@@ -57,7 +57,7 @@ ninferno_add_test(ninferno_qwen3_5_runtime_mechanisms_test
 # (nvidia / RedHatAI NVFP4 35B-A3B releases) sized for the generic linear instead of refused.
 ninferno_add_test(ninferno_qwen3_5_mtp_projection_plan_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_mtp_projection_plan.cpp"
-  LIBRARIES ninferno_engine ninferno_core)
+  LIBRARIES ninferno_engine ninferno_core ninferno::json)
 
 # Decode round pacing (host only): steps and waits on quiet, lagging and fixed hosts.
 ninferno_add_test(ninferno_qwen3_5_round_pacing_test
