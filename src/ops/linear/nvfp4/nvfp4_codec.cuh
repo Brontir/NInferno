@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/arch_family.cuh"
 #include "ops/common/math.cuh"
 #include "ops/common/e2m1.cuh"
 #include "ops/common/memory.cuh"
@@ -38,7 +39,7 @@ __device__ __forceinline__ std::int64_t nvfp4_scale_byte(int row, int group) {
 
 __device__ __forceinline__ unsigned nvfp4_scaled_pair_bf16(std::uint8_t code, std::uint8_t scale) {
 #if (__CUDACC_VER_MAJOR__ > 13 || (__CUDACC_VER_MAJOR__ == 13 && __CUDACC_VER_MINOR__ >= 2)) &&    \
-    defined(__CUDA_ARCH_FAMILY_SPECIFIC__) && __CUDA_ARCH_FAMILY_SPECIFIC__ >= 1000
+    NINFERNO_ARCH_FAMILY_SPECIFIC >= 1000
     // PTX 9.2 exposes native pair widening on the family-specific targets from sm_100. E2M1 times
     // a finite E4M3 scale needs at most six significand bits, so the BF16 multiplication is exact.
     unsigned values, multiplier, result;
@@ -91,8 +92,8 @@ static_assert(alignof(Nvfp4QuantizedK16) == 8);
 // magnitudes {0,.5,1,1.5,2,3,4,6}, nearest wins, a tie takes the even code.
 // cvt with .e2m1x2 / FP8-to-half: Blackwell's architecture- and family-specific targets
 // (sm_100a.., sm_120a, sm_120f: __CUDA_ARCH_FAMILY_SPECIFIC__), not a plain target's PTX.
-#if defined(__CUDA_ARCH__) && defined(__CUDA_ARCH_FAMILY_SPECIFIC__) &&                            \
-    __CUDA_ARCH_FAMILY_SPECIFIC__ >= 1000
+#if defined(__CUDA_ARCH__) &&                            \
+    NINFERNO_ARCH_FAMILY_SPECIFIC >= 1000
 #    define NINFERNO_HAS_E2M1_CVT 1
 #else
 #define NINFERNO_HAS_E2M1_CVT 0

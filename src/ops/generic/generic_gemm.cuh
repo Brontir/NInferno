@@ -25,6 +25,7 @@
 // lies in one group; each group's FP32 partial takes its own scale, and Q4_K/Q5_K/Q2_K subtract
 // their min term, dmin*m times the group's activation sum (an MMA of the activations with ones).
 
+#include "core/arch_family.cuh"
 #include "core/pdl.cuh"
 #include "ops/common/e2m1.cuh"
 #include "ops/common/memory.cuh"
@@ -234,8 +235,8 @@ struct Nvfp4Decoder {
         const int shift     = (j & 1) * 16;
 // cvt with .e2m1x2 / FP8-to-half: Blackwell's architecture- and family-specific targets
 // (sm_100a.., sm_120a, sm_120f: __CUDA_ARCH_FAMILY_SPECIFIC__), not a plain target's PTX.
-#if defined(__CUDA_ARCH__) && defined(__CUDA_ARCH_FAMILY_SPECIFIC__) &&                            \
-    __CUDA_ARCH_FAMILY_SPECIFIC__ >= 1000
+#if defined(__CUDA_ARCH__) &&                            \
+    NINFERNO_ARCH_FAMILY_SPECIFIC >= 1000
         const __half_raw h =
             __nv_cvt_fp8_to_halfraw(static_cast<__nv_fp8_storage_t>(r.scale & 0xffU), __NV_E4M3);
         const __half s(h);
