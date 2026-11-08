@@ -1082,30 +1082,22 @@ std::vector<std::string> refresh_changed_drafters(const fs::path& target_artifac
     try {
         auto manifest = Json::parse(read_file(path));
         // The checks an attach runs (check_drafter: architecture, kind, engine, vocabulary, the
-        // geometry it taps), against the target described once and the drafter's declaration as
-        // the target's plan names it; only when a drafter changed.
-        std::optional<DrafterPlan> plan;
+        // geometry it taps), against the target described once (only when a drafter changed) and
+        // the declaration the manifest's entry holds: a bundle's or a given name's, which no plan
+        // made from the artifact again would name, too.
+        std::optional<DrafterTarget> target;
         const DrafterCheck attach_checks = [&](const Json& entry, const fs::path& drafter) {
-            if (!plan) {
-                const auto target = manifest.value("target", Json::object());
-                auto described    = describe_artifact(target_artifact, target.value("repo", ""));
-                if (described.lineage.empty() && target.contains("lineage")) {
-                    described.lineage = target.at("lineage").get<std::vector<std::string>>();
-                }
-                plan = plan_drafters(std::move(described));
+            if (!target) {
+                target = describe_artifact(target_artifact,
+                                           manifest.value("target", Json::object()).value("repo", ""));
             }
-            const auto name    = entry.value("name", std::string());
-            const auto planned = std::find_if(plan->drafters.begin(), plan->drafters.end(),
-                                              [&](const PlannedDrafter& p) { return p.decl.name == name; });
-            if (planned == plan->drafters.end()) { return false; }
-            PlannedDrafter d = *planned;
-            d.checks.clear();
+            PlannedDrafter d;
+            d.decl = spec::parse_drafter(entry);
             if (entry.value("status", std::string()) == "attached") {
-                d.taps_only   = true; // given, as attach_drafters takes it
-                d.unvalidated = false;
+                d.taps_only = true; // given, as attach_drafters takes it
             }
             const auto fp = spec::artifact_vocab_fingerprint(drafter);
-            check_drafter(plan->target, artifact_config(drafter), fp ? fp->value : "", d);
+            check_drafter(*target, artifact_config(drafter), fp ? fp->value : "", d);
             return d.compatible;
         };
         const DrafterCheck& compatible = check ? check : attach_checks;
