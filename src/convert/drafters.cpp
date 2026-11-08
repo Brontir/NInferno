@@ -1091,9 +1091,10 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
                     options.drafter_artifacts.contains(name)) {
                     continue;
                 }
-                const auto same = std::find_if(drafters.begin(), drafters.end(), [&](const Json& d) {
-                    return d.value("name", std::string()) == name;
-                });
+                const auto same =
+                    std::find_if(drafters.begin(), drafters.end(), [&](const Json& d) {
+                        return d.value("name", std::string()) == name;
+                    });
                 if (same == drafters.end()) {
                     drafters.push_back(old);
                 } else {

@@ -758,12 +758,12 @@ void keeps_given_drafters() {
     const ninferno::test::artifact_fixture::Fixture target;
     target.write();
     const auto manifest_path = ninferno::spec::manifest_path(target.entry);
-    const std::string old = R"({"drafters": [
+    const std::string old    = R"({"drafters": [
         {"name": "mine", "status": "attached", "artifact": "/models/mine.ninferno", "artifact_id": "ab"},
         {"name": "assistant", "status": "failed: SSL connect error"}]})";
     std::ofstream(manifest_path) << old;
     (void)cv::attach_drafters(cv::DrafterPlan{}, target.entry, cv::AttachOptions{});
-    const auto kept = Json::parse(read_text(manifest_path));
+    const auto kept  = Json::parse(read_text(manifest_path));
     const auto names = [](const Json& m) {
         std::vector<std::string> out;
         for (const auto& d : m.at("drafters")) { out.push_back(d.value("name", std::string())); }
