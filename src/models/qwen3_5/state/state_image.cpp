@@ -351,9 +351,7 @@ HostStatePool::HostStatePool(StateImageHostLayout layout, std::uint32_t capacity
     if (backing) {
         // The pins the engine measured are exactly this pool's size: another size is a planning
         // bug, not a reason to pin a second time beside them. A pool of no bytes takes no pins.
-        if (bytes == 0) {
-            throw std::logic_error("HostStatePool of 0 bytes was given a backing");
-        }
+        if (bytes == 0) { throw std::logic_error("HostStatePool of 0 bytes was given a backing"); }
         if (backing->size() != bytes) {
             throw std::logic_error("HostStatePool backing of " + std::to_string(backing->size()) +
                                    " bytes does not match its " + std::to_string(bytes) + " bytes");
