@@ -808,7 +808,7 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         for (double done = 0; done < tokens; done += kMmqSliceTokens) {
             const double t = std::min(kMmqSliceTokens, tokens - done);
             // The column tile the kernel's table takes (core/mmq_columns.h).
-            const int width = mmq_columns::pick(static_cast<int>(t), card.major, card.minor);
+            const int width      = mmq_columns::pick(static_cast<int>(t), card.major, card.minor);
             const double columns = width;
             const double tiles = std::ceil(n / kMmqTile) * std::ceil(t / columns);
             const double waves = std::ceil(tiles / sms);

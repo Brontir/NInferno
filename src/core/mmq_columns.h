@@ -22,7 +22,7 @@
 
 namespace ninferno::mmq_columns {
 
-inline constexpr int kTile = 128; // the widest tile, the weight rows of every tile
+inline constexpr int kTile              = 128; // the widest tile, the weight rows of every tile
 inline constexpr int kTilesEverywhere[] = {16, 32, 64, 128};
 inline constexpr int kTilesGa10x[]      = {16, 32, 64, 80, 96, 128};
 inline constexpr double kTileFixed      = 0.43;
@@ -30,6 +30,7 @@ inline constexpr double kTileFixed      = 0.43;
 [[nodiscard]] constexpr bool uses_work_table(int major, int minor) noexcept {
     return major == 8 && minor == 6;
 }
+
 [[nodiscard]] constexpr std::span<const int> tiles(int major, int minor) noexcept {
     return uses_work_table(major, minor) ? std::span<const int>(kTilesGa10x)
                                          : std::span<const int>(kTilesEverywhere);
@@ -40,7 +41,9 @@ inline constexpr double kTileFixed      = 0.43;
     return kTileFixed + (1 - kTileFixed) * j / kTile;
 }
 
-[[nodiscard]] constexpr int tile_count(int columns, int j) noexcept { return (columns + j - 1) / j; }
+[[nodiscard]] constexpr int tile_count(int columns, int j) noexcept {
+    return (columns + j - 1) / j;
+}
 
 // The cost the launch choice minimises for covering `columns` tokens with tiles of width j on the
 // card's table: the least work (GA10x), else the fewest tiles.
