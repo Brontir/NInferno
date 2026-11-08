@@ -950,8 +950,12 @@ void ArtifactWriter::finish(const std::function<std::string()>& seal) {
         // A relayout journal left at this path belongs to an artifact this one replaces.
         std::filesystem::remove(artifact::relayout_journal_path(file_path(0)));
         std::filesystem::remove(artifact::relayout_journal_path(file_path(0)).string() + ".tmp");
+        // Each target is registered before it becomes visible (a signal while it is published
+        // removes it), and its temporary goes, slot and name, once it is: at most one slot more
+        // than the files is ever taken (an artifact of thousands of shards fits the table).
         for (const auto i : order) {
-            const auto target = file_path(i);
+            const auto target            = file_path(i);
+            TemporarySlot* const visible = register_temporary(target);
             std::error_code linked;
             std::filesystem::create_hard_link(temporary_[i], target, linked);
             // A file system without hard links (exFAT, FAT32, many network and cloud-synced
@@ -962,11 +966,16 @@ void ArtifactWriter::finish(const std::function<std::string()>& seal) {
                 if (!renamed) { linked.clear(); }
             }
             if (linked) {
+                unregister_temporary(visible);
                 throw std::runtime_error("cannot publish " + target.string() + ": " + linked.message());
             }
             published_.push_back(target);
-            // A signal during the publish removes the files already linked in.
-            slots_.push_back(register_temporary(target));
+            // A signal during the rest of the publish removes the files already linked in.
+            slots_.push_back(visible);
+            std::error_code ignored;
+            std::filesystem::remove(temporary_[i], ignored); // gone already when renamed in
+            unregister_temporary(static_cast<TemporarySlot*>(slots_[i]));
+            slots_[i] = nullptr;
         }
         for (const auto& temporary : temporary_) { std::filesystem::remove(temporary); }
         temporary_.clear();
