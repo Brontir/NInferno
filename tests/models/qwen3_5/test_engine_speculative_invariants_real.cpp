@@ -682,8 +682,8 @@ int score_divergences(const char* artifact) {
         const double lp_reference = score(d.reference[d.at]);
         const double lp_candidate = score(d.candidate[d.at]);
         const double gap          = std::abs(lp_reference - lp_candidate);
-        const bool decisive  = gap > kBugGap;
-        const bool invariant = test_activations() != ninferno::ActivationMode::Fast;
+        const bool decisive       = gap > kBugGap;
+        const bool invariant      = test_activations() != ninferno::ActivationMode::Fast;
         std::cout << "divergence " << d.label << " at " << d.at << ": reference "
                   << d.reference[d.at] << " (" << lp_reference << "), candidate "
                   << d.candidate[d.at] << " (" << lp_candidate << "), gap " << gap << ' '
