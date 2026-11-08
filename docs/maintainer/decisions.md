@@ -1702,8 +1702,8 @@ T = 64..512 on the RTX 5090 (170 SMs) and RTX 5070 Ti (70 SMs). The two constant
 fitted per card and format, agree across the two cards: Q4_K pair 1.16 and 1.16 (single 0.95 / 1.02,
 poorly constrained), Q6_K pair 1.26 / 1.22 (single 0.85 / 0.84); jointly (0.98, 1.16) and (0.84, 1.24).
 The model names the faster tile at 235 of 240 (call, card) points (the five misses cost 0.1-0.2 %),
-and predicts the classic tile's time within 16 % (rms 5.4 % Q4_K, 2.5 % Q6_K). The cards agree to the
-microsecond on the single-wave cases (64 x 64 at 128 tokens: 36.9 us / 49.2 us for 1 / 2 CTAs a SM).
+and predicts the classic tile's time within 16 % (rms 5.4 % Q4_K, 2.5 % Q6_K). The cards agree within 2 us
+on the single-wave cases (Q4_K 4096 x 4096, 64 x 64: 34.8..36.9 us for one CTA a SM, 49.2 us for two).
 The 5090 shows the wave effect strongest (T = 288..320: 0.64 of the producer-warp tile, grid 320 CTAs
 in one pass of 2 a SM against 192 CTAs in two waves).
 
@@ -1726,10 +1726,10 @@ not on its path: A/B 136..512 tokens, +-0.4 %.
 **Numerics.** Every W4A8 schedule sums in the one order (generic_w4a8.cuh), so the two tiles write the
 same bytes: no output changes.
 
-**Not done.** The gain is small (the tile step is 0.4 ms against a 50 ms prompt of 9B at these
-lengths): the padding of 63 tokens costs a few percent of the linears. A card with fewer SMs and bigger
+**Not done.** The gain is small (1.4 ms of a 50 ms prompt): the linears are two thirds of it and the padding of
+63 tokens costs a few percent of them. A card with fewer SMs and bigger
 rows (RTX 5060 Ti, 36 SMs; #524's) is the case the model prices at more but was not run. Formats other
 than Q4_K and Q6_K that take the producer-warp tile on Blackwell (IQ3_XXS, IQ2_S, IQ4_XS, IQ2_XS,
 IQ2_XXS, IQ3_S) keep it: each needs its own two constants from two cards.
-Run-to-run the kernel's `w4a8_ws` step depends a little on the token count inside a tile (T = 136:
-77.8 us, T = 256: 84.0 on 4096 x 4096), which the model leaves out.
+The producer-warp tile's step also grows a little with the tokens in it (T = 136: 77.8 us, T = 256:
+84.0 on 4096 x 4096, RTX 5070 Ti), which the model leaves out.
