@@ -685,6 +685,20 @@ std::vector<Case> corpus() {
                      .tool_calls        = 1,
                      .call_arguments    = {"{}"},
                      .cut_calls_dropped = 1});
+    // A stop that swallows only the closing markup of a call that is complete up to it: the call
+    // is closed and kept, as when the stop token ends it.
+    cases.push_back(
+        {.name              = "stop string in the closing markup of a forced call",
+         .tokens            = script({P{"<tool_call>"}, P{"\n<function=search>\n"}, P{"<parameter="},
+                                      P{"q>\nx\n"}, P{"</parameter>"}, P{"\n"}, P{"</function>"},
+                                      P{"\n</tool_call>"}}),
+         .prompt            = PromptKind::ForcedTools,
+         .stops             = {stop("</function>")},
+         .content           = "",
+         .finish            = FinishReason::StopString,
+         .tool_calls        = 1,
+         .call_arguments    = {R"({"q":"x"})"},
+         .cut_calls_dropped = 0});
     cases.push_back({.name    = "stop string after a forced call is complete",
                      .tokens  = script({P{"<tool_call>"}, P{"\n<function=search>\n</function>\n"},
                                         P{"</tool_call>"}, P{"STOP"}}),
