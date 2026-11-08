@@ -4274,7 +4274,8 @@ void test_many_truncated_endpoints_are_screened_before_inspection() {
                 program.started_source_mode == PrivateSourceMode::ConsumeToActive,
             "the request's own session was not the source it consumed");
 
-    // A bound which does not exceed what an exact candidate reuses is not inspected at all.
+    // A bound below what an exact candidate reuses is still inspected (the exact hit may be
+    // costlier to restore); the planner prices both and the longer reuse wins here.
     FakeManager exact = make_manager(1, 3);
     FakeProgram exact_program;
     exact_program.supports_truncated = true;
@@ -4286,8 +4287,8 @@ void test_many_truncated_endpoints_are_screened_before_inspection() {
     exact_program.truncated_inspections = 0;
     auto matched = exact.inspect(exact_program, FakePreparedPrompt{8}, make_base(8), 3);
     require(matched.choice && matched.choice->summary().reusable_prompt_tokens == 16 &&
-                exact_program.truncated_inspections == 0,
-            "a truncated bound below an exact candidate was inspected");
+                exact_program.truncated_inspections == 1,
+            "a truncated candidate was dropped by token count before the planner priced it");
 }
 
 // Enumerates raw owner choices independently of the search frontier/generator and portfolio fold.

@@ -435,18 +435,10 @@ public:
             }
 
             // The truncated candidates, best first: the request's own session before another,
-            // then the longer common prefix. A source whose bound does not exceed what an exact
-            // or shared candidate already reuses cannot win; two are inspected in full, more
-            // would only add planning work.
-            std::uint32_t best_reuse = 0;
-            for (const Candidate& candidate : candidates) {
-                if (candidate.plan) {
-                    best_reuse =
-                        std::max(best_reuse, candidate.plan->summary().reusable_prompt_tokens);
-                }
-            }
-            std::erase_if(
-                screens, [&](const TruncatedScreen& screen) { return screen.bound <= best_reuse; });
+            // then the longer common prefix. A longer exact or shared hit may be on the Host or
+            // need pressure while a shorter Device-resident truncated one is cheaper, so no token
+            // count dominates: the planner prices them all. Two are inspected in full, more would
+            // only add planning work.
             std::stable_sort(screens.begin(), screens.end(),
                              [](const TruncatedScreen& left, const TruncatedScreen& right) {
                                  return std::tie(right.same_session, right.bound) <
