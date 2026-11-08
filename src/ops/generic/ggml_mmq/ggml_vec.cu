@@ -21,6 +21,12 @@ namespace {
 
 constexpr int kVecWarps = 4;
 
+// Resident CTAs per SM the kernel is bounded to, as __launch_bounds__' minimum: the registers of the
+// plain instance of 3 columns (72 on sm_86 / sm_89: 7 CTAs of 128 threads on a 64K-register SM).
+// The 4-column instance, left alone, takes 85 (5 CTAs), and its grid, sized to the resident CTAs,
+// then needs a second round on a shape of 480..512 row pairs.
+constexpr int kVecMinBlocks(int columns) { return columns == 4 ? 7 : 1; }
+
 struct Slice {
     int w[8];
     float f[6];
@@ -623,7 +629,7 @@ __device__ __forceinline__ void store(const VecOut& o, int row, int column, floa
 // and up rows, one row per warp), a separate instance as ninfer-all's Fused one: the plain product
 // keeps no gated branches or second-plane state in its loop.
 template <ggml_type type, int T, int KS, bool Gated>
-__launch_bounds__(kVecWarps * 32) __global__ void vec_kernel(VecArgs p) {
+__launch_bounds__(kVecWarps * 32, kVecMinBlocks(T)) __global__ void vec_kernel(VecArgs p) {
     using D                 = Decoder<type>;
     constexpr int kTable    = D::kTableWords > 0 ? D::kTableWords : 4;
     constexpr int kPerBlock = D::kBlockValues / 32;
