@@ -482,12 +482,14 @@ void retry_failed_drafter() {
     // recorded, is attached again (otherwise every start serves plain: "changed since attach").
     const auto gone = (dir / "gone.ninferno").string();
     expect(with("{" + registry + R"("drafters": [{"name": "assistant", "status": "converted",
-                "artifact": ")" + gone + R"(", "artifact_id": "00"}]})"),
+                "artifact": ")" +
+                gone + R"(", "artifact_id": "00"}]})"),
            "an attached drafter whose artifact is gone: attaching is to do");
     // A drafter the user gave (--drafter-artifact) is not planned again when its file is gone: a
     // plan without that flag would drop the entry.
     expect(!with("{" + registry + R"("drafters": [{"name": "mine", "status": "attached",
-                "artifact": ")" + gone + R"(", "artifact_id": "00"}]})"),
+                "artifact": ")" +
+                 gone + R"(", "artifact_id": "00"}]})"),
            "a given drafter whose file is gone keeps its entry: nothing to plan");
     // ... and is named for a start that requires its drafters, which stops on it; a drafter the
     // registry planned is not (it is planned and attached again).
@@ -495,13 +497,15 @@ void retry_failed_drafter() {
     expect(given_gone.size() == 1 && given_gone[0] == "mine",
            "a given drafter whose file is gone is named for a required start");
     with("{" + registry + R"("drafters": [{"name": "assistant", "status": "converted",
-                "artifact": ")" + gone + R"(", "artifact_id": "00"}]})");
+                "artifact": ")" +
+         gone + R"(", "artifact_id": "00"}]})");
     expect(cv::given_drafters_changed(artifact).empty(),
            "a planned drafter whose file is gone is not a given one");
     const auto other = dir / "other.ninferno";
     std::ofstream(other) << "not an artifact";
     expect(with("{" + registry + R"("drafters": [{"name": "assistant", "status": "converted",
-                "artifact": ")" + other.string() + R"(", "artifact_id": "00"}]})"),
+                "artifact": ")" +
+                other.string() + R"(", "artifact_id": "00"}]})"),
            "an attached drafter whose artifact cannot be read: attaching is to do");
     expect(cv::refresh_changed_drafters(artifact).empty(),
            "a drafter file that cannot be read is not refreshed (an attach plans it again)");
@@ -544,7 +548,8 @@ void retry_failed_drafter() {
     expect(with(manifest("{}", entry("converted", "00") + ", " + companion)),
            "a drafter written again since: attaching is to do");
     const auto refreshed = refresh();
-    expect(refreshed.size() == 1 && refreshed[0] == "assistant", "the changed drafter is refreshed");
+    expect(refreshed.size() == 1 && refreshed[0] == "assistant",
+           "the changed drafter is refreshed");
     const auto after = Json::parse(read_text(ninferno::spec::manifest_path(artifact)));
     expect(after["drafters"][0]["artifact_id"] == id &&
                after["drafters"][0]["status"] == "converted",
@@ -592,7 +597,8 @@ void retry_failed_drafter() {
     with(manifest("{}", entry("attached", "00")));
     expect(refresh().size() == 1, "a given drafter file is refreshed");
     const auto given = Json::parse(read_text(ninferno::spec::manifest_path(artifact)));
-    expect(given["drafters"][0]["status"] == "attached" && given["drafters"][0]["artifact_id"] == id,
+    expect(given["drafters"][0]["status"] == "attached" &&
+               given["drafters"][0]["artifact_id"] == id,
            "a given drafter keeps its status and takes the file's id");
 }
 

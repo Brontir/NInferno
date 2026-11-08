@@ -253,8 +253,9 @@ std::string required_text(const AcquireOptions& options);
 void refresh_drafters(const AcquireOptions& options, const fs::path& artifact) {
     if (options.drafters == Drafters::Off) { return; }
     for (const auto& name : refresh_changed_drafters(artifact)) {
-        say(options, "drafter " + name + ": its file was written again since attach; the "
-                                         "manifest takes it as it is now");
+        say(options, "drafter " + name +
+                         ": its file was written again since attach; the "
+                         "manifest takes it as it is now");
     }
     // A drafter the user gave that the refresh could not take (its file gone, unreadable or
     // refused by the checks) is served without, and no plan restores it: a start that requires

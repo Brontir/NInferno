@@ -1091,8 +1091,8 @@ namespace {
 bool changed_since_attach(const Json& d, bool gone) {
     const auto status   = d.value("status", std::string());
     const auto artifact = d.value("artifact", std::string());
-    const bool attached = status == "embedded" || status == "converted" || status == "cached" ||
-                          status == "attached";
+    const bool attached =
+        status == "embedded" || status == "converted" || status == "cached" || status == "attached";
     if (!attached || artifact.empty()) { return false; }
     std::error_code error;
     if (!fs::is_regular_file(artifact, error)) { return gone; }
@@ -1144,13 +1144,15 @@ std::vector<std::string> refresh_changed_drafters(const fs::path& target_artifac
                 }
                 plan = plan_drafters(std::move(described));
             }
-            const auto name    = entry.value("name", std::string());
-            const auto planned = std::find_if(plan->drafters.begin(), plan->drafters.end(),
-                                              [&](const PlannedDrafter& p) { return p.decl.name == name; });
+            const auto name = entry.value("name", std::string());
+            const auto planned =
+                std::find_if(plan->drafters.begin(), plan->drafters.end(),
+                             [&](const PlannedDrafter& p) { return p.decl.name == name; });
             // A bundle's drafter is its declaration's, never the registry's (whose stale-target
             // refusal the bundle's plan bypassed): a fresh one, checked by its taps.
-            PlannedDrafter d = planned != plan->drafters.end() && !bundle ? *planned : PlannedDrafter();
-            d.decl             = spec::parse_drafter(entry);
+            PlannedDrafter d =
+                planned != plan->drafters.end() && !bundle ? *planned : PlannedDrafter();
+            d.decl = spec::parse_drafter(entry);
             d.checks.clear();
             if (planned == plan->drafters.end() || bundle ||
                 entry.value("status", std::string()) == "attached") {
@@ -1174,8 +1176,8 @@ std::vector<std::string> refresh_changed_drafters(const fs::path& target_artifac
             // A file the checks refuse, or cannot read, is left as it is: the start serves without
             // it ("changed since attach") and the next one looks at the file again, so a later
             // replacement that passes is taken.
-            // The refused file's id is kept on the entry (refused_artifact_id), so an attach does not
-            // take that file for a cache of the drafter (attach_drafters converts it again).
+            // The refused file's id is kept on the entry (refused_artifact_id), so an attach does
+            // not take that file for a cache of the drafter (attach_drafters converts it again).
             bool changed = false;
             try {
                 const auto id = spec::artifact_id_hex(artifact);
@@ -1193,9 +1195,7 @@ std::vector<std::string> refresh_changed_drafters(const fs::path& target_artifac
             } catch (const std::exception&) { continue; }
             if (changed) { refreshed.push_back(d.value("name", std::string())); }
         }
-        if (!refreshed.empty() || refused_any) {
-            write_file_atomic(path, manifest.dump(1) + '\n');
-        }
+        if (!refreshed.empty() || refused_any) { write_file_atomic(path, manifest.dump(1) + '\n'); }
     } catch (const std::exception&) {} // an unreadable manifest: drafters_incomplete() plans again
     return refreshed;
 }
