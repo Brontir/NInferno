@@ -1145,9 +1145,9 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
         }
     }
     if (options_line.size() >= 2) { options_line.resize(options_line.size() - 2); }
-    const std::string converted_earlier =
-        options_key.empty() ? " (converted earlier)"
-                            : " (converted earlier with " + options_line + ")";
+    const std::string converted_earlier = options_key.empty()
+                                              ? " (converted earlier)"
+                                              : " (converted earlier with " + options_line + ")";
     if (!options_key.empty()) {
         say(options, "conversion options of their own, kept apart from the default conversion: " +
                          options_line);
