@@ -1126,8 +1126,8 @@ CompiledGrammar GrammarCompilerSub::MultiThreadCompileGrammar(Grammar grammar_un
 
   // NInferno local change (see README.ninferno.md): a cancelled compile skips the remaining mask
   // computations and throws once the workers are idle. Worker tasks never throw.
-  const std::atomic<bool>* cancel = ninferno_xgrammar::current_compile_cancel();
-  auto cancelled = [cancel]() { return cancel != nullptr && cancel->load(std::memory_order_relaxed); };
+  const ninferno_xgrammar::CompileCancelCheck cancel = ninferno_xgrammar::current_compile_cancel();
+  auto cancelled = [cancel]() { return cancel && cancel(); };
 
   auto add_adaptive_token_mask = [&, cancelled](const ParserState& state, bool is_root_rule) {
     if (cancelled()) {

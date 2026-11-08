@@ -15,12 +15,20 @@ struct CompilerOptions {
     // Largest accepted schema, regex, grammar or structural-tag text, and choice list.
     std::size_t max_definition_bytes = 256U * 1024U;
     std::size_t max_choices          = 4096;
-    // A compile that does not finish in time returns "constraint_compile_timeout". Once no request
-    // waits for it any more it is cancelled: its worker stops at the next token-mask checkpoint,
-    // frees its slot and its threads, and the result is discarded. At most max_concurrent compiles
-    // run at once; a request that cannot start one within the timeout gets
-    // "constraint_compiler_busy".
+    // A compile that does not finish in time returns "constraint_compile_timeout". It then keeps
+    // running with nobody waiting (an orphan) and caches its result, so a client's retry finds it.
+    // An orphan is cancelled, oldest first, as soon as another request needs a compile slot, and
+    // in any case once it has run orphan_timeout_multiple * compile_timeout without a taker; its
+    // worker then stops at the next token-mask checkpoint and frees its slot and threads. A
+    // request for the same constraint that arrives meanwhile waits on it again. Only the
+    // token-mask phase can be cancelled: grammar and automaton building before it runs to its end.
+    // At most max_concurrent compiles run at once; a request that cannot start one within the
+    // timeout gets "constraint_compiler_busy".
     std::chrono::milliseconds compile_timeout{10000};
+    // A compile that finishes within (1 + this) * compile_timeout still serves the retry of the
+    // request that gave up on it; a longer one would time out on every retry anyway, and its
+    // threads are better spent elsewhere.
+    std::uint32_t orphan_timeout_multiple = 4;
     std::uint32_t max_concurrent = 4;
     // Compiled constraints are cached by their exact spec up to this many bytes.
     std::size_t cache_bytes = 512ULL << 20U;

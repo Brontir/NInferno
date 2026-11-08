@@ -69,12 +69,12 @@ without its head (v0.2.7 admitted "1.2rc" for `^[0-9]+\.[0-9]+(-[a-z]+)?$` and "
 The form of the open upstream PR mlc-ai/xgrammar#1032; drop it once that is merged and released.
 
 Local change: `cpp/grammar_compiler.cc`, `GrammarCompilerSub::MultiThreadCompileGrammar`, marked
-"NInferno local change": the compile reads the cancel flag of the NInferno-owned
-`ninferno/compile_cancel.{h,cc}` scope active on its thread, skips the remaining token-mask
-computations once it is set and throws `CompileCancelled` after the workers are idle. Upstream has
+"NInferno local change": the compile asks the cancel check of the NInferno-owned
+`ninferno/compile_cancel.{h,cc}` scope active on its thread before each token-mask computation,
+skips the remaining ones once it answers true and throws `CompileCancelled` after the workers are idle. Upstream has
 no way to stop a compile, and a pattern with nested bounded repetitions keeps all of a compile's
-threads busy for minutes. `src/structured/constraint.cpp` sets the flag when the last request
-waiting for a compile has timed out. When updating, re-apply the checks and run
+threads busy for minutes. The grammar and automaton building before the mask loop has no
+checkpoint. `src/structured/constraint.cpp` supplies the check. When updating, re-apply the checks and run
 `ninferno_structured_output_test` (`cancel_contract`).
 
 To update: replace `include/`, `cpp/`, the two bundled headers and the license files from the new

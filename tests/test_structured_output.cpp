@@ -9,6 +9,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <initializer_list>
@@ -320,36 +321,66 @@ GrammarVocabulary large_vocabulary() {
     return out;
 }
 
-// A compile that times out is cancelled: it frees the only compiler slot soon after the request
-// gave up instead of running to the end. The pattern unrolls to thousands of states, each with a
-// mask pass over the vocabulary, so finishing it takes seconds, far longer than the slot checks
-// below wait.
+OutputConstraintSpec pattern_spec(const std::string& pattern) {
+    OutputConstraintSpec spec;
+    spec.kind       = OutputConstraintKind::JsonSchema;
+    spec.definition = Json{{"type", "string"}, {"pattern", pattern}}.dump();
+    return spec;
+}
+
+// A compile that times out keeps running while nobody needs its slot, and is cancelled once
+// another request does. The pattern unrolls to thousands of states, each with a mask pass over the
+// vocabulary, so finishing it takes seconds, far longer than the test waits.
 void cancel_contract() {
     CompilerOptions options;
     options.max_concurrent  = 1;
     options.compile_threads = 2;
     options.compile_timeout = std::chrono::milliseconds(300);
     const ConstraintCompiler compiler(large_vocabulary(), options);
-    OutputConstraintSpec slow;
-    slow.kind               = OutputConstraintKind::JsonSchema;
-    slow.definition         = R"({"type":"string","pattern":"^(([a-z]{1,30}){1,30}){1,10}$"})";
-    const std::string first = expect_error(compiler, slow);
+    const OutputConstraintSpec slow = pattern_spec("^(([a-z]{1,30}){1,30}){1,10}$");
+    const std::string first         = expect_error(compiler, slow);
     check(first == "constraint_compile_timeout", "slow compile times out: " + first);
 
-    // The same request again starts a new compile (the abandoned one left the table) and times out
-    // the same way instead of waiting on the cancelled one.
-    check(expect_error(compiler, slow) == "constraint_compile_timeout", "retry times out again");
-
-    // The slot comes back within a few seconds; an ordinary schema then compiles.
+    // An ordinary schema needs the only slot: the orphan is cancelled and gives it up. The steps
+    // before the mask loop cannot be cancelled, so a loaded machine may answer busy a few times.
     OutputConstraintSpec simple;
     simple.kind = OutputConstraintKind::JsonObject;
     bool freed  = false;
-    for (int attempt = 0; attempt < 20 && !freed; ++attempt) {
+    for (int attempt = 0; attempt < 40 && !freed; ++attempt) {
         const std::string code = expect_error(compiler, simple);
         freed                  = code == "accepted";
         if (!freed && code != "constraint_compiler_busy") { check(false, "unexpected: " + code); }
     }
-    check(freed, "timed-out compile released its slot");
+    check(freed, "an orphaned compile released its slot to a waiting request");
+}
+
+// A compile that overruns the timeout by a little is not thrown away: it finishes in the
+// background and the client's retry finds it cached.
+void orphan_result_contract() {
+    const std::string pattern = "^(([a-z]{1,8}){1,8}){1,3}$";
+    // How long the compile takes on this machine, with a timeout it cannot hit.
+    CompilerOptions measure;
+    measure.compile_threads = 2;
+    measure.compile_timeout = std::chrono::seconds(120);
+    const auto begin        = std::chrono::steady_clock::now();
+    (void)ConstraintCompiler(large_vocabulary(), measure).compile(pattern_spec(pattern));
+    const auto took = std::chrono::steady_clock::now() - begin;
+
+    // A timeout of a third of that: the first request gives up, the orphan (allowed four more
+    // timeouts) finishes, and a retry returns it without compiling again.
+    CompilerOptions options = measure;
+    options.compile_timeout =
+        std::max(std::chrono::milliseconds(1),
+                 std::chrono::duration_cast<std::chrono::milliseconds>(took / 3));
+    const ConstraintCompiler compiler(large_vocabulary(), options);
+    const std::string first = expect_error(compiler, pattern_spec(pattern));
+    check(first == "constraint_compile_timeout" || first == "accepted",
+          "overrunning compile: " + first);
+    std::string last = first;
+    for (int attempt = 0; attempt < 50 && last != "accepted"; ++attempt) {
+        last = expect_error(compiler, pattern_spec(pattern));
+    }
+    check(last == "accepted", "the retry of an overrunning compile succeeds");
 }
 
 void json_walk_contract(const ConstraintCompiler& compiler) {
@@ -1363,6 +1394,7 @@ int main() {
     compile_error_contract(compiler);
     busy_contract();
     cancel_contract();
+    orphan_result_contract();
     json_walk_contract(compiler);
     other_kinds_contract(compiler);
     structural_tag_whitespace_contract(compiler);
