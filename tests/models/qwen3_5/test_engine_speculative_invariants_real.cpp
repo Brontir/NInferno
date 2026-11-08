@@ -27,7 +27,15 @@
 // compared up to the reference's end of turn (past it the continuation is out of distribution),
 // and every divergence is scored at the end with a CausalScoring engine on the shared prefix, as
 // the determinism test does: a log-probability gap above kBugGap between the two candidates
-// fails, smaller gaps are reported.
+// fails, smaller gaps are reported. That failure holds where the activation mode promises width
+// invariance (exact; int8, which is clean on the artifacts measured). Fast promises none: an
+// NVFP4 projection takes A4 or A16 by the call's width (a plain decode step 1 token, a verify
+// 2..8 exact A16, a batch or a prefill row group A4), so the reference and a batched candidate sit
+// on different sides of that choice and the scorer, whose own prompt-row call is a third width,
+// ranks their tokens up to 1.6 nats apart (#440: Qwen3.8-27B NVFP4, RTX 5090; exact is clean and
+// ranks the reference's token first). Under fast a decisive gap is therefore reported as a WARN
+// naming this reason. NINFERNO_TEST_ACTIVATIONS=exact runs the contract on such an artifact, and
+// NINFERNO_PROJECTION_RECORD=FILE lists the (route, T) the projections took.
 #include "ninferno/engine.h"
 #include "real_artifact.h"
 
@@ -674,13 +682,19 @@ int score_divergences(const char* artifact) {
         const double lp_reference = score(d.reference[d.at]);
         const double lp_candidate = score(d.candidate[d.at]);
         const double gap          = std::abs(lp_reference - lp_candidate);
+        const bool decisive  = gap > kBugGap;
+        const bool invariant = test_activations() != ninferno::ActivationMode::Fast;
         std::cout << "divergence " << d.label << " at " << d.at << ": reference "
                   << d.reference[d.at] << " (" << lp_reference << "), candidate "
                   << d.candidate[d.at] << " (" << lp_candidate << "), gap " << gap << ' '
-                  << (gap <= kNearTieGap ? "near-tie" : gap <= kBugGap ? "WARN: not a near-tie"
-                                                                       : "BUG: decisive")
+                  << (gap <= kNearTieGap ? "near-tie"
+                      : !decisive        ? "WARN: not a near-tie"
+                      : invariant        ? "BUG: decisive"
+                                         : "WARN: decisive under fast activations, which take A4 "
+                                           "or A16 by call width and promise no width invariance "
+                                           "(NINFERNO_TEST_ACTIVATIONS=exact judges the contract)")
                   << '\n';
-        bugs += gap > kBugGap ? 1 : 0;
+        bugs += decisive && invariant ? 1 : 0;
     }
     return bugs;
 }
