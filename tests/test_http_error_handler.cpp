@@ -145,6 +145,25 @@ int main() {
                               "1234 bytes") != std::string::npos,
                       "empty Anthropic 413 did not become a payload-limit error");
 
+    // A gateway's own X-Request-Id names an Anthropic request too (#522), when it is a plain token.
+    httplib::Request traced_messages_request = messages_request;
+    traced_messages_request.set_header("x-request-id", "trace-abc-2");
+    httplib::Response traced_messages_response;
+    traced_messages_response.status = 413;
+    (void)ninferno::serve::handle_unrendered_http_error(options, traced_messages_request,
+                                                        traced_messages_response);
+    failures +=
+        check(traced_messages_response.get_header_value("request-id") == "trace-abc-2" &&
+                  Json::parse(traced_messages_response.body).at("request_id") == "trace-abc-2",
+              "an Anthropic error did not take the client's X-Request-Id");
+    httplib::Request odd_request;
+    odd_request.set_header("x-request-id", "two words");
+    failures += check(
+        ninferno::serve::request_id_of(odd_request, "req_new") == "req_new" &&
+            ninferno::serve::request_id_of(traced_messages_request, "req_new") == "trace-abc-2" &&
+            ninferno::serve::request_id_of(httplib::Request{}, "req_new") == "req_new",
+        "request_id_of took an id that is not a plain token, or missed one");
+
     httplib::Request openai_request;
     openai_request.path = "/v1/responses";
     httplib::Response openai_response;

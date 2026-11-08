@@ -13,15 +13,19 @@
 #include "convert/acquire.h"
 #include "convert/drafters.h"
 
+#include "artifact/fixture.h"
+#include "spec/fingerprint.h"
 #include "spec/manifest.h"
 #include "support/temp_dir.h"
 
 #include <nlohmann/json.hpp>
 
 #include <cmath>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -34,6 +38,11 @@ namespace {
 int failures = 0;
 
 bool line_starts_warning(const std::string& line) { return line.starts_with("warning: "); }
+
+std::string read_text(const std::filesystem::path& path) {
+    std::ifstream stream(path);
+    return {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+}
 
 void expect(bool condition, const std::string& what, const std::string& detail = "") {
     if (!condition) {
@@ -469,6 +478,134 @@ void retry_failed_drafter() {
     expect(with(R"({"drafters": [{"name": "mtp", "status": "embedded"}]})"),
            "a manifest that names no registry: attaching is to do");
     expect(with("{"), "an unreadable manifest: attaching is to do");
+    // An attached drafter whose artifact is gone, or is no longer the artifact the manifest
+    // recorded, is attached again (otherwise every start serves plain: "changed since attach").
+    const auto gone = (dir / "gone.ninferno").string();
+    expect(with("{" + registry + R"("drafters": [{"name": "assistant", "status": "converted",
+                "artifact": ")" +
+                gone + R"(", "artifact_id": "00"}]})"),
+           "an attached drafter whose artifact is gone: attaching is to do");
+    // A drafter the user gave (--drafter-artifact) is not planned again when its file is gone: a
+    // plan without that flag would drop the entry.
+    expect(!with("{" + registry + R"("drafters": [{"name": "mine", "status": "attached",
+                "artifact": ")" +
+                 gone + R"(", "artifact_id": "00"}]})"),
+           "a given drafter whose file is gone keeps its entry: nothing to plan");
+    // ... and is named for a start that requires its drafters, which stops on it; a drafter the
+    // registry planned is not (it is planned and attached again).
+    const auto given_gone = cv::given_drafters_changed(artifact);
+    expect(given_gone.size() == 1 && given_gone[0] == "mine",
+           "a given drafter whose file is gone is named for a required start");
+    with("{" + registry + R"("drafters": [{"name": "assistant", "status": "converted",
+                "artifact": ")" +
+         gone + R"(", "artifact_id": "00"}]})");
+    expect(cv::given_drafters_changed(artifact).empty(),
+           "a planned drafter whose file is gone is not a given one");
+    const auto other = dir / "other.ninferno";
+    std::ofstream(other) << "not an artifact";
+    expect(with("{" + registry + R"("drafters": [{"name": "assistant", "status": "converted",
+                "artifact": ")" +
+                other.string() + R"(", "artifact_id": "00"}]})"),
+           "an attached drafter whose artifact cannot be read: attaching is to do");
+    expect(cv::refresh_changed_drafters(artifact).empty(),
+           "a drafter file that cannot be read is not refreshed (an attach plans it again)");
+    // A drafter file here written again since (its id is no longer the recorded one) takes its new
+    // id, whatever the start asks of drafters: nothing is fetched, the other entries are kept.
+    // A drafter whose vocabulary cannot be read (the fixture's tokenizer.json is not a tokenizer)
+    // is left to an attach, and the others are refreshed all the same.
+    const ninferno::test::artifact_fixture::Fixture unreadable;
+    unreadable.write();
+    std::ofstream(unreadable.entry.string() + ".conversion.json") << "{}";
+    // A vocabulary the fingerprint can read.
+    ninferno::test::artifact_fixture::Fixture drafter;
+    const std::string tokenizer = R"({"model": {"vocab": {"a": 0, "b": 1}}})";
+    for (std::size_t i = 0; i < tokenizer.size(); ++i) {
+        drafter.payload[i] = std::byte(tokenizer[i]);
+    }
+    drafter.root["objects"][0]["bytes"] = tokenizer.size();
+    drafter.write();
+    std::ofstream(drafter.entry.string() + ".conversion.json") << "{}";
+    const auto id    = ninferno::spec::artifact_id_hex(drafter.entry);
+    const auto entry = [&](const std::string& status, const std::string& recorded) {
+        return R"({"name": "assistant", "status": ")" + status + R"(", "artifact": ")" +
+               drafter.entry.string() + R"(", "artifact_id": ")" + recorded + R"("})";
+    };
+    const auto manifest = [&](const std::string& target, const std::string& drafters) {
+        return "{" + registry + R"("target": )" + target + R"(, "drafters": [)" + drafters + "]}";
+    };
+    const std::string companion = R"({"name": "dflash2", "status": "failed: SSL connect error"})";
+    // The attach's checks, stood in by the vocabulary they compare (check_drafter itself is
+    // tested apart); the production one describes the target, which this test has none of.
+    std::string wanted = ninferno::spec::artifact_vocab_fingerprint(drafter.entry).value().value;
+    int checked        = 0;
+    const cv::DrafterCheck passes = [&](const Json&, const std::filesystem::path& file) {
+        ++checked;
+        return ninferno::spec::artifact_vocab_fingerprint(file).value().value == wanted;
+    };
+    const auto refresh = [&] { return cv::refresh_changed_drafters(artifact, passes); };
+    expect(!with(manifest("{}", entry("cached", id))), "the recorded id: nothing to do");
+    expect(refresh().empty() && checked == 0, "the recorded id: nothing checked or refreshed");
+    expect(with(manifest("{}", entry("converted", "00") + ", " + companion)),
+           "a drafter written again since: attaching is to do");
+    const auto refreshed = refresh();
+    expect(refreshed.size() == 1 && refreshed[0] == "assistant",
+           "the changed drafter is refreshed");
+    const auto after = Json::parse(read_text(ninferno::spec::manifest_path(artifact)));
+    expect(after["drafters"][0]["artifact_id"] == id &&
+               after["drafters"][0]["status"] == "converted",
+           "the refreshed drafter takes the file's id and keeps its status");
+    expect(after["drafters"][1]["status"] == "failed: SSL connect error",
+           "another drafter's failure is kept for its retry");
+    expect(refresh().empty(), "refreshed once: nothing more to do");
+    // One drafter whose vocabulary cannot be read does not stop the others' refresh.
+    const std::string bad = R"({"name": "other", "status": "cached", "artifact": ")" +
+                            unreadable.entry.string() + R"(", "artifact_id": "00"})";
+    with(manifest("{}", bad + ", " + entry("cached", "00")));
+    const auto past_bad = refresh();
+    expect(past_bad.size() == 1 && past_bad[0] == "assistant",
+           "a drafter of an unreadable vocabulary is skipped, the next one refreshed");
+    // Checks that cannot run on the file refuse it like checks that fail: its id is kept, so an
+    // attach does not take it for a cache.
+    const auto past = Json::parse(read_text(ninferno::spec::manifest_path(artifact)));
+    expect(past["drafters"][0].value("refused_artifact_id", std::string()) ==
+               ninferno::spec::artifact_id_hex(unreadable.entry),
+           "a file the checks cannot read is recorded as refused");
+    // A replacement the checks refuse keeps the entry as it was: the next start looks at the file
+    // again, and takes a later replacement that passes.
+    wanted = "v1:another";
+    with(manifest("{}", entry("cached", "00")));
+    expect(refresh().empty(), "a replacement the checks refuse is not refreshed");
+    const auto refused = Json::parse(read_text(ninferno::spec::manifest_path(artifact)));
+    expect(refused["drafters"][0]["status"] == "cached" &&
+               refused["drafters"][0]["artifact_id"] == "00",
+           "a refused replacement leaves the entry as it was");
+    // The refused file is named on the entry, so an attach converts it again instead of taking it
+    // for its cache.
+    expect(refused["drafters"][0].value("refused_artifact_id", std::string()) == id,
+           "the refused file's id is kept on the entry");
+    wanted = ninferno::spec::artifact_vocab_fingerprint(drafter.entry).value().value;
+    expect(refresh().size() == 1, "the next start takes a replacement that passes");
+    const auto taken = Json::parse(read_text(ninferno::spec::manifest_path(artifact)));
+    expect(!taken["drafters"][0].contains("refused_artifact_id"),
+           "a replacement taken clears the refusal");
+    // The production checks describe the target: one that cannot be read refreshes nothing.
+    with(manifest("{}", entry("cached", "00")));
+    expect(cv::refresh_changed_drafters(artifact).empty(),
+           "no target to check against: nothing refreshed");
+    // Never attached (failed), or without its conversion report (a conversion stopped half way):
+    // left to an attach.
+    with(manifest("{}", entry("failed: x", "00")));
+    expect(refresh().empty(), "a failed drafter was never attached");
+    std::filesystem::remove(drafter.entry.string() + ".conversion.json");
+    with(manifest("{}", entry("cached", "00")));
+    expect(refresh().empty(), "no conversion report: not refreshed");
+    // A file the user gave (--drafter-artifact) has no conversion report and stays theirs.
+    with(manifest("{}", entry("attached", "00")));
+    expect(refresh().size() == 1, "a given drafter file is refreshed");
+    const auto given = Json::parse(read_text(ninferno::spec::manifest_path(artifact)));
+    expect(given["drafters"][0]["status"] == "attached" &&
+               given["drafters"][0]["artifact_id"] == id,
+           "a given drafter keeps its status and takes the file's id");
 }
 
 // A drafter that cannot be had stops a start that asked for it (--with-drafters) and is a warning
@@ -614,10 +751,44 @@ void companion_failure_is_retried() {
            "a failure carries only to the drafter of its name");
 }
 
+// A drafter the user gave on an earlier start is kept when the drafters are planned again without
+// that flag (another drafter's retry, a registry update); a start that gives the name again takes
+// the new mapping instead.
+void keeps_given_drafters() {
+    const ninferno::test::artifact_fixture::Fixture target;
+    target.write();
+    const auto manifest_path = ninferno::spec::manifest_path(target.entry);
+    const std::string old    = R"({"drafters": [
+        {"name": "mine", "status": "attached", "artifact": "/models/mine.ninferno", "artifact_id": "ab"},
+        {"name": "assistant", "status": "failed: SSL connect error"}]})";
+    std::ofstream(manifest_path) << old;
+    (void)cv::attach_drafters(cv::DrafterPlan{}, target.entry, cv::AttachOptions{});
+    const auto kept  = Json::parse(read_text(manifest_path));
+    const auto names = [](const Json& m) {
+        std::vector<std::string> out;
+        for (const auto& d : m.at("drafters")) { out.push_back(d.value("name", std::string())); }
+        return out;
+    };
+    expect(names(kept) == std::vector<std::string>{"mine"} &&
+               kept["drafters"][0]["artifact_id"] == "ab",
+           "a given drafter the new plan does not name is kept as it was");
+    std::ofstream(manifest_path) << old;
+    cv::AttachOptions again;
+    again.drafter_artifacts["mine"] = "/models/other.ninferno";
+    (void)cv::attach_drafters(cv::DrafterPlan{}, target.entry, again);
+    // The new mapping is this start's (here a file that is not there), never the earlier one.
+    const auto given = Json::parse(read_text(manifest_path));
+    expect(
+        std::none_of(given.at("drafters").begin(), given.at("drafters").end(),
+                     [](const Json& d) { return d.value("artifact_id", std::string()) == "ab"; }),
+        "a start that gives the name again does not keep the old mapping");
+}
+
 } // namespace
 
 int main() {
     num_target_layers();
+    keeps_given_drafters();
     lineage();
     dense_scope();
     nemotron_geometry();

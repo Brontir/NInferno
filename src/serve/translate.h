@@ -26,6 +26,8 @@ struct ResolvedPromptSemantics {
     std::string chat_template_kwargs_json;
     // The server reads images: a PDF page without a text layer reaches the model as one.
     bool vision = false;
+    // --tool-order sorted: the tools render sorted by name, not in the request's order.
+    bool sort_tools = false;
 };
 
 ResolvedPromptSemantics resolve_prompt_semantics(const GenerationRequest& req,

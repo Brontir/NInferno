@@ -182,6 +182,9 @@ struct ServeOptions {
     // fields. An omitted seed is replaced per request with a fresh random seed.
     SamplingOverrides sampling_overrides;
     bool greedy                 = false; // --greedy: force temperature 0 (exact argmax)
+    // --tool-order sorted: render a request's tools sorted by name, so that a client that sends
+    // one set in varying order keeps its cached prefix (default: the request's order).
+    bool sort_tools = false;
     DecodePacingOptions pacing;          // --decode-steps, --decode-wait, --cuda-sync
     MaintainerOptions maintainer;        // --route-table ... --debug-poison-skip
     // --drafter-registry FILE: the drafter registry instead of the compiled-in one

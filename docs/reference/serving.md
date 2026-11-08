@@ -539,7 +539,7 @@ prefix so that a following compatible turn can reuse it.
 | `GET /health` | Engine readiness |
 | `GET /v1/models` | configured OpenAI model alias, effective `max_model_len`, and a llama.cpp-compatible `meta` object |
 | `GET /props` | llama.cpp-style server properties (model alias, context, training context, vocabulary size, slots) |
-| `GET /metrics` | Prometheus text exposition: llama.cpp's `llamacpp:*` series (prompt and generated tokens, decode rounds, busy slots, running and deferred requests) and `ninferno_reused_prompt_tokens_total`, `ninferno_requests_prefilling`, `ninferno_requests_materializing`, `ninferno_http_active_requests`, plus the info gauge `ninferno_decision_fingerprint_info{fingerprint,manifest,schema}` (value 1) |
+| `GET /metrics` | Prometheus text exposition: llama.cpp's `llamacpp:*` series (prompt and generated tokens, decode rounds, busy slots, running and deferred requests) and `ninferno_reused_prompt_tokens_total`, `ninferno_requests_prefilling`, `ninferno_requests_materializing`, `ninferno_http_active_requests`, plus the info gauges `ninferno_decision_fingerprint_info{fingerprint,manifest,schema}` and `ninferno_server_info{server_instance_id}` (value 1; the instance id is the request log's `server_instance_id`, `serve-<pid>-<start µs>`) and `process_start_time_seconds`: both change on a restart, which empties the context cache |
 | `GET /v1/models/{id}` | lookup of the configured alias, `max_model_len`, and `meta` object |
 | `POST /v1/chat/completions` | OpenAI-style chat generation |
 | `POST /v1/responses` | OpenAI Responses Core generation, state, typed Items, and SSE |
@@ -613,7 +613,9 @@ prefix, with the same behavior, errors, and request IDs.
 Every OpenAI-compatible response carries an `x-request-id` header, including streaming and
 error responses: the client's own `X-Request-Id` when it sends one that is a plain token (letters,
 digits, `-`, `_`, `.`, `:`; at most 128 characters), else one the server makes. Anthropic endpoints
-use their separate `request-id` contract. The server's log names that id on each request's start
+answer in their own `request-id` header (and an error body's `request_id`) by the same rule, so a
+gateway that sends one `X-Request-Id` for both dialects finds every request in the log; without
+one they carry a `req_…` id the server makes. The server's log names that id on each request's start
 line and on every refused request (a 4xx before generation is logged too).
 
 ### Keep-alive and dead peers
@@ -946,6 +948,12 @@ retain that member order in aggregate and streaming responses, so an unmodified 
 the same ordered tool call. NInferno does not canonicalize semantically equivalent JSON. If a client
 reorders members, inserts defaults, or otherwise rewrites a tool object, the changed rendered input
 does not match the model-held endpoint and can reuse only an earlier exact checkpoint.
+
+A request's tools render in the order it sends them, whatever earlier requests sent, so the same
+request renders the same prompt on any process and after a restart. A client whose tools arrive in
+varying order (MCP servers that finish registering in another order) can start the server with
+`--tool-order sorted`: every order of one set then renders sorted by name and keeps the cached
+prefix. A request with a duplicate name or a cache boundary after a tool keeps its own order.
 
 ### Key order under an output constraint
 
@@ -1424,7 +1432,8 @@ They may also be grouped in a Responses namespace:
   would end the agent's turn and lose the parallel calls beside it. Declared names pick the call
   region first, so a quoted example of an undeclared call does not displace a declared call after
   it. Llama 3's JSON form, whose call opens like any JSON answer, still needs a declared name.
-- `allowed_tools` with mode `auto` filters that set without changing declaration order.
+- `allowed_tools` with mode `auto` filters that set without changing declaration order (unless the
+  server runs with `--tool-order sorted`, which renders every set sorted by name).
   `tool_choice:"none"` disables structured tool output even when the history contains earlier calls.
 - Function definitions are request configuration rather than conversation Items. They must be sent
   again on tool-result turns.
@@ -1443,7 +1452,8 @@ They may also be grouped in a Responses namespace:
 - Deferred loading, output schemas, and caller restrictions that exclude direct invocation are
   rejected because their semantics cannot be honored.
 - Tools may also arrive as `additional_tools` input Items (`{"type": "additional_tools", "tools":
-  [...]}`, as Codex sends them). Their tools join the request's `tools`, in input order, and the
+  [...]}`, as Codex sends them). Their tools join the request's `tools`, in input order (sorted by
+  name under `--tool-order sorted`), and the
   Item makes no message. A later Item may define a tool or namespace again. The latest definition
   replaces the earlier one where it stands, and a namespace keeps the description it was first
   declared with.
@@ -1563,8 +1573,10 @@ Resource behavior:
 | `POST /v1/responses/{id}/cancel` | explicitly fails because background execution is unsupported |
 | `POST /v1/responses/compact` | explicitly fails with `compaction_not_supported` |
 
-- `store:false` Responses cannot be retrieved or used as `previous_response_id`. LRU eviction and
-  explicit deletion also make an ID unavailable.
+- `store:false` Responses cannot be retrieved or used as `previous_response_id`. LRU eviction,
+  explicit deletion and a restart (the store is in process memory) also make an ID unavailable.
+  Naming one as `previous_response_id` fails with status 400 and `previous_response_not_found`,
+  the answer on which OpenAI clients resend the full input without it.
 - A request whose input and `previous_response_id` context alone exceed the configured store
   capacity fails with `response_store_capacity_exceeded` and status 400 before generation. One whose
   output then makes the Response larger than the store is answered unstored: the Response says
@@ -1719,7 +1731,8 @@ pages (`document_too_large`).
 
 ### Errors and streaming
 
-- Every Messages response carries a `request-id` header. Error bodies also carry `request_id` and use
+- Every Messages response carries a `request-id` header: the client's own `X-Request-Id` when it is
+  a plain token, as on the OpenAI paths ([request IDs](#request-ids)), else a `req_…` id. Error bodies also carry `request_id` and use
   Anthropic error categories.
 - Local admission overload maps to HTTP 529 and queue/media timeouts to HTTP 504.
 - Streaming owns the full Anthropic block lifecycle for Thinking, text, and tool use.
@@ -1926,6 +1939,7 @@ not take at startup.
 | `--frequency-penalty F` | process-level frequency-penalty override | unset |
 | `--seed N` | fixed seed when a request omits one | fresh random seed per request |
 | `--greedy` | force exact argmax for all requests | off |
+| `--tool-order request\|sorted` | `sorted` renders a request's tools sorted by name, so that a client that sends one set in varying order (MCP servers registering in another order) keeps its cached prefix; a request with a duplicate name or a cache boundary after a tool keeps its order | `request` |
 
 ### Media
 
@@ -2636,9 +2650,10 @@ Compatible prefixes are reused for both text and multimodal histories unless the
 | 400 | (no code; `param` names the field) | a sampling value out of range: `temperature` [0,2] (Chat, Responses) or [0,1] (Messages), `top_p` and `min_p` [0,1], `top_k` [0,64], penalties [-2,2] |
 | 401 | `invalid_api_key` | missing or wrong key with `--api-key` set (Anthropic shape on `/v1/messages`) |
 | 400 | `invalid_assistant_history`, `invalid_tool_history` | unrepresentable Responses history |
+| 400 | `previous_response_not_found` | `previous_response_id` names a Response the store no longer has (a restart, an eviction, a `DELETE`, or `store: false`), on Create and `input_tokens`; OpenAI clients then retry once with the full input |
 | 400 | `response_store_capacity_exceeded` | the request's input and context are larger than the response store (an answer that outgrows it after generation is returned unstored) |
 | 403 | `cross_origin_request` | request with `Origin` while `--cors` is off |
-| 404 | `response_not_found` | unknown stored Response |
+| 404 | `response_not_found` | unknown stored Response on `GET`, `DELETE` or `input_items` of `/v1/responses/{id}` |
 | 404 | `not_found` | a path no endpoint serves (JSON body naming the endpoints) |
 | 413 | `request_too_large` | body above `--max-request-mib` |
 | 415 | `unsupported_content_encoding` | compressed request body |
