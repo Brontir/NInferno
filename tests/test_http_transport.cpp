@@ -7,12 +7,14 @@
 #include <iostream>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #if defined(__linux__)
 #    include <arpa/inet.h>
 #    include <netinet/in.h>
 #    include <netinet/tcp.h>
+#    include <poll.h>
 #    include <sys/socket.h>
 #    include <unistd.h>
 #endif
@@ -510,6 +512,101 @@ int test_ambiguous_framing_is_refused(const std::string& framing, const std::str
                           "the bytes after a refused request were served as a second request");
     }
     if (fd >= 0) { ::close(fd); }
+    server.stop();
+    listener.join();
+    return failures;
+}
+
+// A sender that trickles a request body must not hold its worker (#526): the library bounds the
+// headers as a whole and every wait for a body byte, but a peer delivering a byte every few seconds
+// passed both. Here the body must grow by 1000 B/s over each 400 ms window. A trickle of one byte
+// per 50 ms is answered 408 and its connection closed within about a second, while a steady sender
+// that takes much longer than a window in all, and one that pauses briefly after a fast start, are
+// served.
+int test_slow_request_body_is_cut_off() {
+    using namespace std::chrono_literals;
+    httplib::Server server;
+    server.set_read_timeout(5, 0);
+    server.set_request_body_min_rate(1000, 400);
+    server.Post("/echo", [](const httplib::Request& request, httplib::Response& response) {
+        response.set_content(std::to_string(request.body.size()), "text/plain");
+    });
+    const int port = server.bind_to_any_port("127.0.0.1");
+    if (port <= 0) { return check(false, "test HTTP server could not bind"); }
+    std::thread listener([&] { server.listen_after_bind(); });
+    server.wait_until_ready();
+
+    // Sends the headers for `length` body bytes, then `pieces` (bytes, pause after) in order.
+    // Returns the status line and whether the server closed the connection, and the elapsed time.
+    struct Outcome {
+        std::string status;
+        bool closed = false;
+        std::chrono::milliseconds elapsed{0};
+    };
+    const auto exchange = [&](std::size_t length,
+                              const std::vector<std::pair<std::size_t, std::chrono::milliseconds>>&
+                                  pieces) {
+        Outcome outcome;
+        const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        sockaddr_in address{};
+        address.sin_family      = AF_INET;
+        address.sin_port        = htons(static_cast<std::uint16_t>(port));
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        timeval timeout{5, 0};
+        if (fd < 0 || ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0 ||
+            ::connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+            if (fd >= 0) { ::close(fd); }
+            return outcome;
+        }
+        const auto start = std::chrono::steady_clock::now();
+        const std::string head = "POST /echo HTTP/1.1
+Host: 127.0.0.1
+Content-Length: " +
+                                 std::to_string(length) + "
+
+";
+        (void)::send(fd, head.data(), head.size(), MSG_NOSIGNAL);
+        for (const auto& [bytes, pause] : pieces) {
+            const std::string piece(bytes, 'x');
+            if (::send(fd, piece.data(), piece.size(), MSG_NOSIGNAL) < 0) { break; }
+            // The pause ends early when the server has already answered.
+            pollfd readable{fd, POLLIN, 0};
+            if (::poll(&readable, 1, static_cast<int>(pause.count())) > 0) { break; }
+        }
+        std::string received;
+        char buffer[512];
+        for (;;) {
+            const ssize_t got = ::recv(fd, buffer, sizeof(buffer), 0);
+            if (got <= 0) {
+                outcome.closed = got == 0;
+                break;
+            }
+            received.append(buffer, static_cast<std::size_t>(got));
+        }
+        outcome.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start);
+        outcome.status = received.substr(0, received.find("
+"));
+        ::close(fd);
+        return outcome;
+    };
+
+    int failures = 0;
+    std::vector<std::pair<std::size_t, std::chrono::milliseconds>> trickle(100, {1, 50ms});
+    const Outcome slow = exchange(100, trickle);
+    failures += check(slow.status.find(" 408 ") != std::string::npos && slow.closed,
+                      "a body trickled one byte at a time was not answered 408 and closed");
+    failures += check(slow.elapsed < 2500ms, "a trickled body held its worker past the window");
+
+    std::vector<std::pair<std::size_t, std::chrono::milliseconds>> steady(12, {200, 100ms});
+    const Outcome fast = exchange(2400, steady);
+    failures += check(fast.status.find(" 200 ") != std::string::npos,
+                      "a body arriving above the minimum rate was cut off");
+
+    const Outcome paused = exchange(4100, {{4000, 600ms}, {100, 0ms}});
+    failures += check(paused.status.find(" 200 ") != std::string::npos,
+                      "a body that paused briefly after a fast start was cut off");
+
     server.stop();
     listener.join();
     return failures;

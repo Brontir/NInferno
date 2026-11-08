@@ -626,6 +626,13 @@ line and on every refused request (a 4xx before generation is logged too).
 - On Linux, accepted connections also use TCP keepalive and a 15-second `TCP_USER_TIMEOUT`.
   Together with the heartbeat, a dead or unacknowledging peer is normally cancelled within about 20
   seconds, including while the request is waiting or prefilling.
+- Every connection holds one HTTP worker while its request is read. The request line and headers
+  have a 5-second total deadline. A body must grow by at least `--request-body-min-kib-per-sec`
+  (16 KiB/s) over every 10-second window, otherwise the server answers HTTP 408
+  `request_body_too_slow` and closes the connection. A sender that trickles a body therefore
+  holds a worker for about ten seconds, not for as long as it likes. The worker pool is still
+  finite (49 workers by default): on a network where clients are hostile, put a buffering reverse
+  proxy in front, which sends the body to NInferno only once it has received all of it.
 - A peer whose TCP stack remains connected and acknowledges data cannot be distinguished from a
   reading application. Proxies must close their upstream NInferno connection when the downstream
   client disappears.
@@ -1792,6 +1799,7 @@ contract.
 | `--api-key-file PATH` | the same key read from a file (one line) | unset; `NINFERNO_API_KEY` when neither is given |
 | `--cors` | permissive browser CORS headers | off |
 | `--max-request-mib N` | body-size limit before JSON parsing (a body nesting arrays and objects deeper than 128 levels is refused with HTTP 400) | `384` |
+| `--request-body-min-kib-per-sec N` | a request body must grow by at least N KiB/s over every 10 seconds, else the read stops with HTTP 408 `request_body_too_slow` and the connection closes; `0` off | `16` |
 | `--max-request-messages N` | most messages in one request (Responses: `input` Items); more is HTTP 400 `too_many_messages` before the prompt is parsed or rendered | `16384` |
 | `--drain-timeout-ms N` | longest wait for requests in flight after SIGTERM/SIGINT | `60000` |
 | `--health-stall-ms N` | `/health` is 503 while the Engine has work and makes no progress this long; `0` off | `60000` |
@@ -2629,6 +2637,7 @@ Compatible prefixes are reused for both text and multimodal histories unless the
 | 403 | `cross_origin_request` | request with `Origin` while `--cors` is off |
 | 404 | `response_not_found` | unknown stored Response |
 | 404 | `not_found` | a path no endpoint serves (JSON body naming the endpoints) |
+| 408 | `request_body_too_slow` | body arriving slower than `--request-body-min-kib-per-sec` |
 | 413 | `request_too_large` | body above `--max-request-mib` |
 | 415 | `unsupported_content_encoding` | compressed request body |
 | 429 | `server_overloaded` | request capacity full (`Retry-After` 1 s) |

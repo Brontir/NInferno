@@ -46,7 +46,8 @@ std::string serve_usage_text(const char* argv0) {
            "[--drain-timeout-ms N] "
            "[--health-stall-ms N] [--device N|pci:BUSID|GPU-UUID] "
            "[--context-cost-presets FILE] "
-           "[--max-request-mib N] [--max-request-messages N] "
+           "[--max-request-mib N] [--request-body-min-kib-per-sec N] "
+           "[--max-request-messages N] "
            "[--media-cache-mib N] [--media-live-mib N] "
            "[--media-preprocess-threads N] "
            "[--device-state-slots N] [--host-state-slots N] [--host-kv-mib N] "
@@ -113,6 +114,10 @@ std::string serve_usage_text(const char* argv0) {
            std::to_string(kDefaultMaxTokens) +
            " when omitted\n"
            "       --max-request-mib defaults to 384 and is enforced before JSON parsing\n"
+           "       --request-body-min-kib-per-sec defaults to " +
+           std::to_string(kDefaultRequestBodyMinKibPerSec) +
+           "; a request body arriving slower than that over 10 s is a 408 (0: no limit)
+"
            "       --max-request-messages defaults to " +
            std::to_string(kDefaultMaxRequestMessages) +
            "; a request with more messages (Responses: input Items) is a 400\n"
@@ -382,6 +387,8 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.health_stall_ms = count("--health-stall-ms");
         } else if (arg == "--max-request-mib") {
             options.max_request_bytes = mib("--max-request-mib", false);
+        } else if (arg == "--request-body-min-kib-per-sec") {
+            options.request_body_min_kib_per_sec = count("--request-body-min-kib-per-sec");
         } else if (arg == "--max-request-messages") {
             const std::uint64_t messages =
                 parse_u64(require_value("--max-request-messages"), "max-request-messages");

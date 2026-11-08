@@ -279,6 +279,15 @@ httplib::Server::HandlerResponse handle_unrendered_http_error(const ServeOptions
         error.code    = "request_too_large";
         error.message = "request body exceeds the configured payload limit of " +
                         std::to_string(options.max_request_bytes) + " bytes";
+    } else if (response.status == 408) {
+        // The library stops reading a request body that grew too slowly (set_request_body_min_rate).
+        error.status  = 408;
+        error.type    = "invalid_request_error";
+        error.code    = "request_body_too_slow";
+        error.message = "the request body arrived slower than " +
+                        std::to_string(options.request_body_min_kib_per_sec) +
+                        " KiB/s; send it faster, or start the server with a lower "
+                        "--request-body-min-kib-per-sec";
     } else if (response.status == 404 && is_anthropic_path(request.path)) {
         error.status  = 404;
         error.code    = "not_found";
@@ -384,6 +393,9 @@ HttpServer::HttpServer(ServeOptions options, std::shared_ptr<spdlog::logger> log
     server_.set_tcp_nodelay(true);
     server_.set_socket_options(configure_http_server_socket);
     server_.set_payload_max_length(options_.max_request_bytes);
+    server_.set_request_body_min_rate(
+        static_cast<std::size_t>(options_.request_body_min_kib_per_sec) << 10,
+        static_cast<time_t>(kRequestBodyRateWindow.count()));
     register_routes();
 }
 

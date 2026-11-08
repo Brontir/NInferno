@@ -94,6 +94,12 @@ struct HttpWorkerPlan {
     std::size_t max_queued = 0; // 0: unbounded; an accepted socket waits for a free worker
 };
 
+// The window over which a request body must keep arriving at ServeOptions::request_body_min_kib_per_sec.
+// The library bounds the request line and headers as a whole and each wait for body bytes, but not
+// a sender that delivers a few bytes every few seconds; without this such a sender holds a worker
+// for as long as it likes.
+inline constexpr std::chrono::milliseconds kRequestBodyRateWindow{10000};
+
 [[nodiscard]] HttpWorkerPlan plan_http_workers(std::uint32_t max_concurrency,
                                                std::uint32_t max_pending_requests) noexcept;
 

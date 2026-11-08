@@ -41,6 +41,14 @@ ServeOptions parse(std::vector<std::string> arguments) {
 int main() {
     int failures = 0;
 
+    // #526: the minimum request-body rate has a default and can be changed or turned off.
+    failures += check(parse({"ninferno-serve", "m.ninferno"}).request_body_min_kib_per_sec == 16 &&
+                          parse({"ninferno-serve", "m.ninferno", "--request-body-min-kib-per-sec", "64"})
+                                  .request_body_min_kib_per_sec == 64 &&
+                          parse({"ninferno-serve", "m.ninferno", "--request-body-min-kib-per-sec", "0"})
+                                  .request_body_min_kib_per_sec == 0,
+                      "--request-body-min-kib-per-sec: default 16, overridable, 0 off");
+
     // #338: a trusted router's cache hint. Off by default; a malformed hint is none.
     failures += check(!parse({"ninferno-serve", "m.ninferno"}).trust_cache_hints &&
                           parse({"ninferno-serve", "m.ninferno", "--trust-cache-hints"}).trust_cache_hints,

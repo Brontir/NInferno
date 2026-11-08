@@ -466,6 +466,7 @@ std::string format_server_start_json(
              {"api_key_configured", !options.api_key.empty()},
              {"cors_enabled", options.enable_cors},
              {"max_request_bytes", options.max_request_bytes},
+             {"request_body_min_kib_per_sec", options.request_body_min_kib_per_sec},
              {"media_cache_bytes", options.media_cache_bytes},
              {"media_live_bytes", options.media_live_bytes},
              {"media_preprocess_threads", options.media_preprocess_threads},

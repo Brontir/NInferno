@@ -2382,6 +2382,12 @@ public:
   Server &set_idle_interval(const std::chrono::duration<Rep, Period> &duration);
 
   Server &set_payload_max_length(size_t length);
+  // NInferno patch: a request body must keep arriving. Every `window_msec` it
+  // must grow by at least `min_bytes_per_sec` times the window, else the read
+  // stops and the request is answered 408. The read timeout alone never fires
+  // for a peer that delivers a byte every few seconds. 0 turns the check off.
+  Server &set_request_body_min_rate(size_t min_bytes_per_sec,
+                                    time_t window_msec = 10000);
 
   Server &set_compress(bool on);
 
@@ -2460,6 +2466,8 @@ protected:
   time_t idle_interval_sec_ = CPPHTTPLIB_IDLE_INTERVAL_SECOND;
   time_t idle_interval_usec_ = CPPHTTPLIB_IDLE_INTERVAL_USECOND;
   size_t payload_max_length_ = CPPHTTPLIB_PAYLOAD_MAX_LENGTH;
+  size_t body_min_bytes_per_sec_ = 0; // NInferno patch, see set_request_body_min_rate
+  time_t body_rate_window_msec_ = 10000;
   bool compress_ = true;
   bool static_file_compression_ = false;
   size_t static_file_compression_min_length_ =
@@ -13992,6 +14000,13 @@ inline Server &Server::set_idle_interval(time_t sec, time_t usec) {
   return *this;
 }
 
+inline Server &Server::set_request_body_min_rate(size_t min_bytes_per_sec,
+                                                 time_t window_msec) {
+  body_min_bytes_per_sec_ = min_bytes_per_sec;
+  body_rate_window_msec_ = window_msec > 0 ? window_msec : 1;
+  return *this;
+}
+
 inline Server &Server::set_payload_max_length(size_t length) {
   payload_max_length_ = length;
   return *this;
@@ -14311,6 +14326,11 @@ inline bool Server::read_content(Stream &strm, Request &req, Response &res) {
   FormFiles::iterator cur_file;
   auto is_text_field = false;
   size_t count = 0;
+  // NInferno patch: the body read in windows of body_rate_window_msec_; the
+  // bytes at the start of the current window are kept to measure its growth.
+  auto body_too_slow = false;
+  auto window_start = std::chrono::steady_clock::now();
+  size_t window_start_bytes = 0;
   if (read_content_core(
           strm, req, res,
           // Regular
@@ -14336,6 +14356,24 @@ inline bool Server::read_content(Stream &strm, Request &req, Response &res) {
             }
 
             req.body.append(buf, n);
+
+            if (body_min_bytes_per_sec_ > 0) {
+              auto now = std::chrono::steady_clock::now();
+              auto elapsed_msec = static_cast<time_t>(
+                  std::chrono::duration_cast<std::chrono::milliseconds>(
+                      now - window_start)
+                      .count());
+              if (elapsed_msec >= body_rate_window_msec_) {
+                auto grown = req.body.size() - window_start_bytes;
+                if (grown < body_min_bytes_per_sec_ *
+                                static_cast<size_t>(elapsed_msec) / 1000) {
+                  body_too_slow = true;
+                  return false;
+                }
+                window_start = now;
+                window_start_bytes = req.body.size();
+              }
+            }
             return true;
           },
           // Multipart FormData
@@ -14381,6 +14419,7 @@ inline bool Server::read_content(Stream &strm, Request &req, Response &res) {
     }
     return true;
   }
+  if (body_too_slow) { res.status = StatusCode::RequestTimeout_408; }
   return false;
 }
 
