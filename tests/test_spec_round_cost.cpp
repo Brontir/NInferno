@@ -324,8 +324,7 @@ int main() {
             };
             std::printf(
                 "plain step at two requests / one: Qwen3.5-9B RTX 5070 Ti %.4f (weights only "
-                "%.4f), RTX 4060 Ti %.4f (%.4f); Qwen3.6-35B-A3B RTX 4090 %.4f (%.4f)
-",
+                "%.4f), RTX 4060 Ti %.4f (%.4f); Qwen3.6-35B-A3B RTX 4090 %.4f (%.4f)\n",
                 ratio(*d.round_facts, k5070, q9),
                 ratio(*d.round_facts, k5070, {}), ratio(*d.round_facts, k4060, q9),
                 ratio(*d.round_facts, k4060, {}), ratio(*m.round_facts, k4090, q35),
@@ -348,8 +347,7 @@ int main() {
                                           2.0, 2, {}, 0, {}, q9);
             expect(g0 && g1 && *g1 != *g0, "per-stream bytes move the load gain");
             std::printf(
-                "mtp:3 load gain at C=2 of 2.0: Qwen3.5-9B RTX 5070 Ti %.4f (weights only %.4f)
-",
+                "mtp:3 load gain at C=2 of 2.0: Qwen3.5-9B RTX 5070 Ti %.4f (weights only %.4f)\n",
                     g1
                     ? *g1
                     : 0.0,
