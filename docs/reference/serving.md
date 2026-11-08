@@ -2405,9 +2405,11 @@ idle card too, and reports the free memory now beside it (`device.free_now_bytes
 **The configuration choice.** The axes a start leaves automatic (`--kv-dtype auto`, no
 `--activations`, no `--state-dtype`) are chosen for the model on this GPU by one rule
 ([Configuration choice](../maintainer/configuration-choice.md)): among the KV codecs and activation
-modes that keep the asked context per stream, the one with the best worth `-ln(T) - 25 KLD`, T a
-typical request's seconds (2048 prompt tokens, 512 answer tokens) priced on the GPU generation's
-reference card, KLD the measured deviation from the exact reference. Where the generation has no
+modes that keep the asked context per stream, the one with the best worth `-ln(T) - 25 KLD`, T the
+seconds of the benchmark's request mix (20 requests of 2048 prompt + 512 answer tokens and 6 of a
+long prompt, min(24576, the context per stream − 512) + 512, as a weighted geometric mean; a
+context of 2560 or less prices the short request alone) on the GPU generation's reference card,
+KLD the measured deviation from the exact reference (DECISIONS 73). Where the generation has no
 reference card on two lab cards (today: every one but Ada), the family's defaults stand. A start
 logs it before the plan:
 
