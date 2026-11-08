@@ -86,7 +86,8 @@ std::optional<Json> parse_text_json(const std::string& text, const std::string& 
                                     std::size_t max_values) {
     Json parsed;
     switch (parse_bounded_json(text, max_values, parsed)) {
-    case JsonTextStatus::Ok: return parsed;
+    case JsonTextStatus::Ok:
+        return parsed;
     case JsonTextStatus::TooManyValues:
         bad_request(param + " holds more than " + std::to_string(max_values) +
                         " values (--max-request-json-values)",
@@ -95,7 +96,8 @@ std::optional<Json> parse_text_json(const std::string& text, const std::string& 
         bad_request(param + " nests deeper than " + std::to_string(kMaximumRequestJsonDepth) +
                         " levels",
                     param);
-    case JsonTextStatus::Invalid: break;
+    case JsonTextStatus::Invalid:
+        break;
     }
     return std::nullopt;
 }
@@ -199,7 +201,7 @@ std::optional<OutputConstraintRequest> parse_structured_outputs_object(const Jso
     }
     if (value.contains("structural_tag") && !value.at("structural_tag").is_null()) {
         set(structural_tag_request(value.at("structural_tag"), param + ".structural_tag",
-                                  max_values));
+                                   max_values));
     }
     for (const char* flag :
          {"disable_fallback", "disable_any_whitespace", "disable_additional_properties"}) {

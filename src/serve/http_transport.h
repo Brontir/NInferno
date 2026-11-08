@@ -96,8 +96,9 @@ void release_request_memory() noexcept;
 
 // The pool's task queue: httplib's thread pool, running release_request_memory() after each
 // connection a worker served, when its request, its parsed document and its connection are gone
-// and the response has long been sent. A keep-alive connection is one such connection: it trims when
-// it ends (the keep-alive timeout is seconds), and the thread's next big body reuses the memory.
+// and the response has long been sent. A keep-alive connection is one such connection: it trims
+// when it ends (the keep-alive timeout is seconds), and the thread's next big body reuses the
+// memory.
 class WorkerQueue final : public httplib::TaskQueue {
 public:
     explicit WorkerQueue(std::size_t threads, std::size_t max_queued)

@@ -167,7 +167,8 @@ std::optional<OutputConstraintRequest> parse_output_constraint(const Json& body,
     if (body.contains("response_format") && !body.at("response_format").is_null()) {
         format = parse_openai_response_format(body.at("response_format"), "response_format", false);
     }
-    std::optional<OutputConstraintRequest> extension = parse_structured_output_extensions(body, limits.max_json_values);
+    std::optional<OutputConstraintRequest> extension =
+        parse_structured_output_extensions(body, limits.max_json_values);
     if (format && extension) {
         bad_request("response_format and " + extension->param + " cannot be combined",
                     extension->param, "conflicting_constraints");

@@ -45,7 +45,8 @@ RequestJson parse_json_body(const httplib::Request& request, const RequestLimits
     if (request.body.size() >= kLargeBodyBytes) { large_body_seen = true; }
     RequestJson body;
     switch (parse_bounded_json(request.body, limits.max_json_values, body)) {
-    case JsonTextStatus::Ok: return body;
+    case JsonTextStatus::Ok:
+        return body;
     case JsonTextStatus::TooManyValues:
         bad_request("request JSON holds more than " + std::to_string(limits.max_json_values) +
                         " values (--max-request-json-values)",
@@ -53,7 +54,8 @@ RequestJson parse_json_body(const httplib::Request& request, const RequestLimits
     case JsonTextStatus::TooDeep:
         bad_request("request JSON nests deeper than " + std::to_string(kMaximumRequestJsonDepth) +
                     " levels");
-    case JsonTextStatus::Invalid: break;
+    case JsonTextStatus::Invalid:
+        break;
     }
     bad_request("request body is not valid JSON");
 }

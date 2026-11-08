@@ -392,7 +392,7 @@ int test_constrained_decoding_extensions() {
     std::string many = "[";
     for (int i = 0; i < 50; ++i) { many += i == 0 ? "0" : ",0"; }
     many += "]";
-    RequestLimits few_values = limits();
+    RequestLimits few_values   = limits();
     few_values.max_json_values = 40;
     for (const DeepCase& wide_case :
          {DeepCase{"guided_json", Json("{\"a\":" + many + "}"), "guided_json"},
@@ -400,8 +400,8 @@ int test_constrained_decoding_extensions() {
                    "structured_outputs.json"},
           DeepCase{"structured_outputs", Json{{"structural_tag", many}},
                    "structured_outputs.structural_tag"}}) {
-        Json wide              = base_request();
-        wide[wide_case.field]  = wide_case.value;
+        Json wide             = base_request();
+        wide[wide_case.field] = wide_case.value;
         const ApiError error =
             api_error([&] { (void)parse_chat_completion_request(wide, few_values, false); });
         failures += check(error.status == 400 && error.param == wide_case.param &&
