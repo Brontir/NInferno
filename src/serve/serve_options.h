@@ -181,7 +181,7 @@ struct ServeOptions {
     // Process-level explicit overrides layered between registered model/mode defaults and request
     // fields. An omitted seed is replaced per request with a fresh random seed.
     SamplingOverrides sampling_overrides;
-    bool greedy = false;                 // --greedy: force temperature 0 (exact argmax)
+    bool greedy                 = false; // --greedy: force temperature 0 (exact argmax)
     DecodePacingOptions pacing;          // --decode-steps, --decode-wait, --cuda-sync
     MaintainerOptions maintainer;        // --route-table ... --debug-poison-skip
     // --drafter-registry FILE: the drafter registry instead of the compiled-in one

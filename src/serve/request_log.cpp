@@ -42,7 +42,8 @@ std::uint64_t unix_time_ms() {
 std::string new_server_instance_id() {
     const auto now    = std::chrono::system_clock::now().time_since_epoch();
     const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(now).count();
-    return "serve-" + std::to_string(sys::pid()) + '-' + std::to_string(micros);
+    return "serve-" + std::to_string(sys::pid()) + '-' +
+           std::to_string(micros);
 }
 
 std::filesystem::path normalized_absolute_path(const std::string& value) {
