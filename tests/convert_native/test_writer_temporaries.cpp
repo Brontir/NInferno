@@ -51,16 +51,13 @@ std::vector<fs::path> temporaries(const fs::path& dir) {
     return out;
 }
 
-// Forks a child that opens a writer on `target` (default dispositions for SIGINT and SIGTERM,
-// whatever the parent inherited) and waits. Returns its pid once the temporary exists.
+// Forks a child that opens a writer on `target` and waits (it has the parent's signal actions). Returns its pid once the temporary exists.
 pid_t spawn_writer(const fs::path& target) {
     int ready[2];
     if (pipe(ready) != 0) { std::exit(2); }
     const pid_t pid = fork();
     if (pid == 0) {
         close(ready[0]);
-        std::signal(SIGINT, SIG_DFL);
-        std::signal(SIGTERM, SIG_DFL);
         cv::ArtifactWriter writer(target, small_layout(target.filename().string()));
         const char byte = 'r';
         if (write(ready[1], &byte, 1) != 1) { _exit(3); }
@@ -94,6 +91,22 @@ int main() {
         fs::temp_directory_path() / ("ninferno_writer_tmp_" + std::to_string(getpid()));
     fs::remove_all(root);
     fs::create_directories(root);
+    // A test run in the background may inherit ignored signals: the handler goes only where the
+    // default action is.
+    std::signal(SIGINT, SIG_DFL);
+    std::signal(SIGTERM, SIG_DFL);
+
+    // SIGINT and SIGTERM (first: no writer of this process has installed the handler yet, so the
+    // children start with the default actions): the temporary is removed and the process still dies of the signal.
+    for (const int number : {SIGINT, SIGTERM}) {
+        const auto dir = root / ("signal" + std::to_string(number));
+        fs::create_directories(dir);
+        const auto pid = spawn_writer(dir / "a.ninferno");
+        check(temporaries(dir).size() == 1, "the writer has a temporary before the signal");
+        kill(pid, number);
+        check(wait_signal(pid) == number, "the child died of the signal it was sent");
+        check(temporaries(dir).empty(), "the signal removed the temporary");
+    }
 
     // SIGKILL leaves the temporary; the next conversion into the directory removes it.
     {
@@ -141,17 +154,6 @@ int main() {
         fs::create_directories(dir);
         std::ofstream(dir / ".z.ninferno.AbC123.tmp", std::ios::binary).put('\0');
         check(cv::ArtifactWriter::remove_stale_temporaries(dir) == 1, "an empty temporary goes");
-    }
-
-    // SIGINT and SIGTERM: the temporary is removed and the process still dies of the signal.
-    for (const int number : {SIGINT, SIGTERM}) {
-        const auto dir = root / ("signal" + std::to_string(number));
-        fs::create_directories(dir);
-        const auto pid = spawn_writer(dir / "a.ninferno");
-        check(temporaries(dir).size() == 1, "the writer has a temporary before the signal");
-        kill(pid, number);
-        check(wait_signal(pid) == number, "the child died of the signal it was sent");
-        check(temporaries(dir).empty(), "the signal removed the temporary");
     }
 
     fs::remove_all(root);
