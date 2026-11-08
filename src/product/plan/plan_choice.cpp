@@ -677,7 +677,8 @@ std::string choice_line(const ServedChoice& served) {
     }
     if (s.candidate.chunk != choice::kDefaultChunk) { out << ", chunk " << s.candidate.chunk; }
     out << std::fixed << std::setprecision(1) << " | " << s.speed.decode_per_stream
-        << " tok/s decode, " << std::setprecision(0) << s.speed.prefill << " prefill ("
+        << " tok/s decode, " << std::setprecision(0) << s.speed.prefill
+        << " prefill at the short request ("
         << served.prompt_tail_calls << " tail calls), KLD "
         << std::setprecision(4) << s.accuracy.kld << " (estimates) | " << served.choice.why;
     return out.str();

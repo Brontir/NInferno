@@ -1732,9 +1732,20 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     };
     // Each stream's own context in turn (a pinned one, or Auto's steps): the first that holds an
     // eligible candidate takes its best.
+    // The request mix is priced at the context being tried: its long prompt is the context less
+    // the answer, so a step below the largest asked (Auto's 16K, 8K) prices a shorter one, never a
+    // prompt the stream cannot hold. The candidates were scored at the largest asked context; a
+    // step whose long prompt differs scores them again.
     std::optional<std::size_t> chosen;
     std::uint32_t settled = 0;
+    Task priced           = task;
     for (const std::uint32_t context : task.contexts) {
+        Task at   = task;
+        at.contexts = {context};
+        if (at.long_prompt() != priced.long_prompt()) {
+            for (Scored& s : out.scored) { s = score(model, card, ref, quant, s.candidate, at, own_context); }
+            priced = at;
+        }
         for (std::size_t i = 0; i < out.scored.size(); ++i) {
             const Scored& s = out.scored[i];
             if (!eligible(s) || s.own_context < context) { continue; }
@@ -1770,7 +1781,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         activation_name(c.candidate.activations) +
         (out.by_worth ? ": the best worth on the " + std::string(generation_of(card)) +
                             " reference card (" + fixed(c.decision_seconds, 2) + " s on " +
-                            request_mix_text(task) + " there, KLD " + fixed(c.accuracy.kld, 4) + ")"
+                            request_mix_text(priced) + " there, KLD " + fixed(c.accuracy.kld, 4) + ")"
                       : ": the family's defaults (" + defaults_why + ")") +
         (out.chunk_by_speed ? "; chunk " + std::to_string(c.candidate.chunk) +
                                   ": the fastest prefill on the reference card"
@@ -1799,7 +1810,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         }
     }
     for (const Candidate& v : variants) {
-        Scored s  = score(model, card, ref, quant, v, task, own_context);
+        Scored s  = score(model, card, ref, quant, v, priced, own_context);
         s.variant = true;
         s.fits    = s.own_context >= settled;
         out.scored.push_back(std::move(s));
