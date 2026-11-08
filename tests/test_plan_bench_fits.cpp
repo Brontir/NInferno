@@ -208,6 +208,8 @@ int main() {
         if (!row.contains("flags") || !row["flags"].is_string() || !row["value"].is_number()) {
             continue;
         }
+        // Another engine's reference row (llama.cpp's own server and flags): not a start of ours.
+        if (row.value("engine", std::string("ninferno")) != "ninferno") { continue; }
         ++started;
         const Json& machine = row.at("machine");
         Setup s;
