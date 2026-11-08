@@ -1254,14 +1254,21 @@ int heuristic_w4a8(const Problem& problem, const Weight& weight, std::int32_t to
                    : k64x64;
     }
     if (w4a8_ws_wins(problem, weight)) {
-        // Q4_K and Q6_K: the classic 64 x 64 tile where its tiles cost less than the producer-warp
-        // tile's (core/w4a8_tiles.h): 129..192 and 257..320 tokens, where two 128-token tiles pad
-        // up to 63 tokens each. The sums are the same bytes.
+        // Q4_K and Q6_K: the classic 64 x 64 tile where its tiles cost less than the
+        // producer-warp tile's (core/w4a8_tiles.h): 129..192 and 257..320 tokens, where two
+        // 128-token tiles pad up to 63 tokens each. The sums are the same bytes.
         const w4a8_tiles::NarrowCost* narrow = problem.qtype == QType::GGML_Q4_K ? &w4a8_tiles::kQ4k
                                                : problem.qtype == QType::GGML_Q6_K
                                                    ? &w4a8_tiles::kQ6k
                                                    : nullptr;
-        if (narrow != nullptr &&
+        // Blackwell only: the two tiles' costs were read on the RTX 5090 and 5070 Ti (sm_120).
+        bool blackwell = false;
+        try {
+            const auto& d = device_class();
+            blackwell     = gb20x_cc(d.major, d.minor);
+        } catch (const std::exception&) {
+        }
+        if (narrow != nullptr && blackwell &&
             w4a8_tiles::narrow_wins((problem.n + rows_per_cta - 1) / rows_per_cta, tokens,
                                     sm_count(), *narrow)) {
             return k64x64;
