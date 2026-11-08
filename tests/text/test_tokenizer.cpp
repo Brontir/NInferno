@@ -374,6 +374,7 @@ bool check_unicode_tables() {
     const std::vector<Case> cases = {
 #include "pretokenizer_unicode_cases.inc"
     };
+
     // (?i) over non-ASCII literals, as tokenizers 0.23.3 matches them: U+00E9 folds with
     // U+00C9; U+A7D3 does not fold with U+A7D2, nor U+A7CF with U+A7CE (unassigned in 16).
     struct Fold {
@@ -381,6 +382,7 @@ bool check_unicode_tables() {
         std::string text;
         bool matches;
     };
+
     const std::vector<Fold> folds = {
         {R"((?i:\x{E9}))", "\xC3\x89", true},
         {R"((?i:\x{A7D3}))", "\xEA\x9F\x93", true},
