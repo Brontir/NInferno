@@ -1,4 +1,6 @@
 #include "chat/tool_calls.h"
+#include <cstdlib>
+#include <filesystem>
 #include "models/qwen3_5/frontend/frontend.h"
 #include "models/qwen3_5/frontend/resources.h"
 
@@ -2100,46 +2102,54 @@ int test_none_drop_tools_keeps_the_contract() {
 
 // The steering line goes at the end of the last tool result, not in a user turn after it: with
 // the Qwen template a new user turn moves the last-query index, and every assistant turn of the
-// agent loop since the real query then loses its reasoning (a re-prefill of the whole turn).
-int test_steering_after_tool_result_keeps_the_prefix() {
-    const Frontend frontend = make_frontend(resources(), false);
-    const auto input        = [](bool steer) {
-        ninferno::PromptInput result;
-        ninferno::ChatMessage user;
-        user.role = ninferno::ChatRole::User;
-        user.parts.push_back({.text = "list the directory"});
-        ninferno::ChatMessage assistant;
-        assistant.role              = ninferno::ChatRole::Assistant;
+// agent loop since the real query then loses its reasoning (a re-prefill of the whole turn). The
+// rendered prompt up to the end of the result's original content must be byte-identical.
+int check_steered_prefix(const fi::CompiledChatTemplate& compiled, const std::string& label) {
+    constexpr std::string_view kResult = "a.txt b.txt";
+    constexpr std::string_view kLine   = "\n\nTools are unavailable for this reply; answer in plain text.";
+    const auto render                  = [&](bool steer) {
+        fi::ChatMessage tool = chat_message(ninferno::ChatRole::Tool, std::string(kResult));
+        tool.tool_call_id    = "call_1";
+        if (steer) { tool.parts.push_back(fi::ChatPart::text_part(std::string(kLine))); }
+        fi::ChatMessage assistant = chat_message(ninferno::ChatRole::Assistant, "");
         assistant.reasoning_content = "I should call the tool.";
         assistant.tool_calls.push_back(
             {.id = "call_1", .name = "inspect", .arguments_json = R"({"path":"."})"});
-        ninferno::ChatMessage tool;
-        tool.role         = ninferno::ChatRole::Tool;
-        tool.tool_call_id = "call_1";
-        tool.parts.push_back({.text = "a.txt b.txt"});
-        if (steer) {
-            tool.parts.push_back(
-                {.text = "\n\nTools are unavailable for this reply; answer in plain text."});
-        }
-        result.messages.push_back(std::move(user));
-        result.messages.push_back(std::move(assistant));
-        result.messages.push_back(std::move(tool));
-        result.options.enable_thinking = true;
-        result.options.tool_jsons.push_back(
+        fi::ChatRenderOptions options;
+        options.enable_thinking = true;
+        options.tool_jsons.push_back(
             R"({"type":"function","function":{"name":"inspect","parameters":{"type":"object"}}})");
-        result.options.tool_calls_enabled = false;
-        return result;
+        return compiled
+            .render({chat_message(ninferno::ChatRole::User, "list the directory"),
+                     std::move(assistant), std::move(tool)},
+                    std::move(options))
+            .text;
     };
-    const auto plain   = FrontendFactory::inspect(frontend.prepare(input(false))).token_ids;
-    const auto steered = FrontendFactory::inspect(frontend.prepare(input(true))).token_ids;
-    std::size_t common = 0;
-    while (common < plain.size() && common < steered.size() && plain[common] == steered[common]) {
-        ++common;
+    const std::string plain   = render(false);
+    const std::string steered = render(true);
+    const std::size_t end     = plain.rfind(kResult);
+    if (end == std::string::npos) { return check(false, label + ": the tool result was not rendered"); }
+    const std::size_t content_end = end + kResult.size();
+    return check(steered.size() > plain.size() &&
+                     steered.compare(0, content_end, plain, 0, content_end) == 0 &&
+                     steered.find(kLine, content_end) != std::string::npos,
+                 label + ": the steering line after a tool result changed the prompt before it");
+}
+
+int test_steering_after_tool_result_keeps_the_prefix() {
+    int failures = check_steered_prefix(thinking_toggle_template(), "qwen3_6");
+    failures += check_steered_prefix(
+        fi::CompiledChatTemplate::resolve(reasoning_effort_template_source()), "qwen3_8");
+    // Other families' templates (a directory of *.jinja files, e.g. those embedded in GGUFs).
+    if (const char* directory = std::getenv("NINFERNO_TEST_TEMPLATE_DIR")) {
+        for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+            if (entry.path().extension() != ".jinja") { continue; }
+            failures += check_steered_prefix(
+                fi::CompiledChatTemplate::resolve(read_template_fixture(entry.path().string().c_str())),
+                entry.path().filename().string());
+        }
     }
-    // Only the tail after the tool result's content (its close and the generation prompt, bytes of
-    // a toy vocabulary) differs.
-    return check(steered.size() > plain.size() && common + 70 >= plain.size(),
-                 "the steering line after a tool result changed the rendered prompt before it");
+    return failures;
 }
 
 // tool_choice none: outside reasoning, a marker that begins the answer ends the turn (the model has
