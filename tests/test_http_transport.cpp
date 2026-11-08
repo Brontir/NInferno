@@ -181,14 +181,14 @@ int test_json_value_limit() {
     failures += check(parse_with(objects(1000), 1000) == "request_json_too_large",
                       "a body one value over the limit was accepted");
     failures +=
-        check(parse_with(R"({"a":1,"b":[true,null,"x"]})", 7) == "ok" &&
-                  parse_with(R"({"a":1,"b":[true,null,"x"]})", 6) == "request_json_too_large",
+        check(parse_with(R"({"a":1,"b":[true,null,"x"]})", 8) == "ok" &&
+                  parse_with(R"({"a":1,"b":[true,null,"x"]})", 7) == "request_json_too_large",
               "object keys, scalars and containers are not all counted as values");
     failures += check(parse_with("{not json", 100) != "ok" &&
                           parse_with("{not json", 100) != "request_json_too_large",
                       "invalid JSON was reported as too large");
-    // A 16 MiB body of empty objects is refused at the default limit without building them: the
-    // refusal costs about the limit, not 25 times the body.
+    // A 15 MB body of five million empty objects is refused at the default limit without building
+    // them: the refusal costs about the limit, not 25 times the body.
     const std::string big = objects(5'000'000);
     failures += check(parse_with(big, ninferno::serve::kDefaultMaxRequestJsonValues) ==
                           "request_json_too_large",
