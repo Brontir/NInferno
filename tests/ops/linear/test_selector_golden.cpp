@@ -43,10 +43,10 @@
 #include <tuple>
 #include <vector>
 #ifdef _WIN32
-#include <process.h>
+#    include <process.h>
 #else
-#include <signal.h>
-#include <unistd.h>
+#    include <signal.h>
+#    include <unistd.h>
 #endif
 
 namespace {
@@ -56,7 +56,7 @@ using namespace ninferno::test;
 namespace generic = ninferno::ops::detail::generic;
 using ops::LinearPolicy;
 
-using GoldenBoard = generic::FactsBoard;
+using GoldenBoard             = generic::FactsBoard;
 constexpr const auto& kBoards = generic::kFactsBoards;
 
 constexpr QType kFormats[] = {
@@ -224,7 +224,7 @@ struct IndexLock {
     bool held                   = false;
 
     IndexLock() {
-        const long me = own_pid();
+        const long me   = own_pid();
         long last_owner = 0;
         for (int i = 0; i < 600; ++i) {
             if (std::filesystem::create_directory(dir)) {

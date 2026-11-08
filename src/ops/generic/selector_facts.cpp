@@ -19,8 +19,8 @@
 namespace ninferno::ops::detail::generic {
 
 DeviceClass board_device_class(const FactsBoard& b, double sm_scale, double memory_scale) {
-    DeviceClass d = synthetic_device_class(b.pci_device_id, b.major, b.minor, b.sms,
-                                           b.l2_mib * kMiB, b.memory_gib * 1024 * kMiB);
+    DeviceClass d      = synthetic_device_class(b.pci_device_id, b.major, b.minor, b.sms,
+                                                b.l2_mib * kMiB, b.memory_gib * 1024 * kMiB);
     d.sm_clock_khz     = static_cast<int>(b.sm_clock_mhz * 1000 * sm_scale);
     d.memory_clock_khz = static_cast<int>(b.memory_clock_mhz * 1000 * memory_scale);
     d.memory_bus_bits  = b.bus_bits;
@@ -65,14 +65,16 @@ std::string digest_of_reads(const std::vector<RmmaFactRead>& reads) {
 
 std::string selector_facts_digest(const FactsBoard& board) {
     // The formats the register-MMA terms are verified for (has_subblock_scales).
-    constexpr QType kFormats[] = {
-        QType::GGML_Q4_K,   QType::GGML_Q5_K,    QType::GGML_Q6_K,   QType::GGML_Q3_K,
-        QType::GGML_Q2_K,   QType::GGML_IQ4_XS,  QType::GGML_IQ3_XXS, QType::GGML_IQ3_S,
-        QType::GGML_IQ2_S,  QType::GGML_IQ2_XXS, QType::GGML_IQ2_XS, QType::GGML_IQ1_S,
-        QType::GGML_IQ1_M};
+    constexpr QType kFormats[] = {QType::GGML_Q4_K,    QType::GGML_Q5_K,   QType::GGML_Q6_K,
+                                  QType::GGML_Q3_K,    QType::GGML_Q2_K,   QType::GGML_IQ4_XS,
+                                  QType::GGML_IQ3_XXS, QType::GGML_IQ3_S,  QType::GGML_IQ2_S,
+                                  QType::GGML_IQ2_XXS, QType::GGML_IQ2_XS, QType::GGML_IQ1_S,
+                                  QType::GGML_IQ1_M};
+
     struct Shape {
         std::int32_t n, k;
     };
+
     constexpr Shape kShapes[]        = {{1024, 4096}, {4096, 4096}, {17408, 5120}, {5120, 17408}};
     constexpr std::int32_t kTokens[] = {17, 32, 64, 128, 256, 1024};
     const DeviceClass device         = board_device_class(board);
