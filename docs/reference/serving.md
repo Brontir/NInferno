@@ -539,7 +539,7 @@ prefix so that a following compatible turn can reuse it.
 | `GET /health` | Engine readiness |
 | `GET /v1/models` | configured OpenAI model alias, effective `max_model_len`, and a llama.cpp-compatible `meta` object |
 | `GET /props` | llama.cpp-style server properties (model alias, context, training context, vocabulary size, slots) |
-| `GET /metrics` | Prometheus text exposition: llama.cpp's `llamacpp:*` series (prompt and generated tokens, decode rounds, busy slots, running and deferred requests) and `ninferno_reused_prompt_tokens_total`, `ninferno_requests_prefilling`, `ninferno_requests_materializing`, `ninferno_http_active_requests`, plus the info gauge `ninferno_decision_fingerprint_info{fingerprint,manifest,schema}` (value 1) |
+| `GET /metrics` | Prometheus text exposition: llama.cpp's `llamacpp:*` series (prompt and generated tokens, decode rounds, busy slots, running and deferred requests) and `ninferno_reused_prompt_tokens_total`, `ninferno_requests_prefilling`, `ninferno_requests_materializing`, `ninferno_http_active_requests`, plus the info gauges `ninferno_decision_fingerprint_info{fingerprint,manifest,schema}` and `ninferno_server_info{server_instance_id}` (value 1; the instance id is the request log's `server_instance_id`, `serve-<pid>-<start µs>`) and `process_start_time_seconds`: both change on a restart, which empties the context cache |
 | `GET /v1/models/{id}` | lookup of the configured alias, `max_model_len`, and `meta` object |
 | `POST /v1/chat/completions` | OpenAI-style chat generation |
 | `POST /v1/responses` | OpenAI Responses Core generation, state, typed Items, and SSE |

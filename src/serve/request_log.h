@@ -82,6 +82,8 @@ public:
     [[nodiscard]] const std::string& server_instance_id() const noexcept {
         return server_instance_id_;
     }
+    // When this process started serving (the time in its server_instance_id), in Unix microseconds.
+    [[nodiscard]] std::int64_t server_started_unix_us() const noexcept { return started_unix_us_; }
 
     void write_server_start(const ServeOptions& options,
                             const ninferno::EngineOptions& engine_options,
@@ -98,6 +100,7 @@ private:
     void append(std::string record);
 
     std::string path_;
+    std::int64_t started_unix_us_ = 0;
     std::string server_instance_id_;
     std::ofstream output_;
     std::mutex mutex_;
