@@ -86,9 +86,12 @@ struct PassFacts {
 // requests' turnover; and every cost that is not bytes (kernel launches, the router, attention
 // compute), which a step carries too and which this does not price.
 //
-// Checked in the PR (#570) against the two-request step in absolute time, not as a ratio: a ratio
-// weighs any addend by the share of the step the byte model covers (about half of an MoE's), so
-// a right absolute term looks twice too large in it.
+// Checked in absolute time, not as a ratio (PR #570): a ratio weighs any addend by the share of the
+// step the byte model covers (about half of an MoE's), so a right term looks twice too large in it.
+// Qwen3.5-9B on the RTX 5070 Ti, graph-level nsys step periods: f32 against f16 state is +0.036 ms
+// a step alone (model +0.057) and +0.130 ms at two requests (model +0.112): the state bytes are
+// priced right. The step itself is 11 % short (6.055 against 6.794 ms) and the second request's
+// increment 0.34 against 0.56 ms: the rest is not bytes.
 struct StreamBytes {
     double state_bytes = 0; // one request's recurrent state AND convolution window, as stored
                             // (plan_state_bytes: elements x 4 or 2, plus recurrent_conv_bytes)
