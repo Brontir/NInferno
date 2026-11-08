@@ -9,12 +9,12 @@
 // tokens, takes one CTA a SM (86-92 KiB of shared memory) and its producer warps decode the weight
 // rows and copy the activations ahead of the MMA warps, so a CTA's K step is the same for 64 and
 // for 128 tokens (RTX 5090 and 5070 Ti, Q4_K 4096 x 4096: 41.0 us at T = 64, 43.0 at 128). The
-// classic tile (64 x 64) holds 64 tokens in four warps that decode and multiply in turn: a CTA alone
-// on its SM costs `single` of a producer-warp CTA, and two CTAs resident on one SM cost `pair`
-// together (read below), so a CTA in a pair costs pair / 2 of one, more than the half that its
-// half of the tokens would give alone: the weight rows' decode is its fixed part. A call of `columns`
-// tokens takes ceil(columns / 128) token tiles of the producer-warp tile or ceil(columns / 64) of
-// the classic one; the busiest SM runs ceil(tiles / SMs) CTAs, and the call costs
+// classic tile (64 x 64) holds 64 tokens in four warps that decode and multiply in turn: a CTA
+// alone on its SM costs `single` of a producer-warp CTA, and two CTAs resident on one SM cost
+// `pair` together (read below), so a CTA in a pair costs pair / 2 of one, more than the half that
+// its half of the tokens would give alone: the weight rows' decode is its fixed part. A call of
+// `columns` tokens takes ceil(columns / 128) token tiles of the producer-warp tile or ceil(columns
+// / 64) of the classic one; the busiest SM runs ceil(tiles / SMs) CTAs, and the call costs
 //   producer-warp: that count in producer-warp CTAs,
 //   classic:       count / 2 pairs plus, for an odd count, one single CTA.
 // The classic tile wins where the producer-warp tile's token padding exceeds the pair's extra: at
@@ -38,6 +38,7 @@ inline constexpr int kNarrowTokens = 64;  // the classic tile's tokens
 struct NarrowCost {
     double single, pair;
 };
+
 inline constexpr NarrowCost kQ4k{0.98, 1.16};
 inline constexpr NarrowCost kQ6k{0.84, 1.24};
 
