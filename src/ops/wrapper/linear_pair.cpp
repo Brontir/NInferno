@@ -122,19 +122,19 @@ std::optional<ChainPrice> fused_chain(std::int32_t n_rows, std::int32_t k_in, st
 // [n,k] ones, so the shape alone describes them (the selection and the warm-up share this).
 std::optional<ChainPrice> separate_chain(std::int32_t n, std::int32_t k, std::int32_t tokens) {
     Weight w;
-    w.qtype         = QType::Q8_G32_FP16;
-    w.n             = n;
-    w.k             = k;
-    w.ndim          = 2;
-    w.shape[0]      = n;
-    w.shape[1]      = k;
+    w.qtype           = QType::Q8_G32_FP16;
+    w.n               = n;
+    w.k               = k;
+    w.ndim            = 2;
+    w.shape[0]        = n;
+    w.shape[1]        = k;
     w.padded_shape[0] = n;
     w.padded_shape[1] = k;
-    w.group         = 32;
-    w.group_size    = 32;
-    w.layout        = QuantLayout::RowSplit;
-    w.scale_dtype   = DType::FP16;
-    const auto one  = detail::linear_q8_requested_bytes(w, tokens);
+    w.group           = 32;
+    w.group_size      = 32;
+    w.layout          = QuantLayout::RowSplit;
+    w.scale_dtype     = DType::FP16;
+    const auto one    = detail::linear_q8_requested_bytes(w, tokens);
     if (!one) { return std::nullopt; }
     return ChainPrice{2.0 * *one, 2};
 }
