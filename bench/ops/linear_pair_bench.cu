@@ -168,7 +168,8 @@ Options parse_options(int argc, char** argv) {
         } else if (argument == "--help" || argument == "-h") {
             std::printf("Usage: %s --k 2048|5120 "
                         "[--tokens 1,2,... | --sweep START:END[:STEP]] "
-                        "[--execution eager|graph] [--alternative pair|separate] [--warmup N] [--repeat N] [--flush-mib N]\n",
+                        "[--execution eager|graph] [--alternative pair|separate] [--warmup N] "
+                        "[--repeat N] [--flush-mib N]\n",
                         argv[0]);
             std::exit(0);
         } else {
