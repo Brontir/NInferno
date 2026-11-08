@@ -87,6 +87,14 @@ struct LinearCandidate {
                                                              LinearPolicy policy,
                                                              std::int32_t tokens);
 
+// The bytes the CTAs of ops::linear's call request for one Q8_G32 weight at `tokens` (A16), before
+// any cache serves them (generic::route_traffic's law): the weights once for every column tile of
+// CTAs, the activation once for every row tile, the output once. Priced where the shape's own table
+// runs the call and gives its launch's tile (q8_launch_tile); nullopt where another implementation
+// runs it or the tile is not known.
+[[nodiscard]] std::optional<double> linear_q8_requested_bytes(const Weight& weight,
+                                                              std::int32_t tokens);
+
 // ops::linear_pair's implementations for one call (#310): the fused Q8 pair kernel ("fused:q8_pair",
 // its two registered geometries in the converter's RowSplit Q8_G32 layout) and the two separate
 // linear() calls ("separate", A16 as linear_pair's contract has it), each with the candidates of
@@ -100,6 +108,16 @@ struct LinearPairCandidate {
     std::string why;
     std::vector<LinearCandidate> parts;
 };
+// The bytes the CTAs of each alternative request for a call of `tokens` columns (its chain price,
+// ops/wrapper/linear_pair.cpp): the fused kernel's and the two linear() calls', nullopt where the
+// tiling of that alternative is not known (then the fused kernel keeps the call).
+struct LinearPairRequested {
+    std::optional<double> fused;
+    std::optional<double> separate;
+};
+[[nodiscard]] LinearPairRequested linear_pair_requested_bytes(const Weight& first,
+                                                              const Weight& second,
+                                                              std::int32_t tokens);
 [[nodiscard]] std::vector<LinearPairCandidate> linear_pair_candidates(const Weight& first,
                                                                       const Weight& second,
                                                                       std::int32_t tokens);

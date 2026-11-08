@@ -7,6 +7,8 @@
 #include "ops/linear_pair/q8/q8_pair_plan.h"
 
 #include <algorithm>
+#include <cmath>
+#include <optional>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -86,10 +88,57 @@ bool fused_layout(const Weight& first_weight, const Weight& second_weight) {
 // drafter geometries), the K = 2048 one only on the drafter's adjacent K/V row views of one parent
 // (q8_pair_row_views, which its dispatch requires). Every other pair runs as two linear() calls
 // with the same numerics contract.
-bool fused_pair(const Weight& first_weight, const Weight& second_weight) {
+bool fused_domain(const Weight& first_weight, const Weight& second_weight) {
     return detail::q8_pair_registered(first_weight.n, first_weight.k) &&
            fused_layout(first_weight, second_weight) &&
            (first_weight.k != 2048 || detail::q8_pair_row_views(first_weight, second_weight));
+}
+
+// The chain of each alternative for a call of `tokens` columns, by the bytes its CTAs request (the
+// law of generic::route_traffic: every column tile requests the weights again, every row tile the
+// activation, the output is written once), both weights counted. Launch counts are the chain's
+// kernels. Both alternatives read the same weight bytes from DRAM and write the same output, so
+// what tells them apart is how often the tiles re-request them and how many launches carry that.
+// No device enters: the comparison is of two tilings of one problem.
+struct ChainPrice {
+    double requested_bytes;
+    int launches;
+};
+
+std::optional<ChainPrice> fused_chain(const Weight& first_weight, std::int32_t tokens) {
+    const detail::Q8PairProblem problem{first_weight.n, first_weight.k, first_weight.k, tokens};
+    const auto geometry = detail::q8_pair_geometry(problem);
+    if (!geometry) { return std::nullopt; }
+    const double n = first_weight.n, k = first_weight.k, t = tokens;
+    const double weight_bytes = 2.0 * (n * k + n * (k / 32.0) * 2.0);
+    const double passes       = std::ceil(t / geometry->tile_cols);
+    return ChainPrice{weight_bytes * passes + k * t * 2.0 * geometry->x_row_blocks *
+                                                  geometry->launches +
+                          2.0 * n * t * 2.0,
+                      geometry->launches};
+}
+
+std::optional<ChainPrice> separate_chain(const Weight& first_weight, const Weight& second_weight,
+                                         std::int32_t tokens) {
+    const auto first  = detail::linear_q8_requested_bytes(first_weight, tokens);
+    const auto second = detail::linear_q8_requested_bytes(second_weight, tokens);
+    if (!first || !second) { return std::nullopt; }
+    return ChainPrice{*first + *second, 2};
+}
+
+// Whether the call runs the fused kernel: its domain, and then the cheaper chain where both are
+// priced. The fused kernel's schedule can be the two single-weight launches again with a narrower
+// tile (K = 5120 up to 85 columns: 8 rows by 4 columns), re-requesting the weights more often than
+// the shape's own table does; a tie keeps the fused kernel (one launch where it fuses).
+bool fused_pair(const Weight& first_weight, const Weight& second_weight, std::int32_t tokens) {
+    if (!fused_domain(first_weight, second_weight)) { return false; }
+    const auto fused = fused_chain(first_weight, tokens);
+    const auto separate = separate_chain(first_weight, second_weight, tokens);
+    if (!fused || !separate) { return true; }
+    if (separate->requested_bytes != fused->requested_bytes) {
+        return fused->requested_bytes < separate->requested_bytes;
+    }
+    return fused->launches <= separate->launches;
 }
 
 void require_same_logical_shape(const Weight& first_weight, const Weight& second_weight) {
@@ -103,16 +152,30 @@ void require_same_logical_shape(const Weight& first_weight, const Weight& second
 
 namespace detail {
 
+LinearPairRequested linear_pair_requested_bytes(const Weight& first, const Weight& second,
+                                                std::int32_t tokens) {
+    LinearPairRequested out;
+    if (tokens <= 0 || !fused_domain(first, second)) { return out; }
+    if (const auto c = fused_chain(first, tokens)) { out.fused = c->requested_bytes; }
+    if (const auto c = separate_chain(first, second, tokens)) { out.separate = c->requested_bytes; }
+    return out;
+}
+
 std::vector<LinearPairCandidate> linear_pair_candidates(const Weight& first, const Weight& second,
                                                         std::int32_t tokens) {
     using Status = LinearCandidate::Status;
     if (tokens <= 0) { throw std::invalid_argument("linear_pair candidates: T must be positive"); }
     // As linear_pair runs the call: the fused kernel where it applies, else the two calls, which
     // need one shape (linear_pair refuses another).
-    const bool fused = fused_pair(first, second);
+    const bool domain = fused_domain(first, second);
+    const bool fused  = domain && fused_pair(first, second, tokens);
     const bool same  = first.n > 0 && first.k > 0 && first.n == second.n && first.k == second.k;
     LinearPairCandidate kernel{"fused:q8_pair", fused ? Status::Selected : Status::Unavailable, "", {}};
-    if (!fused) {
+    if (!fused && domain) {
+        // In the kernel's domain, and its chain is dearer than the shape's own launches.
+        kernel.status = Status::Dominated;
+        kernel.why    = "the fused chain requests more bytes than the two linear() calls";
+    } else if (!fused) {
         kernel.why = !same ? "the two weights must share one [N,K] shape"
                      : !q8_pair_registered(first.n, first.k) ? "no fused kernel for this [N,K]"
                      : !fused_layout(first, second)
@@ -161,7 +224,9 @@ std::size_t linear_pair_workspace_capacity_bytes(const Weight& first_weight,
     if (min_tokens <= 0 || max_tokens < min_tokens) {
         throw std::invalid_argument("linear_pair: unsupported weight/column geometry");
     }
-    if (fused_pair(first_weight, second_weight)) { return 0; }
+    // Both alternatives take no caller workspace, so the width that decides between them does not
+    // matter here.
+    if (fused_domain(first_weight, second_weight)) { return 0; }
     require_same_logical_shape(first_weight, second_weight);
     // Two A16 linear() calls; the A16 form of linear() takes no caller workspace.
     return 0;
@@ -170,7 +235,7 @@ std::size_t linear_pair_workspace_capacity_bytes(const Weight& first_weight,
 void linear_pair(const Tensor& x, const Weight& first_weight, const Weight& second_weight,
                  Tensor& first_out, Tensor& second_out, cudaStream_t stream) {
     const std::int32_t cols = x.ne[1];
-    if (!fused_pair(first_weight, second_weight)) {
+    if (!fused_pair(first_weight, second_weight, cols)) {
         require_same_logical_shape(first_weight, second_weight);
         if (first_weight.k != x.ne[0]) {
             throw std::invalid_argument("linear_pair: weight K differs from input");

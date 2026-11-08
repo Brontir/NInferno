@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -88,13 +89,18 @@ int main() {
     const std::uintptr_t a = std::uintptr_t{1} << 32, b = std::uintptr_t{1} << 34;
     for (const std::int32_t t : {1, 4, 17, 512}) {
         const std::string at = " T=" + std::to_string(t);
-        // The fused kernel's geometry: it runs; the separate calls stay listed, not taken.
+        // The fused kernel's geometry: the chain with fewer requested bytes runs (a tie keeps the
+        // fused kernel); the other stays listed, not taken.
         {
             const Described f(QType::Q8_G32_FP16, 1024, 5120, a), s(QType::Q8_G32_FP16, 1024, 5120, b);
             const auto c = ops::detail::linear_pair_candidates(f.weight, s.weight, t);
-            check(c.size() == 2 && c[0].id == "fused:q8_pair" && c[0].status == Status::Selected &&
-                      c[1].id == "separate" && c[1].status == Status::Inadmissible &&
-                      c[1].why == "fused" && c[1].parts.size() == 4,
+            const auto r = ops::detail::linear_pair_requested_bytes(f.weight, s.weight, t);
+            const bool fused = !(r.fused && r.separate) || *r.fused <= *r.separate;
+            check(c.size() == 2 && c[0].id == "fused:q8_pair" &&
+                      c[0].status == (fused ? Status::Selected : Status::Dominated) &&
+                      c[1].id == "separate" &&
+                      c[1].status == (fused ? Status::Inadmissible : Status::Selected) &&
+                      c[1].parts.size() == 4,
                   "1024x5120 Q8:" + describe(c) + at);
         }
         // Another shape: no fused kernel; the two calls run, each with its own candidates.
@@ -132,7 +138,10 @@ int main() {
         {
             const Rows f(6144, 2048, 4096, a), s(f, 5120);
             const auto c = ops::detail::linear_pair_candidates(f.weight, s.weight, t);
-            check(c.size() == 2 && c[0].status == Status::Selected && c[1].status == Status::Inadmissible,
+            const auto r = ops::detail::linear_pair_requested_bytes(f.weight, s.weight, t);
+            const bool fused = !(r.fused && r.separate) || *r.fused <= *r.separate;
+            check(c.size() == 2 && c[0].status == (fused ? Status::Selected : Status::Dominated) &&
+                      c[1].status == (fused ? Status::Inadmissible : Status::Selected),
                   "1024x2048 Q8, K/V row views:" + describe(c) + at);
         }
         // A fragment-order pair: linear() refuses each weight, so neither path runs.
@@ -150,6 +159,21 @@ int main() {
             const auto c = ops::detail::linear_pair_candidates(f.weight, s.weight, t);
             check(c.size() == 2 && c[0].status != Status::Selected && c[1].status == Status::Unavailable,
                   "two shapes:" + describe(c) + at);
+        }
+    }
+    // The chain prices over the widths, for the record (MB the CTAs request; * the chain that runs).
+    for (const std::int32_t k : {5120, 2048}) {
+        const Rows f(6144, static_cast<std::uint64_t>(k), 4096, a), s(f, 5120);
+        for (const std::int32_t t : {1, 2, 4, 8, 16, 17, 32, 48, 64, 85, 86, 96, 128, 192, 256, 512, 1024, 2048}) {
+            const auto r = ops::detail::linear_pair_requested_bytes(f.weight, s.weight, t);
+            const auto c = ops::detail::linear_pair_candidates(f.weight, s.weight, t);
+            const auto mb = [](const std::optional<double>& v) {
+                return v ? std::to_string(*v / 1.0e6) : std::string("n/a");
+            };
+            std::cout << "K=" << k << " T=" << t << " fused " << mb(r.fused) << " separate "
+                      << mb(r.separate) << " runs " << (c[0].status == Status::Selected ? "fused" : "separate")
+                      << '
+';
         }
     }
     if (failures != 0) {
