@@ -86,6 +86,14 @@ class Classify(unittest.TestCase):
                  "src/ops/volta_c.cu": ""}
         self.assertEqual(self.run_diff(["src/ops/volta_c.cu"], files)["arches"], ["sm_70"])
 
+    def test_negated_or_ranged_guards_are_all(self):
+        for cond in ('NOT NINFERNO_BUILD_ARCH STREQUAL "70"', "NINFERNO_BUILD_ARCH GREATER_EQUAL 70",
+                     'CMAKE_CUDA_ARCHITECTURES MATCHES "70;75"'):
+            with self.subTest(cond=cond):
+                files = {"src/ops/sources.cmake": f"if({cond})\n  volta_d.cu\nendif()\n",
+                         "src/ops/volta_d.cu": ""}
+                self.assertEqual(self.run_diff(["src/ops/volta_d.cu"], files)["arches"], ALL)
+
     def test_ui_serve_and_pdl_allowlists_are_all(self):
         for path in ("src/ui/catalog.cpp", "src/serve/request_log.cpp", "apps/cli/main.cpp",
                      "tests/ops/pdl_audit_sabotage_allow.txt", "tools/pdl_prewait_loads.txt"):

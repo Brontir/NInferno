@@ -76,11 +76,15 @@ INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]', re.M)
 
 
 def guard_arches(cond):
-    """The lab arches an `if(...)` condition on the build arch names, e.g. ARCH STREQUAL "70"."""
+    """Arches a guard narrows to: set() if it names none, None if it mentions the arch in any form
+    but a positive NINFERNO_BUILD_ARCH STREQUAL "<n>" (NOT, OR, GREATER, LESS, VERSION_, lists)."""
     if "ARCH" not in cond:
         return set()
-    table = (("70", "sm_70"), ("75", "sm_75"), ("86", "sm_86"), ("89", "sm_89"), ("120", "sm_120a"))
-    return {arch for num, arch in table if re.search(r"\b%s\b" % num, cond)}
+    table = {"70": "sm_70", "75": "sm_75", "86": "sm_86", "89": "sm_89", "120": "sm_120a"}
+    m = re.search(r'NINFERNO_BUILD_ARCH\s+STREQUAL\s+"?(\d+)"?', cond)
+    if m and not re.search(r"\b(NOT|OR|GREATER|LESS|VERSION_\w+)\b", cond):
+        return {table[m.group(1)]} if m.group(1) in table else None
+    return None
 
 
 class Verdict:
@@ -195,7 +199,8 @@ class Repo:
                         elif kw == "endif" and stack:
                             stack.pop()
                         continue
-                    arches = {a for g in stack for a in guard_arches(g)}
+                    guards = [guard_arches(g) for g in stack]
+                    arches = None if any(g is None for g in guards) else set().union(*guards)
                     for f in re.findall(r"[\w./${}-]+\.(?:cuh|cu|cpp|h)\b", code):
                         listing.setdefault(PurePosixPath(f).name, []).append(arches or None)
             self._listing = listing
