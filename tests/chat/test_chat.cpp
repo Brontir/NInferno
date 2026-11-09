@@ -1636,11 +1636,10 @@ int test_refusal_structural_tag() {
                           parsed.at("format").at("type") == "any_text",
                       "harmony refusal tag is free text");
     const auto& excludes = parsed.at("format").at("excludes");
-    failures += check(std::find(excludes.begin(), excludes.end(), "<|channel|>commentary") !=
-                              excludes.end() &&
-                          std::find(excludes.begin(), excludes.end(), "<|start|>assistant to") !=
-                              excludes.end(),
-                      "harmony refusal tag closes commentary and the role recipient");
+    failures += check(
+        std::find(excludes.begin(), excludes.end(), "<|channel|>commentary") != excludes.end() &&
+            std::find(excludes.begin(), excludes.end(), "<|start|>assistant to") != excludes.end(),
+        "harmony refusal tag closes commentary and the role recipient");
     return failures;
 }
 
