@@ -471,10 +471,161 @@ struct Choice {
     // drafter whose gain no measurement gives).
     bool drafter_by_worth = false;
     // The speed estimate's resolution wherever a reference exists (#301; the chunk axis needs it
-    // where the worth does not decide): the reference card's generation's measured decode error (worth_band), the speed term's uncertainty in worth (-ln seconds) units;
-    // 0 without one. An alternative that loses by no more than the smaller of it and the two's
-    // speed difference is indistinguishable (explain: within_resolution); the point estimate still
-    // decides, deterministically.
+    // where the worth does not decide): the reference card's generation's measured decode error
+    // (worth_band), the speed term's uncertainty in worth (-ln seconds) units; 0 without one. An
+    // alternative that loses by no more than the smaller of it and the two's speed difference is
+    // indistinguishable (explain: within_resolution); the point estimate decides, unless a
+    // candidate that far from the best worth is strictly more accurate
+    // (resolved_within_resolution).
+    double resolution = 0;
+    // The resolution moved the pick (#301, DECISIONS 75): among the candidates whose speed is
+    // inside `resolution` of the best worth's (the anchor), the one of strictly lower modelled KLD
+    // took it (resolve_within_resolution). False: the anchor stood. `anchor` indexes the best
+    // worth in `scored`; `anchor_worth` is its worth (what a cross-quantization band compares, so
+    // that one allowance applies, not two).
+    bool resolved_within_resolution = false;
+    std::size_t anchor              = 0;
+    double anchor_worth             = 0;
+    std::string why; // "" when the factors decide, else why the family's defaults stand
+};
+
+// A prefill's linears over a chunk of `tokens` by their tiles (DECISIONS 66): every linear's rounds
+// of tiles, an MoE's experts by jobs and its routing's gather and scatter of the tokens' rows;
+// seconds, 0 where the card's generation or the weights' GEMM has no row (a dense model: Q8_0
+// weights; an MoE: its banks' route and Q8_0 beside them).
+// `transferred` (when given) is set where a tile row rests on one card.
+[[nodiscard]] double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card,
+                                             const QuantOption& quant, double tokens,
+                                             bool* transferred = nullptr) noexcept;
+// The rest of a prefill's chunk of `tokens` beside its linears and attention (DECISIONS 66): the
+// recurrent layers' chunked scan in SM-clocks, the norms, activations' quantization, convolution
+// and gates in bytes over the DRAM rate; seconds, 0 where the generation has no census.
+[[nodiscard]] double prefill_small_seconds(const ModelFacts& model, const CardFacts& card,
+                                           double tokens) noexcept;
+// A prompt's full attention by its CTAs (DECISIONS 68): the INT8-KV, BF16-KV and FP8-KV prompt
+// kernels' and Gemma 4's grid per chunk of `chunk` tokens, each CTA's keys at its SM-clocks a key,
+// dealt to the SMs in launch order; seconds over every full layer, 0 where the kernel or the
+// generation has no row.
+[[nodiscard]] double prefill_attention_tiled_seconds(const ModelFacts& model, const CardFacts& card,
+                                                     KvCacheStorage kv, double prompt,
+                                                     std::uint32_t chunk,
+                                                     bool* transferred = nullptr);
+
+[[nodiscard]] std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates = {});
+// Whether the worth decides the KV codec and the activations for `model` on this card: its
+// generation's factors decide and its family's switch terms rest on two cards (accuracy_decides);
+// else the family's defaults stand.
+[[nodiscard]] bool decides_switches(const ModelFacts& model, const CardFacts& card,
+                                    const Gates& gates = {});
+// Whether the worth also weighs a listing's quantizations (plan_quants, each row at its own
+// choice): the curve was measured on its family (kQuantKldFamily); else the quant rule's largest
+// stands.
+[[nodiscard]] bool weighs_quantizations(const ModelFacts& model, const CardFacts& card,
+                                        const Gates& gates = {});
+
+// What a term's KLD rests on (#299). Measured: these weights' files (a quantization) or the
+// family's own switch; Proxy: the same label's measurement on other files (another repository's
+// quantization, or files whose identity is unknown); Interpolated: the curve between measured
+// files by bits per weight; StandIn: the axis's worst measured term, or another codec's;
+// Reference: 0 by definition (a quantization's Q8_0 against itself: the curve is against Q8_0, not
+// against the original weights).
+enum class Evidence { Measured, Proxy, Interpolated, StandIn, Reference };
+
+[[nodiscard]] constexpr std::string_view evidence_name(Evidence evidence) noexcept {
+    switch (evidence) {
+    case Evidence::Measured:
+        return "measured";
+    case Evidence::Proxy:
+        return "proxy";
+    case Evidence::Interpolated:
+        return "interpolated";
+    case Evidence::StandIn:
+        return "stand-in";
+    case Evidence::Reference:
+        return "reference";
+    }
+    return "stand-in";
+}
+
+// Whether a quantization's accuracy term may decide between quantizations (#368), apart from what
+// it shows (Evidence). Direct: these files were measured at these bits (Evidence::Measured; the
+// curve's own Q8_0 file too: every term is a KLD against it, so between quantizations its 0 is
+// exact, though not an error of 0 against the original weights).
+// Transfer: a validated rule carries another quantization's measurement to them (none is
+// registered: a same label at the same bits, a family's curve or a Q8_0 reference alone is not
+// one). Estimate: a value to show (Proxy, Interpolated, StandIn, Reference). Unknown: no place on
+// the curve (unknown bits). plan_quants trades accuracy for speed only between Direct rows, and
+// only where the rule's own pick is one; elsewhere the rule's largest stands.
+enum class QualityAuthority { Direct, Transfer, Estimate, Unknown };
+
+[[nodiscard]] constexpr std::string_view quality_authority_name(QualityAuthority a) noexcept {
+    switch (a) {
+    case QualityAuthority::Direct:
+        return "direct";
+    case QualityAuthority::Transfer:
+        return "transfer";
+    case QualityAuthority::Estimate:
+        return "estimate";
+    case QualityAuthority::Unknown:
+        return "unknown";
+    }
+    return "unknown";
+}
+
+[[nodiscard]] QualityAuthority quant_authority(const ModelFacts& model, const QuantOption& quant);
+
+struct Term {
+    Axis axis;
+    std::string value;
+    double kld       = 0;
+    bool measured    = true;  // evidence == Measured
+    bool transferred = false; // measured on another family (kKldDefaultFamily, kQuantKldFamily)
+    std::string source;
+    Evidence evidence = Evidence::Measured;
+};
+
+struct Accuracy {
+    double kld = 0; // the quantization's term plus the root sum square of the switches'
+    std::vector<Term> terms;
+};
+
+[[nodiscard]] Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant,
+                                   const Candidate& candidate, const CardFacts& card);
+
+// ---- The choice.
+
+struct Scored {
+    Candidate candidate;
+    std::uint32_t own_context = 0;     // the longest context each stream holds of its own (0: none)
+    bool fits                 = false; // own_context >= the context the choice settled on
+    Speed speed;                       // on the board (an estimate to show)
+    Accuracy accuracy;
+    double seconds          = 0; // request_seconds on the board (an estimate to show)
+    double decision_seconds = 0; // request_seconds on the reference card (0: none)
+    double worth            = 0; // -ln(decision_seconds) - lambda kld (0 without a reference)
+    bool variant        = false; // a coupled storage's other value beside the chosen (not eligible)
+    std::string drafter = "plain"; // its drafter's configuration (DrafterOption::label)
+};
+
+// The own context per stream a candidate holds (the plan without the weights), 0 when none.
+using OwnContextFn = std::function<std::uint32_t(const Candidate&)>;
+
+struct Choice {
+    std::vector<Scored> scored;        // every candidate in enumeration order, then the variants
+    std::optional<std::size_t> chosen; // into scored; nullopt: nothing fits
+    std::uint32_t context = 0;         // the own context per stream the choice settled on
+    bool by_worth = false; // the worth decided the KV codec and activations (else the defaults)
+    bool chunk_by_speed = false; // an MoE's chunk was the fastest (else the default stood)
+    // The worth decided the drafter (else the profile's choice stood: no decision constants, or a
+    // drafter whose gain no measurement gives).
+    bool drafter_by_worth = false;
+    // The speed estimate's resolution wherever a reference exists (#301; the chunk axis needs it
+    // where the worth does not decide): the reference card's generation's measured decode error
+    // (worth_band), the speed term's uncertainty in worth (-ln seconds) units; 0 without one. An
+    // alternative that loses by no more than the smaller of it and the two's speed difference is
+    // indistinguishable (explain: within_resolution); the point estimate decides, unless a
+    // candidate that far from the best worth is strictly more accurate
+    // (resolved_within_resolution).
     double resolution = 0;
     // The resolution moved the pick: a candidate with the same or a better accuracy and a speed
     // inside `resolution` of the best worth's holds more context, and took it (see
@@ -510,12 +661,13 @@ struct Alternative {
 };
 [[nodiscard]] std::vector<Alternative> explain(const Choice& choice);
 
-// The tie rule inside the speed estimate's resolution (#301). `eligible` lists indices into
-// `scored` (the candidates that hold the asked context); `anchor` is the one with the best worth
-// among them. A candidate is indistinguishable from the anchor when its modelled accuracy (KLD) is
-// no worse and its request time is longer by no more than `resolution` (worth units: ln of the
-// time ratio). Among the anchor and those, the pick is the one holding the most own context per
-// stream (the cheaper memory), then the earlier in `scored`. A resolution of 0 returns `anchor`.
+// The tie rule inside the speed estimate's resolution (#301, DECISIONS 75, the order of
+// DECISIONS 60's band between quantizations). `eligible` lists indices into `scored` (the
+// candidates that hold the asked context); `anchor` is the one with the best worth among them. A
+// candidate wins only if its modelled KLD is lower than the anchor's by more than kWorthTie and its
+// request time is longer by no more than `resolution` (worth units: ln of the time ratio). Among
+// the winners the lowest KLD, then the lowest index in `scored`; none: the anchor. Context beyond
+// what was asked is headroom (DECISIONS 73) and does not count. A resolution of 0 returns `anchor`.
 [[nodiscard]] std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
                                                     const std::vector<std::size_t>& eligible,
                                                     std::size_t anchor, double resolution) noexcept;

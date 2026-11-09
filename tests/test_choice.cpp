@@ -1096,32 +1096,22 @@ void chooses_the_chunk(const json& fixture) {
         return room > 0 ? static_cast<std::uint32_t>(room / b.model.kv_bytes_per_token(c.kv)) : 0;
     };
     const ch::Choice ada = ch::choose(b.model, b.card, b.quants[0], ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), {}, task, own);
-    // 2048 is the fastest; the narrower 1024 holds more context and takes the pick exactly where
-    // its speed is inside the resolution of it (#301), else 2048 stands.
-    check(
-        ada.chosen && ada.chunk_by_speed &&
-            chosen(ada).candidate.chunk == (ada.resolved_within_resolution ? 1024U : 2048U),
-        "Ada, an MoE: chunk 2048 for a 2048-token prompt, the narrower one inside the resolution");
+    // A chunk has no accuracy term: the resolution rule never moves it (#301, DECISIONS 75).
+    check(ada.chosen && chosen(ada).candidate.chunk == 2048 && ada.chunk_by_speed &&
+              !ada.resolved_within_resolution,
+          "Ada, an MoE: chunk 2048 for a 2048-token prompt");
     int chunks = 0;
     for (const ch::Alternative& a : ch::explain(ada)) {
         if (a.axis == ch::Axis::Chunk && a.value == "4096") {
-            check(a.why_code ==
-                      (ada.resolved_within_resolution ? "within_resolution" : "tie_context"),
-                  "chunk 4096: as fast for this prompt, less context");
+            check(a.why_code == "tie_context", "chunk 4096: as fast for this prompt, less context");
             ++chunks;
         }
-        if (a.axis == ch::Axis::Chunk && (a.value == "1024" || a.value == "2048") &&
-            a.value != std::to_string(chosen(ada).candidate.chunk)) {
-            if (ada.resolved_within_resolution) {
-                check(a.why_code == "within_resolution", "the faster chunk: inside the resolution");
-            } else {
-                // Slower only: a loss outright where it is slower by more than the resolution, else
-                // indistinguishable within it (#301).
-                const double slower =
-                    std::log(a.scored->decision_seconds / chosen(ada).decision_seconds);
-                check(a.why_code == (slower > ada.resolution ? "lower_worth" : "within_resolution"),
-                      "chunk 1024: slower");
-            }
+        if (a.axis == ch::Axis::Chunk && a.value == "1024") {
+            // Slower only: a loss outright where it is slower by more than the resolution, else
+            // indistinguishable within it (#301).
+            const double slower = std::log(a.scored->decision_seconds / chosen(ada).decision_seconds);
+            check(a.why_code == (slower > ada.resolution ? "lower_worth" : "within_resolution"),
+                  "chunk 1024: slower");
             ++chunks;
         }
     }
@@ -1966,11 +1956,13 @@ void resolution_labels(const json& fixture) {
                 }
                 const double gap   = best.worth - a.scored->worth;
                 if (gap < -1e-9) {
-                    // The best worth, passed over inside the resolution for the one holding more
-                    // context.
-                    check(a.why_code == "within_resolution" && c.resolved_within_resolution,
+                    // The best worth, passed over inside the resolution for the more accurate one;
+                    // any other above the pick stays a loss.
+                    const bool anchor = a.scored == &c.scored[c.anchor];
+                    check(anchor == (a.why_code == "within_resolution") &&
+                              (!anchor || c.resolved_within_resolution),
                           name + " " + a.value +
-                              ": a higher worth loses only inside the resolution");
+                              ": a higher worth is within_resolution only as the anchor");
                     continue;
                 }
                 const double apart = std::abs(std::log(a.scored->decision_seconds / best.decision_seconds));
@@ -2255,12 +2247,11 @@ void prices_r8_issue() {
     }
 }
 
-// The tie rule inside the resolution (#301), on a constructed case: five candidates hold the
-// context. A (the best worth, 1000 tokens), B (1.5 % slower, the same accuracy, 3000 tokens), C
-// (1.5 % slower, a worse accuracy, 5000 tokens), D (5 % slower, the same accuracy, 9000 tokens),
-// E (as B, 3000 tokens, listed later). At a resolution of 2 % B is indistinguishable from A and
-// holds more context than it: B wins (not C: it gives accuracy up; not D: it is slower than the
-// resolution; not E: the listing's order decides the rest). A resolution of 0 leaves A.
+// The tie rule inside the resolution (#301, DECISIONS 75), on a constructed case. A is the best
+// worth (KLD 0.02, 1000 tokens). B: 1.5 % slower, KLD 0.01. C: as B but KLD 0.005 and slower by
+// 1.6 %. D: 5 % slower, KLD 0.001. E: as B, listed after it. F: as A in KLD and context, listed
+// before it. At a resolution of 2 % the lowest KLD inside it wins (C), not D (slower than the
+// resolution), and context decides nothing.
 void resolution_rule() {
     const auto make = [](double seconds, double kld, std::uint32_t context) {
         ch::Scored s;
@@ -2270,23 +2261,36 @@ void resolution_rule() {
         s.worth            = -std::log(seconds) - kld;
         return s;
     };
-    std::vector<ch::Scored> scored{make(1.0, 0.01, 1000), make(1.015, 0.01, 3000),
-                                   make(1.015, 0.03, 5000), make(1.05, 0.01, 9000),
-                                   make(1.015, 0.01, 3000)};
-    const std::vector<std::size_t> all{0, 1, 2, 3, 4};
-    check(ch::resolve_within_resolution(scored, all, 0, 0.02) == 1,
-          "inside the resolution: the cheaper memory");
+    const std::vector<ch::Scored> scored{make(1.0, 0.02, 1000),   make(1.015, 0.01, 1000),
+                                         make(1.016, 0.005, 500), make(1.05, 0.001, 9000),
+                                         make(1.015, 0.01, 900),  make(1.0, 0.02, 1000)};
+    const std::vector<std::size_t> all{0, 1, 2, 3, 4, 5};
+    check(ch::resolve_within_resolution(scored, all, 0, 0.02) == 2,
+          "inside the resolution: the lowest KLD");
     check(ch::resolve_within_resolution(scored, all, 0, 0) == 0, "no resolution: the best worth");
     check(ch::resolve_within_resolution(scored, all, 0, 0.01) == 0,
           "outside the resolution: the best worth");
     check(ch::resolve_within_resolution(scored, all, 0, 0.06) == 3,
           "a wider resolution reaches the 5 % one");
     check(ch::resolve_within_resolution(scored, {0, 4, 1}, 0, 0.02) == 1,
-          "equal context: the earlier index");
-    check(ch::resolve_within_resolution(scored, {0, 2}, 0, 0.02) == 0,
-          "never trades accuracy away");
-    scored[0].decision_seconds = 0;
-    check(ch::resolve_within_resolution(scored, all, 0, 0.02) == 0,
+          "equal KLD: the lower index");
+    check(ch::resolve_within_resolution(scored, {4, 1}, 4, 0.02) == 4,
+          "equal KLD to the anchor: it stays");
+    // A lower index of equal KLD and equal context must not move the pick (#507: BF16 over INT8).
+    check(ch::resolve_within_resolution(scored, {5, 0}, 0, 0.02) == 0,
+          "equal KLD and context: the anchor stays");
+    // More context alone never moves it.
+    std::vector<ch::Scored> roomy = scored;
+    roomy[1].accuracy.kld         = 0.02;
+    roomy[1].own_context          = 90000;
+    check(ch::resolve_within_resolution(roomy, {0, 1}, 0, 0.02) == 0,
+          "more context is headroom, not a reason");
+    // A NaN KLD never wins.
+    roomy[1].accuracy.kld = std::nan("");
+    check(ch::resolve_within_resolution(roomy, {0, 1}, 0, 0.02) == 0, "NaN KLD: the anchor stays");
+    std::vector<ch::Scored> none = scored;
+    none[0].decision_seconds     = 0;
+    check(ch::resolve_within_resolution(none, all, 0, 0.02) == 0,
           "no reference estimate: unchanged");
 }
 

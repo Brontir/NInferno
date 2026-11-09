@@ -1745,6 +1745,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     std::optional<std::size_t> chosen;
     std::uint32_t settled = 0;
     bool resolved         = false;
+    std::size_t anchor    = 0;
     Task priced           = task;
     for (const std::uint32_t context : task.contexts) {
         Task at     = task;
@@ -1766,6 +1767,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
             const std::size_t best = *chosen;
             chosen   = resolve_within_resolution(out.scored, holding, best, out.resolution);
             resolved = *chosen != best;
+            anchor   = best;
             settled  = context;
             break;
         }
@@ -1788,6 +1790,8 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     out.chosen                     = chosen;
     out.context                    = settled;
     out.resolved_within_resolution = resolved;
+    out.anchor                     = anchor;
+    out.anchor_worth               = out.scored[anchor].worth;
     for (Scored& s : out.scored) { s.fits = s.own_context >= settled; }
     const Scored& c = out.scored[*chosen];
     out.why =
@@ -1804,7 +1808,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
                             : "") +
         (model.drafters.empty() ? std::string() : "; speculation " + c.drafter) +
         (resolved ? "; inside the speed estimate's resolution (" + fixed(100 * out.resolution, 1) +
-                        " %) of the best worth, the one holding more context"
+                        " %) of the best worth, the more accurate one"
                   : "");
     // The coupled storages' other values beside the chosen (to explain them; never chosen).
     std::vector<Candidate> variants;
@@ -1846,12 +1850,16 @@ std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
     if (!(a.decision_seconds > 0)) { return pick; }
     for (const std::size_t i : eligible) {
         const Scored& s = scored[i];
-        if (!(s.decision_seconds > 0) || s.accuracy.kld > a.accuracy.kld + kWorthTie) { continue; }
+        // Strictly more accurate (a NaN KLD never is), and not slower than the resolution.
+        if (!(s.decision_seconds > 0) || !(s.accuracy.kld + kWorthTie < a.accuracy.kld)) {
+            continue;
+        }
         if (std::log(s.decision_seconds / a.decision_seconds) > resolution + kWorthTie) {
             continue;
         }
         const Scored& p = scored[pick];
-        if (s.own_context > p.own_context || (s.own_context == p.own_context && i < pick)) {
+        if (pick == anchor || s.accuracy.kld < p.accuracy.kld - kWorthTie ||
+            (std::abs(s.accuracy.kld - p.accuracy.kld) <= kWorthTie && i < pick)) {
             pick = i;
         }
     }
@@ -1926,13 +1934,21 @@ std::vector<Alternative> explain(const Choice& choice) {
                 alt.why_not  = axis == Axis::Chunk
                                    ? "the default chunk stands (no measured chunk shares decide here)"
                                    : "the family's default stands (no decision constants for this generation)";
-            } else if (s.worth > chosen.worth + kWorthTie) {
-                // Only the resolution rule picks a lower worth: this one is the best worth's.
+            } else if (choice.resolved_within_resolution && &s == &choice.scored[choice.anchor]) {
+                // The best worth, passed over by the resolution rule for the more accurate one.
                 alt.why_code = "within_resolution";
                 alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) +
-                              " above the chosen, but inside the speed estimate's resolution (" +
+                              " above the chosen, inside the speed estimate's resolution (" +
                               fixed(100 * choice.resolution, 1) +
-                              " % decode rms) the chosen holds more context";
+                              " % decode rms): the chosen is the more accurate (KLD " +
+                              fixed(chosen.accuracy.kld, 4) + " against " +
+                              fixed(s.accuracy.kld, 4) + ")";
+            } else if (s.worth > chosen.worth + kWorthTie) {
+                // Not the anchor, yet above the moved pick: the rule did not pass this one over.
+                alt.why_code = "lower_worth";
+                alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) +
+                              " above the chosen, which is more accurate inside the speed "
+                              "estimate's resolution";
             } else if (std::abs(s.worth - chosen.worth) <= kWorthTie &&
                        s.own_context != chosen.own_context) {
                 alt.why_code = "tie_context";
