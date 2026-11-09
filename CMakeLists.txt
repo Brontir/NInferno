@@ -53,6 +53,10 @@ add_compile_definitions($<$<NOT:$<BOOL:${NINFERNO_WITH_NVFP4}>>:NINFERNO_WITHOUT
 # (build_features, core/device_class.h), so a GPU newer than the build runs the build's paths.
 string(REGEX MATCH "^[0-9]+" NINFERNO_BUILD_ARCH "${CMAKE_CUDA_ARCHITECTURES}")
 add_compile_definitions(NINFERNO_BUILD_ARCH=${NINFERNO_BUILD_ARCH})
+# The label itself ("120a", "89"): the kernel-facts snapshot this build's kernels are checked
+# against and priced from (ops/generic/kernel_facts.h, #612).
+set(NINFERNO_BUILD_ARCH_LABEL "${CMAKE_CUDA_ARCHITECTURES}")
+add_compile_definitions(NINFERNO_BUILD_ARCH_LABEL="${NINFERNO_BUILD_ARCH_LABEL}")
 if(CMAKE_CUDA_ARCHITECTURES MATCHES "[af]$")
   add_compile_definitions(NINFERNO_BUILD_ARCH_SPECIFIC)
 endif()

@@ -1,7 +1,30 @@
 # Generic projection path: runtime-geometry kernels for every weight format. Its tuned routes come
 # from the per-GPU-class route table (src/ops/route_table.cpp, include/ninferno/ops/route_table.h).
+# The kernel-facts snapshots (#612): data/kernel_facts/sm_<arch>.txt, one per build architecture,
+# all compiled into every build (ops/generic/kernel_facts.h reads them; the tool that writes them
+# is tools/kernel_facts/kernel_facts.py). A new file is picked up at the next configure.
+file(GLOB NINFERNO_KERNEL_FACTS_FILES "${CMAKE_CURRENT_LIST_DIR}/data/kernel_facts/sm_*.txt")
+list(SORT NINFERNO_KERNEL_FACTS_FILES)
+set(NINFERNO_KERNEL_FACTS_ARRAYS "")
+set(NINFERNO_KERNEL_FACTS_ENTRIES "")
+foreach(file IN LISTS NINFERNO_KERNEL_FACTS_FILES)
+  get_filename_component(stem "${file}" NAME_WE)
+  string(REGEX REPLACE "^sm_" "" label "${stem}")
+  ninferno_embed_text("${file}" NINFERNO_KF "${stem}_text")
+  string(APPEND NINFERNO_KERNEL_FACTS_ARRAYS
+    "inline constexpr char kKernelFacts_${stem}[] = ${${stem}_text};
+")
+  string(APPEND NINFERNO_KERNEL_FACTS_ENTRIES
+    "    {\"${label}\", std::string_view{kKernelFacts_${stem}, sizeof(kKernelFacts_${stem}) - 1}},
+")
+endforeach()
+configure_file("${CMAKE_CURRENT_LIST_DIR}/embedded_kernel_facts.h.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/ops/generic/embedded_kernel_facts.h" @ONLY)
+target_include_directories(ninferno_ops PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
 ninferno_target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/generic_gemm.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/kernel_facts.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_coverage.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_workspace.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_cost.cpp"
