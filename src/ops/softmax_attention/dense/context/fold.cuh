@@ -11,7 +11,7 @@
 // p - shared (= W + B + r); the window turns its staged keys to their own positions.
 
 #include "ops/common/dflash_rope.cuh"
-#include "ops/softmax_attention/dense/context/kernel.cuh"
+#include "ops/softmax_attention/dense/context/window.cuh"
 
 namespace ninferno::ops {
 
@@ -40,26 +40,12 @@ __device__ __forceinline__ void fold_rotate_tile(__nv_bfloat16* tile, int rows, 
     }
 }
 
-// The window: the last `window` context entries, each unrotated key turned to its own position,
+// FOLD's window: the same last `window` entries, each unrotated key turned to its own position,
 // and the query block (rotated as computed).
 template <class Geometry>
-struct FoldWindowPolicy : ContextAttentionPolicy<Geometry> {
+struct FoldWindowPolicy : ContextWindowPolicy<Geometry> {
     using Geo                           = Geometry;
     static constexpr bool kRerotateKeys = true;
-    int window                          = 0;
-    int key_block                       = 32; // the kernel's tile height
-    int first                           = 0;  // the first window entry: max(length - window, 0)
-
-    // The window's tiles start at a multiple of the tile height: a tile that straddled a page
-    // boundary would read its second page's rows from the physical page after the first (the
-    // pages of a context are not adjacent), so the leading tile takes the entries below `first`
-    // too and allow_context masks them.
-    __device__ __forceinline__ int context_count(int value) const {
-        const int begin = max(value - window, 0);
-        return value - (begin / key_block) * key_block;
-    }
-
-    __device__ __forceinline__ bool allow_context(int, int key) const { return key >= first; }
 
     template <int KeyBlock, int Threads>
     __device__ __forceinline__ bool rerotate(__nv_bfloat16* k_s, int key0, int valid_keys,
@@ -214,7 +200,8 @@ __launch_bounds__(128) __global__ void context_fold_reduce_kernel(
         return tiles > 0 ? min(tiles, capacity) : 1;
     };
     float window_lse, window_value, far_lse, far_value;
-    // The window's tiles start at a multiple of the tile height (FoldWindowPolicy::context_count).
+    // The window's tiles start at a multiple of the tile height
+    // (ContextWindowPolicy::context_count).
     const int window_begin = max(length - window, 0);
     const int window_count = length - (window_begin / window_key_block) * window_key_block;
     fold_branch<Tokens, Geo>(window_acc, window_m, window_l,

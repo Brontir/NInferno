@@ -212,6 +212,24 @@ void context_softmax_attention(const Tensor& q, const Tensor& query_k, const Ten
     std::int32_t min_tokens, std::int32_t max_tokens, std::int32_t batch_size);
 
 /**
+ * context_softmax_attention over the last `window` context rows alone, either registered profile:
+ * every live query i<V attends context rows [max(L-window,0), L) and the query rows [0,V). The
+ * rows below the window are not read. With L <= window it is mathematically
+ * context_softmax_attention (the kernel splits differ, so the bytes may not). Keys are cached
+ * rotated at their own positions, as for the plain op. window > 0.
+ */
+void context_window_attention(const Tensor& q, const Tensor& query_k, const Tensor& query_v,
+                              const Tensor& context_lengths, const Tensor& valid_columns,
+                              const Tensor& table_rows, AttentionHeadGeometry geometry, float scale,
+                              std::int32_t window, const PagedKVBatchLayerView& context,
+                              ContextAttentionExecutionEnvelope envelope, WorkspaceArena& workspace,
+                              Tensor& out, cudaStream_t stream);
+
+[[nodiscard]] std::size_t context_window_attention_workspace_capacity_bytes(
+    AttentionHeadGeometry geometry, ContextAttentionExecutionEnvelope envelope, std::int32_t window,
+    std::int32_t min_tokens, std::int32_t max_tokens, std::int32_t batch_size);
+
+/**
  * FOLD (arXiv 2610.20392) over the inputs of context_softmax_attention, D128 [32, 8] only, with
  * the context's keys cached UNROTATED (q and the query keys rotated at their positions, theta 1e7):
  * the last `window` context rows with each key turned to its own position, and the query rows; the

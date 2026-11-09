@@ -48,6 +48,10 @@ struct DFlashConfig {
     std::vector<float> rope_inv_freq;
     float rope_attention_scaling = 1;
     bool rope_scaled             = false; // the table is the artifact's (not rope_theta's)
+    // The rows every layer of a drafter without a sliding layer reads (the last ones): the context
+    // length its YaRN rope was scaled from, shorter than max_positions, which it was trained on
+    // and past which its acceptance falls (#549). 0: all rows.
+    std::int32_t full_window = 0;
     // q/k/v/o projections carry biases (gpt-oss's drafter); the key and value biases apply to the
     // context keys and values as well.
     bool attention_bias = false;
