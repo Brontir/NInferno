@@ -1667,7 +1667,8 @@ int test_refusal_structural_tag() {
              "<|channel|>final <|constrain|>json",
              "<|channel|>analysis<|message|>a<|end|><|start|>assistant<|channel|>commentary",
              "<|channel|>analysis<|message|>a<|end|><|start|>assistant to=functions.x",
-             "<|channel|>analysis<|message|>a<|end|><|start|>assistant<|channel|>analysis to=python",
+             "<|channel|>analysis<|message|>a<|end|><|start|>assistant<|channel|>analysis "
+             "to=python",
              "<|channel|>final<|message|>b<|start|>assistant<|channel|>commentary",
          }) {
         failures += check(!admits(bad), "refusal tag refuses: " + std::string(bad));

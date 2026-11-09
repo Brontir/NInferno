@@ -2521,12 +2521,11 @@ public:
             return OrderedJson{
                 {"type", "any_text"},
                 {"excludes",
-                 OrderedJson::array({"<|channel|>commentary", "<|channel|>analysis ",
-                                     "<|channel|>analysis\n", "<|channel|>analysis\t",
-                                     "<|channel|>final ", "<|channel|>final\n",
-                                     "<|channel|>final\t", "<|start|>assistant ",
-                                     "<|start|>assistant\n", "<|start|>assistant\t",
-                                     "<|constrain|>"})}};
+                 OrderedJson::array(
+                     {"<|channel|>commentary", "<|channel|>analysis ", "<|channel|>analysis\n",
+                      "<|channel|>analysis\t", "<|channel|>final ", "<|channel|>final\n",
+                      "<|channel|>final\t", "<|start|>assistant ", "<|start|>assistant\n",
+                      "<|start|>assistant\t", "<|constrain|>"})}};
         };
         const auto sequence = [](std::initializer_list<OrderedJson> elements) {
             return OrderedJson{{"type", "sequence"}, {"elements", OrderedJson(elements)}};
@@ -2534,19 +2533,18 @@ public:
         const auto literal = [](std::string_view value) {
             return OrderedJson{{"type", "const_string"}, {"value", std::string(value)}};
         };
-        const OrderedJson header =
-            sequence({literal("<|channel|>"),
-                      OrderedJson{{"type", "or"},
-                                  {"elements", OrderedJson::array({literal("analysis"),
-                                                                   literal("final")})}},
-                      literal(kMessage), text()});
+        const OrderedJson header = sequence(
+            {literal("<|channel|>"),
+             OrderedJson{{"type", "or"},
+                         {"elements", OrderedJson::array({literal("analysis"), literal("final")})}},
+             literal(kMessage), text()});
         const OrderedJson plain = sequence(
-            {OrderedJson{{"type", "regex"},
-                         {"pattern", "[^ \t\n<]|[ \t\n]+[^ \t\nt<]|<[^|]"}},
+            {OrderedJson{{"type", "regex"}, {"pattern", "[^ \t\n<]|[ \t\n]+[^ \t\nt<]|<[^|]"}},
              text()});
-        return OrderedJson{{"type", "structural_tag"},
-                           {"format", OrderedJson{{"type", "or"},
-                                                  {"elements", OrderedJson::array({header, plain})}}}}
+        return OrderedJson{
+            {"type", "structural_tag"},
+            {"format",
+             OrderedJson{{"type", "or"}, {"elements", OrderedJson::array({header, plain})}}}}
             .dump();
     }
     [[nodiscard]] std::string structural_tag(std::span<const ToolCallConstraintTool> tools,
