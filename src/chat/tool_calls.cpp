@@ -1078,12 +1078,99 @@ namespace {
 
 std::optional<std::size_t> json_value_end(std::string_view text, std::size_t pos);
 
+// The end of any JSON value starting at `pos` (an object or an array to its closing bracket, a
+// string to its closing quote, a number or a literal to the byte after it): nullopt while it is
+// still being written.
+std::optional<std::size_t> any_json_value_end(std::string_view text, std::size_t pos) {
+    if (pos >= text.size()) { return std::nullopt; }
+    if (text[pos] == '{' || text[pos] == '[') { return json_value_end(text, pos); }
+    if (text[pos] == '"') {
+        for (std::size_t at = pos + 1; at < text.size(); ++at) {
+            if (text[at] == '\\') {
+                ++at;
+            } else if (text[at] == '"') {
+                return at + 1;
+            }
+        }
+        return std::nullopt;
+    }
+    std::size_t at = pos;
+    while (at < text.size() && text[at] != ',' && text[at] != '}' && text[at] != ']' &&
+           !is_format_whitespace(text[at])) {
+        ++at;
+    }
+    if (at == text.size()) { return std::nullopt; }
+    return at;
+}
+
+// A bare JSON call's bytes with the keys a call object may carry before its name ("id", "type",
+// is_bare_call_object) taken out: {"id": "c", "type": "function", "name": ... reads as
+// {"name": ... for the header. nullopt while such a key's value or the comma after it is still
+// being written (the bytes may yet become a call); the bytes unchanged when they hold no such key
+// or are no JSON header.
+std::optional<std::string> without_leading_call_keys(std::string_view held,
+                                                     std::span<const std::string_view> header) {
+    if (header.empty() || header.front() != "{") { return std::string(held); }
+    // An id and a type, each short, and the whitespace around them: bytes past that hold no call
+    // header (the hold stays bounded however the bytes go on).
+    constexpr std::size_t kLongestLeadingKeys = 768;
+    if (held.size() > kLongestLeadingKeys) { return std::string(held); }
+    std::size_t pos = 0;
+    skip_format_whitespace(held, pos);
+    if (pos == held.size() || held[pos] != '{') { return std::string(held); }
+    const std::size_t open = pos++;
+    bool skipped           = false;
+    int keys               = 0;
+    for (;;) {
+        std::size_t key = pos;
+        skip_format_whitespace(held, key);
+        const std::string_view rest = held.substr(key);
+        std::string_view name;
+        for (const std::string_view candidate :
+             {std::string_view("\"id\""), std::string_view("\"type\"")}) {
+            if (rest.starts_with(candidate)) { name = candidate; }
+            // Still being written ("i of "id"): it may yet be such a key.
+            if (rest.size() >= 2 && rest.size() < candidate.size() && candidate.starts_with(rest)) {
+                return std::nullopt;
+            }
+        }
+        // Each of the two keys once: a third leading key is no call's header.
+        if (name.empty() || ++keys > 2) { break; }
+        std::size_t at = key + name.size();
+        skip_format_whitespace(held, at);
+        if (at == held.size()) { return std::nullopt; }
+        if (held[at] != ':') { break; }
+        ++at;
+        skip_format_whitespace(held, at);
+        if (at == held.size()) { return std::nullopt; }
+        // A call's id or type is short: a longer value is no call's, and the bytes go on (the
+        // hold, and the rescan of the value on every byte, stay bounded).
+        constexpr std::size_t kLongestCallKeyValue = 256;
+        const std::optional<std::size_t> end       = any_json_value_end(held, at);
+        if (!end) {
+            return held.size() - at > kLongestCallKeyValue ? std::optional(std::string(held))
+                                                           : std::nullopt;
+        }
+        std::size_t comma = *end;
+        skip_format_whitespace(held, comma);
+        if (comma == held.size()) { return std::nullopt; }
+        if (held[comma] != ',') { break; }
+        pos     = comma + 1;
+        skipped = true;
+    }
+    if (!skipped) { return std::string(held); }
+    return std::string(held.substr(0, open + 1)) + std::string(held.substr(pos));
+}
+
 // Whether held bytes begin a bare call (the syntax's call header, then a declared tool's name):
 // Complete once the name is whole (a byte after it written), Partial while the bytes can still
 // become that.
-CallStart bare_call_start(std::string_view held, std::span<const std::string_view> header,
+CallStart bare_call_start(std::string_view raw, std::span<const std::string_view> header,
                           const ToolCallOutputContract& contract) {
-    const auto cut = cut_name_after_header(held, header);
+    const std::optional<std::string> keyed = without_leading_call_keys(raw, header);
+    if (!keyed) { return CallStart::Partial; }
+    const std::string_view held = *keyed;
+    const auto cut              = cut_name_after_header(held, header);
     if (!cut) { return CallStart::No; }
     if (cut->name.empty()) { return cut->complete ? CallStart::No : CallStart::Partial; }
     if (cut->complete) {
@@ -1484,7 +1571,10 @@ std::optional<ToolCallOutputDecoder::Terminal> ToolCallOutputDecoder::finish_bar
         syntax_->bare_call_header().empty()) {
         return std::nullopt;
     }
-    const auto cut = cut_name_after_header(held_, syntax_->bare_call_header());
+    const std::optional<std::string> keyed =
+        without_leading_call_keys(held_, syntax_->bare_call_header());
+    const auto cut =
+        keyed ? cut_name_after_header(*keyed, syntax_->bare_call_header()) : std::nullopt;
     if (!cut || cut->name.empty() || cut->complete) { return std::nullopt; }
     held_.clear();
     ToolCallParseDiagnostics diagnostics;
