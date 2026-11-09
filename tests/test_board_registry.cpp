@@ -1,7 +1,8 @@
 // The board registry (core/board_registry.h), no GPU: its constexpr rows are the reference table
 // (core/data/gpu_facts.json) row for row, and each measured board (core/measured_boards.h) is the
 // figures it was spelled with before the registry held them. A change of a row that moves a
-// measured board's figures fails here, at compile time, before any distance or route moves.
+// measured board's figures fails at compile time in core/measured_boards.h (its pins), before
+// any distance or route moves; this test compares the rows at run time.
 #include "core/board_registry.h"
 #include "core/device_class.h"
 #include "core/machine_facts.h"
