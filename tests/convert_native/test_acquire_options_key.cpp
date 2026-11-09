@@ -162,6 +162,19 @@ int main() {
         check(described == "--vocab q8\n", "the key's description names the option");
     }
     {
+        // The same template under another file name: the description shows the name, the
+        // identity a kept conversion is checked by does not.
+        write_text(root / "renamed.jinja", "{{ messages }} CUSTOM");
+        cv::AcquireOptions a, b;
+        a.convert.resources.emplace_back("chat_template.jinja", root / "custom.jinja");
+        b.convert.resources.emplace_back("chat_template.jinja", root / "renamed.jinja");
+        std::string described_a, described_b, identity_a, identity_b;
+        (void)cv::content_options_key(a, &described_a, {}, &identity_a);
+        (void)cv::content_options_key(b, &described_b, {}, &identity_b);
+        check(described_a != described_b && identity_a == identity_b && identity_a.size() == 64,
+              "a renamed file keeps its identity, not its description");
+    }
+    {
         // A template is its bytes, not its path.
         write_text(root / "copy" / "custom.jinja", "{{ messages }} CUSTOM");
         cv::AcquireOptions a, b;
@@ -322,6 +335,32 @@ int main() {
         check(!cv::kept_for_options(cache, "org/base", "", other_template),
               "but not for another template");
         check(!cv::kept_for_options(cache, "org/base", "", cv::AcquireOptions{}), "nor for none");
+        // A --resource identical to the snapshot's own file converted into the default
+        // directory: with the download removed it is found there by what the conversion
+        // recorded (snapshot_resources), and only for that very file.
+        const auto own_dir = cache / "models--org--own";
+        write_text(own_dir / "refs" / "main", commit);
+        write_text(root / "own_snapshot" / "chat_template.jinja", "{{ messages }} CUSTOM");
+        cv::ConvertOptions own_convert;
+        own_convert.resources.emplace_back("chat_template.jinja", root / "custom.jinja");
+        const auto own_lines = cv::snapshot_resources(own_convert, root / "own_snapshot");
+        check(!own_lines.empty(), "the snapshot's own template is recorded as such");
+        check(cv::snapshot_resources(own_convert, {}).empty(), "none without a snapshot");
+        const auto own_artifact = own_dir / "ninferno" / commit / "m-Q8_0.dense_bf16.ninferno";
+        write_text(own_artifact, "own");
+        write_text(own_artifact.string() + ".conversion.json", "{}");
+        cv::AcquireOptions own_request;
+        own_request.convert = own_convert;
+        check(!cv::kept_for_options(cache, "org/own", "", own_request),
+              "a default conversion that recorded no snapshot resource is not taken for one");
+        write_text(own_artifact.string() + ".snapshot-resources", own_lines);
+        const auto own_found = cv::kept_for_options(cache, "org/own", "", own_request);
+        check(own_found && *own_found == own_artifact,
+              "the default conversion is found for the snapshot's own --resource");
+        cv::AcquireOptions own_other;
+        own_other.convert.resources.emplace_back("chat_template.jinja", root / "other.jinja");
+        check(!cv::kept_for_options(cache, "org/own", "", own_other),
+              "but not for another file under that role");
         // A start with a runtime template only (key "") reuses that one: no download for it.
         cv::AcquireOptions serve;
         serve.chat_template = root / "custom.jinja";

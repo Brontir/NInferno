@@ -60,16 +60,19 @@ std::string content_identity(const fs::path& path) {
     return "tree:" + sha256_hex(text);
 }
 
-std::string options_key(const std::vector<OptionPart>& parts, std::string* described) {
+std::string options_key(const std::vector<OptionPart>& parts, std::string* described,
+                        std::string* identity) {
     if (parts.empty()) { return {}; }
-    std::string identity;
+    std::string values;
     std::string text;
     for (const auto& part : parts) {
-        identity += part.name + "=" + part.value + '\n';
+        values += part.name + "=" + part.value + '\n';
         text += part.name + (part.shown.empty() ? "" : " " + part.shown) + '\n';
     }
     if (described) { *described = text; }
-    return sha256_hex(identity).substr(0, 12);
+    const std::string hash = sha256_hex(values);
+    if (identity) { *identity = hash; }
+    return hash.substr(0, 12);
 }
 
 } // namespace ninferno::convert

@@ -221,10 +221,18 @@ struct OptionsKeyContext {
 
 [[nodiscard]] std::string content_options_key(const AcquireOptions& options,
                                               std::string* described           = nullptr,
-                                              const OptionsKeyContext& context = {});
-// kept_artifact for a request: the conversion made with `options`, else, for a request with a
-// chat_template, the one made with it as the chat_template.jinja resource (a model that ships no
-// template: the key is known only after the fetch, which is what a removed download cannot do).
+                                              const OptionsKeyContext& context = {},
+                                              std::string* identity            = nullptr);
+// The --resource files of `options` that are the snapshot's own (content_options_key leaves them
+// out), as sorted "role identity" lines; none without a snapshot. A conversion records them in
+// <artifact>.snapshot-resources, so a start whose snapshot is gone still finds it.
+[[nodiscard]] std::string snapshot_resources(const ConvertOptions& options,
+                                             const std::filesystem::path& snapshot);
+// kept_artifact for a request: the conversion made with `options`; else one made without some of
+// its --resource files, where it recorded them as the snapshot's own (snapshot_resources: with the
+// snapshot gone they cannot be compared); else, for a request with a chat_template, the one made
+// with it as the chat_template.jinja resource (a model that ships no template: the key is known
+// only after the fetch, which is what a removed download cannot do).
 [[nodiscard]] std::optional<std::filesystem::path>
 kept_for_options(const std::filesystem::path& cache, const std::string& repo,
                  const std::string& revision, const AcquireOptions& options,

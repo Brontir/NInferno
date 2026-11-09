@@ -28,6 +28,7 @@
 #include <fstream>
 #include <iterator>
 #include <regex>
+#include <set>
 #include <stdexcept>
 #include <string_view>
 
@@ -699,8 +700,32 @@ std::string options_line_of(const std::string& described) {
     return line;
 }
 
+namespace {
+
+// Whether the resource `role` given as `path` is the snapshot's own file.
+bool snapshot_resource(const fs::path& snapshot, const std::string& role, const fs::path& path) {
+    std::error_code ec;
+    return !snapshot.empty() && fs::is_directory(snapshot, ec) &&
+           fs::is_regular_file(snapshot / role, ec) &&
+           content_identity(snapshot / role) == content_identity(path);
+}
+
+} // namespace
+
+std::string snapshot_resources(const ConvertOptions& options, const fs::path& snapshot) {
+    auto resources = options.resources;
+    std::sort(resources.begin(), resources.end());
+    std::string lines;
+    for (const auto& [role, path] : resources) {
+        if (snapshot_resource(snapshot, role, path)) {
+            lines += role + " " + content_identity(path) + '\n';
+        }
+    }
+    return lines;
+}
+
 std::string content_options_key(const AcquireOptions& options, std::string* described,
-                                const OptionsKeyContext& context) {
+                                const OptionsKeyContext& context, std::string* identity) {
     const ConvertOptions defaults;
     const auto& c = options.convert;
     std::vector<OptionPart> parts;
@@ -721,12 +746,7 @@ std::string content_options_key(const AcquireOptions& options, std::string* desc
     for (const auto& [role, path] : resources) {
         // A resource that is the snapshot's own file (the template the model ships) changes
         // nothing.
-        std::error_code ec;
-        if (!context.snapshot.empty() && fs::is_directory(context.snapshot, ec) &&
-            fs::is_regular_file(context.snapshot / role, ec) &&
-            content_identity(context.snapshot / role) == content_identity(path)) {
-            continue;
-        }
+        if (snapshot_resource(context.snapshot, role, path)) { continue; }
         add("--resource " + role, content_identity(path), utf8_file_name(path));
     }
     auto sources = c.sources;
@@ -764,7 +784,7 @@ std::string content_options_key(const AcquireOptions& options, std::string* desc
     std::sort(include.begin(), include.end());
     include.erase(std::unique(include.begin(), include.end()), include.end());
     for (const auto& pattern : include) { simple("--include", pattern); }
-    return options_key(parts, described);
+    return options_key(parts, described, identity);
 }
 
 std::optional<fs::path> kept_for_options(const fs::path& cache, const std::string& repo,
@@ -774,6 +794,34 @@ std::optional<fs::path> kept_for_options(const fs::path& cache, const std::strin
     if (auto kept = kept_artifact(cache, repo, revision, options.fetch.quant, c.recipe,
                                   content_options_key(options, nullptr, context))) {
         return kept;
+    }
+    // With the snapshot gone, a --resource that was its own file cannot be told from an option:
+    // the conversions made without some of them are taken where they recorded those very files.
+    const auto& resources = c.resources;
+    if (context.snapshot.empty() && !resources.empty() && resources.size() <= 8) {
+        for (std::size_t mask = 1; mask < (std::size_t{1} << resources.size()); ++mask) {
+            AcquireOptions fewer = options;
+            fewer.convert.resources.clear();
+            std::vector<std::string> dropped;
+            for (std::size_t i = 0; i < resources.size(); ++i) {
+                if ((mask >> i) & 1U) {
+                    dropped.push_back(resources[i].first + " " +
+                                      content_identity(resources[i].second));
+                } else {
+                    fewer.convert.resources.push_back(resources[i]);
+                }
+            }
+            const auto kept = kept_artifact(cache, repo, revision, options.fetch.quant, c.recipe,
+                                            content_options_key(fewer, nullptr, context));
+            if (!kept) { continue; }
+            std::ifstream in(kept->string() + ".snapshot-resources");
+            std::set<std::string> recorded;
+            for (std::string line; std::getline(in, line);) { recorded.insert(line); }
+            if (std::all_of(dropped.begin(), dropped.end(),
+                            [&](const std::string& line) { return recorded.contains(line); })) {
+                return kept;
+            }
+        }
     }
     // A model that ships no chat template is converted with the caller's as its resource, which
     // makes the conversion an optioned one only once the model is fetched (acquire_model); the
@@ -831,6 +879,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
     // later run with other options never takes it, nor replaces it.
     const bool url = spec.starts_with("http://") || spec.starts_with("https://");
     std::string options_described;
+    std::string options_identity; // what tells this list from another (options_key)
     OptionsKeyContext key_context;
     if (!url) { key_context.repo = split_spec(spec, options.fetch).first; }
     std::string variant_key = convert_options.out.empty()
@@ -1089,7 +1138,8 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
             convert_options.resources.emplace_back("chat_template.jinja", options.chat_template);
         }
         if (fs::is_directory(fetched.model)) { key_context.snapshot = fetched.model; }
-        variant_key = content_options_key(options, &options_described, key_context);
+        variant_key =
+            content_options_key(options, &options_described, key_context, &options_identity);
     }
     if (options.base_tokenizer_files) { base_tokenizer(fetched, fetch, convert_options); }
 
@@ -1192,6 +1242,21 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
     // the artifact afterwards has them missing; this carries the failure into it, so the manifest
     // lists them as failed (the next run tries again) and one warning names the cause.
     std::vector<PlannedDrafter> companion_failures;
+    // The records a later start reads beside the conversion it serves: its options for the user
+    // and their identity, and the resources it took as the snapshot's own (kept_for_options). A
+    // note: none is needed to serve it.
+    const auto record_options = [&] {
+        try {
+            if (!variant_key.empty()) {
+                write_file_atomic(out.artifact.string() + ".options", options_described);
+                write_file_atomic(out.artifact.string() + ".options-id", options_identity + '\n');
+            }
+            if (const auto own = snapshot_resources(convert_options, key_context.snapshot);
+                !own.empty()) {
+                write_file_atomic(out.artifact.string() + ".snapshot-resources", own);
+            }
+        } catch (const std::exception&) {}
+    };
     // Whatever fails here, the model itself is served as it was before drafters were planned.
     const auto attach_to_artifact = [&] {
         try {
@@ -1279,10 +1344,17 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
         if (!variant_key.empty() && complete(out.artifact, false)) {
             // The options this conversion was made with, as it recorded them: another list under
             // the same name is not this conversion.
+            // By identity (a file by its content, wherever it lies now); a conversion that recorded
+            // none (made before) by its list.
             std::ifstream recorded(out.artifact.string() + ".options");
             const std::string text((std::istreambuf_iterator<char>(recorded)),
                                    std::istreambuf_iterator<char>());
-            if (recorded && text != options_described) {
+            std::ifstream recorded_id(out.artifact.string() + ".options-id");
+            std::string id;
+            const bool other = recorded_id && std::getline(recorded_id, id)
+                                   ? id != options_identity
+                                   : recorded && text != options_described;
+            if (other) {
                 say(options, "converting " + fetched.repo +
                                  " again: its cached artifact was made with other options (" +
                                  options_line_of(text) + ")");
@@ -1314,6 +1386,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                     convert_gguf_companions(text_only, convert_options.drafter_quant);
                 }
                 attach_to_artifact();
+                record_options();
                 return out;
             }
             if (action.kind == DrafterActionKind::Reconvert) {
@@ -1357,6 +1430,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                         if (options.drafters == Drafters::Require) { throw; }
                         not_attached(options, "drafters not attached", error.what(), true);
                     }
+                    record_options();
                     return out;
                 }
                 say(options, "converting " + fetched.repo + " again: its drafter component " +
@@ -1398,11 +1472,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
         if (!options.components_given) { convert_gguf_companions(convert_options, drafter_quant); }
         attach_to_artifact();
     }
-    if (!variant_key.empty()) {
-        try {
-            write_file_atomic(out.artifact.string() + ".options", options_described);
-        } catch (const std::exception&) {} // a note for the user, not needed to reuse
-    }
+    record_options();
     return out;
 }
 

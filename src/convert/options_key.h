@@ -24,9 +24,11 @@ struct OptionPart {
 // cannot be read.
 [[nodiscard]] std::string content_identity(const std::filesystem::path& path);
 
-// "" when there is no part; else 12 hex digits of the parts' identity, and `described` (when
-// given) one "name shown" line per part.
+// "" when there is no part; else 12 hex digits of the parts' identity, `described` (when given)
+// one "name shown" line per part, and `identity` (when given) the whole SHA-256 of their values:
+// what tells two lists apart, where `described` shows file names.
 [[nodiscard]] std::string options_key(const std::vector<OptionPart>& parts,
-                                      std::string* described = nullptr);
+                                      std::string* described = nullptr,
+                                      std::string* identity  = nullptr);
 
 } // namespace ninferno::convert
