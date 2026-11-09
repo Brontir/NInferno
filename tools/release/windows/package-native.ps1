@@ -18,7 +18,7 @@
 #   -> ninferno-windows-x86_64.zip (+ .sha256), the name the release manifest lists.
 #
 # Each architecture builds in its own tree (build-windows-<arch>; NINFERNO_BUILD_ROOT moves them).
-# Needs Visual Studio 2022 Build Tools (C++), the CUDA Toolkit 13.x (12.8 for Volta: -Cuda70),
+# Needs Visual Studio 2022 Build Tools (C++), the CUDA Toolkit the release pins (facts_index.txt; 12.8 for Volta: -Cuda70),
 # CMake, Ninja and vcpkg (vcpkg.json; the first build compiles FFmpeg and curl once).
 param(
     [string]$Archs = "120a,100,90,89,86,80,75",
@@ -26,7 +26,8 @@ param(
     [string]$Version = "",
     [string]$Vcpkg = $env:VCPKG_ROOT,
     [string]$Cuda70 = "",
-    [int]$Jobs = 0
+    [int]$Jobs = 0,
+    [switch]$SkipFactsCheck
 )
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path "$PSScriptRoot\..\..\..").Path
@@ -53,10 +54,39 @@ if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
     foreach ($line in $vars) { if ($line -match '^([^=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2]) } }
 }
 
+# The release's nvcc is pinned to the patch level, as on Linux (tests/ops/linear/selector_golden/
+# facts_index.txt, #556): the register-MMA kernels' registers fix the selector's choices on RTX 30 / 50.
+$pinned = ((Get-Content "$Root\tests\ops\linear\selector_golden\facts_index.txt") | Select-String '^release ([0-9.]+)$').Matches[0].Groups[1].Value
+$nvccVersion = (& nvcc --version | Select-String 'V([0-9]+\.[0-9]+\.[0-9]+)').Matches[0].Groups[1].Value
+if ([version]$nvccVersion -ne [version]$pinned) { throw "nvcc $nvccVersion, the release is pinned to $pinned (selector goldens, #556)" }
+
 # CMake, nvcc and cl write warnings to stderr; their exit codes are checked instead.
 $ErrorActionPreference = 'Continue'
 $installed = if ($env:VCPKG_INSTALLED_DIR) { $env:VCPKG_INSTALLED_DIR } else { "$Root\vcpkg_installed" }
 $parallel = if ($Jobs -gt 0) { @('--parallel', $Jobs) } else { @('--parallel') }
+# The facts of the kernels a tree compiled, from its own engine (`ninferno-serve selector-facts`, the
+# probe the selector goldens are keyed by), against the release entries of facts_index.txt (#556).
+# It needs a GPU that runs those kernels (exit 2 without one; -SkipFactsCheck then says it was not
+# checked); any other failure stops the release.
+function Test-SelectorFacts([string]$arch, [string]$exe) {
+    $set = if ($arch -eq '86') { 'base' } else { 'full' }
+    $out = & $exe selector-facts
+    if ($LASTEXITCODE -eq 2) {
+        if ($SkipFactsCheck) { Write-Warning "the selector facts of sm_$arch were not checked (-SkipFactsCheck)"; return }
+        throw "ninferno-serve selector-facts found no GPU that runs the sm_$arch kernels on this machine"
+    }
+    if ($LASTEXITCODE -ne 0) { throw "ninferno-serve selector-facts failed for sm_$arch (exit $LASTEXITCODE)" }
+    $got = @{}
+    $out | ForEach-Object { $name, $digest = $_ -split ' '; $got[$name] = $digest }
+    $entries = @(Get-Content "$Root\tests\ops\linear\selector_golden\facts_index.txt" | Where-Object { $_ -match "^$set/\S+ \S+ \S+ $([regex]::Escape($pinned))$" })
+    if ($entries.Count -eq 0) { throw "facts_index.txt has no $set/ entries under nvcc $pinned to check sm_$arch against" }
+    foreach ($entry in $entries) {
+        $null = $entry -match "^$set/(\S+) (\S+) "
+        $board = $Matches[1]; $want = $Matches[2]
+        if ($got[$board] -ne $want) { throw "sm_$arch kernels give facts '$($got[$board])' for $board, the release entry is '$want' (selector goldens, #556)" }
+    }
+}
+
 $engines = @()
 $first = $null
 foreach ($arch in $ArchList) {
@@ -96,6 +126,7 @@ foreach ($arch in $ArchList) {
             throw "share\ninferno\llama-ui\index.html missing: configure with network access (NINFERNO_UI_CHAT)"
         }
     }
+    if ($arch -eq '86' -or $arch -eq '120a') { Test-SelectorFacts $arch "$build\apps\ninferno-serve.exe" }
     Copy-Item "$build\apps\ninferno-serve.exe" "$Stage\bin\ninferno-serve-sm$arch.exe"
     $engines += [ordered]@{ tag = $arch; arch = [int]($arch -replace '[^0-9]', ''); specific = [bool]($arch -match '[af]$'); ptx = $ptx }
 }

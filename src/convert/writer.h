@@ -17,6 +17,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <exception>
@@ -117,6 +118,29 @@ public:
     [[nodiscard]] std::filesystem::path file_path(std::size_t index) const;
     [[nodiscard]] static std::filesystem::path partial_path(const std::filesystem::path& target);
 
+    // How old a temporary's last write must be for the sweep to take it (see below).
+    static constexpr std::chrono::seconds kStaleAge{3600};
+
+    // Replaces the lock call (sys::lock) of the writer and the sweep; nullptr restores it. For
+    // tests of file systems that cannot lock.
+    static void set_lock_for_test(int (*function)(int fd, bool wait));
+
+    // Removes the hidden temporaries ".<file>.XXXXXX.tmp" of the output `filenames`, and of any of
+    // their parts ".<file>.part-NNNN.XXXXXX.tmp" (a run with other file sizes had other parts),
+    // that interrupted conversions left in `directory` (killed, out of memory, power loss; a
+    // signal or an exception removes its own). A temporary goes only when all of these hold: its
+    // writer holds no lock on it (on a file system that cannot lock at all, ENOLCK or EOPNOTSUPP,
+    // the age and name rules alone decide; every writer keeps an exclusive lock, flock or
+    // LockFileEx, until the files are published or removed: a conversion still running here, in
+    // this process or another, is refused), it was last written `min_age` ago (protection from a
+    // writer that locks nothing: an older NInferno, a network file system without shared locks, WSL
+    // on /mnt/c), and its first bytes are an artifact header or zeros. Sharing one output directory
+    // between hosts that do not share locks is not supported beyond that age rule. Returns the
+    // count.
+    static std::size_t remove_stale_temporaries(const std::filesystem::path& directory,
+                                                const std::vector<std::string>& filenames,
+                                                std::chrono::seconds min_age = kStaleAge);
+
 private:
     struct Mapping {
         std::byte* base     = nullptr;
@@ -147,6 +171,7 @@ private:
     void release_segment(std::byte* data) noexcept;
     void drain();
     void stop_writers() noexcept;
+    void release_slots() noexcept;
     void finish_direct();
     void write_file(std::size_t index, std::uint64_t offset, const void* data, std::size_t bytes);
     void store(std::size_t index, std::uint64_t offset, const std::byte* data, std::size_t bytes);
@@ -160,6 +185,11 @@ private:
     artifact::ArtifactId id_{};
     std::vector<std::uint64_t> prefixes_;
     std::vector<int> fds_;
+    // The places in the signal handler's table: each temporary's, by its index in temporary_
+    // (nullptr for a named partial, which a signal keeps, and once it is gone), and each published
+    // target's while the rest of the artifact is published.
+    std::vector<void*> temporary_slots_;
+    std::vector<void*> published_slots_;
     std::vector<Mapping> mappings_;
     std::vector<std::filesystem::path> temporary_;
     std::vector<std::filesystem::path> published_;

@@ -64,6 +64,13 @@ python3 -m tools.convert \
   that changes what is written (`--components`, `--layout`, `--vocab`, `--drafter-quant`,
   `--proposal`, `--include`, `--no-drafters`, `--max-file-bytes`, ...) converts again and
   replaces it, and an explicit `--out` is never reused. `--model` needs `--out`.
+- A conversion writes into hidden `.<file>.XXXXXX.tmp` files beside the target and renames them in
+  when it is done. Ctrl+C, SIGTERM (on Windows also Ctrl+Break and closing the console) and a
+  failure remove them. After a hard kill (SIGKILL, the out-of-memory killer, a power loss) the next
+  conversion of the same file removes what the dead run left (it says so), before it checks the
+  free space, once that file is an hour old. A temporary that a conversion still running holds is
+  never removed, and neither is one written within the hour. Two hosts converting into one shared
+  directory is not supported.
 - Before any weight is downloaded, a hub model is checked against one rule set
   (`convert/support.h`), the same one the plan without weights and the UI's search use. It reads
   only what the hub shows: the model card (task, library, gated, the hub's part of `config.json`,

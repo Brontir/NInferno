@@ -1584,6 +1584,47 @@ int test_input_item_limit() {
     failures +=
         check(api_code([&] { (void)parse_openai_responses_create_request(body, narrow); }).empty(),
               "Responses input at the message limit is accepted");
+
+    // #527: a replayed call's arguments are kept as text and parsed again by the chat template, so
+    // `[0,0,...` as arguments is measured at the request, not built there.
+    std::string many = "[";
+    for (int i = 0; i < 50; ++i) { many += i == 0 ? "0" : ",0"; }
+    many += "]";
+    const Json call_body       = Json{{"model", "qwen"},
+                                      {"input", Json::array({Json{{"type", "function_call"},
+                                                                  {"call_id", "call_1"},
+                                                                  {"name", "f"},
+                                                                  {"arguments", many}}})}};
+    RequestLimits few_values   = limits();
+    few_values.max_json_values = 40;
+    failures += check(api_code([&] {
+                          (void)parse_openai_responses_create_request(call_body, few_values);
+                      }) == "request_json_too_large",
+                      "function_call arguments over the value limit are accepted");
+    few_values.max_json_values = 60;
+    failures += check(api_code([&] {
+                          (void)parse_openai_responses_create_request(call_body, few_values);
+                      }).empty(),
+                      "function_call arguments within the value limit are refused");
+    // Each call is under the limit, all of them are over it: the template parses them together.
+    Json calls = Json::array();
+    for (int i = 0; i < 3; ++i) {
+        calls.push_back(Json{{"type", "function_call"},
+                             {"call_id", "call_" + std::to_string(i)},
+                             {"name", "f"},
+                             {"arguments", many}});
+    }
+    const Json three_calls     = Json{{"model", "qwen"}, {"input", calls}};
+    few_values.max_json_values = 120;
+    failures += check(api_code([&] {
+                          (void)parse_openai_responses_create_request(three_calls, few_values);
+                      }) == "request_json_too_large",
+                      "three calls of 51 values are accepted under a budget of 120");
+    few_values.max_json_values = 160;
+    failures += check(api_code([&] {
+                          (void)parse_openai_responses_create_request(three_calls, few_values);
+                      }).empty(),
+                      "three calls of 51 values are refused under a budget of 160");
     return failures;
 }
 

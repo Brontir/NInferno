@@ -19,6 +19,7 @@ namespace ninferno::serve {
 // clamps the request to its effective context capacity.
 inline constexpr int kDefaultMaxTokens                    = 8192;
 inline constexpr std::size_t kDefaultMaxRequestBytes      = 384ULL << 20;
+inline constexpr std::uint32_t kDefaultRequestBodyMinKibPerSec = 16;
 inline constexpr std::size_t kDefaultResponseStoreRecords = 1024;
 inline constexpr std::size_t kDefaultResponseStoreBytes   = 256ULL << 20;
 
@@ -97,6 +98,9 @@ struct ServeOptions {
     // long (a hung device wait, a wedged executor); 0 disables the check.
     std::uint32_t health_stall_ms = 60000;
     std::size_t max_request_bytes          = kDefaultMaxRequestBytes;
+    // A request body that grows slower than this over a 10-second window is cut off with a 408, so
+    // a sender that trickles it cannot hold an HTTP worker; 0 disables the check.
+    std::uint32_t request_body_min_kib_per_sec = kDefaultRequestBodyMinKibPerSec;
     std::size_t media_cache_bytes          = kDefaultMediaCacheBytes;
     std::size_t media_live_bytes           = kDefaultMediaLiveBytes;
     std::uint32_t media_preprocess_threads = 0;
@@ -173,6 +177,7 @@ struct ServeOptions {
     int default_max_tokens = kDefaultMaxTokens;
     // --max-request-messages N: a request with more messages (Responses: input Items) is a 400.
     std::size_t max_request_messages = kDefaultMaxRequestMessages;
+    std::size_t max_request_json_values = kDefaultMaxRequestJsonValues;
     bool enable_cors       = false; // send permissive CORS headers for browser UIs
     // --usage-chunk-choice: emit the streaming usage chunk with a zero-delta choice instead of the
     // OpenAI-conformant empty choices array. Strict client parsers (GitHub Copilot) reject the

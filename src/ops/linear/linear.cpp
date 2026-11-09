@@ -19,6 +19,7 @@
 #include "ops/linear_swiglu/q8/q8_linear_swiglu_plan.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -202,6 +203,30 @@ std::optional<std::string> owned_launch_id(QType qtype, std::int32_t n, std::int
     }
 }
 
+std::optional<double> linear_q8_requested_bytes(const Weight& w, std::int32_t tokens) {
+    if (w.qtype != QType::Q8_G32_FP16 || tokens <= 0 || w.n <= 0 || w.k <= 0 ||
+        w.layout == QuantLayout::GgmlFrag || !linear_shape_registered(w.qtype, w.n, w.k)) {
+        return std::nullopt;
+    }
+    // A host without a device (the host-only warm-up check) prices nothing: the fused kernel keeps
+    // the call, as wherever the separate side is unpriced.
+    const DeviceClass* device = nullptr;
+    try {
+        device = &device_class();
+    } catch (const std::runtime_error&) { return std::nullopt; }
+    if (linear_decision(w, LinearPolicy::A16Only, tokens).claim != LinearClaim::Owned) {
+        return std::nullopt;
+    }
+    const auto tile = q8_launch_tile(select_q8_a16_launch(w.n, w.k, tokens));
+    if (!tile || (tile->mma && !device->features.mma_bf16_native)) { return std::nullopt; }
+    const auto cdiv = [](double a, double b) { return std::ceil(a / b); };
+    const double n = w.n, k = w.k, t = tokens;
+    // The row-split Q8_G32 payload of the weight's own rows: codes and an FP16 scale a 32 (a row
+    // view's payload_bytes is its parent's).
+    const double weight_bytes = q8_g32_payload_bytes(n, k);
+    return weight_bytes * cdiv(t, tile->tokens) + k * t * 2.0 * cdiv(n, tile->rows) + n * t * 2.0;
+}
+
 std::vector<LinearCandidate> linear_candidates(const Weight& w, LinearPolicy policy,
                                                std::int32_t tokens) {
     using Status = LinearCandidate::Status;
@@ -375,6 +400,9 @@ bool dispatch_linear(const Tensor& x, const Weight& w, Tensor& out, LinearPolicy
     const detail::LinearDecision decision = detail::linear_decision(w, policy, x.ne[1]);
     policy                                = decision.policy;
     if (decision.claim != detail::LinearClaim::Owned && detail::generic::supports(w)) {
+        if (decision.claim == detail::LinearClaim::OwnedPrefillW4a8) {
+            detail::generic::record_projection_route("linear", "w4a8", x.ne[1], w.n, w.k);
+        }
         if (release_next) {
             return detail::generic::linear_release_next(x, w, out, policy, workspace, stream);
         }

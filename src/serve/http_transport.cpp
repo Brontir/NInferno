@@ -1,14 +1,18 @@
 #include "serve/http_transport.h"
 
+#include "serve/bounded_json.h"
 #include "serve/request_validation.h"
-#include "text/json_depth.h"
 
+#if defined(__GLIBC__)
+#    include <malloc.h>
+#endif
 #if defined(__linux__)
 #    include <netinet/tcp.h>
 #    include <sys/socket.h>
 #endif
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
@@ -22,6 +26,7 @@ constexpr int kKeepAliveIdleSeconds                = 10;
 constexpr int kKeepAliveIntervalSeconds            = 3;
 constexpr int kKeepAliveProbeCount                 = 3;
 constexpr unsigned int kTcpUserTimeoutMilliseconds = 15000;
+constexpr int kDeferAcceptSeconds                  = 3;
 
 template <class T>
 void set_socket_option(socket_t socket, int level, int option, const T& value) noexcept {
@@ -31,16 +36,52 @@ void set_socket_option(socket_t socket, int level, int option, const T& value) n
 
 } // namespace
 
-RequestJson parse_json_body(const httplib::Request& request) {
+RequestJson parse_json_body(const httplib::Request& request, const RequestLimits& limits) {
     RequestJson body;
-    try {
-        body = RequestJson::parse(request.body);
-    } catch (const std::exception&) { bad_request("request body is not valid JSON"); }
-    if (text::json_nests_deeper_than(body, kMaximumRequestJsonDepth)) {
+    switch (parse_bounded_json(request.body, limits.max_json_values, body)) {
+    case JsonTextStatus::Ok:
+        return body;
+    case JsonTextStatus::TooManyValues:
+        bad_request("request JSON holds more than " + std::to_string(limits.max_json_values) +
+                        " values (--max-request-json-values)",
+                    {}, "request_json_too_large");
+    case JsonTextStatus::TooDeep:
         bad_request("request JSON nests deeper than " + std::to_string(kMaximumRequestJsonDepth) +
                     " levels");
+    case JsonTextStatus::Invalid:
+        break;
     }
-    return body;
+    bad_request("request body is not valid JSON");
+}
+
+void release_request_memory() noexcept {
+    if (!take_large_parse_seen()) { return; }
+#if defined(__GLIBC__)
+    (void)::malloc_trim(0);
+#endif
+}
+
+bool WorkerQueue::enqueue(std::function<void()> connection) {
+    if (limit_ != 0 && in_hand_.fetch_add(1, std::memory_order_acq_rel) >= limit_) {
+        in_hand_.fetch_sub(1, std::memory_order_acq_rel);
+        return false;
+    }
+    if (limit_ == 0) { in_hand_.fetch_add(1, std::memory_order_acq_rel); }
+
+    // Counted out when the connection ends, however it ends.
+    struct Release {
+        std::atomic<std::size_t>& count;
+
+        ~Release() { count.fetch_sub(1, std::memory_order_acq_rel); }
+    };
+
+    const bool queued = pool_.enqueue([this, connection = std::move(connection)] {
+        const Release release{in_hand_};
+        connection();
+        release_request_memory();
+    });
+    if (!queued) { in_hand_.fetch_sub(1, std::memory_order_acq_rel); }
+    return queued;
 }
 
 bool client_disconnected(const httplib::Request& request) { return request.is_connection_closed(); }
@@ -86,14 +127,70 @@ bool SseTransport::poll(Clock::time_point now) {
     return false;
 }
 
+void answer_overloaded_connection(socket_t socket, const std::function<HealthReply()>& health) {
+#if defined(__linux__)
+    // The listening socket defers accept until bytes have arrived (configure_http_server_socket),
+    // so a request's first bytes are normally there; the peek costs the accepting thread no wait.
+    std::array<char, 16> head{};
+    const ssize_t peeked_bytes = ::recv(socket, head.data(), head.size(), MSG_PEEK | MSG_DONTWAIT);
+    // A connection with no bytes yet is a pooled or idle one a proxy opened ahead (Envoy, HAProxy):
+    // closing it with no response is an ordinary idle close that the proxy retries on another
+    // connection, where a 503 nobody asked for would be passed on as an error.
+    if (peeked_bytes <= 0) { return; }
+    const std::string_view line(head.data(),
+                                peeked_bytes > 0 ? static_cast<std::size_t>(peeked_bytes) : 0);
+    const bool is_health =
+        line.starts_with("GET /health") && line.size() > 11 && (line[11] == ' ' || line[11] == '?');
+    std::string status_line;
+    std::string body;
+    if (is_health) {
+        const HealthReply reply = health();
+        status_line             = reply.status == 200 ? "200 OK" : "503 Service Unavailable";
+        body                    = reply.body;
+    } else {
+        status_line = "503 Service Unavailable";
+        body = R"({"error":{"message":"the server has no free connection worker; retry shortly",)"
+               R"("type":"server_error","code":"server_busy"}})";
+    }
+    std::string answer = "HTTP/1.1 " + status_line + "\r\nContent-Type: application/json\r\n";
+    if (status_line[0] != '2') { answer += "Retry-After: 5\r\n"; }
+    answer +=
+        "Connection: close\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
+    // The socket is fresh: the answer fits its send buffer, and a full one drops it.
+    (void)::send(socket, answer.data(), answer.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
+    // Closing with unread data sends a reset that can destroy the answer at the client: read what
+    // has arrived (a small request is all here) and drop it. Bytes that arrive after this still
+    // reset the connection, as for any server that answers before it has read the request.
+    std::array<char, 4096> sink{};
+    for (std::size_t drained = 0; drained < (1u << 20);) {
+        const ssize_t got = ::recv(socket, sink.data(), sink.size(), MSG_DONTWAIT);
+        if (got <= 0) { break; }
+        drained += static_cast<std::size_t>(got);
+    }
+#else
+    (void)socket;
+    (void)health;
+#endif
+}
+
 HttpWorkerPlan plan_http_workers(std::uint32_t max_concurrency,
                                  std::uint32_t max_pending_requests) noexcept {
     // Rejections in flight and idle keep-alive sockets; threads cost only their stacks.
     constexpr std::size_t kMinimumHeadroom = 32;
     const std::size_t engine_held =
         static_cast<std::size_t>(max_concurrency) + static_cast<std::size_t>(max_pending_requests);
-    return HttpWorkerPlan{.threads    = engine_held + std::max(kMinimumHeadroom, engine_held),
-                          .max_queued = 0};
+    const std::size_t threads = engine_held + std::max(kMinimumHeadroom, engine_held);
+#if defined(__linux__)
+    // Connections that wait for a worker: half the pool again, at least 16. A bench or an SDK pool
+    // that opens a few dozen connections at once waits for workers as before, while a waiter is
+    // served within seconds when the workers turn over; the rest are refused at once
+    // (answer_overloaded_connection), which only Linux supports (it needs the request to be
+    // buffered at accept time, see configure_http_server_socket).
+    constexpr std::size_t kMinimumQueued = 16;
+    return HttpWorkerPlan{.threads = threads, .max_queued = std::max(kMinimumQueued, threads / 2)};
+#else
+    return HttpWorkerPlan{.threads = threads, .max_queued = 0};
+#endif
 }
 
 bool ExecutorStallMonitor::update(const ninferno::RuntimeStats& stats,
@@ -134,6 +231,13 @@ void configure_http_server_socket(socket_t socket) noexcept {
     set_socket_option(socket, IPPROTO_TCP, TCP_KEEPINTVL, kKeepAliveIntervalSeconds);
     set_socket_option(socket, IPPROTO_TCP, TCP_KEEPCNT, kKeepAliveProbeCount);
     set_socket_option(socket, IPPROTO_TCP, TCP_USER_TIMEOUT, kTcpUserTimeoutMilliseconds);
+    // A connection is handed to the server once its first bytes have arrived, or, if none do, when
+    // the kernel's SYN-ACK retransmit after this many seconds finds it still silent (Linux takes
+    // about 3-7 s): a client that connects and says nothing waits that long for a worker or a queue
+    // place instead of taking one at once. A client that has sent one byte is accepted at once, so
+    // a refused connection's request line is normally, not always, there to read without waiting
+    // (answer_overloaded_connection); one that is not there gets the same 503 or close.
+    set_socket_option(socket, IPPROTO_TCP, TCP_DEFER_ACCEPT, kDeferAcceptSeconds);
 #endif
 }
 

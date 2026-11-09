@@ -41,6 +41,27 @@ ServeOptions parse(std::vector<std::string> arguments) {
 int main() {
     int failures = 0;
 
+    // #526: the minimum request-body rate has a default and can be changed or turned off.
+    failures +=
+        check(parse({"ninferno-serve", "m.ninferno"}).request_body_min_kib_per_sec == 16 &&
+                  parse({"ninferno-serve", "m.ninferno", "--request-body-min-kib-per-sec", "64"})
+                          .request_body_min_kib_per_sec == 64 &&
+                  parse({"ninferno-serve", "m.ninferno", "--request-body-min-kib-per-sec", "0"})
+                          .request_body_min_kib_per_sec == 0,
+              "--request-body-min-kib-per-sec: default 16, overridable, 0 off");
+    // #527: the limit on the values of a request body's JSON has a default and can be changed.
+    failures +=
+        check(parse({"ninferno-serve", "m.ninferno"}).max_request_json_values ==
+                      kDefaultMaxRequestJsonValues &&
+                  parse({"ninferno-serve", "m.ninferno", "--max-request-json-values", "5000"})
+                          .max_request_json_values == 5000,
+              "--max-request-json-values: default, overridable");
+    bool zero_values_refused = false;
+    try {
+        (void)parse({"ninferno-serve", "m.ninferno", "--max-request-json-values", "0"});
+    } catch (const std::invalid_argument&) { zero_values_refused = true; }
+    failures += check(zero_values_refused, "--max-request-json-values 0 was accepted");
+
     // #338: a trusted router's cache hint. Off by default; a malformed hint is none.
     failures += check(!parse({"ninferno-serve", "m.ninferno"}).trust_cache_hints &&
                           parse({"ninferno-serve", "m.ninferno", "--trust-cache-hints"}).trust_cache_hints,

@@ -87,19 +87,52 @@ struct LinearCandidate {
                                                              LinearPolicy policy,
                                                              std::int32_t tokens);
 
-// ops::linear_pair's implementations for one call (#310): the fused Q8 pair kernel ("fused:q8_pair",
-// its two registered geometries in the converter's RowSplit Q8_G32 layout) and the two separate
-// linear() calls ("separate", A16 as linear_pair's contract has it), each with the candidates of
-// its two calls (`parts`: linear_candidates of each weight, the first then the second). Selected:
-// the one linear_pair runs; the fused kernel is Unavailable with what lacks where it does not
-// apply; the separate calls are Inadmissible ("fused") where the fused kernel takes the pair,
-// Unavailable where the shapes differ or linear() runs nothing for a weight.
+// The bytes the CTAs of ops::linear's call request for one Q8_G32 weight at `tokens` (A16), before
+// any cache serves them (generic::route_traffic's law): the weights once for every column tile of
+// CTAs, the activation once for every row tile, the output once. Priced where the shape's own table
+// runs the call and gives its launch's tile (q8_launch_tile); nullopt where another implementation
+// runs it, the tile is not known, or the tile is an MMA one on a device whose MMA does not take
+// BF16 operands (sm_70 emulates it on FP32 FMAs, sm_75 rounds the activations to f16): its time and
+// its numerics are then not what the bytes say. The row-split Q8_G32 payload of n x k weights: one
+// code byte a value and an FP16 scale a 32.
+[[nodiscard]] inline double q8_g32_payload_bytes(double n, double k) {
+    return n * k + n * (k / 32.0) * 2.0;
+}
+
+[[nodiscard]] std::optional<double> linear_q8_requested_bytes(const Weight& weight,
+                                                              std::int32_t tokens);
+
+// ops::linear_pair's implementations for one call (#310): the fused Q8 pair kernel
+// ("fused:q8_pair", its two registered geometries in the converter's RowSplit Q8_G32 layout) and
+// the two separate linear() calls ("separate", A16 as linear_pair's contract has it), each with the
+// candidates of its two calls (`parts`: linear_candidates of each weight, the first then the
+// second). Selected: the one linear_pair runs; the fused kernel is Unavailable with what lacks
+// where it does not apply (Dominated where it applies but its chain requests more bytes than the
+// two calls' and fuses nothing); the separate calls are Inadmissible ("fused") where the fused
+// kernel takes the pair, Unavailable where the shapes differ or linear() runs nothing for a weight.
 struct LinearPairCandidate {
     std::string id;
     LinearCandidate::Status status = LinearCandidate::Status::Unavailable;
     std::string why;
     std::vector<LinearCandidate> parts;
 };
+
+// Whether linear_pair runs its fused kernel for an [n,k] pair of the converter's Q8_G32 layout at
+// `tokens` columns, by the chain price: the one predicate linear_pair's selection and the engine's
+// warm-up share (the K = 2048 geometry additionally needs the drafter's row views, which the
+// weights decide, not the shape).
+[[nodiscard]] bool linear_pair_runs_fused(std::int32_t n, std::int32_t k, std::int32_t tokens);
+
+// The bytes the CTAs of each alternative request for a call of `tokens` columns (its chain price,
+// ops/wrapper/linear_pair.cpp): the fused kernel's and the two linear() calls', nullopt where the
+// tiling of that alternative is not known (then the fused kernel keeps the call).
+struct LinearPairRequested {
+    std::optional<double> fused;
+    std::optional<double> separate;
+};
+
+[[nodiscard]] LinearPairRequested
+linear_pair_requested_bytes(const Weight& first, const Weight& second, std::int32_t tokens);
 [[nodiscard]] std::vector<LinearPairCandidate> linear_pair_candidates(const Weight& first,
                                                                       const Weight& second,
                                                                       std::int32_t tokens);

@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 namespace ninferno::ops::detail {
 
@@ -79,6 +80,19 @@ bool q8_pair_registered(std::int32_t rows, std::int32_t k) noexcept;
 // and 5120) of one 6144-row Q8_G32 parent, which the paired kernel reads as one plane.
 bool q8_pair_row_views(const Weight& first_weight, const Weight& second_weight) noexcept;
 bool q8_pair_admits(const Q8PairProblem& problem) noexcept;
+
+// The geometry of the launches `plan` makes for a problem, for the traffic they request (the same
+// law as generic::route_traffic): each column tile of CTAs requests the weights again
+// (ceil(cols / tile_cols) passes over both), each row tile the activation (x_row_blocks times per
+// launch). nullopt for the schedules whose tile is not one column tile of a row tile (the decode
+// and split-K kernels, the exact tails).
+struct Q8PairGeometry {
+    std::int32_t launches;     // kernel launches of the call
+    std::int32_t x_row_blocks; // row tiles that each request the whole activation, per launch
+    std::int32_t tile_cols;    // token columns of one CTA
+};
+
+[[nodiscard]] std::optional<Q8PairGeometry> q8_pair_geometry(const Q8PairProblem& problem);
 Q8PairPlan q8_pair_resolve_plan(const Q8PairProblem& problem);
 
 // Whether a launch of `plan` for `problem` takes the full-tile kernel variant of its tiled

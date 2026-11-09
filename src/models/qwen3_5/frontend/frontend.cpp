@@ -1085,7 +1085,7 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
     const auto tool_call_output = chat::build_tool_call_output_contract(
         options.tool_jsons,
         (options.tool_calls_enabled || options.tool_calls_discarded) && !options.tool_jsons.empty(),
-        impl_->chat_template.conventions().tools.format);
+        impl_->chat_template.conventions().tools.format, options.tool_calls_forced);
     const std::optional<std::uint32_t> leading_boundary =
         leading_instruction_boundary(message_roles);
     std::vector<PromptCacheMarker> rendered_markers = cache_hints.markers;

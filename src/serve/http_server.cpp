@@ -280,6 +280,16 @@ httplib::Server::HandlerResponse handle_unrendered_http_error(const ServeOptions
         error.code    = "request_too_large";
         error.message = "request body exceeds the configured payload limit of " +
                         std::to_string(options.max_request_bytes) + " bytes";
+    } else if (response.status == 408) {
+        // The library stops reading a request body that grew too slowly
+        // (set_request_body_min_rate).
+        error.status  = 408;
+        error.type    = "invalid_request_error";
+        error.code    = "request_body_too_slow";
+        error.message = "the request body arrived slower than " +
+                        std::to_string(options.request_body_min_kib_per_sec) +
+                        " KiB/s; send it faster, or start the server with a lower "
+                        "--request-body-min-kib-per-sec";
     } else if (response.status == 404 && is_anthropic_path(request.path)) {
         error.status  = 404;
         error.code    = "not_found";
@@ -377,7 +387,7 @@ HttpServer::HttpServer(ServeOptions options, std::shared_ptr<spdlog::logger> log
     const HttpWorkerPlan workers =
         plan_http_workers(options_.max_concurrency, options_.max_pending_requests);
     server_.new_task_queue = [workers] {
-        return new httplib::ThreadPool(workers.threads, workers.threads, workers.max_queued);
+        return new WorkerQueue(workers.threads, workers.max_queued);
     };
     // Streamed tokens leave as small SSE writes, one per decode round: without TCP_NODELAY Nagle holds
     // a write behind the previous one's ACK (delayed up to 40 ms) on a busy loopback or LAN client
@@ -385,7 +395,34 @@ HttpServer::HttpServer(ServeOptions options, std::shared_ptr<spdlog::logger> log
     server_.set_tcp_nodelay(true);
     server_.set_socket_options(configure_http_server_socket);
     server_.set_payload_max_length(options_.max_request_bytes);
+    server_.set_overload_handler([this](socket_t socket) {
+        // Runs on the accepting thread, which must survive whatever the health answer throws.
+        try {
+            answer_overloaded_connection(socket, [this] { return health_reply(); });
+        } catch (...) {}
+    });
+    server_.set_request_body_min_rate(
+        static_cast<std::size_t>(options_.request_body_min_kib_per_sec) << 10,
+        static_cast<time_t>(kRequestBodyRateWindow.count()));
     register_routes();
+}
+
+HealthReply HttpServer::health_reply() const {
+    const bool available = service_ != nullptr && service_->is_available();
+    const char* status   = !available         ? "unavailable"
+                           : draining_.load() ? "draining"
+                           : stalled_.load()  ? "stalled"
+                                              : "ok";
+    nlohmann::json body{{"status", status}, {"active_requests", active_requests_.load()}};
+    if (service_ != nullptr) {
+        const ninferno::RuntimeStats stats = service_->runtime_stats();
+        body["running_requests"]           = stats.running_requests;
+        body["waiting_requests"]           = stats.waiting_requests;
+        body["materializing_requests"]     = stats.materializing_requests;
+    }
+    return HealthReply{.status           = std::string_view(status) == "ok" ? 200 : 503,
+                       .body             = body.dump(),
+                       .keeps_connection = std::string_view(status) == "stalled"};
 }
 
 HttpServer::RequestLifecycle::RequestLifecycle(HttpServer& owner, RequestLogContext context)
@@ -658,25 +695,13 @@ void HttpServer::register_routes() {
     // server drains after SIGTERM, and while the executor holds work without progress; the body
     // carries the load gauges.
     server_.Get("/health", [this](const httplib::Request&, httplib::Response& res) {
-        const bool available = service_ != nullptr && service_->is_available();
-        const char* status   = !available                 ? "unavailable"
-                               : draining_.load()         ? "draining"
-                               : stalled_.load()          ? "stalled"
-                                                          : "ok";
-        res.status           = std::string_view(status) == "ok" ? 200 : 503;
-        nlohmann::json body{{"status", status},
-                            {"active_requests", active_requests_.load()}};
-        if (service_ != nullptr) {
-            const ninferno::RuntimeStats stats = service_->runtime_stats();
-            body["running_requests"]         = stats.running_requests;
-            body["waiting_requests"]         = stats.waiting_requests;
-            body["materializing_requests"]   = stats.materializing_requests;
-        }
+        const HealthReply reply = health_reply();
+        res.status              = reply.status;
         if (res.status != 200) { res.set_header("Retry-After", kRetryAfterUnavailableSeconds); }
         // A stalled executor recovers in this process: a load balancer's probe keeps its
         // connection. A failed or draining server goes away.
-        res.keep_alive_after_error = std::string_view(status) == "stalled";
-        res.set_content(body.dump(), "application/json");
+        res.keep_alive_after_error = reply.keeps_connection;
+        res.set_content(reply.body, "application/json");
     });
     server_.Get("/props", [this](const httplib::Request&, httplib::Response& res) {
         res.set_content(make_props(public_model_id_, options_.max_context,
@@ -858,7 +883,8 @@ std::string HttpServer::router_report_frame(const GenerationOutcome& outcome) co
 
 RequestLimits HttpServer::request_limits() const noexcept {
     return RequestLimits{.default_max_tokens = options_.default_max_tokens,
-                         .max_messages       = options_.max_request_messages};
+                         .max_messages       = options_.max_request_messages,
+                         .max_json_values    = options_.max_request_json_values};
 }
 
 bool HttpServer::reject_while_draining(const httplib::Request& req, httplib::Response& res) {

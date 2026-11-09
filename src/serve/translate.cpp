@@ -467,6 +467,9 @@ ninferno::PromptInput to_prompt_input(const GenerationRequest& request,
     input.options.tool_calls_enabled               = request.uses_tools();
     // tool_choice none: a call written anyway is cut out of the answer, not shown as markup.
     input.options.tool_calls_discarded = !tools.empty() && !request.uses_tools();
+    input.options.tool_calls_forced =
+        request.uses_tools() &&
+        request.tool_choice.requirement != ninferno::ToolCallRequirement::Optional;
     input.options.tool_jsons.reserve(tools.size());
     for (std::size_t index = 0; index < tools.size(); ++index) {
         input.options.tool_jsons.push_back(render_tool_definition(*tools[index]));

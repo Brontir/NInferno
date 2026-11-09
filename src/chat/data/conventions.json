@@ -86,6 +86,10 @@
                 "<|call|>",
                 "<|endoftext|>"
             ],
+            "recipient_separators": [
+                " ",
+                "<|channel|>"
+            ],
             "roles": {
                 "system": "system",
                 "developer": "developer",
@@ -133,6 +137,9 @@
             "after_close": "",
             "stops": [
                 "<|eot|>"
+            ],
+            "recipient_separators": [
+                " "
             ],
             "roles": {
                 "system": "system",
