@@ -66,7 +66,10 @@ def measured_boards(path):
     """kMmqPrefillPays: [(name, cc, sms, l2, dram, pays)] from core/measured_boards.h."""
     text = Path(path).read_text(encoding="utf-8")
     consts = {}
-    for m in re.finditer(r"constexpr Board (k\w+)\{(\d+), (\d+), (\d+), ([\d.]+), ([\d.]+)\}", text):
+    for m in re.finditer(r"constexpr Board (k\w+)\{(\d+), (\d+), (\d+), ([\d.]+), ([\d.]+)"
+                         r"(?:, (true|false))?\}", text):
+        if m[7] == "true":
+            raise ValueError(f"{m[1]}: mma_slow boards are not mirrored")
         consts[m[1]] = (int(m[2]) * 10 + int(m[3]), int(m[4]), float(m[5]), float(m[6]))
     table = re.search(r"kMmqPrefillPays\[\] = \{(.*?)\};", text, re.S)
     out = []
@@ -77,7 +80,17 @@ def measured_boards(path):
 
 
 def distance(a, b):
-    """Mirror of core/device_class.cpp board_distance for two boards of one compute capability."""
+    """Mirror of core/device_class.cpp board_distance for two boards of one compute capability.
+
+    The C++ also returns infinity for other pairs (mma_slow or instruction-set mismatch,
+    sms <= 0, cross-cc boards of different FP32-accumulate kind); those are not mirrored, so they
+    raise instead of being filtered silently."""
+    if a.get("cc") is not None and b.get("cc") is not None and a["cc"] != b["cc"]:
+        raise ValueError("board_distance mirror: different compute capabilities")
+    if a.get("mma_slow", False) != b.get("mma_slow", False):
+        raise ValueError("board_distance mirror: mma_slow differs (infinite in C++)")
+    if a["sms"] <= 0 or b["sms"] <= 0:
+        raise ValueError("board_distance mirror: sms <= 0 (infinite in C++)")
     def apart(x, y):
         return abs(math.log2(x) - math.log2(y)) if x > 0 and y > 0 else 0.0
     return apart(a["sms"], b["sms"]) + apart(a["dram_gbps"], b["dram_gbps"]) \
@@ -98,10 +111,14 @@ def load_cards(routes_dir, gen_rows, facts):
     for path in sorted(Path(routes_dir).glob("*.json")):
         doc = json.loads(path.read_text(encoding="utf-8"))
         if "board" not in doc["gpu"]:
+            print(f"warning: {path.name}: no gpu.board, card skipped", file=sys.stderr)
             continue
         board = dict(doc["gpu"]["board"])
         gen = generation_of(gen_rows, board["cc"])
         clock = boost_mhz(facts, board)
+        if clock is None:
+            print(f"warning: {path.name}: no gpu_facts.json row matches board {board}; "
+                  "its ridge is unknown", file=sys.stderr)
         ridge = None
         if clock and gen[4] > 0:
             ops = gen[4] * board["sms"] * clock * 1e6
@@ -142,6 +159,7 @@ def table_audit(cards):
             ca, cb = cards[a], cards[b]
             ridges = [r for r in (ca["ridge_t"], cb["ridge_t"]) if r]
             if len(ridges) < 2:
+                print(f"warning: pair {a}/{b} skipped: a ridge is unknown", file=sys.stderr)
                 continue
             shared = sorted(set(ca["entries"]) & set(cb["entries"]),
                             key=lambda k: tuple(str(x) for x in k))
