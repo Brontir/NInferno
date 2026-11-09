@@ -1078,12 +1078,62 @@ namespace {
 
 std::optional<std::size_t> json_value_end(std::string_view text, std::size_t pos);
 
+// A bare JSON call's bytes with the keys a call object may carry before its name ("id", "type",
+// is_bare_call_object) taken out: {"id": "c", "type": "function", "name": ... reads as
+// {"name": ... for the header. nullopt while such a key's value or the comma after it is still
+// being written (the bytes may yet become a call); the bytes unchanged when they hold no such key
+// or are no JSON header.
+std::optional<std::string> without_leading_call_keys(std::string_view held,
+                                                     std::span<const std::string_view> header) {
+    if (header.empty() || header.front() != "{") { return std::string(held); }
+    std::size_t pos = 0;
+    skip_format_whitespace(held, pos);
+    if (pos == held.size() || held[pos] != '{') { return std::string(held); }
+    const std::size_t open = pos++;
+    bool skipped           = false;
+    for (;;) {
+        std::size_t key = pos;
+        skip_format_whitespace(held, key);
+        const std::string_view rest = held.substr(key);
+        std::string_view name;
+        for (const std::string_view candidate :
+             {std::string_view("\"id\""), std::string_view("\"type\"")}) {
+            if (rest.starts_with(candidate)) { name = candidate; }
+            // Still being written ("i of "id"): it may yet be such a key.
+            if (rest.size() >= 2 && rest.size() < candidate.size() && candidate.starts_with(rest)) {
+                return std::nullopt;
+            }
+        }
+        if (name.empty()) { break; }
+        std::size_t at = key + name.size();
+        skip_format_whitespace(held, at);
+        if (at == held.size()) { return std::nullopt; }
+        if (held[at] != ':') { break; }
+        ++at;
+        skip_format_whitespace(held, at);
+        if (at == held.size()) { return std::nullopt; }
+        const std::optional<std::size_t> end = json_value_end(held, at);
+        if (!end) { return std::nullopt; }
+        std::size_t comma = *end;
+        skip_format_whitespace(held, comma);
+        if (comma == held.size()) { return std::nullopt; }
+        if (held[comma] != ',') { break; }
+        pos     = comma + 1;
+        skipped = true;
+    }
+    if (!skipped) { return std::string(held); }
+    return std::string(held.substr(0, open + 1)) + std::string(held.substr(pos));
+}
+
 // Whether held bytes begin a bare call (the syntax's call header, then a declared tool's name):
 // Complete once the name is whole (a byte after it written), Partial while the bytes can still
 // become that.
-CallStart bare_call_start(std::string_view held, std::span<const std::string_view> header,
+CallStart bare_call_start(std::string_view raw, std::span<const std::string_view> header,
                           const ToolCallOutputContract& contract) {
-    const auto cut = cut_name_after_header(held, header);
+    const std::optional<std::string> keyed = without_leading_call_keys(raw, header);
+    if (!keyed) { return CallStart::Partial; }
+    const std::string_view held = *keyed;
+    const auto cut              = cut_name_after_header(held, header);
     if (!cut) { return CallStart::No; }
     if (cut->name.empty()) { return cut->complete ? CallStart::No : CallStart::Partial; }
     if (cut->complete) {
@@ -1409,7 +1459,10 @@ ToolCallOutputDecoder::finish_region(bool cut_off, std::optional<std::string_vie
         // The output ended inside a bare call before the end of its tool's name (the limit, a
         // stop string, the end of the turn): its markup is not the answer (the held bytes would
         // otherwise be published).
-        const auto cut = cut_name_after_header(held_, syntax_->bare_call_header());
+        const std::optional<std::string> keyed =
+            without_leading_call_keys(held_, syntax_->bare_call_header());
+        const auto cut =
+            keyed ? cut_name_after_header(*keyed, syntax_->bare_call_header()) : std::nullopt;
         if (cut && !cut->name.empty() && !cut->complete) {
             held_.clear();
             ToolCallParseDiagnostics diagnostics;
