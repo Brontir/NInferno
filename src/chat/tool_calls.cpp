@@ -1392,10 +1392,11 @@ ToolCallOutputDecoder::finish_region(bool cut_off, std::optional<std::string_vie
         return Terminal{.content = std::move(body), .tool_calls = {}, .diagnostics = diagnostics};
     }
 
-    if (cut_off && !saw_tool_marker_ && contract_->discarded && !emitted_text_ &&
+    if (!saw_tool_marker_ && contract_->discarded && !emitted_text_ &&
         !syntax_->bare_call_header().empty()) {
-        // The limit cut a bare call off before the end of its tool's name: its markup is not the
-        // answer (the held bytes would otherwise be published).
+        // The output ended inside a bare call before the end of its tool's name (the limit, a
+        // stop string, the end of the turn): its markup is not the answer (the held bytes would
+        // otherwise be published).
         const auto cut = cut_name_after_header(held_, syntax_->bare_call_header());
         if (cut && !cut->name.empty() && !cut->complete) {
             held_.clear();

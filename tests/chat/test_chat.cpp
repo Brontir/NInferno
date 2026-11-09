@@ -744,6 +744,10 @@ int test_bare_json_call_dropped() {
         const auto partial = run(R"({"name": "weat)", true);
         failures += check(partial.first.empty() && partial.second == 0,
                           "a partial bare call at the output limit was shown: " + partial.first);
+        const auto partial_end = run(R"({"name": "weat)", false);
+        failures += check(partial_end.first.empty() && partial_end.second == 0,
+                          "a partial bare call at the end of the turn was shown: " +
+                              partial_end.first);
         // Only name plus exactly one of arguments/parameters is a call: a tool definition, a
         // lookup result and a router object followed by text that says "arguments" are text.
         const std::string definition =
