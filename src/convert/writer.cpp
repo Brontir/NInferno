@@ -763,6 +763,7 @@ void ArtifactWriter::reopen(std::size_t index) {
     if (fd < 0) {
         throw std::runtime_error("cannot resume: partial output " + name.string() + " is missing");
     }
+    temporary_slots_.push_back(nullptr); // a named partial: a signal keeps it to resume
     fds_.push_back(fd);
     temporary_.push_back(name);
     if (static_cast<std::uint64_t>(sys::file_size(fd)) != file_length(index)) {
@@ -986,6 +987,9 @@ void ArtifactWriter::finish(const std::function<std::string()>& seal) {
         for (auto& file : direct_) {
             if (file.fd >= 0) { sys::close(file.fd); }
             file.fd = -1;
+        }
+        if (temporary_slots_.size() != temporary_.size()) {
+            throw std::logic_error("artifact writer: a temporary without its slot entry");
         }
         std::vector<std::size_t> order;
         for (std::size_t i = 1; i < temporary_.size(); ++i) { order.push_back(i); }
