@@ -71,6 +71,11 @@ add_test(NAME ninferno_selection_regret_test
 add_test(NAME ninferno_regret_collect_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_regret_collect.py)
 
+# tools/audit/affected_arches.py: a diff to the arches and stands to test, synthetic diffs, no GPU
+# (#611).
+add_test(NAME ninferno_affected_arches_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_affected_arches.py)
+
 # Repository hygiene, no GPU: only scripts (a #! first line) may be committed executable.
 add_test(NAME ninferno_file_modes_test
   COMMAND bash "${PROJECT_SOURCE_DIR}/tools/check_file_modes.sh")
