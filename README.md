@@ -304,6 +304,10 @@ Set `CMAKE_CUDA_ARCHITECTURES` to your GPU:
 |---|---|---|---|---|---|
 | RTX 50, PRO 6000 | RTX 40, L4, L40S | RTX 30, A10 | A100 | RTX 20, T4 | V100 |
 
+Kernel choices are deterministic per binary. On sm_86 (RTX 30, A10) and sm_120 (RTX 50, PRO 6000) they
+depend on the compiled kernels, so the toolkit version is pinned: the release archives are built with
+one nvcc, and the selector goldens in `tests/ops/linear/selector_golden` are kept per toolkit.
+
 The binaries land in `build/apps/`. [Building from source](docs/building.md) also covers Docker
 images and release archives.
 

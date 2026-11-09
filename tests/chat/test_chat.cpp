@@ -108,6 +108,18 @@ int test_conventions() {
                           gemma.reasoning->close == "<channel|>",
                       "gemma channel reasoning");
     failures += check(gemma.tools.format == ToolCallFormat::Gemma4, "gemma tools");
+    // The markers a refused call turn must not write: the call and tool-result markers, and the
+    // reasoning markers apart (none for a template whose answer opens with a header).
+    failures += check(gemma.non_answer_markers() ==
+                              std::vector<std::string>{"<|tool_call>", "<tool_call|>",
+                                                       "<|tool_response>", "<tool_response|>"} &&
+                          gemma.reasoning_markers() ==
+                              std::vector<std::string>{"<|channel>thought", "<channel|>"},
+                      "gemma non-answer markers");
+    failures += check(hermes.non_answer_markers() ==
+                          std::vector<std::string>{"<tool_call>", "</tool_call>", "<tool_response>",
+                                                   "</tool_response>"},
+                      "hermes non-answer markers");
 
     const auto llama = resolve_conventions(
         "<|start_header_id|>user<|end_header_id|>\n\nhi<|eot_id|>");
@@ -142,6 +154,8 @@ int test_conventions() {
                           harmony.reasoning->content_open.size() == 2,
                       "harmony analysis reasoning");
     failures += check(harmony.tools.format == ToolCallFormat::Harmony, "harmony tools");
+    failures += check(harmony.reasoning_markers().empty() && harmony.non_answer_markers().empty(),
+                      "harmony answer header shares the reasoning markers' tokens");
 
     // Generation stops come from the matched turn markup, the tool hand-off among them. A close
     // that ends one message of a reply (harmony's <|end|>) and the reasoning markers are inside a
@@ -674,7 +688,367 @@ bool grammar_accepts(
     return request.stats().complete;
 }
 
+std::string trim_ws(std::string text) {
+    const auto space = [](char byte) { return byte == ' ' || byte == '\n' || byte == '\t'; };
+    while (!text.empty() && space(text.back())) { text.pop_back(); }
+    std::size_t begin = 0;
+    while (begin < text.size() && space(text[begin])) { ++begin; }
+    return text.substr(begin);
+}
+
+// tool_choice none (a discarded contract): a model kept from the call opener may write its call as
+// bare JSON with a declared tool's name; that is cut out like the opener's call, not shown.
+int test_bare_json_call_dropped() {
+    int failures                         = 0;
+    const std::vector<std::string> tools = {tool_definition("weather", kWeatherSchema),
+                                            tool_definition("note", Json{{"type", "object"}})};
+    for (const ToolCallFormat format : {ToolCallFormat::HermesJson}) {
+        const auto discarded =
+            ninferno::chat::build_tool_call_output_contract(tools, true, format, true);
+        const std::size_t expected_calls = 1U;
+        const std::string call =
+            "{\n  \"name\": \"weather\",\n  \"arguments\": {\"city\": \"Oslo\", \"days\": 1}\n}";
+        for (const bool bytewise : {false, true}) {
+            ninferno::chat::ToolCallOutputDecoder decoder(discarded, 64);
+            const std::string text = "\n\n" + call;
+            std::string visible;
+            if (bytewise) {
+                for (const char byte : text) {
+                    visible += decoder.feed(std::string_view(&byte, 1));
+                }
+            } else {
+                visible = decoder.feed(text);
+            }
+            const auto end = decoder.finish();
+            failures += check(trim_ws(visible).empty() && trim_ws(end.content).empty() &&
+                                  end.tool_calls.size() == expected_calls &&
+                                  (expected_calls == 0 || end.tool_calls[0].name == "weather"),
+                              "a bare JSON call under none was shown or lost");
+        }
+        // Prose before it stays; the call is the same.
+        ninferno::chat::ToolCallOutputDecoder prose(discarded, 64);
+        const std::string shown = prose.feed("It is sunny.\n" + call);
+        const auto prose_end    = prose.finish();
+        failures += check(shown + prose_end.content == "It is sunny.\n" + call &&
+                              prose_end.tool_calls.empty(),
+                          "a bare JSON call after prose was cut");
+        // The output limit cut the call off: dropped, not shown as markup.
+        ninferno::chat::ToolCallOutputDecoder cut(discarded, 64);
+        const std::string cut_shown = cut.feed(call.substr(0, call.size() - 20));
+        const auto cut_end          = cut.finish(true);
+        failures += check(trim_ws(cut_shown).empty() && trim_ws(cut_end.content).empty() &&
+                              cut_end.tool_calls.empty(),
+                          "a cut-off bare JSON call was shown");
+        // JSON that is not a declared tool's call, and JSON in a request that keeps its calls
+        // (the contract not discarded), is text.
+        for (const auto& [contract_used, body] :
+             {std::pair{discarded, std::string(R"({"name": "other", "arguments": {}})")},
+              std::pair{discarded, std::string(R"({"name": "weatherx", "arguments": {}})")},
+              std::pair{discarded, std::string(R"({"id": 1, "name": "weather"})")},
+              std::pair{ninferno::chat::build_tool_call_output_contract(tools, true, format),
+                        call}}) {
+            ninferno::chat::ToolCallOutputDecoder text_only(contract_used, 64);
+            const std::string shown_text = text_only.feed(body);
+            const auto text_end          = text_only.finish();
+            failures += check(shown_text + text_end.content == body && text_end.tool_calls.empty(),
+                              "JSON that is no discarded call was cut: " + body);
+        }
+    }
+    {
+        // Only a call that begins the answer is cut; the text after it stays; an object that is no
+        // call is text; a cut-off partial call is dropped.
+        const auto discarded = ninferno::chat::build_tool_call_output_contract(
+            tools, true, ToolCallFormat::HermesJson, true);
+        const std::string call = R"({"name": "weather", "arguments": {"city": "Oslo", "days": 1}})";
+        const auto run         = [&](const std::string& text, bool cut_off) {
+            ninferno::chat::ToolCallOutputDecoder decoder(discarded, 64);
+            std::string visible;
+            for (const char byte : text) { visible += decoder.feed(std::string_view(&byte, 1)); }
+            auto end = decoder.finish(cut_off);
+            return std::pair{visible + end.content, end.tool_calls.size()};
+        };
+        const auto after = run(call + "\nThat is the call I would make.", false);
+        failures += check(after.first == "\nThat is the call I would make." && after.second == 1,
+                          "the text after a bare call was lost: " + after.first);
+        const std::string summary = "Earlier I ran " + call + " and it returned.";
+        const auto mid            = run(summary, false);
+        failures += check(mid.first == summary && mid.second == 0,
+                          "a call quoted inside a summary was cut: " + mid.first);
+        const std::string router = R"({"name": "weather", "reason": "the user asked about rain"})";
+        const auto routed        = run(router, false);
+        failures += check(routed.first == router && routed.second == 0,
+                          "an object that is no call was cut: " + routed.first);
+        const auto partial = run(R"({"name": "weat)", true);
+        failures += check(partial.first.empty() && partial.second == 0,
+                          "a partial bare call at the output limit was shown: " + partial.first);
+        const auto partial_end = run(R"({"name": "weat)", false);
+        failures +=
+            check(partial_end.first.empty() && partial_end.second == 0,
+                  "a partial bare call at the end of the turn was shown: " + partial_end.first);
+        // Only name plus exactly one of arguments/parameters is a call: a tool definition, a
+        // lookup result and a router object followed by text that says "arguments" are text.
+        const std::string definition =
+            R"({"name": "weather", "description": "City weather.", "parameters": {"type": "object"}})";
+        const auto defined = run(definition, false);
+        failures += check(defined.first == definition && defined.second == 0,
+                          "a tool definition was cut: " + defined.first);
+        const std::string lookup = R"({"name": "weather", "result": {"arguments": 1}})";
+        const auto looked        = run(lookup, false);
+        failures += check(looked.first == lookup && looked.second == 0,
+                          "an object with a nested arguments key was cut: " + looked.first);
+        const std::string routed_text = router + "\nThe arguments of the call are above.";
+        const auto routed_more        = run(routed_text, false);
+        failures += check(routed_more.first == routed_text && routed_more.second == 0,
+                          "a router object followed by text was cut: " + routed_more.first);
+        // A call cut off inside its arguments is dropped; a router object cut off is text.
+        const auto cut_call = run(call.substr(0, call.size() - 12), true);
+        failures += check(cut_call.first.empty() && cut_call.second == 0,
+                          "a bare call cut inside its arguments was shown: " + cut_call.first);
+        const auto cut_router = run(router.substr(0, router.size() - 8), true);
+        failures +=
+            check(cut_router.first == router.substr(0, router.size() - 8) && cut_router.second == 0,
+                  "a router object cut at the limit was dropped: " + cut_router.first);
+        // The text after a call streams as it comes, not at the end.
+        ninferno::chat::ToolCallOutputDecoder streaming(discarded, 64);
+        std::string live = streaming.feed(call);
+        live += streaming.feed("\nAfter the call.");
+        failures += check(live == "\nAfter the call.",
+                          "the text after a bare call waited for the end: " + live);
+        (void)streaming.finish();
+        // An unclosed call ended by EOS (not cut) is dropped as well, and a cut inside the key
+        // "arguments" itself is a call that had begun.
+        const auto unclosed = run(call.substr(0, call.size() - 12), false);
+        failures += check(unclosed.first.empty() && unclosed.second == 0,
+                          "an unclosed bare call ended by EOS was shown: " + unclosed.first);
+        const auto in_key = run(R"({"name": "weather", "argu)", true);
+        failures += check(in_key.first.empty() && in_key.second == 0,
+                          "a bare call cut inside its arguments key was shown: " + in_key.first);
+        // An object whose keys so far already rule a call out stays text when cut, as complete:
+        // another key before the arguments, both argument keys, or another key being written.
+        for (const std::string cut :
+             {std::string(R"({"name": "weather", "reason": "rain", "arguments": {)"),
+              std::string(R"({"name": "weather", "arguments": {}, "parameters": {)"),
+              std::string(R"({"name": "weather", "arguments": {}, "rea)")}) {
+            for (const bool limit : {true, false}) {
+                const auto kept = run(cut, limit);
+                failures += check(kept.first == cut && kept.second == 0,
+                                  "a cut object proven not a call was dropped: " + kept.first);
+            }
+        }
+        // A cut right after the opening quote of the next key is a call that has begun; a value
+        // string at the end (an "id" being written) is not a key.
+        const auto empty_key = run(R"({"name": "weather", ")", true);
+        failures += check(empty_key.first.empty() && empty_key.second == 0,
+                          "a cut at an empty key position was shown: " + empty_key.first);
+        const std::string value_cut = R"({"name": "weather", "id": "a)";
+        const auto in_value         = run(value_cut, true);
+        failures += check(in_value.first == value_cut && in_value.second == 0,
+                          "a cut inside a string value was dropped: " + in_value.first);
+        // A second bare call after the first stays text.
+        const auto twice = run(call + "\n" + call, false);
+        failures += check(twice.first == "\n" + call && twice.second == 1,
+                          "a second bare call was cut: " + twice.first);
+    }
+    {
+        // "call:NAME" with no brace after the name is prose, released once the byte after the name
+        // shows it, not held for the whole stream.
+        const auto discarded = ninferno::chat::build_tool_call_output_contract(
+            tools, true, ToolCallFormat::Gemma4, true);
+        ninferno::chat::ToolCallOutputDecoder decoder(discarded, 64);
+        std::string visible = decoder.feed("call:weather is the function to use");
+        failures += check(visible == "call:weather is the function to use",
+                          "prose after call:NAME was held: " + visible);
+        (void)decoder.finish();
+    }
+    // Gemma 4's bare call, "call:NAME{...}" with no opener, under none: nothing of it is shown.
+    {
+        const auto discarded = ninferno::chat::build_tool_call_output_contract(
+            tools, true, ToolCallFormat::Gemma4, true);
+        ninferno::chat::ToolCallOutputDecoder decoder(discarded, 64);
+        const std::string visible =
+            decoder.feed("call:weather{city:<|\"|>Oslo}<|\"|>,days:1} and then prose.");
+        const auto end = decoder.finish();
+        failures += check(visible + end.content == " and then prose." && end.tool_calls.size() == 1,
+                          "a bare Gemma 4 call under none was shown or lost its text: " + visible +
+                              end.content);
+    }
+    return failures;
+}
+
 // What a syntax's grammar admits, its parser turns into calls.
+// A caller's stop string ends a forced call's output (finish with the stop text): what is no
+// complete call is dropped and counted, never returned as text, in every call syntax; a call that
+// the stop left complete except for its closing markup is closed and kept; a stop that can match
+// between a call's parts closes nothing.
+int test_forced_stop_cut() {
+    int failures = 0;
+
+    struct Sample {
+        ToolCallFormat format;
+        std::string call; // one complete call
+    };
+
+    const Sample samples[] = {
+        {ToolCallFormat::QwenXml,
+         "<tool_call>\n<function=weather>\n<parameter=city>\nOslo\n</parameter>\n"
+         "<parameter=days>\n2\n</parameter>\n</function>\n</tool_call>"},
+        {ToolCallFormat::HermesJson,
+         "<tool_call>\n{\"name\": \"weather\", \"arguments\": {\"city\": \"Oslo\", \"days\": 2}}\n"
+         "</tool_call>"},
+        {ToolCallFormat::Gemma4,
+         "<|tool_call>call:weather{city:<|\"|>Oslo<|\"|>,days:2}<tool_call|>"},
+        {ToolCallFormat::MistralJson, "[TOOL_CALLS]weather[ARGS]{\"city\": \"Oslo\", \"days\": 2}"},
+        {ToolCallFormat::Llama3Json,
+         "{\"name\": \"weather\", \"parameters\": {\"city\": \"Oslo\", \"days\": 2}}"},
+        {ToolCallFormat::Harmony,
+         "<|start|>assistant<|channel|>commentary to=functions.weather <|constrain|>json"
+         "<|message|>{\"city\": \"Oslo\", \"days\": 2}<|call|>"},
+        {ToolCallFormat::Pythonic,
+         "<function_calls>weather(city=\"Oslo\", days=2)</function_calls>"},
+        {ToolCallFormat::GraniteJson, "<|tool_call|>[{\"name\": \"weather\", \"arguments\": "
+                                      "{\"city\": \"Oslo\", \"days\": 2}}]"},
+        {ToolCallFormat::Atem,
+         " to=weather<|message|><atem:function_calls>\n<atem:invoke name=\"weather\">\n"
+         "<atem:parameter name=\"city\">Oslo</atem:parameter>\n"
+         "<atem:parameter name=\"days\">2</atem:parameter>\n</atem:invoke>\n"
+         "</atem:function_calls>"},
+    };
+    const auto decode = [&](ToolCallFormat format, const std::string& text, std::string_view stop) {
+        ninferno::chat::ToolCallOutputDecoder decoder(contract(format), 64);
+        std::string visible = decoder.feed(text);
+        auto terminal       = decoder.finish(true, stop);
+        terminal.content    = visible + terminal.content;
+        return terminal;
+    };
+    for (const Sample& sample : samples) {
+        const std::string name(ninferno::chat::tool_call_format_name(sample.format));
+        // The stop cut the call in its arguments: nothing of it reaches the client as text.
+        const std::string cut = sample.call.substr(0, sample.call.find("Oslo") + 2);
+        const auto dropped    = decode(sample.format, cut, "Observation");
+        failures += check(dropped.content.empty() && dropped.tool_calls.empty() &&
+                              dropped.diagnostics.cut_calls_dropped == 1,
+                          name + ": a call cut by a stop string reached the content");
+    }
+
+    const auto qwen = [&](const std::string& text, std::string_view stop) {
+        return decode(ToolCallFormat::QwenXml, text, stop);
+    };
+    const std::string open =
+        "<tool_call>\n<function=weather>\n<parameter=city>\nOslo\n</parameter>\n"
+        "<parameter=days>\n2\n</parameter>\n";
+    // The stop matched the closing markup alone: the call is complete and kept.
+    for (const std::string_view stop : {"</function>", "\n</function>", "</fun"}) {
+        const auto closed = qwen(open, stop);
+        failures +=
+            check(closed.tool_calls.size() == 1 && closed.content.empty() &&
+                      closed.diagnostics.cut_calls_dropped == 0,
+                  "a stop in the closing markup lost a complete Qwen call: " + std::string(stop));
+    }
+    const auto tool_close = qwen(open + "</function>\n", "</tool_call>");
+    failures += check(tool_close.tool_calls.size() == 1 && tool_close.content.empty() &&
+                          tool_close.diagnostics.cut_calls_dropped == 0,
+                      "a stop on </tool_call> lost a complete Qwen call");
+    // A stop that ends at the start of the closer it did not reach begins no call.
+    const auto short_close = qwen(open, "</function>\n<");
+    failures +=
+        check(short_close.tool_calls.size() == 1 && short_close.diagnostics.cut_calls_dropped == 0,
+              "a stop ending at the start of </tool_call> counted a cut call");
+    // A stop that also swallowed the next call's opener cut that call: the closed call is kept,
+    // the next one counted as cut (the turn is no complete call set), also when the stop runs
+    // past the opener into the next call.
+    for (const auto& [text, stop] :
+         {std::pair<std::string, std::string_view>{open + "</function>\n",
+                                                   "</tool_call>\n<tool_call>"},
+          {open, "</function>\n</tool_call>\n<tool_call>"},
+          {open + "</function>\n</tool_call>", "\n<tool_call>"},
+          {open + "</function>\n", "</tool_call>\n<tool_call>\n"},
+          {open, "</function>\n</tool_call>\n<tool_call>\n<function=w"}}) {
+        const auto next = qwen(text, stop);
+        failures += check(next.tool_calls.size() == 1 && next.content.empty() &&
+                              next.diagnostics.cut_calls_dropped == 1,
+                          "a stop that began the next call was not counted: " + std::string(stop));
+    }
+    // A stop that is the whole opener at the output's start leaves nothing held: the call it cut
+    // is counted all the same.
+    for (const std::string_view stop : {"<tool_call>", "\n<tool_call>"}) {
+        const auto whole = qwen("", stop);
+        failures += check(whole.tool_calls.empty() && whole.content.empty() &&
+                              whole.diagnostics.cut_calls_dropped == 1,
+                          "a stop that was the whole opener was not counted: " + std::string(stop));
+    }
+    const auto hermes_next = decode(
+        ToolCallFormat::HermesJson,
+        "<tool_call>\n{\"name\": \"weather\", \"arguments\": {\"city\": \"Oslo\", \"days\": 2}}\n",
+        "</tool_call>\n<tool_call>");
+    failures += check(hermes_next.tool_calls.size() == 1 && hermes_next.content.empty() &&
+                          hermes_next.diagnostics.cut_calls_dropped == 1,
+                      "a Hermes stop that began the next call was not counted");
+    // A stop that also matches between parameters must not close a call with parameters missing.
+    for (const std::string_view stop : {"<parameter", "\n<", "<", "Oslo"}) {
+        const auto between = qwen("<tool_call>\n<function=weather>\n<parameter=city>\nOslo\n"
+                                  "</parameter>\n",
+                                  stop);
+        failures += check(between.tool_calls.empty() && between.content.empty() &&
+                              between.diagnostics.cut_calls_dropped == 1,
+                          "a stop between parameters closed a Qwen call: " + std::string(stop));
+    }
+    // The other syntaxes with a close marker close the same way.
+    const auto hermes = decode(
+        ToolCallFormat::HermesJson,
+        "<tool_call>\n{\"name\": \"weather\", \"arguments\": {\"city\": \"Oslo\", \"days\": 2}}\n",
+        "</tool_call>");
+    failures += check(hermes.tool_calls.size() == 1 && hermes.content.empty(),
+                      "a stop on </tool_call> lost a complete Hermes call");
+    const auto gemma =
+        decode(ToolCallFormat::Gemma4, "<|tool_call>call:weather{city:<|\"|>Oslo<|\"|>,days:2}",
+               "<tool_call|>");
+    failures += check(gemma.tool_calls.size() == 1 && gemma.content.empty() &&
+                          gemma.diagnostics.cut_calls_dropped == 0,
+                      "a stop on <tool_call|> lost a complete Gemma call");
+    // A stop of fewer than three closer bytes matched before the closer: these parsers would close
+    // the complete body at the end of the output, but such a stop also matches inside a call, so
+    // the call is dropped.
+    const auto hermes_short = decode(
+        ToolCallFormat::HermesJson,
+        "<tool_call>\n{\"name\": \"weather\", \"arguments\": {\"city\": \"Oslo\", \"days\": 2}}",
+        "\n<");
+    failures += check(hermes_short.tool_calls.empty() && hermes_short.content.empty() &&
+                          hermes_short.diagnostics.cut_calls_dropped == 1,
+                      "a short stop before </tool_call> kept a Hermes call");
+    const auto gemma_short = decode(ToolCallFormat::Gemma4,
+                                    "<|tool_call>call:weather{city:<|\"|>Oslo<|\"|>,days:2}", "<t");
+    failures += check(gemma_short.tool_calls.empty() && gemma_short.content.empty() &&
+                          gemma_short.diagnostics.cut_calls_dropped == 1,
+                      "a short stop before <tool_call|> kept a Gemma call");
+    // The closer quoted inside the arguments is no close: the call the stop ended is still dropped,
+    // not published, nor returned as text.
+    const auto quoted = decode(ToolCallFormat::HermesJson,
+                               "<tool_call>\n{\"name\": \"weather\", \"arguments\": {\"city\": "
+                               "\"</tool_call>\", \"days\": 2}}",
+                               "\n<");
+    failures += check(quoted.tool_calls.empty() && quoted.content.empty() &&
+                          quoted.diagnostics.cut_calls_dropped == 1,
+                      "a closer quoted in the arguments closed a stopped Hermes call");
+    // An open marker quoted in the unfinished call's arguments is not where that call starts: the
+    // complete call before it is kept, the cut one dropped.
+    const auto quoted_open = decode(
+        ToolCallFormat::HermesJson,
+        "<tool_call>\n{\"name\": \"weather\", \"arguments\": {\"city\": \"Oslo\", \"days\": 2}}\n"
+        "</tool_call>\n<tool_call>\n{\"name\": \"weather\", \"arguments\": {\"city\": "
+        "\"<tool_call>",
+        "Observation");
+    failures +=
+        check(quoted_open.tool_calls.size() == 1 && quoted_open.content.empty() &&
+                  quoted_open.diagnostics.cut_calls_dropped == 1,
+              "an opener quoted in a cut call's arguments lost the complete call before it");
+    // A stop inside the call's open marker: its start is dropped, not the answer.
+    const auto in_opener = qwen("<tool", "_call>");
+    failures += check(in_opener.tool_calls.empty() && in_opener.content.empty() &&
+                          in_opener.diagnostics.cut_calls_dropped == 1,
+                      "a stop inside <tool_call> returned the marker's start as text");
+    return failures;
+}
+
 int test_structural_tags() {
     int failures = 0;
     const std::vector<ToolCallConstraintTool> tools = {
@@ -1198,9 +1572,11 @@ int test_codec() {
 int main() {
     int failures = 0;
     failures += test_conventions();
+    failures += test_bare_json_call_dropped();
     failures += test_harmony_any_recipient_under_none();
     failures += test_parsers();
     failures += test_streaming_decoder();
+    failures += test_forced_stop_cut();
     failures += test_structural_tags();
     failures += test_argument_key_order();
     failures += test_codec();

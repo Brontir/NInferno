@@ -672,6 +672,15 @@ int main() {
         .fallback_reason           = ninferno::ToolCallParseFallbackReason::None,
         .recovered_from_reasoning  = true,
     };
+    failures += check(render_request_done(context, normalized_tool_outcome)
+                          .message.starts_with("req#7 done | openai-chat | tool calls 1, output "
+                                               "limit | prompt 401"),
+                      "a turn the output limit cut shows the cut beside its tool calls");
+    GenerationOutcome finished_tool_outcome = normalized_tool_outcome;
+    finished_tool_outcome.finish_reason     = ninferno::FinishReason::StopToken;
+    failures += check(render_request_done(context, finished_tool_outcome)
+                          .message.starts_with("req#7 done | openai-chat | tool calls 1 | prompt"),
+                      "a finished turn shows its tool calls alone");
     const Json normalized_tool_done =
         Json::parse(format_request_done_json("serve-test", 3002, context, normalized_tool_outcome));
     failures += check(

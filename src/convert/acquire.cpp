@@ -5,6 +5,7 @@
 #include "core/ascii.h"
 #include "core/quant_label.h"
 #include "convert/files.h"
+#include "convert/options_key.h"
 
 #include "convert/cache.h"
 #include "convert/checks.h"
@@ -14,6 +15,7 @@
 #include "convert/support.h"
 #include "core/cache_file.h"
 #include "core/host_memory.h"
+#include "core/sha256.h"
 #include "spec/manifest.h"
 
 #include "core/sys.h"
@@ -26,6 +28,7 @@
 #include <fstream>
 #include <iterator>
 #include <regex>
+#include <set>
 #include <stdexcept>
 #include <string_view>
 
@@ -480,15 +483,24 @@ std::optional<fs::path> converted_artifact(const fs::path& commit_dir, const std
     return found.front().first;
 }
 
+// The commit a kept conversion belongs to: its directory's name, or its parent's for one in
+// options-<hash>/.
+static std::string commit_of(const fs::path& artifact) {
+    const auto dir = artifact.parent_path();
+    return dir.filename().string().rfind("options-", 0) == 0 ? dir.parent_path().filename().string()
+                                                             : dir.filename().string();
+}
+
 std::optional<fs::path> kept_artifact(const fs::path& cache, const std::string& repo,
                                       const std::string& revision, const std::string& quant,
-                                      const std::string& recipe) {
+                                      const std::string& recipe, const std::string& key) {
     const auto root   = cache / hub_repo_directory(repo);
     const auto commit = local_commit(root, revision);
     if (!commit) { return std::nullopt; }
     std::error_code ec;
     if (fs::exists(root / "snapshots" / *commit, ec)) { return std::nullopt; } // the usual path
-    return converted_artifact(root / "ninferno" / *commit, quant, recipe);
+    return converted_artifact(conversion_directory(root / "ninferno" / *commit, key), quant,
+                              recipe);
 }
 
 namespace {
@@ -674,6 +686,175 @@ std::optional<std::filesystem::path> gguf_projector_beside(const std::filesystem
     return best;
 }
 
+// The description lines "--vocab q8" and "--name x" as "--vocab q8, --name x".
+std::string options_line_of(const std::string& described) {
+    std::string line;
+    for (const char c : described) {
+        if (c == '\n') {
+            line += ", ";
+        } else {
+            line += c;
+        }
+    }
+    if (line.size() >= 2) { line.resize(line.size() - 2); }
+    return line;
+}
+
+namespace {
+
+// Whether the resource `role` given as `path` is the snapshot's own file.
+bool snapshot_resource(const fs::path& snapshot, const std::string& role, const fs::path& path) {
+    std::error_code ec;
+    return !snapshot.empty() && fs::is_directory(snapshot, ec) &&
+           fs::is_regular_file(snapshot / role, ec) &&
+           content_identity(snapshot / role) == content_identity(path);
+}
+
+} // namespace
+
+std::string snapshot_resources(const ConvertOptions& options, const fs::path& snapshot) {
+    auto resources = options.resources;
+    std::sort(resources.begin(), resources.end());
+    std::string lines;
+    for (const auto& [role, path] : resources) {
+        if (snapshot_resource(snapshot, role, path)) {
+            lines += role + " " + content_identity(path) + '\n';
+        }
+    }
+    return lines;
+}
+
+std::string content_options_key(const AcquireOptions& options, std::string* described,
+                                const OptionsKeyContext& context, std::string* identity) {
+    const ConvertOptions defaults;
+    const auto& c = options.convert;
+    std::vector<OptionPart> parts;
+    const auto add    = [&](const std::string& name, const std::string& value,
+                         const std::string& shown) { parts.push_back({name, value, shown}); };
+    const auto simple = [&](const std::string& name, const std::string& value) {
+        add(name, value, value);
+    };
+    // The vocabulary the dense and MoE recipes keep is the checkpoint's own: "native" is the
+    // default spelled out.
+    if (!c.vocab.empty() && c.vocab != "native") { simple("--vocab", c.vocab); }
+    if (!c.drafter_quant.empty() && !c.drafter_quant_declared) {
+        simple("--drafter-quant", c.drafter_quant);
+    }
+    if (c.name) { simple("--name", *c.name); }
+    auto resources = c.resources;
+    std::sort(resources.begin(), resources.end());
+    for (const auto& [role, path] : resources) {
+        // A resource that is the snapshot's own file (the template the model ships) changes
+        // nothing.
+        if (snapshot_resource(context.snapshot, role, path)) { continue; }
+        add("--resource " + role, content_identity(path), utf8_file_name(path));
+    }
+    auto sources = c.sources;
+    std::sort(sources.begin(), sources.end());
+    for (const auto& [name, path] : sources) {
+        add("--source " + name, content_identity(path), utf8_file_name(path));
+    }
+    if (options.components_given) { simple("--components", c.components); }
+    if (c.proposal) { simple("--proposal", ""); }
+    if (c.proposal_rows != defaults.proposal_rows) {
+        simple("--proposal-rows", std::to_string(c.proposal_rows));
+    }
+    if (!c.proposal_default) { simple("--no-proposal", ""); }
+    if (!c.ranking.empty()) {
+        add("--ranking", content_identity(c.ranking), utf8_file_name(c.ranking));
+    }
+    if (c.max_file_bytes != defaults.max_file_bytes) {
+        simple("--max-file-bytes", std::to_string(c.max_file_bytes));
+    }
+    if (c.maintainer_quantize) { simple("--maintainer-quantize", ""); }
+    if (c.round_tiny_scales) { simple("--round-tiny-scales", ""); }
+    if (c.expert_layout != defaults.expert_layout) {
+        simple("--layout", c.expert_layout == ExpertLayout::Frag ? "frag" : "published");
+    }
+    if (options.drafters == Drafters::Off) { simple("--no-drafters", ""); }
+    for (const auto& [name, path] : options.drafter_artifacts) {
+        add("--drafter-artifact " + name, content_identity(path), utf8_file_name(path));
+    }
+    if (!options.model_id.empty() && options.model_id != context.repo) {
+        simple("--model-id", options.model_id);
+    }
+    if (!options.base_tokenizer_files) { simple("--no-base-tokenizer", ""); }
+    // The same files in any order are the same selection.
+    auto include = options.fetch.include;
+    std::sort(include.begin(), include.end());
+    include.erase(std::unique(include.begin(), include.end()), include.end());
+    for (const auto& pattern : include) { simple("--include", pattern); }
+    return options_key(parts, described, identity);
+}
+
+std::optional<fs::path> kept_for_options(const fs::path& cache, const std::string& repo,
+                                         const std::string& revision, const AcquireOptions& options,
+                                         const OptionsKeyContext& context) {
+    const auto& c = options.convert;
+    if (auto kept = kept_artifact(cache, repo, revision, options.fetch.quant, c.recipe,
+                                  content_options_key(options, nullptr, context))) {
+        return kept;
+    }
+    // With the snapshot gone, a --resource that was its own file cannot be told from an option:
+    // the conversions made without some of them are taken where they recorded those very files.
+    const auto& resources = c.resources;
+    if (context.snapshot.empty() && !resources.empty() && resources.size() <= 8) {
+        for (std::size_t mask = 1; mask < (std::size_t{1} << resources.size()); ++mask) {
+            AcquireOptions fewer = options;
+            fewer.convert.resources.clear();
+            std::vector<std::string> dropped;
+            for (std::size_t i = 0; i < resources.size(); ++i) {
+                if ((mask >> i) & 1U) {
+                    dropped.push_back(resources[i].first + " " +
+                                      content_identity(resources[i].second));
+                } else {
+                    fewer.convert.resources.push_back(resources[i]);
+                }
+            }
+            const auto kept = kept_artifact(cache, repo, revision, options.fetch.quant, c.recipe,
+                                            content_options_key(fewer, nullptr, context));
+            if (!kept) { continue; }
+            std::ifstream in(kept->string() + ".snapshot-resources");
+            std::set<std::string> recorded;
+            for (std::string line; std::getline(in, line);) { recorded.insert(line); }
+            if (std::all_of(dropped.begin(), dropped.end(),
+                            [&](const std::string& line) { return recorded.contains(line); })) {
+                return kept;
+            }
+        }
+    }
+    // A model that ships no chat template is converted with the caller's as its resource, which
+    // makes the conversion an optioned one only once the model is fetched (acquire_model); the
+    // key before the fetch does not know. Looked for under that key too.
+    if (options.chat_template.empty()) { return std::nullopt; }
+    AcquireOptions baked = options;
+    baked.convert.resources.emplace_back("chat_template.jinja", options.chat_template);
+    return kept_artifact(cache, repo, revision, options.fetch.quant, c.recipe,
+                         content_options_key(baked, nullptr, context));
+}
+
+namespace {
+
+// A model that does not ship a chat template is converted with the caller's as its resource
+// (#583): one known to ship none, and one whose answer is unknown (a GGUF naming a base
+// repository, whose template may be missing or unreachable: base_tokenizer then fetches no other).
+// A GGUF's chat_template.jinja beside it is its template. The conversion after the fetch and the
+// refetch lookup of the kept one ask it the same way.
+void bake_chat_template(ConvertOptions& convert, const AcquireOptions& options,
+                        const fs::path& model) {
+    if (options.chat_template.empty()) { return; }
+    const bool ships =
+        local_support_facts(model).chat_template.value_or(false) ||
+        (fs::is_regular_file(model) && fs::exists(model.parent_path() / "chat_template.jinja"));
+    if (!ships) { convert.resources.emplace_back("chat_template.jinja", options.chat_template); }
+}
+
+} // namespace
+
+fs::path conversion_directory(const fs::path& commit_dir, const std::string& key) {
+    return key.empty() ? commit_dir : commit_dir / ("options-" + key);
+}
+
 AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
     AcquiredModel out;
     // MovedRef::Refetch: the old conversion goes once the new commit's artifact is there: the
@@ -689,39 +870,64 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 out.artifact == artifact) {
                 return;
             }
-            const auto dir = artifact.parent_path();
-            std::string manifest;
-            if (std::ifstream in(spec::manifest_path(artifact)); in) {
-                manifest.assign(std::istreambuf_iterator<char>(in), {});
-            }
+            auto dir                 = artifact.parent_path();
+            const auto drafter_files = manifest_drafter_files(artifact);
             remove_artifact(artifact);
             std::error_code ec;
-            bool others = false;
-            for (const auto& entry : fs::directory_iterator(dir, ec)) {
-                const auto name = entry.path().filename().string();
-                if (entry.path().extension() == ".ninferno" &&
-                    manifest.find(name) == std::string::npos) {
-                    others = true;
+            // Whether a directory holds a conversion other than the replaced one's drafters.
+            // Recursive: a conversion with options of its own lives in options-<hash>/ below, and
+            // may be serving; it stays, with the commit it belongs to. A conversion still being
+            // written below has no .ninferno file yet.
+            // The walk takes its errors in `ec` (increment, not operator++): this destructor
+            // must not throw.
+            const auto others_in = [&](const fs::path& where) {
+                for (auto it = fs::recursive_directory_iterator(where, ec);
+                     !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+                    // By path, not by name: a conversion with options of its own below has the
+                    // same file name as the one replaced.
+                    std::error_code e;
+                    if (it->path().extension() == ".ninferno" &&
+                        !drafter_files.contains(fs::weakly_canonical(it->path(), e))) {
+                        return true;
+                    }
                 }
-            }
+                return ec ? true : conversion_in_progress(where);
+            };
+            bool others = others_in(dir);
             if (!others) { fs::remove_all(dir, ec); }
+            // A replaced conversion with options of its own: its commit's directory is looked at
+            // next, as App::delete_artifact does (its lock, accepted-ref records, drafters).
+            if (dir.filename().string().rfind("options-", 0) == 0) {
+                dir = dir.parent_path();
+                if (!others && !others_in(dir)) { fs::remove_all(dir, ec); }
+            }
             say(options, "removed the old conversion " + artifact.string() +
                              (others ? " (other conversions of that commit stay)" : ""));
         }
     } replaced{{}, out, options};
     ConvertOptions& convert_options = options.convert;
+    // A conversion with options of its own is kept apart from the model's default one (#553): a
+    // later run with other options never takes it, nor replaces it.
     const bool url = spec.starts_with("http://") || spec.starts_with("https://");
+    std::string options_described;
+    std::string options_identity; // what tells this list from another (options_key)
+    OptionsKeyContext key_context;
+    if (!url) { key_context.repo = split_spec(spec, options.fetch).first; }
+    std::string variant_key = convert_options.out.empty()
+                                  ? content_options_key(options, &options_described, key_context)
+                                  : std::string();
     std::string preflight_recipe;
     std::string pinned; // org/name@commit when weights of a moved ref stay (see below)
     std::string pinned_quant; // the exact quantization of the GGUF model there
     if (!url && !options.fetch_only) {
         const auto [repo, revision] = split_spec(spec, options.fetch);
+        // The download removed, its conversion kept: the one with these options is found that way
+        // (the default's directory, or its options-<hash>/).
         if (options.reuse && convert_options.out.empty() &&
             (is_hugging_face_hub(options.fetch.hub))) {
             const auto cache =
                 options.fetch.cache.empty() ? default_hub_cache() : options.fetch.cache;
-            auto kept = kept_artifact(cache, repo, revision, options.fetch.quant,
-                                      convert_options.recipe);
+            auto kept = kept_for_options(cache, repo, revision, options, key_context);
             // A branch or a tag may have moved since its weights came here, whether their download
             // was converted and removed (the kept artifact) or is still in the cache. They stay
             // unless the user asks for the new commit (a download of many gigabytes): the start
@@ -734,7 +940,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
             const fs::path repo_dir = cache / hub_repo_directory(repo);
             std::string held_commit; // the commit of the weights here, when the ref names one
             if (kept) {
-                held_commit = kept->parent_path().filename().string();
+                held_commit = commit_of(*kept);
             } else if (const auto commit = local_commit(repo_dir, revision)) {
                 // Only a snapshot holding the model this start asks for (its quantization, every
                 // shard, the projector a --vision start takes): another quantization of the old
@@ -790,8 +996,36 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                                 auto quant = snapshot_quant_label(
                                     repo_dir / "snapshots" / held_commit, options.fetch, repo);
                                 if (quant.empty()) { quant = options.fetch.quant; }
-                                if (auto old = converted_artifact(commit_dir, quant,
-                                                                  convert_options.recipe)) {
+                                // In this start's own directory of the commit: a conversion
+                                // with options replaces its optioned one (options-<key>/),
+                                // never the default one beside it, which may be serving. Its key
+                                // as it was written, once that snapshot was known (below, after
+                                // the fetch): the caller's template a resource where the model
+                                // ships none, a resource that is the snapshot's own file none.
+                                const auto held_snapshot = repo_dir / "snapshots" / held_commit;
+                                // The model that snapshot serves, chosen as the fetch chooses it
+                                // (a GGUF file of it, or the directory), and asked as the fetch's
+                                // model is asked below.
+                                FetchOptions held_fetch = options.fetch;
+                                held_fetch.quant        = quant;
+                                // Where that choice fails (an ambiguous label), the conversion
+                                // is not looked up: a key asked of the wrong model could name
+                                // the default conversion another server serves. It stays.
+                                const auto chosen = snapshot_model(held_snapshot, held_fetch, repo);
+                                const fs::path held_model = chosen.value_or(held_snapshot);
+                                AcquireOptions as_written = options;
+                                bake_chat_template(as_written.convert, options, held_model);
+                                OptionsKeyContext written_context = key_context;
+                                if (fs::is_directory(held_model)) {
+                                    written_context.snapshot = held_model;
+                                }
+                                const std::string written_key =
+                                    content_options_key(as_written, nullptr, written_context);
+                                if (auto old =
+                                        !chosen ? std::nullopt
+                                                : converted_artifact(
+                                                      conversion_directory(commit_dir, written_key),
+                                                      quant, convert_options.recipe)) {
                                     replaced.artifact = *old;
                                 }
                             }
@@ -835,7 +1069,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 out.recipe           = base.substr(base.rfind('.') + 1);
                 out.reused           = true;
                 out.fetched.repo     = repo;
-                out.fetched.commit   = kept->parent_path().filename().string();
+                out.fetched.commit   = commit_of(*kept);
                 out.fetched.snapshot = kept->parent_path();
                 out.fetched.model    = *kept;
                 out.fetched.offline  = true;
@@ -922,7 +1156,8 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
         } catch (const std::exception&) {}
         if (facts) {
             // A template given (--resource chat_template.jinja=FILE) is the template.
-            if (std::any_of(options.convert.resources.begin(), options.convert.resources.end(),
+            if (!options.chat_template.empty() ||
+                std::any_of(options.convert.resources.begin(), options.convert.resources.end(),
                             [](const auto& r) { return r.first == "chat_template.jinja"; })) {
                 facts->chat_template = true;
             }
@@ -955,15 +1190,24 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
     }
     if (options.fetch_only) { return out; }
     convert_options.model = fetched.model;
+    // Known now: a resource that is the snapshot's own file is no option (the key before the
+    // fetch counted it).
+    if (convert_options.out.empty()) {
+        bake_chat_template(convert_options, options, fetched.model);
+        if (fs::is_directory(fetched.model)) { key_context.snapshot = fetched.model; }
+        variant_key =
+            content_options_key(options, &options_described, key_context, &options_identity);
+    }
     if (options.base_tokenizer_files) { base_tokenizer(fetched, fetch, convert_options); }
 
     // Beside the hub cache's snapshots, per commit (a URL: beside the file); the file is named
     // <model stem>.<recipe>.ninferno once the recipe is known.
     const bool default_out = convert_options.out.empty();
     const auto directory =
-        fetched.commit.empty()
-            ? fetched.snapshot
-            : fetched.snapshot.parent_path().parent_path() / "ninferno" / fetched.commit;
+        conversion_directory(fetched.commit.empty() ? fetched.snapshot
+                                                    : fetched.snapshot.parent_path().parent_path() /
+                                                          "ninferno" / fetched.commit,
+                             variant_key);
     const std::string stem = fs::is_regular_file(fetched.model) ? fetched.model.stem().string()
                                                                 : std::string("model");
     RecipeChoice choice;
@@ -1020,6 +1264,16 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
             directory / (stem + (vision ? ".vision." : ".") + out.recipe + ".ninferno");
     }
     out.artifact = convert_options.out;
+    // "--vocab q8, --resource chat_template.jinja custom.jinja": the options that made this
+    // conversion its own, for the log and for <artifact>.options.
+    const std::string options_line      = options_line_of(options_described);
+    const std::string converted_earlier = variant_key.empty()
+                                              ? " (converted earlier)"
+                                              : " (converted earlier with " + options_line + ")";
+    if (!variant_key.empty()) {
+        say(options, "conversion options of their own, kept apart from the default conversion: " +
+                         options_line);
+    }
     // A GGUF model carries no checkpoint to plan from: its drafters are planned for the converted
     // artifact (its text component's architecture and geometry, its tokenizer), once converted.
     // They are attached when asked for (a separate download, 1.6 GB for Muse Glimmer's DFlash);
@@ -1045,6 +1299,21 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
     // the artifact afterwards has them missing; this carries the failure into it, so the manifest
     // lists them as failed (the next run tries again) and one warning names the cause.
     std::vector<PlannedDrafter> companion_failures;
+    // The records a later start reads beside the conversion it serves: its options for the user
+    // and their identity, and the resources it took as the snapshot's own (kept_for_options). A
+    // note: none is needed to serve it.
+    const auto record_options = [&] {
+        try {
+            if (!variant_key.empty()) {
+                write_file_atomic(out.artifact.string() + ".options", options_described);
+                write_file_atomic(out.artifact.string() + ".options-id", options_identity + '\n');
+            }
+            if (const auto own = snapshot_resources(convert_options, key_context.snapshot);
+                !own.empty()) {
+                write_file_atomic(out.artifact.string() + ".snapshot-resources", own);
+            }
+        } catch (const std::exception&) {}
+    };
     // Whatever fails here, the model itself is served as it was before drafters were planned.
     const auto attach_to_artifact = [&] {
         try {
@@ -1129,6 +1398,26 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
         remove_artifact(out.artifact);
     }
     if (options.reuse) {
+        if (!variant_key.empty() && complete(out.artifact, false)) {
+            // The options this conversion was made with, as it recorded them: another list under
+            // the same name is not this conversion.
+            // By identity (a file by its content, wherever it lies now); a conversion that recorded
+            // none (made before) by its list.
+            std::ifstream recorded(out.artifact.string() + ".options");
+            const std::string text((std::istreambuf_iterator<char>(recorded)),
+                                   std::istreambuf_iterator<char>());
+            std::ifstream recorded_id(out.artifact.string() + ".options-id");
+            std::string id;
+            const bool other = recorded_id && std::getline(recorded_id, id)
+                                   ? id != options_identity
+                                   : recorded && text != options_described;
+            if (other) {
+                say(options, "converting " + fetched.repo +
+                                 " again: its cached artifact was made with other options (" +
+                                 options_line_of(text) + ")");
+                remove_artifact(out.artifact);
+            }
+        }
         if (complete(out.artifact, false) && !cache_current(out.artifact)) {
             say(options, "converting " + fetched.repo + " again: its cached artifact is conversion " +
                              "revision " + std::to_string(cached_revision(out.artifact)) +
@@ -1147,13 +1436,14 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 // A GGUF's, converted before its drafters could be attached, or one failed: its
                 // companions are converted in and the others attached now.
                 out.reused = true;
-                say(options, "artifact " + out.artifact.string() + " (converted earlier)");
+                say(options, "artifact " + out.artifact.string() + converted_earlier);
                 if (action.kind == DrafterActionKind::CompanionsThenAttach) {
                     auto text_only          = convert_options;
                     text_only.drafter_quant = std::string();
                     convert_gguf_companions(text_only, convert_options.drafter_quant);
                 }
                 attach_to_artifact();
+                record_options();
                 return out;
             }
             if (action.kind == DrafterActionKind::Reconvert) {
@@ -1186,7 +1476,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 }
                 if (missing.empty()) {
                     out.reused = true;
-                    say(options, "artifact " + out.artifact.string() + " (converted earlier)");
+                    say(options, "artifact " + out.artifact.string() + converted_earlier);
                     try {
                         if (!replan_error.empty()) { throw std::runtime_error(replan_error); }
                         if (replanned) {
@@ -1197,6 +1487,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                         if (options.drafters == Drafters::Require) { throw; }
                         not_attached(options, "drafters not attached", error.what(), true);
                     }
+                    record_options();
                     return out;
                 }
                 say(options, "converting " + fetched.repo + " again: its drafter component " +
@@ -1238,6 +1529,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
         if (!options.components_given) { convert_gguf_companions(convert_options, drafter_quant); }
         attach_to_artifact();
     }
+    record_options();
     return out;
 }
 

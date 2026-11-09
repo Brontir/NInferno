@@ -8,14 +8,28 @@
 #include "core/sys.h"
 
 #include <algorithm>
+#include <cctype>
 #include <condition_variable>
+#include <csignal>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <mutex>
+#include <new>
 #include <thread>
 
 #include <openssl/evp.h>
+
+#ifdef _WIN32
+#    ifndef NOMINMAX
+#        define NOMINMAX
+#    endif
+#    include <windows.h>
+#    include <io.h>
+#else
+#    include <unistd.h>
+#endif
 
 namespace ninferno::convert {
 namespace {
@@ -30,6 +44,231 @@ constexpr std::uint64_t kDirectWriters = 2;
 constexpr std::uint64_t kQueueBytes    = 256ULL << 20;
 
 constexpr std::uint64_t kDirectBlock = 4096;
+
+// Temporary files (and files just published) of the writers alive in this process, so that an
+// interrupt can remove them: an interrupted conversion otherwise leaves everything it had written
+// in a hidden dotfile. On POSIX the handlers for SIGINT and SIGTERM are installed only for a
+// signal that has its default action when the first writer registers (sigaction queried first: a
+// handler of the application, an ignored signal and SA_SIGINFO handlers are left as they are). The
+// handler unlinks every registered file and re-raises the signal with the default action, so the
+// exit status is the one an unhandled signal gives. On Windows a console control handler covers
+// Ctrl+C, Ctrl+Break, closing the console, logoff and shutdown; it removes the files and returns
+// FALSE, so the handlers installed before it and the default action go on. Windows cannot list the
+// handlers of an application, so unlike POSIX it is installed whatever the application has set;
+// returning FALSE keeps that harmless, and SIGTERM (raise) is handled only over its default.
+//
+// A handler cannot allocate or lock: the table is made of chunks of fixed slots, a chunk is
+// allocated (outside any handler, under a mutex) when the slots in use fill the ones there are and
+// is never freed, so the handler only reads. Each slot carries a sequence number, odd while its
+// name is being written or cleared; the handler copies a name and uses the copy only if the
+// sequence did not move meanwhile, so a slot being reused is skipped, never read torn.
+//
+// The targets one writer publishes form a group: each slot names the group's leader (the first
+// target's slot), and the leader's `committed` keeps them all once every file is in place. One
+// store commits the artifact whole, so a signal while the slots are released afterwards removes
+// none of it, never some. Slots are never freed, so the leader a handler reads is always a slot.
+constexpr std::size_t kChunkSlots = 256;
+constexpr std::size_t kMaxChunks  = 64;
+constexpr std::size_t kSlotLength = 4096;
+
+struct TemporarySlot {
+    std::atomic<bool> used{false};
+    std::atomic<unsigned> sequence{0};
+    std::atomic<TemporarySlot*> leader{nullptr}; // the group's leader slot, nullptr: no group
+    std::atomic<bool> committed{false};          // a leader's: its group's files stay
+    // name[0] == 0: nothing registered. Each character atomic: a handler on another thread reads
+    // it while a slot is written (the sequence then discards the copy), and that read is no race.
+    std::atomic<std::filesystem::path::value_type> name[kSlotLength];
+};
+
+// A handler may only touch lock-free atomics.
+static_assert(std::atomic<std::filesystem::path::value_type>::is_always_lock_free &&
+              std::atomic<unsigned>::is_always_lock_free && std::atomic<bool>::is_always_lock_free);
+
+struct SlotChunk {
+    TemporarySlot slots[kChunkSlots];
+};
+
+std::atomic<SlotChunk*> g_chunks[kMaxChunks];
+std::mutex g_chunk_mutex;
+
+void unlink_registered() {
+    std::filesystem::path::value_type copy[kSlotLength];
+    for (auto& holder : g_chunks) {
+        SlotChunk* chunk = holder.load(std::memory_order_acquire);
+        if (chunk == nullptr) { break; }
+        for (auto& slot : chunk->slots) {
+            const unsigned before = slot.sequence.load(std::memory_order_acquire);
+            if ((before & 1U) != 0 || slot.name[0].load(std::memory_order_relaxed) == 0) {
+                continue;
+            }
+            std::size_t length = 0;
+            for (; length + 1 < kSlotLength; ++length) {
+                const auto c = slot.name[length].load(std::memory_order_relaxed);
+                if (c == 0) { break; }
+                copy[length] = c;
+            }
+            copy[length] = 0;
+            std::atomic_thread_fence(std::memory_order_acquire);
+            if (slot.sequence.load(std::memory_order_relaxed) != before) { continue; }
+            if (const TemporarySlot* leader = slot.leader.load(std::memory_order_acquire);
+                leader != nullptr && leader->committed.load(std::memory_order_acquire)) {
+                continue;
+            }
+#ifdef _WIN32
+            _wunlink(copy);
+#else
+            ::unlink(copy);
+#endif
+        }
+    }
+}
+
+#ifdef _WIN32
+BOOL WINAPI on_console_control(DWORD) {
+    unlink_registered();
+    return FALSE; // the handlers installed before this one and the default action go on
+}
+
+void on_terminate_signal(int number) {
+    unlink_registered();
+    std::signal(number, SIG_DFL);
+    std::raise(number);
+}
+#else
+void on_signal(int number) {
+    unlink_registered();
+    struct sigaction action{};
+    action.sa_handler = SIG_DFL;
+    sigemptyset(&action.sa_mask);
+    sigaction(number, &action, nullptr);
+    std::raise(number);
+}
+#endif
+
+void install_signal_cleanup() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+#ifdef _WIN32
+        SetConsoleCtrlHandler(on_console_control, TRUE);
+        const auto previous = std::signal(SIGTERM, on_terminate_signal);
+        if (previous != SIG_DFL && previous != SIG_ERR) { std::signal(SIGTERM, previous); }
+#else
+        for (const int number : {SIGINT, SIGTERM}) {
+            struct sigaction old {};
+            if (sigaction(number, nullptr, &old) != 0) { continue; }
+            if ((old.sa_flags & SA_SIGINFO) != 0 || old.sa_handler != SIG_DFL) { continue; }
+            struct sigaction action {};
+            action.sa_handler = on_signal;
+            sigemptyset(&action.sa_mask);
+            sigaction(number, &action, nullptr);
+        }
+#endif
+    });
+}
+
+// Claims a free slot of the chunks there are, else adds a chunk; nullptr when the table is full
+// or a chunk cannot be allocated.
+TemporarySlot* claim_slot() {
+    const std::lock_guard lock(g_chunk_mutex);
+    for (auto& holder : g_chunks) {
+        SlotChunk* chunk = holder.load(std::memory_order_acquire);
+        if (chunk == nullptr) {
+            chunk = new (std::nothrow) SlotChunk;
+            if (chunk == nullptr) { return nullptr; }
+            for (auto& slot : chunk->slots) { slot.name[0].store(0, std::memory_order_relaxed); }
+            holder.store(chunk, std::memory_order_release);
+        }
+        for (auto& slot : chunk->slots) {
+            bool expected = false;
+            if (slot.used.compare_exchange_strong(expected, true)) { return &slot; }
+        }
+    }
+    return nullptr;
+}
+
+// The slot holding `path`, or nullptr (the table is full, or the name is too long: a temporary
+// is then removed by the stale sweep of a later run instead). A published target joins the group
+// of `leader` (itself when `lead`).
+TemporarySlot* register_temporary(const std::filesystem::path& path,
+                                  TemporarySlot* leader = nullptr, bool lead = false) {
+    const auto& native = path.native();
+    if (native.size() >= kSlotLength) { return nullptr; }
+    install_signal_cleanup();
+    TemporarySlot* slot = claim_slot();
+    if (slot == nullptr) { return nullptr; }
+    slot->sequence.fetch_add(1);
+    slot->committed.store(false, std::memory_order_relaxed);
+    slot->leader.store(lead ? slot : leader, std::memory_order_release);
+    for (std::size_t i = 0; i < native.size(); ++i) {
+        slot->name[i].store(native[i], std::memory_order_relaxed);
+    }
+    slot->name[native.size()].store(0, std::memory_order_relaxed);
+    slot->sequence.fetch_add(1);
+    return slot;
+}
+
+void unregister_temporary(TemporarySlot* slot) noexcept {
+    if (slot == nullptr) { return; }
+    slot->sequence.fetch_add(1);
+    slot->name[0].store(0, std::memory_order_relaxed);
+    slot->leader.store(nullptr, std::memory_order_relaxed);
+    slot->sequence.fetch_add(1);
+    slot->committed.store(false);
+    slot->used.store(false);
+}
+
+// Whether `name` is a temporary of one of `filenames`: "." + file name + "." + six letters or
+// digits + ".tmp", the name create() draws. Only the files this writer is about to create
+// count: the directory may be anyone's (an output path "q.ninferno" is the current directory).
+bool temporary_of(const std::string& name, const std::vector<std::string>& filenames) {
+    constexpr std::size_t kTail = 6 + 4; // XXXXXX.tmp
+    if (name.size() < kTail || name.compare(name.size() - 4, 4, ".tmp") != 0) { return false; }
+    for (std::size_t i = name.size() - kTail; i < name.size() - 4; ++i) {
+        if (!std::isalnum(static_cast<unsigned char>(name[i]))) { return false; }
+    }
+    const std::string stem = name.substr(0, name.size() - kTail);
+    // ".<file>." itself, or a part of it, ".<file>.part-<digits>.": a run with other file sizes
+    // left parts this layout does not have.
+    const auto part_of = [&](const std::string& file) {
+        const std::string prefix = "." + file + ".part-";
+        if (stem.size() <= prefix.size() + 1 || stem.compare(0, prefix.size(), prefix) != 0 ||
+            stem.back() != '.') {
+            return false;
+        }
+        return std::all_of(stem.begin() + static_cast<std::ptrdiff_t>(prefix.size()),
+                           stem.end() - 1,
+                           [](char c) { return std::isdigit(static_cast<unsigned char>(c)); });
+    };
+    return std::any_of(filenames.begin(), filenames.end(), [&](const std::string& file) {
+        return stem == "." + file + "." || part_of(file);
+    });
+}
+
+// Locks a freshly created temporary for the writer's lifetime, so that the sweep of another
+// conversion can tell a live temporary from a dead one. A sweep that got the lock first removes
+// the file under it: the name is then gone, and the caller draws another. A file system without
+// locks leaves the file unlocked (the sweep's age rule protects it then).
+std::atomic<int (*)(int, bool)> g_lock_override{nullptr}; // tests only
+
+int lock_file(int fd, bool wait) {
+    const auto function = g_lock_override.load();
+    return function != nullptr ? function(fd, wait) : sys::lock(fd, wait);
+}
+
+// Whether a failed lock means the file system cannot lock at all (as opposed to "held").
+bool lock_unsupported(int error) {
+    return error == ENOLCK || error == EOPNOTSUPP || error == ENOSYS || error == EINVAL ||
+           error == ENOTSUP;
+}
+
+bool lock_temporary(int fd, const std::filesystem::path& name) {
+    while (lock_file(fd, true) != 0) {
+        if (errno != EINTR) { return true; }
+    }
+    std::error_code ignored;
+    return std::filesystem::exists(name, ignored);
+}
 
 std::string files_json(const std::vector<OutputFile>& files) {
     OJson list = OJson::array();
@@ -138,6 +377,59 @@ std::filesystem::path ArtifactWriter::partial_path(const std::filesystem::path& 
     return target.string() + ".partial";
 }
 
+void ArtifactWriter::set_lock_for_test(int (*function)(int fd, bool wait)) {
+    g_lock_override.store(function);
+}
+
+std::size_t ArtifactWriter::remove_stale_temporaries(const std::filesystem::path& directory,
+                                                     const std::vector<std::string>& filenames,
+                                                     std::chrono::seconds min_age) {
+    std::size_t removed = 0;
+    std::error_code error;
+    std::vector<std::filesystem::path> candidates;
+    for (std::filesystem::directory_iterator it(directory, error), end; !error && it != end;
+         it.increment(error)) {
+        if (!temporary_of(it->path().filename().string(), filenames)) { continue; }
+        std::error_code status;
+        if (!it->is_regular_file(status) || it->is_symlink(status)) { continue; }
+        // A writer that holds no lock (an older NInferno, a file system or a host that does not
+        // share locks) is told by its output: a live one writes at least every flush (a direct
+        // segment of 8 MiB, a mapped run's 256 MiB writeback), which moves the modification time
+        // within minutes even on a slow disk. Younger than `min_age` is never stale.
+        const auto written = std::filesystem::last_write_time(it->path(), status);
+        if (status || std::filesystem::file_time_type::clock::now() - written < min_age) {
+            continue;
+        }
+        candidates.push_back(it->path());
+    }
+    for (const auto& path : candidates) {
+        // A live writer holds the lock, so it is refused. A file this code did not write (neither
+        // an artifact header nor zeros where one goes) is left alone.
+        const int fd = sys::open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) { continue; }
+        bool gone = false;
+        // A file system without locks (ENOLCK, EOPNOTSUPP: some network mounts) cannot say who
+        // holds the file: the age and name rules alone decide there, as for a writer that locks
+        // nothing.
+        const bool locked = lock_file(fd, false) == 0;
+        if (locked || lock_unsupported(errno)) {
+            std::byte head[8]{};
+            const auto got = sys::pread(fd, head, sizeof(head), 0);
+            const std::byte zeros[8]{};
+            const bool ours = got >= 0 && (artifact::has_magic(artifact::kEntryMagic, head) ||
+                                           artifact::has_magic(artifact::kPartMagic, head) ||
+                                           std::memcmp(head, zeros, sizeof(head)) == 0);
+            // Removed while still locked: a writer that created the file just before waits for
+            // the lock, finds the name gone and draws another.
+            std::error_code ignored;
+            if (ours) { gone = std::filesystem::remove(path, ignored); }
+        }
+        sys::close(fd);
+        if (gone) { ++removed; }
+    }
+    return removed;
+}
+
 ArtifactWriter::ArtifactWriter(std::filesystem::path path, ArtifactLayout layout,
                                WriterOptions options)
     : path_(std::move(path)), layout_(std::move(layout)), options_(std::move(options)) {
@@ -160,6 +452,15 @@ ArtifactWriter::ArtifactWriter(std::filesystem::path path, ArtifactLayout layout
         }
     }
     create_parent_directories(path_);
+    if (!options_.named_partial && !options_.resume) {
+        const auto directory =
+            path_.parent_path().empty() ? std::filesystem::path(".") : path_.parent_path();
+        std::vector<std::string> names;
+        for (std::size_t i = 0; i < layout_.files.size(); ++i) {
+            names.push_back(file_path(i).filename().string());
+        }
+        (void)remove_stale_temporaries(directory, names);
+    }
     if (options_.direct && options_.resume) {
         throw std::logic_error("direct output cannot resume a partial file");
     }
@@ -202,14 +503,47 @@ void ArtifactWriter::create(std::size_t index) {
     const auto target = file_path(index);
     int fd            = -1;
     std::string name;
+    void* slot_of_name = nullptr; // a named partial has none: a signal keeps it to resume
     if (options_.named_partial) {
         name = partial_path(target).string();
         fd   = sys::open(name, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
     } else {
-        name = (target.parent_path() / ("." + target.filename().string() + ".XXXXXX.tmp")).string();
-        fd   = sys::create_unique(name, 4);
+        // The name is drawn and listed for the signal handler before the file exists, so a
+        // signal at any moment after it appears finds it (unlinking a name not there yet does no
+        // harm). A name taken, or removed by a sweep between the create and the lock, is drawn
+        // again.
+        static const char letters[] =
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        for (int attempt = 0; attempt < 16; ++attempt) {
+            unsigned char noise[6];
+            if (!sys::random_bytes(noise, sizeof(noise))) {
+                errno = EIO;
+                break;
+            }
+            std::string suffix;
+            for (const auto byte : noise) { suffix += letters[byte % 62]; }
+            name =
+                (target.parent_path() / ("." + target.filename().string() + "." + suffix + ".tmp"))
+                    .string();
+            TemporarySlot* slot = register_temporary(name);
+            fd                  = sys::open(name, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+            if (fd >= 0 && lock_temporary(fd, name)) {
+                slot_of_name = slot;
+                break;
+            }
+            int error = errno;
+            if (fd >= 0) {
+                sys::close(fd);
+                fd    = -1;
+                error = EEXIST;
+            }
+            unregister_temporary(slot);
+            errno = error;
+            if (error != EEXIST) { break; }
+        }
     }
     if (fd < 0) { throw std::runtime_error("cannot create " + name + ": " + sys::error_text(errno)); }
+    temporary_slots_.push_back(slot_of_name);
     fds_.push_back(fd);
     temporary_.emplace_back(name);
     if (sys::truncate(fd, static_cast<std::int64_t>(file_length(index))) != 0) {
@@ -429,6 +763,7 @@ void ArtifactWriter::reopen(std::size_t index) {
     if (fd < 0) {
         throw std::runtime_error("cannot resume: partial output " + name.string() + " is missing");
     }
+    temporary_slots_.push_back(nullptr); // a named partial: a signal keeps it to resume
     fds_.push_back(fd);
     temporary_.push_back(name);
     if (static_cast<std::uint64_t>(sys::file_size(fd)) != file_length(index)) {
@@ -647,11 +982,14 @@ void ArtifactWriter::finish(const std::function<std::string()>& seal) {
             if (sys::fdatasync(fd) != 0) { throw std::runtime_error("fdatasync failed"); }
             sys::advise_file(fd, 0, 0, sys::Advice::DontNeed);
         }
-        for (const int fd : fds_) { sys::close(fd); }
-        fds_.clear();
+        // The descriptors stay open (and the temporaries locked) until the files are published:
+        // another conversion's sweep must not take a finished temporary before its link exists.
         for (auto& file : direct_) {
             if (file.fd >= 0) { sys::close(file.fd); }
             file.fd = -1;
+        }
+        if (temporary_slots_.size() != temporary_.size()) {
+            throw std::logic_error("artifact writer: a temporary without its slot entry");
         }
         std::vector<std::size_t> order;
         for (std::size_t i = 1; i < temporary_.size(); ++i) { order.push_back(i); }
@@ -659,8 +997,14 @@ void ArtifactWriter::finish(const std::function<std::string()>& seal) {
         // A relayout journal left at this path belongs to an artifact this one replaces.
         std::filesystem::remove(artifact::relayout_journal_path(file_path(0)));
         std::filesystem::remove(artifact::relayout_journal_path(file_path(0)).string() + ".tmp");
+        // Each target is registered before it becomes visible (a signal while it is published
+        // removes it), and its temporary goes, slot and name, once it is: at most one slot more
+        // than the files is ever taken (an artifact of thousands of shards fits the table).
+        TemporarySlot* leader = nullptr; // the group of the published targets
         for (const auto i : order) {
-            const auto target = file_path(i);
+            const auto target            = file_path(i);
+            TemporarySlot* const visible = register_temporary(target, leader, leader == nullptr);
+            if (leader == nullptr) { leader = visible; }
             std::error_code linked;
             std::filesystem::create_hard_link(temporary_[i], target, linked);
             // A file system without hard links (exFAT, FAT32, many network and cloud-synced
@@ -671,13 +1015,25 @@ void ArtifactWriter::finish(const std::function<std::string()>& seal) {
                 if (!renamed) { linked.clear(); }
             }
             if (linked) {
+                unregister_temporary(visible);
                 throw std::runtime_error("cannot publish " + target.string() + ": " + linked.message());
             }
             published_.push_back(target);
+            // A signal during the rest of the publish removes the files already linked in.
+            published_slots_.push_back(visible);
+            std::error_code ignored;
+            std::filesystem::remove(temporary_[i], ignored); // gone already when renamed in
+            unregister_temporary(static_cast<TemporarySlot*>(temporary_slots_[i]));
+            temporary_slots_[i] = nullptr;
         }
         for (const auto& temporary : temporary_) { std::filesystem::remove(temporary); }
         temporary_.clear();
+        for (const int fd : fds_) { sys::close(fd); }
+        fds_.clear();
+        // Every file is in place: one store keeps them all (see TemporarySlot), then the slots go.
+        if (leader != nullptr) { leader->committed.store(true, std::memory_order_release); }
         finished_ = true;
+        release_slots();
     } catch (...) {
         abort();
         throw;
@@ -706,8 +1062,19 @@ void ArtifactWriter::abort() noexcept {
         }
         for (const auto& path : published_) { std::filesystem::remove(path, ignored); }
     }
+    release_slots();
     temporary_.clear();
     published_.clear();
+}
+
+void ArtifactWriter::release_slots() noexcept {
+    for (void* slot : temporary_slots_) { unregister_temporary(static_cast<TemporarySlot*>(slot)); }
+    temporary_slots_.clear();
+    // The group's leader last: the others name it until they are gone.
+    for (auto it = published_slots_.rbegin(); it != published_slots_.rend(); ++it) {
+        unregister_temporary(static_cast<TemporarySlot*>(*it));
+    }
+    published_slots_.clear();
 }
 
 } // namespace ninferno::convert

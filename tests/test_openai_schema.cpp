@@ -631,6 +631,66 @@ int test_tools() {
                           std::vector<std::string>{"order_beta", "order_alpha", "order_beta"},
                       "a duplicate name keeps the request's order under --tool-order sorted");
 
+    // tool_choice none keeps the declarations and ends the last user turn with one fixed line;
+    // --tool-choice-none drop-tools removes the declarations instead; auto adds nothing.
+    {
+        Json none_request                   = base_request();
+        none_request["tools"]               = Json::array({function_tool()});
+        none_request["tool_choice"]         = "none";
+        const OpenAIChatRequest none_parsed = parse(none_request);
+        const auto last_text                = [](const ninferno::PromptInput& input) {
+            return input.messages.empty() || input.messages.back().parts.empty()
+                                      ? std::string()
+                                      : input.messages.back().parts.back().text;
+        };
+        const std::string kLine = "Tools are unavailable for this reply; answer in plain text.";
+        ServeOptions steer;
+        const auto steered = to_prompt_input(
+            none_parsed.generation, resolve_prompt_semantics(none_parsed.generation, steer), {});
+        failures +=
+            check(steered.options.tool_jsons.size() == 1 && steered.options.tool_calls_discarded &&
+                      last_text(steered) == "\n\n" + kLine,
+                  "tool_choice none did not keep the tools and steer the last user turn");
+        ServeOptions drop;
+        drop.drop_tools_under_none = true;
+        const auto dropped         = to_prompt_input(
+            none_parsed.generation, resolve_prompt_semantics(none_parsed.generation, drop), {});
+        failures +=
+            check(dropped.options.tool_jsons.empty() && dropped.options.tool_calls_discarded &&
+                      dropped.options.refused_tool_jsons.size() == 1 &&
+                      last_text(dropped).find("Tools are unavailable") == std::string::npos,
+                  "--tool-choice-none drop-tools kept the tools or the steering line");
+        failures += check(last_text(prompt(automatic.generation)).find("Tools are unavailable") ==
+                              std::string::npos,
+                          "an auto request got the steering line");
+        // A tool result as the last message gets the line at the end of its content, not a new
+        // user turn after it.
+        Json after_tool           = base_request();
+        after_tool["tools"]       = Json::array({function_tool()});
+        after_tool["tool_choice"] = "none";
+        after_tool["messages"]    = Json::array(
+            {Json{{"role", "user"}, {"content", "list"}},
+                Json{{"role", "assistant"},
+                     {"content", nullptr},
+                     {"tool_calls", Json::array({Json{{"id", "call_1"},
+                                                      {"type", "function"},
+                                                      {"function", Json{{"name", "get_weather"},
+                                                                        {"arguments", "{}"}}}}})}},
+                Json{{"role", "tool"}, {"tool_call_id", "call_1"}, {"content", "sunny"}}});
+        const auto after_tool_input =
+            to_prompt_input(parse(after_tool).generation,
+                            resolve_prompt_semantics(parse(after_tool).generation, steer), {});
+        failures += check(after_tool_input.messages.size() == 3 &&
+                              after_tool_input.messages.back().role == ninferno::ChatRole::Tool &&
+                              last_text(after_tool_input) == "\n\n" + kLine,
+                          "the steering line after a tool result is not at the end of its content");
+        Json no_tools           = base_request();
+        no_tools["tool_choice"] = "none";
+        failures += check(last_text(prompt(parse(no_tools).generation)).find("unavailable") ==
+                              std::string::npos,
+                          "tool_choice none without tools got the steering line");
+    }
+
     body["tools"][0]["future_item_field"]                 = "ignored";
     body["tools"][0]["function"]["future_function_field"] = "ignored";
     const std::string normalized_definition = prompt(parse(body).generation).options.tool_jsons[0];
@@ -667,6 +727,8 @@ int test_tools() {
                           none_prompt.options.tool_jsons.size() == none.generation.tools.size() &&
                           !none_prompt.options.tool_jsons.empty(),
                       "tool_choice none did not keep the declarations with calls disabled");
+    failures +=
+        check(!none_prompt.options.tool_calls_forced, "tool_choice none does not force calls");
 
     using Requirement   = ninferno::ToolCallRequirement;
     const auto tool_constraint = [&](const Json& request_body) {
@@ -680,11 +742,25 @@ int test_tools() {
                   required_calls->tool_requirement == Requirement::Required &&
                   required_calls->param == "tools",
               "required tool choice is enforced by a tool-call constraint");
+    failures += check(prompt(parse(body).generation).options.tool_calls_forced,
+                      "required tool choice marks the prompt's calls as forced");
     body["tool_choice"] = Json{{"type", "function"}, {"function", Json{{"name", "weather"}}}};
     auto named_call     = tool_constraint(body);
     failures += check(named_call && named_call->tool_requirement == Requirement::Named &&
                           named_call->named_tool == "weather",
                       "named tool choice is enforced by a tool-call constraint");
+    failures += check(prompt(parse(body).generation).options.tool_calls_forced,
+                      "a named tool choice marks the prompt's calls as forced");
+    body["tool_choice"] =
+        Json{{"type", "allowed_tools"},
+             {"allowed_tools",
+              Json{{"mode", "required"},
+                   {"tools", Json::array({Json{{"type", "function"}, {"name", "weather"}}})}}}};
+    failures += check(prompt(parse(body).generation).options.tool_calls_forced,
+                      "allowed_tools mode required marks the prompt's calls as forced");
+    body["tool_choice"]["allowed_tools"]["mode"] = "auto";
+    failures += check(!prompt(parse(body).generation).options.tool_calls_forced,
+                      "allowed_tools mode auto does not force calls");
     body["tool_choice"] = Json{{"type", "function"}, {"function", Json{{"name", "missing"}}}};
     failures += check(api_error([&] { (void)parse(body); }).param == "tool_choice",
                       "named tool choice must name a declared tool");
@@ -1390,6 +1466,31 @@ int test_aggregate_response() {
         call["id"].get<std::string>().starts_with("call_") && call["function"]["name"] == "Edit" &&
             !Json::parse(call["function"]["arguments"].get<std::string>()).contains("replace_all"),
         "OpenAI adapter owns wire tool-call identifiers");
+
+    // A turn the output was cut short in keeps its complete calls but is not a finished one:
+    // length, whether the limit, the context or a repetition loop ended it.
+    for (const auto cut :
+         {ninferno::FinishReason::OutputLimit, ninferno::FinishReason::ContextCapacity,
+          ninferno::FinishReason::Repetition}) {
+        outcome.finish_reason = cut;
+        response              = Json::parse(make_chat_completion_response(identity(), outcome));
+        failures += check(response["choices"][0]["finish_reason"] == "length" &&
+                              response["choices"][0]["message"]["tool_calls"].size() == 1,
+                          "a cut turn reports length and keeps its complete calls");
+    }
+    outcome.finish_reason = ninferno::FinishReason::StopString;
+    response              = Json::parse(make_chat_completion_response(identity(), outcome));
+    failures += check(response["choices"][0]["finish_reason"] == "tool_calls",
+                      "a stop string after complete calls still reports tool_calls");
+
+    // A call dropped as unfinished (a stop string in a forced call) means the turn is not a
+    // finished set of calls: the stop is reported, the complete calls stay.
+    outcome.finish_reason                     = ninferno::FinishReason::StopString;
+    outcome.tool_call_parse.cut_calls_dropped = 1;
+    response = Json::parse(make_chat_completion_response(identity(), outcome));
+    failures += check(response["choices"][0]["finish_reason"] == "stop" &&
+                          response["choices"][0]["message"]["tool_calls"].size() == 1,
+                      "a turn that dropped a call reports stop and keeps the complete calls");
     return failures;
 }
 
@@ -1459,6 +1560,14 @@ int test_stream_response() {
             parse_sse(tool_events[1])["choices"][0]["finish_reason"] == "tool_calls" &&
             !parse_sse(tool_events[1])["choices"][0]["delta"].contains("role"),
         "stream encoder owns stable OpenAI tool-call shape; a call-only turn carries the role");
+
+    OpenAIChatStream cut_stream(identity(), false);
+    (void)cut_stream.start();
+    tool_outcome.finish_reason                = ninferno::FinishReason::OutputLimit;
+    const std::vector<std::string> cut_events = cut_stream.finish(tool_outcome);
+    failures += check(!parse_sse(cut_events[0])["choices"][0]["delta"]["tool_calls"].empty() &&
+                          parse_sse(cut_events[1])["choices"][0]["finish_reason"] == "length",
+                      "a streamed turn cut by the output limit keeps its calls and reports length");
     return failures;
 }
 

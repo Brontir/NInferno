@@ -84,7 +84,7 @@ def identity(path, rows, column):
 def protocol_of(row):
     """How a row's time was taken: (protocol, calls per sample, samples)."""
     protocol = row["protocol"].strip()
-    if protocol not in ("copies", "flushed"):
+    if protocol not in ("copies", "flushed", "warm"):
         raise ValueError(f"unknown timing protocol {protocol!r}")
     return (protocol, int(row["calls"]), int(row["samples"]))
 
@@ -94,6 +94,8 @@ def describe(protocol):
     if kind == "copies":
         return (f"{calls} consecutive calls over weight copies (2x L2 or 128 MiB) between one event "
                 f"pair, median of {samples} samples")
+    if kind == "warm":
+        return f"one call with a warm L2 (the timer had no flush buffer), median of {samples} samples"
     return f"one call after an L2 flush, median of {samples} samples"
 
 

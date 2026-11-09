@@ -189,6 +189,10 @@ struct DecoderState {
     // bytes held while they match one.
     std::string content_header_pending;
     bool awaiting_content_header   = false;
+    // Non-whitespace content has been published.
+    bool content_started = false;
+    // A reasoning close was written where no reasoning is open and the answer has not begun.
+    bool stray_close_seen          = false;
     bool in_reasoning              = false;
     bool quoted_close_is_text      = false;
     // The last reasoning byte published before think_marker_pending.
@@ -377,6 +381,11 @@ void feed_content(DecoderState& state, std::string text, const StopPolicy& polic
     std::optional<std::string> stripped = strip_content_header(state, std::move(text), headers);
     if (!stripped) { return; }
     text = std::move(*stripped);
+    if (!state.content_started) {
+        state.content_started = std::any_of(text.begin(), text.end(), [](char byte) {
+            return std::isspace(static_cast<unsigned char>(byte)) == 0;
+        });
+    }
     if (state.strip_content_leading) {
         std::size_t begin = 0;
         while (begin < text.size() && std::isspace(static_cast<unsigned char>(text[begin])) != 0) {
@@ -539,6 +548,7 @@ public:
           thinking_control_tokens(std::move(thinking_control_tokens_)),
           conventions(std::move(conventions_)),
           preserve_special(output.raw || output.preserve_special_tokens),
+          end_at_structural(start.answer_only && !output.raw),
           split_reasoning(start.in_reasoning && !output.raw),
           tool_contract(output.raw ? nullptr : std::move(tool_call_output_)),
           tool_name_max_length(output.tool_name_max_length),
@@ -578,7 +588,9 @@ public:
     std::shared_ptr<const std::vector<TokenId>> thinking_control_tokens;
     std::shared_ptr<const OutputConventions> conventions;
     bool preserve_special = false;
-    bool split_reasoning  = false;
+    // OutputStart::answer_only: a structural token outside reasoning ends the turn.
+    bool end_at_structural = false;
+    bool split_reasoning   = false;
     DecoderState state;
     DecoderState preview_state;
     SemanticThinkingState semantic;
@@ -727,6 +739,32 @@ runtime::OutputDecision OutputSession::preview_model(std::span<const TokenId> to
         const bool stop_token =
             std::find(impl_->policy.token_ids.begin(), impl_->policy.token_ids.end(), token) !=
             impl_->policy.token_ids.end();
+        // The first reasoning close where no reasoning is open and the answer has not begun is
+        // dropped: Gemma 4 writes one after a tool response and then answers. A second ends the
+        // turn below (Qwen3 repeats the close as its way out of a refused call).
+        if (!stop_token && impl_->end_at_structural && conventions.reasoning_close_token &&
+            token == *conventions.reasoning_close_token && !impl_->preview_state.in_reasoning &&
+            !impl_->preview_state.awaiting_open && !impl_->preview_state.content_started &&
+            !impl_->preview_state.stray_close_seen) {
+            impl_->preview_state.stray_close_seen = true;
+            continue;
+        }
+        // A marker that is a control token ends the turn wherever it comes; one that is plain
+        // vocabulary (Qwen's <think> and <tool_call> are added tokens that are not special) only
+        // where it begins the answer: later it may be prose that quotes the tag.
+        if (!stop_token && impl_->end_at_structural && !impl_->preview_state.in_reasoning &&
+            !impl_->preview_state.awaiting_open &&
+            (decoded.special || !impl_->preview_state.content_started) &&
+            (std::binary_search(conventions.call_tokens.begin(), conventions.call_tokens.end(),
+                                token) ||
+             std::binary_search(conventions.reasoning_tokens.begin(),
+                                conventions.reasoning_tokens.end(), token))) {
+            // The call is refused and the model wrote markup where the answer goes: ends the
+            // turn like a stop token that is not published, with what came before kept.
+            terminalize(impl_->preview_state, impl_->policy, conventions, impl_->preview_output,
+                        count);
+            return complete(count, FinishReason::StopToken);
+        }
         DecoderState before_state;
         PublishedOutput before_output;
         if (stop_token && !impl_->policy.publish_stop_token) {
@@ -996,9 +1034,18 @@ PublishedOutput OutputSession::commit_preview() {
         }
     }
     if (impl_->state.terminal) {
-        chat::ToolCallOutputDecoder::Terminal terminal =
-            impl_->tool_call_output.finish(impl_->finish_reason == FinishReason::OutputLimit ||
-                                           impl_->finish_reason == FinishReason::ContextCapacity);
+        // The caller's stop string matched inside a forced call: what it left unfinished is as
+        // unfinished as a call the limit cut off, and the forced answer is never the call's markup.
+        const bool forced_stop = impl_->finish_reason == FinishReason::StopString &&
+                                 impl_->tool_contract && impl_->tool_contract->forced_calls;
+        const std::optional<std::string> stop_text =
+            forced_stop ? std::optional<std::string>(matched_stop_string().value_or(""))
+                        : std::nullopt;
+        chat::ToolCallOutputDecoder::Terminal terminal = impl_->tool_call_output.finish(
+            impl_->finish_reason == FinishReason::OutputLimit ||
+                impl_->finish_reason == FinishReason::ContextCapacity ||
+                impl_->finish_reason == FinishReason::Repetition || forced_stop,
+            stop_text ? std::optional<std::string_view>(*stop_text) : std::nullopt);
         impl_->tool_calls                              = std::move(terminal.tool_calls);
         impl_->tool_call_parse                         = terminal.diagnostics;
         // The model ended the turn with its stop token inside a thinking span it never closed, so

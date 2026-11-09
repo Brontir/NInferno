@@ -1921,6 +1921,7 @@ Json App::local_json() {
                        {"params", params_label(repo.empty() ? name.stem : repo + " " + name.stem)},
                        {"quant", name.quant},
                        {"vision", f.vision},
+                       {"options", conversion_options(path)},
                        {"mtp", f.mtp || fs::exists(path.string() + ".speculation.json", ec)},
                        {"size_gib", gib2(fs::file_size(path, ec))},
                        {"modified", iso_time(fs::last_write_time(path, ec))},
@@ -1972,12 +1973,28 @@ Json App::local_json() {
             {"keep_originals", options_.keep_originals}};
 }
 
+std::string conversion_options(const fs::path& artifact) {
+    std::ifstream in(artifact.string() + ".options");
+    std::string line, out;
+    while (std::getline(in, line)) {
+        if (!line.empty()) { out += (out.empty() ? "" : ", ") + line; }
+    }
+    return out;
+}
+
+bool is_default_conversion(const fs::path& artifact) {
+    return artifact.parent_path().filename().string().rfind("options-", 0) != 0;
+}
+
 fs::path App::local_artifact(const std::string& repo, const std::string& quant) {
     std::error_code ec;
     const auto dir = hub_root() / hub_repo_directory(repo) / "ninferno";
     if (!fs::is_directory(dir, ec)) { return {}; }
     for (const auto& entry : fs::recursive_directory_iterator(dir, ec)) {
         if (!entry.is_regular_file(ec) || entry.path().extension() != ".ninferno") { continue; }
+        // A plain launch of the repository serves its default conversion, never one made with
+        // --round-tiny-scales, --components, ... (options-<hash>/).
+        if (!is_default_conversion(entry.path())) { continue; }
         const auto f = facts(entry.path());
         if (!f.readable || f.drafter) { continue; }
         if (quant.empty() || artifact_name(entry.path().filename().string()).quant == quant) {
@@ -2002,10 +2019,7 @@ std::uint64_t App::delete_artifact(const fs::path& requested) {
     }
     std::uint64_t freed = 0;
     // Its speculation manifest names the drafters converted for it (read before the sidecars go).
-    std::string manifest;
-    if (std::ifstream in(spec::manifest_path(path)); in) {
-        manifest.assign(std::istreambuf_iterator<char>(in), {});
-    }
+    const auto drafter_files = convert::manifest_drafter_files(path);
     // The file and its sidecars (<artifact>.conversion.json, .speculation.json, ...).
     const auto prefix = path.filename().string();
     for (const auto& entry : fs::directory_iterator(path.parent_path(), ec)) {
@@ -2026,24 +2040,40 @@ std::uint64_t App::delete_artifact(const fs::path& requested) {
         }
     }
     if (!repo_dir.empty()) {
-        // Its commit's directory holding no conversion but the drafters its manifest names:
+        // A directory holding no conversion but the drafters the removed one's manifest names is
         // removed whole, as the converter removes a replaced conversion (acquire.cpp). Another
-        // quantization of the commit keeps it.
-        const auto commit_dir = path.parent_path();
-        if (commit_dir.parent_path() == repo_dir / "ninferno") {
-            bool others = false;
-            for (const auto& entry : fs::directory_iterator(commit_dir, ec)) {
+        // quantization of the commit keeps it, and so does a conversion with options of its own,
+        // which lives below it in options-<hash>/ (hence the recursive look: a running model may
+        // be serving it).
+        const auto conversions_left = [&](const fs::path& dir) {
+            // A conversion still being written has no .ninferno yet (only its lock and a
+            // temporary): it counts, or the snapshot it reads would go with the directory.
+            if (convert::conversion_in_progress(dir)) { return true; }
+            for (const auto& entry : fs::recursive_directory_iterator(dir, ec)) {
+                // By path: an optioned sibling has the same name as the default conversion.
                 if (entry.path().extension() == ".ninferno" &&
-                    manifest.find(entry.path().filename().string()) == std::string::npos) {
-                    others = true;
+                    !drafter_files.contains(fs::weakly_canonical(entry.path(), ec))) {
+                    return true;
                 }
             }
-            if (!others) {
-                freed += tree_bytes(commit_dir);
-                fs::remove_all(commit_dir, ec);
+            return false;
+        };
+        auto dir = path.parent_path();
+        // The last conversion of an options-<hash>/ directory takes the directory with it (its
+        // lock file, its drafters); the commit's directory is looked at next.
+        if (dir.filename().string().rfind("options-", 0) == 0 &&
+            dir.parent_path().parent_path() == repo_dir / "ninferno") {
+            if (!conversions_left(dir)) {
+                freed += tree_bytes(dir);
+                fs::remove_all(dir, ec);
             }
+            dir = dir.parent_path();
         }
-        bool left = false;
+        if (dir.parent_path() == repo_dir / "ninferno" && !conversions_left(dir)) {
+            freed += tree_bytes(dir);
+            fs::remove_all(dir, ec);
+        }
+        bool left = convert::conversion_in_progress(repo_dir / "ninferno");
         for (const auto& entry : fs::recursive_directory_iterator(repo_dir / "ninferno", ec)) {
             if (entry.is_regular_file(ec) && entry.path().extension() == ".ninferno" &&
                 !facts(entry.path()).drafter) {

@@ -30,8 +30,15 @@ struct TurnMarkup {
     // "<|tool_response>", harmony's "<|call|>"), whether or not the template offers tools.
     std::vector<std::string> stops;
     std::vector<std::pair<std::string, ChatRole>> roles;  // header text -> role
+    // What follows an assistant header where the turn is addressed to a recipient: harmony's
+    // "assistant to=functions.x<|channel|>commentary" (" "), its "assistant<|channel|>commentary"
+    // ("<|channel|>"), Atem's "assistant to=x" (" "). Empty: the markup addresses no turn.
+    std::vector<std::string> recipient_separators;
 
     [[nodiscard]] std::optional<ChatRole> role(std::string_view header) const noexcept;
+    // Whether an unnamed header is the model's own turn to a recipient (a tool call): a header the
+    // roles name Assistant, then a recipient separator.
+    [[nodiscard]] bool assistant_addressed(std::string_view header) const noexcept;
 };
 
 struct ReasoningMarkup {
@@ -97,6 +104,17 @@ struct ChatConventions {
     // Control strings the output parsers read. Their tokens pass through the output presentation
     // even when the tokenizer marks them special.
     [[nodiscard]] std::vector<std::string> structural_markers() const;
+
+    // The markers that cannot begin or continue an answer when the call is refused (tool_choice
+    // none): the call opener and closer and the tool-result opener and closer. The reasoning
+    // markers are separate (reasoning_markers): they are not an answer either, but a model that
+    // may reason writes them.
+    [[nodiscard]] std::vector<std::string> non_answer_markers() const;
+
+    // The reasoning open and close markers; empty when the template has no reasoning, or when
+    // its answer opens with a header (harmony): that header shares its special tokens with the
+    // reasoning markers, so no token can be told apart from the answer's.
+    [[nodiscard]] std::vector<std::string> reasoning_markers() const;
 
     // The tokens that end a generated reply: the turn markup's stops. Empty when no turn markup
     // matched the template.

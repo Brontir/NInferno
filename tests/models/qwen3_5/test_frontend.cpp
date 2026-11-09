@@ -1,3 +1,6 @@
+#include "chat/tool_calls.h"
+#include <cstdlib>
+#include <filesystem>
 #include "models/qwen3_5/frontend/frontend.h"
 #include "models/qwen3_5/frontend/resources.h"
 
@@ -1158,6 +1161,51 @@ int test_replacement_suffix_boundaries() {
                  "replacement-suffix execution boundaries do not follow the turn roles");
 }
 
+// The model's own call turn to a recipient (harmony's "assistant to=functions.x...", unnamed by the
+// roles) splits the prefill at its begin, where the request that wrote it opened its generation
+// prompt (#572); a tool response addressed to the assistant does not.
+int test_assistant_call_turn_boundary() {
+    ninferno::chat::ChatConventions conventions;
+    conventions.turns =
+        ninferno::chat::TurnMarkup{.name                 = "test",
+                                   .open                 = "<|start|>",
+                                   .header_end           = "<|message|>",
+                                   .close                = "<|end|>",
+                                   .after_close          = "",
+                                   .roles                = {{"system", ninferno::ChatRole::System},
+                                                            {"developer", ninferno::ChatRole::Developer},
+                                                            {"user", ninferno::ChatRole::User},
+                                                            {"assistant", ninferno::ChatRole::Assistant}},
+                                   .recipient_separators = {" ", "<|channel|>"}};
+    const std::vector<std::pair<std::string, std::string>> turns{
+        {"system", "S"},
+        {"user", "U"},
+        {"assistant to=functions.x<|channel|>commentary json", "{}"},
+        {"functions.x to=assistant<|channel|>commentary", "R"},
+        {"assistant", ""}};
+    ninferno::text::TemplateOutput output;
+    std::vector<std::size_t> begins;
+    std::vector<std::size_t> bodies;
+    for (std::size_t i = 0; i < turns.size(); ++i) {
+        begins.push_back(output.text.size());
+        output.text += "<|start|>" + turns[i].first + "<|message|>";
+        bodies.push_back(output.text.size());
+        if (i + 1 < turns.size()) { output.text += turns[i].second + "<|end|>"; }
+    }
+    const fi::PromptLayout layout = fi::inspect_prompt_layout(output, {}, conventions);
+    const std::vector<std::size_t> expected{
+        begins[2],             // the call turn, where the previous request's prompt opened
+        begins[4], bodies[4]}; // generation prompt
+    int failures = check(layout.execution_boundaries == expected,
+                         "the assistant's call turn does not split the prefill at its begin");
+    failures += check(layout.messages.size() == 3, "the call turn became a message");
+    failures += check(conventions.turns->assistant_addressed("assistant<|channel|>commentary") &&
+                          !conventions.turns->assistant_addressed("assistantx") &&
+                          !conventions.turns->assistant_addressed("functions.x to=assistant"),
+                      "assistant_addressed misreads a header");
+    return failures;
+}
+
 // Harmony renders a system then a developer message ahead of the first user turn: both are
 // leading instructions, so the first user turn does not split the prefill; a developer message
 // after that user turn does.
@@ -2091,23 +2139,46 @@ int test_disabled_tool_calls_keep_the_prompt() {
                  "disabled tool calls changed the prompt or still read calls back");
 }
 
+// The test vocabulary with Qwen's call opener and closer added as tokens.
+constexpr int kOpenerId = 248058;
+constexpr int kCloserId = 248059;
+
+FrontendResources resources_with_opener(bool special_opener = false) {
+    FrontendResources with_opener = resources();
+    auto tokenizer                = nlohmann::json::parse(with_opener.tokenizer_json);
+    tokenizer["added_tokens"].push_back(added(kOpenerId, "<tool_call>", special_opener));
+    tokenizer["added_tokens"].push_back(added(kCloserId, "</tool_call>"));
+    with_opener.tokenizer_json = tokenizer.dump();
+    auto config                = nlohmann::json::parse(with_opener.tokenizer_config_json);
+    config["added_tokens_decoder"][std::to_string(kOpenerId)] =
+        decoder_added("<tool_call>", special_opener);
+    config["added_tokens_decoder"][std::to_string(kCloserId)] = decoder_added("</tool_call>");
+    with_opener.tokenizer_config_json                         = config.dump();
+    return with_opener;
+}
+
+ninferno::PromptInput none_input(std::optional<bool> thinking) {
+    ninferno::PromptInput result;
+    ninferno::ChatMessage user;
+    user.role = ninferno::ChatRole::User;
+    user.parts.push_back(ninferno::MessagePart{
+        .kind = ninferno::MessagePartKind::Text, .text = "weather?", .media = {}});
+    result.messages.push_back(std::move(user));
+    result.options.tool_jsons.push_back(
+        R"({"type":"function","function":{"name":"inspect","parameters":{"type":"object"}}})");
+    result.options.tool_calls_enabled   = false;
+    result.options.tool_calls_discarded = true;
+    result.options.enable_thinking      = thinking;
+    return result;
+}
+
 // tool_choice none with tools declared bans the template's call opener and closer (one token
 // each), so the model answers in text; the prompt stays the tool-enabled one. Where the opener is
 // not a token of the vocabulary, or the calls are on, or no tools are declared, nothing is banned.
+// The reasoning markers are not banned, thinking declined or not: the turn ends at one outside
+// reasoning (test_none_ends_at_structural_tokens).
 int test_disabled_tool_calls_ban_the_opener() {
-    constexpr int kOpenerId       = 248058;
-    constexpr int kCloserId       = 248059;
-    FrontendResources with_opener = resources();
-    {
-        auto tokenizer = nlohmann::json::parse(with_opener.tokenizer_json);
-        tokenizer["added_tokens"].push_back(added(kOpenerId, "<tool_call>"));
-        tokenizer["added_tokens"].push_back(added(kCloserId, "</tool_call>"));
-        with_opener.tokenizer_json = tokenizer.dump();
-        auto config                = nlohmann::json::parse(with_opener.tokenizer_config_json);
-        config["added_tokens_decoder"][std::to_string(kOpenerId)] = decoder_added("<tool_call>");
-        config["added_tokens_decoder"][std::to_string(kCloserId)] = decoder_added("</tool_call>");
-        with_opener.tokenizer_config_json                         = config.dump();
-    }
+    const FrontendResources with_opener = resources_with_opener();
     const auto input = [](bool calls, bool discarded, bool tools) {
         ninferno::PromptInput result;
         ninferno::ChatMessage user;
@@ -2130,6 +2201,10 @@ int test_disabled_tool_calls_ban_the_opener() {
     const std::vector<int> banned = {kOpenerId, kCloserId};
     failures += check(none.summary().banned_tokens == banned,
                       "tool_choice none did not ban the Qwen XML call opener and closer tokens");
+    const auto declined = frontend.prepare(none_input(false));
+    failures += check(declined.summary().banned_tokens == banned &&
+                          frontend.prepare(none_input(true)).summary().banned_tokens == banned,
+                      "tool_choice none banned a reasoning marker (the turn ends at one instead)");
     failures += check(FrontendFactory::inspect(none).token_ids ==
                           FrontendFactory::inspect(automatic).token_ids,
                       "banning the opener changed the prompt");
@@ -2140,6 +2215,298 @@ int test_disabled_tool_calls_ban_the_opener() {
     const Frontend plain = make_frontend(resources(), false);
     failures += check(plain.prepare(input(false, true, true)).summary().banned_tokens.empty(),
                       "an opener that is not a vocabulary token was banned");
+    // Under an output constraint (cut_bare_calls off) the constraint owns the output: nothing is
+    // banned, a token it may require included.
+    auto constrained                   = input(false, true, true);
+    constrained.options.cut_bare_calls = false;
+    failures += check(frontend.prepare(std::move(constrained)).summary().banned_tokens.empty(),
+                      "tool_choice none under an output constraint banned the call opener");
+    return failures;
+}
+
+// --tool-choice-none drop-tools: the prompt carries no declarations, but the refused ones stay the
+// output contract's, so the call opener is still banned and a call written anyway is read and cut.
+int test_none_drop_tools_keeps_the_contract() {
+    const Frontend frontend            = make_frontend(resources_with_opener(), false);
+    ninferno::PromptInput dropped      = none_input(false);
+    dropped.options.refused_tool_jsons = dropped.options.tool_jsons;
+    dropped.options.tool_jsons.clear();
+    const auto steered_prompt = frontend.prepare(none_input(false));
+    const auto dropped_prompt = frontend.prepare(std::move(dropped));
+    int failures              = check(FrontendFactory::inspect(dropped_prompt).token_ids.size() <
+                                          FrontendFactory::inspect(steered_prompt).token_ids.size(),
+                                      "drop-tools still sent the tool declarations");
+    failures +=
+        check(dropped_prompt.summary().banned_tokens == std::vector<int>{kOpenerId, kCloserId},
+              "drop-tools lost the call opener ban");
+    const auto& contract = FrontendFactory::inspect(dropped_prompt).tool_call_output;
+    failures += check(contract != nullptr && contract->discarded && contract->declares("inspect"),
+                      "drop-tools lost the output contract that cuts a written call");
+    ninferno::chat::ToolCallOutputDecoder decoder(contract, 64);
+    const std::string shown =
+        decoder.feed("<tool_call>\n<function=inspect>\n</function>\n</tool_call>");
+    const auto end = decoder.finish();
+    failures += check(shown.empty() && end.content.empty() && end.tool_calls.size() == 1,
+                      "drop-tools returned a written call verbatim");
+    // Under an output constraint (cut_bare_calls off) the constraint owns the output: no
+    // contract reads a call it permits out of the text.
+    ninferno::PromptInput constrained  = none_input(false);
+    constrained.options.cut_bare_calls = false;
+    const auto constrained_prompt      = frontend.prepare(std::move(constrained));
+    failures += check(FrontendFactory::inspect(constrained_prompt).tool_call_output == nullptr,
+                      "tool_choice none under an output constraint kept a tool-call contract");
+    return failures;
+}
+
+// The steering line goes at the end of the last tool result (gpt-oss renders a result as a JSON
+// string, so the blank line there is escaped), not in a user turn after it: with
+// the Qwen template a new user turn moves the last-query index, and every assistant turn of the
+// agent loop since the real query then loses its reasoning (a re-prefill of the whole turn). The
+// rendered prompt up to the end of the result's original content must be byte-identical.
+int check_steered_prefix(const fi::CompiledChatTemplate& compiled, const std::string& label) {
+    constexpr std::string_view kResult = "a.txt b.txt";
+    constexpr std::string_view kLine =
+        "\n\nTools are unavailable for this reply; answer in plain text.";
+    const auto render = [&](bool steer) {
+        fi::ChatMessage tool = chat_message(ninferno::ChatRole::Tool, std::string(kResult));
+        tool.tool_call_id    = "call_1";
+        if (steer) { tool.parts.push_back(fi::ChatPart::text_part(std::string(kLine))); }
+        fi::ChatMessage assistant   = chat_message(ninferno::ChatRole::Assistant, "");
+        assistant.reasoning_content = "I should call the tool.";
+        assistant.tool_calls.push_back(
+            {.id = "call_1", .name = "inspect", .arguments_json = R"({"path":"."})"});
+        fi::ChatRenderOptions options;
+        options.enable_thinking = true;
+        options.tool_jsons.push_back(
+            R"({"type":"function","function":{"name":"inspect","parameters":{"type":"object"}}})");
+        return compiled
+            .render({chat_message(ninferno::ChatRole::User, "list the directory"),
+                     std::move(assistant), std::move(tool)},
+                    std::move(options))
+            .text;
+    };
+    const std::string plain   = render(false);
+    const std::string steered = render(true);
+    const std::size_t end     = plain.rfind(kResult);
+    if (end == std::string::npos) {
+        return check(false, (label + ": the tool result was not rendered").c_str());
+    }
+    const std::size_t content_end = end + kResult.size();
+    std::size_t diverge           = 0;
+    while (diverge < plain.size() && diverge < steered.size() &&
+           plain[diverge] == steered[diverge]) {
+        ++diverge;
+    }
+    if (diverge < content_end) {
+        std::fprintf(stderr, "%s diverges at %zu of %zu: plain [%s] steered [%s]\n", label.c_str(),
+                     diverge, content_end, plain.substr(diverge, 80).c_str(),
+                     steered.substr(diverge, 80).c_str());
+    }
+    if (steered.find(kLine.substr(2), content_end) == std::string::npos) {
+        std::fprintf(stderr, "%s tail: plain [%s] steered [%s]%c", label.c_str(),
+                     plain.substr(content_end).c_str(), steered.substr(content_end).c_str(), 10);
+    }
+    return check(
+        steered.size() > plain.size() &&
+            steered.compare(0, content_end, plain, 0, content_end) == 0 &&
+            steered.find(kLine.substr(2), content_end) != std::string::npos,
+        (label + ": the steering line after a tool result changed the prompt before it").c_str());
+}
+
+int test_steering_after_tool_result_keeps_the_prefix() {
+    int failures = check_steered_prefix(thinking_toggle_template(), "qwen3_6");
+    failures += check_steered_prefix(
+        fi::CompiledChatTemplate::resolve(reasoning_effort_template_source()), "qwen3_8");
+    // Other families' templates (a directory of *.jinja files, e.g. those embedded in GGUFs).
+    if (const char* directory = std::getenv("NINFERNO_TEST_TEMPLATE_DIR")) {
+        for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+            if (entry.path().extension() != ".jinja") { continue; }
+            failures +=
+                check_steered_prefix(fi::CompiledChatTemplate::resolve(
+                                         read_template_fixture(entry.path().string().c_str())),
+                                     entry.path().filename().string());
+        }
+    }
+    return failures;
+}
+
+// tool_choice none: outside reasoning, a marker that begins the answer ends the turn (the model has
+// left the answer for markup), with the marker not published; one after text is prose that may
+// quote the tag (the test vocabulary's <think> and <tool_call> are not control tokens, as in
+// Qwen's); inside reasoning the markers are the span's own.
+int test_none_ends_at_structural_tokens() {
+    const Frontend frontend = make_frontend(resources_with_opener(), false);
+    ninferno::StopPolicy stop;
+    constexpr ninferno::TokenId kHello = 1; // "helloST"
+    constexpr ninferno::TokenId kThink = 248068;
+    constexpr ninferno::TokenId kClose = 248069;
+    int failures                       = 0;
+    const auto run                     = [&](const ninferno::PromptInput& input,
+                         std::vector<ninferno::TokenId> tokens) {
+        auto prompt   = frontend.prepare(input);
+        auto session  = frontend.make_output_session(prompt, stop);
+        auto decision = session.preview_model(tokens, 64, ninferno::FinishReason::OutputLimit);
+        return std::pair{decision, session.commit_preview()};
+    };
+    const auto content = [](const PublishedOutput& output) {
+        return channel_text(output, ninferno::OutputChannel::Content);
+    };
+    // Thinking declined: a first stray close is dropped (Gemma 4 writes one after a tool response
+    // and then answers); a second ends the turn.
+    {
+        const auto [decision, output] = run(none_input(false), {kClose, kHello});
+        failures += check(decision.accepted_tokens == 2 && !decision.finished() &&
+                              content(output) == "helloST",
+                          "a first stray close before the answer was not dropped");
+        const auto [ended, empty] = run(none_input(false), {kClose, kClose, kHello});
+        failures += check(ended.accepted_tokens == 2 &&
+                              ended.finish_reason == ninferno::FinishReason::StopToken &&
+                              content(empty).empty(),
+                          "a second stray close at the start did not end the turn");
+    }
+    // After text the same tokens are prose: an answer that quotes the tag is kept whole.
+    {
+        const auto [decision, output] = run(none_input(false), {kHello, kClose, kHello, kThink});
+        failures += check(decision.accepted_tokens == 4 && !decision.finished() &&
+                              content(output).find("helloST") != std::string::npos,
+                          "an answer that quotes a reasoning tag was cut");
+    }
+    // Thinking on: the first span is reasoning; a second opener where the answer begins ends it.
+    {
+        const auto [decision, output] = run(none_input(true), {kHello, kClose, kThink, kHello});
+        failures += check(decision.accepted_tokens == 3 &&
+                              decision.finish_reason == ninferno::FinishReason::StopToken &&
+                              content(output).empty(),
+                          "a second reasoning opener reached the answer");
+    }
+    // The call opener at the start ends it too.
+    {
+        const auto [decision, output] = run(none_input(true), {kClose, kOpenerId, kHello});
+        failures += check(decision.accepted_tokens == 2 &&
+                              decision.finish_reason == ninferno::FinishReason::StopToken,
+                          "the call opener after the reasoning did not end the turn");
+    }
+    // A control (special) token ends the turn after text too.
+    {
+        const Frontend special_frontend = make_frontend(resources_with_opener(true), false);
+        auto prompt                     = special_frontend.prepare(none_input(false));
+        auto session                    = special_frontend.make_output_session(prompt, stop);
+        const auto decision =
+            session.preview_model(std::array<ninferno::TokenId, 3>{kHello, kOpenerId, kHello}, 64,
+                                  ninferno::FinishReason::OutputLimit);
+        const auto output = session.commit_preview();
+        failures += check(decision.accepted_tokens == 2 &&
+                              decision.finish_reason == ninferno::FinishReason::StopToken &&
+                              content(output) == "helloST",
+                          "a control token after text did not end the turn");
+    }
+    // Rounds: the rule reads the state of earlier rounds (reasoning closed in the first).
+    {
+        auto prompt      = frontend.prepare(none_input(true));
+        auto session     = frontend.make_output_session(prompt, stop);
+        const auto first = session.preview_model(std::array<ninferno::TokenId, 2>{kHello, kClose},
+                                                 64, ninferno::FinishReason::OutputLimit);
+        (void)session.commit_preview();
+        const auto second = session.preview_model(std::array<ninferno::TokenId, 2>{kThink, kHello},
+                                                  62, ninferno::FinishReason::OutputLimit);
+        const auto output = session.commit_preview();
+        failures += check(!first.finished() && second.accepted_tokens == 1 &&
+                              second.finish_reason == ninferno::FinishReason::StopToken &&
+                              content(output).empty(),
+                          "the end-of-turn rule lost the state across rounds");
+    }
+    // Calls enabled (auto): the same tokens are not an end.
+    {
+        ninferno::PromptInput input        = none_input(true);
+        input.options.tool_calls_discarded = false;
+        input.options.tool_calls_enabled   = true;
+        const auto [decision, output]      = run(input, {kHello, kClose, kThink, kHello});
+        failures += check(decision.accepted_tokens == 4 && !decision.finished(),
+                          "tool calls enabled ended the turn at a structural token");
+    }
+    // An output constraint (response_format) owns the output: no tool-call decoder reads it.
+    {
+        ninferno::PromptInput input  = none_input(true);
+        input.options.cut_bare_calls = false;
+        const auto prompt            = frontend.prepare(input);
+        failures += check(FrontendFactory::inspect(prompt).tool_call_output == nullptr,
+                          "an output constraint still cut bare calls");
+    }
+    return failures;
+}
+
+// The Gemma 4 head-token path end to end: <|channel> is the special token of the reasoning opener
+// "<|channel>thought". Thinking off, a first <|channel> is markup where the answer begins and ends
+// the turn; thinking on, it opens the model's reasoning, and one after the reasoning ends the turn.
+int test_none_gemma_channel_head_token() {
+    // Gemma 4's own template: thinking off writes the empty thought channel into the prompt.
+    const std::string gemma_template =
+        "{% for m in messages %}<|turn>{{ 'model' if m.role == 'assistant' else m.role }}\n"
+        "{{ m.content }}<turn|>\n{% endfor %}"
+        "{% if add_generation_prompt %}<|turn>model\n"
+        "{% if not enable_thinking %}<|channel>thought\n<channel|>{% endif %}{% endif %}";
+    FrontendResources source      = resources(gemma_template);
+    nlohmann::json tokenizer_json = nlohmann::json::parse(source.tokenizer_json);
+    nlohmann::json config         = nlohmann::json::parse(source.tokenizer_config_json);
+    const std::array<std::pair<int, const char*>, 4> specials{
+        {{100, "<|turn>"}, {101, "<turn|>"}, {102, "<|channel>"}, {103, "<channel|>"}}};
+    for (const auto& [id, content] : specials) {
+        tokenizer_json["added_tokens"].push_back(added(id, content, true));
+        config["added_tokens_decoder"][std::to_string(id)] = decoder_added(content, true);
+    }
+    source.tokenizer_json        = tokenizer_json.dump();
+    source.tokenizer_config_json = config.dump();
+    const Frontend frontend      = make_frontend(source, false);
+    ninferno::StopPolicy stop;
+    constexpr ninferno::TokenId kChannel = 102;
+    constexpr ninferno::TokenId kClosed  = 103;
+    const auto input                     = [](bool thinking) {
+        ninferno::PromptInput result;
+        ninferno::ChatMessage message;
+        message.role = ninferno::ChatRole::User;
+        message.parts.push_back({.text = "hi"});
+        result.messages.push_back(std::move(message));
+        result.options.enable_thinking = thinking;
+        result.options.tool_jsons.push_back(
+            R"({"type":"function","function":{"name":"inspect","parameters":{"type":"object"}}})");
+        result.options.tool_calls_enabled   = false;
+        result.options.tool_calls_discarded = true;
+        return result;
+    };
+    int failures = 0;
+    {
+        auto prompt         = frontend.prepare(input(false));
+        auto session        = frontend.make_output_session(prompt, stop);
+        const auto decision = session.preview_model(std::array<ninferno::TokenId, 2>{kChannel, 1},
+                                                    64, ninferno::FinishReason::OutputLimit);
+        const auto output   = session.commit_preview();
+        failures += check(decision.accepted_tokens == 1 &&
+                              decision.finish_reason == ninferno::FinishReason::StopToken &&
+                              channel_text(output, ninferno::OutputChannel::Content).empty(),
+                          "thinking off: a first <|channel> did not end the turn");
+    }
+    {
+        std::vector<ninferno::TokenId> tokens = {};
+        for (const int id : frontend.tokenize_text("<|channel>thought\nweigh it")) {
+            tokens.push_back(id);
+        }
+        const std::size_t reasoning_tokens = tokens.size();
+        tokens.push_back(kClosed);
+        tokens.push_back(kChannel);
+        tokens.push_back(1);
+        auto prompt  = frontend.prepare(input(true));
+        auto session = frontend.make_output_session(prompt, stop);
+        const auto decision =
+            session.preview_model(tokens, 64, ninferno::FinishReason::OutputLimit);
+        const auto output = session.commit_preview();
+        failures +=
+            check(decision.accepted_tokens == reasoning_tokens + 2 &&
+                      decision.finish_reason == ninferno::FinishReason::StopToken &&
+                      channel_text(output, ninferno::OutputChannel::Content).empty() &&
+                      channel_text(output, ninferno::OutputChannel::Reasoning).find("weigh it") !=
+                          std::string::npos,
+                  "thinking on: the opener or the second <|channel> was mishandled");
+    }
     return failures;
 }
 
@@ -3545,6 +3912,7 @@ int main() {
     failures += test_rewrite_checkpoint_trace();
     failures += test_replacement_suffix_boundaries();
     failures += test_leading_instruction_run_boundaries();
+    failures += test_assistant_call_turn_boundary();
     failures += test_adjacent_tool_message_boundary();
     failures += test_literal_cache_boundary();
     failures += test_selected_template_recovery_boundary();
@@ -3559,6 +3927,10 @@ int main() {
     failures += test_image_resize_rejection_policy();
     failures += test_disabled_tool_calls_keep_the_prompt();
     failures += test_disabled_tool_calls_ban_the_opener();
+    failures += test_none_ends_at_structural_tokens();
+    failures += test_none_drop_tools_keeps_the_contract();
+    failures += test_steering_after_tool_result_keeps_the_prefix();
+    failures += test_none_gemma_channel_head_token();
     failures += test_explicit_leading_instruction_cache_boundary();
     failures += test_last_part_boundary_at_turn_end();
     failures += test_media_admission_uses_aggregate_resources(frontend);

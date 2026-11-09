@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <functional>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -99,10 +100,15 @@ void release_request_memory() noexcept;
 // and the response has long been sent. A keep-alive connection is one such connection: it trims
 // when it ends (the keep-alive timeout is seconds), and the thread's next big body reuses the
 // memory.
+//
+// The bound (max_queued > 0) counts the connections in hand, served or waiting: one more than
+// threads + max_queued is refused. httplib's own bound counts its job list alone, which a burst of
+// accepts fills before idle workers have woken to take from it, so it refused connections while
+// workers were free; the inner pool is therefore unbounded.
 class WorkerQueue final : public httplib::TaskQueue {
 public:
     explicit WorkerQueue(std::size_t threads, std::size_t max_queued)
-        : pool_(threads, threads, max_queued) {}
+        : pool_(threads, threads, 0), limit_(max_queued == 0 ? 0 : threads + max_queued) {}
 
     bool enqueue(std::function<void()> connection) override;
 
@@ -110,8 +116,15 @@ public:
 
     void on_idle() override { pool_.on_idle(); }
 
+    // Connections enqueued and not yet finished (served or waiting for a worker).
+    [[nodiscard]] std::size_t in_hand() const noexcept {
+        return in_hand_.load(std::memory_order_relaxed);
+    }
+
 private:
     httplib::ThreadPool pool_;
+    std::size_t limit_; // 0: unbounded
+    std::atomic<std::size_t> in_hand_{0};
 };
 
 // The HTTP worker pool in front of the Engine. Admission belongs to the Engine alone: it runs
@@ -119,11 +132,38 @@ private:
 // 429/503. The pool therefore must never close an accepted connection without a response. It keeps
 // a worker for every request the Engine may hold, headroom for requests the Engine rejects at once
 // and for idle keep-alive connections (each holds a worker until its keep-alive timeout), and it
-// queues accepted sockets beyond that instead of dropping them.
+// queues some accepted sockets beyond that (Linux; elsewhere all of them). A socket past the queue
+// is answered 503 by answer_overloaded_connection, never dropped, and never left waiting without
+// bound behind workers that slow senders hold.
 struct HttpWorkerPlan {
     std::size_t threads    = 0;
-    std::size_t max_queued = 0; // 0: unbounded; an accepted socket waits for a free worker
+    std::size_t max_queued = 0; // accepted sockets that wait for a free worker; more are refused
 };
+
+// The window over which a request body must keep arriving at
+// ServeOptions::request_body_min_kib_per_sec. The library bounds the request line and headers as a
+// whole and each wait for body bytes, but not a sender that delivers a few bytes every few seconds;
+// without this such a sender holds a worker for as long as it likes.
+inline constexpr std::chrono::milliseconds kRequestBodyRateWindow{10000};
+
+// What /health answers: the status code, the JSON body, and whether the connection may be kept.
+struct HealthReply {
+    int status = 200;
+    std::string body;
+    bool keeps_connection = false;
+};
+
+// The answer to a connection the worker pool refused because every worker is busy and its queue is
+// full (the pool runs on the accepting thread and must not block): a `GET /health` is answered
+// with `health()`, so a liveness probe is not failed by a pool that slow senders have filled, and
+// anything else gets HTTP 503 with Retry-After, server_busy, and the connection closes. The
+// request line is peeked at without waiting (the listening socket defers accept until bytes have
+// arrived) and what has arrived is then dropped, so closing does not reset the connection under the
+// answer of a small request. A connection with no bytes at all gets no answer: it is closed, as an
+// idle pooled connection of a proxy is, and the proxy retries on another. /health here answers for
+// the Engine (liveness), not for the pool: a saturated pool is not an unhealthy server. Linux only;
+// elsewhere the queue stays unbounded and this is never called.
+void answer_overloaded_connection(socket_t socket, const std::function<HealthReply()>& health);
 
 [[nodiscard]] HttpWorkerPlan plan_http_workers(std::uint32_t max_concurrency,
                                                std::uint32_t max_pending_requests) noexcept;

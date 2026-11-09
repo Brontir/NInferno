@@ -143,6 +143,17 @@ class Collect(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "different protocols"):
             self.collect_new([self.new_pass(1, "x-1", rotated), self.new_pass(2, "x-2", flushed)])
 
+    def test_warm_samples_are_their_own_protocol(self):
+        # #574: a timer without a flush buffer times a warm L2; its rows say so, and a pass of
+        # them is not one of flushed rows.
+        warm = [(24, "rmma.a", 30, "warm", 1), (24, "rmma.b", 25, "warm", 1)]
+        doc = self.collect_new([self.new_pass(1, "x-1", warm), self.new_pass(2, "x-2", warm)])
+        work = {c["id"]: c["workload"] for c in doc["cases"]}
+        self.assertIn("warm L2", work["q8.a16.store.n64.k64.T24"])
+        flushed = [(24, "rmma.a", 50, "flushed", 1), (24, "rmma.b", 40, "flushed", 1)]
+        with self.assertRaisesRegex(ValueError, "different protocols"):
+            self.collect_new([self.new_pass(1, "x-1", warm), self.new_pass(2, "x-2", flushed)])
+
     def test_files_of_different_runs_refused(self):
         rows = [(4, "rmma.a", 5, "copies", 64)]
         sel, _ = self.new_pass(1, "x-1", rows)

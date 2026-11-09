@@ -348,9 +348,14 @@ ResolvedPromptSemantics resolve_prompt_semantics(const GenerationRequest& reques
         !result.preserve_thinking && result.enable_thinking == false &&
         std::none_of(request.messages.begin(), request.messages.end(), reasoned);
     result.vision     = server.enable_vision;
-    result.sort_tools = server.sort_tools;
+    result.sort_tools            = server.sort_tools;
+    result.drop_tools_under_none = server.drop_tools_under_none;
     return result;
 }
+
+// The line a tool_choice none prompt ends with (documented in serving.md).
+constexpr std::string_view kToolsUnavailableLine =
+    "Tools are unavailable for this reply; answer in plain text.";
 
 ninferno::PromptInput to_prompt_input(const GenerationRequest& request,
                                     const ResolvedPromptSemantics& semantics,
@@ -463,10 +468,42 @@ ninferno::PromptInput to_prompt_input(const GenerationRequest& request,
         semantics.preserve_for_reuse ? std::optional<bool>(true) : semantics.preserve_thinking;
     input.options.chat_template_kwargs_json        = semantics.chat_template_kwargs_json;
     input.options.add_vision_id                    = false;
-    const std::vector<const ToolDefinition*> tools = effective_tools(request, semantics.sort_tools);
+    std::vector<const ToolDefinition*> tools       = effective_tools(request, semantics.sort_tools);
+    const bool tools_refused                       = !tools.empty() && !request.uses_tools();
+    std::vector<const ToolDefinition*> refused_tools;
+    if (tools_refused && semantics.drop_tools_under_none) {
+        // The model is not told about tools at all (vLLM's --exclude-tools-when-tool-choice-none);
+        // a call it writes anyway is still read against them and cut, so they stay the output
+        // contract's.
+        refused_tools = std::move(tools);
+        tools.clear();
+    } else if (tools_refused &&
+               request.continuation == ninferno::PromptContinuationMode::NewAssistantTurn &&
+               !input.messages.empty()) {
+        // The declarations stay (the cached prefix), and the model is told once more, where it
+        // answers, that they cannot be used: both templates that declare tools in the system
+        // prompt otherwise lead the model to a call it is then refused. The line ends the last
+        // user turn, or the last tool result: a user turn added after a tool result would move
+        // the template's last-query index and re-render the reasoning of the whole agent turn.
+        // After a system or developer message nothing is added.
+        ninferno::ChatMessage& last = input.messages.back();
+        if (last.role == ChatRole::User || last.role == ChatRole::Tool) {
+            last.parts.push_back(
+                ninferno::MessagePart{.kind  = ninferno::MessagePartKind::Text,
+                                      .text  = "\n\n" + std::string(kToolsUnavailableLine),
+                                      .media = {}});
+        }
+    }
     input.options.tool_calls_enabled               = request.uses_tools();
     // tool_choice none: a call written anyway is cut out of the answer, not shown as markup.
-    input.options.tool_calls_discarded = !tools.empty() && !request.uses_tools();
+    input.options.tool_calls_discarded = tools_refused;
+    for (const ToolDefinition* tool : refused_tools) {
+        input.options.refused_tool_jsons.push_back(render_tool_definition(*tool));
+    }
+    input.options.cut_bare_calls = !request.output_constraint;
+    input.options.tool_calls_forced =
+        request.uses_tools() &&
+        request.tool_choice.requirement != ninferno::ToolCallRequirement::Optional;
     input.options.tool_jsons.reserve(tools.size());
     for (std::size_t index = 0; index < tools.size(); ++index) {
         input.options.tool_jsons.push_back(render_tool_definition(*tools[index]));

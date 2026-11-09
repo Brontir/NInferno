@@ -38,6 +38,19 @@ Nvfp4AttnInputRoute resolve_route(LinearPolicy policy, std::int32_t tokens) {
                                                     : Nvfp4AttnInputRoute::A16;
 }
 
+const char* route_name(Nvfp4AttnInputRoute route) {
+    switch (route) {
+    case Nvfp4AttnInputRoute::A16:
+        return "a16";
+    case Nvfp4AttnInputRoute::A16Exact:
+        return "a16_exact";
+    case Nvfp4AttnInputRoute::A4:
+        return "a4";
+    case Nvfp4AttnInputRoute::W4A8:
+        return "w4a8";
+    }
+    return "?";
+}
 
 } // namespace
 
@@ -69,6 +82,7 @@ void nvfp4_attn_input_dispatch(const Tensor& x, const Weight& weight, Tensor& q,
         (workspace == nullptr || !generic::owned_prefill_w4a8(weight, policy, x.ne[1]))) {
         route = Nvfp4AttnInputRoute::A16;
     }
+    generic::record_projection_route("attn_input", route_name(route), x.ne[1], weight.n, weight.k);
     if (route == Nvfp4AttnInputRoute::A16Exact) {
         nvfp4_attn_input_exact_launch(x, weight, q, gate, k, v, stream);
         return;

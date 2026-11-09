@@ -1,7 +1,9 @@
 #include "convert/drafters.h"
 
 #include "core/ascii.h"
+#include "core/hex.h"
 #include "convert/files.h"
+#include "convert/options_key.h"
 #include "core/cache_file.h"
 #include "core/clock.h"
 #include "core/sha256.h"
@@ -846,6 +848,30 @@ namespace {
 
 // The id of the file the refresh refused for drafter `name` of the target's manifest, "" where
 // none was refused (or there is no manifest to say).
+// The artifact id a drafter's conversion report records, "" without a readable report.
+std::string reported_id(const fs::path& artifact) {
+    std::ifstream in(artifact.string() + ".conversion.json");
+    if (!in) { return {}; }
+    try {
+        return Json::parse(in).value("artifact_id", std::string());
+    } catch (const std::exception&) { return {}; }
+}
+
+// The id of the artifact itself, "" where any of its files cannot be read (truncated, replaced by
+// another file, a part missing): every part is opened, which checks its header and its length
+// against the directory.
+std::string readable_id(const fs::path& artifact) {
+    try {
+        const artifact::Reader reader(artifact);
+        // An empty read: Reader opens (and checks) the part before reading nothing from it.
+        for (std::size_t part = 1; part < reader.directory().files.size(); ++part) {
+            (void)reader.read_direct(part, 0, {});
+        }
+        const auto& id = reader.artifact_id();
+        return hex_encode(id.data(), id.size());
+    } catch (const std::exception&) { return {}; }
+}
+
 std::string refused_id(const fs::path& target_artifact, const std::string& name) {
     try {
         const auto path = spec::manifest_path(target_artifact);
@@ -1027,19 +1053,48 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
             // Named by what it holds: --drafter-quant replaces the declared quantization.
             const std::string quant =
                 convert_options.drafter_quant.empty() ? "" : "." + convert_options.drafter_quant;
-            convert_options.out = dir / (stem + "." + d.decl.recipe + quant + suffix + ".ninferno");
+            // Content options the name does not carry give the drafter a directory of its own.
+            const auto variant = drafter_options_key(convert_options);
+            const auto home    = variant.empty() ? dir : dir / ("options-" + variant);
+            fs::create_directories(home);
+            convert_options.out =
+                home / (stem + "." + d.decl.recipe + quant + suffix + ".ninferno");
             // A file the refresh refused (refresh_changed_drafters: another drafter written at this
             // path) is no cache: converted again from the checkpoint just fetched.
+            // A cache is the file its report describes: readable, with the id the report records.
+            // One damaged or replaced since (unreadable, or another id) is converted again from
+            // the checkpoint, which is still here.
+            const std::string file_id =
+                fs::exists(convert_options.out) ? readable_id(convert_options.out) : std::string();
             const std::string refused_file = refused_id(target_artifact, d.decl.name);
-            const bool refused = !refused_file.empty() && fs::exists(convert_options.out) &&
-                                 refused_file == spec::artifact_id_hex(convert_options.out);
-            if (!refused && fs::exists(convert_options.out) &&
+            const bool refused             = !refused_file.empty() && refused_file == file_id;
+            const bool damaged             = fs::exists(convert_options.out) &&
+                                 fs::exists(convert_options.out.string() + ".conversion.json") &&
+                                 (file_id.empty() || file_id != reported_id(convert_options.out));
+            // What it was converted with, as it recorded it: a drafter made with another template
+            // or flags is converted again; one with no record (converted before) is kept.
+            const std::string identity = drafter_content_identity(convert_options);
+            bool recorded_other        = false;
+            if (std::ifstream recorded(convert_options.out.string() + ".options"); recorded) {
+                const std::string text((std::istreambuf_iterator<char>(recorded)),
+                                       std::istreambuf_iterator<char>());
+                recorded_other = text != identity;
+            }
+            if (!refused && !damaged && !recorded_other && !file_id.empty() &&
                 fs::exists(convert_options.out.string() + ".conversion.json")) {
                 d.status = "cached";
             } else {
+                if (recorded_other) {
+                    log_line(options.log, "  " + convert_options.out.string() +
+                                              " was converted with other options: converted again");
+                }
                 if (refused) {
                     log_line(options.log, "  " + convert_options.out.string() +
                                               " failed the drafter checks: converted again");
+                } else if (damaged) {
+                    log_line(options.log, "  " + convert_options.out.string() +
+                                              " is not the file its report describes: converted "
+                                              "again");
                 }
                 // A conversion that stopped half way left the output in place without its report
                 // (convert() renames it in first): removed, or every start would fail on it.
@@ -1048,8 +1103,11 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
                 log_line(options.log, "  wrote " + convert_options.out.string() + " in " +
                                           std::to_string(result.seconds).substr(0, 5) + " s");
                 d.status = "converted";
+                try {
+                    write_file_atomic(convert_options.out.string() + ".options", identity);
+                } catch (const std::exception&) {} // a record only; none keeps the drafter
             }
-            d.artifact    = convert_options.out.string();
+            d.artifact    = fs::absolute(convert_options.out).string(); // as a local drafter's
             d.artifact_id = spec::artifact_id_hex(convert_options.out);
             if (const auto fp = spec::artifact_vocab_fingerprint(convert_options.out);
                 fp && !plan.target.fingerprint.empty()) {
@@ -1142,6 +1200,40 @@ std::vector<std::string> given_drafters_changed(const fs::path& target_artifact)
         }
     } catch (const std::exception&) {}
     return out;
+}
+
+namespace {
+
+std::vector<OptionPart> drafter_flag_parts(const ConvertOptions& options) {
+    std::vector<OptionPart> parts;
+    if (options.round_tiny_scales) { parts.push_back({"--round-tiny-scales", "", ""}); }
+    if (options.maintainer_quantize) { parts.push_back({"--maintainer-quantize", "", ""}); }
+    if (options.max_file_bytes != ConvertOptions{}.max_file_bytes) {
+        const auto value = std::to_string(options.max_file_bytes);
+        parts.push_back({"--max-file-bytes", value, value});
+    }
+    return parts;
+}
+
+} // namespace
+
+std::string drafter_options_key(const ConvertOptions& options, std::string* described) {
+    return options_key(drafter_flag_parts(options), described);
+}
+
+std::string drafter_content_identity(const ConvertOptions& options) {
+    auto parts     = drafter_flag_parts(options);
+    auto resources = options.resources;
+    std::sort(resources.begin(), resources.end());
+    for (const auto& [role, path] : resources) {
+        // A drafter never reads the chat template: a target with another one (a default target and
+        // a custom-template target share the drafter) is the same drafter.
+        if (role == "chat_template.jinja") { continue; }
+        parts.push_back({"--resource " + role, content_identity(path), path.filename().string()});
+    }
+    std::string text;
+    for (const auto& part : parts) { text += part.name + "=" + part.value + '\n'; }
+    return text;
 }
 
 std::vector<std::string> refresh_changed_drafters(const fs::path& target_artifact,

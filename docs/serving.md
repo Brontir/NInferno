@@ -80,10 +80,18 @@ For a hub id:
   - `--accept-converted` keeps them from now on without the notice, until the branch moves again.
   - `--refetch` downloads the new commit, converts it and removes the old conversion
     (`--keep-replaced` leaves it, for ninferno-ui to remove once the new one serves).
+  - A hub that cannot be reached leaves the converted weights in use, with a warning.
 - `--round-tiny-scales` passes the converter's flag (docs/weight-conversion.md): a published integer
   matrix whose only inexact binary16 scales lie below binary16's normal range is kept with them
   rounded, the report counting them. Off by default: such a model is refused, naming the flag.
-  - A hub that cannot be reached leaves the converted weights in use, with a warning.
+  It changes the weights, so such a start converts into an `options-<hash>/` directory beside the
+  default conversion of that commit and reuses it on later starts with the same flag; a start
+  without the flag serves the default conversion and never the other.
+- `--chat-template FILE` is applied when the model runs, by every model family, and is not
+  converted in: the cached default conversion (or the one a deleted download left) serves it, and
+  a start without the flag never sees it. A base model that ships no template is the exception: it
+  is converted with this one (into an `options-<hash>/` directory, as a template given to
+  `ninferno-convert --resource`).
 
 The server checks before downloading any weight and refuses with a reason if the architecture is not
 supported, the repository is gated or missing, the weights do not fit the GPU memory, or the disk is
