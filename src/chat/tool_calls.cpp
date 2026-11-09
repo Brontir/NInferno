@@ -2315,6 +2315,22 @@ public:
         return parse_calls(
             text, kOpen, max_length, contract,
             [any_recipient](std::string_view region, ParsedCalls& calls) {
+                // Under none, where the refused calls end (a message to no one, or a header the
+                // limit cut): the answer is the last message's text when that message is a final
+                // one to no one; a region ending in a call, an analysis message or a cut header
+                // leaves none.
+                const auto answer_after_calls = [&] {
+                    const std::size_t last      = region.rfind(kOpen);
+                    const std::size_t body      = region.find(kMessage, last);
+                    const std::string_view head = body == std::string_view::npos
+                                                      ? std::string_view()
+                                                      : region.substr(last, body - last);
+                    calls.trailing = head.find("<|channel|>final") != std::string_view::npos &&
+                                             head.find(kAnyRecipient) == std::string_view::npos
+                                         ? body + kMessage.size()
+                                         : region.size();
+                    return FallbackReason::TrailingContent;
+                };
                 std::size_t pos = 0;
                 for (;;) {
                     skip_format_whitespace(region, pos);
@@ -2329,6 +2345,7 @@ public:
                     }
                     const std::size_t header_end = region.find(kMessage, pos);
                     if (header_end == std::string_view::npos) {
+                        if (any_recipient && !calls.empty()) { return answer_after_calls(); }
                         return FallbackReason::MalformedStructure;
                     }
                     const std::string_view header = region.substr(pos, header_end - pos);
@@ -2346,13 +2363,7 @@ public:
                         (header.find("<|channel|>commentary") == std::string_view::npos &&
                          !(any_recipient &&
                            header.find("<|channel|>analysis") != std::string_view::npos))) {
-                        // Under none a message to no one after refused calls ends them (the model
-                        // answers after its <|end|>): the answer is the last message's text,
-                        // without its header (an analysis message before it is no answer).
-                        if (any_recipient && !calls.empty()) {
-                            calls.trailing = region.rfind(kMessage) + kMessage.size();
-                            return FallbackReason::TrailingContent;
-                        }
+                        if (any_recipient && !calls.empty()) { return answer_after_calls(); }
                         return FallbackReason::MalformedStructure;
                     }
                     std::size_t name_end = name_at;

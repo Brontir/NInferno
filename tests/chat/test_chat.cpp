@@ -92,6 +92,20 @@ int test_harmony_any_recipient_under_none() {
                   "<|start|>assistant<|channel|>final<|message|>The answer.");
     failures += check(answered.content == "The answer." && answered.tool_calls.size() == 1,
                       "the answer after a refused call was lost: " + answered.content);
+    // Only a final message ending the output is the answer: one followed by another call, or an
+    // output ending in analysis or a cut header, leaves none of the markup as text.
+    for (const std::string& tail :
+         {std::string("<|start|>assistant<|channel|>final<|message|>Answer.<|end|>"
+                      "<|start|>assistant<|channel|>commentary to=x <|constrain|>json"
+                      "<|message|>{\"a\": 1}<|call|>"),
+          std::string("<|start|>assistant<|channel|>analysis<|message|>thinking"),
+          std::string("<|start|>assistant<|channel|>fin")}) {
+        const auto ended = run(true, "<|start|>assistant<|channel|>analysis to=python code"
+                                     "<|message|>print(1)<|end|>" +
+                                         tail);
+        failures += check(ended.content.empty() && !ended.tool_calls.empty(),
+                          "markup after a refused call was shown: " + ended.content);
+    }
     const auto braces = run(true, "<|start|>assistant to=python<|channel|>commentary code"
                                   "<|message|>{1, 2}<|call|>");
     failures += check(braces.content.empty() && braces.tool_calls.size() == 1,
