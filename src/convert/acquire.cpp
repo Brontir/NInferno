@@ -852,24 +852,33 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 out.artifact == artifact) {
                 return;
             }
-            const auto dir = artifact.parent_path();
+            auto dir                 = artifact.parent_path();
             const auto drafter_files = manifest_drafter_files(artifact);
             remove_artifact(artifact);
             std::error_code ec;
-            bool others = false;
+            // Whether a directory holds a conversion other than the replaced one's drafters.
             // Recursive: a conversion with options of its own lives in options-<hash>/ below, and
-            // may be serving; it stays, with the commit it belongs to.
-            for (const auto& entry : fs::recursive_directory_iterator(dir, ec)) {
-                // By path, not by name: a conversion with options of its own below has the same
-                // file name as the one replaced.
-                if (entry.path().extension() == ".ninferno" &&
-                    !drafter_files.contains(fs::weakly_canonical(entry.path(), ec))) {
-                    others = true;
+            // may be serving; it stays, with the commit it belongs to. A conversion still being
+            // written below has no .ninferno file yet.
+            const auto others_in = [&](const fs::path& where) {
+                for (const auto& entry : fs::recursive_directory_iterator(where, ec)) {
+                    // By path, not by name: a conversion with options of its own below has the
+                    // same file name as the one replaced.
+                    if (entry.path().extension() == ".ninferno" &&
+                        !drafter_files.contains(fs::weakly_canonical(entry.path(), ec))) {
+                        return true;
+                    }
                 }
-            }
-            // A conversion still being written below has no .ninferno file yet.
-            others = others || conversion_in_progress(dir);
+                return conversion_in_progress(where);
+            };
+            bool others = others_in(dir);
             if (!others) { fs::remove_all(dir, ec); }
+            // A replaced conversion with options of its own: its commit's directory is looked at
+            // next, as App::delete_artifact does (its lock, accepted-ref records, drafters).
+            if (dir.filename().string().rfind("options-", 0) == 0) {
+                dir = dir.parent_path();
+                if (!others && !others_in(dir)) { fs::remove_all(dir, ec); }
+            }
             say(options, "removed the old conversion " + artifact.string() +
                              (others ? " (other conversions of that commit stay)" : ""));
         }
@@ -965,8 +974,12 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                                 auto quant = snapshot_quant_label(
                                     repo_dir / "snapshots" / held_commit, options.fetch, repo);
                                 if (quant.empty()) { quant = options.fetch.quant; }
-                                if (auto old = converted_artifact(commit_dir, quant,
-                                                                  convert_options.recipe)) {
+                                // In this start's own directory of the commit: a conversion
+                                // with options replaces its optioned one (options-<key>/),
+                                // never the default one beside it, which may be serving.
+                                if (auto old = converted_artifact(
+                                        conversion_directory(commit_dir, variant_key), quant,
+                                        convert_options.recipe)) {
                                     replaced.artifact = *old;
                                 }
                             }
