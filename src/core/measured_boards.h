@@ -6,6 +6,7 @@
 // Data keyed by one of these carries to any other board through board_distance; a table names
 // the board it ran on instead of a chip, whose boards differ (core/device_class.h: Board).
 
+#include "core/board_registry.h"
 #include "core/device_class.h"
 
 #include <limits>
@@ -13,18 +14,24 @@
 
 namespace ninferno::measured {
 
-inline constexpr Board kRtx5090{12, 0, 170, 96, 1792};
-inline constexpr Board kRtx5080{12, 0, 84, 64, 960};
-inline constexpr Board kRtx5060Ti{12, 0, 36, 32, 448};
-inline constexpr Board kRtx4090{8, 9, 128, 72, 1008};
-inline constexpr Board kRtx4080Super{8, 9, 80, 64, 736};
-inline constexpr Board kL4{8, 9, 58, 48, 300};
-inline constexpr Board kRtx4060Ti{8, 9, 34, 32, 288};
-inline constexpr Board kRtx3090{8, 6, 82, 6, 936};
-inline constexpr Board kA10{8, 6, 72, 6, 600};
-inline constexpr Board kA100Sxm40{8, 0, 108, 40, 1555.2};
-inline constexpr Board kRtx2080Ti{7, 5, 68, 5.5, 616};
-inline constexpr Board kV100Sxm2{7, 0, 80, 6, 900};
+// Each board is its PCI id in the registry (core/board_registry.h, generated from
+// core/data/gpu_facts.json): the facts are not spelled here. tests/test_board_registry.cpp holds
+// the figures these boards were measured under and fails when a row drifts from them.
+inline constexpr Board kRtx5090      = board_registry::board(0x2B85);
+inline constexpr Board kRtx5080      = board_registry::board(0x2C02);
+inline constexpr Board kRtx5060Ti    = board_registry::board(0x2D04);
+inline constexpr Board kRtx4090      = board_registry::board(0x2684);
+inline constexpr Board kRtx4080Super = board_registry::board(0x2702);
+inline constexpr Board kL4           = board_registry::board(0x27B8);
+inline constexpr Board kRtx4060Ti    = board_registry::board(0x2805);
+inline constexpr Board kRtx3090      = board_registry::board(0x2204);
+inline constexpr Board kA10          = board_registry::board(0x2236);
+inline constexpr Board kA100Sxm40    = board_registry::board(0x20B0);
+inline constexpr Board kRtx2080Ti    = board_registry::board(0x1E07);
+// Conflict between tables: the row spells the V100 SXM2's 4096-bit HBM2 at 1.754 Gbps, 898.048
+// GB/s; the route and R8 tables and the gates were measured under, and board_distance has always
+// read, the published 900 GB/s. Kept at 900 so every distance is as before.
+inline constexpr Board kV100Sxm2 = board_registry::board(0x1DB5, 900);
 
 // How far a measured choice carries (board_distance): to the variants of the board (a 4090 D or a
 // 3090 Ti, 0.17 and 0.14 from the 4090 and the 3090) and to its near neighbours (an A40 0.43 from
