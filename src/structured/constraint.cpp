@@ -739,15 +739,19 @@ ConstraintCompiler::compile(const OutputConstraintSpec& spec) const {
                     // given up, so it takes no room in the cache.
                     if (!job->cancel.load(std::memory_order_relaxed)) { impl->insert(key, built); }
                 } catch (...) { error = std::current_exception(); }
-                // Out of the table before the answer, so a request woken by a cancel starts afresh.
-                impl->finish_inflight(key, job.get());
+                // A failure (a cancel among them) leaves the table before its answer, so a request
+                // woken by it starts afresh; a result is answered first and leaves after, so a
+                // request arriving meanwhile finds it (in the table, or in the cache) instead of
+                // compiling it again where the cache does not keep it.
                 try {
                     if (error) {
+                        impl->finish_inflight(key, job.get());
                         promise->set_exception(error);
                     } else {
                         promise->set_value(std::move(built));
+                        impl->finish_inflight(key, job.get());
                     }
-                } catch (...) {}
+                } catch (...) { impl->finish_inflight(key, job.get()); }
                 {
                     std::lock_guard lock(impl->slot_mutex);
                     --impl->active;
