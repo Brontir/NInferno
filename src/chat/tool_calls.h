@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
 #include <span>
 #include <string>
@@ -213,7 +214,31 @@ private:
     std::vector<GeneratedToolCall> bare_calls_;
     std::uint32_t bare_dropped_ = 0;
     std::string settle_bare();
+
+    // finish's region, read once: its parse and its last call, with how the output ended.
+    struct RegionParse {
+        ParsedToolCallOutput parsed;
+        ToolCallSyntax::LastCall last_open;
+        std::optional<std::string_view> stop_text;
+        bool cut_off = false;
+    };
     Terminal finish_region(bool cut_off, std::optional<std::string_view> stop_text);
+    // The terminal stages, in finish_region's order: each returns the turn it recognizes, or
+    // nothing for the next stage.
+    std::optional<Terminal> finish_bare_region();
+    std::optional<Terminal> finish_bare_name_cut();
+    std::optional<Terminal> finish_parsed_calls(RegionParse& region);
+    std::optional<Terminal> finish_qwen_after_parameter(RegionParse& region);
+    std::optional<Terminal> finish_stop_swallowed_close(RegionParse& region);
+    std::optional<Terminal> finish_cut_last_call(RegionParse& region);
+    std::optional<Terminal> finish_forced_stop(RegionParse& region);
+    // The calls of `parsed` are the turn (the region and what is held are consumed).
+    Terminal take_calls(ParsedToolCallOutput parsed);
+    // A call was cut and dropped: no content, no calls, one cut call counted.
+    Terminal drop_cut_call(ToolCallParseDiagnostics diagnostics);
+    [[nodiscard]] std::uint32_t
+    next_call_cut(std::optional<std::string_view> stop_text,
+                  std::initializer_list<std::string_view> swallowed) const;
     // Bytes that may still begin the call region (ToolCallSyntax::match_start).
     std::string held_;
     std::string tool_region_;

@@ -25,6 +25,7 @@
 #include "models/qwen3_5/program/planning/startup.h"
 #include "models/qwen3_5/program/qwen3_5_execution.h"
 #include "convert/checks.h"
+#include "convert/dense.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
 #include "runtime/engine/kv_capacity.h"
@@ -1393,11 +1394,33 @@ void test_gptoss_drafter_rings() {
         check(beside && beside->local_layers == 8 && beside->window == 4096,
               "a YaRN length beside rope_scaling rings");
     }
-    // rope_parameters alone: the DFlash converter keeps the rope unscaled (no length), paged; with
-    // rope_scaling given, the keyed rope_parameters is the rope it resolves.
-    const auto alone = drafter("rope_parameters", json{{"full_attention", yarn_4096}});
-    check(alone && alone->local_layers == 0 && alone->full_layers == 8,
-          "rope_parameters without rope_scaling stays paged");
+    // rope_parameters alone (transformers 5, no rope_scaling): the DFlash converter resolves the
+    // YaRN rope it names (#588), keyed by layer type or flat, and the drafter rings; a default
+    // one stays unscaled, paged. With rope_scaling given, rope_parameters is still the rope.
+    json flat_yarn          = yarn_4096;
+    flat_yarn["rope_theta"] = 150000.0;
+    for (const json& parameters : {json{{"full_attention", yarn_4096}}, flat_yarn}) {
+        const auto alone = drafter("rope_parameters", parameters);
+        check(alone && alone->local_layers == 8 && alone->window == 4096,
+              "a YaRN rope in rope_parameters alone rings: " + parameters.dump());
+    }
+    const auto plain_alone = drafter("rope_parameters", plain);
+    check(plain_alone && plain_alone->local_layers == 0 && plain_alone->full_layers == 8,
+          "a default rope in rope_parameters alone stays paged");
+    {
+        const auto rope = ninferno::convert::dflash_rope(
+            ninferno::convert::OJson{{"max_position_embeddings", 131072},
+                                     {"rope_theta", 150000.0},
+                                     {"rope_parameters",
+                                      {{"rope_type", "yarn"},
+                                       {"rope_theta", 150000.0},
+                                       {"factor", 32.0},
+                                       {"original_max_position_embeddings", 4096}}}},
+            64, "drafter");
+        check(rope && rope->value("rope_type", std::string()) == "yarn" &&
+                  rope->value("original_max_position_embeddings", 0) == 4096,
+              "the converter resolves a YaRN rope_parameters without rope_scaling");
+    }
     {
         json c           = {{"architectures", {"DFlashDraftModel"}},
                             {"model_type", "dflash"},
