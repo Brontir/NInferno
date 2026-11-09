@@ -746,6 +746,15 @@ int test_forced_stop_cut() {
     failures += check(gemma_short.tool_calls.empty() && gemma_short.content.empty() &&
                           gemma_short.diagnostics.cut_calls_dropped == 1,
                       "a short stop before <tool_call|> kept a Gemma call");
+    // The closer quoted inside the arguments is no close: the call the stop ended is still dropped,
+    // not published, nor returned as text.
+    const auto quoted = decode(ToolCallFormat::HermesJson,
+                               "<tool_call>\n{\"name\": \"weather\", \"arguments\": {\"city\": "
+                               "\"</tool_call>\", \"days\": 2}}",
+                               "\n<");
+    failures += check(quoted.tool_calls.empty() && quoted.content.empty() &&
+                          quoted.diagnostics.cut_calls_dropped == 1,
+                      "a closer quoted in the arguments closed a stopped Hermes call");
     return failures;
 }
 

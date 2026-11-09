@@ -1126,10 +1126,13 @@ ToolCallOutputDecoder::finish(bool cut_off, std::optional<std::string_view> stop
     // A caller's stop string that ended the last call before its close marker: a parser that closes
     // a complete body at the end of the output (Hermes, Gemma) is taken at its word only where the
     // stop swallowed that marker; a shorter stop ("\n<", "<t") also matches between a call's parts.
+    // A stop text comes only with a forced call, whose grammar writes nothing but calls: the last
+    // call is closed exactly when the region ends with its marker (a marker quoted inside its
+    // arguments is no close).
     const ToolCallSyntax::LastCall last_open = syntax_->last_call(tool_region_);
     const bool stopped_unclosed =
         stop_text && last_open.start != std::string::npos && !last_open.close.empty() &&
-        tool_region_.find(last_open.close, last_open.start) == std::string::npos &&
+        !rtrim_format_whitespace(tool_region_).ends_with(last_open.close) &&
         !stop_swallows(*stop_text, last_open.close);
     if (saw_tool_marker_ && parsed.is_tool_call_response && !stopped_unclosed) {
         held_.clear();
@@ -1202,6 +1205,13 @@ ToolCallOutputDecoder::finish(bool cut_off, std::optional<std::string_view> stop
     if (cut_off && saw_tool_marker_ && !close.empty()) {
         const ToolCallSyntax::LastCall last_call = syntax_->last_call(tool_region_);
         const std::size_t last                   = last_call.start;
+        // Whether the last call has no close marker: after a forced call's stop the region is calls
+        // only, so it is closed exactly when it ends with the marker (one quoted in its arguments
+        // is none); otherwise no marker follows its open one.
+        const bool last_open_unclosed =
+            last != std::string::npos &&
+            (stop_text ? !rtrim_format_whitespace(tool_region_).ends_with(last_call.close)
+                       : tool_region_.find(last_call.close, last) == std::string::npos);
         // The only call of the region was cut off (nothing but format whitespace before its open
         // marker): no call is complete, and its markup is not the answer either (a forced call
         // must not reach the client as text). The answer is empty, with the finish reason length.
@@ -1223,8 +1233,7 @@ ToolCallOutputDecoder::finish(bool cut_off, std::optional<std::string_view> stop
                                                         : name.starts_with(cut->name);
                                });
         };
-        if (last != std::string::npos &&
-            tool_region_.find(last_call.close, last) == std::string::npos &&
+        if (last_open_unclosed &&
             std::all_of(tool_region_.begin(),
                         tool_region_.begin() + static_cast<std::ptrdiff_t>(last),
                         [](char byte) { return is_format_whitespace(byte); }) &&
@@ -1236,8 +1245,7 @@ ToolCallOutputDecoder::finish(bool cut_off, std::optional<std::string_view> stop
             diagnostics.cut_calls_dropped        = 1;
             return Terminal{.content = {}, .tool_calls = {}, .diagnostics = diagnostics};
         }
-        if (last != std::string::npos && last != 0 &&
-            tool_region_.find(last_call.close, last) == std::string::npos) {
+        if (last_open_unclosed && last != 0) {
             ParsedToolCallOutput complete =
                 syntax_->parse(tool_region_.substr(0, last), max_tool_name_length_, *contract_);
             if (complete.is_tool_call_response && !complete.tool_calls.empty()) {
