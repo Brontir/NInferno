@@ -1126,9 +1126,12 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
     const std::vector<std::string>& contract_tools =
         options.tool_jsons.empty() && options.tool_calls_discarded ? options.refused_tool_jsons
                                                                    : options.tool_jsons;
+    // tool_choice none under an output constraint (cut_bare_calls off): the constraint owns the
+    // output, a call it permits included, so no contract reads one out of the text.
     const auto tool_call_output = chat::build_tool_call_output_contract(
         contract_tools,
-        (options.tool_calls_enabled || options.tool_calls_discarded) && !contract_tools.empty(),
+        (options.tool_calls_enabled || (options.tool_calls_discarded && options.cut_bare_calls)) &&
+            !contract_tools.empty(),
         impl_->chat_template.conventions().tools.format,
         options.tool_calls_discarded && options.cut_bare_calls);
     const std::optional<std::uint32_t> leading_boundary =

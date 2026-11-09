@@ -2103,6 +2103,13 @@ int test_none_drop_tools_keeps_the_contract() {
     const auto end = decoder.finish();
     failures += check(shown.empty() && end.content.empty() && end.tool_calls.size() == 1,
                       "drop-tools returned a written call verbatim");
+    // Under an output constraint (cut_bare_calls off) the constraint owns the output: no
+    // contract reads a call it permits out of the text.
+    ninferno::PromptInput constrained  = none_input(false);
+    constrained.options.cut_bare_calls = false;
+    const auto constrained_prompt      = frontend.prepare(std::move(constrained));
+    failures += check(FrontendFactory::inspect(constrained_prompt).tool_call_output == nullptr,
+                      "tool_choice none under an output constraint kept a tool-call contract");
     return failures;
 }
 
