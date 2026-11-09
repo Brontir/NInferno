@@ -14,6 +14,8 @@
 #include <cstdint>
 #include <iostream>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -112,12 +114,14 @@ void test_every_kind_carried() {
 // at exactly the task's streams, the round cost's; at more streams than the last priced count, held
 // from the price there (the gain does not climb with load), with that count named.
 void test_gain_note_names_where_the_price_is_held_from() {
-    const auto note_at = [](std::uint32_t streams) {
+    const auto note_at = [](std::uint32_t streams,
+                            std::vector<pr::choice::DrafterOption::JointScale> joint =
+                                {{.streams = 2, .scale = 0.45}}) {
         pr::ServedChoice served;
         pr::choice::DrafterOption option;
         option.label   = "mtp:3";
         option.speedup = 2.0;
-        option.joint   = {{.streams = 2, .scale = 0.45}};
+        option.joint   = std::move(joint);
         served.drafter_options.push_back(option);
         served.task.concurrency = streams;
         pr::choice::Scored scored;
@@ -137,6 +141,13 @@ void test_gain_note_names_where_the_price_is_held_from() {
               held["note"].get<std::string>().find("held from the price at 2 streams") !=
                   std::string::npos,
           "priced only at fewer streams: the note says it is held from that count");
+    // Priced at 2 (0.5) and at 4 (0.9): the gain at 4 is held to 2's lower price, and the note
+    // names 2, not the priced count 4.
+    const auto least = note_at(4, {{.streams = 2, .scale = 0.5}, {.streams = 4, .scale = 0.9}});
+    check(least["joint_priced_at_streams"] == 2 &&
+              least["note"].get<std::string>().find("held from the price at 2 streams") !=
+                  std::string::npos,
+          "a count priced above a smaller count's price: the note names the smaller count");
 }
 
 } // namespace
