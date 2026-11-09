@@ -1321,6 +1321,31 @@ void test_gptoss_drafter_rings() {
         {{"rope_type", "yarn"}, {"factor", 32.0}, {"original_max_position_embeddings", 3000}});
     check(paged && paged->local_layers == 0 && paged->full_layers == 8 && paged->window == 0,
           "a window no ring holds stays paged");
+    // transformers-5 rope_parameters wins over a legacy rope_scaling, as the converter reads them:
+    // flat or keyed by layer type, an unscaled rope there keeps the layers paged.
+    const json yarn_4096 = {
+        {"rope_type", "yarn"}, {"factor", 32.0}, {"original_max_position_embeddings", 4096}};
+    const json plain = {{"rope_type", "default"}, {"rope_theta", 150000.0}};
+    for (const json& parameters : {plain, json{{"full_attention", plain}}}) {
+        json both = {{"rope_scaling", yarn_4096}, {"rope_parameters", parameters}};
+        json c    = {{"architectures", {"DFlashDraftModel"}},
+                     {"model_type", "dflash"},
+                     {"num_hidden_layers", 8},
+                     {"num_attention_heads", 64},
+                     {"num_key_value_heads", 8},
+                     {"head_dim", 64},
+                     {"max_position_embeddings", 131072},
+                     {"layer_types", layers},
+                     {"dflash_config",
+                      {{"target_layer_ids", {1, 6, 11, 16, 21}}, {"mask_token_id", 200000}}}};
+        c.update(both);
+        const auto state = pr::plan_drafter_state_of_config(c, 2880);
+        check(state && state->local_layers == 0 && state->full_layers == 8,
+              "rope_parameters over rope_scaling: " + parameters.dump());
+    }
+    const auto keyed = drafter("rope_parameters", json{{"full_attention", yarn_4096}});
+    check(keyed && keyed->local_layers == 8 && keyed->window == 4096,
+          "gpt-oss drafter rings from rope_parameters keyed by layer type");
 }
 
 int main() {

@@ -829,9 +829,21 @@ std::optional<models::DrafterStateShape> plan_drafter_state_of_config(const json
     if (out.local_layers == 0 && number(config, "head_dim") == 64) {
         const std::uint32_t positions = u32(number(config, "max_position_embeddings"));
         std::uint32_t original        = 0;
-        for (const char* key : {"rope_scaling", "rope_parameters", "rope"}) {
-            const auto rope = config.find(key);
-            if (rope == config.end() || !rope->is_object()) { continue; }
+        // The converter's precedence (convert/dense.cpp rope_parameters): transformers-5
+        // rope_parameters (keyed by layer type, or flat) over the legacy rope_scaling.
+        const auto rope_of = [&](const char* key) -> const json* {
+            const auto it = config.find(key);
+            if (it == config.end() || !it->is_object()) { return nullptr; }
+            if (std::string_view(key) != "rope_parameters") { return &*it; }
+            if (const auto typed = it->find("full_attention");
+                typed != it->end() && typed->is_object()) {
+                return &*typed;
+            }
+            return it->contains("rope_theta") || it->contains("rope_type") ? &*it : nullptr;
+        };
+        for (const char* key : {"rope", "rope_parameters", "rope_scaling"}) {
+            const json* rope = rope_of(key);
+            if (rope == nullptr) { continue; }
             original             = u32(number(*rope, "original_max_position_embeddings"));
             const auto type      = rope->find("rope_type");
             const bool yarn      = type != rope->end() && type->is_string() && *type == "yarn";
