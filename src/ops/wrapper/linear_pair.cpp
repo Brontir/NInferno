@@ -275,6 +275,10 @@ void linear_pair(const Tensor& x, const Weight& first_weight, const Weight& seco
         require_matrix(x, x.ne[0], cols, "x");
         require_matrix(first_out, first_weight.n, cols, "first output");
         require_matrix(second_out, second_weight.n, cols, "second output");
+        // In the fused kernel's domain the contract is the same whichever chain runs.
+        if (fused_domain(first_weight, second_weight)) {
+            require_nonoverlap(x, first_weight, second_weight, first_out, second_out);
+        }
         linear(x, first_weight, first_out, stream);
         linear(x, second_weight, second_out, stream);
         return;
