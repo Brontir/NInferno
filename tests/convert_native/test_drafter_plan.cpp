@@ -166,9 +166,10 @@ void dspine_is_no_dflash() {
             return t;
         }(),
         registry());
-    auto d      = plan.drafters[0];
-    d.decl.gguf = "";
-    const auto config = Json::parse(R"({"architectures":["DFlashDraftModel"],"model_type":"qwen3","block_size":16,"hidden_size":256,"intermediate_size":17408,"num_attention_heads":32,"num_key_value_heads":8,"head_dim":128,"num_hidden_layers":5,"num_target_layers":4,"vocab_size":1000,"is_causal":true,"layer_types":["sliding_attention","sliding_attention","sliding_attention","sliding_attention","sliding_attention"],"sliding_window":8192,"rms_norm_eps":1e-06,"rope_parameters":{"rope_theta":10000000,"rope_type":"default"},"code_bridge_second_pass":{"first_exact":4,"head_topk":16,"mode":"serial_table"},"dflash_config":{"context_fusion_checkpointing":true,"decoder_checkpointing":true,"draft_block_causal":true,"mask_token_id":999,"selected_prefix_code_bridge":{"code_size":1024,"eps":1e-06,"kappa":10.0,"rank":512},"selected_prefix_decode_mode":"serial","selected_prefix_feature_gt_training":true,"selected_prefix_feature_layers":[1,2,3,4,5],"selected_prefix_feature_teacher_layers":[1,2,3],"selected_prefix_feature_teacher_schedule":{"hold_fraction":0.16666666666666666,"kind":"block_bernoulli","peak_probability":0.5,"zero_fraction":0.3333333333333333},"selected_prefix_feature_write_mode":"independent","selected_prefix_feature_writes":true,"selected_prefix_last_write_refine":{"head_topk":16,"kind":"exact_sender","version":1,"weight":1.0},"selected_prefix_terminal":false,"target_layer_ids":[0,3]}})");
+    auto d            = plan.drafters[0];
+    d.decl.gguf       = "";
+    const auto config = Json::parse(
+        R"({"architectures":["DFlashDraftModel"],"model_type":"qwen3","block_size":16,"hidden_size":256,"intermediate_size":17408,"num_attention_heads":32,"num_key_value_heads":8,"head_dim":128,"num_hidden_layers":5,"num_target_layers":4,"vocab_size":1000,"is_causal":true,"layer_types":["sliding_attention","sliding_attention","sliding_attention","sliding_attention","sliding_attention"],"sliding_window":8192,"rms_norm_eps":1e-06,"rope_parameters":{"rope_theta":10000000,"rope_type":"default"},"code_bridge_second_pass":{"first_exact":4,"head_topk":16,"mode":"serial_table"},"dflash_config":{"context_fusion_checkpointing":true,"decoder_checkpointing":true,"draft_block_causal":true,"mask_token_id":999,"selected_prefix_code_bridge":{"code_size":1024,"eps":1e-06,"kappa":10.0,"rank":512},"selected_prefix_decode_mode":"serial","selected_prefix_feature_gt_training":true,"selected_prefix_feature_layers":[1,2,3,4,5],"selected_prefix_feature_teacher_layers":[1,2,3],"selected_prefix_feature_teacher_schedule":{"hold_fraction":0.16666666666666666,"kind":"block_bernoulli","peak_probability":0.5,"zero_fraction":0.3333333333333333},"selected_prefix_feature_write_mode":"independent","selected_prefix_feature_writes":true,"selected_prefix_last_write_refine":{"head_topk":16,"kind":"exact_sender","version":1,"weight":1.0},"selected_prefix_terminal":false,"target_layer_ids":[0,3]}})");
     cv::check_drafter(plan.target, config, "", d, registry());
     expect(has_check(d, "ok DSpine code bridge (code 1024, rank 512, top-16"),
            "the bridge is read and validated");
@@ -178,18 +179,19 @@ void dspine_is_no_dflash() {
     // The same config without its bridge is the plain DFlash draft it names.
     auto plain = config;
     plain["dflash_config"].erase("selected_prefix_code_bridge");
-    d = plan.drafters[0];
+    d           = plan.drafters[0];
     d.decl.gguf = "";
     cv::check_drafter(plan.target, plain, "", d, registry());
     expect(d.reason.find("DSpine") == std::string::npos, "no bridge, no DSpine refusal", d.reason);
 
     // A bridge variant the arithmetic does not cover is refused by name.
-    auto terminal = config;
+    auto terminal                                         = config;
     terminal["dflash_config"]["selected_prefix_terminal"] = true;
-    d = plan.drafters[0];
-    d.decl.gguf = "";
+    d                                                     = plan.drafters[0];
+    d.decl.gguf                                           = "";
     cv::check_drafter(plan.target, terminal, "", d, registry());
-    expect(d.reason.find("terminal") != std::string::npos, "a terminal bridge is refused", d.reason);
+    expect(d.reason.find("terminal") != std::string::npos, "a terminal bridge is refused",
+           d.reason);
 }
 
 void lineage() {
