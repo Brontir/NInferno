@@ -97,6 +97,8 @@ for arch in $ARCHS; do
   specific=false; [[ $arch =~ [af]$ ]] && specific=true
   if [ "${NINFERNO_PACKAGE_RESUME:-0}" = 1 ] && [ -x "$STAGE/bin/ninferno-serve-sm$arch" ] && [ -f "$STAGE/bin/ninferno-serve.dispatch" ]; then
     echo "package.sh: sm_$arch already packed (resume)"
+    # Its facts again: the tree, a flag or the index may have changed since it was staged.
+    if [ "$arch" = 86 ] || [ "$arch" = 120a ]; then check_selector_facts "$arch" "$STAGE/bin/ninferno-serve-sm$arch"; fi
     first=${first:-$STAGE}
     engines+="${engines:+, }{\"tag\": \"$arch\", \"arch\": ${arch//[!0-9]/}, \"specific\": $specific, \"ptx\": $ptx}"
     continue
