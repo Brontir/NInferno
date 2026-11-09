@@ -155,7 +155,7 @@ void occupancy_from_facts() {
     // not fit.
     const DeviceClass sm120 = generic::board_device_class(generic::kFactsBoards[0]); // rtx5090
     expect(ninferno::resident_ctas_per_sm(sm120, {229, 0, 128, 0}) == 2, "229 registers x 128");
-    expect(ninferno::resident_ctas_per_sm(sm120, {64, 0, 128, 0}) == 12, "64 registers x 128");
+    expect(ninferno::resident_ctas_per_sm(sm120, {32, 0, 128, 0}) == 12, "32 registers x 128");
     expect(ninferno::resident_ctas_per_sm(sm120, {128, 0, 128, 64 * 1024}) == 0,
            "64 KiB of dynamic shared memory without the opt-in fits");
     expect(ninferno::resident_ctas_per_sm(sm120, {0, 0, 128, 0}) == 0, "unknown registers fit");
