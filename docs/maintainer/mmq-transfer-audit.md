@@ -31,14 +31,14 @@ pair) and a grid of widths, how often "ggml_mmq or not" disagrees.
 | prefill, straddling | 524 | 0 | 0 |
 | prefill, compute-bound on both | 7287 | 0 | 0 |
 
-- No table picks MMQ at T <= 4 or at T above the ridge: all of MMQ's table use is T 5 .. ~127, so
+- No table picks MMQ at T <= 4 or at T above the ridge: every MMQ band in the tables lies in T 5..23, so
   every disagreement sits in the verify and the memory-bound-prefill bands.
 - There the pair's disagreement rate follows the board distance, not the generation: Ada 4.6-10.6 %
   (distance 0.8-4.3), GA10x 3060/3090 10.0 % (3.64), GB20x 5090/5070 Ti 1.6 % (2.78), 5080/5070 Ti
   0 % (0.57), 5090/5080 0 % (2.21), but 5090/5060 Ti 20.5 % and 5070 Ti/5060 Ti 23.9 %: the 5060 Ti
   table never picks MMQ in the pairs' shared problems (MMQ points 0 on that side), the 5090 and the
   70-SM card do. The same split the gate has (36 SMs false, 170 true).
-- The exact route disagrees far more (about 50-70 % of points), which is expected between
+- The exact route disagrees far more (roughly half of the points or more), which is expected between
   different SM counts and is not an MMQ question.
 
 ## Layer 2: gate label regret on paired timings
@@ -68,7 +68,7 @@ size of the loss when the donor is the wrong side.
   `evidence_us` holds default against chosen time of one card. Needs `regret_collect.py` rows
   (`ninferno-selection-regret/1`) from both cards of a pair, same build and protocol.
 - Paired mmq/w4a8 timings are all prefill at 9K-24K tokens: nothing for the memory-bound prefill
-  window (T 17 .. ~170) or for verify widths, where layer 1 shows the disagreements are.
+  window (T 24 .. ~170: no table band has MMQ there, so it is also not measured against it) or for verify widths, where layer 1 shows the disagreements are.
 - GA10x has one timed card (3060): the 3060/3090 pair has no regret at all (no 3090 timings; the
   3090 is not a gate row). Ada has no L4 or 4080 timings; GB20x has no card between 70 and 170 SMs
   (the 5080 table has no MMQ entries in common with a measured prefill) and no 5060 Ti timings.
