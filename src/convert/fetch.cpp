@@ -1645,11 +1645,11 @@ std::string range_prefix(const std::string& url, const std::vector<std::string>&
 
 } // namespace
 
-fs::path snapshot_model(const fs::path& snapshot, const FetchOptions& options,
-                        const std::string& repo) {
+std::optional<fs::path> snapshot_model(const fs::path& snapshot, const FetchOptions& options,
+                                       const std::string& repo) {
     try {
         return cached_model(snapshot, options, repo);
-    } catch (const std::exception&) { return snapshot; }
+    } catch (const std::exception&) { return std::nullopt; }
 }
 
 std::string snapshot_quant_label(const fs::path& snapshot, const FetchOptions& options,

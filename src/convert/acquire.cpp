@@ -990,8 +990,11 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                                 // model is asked below.
                                 FetchOptions held_fetch = options.fetch;
                                 held_fetch.quant        = quant;
-                                const auto held_model =
-                                    snapshot_model(held_snapshot, held_fetch, repo);
+                                // Where that choice fails (an ambiguous label), the conversion
+                                // is not looked up: a key asked of the wrong model could name
+                                // the default conversion another server serves. It stays.
+                                const auto chosen = snapshot_model(held_snapshot, held_fetch, repo);
+                                const fs::path held_model = chosen.value_or(held_snapshot);
                                 AcquireOptions as_written = options;
                                 if (!options.chat_template.empty() &&
                                     !local_support_facts(held_model).chat_template) {
@@ -1004,9 +1007,11 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                                 }
                                 const std::string written_key =
                                     content_options_key(as_written, nullptr, written_context);
-                                if (auto old = converted_artifact(
-                                        conversion_directory(commit_dir, written_key), quant,
-                                        convert_options.recipe)) {
+                                if (auto old =
+                                        !chosen ? std::nullopt
+                                                : converted_artifact(
+                                                      conversion_directory(commit_dir, written_key),
+                                                      quant, convert_options.recipe)) {
                                     replaced.artifact = *old;
                                 }
                             }
