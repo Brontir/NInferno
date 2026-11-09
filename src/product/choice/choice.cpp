@@ -805,16 +805,23 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
             unread_flops += 2 * l.per_token * tokens * l.k * l.n;
             continue;
         }
+        // The format the kernel's table is chosen by (mmq_columns::work_tiles_format): the
+        // linear's own, else the label's (Q4_K, Q6_K).
+        const bool measured_format = l.format.empty()
+                                         ? format == &formats[1] || format == &formats[3]
+                                         : l.format == "ggml_q4_k" || l.format == "ggml_q6_k";
         for (double done = 0; done < tokens; done += kMmqSliceTokens) {
             const double t = std::min(kMmqSliceTokens, tokens - done);
             // The column tile the kernel's table takes (core/mmq_columns.h).
-            const int width      = mmq_columns::pick(static_cast<int>(t), card.major, card.minor);
+            const int width =
+                mmq_columns::pick(static_cast<int>(t), card.major, card.minor, measured_format);
             const double columns = width;
             const double tiles = std::ceil(n / kMmqTile) * std::ceil(t / columns);
             const double waves = std::ceil(tiles / sms);
             const double k_step =
                 l.k * step *
-                mmq_columns::step_share(width, mmq_tile_fixed_of(card.major, card.minor));
+                mmq_columns::step_share(
+                    width, mmq_columns::tile_fixed(card.major, card.minor, measured_format));
             if (100 * tiles >= 90 * sms * waves) {
                 clocks += grids * l.per_token * waves * (cost->c0 + k_step);
             } else { // stream-k: the SMs share the tiles' K steps; the fixup adds the split tiles

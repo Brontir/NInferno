@@ -604,12 +604,23 @@ int run_column_tiles() {
     const DeviceClass& d = device_class();
     int failures = 0, checked = 0;
     using ninferno::ops::ggml_mmq::Type;
-    for (const Type type :
-         {Type::Q4_K, Type::Q5_K, Type::Q6_K, Type::IQ4_XS, Type::IQ3_XXS, Type::IQ3_S, Type::Q4_0,
-          Type::Q4_1, Type::Q5_0, Type::Q5_1, Type::IQ4_NL, Type::Q2_K, Type::Q3_K, Type::IQ2_XXS,
-          Type::IQ2_XS, Type::IQ2_S, Type::IQ1_S}) {
+    using ninferno::QType;
+    // Each kernel format with its weight format: the table's format rule (work_tiles_format) is
+    // the one the launch keeps.
+    const std::pair<Type, QType> formats[] = {
+        {Type::Q4_K, QType::GGML_Q4_K},       {Type::Q5_K, QType::GGML_Q5_K},
+        {Type::Q6_K, QType::GGML_Q6_K},       {Type::IQ4_XS, QType::GGML_IQ4_XS},
+        {Type::IQ3_XXS, QType::GGML_IQ3_XXS}, {Type::IQ3_S, QType::GGML_IQ3_S},
+        {Type::Q4_0, QType::GGML_Q4_0},       {Type::Q4_1, QType::GGML_Q4_1},
+        {Type::Q5_0, QType::GGML_Q5_0},       {Type::Q5_1, QType::GGML_Q5_1},
+        {Type::IQ4_NL, QType::GGML_IQ4_NL},   {Type::Q2_K, QType::GGML_Q2_K},
+        {Type::Q3_K, QType::GGML_Q3_K},       {Type::IQ2_XXS, QType::GGML_IQ2_XXS},
+        {Type::IQ2_XS, QType::GGML_IQ2_XS},   {Type::IQ2_S, QType::GGML_IQ2_S},
+        {Type::IQ1_S, QType::GGML_IQ1_S}};
+    for (const auto& [type, qtype] : formats) {
+        const bool format = ninferno::mmq_columns::work_tiles_format(qtype);
         for (int columns = 1; columns <= 512; ++columns) {
-            const int picked = ninferno::mmq_columns::pick(columns, d.major, d.minor);
+            const int picked = ninferno::mmq_columns::pick(columns, d.major, d.minor, format);
             const int taken  = ninferno::ops::ggml_mmq::column_tile(type, 4096, columns, 4096);
             ++checked;
             if (taken != picked && failures++ < 10) {

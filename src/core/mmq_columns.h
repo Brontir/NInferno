@@ -11,12 +11,13 @@
 //
 // Two tables. Everywhere: J = 16, 32, 64, 128 and the fewest tiles, the narrower on a tie (the
 // choice before DECISIONS 74). Where the generation row says mmq_work_tiles (core/generation.h:
-// GA10x on the RTX 3060 and 3090, GB20x on the RTX 5090: the grids of DECISIONS 74): J = 16, 32,
-// 64, 80, 96, 128 and the least work ceil(columns / J) x step_share(J, the row's mmq_tile_fixed).
-// No other generation or format has been run over the widths: a generation that is measured joins
-// by its row.
+// GA10x on the RTX 3060 and 3090, GB20x on the RTX 5090: the grids of DECISIONS 74) and the weight
+// format is one those grids ran (work_tiles_format): J = 16, 32, 64, 80, 96, 128 and the least work
+// ceil(columns / J) x step_share(J, the row's mmq_tile_fixed). No other generation or format has
+// been run over the widths: a generation joins by its row, a format by its grid.
 
 #include "core/generation.h"
+#include "core/weight.h"
 
 #include <cmath>
 #include <span>
@@ -28,13 +29,25 @@ inline constexpr int kTilesEverywhere[] = {16, 32, 64, 128};
 inline constexpr int kTilesGa10x[]      = {16, 32, 64, 80, 96, 128};
 inline constexpr double kTileFixed      = 0.43;
 
-[[nodiscard]] constexpr bool uses_work_table(int major, int minor) noexcept {
-    return mmq_work_tiles_measured(major, minor);
+// The weight formats the grids ran (Qwen3-8B Q4_K_M: its Q4_K and Q6_K linears). Another decode
+// has another fixed share (the Q4_0 and IQ ones, DECISIONS 74): it keeps the fewest tiles.
+[[nodiscard]] constexpr bool work_tiles_format(QType qtype) noexcept {
+    return qtype == QType::GGML_Q4_K || qtype == QType::GGML_Q6_K;
 }
 
-[[nodiscard]] constexpr std::span<const int> tiles(int major, int minor) noexcept {
-    return uses_work_table(major, minor) ? std::span<const int>(kTilesGa10x)
-                                         : std::span<const int>(kTilesEverywhere);
+[[nodiscard]] constexpr bool uses_work_table(int major, int minor, bool format) noexcept {
+    return format && mmq_work_tiles_measured(major, minor);
+}
+
+[[nodiscard]] constexpr std::span<const int> tiles(int major, int minor, bool format) noexcept {
+    return uses_work_table(major, minor, format) ? std::span<const int>(kTilesGa10x)
+                                                 : std::span<const int>(kTilesEverywhere);
+}
+
+// The fixed share a tile of that table is priced with: the row's where it takes the work table,
+// else the DECISIONS 69 point.
+[[nodiscard]] constexpr double tile_fixed(int major, int minor, bool format) noexcept {
+    return uses_work_table(major, minor, format) ? mmq_tile_fixed_of(major, minor) : kTileFixed;
 }
 
 // A J-column tile's K step against a 128-column tile's.
@@ -53,13 +66,14 @@ inline constexpr double kTileFixed      = 0.43;
     return work_table ? tile_count(columns, j) * step_share(j, fixed) : tile_count(columns, j);
 }
 
-// The width the card's table takes for `columns` tokens (every width available).
-[[nodiscard]] constexpr int pick(int columns, int major, int minor) noexcept {
-    const bool work    = uses_work_table(major, minor);
-    const double fixed = mmq_tile_fixed_of(major, minor);
+// The width the card's table takes for `columns` tokens of a format (work_tiles_format; every
+// width available).
+[[nodiscard]] constexpr int pick(int columns, int major, int minor, bool format) noexcept {
+    const bool work    = uses_work_table(major, minor, format);
+    const double fixed = tile_fixed(major, minor, format);
     int best           = 0;
     double least       = 1e300;
-    for (const int j : tiles(major, minor)) {
+    for (const int j : tiles(major, minor, format)) {
         if (const double c = launch_cost(columns, j, work, fixed); c < least) {
             least = c;
             best  = j;

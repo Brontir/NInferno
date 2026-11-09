@@ -1639,10 +1639,11 @@ defaults (Qwen3-8B, Qwen3.5-4B / 9B, Qwen3.8-27B, gemma-4-31B and -12b, Muse-Gli
 ## 74. ggml's matrix kernel takes the column tile of least work where the generation row says so (#524, 08.11, measured)
 
 **Decision.** Where the generation row has `mmq_work_tiles` (GA10x: RTX 3060, 3090; GB20x: RTX
-5090) a prefill product on ggml's matrix kernel takes, among J = 16, 32, 64, 80, 96, 128, the width
+5090), a prefill product on ggml's matrix kernel of a format the grids ran (Q4_K and Q6_K, the
+linears of the Q4_K_M model measured: `mmq_columns::work_tiles_format`) takes, among J = 16, 32, 64, 80, 96, 128, the width
 whose tiles cost least, ceil(t / J) x (f + (1 - f) J / 128) of a 128-column tile's K steps, the
-narrower on a tie; f is the row's `mmq_tile_fixed` (GA10x 0.20, GB20x 0.10). Every other generation
-keeps J = 16, 32, 64, 128 and the fewest tiles. The kernel's `select_launch`, the estimate's
+narrower on a tie; f is the row's `mmq_tile_fixed` (GA10x 0.20, GB20x 0.10). Every other generation,
+and every other format there, keeps J = 16, 32, 64, 128 and the fewest tiles. The kernel's `select_launch`, the estimate's
 `mmq_linears_seconds` and cost_route's MMQ term (generic_cost.cpp, which priced continuous 8-column
 steps: 144 tokens as two 128-column tiles) read the one table (core/mmq_columns.h). J = 112 is not
 instantiated.
@@ -1685,7 +1686,7 @@ A width costs about 0.2 MB and 1.1 s of compile a format and architecture it is 
 differently), as they already did between a prefill chunk of 128 and 1024: on natural text the mean
 |logprob| difference old vs new is 0.000-0.03, old build's chunks 128 vs 1024 0.003-0.026.
 
-**Not done.** Ada, Turing, Volta and Thor rows (own grids); the A10; other formats than Q4_K
-(the Q4_0 and IQ decodes give other fixed shares); the RTX 5070 Ti and 5060 Ti prefill Q4_K / Q6_K
+**Not done.** Ada, Turing, Volta and Thor rows (own grids); the A10; other formats than Q4_K and
+Q6_K (the Q4_0 and IQ decodes give other fixed shares: they keep the fewest tiles until their grids); the RTX 5070 Ti and 5060 Ti prefill Q4_K / Q6_K
 on the W4A8 tiles, not this kernel, which steps the same way (RTX 5060 Ti 104 -> 107 ms from 144 to
 256 tokens): its 64 x 64 against 128 x 64 tile steps need their own grid.

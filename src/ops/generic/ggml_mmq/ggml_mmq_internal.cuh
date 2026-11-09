@@ -114,14 +114,21 @@ struct Launch {
     int k_vram         = 0; // the config's K_vram: a stream-k block's unit of work along k
 };
 
+// mmq_columns::work_tiles_format in ggml's names (test_route_classes checks the launch against the
+// table for every format).
+template <ggml_type type>
+inline constexpr bool kWorkTilesFormat = type == GGML_TYPE_Q4_K || type == GGML_TYPE_Q6_K;
+
 template <ggml_type type>
 Launch select_launch(int rows, int columns, int k) {
     const DeviceFacts& device = device_facts();
     Launch best;
     double best_cost        = 1e300;
-    const bool work_table   = mmq_columns::uses_work_table(device.cc / 100, device.cc / 10 % 10);
-    const double tile_fixed = mmq_tile_fixed_of(device.cc / 100, device.cc / 10 % 10);
-    for (const int J : mmq_columns::tiles(device.cc / 100, device.cc / 10 % 10)) {
+    const int major         = device.cc / 100;
+    const int minor         = device.cc / 10 % 10;
+    const bool work_table   = mmq_columns::uses_work_table(major, minor, kWorkTilesFormat<type>);
+    const double tile_fixed = mmq_columns::tile_fixed(major, minor, kWorkTilesFormat<type>);
+    for (const int J : mmq_columns::tiles(major, minor, kWorkTilesFormat<type>)) {
         const ggml_cuda_mmq_config config = ggml_cuda_mmq_get_config(type, J, false, device.cc);
         if (config.type == GGML_TYPE_COUNT) continue;
         const std::size_t shared = mmq_get_nbytes_shared(config, device.cc);

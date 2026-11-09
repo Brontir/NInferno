@@ -33,20 +33,31 @@ namespace {
 // (ggml_mmq fixup_bound: the column count rounded up to a power of two from 16, at most 128).
 namespace pins {
 using ninferno::mmq_columns::pick;
-static_assert(pick(144, 8, 6) == 80 && pick(160, 8, 6) == 80 && pick(192, 8, 6) == 96 &&
-              pick(224, 8, 6) == 128 && pick(256, 8, 6) == 128 && pick(16, 8, 6) == 16 &&
-              pick(8, 8, 6) == 16 && pick(1, 8, 6) == 16 && pick(320, 8, 6) == 80);
-static_assert(pick(144, 12, 0) == 80 && pick(192, 12, 0) == 96 && pick(224, 12, 0) == 80 &&
-              pick(256, 12, 0) == 128 && pick(16, 12, 0) == 16);
-static_assert(pick(144, 8, 9) == 128 && pick(192, 8, 9) == 128 && pick(16, 8, 9) == 16 &&
-              pick(144, 7, 5) == 128);
+static_assert(pick(144, 8, 6, true) == 80 && pick(160, 8, 6, true) == 80 &&
+              pick(192, 8, 6, true) == 96 && pick(224, 8, 6, true) == 128 &&
+              pick(256, 8, 6, true) == 128 && pick(16, 8, 6, true) == 16 &&
+              pick(8, 8, 6, true) == 16 && pick(1, 8, 6, true) == 16 &&
+              pick(320, 8, 6, true) == 80);
+static_assert(pick(144, 12, 0, true) == 80 && pick(192, 12, 0, true) == 96 &&
+              pick(224, 12, 0, true) == 80 && pick(256, 12, 0, true) == 128 &&
+              pick(16, 12, 0, true) == 16);
+static_assert(pick(144, 8, 9, true) == 128 && pick(192, 8, 9, true) == 128 &&
+              pick(16, 8, 9, true) == 16 && pick(144, 7, 5, true) == 128);
+// A format the grids did not run keeps the fewest tiles on every card
+// (mmq_columns::work_tiles_format).
+static_assert(pick(144, 8, 6, false) == 128 && pick(192, 12, 0, false) == 128 &&
+              pick(16, 8, 6, false) == 16);
+static_assert(ninferno::mmq_columns::work_tiles_format(ninferno::QType::GGML_Q4_K) &&
+              ninferno::mmq_columns::work_tiles_format(ninferno::QType::GGML_Q6_K) &&
+              !ninferno::mmq_columns::work_tiles_format(ninferno::QType::GGML_Q4_0) &&
+              !ninferno::mmq_columns::work_tiles_format(ninferno::QType::GGML_IQ4_XS));
 
 constexpr bool within_fixup_bound() {
     for (int c = 1; c <= 512; ++c) {
         int bound = 16;
         while (bound < c && bound < 128) bound *= 2;
         for (const int cc : {60, 70, 75, 80, 86, 89, 90, 120}) {
-            if (pick(c, cc / 10, cc % 10) > bound) return false;
+            if (pick(c, cc / 10, cc % 10, true) > bound) return false;
         }
     }
     return true;
