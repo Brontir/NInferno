@@ -419,6 +419,7 @@ inline constexpr TileCost kTileCost[] = {
     {"gb20x", TileKernel::A16, 785, 14.96, 1, 1},   {"gb20x", TileKernel::Mx, 1226, 8.34, 1, 1},
 };
 
+// clang-format off
 // ggml's matrix kernel (MMQ, mul_mat_q) on a dense model's K-quant linears where it takes their
 // prefill (measured::mmq_prefill_pays; DECISIONS 69): a call runs kMmqSliceTokens tokens at a time;
 // a tile is 128 weight rows x 128 tokens over the whole K (one CTA a SM, 256 threads at 254
@@ -437,9 +438,13 @@ inline constexpr TileCost kTileCost[] = {
 // K-quant class here, DECISIONS 69.) A mix's tiles take its label's format (Q4_K_M: Q4_K), its bits
 // a weight past that format's moving them toward Q6_K's (the mixes raise ffn_down, attn_v and the
 // like to Q5_K / Q6_K; the bits are the whole file's, its token table and head among them). A slice
-// of t tokens takes ggml's narrowest column tile with the fewest tiles (16, 32, 64 or 128: ggml_mmq
-// kColumnTiles); a J-column tile's K step is (kMmqTileFixed + (1 - kMmqTileFixed) J / 128) of a
-// 128-column one (the RTX 4060 Ti's 64-column Q4_K tiles: 0.716).
+// of t tokens takes the column tile the kernel's table does (core/mmq_columns.h): 16, 32, 64 or 128
+// with the fewest tiles; where the generation row says mmq_work_tiles (GA10x: RTX 3060 and 3090,
+// GB20x: RTX 5090) 16, 32, 64, 80, 96 or 128 with the least work. A J-column tile's K step is
+// mmq_columns::step_share(J, mmq_tile_fixed) = f + (1 - f) J / 128 of a 128-column one: f = 0.43
+// (the RTX 4060 Ti's 64-column Q4_K tiles: 0.716) where the row has none of its own, 0.20 on GA10x,
+// 0.10 on GB20x (DECISIONS 74).
+// clang-format on
 struct MmqTileCost {
     std::string_view generation;
     double c0;
@@ -472,18 +477,25 @@ struct MmqIqStep {
     double step;
     int cards;
 };
+
 inline constexpr MmqIqStep kMmqIqStep[] = {
-    {"ga10x", "ggml_iq3_xxs", 40.7, 1}, {"ga10x", "ggml_iq3_s", 41.2, 1},
-    {"ga10x", "ggml_iq2_xxs", 38.7, 1}, {"ga10x", "ggml_iq2_xs", 51.1, 1},
-    {"ga10x", "ggml_iq2_s", 50.5, 1},   {"ga10x", "ggml_iq1_s", 44.1, 1},
-    // The RTX 4090's census of the same files (stream-k: its fixups counted with their calls), IQ4_XS
-    // at 38.3 (15.69 ms a G weight): IQ2_XXS 16.43 / 16.21, IQ1_S 18.1 / 18.27, IQ2_S 21.57 / 21.36,
-    // IQ2_XS 21.18 / 21.9, IQ3_XXS 17.29 / 17.4, IQ3_S 18.08 (one file); Q3_K's 51.0 against its 51.5.
-    {"ada", "ggml_iq3_xxs", 42.3, 1},   {"ada", "ggml_iq3_s", 44.1, 1},
-    {"ada", "ggml_iq2_xxs", 39.8, 1},   {"ada", "ggml_iq2_xs", 52.6, 1},
-    {"ada", "ggml_iq2_s", 52.4, 1},     {"ada", "ggml_iq1_s", 44.4, 1},
+    {"ga10x", "ggml_iq3_xxs", 40.7, 1},
+    {"ga10x", "ggml_iq3_s", 41.2, 1},
+    {"ga10x", "ggml_iq2_xxs", 38.7, 1},
+    {"ga10x", "ggml_iq2_xs", 51.1, 1},
+    {"ga10x", "ggml_iq2_s", 50.5, 1},
+    {"ga10x", "ggml_iq1_s", 44.1, 1},
+    // The RTX 4090's census of the same files (stream-k: its fixups counted with their calls),
+    // IQ4_XS at 38.3 (15.69 ms a G weight): IQ2_XXS 16.43 / 16.21, IQ1_S 18.1 / 18.27, IQ2_S 21.57
+    // / 21.36, IQ2_XS 21.18 / 21.9, IQ3_XXS 17.29 / 17.4, IQ3_S 18.08 (one file); Q3_K's 51.0
+    // against its 51.5.
+    {"ada", "ggml_iq3_xxs", 42.3, 1},
+    {"ada", "ggml_iq3_s", 44.1, 1},
+    {"ada", "ggml_iq2_xxs", 39.8, 1},
+    {"ada", "ggml_iq2_xs", 52.6, 1},
+    {"ada", "ggml_iq2_s", 52.4, 1},
+    {"ada", "ggml_iq1_s", 44.4, 1},
 };
-inline constexpr double kMmqTileFixed = 0.43;
 // Where MMQ does not pay (measured::kMmqPrefillPays: the RTX 5070 Ti as the 5060 Ti) a dense
 // K-quant prefills on the W4A8 tiles (generic_gemm.cpp: Q4_K and Q6_K the producer-warp 128 x 64
 // tile on Blackwell, w4a8_ws_wins; Q5_K the classic 128 x 64): a tile is 128 tokens x 64 weight rows

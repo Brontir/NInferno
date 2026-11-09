@@ -18,6 +18,7 @@
 #include "ops/direct_bf16_weight.h"
 #include "ops/quantized_weight.h"
 
+#include "core/mmq_columns.h"
 #include "core/device_class.h"
 #include "core/units.h"
 #include "core/weight.h"
@@ -26,6 +27,7 @@
 #include "ops/common/native_nvfp4.h"
 #include "ops/generic/build_manifest.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/ggml_mmq/ggml_mmq.h"
 #include "ops/generic/route_table.h"
 
 #include <cuda_runtime.h>
@@ -587,6 +589,49 @@ int run_summation_orders() {
     }
     std::cout << "summation orders: " << routes.size() << " routes, " << register_one
               << " register-MMA schedules in the register order, " << failures << " failures\n";
+    return failures == 0 ? 0 : 1;
+}
+
+// The column tile the launch really takes (select_launch: the table's widths filtered by the config
+// and shared memory the device admits) is the table's pick (core/mmq_columns.h, which the estimate
+// and cost_route read unfiltered), for every format and every column count of a prefill slice.
+int run_column_tiles() {
+    int devices = 0;
+    if (cudaGetDeviceCount(&devices) != cudaSuccess || devices == 0) {
+        std::cout << "column tiles: CUDA unavailable; skipped\n";
+        return 0;
+    }
+    const DeviceClass& d = device_class();
+    int failures = 0, checked = 0;
+    using ninferno::ops::ggml_mmq::Type;
+    using ninferno::QType;
+    // Each kernel format with its weight format: the table's format rule (work_tiles_format) is
+    // the one the launch keeps.
+    const std::pair<Type, QType> formats[] = {
+        {Type::Q4_K, QType::GGML_Q4_K},       {Type::Q5_K, QType::GGML_Q5_K},
+        {Type::Q6_K, QType::GGML_Q6_K},       {Type::IQ4_XS, QType::GGML_IQ4_XS},
+        {Type::IQ3_XXS, QType::GGML_IQ3_XXS}, {Type::IQ3_S, QType::GGML_IQ3_S},
+        {Type::Q4_0, QType::GGML_Q4_0},       {Type::Q4_1, QType::GGML_Q4_1},
+        {Type::Q5_0, QType::GGML_Q5_0},       {Type::Q5_1, QType::GGML_Q5_1},
+        {Type::IQ4_NL, QType::GGML_IQ4_NL},   {Type::Q2_K, QType::GGML_Q2_K},
+        {Type::Q3_K, QType::GGML_Q3_K},       {Type::IQ2_XXS, QType::GGML_IQ2_XXS},
+        {Type::IQ2_XS, QType::GGML_IQ2_XS},   {Type::IQ2_S, QType::GGML_IQ2_S},
+        {Type::IQ1_S, QType::GGML_IQ1_S}};
+    for (const auto& [type, qtype] : formats) {
+        const bool format = ninferno::mmq_columns::work_tiles_format(qtype);
+        for (int columns = 1; columns <= 512; ++columns) {
+            const int picked = ninferno::mmq_columns::pick(columns, d.major, d.minor, format);
+            const int taken  = ninferno::ops::ggml_mmq::column_tile(type, 4096, columns, 4096);
+            ++checked;
+            if (taken != picked && failures++ < 10) {
+                std::cerr << "column tile: type " << static_cast<int>(type) << " columns "
+                          << columns << " takes " << taken << ", the table picks " << picked
+                          << '\n';
+            }
+        }
+    }
+    std::cout << "column tiles: " << checked << " products on sm_" << d.major << d.minor << ", "
+              << failures << " differ from the table\n";
     return failures == 0 ? 0 : 1;
 }
 
@@ -1313,6 +1358,7 @@ int main(int argc, char** argv) {
             return 2;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--volta-tiled") return run_volta_tiled();
+        if (argc == 2 && std::string_view(argv[1]) == "--column-tiles") return run_column_tiles();
         if (argc == 2 && std::string_view(argv[1]) == "--resources") return run_resources(false);
         if (argc == 2 && std::string_view(argv[1]) == "--resources-detail") {
             return run_resources(true);
@@ -1323,6 +1369,7 @@ int main(int argc, char** argv) {
             if (std::system(command.c_str()) != 0) ++failed;
         }
         if (std::system((std::string(argv[0]) + " --volta-tiled").c_str()) != 0) ++failed;
+        if (std::system((std::string(argv[0]) + " --column-tiles").c_str()) != 0) ++failed;
         if (std::system((std::string(argv[0]) + " --resources").c_str()) != 0) ++failed;
         if (run_summation_orders() != 0) ++failed;
         if (failed != 0) {
