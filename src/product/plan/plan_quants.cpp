@@ -428,7 +428,7 @@ struct PublishedDrafter {
     std::uint64_t head_bits = 16;
 };
 
-PublishedDrafter published_drafter(const spec::DrafterDecl& d, const std::string& spec,
+PublishedDrafter published_drafter(const spec::DrafterDecl& /*d*/, const std::string& spec,
                                    const convert::FetchOptions& fetch, bool read_config) {
     PublishedDrafter out;
     try {

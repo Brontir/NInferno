@@ -74,9 +74,10 @@ function(ninferno_target_sources target)
 endfunction()
 
 # Warnings for every target created in the calling directory and below, when NINFERNO_WARNINGS is
-# ON. Host C++ only: nvcc's CUDA translation units do not get these flags. -Wunused stays a warning.
+# ON. Designated and partial aggregate initializers are the code base's style, so
+# -Wmissing-field-initializers is off. Host C++ only: nvcc's CUDA translation units do not get these flags. -Wunused stays a warning.
 function(ninferno_directory_warnings)
   if(NINFERNO_WARNINGS AND NOT MSVC)
-    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wunused;-Werror=return-type;-Werror=unused-function>")
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wunused;-Wno-missing-field-initializers;-Werror=return-type;-Werror=unused-function>")
   endif()
 endfunction()
