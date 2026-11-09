@@ -387,7 +387,7 @@ HttpServer::HttpServer(ServeOptions options, std::shared_ptr<spdlog::logger> log
     const HttpWorkerPlan workers =
         plan_http_workers(options_.max_concurrency, options_.max_pending_requests);
     server_.new_task_queue = [workers] {
-        return new httplib::ThreadPool(workers.threads, workers.threads, workers.max_queued);
+        return new WorkerQueue(workers.threads, workers.max_queued);
     };
     // Streamed tokens leave as small SSE writes, one per decode round: without TCP_NODELAY Nagle holds
     // a write behind the previous one's ACK (delayed up to 40 ms) on a busy loopback or LAN client
@@ -883,7 +883,8 @@ std::string HttpServer::router_report_frame(const GenerationOutcome& outcome) co
 
 RequestLimits HttpServer::request_limits() const noexcept {
     return RequestLimits{.default_max_tokens = options_.default_max_tokens,
-                         .max_messages       = options_.max_request_messages};
+                         .max_messages       = options_.max_request_messages,
+                         .max_json_values    = options_.max_request_json_values};
 }
 
 bool HttpServer::reject_while_draining(const httplib::Request& req, httplib::Response& res) {

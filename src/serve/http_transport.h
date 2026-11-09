@@ -1,6 +1,7 @@
 #pragma once
 
 #include "serve/generation_service.h"
+#include "serve/request.h"
 #include "serve/request_json.h"
 
 #include <httplib.h>
@@ -81,8 +82,50 @@ void render_and_write(SseTransport& transport, Render&& render) {
     } catch (const std::exception& exception) { throw ResponseRenderFailure(exception.what()); }
 }
 
-RequestJson parse_json_body(const httplib::Request& request);
+// The request body as JSON. Refused with a 400 when it is not JSON, nests deeper than
+// kMaximumRequestJsonDepth, or holds more than limits.max_json_values values: both are counted
+// while the document is built and stop the parse at the limit.
+RequestJson parse_json_body(const httplib::Request& request, const RequestLimits& limits);
 [[nodiscard]] bool client_disconnected(const httplib::Request& request);
+
+// A worker thread that parsed a large body has built and freed a document in its own malloc arena;
+// glibc keeps such fragmented memory resident, and every worker keeps its own share (about half of
+// the peak, measured in #527), so the process grows by one share per worker that ever served a big
+// body. This hands it back (malloc_trim walks every arena) if the calling thread parsed one since
+// the last call.
+void release_request_memory() noexcept;
+
+// The pool's task queue: httplib's thread pool, running release_request_memory() after each
+// connection a worker served, when its request, its parsed document and its connection are gone
+// and the response has long been sent. A keep-alive connection is one such connection: it trims
+// when it ends (the keep-alive timeout is seconds), and the thread's next big body reuses the
+// memory.
+//
+// The bound (max_queued > 0) counts the connections in hand, served or waiting: one more than
+// threads + max_queued is refused. httplib's own bound counts its job list alone, which a burst of
+// accepts fills before idle workers have woken to take from it, so it refused connections while
+// workers were free; the inner pool is therefore unbounded.
+class WorkerQueue final : public httplib::TaskQueue {
+public:
+    explicit WorkerQueue(std::size_t threads, std::size_t max_queued)
+        : pool_(threads, threads, 0), limit_(max_queued == 0 ? 0 : threads + max_queued) {}
+
+    bool enqueue(std::function<void()> connection) override;
+
+    void shutdown() override { pool_.shutdown(); }
+
+    void on_idle() override { pool_.on_idle(); }
+
+    // Connections enqueued and not yet finished (served or waiting for a worker).
+    [[nodiscard]] std::size_t in_hand() const noexcept {
+        return in_hand_.load(std::memory_order_relaxed);
+    }
+
+private:
+    httplib::ThreadPool pool_;
+    std::size_t limit_; // 0: unbounded
+    std::atomic<std::size_t> in_hand_{0};
+};
 
 // The HTTP worker pool in front of the Engine. Admission belongs to the Engine alone: it runs
 // max_concurrency requests, holds max_pending_requests more, and answers the rest with an honest

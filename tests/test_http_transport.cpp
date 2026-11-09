@@ -3,8 +3,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <iostream>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <utility>
@@ -132,7 +134,7 @@ int test_json_nesting_limit() {
         httplib::Request request;
         request.body = std::move(body);
         try {
-            (void)ninferno::serve::parse_json_body(request);
+            (void)ninferno::serve::parse_json_body(request, {});
             return true;
         } catch (const std::exception&) { return false; }
     };
@@ -157,6 +159,47 @@ int test_json_nesting_limit() {
     return failures;
 }
 
+// A body of many small values is refused at --max-request-json-values while it is parsed, before
+// the document is built (#527): `{}` is three bytes of text and about 25 times that in memory, so
+// the body size alone does not bound the parse. Scalars, containers and object keys all count.
+int test_json_value_limit() {
+    const auto parse_with = [](std::string body, std::size_t limit) -> std::string {
+        httplib::Request request;
+        request.body = std::move(body);
+        ninferno::serve::RequestLimits limits;
+        limits.max_json_values = limit;
+        try {
+            (void)ninferno::serve::parse_json_body(request, limits);
+            return "ok";
+        } catch (const ninferno::serve::ApiException& exception) { return exception.error().code; }
+    };
+    const auto objects = [](std::size_t count) {
+        std::string body = "[";
+        for (std::size_t i = 0; i < count; ++i) { body += i == 0 ? "{}" : ",{}"; }
+        return body + "]";
+    };
+    int failures = 0;
+    // The array and its 1,000 objects are 1,001 values.
+    failures += check(parse_with(objects(1000), 1001) == "ok",
+                      "a body exactly at the value limit was refused");
+    failures += check(parse_with(objects(1000), 1000) == "request_json_too_large",
+                      "a body one value over the limit was accepted");
+    failures +=
+        check(parse_with(R"({"a":1,"b":[true,null,"x"]})", 8) == "ok" &&
+                  parse_with(R"({"a":1,"b":[true,null,"x"]})", 7) == "request_json_too_large",
+              "object keys, scalars and containers are not all counted as values");
+    failures += check(parse_with("{not json", 100) != "ok" &&
+                          parse_with("{not json", 100) != "request_json_too_large",
+                      "invalid JSON was reported as too large");
+    // A 15 MB body of five million empty objects is refused at the default limit without building
+    // them: the refusal costs about the limit, not 25 times the body.
+    const std::string big = objects(5'000'000);
+    failures += check(parse_with(big, ninferno::serve::kDefaultMaxRequestJsonValues) ==
+                          "request_json_too_large",
+                      "a body of five million values was accepted at the default limit");
+    return failures;
+}
+
 int test_sse_response_headers() {
     httplib::Response response;
     ninferno::serve::prepare_sse_response(response);
@@ -170,7 +213,7 @@ int test_prompt_json_member_order() {
     request.body =
         R"({"model":"claude-local","tools":[{"name":"probe","input_schema":{"type":"object","properties":{"zeta":{"type":"string"},"alpha":{"type":"object","properties":{"yankee":{"type":"integer"},"bravo":{"type":"boolean"}}}}}}],"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"probe","input":{"zeta":"last","alpha":{"yankee":2,"bravo":true}}}]}],"max_tokens":32})";
 
-    const auto parsed = ninferno::serve::parse_json_body(request);
+    const auto parsed = ninferno::serve::parse_json_body(request, {});
     return check(
         parsed.at("tools").at(0).at("input_schema").at("properties").dump() ==
                 R"({"zeta":{"type":"string"},"alpha":{"type":"object","properties":{"yankee":{"type":"integer"},"bravo":{"type":"boolean"}}}})" &&
@@ -339,7 +382,7 @@ int test_worker_plan_answers_every_connection() {
 
     httplib::Server server;
     server.new_task_queue = [plan] {
-        return new httplib::ThreadPool(plan.threads, plan.threads, plan.max_queued);
+        return new ninferno::serve::WorkerQueue(plan.threads, plan.max_queued);
     };
     server.set_read_timeout(1, 0);
     server.set_keep_alive_timeout(1);
@@ -662,13 +705,44 @@ int test_overload_answer_by_connection() {
     return failures;
 }
 
+// The pool's bound counts the connections in hand, served or waiting: threads + max_queued of them
+// are taken at once, however fast they arrive (httplib's own bound counted its job list, which a
+// burst fills before idle workers wake, and refused connections while workers were free), one more
+// is refused, and a finished one frees its place.
+int test_worker_queue_counts_connections_in_hand() {
+    using namespace std::chrono_literals;
+    ninferno::serve::WorkerQueue queue(2, 1);
+    std::mutex mutex;
+    std::condition_variable wake;
+    bool release = false;
+    const auto held = [&] {
+        std::unique_lock lock(mutex);
+        wake.wait(lock, [&] { return release; });
+    };
+    int failures = 0;
+    int taken    = 0;
+    for (int i = 0; i < 3; ++i) { taken += queue.enqueue(held) ? 1 : 0; }
+    failures += check(taken == 3, "a burst within threads + max_queued was refused");
+    failures += check(!queue.enqueue(held), "a connection past threads + max_queued was taken");
+    {
+        std::lock_guard lock(mutex);
+        release = true;
+    }
+    wake.notify_all();
+    for (int i = 0; i < 200 && queue.in_hand() != 0; ++i) { std::this_thread::sleep_for(5ms); }
+    failures += check(queue.in_hand() == 0, "finished connections stayed counted");
+    failures += check(queue.enqueue([] {}), "a freed place was not taken again");
+    queue.shutdown();
+    return failures;
+}
+
 // Slow senders that fill the worker pool and its queue must not make the server unreachable
 // (#526): a connection past the queue is answered at once, /health with the health answer and the
 // rest with 503 and Retry-After. Two workers and one queue slot are held by stalled requests.
 int test_overloaded_pool_still_answers() {
     using namespace std::chrono_literals;
     httplib::Server server;
-    server.new_task_queue = [] { return new httplib::ThreadPool(2, 2, 1); };
+    server.new_task_queue = [] { return new ninferno::serve::WorkerQueue(2, 1); };
     server.set_read_timeout(5, 0);
     server.set_socket_options(ninferno::serve::configure_http_server_socket);
     server.set_overload_handler([](socket_t socket) {
@@ -778,13 +852,14 @@ int test_executor_stall_monitor() {
 int main() {
     int failures = test_sse_transport() + test_sse_response_headers() +
                    test_prompt_json_member_order() + test_executor_stall_monitor() +
-                   test_json_nesting_limit();
+                   test_json_nesting_limit() + test_json_value_limit();
 #if defined(__linux__)
     failures += test_inherited_socket_liveness();
     failures += test_worker_plan_answers_every_connection();
     failures += test_successor_binds_over_time_wait();
     failures += test_error_connection_reuse();
     failures += test_slow_request_body_is_cut_off();
+    failures += test_worker_queue_counts_connections_in_hand();
     failures += test_overloaded_pool_still_answers();
     failures += test_overload_answer_by_connection();
     failures += test_ambiguous_framing_is_refused("Content-Length: 5\r\nContent-Length: 6\r\n",

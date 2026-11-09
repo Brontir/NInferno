@@ -108,6 +108,8 @@ struct Rotary {
     // applies (original_max_position_embeddings); empty when the rope has one mode.
     std::vector<float> long_inv_freq;
     std::uint64_t long_after = 0;
+    // YaRN: the context length the checkpoint was scaled from (original_max_position_embeddings).
+    std::uint64_t yarn_original = 0;
 };
 
 // LongRoPE's per-pair rescale: 1 / (factor[i] * theta^(2i/dim)), transformers'
@@ -231,6 +233,7 @@ Rotary rotary(const OJson& p, std::uint64_t dim, std::uint64_t max_positions,
         YarnRope rope         = yarn_rope(theta, dim, yarn);
         out.inv_freq          = std::move(rope.inv_freq);
         out.attention_scaling = rope.attention_scaling;
+        out.yarn_original     = static_cast<std::uint64_t>(yarn.original);
         return out;
     }
     refuse(where + ": rope_type " + type + " is not implemented");
@@ -1579,6 +1582,12 @@ OJson resolved_rope(const OJson& source, std::uint64_t dim, std::uint64_t max_po
     OJson freq               = OJson::array();
     for (const float f : r.inv_freq) { freq.push_back(static_cast<double>(f)); }
     out["inv_freq"] = std::move(freq);
+    // The length a YaRN rope was scaled from, when shorter than the positions the checkpoint
+    // addresses: a DFlash drafter without a sliding layer reads no further than this
+    // (DFlashConfig::full_window).
+    if (r.yarn_original != 0 && r.yarn_original < max_positions) {
+        out["original_max_position_embeddings"] = r.yarn_original;
+    }
     return out;
 }
 

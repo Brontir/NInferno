@@ -1,8 +1,11 @@
 #include "serve/http_transport.h"
 
+#include "serve/bounded_json.h"
 #include "serve/request_validation.h"
-#include "text/json_depth.h"
 
+#if defined(__GLIBC__)
+#    include <malloc.h>
+#endif
 #if defined(__linux__)
 #    include <netinet/tcp.h>
 #    include <sys/socket.h>
@@ -33,16 +36,49 @@ void set_socket_option(socket_t socket, int level, int option, const T& value) n
 
 } // namespace
 
-RequestJson parse_json_body(const httplib::Request& request) {
+RequestJson parse_json_body(const httplib::Request& request, const RequestLimits& limits) {
     RequestJson body;
-    try {
-        body = RequestJson::parse(request.body);
-    } catch (const std::exception&) { bad_request("request body is not valid JSON"); }
-    if (text::json_nests_deeper_than(body, kMaximumRequestJsonDepth)) {
+    switch (parse_bounded_json(request.body, limits.max_json_values, body)) {
+    case JsonTextStatus::Ok:
+        return body;
+    case JsonTextStatus::TooManyValues:
+        bad_request("request JSON holds more than " + std::to_string(limits.max_json_values) +
+                        " values (--max-request-json-values)",
+                    {}, "request_json_too_large");
+    case JsonTextStatus::TooDeep:
         bad_request("request JSON nests deeper than " + std::to_string(kMaximumRequestJsonDepth) +
                     " levels");
+    case JsonTextStatus::Invalid:
+        break;
     }
-    return body;
+    bad_request("request body is not valid JSON");
+}
+
+void release_request_memory() noexcept {
+    if (!take_large_parse_seen()) { return; }
+#if defined(__GLIBC__)
+    (void)::malloc_trim(0);
+#endif
+}
+
+bool WorkerQueue::enqueue(std::function<void()> connection) {
+    if (limit_ != 0 && in_hand_.fetch_add(1, std::memory_order_acq_rel) >= limit_) {
+        in_hand_.fetch_sub(1, std::memory_order_acq_rel);
+        return false;
+    }
+    if (limit_ == 0) { in_hand_.fetch_add(1, std::memory_order_acq_rel); }
+    // Counted out when the connection ends, however it ends.
+    struct Release {
+        std::atomic<std::size_t>& count;
+        ~Release() { count.fetch_sub(1, std::memory_order_acq_rel); }
+    };
+    const bool queued = pool_.enqueue([this, connection = std::move(connection)] {
+        const Release release{in_hand_};
+        connection();
+        release_request_memory();
+    });
+    if (!queued) { in_hand_.fetch_sub(1, std::memory_order_acq_rel); }
+    return queued;
 }
 
 bool client_disconnected(const httplib::Request& request) { return request.is_connection_closed(); }

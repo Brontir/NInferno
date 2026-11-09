@@ -177,6 +177,7 @@ struct ServeOptions {
     int default_max_tokens = kDefaultMaxTokens;
     // --max-request-messages N: a request with more messages (Responses: input Items) is a 400.
     std::size_t max_request_messages = kDefaultMaxRequestMessages;
+    std::size_t max_request_json_values = kDefaultMaxRequestJsonValues;
     bool enable_cors       = false; // send permissive CORS headers for browser UIs
     // --usage-chunk-choice: emit the streaming usage chunk with a zero-delta choice instead of the
     // OpenAI-conformant empty choices array. Strict client parsers (GitHub Copilot) reject the
