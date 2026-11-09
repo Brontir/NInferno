@@ -10,18 +10,17 @@
 namespace ninferno::ops::detail {
 namespace {
 
-template <int Tokens, class Launch>
+template <class Geo, int Tokens, class Launch>
 void dispatch_token_case(Launch&& launch) {
-    constexpr int Warps = (Tokens + 3) / 4;
-    launch.template operator()<Tokens, Warps>();
+    launch.template operator()<Tokens, kContextQueryWarps<Geo, Tokens>>();
 }
 
-template <class Launch>
+template <class Geo, class Launch>
 void dispatch_tokens(std::int32_t tokens, Launch&& launch) {
     switch (tokens) {
 #define NINFERNO_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(TOKENS)                                       \
     case TOKENS:                                                                                   \
-        dispatch_token_case<TOKENS>(launch);                                                       \
+        dispatch_token_case<Geo, TOKENS>(launch);                                                  \
         return
         NINFERNO_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(1);
         NINFERNO_SLIDING_WINDOW_ATTENTION_TOKEN_CASE(2);
@@ -49,7 +48,8 @@ void dispatch_tokens(std::int32_t tokens, Launch&& launch) {
 
 SlidingWindowAttentionPlan
 sliding_window_attention_resolve_plan(std::uint32_t window, std::int32_t tokens, std::int32_t batch,
-                                      SlidingWindowAttentionExecutionEnvelope envelope) {
+                                      SlidingWindowAttentionExecutionEnvelope envelope,
+                                      AttentionHeadGeometry geometry) {
     if (window != 2048 && window != 4096) {
         throw std::invalid_argument("sliding_window_attention plan: unsupported window");
     }
@@ -64,7 +64,7 @@ sliding_window_attention_resolve_plan(std::uint32_t window, std::int32_t tokens,
     // FP32 partial writes and merge traffic as the batch/query block grows.
     const int direct_context_limit = window == 2048 && tokens > 8 && batch >= 6 ? 128 : 96;
     const bool direct = envelope.max_context <= static_cast<std::uint32_t>(direct_context_limit);
-    constexpr int key_block          = 32;
+    const int key_block = sliding_window_key_block(geometry.head_dim, tokens);
     const int reduce_warps           = window == 2048 ? 4 : 1;
     const std::uint32_t context_rows = std::min(envelope.max_context, window - 1u);
     const std::int32_t context_tiles = (context_rows + key_block - 1u) / key_block;
@@ -87,7 +87,6 @@ sliding_window_attention_resolve_plan(std::uint32_t window, std::int32_t tokens,
         .route =
             direct ? SlidingWindowAttentionRoute::Direct : SlidingWindowAttentionRoute::SplitKv,
         .tokens         = tokens,
-        .warps          = (tokens + 3) / 4,
         .key_block      = key_block,
         .reduce_warps   = reduce_warps,
         .split_capacity = direct ? 1 : std::min(split_limit, std::max(1, context_tiles)),
@@ -106,54 +105,48 @@ const char* sliding_window_attention_route_name(SlidingWindowAttentionRoute rout
     return "unknown";
 }
 
-void sliding_window_attention_launch(const Tensor& q, const Tensor& query_k, const Tensor& query_v,
-                                     const Tensor& positions, const Tensor& valid_columns,
-                                     const Tensor& lanes, float scale,
-                                     const CyclicKVCacheLayerView& context,
-                                     const SlidingWindowAttentionPlan& plan, Tensor& partial_acc,
-                                     Tensor& partial_m, Tensor& partial_l, Tensor& out,
-                                     cudaStream_t stream) {
+namespace {
+
+template <class Geo>
+void launch_profile(const Tensor& q, const Tensor& query_k, const Tensor& query_v,
+                    const Tensor& positions, const Tensor& valid_columns, const Tensor& lanes,
+                    float scale, const CyclicKVCacheLayerView& context,
+                    const SlidingWindowAttentionPlan& plan, Tensor& partial_acc, Tensor& partial_m,
+                    Tensor& partial_l, Tensor& out, cudaStream_t stream) {
     const bool direct = plan.route == SlidingWindowAttentionRoute::Direct;
-    if ((plan.window != 2048 && plan.window != 4096) ||
-        context.capacity != static_cast<std::uint32_t>(plan.window) ||
-        plan.key_block != 32 || plan.reduce_warps != (plan.window == 2048 ? 4 : 1) ||
-        plan.split_capacity < 1 || plan.split_capacity > kSlidingWindowMaxSplits ||
-        (direct && plan.split_capacity != 1))
-        throw std::invalid_argument("sliding_window_attention: inconsistent plan");
-    dispatch_tokens(q.ne[2], [&]<int Tokens, int Warps>() {
-        constexpr int KeyBlock = 32;
-        constexpr std::size_t SmemBytes =
-            2u * KeyBlock * kContextQueryHeadDim * sizeof(__nv_bfloat16);
-        if (plan.warps != Warps)
-            throw std::invalid_argument("sliding_window_attention: inconsistent query layout");
+    dispatch_tokens<Geo>(q.ne[2], [&]<int Tokens, int Warps>() {
+        constexpr int KeyBlock          = sliding_window_key_block(Geo::D, Tokens);
+        constexpr std::size_t SmemBytes = 2u * KeyBlock * Geo::D * sizeof(__nv_bfloat16);
         // Window determines visibility and ring addressing, not the MMA storage layout.
         const auto partial_typed = [&]<bool Direct, typename KT, typename VT>() {
-            const dim3 grid(kContextQueryKVHeads, Direct ? 1 : plan.split_capacity, q.ne[3]);
+            const dim3 grid(Geo::Hkv, Direct ? 1 : plan.split_capacity, q.ne[3]);
             constexpr std::size_t Bytes =
-                SmemBytes + (std::is_same_v<KT, std::int8_t>
-                                 ? kContextQueryInt8StageBytes<kContextQueryHeadDim, KeyBlock>
-                                 : 0u);
-            sliding_window_attention_split_partial_kernel<Tokens, Warps, KeyBlock, Direct, KT, VT>
-                <<<grid, Warps * 32, Bytes, stream>>>(
-                    static_cast<const __nv_bfloat16*>(q.data),
-                    static_cast<const __nv_bfloat16*>(query_k.data),
-                    static_cast<const __nv_bfloat16*>(query_v.data),
-                    static_cast<const std::int32_t*>(positions.data),
-                    static_cast<const std::int32_t*>(valid_columns.data),
-                    static_cast<const std::int32_t*>(lanes.data),
-                    static_cast<const KT*>(context.k.data), static_cast<const VT*>(context.v.data),
-                    static_cast<int>(context.padded_capacity), plan.window - 1, plan.max_context,
-                    Direct ? 1 : plan.split_capacity, scale, static_cast<float*>(partial_acc.data),
-                    static_cast<float*>(partial_m.data), static_cast<float*>(partial_l.data),
-                    static_cast<__nv_bfloat16*>(out.data));
+                SmemBytes +
+                (std::is_same_v<KT, std::int8_t> ? kContextQueryInt8StageBytes<Geo::D, KeyBlock>
+                                                 : 0u);
+            sliding_window_attention_split_partial_kernel<Geo, Tokens, Warps, KeyBlock, Direct, KT,
+                                                          VT><<<grid, Warps * 32, Bytes, stream>>>(
+                static_cast<const __nv_bfloat16*>(q.data),
+                static_cast<const __nv_bfloat16*>(query_k.data),
+                static_cast<const __nv_bfloat16*>(query_v.data),
+                static_cast<const std::int32_t*>(positions.data),
+                static_cast<const std::int32_t*>(valid_columns.data),
+                static_cast<const std::int32_t*>(lanes.data),
+                static_cast<const KT*>(context.k.data), static_cast<const VT*>(context.v.data),
+                static_cast<int>(context.padded_capacity), plan.window - 1, plan.max_context,
+                Direct ? 1 : plan.split_capacity, scale, static_cast<float*>(partial_acc.data),
+                static_cast<float*>(partial_m.data), static_cast<float*>(partial_l.data),
+                static_cast<__nv_bfloat16*>(out.data));
             CUDA_CHECK(cudaGetLastError());
         };
         const auto partial = [&]<bool Direct>() {
-            if (context.int8) {
-                partial_typed.template operator()<Direct, std::int8_t, std::int8_t>();
-            } else {
-                partial_typed.template operator()<Direct, __nv_bfloat16, __half>();
+            if constexpr (Geo::D == 128) {
+                if (context.int8) {
+                    partial_typed.template operator()<Direct, std::int8_t, std::int8_t>();
+                    return;
+                }
             }
+            partial_typed.template operator()<Direct, __nv_bfloat16, __half>();
         };
         if (direct) {
             partial.template operator()<true>();
@@ -161,9 +154,9 @@ void sliding_window_attention_launch(const Tensor& q, const Tensor& query_k, con
         }
         partial.template operator()<false>();
         const auto reduce = [&]<int ReduceWarps>() {
-            constexpr int Rows = kContextQueryQHeads * Tokens;
+            constexpr int Rows = Geo::Hq * Tokens;
             const dim3 grid((Rows + ReduceWarps - 1) / ReduceWarps, 1, q.ne[3]);
-            sliding_window_attention_reduce_kernel<Tokens, KeyBlock, ReduceWarps>
+            sliding_window_attention_reduce_kernel<Geo, Tokens, KeyBlock, ReduceWarps>
                 <<<grid, ReduceWarps * 32, 0, stream>>>(
                     static_cast<const float*>(partial_acc.data),
                     static_cast<const float*>(partial_m.data),
@@ -178,6 +171,38 @@ void sliding_window_attention_launch(const Tensor& q, const Tensor& query_k, con
         else
             reduce.template operator()<1>();
     });
+}
+
+} // namespace
+
+void sliding_window_attention_launch(const Tensor& q, const Tensor& query_k, const Tensor& query_v,
+                                     const Tensor& positions, const Tensor& valid_columns,
+                                     const Tensor& lanes, AttentionHeadGeometry geometry,
+                                     float scale, const CyclicKVCacheLayerView& context,
+                                     const SlidingWindowAttentionPlan& plan, Tensor& partial_acc,
+                                     Tensor& partial_m, Tensor& partial_l, Tensor& out,
+                                     cudaStream_t stream) {
+    const bool direct = plan.route == SlidingWindowAttentionRoute::Direct;
+    if ((plan.window != 2048 && plan.window != 4096) ||
+        context.capacity != static_cast<std::uint32_t>(plan.window) ||
+        plan.key_block != sliding_window_key_block(geometry.head_dim, plan.tokens) ||
+        plan.reduce_warps != (plan.window == 2048 ? 4 : 1) || plan.split_capacity < 1 ||
+        plan.split_capacity > kSlidingWindowMaxSplits || (direct && plan.split_capacity != 1) ||
+        plan.tokens != q.ne[2]) {
+        throw std::invalid_argument("sliding_window_attention: inconsistent plan");
+    }
+    if (geometry.head_dim == 128 && geometry.query_heads == 32 && geometry.kv_heads == 8) {
+        launch_profile<ContextQueryD128>(q, query_k, query_v, positions, valid_columns, lanes,
+                                         scale, context, plan, partial_acc, partial_m, partial_l,
+                                         out, stream);
+    } else if (geometry.head_dim == 64 && geometry.query_heads == 64 && geometry.kv_heads == 8 &&
+               !context.int8) {
+        launch_profile<ContextQueryD64>(q, query_k, query_v, positions, valid_columns, lanes, scale,
+                                        context, plan, partial_acc, partial_m, partial_l, out,
+                                        stream);
+    } else {
+        throw std::invalid_argument("sliding_window_attention: unsupported head geometry");
+    }
 }
 
 } // namespace ninferno::ops::detail

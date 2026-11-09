@@ -1622,4 +1622,12 @@ OJson resolved_rope(const OJson& source, std::uint64_t dim, std::uint64_t max_po
     return out;
 }
 
+std::optional<OJson> dflash_rope(const OJson& source, std::uint64_t head_dim,
+                                 const std::string& where) {
+    const auto* scaling = member(source, "rope_scaling");
+    if (!present(scaling) || (scaling->is_object() && scaling->empty())) { return std::nullopt; }
+    const auto* limit = member(source, "max_position_embeddings");
+    return resolved_rope(source, head_dim, present(limit) ? limit->get<std::uint64_t>() : 0,
+                         where + ".rope_scaling");
+}
 } // namespace ninferno::convert

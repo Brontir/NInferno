@@ -11,6 +11,7 @@
 #include "convert/gguf.h"
 #include "convert/gguf_resources.h"
 #include "core/device_class.h"
+#include "core/dflash_ring.h"
 #include "core/ggml_frag.h"
 #include "core/machine_facts.h"
 #include "spec/pairs.h"
@@ -18,6 +19,7 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <cmath>
 #include <array>
 #include <cctype>
 #include <cstdlib>
@@ -819,6 +821,44 @@ std::optional<models::DrafterStateShape> plan_drafter_state_of_config(const json
         }
     }
     out.window      = out.local_layers != 0 ? u32(number(config, "sliding_window")) : 0;
+    // A drafter without a sliding layer whose YaRN rope was scaled from a length a ring holds
+    // (gpt-oss's 4096 of 131072): the runtime runs every layer as a sliding one of that window
+    // (speculation::parse_dflash_config, #564), its keys and values in rings, not pages. The rope
+    // is the one the converter writes (convert::dflash_rope), or the converted artifact's own, and
+    // the window is told from it as the runtime tells it (core/dflash_ring.h).
+    if (out.local_layers == 0) {
+        const std::uint32_t positions = u32(number(config, "max_position_embeddings"));
+        const std::uint32_t head_dim  = u32(number(config, "head_dim"));
+        std::optional<convert::OJson> rope;
+        if (const auto it = config.find("rope"); it != config.end() && it->is_object()) {
+            rope = convert::OJson::parse(it->dump());
+        } else if (head_dim != 0) {
+            // A rope the converter refuses converts no drafter: nothing to plan rings for.
+            try {
+                rope =
+                    convert::dflash_rope(convert::OJson::parse(config.dump()), head_dim, "drafter");
+            } catch (const std::exception&) {}
+        }
+        if (rope && rope->is_object()) {
+            const auto length     = rope->find("original_max_position_embeddings");
+            const auto recorded   = length != rope->end() && length->is_number()
+                                        ? std::optional<std::uint64_t>(length->get<std::uint64_t>())
+                                        : std::nullopt;
+            const auto type       = rope->find("rope_type");
+            const bool yarn       = type != rope->end() && type->is_string() && *type == "yarn";
+            const auto scaling    = rope->find("attention_scaling");
+            const float attention = scaling != rope->end() && scaling->is_number()
+                                        ? static_cast<float>(scaling->get<double>())
+                                        : 0.0F;
+            const std::uint32_t window = core::dflash_ring_window(
+                core::yarn_original_length(recorded, yarn, attention, positions), head_dim);
+            if (window != 0) {
+                out.local_layers = out.full_layers;
+                out.full_layers  = 0;
+                out.window       = window;
+            }
+        }
+    }
     out.kv_heads    = static_cast<std::int32_t>(u32(number(config, "num_key_value_heads")));
     out.head_dim    = static_cast<std::int32_t>(u32(number(config, "head_dim")));
     const auto taps = draft->find("target_layer_ids");

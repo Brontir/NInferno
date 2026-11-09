@@ -26,6 +26,7 @@
 #include "convert/model.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -50,6 +51,13 @@ namespace ninferno::convert {
 // (gpt-oss's YaRN). A rope whose rotation depends on the context (LongRoPE) is refused.
 [[nodiscard]] OJson resolved_rope(const OJson& source, std::uint64_t dim,
                                   std::uint64_t max_positions, const std::string& where);
+
+// A DFlash drafter's rope as its converted config records it (`rope`): resolved from a scaled rope
+// (gpt-oss's drafter: YaRN, as its target) over the whole head, only where rope_scaling is given;
+// none (the plain frequencies of rope_theta) otherwise. convert::block_dflash_config writes it, and
+// the plan without weights reads the drafter's ring from it (plan_drafter_state_of_config).
+[[nodiscard]] std::optional<OJson> dflash_rope(const OJson& source, std::uint64_t head_dim,
+                                               const std::string& where);
 
 [[nodiscard]] bool is_dense_recipe(std::string_view name) noexcept;
 // Applies the recipe with its vocabulary (token embedding and output head) policy: "native"

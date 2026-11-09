@@ -168,16 +168,19 @@ void validate_paged_cache(const PagedKVBatchLayerView& cache,
 
 void validate_cyclic_cache(const CyclicKVCacheLayerView& cache,
                            KVCacheAppendPrefixExecutionEnvelope envelope) {
+    // The cyclic profiles: D=128 (the Qwen, Gemma 4 and Muse drafters, BF16 or Int8Group64) and
+    // D=64 (gpt-oss's, BF16).
     const bool registered_capacity = cache.capacity == 2048 || cache.capacity == 4096;
-    if (cache.num_kv_heads != kKVHeads || cache.head_dim != kHeadDim || !registered_capacity ||
-        cache.padded_capacity < cache.capacity ||
+    const std::int32_t d           = cache.head_dim;
+    if (cache.num_kv_heads != kKVHeads || (d != kHeadDim && (d != kHalfHeadDim || cache.int8)) ||
+        !registered_capacity || cache.padded_capacity < cache.capacity ||
         cache.padded_capacity >
             static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()) ||
         envelope.max_count > cache.capacity) {
         throw std::invalid_argument("kv_cache_append_prefix: invalid cyclic cache");
     }
     const auto padded      = static_cast<std::int32_t>(cache.padded_capacity);
-    const std::int32_t row = cache.int8 ? cyclic_kv_int8_row_bytes(kHeadDim) : kHeadDim;
+    const std::int32_t row = cache.int8 ? cyclic_kv_int8_row_bytes(d) : d;
     const DType k_dtype    = cache.int8 ? DType::I8 : DType::BF16;
     const DType v_dtype    = cache.int8 ? DType::I8 : DType::FP16;
     if (cache.k.dtype != k_dtype || cache.v.dtype != v_dtype || cache.k.ne[0] != row ||
@@ -240,8 +243,8 @@ void kv_cache_append_prefix(const Tensor& k, const Tensor& v, const Tensor& posi
                             const Tensor& counts, const Tensor& lanes,
                             KVCacheAppendPrefixExecutionEnvelope envelope,
                             CyclicKVCacheLayerView cache, cudaStream_t stream) {
-    const auto plan = validate_inputs(k, v, positions, counts, lanes, envelope, kHeadDim);
     validate_cyclic_cache(cache, envelope);
+    const auto plan = validate_inputs(k, v, positions, counts, lanes, envelope, cache.head_dim);
     detail::kv_cache_append_prefix_launch(k, v, positions, counts, lanes, cache, plan, stream);
 }
 

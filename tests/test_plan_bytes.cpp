@@ -33,6 +33,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <iostream>
@@ -1278,6 +1279,144 @@ void test_fits_instead() {
 
 } // namespace
 
+// #564: gpt-oss's drafter (eight full layers, YaRN scaled from 4096 of 131072) is planned as the
+// runtime runs it (speculation::parse_dflash_config, test_dflash_config): every layer a sliding
+// one over a ring of 4096, as published (rope_scaling), as converted (rope with the length) and
+// as converted before the converter recorded it (rope with YaRN's attention factor alone).
+void test_gptoss_drafter_rings() {
+    json layers = json::array();
+    for (int i = 0; i < 8; ++i) { layers.push_back("full_attention"); }
+    const auto drafter = [&](const char* key, const json& rope) {
+        json c = {{"architectures", {"DFlashDraftModel"}},
+                  {"model_type", "dflash"},
+                  {"num_hidden_layers", 8},
+                  {"num_attention_heads", 64},
+                  {"num_key_value_heads", 8},
+                  {"head_dim", 64},
+                  {"max_position_embeddings", 131072},
+                  {"layer_types", layers},
+                  {"dflash_config",
+                   {{"target_layer_ids", {1, 6, 11, 16, 21}}, {"mask_token_id", 200000}}}};
+        c[key] = rope;
+        return pr::plan_drafter_state_of_config(c, 2880);
+    };
+    const double scaling = 0.1 * std::log(32.0) + 1.0;
+    for (const auto& [key, rope] : std::vector<std::pair<const char*, json>>{
+             {"rope_scaling",
+              {{"rope_type", "yarn"},
+               {"factor", 32.0},
+               {"original_max_position_embeddings", 4096}}},
+             {"rope",
+              {{"rope_type", "yarn"},
+               {"attention_scaling", scaling},
+               {"original_max_position_embeddings", 4096}}},
+             {"rope", {{"rope_type", "yarn"}, {"attention_scaling", scaling}}},
+             {"rope_scaling", {{"rope_type", "yarn"}, {"factor", 32.0}}}}) {
+        const auto state = drafter(key, rope);
+        check(state && state->local_layers == 8 && state->full_layers == 0 && state->window == 4096,
+              std::string("gpt-oss drafter rings from ") + key + " " + rope.dump());
+    }
+    const auto paged = drafter(
+        "rope_scaling",
+        {{"rope_type", "yarn"}, {"factor", 32.0}, {"original_max_position_embeddings", 3000}});
+    check(paged && paged->local_layers == 0 && paged->full_layers == 8 && paged->window == 0,
+          "a window no ring holds stays paged");
+    // transformers-5 rope_parameters wins over a legacy rope_scaling, as the converter reads them:
+    // flat or keyed by layer type, an unscaled rope there keeps the layers paged.
+    const json yarn_4096 = {
+        {"rope_type", "yarn"}, {"factor", 32.0}, {"original_max_position_embeddings", 4096}};
+    const json plain = {{"rope_type", "default"}, {"rope_theta", 150000.0}};
+    for (const json& parameters : {plain, json{{"full_attention", plain}}}) {
+        json both = {{"rope_scaling", yarn_4096}, {"rope_parameters", parameters}};
+        json c    = {{"architectures", {"DFlashDraftModel"}},
+                     {"model_type", "dflash"},
+                     {"num_hidden_layers", 8},
+                     {"num_attention_heads", 64},
+                     {"num_key_value_heads", 8},
+                     {"head_dim", 64},
+                     {"max_position_embeddings", 131072},
+                     {"layer_types", layers},
+                     {"dflash_config",
+                      {{"target_layer_ids", {1, 6, 11, 16, 21}}, {"mask_token_id", 200000}}}};
+        c.update(both);
+        const auto state = pr::plan_drafter_state_of_config(c, 2880);
+        check(state && state->local_layers == 0 && state->full_layers == 8,
+              "rope_parameters over rope_scaling: " + parameters.dump());
+    }
+    // An attention factor of its own (not YaRN's default) tells no length: paged.
+    for (const json& own :
+         {json{{"rope_type", "yarn"}, {"factor", 32.0}, {"attention_factor", 1.2}},
+          json{
+              {"rope_type", "yarn"}, {"factor", 32.0}, {"mscale", 1.0}, {"mscale_all_dim", 1.0}}}) {
+        const auto state = drafter("rope_scaling", own);
+        check(state && state->local_layers == 0 && state->full_layers == 8,
+              "an overridden YaRN attention factor stays paged: " + own.dump());
+    }
+    // Unset as the converter reads it (0, false, null), or set to YaRN's own default: the
+    // converter writes the default scaling, the runtime tells 4096 from it, a ring.
+    for (const json& as_default :
+         {json{{"rope_type", "yarn"}, {"factor", 32.0}, {"attention_factor", 0}},
+          json{{"rope_type", "yarn"}, {"factor", 32.0}, {"mscale", 1.0}, {"mscale_all_dim", 0}},
+          json{{"rope_type", "yarn"}, {"factor", 32.0}, {"attention_factor", nullptr}},
+          json{{"rope_type", "yarn"}, {"factor", 32.0}, {"attention_factor", scaling}}}) {
+        const auto state = drafter("rope_scaling", as_default);
+        check(state && state->local_layers == 8 && state->window == 4096,
+              "a default YaRN attention factor rings: " + as_default.dump());
+    }
+    // Another rope with the same length bounds nothing (the converter records it for YaRN only);
+    // the legacy key `type` names YaRN as rope_type does.
+    const auto llama3 = drafter("rope_scaling", json{{"rope_type", "llama3"},
+                                                     {"factor", 32.0},
+                                                     {"original_max_position_embeddings", 4096}});
+    check(llama3 && llama3->local_layers == 0 && llama3->full_layers == 8,
+          "a llama3 rope with an original length stays paged");
+    const auto legacy = drafter(
+        "rope_scaling",
+        json{{"type", "yarn"}, {"factor", 32.0}, {"original_max_position_embeddings", 4096}});
+    check(legacy && legacy->local_layers == 8 && legacy->window == 4096,
+          "a YaRN rope named by the legacy type rings");
+    // The length beside rope_scaling (Phi-3's place), which the converter copies into the rope.
+    {
+        json c            = {{"architectures", {"DFlashDraftModel"}},
+                             {"model_type", "dflash"},
+                             {"num_hidden_layers", 8},
+                             {"num_attention_heads", 64},
+                             {"num_key_value_heads", 8},
+                             {"head_dim", 64},
+                             {"max_position_embeddings", 131072},
+                             {"original_max_position_embeddings", 4096},
+                             {"layer_types", layers},
+                             {"rope_scaling", {{"type", "yarn"}, {"attention_factor", 1.2}}},
+                             {"dflash_config",
+                              {{"target_layer_ids", {1, 6, 11, 16, 21}}, {"mask_token_id", 200000}}}};
+        const auto beside = pr::plan_drafter_state_of_config(c, 2880);
+        check(beside && beside->local_layers == 8 && beside->window == 4096,
+              "a YaRN length beside rope_scaling rings");
+    }
+    // rope_parameters alone: the DFlash converter keeps the rope unscaled (no length), paged; with
+    // rope_scaling given, the keyed rope_parameters is the rope it resolves.
+    const auto alone = drafter("rope_parameters", json{{"full_attention", yarn_4096}});
+    check(alone && alone->local_layers == 0 && alone->full_layers == 8,
+          "rope_parameters without rope_scaling stays paged");
+    {
+        json c           = {{"architectures", {"DFlashDraftModel"}},
+                            {"model_type", "dflash"},
+                            {"num_hidden_layers", 8},
+                            {"num_attention_heads", 64},
+                            {"num_key_value_heads", 8},
+                            {"head_dim", 64},
+                            {"max_position_embeddings", 131072},
+                            {"layer_types", layers},
+                            {"rope_scaling", {{"rope_type", "default"}}},
+                            {"rope_parameters", {{"full_attention", yarn_4096}}},
+                            {"dflash_config",
+                             {{"target_layer_ids", {1, 6, 11, 16, 21}}, {"mask_token_id", 200000}}}};
+        const auto keyed = pr::plan_drafter_state_of_config(c, 2880);
+        check(keyed && keyed->local_layers == 8 && keyed->window == 4096,
+              "gpt-oss drafter rings from rope_parameters keyed by layer type");
+    }
+}
+
 int main() {
     const std::vector<Subject> all = subjects();
     test_shapes(all);
@@ -1289,6 +1428,7 @@ int main() {
     test_proposal_bytes_only_when_drafting();
     test_proposal_bytes_per_quant();
     test_default_proposal_possible();
+    test_gptoss_drafter_rings();
     std::cout << "rung bytes compared: " << compared << '\n';
     check(compared > 1000, "many rungs compared");
     if (failures != 0) {

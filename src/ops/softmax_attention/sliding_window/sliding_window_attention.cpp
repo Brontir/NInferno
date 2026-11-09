@@ -14,16 +14,21 @@
 namespace ninferno::ops {
 namespace {
 
-constexpr std::int32_t kHeadDim = 128;
-constexpr std::int32_t kQHeads  = 32;
-constexpr std::int32_t kKVHeads = 8;
-constexpr float kExpectedScale  = 0.08838834764831844055f;
-
 bool registered_window(std::uint32_t window) { return window == 2048 || window == 4096; }
 
+// The registered profiles: D128 with 32/8 heads (the Qwen, Gemma 4 and Muse drafters) and D64 with
+// 64/8 (gpt-oss's), the scale 1/sqrt(D) either way.
+bool d128_profile(AttentionHeadGeometry g) {
+    return g.head_dim == 128 && g.query_heads == 32 && g.kv_heads == 8;
+}
+
+bool d64_profile(AttentionHeadGeometry g) {
+    return g.head_dim == 64 && g.query_heads == 64 && g.kv_heads == 8;
+}
+
 void require_profile(AttentionHeadGeometry geometry, std::uint32_t window, const char* op) {
-    if (!valid_attention_head_geometry(geometry) || geometry.head_dim != kHeadDim ||
-        geometry.query_heads != kQHeads || geometry.kv_heads != kKVHeads) {
+    if (!valid_attention_head_geometry(geometry) ||
+        (!d128_profile(geometry) && !d64_profile(geometry))) {
         throw std::invalid_argument(std::string(op) + ": unsupported head geometry");
     }
     if (!registered_window(window)) {
@@ -31,10 +36,12 @@ void require_profile(AttentionHeadGeometry geometry, std::uint32_t window, const
     }
 }
 
-void validate_context(const CyclicKVCacheLayerView& context, std::uint32_t window, const char* op) {
-    if (context.num_kv_heads != kKVHeads || context.head_dim != kHeadDim ||
+void validate_context(const CyclicKVCacheLayerView& context, AttentionHeadGeometry geometry,
+                      std::uint32_t window, const char* op) {
+    const std::int32_t d = geometry.head_dim;
+    if (context.num_kv_heads != geometry.kv_heads || context.head_dim != d ||
         context.capacity != window || context.padded_capacity < context.capacity ||
-        context.lane_capacity <= 0) {
+        context.lane_capacity <= 0 || (context.int8 && !d128_profile(geometry))) {
         throw std::invalid_argument(std::string(op) + ": invalid cyclic context");
     }
     if (context.padded_capacity >
@@ -47,9 +54,11 @@ void validate_context(const CyclicKVCacheLayerView& context, std::uint32_t windo
         throw std::invalid_argument(std::string(op) +
                                     ": context K/V must be BF16/FP16 or Int8Group64 (I8)");
     }
-    const std::int32_t row = context.int8 ? cyclic_kv_int8_row_bytes(kHeadDim) : kHeadDim;
-    require_shape(context.k, row, padded, kKVHeads, context.lane_capacity, op, "context k");
-    require_shape(context.v, row, padded, kKVHeads, context.lane_capacity, op, "context v");
+    const std::int32_t row = context.int8 ? cyclic_kv_int8_row_bytes(d) : d;
+    require_shape(context.k, row, padded, geometry.kv_heads, context.lane_capacity, op,
+                  "context k");
+    require_shape(context.v, row, padded, geometry.kv_heads, context.lane_capacity, op,
+                  "context v");
     require_contiguous_nonnull(context.k, op, "context k");
     require_contiguous_nonnull(context.v, op, "context v");
 }
@@ -61,12 +70,15 @@ struct PartialWorkspace {
 };
 
 template <class Allocator>
-PartialWorkspace allocate_workspace(Allocator& workspace, std::int32_t tokens, std::int32_t splits,
+PartialWorkspace allocate_workspace(Allocator& workspace, AttentionHeadGeometry geometry,
+                                    std::int32_t tokens, std::int32_t splits,
                                     std::int32_t batch_size) {
+    const std::int32_t d  = geometry.head_dim;
+    const std::int32_t hq = geometry.query_heads;
     return {
-        workspace.alloc(DType::FP32, {kHeadDim, kQHeads, tokens, splits * batch_size}),
-        workspace.alloc(DType::FP32, {kQHeads, tokens, splits * batch_size}),
-        workspace.alloc(DType::FP32, {kQHeads, tokens, splits * batch_size}),
+        workspace.alloc(DType::FP32, {d, hq, tokens, splits * batch_size}),
+        workspace.alloc(DType::FP32, {hq, tokens, splits * batch_size}),
+        workspace.alloc(DType::FP32, {hq, tokens, splits * batch_size}),
     };
 }
 
@@ -88,11 +100,11 @@ std::size_t sliding_window_attention_workspace_capacity_bytes(
     // largest allocation (for example, a wider block can use fewer splits).
     std::size_t capacity = 0;
     for (int tokens = min_tokens; tokens <= max_tokens; ++tokens) {
-        const auto plan =
-            detail::sliding_window_attention_resolve_plan(window, tokens, batch_size, envelope);
+        const auto plan = detail::sliding_window_attention_resolve_plan(window, tokens, batch_size,
+                                                                        envelope, geometry);
         if (plan.route == detail::SlidingWindowAttentionRoute::Direct) continue;
         WorkspaceLayoutBuilder layout;
-        (void)allocate_workspace(layout, tokens, plan.split_capacity, batch_size);
+        (void)allocate_workspace(layout, geometry, tokens, plan.split_capacity, batch_size);
         capacity = std::max(capacity, layout.peak_bytes(1));
     }
     return capacity;
@@ -124,13 +136,14 @@ void sliding_window_attention(const Tensor& q, const Tensor& query_k, const Tens
     if (batch < 1 || batch > 8) {
         throw std::invalid_argument("sliding_window_attention: B must be 1..8");
     }
-    require_shape(q, kHeadDim, kQHeads, tokens, batch, op, "q");
-    require_shape(query_k, kHeadDim, kKVHeads, tokens, batch, op, "query k");
-    require_shape(query_v, kHeadDim, kKVHeads, tokens, batch, op, "query v");
+    const std::int32_t d = geometry.head_dim;
+    require_shape(q, d, geometry.query_heads, tokens, batch, op, "q");
+    require_shape(query_k, d, geometry.kv_heads, tokens, batch, op, "query k");
+    require_shape(query_v, d, geometry.kv_heads, tokens, batch, op, "query v");
     require_shape(positions, tokens, batch, 1, 1, op, "positions");
     require_shape(valid_columns, batch, 1, 1, 1, op, "valid columns");
     require_shape(lanes, batch, 1, 1, 1, op, "lanes");
-    require_shape(out, kHeadDim, kQHeads, tokens, batch, op, "out");
+    require_shape(out, d, geometry.query_heads, tokens, batch, op, "out");
     require_contiguous_nonnull(q, op, "q");
     require_contiguous_nonnull(query_k, op, "query k");
     require_contiguous_nonnull(query_v, op, "query v");
@@ -138,26 +151,27 @@ void sliding_window_attention(const Tensor& q, const Tensor& query_k, const Tens
     require_contiguous_nonnull(valid_columns, op, "valid columns");
     require_contiguous_nonnull(lanes, op, "lanes");
     require_contiguous_nonnull(out, op, "out");
-    validate_context(context, window, op);
+    validate_context(context, geometry, window, op);
     if (envelope.min_context > envelope.max_context ||
         envelope.max_context >
             static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) {
         throw std::invalid_argument("sliding_window_attention: invalid execution envelope");
     }
-    if (!std::isfinite(scale) || std::abs(scale - kExpectedScale) > 1e-7f) {
-        throw std::invalid_argument("sliding_window_attention: scale must be 1/sqrt(128)");
+    const float expected = 1.0f / std::sqrt(static_cast<float>(d));
+    if (!std::isfinite(scale) || std::abs(scale - expected) > 1e-7f) {
+        throw std::invalid_argument("sliding_window_attention: scale must be 1/sqrt(head_dim)");
     }
 
     auto scope = workspace.scope();
     const auto plan =
-        detail::sliding_window_attention_resolve_plan(window, tokens, batch, envelope);
+        detail::sliding_window_attention_resolve_plan(window, tokens, batch, envelope, geometry);
     PartialWorkspace partial{};
     if (plan.route == detail::SlidingWindowAttentionRoute::SplitKv) {
-        partial = allocate_workspace(workspace, tokens, plan.split_capacity, batch);
+        partial = allocate_workspace(workspace, geometry, tokens, plan.split_capacity, batch);
     }
     detail::sliding_window_attention_launch(q, query_k, query_v, positions, valid_columns, lanes,
-                                            scale, context, plan, partial.acc, partial.m, partial.l,
-                                            out, stream);
+                                            geometry, scale, context, plan, partial.acc, partial.m,
+                                            partial.l, out, stream);
 }
 
 } // namespace ninferno::ops
