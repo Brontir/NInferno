@@ -66,6 +66,21 @@ std::size_t route_workspace_bytes(Route route, std::int32_t k, std::int32_t toke
     return layout.peak_bytes(1);
 }
 
+std::size_t executed_workspace_bytes(Route route, bool r8_prequantized, std::int32_t k,
+                                     std::int32_t rows, Epilogue epilogue, std::int32_t tokens) {
+    switch (route.family) {
+    case Family::GgmlMmq:
+        return mmq_workspace_bytes(k, epilogue == Epilogue::SwiGlu ? 2 * rows : rows,
+                                   std::min(tokens, kMmqPrefillSlice));
+    case Family::GgmlVec:
+        return vec_workspace_bytes(k, std::min(tokens, ggml_mmq::kVecMaxColumns));
+    case Family::R8Mma:
+        return r8_prequantized ? route_workspace_bytes(route, k, tokens) : 0;
+    default:
+        return route_workspace_bytes(route, k, tokens);
+    }
+}
+
 std::size_t volta_prefill_workspace_bytes(QType qtype, std::int32_t rows, std::int32_t k,
                                           std::int32_t max_tokens, bool swiglu) {
     if (max_tokens < 17 || !volta_cutlass_runs(volta_cutlass_only_qtype(qtype), max_tokens) ||

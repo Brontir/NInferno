@@ -233,9 +233,13 @@ int route_tune_main(int argc, char** argv) {
                 for (const auto t : wide_points()) points.push_back(t);
             }
             for (const Problem& p : problems) {
+                // The sweep's policy (a8_sweep below): an A16 GGUF block format under
+                // --a8-candidates runs AllowA8.
+                const bool a8_sweep = a8_candidates && p.compute == generic::ComputeClass::A16 &&
+                                      generic::ggml_mmq_format(p.qtype);
                 const auto policy = p.compute == generic::ComputeClass::A4
                                         ? ops::LinearPolicy::AllowA4
-                                    : p.compute == generic::ComputeClass::A8 || a8_candidates
+                                    : p.compute == generic::ComputeClass::A8 || a8_sweep
                                         ? ops::LinearPolicy::AllowA8
                                         : ops::LinearPolicy::A16Only;
                 for (const std::int32_t t : points) {

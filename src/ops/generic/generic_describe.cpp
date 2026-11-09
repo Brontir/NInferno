@@ -192,12 +192,8 @@ std::optional<KernelResources> route_resources(Route route, const Weight& w, Epi
         return std::nullopt;
     }
     const std::int32_t rows = epilogue == Epilogue::SwiGlu ? w.n / 2 : w.n;
-    // ggml's matrix kernel holds its planes (both of a SwiGLU pair's) for one prefill slice.
     const std::size_t workspace =
-        route.family == Family::GgmlMmq
-            ? mmq_workspace_bytes(w.k, epilogue == Epilogue::SwiGlu ? 2 * rows : rows,
-                                  std::min(tokens, kMmqPrefillSlice))
-            : route_workspace_bytes(route, w.k, tokens);
+        executed_workspace_bytes(route, false, w.k, rows, epilogue, tokens);
     const ResolvedRoute resolved =
         resolve_route(route, w,
                       CallLayout{.x_aligned16    = true,

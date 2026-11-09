@@ -3739,12 +3739,13 @@ ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call
     // launch. Without any workspace run() already took A16 (workspace_free_route).
     if ((route.family == Family::W4a4Mma || route.family == Family::W4a8Mma ||
          route.family == Family::I8Mma) &&
-        call.workspace_free && *call.workspace_free < route_workspace_bytes(route, w.k, call.tokens)) {
+        call.workspace_free &&
+        *call.workspace_free <
+            executed_workspace_bytes(route, false, w.k, call.rows, call.epilogue, call.tokens)) {
         demote(a16(), Demotion::Workspace);
     }
     // ggml's matrix kernel needs its planes in the workspace and x in 8-byte words; a call it
     // cannot take runs A16 (the same route the heuristic gives without the band).
-    const int plane_rows = call.epilogue == Epilogue::SwiGlu ? 2 * call.rows : call.rows;
     const auto free_for  = [&](std::size_t bytes) {
         return call.workspace_free.has_value() && bytes <= *call.workspace_free;
     };
@@ -3755,15 +3756,16 @@ ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call
             demote(a16(), Demotion::Alignment);
         } else if ((call.rows % ggml_mmq::kRowMultiple) != 0) {
             demote(a16(), Demotion::GgmlLayout);
-        } else if (!free_for(mmq_workspace_bytes(w.k, plane_rows,
-                                                 std::min(call.tokens, kMmqPrefillSlice)))) {
+        } else if (!free_for(executed_workspace_bytes(route, false, w.k, call.rows, call.epilogue,
+                                                      call.tokens))) {
             demote(a16(), Demotion::GgmlWorkspace);
         }
         out.ggml_fallback = route.family != Family::GgmlMmq;
     } else if (route.family == Family::GgmlVec) {
         if (call.segments > ggml_mmq::kVecMaxSegments) {
             demote(a16(), Demotion::GgmlLayout);
-        } else if (!free_for(vec_workspace_bytes(w.k, std::min(call.tokens, ggml_mmq::kVecMaxColumns)))) {
+        } else if (!free_for(executed_workspace_bytes(route, false, w.k, call.rows, call.epilogue,
+                                                      call.tokens))) {
             demote(a16(), Demotion::GgmlWorkspace);
         }
         out.ggml_fallback = route.family != Family::GgmlVec;

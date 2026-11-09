@@ -63,7 +63,9 @@ resolved_route_query(const DeviceClass& device, QType qtype, LinearPolicy policy
 // run_route launches), the tile and traffic of route_tile and route_traffic (declared geometry
 // and a prediction of requested bytes, not counters), `prepared` of prepared_rule, the price of
 // route_cost_seconds, and the kernel of route_resources (the compiled registers, shared memory,
-// threads and grid, read from the HOST GPU's binary: only when asked for).
+// threads and grid, read from the HOST GPU's binary: only when asked for). Not device-free
+// otherwise either: at 17 tokens or more a gated register-MMA price (select_route,
+// route_cost_seconds) reads the host GPU's compiled rmma facts, whatever `device` substitutes.
 // The description is of the call route_query describes: the engine's contiguous, aligned
 // activation, the weight in the converter's layout (see above), not a recorded call's own layout.
 struct RouteDescription {

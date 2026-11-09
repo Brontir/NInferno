@@ -1,9 +1,9 @@
 #include "ops/generic/route_query.h"
 
 #include "core/weight_view.h"
-#include "ops/generic/generic_ggml_internal.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -99,19 +99,13 @@ RouteDescription describe_resolved(const DescribedWeight& described, const Probl
     const Weight& w = described.weight;
     const Route ran = resolved.executed;
     RouteDescription out;
-    out.resolved = resolved;
-    // ggml's matrix kernel holds its planes (both of a SwiGLU pair's) for one prefill slice, as
-    // route_resources sizes it; every other family's are route_workspace_bytes'.
-    out.workspace_bytes =
-        ran.family == Family::GgmlMmq
-            ? mmq_workspace_bytes(problem.k,
-                                  problem.epilogue == Epilogue::SwiGlu ? 2 * problem.n : problem.n,
-                                  std::min(tokens, kMmqPrefillSlice))
-            : route_workspace_bytes(ran, problem.k, tokens);
-    out.tile         = route_tile(ran, problem.epilogue, tokens);
-    out.traffic      = route_traffic(ran, w, problem, tokens);
-    out.prepared     = prepared_rule(resolved, w);
-    out.cost_seconds = route_cost_seconds(problem, w, ran, tokens);
+    out.resolved        = resolved;
+    out.workspace_bytes = executed_workspace_bytes(ran, resolved.r8_prequantized, problem.k,
+                                                   problem.n, problem.epilogue, tokens);
+    out.tile            = route_tile(ran, problem.epilogue, tokens);
+    out.traffic         = route_traffic(ran, w, problem, tokens);
+    out.prepared        = prepared_rule(resolved, w);
+    out.cost_seconds    = route_cost_seconds(problem, w, ran, tokens);
     if (with_kernel) {
         try {
             out.kernel = route_resources(ran, w, problem.epilogue, tokens);
@@ -196,7 +190,13 @@ std::string describe_text(const RouteDescription& d) {
     }
     if (d.prepared)
         out += std::string(" prepared=") + representation_name(d.prepared->representation);
-    if (d.cost_seconds) out += " cost_us=" + std::to_string(*d.cost_seconds * 1e6);
+    if (d.cost_seconds) {
+        // Locale-independent: std::to_chars, three decimals.
+        char digits[64];
+        const auto end = std::to_chars(digits, digits + sizeof(digits), *d.cost_seconds * 1e6,
+                                       std::chars_format::fixed, 3);
+        out += " cost_us=" + std::string(digits, end.ptr);
+    }
     if (d.kernel) {
         const KernelResources& k = *d.kernel;
         out += " regs=" + std::to_string(k.registers) + " local=" + std::to_string(k.local_bytes) +

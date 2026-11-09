@@ -908,6 +908,15 @@ struct BuildManifest {
 
 // Transient storage a route needs for T tokens (W4A4, W4A8: the quantized activation).
 [[nodiscard]] std::size_t route_workspace_bytes(Route route, std::int32_t k, std::int32_t tokens);
+// The workspace the route a call RUNS takes from the call's workspace, the one rule resolve_route
+// checks the free bytes against and the descriptions report: ggml's matrix kernel its planes for
+// one prefill slice (both halves of a SwiGLU pair), its vector kernel those of its first
+// kVecMaxColumns tokens, R8 the pre-quantized planes only where `r8_prequantized` (else it
+// quantizes inside the CTA and takes none), every other family route_workspace_bytes. `rows` is
+// the call's output rows (SwiGLU: the gate's).
+[[nodiscard]] std::size_t executed_workspace_bytes(Route route, bool r8_prequantized,
+                                                   std::int32_t k, std::int32_t rows,
+                                                   Epilogue epilogue, std::int32_t tokens);
 // Family::GgmlMmq's workspace for a call of `plane_rows` weight rows (SwiGlu: gate and up) and T
 // tokens: the q8_1 activation, the FP32 plane and the stream-k fixup bound.
 // Whether ggml's matrix kernel (Family::GgmlMmq) reads the format.

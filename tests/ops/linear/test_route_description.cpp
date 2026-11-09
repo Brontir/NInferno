@@ -12,10 +12,12 @@
 #include "core/weight.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/route_query.h"
+#include "ops/generic/route_table.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -80,6 +82,23 @@ int main() {
                                      " workspace=0 tile=" + std::to_string(d->tile->out_rows) +
                                      "x" + std::to_string(d->tile->tokens);
             check(text.rfind(head, 0) == 0, "pinned line starts: " + text);
+            // The whole line, every key literal: a format change anywhere fails.
+            std::string full = "asked=" + generic::route_name(route) +
+                               " runs=" + generic::route_name(route) +
+                               " workspace=0 tile=" + std::to_string(s.m_tiles * s.warps_m * 16) +
+                               "x" + std::to_string(8 * s.n_tiles);
+            if (s.cluster > 1) full += " ksplit=" + std::to_string(s.cluster);
+            full += " weight_bytes=" +
+                    std::to_string(static_cast<std::uint64_t>(d->traffic->weight_bytes)) +
+                    " activation_bytes=" +
+                    std::to_string(static_cast<std::uint64_t>(d->traffic->activation_bytes)) +
+                    " output_bytes=" + std::to_string(n * 100 * 2);
+            if (d->cost_seconds) {
+                char us[64];
+                std::snprintf(us, sizeof(us), "%.3f", *d->cost_seconds * 1e6);
+                full += std::string(" cost_us=") + us;
+            }
+            check(text == full, "pinned full line: " + text + " vs " + full);
             check(text.find("weight_bytes=") != std::string::npos &&
                       text.find("output_bytes=" + std::to_string(n * 100 * 2)) != std::string::npos,
                   "pinned line carries the traffic: " + text);
@@ -117,7 +136,9 @@ int main() {
                     const auto q = generic::route_query(device, qtype, policy, epilogue, n, k, t);
                     check(q && *q == d->resolved.asked, at + ": the route asked is route_query's");
                     const generic::Route ran = d->resolved.executed;
-                    if (ran.family != generic::Family::GgmlMmq) {
+                    if (ran.family != generic::Family::GgmlMmq &&
+                        ran.family != generic::Family::GgmlVec &&
+                        ran.family != generic::Family::R8Mma) {
                         check(d->workspace_bytes == generic::route_workspace_bytes(ran, k, t),
                               at + ": workspace is route_workspace_bytes'");
                     }
@@ -143,6 +164,32 @@ int main() {
                           at + ": prepared rule is prepared_rule's");
                     check(!generic::describe_text(*d).empty(), at + ": renders");
                 }
+            }
+        }
+    }
+
+    // R8 at verify widths takes workspace only in its pre-quantized form: without any workspace
+    // (not pre-quantized) the description reports none; with it, the planes it reads.
+    for (const QType qtype : {QType::GGML_Q4_K, QType::GGML_Q6_K, QType::Q8_G32_FP16}) {
+        for (const std::int32_t t : {1, 2, 4, 8}) {
+            const std::string at = std::string("R8 ") + std::string(generic::qtype_name(qtype)) +
+                                   " T=" + std::to_string(t);
+            const generic::Route r8{generic::Family::R8Mma, 0};
+            const auto bare =
+                generic::describe_route(device, r8, qtype, LinearPolicy::AllowA8,
+                                        generic::Epilogue::Store, n, k, t, std::nullopt);
+            if (bare && bare->resolved.executed.family == generic::Family::R8Mma) {
+                check(!bare->resolved.r8_prequantized && bare->workspace_bytes == 0,
+                      at + ": no workspace, none reported");
+            }
+            const auto roomy =
+                generic::describe_route(device, r8, qtype, LinearPolicy::AllowA8,
+                                        generic::Epilogue::Store, n, k, t, std::size_t{1} << 30);
+            if (roomy && roomy->resolved.executed.family == generic::Family::R8Mma) {
+                check(roomy->workspace_bytes == (roomy->resolved.r8_prequantized
+                                                     ? generic::route_workspace_bytes(r8, k, t)
+                                                     : std::size_t{0}),
+                      at + ": workspace only in the pre-quantized form");
             }
         }
     }
