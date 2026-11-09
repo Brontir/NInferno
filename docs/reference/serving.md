@@ -628,6 +628,31 @@ line and on every refused request (a 4xx before generation is logged too).
 - On Linux, accepted connections also use TCP keepalive and a 15-second `TCP_USER_TIMEOUT`.
   Together with the heartbeat, a dead or unacknowledging peer is normally cancelled within about 20
   seconds, including while the request is waiting or prefilling.
+- Every connection holds one HTTP worker while its request is read. The request line and headers
+  have a 5-second total deadline. A body must grow by at least `--request-body-min-kib-per-sec`
+  (16 KiB/s) over every 10-second window, counting the bytes of chunk framing as well, otherwise
+  the server answers HTTP 408 `request_body_too_slow` and closes the connection. A sender that
+  trickles a body therefore holds a worker for about ten seconds, not for as long as it likes.
+- The worker pool is finite (49 workers by default) and, on Linux, queues at most half as many
+  more connections (at least 16). A connection past the queue is answered at once on the accepting
+  thread: `GET /health` with the health answer, anything else with HTTP 503, `Retry-After: 5` and
+  code `server_busy`. Senders that fill the pool therefore cannot make the server unreachable to a
+  liveness probe, and nobody waits in an unbounded queue. That `/health` answer reports the Engine
+  (liveness): a saturated pool does not make it unhealthy. A past-the-queue connection that has sent
+  no bytes yet (a connection a proxy opened ahead and keeps idle) is closed without an answer, which
+  proxies treat as an ordinary idle close and retry; only a connection with request bytes gets the
+  503. A 503 is written before the request is read: a small request is read and dropped so the
+  client sees the answer, a large one still in flight may reset the connection.
+  - Linux hands a connection to the server when its first bytes arrive (`TCP_DEFER_ACCEPT`); a
+    client that connects and says nothing is handed over by the kernel's SYN-ACK retransmit
+    after about 3-7 s, so it waits that long instead of taking a worker at once.
+  - The queue size is a choice, not a limit of the design: half the pool, at least 16, so the default
+    pool holds 49 workers and 24 queued connections, 73 in all. A client or SDK pool beyond that is
+    answered 503 with `Retry-After: 5`, which the OpenAI and Anthropic SDKs retry. A bench that opens
+    more connections than that at once should lower its concurrency or retry.
+  - On other systems the queue is unbounded as before and only the body rate applies. A connection that is queued waits for a worker to free up, which
+  takes seconds. On a network where clients are hostile, a buffering reverse proxy in front still
+  helps: it sends the body to NInferno only once it has received all of it.
 - A peer whose TCP stack remains connected and acknowledges data cannot be distinguished from a
   reading application. Proxies must close their upstream NInferno connection when the downstream
   client disappears.
@@ -694,7 +719,11 @@ llama.cpp-style base URLs.
 - User `image_url` parts, tool-result `image_url` parts used by compatible clients, and the User
   `video_url` extension, using HTTP(S) or data URIs. Image detail `auto`, `low` and `high` (or
   omitted) all take the fixed Vision preprocessing profile.
-- Assistant `reasoning_content` and `reasoning` history aliases.
+- Assistant `reasoning_content`, `reasoning` and `thinking` history aliases. A template also sees
+  the reasoning as `thinking` (gpt-oss keeps a tool-call turn's analysis from it; recent
+  transformers fills the field the same way). A tool-call turn that carries both text and
+  reasoning renders its reasoning and not the text for a template that reads `thinking` and
+  refuses both (gpt-oss: the text is not shown to the model); the request is not refused.
 - Assistant tool-call history, tool-result messages, and legacy function-call history. Results
   returned out of order (by clients that run the calls concurrently) are rendered in the order of
   their calls when their `tool_call_id`s all name calls of that assistant turn.
@@ -732,7 +761,17 @@ llama.cpp-style base URLs.
   Completions only: Responses refuses it as an unknown parameter, Anthropic Messages ignores it
   with the unknown-field warning.
 - Up to sixteen stop strings, applied to the answer only (a stop never ends a thinking model's
-  reasoning). Empty strings mean none and are dropped.
+  reasoning). Empty strings mean none and are dropped. Under `tool_choice` `required` or a named
+  function, a stop string that matches inside a call ends the output like any other stop, but the
+  unfinished call is dropped (counted as `cut_calls_dropped` in the request log), not returned as
+  text: the answer is empty or holds only the calls that were complete before the stop. A call
+  that the stop left complete except for its closing markup is closed and kept (Qwen XML, Hermes
+  JSON, Gemma 4; only for a stop that shares three bytes with the closer it swallowed). A syntax
+  without a close marker (Mistral, Llama 3, harmony, Pythonic, Granite, Atem) loses the whole
+  call region that the stop cut, its complete calls included. When a
+  call was dropped, the turn reports `stop` / `stop_sequence` even if complete calls precede it, so
+  a client does not take them for all the calls the model meant to make. With
+  `tool_choice` `auto` the unfinished markup stays text, like any malformed call.
 - The thinking switch as `enable_thinking`, `chat_template_kwargs.enable_thinking`, Ollama's `think`
   and `thinking: {"type": "enabled" | "disabled"}`; conflicting values are refused. A chat template
   that renders the same prompt either way (gpt-oss's harmony template, which always reasons) has no
@@ -1809,6 +1848,8 @@ contract.
 | `--api-key-file PATH` | the same key read from a file (one line) | unset; `NINFERNO_API_KEY` when neither is given |
 | `--cors` | permissive browser CORS headers | off |
 | `--max-request-mib N` | body-size limit before JSON parsing (a body nesting arrays and objects deeper than 128 levels is refused with HTTP 400) | `384` |
+| `--request-body-min-kib-per-sec N` | a request body must grow by at least N KiB/s over every 10 seconds, else the read stops with HTTP 408 `request_body_too_slow` and the connection closes; `0` off | `16` |
+| `--max-request-json-values N` | most JSON values (scalars, arrays, objects, object keys) a request body may hold; more is HTTP 400 `request_json_too_large`, stopped while the body is parsed. Each value costs about 100 bytes of memory whatever its text size, so this, not `--max-request-mib`, bounds the parse | `1000000` |
 | `--max-request-messages N` | most messages in one request (Responses: `input` Items); more is HTTP 400 `too_many_messages` before the prompt is parsed or rendered | `16384` |
 | `--drain-timeout-ms N` | longest wait for requests in flight after SIGTERM/SIGINT | `60000` |
 | `--health-stall-ms N` | `/health` is 503 while the Engine has work and makes no progress this long; `0` off | `60000` |
@@ -2169,9 +2210,18 @@ rides on the round's own synchronization.
 
 ### Input and output memory
 
-Input memory is bounded by the outstanding-request count and the per-request `--max-request-mib`
-limit. Media requests additionally share one preparation permit, so a waiting media request retains
-the same cancellation and timeout deadline. Model output is bounded by the same finite request count
+A request body is parsed into a document before admission, on an HTTP worker, so up to one parse per
+worker (49 by default) runs at once, not one per admission slot. Raw bytes are bounded by
+`--max-request-mib`, but a body of many small values costs far more than its size (`{}` is three
+bytes of text and about 80 bytes in memory, a factor of 25), so the number of values is bounded as
+well: `--max-request-json-values` (1,000,000, about 100 MB per parse). A request with large media
+has few values, and its bytes are held once. Lower the limit to bound the sum on a small host. When
+a request that built a large document ends (text of 1 MiB or more, or 10,000 or more values, a
+parse that was stopped at the limit included), the server returns the freed memory of its worker
+thread to the operating system once its connection ends. Replayed tool-call arguments are kept as
+text and parsed by the chat template, so all of them share one budget of
+`--max-request-json-values`. Media requests additionally share one preparation permit, so a waiting
+media request retains the same cancellation and timeout deadline. Model output is bounded by the same finite request count
 and each request's effective output-token limit. Output callbacks and network serialization run
 outside the GPU executor and do not delay formation of the next batch.
 
@@ -2649,6 +2699,7 @@ Compatible prefixes are reused for both text and multimodal histories unless the
 | 403 | `cross_origin_request` | request with `Origin` while `--cors` is off |
 | 404 | `response_not_found` | unknown stored Response on `GET`, `DELETE` or `input_items` of `/v1/responses/{id}` |
 | 404 | `not_found` | a path no endpoint serves (JSON body naming the endpoints) |
+| 408 | `request_body_too_slow` | body arriving slower than `--request-body-min-kib-per-sec` |
 | 413 | `request_too_large` | body above `--max-request-mib` |
 | 415 | `unsupported_content_encoding` | compressed request body |
 | 429 | `server_overloaded` | request capacity full (`Retry-After` 1 s) |

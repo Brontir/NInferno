@@ -1008,6 +1008,9 @@ struct PromptOptions {
     // anyway is still read out of the text, so its markup never reaches the answer, and dropped
     // (the serve layer does not return it). Nothing else of the text changes.
     bool tool_calls_discarded = false;
+    // tool_choice required or named: the answer is the calls alone. A call that a caller's stop
+    // string cuts off is dropped (counted in the parse diagnostics), never returned as text.
+    bool tool_calls_forced = false;
 };
 
 enum class CacheRetentionHint : std::uint8_t {

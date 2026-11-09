@@ -237,7 +237,7 @@ void HttpServer::handle_responses(const httplib::Request& req, httplib::Response
     const std::string id = new_openai_response_id();
     try {
         const RequestLimits limits = request_limits();
-        request  = parse_openai_responses_create_request(parse_json_body(req), limits,
+        request  = parse_openai_responses_create_request(parse_json_body(req, limits), limits,
                                                          options_.auto_system_shared_prefix);
         resolved = resolve_openai_responses_prompt(request.prompt, openai_responses_store_, id,
                                                    request.store);
@@ -562,7 +562,7 @@ void HttpServer::handle_response_input_tokens(const httplib::Request& req, httpl
     try {
         const RequestLimits limits = request_limits();
         OpenAIResponsesPromptRequest request =
-            parse_openai_responses_input_tokens_request(parse_json_body(req), limits);
+            parse_openai_responses_input_tokens_request(parse_json_body(req, limits), limits);
         OpenAIResponsesResolvedPrompt resolved =
             resolve_openai_responses_prompt(request, openai_responses_store_, std::nullopt, false);
         const int tokens = service_->count_prompt_tokens(

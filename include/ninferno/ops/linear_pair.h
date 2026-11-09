@@ -21,9 +21,11 @@ namespace ninferno::ops {
  *
  * `x` is contiguous BF16 [K,T], both outputs are distinct contiguous BF16 [N,T], and both
  * weights have the same logical [N,K] shape and RowSplit Q8_G32_FP16 encoding with FP16 scales.
- * The fused kernel serves the paired [1024,5120] physical projection and the exact adjacent
- * [1024,2048] K/V row views (parent rows [4096,5120) and [5120,6144)) for every positive T; any
- * other pair of equally shaped weights, in any format linear() takes, runs as two linear() calls.
+ * The fused kernel's domain is the paired [1024,5120] physical projection and the exact adjacent
+ * [1024,2048] K/V row views (parent rows [4096,5120) and [5120,6144)); within it a call runs the
+ * fused kernel or two linear() calls, whichever chain the price prefers at its T (the [1024,5120]
+ * pair from 5 to 85 columns on a GPU whose MMA takes BF16 natively runs the two calls). Any other
+ * pair of equally shaped weights, in any format linear() takes, runs as two linear() calls.
  * Numeric semantics are those of linear(). Inputs, outputs, and weight planes must be mutually
  * non-overlapping. The Op requires no caller-owned transient storage and has no persistent state
  * side effect.

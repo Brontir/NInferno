@@ -1,6 +1,7 @@
 #include "convert/drafters.h"
 
 #include "core/ascii.h"
+#include "core/hex.h"
 #include "convert/files.h"
 #include "convert/options_key.h"
 #include "core/cache_file.h"
@@ -847,6 +848,30 @@ namespace {
 
 // The id of the file the refresh refused for drafter `name` of the target's manifest, "" where
 // none was refused (or there is no manifest to say).
+// The artifact id a drafter's conversion report records, "" without a readable report.
+std::string reported_id(const fs::path& artifact) {
+    std::ifstream in(artifact.string() + ".conversion.json");
+    if (!in) { return {}; }
+    try {
+        return Json::parse(in).value("artifact_id", std::string());
+    } catch (const std::exception&) { return {}; }
+}
+
+// The id of the artifact itself, "" where any of its files cannot be read (truncated, replaced by
+// another file, a part missing): every part is opened, which checks its header and its length
+// against the directory.
+std::string readable_id(const fs::path& artifact) {
+    try {
+        const artifact::Reader reader(artifact);
+        // An empty read: Reader opens (and checks) the part before reading nothing from it.
+        for (std::size_t part = 1; part < reader.directory().files.size(); ++part) {
+            (void)reader.read_direct(part, 0, {});
+        }
+        const auto& id = reader.artifact_id();
+        return hex_encode(id.data(), id.size());
+    } catch (const std::exception&) { return {}; }
+}
+
 std::string refused_id(const fs::path& target_artifact, const std::string& name) {
     try {
         const auto path = spec::manifest_path(target_artifact);
@@ -1036,9 +1061,16 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
                 home / (stem + "." + d.decl.recipe + quant + suffix + ".ninferno");
             // A file the refresh refused (refresh_changed_drafters: another drafter written at this
             // path) is no cache: converted again from the checkpoint just fetched.
+            // A cache is the file its report describes: readable, with the id the report records.
+            // One damaged or replaced since (unreadable, or another id) is converted again from
+            // the checkpoint, which is still here.
+            const std::string file_id =
+                fs::exists(convert_options.out) ? readable_id(convert_options.out) : std::string();
             const std::string refused_file = refused_id(target_artifact, d.decl.name);
-            const bool refused = !refused_file.empty() && fs::exists(convert_options.out) &&
-                                 refused_file == spec::artifact_id_hex(convert_options.out);
+            const bool refused             = !refused_file.empty() && refused_file == file_id;
+            const bool damaged             = fs::exists(convert_options.out) &&
+                                 fs::exists(convert_options.out.string() + ".conversion.json") &&
+                                 (file_id.empty() || file_id != reported_id(convert_options.out));
             // What it was converted with, as it recorded it: a drafter made with another template
             // or flags is converted again; one with no record (converted before) is kept.
             const std::string identity = drafter_content_identity(convert_options);
@@ -1048,7 +1080,7 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
                                        std::istreambuf_iterator<char>());
                 recorded_other = text != identity;
             }
-            if (!refused && !recorded_other && fs::exists(convert_options.out) &&
+            if (!refused && !damaged && !recorded_other && !file_id.empty() &&
                 fs::exists(convert_options.out.string() + ".conversion.json")) {
                 d.status = "cached";
             } else {
@@ -1059,6 +1091,10 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
                 if (refused) {
                     log_line(options.log, "  " + convert_options.out.string() +
                                               " failed the drafter checks: converted again");
+                } else if (damaged) {
+                    log_line(options.log, "  " + convert_options.out.string() +
+                                              " is not the file its report describes: converted "
+                                              "again");
                 }
                 // A conversion that stopped half way left the output in place without its report
                 // (convert() renames it in first): removed, or every start would fail on it.

@@ -193,7 +193,8 @@ std::vector<TokenId> script(const std::vector<Piece>& pieces) {
     return out;
 }
 
-enum class PromptKind : std::uint8_t { Plain, Thinking, Tools, ThinkingTools };
+// ForcedTools: the tools with tool_choice required (the answer is the calls alone).
+enum class PromptKind : std::uint8_t { Plain, Thinking, Tools, ThinkingTools, ForcedTools };
 
 struct Case {
     std::string name;
@@ -258,7 +259,7 @@ public:
     Harness()
         : frontend_(make_fixture_frontend()), plain_(frontend_.prepare_tokens({kByteBase + 'x'})),
           thinking_(prepare(true, false)), tools_(prepare(false, true)),
-          thinking_tools_(prepare(true, true)) {}
+          thinking_tools_(prepare(true, true)), forced_tools_(prepare(false, true, true)) {}
 
     [[nodiscard]] const PreparedPrompt& prompt(PromptKind kind) const {
         switch (kind) {
@@ -270,6 +271,8 @@ public:
             return tools_;
         case PromptKind::ThinkingTools:
             return thinking_tools_;
+        case PromptKind::ForcedTools:
+            return forced_tools_;
         }
         throw std::logic_error("unknown prompt kind");
     }
@@ -350,7 +353,7 @@ public:
     }
 
 private:
-    [[nodiscard]] PreparedPrompt prepare(bool thinking, bool tools) const {
+    [[nodiscard]] PreparedPrompt prepare(bool thinking, bool tools, bool forced = false) const {
         ninferno::ChatMessage message;
         message.role = ninferno::ChatRole::User;
         message.parts.push_back(ninferno::MessagePart{
@@ -358,7 +361,8 @@ private:
         ninferno::PromptInput input;
         input.messages.push_back(std::move(message));
         input.options.continuation    = ninferno::PromptContinuationMode::NewAssistantTurn;
-        input.options.enable_thinking = thinking;
+        input.options.enable_thinking   = thinking;
+        input.options.tool_calls_forced = forced;
         if (tools) {
             input.options.tool_jsons.push_back(
                 R"({"type":"function","function":{"name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string"},"days":{"type":"integer"}},"required":["city"]}}})");
@@ -373,6 +377,7 @@ private:
     PreparedPrompt thinking_;
     PreparedPrompt tools_;
     PreparedPrompt thinking_tools_;
+    PreparedPrompt forced_tools_;
 };
 
 // All compositions of n into rounds of 1..kMaxRound when there are few; otherwise the uniform
@@ -657,6 +662,50 @@ std::vector<Case> corpus() {
                      .content    = "<tool_call>\n<function=search>\n",
                      .finish     = FinishReason::StopString,
                      .tool_calls = 0});
+    // The same stop inside a forced call: the unfinished call is dropped like one the limit cut
+    // off, never returned as content. A call completed before the stop is kept.
+    cases.push_back(
+        {.name       = "stop string inside a forced call",
+         .tokens     = script({P{"<tool_call>"}, P{"\n<function=search>\n"}, P{"<parameter="},
+                               P{"q>\nObserv"}, P{"STOP"}, P{"</parameter>"}}),
+         .prompt     = PromptKind::ForcedTools,
+         .stops      = {stop("STOP")},
+         .content    = "",
+         .finish     = FinishReason::StopString,
+         .tool_calls = 0,
+         .cut_calls_dropped = 1});
+    cases.push_back({.name    = "stop string inside a forced call after a complete one",
+                     .tokens  = script({P{"<tool_call>"}, P{"\n<function=search>\n</function>\n"},
+                                        P{"</tool_call>"}, P{"\n"}, P{"<tool_call>"},
+                                        P{"\n<function=search>\n"}, P{"STOP"}, P{"</function>"}}),
+                     .prompt  = PromptKind::ForcedTools,
+                     .stops   = {stop("STOP")},
+                     .content = "",
+                     .finish  = FinishReason::StopString,
+                     .tool_calls        = 1,
+                     .call_arguments    = {"{}"},
+                     .cut_calls_dropped = 1});
+    // A stop that swallows only the closing markup of a call that is complete up to it: the call
+    // is closed and kept, as when the stop token ends it.
+    cases.push_back({.name              = "stop string in the closing markup of a forced call",
+                     .tokens            = script({P{"<tool_call>"}, P{"\n<function=search>\n"},
+                                                  P{"<parameter="}, P{"q>\nx\n"}, P{"</parameter>"}, P{"\n"},
+                                                  P{"</function>"}, P{"\n</tool_call>"}}),
+                     .prompt            = PromptKind::ForcedTools,
+                     .stops             = {stop("</function>")},
+                     .content           = "",
+                     .finish            = FinishReason::StopString,
+                     .tool_calls        = 1,
+                     .call_arguments    = {R"({"q":"x"})"},
+                     .cut_calls_dropped = 0});
+    cases.push_back({.name    = "stop string after a forced call is complete",
+                     .tokens  = script({P{"<tool_call>"}, P{"\n<function=search>\n</function>\n"},
+                                        P{"</tool_call>"}, P{"STOP"}}),
+                     .prompt  = PromptKind::ForcedTools,
+                     .stops   = {stop("STOP")},
+                     .content = "",
+                     .finish  = FinishReason::StopString,
+                     .tool_calls = 1});
     // A reasoning-channel stop string, and the thinking budget with its injected control.
     cases.push_back({.name      = "reasoning-channel stop",
                      .tokens    = script({P{"we"}, P{"helloST"}, P{"OPtail"}}),

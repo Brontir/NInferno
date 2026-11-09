@@ -171,6 +171,14 @@ set_tests_properties(
   ninferno_qwen3_5_speculative_invariants_real_test
   PROPERTIES SKIP_RETURN_CODE 77)
 
+# The same cases in fast activations (the product's default): WARN-only on a width-dependent gap
+# (#440).
+add_test(NAME ninferno_qwen3_5_speculative_invariants_real_fast_test
+  COMMAND ninferno_qwen3_5_speculative_invariants_real_test)
+set_tests_properties(
+  ninferno_qwen3_5_speculative_invariants_real_fast_test
+  PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT "NINFERNO_TEST_ACTIVATIONS=fast")
+
 ninferno_add_test(ninferno_tool_call_parser_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../../test_tool_call_parser.cpp"
   LIBRARIES ninferno_engine ninferno_structured ninferno::json)

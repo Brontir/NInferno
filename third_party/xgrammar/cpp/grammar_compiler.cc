@@ -6,6 +6,7 @@
 #include <xgrammar/compiler.h>
 
 #include <algorithm>
+#include <atomic>
 #include <bitset>
 #include <cctype>
 #include <cstddef>
@@ -18,6 +19,7 @@
 #include <variant>
 #include <vector>
 
+#include "compile_cancel.h"  // NInferno local change (see README.ninferno.md)
 #include "compiled_grammar_impl.h"
 #include "earley_parser.h"
 #include "fsm.h"
@@ -1092,8 +1094,16 @@ static void CheckTokenIdsInVocab(const Grammar& grammar, int vocab_size) {
 }
 
 CompiledGrammar GrammarCompilerSub::MultiThreadCompileGrammar(Grammar grammar_unoptimized) {
+  // NInferno local change (see README.ninferno.md): the compile stops at its checkpoints once the
+  // scope active on this thread says so. A stop skips the remaining token masks and throws after
+  // the workers are idle (worker tasks never throw).
+  const ninferno_xgrammar::CompileCancelCheck cancel = ninferno_xgrammar::current_compile_cancel();
+  auto cancelled = [cancel]() { return cancel && cancel(); };
+  std::atomic<bool> skipped_mask{false};
+
   auto compiled_grammar_impl = std::make_shared<CompiledGrammar::Impl>();
   compiled_grammar_impl->grammar = GrammarOptimizer::Apply(grammar_unoptimized);
+  if (cancelled()) throw ninferno_xgrammar::CompileCancelled();  // NInferno
   compiled_grammar_impl->tokenizer_info = tokenizer_info_;
   CheckTokenIdsInVocab(compiled_grammar_impl->grammar, tokenizer_info_.GetVocabSize());
   if (tokenizer_info_.GetVocabSize() == 0) {
@@ -1101,6 +1111,7 @@ CompiledGrammar GrammarCompilerSub::MultiThreadCompileGrammar(Grammar grammar_un
   }
   std::unordered_map<int32_t, DynamicBitset> tag_dispatch_rule_id_to_second_slicing_bitset;
   TagDispatchOptimization(compiled_grammar_impl, &tag_dispatch_rule_id_to_second_slicing_bitset);
+  if (cancelled()) throw ninferno_xgrammar::CompileCancelled();  // NInferno
 
   // If the compiler is cache-enabled, then we hash the grammars for crossing-grammar caching.
   if (rule_level_cache_.has_value()) {
@@ -1123,6 +1134,10 @@ CompiledGrammar GrammarCompilerSub::MultiThreadCompileGrammar(Grammar grammar_un
   }
 
   auto add_adaptive_token_mask = [&](const ParserState& state, bool is_root_rule) {
+    if (cancelled()) {  // NInferno
+      skipped_mask = true;
+      return;
+    }
     auto grammar_matcher = GrammarMatcherForTokenMaskCache(
         compiled_grammar_impl->grammar,
         state,
@@ -1154,6 +1169,10 @@ CompiledGrammar GrammarCompilerSub::MultiThreadCompileGrammar(Grammar grammar_un
 
   for (int32_t rule_id = 0; rule_id < static_cast<int>(compiled_grammar_impl->grammar->NumRules());
        ++rule_id) {
+    if (cancelled()) {  // NInferno
+      skipped_mask = true;
+      break;
+    }
     auto rule = compiled_grammar_impl->grammar->GetRule(rule_id);
     const auto& rule_fsm = compiled_grammar_impl->grammar->per_rule_fsms[rule_id];
     XGRAMMAR_DCHECK(rule_fsm.has_value());
@@ -1173,6 +1192,8 @@ CompiledGrammar GrammarCompilerSub::MultiThreadCompileGrammar(Grammar grammar_un
   if (max_threads_ > 1) {
     thread_pool->Join();
   }
+  // NInferno: only a compile that skipped a mask is thrown away; a finished one is kept.
+  if (skipped_mask) throw ninferno_xgrammar::CompileCancelled();
 
   return CompiledGrammar(compiled_grammar_impl);
 }

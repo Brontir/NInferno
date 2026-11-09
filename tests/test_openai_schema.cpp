@@ -387,6 +387,48 @@ int test_constrained_decoding_extensions() {
                           std::string(deep_case.param) + " text nesting 200 levels is not refused");
     }
 
+    // JSON carried as text is also bounded in values (#527): `[0,0,...]` costs as much as a text
+    // as it does in the body, and the body's count sees one string.
+    std::string many = "[";
+    for (int i = 0; i < 50; ++i) { many += i == 0 ? "0" : ",0"; }
+    many += "]";
+    RequestLimits few_values   = limits();
+    few_values.max_json_values = 40;
+    for (const DeepCase& wide_case :
+         {DeepCase{"guided_json", Json("{\"a\":" + many + "}"), "guided_json"},
+          DeepCase{"structured_outputs", Json{{"json", "{\"a\":" + many + "}"}},
+                   "structured_outputs.json"},
+          DeepCase{"structured_outputs", Json{{"structural_tag", many}},
+                   "structured_outputs.structural_tag"}}) {
+        Json wide             = base_request();
+        wide[wide_case.field] = wide_case.value;
+        const ApiError error =
+            api_error([&] { (void)parse_chat_completion_request(wide, few_values, false); });
+        failures += check(error.status == 400 && error.param == wide_case.param &&
+                              error.code == "request_json_too_large",
+                          std::string(wide_case.param) + " text with too many values is accepted");
+    }
+
+    // The arguments of a replayed tool call are kept as text for the chat template to parse: they
+    // are measured at the request (#527).
+    for (const char* key : {"tool_calls", "function_call"}) {
+        Json history = base_request();
+        const Json function{{"name", "f"}, {"arguments", many}};
+        Json assistant{{"role", "assistant"}, {"content", nullptr}};
+        if (std::string(key) == "tool_calls") {
+            assistant[key] =
+                Json::array({Json{{"id", "c1"}, {"type", "function"}, {"function", function}}});
+        } else {
+            assistant[key] = function;
+        }
+        history["messages"].push_back(assistant);
+        const ApiError error =
+            api_error([&] { (void)parse_chat_completion_request(history, few_values, false); });
+        failures +=
+            check(error.status == 400 && error.code == "request_json_too_large",
+                  std::string("assistant ") + key + " arguments over the value limit are accepted");
+    }
+
     Json two                = base_request();
     two["response_format"]  = Json{{"type", "json_object"}};
     two["guided_regex"]     = "[a-z]+";
@@ -625,6 +667,8 @@ int test_tools() {
                           none_prompt.options.tool_jsons.size() == none.generation.tools.size() &&
                           !none_prompt.options.tool_jsons.empty(),
                       "tool_choice none did not keep the declarations with calls disabled");
+    failures +=
+        check(!none_prompt.options.tool_calls_forced, "tool_choice none does not force calls");
 
     using Requirement   = ninferno::ToolCallRequirement;
     const auto tool_constraint = [&](const Json& request_body) {
@@ -638,11 +682,25 @@ int test_tools() {
                   required_calls->tool_requirement == Requirement::Required &&
                   required_calls->param == "tools",
               "required tool choice is enforced by a tool-call constraint");
+    failures += check(prompt(parse(body).generation).options.tool_calls_forced,
+                      "required tool choice marks the prompt's calls as forced");
     body["tool_choice"] = Json{{"type", "function"}, {"function", Json{{"name", "weather"}}}};
     auto named_call     = tool_constraint(body);
     failures += check(named_call && named_call->tool_requirement == Requirement::Named &&
                           named_call->named_tool == "weather",
                       "named tool choice is enforced by a tool-call constraint");
+    failures += check(prompt(parse(body).generation).options.tool_calls_forced,
+                      "a named tool choice marks the prompt's calls as forced");
+    body["tool_choice"] =
+        Json{{"type", "allowed_tools"},
+             {"allowed_tools",
+              Json{{"mode", "required"},
+                   {"tools", Json::array({Json{{"type", "function"}, {"name", "weather"}}})}}}};
+    failures += check(prompt(parse(body).generation).options.tool_calls_forced,
+                      "allowed_tools mode required marks the prompt's calls as forced");
+    body["tool_choice"]["allowed_tools"]["mode"] = "auto";
+    failures += check(!prompt(parse(body).generation).options.tool_calls_forced,
+                      "allowed_tools mode auto does not force calls");
     body["tool_choice"] = Json{{"type", "function"}, {"function", Json{{"name", "missing"}}}};
     failures += check(api_error([&] { (void)parse(body); }).param == "tool_choice",
                       "named tool choice must name a declared tool");
@@ -1096,6 +1154,14 @@ int test_reasoning_and_extensions() {
     failures += check(parse(body).generation.messages.back().reasoning_content == "different",
                       "an empty reasoning alias does not conflict with a meaningful alias");
     body = base_request();
+    body["messages"].push_back(
+        Json{{"role", "assistant"}, {"content", "answer"}, {"thinking", "thought"}});
+    failures += check(parse(body).generation.messages.back().reasoning_content == "thought",
+                      "assistant thinking is an alias of reasoning_content");
+    body["messages"].back()["reasoning"] = "different";
+    failures += check(api_error([&] { (void)parse(body); }).code == "conflicting_template_option",
+                      "thinking conflicting with reasoning rejected");
+    body = base_request();
     body["messages"].push_back(Json{
         {"role", "assistant"}, {"content", nullptr}, {"reasoning_content", "unfinished thought"}});
     failures +=
@@ -1340,6 +1406,15 @@ int test_aggregate_response() {
         call["id"].get<std::string>().starts_with("call_") && call["function"]["name"] == "Edit" &&
             !Json::parse(call["function"]["arguments"].get<std::string>()).contains("replace_all"),
         "OpenAI adapter owns wire tool-call identifiers");
+
+    // A call dropped as unfinished (a stop string in a forced call) means the turn is not a
+    // finished set of calls: the stop is reported, the complete calls stay.
+    outcome.finish_reason                     = ninferno::FinishReason::StopString;
+    outcome.tool_call_parse.cut_calls_dropped = 1;
+    response = Json::parse(make_chat_completion_response(identity(), outcome));
+    failures += check(response["choices"][0]["finish_reason"] == "stop" &&
+                          response["choices"][0]["message"]["tool_calls"].size() == 1,
+                      "a turn that dropped a call reports stop and keeps the complete calls");
     return failures;
 }
 

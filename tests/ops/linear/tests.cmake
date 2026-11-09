@@ -125,7 +125,8 @@ ninferno_add_op_test(ninferno_selector_golden_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_selector_golden.cpp"
   LIBRARIES ninferno_linear_test_support)
 target_compile_definitions(ninferno_selector_golden_test PRIVATE
-  NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden")
+  NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden"
+  NINFERNO_NVCC_VERSION="${CMAKE_CUDA_COMPILER_VERSION}")
 
 # The generic path's dense tuner: tuned at the first eager call, within the activation class, R8
 # decode bytes kept, the cache file read back, nothing timed inside a graph capture.
@@ -137,6 +138,12 @@ ninferno_add_op_test(ninferno_dense_tune_test
 ninferno_add_op_test(ninferno_segmented_swiglu_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_segmented_swiglu.cpp"
   LIBRARIES ninferno_linear_test_support)
+
+# The bounded twin of ggml's 4-column vector kernel: bytes equal the plain instance's, and the launch's
+# choice (twin only when it saves a round and does not spill) read from its description.
+ninferno_add_op_test(ninferno_ggml_vec_twin_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_ggml_vec_twin.cpp"
+  LIBRARIES ninferno_linear_test_support ninferno_ggml_mmq ninferno_core)
 
 # Side-by-side q/k/v and gate projections (segmented, joined, spread) equal the separate ones.
 ninferno_add_op_test(ninferno_side_by_side_projection_test

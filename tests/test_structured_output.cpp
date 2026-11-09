@@ -9,7 +9,11 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <chrono>
+#include <mutex>
+#include <condition_variable>
+#include <atomic>
 #include <cstdint>
 #include <initializer_list>
 #include <iostream>
@@ -304,6 +308,136 @@ void busy_contract() {
     OutputConstraintSpec spec;
     spec.kind = OutputConstraintKind::JsonObject;
     check(expect_error(busy, spec) == "constraint_compiler_busy", "no free compiler slot");
+}
+
+// The test vocabulary plus every three-letter lowercase word: a compile does per-state work over
+// the whole vocabulary, so a larger one makes an expensive pattern slow, as a real vocabulary does.
+GrammarVocabulary large_vocabulary() {
+    GrammarVocabulary out = vocabulary();
+    for (char a = 'a'; a <= 'z'; ++a) {
+        for (char b = 'a'; b <= 'z'; ++b) {
+            for (char c = 'a'; c <= 'z'; ++c) { out.token_bytes.push_back(std::string{a, b, c}); }
+        }
+    }
+    out.token_domain = static_cast<std::uint32_t>(out.token_bytes.size());
+    out.special.resize(out.token_bytes.size(), false);
+    return out;
+}
+
+OutputConstraintSpec pattern_spec(const std::string& pattern) {
+    OutputConstraintSpec spec;
+    spec.kind       = OutputConstraintKind::JsonSchema;
+    spec.definition = Json{{"type", "string"}, {"pattern", pattern}}.dump();
+    return spec;
+}
+
+// Holds a compile at its first checkpoint until the test lets it go, so a "slow" compile is slow by
+// construction and the tests depend on no wall-clock race.
+class Gate {
+public:
+    void wait() {
+        std::unique_lock lock(mutex_);
+        cv_.wait_for(lock, std::chrono::seconds(60), [&] { return open_; });
+    }
+
+    void release() {
+        {
+            std::lock_guard lock(mutex_);
+            open_ = true;
+        }
+        cv_.notify_all();
+    }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    bool open_ = false;
+};
+
+CompilerOptions gated_options(Gate& gate) {
+    CompilerOptions options;
+    options.max_concurrent  = 1;
+    options.compile_threads = 2;
+    options.compile_timeout = std::chrono::milliseconds(100);
+    options.checkpoint_hook = [&gate] { gate.wait(); };
+    return options;
+}
+
+const char* const kSlowPattern = "^[a-z]{1,20}$";
+
+// A compile that times out keeps running while nobody needs its slot, and is cancelled once
+// another request does.
+void cancel_contract() {
+    CompilerOptions invalid;
+    invalid.compile_runtime_multiple = 0;
+    bool refused                     = false;
+    try {
+        const ConstraintCompiler refusing(vocabulary(), invalid);
+    } catch (const std::invalid_argument&) { refused = true; }
+    check(refused, "a run-time cap of zero timeouts is refused");
+
+    Gate gate;
+    const ConstraintCompiler compiler(large_vocabulary(), gated_options(gate));
+    const std::string first = expect_error(compiler, pattern_spec(kSlowPattern));
+    check(first == "constraint_compile_timeout", "gated compile times out: " + first);
+
+    // An ordinary schema needs the only slot: the orphan is cancelled on its behalf. Its worker is
+    // held at the gate, so this request itself finds the slot still taken.
+    OutputConstraintSpec simple;
+    simple.kind = OutputConstraintKind::JsonObject;
+    check(expect_error(compiler, simple) == "constraint_compiler_busy",
+          "the slot stays taken while the orphan is held");
+    gate.release();
+    bool freed = false;
+    for (int attempt = 0; attempt < 100 && !freed; ++attempt) {
+        const std::string code = expect_error(compiler, simple);
+        freed                  = code == "accepted";
+        if (!freed && code != "constraint_compiler_busy") { check(false, "unexpected: " + code); }
+    }
+    check(freed, "the cancelled orphan released its slot to the waiting request");
+}
+
+// A compile that overruns the timeout is not thrown away: it finishes in the background and the
+// client's retry finds it.
+void orphan_result_contract() {
+    Gate gate;
+    const ConstraintCompiler compiler(large_vocabulary(), gated_options(gate));
+    const OutputConstraintSpec spec = pattern_spec(kSlowPattern);
+    check(expect_error(compiler, spec) == "constraint_compile_timeout", "gated compile times out");
+    gate.release();
+    std::string last = "constraint_compile_timeout";
+    for (int attempt = 0; attempt < 100 && last != "accepted"; ++attempt) {
+        last = expect_error(compiler, spec);
+    }
+    check(last == "accepted", "the retry of an overrunning compile succeeds");
+}
+
+// A compile that ran past its total run-time cap is cancelled however often it is asked for, caches
+// nothing, and the next request compiles the constraint whole.
+void runtime_cap_contract() {
+    Gate gate;
+    std::atomic<std::int64_t> clock{1};
+    CompilerOptions options = gated_options(gate);
+    options.clock_ns        = [&clock] { return clock.load(); };
+    const ConstraintCompiler compiler(large_vocabulary(), options);
+    const OutputConstraintSpec spec = pattern_spec(kSlowPattern);
+    check(expect_error(compiler, spec) == "constraint_compile_timeout", "gated compile times out");
+    // Time passes beyond the cap (five timeouts) while the worker is held; it then stops without
+    // finishing the masks.
+    clock += 60LL * 1000 * 1000 * 1000;
+    // The cancelled compile is still running (held at the gate), so a retry waits for it instead of
+    // starting a second copy: it times out, it does not even find a free slot.
+    check(expect_error(compiler, spec) == "constraint_compile_timeout",
+          "a retry waits for the cancelled compile");
+    gate.release();
+    std::string last = "constraint_compile_timeout";
+    for (int attempt = 0; attempt < 100 && last != "accepted"; ++attempt) {
+        last = expect_error(compiler, spec);
+    }
+    check(last == "accepted", "a request after the cap compiles afresh");
+    // The cached constraint is complete: a matching text walks through it.
+    RequestConstraint request(compiler.compile(spec), false);
+    walk_text(request, "\"abc\"", "constraint compiled after a capped one");
 }
 
 void json_walk_contract(const ConstraintCompiler& compiler) {
@@ -1316,6 +1450,9 @@ int main() {
     schema_policy_contract();
     compile_error_contract(compiler);
     busy_contract();
+    cancel_contract();
+    orphan_result_contract();
+    runtime_cap_contract();
     json_walk_contract(compiler);
     other_kinds_contract(compiler);
     structural_tag_whitespace_contract(compiler);

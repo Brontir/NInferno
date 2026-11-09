@@ -39,6 +39,10 @@ int main() {
         const auto pre = g::launch_overlap(route(F::R8Mma, true), g::Epilogue::Store, 4, false, true, true);
         check(pre.release == R::PrequantizedR8 && pre.prefetch == R::PrequantizedR8,
               "the pre-quantized R8 form neither releases nor prefetches");
+        const auto pre_join =
+            g::launch_overlap(route(F::R8Mma, true), g::Epilogue::Store, 4, true, false, true);
+        check(pre_join.join == R::PrequantizedR8 && !pre_join.joins(),
+              "the pre-quantized R8 form does not join (its launches run in stream order)");
         const auto r8 = g::launch_overlap(route(F::R8Mma, false), g::Epilogue::Store, 4, false, true, true);
         check(r8.releases() && r8.prefetches(), "R8 quantizing in its kernel releases and prefetches");
         const auto no_pdl = g::launch_overlap(route(F::RegisterMma, false), g::Epilogue::Store, 1, false, true, false);
@@ -56,7 +60,8 @@ int main() {
         check(tiled.join == R::Family && tiled.release == R::Family && tiled.prefetch == R::Family,
               "another family runs in stream order");
     }
-    // The flags equal run_route's rule before #309, for every case.
+    // The flags equal run_route's rule before #309, for every case, but the pre-quantized R8 form's
+    // join (its launches run in stream order, so it never happened) and its release flag.
     int cases = 0;
     for (const F family : {F::RegisterMma, F::Scalar, F::W4a4Mma, F::TiledMma, F::W4a8Mma, F::StagedMma,
                            F::Nvfp4TiledMma, F::R8Mma, F::GgmlMmq, F::GgmlVec, F::I8Mma}) {
@@ -72,7 +77,8 @@ int main() {
                                                                  release, pdl);
                                 const bool joinable = (family == F::RegisterMma || family == F::R8Mma) &&
                                                       epilogue == g::Epilogue::Store;
-                                const bool old_join     = join && joinable;
+                                const bool old_join =
+                                    join && joinable && !(family == F::R8Mma && pre);
                                 const bool old_flag     = release && joinable;
                                 const bool old_released = old_flag && !(family == F::R8Mma && pre) && pdl;
                                 const bool old_prefetch =

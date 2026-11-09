@@ -55,6 +55,10 @@ public:
     // the GPU waits, so the times are the GPU's and not the host's launch rate.
     void set_lead_us(double us) noexcept { lead_us_ = us; }
 
+    // Whether each sample follows an L2 flush: false where the buffer could not be had (no L2
+    // reported, no room), and the samples then read a warm L2.
+    [[nodiscard]] bool flushes() const noexcept { return flush_.bytes > 0; }
+
 private:
     void flush();
     void lead();

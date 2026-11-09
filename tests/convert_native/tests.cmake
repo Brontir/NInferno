@@ -58,6 +58,14 @@ ninferno_add_test(ninferno_convert_acquire_options_key_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_acquire_options_key.cpp"
   LIBRARIES ninferno_convert)
 
+# The writer's hidden temporaries (#552): swept when stale, kept when live, removed on SIGINT/SIGTERM.
+# POSIX only (fork, kill, sigaction).
+if(NOT WIN32)
+  ninferno_add_test(ninferno_convert_writer_temporaries_test
+    SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_writer_temporaries.cpp"
+    LIBRARIES ninferno_convert)
+endif()
+
 ninferno_add_test(ninferno_convert_consume_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_consume.cpp"
   LIBRARIES ninferno_convert)

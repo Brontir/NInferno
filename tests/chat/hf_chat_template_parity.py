@@ -130,6 +130,13 @@ DIALOGS = {
                                        "function": {"name": "get_weather", "arguments": CALL_ARGS}}]},
                       {"role": "tool", "tool_call_id": "c1", "content": "result one"},
                       {"role": "tool", "tool_call_id": "c2", "content": "result two"}],
+    # gpt-oss keeps this turn's analysis (no final answer follows) and reads it from `thinking`.
+    "tool_loop_reasoning": [{"role": "user", "content": "Weather in Paris?"},
+                            {"role": "assistant", "content": "",
+                             "reasoning_content": "Need the tool, then compare with Rome.",
+                             "tool_calls": [{"id": "call_1", "type": "function",
+                                             "function": {"name": "get_weather", "arguments": CALL_ARGS}}]},
+                            {"role": "tool", "tool_call_id": "call_1", "content": "sunny"}],
     "past_reasoning": [{"role": "user", "content": "First question"},
                        {"role": "assistant", "content": "First answer",
                         "reasoning_content": "I think about the first question."},
@@ -210,6 +217,10 @@ def hf_messages(messages):
             message["role"] = "system"
         if message.get("content") is None:
             message["content"] = ""
+        # NInferno's adapter also hands a past reasoning to the template as `thinking`, the field
+        # the gpt-oss template reads; the reference is rendered with the same alias.
+        if message.get("reasoning_content") and "thinking" not in message:
+            message["thinking"] = message["reasoning_content"]
         for call in message.get("tool_calls") or []:
             arguments = call["function"]["arguments"]
             if isinstance(arguments, str):

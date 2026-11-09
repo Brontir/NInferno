@@ -131,6 +131,22 @@ struct VecOut {
 [[nodiscard]] std::size_t vec_activation_bytes(int k, int columns);
 void vec_quantize_activation(const __nv_bfloat16* x, int ldx, int k, int columns, void* out,
                              cudaStream_t stream);
+// Which instance of the 4-column runtime-K plain kernel a launch takes: Auto lets the launch choose
+// (the bounded twin when it saves a round and does not spill), the others force one. For tests
+// only: no production caller sets it.
+enum class VecInstance : std::uint8_t { Auto, Plain, Twin };
+
+class ScopedVecInstance {
+public:
+    explicit ScopedVecInstance(VecInstance instance) noexcept;
+    ~ScopedVecInstance();
+    ScopedVecInstance(const ScopedVecInstance&)            = delete;
+    ScopedVecInstance& operator=(const ScopedVecInstance&) = delete;
+
+private:
+    VecInstance previous_;
+};
+
 // rows output rows of `weight` (SwiGlu: the gate rows; `up` the up rows) against the activation.
 void vec_product(Type type, const Planes& weight, const Planes& up, int blocks_per_row, int rows,
                  int k, const void* activation, int columns, const VecOut& out,

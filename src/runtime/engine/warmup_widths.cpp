@@ -9,6 +9,7 @@
 #include "ops/linear_add/q8/q8_linear_add_kernels.h"
 #include "ops/linear_add/q8/q8_linear_add_plan.h"
 #include "ops/linear_attention/gated_delta_net/chunked/launch.h"
+#include "ops/linear/linear_registry.h"
 #include "ops/linear_pair/q8/q8_pair_plan.h"
 #include "ops/linear_swiglu/q8/q8_linear_swiglu_kernels.h"
 #include "ops/sparse_moe/prefill/sparse_moe_prefill.h"
@@ -148,6 +149,11 @@ std::vector<WarmUpClassProbe> make_probes() {
         const std::int32_t rows = shape.rows;
         const std::int32_t k    = shape.k;
         probes.push_back({shape_name("q8 linear_pair", shape), [rows, k](std::int32_t cols) {
+                              // Where the chain price hands the call to the two linear() calls
+                              // the fused kernel does not run; their warm-up is linear's.
+                              if (!op::linear_pair_runs_fused(rows, k, cols)) {
+                                  return std::int64_t{-1};
+                              }
                               const op::Q8PairProblem problem{rows, k, k, cols};
                               const op::Q8PairPlan plan = op::q8_pair_resolve_plan(problem);
                               return class_value(static_cast<int>(plan.schedule),

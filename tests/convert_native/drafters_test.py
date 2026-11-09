@@ -198,6 +198,23 @@ def main() -> int:
              and any(c.startswith("ok vocabulary fingerprint") for c in drafters["assistant"]["checks"]),
              json.dumps([d["checks"] for d in drafters.values()]))
 
+        # A cached drafter damaged since (eight bytes, its conversion report kept) is converted
+        # again from its cached checkpoint, not reused on every start (#573).
+        assistant_path = Path(drafters.get("assistant", {}).get("artifact", "/nonexistent"))
+        if assistant_path.exists():
+            good_size = assistant_path.stat().st_size
+            assistant_path.write_bytes(b"\0" * 8)
+            again = convert("--fetch", "org/gemma-tiny", "--cache", str(work / "c1"), check=False)
+            m_again = manifest_of("c1", "org/gemma-tiny")
+            again_status = {d["name"]: d.get("status", "")
+                            for d in (m_again or {}).get("drafters", [])}
+            case("a damaged cached drafter is converted again",
+                 again.returncode == 0 and again_status.get("assistant") == "converted"
+                 and assistant_path.stat().st_size == good_size,
+                 f"rc {again.returncode} {again_status} size {assistant_path.stat().st_size}")
+        else:
+            case("a damaged cached drafter is converted again", False, "no assistant artifact")
+
         # 2. A fine-tune declaring the target as its base model.
         convert("--fetch", "user/gemma-tiny-finetune", "--cache", str(work / "c2"))
         m = manifest_of("c2", "user/gemma-tiny-finetune")
