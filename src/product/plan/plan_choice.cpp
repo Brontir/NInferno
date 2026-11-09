@@ -128,6 +128,29 @@ DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk
                                    .bounded  = depth < c.config.k,
                                    .measured = gain.has_value()});
         }
+        // The joint verify's price (#303): at C streams the profile runs the depth its load table
+        // bounds (the configuration's below the first bound), and a round of C x (depth + 1) rows
+        // costs more than one request's, R_1 / R_C of it, where the round cost prices it.
+        for (std::int32_t streams = 2; streams <= spec::kPricedVerifyRows; ++streams) {
+            if (option.plain_from_streams != 0 &&
+                static_cast<std::uint32_t>(streams) >= option.plain_from_streams) {
+                break;
+            }
+            std::int32_t depth = c.config.k;
+            for (const spec::LoadBound& bound : p.load) {
+                if (bound.lanes > streams) { break; }
+                depth = std::min(depth, bound.depth);
+            }
+            spec::SpecConfig at = c.config;
+            at.k                = depth;
+            const auto priced   = p.joint_scale.find(at.label());
+            if (depth < 1 || priced == p.joint_scale.end()) { continue; }
+            const auto scale = priced->second.find(streams);
+            if (scale != priced->second.end()) {
+                option.joint.push_back(
+                    {.streams = static_cast<std::uint32_t>(streams), .scale = scale->second});
+            }
+        }
         out.options.push_back(std::move(option));
         out.served.push_back(*served);
         if (base && base->engine.backend != SpeculativeBackend::None && base->menu.mode == mode) {
@@ -750,7 +773,14 @@ Json choice_json(const ServedChoice& served) {
             gain["bounded_depth"]  = in_force->depth;
             gain["depth_measured"] = in_force->measured;
         }
-        if (!plain && streams > 1) {
+        if (!plain && streams > 1 && d.joint_priced_at(streams)) {
+            // The one-request gain at the depth this load drafts times R_1 / R_C, the round cost's
+            // price of the streams' rows verified together (spec/round_cost.h).
+            gain["joint_verify_scale"] = round_to(d.joint_scale_at(streams), 3);
+            gain["note"] = "the one-request gain at the depth this load drafts, priced for the "
+                           "streams' rows verified together (the round cost's R_1 / R_C); the "
+                           "requests' attention and state bytes are not in it";
+        } else if (!plain && streams > 1) {
             gain["note"] = "a ceiling: one request's gain at the depth this load drafts; the verify "
                            "of the streams' rows together is not priced";
         }

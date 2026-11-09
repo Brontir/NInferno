@@ -207,6 +207,13 @@ struct Profile {
     // The bounds on its choices' depths under decode load (spec-tune --load), for every choice.
     // Empty: unbounded.
     std::vector<LoadBound> load;
+    // What the requests decoded together do to a round's price (#303), by configuration label and
+    // number of streams: R_1(k) / R_C(k), the one-stream round's price over the joint verify's
+    // (spec::load_gain at a gain of 1), for the depths 1..k of each choice, where the round cost
+    // prices them (within spec::kPricedVerifyRows). Filled where the pair's facts and the lab
+    // board's rates are known (profile_for_target at home); not written to a profile file, so an
+    // empty table says only that nobody priced it: the one-request gain then stands as a ceiling.
+    std::map<std::string, std::map<std::int32_t, double>> joint_scale;
     // The longest prompt its choices speculate on (SpeculativeOptions::context_limit), measured
     // where rounds stop paying at long context. 0: every length.
     std::uint32_t context_limit = 0;

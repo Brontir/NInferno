@@ -319,6 +319,45 @@ int main() {
             }
         }
     }
+    // The joint verify's price in a profile at home (#303): two Ada lab cards that choose alike
+    // give the profile R_1 / R_C of its choice at every depth up to it and every priced stream
+    // count, the round cost's own (load_gain at a gain of 1) on the lab board's rates. A priced
+    // scale is what a plan's estimate multiplies the one-request gain by.
+    {
+        const auto& lab             = pair_of(kQ9, "ad104:60sm");
+        auto second                 = lab; // the same measurement on a second Ada card
+        second.tune.key.gpu         = "ad102:128sm";
+        const auto home             = sp::profile_for_target({&lab, &second}, "sm89");
+        const sp::SpecConfig chosen = home.overall.config;
+        const double kappa          = sp::card_rates_of_board(lab.lab_board).kappa();
+        expect(chosen.enabled() && !home.joint_scale.empty(),
+               "a home profile prices its joint verify");
+        for (std::int32_t k = 1; k <= chosen.k; ++k) {
+            sp::SpecConfig at = chosen;
+            at.k              = k;
+            const auto found  = home.joint_scale.find(at.label());
+            for (std::int32_t streams = 2; streams <= sp::kPricedVerifyRows; ++streams) {
+                const auto direct =
+                    sp::load_gain(*lab.round_facts, at, kappa, 1.0, streams,
+                                  at.proposal_head ? lab.tune.proposal_rows : sp::ProposalRows{});
+                const bool listed =
+                    found != home.joint_scale.end() && found->second.contains(streams);
+                expect(listed == direct.has_value() &&
+                           (!listed || near(found->second.at(streams), *direct, 1e-12)),
+                       "the joint scale is load_gain's at " + at.label() + " x" +
+                           std::to_string(streams));
+                if (listed) {
+                    expect(found->second.at(streams) > 0 &&
+                               std::isfinite(found->second.at(streams)),
+                           "the joint scale is positive: " + at.label());
+                }
+            }
+        }
+        // Not at home (one card of the generation: the portable choice, plain from two streams),
+        // nothing is priced.
+        expect(sp::profile_for_target({&lab}, "sm89").joint_scale.empty(),
+               "a profile that decodes plainly under load prices no joint verify");
+    }
     // The draft head over the rows an artifact's proposal head carries (#205: MTP reads its own
     // 57,344-row prefix of the 147,456 rows it read before, Qwen3.5-9B Q4_K_M, Q6_K head). The
     // rounds/s gain R(147,456) / R(57,344) - 1 against hard50's on the RTX 4060 Ti (l4060):

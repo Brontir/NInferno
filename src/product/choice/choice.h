@@ -85,8 +85,20 @@ struct DrafterOption {
     };
     std::vector<LoadGain> load;
 
+    // The joint verify's price at `streams` streams (#303): R_1(k) / R_C(k) at the depth in force
+    // there (spec::load_gain), by which the one-request gain at that depth is scaled. Ascending
+    // by streams; a count of streams not listed is not priced (the gain stays that ceiling).
+    struct JointScale {
+        std::uint32_t streams = 0;
+        double scale          = 1;
+    };
+
+    std::vector<JointScale> joint;
+
     // The gain at `streams` streams: plain decode's 1 from plain_from_streams on, else the load
-    // table's at its last bound below, else `speedup`.
+    // table's at its last bound below, scaled by the joint verify's price where it is priced
+    // (below 1 when the round at that load no longer pays: the choice then weighs plain decode),
+    // else `speedup`.
     [[nodiscard]] double speedup_at(std::uint32_t streams) const noexcept {
         if (plain_from_streams != 0 && streams >= plain_from_streams) { return 1; }
         double gain = speedup;
@@ -94,7 +106,26 @@ struct DrafterOption {
             if (g.streams > streams) { break; }
             gain = g.speedup;
         }
+        for (const JointScale& j : joint) {
+            if (j.streams == streams) { return gain * j.scale; }
+        }
         return gain;
+    }
+
+    // R_1 / R_C at `streams` streams (1 where it is not priced).
+    [[nodiscard]] double joint_scale_at(std::uint32_t streams) const noexcept {
+        for (const JointScale& j : joint) {
+            if (j.streams == streams) { return j.scale; }
+        }
+        return 1;
+    }
+
+    // Whether the gain at `streams` streams is priced for the joint verify, not a one-request
+    // ceiling.
+    [[nodiscard]] bool joint_priced_at(std::uint32_t streams) const noexcept {
+        if (plain_from_streams != 0 && streams >= plain_from_streams) { return false; }
+        return std::any_of(joint.begin(), joint.end(),
+                           [&](const JointScale& j) { return j.streams == streams; });
     }
     // Whether a measurement gives the gain at `streams` streams: `measured`, and the load table's
     // bound in force there measured at its depth (a published profile lists no depths but its

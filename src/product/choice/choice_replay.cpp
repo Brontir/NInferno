@@ -165,9 +165,19 @@ json model_json(const ModelFacts& m) {
             load.push_back({{"streams", g.streams}, {"speedup", g.speedup}, {"depth", g.depth},
                             {"bounded", g.bounded}, {"measured", g.measured}});
         }
-        drafters.push_back({{"label", d.label}, {"drafter", d.drafter}, {"speedup", d.speedup},
-                            {"plain_from_streams", d.plain_from_streams}, {"basis", d.basis},
-                            {"measured", d.measured}, {"load", std::move(load)}});
+        json drafter = {{"label", d.label},       {"drafter", d.drafter},
+                        {"speedup", d.speedup},   {"plain_from_streams", d.plain_from_streams},
+                        {"basis", d.basis},       {"measured", d.measured},
+                        {"load", std::move(load)}};
+        // Written only when priced (#303): a record without it replays as before.
+        if (!d.joint.empty()) {
+            json joint = json::array();
+            for (const auto& j : d.joint) {
+                joint.push_back({{"streams", j.streams}, {"scale", j.scale}});
+            }
+            drafter["joint"] = std::move(joint);
+        }
+        drafters.push_back(std::move(drafter));
     }
     return json{
         {"family", m.family},
@@ -260,6 +270,14 @@ ModelFacts model_of(const json& j) {
             read(gain.bounded, g.at("bounded"));
             read(gain.measured, g.at("measured"));
             o.load.push_back(gain);
+        }
+        if (d.contains("joint")) {
+            for (const auto& j : array_at(d, "joint")) {
+                DrafterOption::JointScale scale;
+                read(scale.streams, j.at("streams"));
+                read(scale.scale, j.at("scale"));
+                o.joint.push_back(scale);
+            }
         }
         m.drafters.push_back(std::move(o));
     }

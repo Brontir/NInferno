@@ -247,6 +247,40 @@ void price_by_facts(Profile& p, const RoundCostEstimate& estimate) {
     }
 }
 
+// The price of the requests' joint verify (#303), for a profile at home: for each choice's
+// configuration and every depth up to it, R_1 / R_C at C = 2..kPricedVerifyRows streams where the
+// round cost prices it (load_gain at a gain of 1), on the lab board's rates and the lab artifact's
+// draft head (the one the load table was measured on). Nothing without the pair's facts or the
+// board's rates. The load table's depths are among these: a bound runs that depth.
+void price_joint(Profile& p, const MeasuredPair& pair) {
+    p.joint_scale.clear();
+    if (!pair.round_facts) { return; }
+    const CardRates lab = card_rates_of_board(pair.lab_board);
+    if (!lab.known()) { return; }
+    std::vector<SpecConfig> configs;
+    for (const Choice* c : {&p.overall, &p.thinking, &p.non_thinking}) {
+        if (c->config.enabled()) { configs.push_back(c->config); }
+    }
+    if (p.fit_fallback && p.fit_fallback->config.enabled()) {
+        configs.push_back(p.fit_fallback->config);
+    }
+    for (SpecConfig config : configs) {
+        const ProposalRows rows = config.proposal_head ? pair.tune.proposal_rows : ProposalRows{};
+        const std::int32_t deepest = config.k;
+        for (std::int32_t k = 1; k <= deepest; ++k) {
+            config.k         = k;
+            auto& by_streams = p.joint_scale[config.label()];
+            for (std::int32_t streams = 2; streams <= kPricedVerifyRows; ++streams) {
+                if (const auto ratio = load_gain(*pair.round_facts, config, lab.kappa(), 1.0,
+                                                 streams, rows, 0, {})) {
+                    by_streams[streams] = *ratio;
+                }
+            }
+            if (by_streams.empty()) { p.joint_scale.erase(config.label()); }
+        }
+    }
+}
+
 // select() over the pair's measurements: every depth and its load bounds at home, else the
 // portable ones, each round's seconds scaled by `round_costs` (by configuration label: what a round
 // costs on the card asked for over the measuring one), or priced by `facts` (price_by_facts). With
@@ -290,6 +324,7 @@ Profile selected(const MeasuredPair& pair, bool home, const SelectOptions& optio
     SelectOptions select_options    = options;
     select_options.portable_within = 0;
     select(p, select_options);
+    if (home) { price_joint(p, pair); }
     return p;
 }
 
