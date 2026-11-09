@@ -33,6 +33,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <iostream>
@@ -1278,6 +1279,49 @@ void test_fits_instead() {
 
 } // namespace
 
+// #564: gpt-oss's drafter (eight full layers, YaRN scaled from 4096 of 131072) is planned as the
+// runtime runs it (speculation::parse_dflash_config, test_dflash_config): every layer a sliding
+// one over a ring of 4096, as published (rope_scaling), as converted (rope with the length) and
+// as converted before the converter recorded it (rope with YaRN's attention factor alone).
+void test_gptoss_drafter_rings() {
+    json layers = json::array();
+    for (int i = 0; i < 8; ++i) { layers.push_back("full_attention"); }
+    const auto drafter = [&](const char* key, const json& rope) {
+        json c = {{"architectures", {"DFlashDraftModel"}},
+                  {"model_type", "dflash"},
+                  {"num_hidden_layers", 8},
+                  {"num_attention_heads", 64},
+                  {"num_key_value_heads", 8},
+                  {"head_dim", 64},
+                  {"max_position_embeddings", 131072},
+                  {"layer_types", layers},
+                  {"dflash_config",
+                   {{"target_layer_ids", {1, 6, 11, 16, 21}}, {"mask_token_id", 200000}}}};
+        c[key] = rope;
+        return pr::plan_drafter_state_of_config(c, 2880);
+    };
+    const double scaling = 0.1 * std::log(32.0) + 1.0;
+    for (const auto& [key, rope] : std::vector<std::pair<const char*, json>>{
+             {"rope_scaling",
+              {{"rope_type", "yarn"},
+               {"factor", 32.0},
+               {"original_max_position_embeddings", 4096}}},
+             {"rope",
+              {{"rope_type", "yarn"},
+               {"attention_scaling", scaling},
+               {"original_max_position_embeddings", 4096}}},
+             {"rope", {{"rope_type", "yarn"}, {"attention_scaling", scaling}}}}) {
+        const auto state = drafter(key, rope);
+        check(state && state->local_layers == 8 && state->full_layers == 0 && state->window == 4096,
+              std::string("gpt-oss drafter rings from ") + key + " " + rope.dump());
+    }
+    const auto paged = drafter(
+        "rope_scaling",
+        {{"rope_type", "yarn"}, {"factor", 32.0}, {"original_max_position_embeddings", 3000}});
+    check(paged && paged->local_layers == 0 && paged->full_layers == 8 && paged->window == 0,
+          "a window no ring holds stays paged");
+}
+
 int main() {
     const std::vector<Subject> all = subjects();
     test_shapes(all);
@@ -1289,6 +1333,7 @@ int main() {
     test_proposal_bytes_only_when_drafting();
     test_proposal_bytes_per_quant();
     test_default_proposal_possible();
+    test_gptoss_drafter_rings();
     std::cout << "rung bytes compared: " << compared << '\n';
     check(compared > 1000, "many rungs compared");
     if (failures != 0) {

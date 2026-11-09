@@ -48,7 +48,8 @@ void dispatch_tokens(std::int32_t tokens, Launch&& launch) {
 
 SlidingWindowAttentionPlan
 sliding_window_attention_resolve_plan(std::uint32_t window, std::int32_t tokens, std::int32_t batch,
-                                      SlidingWindowAttentionExecutionEnvelope envelope) {
+                                      SlidingWindowAttentionExecutionEnvelope envelope,
+                                      AttentionHeadGeometry geometry) {
     if (window != 2048 && window != 4096) {
         throw std::invalid_argument("sliding_window_attention plan: unsupported window");
     }
@@ -63,7 +64,7 @@ sliding_window_attention_resolve_plan(std::uint32_t window, std::int32_t tokens,
     // FP32 partial writes and merge traffic as the batch/query block grows.
     const int direct_context_limit = window == 2048 && tokens > 8 && batch >= 6 ? 128 : 96;
     const bool direct = envelope.max_context <= static_cast<std::uint32_t>(direct_context_limit);
-    constexpr int key_block          = 32;
+    const int key_block = sliding_window_key_block(geometry.head_dim, tokens);
     const int reduce_warps           = window == 2048 ? 4 : 1;
     const std::uint32_t context_rows = std::min(envelope.max_context, window - 1u);
     const std::int32_t context_tiles = (context_rows + key_block - 1u) / key_block;
@@ -114,7 +115,7 @@ void launch_profile(const Tensor& q, const Tensor& query_k, const Tensor& query_
                     Tensor& partial_l, Tensor& out, cudaStream_t stream) {
     const bool direct = plan.route == SlidingWindowAttentionRoute::Direct;
     dispatch_tokens<Geo>(q.ne[2], [&]<int Tokens, int Warps>() {
-        constexpr int KeyBlock          = 32;
+        constexpr int KeyBlock          = sliding_window_key_block(Geo::D, Tokens);
         constexpr std::size_t SmemBytes = 2u * KeyBlock * Geo::D * sizeof(__nv_bfloat16);
         // Window determines visibility and ring addressing, not the MMA storage layout.
         const auto partial_typed = [&]<bool Direct, typename KT, typename VT>() {
@@ -183,7 +184,8 @@ void sliding_window_attention_launch(const Tensor& q, const Tensor& query_k, con
                                      cudaStream_t stream) {
     const bool direct = plan.route == SlidingWindowAttentionRoute::Direct;
     if ((plan.window != 2048 && plan.window != 4096) ||
-        context.capacity != static_cast<std::uint32_t>(plan.window) || plan.key_block != 32 ||
+        context.capacity != static_cast<std::uint32_t>(plan.window) ||
+        plan.key_block != sliding_window_key_block(geometry.head_dim, plan.tokens) ||
         plan.reduce_warps != (plan.window == 2048 ? 4 : 1) || plan.split_capacity < 1 ||
         plan.split_capacity > kSlidingWindowMaxSplits || (direct && plan.split_capacity != 1) ||
         plan.tokens != q.ne[2]) {

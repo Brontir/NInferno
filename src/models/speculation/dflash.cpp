@@ -171,7 +171,9 @@ DFlashConfig parse_dflash_config(const artifact::Json& c) {
     // reads the paged context through its window (full_window).
     if (window_candidate > 0 && std::all_of(out.windows.begin(), out.windows.end(),
                                             [](std::int32_t w) { return w == 0; })) {
-        if (window_candidate == 2048 || window_candidate == 4096) {
+        // The dense drafter's rings at D64 (gpt-oss's) only: a D128 drafter of this shape would
+        // run on the Qwen Program's int8 local path, never qualified for it.
+        if (out.head_dim == 64 && (window_candidate == 2048 || window_candidate == 4096)) {
             out.sliding_window = window_candidate;
             std::fill(out.windows.begin(), out.windows.end(), window_candidate);
             out.sliding_block = true; // a full layer's block sees itself whole

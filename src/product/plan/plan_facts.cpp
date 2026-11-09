@@ -18,6 +18,7 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <cmath>
 #include <array>
 #include <cctype>
 #include <cstdlib>
@@ -821,19 +822,33 @@ std::optional<models::DrafterStateShape> plan_drafter_state_of_config(const json
     out.window      = out.local_layers != 0 ? u32(number(config, "sliding_window")) : 0;
     // A drafter without a sliding layer whose YaRN rope was scaled from a length a ring holds
     // (gpt-oss's 4096 of 131072): the runtime runs every layer as a sliding one of that window
-    // (speculation::parse_dflash_config, #564), its keys and values in rings, not pages.
-    if (out.local_layers == 0) {
-        for (const char* key : {"rope_scaling", "rope_parameters"}) {
+    // (speculation::parse_dflash_config, #564), its keys and values in rings, not pages. The
+    // length as published (rope_scaling, rope_parameters) or as converted (rope), and for an
+    // artifact converted before the converter recorded it, told by YaRN's default attention factor
+    // 0.1 ln(factor) + 1 as the runtime's yarn_original_length tells it.
+    if (out.local_layers == 0 && number(config, "head_dim") == 64) {
+        const std::uint32_t positions = u32(number(config, "max_position_embeddings"));
+        std::uint32_t original        = 0;
+        for (const char* key : {"rope_scaling", "rope_parameters", "rope"}) {
             const auto rope = config.find(key);
             if (rope == config.end() || !rope->is_object()) { continue; }
-            const std::uint32_t original = u32(number(*rope, "original_max_position_embeddings"));
-            if ((original == 2048 || original == 4096) &&
-                original < u32(number(config, "max_position_embeddings"))) {
-                out.local_layers = out.full_layers;
-                out.full_layers  = 0;
-                out.window       = original;
+            original             = u32(number(*rope, "original_max_position_embeddings"));
+            const double scaling = number(*rope, "attention_scaling");
+            if (original == 0 && rope->value("rope_type", std::string()) == "yarn" &&
+                scaling > 1.0 && positions != 0) {
+                const double factor = std::exp((scaling - 1.0) / 0.1);
+                const double whole  = std::round(factor);
+                if (whole >= 2.0 && std::fabs(factor - whole) <= 1e-3 * whole &&
+                    positions % static_cast<std::uint32_t>(whole) == 0) {
+                    original = positions / static_cast<std::uint32_t>(whole);
+                }
             }
             break;
+        }
+        if ((original == 2048 || original == 4096) && original < positions) {
+            out.local_layers = out.full_layers;
+            out.full_layers  = 0;
+            out.window       = original;
         }
     }
     out.kv_heads    = static_cast<std::int32_t>(u32(number(config, "num_key_value_heads")));

@@ -100,8 +100,8 @@ std::size_t sliding_window_attention_workspace_capacity_bytes(
     // largest allocation (for example, a wider block can use fewer splits).
     std::size_t capacity = 0;
     for (int tokens = min_tokens; tokens <= max_tokens; ++tokens) {
-        const auto plan =
-            detail::sliding_window_attention_resolve_plan(window, tokens, batch_size, envelope);
+        const auto plan = detail::sliding_window_attention_resolve_plan(window, tokens, batch_size,
+                                                                        envelope, geometry);
         if (plan.route == detail::SlidingWindowAttentionRoute::Direct) continue;
         WorkspaceLayoutBuilder layout;
         (void)allocate_workspace(layout, geometry, tokens, plan.split_capacity, batch_size);
@@ -164,7 +164,7 @@ void sliding_window_attention(const Tensor& q, const Tensor& query_k, const Tens
 
     auto scope = workspace.scope();
     const auto plan =
-        detail::sliding_window_attention_resolve_plan(window, tokens, batch, envelope);
+        detail::sliding_window_attention_resolve_plan(window, tokens, batch, envelope, geometry);
     PartialWorkspace partial{};
     if (plan.route == detail::SlidingWindowAttentionRoute::SplitKv) {
         partial = allocate_workspace(workspace, geometry, tokens, plan.split_capacity, batch);

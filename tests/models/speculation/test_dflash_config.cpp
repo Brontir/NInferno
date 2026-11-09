@@ -113,11 +113,6 @@ int main() {
               std::all_of(paged.windows.begin(), paged.windows.end(),
                           [](std::int32_t w) { return w == 0; }),
           "a 3000 window: full layers read it from the pages");
-    if (failures == 0) {
-        std::cout << "dflash config: PASS
-                     "; }
-                    return failures ==
-                0
-            ? 0
-            : 1;
-    }
+    if (failures == 0) { std::cout << "dflash config: PASS\n"; }
+    return failures == 0 ? 0 : 1;
+}
