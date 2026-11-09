@@ -3,6 +3,7 @@
 // Private launch entry points of the generic projection path, one per compiled family and format.
 
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/kernel_facts.h"
 
 #include <cuda_runtime.h>
 
@@ -35,6 +36,25 @@ inline void describe_kernel(KernelResources& out, const cudaFuncAttributes& a, d
     out.max_threads_per_block = a.maxThreadsPerBlock;
     out.ptx_version           = a.ptxVersion;
     out.binary_version        = a.binaryVersion;
+    out.grid_x                = grid.x;
+    out.grid_y                = grid.y;
+    out.grid_z                = grid.z;
+    out.latency_variant       = latency;
+}
+
+// The same from a kernel's committed facts (kernel_facts.h, #612): what the register-MMA launch
+// describes. The block limit is the launch bounds' (Schedule::kThreads); the versions are the
+// build's architecture.
+inline void describe_kernel(KernelResources& out, const kernel_facts::KernelFacts& f, dim3 grid,
+                            int threads, std::size_t dynamic_smem, bool latency) noexcept {
+    out.registers             = f.registers;
+    out.local_bytes           = f.stack_bytes + f.local_bytes;
+    out.static_smem           = f.static_shared_bytes;
+    out.dynamic_smem          = dynamic_smem;
+    out.threads               = threads;
+    out.max_threads_per_block = threads;
+    out.ptx_version           = NINFERNO_BUILD_ARCH;
+    out.binary_version        = NINFERNO_BUILD_ARCH;
     out.grid_x                = grid.x;
     out.grid_y                = grid.y;
     out.grid_z                = grid.z;

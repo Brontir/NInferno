@@ -5,14 +5,17 @@
 
 #include "core/device.h"
 #include "core/device_class.h"
+#include "core/kernel_occupancy.h"
 #include "core/per_device.h"
 #include "ops/generic/generic_gemm.cuh"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/common/arch_limits.h"
 #include "ops/generic/generic_schedules.h"
+#include "ops/generic/kernel_facts.h"
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 
 namespace ninferno::ops::detail::generic {
@@ -58,16 +61,87 @@ std::int64_t rmma_grid_ctas(const GemmArgs& args) {
     return x * y * Schedule::kCluster;
 }
 
+// The key of a kernel instance in the kernel-facts snapshots (ops/generic/kernel_facts.h): the
+// template arguments as the symbol spells them.
+template <class Decoder, class Schedule, Epilogue E, bool Latency, bool AddSums>
+kernel_facts::RmmaKernelKey rmma_kernel_key() {
+    return {kernel_facts::decoder_name<Decoder>(),
+            Schedule::kWarpsM,
+            Schedule::kWarpsK,
+            Schedule::kMTiles,
+            Schedule::kNTiles,
+            Schedule::kCluster,
+            static_cast<int>(E),
+            Latency,
+            AddSums};
+}
+
+// The committed facts of a kernel instance (registers, stack, static shared memory: #612) for the
+// kernels this thread's device runs (kernel_facts::sass_arch: this build's SASS, or the release
+// engine of a substituted board), read once per instance and device (a static per template
+// instantiation, bounded by the instances; PerDevice keeps a substitute's answer apart by its
+// content). nullopt where no facts are known: the device runs PTX the driver compiled, there is
+// no device, or the snapshot lacks the instance. The host GPU's own kernels are never asked
+// (cudaFuncGetAttributes) except by the live check (kernel_facts::live_check_target).
+template <class Decoder, class Schedule, Epilogue E, bool Latency, bool AddSums>
+const std::optional<kernel_facts::KernelFacts>& rmma_kernel_facts() {
+    static PerDevice<std::optional<kernel_facts::KernelFacts>> kept;
+    return kept.get([](int) -> std::optional<kernel_facts::KernelFacts> {
+        const auto arch = kernel_facts::sass_arch();
+        if (!arch) return std::nullopt;
+        return kernel_facts::rmma_facts(*arch,
+                                        rmma_kernel_key<Decoder, Schedule, E, Latency, AddSums>());
+    });
+}
+
+// The maintainer's live check of one instance (ninferno-serve selector-facts,
+// ninferno_kernel_facts_live_test): the running GPU's attributes and occupancy of the kernel
+// beside the snapshot's, recorded for the caller to compare.
+template <class Decoder, class Schedule, Epilogue E, bool Latency, bool AddSums>
+void rmma_kernel_facts_live(kernel_facts::LiveCheckSink& sink,
+                            const std::optional<kernel_facts::KernelFacts>& snapshot,
+                            std::size_t dynamic_smem) {
+    const void* kernel =
+        reinterpret_cast<const void*>(&rmma_kernel<Decoder, Schedule, E, Latency, AddSums>);
+    cudaFuncAttributes a{};
+    CUDA_CHECK(cudaFuncGetAttributes(&a, kernel));
+    kernel_facts::LiveRead read;
+    read.key                      = rmma_kernel_key<Decoder, Schedule, E, Latency, AddSums>();
+    read.arch                     = kernel_facts::sass_arch().value_or("");
+    read.snapshot                 = snapshot;
+    read.live.registers           = a.numRegs;
+    read.live.stack_bytes         = a.localSizeBytes;
+    read.live.static_shared_bytes = a.sharedSizeBytes;
+    read.threads                  = Schedule::kThreads;
+    read.dynamic_shared_bytes     = dynamic_smem;
+    read.live_ctas = kernel_resident_ctas_per_sm(kernel, Schedule::kThreads, dynamic_smem);
+    read.snapshot_ctas =
+        snapshot
+            ? resident_ctas_per_sm(device_class(),
+                                   KernelShape{snapshot->registers, snapshot->static_shared_bytes,
+                                               Schedule::kThreads, dynamic_smem})
+            : 0;
+    sink.push_back(read);
+}
+
 // A variant kernel's and the plain kernel's resident CTAs per SM on the call's dynamic shared
-// memory: the caller's slot holds them for none (every K-quant call), once per device;
-// kernel_resident_ctas_per_sm caches the rest per kernel, size and device.
+// memory, from their committed facts and the device's limits (resident_ctas_per_sm, no GPU
+// asked): the caller's slot holds them for none (every K-quant call), once per device. A kernel
+// without facts holds no CTA (0: the variant never pays, rmma_variant_occupancy_rule).
 template <class Schedule>
-bool rmma_occupancy_kept(PerDevice<std::array<int, 2>>& slot, const void* variant,
-                         const void* plain, const GemmArgs& args) {
+bool rmma_occupancy_kept(PerDevice<std::array<int, 2>>& slot,
+                         const std::optional<kernel_facts::KernelFacts>& variant,
+                         const std::optional<kernel_facts::KernelFacts>& plain,
+                         const GemmArgs& args) {
     const auto smem     = static_cast<std::size_t>(args.spread_smem);
     const auto resident = [&](std::size_t bytes) {
-        return std::array<int, 2>{kernel_resident_ctas_per_sm(variant, Schedule::kThreads, bytes),
-                                  kernel_resident_ctas_per_sm(plain, Schedule::kThreads, bytes)};
+        const auto& d   = device_class();
+        const auto ctas = [&](const std::optional<kernel_facts::KernelFacts>& f) {
+            if (!f) return 0;
+            return resident_ctas_per_sm(
+                d, KernelShape{f->registers, f->static_shared_bytes, Schedule::kThreads, bytes});
+        };
+        return std::array<int, 2>{ctas(variant), ctas(plain)};
     };
     const std::array<int, 2> ctas =
         smem == 0 ? slot.get([&](int) { return resident(0); }) : resident(smem);
@@ -105,8 +179,8 @@ bool rmma_latency_pays(const GemmArgs& args) {
     static PerDevice<std::array<int, 2>> ctas;
     return rmma_latency_board<Decoder, Schedule, E>() &&
            rmma_occupancy_kept<Schedule>(
-               ctas, reinterpret_cast<const void*>(&rmma_kernel<Decoder, Schedule, E, true>),
-               reinterpret_cast<const void*>(&rmma_kernel<Decoder, Schedule, E, false>), args);
+               ctas, rmma_kernel_facts<Decoder, Schedule, E, true, false>(),
+               rmma_kernel_facts<Decoder, Schedule, E, false, false>(), args);
 }
 
 // The schedules and decoders with a wide variant (WideOf: the wide-load Q6_K), one token tile.
@@ -115,31 +189,21 @@ inline constexpr bool kRmmaWideVariant =
     Schedule::kNTiles == 1 && !std::is_void_v<typename WideOf<Decoder>::type>;
 
 // Whether this device launches the wide variant (rmma_wide_rule, generic_gemm_internal.h): the
-// board's DRAM bytes per SM cycle and compute capability and the two kernels' local memory
-// (spills), read once per device, and the call's waves at either kernel's resident CTAs per SM.
+// board's DRAM bytes per SM cycle and compute capability and the two kernels' stack bytes
+// (spills) from their committed facts, and the call's waves at either kernel's resident CTAs per
+// SM. A kernel without facts never pays.
 template <class Decoder, class Schedule, Epilogue E>
 bool rmma_wide_pays(const GemmArgs& args) {
     using Wide        = typename WideOf<Decoder>::type;
-    const void* plain = reinterpret_cast<const void*>(&rmma_kernel<Decoder, Schedule, E>);
-    const void* wide  = reinterpret_cast<const void*>(&rmma_kernel<Wide, Schedule, E>);
-    struct Board {
-        double bytes;
-        int cc;
-        std::size_t wide_local;
-        std::size_t plain_local;
-    };
-    static PerDevice<Board> board;
-    const Board& b = board.get([&](int) {
-        const auto& d    = device_class();
-        const auto local = [](const void* kernel) {
-            cudaFuncAttributes attr{};
-            CUDA_CHECK(cudaFuncGetAttributes(&attr, kernel));
-            return attr.localSizeBytes;
-        };
-        return Board{dram_bytes_per_sm_cycle(), d.major * 10 + d.minor, local(wide), local(plain)};
-    });
-    // The board's facts first: the occupancy query only where they admit the wide kernel.
-    if (!rmma_wide_rule(b.bytes, b.cc, true, b.wide_local, b.plain_local)) return false;
+    const auto& plain = rmma_kernel_facts<Decoder, Schedule, E, false, false>();
+    const auto& wide  = rmma_kernel_facts<Wide, Schedule, E, false, false>();
+    if (!plain || !wide) return false;
+    const auto& d = device_class();
+    // The board's facts first: the occupancy only where they admit the wide kernel.
+    if (!rmma_wide_rule(dram_bytes_per_sm_cycle(), d.major * 10 + d.minor, true, wide->stack_bytes,
+                        plain->stack_bytes)) {
+        return false;
+    }
     static PerDevice<std::array<int, 2>> ctas;
     return rmma_occupancy_kept<Schedule>(ctas, wide, plain, args);
 }
@@ -190,16 +254,15 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
         throw std::invalid_argument("generic linear: token extent exceeds the grid");
     const auto smem = static_cast<std::size_t>(args.spread_smem);
     if (KernelResources* described = kernel_describe_target()) {
-        // One read per kernel instance and device (a static per template instantiation: bounded by
-        // the instances, not by the calls): the cost model describes up to 20 schedules a call.
-        static PerDevice<cudaFuncAttributes> kept;
-        const cudaFuncAttributes& attributes = kept.get([](int) {
-            cudaFuncAttributes a{};
-            CUDA_CHECK(
-                cudaFuncGetAttributes(&a, rmma_kernel<Decoder, Schedule, E, Latency, AddSums>));
-            return a;
-        });
-        describe_kernel(*described, attributes, dim3(grid.x, grid.y, Schedule::kCluster),
+        // The kernel's committed facts (the cost model describes up to 20 schedules a call: one
+        // snapshot read per instance and device). Without them nothing is described: the caller
+        // prices by threads alone.
+        const auto& facts = rmma_kernel_facts<Decoder, Schedule, E, Latency, AddSums>();
+        if (kernel_facts::LiveCheckSink* live = kernel_facts::live_check_target()) {
+            rmma_kernel_facts_live<Decoder, Schedule, E, Latency, AddSums>(*live, facts, smem);
+        }
+        if (!facts) return;
+        describe_kernel(*described, *facts, dim3(grid.x, grid.y, Schedule::kCluster),
                         Schedule::kThreads, smem, Latency);
         return;
     }
