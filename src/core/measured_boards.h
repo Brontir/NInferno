@@ -15,8 +15,8 @@
 namespace ninferno::measured {
 
 // Each board is its PCI id in the registry (core/board_registry.h, generated from
-// core/data/gpu_facts.json): the facts are not spelled here. tests/test_board_registry.cpp holds
-// the figures these boards were measured under and fails when a row drifts from them.
+// core/data/gpu_facts.json): the facts are not spelled here. The pins below hold the figures these
+// boards were measured under and fail the build when a row drifts from them.
 inline constexpr Board kRtx5090      = board_registry::board(0x2B85);
 inline constexpr Board kRtx5080      = board_registry::board(0x2C02);
 inline constexpr Board kRtx5060Ti    = board_registry::board(0x2D04);
@@ -32,6 +32,28 @@ inline constexpr Board kRtx2080Ti    = board_registry::board(0x1E07);
 // GB/s; the route and R8 tables and the gates were measured under, and board_distance has always
 // read, the published 900 GB/s. Kept at 900 so every distance is as before.
 inline constexpr Board kV100Sxm2 = board_registry::board(0x1DB5, 900);
+
+// Pins, checked in every translation unit that includes this header: a change of a gpu_facts.json
+// row that moves a measured board's figures fails every product build, not only the test.
+constexpr bool same_board_facts(const Board& a, const Board& b) {
+    return a.major == b.major && a.minor == b.minor && a.sms == b.sms && a.l2_mib == b.l2_mib &&
+           a.dram_gbps == b.dram_gbps && a.mma_slow == b.mma_slow;
+}
+
+// The literals the measured boards carried before the registry (major, minor, SMs, L2 MiB, DRAM
+// GB/s): the value every derived distance and gate was computed from.
+static_assert(same_board_facts(measured::kRtx5090, Board{12, 0, 170, 96, 1792}));
+static_assert(same_board_facts(measured::kRtx5080, Board{12, 0, 84, 64, 960}));
+static_assert(same_board_facts(measured::kRtx5060Ti, Board{12, 0, 36, 32, 448}));
+static_assert(same_board_facts(measured::kRtx4090, Board{8, 9, 128, 72, 1008}));
+static_assert(same_board_facts(measured::kRtx4080Super, Board{8, 9, 80, 64, 736}));
+static_assert(same_board_facts(measured::kL4, Board{8, 9, 58, 48, 300}));
+static_assert(same_board_facts(measured::kRtx4060Ti, Board{8, 9, 34, 32, 288}));
+static_assert(same_board_facts(measured::kRtx3090, Board{8, 6, 82, 6, 936}));
+static_assert(same_board_facts(measured::kA10, Board{8, 6, 72, 6, 600}));
+static_assert(same_board_facts(measured::kA100Sxm40, Board{8, 0, 108, 40, 1555.2}));
+static_assert(same_board_facts(measured::kRtx2080Ti, Board{7, 5, 68, 5.5, 616}));
+static_assert(same_board_facts(measured::kV100Sxm2, Board{7, 0, 80, 6, 900}));
 
 // How far a measured choice carries (board_distance): to the variants of the board (a 4090 D or a
 // 3090 Ti, 0.17 and 0.14 from the 4090 and the 3090) and to its near neighbours (an A40 0.43 from

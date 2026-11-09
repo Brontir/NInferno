@@ -25,6 +25,7 @@ struct BoardRow {
     int bus_bits;
     double gbps; // memory data rate per pin
     int boost_mhz;
+    bool mma_slow; // no tensor cores (TU116, TU117, GTX 16 boards)
 };
 
 inline constexpr BoardRow kRows[] = {
@@ -50,8 +51,12 @@ inline constexpr BoardRow kRows[] = {
 [[nodiscard]] constexpr Board board(std::uint32_t pci_device_id, double dram_gbps_override = 0) {
     const BoardRow* row = find(pci_device_id);
     if (row == nullptr) { throw "board registry: unknown PCI device id"; }
-    return Board{row->major, row->minor, row->sms, row->l2_mib,
-                 dram_gbps_override != 0 ? dram_gbps_override : dram_gbps(*row)};
+    return Board{row->major,
+                 row->minor,
+                 row->sms,
+                 row->l2_mib,
+                 dram_gbps_override != 0 ? dram_gbps_override : dram_gbps(*row),
+                 row->mma_slow};
 }
 
 } // namespace ninferno::board_registry

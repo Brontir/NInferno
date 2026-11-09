@@ -19,26 +19,6 @@ namespace {
 
 using namespace ninferno;
 
-constexpr bool same_board(const Board& a, const Board& b) {
-    return a.major == b.major && a.minor == b.minor && a.sms == b.sms && a.l2_mib == b.l2_mib &&
-           a.dram_gbps == b.dram_gbps && a.mma_slow == b.mma_slow;
-}
-
-// The literals the measured boards carried before the registry (major, minor, SMs, L2 MiB, DRAM
-// GB/s): the value every derived distance and gate was computed from.
-static_assert(same_board(measured::kRtx5090, Board{12, 0, 170, 96, 1792}));
-static_assert(same_board(measured::kRtx5080, Board{12, 0, 84, 64, 960}));
-static_assert(same_board(measured::kRtx5060Ti, Board{12, 0, 36, 32, 448}));
-static_assert(same_board(measured::kRtx4090, Board{8, 9, 128, 72, 1008}));
-static_assert(same_board(measured::kRtx4080Super, Board{8, 9, 80, 64, 736}));
-static_assert(same_board(measured::kL4, Board{8, 9, 58, 48, 300}));
-static_assert(same_board(measured::kRtx4060Ti, Board{8, 9, 34, 32, 288}));
-static_assert(same_board(measured::kRtx3090, Board{8, 6, 82, 6, 936}));
-static_assert(same_board(measured::kA10, Board{8, 6, 72, 6, 600}));
-static_assert(same_board(measured::kA100Sxm40, Board{8, 0, 108, 40, 1555.2}));
-static_assert(same_board(measured::kRtx2080Ti, Board{7, 5, 68, 5.5, 616}));
-static_assert(same_board(measured::kV100Sxm2, Board{7, 0, 80, 6, 900}));
-
 // The one conflict: the V100 SXM2 row's bandwidth is not the measured board's (898.048 against
 // 900), so the board carries an override; every other measured board takes the row's own.
 static_assert(board_registry::dram_gbps(*board_registry::find(0x1DB5)) == 898.048);
@@ -70,6 +50,7 @@ void registry_matches_the_table() {
         expect(r.bus_bits == t.bus_bits, what + ": bus bits");
         expect(r.gbps == t.gbps, what + ": data rate");
         expect(r.boost_mhz == t.boost_mhz, what + ": boost clock");
+        expect(r.mma_slow == t.mma_slow, what + ": mma_slow");
         expect(board_registry::find(t.pci_device_id) != nullptr, what + ": found by id");
     }
     expect(board_registry::find(0) == nullptr, "an unknown id has no row");
