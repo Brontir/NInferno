@@ -239,6 +239,17 @@ int main() {
         check(fs::exists(other), "an old temporary of a name not written stays");
         check(cv::ArtifactWriter::remove_stale_temporaries(dir, {"y.ninferno"}) == 1,
               "and goes for its own name");
+        // A part beyond this layout's (an interrupted run with smaller files) is the entry's too;
+        // a name that only starts like a part is not.
+        const auto far  = dir / ".z.ninferno.part-0042.ZxC789.tmp";
+        const auto fake = dir / ".z.ninferno.part-x1.ZxC789.tmp";
+        std::ofstream(far, std::ios::binary).put('\0');
+        std::ofstream(fake, std::ios::binary).put('\0');
+        make_old(far);
+        make_old(fake);
+        check(cv::ArtifactWriter::remove_stale_temporaries(dir, {"z.ninferno"}) == 1 &&
+                  !fs::exists(far) && fs::exists(fake),
+              "an old temporary of any part of the entry goes");
     }
 
     // Where the file system cannot lock, the age and name rules alone decide (a held lock, on the

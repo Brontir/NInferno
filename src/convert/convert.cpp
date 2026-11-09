@@ -2024,7 +2024,8 @@ ConvertResult convert(const ConvertOptions& options) {
     std::vector<std::uint64_t> output_bytes;
     for (const auto& job : plan.weights) { output_bytes.push_back(job.geometry.bytes); }
     if (!options.consume_source) {
-        // Before the free-space check: what an interrupted run left would be counted against it.
+        // Before the free-space check: what an interrupted run left would be counted against it
+        // (its parts by the entry's name, as many as that run's layout had).
         const auto directory = options.out.parent_path().empty() ? std::filesystem::path(".")
                                                                  : options.out.parent_path();
         std::vector<std::string> names = {options.out.filename().string()};

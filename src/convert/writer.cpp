@@ -200,8 +200,21 @@ bool temporary_of(const std::string& name, const std::vector<std::string>& filen
         if (!std::isalnum(static_cast<unsigned char>(name[i]))) { return false; }
     }
     const std::string stem = name.substr(0, name.size() - kTail);
-    return std::any_of(filenames.begin(), filenames.end(),
-                       [&](const std::string& file) { return stem == "." + file + "."; });
+    // ".<file>." itself, or a part of it, ".<file>.part-<digits>.": a run with other file sizes
+    // left parts this layout does not have.
+    const auto part_of = [&](const std::string& file) {
+        const std::string prefix = "." + file + ".part-";
+        if (stem.size() <= prefix.size() + 1 || stem.compare(0, prefix.size(), prefix) != 0 ||
+            stem.back() != '.') {
+            return false;
+        }
+        return std::all_of(stem.begin() + static_cast<std::ptrdiff_t>(prefix.size()),
+                           stem.end() - 1,
+                           [](char c) { return std::isdigit(static_cast<unsigned char>(c)); });
+    };
+    return std::any_of(filenames.begin(), filenames.end(), [&](const std::string& file) {
+        return stem == "." + file + "." || part_of(file);
+    });
 }
 
 // Locks a freshly created temporary for the writer's lifetime, so that the sweep of another
