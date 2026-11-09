@@ -1,0 +1,179 @@
+"""tools/audit/diff_lint.py on planted diffs: each rule fires on the mistake and stays quiet on the
+look-alikes. Plain git diff -U0 text and an in-memory tree; no git, no GPU."""
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "audit"))
+import diff_lint as dl  # noqa: E402
+
+
+def diff(path, removed=(), added=(), old_start=1, new_start=1):
+    """A one-hunk -U0 diff of one file."""
+    rows = [f"diff --git a/{path} b/{path}", f"--- a/{path}", f"+++ b/{path}",
+            f"@@ -{old_start},{len(removed)} +{new_start},{len(added)} @@"]
+    return "\n".join(rows + ["-" + r for r in removed] + ["+" + a for a in added]) + "\n"
+
+
+def rules(found):
+    return [f[2] for f in found]
+
+
+BLOCK = ["    const auto plan = make_plan(model, card);", '    check(plan.valid, "plan is valid");',
+         '    check(plan.bytes > 0, "plan has bytes");', '    check(plan.steps == 3, "three steps");']
+
+
+LONG = BLOCK + ['    check(plan.steps[0].ok, "first step");', '    check(plan.steps[1].ok, "second step");',
+                '    check(plan.steps[2].ok, "third step");', '    check(plan.total_ms < budget, "within budget");',
+                '    log_line("plan checked for " + card.name());', '    release(plan);']
+
+
+class DupBlock(unittest.TestCase):
+    def test_pasted_twice_is_flagged_on_the_second_copy(self):
+        body = ["void test_a() {"] + LONG + ["}", "", "void test_b() {"] + LONG + ["}"]
+        text = "\n".join(body) + "\n"
+        found = dl.lint(diff("t.cpp", added=body), dl.DictTree({"t.cpp": text}))
+        self.assertEqual(rules(found), ["dup-block"])
+        self.assertEqual(found[0][1], 15)  # first line of the second copy
+
+    def test_copy_of_old_content_is_flagged(self):
+        old = LONG + ["}", "int other();"]
+        new = old + ["", "void again() {"] + LONG + ["}"]
+        added = new[len(old):]
+        d = diff("t.cpp", added=added, new_start=len(old) + 1)
+        self.assertEqual(rules(dl.lint(d, dl.DictTree({"t.cpp": "\n".join(new) + "\n"}))), ["dup-block"])
+
+    def test_short_copy_inside_a_bigger_new_run_is_quiet(self):
+        a = ["void f() {"] + BLOCK + ["    return 1;", "}"]
+        b = ["void g() {"] + BLOCK + ["    return 2;", "}"]
+        text = "\n".join(a + [""] + b) + "\n"
+        d = diff("t.cpp", added=a + [""] + b)
+        self.assertEqual(dl.lint(d, dl.DictTree({"t.cpp": text})), [])
+
+    def test_trivial_closers_are_quiet(self):
+        closers = ["    }", "  }", "}", "};"] * 2
+        d = diff("t.cpp", added=closers)
+        self.assertEqual(dl.lint(d, dl.DictTree({"t.cpp": "\n".join(closers) + "\n"})), [])
+
+    def test_allow_marker(self):
+        marked = BLOCK[:2] + [BLOCK[2] + " // diff-lint: allow"] + BLOCK[3:]
+        body = ["void test_a() {"] + BLOCK + ["}", "", "void test_b() {"] + marked + ["}"]
+        text = "\n".join(body) + "\n"
+        # the marker also makes the second copy differ from the first, so nothing repeats
+        self.assertEqual(dl.lint(diff("t.cpp", added=body), dl.DictTree({"t.cpp": text})), [])
+
+    def test_data_and_vendored_files_are_skipped(self):
+        body = BLOCK + ["x"] + BLOCK
+        for path in ("routes/a.json", "third_party/x/y.cpp"):
+            self.assertEqual(dl.lint(diff(path, added=body), dl.DictTree({path: "\n".join(body) + "\n"})), [])
+
+
+DEF = ["double DrafterOption::measured_at(int k) const {", "    return table_[k];", "}"]
+
+
+class RemovedDefinition(unittest.TestCase):
+    def test_removed_and_still_called_is_flagged_at_the_call(self):
+        t = dl.DictTree({"a.h": "struct DrafterOption {};\n",
+                         "b.cpp": "void f(DrafterOption o) {\n    use(o.measured_at(3));\n}\n"})
+        found = dl.lint(diff("a.cpp", removed=DEF), t)
+        self.assertEqual(rules(found), ["removed-def"])
+        self.assertEqual(found[0][:2], ("b.cpp", 2))
+
+    def test_inline_member_in_a_header(self):
+        t = dl.DictTree({"b.cu": "void f() { x = widget.area(); }\n"})
+        d = diff("w.h", removed=["    [[nodiscard]] int area() const {", "        return w_ * h_;", "    }"])
+        self.assertEqual(rules(dl.lint(d, t)), ["removed-def"])
+
+    def test_multi_line_signature(self):
+        t = dl.DictTree({"b.cpp": "int g() { return pick_route(1, 2); }\n"})
+        d = diff("a.cpp", removed=["static int pick_route(int a,", "                      int b) {",
+                                   "    return a;", "}"])
+        self.assertEqual(rules(dl.lint(d, t)), ["removed-def"])
+
+    def test_removed_and_no_call_is_quiet(self):
+        t = dl.DictTree({"b.cpp": "void f() { other(); }\n// measured_at(3) was removed\n"})
+        self.assertEqual(dl.lint(diff("a.cpp", removed=DEF), t), [])
+
+    def test_name_still_defined_elsewhere_is_quiet(self):
+        for left in ("double Other::measured_at(int k) const {", "double measured_at(int k);",
+                     "    double measured_at(double k) const;"):
+            t = dl.DictTree({"b.cpp": "void f() { x.measured_at(3); }\n", "c.h": left + "\n"})
+            self.assertEqual(dl.lint(diff("a.cpp", removed=DEF), t), [], left)
+
+    def test_moved_definition_is_quiet(self):
+        t = dl.DictTree({"new.cpp": "\n".join(DEF) + "\n", "b.cpp": "void f() { x.measured_at(3); }\n"})
+        self.assertEqual(dl.lint(diff("old.cpp", removed=DEF), t), [])
+
+    def test_calls_and_control_flow_are_not_definitions(self):
+        removed = ["    if (check(x)) {", "        return run_all(x);", "    }", "    while (pending(x)) {",
+                   "    }", "    : pool_(threads, 0) {}"]
+        t = dl.DictTree({"b.cpp": "void f() { run_all(1); check(2); pending(3); pool_(4); }\n"})
+        self.assertEqual(dl.lint(diff("a.cpp", removed=removed), t), [])
+
+    def test_python_files_are_not_checked(self):
+        t = dl.DictTree({"b.cpp": "void f() { x.measured_at(3); }\n"})
+        self.assertEqual(dl.lint(diff("a.py", removed=DEF), t), [])
+
+    def test_deleted_file(self):
+        t = dl.DictTree({"b.cpp": "void f() { x.measured_at(3); }\n"})
+        d = ("diff --git a/gone.cpp b/gone.cpp\ndeleted file mode 100644\n--- a/gone.cpp\n+++ /dev/null\n"
+             "@@ -1,3 +0,0 @@\n" + "".join("-" + r + "\n" for r in DEF))
+        self.assertEqual(rules(dl.lint(d, t)), ["removed-def"])
+
+    def test_allow_marker_on_the_removed_line_or_the_call(self):
+        t = dl.DictTree({"b.cpp": "void f() { x.measured_at(3); }\n"})
+        marked = [DEF[0] + " // diff-lint: allow"] + DEF[1:]
+        self.assertEqual(dl.lint(diff("a.cpp", removed=marked), t), [])
+        t = dl.DictTree({"b.cpp": "void f() { x.measured_at(3); } // diff-lint: allow\n"})
+        self.assertEqual(dl.lint(diff("a.cpp", removed=DEF), t), [])
+
+
+class RemovedInclude(unittest.TestCase):
+    HEADER = "#pragma once\nstruct Widget {\n    int size;\n};\n"
+
+    def tree(self, user_text, **more):
+        files = {"src/widget.h": self.HEADER, "src/use.cpp": user_text}
+        files.update(more)
+        return dl.DictTree(files)
+
+    def removed(self, inc='#include "widget.h"'):
+        return diff("src/use.cpp", removed=[inc])
+
+    def test_type_still_used_and_no_other_path_is_flagged(self):
+        t = self.tree("#include <vector>\nint f(const Widget& w) { return w.size; }\n")
+        found = dl.lint(self.removed(), t)
+        self.assertEqual(rules(found), ["removed-include"])
+        self.assertEqual(found[0][:2], ("src/use.cpp", 2))
+
+    def test_still_reachable_through_another_include_is_quiet(self):
+        t = self.tree('#include "mid.h"\nint f(const Widget& w) { return w.size; }\n',
+                      **{"src/mid.h": '#pragma once\n#include "widget.h"\n'})
+        self.assertEqual(dl.lint(self.removed(), t), [])
+
+    def test_symbol_not_used_is_quiet(self):
+        t = self.tree('int f(int w) { return w; }\n// Widget is gone\nconst char* s = "Widget";\n')
+        self.assertEqual(dl.lint(self.removed(), t), [])
+
+    def test_type_defined_in_the_file_itself_is_quiet(self):
+        t = self.tree("struct Widget { int size; };\nint f(const Widget& w) { return w.size; }\n")
+        self.assertEqual(dl.lint(self.removed(), t), [])
+
+    def test_system_and_unresolved_includes_are_skipped(self):
+        t = self.tree("int f(const Widget& w) { return w.size; }\n")
+        self.assertEqual(dl.lint(self.removed("#include <widget.h>"), t), [])
+        self.assertEqual(dl.lint(self.removed('#include "nowhere.h"'), t), [])
+
+    def test_allow_marker(self):
+        t = self.tree("int f(const Widget& w) { return w.size; } // diff-lint: allow\n")
+        self.assertEqual(dl.lint(self.removed(), t), [])
+        t = self.tree("int f(const Widget& w) { return w.size; }\n")
+        self.assertEqual(dl.lint(self.removed('#include "widget.h" // diff-lint: allow'), t), [])
+
+
+class Driver(unittest.TestCase):
+    def test_empty_diff_is_clean(self):
+        self.assertEqual(dl.lint("", dl.DictTree({})), [])
+
+
+if __name__ == "__main__":
+    unittest.main()
