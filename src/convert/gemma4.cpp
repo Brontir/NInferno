@@ -574,11 +574,11 @@ OJson block_dflash_config(const OJson& source, std::optional<std::uint64_t> toke
     if (bias) { result["attention_bias"] = true; }
     const OJson* theta = member(source, "rope_theta");
     if (!theta || theta->is_null()) {
+        // transformers 5 keeps it in rope_parameters (keyed by layer type, or flat); a scaled
+        // rope there is resolved below (dflash_rope).
         if (const auto* rope = member(source, "rope_parameters"); rope && rope->is_object()) {
-            if (const auto* type = member(*rope, "rope_type"); type && *type != "default") {
-                throw std::runtime_error(label + ".rope_parameters.rope_type must be default");
-            }
-            theta = member(*rope, "rope_theta");
+            const auto* typed = member(*rope, "full_attention");
+            theta             = member(typed && typed->is_object() ? *typed : *rope, "rope_theta");
         }
     }
     result["rope_theta"]   = f32(theta, label + ".rope_theta");

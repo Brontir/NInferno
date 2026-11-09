@@ -1593,10 +1593,20 @@ OJson resolved_rope(const OJson& source, std::uint64_t dim, std::uint64_t max_po
 
 std::optional<OJson> dflash_rope(const OJson& source, std::uint64_t head_dim,
                                  const std::string& where) {
+    // Scaled where rope_scaling is given, or where transformers-5 rope_parameters names a rope
+    // type of its own (YaRN without a legacy rope_scaling, #588).
     const auto* scaling = member(source, "rope_scaling");
-    if (!present(scaling) || (scaling->is_object() && scaling->empty())) { return std::nullopt; }
+    bool scaled         = present(scaling) && !(scaling->is_object() && scaling->empty());
+    if (!scaled) {
+        const OJson p =
+            rope_parameters(source, source.value("model_type", std::string()), "full_attention");
+        const auto* type = member(p, "rope_type");
+        if (!type || !type->is_string()) { type = member(p, "type"); }
+        scaled = type && type->is_string() && type->get<std::string>() != "default";
+    }
+    if (!scaled) { return std::nullopt; }
     const auto* limit = member(source, "max_position_embeddings");
     return resolved_rope(source, head_dim, present(limit) ? limit->get<std::uint64_t>() : 0,
-                         where + ".rope_scaling");
+                         where + ".rope");
 }
 } // namespace ninferno::convert
