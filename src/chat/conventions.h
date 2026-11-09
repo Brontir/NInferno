@@ -48,6 +48,10 @@ struct ReasoningMarkup {
     // Headers the model writes before its answer, after reasoning or in place of it (a harmony
     // "final" channel); the presentation drops the one the answer begins with. Empty: none.
     std::vector<std::string> content_open;
+    // The template reads a tool-call turn's analysis from message.thinking and refuses a turn that
+    // also has text (gpt-oss: "Cannot pass both content and thinking"). Detected by that refusal
+    // text in the template source.
+    bool refuses_text_with_thinking = false;
 };
 
 enum class ToolCallFormat : std::uint8_t {
