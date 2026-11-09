@@ -697,6 +697,29 @@ struct KernelResources {
     bool latency_variant = false;
 };
 
+// The compiled facts the cost model read for one register-MMA schedule of one format (#556): what
+// price_routes took from rmma_resources. A test installs a sink to digest exactly these reads (the
+// selector golden keys a facts-priced board's file by them); nothing is recorded otherwise.
+struct RmmaFactRead {
+    QType qtype;
+    int schedule;
+    Epilogue epilogue;
+    KernelResources facts;
+};
+
+class ScopedRmmaFactsSink {
+public:
+    explicit ScopedRmmaFactsSink(std::vector<RmmaFactRead>& sink) noexcept;
+    ~ScopedRmmaFactsSink();
+    ScopedRmmaFactsSink(const ScopedRmmaFactsSink&)            = delete;
+    ScopedRmmaFactsSink& operator=(const ScopedRmmaFactsSink&) = delete;
+
+private:
+    std::vector<RmmaFactRead>* previous_;
+};
+
+void note_rmma_fact_read(const RmmaFactRead& read) noexcept;
+
 // What register-MMA schedule `schedule` runs for a `tokens`-token call of `weight` under `epilogue`
 // on the current device: the same launch path as run_route takes (the codec's decoder, its wide or
 // latency variant by the same rules), described instead of launched. nullopt where the schedule is
