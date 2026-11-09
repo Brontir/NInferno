@@ -66,14 +66,18 @@ inline constexpr double kTileFixed      = 0.43;
     return work_table ? tile_count(columns, j) * step_share(j, fixed) : tile_count(columns, j);
 }
 
-// The width the card's table takes for `columns` tokens of a format (work_tiles_format; every
-// width available).
-[[nodiscard]] constexpr int pick(int columns, int major, int minor, bool format) noexcept {
+// The width the card's table takes for `columns` tokens of a format (work_tiles_format), among the
+// widths up to `widest`: a format whose wider tile the device's shared memory cannot hold (Turing's
+// 64 KiB: several formats' 128-column tile) has its own widest (ggml_mmq::column_tile at a wide
+// product tells it).
+[[nodiscard]] constexpr int pick(int columns, int major, int minor, bool format,
+                                 int widest = 128) noexcept {
     const bool work    = uses_work_table(major, minor, format);
     const double fixed = tile_fixed(major, minor, format);
     int best           = 0;
     double least       = 1e300;
     for (const int j : tiles(major, minor, format)) {
+        if (j > widest) { continue; }
         if (const double c = launch_cost(columns, j, work, fixed); c < least) {
             least = c;
             best  = j;
