@@ -109,6 +109,11 @@ int main() {
         // A difference inside the band is a tie, outside it is not.
         p.fused = 0.5 * (1.0 + 1.0e-11);
         expect(chosen(chain::pair_alternatives(p)) == "separate", "inside the band: a tie");
+        // The band decides here: fused is dearer by 1e-11 but has fewer launches.
+        p.fused_launches = 1;
+        expect(chosen(chain::pair_alternatives(p)) == "fused",
+               "inside the band, fewer launches win though dearer");
+        p.fused_launches = 3;
         p.fused = 0.5 * (1.0 - 1.0e-6);
         expect(chosen(chain::pair_alternatives(p)) == "fused", "outside the band: cheaper wins");
     }

@@ -11,8 +11,12 @@
 // registers is one the unfused chain's producer writes and its consumer reads: the larger write is
 // in the producer's projection step, the read in the pointwise step, which runs at the L2's
 // bandwidth when the tensor fits in the L2 and at the DRAM's otherwise. The memory numbers are
-// device facts the caller passes (the facts' DRAM bandwidth, the device's L2 size, the L2 bandwidth
-// the generic cost model uses); no constant is added here. The launch count is no price (no launch
+// numbers the caller passes (the facts' DRAM bandwidth, the device's L2 size, and the L2 bandwidth
+// the generic cost model uses: a fitted rate measured on sm_86 and sm_120 only,
+// route_cost_constants.h, so a caller passes it only where that model prices its L2 term and 0
+// elsewhere, which reads at the DRAM's); no constant is added here. The tensor counts as held in
+// the L2 when twice its bytes fit, the generic model's own rule (its weights stream through the
+// L2 beside it). The launch count is no price (no launch
 // constant is fitted); it breaks a tie.
 //
 // Selection: the lowest total seconds among the priced alternatives; totals within a relative 1e-9
@@ -95,7 +99,7 @@ projection_step_seconds(std::optional<double> route_seconds, double output_bytes
         return std::nullopt;
     }
     const bool in_l2 = memory.l2_bytes > 0.0 && memory.l2_bytes_per_second > 0.0 &&
-                       resident_bytes <= memory.l2_bytes;
+                       2.0 * resident_bytes <= memory.l2_bytes;
     const double read_bw = in_l2 ? memory.l2_bytes_per_second : memory.dram_bytes_per_second;
     return bytes_read / read_bw + bytes_written / memory.dram_bytes_per_second;
 }
