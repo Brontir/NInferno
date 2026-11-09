@@ -47,6 +47,9 @@ struct StopPresentation {
 };
 
 StopPresentation stop_presentation(const GenerationOutcome& outcome) {
+    // Complete calls end the turn with tool_use, unless the output was cut short (then the client
+    // must see max_tokens, or the context window) or a call was dropped as unfinished (then the
+    // stop that dropped it): the client must not take the calls for all the model meant to make.
     if (calls_end_turn(outcome)) { return StopPresentation{.reason = "tool_use"}; }
     switch (outcome.finish_reason) {
     case ninferno::FinishReason::OutputLimit:

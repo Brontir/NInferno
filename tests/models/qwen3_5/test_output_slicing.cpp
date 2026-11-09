@@ -987,6 +987,29 @@ int test_repetition_concludes_thinking(const Harness& harness) {
     return failures;
 }
 
+// A repetition loop inside a later call's arguments ends the output like the limit does: the calls
+// before it are kept, the looping one is dropped, and none of its markup becomes content.
+int test_repetition_inside_call(const Harness& harness) {
+    std::string loop = "ab";
+    for (int i = 0; i < 16; ++i) { loop += "pq"; }
+    Case c{.name       = "loop inside a second call",
+           .tokens     = script({Piece{"<tool_call>"}, Piece{"\n<function=search>\n</function>\n"},
+                                 Piece{"</tool_call>"}, Piece{"\n"}, Piece{"<tool_call>"},
+                                 Piece{"\n<function=search>\n"}, Piece{"<parameter="}, Piece{"q>\n"},
+                                 Piece{loop, true}, Piece{kEosPiece}}),
+           .prompt     = PromptKind::Tools,
+           .max_tokens = 400,
+           .repetition_window = 32};
+    const Outcome out = harness.run(c, {1});
+    if (out.finish != FinishReason::Repetition || out.calls.size() != 1 || !out.content.empty() ||
+        out.diagnostics.cut_calls_dropped != 1) {
+        std::cerr << "a loop inside a call did not keep the complete calls: " << describe(out)
+                  << "\n";
+        return 1;
+    }
+    return 0;
+}
+
 int main() {
     try {
         const Harness harness;
@@ -998,6 +1021,7 @@ int main() {
         failures += test_reasoning_start_state_matrix();
         failures += test_repetition_stop();
         failures += test_repetition_concludes_thinking(harness);
+        failures += test_repetition_inside_call(harness);
         std::cout << "output slicing: " << cases.size() << " scripts, " << runs
                   << " slicings, failures=" << failures << "\n";
         return failures == 0 ? 0 : 1;

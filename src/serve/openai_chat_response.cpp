@@ -183,6 +183,10 @@ const char* finish_reason(ninferno::FinishReason reason) {
     return "stop";
 }
 
+const char* chat_finish_reason(const GenerationOutcome& outcome) {
+    return calls_end_turn(outcome) ? "tool_calls" : finish_reason(outcome.finish_reason);
+}
+
 std::vector<ToolCall>
 materialize_tool_calls(const std::vector<ninferno::GeneratedToolCall>& generated) {
     return tool_calls_of(generated, [](std::size_t) { return new_openai_chat_tool_call_id(); });
@@ -301,8 +305,7 @@ std::string make_chat_completion_response(const OpenAIChatResponseIdentity& iden
         {"logprobs", outcome.logprobs ? Json{{"content", openai_logprob_content(*outcome.logprobs)},
                                              {"refusal", nullptr}}
                                       : Json(nullptr)},
-        {"finish_reason",
-         calls_end ? Json("tool_calls") : Json(finish_reason(outcome.finish_reason))}}});
+        {"finish_reason", Json(chat_finish_reason(outcome))}}});
     payload["usage"]   = usage_json(usage_from(outcome));
     payload["timings"] = timings_json(outcome_timings(outcome));
     return payload.dump();
@@ -471,8 +474,7 @@ std::vector<std::string> OpenAIChatStream::finish(const GenerationOutcome& outco
                          nullptr, output_timings));
     }
     // The terminal event carries the final timings unless the usage chunk that follows does.
-    const char* reason =
-        calls_end_turn(outcome) ? "tool_calls" : finish_reason(outcome.finish_reason);
+    const char* reason = chat_finish_reason(outcome);
     events.push_back(
         stream_event(Json::object(), reason, include_usage_ ? Json(nullptr) : final_timings));
     if (include_usage_) {

@@ -1107,6 +1107,18 @@ namespace {
 // leading whitespace, shares at least three bytes ("</f") with the closer's start. A shorter or
 // different stop ("<parameter", "\n<") also matches between a call's parts, where closing would
 // publish a call with parameters missing.
+// Whether `text` (a stop's bytes past the markup it swallowed) begins a call: it starts with the
+// syntax's call start, or is all a prefix of one. The held-bytes matcher answers for exactly the
+// bytes it is given, so it is asked for each prefix.
+bool begins_call(const ToolCallSyntax& syntax, std::string_view text) {
+    for (std::size_t n = 1; n <= text.size(); ++n) {
+        const CallStart start = syntax.match_start(text.substr(0, n));
+        if (start == CallStart::Complete) { return true; }
+        if (start == CallStart::No) { return false; }
+    }
+    return !text.empty();
+}
+
 bool stop_swallows(std::string_view stop, std::string_view closer) {
     while (!stop.empty() && is_format_whitespace(stop.front())) { stop.remove_prefix(1); }
     const std::size_t shared = std::min(stop.size(), closer.size());
@@ -1158,9 +1170,41 @@ ToolCallOutputDecoder::finish(bool cut_off, std::optional<std::string_view> stop
         stop_text && last_open.start != std::string::npos && !last_open.close.empty() &&
         !rtrim_format_whitespace(tool_region_).ends_with(last_open.close) &&
         !stop_swallows(*stop_text, last_open.close);
+    // A stop that, past the closing markup it swallowed, began another call
+    // ("</tool_call>\n<tool_call>"): the model was writing one more call when the stop matched.
+    // The calls closed before it are kept, and that one is counted as cut, so the turn does not
+    // read as a complete call set.
+    const auto next_call_cut = [&](std::initializer_list<std::string_view> swallowed) {
+        if (!stop_text) { return std::uint32_t{0}; }
+        std::string_view rest = *stop_text;
+        const auto skip_space = [&] {
+            while (!rest.empty() && is_format_whitespace(rest.front())) { rest.remove_prefix(1); }
+        };
+        std::string_view unreached; // the first closer the stop did not swallow
+        for (const std::string_view closer : swallowed) {
+            skip_space();
+            if (unreached.empty() && stop_swallows(rest, closer)) {
+                rest.remove_prefix(std::min(rest.size(), closer.size()));
+            } else if (unreached.empty()) {
+                unreached = closer;
+            }
+        }
+        skip_space();
+        // What is left may still be the start of that closer ("<" of </tool_call> after
+        // </function>): no call begun.
+        if (!rest.empty() && !unreached.empty() && unreached.starts_with(rest)) {
+            return std::uint32_t{0};
+        }
+        return std::uint32_t{begins_call(*syntax_, rest)};
+    };
     if (saw_tool_marker_ && parsed.is_tool_call_response && !stopped_unclosed) {
+        // The region closed its last call already: nothing for the stop to swallow.
+        const bool closed = last_open.close.empty() ||
+                            rtrim_format_whitespace(tool_region_).ends_with(last_open.close);
         held_.clear();
         tool_region_.clear();
+        parsed.diagnostics.cut_calls_dropped +=
+            closed ? next_call_cut({}) : next_call_cut({last_open.close});
         // The prose before a recovered later marker, and text after complete calls.
         return Terminal{.content     = std::move(parsed.content),
                         .tool_calls  = std::move(parsed.tool_calls),
@@ -1184,6 +1228,8 @@ ToolCallOutputDecoder::finish(bool cut_off, std::optional<std::string_view> stop
                 held_.clear();
                 tool_region_.clear();
                 completed.diagnostics.closed_calls = 1;
+                completed.diagnostics.cut_calls_dropped +=
+                    next_call_cut({kFunctionClose, kToolClose});
                 return Terminal{.content     = std::move(completed.content),
                                 .tool_calls  = std::move(completed.tool_calls),
                                 .diagnostics = completed.diagnostics};
@@ -1214,6 +1260,9 @@ ToolCallOutputDecoder::finish(bool cut_off, std::optional<std::string_view> stop
                 held_.clear();
                 tool_region_.clear();
                 completed.diagnostics.closed_calls = 1;
+                // Past the closer it swallowed, the stop may have begun the next call.
+                completed.diagnostics.cut_calls_dropped += next_call_cut(
+                    {contract_->format == ToolCallFormat::QwenXml ? kToolClose : syntax_->close()});
                 return Terminal{.content     = std::move(completed.content),
                                 .tool_calls  = std::move(completed.tool_calls),
                                 .diagnostics = completed.diagnostics};
@@ -1298,8 +1347,15 @@ ToolCallOutputDecoder::finish(bool cut_off, std::optional<std::string_view> stop
 
     // A forced call's stop that matched inside the call's open marker ("_call>" in "<tool_call>"):
     // what is held is the start of that marker (feed holds text only while it may begin a call),
-    // the start of a call, never the answer.
-    if (stop_text && !saw_tool_marker_ && !held_.empty()) {
+    // the start of a call, never the answer. A stop that was the whole opener at the output's
+    // start ("<tool_call>" itself) leaves nothing held, and cut a call all the same (a forced
+    // call's grammar writes nothing but calls, so no answer text came before it).
+    const auto stop_opened_call = [&] {
+        std::string_view stop = *stop_text;
+        while (!stop.empty() && is_format_whitespace(stop.front())) { stop.remove_prefix(1); }
+        return begins_call(*syntax_, stop);
+    };
+    if (stop_text && !saw_tool_marker_ && (!held_.empty() || stop_opened_call())) {
         held_.clear();
         tool_region_.clear();
         ToolCallParseDiagnostics diagnostics = parsed.diagnostics;

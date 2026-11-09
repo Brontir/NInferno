@@ -707,8 +707,44 @@ int test_forced_stop_cut() {
                   "a stop in the closing markup lost a complete Qwen call: " + std::string(stop));
     }
     const auto tool_close = qwen(open + "</function>\n", "</tool_call>");
-    failures += check(tool_close.tool_calls.size() == 1 && tool_close.content.empty(),
+    failures += check(tool_close.tool_calls.size() == 1 && tool_close.content.empty() &&
+                          tool_close.diagnostics.cut_calls_dropped == 0,
                       "a stop on </tool_call> lost a complete Qwen call");
+    // A stop that ends at the start of the closer it did not reach begins no call.
+    const auto short_close = qwen(open, "</function>\n<");
+    failures +=
+        check(short_close.tool_calls.size() == 1 && short_close.diagnostics.cut_calls_dropped == 0,
+              "a stop ending at the start of </tool_call> counted a cut call");
+    // A stop that also swallowed the next call's opener cut that call: the closed call is kept,
+    // the next one counted as cut (the turn is no complete call set), also when the stop runs
+    // past the opener into the next call.
+    for (const auto& [text, stop] :
+         {std::pair<std::string, std::string_view>{open + "</function>\n",
+                                                   "</tool_call>\n<tool_call>"},
+          {open, "</function>\n</tool_call>\n<tool_call>"},
+          {open + "</function>\n</tool_call>", "\n<tool_call>"},
+          {open + "</function>\n", "</tool_call>\n<tool_call>\n"},
+          {open, "</function>\n</tool_call>\n<tool_call>\n<function=w"}}) {
+        const auto next = qwen(text, stop);
+        failures += check(next.tool_calls.size() == 1 && next.content.empty() &&
+                              next.diagnostics.cut_calls_dropped == 1,
+                          "a stop that began the next call was not counted: " + std::string(stop));
+    }
+    // A stop that is the whole opener at the output's start leaves nothing held: the call it cut
+    // is counted all the same.
+    for (const std::string_view stop : {"<tool_call>", "\n<tool_call>"}) {
+        const auto whole = qwen("", stop);
+        failures += check(whole.tool_calls.empty() && whole.content.empty() &&
+                              whole.diagnostics.cut_calls_dropped == 1,
+                          "a stop that was the whole opener was not counted: " + std::string(stop));
+    }
+    const auto hermes_next = decode(
+        ToolCallFormat::HermesJson,
+        "<tool_call>\n{\"name\": \"weather\", \"arguments\": {\"city\": \"Oslo\", \"days\": 2}}\n",
+        "</tool_call>\n<tool_call>");
+    failures += check(hermes_next.tool_calls.size() == 1 && hermes_next.content.empty() &&
+                          hermes_next.diagnostics.cut_calls_dropped == 1,
+                      "a Hermes stop that began the next call was not counted");
     // A stop that also matches between parameters must not close a call with parameters missing.
     for (const std::string_view stop : {"<parameter", "\n<", "<", "Oslo"}) {
         const auto between = qwen("<tool_call>\n<function=weather>\n<parameter=city>\nOslo\n"
