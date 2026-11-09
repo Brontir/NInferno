@@ -833,6 +833,17 @@ std::optional<fs::path> kept_for_options(const fs::path& cache, const std::strin
                          content_options_key(baked, nullptr, context));
 }
 
+// Whether a snapshot serves a GGUF file: its model is that file, not the directory, and the
+// options key then has no snapshot to read resources from (acquire_model).
+static bool has_gguf_file(const fs::path& snapshot) {
+    std::error_code ec;
+    for (auto it = fs::directory_iterator(snapshot, ec); !ec && it != fs::directory_iterator();
+         it.increment(ec)) {
+        if (it->path().extension() == ".gguf") { return true; }
+    }
+    return false;
+}
+
 fs::path conversion_directory(const fs::path& commit_dir, const std::string& key) {
     return key.empty() ? commit_dir : commit_dir / ("options-" + key);
 }
@@ -860,16 +871,20 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
             // Recursive: a conversion with options of its own lives in options-<hash>/ below, and
             // may be serving; it stays, with the commit it belongs to. A conversion still being
             // written below has no .ninferno file yet.
+            // The walk takes its errors in `ec` (increment, not operator++): this destructor
+            // must not throw.
             const auto others_in = [&](const fs::path& where) {
-                for (const auto& entry : fs::recursive_directory_iterator(where, ec)) {
+                for (auto it = fs::recursive_directory_iterator(where, ec);
+                     !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
                     // By path, not by name: a conversion with options of its own below has the
                     // same file name as the one replaced.
-                    if (entry.path().extension() == ".ninferno" &&
-                        !drafter_files.contains(fs::weakly_canonical(entry.path(), ec))) {
+                    std::error_code e;
+                    if (it->path().extension() == ".ninferno" &&
+                        !drafter_files.contains(fs::weakly_canonical(it->path(), e))) {
                         return true;
                     }
                 }
-                return conversion_in_progress(where);
+                return ec ? true : conversion_in_progress(where);
             };
             bool others = others_in(dir);
             if (!others) { fs::remove_all(dir, ec); }
@@ -976,9 +991,25 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                                 if (quant.empty()) { quant = options.fetch.quant; }
                                 // In this start's own directory of the commit: a conversion
                                 // with options replaces its optioned one (options-<key>/),
-                                // never the default one beside it, which may be serving.
+                                // never the default one beside it, which may be serving. Its key
+                                // as it was written, once that snapshot was known (below, after
+                                // the fetch): the caller's template a resource where the model
+                                // ships none, a resource that is the snapshot's own file none.
+                                const auto held_snapshot  = repo_dir / "snapshots" / held_commit;
+                                AcquireOptions as_written = options;
+                                if (!options.chat_template.empty() &&
+                                    !local_support_facts(held_snapshot).chat_template) {
+                                    as_written.convert.resources.emplace_back(
+                                        "chat_template.jinja", options.chat_template);
+                                }
+                                OptionsKeyContext written_context = key_context;
+                                if (!has_gguf_file(held_snapshot)) {
+                                    written_context.snapshot = held_snapshot;
+                                }
+                                const std::string written_key =
+                                    content_options_key(as_written, nullptr, written_context);
                                 if (auto old = converted_artifact(
-                                        conversion_directory(commit_dir, variant_key), quant,
+                                        conversion_directory(commit_dir, written_key), quant,
                                         convert_options.recipe)) {
                                     replaced.artifact = *old;
                                 }
