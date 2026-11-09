@@ -27,6 +27,8 @@ extern "C" void ggml_abort(const char* file, int line, const char* fmt, ...) {
     extern template std::size_t ninferno::ops::ggml_mmq::detail::fixup_bytes_impl<TYPE>(int, int,  \
                                                                                         int);      \
     extern template int ninferno::ops::ggml_mmq::detail::column_tile_impl<TYPE>(int, int, int);    \
+    extern template std::size_t ninferno::ops::ggml_mmq::detail::tile_shared_bytes_impl<TYPE>(     \
+        int);                                                                                      \
     extern template void ninferno::ops::ggml_mmq::detail::product_impl<TYPE>(                      \
         const ninferno::ops::ggml_mmq::Planes&, int, int, int, const void*, int, float*,           \
         std::int64_t, void*, cudaStream_t)
@@ -291,6 +293,13 @@ int column_tile(Type type, int rows, int columns, int k) {
 #define NINFERNO_TILE(T) detail::column_tile_impl<T>(rows, columns, k)
     switch (type) { NINFERNO_GGML_MMQ_CASES(NINFERNO_TILE) }
 #undef NINFERNO_TILE
+    throw std::invalid_argument("ggml mmq: unknown block format");
+}
+
+std::size_t tile_shared_bytes(Type type, int columns_per_tile) {
+#define NINFERNO_BYTES(T) detail::tile_shared_bytes_impl<T>(columns_per_tile)
+    switch (type) { NINFERNO_GGML_MMQ_CASES(NINFERNO_BYTES) }
+#undef NINFERNO_BYTES
     throw std::invalid_argument("ggml mmq: unknown block format");
 }
 
