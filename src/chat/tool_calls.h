@@ -55,6 +55,13 @@ struct ToolCallOutputContract {
     std::vector<Tool> tools;
     bool enforce_declared_names = false;
     ToolCallFormat format       = ToolCallFormat::QwenXml;
+    // The calls are read only to be dropped (tool_choice none). A model kept from the call opener
+    // may write its call as bare JSON, {"name": NAME, ...}, with no opener before it: for a
+    // syntax that has a call header (ToolCallSyntax::bare_call_header), that header and a declared
+    // tool's name open the call region as the opener would, and only where the call begins the
+    // answer (nothing but whitespace before it): the same JSON later in a summary, a code sample
+    // or a router object is text.
+    bool discarded = false;
     // tool_choice required or named: the answer is the calls alone. A call that a stop string cut
     // off is then dropped, as one the output limit cut off is, not returned as text.
     bool forced_calls = false;
@@ -72,7 +79,7 @@ struct ParsedToolCallOutput {
 [[nodiscard]] std::shared_ptr<const ToolCallOutputContract>
 build_tool_call_output_contract(std::span<const std::string> tool_jsons, bool enabled,
                                 ToolCallFormat format = ToolCallFormat::QwenXml,
-                                bool forced_calls     = false);
+                                bool discarded = false, bool forced_calls = false);
 
 // Whether held output bytes begin a tool-call region: not at all, possibly (a prefix of one), or
 // for certain (the region starts at the held bytes).
@@ -97,6 +104,14 @@ public:
     // region. The default: whitespace, an optional lead() and whitespace, then open(). A syntax
     // whose region opens with a header that names the function overrides it.
     [[nodiscard]] virtual ToolCallStart match_start(std::string_view held) const;
+
+    // The header a call of this syntax begins with right after its open marker ({"name": " for
+    // JSON calls, call: for Gemma 4's), followed by a declared tool's name. A model kept from the
+    // open marker may write the call without it: under ToolCallOutputContract::discarded, that
+    // header and a declared name open the call region as the marker would. Empty: none.
+    [[nodiscard]] virtual std::span<const std::string_view> bare_call_header() const noexcept {
+        return {};
+    }
     // The name a call cut off by the output limit had begun to write: `body` follows open().
     // nullopt when the body does not begin this syntax's call header (then the region is not a
     // call, e.g. prose quoting the marker); else the name bytes written so far (empty while the
@@ -189,6 +204,16 @@ private:
 
     std::shared_ptr<const ToolCallOutputContract> contract_;
     const ToolCallSyntax* syntax_ = nullptr;  // the contract format's syntax
+    // The region began as a bare call (ToolCallOutputContract::discarded): when the syntax
+    // cannot read it back, the region is dropped instead of shown.
+    bool bare_region_ = false;
+    // Non-whitespace text has been published: a bare call is cut only where it begins the answer.
+    bool emitted_text_ = false;
+    // Calls read out of closed bare regions, and bare regions dropped unreadable.
+    std::vector<GeneratedToolCall> bare_calls_;
+    std::uint32_t bare_dropped_ = 0;
+    std::string settle_bare();
+    Terminal finish_region(bool cut_off, std::optional<std::string_view> stop_text);
     // Bytes that may still begin the call region (ToolCallSyntax::match_start).
     std::string held_;
     std::string tool_region_;

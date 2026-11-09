@@ -802,14 +802,41 @@ llama.cpp-style base URLs.
   (after any reasoning, a forced answer is the call or calls, with no text before them). `none`
   keeps the declarations in the prompt, as vLLM does by default, so a turn without calls (an
   agent's compaction or summary) reuses the conversation's cached prefix. No output is read back
-  as a call then, and the model is kept from opening one: the syntax's call opener (`<tool_call>`,
+  as a call then. The last user turn ends with the fixed line `Tools are unavailable for this reply;
+  answer in plain text.` (after a blank line; when the last message is a tool
+  result, at the end of that result's content, since a user turn added after it would make the
+  template re-render the reasoning of the whole agent turn; after a system or developer message
+  nothing is added). The line is always English and counts in `prompt_tokens`, `input_tokens` and
+  `count_tokens`, because both the Qwen and Gemma 4 templates declare the tools in the system
+  prompt and the call is otherwise the model's near-certain next token. `--tool-choice-none
+  drop-tools` sends no declarations instead (vLLM's opt-in `--exclude-tools-when-tool-choice-none`;
+  the cached prefix is lost, the line is not added, and a call written anyway is still cut). The model is also kept from opening a call: the syntax's call opener (`<tool_call>`,
   `<|tool_call>`, `[TOOL_CALLS]`, `<|tool_call|>`, `<function_calls>`) and its closer
-  (`</tool_call>`, `<tool_call|>`, `</function_calls>`) get a `logit_bias` of -100 when the template's tokenizer encodes each as one token, so the answer
-  is text. A `logit_bias` of your own for that
-  token is replaced by the ban. Syntaxes without such an opener (gpt-oss harmony, Atem, Llama 3
-  JSON) are not steered; a call they write anyway is cut out of the answer, as is one written as
-  plain text (a Qwen model kept from `<tool_call>` can still write a bare `<function=...>`, which
-  is cut too).
+  (`</tool_call>`, `<tool_call|>`, `</function_calls>`), and the template's tool-result opener and
+  closer (`<tool_response>`, `<|tool_response>`, ...), get a `logit_bias` of -100 when the
+  template's tokenizer encodes each as one token. A `logit_bias` of your own for such a token is
+  replaced by the ban. A model refused its call would otherwise write the next structural token it
+  knows. Its reasoning markers (`<think>`, `</think>`, `<|channel>`, `<channel|>`) are not banned
+  (a model that may reason needs them, and one that may not uses them as the way out of a
+  refused call, where banned they leave filler that looks like an answer); outside reasoning, the
+  first marker of the call, tool-result or reasoning kind ends the turn instead: the text written
+  before it is the answer, the marker is not published, and `finish_reason` is `stop`. A refused
+  call that leaves only markup is therefore an empty `content` with `finish_reason` `stop`, never
+  markup. A reasoning tag that is plain vocabulary (Qwen's `<think>`) ends the turn only where
+  the answer begins with it; after text it is prose that may quote the tag. `ignore_eos` does not
+  change this: it keeps the model's own end-of-turn tokens from stopping the output, not this
+  rule. Syntaxes without such an opener (gpt-oss harmony, Atem, Llama 3 JSON) are not steered; a
+  call they write anyway is cut out of the answer, as is one written as plain text (a Qwen model
+  kept from `<tool_call>` can still write a bare `<function=...>`). A bare `{"name": "...",
+  "arguments": ...}` object naming a declared tool (Hermes JSON) or Gemma 4's `call:...` is cut
+  only where it begins the answer, never under `response_format`, and the text after it stays
+  (streamed as it comes; a second bare call after the first stays text). The leading object is a
+  call only when its top-level keys are `name` plus exactly one of `arguments` and `parameters`
+  (and optionally `id`, `type`); a tool definition, a router object or a lookup result is text, as
+  is a fenced ```` ```json ```` block. An answer that is exactly a call object at its start is thus
+  treated as a call and cut. A first stray reasoning close (`</think>`, `<channel|>`) before the answer is
+  dropped (Gemma 4 writes one after a tool response and then answers); a second ends the turn, so an
+  answer that is only such closes is empty.
 - `strict:true`, whose arguments the same constraint holds to the declared JSON Schema in every
   call syntax ([key order](#key-order-under-an-output-constraint)), and
   `parallel_tool_calls:false`, under which generation stops after the first call.
@@ -1974,6 +2001,7 @@ not take at startup.
 | `--seed N` | fixed seed when a request omits one | fresh random seed per request |
 | `--greedy` | force exact argmax for all requests | off |
 | `--tool-order request\|sorted` | `sorted` renders a request's tools sorted by name, so that a client that sends one set in varying order (MCP servers registering in another order) keeps its cached prefix; a request with a duplicate name or a cache boundary after a tool keeps its order | `request` |
+| `--tool-choice-none steer\|drop-tools` | `steer` keeps a `tool_choice` `none` request's tool declarations (the cached prefix) and ends its last user turn with the line `Tools are unavailable for this reply; answer in plain text.`; `drop-tools` removes the declarations (a re-prefill). Recorded in the server-start record | `steer` |
 
 ### Media
 

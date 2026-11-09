@@ -3,8 +3,10 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
@@ -835,11 +837,12 @@ bool ToolCallOutputContract::declares(std::string_view name) const noexcept {
 
 std::shared_ptr<const ToolCallOutputContract>
 build_tool_call_output_contract(std::span<const std::string> tool_jsons, bool enabled,
-                                ToolCallFormat format, bool forced_calls) {
+                                ToolCallFormat format, bool discarded, bool forced_calls) {
     if (!enabled || format == ToolCallFormat::None) { return {}; }
     auto contract                    = std::make_shared<ToolCallOutputContract>();
     contract->enforce_declared_names = true;
     contract->format                 = format;
+    contract->discarded              = discarded;
     contract->forced_calls           = forced_calls;
     contract->tools.reserve(tool_jsons.size());
     for (const std::string& tool_json : tool_jsons) {
@@ -1037,7 +1040,7 @@ namespace {
 // call the output limit cut off: nullopt when the body leaves the header, an empty name while
 // the body ends inside the header.
 std::optional<ToolCallSyntax::CutCallName>
-cut_name_after_header(std::string_view body, std::initializer_list<std::string_view> header) {
+cut_name_after_header(std::string_view body, std::span<const std::string_view> header) {
     std::size_t pos = 0;
     for (const std::string_view part : header) {
         while (pos < body.size() && is_format_whitespace(body[pos])) { ++pos; }
@@ -1059,11 +1062,42 @@ cut_name_after_header(std::string_view body, std::initializer_list<std::string_v
                                        .complete = end < body.size()};
 }
 
+std::optional<ToolCallSyntax::CutCallName>
+cut_name_after_header(std::string_view body, std::initializer_list<std::string_view> header) {
+    return cut_name_after_header(body,
+                                 std::span<const std::string_view>(header.begin(), header.size()));
+}
+
 } // namespace
 
 ToolCallStart ToolCallSyntax::match_start(std::string_view held) const {
     return match_call_start(held, lead(), open());
 }
+
+namespace {
+
+std::optional<std::size_t> json_value_end(std::string_view text, std::size_t pos);
+
+// Whether held bytes begin a bare call (the syntax's call header, then a declared tool's name):
+// Complete once the name is whole (a byte after it written), Partial while the bytes can still
+// become that.
+CallStart bare_call_start(std::string_view held, std::span<const std::string_view> header,
+                          const ToolCallOutputContract& contract) {
+    const auto cut = cut_name_after_header(held, header);
+    if (!cut) { return CallStart::No; }
+    if (cut->name.empty()) { return cut->complete ? CallStart::No : CallStart::Partial; }
+    if (cut->complete) {
+        return contract.declares(cut->name) ? CallStart::Complete : CallStart::No;
+    }
+    return std::any_of(contract.tools.begin(), contract.tools.end(),
+                       [&](const ToolCallOutputContract::Tool& tool) {
+                           return std::string_view(tool.name).starts_with(cut->name);
+                       })
+               ? CallStart::Partial
+               : CallStart::No;
+}
+
+} // namespace
 
 ToolCallOutputDecoder::ToolCallOutputDecoder(std::shared_ptr<const ToolCallOutputContract> contract,
                                              std::size_t max_tool_name_length)
@@ -1071,33 +1105,216 @@ ToolCallOutputDecoder::ToolCallOutputDecoder(std::shared_ptr<const ToolCallOutpu
       syntax_(contract_ ? &tool_call_syntax(contract_->format) : nullptr),
       max_tool_name_length_(max_tool_name_length) {}
 
+namespace {
+
+// The keys of the object's top level, those whose value has begun included, in an object that may
+// be cut off anywhere.
+std::vector<std::string> top_level_keys(std::string_view object,
+                                        std::optional<std::string>* partial = nullptr) {
+    std::vector<std::string> keys;
+    std::size_t depth = 0;
+    char previous     = 0; // the last byte outside strings that is not whitespace
+    for (std::size_t at = 0; at < object.size(); ++at) {
+        const char byte = object[at];
+        if (byte == '"') {
+            std::string text;
+            bool closed = false;
+            for (++at; at < object.size(); ++at) {
+                if (object[at] == '"') {
+                    closed = true;
+                    break;
+                }
+                if (object[at] == '\\' && at + 1 < object.size()) { ++at; }
+                text.push_back(object[at]);
+            }
+            // A string is a key only at the object's top level, after its { or a comma; one after
+            // a colon is a value.
+            const bool key_position = depth == 1 && (previous == '{' || previous == ',');
+            std::size_t after       = at + 1;
+            while (after < object.size() && is_format_whitespace(object[after])) { ++after; }
+            if (key_position && closed && after < object.size() && object[after] == ':') {
+                keys.push_back(std::move(text));
+            } else if (key_position && after >= object.size() && partial != nullptr) {
+                // The cut-off object ends in this key, its colon not yet written.
+                *partial = std::move(text);
+            }
+            previous = '"';
+        } else if (is_format_whitespace(byte)) {
+            continue;
+        } else {
+            if (byte == '{' || byte == '[') {
+                ++depth;
+            } else if ((byte == '}' || byte == ']') && depth != 0) {
+                --depth;
+            }
+            previous = byte;
+        }
+    }
+    return keys;
+}
+
+// A JSON object that is a call: name, exactly one of arguments and parameters, and at most an id
+// and a type. A tool definition (description, parameters), a router's {"name", "reason"} or a
+// lookup's {"name", "result"} is some other object, text.
+struct CallKeys {
+    bool name  = false;
+    int args   = 0;
+    bool other = false; // a key no call has: the object is not one
+};
+
+CallKeys call_keys(const std::vector<std::string>& keys) {
+    CallKeys seen;
+    for (const std::string& key : keys) {
+        if (key == "name") {
+            seen.name = true;
+        } else if (key == "arguments" || key == "parameters") {
+            ++seen.args;
+        } else if (key != "id" && key != "type") {
+            seen.other = true;
+        }
+    }
+    return seen;
+}
+
+bool is_bare_call_object(std::string_view object) {
+    const CallKeys keys = call_keys(top_level_keys(object));
+    return !keys.other && keys.name && keys.args == 1;
+}
+
+// A cut-off object that had begun its arguments (the key itself may be cut: "argu", or right after
+// its opening quote) and whose keys so far are a call's: one with another key, or with both
+// argument keys, is text like the complete object.
+bool is_cut_bare_call_object(std::string_view object) {
+    std::optional<std::string> partial;
+    const CallKeys keys = call_keys(top_level_keys(object, &partial));
+    const auto begins = [&](std::string_view key) { return partial && key.starts_with(*partial); };
+    const bool other  = partial && !begins("name") && !begins("arguments") &&
+                       !begins("parameters") && !begins("id") && !begins("type");
+    const bool cut_args = begins("arguments") || begins("parameters");
+    return !keys.other && !other && keys.args <= 1 && (keys.args == 1 || cut_args);
+}
+
+// The end of Gemma 4's bare call, call:NAME{...}: the brace that closes its argument object,
+// strings wrapped in <|"|> held opaque.
+std::optional<std::size_t> bare_call_end(std::string_view body) {
+    constexpr std::string_view kQuote = "<|\"|>";
+    std::size_t depth                 = 0;
+    bool in_string                    = false;
+    for (std::size_t at = 0; at < body.size(); ++at) {
+        if (body.compare(at, kQuote.size(), kQuote) == 0) {
+            in_string = !in_string;
+            at += kQuote.size() - 1;
+        } else if (!in_string && body[at] == '{') {
+            ++depth;
+        } else if (!in_string && body[at] == '}' && depth != 0 && --depth == 0) {
+            return at + 1;
+        }
+    }
+    return std::nullopt;
+}
+
+} // namespace
+
 std::string ToolCallOutputDecoder::feed(std::string_view text) {
     if (finished_) { throw std::logic_error("tool-call output decoder is already finished"); }
     if (text.empty()) { return {}; }
     if (!contract_) { return std::string(text); }
     if (saw_tool_marker_) {
         tool_region_.append(text);
-        return {};
+        return bare_region_ ? settle_bare() : std::string();
     }
 
+    // The held bytes against the syntax's call start, and where the syntax has bare JSON calls
+    // and they are being dropped, against a bare call too (bare_call_start).
+    bool bare        = false;
+    const auto match = [&](std::string_view held) {
+        bare              = false;
+        CallStart matched = syntax_->match_start(held);
+        if (matched == CallStart::No && contract_->discarded && !emitted_text_ &&
+            !syntax_->bare_call_header().empty()) {
+            matched = bare_call_start(held, syntax_->bare_call_header(), *contract_);
+            bare    = matched != CallStart::No;
+        }
+        return matched;
+    };
     std::string visible;
     for (std::size_t index = 0; index < text.size(); ++index) {
         held_.push_back(text[index]);
-        CallStart start = syntax_->match_start(held_);
+        CallStart start = match(held_);
         // Publish the held bytes that can no longer begin the suffix, oldest first.
         while (start == CallStart::No) {
             visible.push_back(held_.front());
             held_.erase(0, 1);
-            start = held_.empty() ? CallStart::Partial : syntax_->match_start(held_);
+            start = held_.empty() ? CallStart::Partial : match(held_);
+        }
+        if (!emitted_text_) {
+            emitted_text_ = std::any_of(visible.begin(), visible.end(), [](char byte) {
+                return std::isspace(static_cast<unsigned char>(byte)) == 0;
+            });
         }
         if (start == CallStart::Complete) {
-            tool_region_ = std::move(held_);
+            // A bare call is read as the call the syntax's opener would have opened.
+            bare_region_ = bare;
+            tool_region_ = bare ? std::string(syntax_->open()) + held_ : std::move(held_);
             held_.clear();
             tool_region_.append(text.substr(index + 1));
             saw_tool_marker_ = true;
+            if (bare_region_) { visible += settle_bare(); }
             break;
         }
     }
+    return visible;
+}
+
+// A bare call region is closed where its object ends: a complete call object becomes the call, the
+// text after it is streamed as usual (a second bare call stays text); an object that is no call
+// is text. While the object is open, nothing is published.
+std::string ToolCallOutputDecoder::settle_bare() {
+    const std::string_view body = std::string_view(tool_region_).substr(syntax_->open().size());
+    const bool json             = syntax_->bare_call_header().front() == "{";
+    if (!json) {
+        // Gemma 4 writes the arguments right after the name: anything else there ("call:x is a
+        // function") was prose.
+        const auto cut = cut_name_after_header(body, syntax_->bare_call_header());
+        if (cut && cut->complete) {
+            const std::size_t name_end =
+                static_cast<std::size_t>(cut->name.data() - body.data()) + cut->name.size();
+            if (body[name_end] != '{') {
+                std::string text(body);
+                saw_tool_marker_ = false;
+                bare_region_     = false;
+                emitted_text_    = true;
+                tool_region_.clear();
+                return text;
+            }
+        }
+    }
+    std::size_t start = 0;
+    skip_format_whitespace(body, start);
+    const std::optional<std::size_t> end = json ? json_value_end(body, start) : bare_call_end(body);
+    if (!end) { return {}; }
+    const std::string object(body.substr(0, *end));
+    std::string rest(body.substr(*end));
+    std::string visible;
+    if (!json || is_bare_call_object(object)) {
+        ParsedToolCallOutput one = syntax_->parse(std::string(syntax_->open()) + object +
+                                                      (json ? "" : std::string(syntax_->close())),
+                                                  max_tool_name_length_, *contract_);
+        if (one.is_tool_call_response) {
+            for (GeneratedToolCall& call : one.tool_calls) {
+                bare_calls_.push_back(std::move(call));
+            }
+        } else {
+            ++bare_dropped_;
+        }
+    } else {
+        visible = object;
+    }
+    saw_tool_marker_ = false;
+    bare_region_     = false;
+    emitted_text_    = true;
+    tool_region_.clear();
+    if (!rest.empty()) { visible += feed(rest); }
     return visible;
 }
 
@@ -1156,6 +1373,50 @@ ToolCallOutputDecoder::finish(bool cut_off, std::optional<std::string_view> stop
     if (finished_) { throw std::logic_error("tool-call output decoder is already finished"); }
     finished_ = true;
     if (!contract_) { return {}; }
+    Terminal terminal = finish_region(cut_off, stop_text);
+    terminal.tool_calls.insert(terminal.tool_calls.begin(),
+                               std::make_move_iterator(bare_calls_.begin()),
+                               std::make_move_iterator(bare_calls_.end()));
+    terminal.diagnostics.cut_calls_dropped += bare_dropped_;
+    if (!bare_calls_.empty()) {
+        terminal.diagnostics.structured_call_count =
+            static_cast<std::uint32_t>(terminal.tool_calls.size());
+    }
+    return terminal;
+}
+
+ToolCallOutputDecoder::Terminal
+ToolCallOutputDecoder::finish_region(bool cut_off, std::optional<std::string_view> stop_text) {
+    if (bare_region_ && saw_tool_marker_) {
+        // The object never closed: the output ended or the limit cut it off. A JSON object that
+        // had begun its arguments, or a Gemma 4 call, was a call and is dropped when cut off;
+        // anything else is text.
+        std::string body = tool_region_.substr(syntax_->open().size());
+        tool_region_.clear();
+        held_.clear();
+        const bool json = syntax_->bare_call_header().front() == "{";
+        const bool call = !json || is_cut_bare_call_object(body);
+        ToolCallParseDiagnostics diagnostics;
+        if (call) {
+            diagnostics.cut_calls_dropped = 1;
+            return Terminal{.content = {}, .tool_calls = {}, .diagnostics = diagnostics};
+        }
+        return Terminal{.content = std::move(body), .tool_calls = {}, .diagnostics = diagnostics};
+    }
+
+    if (!saw_tool_marker_ && contract_->discarded && !emitted_text_ &&
+        !syntax_->bare_call_header().empty()) {
+        // The output ended inside a bare call before the end of its tool's name (the limit, a
+        // stop string, the end of the turn): its markup is not the answer (the held bytes would
+        // otherwise be published).
+        const auto cut = cut_name_after_header(held_, syntax_->bare_call_header());
+        if (cut && !cut->name.empty() && !cut->complete) {
+            held_.clear();
+            ToolCallParseDiagnostics diagnostics;
+            diagnostics.cut_calls_dropped = 1;
+            return Terminal{.content = {}, .tool_calls = {}, .diagnostics = diagnostics};
+        }
+    }
 
     ParsedToolCallOutput parsed =
         tool_call_syntax(contract_->format).parse(tool_region_, max_tool_name_length_, *contract_);
@@ -1549,6 +1810,8 @@ std::string calls_structural_tag(std::span<const ToolCallConstraintTool> tools,
     return OrderedJson{{"type", "structural_tag"}, {"format", std::move(format)}}.dump();
 }
 
+constexpr std::array<std::string_view, 4> kBareJsonHeader = {"{", "\"name\"", ":", "\""};
+
 class QwenXmlSyntax final : public ToolCallSyntax {
 public:
     [[nodiscard]] std::string_view open() const noexcept override { return kToolOpen; }
@@ -1598,6 +1861,10 @@ public:
 class HermesJsonSyntax final : public ToolCallSyntax {
 public:
     [[nodiscard]] std::string_view open() const noexcept override { return kToolOpen; }
+
+    [[nodiscard]] std::span<const std::string_view> bare_call_header() const noexcept override {
+        return kBareJsonHeader;
+    }
 
     [[nodiscard]] std::string_view close() const noexcept override { return kToolClose; }
     [[nodiscard]] std::optional<CutCallName> cut_call_name(std::string_view body) const override {
@@ -1676,6 +1943,11 @@ public:
 
 
     [[nodiscard]] std::string_view open() const noexcept override { return kOpen; }
+
+    [[nodiscard]] std::span<const std::string_view> bare_call_header() const noexcept override {
+        static constexpr std::array<std::string_view, 1> kHeader = {kCall};
+        return kHeader;
+    }
 
     [[nodiscard]] std::string_view close() const noexcept override { return kClose; }
     [[nodiscard]] std::optional<CutCallName> cut_call_name(std::string_view body) const override {

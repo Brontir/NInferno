@@ -28,6 +28,8 @@ struct ResolvedPromptSemantics {
     bool vision = false;
     // --tool-order sorted: the tools render sorted by name, not in the request's order.
     bool sort_tools = false;
+    // --tool-choice-none drop-tools: tool_choice none sends no tool declarations.
+    bool drop_tools_under_none = false;
 };
 
 ResolvedPromptSemantics resolve_prompt_semantics(const GenerationRequest& req,

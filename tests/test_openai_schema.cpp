@@ -631,6 +631,66 @@ int test_tools() {
                           std::vector<std::string>{"order_beta", "order_alpha", "order_beta"},
                       "a duplicate name keeps the request's order under --tool-order sorted");
 
+    // tool_choice none keeps the declarations and ends the last user turn with one fixed line;
+    // --tool-choice-none drop-tools removes the declarations instead; auto adds nothing.
+    {
+        Json none_request                   = base_request();
+        none_request["tools"]               = Json::array({function_tool()});
+        none_request["tool_choice"]         = "none";
+        const OpenAIChatRequest none_parsed = parse(none_request);
+        const auto last_text                = [](const ninferno::PromptInput& input) {
+            return input.messages.empty() || input.messages.back().parts.empty()
+                                      ? std::string()
+                                      : input.messages.back().parts.back().text;
+        };
+        const std::string kLine = "Tools are unavailable for this reply; answer in plain text.";
+        ServeOptions steer;
+        const auto steered = to_prompt_input(
+            none_parsed.generation, resolve_prompt_semantics(none_parsed.generation, steer), {});
+        failures +=
+            check(steered.options.tool_jsons.size() == 1 && steered.options.tool_calls_discarded &&
+                      last_text(steered) == "\n\n" + kLine,
+                  "tool_choice none did not keep the tools and steer the last user turn");
+        ServeOptions drop;
+        drop.drop_tools_under_none = true;
+        const auto dropped         = to_prompt_input(
+            none_parsed.generation, resolve_prompt_semantics(none_parsed.generation, drop), {});
+        failures +=
+            check(dropped.options.tool_jsons.empty() && dropped.options.tool_calls_discarded &&
+                      dropped.options.refused_tool_jsons.size() == 1 &&
+                      last_text(dropped).find("Tools are unavailable") == std::string::npos,
+                  "--tool-choice-none drop-tools kept the tools or the steering line");
+        failures += check(last_text(prompt(automatic.generation)).find("Tools are unavailable") ==
+                              std::string::npos,
+                          "an auto request got the steering line");
+        // A tool result as the last message gets the line at the end of its content, not a new
+        // user turn after it.
+        Json after_tool           = base_request();
+        after_tool["tools"]       = Json::array({function_tool()});
+        after_tool["tool_choice"] = "none";
+        after_tool["messages"]    = Json::array(
+            {Json{{"role", "user"}, {"content", "list"}},
+                Json{{"role", "assistant"},
+                     {"content", nullptr},
+                     {"tool_calls", Json::array({Json{{"id", "call_1"},
+                                                      {"type", "function"},
+                                                      {"function", Json{{"name", "get_weather"},
+                                                                        {"arguments", "{}"}}}}})}},
+                Json{{"role", "tool"}, {"tool_call_id", "call_1"}, {"content", "sunny"}}});
+        const auto after_tool_input =
+            to_prompt_input(parse(after_tool).generation,
+                            resolve_prompt_semantics(parse(after_tool).generation, steer), {});
+        failures += check(after_tool_input.messages.size() == 3 &&
+                              after_tool_input.messages.back().role == ninferno::ChatRole::Tool &&
+                              last_text(after_tool_input) == "\n\n" + kLine,
+                          "the steering line after a tool result is not at the end of its content");
+        Json no_tools           = base_request();
+        no_tools["tool_choice"] = "none";
+        failures += check(last_text(prompt(parse(no_tools).generation)).find("unavailable") ==
+                              std::string::npos,
+                          "tool_choice none without tools got the steering line");
+    }
+
     body["tools"][0]["future_item_field"]                 = "ignored";
     body["tools"][0]["function"]["future_function_field"] = "ignored";
     const std::string normalized_definition = prompt(parse(body).generation).options.tool_jsons[0];

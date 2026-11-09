@@ -639,6 +639,38 @@ std::vector<std::size_t> prefix_failure_table(std::string_view pattern) {
     return failure;
 }
 
+// The token a marker is spelled with: the marker as exactly one token (Qwen's <think> and
+// <tool_call> are added tokens that are not marked special), or (head_ok) a special token followed
+// only by plain text (Gemma 4's <|channel> + "thought"). Nothing for a marker that is plain text,
+// or has a further special token in it.
+std::optional<TokenId> marker_token(const text::TokenCodec& tokenizer, const std::string& marker,
+                                    bool head_ok) {
+    const std::vector<int> ids = tokenizer.encode(marker);
+    if (ids.size() == 1U) {
+        const std::optional<int> id = tokenizer.token_id(marker);
+        return id && *id == ids.front() ? std::optional<TokenId>(static_cast<TokenId>(*id))
+                                        : std::nullopt;
+    }
+    if (!head_ok || ids.empty() || !tokenizer.is_special_token(ids.front())) {
+        return std::nullopt;
+    }
+    for (std::size_t index = 1; index < ids.size(); ++index) {
+        if (tokenizer.is_special_token(ids[index])) { return std::nullopt; }
+    }
+    return static_cast<TokenId>(ids.front());
+}
+
+std::vector<TokenId> marker_tokens(const text::TokenCodec& tokenizer,
+                                   const std::vector<std::string>& markers, bool head_ok) {
+    std::vector<TokenId> tokens;
+    for (const std::string& marker : markers) {
+        if (const std::optional<TokenId> token = marker_token(tokenizer, marker, head_ok)) {
+            tokens.push_back(*token);
+        }
+    }
+    return tokens;
+}
+
 std::shared_ptr<const OutputConventions> output_conventions(const chat::ChatConventions& chat,
                                                             const text::TokenCodec& tokenizer) {
     auto result = std::make_shared<OutputConventions>();
@@ -662,6 +694,15 @@ std::shared_ptr<const OutputConventions> output_conventions(const chat::ChatConv
     result->structural_tokens.erase(
         std::unique(result->structural_tokens.begin(), result->structural_tokens.end()),
         result->structural_tokens.end());
+    result->call_tokens      = marker_tokens(tokenizer, chat.non_answer_markers(), false);
+    result->reasoning_tokens = marker_tokens(tokenizer, chat.reasoning_markers(), true);
+    if (!chat.reasoning_markers().empty()) {
+        result->reasoning_close_token = marker_token(tokenizer, chat.reasoning->close, false);
+    }
+    for (std::vector<TokenId>* tokens : {&result->call_tokens, &result->reasoning_tokens}) {
+        std::sort(tokens->begin(), tokens->end());
+        tokens->erase(std::unique(tokens->begin(), tokens->end()), tokens->end());
+    }
     return result;
 }
 
@@ -1082,10 +1123,17 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
             "this model's chat template declares no tool-call syntax, so it cannot take tools; "
             "serve it with a chat template that does (--chat-template)");
     }
+    const std::vector<std::string>& contract_tools =
+        options.tool_jsons.empty() && options.tool_calls_discarded ? options.refused_tool_jsons
+                                                                   : options.tool_jsons;
+    // tool_choice none under an output constraint (cut_bare_calls off): the constraint owns the
+    // output, a call it permits included, so no contract reads one out of the text.
     const auto tool_call_output = chat::build_tool_call_output_contract(
-        options.tool_jsons,
-        (options.tool_calls_enabled || options.tool_calls_discarded) && !options.tool_jsons.empty(),
-        impl_->chat_template.conventions().tools.format, options.tool_calls_forced);
+        contract_tools,
+        (options.tool_calls_enabled || (options.tool_calls_discarded && options.cut_bare_calls)) &&
+            !contract_tools.empty(),
+        impl_->chat_template.conventions().tools.format,
+        options.tool_calls_discarded && options.cut_bare_calls, options.tool_calls_forced);
     const std::optional<std::uint32_t> leading_boundary =
         leading_instruction_boundary(message_roles);
     std::vector<PromptCacheMarker> rendered_markers = cache_hints.markers;
@@ -1115,22 +1163,6 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
     auto prepared              = std::make_unique<PreparedPromptData>();
     PreparedPromptData& result = *prepared;
     result.tool_call_output    = tool_call_output;
-    if (options.tool_calls_discarded && !options.tool_jsons.empty()) {
-        // tool_choice none: the prompt keeps the declarations (the cached prefix is the auto
-        // request's), and the model is kept from opening a call, so it answers in text. Only an
-        // opener that is one token can be banned; the other syntaxes keep the cut alone.
-        // Its closer goes too: kept from opening, a model may still write the close as text.
-        const auto& tools = impl_->chat_template.conventions().tools;
-        if (!tools.opener.empty()) {
-            for (const std::string* marker : {&tools.opener, &tools.closer}) {
-                if (marker->empty()) continue;
-                if (const std::optional<int> id = impl_->tokenizer->token_id(*marker);
-                    id && impl_->tokenizer->encode(*marker) == std::vector<int>{*id}) {
-                    result.banned_tokens.push_back(*id);
-                }
-            }
-        }
-    }
     std::vector<std::optional<std::uint32_t>> message_boundaries;
     std::vector<std::optional<std::uint32_t>> cache_boundaries;
     if (has_media) {
@@ -1202,6 +1234,22 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
         assign_text_positions(result);
     }
     (void)checked_token_count(result.token_ids.size());
+    // Under an output constraint (cut_bare_calls off) the constraint owns the output, a marker it
+    // writes included: a ban could leave it no token, the structural end would cut its text.
+    if (options.tool_calls_discarded && !contract_tools.empty() && options.cut_bare_calls) {
+        // tool_choice none: the prompt keeps the declarations (the cached prefix is the auto
+        // request's), and the model is kept from the markup of a call turn, so it answers in
+        // text. The call opener and closer go, and the tool-result opener and closer: kept from
+        // opening a call, a model writes the next structural token it knows (Gemma 4's
+        // <|tool_response>). The reasoning markers cannot be banned: a model that may reason
+        // needs them, and one that may not (thinking declined) uses them as the clean way out
+        // (Gemma 4 writes an empty thought, Qwen3 a stray close) where banned they leave
+        // junk filler that looks like an answer (measured, #516). The output ends at one of them
+        // outside reasoning instead (OutputStart::answer_only). Only a marker that is one token
+        // can be banned; the other syntaxes keep the cut alone.
+        result.answer_only   = true;
+        result.banned_tokens = impl_->output->call_tokens;
+    }
     result.identity.reusable = true;
     result.context_cache     = prepare_context_cache(
         std::move(cache_hints), message_count, message_parts, message_boundaries, rendered_markers,
@@ -1338,7 +1386,8 @@ OutputSession Frontend::make_output_session(const PreparedPrompt& prompt,
     return OutputSession(impl_->tokenizer, std::move(policy), output,
                          OutputStart{.in_reasoning           = prompt.data_->starts_in_reasoning,
                                      .reasoning_open_allowed = prompt.data_->reasoning_open_allowed,
-                                     .quoted_close_is_text   = quoted_reasoning_close_is_text},
+                                     .quoted_close_is_text   = quoted_reasoning_close_is_text,
+                                     .answer_only            = prompt.data_->answer_only},
                          thinking, impl_->thinking_control_tokens, prompt.data_->tool_call_output,
                          impl_->output);
 }
