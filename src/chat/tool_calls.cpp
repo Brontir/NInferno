@@ -1320,10 +1320,6 @@ std::string ToolCallOutputDecoder::settle_bare() {
 
 namespace {
 
-// Whether a stop string that ended a call region swallowed (the start of) `closer`: its text, past
-// leading whitespace, shares at least three bytes ("</f") with the closer's start. A shorter or
-// different stop ("<parameter", "\n<") also matches between a call's parts, where closing would
-// publish a call with parameters missing.
 // Whether `text` (a stop's bytes past the markup it swallowed) begins a call: it starts with the
 // syntax's call start, or is all a prefix of one. The held-bytes matcher answers for exactly the
 // bytes it is given, so it is asked for each prefix.
@@ -1336,6 +1332,10 @@ bool begins_call(const ToolCallSyntax& syntax, std::string_view text) {
     return !text.empty();
 }
 
+// Whether a stop string that ended a call region swallowed (the start of) `closer`: its text, past
+// leading whitespace, shares at least three bytes ("</f") with the closer's start. A shorter or
+// different stop ("<parameter", "\n<") also matches between a call's parts, where closing would
+// publish a call with parameters missing.
 bool stop_swallows(std::string_view stop, std::string_view closer) {
     while (!stop.empty() && is_format_whitespace(stop.front())) { stop.remove_prefix(1); }
     const std::size_t shared = std::min(stop.size(), closer.size());
@@ -1385,251 +1385,260 @@ ToolCallOutputDecoder::finish(bool cut_off, std::optional<std::string_view> stop
     return terminal;
 }
 
+// The terminal stages of a region, tried in order (finish_region); each answers for the output it
+// recognizes and leaves the rest to the next.
+
 ToolCallOutputDecoder::Terminal
 ToolCallOutputDecoder::finish_region(bool cut_off, std::optional<std::string_view> stop_text) {
-    if (bare_region_ && saw_tool_marker_) {
-        // The object never closed: the output ended or the limit cut it off. A JSON object that
-        // had begun its arguments, or a Gemma 4 call, was a call and is dropped when cut off;
-        // anything else is text.
-        std::string body = tool_region_.substr(syntax_->open().size());
-        tool_region_.clear();
-        held_.clear();
-        const bool json = syntax_->bare_call_header().front() == "{";
-        const bool call = !json || is_cut_bare_call_object(body);
-        ToolCallParseDiagnostics diagnostics;
-        if (call) {
-            diagnostics.cut_calls_dropped = 1;
-            return Terminal{.content = {}, .tool_calls = {}, .diagnostics = diagnostics};
-        }
-        return Terminal{.content = std::move(body), .tool_calls = {}, .diagnostics = diagnostics};
-    }
-
-    if (!saw_tool_marker_ && contract_->discarded && !emitted_text_ &&
-        !syntax_->bare_call_header().empty()) {
-        // The output ended inside a bare call before the end of its tool's name (the limit, a
-        // stop string, the end of the turn): its markup is not the answer (the held bytes would
-        // otherwise be published).
-        const auto cut = cut_name_after_header(held_, syntax_->bare_call_header());
-        if (cut && !cut->name.empty() && !cut->complete) {
-            held_.clear();
-            ToolCallParseDiagnostics diagnostics;
-            diagnostics.cut_calls_dropped = 1;
-            return Terminal{.content = {}, .tool_calls = {}, .diagnostics = diagnostics};
-        }
-    }
-
-    ParsedToolCallOutput parsed =
-        tool_call_syntax(contract_->format).parse(tool_region_, max_tool_name_length_, *contract_);
-    // A caller's stop string that ended the last call before its close marker: a parser that closes
-    // a complete body at the end of the output (Hermes, Gemma) is taken at its word only where the
-    // stop swallowed that marker; a shorter stop ("\n<", "<t") also matches between a call's parts.
-    // A stop text comes only with a forced call, whose grammar writes nothing but calls: the last
-    // call is closed exactly when the region ends with its marker (a marker quoted inside its
-    // arguments is no close).
-    const ToolCallSyntax::LastCall last_open = syntax_->last_call(tool_region_);
-    const bool stopped_unclosed =
-        stop_text && last_open.start != std::string::npos && !last_open.close.empty() &&
-        !rtrim_format_whitespace(tool_region_).ends_with(last_open.close) &&
-        !stop_swallows(*stop_text, last_open.close);
-    // A stop that, past the closing markup it swallowed, began another call
-    // ("</tool_call>\n<tool_call>"): the model was writing one more call when the stop matched.
-    // The calls closed before it are kept, and that one is counted as cut, so the turn does not
-    // read as a complete call set.
-    const auto next_call_cut = [&](std::initializer_list<std::string_view> swallowed) {
-        if (!stop_text) { return std::uint32_t{0}; }
-        std::string_view rest = *stop_text;
-        const auto skip_space = [&] {
-            while (!rest.empty() && is_format_whitespace(rest.front())) { rest.remove_prefix(1); }
-        };
-        std::string_view unreached; // the first closer the stop did not swallow
-        for (const std::string_view closer : swallowed) {
-            skip_space();
-            if (unreached.empty() && stop_swallows(rest, closer)) {
-                rest.remove_prefix(std::min(rest.size(), closer.size()));
-            } else if (unreached.empty()) {
-                unreached = closer;
-            }
-        }
-        skip_space();
-        // What is left may still be the start of that closer ("<" of </tool_call> after
-        // </function>): no call begun.
-        if (!rest.empty() && !unreached.empty() && unreached.starts_with(rest)) {
-            return std::uint32_t{0};
-        }
-        return std::uint32_t{begins_call(*syntax_, rest)};
+    if (auto terminal = finish_bare_region()) { return std::move(*terminal); }
+    if (auto terminal = finish_bare_name_cut()) { return std::move(*terminal); }
+    RegionParse region{
+        .parsed = tool_call_syntax(contract_->format)
+                      .parse(tool_region_, max_tool_name_length_, *contract_),
+        .last_open = syntax_->last_call(tool_region_),
+        .stop_text = stop_text,
+        .cut_off   = cut_off,
     };
-    if (saw_tool_marker_ && parsed.is_tool_call_response && !stopped_unclosed) {
-        // The region closed its last call already: nothing for the stop to swallow.
-        const bool closed = last_open.close.empty() ||
-                            rtrim_format_whitespace(tool_region_).ends_with(last_open.close);
-        held_.clear();
-        tool_region_.clear();
-        parsed.diagnostics.cut_calls_dropped +=
-            closed ? next_call_cut({}) : next_call_cut({last_open.close});
-        // The prose before a recovered later marker, and text after complete calls.
-        return Terminal{.content     = std::move(parsed.content),
-                        .tool_calls  = std::move(parsed.tool_calls),
-                        .diagnostics = parsed.diagnostics};
-    }
-    // Qwen XML: the stop token ended the turn after the last call's closed parameter, before its
-    // </function> (vLLM closes such a call at the end of the stream too). The call is closed; one
-    // the output limit cut off is not, since more of its parameters may have followed.
-    // A stop string can end the call the same way when it matches in the closing markup alone.
-    if ((!cut_off || (stop_text && stop_swallows(*stop_text, kFunctionClose))) &&
-        saw_tool_marker_ && contract_->format == ToolCallFormat::QwenXml) {
-        std::string closed = rtrim_format_whitespace(tool_region_);
-        if (closed.ends_with(kParamClose)) {
-            closed.append("\n").append(kFunctionClose);
-            if (closed.find(kToolOpen) != std::string::npos) {
-                closed.append("\n").append(kToolClose);
-            }
-            ParsedToolCallOutput completed =
-                syntax_->parse(closed, max_tool_name_length_, *contract_);
-            if (completed.is_tool_call_response && !completed.tool_calls.empty()) {
-                held_.clear();
-                tool_region_.clear();
-                completed.diagnostics.closed_calls = 1;
-                completed.diagnostics.cut_calls_dropped +=
-                    next_call_cut({kFunctionClose, kToolClose});
-                return Terminal{.content     = std::move(completed.content),
-                                .tool_calls  = std::move(completed.tool_calls),
-                                .diagnostics = completed.diagnostics};
-            }
-        }
-    }
-    // A forced call's stop string that swallowed only the markup closing a call whose body is
-    // complete: the call is closed and kept (Qwen's </tool_call> after its </function>, every
-    // other syntax's own close marker).
-    if (stop_text && saw_tool_marker_) {
-        std::string closed = rtrim_format_whitespace(tool_region_);
-        bool closes        = false;
-        if (contract_->format == ToolCallFormat::QwenXml) {
-            if (closed.ends_with(kFunctionClose) && stop_swallows(*stop_text, kToolClose) &&
-                closed.find(kToolOpen) != std::string::npos) {
-                closed.append("\n").append(kToolClose);
-                closes = true;
-            }
-        } else if (!syntax_->close().empty() && stop_swallows(*stop_text, syntax_->close()) &&
-                   !closed.ends_with(syntax_->close())) {
-            closed.append(syntax_->close());
-            closes = true;
-        }
-        if (closes) {
-            ParsedToolCallOutput completed =
-                syntax_->parse(closed, max_tool_name_length_, *contract_);
-            if (completed.is_tool_call_response && !completed.tool_calls.empty()) {
-                held_.clear();
-                tool_region_.clear();
-                completed.diagnostics.closed_calls = 1;
-                // Past the closer it swallowed, the stop may have begun the next call.
-                completed.diagnostics.cut_calls_dropped += next_call_cut(
-                    {contract_->format == ToolCallFormat::QwenXml ? kToolClose : syntax_->close()});
-                return Terminal{.content     = std::move(completed.content),
-                                .tool_calls  = std::move(completed.tool_calls),
-                                .diagnostics = completed.diagnostics};
-            }
-        }
-    }
-    // The output limit cut the last call off (its open marker has no close marker after it): the
-    // calls before that marker were complete and are the turn's calls (as an all-or-nothing parse,
-    // every one of them was lost as text). The unfinished call cannot run; its markup is dropped
-    // and counted. A region that fails for any other reason (a malformed call, a call after
-    // prose that follows complete calls), or does not parse up to that marker, stays text.
-    const std::string_view close = syntax_->close();
-    if (cut_off && saw_tool_marker_ && !close.empty()) {
-        const ToolCallSyntax::LastCall last_call =
-            stop_text ? stopped_last_call() : syntax_->last_call(tool_region_);
-        const std::size_t last = last_call.start;
-        // Whether the last call has no close marker: after a forced call's stop the region is calls
-        // only, so it is closed exactly when it ends with the marker (one quoted in its arguments
-        // is none); otherwise no marker follows its open one.
-        const bool last_open_unclosed =
-            last != std::string::npos &&
-            (stop_text ? !rtrim_format_whitespace(tool_region_).ends_with(last_call.close)
-                       : tool_region_.find(last_call.close, last) == std::string::npos);
-        // The only call of the region was cut off (nothing but format whitespace before its open
-        // marker): no call is complete, and its markup is not the answer either (a forced call
-        // must not reach the client as text). The answer is empty, with the finish reason length.
-        // Only a call that began is dropped: after the marker, the body writes the syntax's call
-        // header and, at its name position, a declared tool's name or (cut there) a prefix of
-        // one. Prose that quotes the marker ("the `<tool_call>` tag") opens a region too, and
-        // stays text. A region without the open marker is a bare call (Qwen's <function=NAME>
-        // block, which opens a region on its own): its body is the whole region.
-        const auto began_call = [&]() {
-            if (last_call.body == std::string::npos) { return false; }
-            const std::string_view body = std::string_view(tool_region_).substr(last_call.body);
-            const auto cut              = syntax_->cut_call_name(body);
-            if (!cut) { return false; }
-            if (cut->name.empty()) { return !cut->complete; }
-            return std::any_of(contract_->tools.begin(), contract_->tools.end(),
-                               [&](const ToolCallOutputContract::Tool& tool) {
-                                   const std::string_view name = tool.name;
-                                   return cut->complete ? name == cut->name
-                                                        : name.starts_with(cut->name);
-                               });
-        };
-        if (last_open_unclosed &&
-            std::all_of(tool_region_.begin(),
-                        tool_region_.begin() + static_cast<std::ptrdiff_t>(last),
-                        [](char byte) { return is_format_whitespace(byte); }) &&
-            began_call()) {
-            held_.clear();
-            tool_region_.clear();
-            ToolCallParseDiagnostics diagnostics = parsed.diagnostics;
-            diagnostics.fallback_reason          = ToolCallParseFallbackReason::None;
-            diagnostics.cut_calls_dropped        = 1;
-            return Terminal{.content = {}, .tool_calls = {}, .diagnostics = diagnostics};
-        }
-        if (last_open_unclosed && last != 0) {
-            ParsedToolCallOutput complete =
-                syntax_->parse(tool_region_.substr(0, last), max_tool_name_length_, *contract_);
-            if (complete.is_tool_call_response && !complete.tool_calls.empty()) {
-                held_.clear();
-                tool_region_.clear();
-                complete.diagnostics.cut_calls_dropped = 1;
-                return Terminal{.content     = std::move(complete.content),
-                                .tool_calls  = std::move(complete.tool_calls),
-                                .diagnostics = complete.diagnostics};
-            }
-        }
-    }
-
-    // A forced call's stop string left a region that is no complete call (a syntax without a close
-    // marker, or a region the cut above could not place): its markup is not the answer, so it is
-    // dropped and counted, never returned as text.
-    if (stop_text && saw_tool_marker_) {
-        held_.clear();
-        tool_region_.clear();
-        ToolCallParseDiagnostics diagnostics = parsed.diagnostics;
-        diagnostics.fallback_reason          = ToolCallParseFallbackReason::None;
-        diagnostics.cut_calls_dropped        = 1;
-        return Terminal{.content = {}, .tool_calls = {}, .diagnostics = diagnostics};
-    }
-
-    // A forced call's stop that matched inside the call's open marker ("_call>" in "<tool_call>"):
-    // what is held is the start of that marker (feed holds text only while it may begin a call),
-    // the start of a call, never the answer. A stop that was the whole opener at the output's
-    // start ("<tool_call>" itself) leaves nothing held, and cut a call all the same (a forced
-    // call's grammar writes nothing but calls, so no answer text came before it).
-    const auto stop_opened_call = [&] {
-        std::string_view stop = *stop_text;
-        while (!stop.empty() && is_format_whitespace(stop.front())) { stop.remove_prefix(1); }
-        return begins_call(*syntax_, stop);
-    };
-    if (stop_text && !saw_tool_marker_ && (!held_.empty() || stop_opened_call())) {
-        held_.clear();
-        tool_region_.clear();
-        ToolCallParseDiagnostics diagnostics = parsed.diagnostics;
-        diagnostics.fallback_reason          = ToolCallParseFallbackReason::None;
-        diagnostics.cut_calls_dropped        = 1;
-        return Terminal{.content = {}, .tool_calls = {}, .diagnostics = diagnostics};
-    }
+    if (auto terminal = finish_parsed_calls(region)) { return std::move(*terminal); }
+    if (auto terminal = finish_qwen_after_parameter(region)) { return std::move(*terminal); }
+    if (auto terminal = finish_stop_swallowed_close(region)) { return std::move(*terminal); }
+    if (auto terminal = finish_cut_last_call(region)) { return std::move(*terminal); }
+    if (auto terminal = finish_forced_stop(region)) { return std::move(*terminal); }
+    // Nothing recognized a call: what is held and the region are text.
     std::string tail = std::move(held_);
     held_.clear();
     tail += tool_region_;
     tool_region_.clear();
     return Terminal{
-        .content = std::move(tail), .tool_calls = {}, .diagnostics = parsed.diagnostics};
+        .content = std::move(tail), .tool_calls = {}, .diagnostics = region.parsed.diagnostics};
+}
+
+ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::take_calls(ParsedToolCallOutput parsed) {
+    held_.clear();
+    tool_region_.clear();
+    return Terminal{.content     = std::move(parsed.content),
+                    .tool_calls  = std::move(parsed.tool_calls),
+                    .diagnostics = parsed.diagnostics};
+}
+
+ToolCallOutputDecoder::Terminal
+ToolCallOutputDecoder::drop_cut_call(ToolCallParseDiagnostics diagnostics) {
+    held_.clear();
+    tool_region_.clear();
+    diagnostics.fallback_reason   = ToolCallParseFallbackReason::None;
+    diagnostics.cut_calls_dropped = 1;
+    return Terminal{.content = {}, .tool_calls = {}, .diagnostics = diagnostics};
+}
+
+// A stop that, past the closing markup it swallowed (`swallowed`, in order), began another call
+// ("</tool_call>\n<tool_call>"): the model was writing one more call when the stop matched. The
+// calls closed before it are kept, and that one is counted as cut, so the turn does not read as a
+// complete call set.
+std::uint32_t
+ToolCallOutputDecoder::next_call_cut(std::optional<std::string_view> stop_text,
+                                     std::initializer_list<std::string_view> swallowed) const {
+    if (!stop_text) { return 0; }
+    std::string_view rest = *stop_text;
+    const auto skip_space = [&] {
+        while (!rest.empty() && is_format_whitespace(rest.front())) { rest.remove_prefix(1); }
+    };
+    std::string_view unreached; // the first closer the stop did not swallow
+    for (const std::string_view closer : swallowed) {
+        skip_space();
+        if (unreached.empty() && stop_swallows(rest, closer)) {
+            rest.remove_prefix(std::min(rest.size(), closer.size()));
+        } else if (unreached.empty()) {
+            unreached = closer;
+        }
+    }
+    skip_space();
+    // What is left may still be the start of that closer ("<" of </tool_call> after </function>):
+    // no call begun.
+    if (!rest.empty() && !unreached.empty() && unreached.starts_with(rest)) { return 0; }
+    return begins_call(*syntax_, rest) ? 1 : 0;
+}
+
+// A bare call's region (tool_choice none) whose object never closed: the output ended or the
+// limit cut it off. A JSON object that had begun its arguments, or a Gemma 4 call, was a call and
+// is dropped; anything else is text.
+std::optional<ToolCallOutputDecoder::Terminal> ToolCallOutputDecoder::finish_bare_region() {
+    if (!bare_region_ || !saw_tool_marker_) { return std::nullopt; }
+    std::string body = tool_region_.substr(syntax_->open().size());
+    tool_region_.clear();
+    held_.clear();
+    const bool json = syntax_->bare_call_header().front() == "{";
+    const bool call = !json || is_cut_bare_call_object(body);
+    ToolCallParseDiagnostics diagnostics;
+    if (call) {
+        diagnostics.cut_calls_dropped = 1;
+        return Terminal{.content = {}, .tool_calls = {}, .diagnostics = diagnostics};
+    }
+    return Terminal{.content = std::move(body), .tool_calls = {}, .diagnostics = diagnostics};
+}
+
+// The output ended inside a bare call before the end of its tool's name (the limit, a stop
+// string, the end of the turn): its markup is not the answer (the held bytes would otherwise be
+// published).
+std::optional<ToolCallOutputDecoder::Terminal> ToolCallOutputDecoder::finish_bare_name_cut() {
+    if (saw_tool_marker_ || !contract_->discarded || emitted_text_ ||
+        syntax_->bare_call_header().empty()) {
+        return std::nullopt;
+    }
+    const auto cut = cut_name_after_header(held_, syntax_->bare_call_header());
+    if (!cut || cut->name.empty() || cut->complete) { return std::nullopt; }
+    held_.clear();
+    ToolCallParseDiagnostics diagnostics;
+    diagnostics.cut_calls_dropped = 1;
+    return Terminal{.content = {}, .tool_calls = {}, .diagnostics = diagnostics};
+}
+
+// The region parses as calls. A caller's stop string that ended the last call before its close
+// marker is the exception: a parser that closes a complete body at the end of the output (Hermes,
+// Gemma) is taken at its word only where the stop swallowed that marker; a shorter stop ("\n<",
+// "<t") also matches between a call's parts. A stop text comes only with a forced call, whose
+// grammar writes nothing but calls: the last call is closed exactly when the region ends with its
+// marker (a marker quoted inside its arguments is no close).
+std::optional<ToolCallOutputDecoder::Terminal>
+ToolCallOutputDecoder::finish_parsed_calls(RegionParse& region) {
+    const ToolCallSyntax::LastCall& last = region.last_open;
+    const bool ends_closed      = rtrim_format_whitespace(tool_region_).ends_with(last.close);
+    const bool stopped_unclosed = region.stop_text && last.start != std::string::npos &&
+                                  !last.close.empty() && !ends_closed &&
+                                  !stop_swallows(*region.stop_text, last.close);
+    if (!saw_tool_marker_ || !region.parsed.is_tool_call_response || stopped_unclosed) {
+        return std::nullopt;
+    }
+    // The region closed its last call already: nothing for the stop to swallow.
+    const bool closed = last.close.empty() || ends_closed;
+    region.parsed.diagnostics.cut_calls_dropped +=
+        closed ? next_call_cut(region.stop_text, {})
+               : next_call_cut(region.stop_text, {last.close});
+    // The prose before a recovered later marker, and text after complete calls.
+    return take_calls(std::move(region.parsed));
+}
+
+// Qwen XML: the stop token ended the turn after the last call's closed parameter, before its
+// </function> (vLLM closes such a call at the end of the stream too). The call is closed; one the
+// output limit cut off is not, since more of its parameters may have followed. A stop string can
+// end the call the same way when it matches in the closing markup alone.
+std::optional<ToolCallOutputDecoder::Terminal>
+ToolCallOutputDecoder::finish_qwen_after_parameter(RegionParse& region) {
+    const bool stop_closes = region.stop_text && stop_swallows(*region.stop_text, kFunctionClose);
+    if ((region.cut_off && !stop_closes) || !saw_tool_marker_ ||
+        contract_->format != ToolCallFormat::QwenXml) {
+        return std::nullopt;
+    }
+    std::string closed = rtrim_format_whitespace(tool_region_);
+    if (!closed.ends_with(kParamClose)) { return std::nullopt; }
+    closed.append("\n").append(kFunctionClose);
+    if (closed.find(kToolOpen) != std::string::npos) { closed.append("\n").append(kToolClose); }
+    ParsedToolCallOutput completed = syntax_->parse(closed, max_tool_name_length_, *contract_);
+    if (!completed.is_tool_call_response || completed.tool_calls.empty()) { return std::nullopt; }
+    completed.diagnostics.closed_calls = 1;
+    completed.diagnostics.cut_calls_dropped +=
+        next_call_cut(region.stop_text, {kFunctionClose, kToolClose});
+    return take_calls(std::move(completed));
+}
+
+// A forced call's stop string that swallowed only the markup closing a call whose body is
+// complete: the call is closed and kept (Qwen's </tool_call> after its </function>, every other
+// syntax's own close marker).
+std::optional<ToolCallOutputDecoder::Terminal>
+ToolCallOutputDecoder::finish_stop_swallowed_close(RegionParse& region) {
+    if (!region.stop_text || !saw_tool_marker_) { return std::nullopt; }
+    std::string closed = rtrim_format_whitespace(tool_region_);
+    bool closes        = false;
+    if (contract_->format == ToolCallFormat::QwenXml) {
+        if (closed.ends_with(kFunctionClose) && stop_swallows(*region.stop_text, kToolClose) &&
+            closed.find(kToolOpen) != std::string::npos) {
+            closed.append("\n").append(kToolClose);
+            closes = true;
+        }
+    } else if (!syntax_->close().empty() && stop_swallows(*region.stop_text, syntax_->close()) &&
+               !closed.ends_with(syntax_->close())) {
+        closed.append(syntax_->close());
+        closes = true;
+    }
+    if (!closes) { return std::nullopt; }
+    ParsedToolCallOutput completed = syntax_->parse(closed, max_tool_name_length_, *contract_);
+    if (!completed.is_tool_call_response || completed.tool_calls.empty()) { return std::nullopt; }
+    completed.diagnostics.closed_calls = 1;
+    // Past the closer it swallowed, the stop may have begun the next call.
+    completed.diagnostics.cut_calls_dropped += next_call_cut(
+        region.stop_text,
+        {contract_->format == ToolCallFormat::QwenXml ? kToolClose : syntax_->close()});
+    return take_calls(std::move(completed));
+}
+
+// The output limit cut the last call off (its open marker has no close marker after it): the calls
+// before that marker were complete and are the turn's calls (as an all-or-nothing parse, every one
+// of them was lost as text). The unfinished call cannot run; its markup is dropped and counted. A
+// region that fails for any other reason (a malformed call, a call after prose that follows
+// complete calls), or does not parse up to that marker, stays text.
+std::optional<ToolCallOutputDecoder::Terminal>
+ToolCallOutputDecoder::finish_cut_last_call(RegionParse& region) {
+    const std::string_view close = syntax_->close();
+    if (!region.cut_off || !saw_tool_marker_ || close.empty()) { return std::nullopt; }
+    const ToolCallSyntax::LastCall last_call =
+        region.stop_text ? stopped_last_call() : syntax_->last_call(tool_region_);
+    const std::size_t last = last_call.start;
+    // Whether the last call has no close marker: after a forced call's stop the region is calls
+    // only, so it is closed exactly when it ends with the marker (one quoted in its arguments is
+    // none); otherwise no marker follows its open one.
+    const bool last_open_unclosed =
+        last != std::string::npos &&
+        (region.stop_text ? !rtrim_format_whitespace(tool_region_).ends_with(last_call.close)
+                          : tool_region_.find(last_call.close, last) == std::string::npos);
+    if (!last_open_unclosed) { return std::nullopt; }
+    // The only call of the region was cut off (nothing but format whitespace before its open
+    // marker): no call is complete, and its markup is not the answer either (a forced call must
+    // not reach the client as text). The answer is empty, with the finish reason length. Only a
+    // call that began is dropped: after the marker, the body writes the syntax's call header and,
+    // at its name position, a declared tool's name or (cut there) a prefix of one. Prose that
+    // quotes the marker ("the `<tool_call>` tag") opens a region too, and stays text. A region
+    // without the open marker is a bare call (Qwen's <function=NAME> block, which opens a region
+    // on its own): its body is the whole region.
+    const auto began_call = [&]() {
+        if (last_call.body == std::string::npos) { return false; }
+        const std::string_view body = std::string_view(tool_region_).substr(last_call.body);
+        const auto cut              = syntax_->cut_call_name(body);
+        if (!cut) { return false; }
+        if (cut->name.empty()) { return !cut->complete; }
+        return std::any_of(contract_->tools.begin(), contract_->tools.end(),
+                           [&](const ToolCallOutputContract::Tool& tool) {
+                               const std::string_view name = tool.name;
+                               return cut->complete ? name == cut->name
+                                                    : name.starts_with(cut->name);
+                           });
+    };
+    if (std::all_of(tool_region_.begin(), tool_region_.begin() + static_cast<std::ptrdiff_t>(last),
+                    [](char byte) { return is_format_whitespace(byte); }) &&
+        began_call()) {
+        return drop_cut_call(region.parsed.diagnostics);
+    }
+    if (last == 0) { return std::nullopt; }
+    ParsedToolCallOutput complete =
+        syntax_->parse(tool_region_.substr(0, last), max_tool_name_length_, *contract_);
+    if (!complete.is_tool_call_response || complete.tool_calls.empty()) { return std::nullopt; }
+    complete.diagnostics.cut_calls_dropped = 1;
+    return take_calls(std::move(complete));
+}
+
+// What is left of a forced call's stop is not the answer. A region that is no complete call (a
+// syntax without a close marker, or a region the cut above could not place) is dropped and
+// counted, never returned as text. So is a stop that matched inside the call's open marker
+// ("_call>" in "<tool_call>"): what is held is the start of that marker (feed holds text only while
+// it may begin a call), the start of a call, never the answer. A stop that was the whole opener at
+// the output's start ("<tool_call>" itself) leaves nothing held, and cut a call all the same (a
+// forced call's grammar writes nothing but calls, so no answer text came before it).
+std::optional<ToolCallOutputDecoder::Terminal>
+ToolCallOutputDecoder::finish_forced_stop(RegionParse& region) {
+    if (!region.stop_text) { return std::nullopt; }
+    if (saw_tool_marker_) { return drop_cut_call(region.parsed.diagnostics); }
+    std::string_view stop = *region.stop_text;
+    while (!stop.empty() && is_format_whitespace(stop.front())) { stop.remove_prefix(1); }
+    if (held_.empty() && !begins_call(*syntax_, stop)) { return std::nullopt; }
+    return drop_cut_call(region.parsed.diagnostics);
 }
 
 // ---------------------------------------------------------------------------------------------
