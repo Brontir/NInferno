@@ -219,12 +219,6 @@ int main() {
         check(!g::first_scratch_violation({a, b, c}).has_value(),
               "a non-releasing middle launch cuts the chain: C starts after B completes");
     }
-    // B starts early under A but does not release: C starts at B's completion, which is after
-    // A's too (B waits for A before it exits), so C may write what A reads.
-    b.starts_early = true;
-    b.releases     = false;
-    check(!g::first_scratch_violation({a, b, c}).has_value(),
-          "a non-releasing middle launch cuts the chain: C starts after B completes");
 
     // Across every family, epilogue, width, ask and PDL setting: a launch that reads a prepared
     // scratch region never releases through launch_overlap (the restriction it keeps).
