@@ -66,6 +66,17 @@ std::optional<ChatRole> TurnMarkup::role(std::string_view header) const noexcept
     return std::nullopt;
 }
 
+bool TurnMarkup::assistant_addressed(std::string_view header) const noexcept {
+    for (const auto& [text, role] : roles) {
+        if (role != ChatRole::Assistant || !header.starts_with(text)) { continue; }
+        const std::string_view rest = header.substr(text.size());
+        for (const auto& separator : recipient_separators) {
+            if (!separator.empty() && rest.starts_with(separator)) { return true; }
+        }
+    }
+    return false;
+}
+
 std::vector<std::string> ChatConventions::structural_markers() const {
     std::vector<std::string> markers;
     if (reasoning) {
@@ -133,6 +144,8 @@ ChatConventions resolve_conventions(std::string_view source) {
         turns.close       = entry->at("close").get<std::string>();
         turns.after_close = entry->at("after_close").get<std::string>();
         turns.stops       = entry->at("stops").get<std::vector<std::string>>();
+        turns.recipient_separators =
+            entry->value("recipient_separators", std::vector<std::string>{});
         for (const auto& [header, role] : entry->at("roles").items()) {
             turns.roles.emplace_back(header, parse_role(role.get<std::string>()));
         }
