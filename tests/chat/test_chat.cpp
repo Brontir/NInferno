@@ -782,6 +782,18 @@ int test_bare_json_call_dropped() {
         const auto in_key = run(R"({"name": "weather", "argu)", true);
         failures += check(in_key.first.empty() && in_key.second == 0,
                           "a bare call cut inside its arguments key was shown: " + in_key.first);
+        // An object whose keys so far already rule a call out stays text when cut, as complete:
+        // another key before the arguments, both argument keys, or another key being written.
+        for (const std::string cut :
+             {std::string(R"({"name": "weather", "reason": "rain", "arguments": {)"),
+              std::string(R"({"name": "weather", "arguments": {}, "parameters": {)"),
+              std::string(R"({"name": "weather", "arguments": {}, "rea)")}) {
+            for (const bool limit : {true, false}) {
+                const auto kept = run(cut, limit);
+                failures += check(kept.first == cut && kept.second == 0,
+                                  "a cut object proven not a call was dropped: " + kept.first);
+            }
+        }
         // A cut right after the opening quote of the next key is a call that has begun; a value
         // string at the end (an "id" being written) is not a key.
         const auto empty_key = run(R"({"name": "weather", ")", true);

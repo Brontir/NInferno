@@ -1155,19 +1155,42 @@ std::vector<std::string> top_level_keys(std::string_view object,
 // A JSON object that is a call: name, exactly one of arguments and parameters, and at most an id
 // and a type. A tool definition (description, parameters), a router's {"name", "reason"} or a
 // lookup's {"name", "result"} is some other object, text.
-bool is_bare_call_object(std::string_view object) {
-    bool name = false;
-    int args  = 0;
-    for (const std::string& key : top_level_keys(object)) {
+struct CallKeys {
+    bool name  = false;
+    int args   = 0;
+    bool other = false; // a key no call has: the object is not one
+};
+
+CallKeys call_keys(const std::vector<std::string>& keys) {
+    CallKeys seen;
+    for (const std::string& key : keys) {
         if (key == "name") {
-            name = true;
+            seen.name = true;
         } else if (key == "arguments" || key == "parameters") {
-            ++args;
+            ++seen.args;
         } else if (key != "id" && key != "type") {
-            return false;
+            seen.other = true;
         }
     }
-    return name && args == 1;
+    return seen;
+}
+
+bool is_bare_call_object(std::string_view object) {
+    const CallKeys keys = call_keys(top_level_keys(object));
+    return !keys.other && keys.name && keys.args == 1;
+}
+
+// A cut-off object that had begun its arguments (the key itself may be cut: "argu", or right after
+// its opening quote) and whose keys so far are a call's: one with another key, or with both
+// argument keys, is text like the complete object.
+bool is_cut_bare_call_object(std::string_view object) {
+    std::optional<std::string> partial;
+    const CallKeys keys = call_keys(top_level_keys(object, &partial));
+    const auto begins = [&](std::string_view key) { return partial && key.starts_with(*partial); };
+    const bool other  = partial && !begins("name") && !begins("arguments") &&
+                       !begins("parameters") && !begins("id") && !begins("type");
+    const bool cut_args = begins("arguments") || begins("parameters");
+    return !keys.other && !other && keys.args <= 1 && (keys.args == 1 || cut_args);
 }
 
 // The end of Gemma 4's bare call, call:NAME{...}: the brace that closes its argument object,
@@ -1319,17 +1342,7 @@ ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish_region(bool cut_of
         tool_region_.clear();
         held_.clear();
         const bool json = syntax_->bare_call_header().front() == "{";
-        bool call       = !json;
-        if (json) {
-            std::optional<std::string> partial;
-            for (const std::string& key : top_level_keys(body, &partial)) {
-                call = call || key == "arguments" || key == "parameters";
-            }
-            // A cut inside the key itself ("argu", or right after the opening quote) is a call
-            // that had begun its arguments.
-            call = call || (partial && (std::string_view("arguments").starts_with(*partial) ||
-                                        std::string_view("parameters").starts_with(*partial)));
-        }
+        const bool call = !json || is_cut_bare_call_object(body);
         ToolCallParseDiagnostics diagnostics;
         if (call) {
             diagnostics.cut_calls_dropped = 1;
