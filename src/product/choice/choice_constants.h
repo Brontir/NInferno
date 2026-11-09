@@ -302,8 +302,8 @@ struct PredictionError {
 };
 inline constexpr PredictionError kDecodePredictionError[] = {{"ada", 0.0226}, {"gb20x", 0.0170}};
 
-// kDp4aOpsPerSmClock (a generation without an int8 MMA decodes its int8 route at it, spec/round_cost.cpp):
-// core/cost_constants.h, a chip fact.
+// kDp4aOpsPerSmClock (a generation without an int8 MMA decodes its int8 route at it,
+// spec/round_cost.cpp): core/cost_constants.h, a chip fact.
 
 // A row per generation (core/generation.h's names) and kind; a generation without its own row
 // takes kTransferGeneration's, marked as a transfer (its prefill: a generation's with the same BF16
