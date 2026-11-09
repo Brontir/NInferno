@@ -55,6 +55,25 @@ static_assert(ninferno::mmq_columns::work_tiles_format(ninferno::QType::GGML_Q4_
               !ninferno::mmq_columns::work_tiles_format(ninferno::QType::GGML_Q4_0) &&
               !ninferno::mmq_columns::work_tiles_format(ninferno::QType::GGML_IQ4_XS));
 
+// A tile's shared memory (ggml's mmq_get_nbytes_shared): Q2_K's 128-column tile is 70 144 bytes,
+// over Turing's 64 KiB (its widest there is 64) and under Volta's 96 KiB and Ampere's; Q4_K's
+// (stride 76 words) is 57 856 and fits.
+static_assert(ninferno::mmq_columns::tile_shared_bytes(ninferno::mmq_columns::SramLayout::Q2_K,
+                                                       128) == 70144);
+static_assert(ninferno::mmq_columns::tile_shared_bytes(ninferno::mmq_columns::SramLayout::Q8_1,
+                                                       128) == 128 * 76 * 4 + 512 + 18432);
+static_assert(ninferno::mmq_columns::widest_tile(ninferno::QType::GGML_Q2_K, 7, 5) == 64);
+static_assert(ninferno::mmq_columns::widest_tile(ninferno::QType::GGML_Q4_K, 7, 5) == 128);
+static_assert(ninferno::mmq_columns::widest_tile(ninferno::QType::GGML_Q2_K, 8, 6) == 128);
+static_assert(ninferno::mmq_columns::widest_tile(ninferno::QType::GGML_Q2_K, 7, 0) == 128);
+// cost_route's MMQ column count (min(128, widest, 8-column steps)) for Q2_K at 100 tokens on sm_75
+// is 64: two 64-column tiles, as the kernel runs.
+static_assert(std::min(128, ninferno::mmq_columns::widest_tile(ninferno::QType::GGML_Q2_K, 7, 5)) ==
+              64);
+// A Turing Q2_K product of 65..128 columns takes two 64-column tiles, not one of 128.
+static_assert(pick(100, 7, 5, false,
+                   ninferno::mmq_columns::widest_tile(ninferno::QType::GGML_Q2_K, 7, 5)) == 64);
+
 constexpr bool within_fixup_bound() {
     for (int c = 1; c <= 512; ++c) {
         int bound = 16;

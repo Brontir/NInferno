@@ -545,6 +545,25 @@ Route route_of(const QuantOption& quant, ActivationMode activations, const CardF
 
 namespace {
 
+// The weight format a linear's file names (ggml_q4_k, ...) as the engine's QType; a name the matrix
+// kernel does not run (bf16, q8_g32_fp16) gives one with no tile of its own (widest_tile: 128).
+QType qtype_of_name(std::string_view name) noexcept {
+    static constexpr std::pair<std::string_view, QType> kNames[] = {
+        {"ggml_q2_k", QType::GGML_Q2_K},       {"ggml_q3_k", QType::GGML_Q3_K},
+        {"ggml_q4_k", QType::GGML_Q4_K},       {"ggml_q5_k", QType::GGML_Q5_K},
+        {"ggml_q6_k", QType::GGML_Q6_K},       {"ggml_iq4_xs", QType::GGML_IQ4_XS},
+        {"ggml_iq3_xxs", QType::GGML_IQ3_XXS}, {"ggml_iq3_s", QType::GGML_IQ3_S},
+        {"ggml_q4_0", QType::GGML_Q4_0},       {"ggml_q4_1", QType::GGML_Q4_1},
+        {"ggml_q5_0", QType::GGML_Q5_0},       {"ggml_q5_1", QType::GGML_Q5_1},
+        {"ggml_iq4_nl", QType::GGML_IQ4_NL},   {"ggml_iq2_xxs", QType::GGML_IQ2_XXS},
+        {"ggml_iq2_xs", QType::GGML_IQ2_XS},   {"ggml_iq2_s", QType::GGML_IQ2_S},
+        {"ggml_iq1_s", QType::GGML_IQ1_S}};
+    for (const auto& [n, q] : kNames) {
+        if (n == name) { return q; }
+    }
+    return QType::BF16;
+}
+
 // A dense model's int8 route on the int8 tiles (Q8 weights): the tile's clock count at the model's
 // hidden width (2 x 64 x 64 operations a tile over c0 + K c1 SM-clocks, against the s8 rate a
 // SM-clock), Turing's measured row, else the generation's int8 row, transferred.
@@ -754,6 +773,14 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         reads_q41 = reads_q41 || format == q41;
         return named ? format->step : label_step;
     };
+    // The label's weight format as a QType (the formats table's order: Q3_K, Q4_K, Q5_K, Q6_K,
+    // IQ4_XS, Q4_1).
+    const QType label_qtype = format == &formats[0]   ? QType::GGML_Q3_K
+                              : format == &formats[1] ? QType::GGML_Q4_K
+                              : format == &formats[2] ? QType::GGML_Q5_K
+                              : format == &formats[3] ? QType::GGML_Q6_K
+                              : format == &formats[4] ? QType::GGML_IQ4_XS
+                                                      : QType::GGML_Q4_1;
     double clocks = 0, bytes = 0;
     // A linear of a format not read takes the share (the dense int8 prefill rate on its flops) beside
     // the read ones' tiles: one such tensor no longer drops the whole file's tiles for the share
@@ -810,11 +837,17 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         const bool measured_format = l.format.empty()
                                          ? format == &formats[1] || format == &formats[3]
                                          : l.format == "ggml_q4_k" || l.format == "ggml_q6_k";
+        // A guard for a future Q2_K step row: today step_of prices Q2_K as the int8 share, so no
+        // Q2_K linear reaches here (cost_route, ops/generic/generic_cost.cpp, has the live cap).
+        // The widest tile the card's shared memory holds for the linear's format (a label's
+        // format: its tile's, Q3_K .. Q4_1 of `formats`).
+        const int widest = mmq_columns::widest_tile(
+            l.format.empty() ? label_qtype : qtype_of_name(l.format), card.major, card.minor);
         for (double done = 0; done < tokens; done += kMmqSliceTokens) {
             const double t = std::min(kMmqSliceTokens, tokens - done);
             // The column tile the kernel's table takes (core/mmq_columns.h).
-            const int width =
-                mmq_columns::pick(static_cast<int>(t), card.major, card.minor, measured_format);
+            const int width      = mmq_columns::pick(static_cast<int>(t), card.major, card.minor,
+                                                     measured_format, widest);
             const double columns = width;
             const double tiles = std::ceil(n / kMmqTile) * std::ceil(t / columns);
             const double waves = std::ceil(tiles / sms);

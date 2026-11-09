@@ -813,6 +813,24 @@ int test_bare_json_call_dropped() {
         const auto routed        = run(router, false);
         failures += check(routed.first == router && routed.second == 0,
                           "an object that is no call was cut: " + routed.first);
+        // The keys a call object may carry before its name (#585): still a call, and dropped;
+        // an object whose type is not followed by a call's name is text.
+        const auto keyed =
+            run(R"({"id": "c1", "type": "function", "name": "weather", "arguments": {}})", false);
+        failures += check(keyed.first.empty() && keyed.second == 1,
+                          "a bare call with id and type before its name was shown: " + keyed.first);
+        const auto keyed_cut = run(R"({"id": "c1", "name": "weat)", false);
+        failures += check(keyed_cut.first.empty() && keyed_cut.second == 0,
+                          "a cut bare call with id before its name was shown: " + keyed_cut.first);
+        const std::string long_id =
+            R"({"id": ")" + std::string(400, 'x') + R"(", "name": "weather", "arguments": {}})";
+        const auto held_long = run(long_id, false);
+        failures += check(held_long.first == long_id && held_long.second == 0,
+                          "a 400-byte id was held as a call's");
+        const std::string schema = R"({"type": "object", "properties": {}})";
+        const auto typed         = run(schema, false);
+        failures += check(typed.first == schema && typed.second == 0,
+                          "an object with a type and no call was cut: " + typed.first);
         const auto partial = run(R"({"name": "weat)", true);
         failures += check(partial.first.empty() && partial.second == 0,
                           "a partial bare call at the output limit was shown: " + partial.first);
