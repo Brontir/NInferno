@@ -95,6 +95,8 @@ void test_refusals() {
     expect(refused(edit([](json& c) { c["dflash_config"].erase("selected_prefix_terminal"); })),
            "terminal flag absent (the serving default is terminal)");
     expect(refused(edit([](json& c) { c["is_causal"] = false; })), "non-causal block");
+    expect(!refused(edit([](json& c) { c.erase("is_causal"); })),
+           "a top-level is_causal may be absent: the block is dflash_config.draft_block_causal");
     expect(refused(edit([](json& c) { c["dflash_config"]["draft_block_causal"] = false; })),
            "non-causal block, dflash_config");
     expect(refused(edit([](json& c) {
@@ -130,6 +132,20 @@ void test_refusals() {
         c["partial_rotary_factor"] = nullptr;
     })),
            "null optional keys");
+}
+
+void test_qwen3_8b() {
+    // Tencent's Qwen3-8B draft: a DSpine by its bridge, but trained with theta 1e6 and
+    // full-attention layers on a 4096-wide target: refused for its constants, by name.
+    std::ifstream in(fixture_path("config_qwen3_8b.json"));
+    const auto config = json::parse(in);
+    expect(sp::is_dspine_config(config), "the Qwen3-8B draft carries the bridge");
+    std::string why;
+    try {
+        (void)sp::parse_dspine_config(config);
+    } catch (const std::runtime_error& error) { why = error.what(); }
+    expect(why.find("RoPE theta") != std::string::npos && why.find("1e6") != std::string::npos,
+           "refused for its RoPE theta: " + why);
 }
 
 void test_tensor_contract() {
@@ -229,6 +245,15 @@ void test_walk() {
     for (int i = 0; i < 3; ++i) {
         expect(near(q[i * 3] + q[i * 3 + 1] + q[i * 3 + 2], 1.0, 1e-5), "q sums to one");
     }
+    // Rounding past the last lane lands on the last lane with mass; a cold row is greedy.
+    std::vector<float> two{0.F, 0.F, -1000.F}, q2(3);
+    lanes = sp::dspine_walk_sample(two, 3, 1, 1.F, std::vector<float>{0.9999999F}, q2);
+    expect(lanes[0] == 1 || lanes[0] == 0, "a draw inside the mass");
+    lanes = sp::dspine_walk_sample(two, 3, 1, 1.F, std::vector<float>{2.F}, q2);
+    expect(lanes[0] == 1, "a draw past the end takes the last lane with mass");
+    lanes = sp::dspine_walk_sample(edges, 3, 3, 0.F, u, q);
+    expect(lanes == std::vector<std::uint32_t>({1, 2, 0}) && q[1] == 1.F && q[0] == 0.F,
+           "temperature 0 is the greedy walk, one-hot");
     // A hot temperature spreads the mass; uniform 0 draws lane 0.
     std::vector<float> flat(3, 0.F), qf(3), zero{0.F};
     lanes = sp::dspine_walk_sample(flat, 3, 1, 1.F, zero, qf);
@@ -240,6 +265,7 @@ void test_walk() {
 int main() {
     test_published_config();
     test_refusals();
+    test_qwen3_8b();
     test_tensor_contract();
     test_round_facts();
     test_arithmetic();

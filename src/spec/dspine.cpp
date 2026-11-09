@@ -62,11 +62,6 @@ void require_absent_or_null(const json& object, const char* key, const char* whe
 
 } // namespace
 
-bool is_dspine_config(const json& config) {
-    const auto it = config.find("dflash_config");
-    return it != config.end() && it->is_object() && it->contains("selected_prefix_code_bridge");
-}
-
 DSpineConfig parse_dspine_config(const json& config) {
     if (!config.is_object()) { refuse("not an object"); }
     const auto architectures = config.find("architectures");
@@ -103,7 +98,10 @@ DSpineConfig parse_dspine_config(const json& config) {
     }
     // The draft attention rotates and normalizes Q/K in one fused kernel with these constants.
     if (out.rope_theta != 1.0e7F || out.rms_norm_eps != 1.0e-6F) {
-        refuse("RoPE theta and RMSNorm epsilon must be 1e7 and 1e-6");
+        refuse("RoPE theta " + std::to_string(out.rope_theta) + " and RMSNorm epsilon " +
+               std::to_string(out.rms_norm_eps) +
+               " are not the draft attention kernel's fixed 1e7 and 1e-6 (Tencent's Qwen3-8B "
+               "DSpine trains with theta 1e6)");
     }
     if (config.contains("rope_scaling") && !config.at("rope_scaling").is_null()) {
         refuse("rope_scaling is not part of the DSpine path");
@@ -114,9 +112,9 @@ DSpineConfig parse_dspine_config(const json& config) {
     if (bool_or(config, "has_embed_tokens", false)) {
         refuse("has_embed_tokens: the target's embedding is used");
     }
-    if (!flag_is(config, "is_causal", true)) {
-        refuse("is_causal must be true (causal draft block)");
-    }
+    // The causal block is dflash_config.draft_block_causal (checked below); a top-level is_causal
+    // may be absent (the reference runtime sets it from that), never false.
+    if (!bool_or(config, "is_causal", true)) { refuse("is_causal is false (causal draft block)"); }
     if (!flag_is(draft, "draft_block_causal", true)) {
         refuse("dflash_config.draft_block_causal must be true");
     }
@@ -335,6 +333,13 @@ std::vector<std::uint32_t> dspine_walk_greedy(std::span<const float> edges, std:
 std::vector<std::uint32_t> dspine_walk_sample(std::span<const float> edges, std::uint32_t k,
                                               std::uint32_t proposals, float temperature,
                                               std::span<const float> uniforms, std::span<float> q) {
+    if (!(temperature > 0)) {
+        // A cold row is the greedy walk with a one-hot distribution.
+        auto lanes = dspine_walk_greedy(edges, k, proposals);
+        std::fill(q.begin(), q.begin() + std::size_t{proposals} * k, 0.0F);
+        for (std::uint32_t i = 0; i < proposals; ++i) { q[std::size_t{i} * k + lanes[i]] = 1.0F; }
+        return lanes;
+    }
     std::vector<std::uint32_t> lanes(proposals);
     std::uint32_t previous = 0;
     for (std::uint32_t i = 0; i < proposals; ++i) {
@@ -346,17 +351,16 @@ std::vector<std::uint32_t> dspine_walk_sample(std::span<const float> edges, std:
             total += std::exp((double(row[c]) - top) / temperature);
         }
         double mass        = 0;
-        std::uint32_t pick = k - 1;
-        bool chosen        = false;
+        std::uint32_t pick = k;
+        std::uint32_t last = 0; // the last lane with mass: where rounding past the end lands
         for (std::uint32_t c = 0; c < k; ++c) {
             const double p            = std::exp((double(row[c]) - top) / temperature) / total;
             q[std::size_t{i} * k + c] = static_cast<float>(p);
             mass += p;
-            if (!chosen && uniforms[i] < mass) {
-                pick   = c;
-                chosen = true;
-            }
+            if (p > 0) { last = c; }
+            if (pick == k && uniforms[i] < mass) { pick = c; }
         }
+        if (pick == k) { pick = last; }
         lanes[i] = previous = pick;
     }
     return lanes;

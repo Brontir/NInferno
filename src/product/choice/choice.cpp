@@ -732,7 +732,7 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
     // parts priced as theirs), the label's format's own step (a Q8_0 or 16-bit linear among them).
     bool reads_q41            = false; // a Q4_1 linear's step, read on q41_cards cards
     bool reads_iq_transferred = false; // an IQ linear's step read on one card
-    const auto step_of = [&](const LinearShape& l) {
+    const auto step_of        = [&](const LinearShape& l) {
         for (const auto& [name, f] : {std::pair{"ggml_q3_k", &formats[0]}, std::pair{"ggml_q4_k", &formats[1]},
                                       std::pair{"ggml_q5_k", &formats[2]}, std::pair{"ggml_q6_k", &formats[3]},
                                       std::pair{"ggml_iq4_xs", &formats[4]}, std::pair{"ggml_q4_1", &formats[5]}}) {

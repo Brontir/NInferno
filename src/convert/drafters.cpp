@@ -187,6 +187,9 @@ bool gguf_head_config(const PlannedDrafter& d, const AttachOptions& options, Jso
     try {
         config = Json::parse(map_gguf_model(*parsed, lookup, read, head.path).config.dump());
     } catch (const std::exception& error) {
+        // A refusal by name (a DSpine file) stands: the whole file would only be fetched to be
+        // refused again.
+        if (std::string(error.what()).find("DSpine") != std::string::npos) { throw; }
         log_line(options.log, "  " + file + ": the metadata alone does not map (" + error.what() +
                                   "); reading the whole file");
         return false;

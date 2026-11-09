@@ -40,7 +40,12 @@ struct DSpineConfig {
 };
 
 // True when a draft config.json carries the code bridge (also a "DFlashDraftModel" by name).
-[[nodiscard]] bool is_dspine_config(const nlohmann::json& config);
+// (A template so that json and ordered_json both read.)
+template <class Json>
+[[nodiscard]] bool is_dspine_config(const Json& config) {
+    const auto it = config.find("dflash_config");
+    return it != config.end() && it->is_object() && it->contains("selected_prefix_code_bridge");
+}
 
 // The config of a DSpine draft, refusing every variant the arithmetic below does not cover (a
 // terminal-corrected bridge, next-token rows, DFlash2 selector keys, a partial bridge, ...).
