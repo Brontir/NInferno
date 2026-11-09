@@ -142,9 +142,11 @@ public:
     [[nodiscard]] virtual ParsedToolCallOutput
     parse(const std::string& text, std::size_t max_tool_name_length,
           const ToolCallOutputContract& contract) const = 0;
-    [[nodiscard]] virtual std::string
-    structural_tag(std::span<const ToolCallConstraintTool> tools, ToolCallRequirement requirement,
-                   std::string_view named_tool, bool parallel_tool_calls) const = 0;
+    [[nodiscard]] virtual std::string structural_tag(std::span<const ToolCallConstraintTool> tools,
+                                                     ToolCallRequirement requirement,
+                                                     std::string_view named_tool,
+                                                     bool parallel_tool_calls) const = 0;
+
     // tool_choice none: a structural tag that keeps the model from the header of a call, where
     // the syntax has one that plain-text bans cannot reach (a call that is a message of its own,
     // harmony). Empty: the syntax needs none.

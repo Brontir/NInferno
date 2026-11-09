@@ -862,11 +862,10 @@ PreparedRequest GenerationService::prepare_impl(const GenerationRequest& request
         // constraint of its own keeps it (#546).
         if (!prompt.summary().refusal_tag.empty() && !request.output_constraint) {
             OutputConstraintRequest steer;
-            steer.kind       = ninferno::OutputConstraintKind::StructuralTag;
-            steer.definition = prompt.summary().refusal_tag;
-            steer.param      = "tool_choice";
-            request_options.constraint.compiled =
-                compile_output_constraint(steer, false, true);
+            steer.kind                              = ninferno::OutputConstraintKind::StructuralTag;
+            steer.definition                        = prompt.summary().refusal_tag;
+            steer.param                             = "tool_choice";
+            request_options.constraint.compiled     = compile_output_constraint(steer, false, true);
             request_options.constraint.header_steer = true;
             check_preparation_control(prepared.lifetime->deadline, is_cancelled);
         }

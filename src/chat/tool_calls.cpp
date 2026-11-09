@@ -2507,14 +2507,15 @@ public:
                 }
             });
     }
+
     // Text of any content, except the headers that address a message: a commentary channel, and
     // a recipient in the role or after a channel name. The prose of the final message and the
     // analysis stay free (" to" and "commentary" are words); only these header positions are
     // closed, so the model answers in a final message rather than writing a call (#578).
     [[nodiscard]] std::string refusal_structural_tag() const override {
-        const OrderedJson excludes = OrderedJson::array(
-            {"<|channel|>commentary", "<|start|>assistant to", "<|channel|>analysis to",
-             "<|channel|>final to"});
+        const OrderedJson excludes =
+            OrderedJson::array({"<|channel|>commentary", "<|start|>assistant to",
+                                "<|channel|>analysis to", "<|channel|>final to"});
         return OrderedJson{{"type", "structural_tag"},
                            {"format", OrderedJson{{"type", "any_text"}, {"excludes", excludes}}}}
             .dump();
