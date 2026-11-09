@@ -475,6 +475,7 @@ void ArtifactWriter::create(std::size_t index) {
     const auto target = file_path(index);
     int fd            = -1;
     std::string name;
+    void* slot_of_name = nullptr; // a named partial has none: a signal keeps it to resume
     if (options_.named_partial) {
         name = partial_path(target).string();
         fd   = sys::open(name, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
@@ -499,7 +500,7 @@ void ArtifactWriter::create(std::size_t index) {
             TemporarySlot* slot = register_temporary(name);
             fd                  = sys::open(name, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
             if (fd >= 0 && lock_temporary(fd, name)) {
-                slots_.push_back(slot);
+                slot_of_name = slot;
                 break;
             }
             int error = errno;
@@ -514,6 +515,7 @@ void ArtifactWriter::create(std::size_t index) {
         }
     }
     if (fd < 0) { throw std::runtime_error("cannot create " + name + ": " + sys::error_text(errno)); }
+    temporary_slots_.push_back(slot_of_name);
     fds_.push_back(fd);
     temporary_.emplace_back(name);
     if (sys::truncate(fd, static_cast<std::int64_t>(file_length(index))) != 0) {
@@ -984,18 +986,17 @@ void ArtifactWriter::finish(const std::function<std::string()>& seal) {
             }
             published_.push_back(target);
             // A signal during the rest of the publish removes the files already linked in.
-            slots_.push_back(visible);
+            published_slots_.push_back(visible);
             std::error_code ignored;
             std::filesystem::remove(temporary_[i], ignored); // gone already when renamed in
-            unregister_temporary(static_cast<TemporarySlot*>(slots_[i]));
-            slots_[i] = nullptr;
+            unregister_temporary(static_cast<TemporarySlot*>(temporary_slots_[i]));
+            temporary_slots_[i] = nullptr;
         }
         for (const auto& temporary : temporary_) { std::filesystem::remove(temporary); }
         temporary_.clear();
         for (const int fd : fds_) { sys::close(fd); }
         fds_.clear();
-        for (void* slot : slots_) { unregister_temporary(static_cast<TemporarySlot*>(slot)); }
-        slots_.clear();
+        release_slots();
         finished_ = true;
     } catch (...) {
         abort();
@@ -1025,10 +1026,16 @@ void ArtifactWriter::abort() noexcept {
         }
         for (const auto& path : published_) { std::filesystem::remove(path, ignored); }
     }
-    for (void* slot : slots_) { unregister_temporary(static_cast<TemporarySlot*>(slot)); }
-    slots_.clear();
+    release_slots();
     temporary_.clear();
     published_.clear();
+}
+
+void ArtifactWriter::release_slots() noexcept {
+    for (auto* slots : {&temporary_slots_, &published_slots_}) {
+        for (void* slot : *slots) { unregister_temporary(static_cast<TemporarySlot*>(slot)); }
+        slots->clear();
+    }
 }
 
 } // namespace ninferno::convert

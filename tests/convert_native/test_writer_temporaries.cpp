@@ -193,6 +193,32 @@ int main() {
         check(temporaries(dir).size() == 3, "an unfinished writer removed its own temporary");
     }
 
+    // A sharded artifact written under named partials (--consume-source) publishes every file:
+    // its partials take no slot of the signal handler's table, its published targets do.
+    {
+        const auto dir = root / "named";
+        fs::create_directories(dir);
+        const auto layout =
+            cv::layout_artifact("n.ninferno", R"({"objects":[]})", 64 * 1024, 16 * 1024);
+        check(layout.files.size() >= 3, "the named-partial layout has parts");
+        cv::WriterOptions options;
+        options.named_partial = true;
+        {
+            cv::ArtifactWriter writer(dir / "n.ninferno", layout, options);
+            writer.finish({});
+        }
+        bool all = fs::exists(dir / "n.ninferno");
+        for (std::size_t i = 1; i < layout.files.size(); ++i) {
+            all = all && layout.files[i].path && fs::exists(dir / *layout.files[i].path);
+        }
+        check(all, "every file of a named-partial artifact was published");
+        bool partial = false;
+        for (const auto& entry : fs::directory_iterator(dir)) {
+            partial = partial || entry.path().extension() == ".partial";
+        }
+        check(!partial, "no named partial remains after publishing");
+    }
+
     // A live writer's temporary is never removed by another conversion in the directory, however
     // old it looks (it holds the lock).
     {

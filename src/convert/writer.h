@@ -171,6 +171,7 @@ private:
     void release_segment(std::byte* data) noexcept;
     void drain();
     void stop_writers() noexcept;
+    void release_slots() noexcept;
     void finish_direct();
     void write_file(std::size_t index, std::uint64_t offset, const void* data, std::size_t bytes);
     void store(std::size_t index, std::uint64_t offset, const std::byte* data, std::size_t bytes);
@@ -184,7 +185,11 @@ private:
     artifact::ArtifactId id_{};
     std::vector<std::uint64_t> prefixes_;
     std::vector<int> fds_;
-    std::vector<void*> slots_; // the temporaries' places in the signal handler's table
+    // The places in the signal handler's table: each temporary's, by its index in temporary_
+    // (nullptr for a named partial, which a signal keeps, and once it is gone), and each published
+    // target's while the rest of the artifact is published.
+    std::vector<void*> temporary_slots_;
+    std::vector<void*> published_slots_;
     std::vector<Mapping> mappings_;
     std::vector<std::filesystem::path> temporary_;
     std::vector<std::filesystem::path> published_;
