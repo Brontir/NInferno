@@ -1,11 +1,15 @@
 """tools/audit/diff_lint.py on planted diffs: each rule fires on the mistake and stays quiet on the
 look-alikes. Plain git diff -U0 text and an in-memory tree; no git, no GPU."""
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "audit"))
 import diff_lint as dl  # noqa: E402
+
+REPO = Path(__file__).resolve().parents[1]
 
 
 def diff(path, removed=(), added=(), old_start=1, new_start=1):
@@ -170,7 +174,57 @@ class RemovedInclude(unittest.TestCase):
         self.assertEqual(dl.lint(self.removed('#include "widget.h" // diff-lint: allow'), t), [])
 
 
+def real_commit(sha):
+    ok = subprocess.run(["git", "cat-file", "-e", sha + "^{commit}"], cwd=REPO, capture_output=True).returncode == 0
+    return ok
+
+
+def lint_commit(sha):
+    d = subprocess.run(["git", "diff", "-U0", "-M", sha + "^", sha], cwd=REPO, capture_output=True,
+                       text=True, encoding="utf-8", errors="replace").stdout
+    return dl.lint(d, dl.GitTree(sha, cwd=REPO))
+
+
+@unittest.skipUnless(real_commit("bd51efb1") and real_commit("7275afba") and real_commit("ec402086"),
+                     "the real commits are not in this clone")
+class RealBugs(unittest.TestCase):
+    def test_599_deleted_measured_at_still_called(self):
+        found = [f for f in lint_commit("bd51efb1") if f[2] == "removed-def"]
+        self.assertEqual(len(found), 1)
+        self.assertIn("`measured_at(`", found[0][3])
+        self.assertIn("src/product/choice/choice.h", found[0][3])
+
+    def test_600_header_tail_pasted_twice_warns(self):
+        found = lint_commit("ec402086")
+        self.assertTrue(found and all(f[2] == "dup-block" for f in found))
+        self.assertTrue(all(f[0] == "src/product/choice/choice.h" for f in found))
+
+    def test_602_block_pasted_twice_warns_only_below_the_long_copy_threshold(self):
+        # The pasted test block is 5 lines, under the 10-line threshold: silent by default.
+        self.assertEqual(lint_commit("7275afba"), [])
+        old, dl.LONG_COPY = dl.LONG_COPY, 4
+        try:
+            found = lint_commit("7275afba")
+        finally:
+            dl.LONG_COPY = old
+        self.assertEqual([(f[0], f[2]) for f in found],
+                         [("tests/ops/linear/test_scratch_lifetime.cpp", "dup-block")])
+
+
 class Driver(unittest.TestCase):
+    def test_dup_block_warns_without_failing_and_removed_def_fails(self):
+        body = ["void a() {"] + LONG + ["}", "", "void b() {"] + LONG + ["}"]
+        if True:
+            def run(text_diff, tree):
+                found = dl.lint(text_diff, tree)
+                errors = [f for f in found if f[2] not in dl.WARN_RULES]
+                return found, errors
+            found, errors = run(diff("t.cpp", added=body), dl.DictTree({"t.cpp": "\n".join(body) + "\n"}))
+            self.assertEqual((rules(found), errors), (["dup-block"], []))
+            found, errors = run(diff("a.cpp", removed=DEF), dl.DictTree({"b.cpp": "void f() { x.measured_at(3); }\n"}))
+            self.assertEqual(rules(errors), ["removed-def"])
+
+
     def test_empty_diff_is_clean(self):
         self.assertEqual(dl.lint("", dl.DictTree({})), [])
 

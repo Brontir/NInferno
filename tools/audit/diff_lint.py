@@ -11,11 +11,13 @@ Three rules, all heuristic and tuned to stay quiet:
                    header is not reachable through the includes the file still has (a transitive include
                    hides the mistake, so the file still compiles and is not flagged).
 
+dup-block only warns (a ::warning annotation, exit 0); the other two rules fail the check.
+
 Escape: a line containing `diff-lint: allow` is never reported (for removed-def and removed-include the
 marker may sit on the removed line or on the reported line).
 
 Usage: diff_lint.py [--base REF] [--head REV]   (default: merge base with origin/master, HEAD)
-Exit 1 on any finding.
+Exit 1 on a removed-def or removed-include finding.
 """
 import argparse
 import os
@@ -30,6 +32,7 @@ DEF_EXT = {".h", ".cpp", ".cu", ".cuh"}
 SKIP_DIRS = ("third_party/", "routes/", "build/")
 MIN_RUN = 4
 LONG_COPY = 10
+WARN_RULES = {"dup-block"}  # repeated blocks are often intended; they warn and never fail the exit code
 KEYWORDS = {"if", "for", "while", "switch", "catch", "return", "else", "new", "delete", "throw", "case",
             "goto", "sizeof", "co_return", "co_await", "co_yield", "using", "typedef", "operator", "do",
             "defined", "alignof", "decltype", "static_assert", "namespace", "template", "typename"}
@@ -388,10 +391,14 @@ def main(argv=None):
 
     base = a.base if a.exact else git("merge-base", a.base, a.head).strip()
     found = lint(git("diff", "-U0", "--no-color", "-M", base, a.head), GitTree(a.head))
+    errors = [f for f in found if f[2] not in WARN_RULES]
     for path, line, rule, why in found:
-        print(f"{path}:{line}: [{rule}] {why}")
-    if found:
-        print(f"diff-lint: {len(found)} finding(s). Fix them, or mark an intended case with `// {ALLOW}`.")
+        if rule in WARN_RULES:  # a GitHub annotation; it does not fail the check
+            print(f"::warning file={path},line={line},title=diff-lint {rule}::{why}")
+        else:
+            print(f"{path}:{line}: [{rule}] {why}")
+    if errors:
+        print(f"diff-lint: {len(errors)} error(s). Fix them, or mark an intended case with `// {ALLOW}`.")
         return 1
     return 0
 
