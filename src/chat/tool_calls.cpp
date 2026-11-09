@@ -1137,6 +1137,10 @@ std::optional<std::string> without_leading_call_keys(std::string_view held,
         ++at;
         skip_format_whitespace(held, at);
         if (at == held.size()) { return std::nullopt; }
+        // A call's id or type is short: a longer value is no call's, and the bytes go on (the
+        // hold, and the rescan of the value on every byte, stay bounded).
+        constexpr std::size_t kLongestCallKeyValue = 256;
+        if (held.size() - at > kLongestCallKeyValue) { return std::string(held); }
         const std::optional<std::size_t> end = any_json_value_end(held, at);
         if (!end) { return std::nullopt; }
         std::size_t comma = *end;

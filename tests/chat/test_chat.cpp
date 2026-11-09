@@ -822,6 +822,11 @@ int test_bare_json_call_dropped() {
         const auto keyed_cut = run(R"({"id": "c1", "name": "weat)", false);
         failures += check(keyed_cut.first.empty() && keyed_cut.second == 0,
                           "a cut bare call with id before its name was shown: " + keyed_cut.first);
+        const std::string long_id =
+            R"({"id": ")" + std::string(400, 'x') + R"(", "name": "weather", "arguments": {}})";
+        const auto held_long = run(long_id, false);
+        failures += check(held_long.first == long_id && held_long.second == 0,
+                          "a 400-byte id was held as a call's");
         const std::string schema = R"({"type": "object", "properties": {}})";
         const auto typed         = run(schema, false);
         failures += check(typed.first == schema && typed.second == 0,
