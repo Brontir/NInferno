@@ -68,8 +68,8 @@ inline constexpr double kTileFixed      = 0.43;
 
 // The width the card's table takes for `columns` tokens of a format (work_tiles_format), among the
 // widths up to `widest`: a format whose wider tile the device's shared memory cannot hold (Turing's
-// 64 KiB: several formats' 128-column tile) has its own widest (ggml_mmq::column_tile at a wide
-// product tells it).
+// 64 KiB: Q2_K's 128-column tile, 70 144 bytes) has its own widest (ggml_mmq::column_tile at a wide
+// product tells it; the estimate, product/choice, does not know it yet).
 [[nodiscard]] constexpr int pick(int columns, int major, int minor, bool format,
                                  int widest = 128) noexcept {
     const bool work    = uses_work_table(major, minor, format);
