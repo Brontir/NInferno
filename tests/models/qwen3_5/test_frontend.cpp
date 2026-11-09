@@ -2070,6 +2070,12 @@ int test_disabled_tool_calls_ban_the_opener() {
     const Frontend plain = make_frontend(resources(), false);
     failures += check(plain.prepare(input(false, true, true)).summary().banned_tokens.empty(),
                       "an opener that is not a vocabulary token was banned");
+    // Under an output constraint (cut_bare_calls off) the constraint owns the output: nothing is
+    // banned, a token it may require included.
+    auto constrained                   = input(false, true, true);
+    constrained.options.cut_bare_calls = false;
+    failures += check(frontend.prepare(std::move(constrained)).summary().banned_tokens.empty(),
+                      "tool_choice none under an output constraint banned the call opener");
     return failures;
 }
 

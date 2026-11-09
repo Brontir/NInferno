@@ -1231,7 +1231,9 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
         assign_text_positions(result);
     }
     (void)checked_token_count(result.token_ids.size());
-    if (options.tool_calls_discarded && !contract_tools.empty()) {
+    // Under an output constraint (cut_bare_calls off) the constraint owns the output, a marker it
+    // writes included: a ban could leave it no token, the structural end would cut its text.
+    if (options.tool_calls_discarded && !contract_tools.empty() && options.cut_bare_calls) {
         // tool_choice none: the prompt keeps the declarations (the cached prefix is the auto
         // request's), and the model is kept from the markup of a call turn, so it answers in
         // text. The call opener and closer go, and the tool-result opener and closer: kept from
