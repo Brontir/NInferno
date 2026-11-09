@@ -1078,6 +1078,31 @@ namespace {
 
 std::optional<std::size_t> json_value_end(std::string_view text, std::size_t pos);
 
+// The end of any JSON value starting at `pos` (an object or an array to its closing bracket, a
+// string to its closing quote, a number or a literal to the byte after it): nullopt while it is
+// still being written.
+std::optional<std::size_t> any_json_value_end(std::string_view text, std::size_t pos) {
+    if (pos >= text.size()) { return std::nullopt; }
+    if (text[pos] == '{' || text[pos] == '[') { return json_value_end(text, pos); }
+    if (text[pos] == '"') {
+        for (std::size_t at = pos + 1; at < text.size(); ++at) {
+            if (text[at] == '\\') {
+                ++at;
+            } else if (text[at] == '"') {
+                return at + 1;
+            }
+        }
+        return std::nullopt;
+    }
+    std::size_t at = pos;
+    while (at < text.size() && text[at] != ',' && text[at] != '}' && text[at] != ']' &&
+           !is_format_whitespace(text[at])) {
+        ++at;
+    }
+    if (at == text.size()) { return std::nullopt; }
+    return at;
+}
+
 // A bare JSON call's bytes with the keys a call object may carry before its name ("id", "type",
 // is_bare_call_object) taken out: {"id": "c", "type": "function", "name": ... reads as
 // {"name": ... for the header. nullopt while such a key's value or the comma after it is still
@@ -1112,7 +1137,7 @@ std::optional<std::string> without_leading_call_keys(std::string_view held,
         ++at;
         skip_format_whitespace(held, at);
         if (at == held.size()) { return std::nullopt; }
-        const std::optional<std::size_t> end = json_value_end(held, at);
+        const std::optional<std::size_t> end = any_json_value_end(held, at);
         if (!end) { return std::nullopt; }
         std::size_t comma = *end;
         skip_format_whitespace(held, comma);
