@@ -1,3 +1,4 @@
+ninferno_directory_warnings()
 # Speculation discovery and tuning support shared by the converter and the engines: vocabulary
 # fingerprints, the curated drafter registry, the built-in tuning corpus, profiles and the runtime
 # acceptance watchdog. The registry and the corpus are JSON files compiled in.

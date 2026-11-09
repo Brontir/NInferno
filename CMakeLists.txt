@@ -109,6 +109,9 @@ if(NINFERNO_BUILD_ARCH STREQUAL "70" AND NINFERNO_VOLTA_CUTLASS)
 endif()
 
 # --- Global settings ---------------------------------------------------------
+# Host C++ warnings for the project's own directories (never third_party). Each directory opts in by
+# calling ninferno_directory_warnings() in its CMakeLists.txt; the rest are follow-ups of issue #611.
+option(NINFERNO_WARNINGS "Host C++ warnings (-Wall -Wextra, errors on return-type and unused-function)" OFF)
 option(NINFERNO_BUILD_APPS "Build the NInferno CLI, server and perplexity evaluator" ON)
 option(BUILD_TESTING "Build NInferno tests" OFF)
 option(NINFERNO_BUILD_BENCHMARKS "Build NInferno benchmarks" OFF)

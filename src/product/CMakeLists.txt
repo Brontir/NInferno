@@ -1,3 +1,4 @@
+ninferno_directory_warnings()
 add_library(ninferno_media_acquire STATIC
   media_acquire/acquire.cpp
 )
