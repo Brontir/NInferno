@@ -34,7 +34,7 @@ bare `add_test()` calls `ninferno_label_tests(<name> LABELS ...)` next to it.
 
 | Label | Meaning |
 |---|---|
-| `host` | Runs and passes with no GPU: `CUDA_VISIBLE_DEVICES= ctest -L host`. Never combined with `gpu` or `real`. |
+| `host` | Runs and passes with no GPU: `CUDA_VISIBLE_DEVICES= ctest -L host`. Never combined with `gpu` or `real`. The tests that need an optional Python package (`torch`, `gguf`) or a build for sm_90+ still exit 77 where it is missing. |
 | `gpu` | Needs a CUDA device; exits 77 (skipped) or fails without one. |
 | `real` | Needs a model artifact, tokenizer fixtures or another input the checkout does not carry, and skips (77) without it. A real test that also runs the engine is `real` and `gpu`. |
 | `golden` | Compares against a committed golden: the selector, choice and plan goldens. |

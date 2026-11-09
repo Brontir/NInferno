@@ -53,9 +53,9 @@ ninferno_add_test(ninferno_qwen3_5_runtime_mechanisms_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_runtime_mechanisms.cpp"
   LIBRARIES ninferno_engine ninferno_core)
 
-# The MTP layer's packed Q/K/gate/V parent (host only): fused Op forms, and a BF16 MoE parent
+# The MTP layer's packed Q/K/gate/V parent (the unregistered-split check reads the device): fused Op forms, and a BF16 MoE parent
 # (nvidia / RedHatAI NVFP4 35B-A3B releases) sized for the generic linear instead of refused.
-ninferno_add_test(ninferno_qwen3_5_mtp_projection_plan_test LABELS host
+ninferno_add_test(ninferno_qwen3_5_mtp_projection_plan_test LABELS gpu
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_mtp_projection_plan.cpp"
   LIBRARIES ninferno_engine ninferno_core ninferno::json)
 

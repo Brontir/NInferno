@@ -101,7 +101,7 @@ ninferno_add_test(ninferno_sm_wave_rules_test LABELS host
   LIBRARIES ninferno_core)
 
 # Per-GPU-class route_as overrides of the shape-owned Linear tables: loader and lookup.
-ninferno_add_op_test(ninferno_shape_routes_test LABELS host
+ninferno_add_op_test(ninferno_shape_routes_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_shape_routes.cpp"
   LIBRARIES ninferno_ops)
 
@@ -114,7 +114,7 @@ if(NINFERNO_WITH_NVFP4)
     LIBRARIES ninferno_ops)
 endif()
 
-ninferno_add_op_test(ninferno_candidate_selector_test LABELS host
+ninferno_add_op_test(ninferno_candidate_selector_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_candidate_selector.cpp"
   LIBRARIES ninferno_ops)
 

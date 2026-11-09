@@ -69,7 +69,7 @@ ninferno_add_op_test(ninferno_qwen_prefill_token_invariance_test
   LIBRARIES ninferno_linear_test_support)
 
 # Route tables of the generic projection path: lookup, prefill route, refusals.
-ninferno_add_op_test(ninferno_route_table_test LABELS host
+ninferno_add_op_test(ninferno_route_table_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_table.cpp"
   LIBRARIES ninferno_linear_test_support)
 # Every format and activation path over the scale domain (tensor scale 3e-4..2.5, block
@@ -80,11 +80,11 @@ ninferno_add_op_test(ninferno_linear_scale_domain_test
 
 add_test(NAME ninferno_route_table_malformed_default_test
   COMMAND ninferno_route_table_test --malformed-default)
-ninferno_label_tests(ninferno_route_table_malformed_default_test LABELS host)
+ninferno_label_tests(ninferno_route_table_malformed_default_test LABELS gpu)
 set_tests_properties(ninferno_route_table_malformed_default_test PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME ninferno_route_table_similar_default_test
   COMMAND ninferno_route_table_test --similar-default)
-ninferno_label_tests(ninferno_route_table_similar_default_test LABELS host)
+ninferno_label_tests(ninferno_route_table_similar_default_test LABELS gpu)
 set_tests_properties(ninferno_route_table_similar_default_test PROPERTIES SKIP_RETURN_CODE 77)
 
 # The generic projection path: random and awkward shapes in every format, every op and route,
@@ -117,7 +117,7 @@ ninferno_add_op_test(ninferno_prepared_rules_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_prepared_rules.cpp"
   LIBRARIES ninferno_linear_test_support)
 
-ninferno_add_op_test(ninferno_linear_candidates_test LABELS host
+ninferno_add_op_test(ninferno_linear_candidates_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_linear_candidates.cpp"
   LIBRARIES ninferno_linear_test_support)
 
@@ -155,6 +155,6 @@ ninferno_add_op_test(ninferno_side_by_side_projection_test
 # The generic path under a route pin (--prefill-route, --decode-route) on substituted boards: the
 # pinned family takes every call it can compute, every other call keeps its automatic route, the
 # registered shapes' hand-off gates follow, and clearing the pins restores every route.
-ninferno_add_op_test(ninferno_route_pin_selector_test LABELS host
+ninferno_add_op_test(ninferno_route_pin_selector_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_pin_selector.cpp"
   LIBRARIES ninferno_linear_test_support)
