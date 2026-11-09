@@ -997,7 +997,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                                 const fs::path held_model = chosen.value_or(held_snapshot);
                                 AcquireOptions as_written = options;
                                 if (!options.chat_template.empty() &&
-                                    !local_support_facts(held_model).chat_template) {
+                                    local_support_facts(held_model).chat_template == false) {
                                     as_written.convert.resources.emplace_back(
                                         "chat_template.jinja", options.chat_template);
                                 }
@@ -1179,7 +1179,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
     // Known now: a resource that is the snapshot's own file is no option (the key before the
     // fetch counted it).
     if (convert_options.out.empty()) {
-        if (!options.chat_template.empty() && !local_support_facts(fetched.model).chat_template) {
+        if (!options.chat_template.empty() && local_support_facts(fetched.model).chat_template == false) {
             convert_options.resources.emplace_back("chat_template.jinja", options.chat_template);
         }
         if (fs::is_directory(fetched.model)) { key_context.snapshot = fetched.model; }
