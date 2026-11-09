@@ -755,6 +755,11 @@ int test_forced_stop_cut() {
     failures += check(quoted.tool_calls.empty() && quoted.content.empty() &&
                           quoted.diagnostics.cut_calls_dropped == 1,
                       "a closer quoted in the arguments closed a stopped Hermes call");
+    // A stop inside the call's open marker: its start is dropped, not the answer.
+    const auto in_opener = qwen("<tool", "_call>");
+    failures += check(in_opener.tool_calls.empty() && in_opener.content.empty() &&
+                          in_opener.diagnostics.cut_calls_dropped == 1,
+                      "a stop inside <tool_call> returned the marker's start as text");
     return failures;
 }
 

@@ -1271,6 +1271,17 @@ ToolCallOutputDecoder::finish(bool cut_off, std::optional<std::string_view> stop
         return Terminal{.content = {}, .tool_calls = {}, .diagnostics = diagnostics};
     }
 
+    // A forced call's stop that matched inside the call's open marker ("_call>" in "<tool_call>"):
+    // what is held is the start of that marker (feed holds text only while it may begin a call),
+    // the start of a call, never the answer.
+    if (stop_text && !saw_tool_marker_ && !held_.empty()) {
+        held_.clear();
+        tool_region_.clear();
+        ToolCallParseDiagnostics diagnostics = parsed.diagnostics;
+        diagnostics.fallback_reason          = ToolCallParseFallbackReason::None;
+        diagnostics.cut_calls_dropped        = 1;
+        return Terminal{.content = {}, .tool_calls = {}, .diagnostics = diagnostics};
+    }
     std::string tail = std::move(held_);
     held_.clear();
     tail += tool_region_;
