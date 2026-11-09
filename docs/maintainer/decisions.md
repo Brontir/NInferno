@@ -1638,8 +1638,8 @@ defaults (Qwen3-8B, Qwen3.5-4B / 9B, Qwen3.8-27B, gemma-4-31B and -12b, Muse-Gli
 
 ## 74. ggml's matrix kernel takes the column tile of least work where the generation row says so (#524, 08.11, measured)
 
-**Decision.** Where the generation row has `mmq_work_tiles` (GA10x: RTX 3060, 3090; GB20x: RTX
-5090), a prefill product on ggml's matrix kernel of a format the grids ran (Q4_K and Q6_K, the
+**Decision.** Where the generation row has `mmq_work_tiles` (GA10x: RTX 3060, 3090; Ada: RTX
+4070 Ti; GB20x: RTX 5090), a prefill product on ggml's matrix kernel of a format the grids ran (Q4_K and Q6_K, the
 linears of the Q4_K_M model measured: `mmq_columns::work_tiles_format`) takes, among J = 16, 32, 64, 80, 96, 128, the width
 whose tiles cost least, ceil(t / J) x (f + (1 - f) J / 128) of a 128-column tile's K steps, the
 narrower on a tie; f is the row's `mmq_tile_fixed` (GA10x 0.20, GB20x 0.10). Every other generation,
@@ -1660,9 +1660,14 @@ point) give the regret of the model's picks against the best width of the set as
 RTX 3060 0.00 % at 0.25-0.30 (0.21 % at 0.15-0.20), RTX 3090 0.00 % at 0.15-0.20 (0.28 % at
 0.25-0.30), RTX 5090 0.06 % at 0.10 (0.31 % at 0.05, 0.45 % at 0.15-0.20); 0.43 (the RTX 4060 Ti's
 point, DECISIONS 69) costs 0.28 %, 0.70 %, 1.0 %. GA10x takes 0.20 (the two cards' common best
-range), GB20x 0.10 (one card: the RTX 5070 Ti was busy). Ada (RTX 4090, 4060 Ti) and Turing
-(RTX 2080 Ti) were not run over the widths (their stands were loaded by other builds): they keep the
-fewest tiles, a row joins by its own grid.
+range), GB20x 0.10 (one card: the RTX 5070 Ti was busy). Ada joined on 09.11 by its own grid
+(RTX 4070 Ti, the same 8 widths x 21 slices): 0.07 % at 0.15-0.20 (0.14 % at 0.25-0.30, 0.90 % at
+0.10, 1.72 % at 0.05, 0.17 % at 0.43): Ada takes 0.20, GA10x's value; its best widths are 80 for
+144..160 and 320 tokens, 96 for 176..192, 288 and 448, 128 for 208..256 (so Ada gains less than
+GA10x there: predicted -14 % at 144..160, -10 % at 176..192, -5.9 % over the 144..256 mix). Turing
+(RTX 2080 Ti) was not run over the widths: it keeps the fewest tiles, a row joins by its own grid.
+The RTX 5070 Ti prefills Q4_K / Q6_K on W4A8 tiles, never on ggml's matrix kernel: GB20x's row
+changes nothing there (A B within 0.3 %).
 
 **Measured** (A B A B, three rounds of four requests, the same binary with `old` and `new` tables):
 RTX 5090 (f 0.10) 144..160-token prompts 25.1..25.3 -> 20.9..21.0 ms (-17 %), 136 -13 %, 176..192

@@ -93,7 +93,7 @@ inline constexpr GenerationRow kGenerations[] = {
     {7, 5, 9, "turing", 1536.0, 2048.0, false, 1.0, 1.11, true},
     {8, 0, 0, "ga100", 2048.0, 4096.0, true, 0.46, 1.64, false},
     {8, 1, 8, "ga10x", 512.0, 2048.0, false, 1.0, 1.11, true, false, true, 0.20},
-    {8, 9, 9, "ada", 512.0, 2048.0, false, 1.0, 1.11, true},
+    {8, 9, 9, "ada", 512.0, 2048.0, false, 1.0, 1.11, true, false, true, 0.20},
     {9, 0, 9, "hopper", 2048.0, 4096.0, true, 0.46, 1.64, false},
     {10, 0, 9, "gb100", 2048.0, 4096.0, true, 0.46, 1.64, false},
     {11, 0, 9, "thor", 512.0, 2048.0, false, 1.0, 1.11, true},

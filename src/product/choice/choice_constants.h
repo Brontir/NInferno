@@ -440,10 +440,10 @@ inline constexpr TileCost kTileCost[] = {
 // like to Q5_K / Q6_K; the bits are the whole file's, its token table and head among them). A slice
 // of t tokens takes the column tile the kernel's table does (core/mmq_columns.h): 16, 32, 64 or 128
 // with the fewest tiles; where the generation row says mmq_work_tiles (GA10x: RTX 3060 and 3090,
-// GB20x: RTX 5090) 16, 32, 64, 80, 96 or 128 with the least work. A J-column tile's K step is
+// Ada: RTX 4070 Ti, GB20x: RTX 5090) 16, 32, 64, 80, 96 or 128 with the least work. A J-column tile's K step is
 // mmq_columns::step_share(J, mmq_tile_fixed) = f + (1 - f) J / 128 of a 128-column one: f = 0.43
-// (the RTX 4060 Ti's 64-column Q4_K tiles: 0.716) where the row has none of its own, 0.20 on GA10x,
-// 0.10 on GB20x (DECISIONS 74).
+// (the RTX 4060 Ti's 64-column Q4_K tiles: 0.716) where the row has none of its own, 0.20 on GA10x
+// and Ada, 0.10 on GB20x (DECISIONS 74).
 // clang-format on
 struct MmqTileCost {
     std::string_view generation;
