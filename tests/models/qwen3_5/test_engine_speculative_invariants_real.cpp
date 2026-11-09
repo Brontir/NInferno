@@ -689,10 +689,11 @@ int score_divergences(const char* artifact) {
         const double lp_candidate = score(d.candidate[d.at]);
         const double gap          = std::abs(lp_reference - lp_candidate);
         const bool decisive       = gap > kBugGap;
-        const bool invariant      = test_activations() == ninferno::ActivationMode::Exact;
-        // The candidate chose a token the scorer rates far below the reference's.
-        const bool candidate_worse = lp_reference > lp_candidate;
-        const bool bug             = decisive && (invariant || candidate_worse);
+        // Only exact activations promise width invariance. Under fast and int8 the scorer runs at
+        // a third call width, so which side it prefers cannot tell a route from a regression:
+        // a decisive gap there is reported, and the default (exact) entry judges the contract.
+        const bool invariant = test_activations() == ninferno::ActivationMode::Exact;
+        const bool bug       = decisive && invariant;
         std::cout << "divergence " << d.label << " at " << d.at << ": reference "
                   << d.reference[d.at] << " (" << lp_reference << "), candidate "
                   << d.candidate[d.at] << " (" << lp_candidate << "), gap " << gap << ' '
@@ -700,8 +701,7 @@ int score_divergences(const char* artifact) {
                       : !decisive        ? "WARN: not a near-tie"
                       : bug              ? "BUG: decisive"
                                          : "WARN: decisive, but this activation mode takes A4 or "
-                                           "A16 by call width and promises no width invariance, "
-                                           "and the scorer ranks the candidate first "
+                                           "A16 by call width and promises no width invariance "
                                            "(NINFERNO_TEST_ACTIVATIONS=exact judges the contract)")
                   << '\n';
         bugs += bug ? 1 : 0;

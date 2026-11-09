@@ -249,12 +249,13 @@ void linear_add(const Tensor& x, const Weight& w, Tensor& residual_out, LinearPo
     }
     // A registered shape stored with padded K is not the plan's problem either, nor an NVFP4
     // prefill call the generic W4A8 takes (owned_prefill_w4a8: the plan has no 8-bit form).
+    const bool w4a8       = detail::generic::owned_prefill_w4a8(w, policy, t);
     const bool registered = shape_plan_runs(w.qtype, w.n, w.k, policy) &&
                             (w.layout != QuantLayout::RowSplit || w.padded_shape[1] == w.k) &&
                             !detail::generic::owned_decode_r8(w, policy, t) && !prefill_a8 &&
-                            !detail::generic::owned_prefill_w4a8(w, policy, t) &&
-                            !detail::generic::volta_tiled_route(w, policy, t);
+                            !w4a8 && !detail::generic::volta_tiled_route(w, policy, t);
     if (!registered && detail::generic::supports(w)) {
+        if (w4a8) { detail::generic::record_projection_route("linear_add", "w4a8", t, w.n, w.k); }
         detail::generic::linear_add(x, w, residual_out, prefill_a8 ? a8_policy : policy, &ws,
                                     stream);
         return;
