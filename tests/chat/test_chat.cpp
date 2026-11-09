@@ -49,6 +49,43 @@ std::shared_ptr<const ninferno::chat::ToolCallOutputContract> contract(ToolCallF
     return ninferno::chat::build_tool_call_output_contract(tools, true, format);
 }
 
+// #578: gpt-oss under tool_choice none addresses tools of its own ("to=tool file"). Under a
+// discarded contract that message is a call the turn refuses, cut and never shown; under an
+// ordinary contract it is no call of a declared function, and stays text.
+int test_harmony_any_recipient_under_none() {
+    int failures                         = 0;
+    const std::vector<std::string> tools = {tool_definition("weather", kWeatherSchema)};
+    const std::string invented           = "<|start|>assistant<|channel|>commentary to=tool file "
+                                           "<|constrain|>json<|message|>{\"action\": \"read\"}<|call|>";
+    const auto run                       = [&](bool discarded, const std::string& text) {
+        ninferno::chat::ToolCallOutputDecoder decoder(
+            ninferno::chat::build_tool_call_output_contract(tools, true, ToolCallFormat::Harmony,
+                                                                                  discarded),
+            64);
+        std::string visible = decoder.feed(text);
+        auto end            = decoder.finish();
+        end.content         = visible + end.content;
+        return end;
+    };
+    const auto refused = run(true, invented);
+    failures += check(refused.content.empty() && refused.tool_calls.size() == 1 &&
+                          refused.tool_calls[0].name == "tool",
+                      "an invented recipient under none was shown: " + refused.content);
+    const auto python = run(true, "<|start|>assistant to=python<|channel|>commentary "
+                                  "<|message|>{\"code\": \"1\"}<|call|>");
+    failures += check(python.content.empty() && python.tool_calls.size() == 1,
+                      "a role recipient under none was shown: " + python.content);
+    const auto kept = run(false, invented);
+    failures += check(kept.content == invented && kept.tool_calls.empty(),
+                      "an invented recipient became a call of an ordinary turn");
+    const auto declared = run(true, "<|start|>assistant<|channel|>commentary to=functions.weather "
+                                    "<|constrain|>json<|message|>{\"city\": \"Oslo\"}<|call|>");
+    failures += check(declared.content.empty() && declared.tool_calls.size() == 1 &&
+                          declared.tool_calls[0].name == "weather",
+                      "a declared call under none changed");
+    return failures;
+}
+
 int test_conventions() {
     int failures = 0;
     using ninferno::chat::resolve_conventions;
@@ -1161,6 +1198,7 @@ int test_codec() {
 int main() {
     int failures = 0;
     failures += test_conventions();
+    failures += test_harmony_any_recipient_under_none();
     failures += test_parsers();
     failures += test_streaming_decoder();
     failures += test_structural_tags();
