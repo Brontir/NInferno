@@ -372,6 +372,8 @@ struct ConstraintCompiler::Impl : std::enable_shared_from_this<ConstraintCompile
         std::uint32_t waiters = 0; // guarded by inflight_mutex
         // Clock nanoseconds when the last waiter left, 0 while someone waits.
         std::atomic<std::int64_t> orphaned_ns{0};
+        // Clock nanoseconds when the compile took its slot: the run-time cap counts from there, not
+        // from the wait for a free slot. Set before its worker starts.
         std::int64_t started_ns   = 0;
         std::int64_t run_limit_ns = 0;
     };
@@ -687,7 +689,6 @@ ConstraintCompiler::compile(const OutputConstraintSpec& spec) const {
             } else {
                 job->result       = promise->get_future().share();
                 job->waiters      = 1;
-                job->started_ns   = impl_->now_ns();
                 job->run_limit_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
                                         options.compile_timeout * options.compile_runtime_multiple)
                                         .count();
@@ -723,6 +724,7 @@ ConstraintCompiler::compile(const OutputConstraintSpec& spec) const {
                 throw busy;
             }
             ++impl_->active;
+            job->started_ns = impl_->now_ns();
         }
 
         try {
@@ -733,7 +735,9 @@ ConstraintCompiler::compile(const OutputConstraintSpec& spec) const {
                     const ninferno_xgrammar::CompileCancelScope cancel_scope(
                         [impl, key, job] { return impl->stop_requested(key, job); });
                     built = impl->build_and_compile(spec);
-                    impl->insert(key, built);
+                    // Cancelled after its last checkpoint (the slot was needed): complete, but
+                    // given up, so it takes no room in the cache.
+                    if (!job->cancel.load(std::memory_order_relaxed)) { impl->insert(key, built); }
                 } catch (...) { error = std::current_exception(); }
                 // Out of the table before the answer, so a request woken by a cancel starts afresh.
                 impl->finish_inflight(key, job.get());
