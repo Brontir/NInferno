@@ -44,9 +44,9 @@
 //                   the grid regret over the widths is least at 0.15-0.25 on the RTX 3060 and
 //                   3090, 0.05-0.15 on the RTX 5090; DECISIONS 74), a generation with a higher
 //                   MMA rate (ga100: s8 4096) has a smaller part in J and a larger fixed share, so
-//                   fewer widths pay. A generation joins by its own grid: Ada and Turing were not
-//                   run over the widths and keep the fewest tiles. A measured preference, not
-//                   carried by a lent row.
+//                   fewer widths pay. A generation joins by its own grid: Ada did (0.20, the RTX
+//                   4070 Ti and 4090); Turing was not run over the widths and keeps the fewest
+//                   tiles. A measured preference, not carried by a lent row.
 
 //
 // What a lent row carries (#300): generation_row answers every compute capability, lending the
