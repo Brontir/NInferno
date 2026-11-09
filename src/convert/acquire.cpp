@@ -838,14 +838,12 @@ namespace {
 // A model that does not ship a chat template is converted with the caller's as its resource
 // (#583): one known to ship none, and one whose answer is unknown (a GGUF naming a base
 // repository, whose template may be missing or unreachable: base_tokenizer then fetches no other).
-// A GGUF's chat_template.jinja beside it is its template. The conversion after the fetch and the
-// refetch lookup of the kept one ask it the same way.
+// A GGUF's chat_template.jinja beside it is its template (local_support_facts). The conversion
+// after the fetch and the refetch lookup of the kept one ask it the same way.
 void bake_chat_template(ConvertOptions& convert, const AcquireOptions& options,
                         const fs::path& model) {
     if (options.chat_template.empty()) { return; }
-    const bool ships =
-        local_support_facts(model).chat_template.value_or(false) ||
-        (fs::is_regular_file(model) && fs::exists(model.parent_path() / "chat_template.jinja"));
+    const bool ships = local_support_facts(model).chat_template.value_or(false);
     if (!ships) { convert.resources.emplace_back("chat_template.jinja", options.chat_template); }
 }
 

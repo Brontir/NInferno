@@ -229,6 +229,12 @@ int main(int argc, char** argv) {
         write("f64.gguf", false, gg::F64, 64);
         const auto f64 = cv::local_support_facts(dir / "f64.gguf");
         expect(f64.gguf_block_matrices == 0, "an F64 matrix is plain, no block encoding");
+        // No template in the header: none, unless a chat_template.jinja lies beside the file (as
+        // the converter reads it, and the hub facts count it, #587).
+        expect(f64.chat_template == false, "a GGUF without a template ships none");
+        std::ofstream(dir / "chat_template.jinja") << "{{ messages }}";
+        expect(cv::local_support_facts(dir / "f64.gguf").chat_template == true,
+               "a GGUF with a chat_template.jinja beside it ships that template");
         std::filesystem::remove_all(dir);
     }
     // A checkpoint folder on disk: its config.json and its template files.
