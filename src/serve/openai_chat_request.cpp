@@ -161,12 +161,14 @@ void validate_standard_output_controls(const Json& body) {
 // OpenAI response_format, vLLM structured_outputs (and the guided_* spellings) and llama.cpp
 // grammar each promise constrained generation. At most one may be present; each accepted form is
 // enforced by the Engine.
-std::optional<OutputConstraintRequest> parse_output_constraint(const Json& body) {
+std::optional<OutputConstraintRequest> parse_output_constraint(const Json& body,
+                                                               const RequestLimits& limits) {
     std::optional<OutputConstraintRequest> format;
     if (body.contains("response_format") && !body.at("response_format").is_null()) {
         format = parse_openai_response_format(body.at("response_format"), "response_format", false);
     }
-    std::optional<OutputConstraintRequest> extension = parse_structured_output_extensions(body);
+    std::optional<OutputConstraintRequest> extension =
+        parse_structured_output_extensions(body, limits.max_json_values);
     if (format && extension) {
         bad_request("response_format and " + extension->param + " cannot be combined",
                     extension->param, "conflicting_constraints");
@@ -583,6 +585,7 @@ void parse_messages(const Json& body, const RequestLimits& limits, GenerationReq
     for (std::size_t index = 0; index < messages.size(); ++index) {
         output.messages.push_back(parse_message(messages.at(index), index));
     }
+    check_history_call_arguments(output.messages, limits, "messages");
     order_tool_results(output.messages);
 }
 
@@ -979,7 +982,7 @@ OpenAIChatRequest parse_chat_completion_request(const Json& body, const RequestL
                                                 bool auto_system_shared_prefix) {
     require_object(body, "request body must be a JSON object");
     validate_standard_output_controls(body);
-    std::optional<OutputConstraintRequest> constraint = parse_output_constraint(body);
+    std::optional<OutputConstraintRequest> constraint = parse_output_constraint(body, limits);
     validate_compatibility_hints(body);
 
     OpenAIChatRequest output;
