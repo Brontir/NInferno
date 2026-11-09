@@ -731,6 +731,21 @@ int test_forced_stop_cut() {
     failures += check(gemma.tool_calls.size() == 1 && gemma.content.empty() &&
                           gemma.diagnostics.cut_calls_dropped == 0,
                       "a stop on <tool_call|> lost a complete Gemma call");
+    // A stop of fewer than three closer bytes matched before the closer: these parsers would close
+    // the complete body at the end of the output, but such a stop also matches inside a call, so
+    // the call is dropped.
+    const auto hermes_short = decode(
+        ToolCallFormat::HermesJson,
+        "<tool_call>\n{\"name\": \"weather\", \"arguments\": {\"city\": \"Oslo\", \"days\": 2}}",
+        "\n<");
+    failures += check(hermes_short.tool_calls.empty() && hermes_short.content.empty() &&
+                          hermes_short.diagnostics.cut_calls_dropped == 1,
+                      "a short stop before </tool_call> kept a Hermes call");
+    const auto gemma_short = decode(ToolCallFormat::Gemma4,
+                                    "<|tool_call>call:weather{city:<|\"|>Oslo<|\"|>,days:2}", "<t");
+    failures += check(gemma_short.tool_calls.empty() && gemma_short.content.empty() &&
+                          gemma_short.diagnostics.cut_calls_dropped == 1,
+                      "a short stop before <tool_call|> kept a Gemma call");
     return failures;
 }
 

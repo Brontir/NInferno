@@ -1123,7 +1123,15 @@ ToolCallOutputDecoder::finish(bool cut_off, std::optional<std::string_view> stop
 
     ParsedToolCallOutput parsed =
         tool_call_syntax(contract_->format).parse(tool_region_, max_tool_name_length_, *contract_);
-    if (saw_tool_marker_ && parsed.is_tool_call_response) {
+    // A caller's stop string that ended the last call before its close marker: a parser that closes
+    // a complete body at the end of the output (Hermes, Gemma) is taken at its word only where the
+    // stop swallowed that marker; a shorter stop ("\n<", "<t") also matches between a call's parts.
+    const ToolCallSyntax::LastCall last_open = syntax_->last_call(tool_region_);
+    const bool stopped_unclosed =
+        stop_text && last_open.start != std::string::npos && !last_open.close.empty() &&
+        tool_region_.find(last_open.close, last_open.start) == std::string::npos &&
+        !stop_swallows(*stop_text, last_open.close);
+    if (saw_tool_marker_ && parsed.is_tool_call_response && !stopped_unclosed) {
         held_.clear();
         tool_region_.clear();
         // The prose before a recovered later marker, and text after complete calls.
