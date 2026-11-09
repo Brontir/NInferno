@@ -231,13 +231,25 @@ bool source_changed(const std::filesystem::path& artifact, const std::string& st
 }
 
 std::set<std::filesystem::path> manifest_drafter_files(const std::filesystem::path& artifact) {
+    // Read leniently: only drafters[].artifact counts here. A manifest the speculation reader
+    // refuses (an older layout, a field missing) still names the files that go with the
+    // conversion; a relative path is the conversion's directory's.
     std::set<std::filesystem::path> out;
-    const auto manifest = spec::read_manifest(spec::manifest_path(artifact));
-    if (!manifest) { return out; }
+    std::ifstream in(spec::manifest_path(artifact));
+    if (!in) { return out; }
+    const auto doc      = nlohmann::json::parse(in, nullptr, false);
+    const auto drafters = doc.is_object() ? doc.find("drafters") : doc.end();
+    if (!doc.is_object() || drafters == doc.end() || !drafters->is_array()) { return out; }
     std::error_code ec;
-    for (const auto& drafter : manifest->drafters) {
-        if (drafter.artifact.empty()) { continue; }
-        out.insert(std::filesystem::weakly_canonical(drafter.artifact, ec));
+    for (const auto& drafter : *drafters) {
+        const auto file = drafter.is_object() ? drafter.find("artifact") : drafter.end();
+        if (!drafter.is_object() || file == drafter.end() || !file->is_string() ||
+            file->get<std::string>().empty()) {
+            continue;
+        }
+        std::filesystem::path path(file->get<std::string>());
+        if (path.is_relative()) { path = artifact.parent_path() / path; }
+        out.insert(std::filesystem::weakly_canonical(path, ec));
     }
     return out;
 }
