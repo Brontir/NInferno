@@ -850,6 +850,10 @@ std::optional<models::DrafterStateShape> plan_drafter_state_of_config(const json
             if (type == rope->end() || !type->is_string()) { type = rope->find("type"); }
             const bool yarn = type != rope->end() && type->is_string() && *type == "yarn";
             original        = yarn ? u32(number(*rope, "original_max_position_embeddings")) : 0;
+            // Phi-3 keeps the length beside rope_scaling, not in it: the converter copies it in.
+            if (yarn && original == 0 && std::string_view(key) == "rope_scaling") {
+                original = u32(number(config, "original_max_position_embeddings"));
+            }
             // The attention scaling the runtime reads its length back from (yarn_original_length):
             // as converted (rope), or as the converter computes it from a published rope
             // (core/yarn.h yarn_rope): attention_factor, else mscale over mscale_all_dim, else

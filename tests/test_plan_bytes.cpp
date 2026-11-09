@@ -1375,6 +1375,24 @@ void test_gptoss_drafter_rings() {
         json{{"type", "yarn"}, {"factor", 32.0}, {"original_max_position_embeddings", 4096}});
     check(legacy && legacy->local_layers == 8 && legacy->window == 4096,
           "a YaRN rope named by the legacy type rings");
+    // The length beside rope_scaling (Phi-3's place), which the converter copies into the rope.
+    {
+        json c            = {{"architectures", {"DFlashDraftModel"}},
+                             {"model_type", "dflash"},
+                             {"num_hidden_layers", 8},
+                             {"num_attention_heads", 64},
+                             {"num_key_value_heads", 8},
+                             {"head_dim", 64},
+                             {"max_position_embeddings", 131072},
+                             {"original_max_position_embeddings", 4096},
+                             {"layer_types", layers},
+                             {"rope_scaling", {{"type", "yarn"}, {"attention_factor", 1.2}}},
+                             {"dflash_config",
+                              {{"target_layer_ids", {1, 6, 11, 16, 21}}, {"mask_token_id", 200000}}}};
+        const auto beside = pr::plan_drafter_state_of_config(c, 2880);
+        check(beside && beside->local_layers == 8 && beside->window == 4096,
+              "a YaRN length beside rope_scaling rings");
+    }
     const auto keyed = drafter("rope_parameters", json{{"full_attention", yarn_4096}});
     check(keyed && keyed->local_layers == 8 && keyed->window == 4096,
           "gpt-oss drafter rings from rope_parameters keyed by layer type");
