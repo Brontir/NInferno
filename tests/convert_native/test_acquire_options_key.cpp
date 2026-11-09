@@ -355,6 +355,18 @@ int main() {
         check(!cv::kept_for_options(cache, "org/base", "", other_template),
               "but not for another template");
         check(!cv::kept_for_options(cache, "org/base", "", cv::AcquireOptions{}), "nor for none");
+        // A plain conversion of the same model beside the baked one: the start with the template
+        // takes the baked one, the conversion it would write after the fetch (#587); without the
+        // template it takes the plain one.
+        write_text(base_dir / "ninferno" / commit / "m-Q8_0.dense_bf16.ninferno", "plain");
+        write_text(base_dir / "ninferno" / commit / "m-Q8_0.dense_bf16.ninferno.conversion.json",
+                   "{}");
+        const auto both = cv::kept_for_options(cache, "org/base", "", request);
+        check(both && both->parent_path().filename() == "options-" + baked_key,
+              "the baked conversion wins over the plain one when a template is given");
+        const auto plain_only = cv::kept_for_options(cache, "org/base", "", cv::AcquireOptions{});
+        check(plain_only && plain_only->parent_path().filename() == commit,
+              "and the plain one is taken without a template");
         // A --resource identical to the snapshot's own file converted into the default
         // directory: with the download removed it is found there by what the conversion
         // recorded (snapshot_resources), and only for that very file.
