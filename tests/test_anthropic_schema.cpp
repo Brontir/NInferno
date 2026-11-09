@@ -658,6 +658,27 @@ int test_thinking_history_transport_metadata() {
         parse_anthropic_count_tokens_request(missing_signature);
     failures += check(counted.generation.messages[1].reasoning_content == "thought",
                       "Count Tokens assigned semantics to Thinking signature metadata");
+
+    // Thinking before a tool_use is one assistant turn carrying both: the turn a template that
+    // keeps the analysis of a tool-call turn (gpt-oss, from `thinking`) renders it from.
+    Json tool_turn = base_request();
+    tool_turn["messages"] =
+        Json::array({Json{{"role", "user"}, {"content", "go"}},
+                     Json{{"role", "assistant"},
+                          {"content", Json::array({Json{{"type", "thinking"}, {"thinking", "plan"}},
+                                                   Json{{"type", "tool_use"},
+                                                        {"id", "toolu_1"},
+                                                        {"name", "calc"},
+                                                        {"input", Json::object()}}})}},
+                     Json{{"role", "user"},
+                          {"content", Json::array({Json{{"type", "tool_result"},
+                                                        {"tool_use_id", "toolu_1"},
+                                                        {"content", "912"}}})}}});
+    const GenerationRequest tool_request = parse(tool_turn).generation;
+    failures += check(tool_request.messages.size() == 3 &&
+                          tool_request.messages[1].reasoning_content == "plan" &&
+                          tool_request.messages[1].tool_calls.size() == 1,
+                      "Thinking before tool_use did not form one assistant turn");
     return failures;
 }
 

@@ -3,6 +3,7 @@
 #include "serve/cache_hint.h"
 #include "serve/generation_service.h"
 #include "serve/operational_log.h"
+#include "serve/http_transport.h"
 #include "serve/openai_responses_store.h"
 #include "serve/request_log.h"
 #include "serve/serve_options.h"
@@ -22,6 +23,10 @@
 namespace ninferno::serve {
 
 void write_openai_error(httplib::Response& response, const ApiError& error);
+
+// The request's id, on every endpoint: the client's own X-Request-Id when it is a plain token (up
+// to 128 letters, digits and -_.:), so a gateway's logs and ours share it; else `minted`.
+[[nodiscard]] std::string request_id_of(const httplib::Request& request, std::string minted);
 void write_anthropic_error(httplib::Response& response, const ApiError& error,
                            const std::string& request_id);
 
@@ -130,6 +135,9 @@ private:
                 const ApiError& error) const;
 
     void register_routes();
+    // The /health answer (status code and JSON body), also given to a connection the worker pool
+    // refused (answer_overloaded_connection).
+    [[nodiscard]] HealthReply health_reply() const;
     void handle_chat_completions(const httplib::Request& req, httplib::Response& res);
     void handle_messages(const httplib::Request& req, httplib::Response& res);
     void handle_count_tokens(const httplib::Request& req, httplib::Response& res);

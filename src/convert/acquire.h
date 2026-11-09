@@ -56,6 +56,32 @@ enum class Drafters {
     Off,     // --no-drafters
 };
 
+// Whether a start attaches a model's separate drafters: by default a checkpoint's, not a GGUF's.
+[[nodiscard]] bool drafters_enabled(Drafters mode, bool gguf);
+
+// What acquire_model does about the drafters of an artifact it reuses.
+enum class DrafterActionKind {
+    Nothing,              // serve the artifact as it is
+    Attach,               // download gone: plan from the artifact and attach; download present (a
+                          // GGUF's): attach to it without converting companions in
+    CompanionsThenAttach, // a GGUF's: convert the companions in again, then attach the others
+    Reconvert,            // a checkpoint's artifact converted without its drafters: convert again
+    ReplanFromCheckpoint, // plan again from the download; a companion it adds converts again
+    Warn,                 // serve without a drafter that failed (message), after a warning
+    Fail,                 // a drafter that failed fails the start (message)
+};
+
+struct DrafterAction {
+    DrafterActionKind kind = DrafterActionKind::Nothing;
+    std::string message; // Warn and Fail: why
+};
+
+// The decision for a complete artifact, a pure function of the start's `mode`, whether the model
+// is a GGUF (with the download gone: what the manifest records, else what the artifact says),
+// whether its download is still there, the manifest, and whether the caller named the components.
+[[nodiscard]] DrafterAction decide_drafters(Drafters mode, bool gguf, bool download_present,
+                                            const ManifestState& manifest, bool components_given);
+
 struct AcquireOptions {
     FetchOptions fetch;
     // The conversion: recipe ("" for the official one), out ("" for

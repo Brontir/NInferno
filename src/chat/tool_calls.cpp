@@ -1268,6 +1268,39 @@ ToolCallOutputDecoder::finish(bool cut_off, std::optional<std::string_view> stop
             }
         }
     }
+    // A forced call's stop string that swallowed only the markup closing a call whose body is
+    // complete: the call is closed and kept (Qwen's </tool_call> after its </function>, every
+    // other syntax's own close marker).
+    if (stop_text && saw_tool_marker_) {
+        std::string closed = rtrim_format_whitespace(tool_region_);
+        bool closes        = false;
+        if (contract_->format == ToolCallFormat::QwenXml) {
+            if (closed.ends_with(kFunctionClose) && stop_swallows(*stop_text, kToolClose) &&
+                closed.find(kToolOpen) != std::string::npos) {
+                closed.append("\n").append(kToolClose);
+                closes = true;
+            }
+        } else if (!syntax_->close().empty() && stop_swallows(*stop_text, syntax_->close()) &&
+                   !closed.ends_with(syntax_->close())) {
+            closed.append(syntax_->close());
+            closes = true;
+        }
+        if (closes) {
+            ParsedToolCallOutput completed =
+                syntax_->parse(closed, max_tool_name_length_, *contract_);
+            if (completed.is_tool_call_response && !completed.tool_calls.empty()) {
+                held_.clear();
+                tool_region_.clear();
+                completed.diagnostics.closed_calls = 1;
+                // Past the closer it swallowed, the stop may have begun the next call.
+                completed.diagnostics.cut_calls_dropped += next_call_cut(
+                    {contract_->format == ToolCallFormat::QwenXml ? kToolClose : syntax_->close()});
+                return Terminal{.content     = std::move(completed.content),
+                                .tool_calls  = std::move(completed.tool_calls),
+                                .diagnostics = completed.diagnostics};
+            }
+        }
+    }
     // The output limit cut the last call off (its open marker has no close marker after it): the
     // calls before that marker were complete and are the turn's calls (as an all-or-nothing parse,
     // every one of them was lost as text). The unfinished call cannot run; its markup is dropped

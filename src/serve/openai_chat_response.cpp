@@ -289,6 +289,7 @@ std::string make_chat_completion_response(const OpenAIChatResponseIdentity& iden
                                           const GenerationOutcome& outcome) {
     Json message = {{"role", "assistant"}, {"content", outcome.text}, {"refusal", nullptr}};
     const bool has_tool_calls = !outcome.tool_calls.empty();
+    const bool calls_end      = calls_end_turn(outcome);
     // vLLM/SGLang-compatible reasoning_content preserves the Engine's Reasoning/Content split.
     if (!outcome.reasoning.empty()) { message["reasoning_content"] = outcome.reasoning; }
     if (has_tool_calls) {

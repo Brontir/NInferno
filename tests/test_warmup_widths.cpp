@@ -13,6 +13,7 @@
 #include "support/temp_dir.h"
 #include "ops/gdn_gating_proj/bf16/bf16_gdn_gating_proj_plan.h"
 #include "ops/linear_add/q8/q8_linear_add_plan.h"
+#include "ops/linear/linear_registry.h"
 #include "ops/linear_pair/q8/q8_pair_plan.h"
 
 #include <nlohmann/json.hpp>
@@ -120,6 +121,10 @@ std::vector<Chooser> choosers() {
     }
     for (const std::int32_t k : {5120, 2048}) {
         out.push_back({"q8 linear_pair 1024x" + std::to_string(k), [k](std::int32_t cols) {
+                           // The two linear() calls where the chain price hands them the call.
+                           if (!op::linear_pair_runs_fused(1024, k, cols)) {
+                               return std::string("two linear() calls");
+                           }
                            const op::Q8PairProblem problem{1024, k, k, cols};
                            const op::Q8PairPlan plan = op::q8_pair_resolve_plan(problem);
                            return std::string(op::q8_pair_schedule_name(plan.schedule)) +

@@ -9,3 +9,9 @@ ninferno_add_test(ninferno_speculation_ngram_lookup_test
 ninferno_add_op_test(ninferno_speculation_dflash_split_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_dflash_split.cpp"
   LIBRARIES ninferno_speculation)
+
+# The rows a DFlash drafter's full layers read (DFlashConfig::full_window): recorded, derived from
+# YaRN's attention factor, or none.
+ninferno_add_test(ninferno_speculation_dflash_config_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_dflash_config.cpp"
+  LIBRARIES ninferno_speculation)

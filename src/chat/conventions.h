@@ -30,8 +30,15 @@ struct TurnMarkup {
     // "<|tool_response>", harmony's "<|call|>"), whether or not the template offers tools.
     std::vector<std::string> stops;
     std::vector<std::pair<std::string, ChatRole>> roles;  // header text -> role
+    // What follows an assistant header where the turn is addressed to a recipient: harmony's
+    // "assistant to=functions.x<|channel|>commentary" (" "), its "assistant<|channel|>commentary"
+    // ("<|channel|>"), Atem's "assistant to=x" (" "). Empty: the markup addresses no turn.
+    std::vector<std::string> recipient_separators;
 
     [[nodiscard]] std::optional<ChatRole> role(std::string_view header) const noexcept;
+    // Whether an unnamed header is the model's own turn to a recipient (a tool call): a header the
+    // roles name Assistant, then a recipient separator.
+    [[nodiscard]] bool assistant_addressed(std::string_view header) const noexcept;
 };
 
 struct ReasoningMarkup {
@@ -48,6 +55,10 @@ struct ReasoningMarkup {
     // Headers the model writes before its answer, after reasoning or in place of it (a harmony
     // "final" channel); the presentation drops the one the answer begins with. Empty: none.
     std::vector<std::string> content_open;
+    // The template reads a tool-call turn's analysis from message.thinking and refuses a turn that
+    // also has text (gpt-oss: "Cannot pass both content and thinking"). Detected by that refusal
+    // text in the template source.
+    bool refuses_text_with_thinking = false;
 };
 
 enum class ToolCallFormat : std::uint8_t {

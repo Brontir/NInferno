@@ -161,12 +161,14 @@ void validate_standard_output_controls(const Json& body) {
 // OpenAI response_format, vLLM structured_outputs (and the guided_* spellings) and llama.cpp
 // grammar each promise constrained generation. At most one may be present; each accepted form is
 // enforced by the Engine.
-std::optional<OutputConstraintRequest> parse_output_constraint(const Json& body) {
+std::optional<OutputConstraintRequest> parse_output_constraint(const Json& body,
+                                                               const RequestLimits& limits) {
     std::optional<OutputConstraintRequest> format;
     if (body.contains("response_format") && !body.at("response_format").is_null()) {
         format = parse_openai_response_format(body.at("response_format"), "response_format", false);
     }
-    std::optional<OutputConstraintRequest> extension = parse_structured_output_extensions(body);
+    std::optional<OutputConstraintRequest> extension =
+        parse_structured_output_extensions(body, limits.max_json_values);
     if (format && extension) {
         bad_request("response_format and " + extension->param + " cannot be combined",
                     extension->param, "conflicting_constraints");
@@ -379,17 +381,20 @@ std::optional<std::string> parse_assistant_reasoning(const Json& message, std::s
         }
         return message.at(key).get<std::string>();
     };
-    // vLLM historically used reasoning_content and now also accepts reasoning. They carry the
-    // same assistant-history semantics, so equal aliases normalize to one Engine field.
-    std::optional<std::string> content   = parse("reasoning_content");
-    std::optional<std::string> reasoning = parse("reasoning");
-    if (content && content->empty()) { content.reset(); }
-    if (reasoning && reasoning->empty()) { reasoning.reset(); }
-    if (content && reasoning && *content != *reasoning) {
-        bad_request("conflicting assistant reasoning and reasoning_content values", "messages",
-                    "conflicting_template_option");
+    // vLLM historically used reasoning_content and now also accepts reasoning; transformers also
+    // takes `thinking` (the gpt-oss template's field). They carry the same assistant-history
+    // semantics, so equal aliases normalize to one Engine field.
+    std::optional<std::string> found;
+    for (const char* key : {"reasoning_content", "reasoning", "thinking"}) {
+        std::optional<std::string> value = parse(key);
+        if (!value || value->empty()) { continue; }
+        if (found && *found != *value) {
+            bad_request("conflicting assistant reasoning, reasoning_content and thinking values",
+                        "messages", "conflicting_template_option");
+        }
+        found = std::move(value);
     }
-    return reasoning ? reasoning : content;
+    return found;
 }
 
 void validate_message_name(const Json& item) {
@@ -407,7 +412,7 @@ void validate_non_assistant_fields(const Json& item, ChatRole role) {
         bad_request("function_call is only valid on assistant messages", "messages");
     }
     if (role == ChatRole::Assistant) { return; }
-    for (const char* key : {"reasoning", "reasoning_content"}) {
+    for (const char* key : {"reasoning", "reasoning_content", "thinking"}) {
         if (!item.contains(key) || item.at(key).is_null()) { continue; }
         if (!item.at(key).is_string()) {
             bad_request(std::string(key) + " must be a string", "messages");
@@ -580,6 +585,7 @@ void parse_messages(const Json& body, const RequestLimits& limits, GenerationReq
     for (std::size_t index = 0; index < messages.size(); ++index) {
         output.messages.push_back(parse_message(messages.at(index), index));
     }
+    check_history_call_arguments(output.messages, limits, "messages");
     order_tool_results(output.messages);
 }
 
@@ -976,7 +982,7 @@ OpenAIChatRequest parse_chat_completion_request(const Json& body, const RequestL
                                                 bool auto_system_shared_prefix) {
     require_object(body, "request body must be a JSON object");
     validate_standard_output_controls(body);
-    std::optional<OutputConstraintRequest> constraint = parse_output_constraint(body);
+    std::optional<OutputConstraintRequest> constraint = parse_output_constraint(body, limits);
     validate_compatibility_hints(body);
 
     OpenAIChatRequest output;

@@ -68,6 +68,22 @@ int main() {
                           "an unknown path answers a JSON 404");
     }
 
+    {
+        httplib::Request slow;
+        slow.method = "POST";
+        slow.path   = "/v1/chat/completions";
+        slow.set_header("Content-Length", "100");
+        httplib::Response slow_response;
+        slow_response.status = 408;
+        const auto handled   = ninferno::serve::handle_unrendered_http_error(
+            ninferno::serve::ServeOptions{}, slow, slow_response);
+        failures += check(handled == httplib::Server::HandlerResponse::Handled &&
+                              !slow_response.keep_alive_after_error &&
+                              Json::parse(slow_response.body).at("error").at("code") ==
+                                  "request_body_too_slow",
+                          "a request body cut off for arriving too slowly answers a JSON 408");
+    }
+
     // Errors on a doubled path keep the envelope and request-id header of the endpoint it names.
     ninferno::serve::ServeOptions options;
     httplib::Request missing_messages;
@@ -116,6 +132,17 @@ int main() {
             ninferno::serve::make_prometheus_metrics(stats, 3, ninferno::ModelMetadata{})
                     .find("ninferno_decision_fingerprint_info") == std::string::npos,
         "/metrics must carry the decision fingerprint as an info gauge when there is one");
+    const std::string identified = ninferno::serve::make_prometheus_metrics(
+        stats, 3, ninferno::ModelMetadata{},
+        ninferno::serve::ServerProcess{"serve-4242-1762190000500000", 1762190000500000});
+    failures += check(
+        identified.find("# TYPE ninferno_server_info gauge\n"
+                        "ninferno_server_info{server_instance_id=\"serve-4242-1762190000500000\"} "
+                        "1\n") != std::string::npos &&
+            identified.find("# TYPE process_start_time_seconds gauge\n"
+                            "process_start_time_seconds 1762190000.5\n") != std::string::npos &&
+            metrics.find("ninferno_server_info") == std::string::npos,
+        "/metrics must name the server process and its start time when given");
     const Json models = Json::parse(ninferno::serve::make_models_list("m", 0, 4096, fingerprinted));
     failures += check(
         models.at("data").at(0).at("meta").at("decision_fingerprint") == "nf1-0123456789abcdef" &&

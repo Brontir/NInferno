@@ -53,6 +53,12 @@ ninferno_add_test(ninferno_qwen3_5_runtime_mechanisms_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_runtime_mechanisms.cpp"
   LIBRARIES ninferno_engine ninferno_core)
 
+# The MTP layer's packed Q/K/gate/V parent (host only): fused Op forms, and a BF16 MoE parent
+# (nvidia / RedHatAI NVFP4 35B-A3B releases) sized for the generic linear instead of refused.
+ninferno_add_test(ninferno_qwen3_5_mtp_projection_plan_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_mtp_projection_plan.cpp"
+  LIBRARIES ninferno_engine ninferno_core ninferno::json)
+
 # Decode round pacing (host only): steps and waits on quiet, lagging and fixed hosts.
 ninferno_add_test(ninferno_qwen3_5_round_pacing_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_round_pacing.cpp")
@@ -164,6 +170,14 @@ ninferno_add_test(ninferno_qwen3_5_speculative_invariants_real_test
 set_tests_properties(
   ninferno_qwen3_5_speculative_invariants_real_test
   PROPERTIES SKIP_RETURN_CODE 77)
+
+# The same cases in fast activations (the product's default): WARN-only on a width-dependent gap
+# (#440).
+add_test(NAME ninferno_qwen3_5_speculative_invariants_real_fast_test
+  COMMAND ninferno_qwen3_5_speculative_invariants_real_test)
+set_tests_properties(
+  ninferno_qwen3_5_speculative_invariants_real_fast_test
+  PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT "NINFERNO_TEST_ACTIVATIONS=fast")
 
 ninferno_add_test(ninferno_tool_call_parser_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../../test_tool_call_parser.cpp"

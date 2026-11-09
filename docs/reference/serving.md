@@ -539,7 +539,7 @@ prefix so that a following compatible turn can reuse it.
 | `GET /health` | Engine readiness |
 | `GET /v1/models` | configured OpenAI model alias, effective `max_model_len`, and a llama.cpp-compatible `meta` object |
 | `GET /props` | llama.cpp-style server properties (model alias, context, training context, vocabulary size, slots) |
-| `GET /metrics` | Prometheus text exposition: llama.cpp's `llamacpp:*` series (prompt and generated tokens, decode rounds, busy slots, running and deferred requests) and `ninferno_reused_prompt_tokens_total`, `ninferno_requests_prefilling`, `ninferno_requests_materializing`, `ninferno_http_active_requests`, plus the info gauge `ninferno_decision_fingerprint_info{fingerprint,manifest,schema}` (value 1) |
+| `GET /metrics` | Prometheus text exposition: llama.cpp's `llamacpp:*` series (prompt and generated tokens, decode rounds, busy slots, running and deferred requests) and `ninferno_reused_prompt_tokens_total`, `ninferno_requests_prefilling`, `ninferno_requests_materializing`, `ninferno_http_active_requests`, plus the info gauges `ninferno_decision_fingerprint_info{fingerprint,manifest,schema}` and `ninferno_server_info{server_instance_id}` (value 1; the instance id is the request log's `server_instance_id`, `serve-<pid>-<start µs>`) and `process_start_time_seconds`: both change on a restart, which empties the context cache |
 | `GET /v1/models/{id}` | lookup of the configured alias, `max_model_len`, and `meta` object |
 | `POST /v1/chat/completions` | OpenAI-style chat generation |
 | `POST /v1/responses` | OpenAI Responses Core generation, state, typed Items, and SSE |
@@ -613,7 +613,9 @@ prefix, with the same behavior, errors, and request IDs.
 Every OpenAI-compatible response carries an `x-request-id` header, including streaming and
 error responses: the client's own `X-Request-Id` when it sends one that is a plain token (letters,
 digits, `-`, `_`, `.`, `:`; at most 128 characters), else one the server makes. Anthropic endpoints
-use their separate `request-id` contract. The server's log names that id on each request's start
+answer in their own `request-id` header (and an error body's `request_id`) by the same rule, so a
+gateway that sends one `X-Request-Id` for both dialects finds every request in the log; without
+one they carry a `req_…` id the server makes. The server's log names that id on each request's start
 line and on every refused request (a 4xx before generation is logged too).
 
 ### Keep-alive and dead peers
@@ -626,6 +628,31 @@ line and on every refused request (a 4xx before generation is logged too).
 - On Linux, accepted connections also use TCP keepalive and a 15-second `TCP_USER_TIMEOUT`.
   Together with the heartbeat, a dead or unacknowledging peer is normally cancelled within about 20
   seconds, including while the request is waiting or prefilling.
+- Every connection holds one HTTP worker while its request is read. The request line and headers
+  have a 5-second total deadline. A body must grow by at least `--request-body-min-kib-per-sec`
+  (16 KiB/s) over every 10-second window, counting the bytes of chunk framing as well, otherwise
+  the server answers HTTP 408 `request_body_too_slow` and closes the connection. A sender that
+  trickles a body therefore holds a worker for about ten seconds, not for as long as it likes.
+- The worker pool is finite (49 workers by default) and, on Linux, queues at most half as many
+  more connections (at least 16). A connection past the queue is answered at once on the accepting
+  thread: `GET /health` with the health answer, anything else with HTTP 503, `Retry-After: 5` and
+  code `server_busy`. Senders that fill the pool therefore cannot make the server unreachable to a
+  liveness probe, and nobody waits in an unbounded queue. That `/health` answer reports the Engine
+  (liveness): a saturated pool does not make it unhealthy. A past-the-queue connection that has sent
+  no bytes yet (a connection a proxy opened ahead and keeps idle) is closed without an answer, which
+  proxies treat as an ordinary idle close and retry; only a connection with request bytes gets the
+  503. A 503 is written before the request is read: a small request is read and dropped so the
+  client sees the answer, a large one still in flight may reset the connection.
+  - Linux hands a connection to the server when its first bytes arrive (`TCP_DEFER_ACCEPT`); a
+    client that connects and says nothing is handed over by the kernel's SYN-ACK retransmit
+    after about 3-7 s, so it waits that long instead of taking a worker at once.
+  - The queue size is a choice, not a limit of the design: half the pool, at least 16, so the default
+    pool holds 49 workers and 24 queued connections, 73 in all. A client or SDK pool beyond that is
+    answered 503 with `Retry-After: 5`, which the OpenAI and Anthropic SDKs retry. A bench that opens
+    more connections than that at once should lower its concurrency or retry.
+  - On other systems the queue is unbounded as before and only the body rate applies. A connection that is queued waits for a worker to free up, which
+  takes seconds. On a network where clients are hostile, a buffering reverse proxy in front still
+  helps: it sends the body to NInferno only once it has received all of it.
 - A peer whose TCP stack remains connected and acknowledges data cannot be distinguished from a
   reading application. Proxies must close their upstream NInferno connection when the downstream
   client disappears.
@@ -676,8 +703,9 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 ```
 
 The request `model` may name anything: a server serves one model, so a client's own default
-(`gpt-4o`, an alias the user configured) means it. Responses carry the public model ID: the
-artifact's `metadata.name`, else its file name by default, or the explicit `--model-id` override.
+(`gpt-4o`, an alias the user configured) means it, and Chat Completions and Responses answers echo
+that `model` back. `/v1/models` lists the public model ID: the artifact's `metadata.name`, else its
+file name by default, or the explicit `--model-id` override.
 Every endpoint also answers without its `/v1` prefix (`/chat/completions`, `/models`), for
 llama.cpp-style base URLs.
 
@@ -691,7 +719,11 @@ llama.cpp-style base URLs.
 - User `image_url` parts, tool-result `image_url` parts used by compatible clients, and the User
   `video_url` extension, using HTTP(S) or data URIs. Image detail `auto`, `low` and `high` (or
   omitted) all take the fixed Vision preprocessing profile.
-- Assistant `reasoning_content` and `reasoning` history aliases.
+- Assistant `reasoning_content`, `reasoning` and `thinking` history aliases. A template also sees
+  the reasoning as `thinking` (gpt-oss keeps a tool-call turn's analysis from it; recent
+  transformers fills the field the same way). A tool-call turn that carries both text and
+  reasoning renders its reasoning and not the text for a template that reads `thinking` and
+  refuses both (gpt-oss: the text is not shown to the model); the request is not refused.
 - Assistant tool-call history, tool-result messages, and legacy function-call history. Results
   returned out of order (by clients that run the calls concurrently) are rendered in the order of
   their calls when their `tool_call_id`s all name calls of that assistant turn.
@@ -945,6 +977,12 @@ retain that member order in aggregate and streaming responses, so an unmodified 
 the same ordered tool call. NInferno does not canonicalize semantically equivalent JSON. If a client
 reorders members, inserts defaults, or otherwise rewrites a tool object, the changed rendered input
 does not match the model-held endpoint and can reuse only an earlier exact checkpoint.
+
+A request's tools render in the order it sends them, whatever earlier requests sent, so the same
+request renders the same prompt on any process and after a restart. A client whose tools arrive in
+varying order (MCP servers that finish registering in another order) can start the server with
+`--tool-order sorted`: every order of one set then renders sorted by name and keeps the cached
+prefix. A request with a duplicate name or a cache boundary after a tool keeps its own order.
 
 ### Key order under an output constraint
 
@@ -1308,10 +1346,10 @@ response contains typed `output` Items.
 | `reasoning.summary` | omitted, `null`, or any string; every string requests the same fixed protocol placeholder without changing model execution, and the original value is echoed in the response |
 | `chat_template_kwargs` | template parameters as a JSON object; standard options merge with typed fields |
 | `preserve_thinking` | alias for `chat_template_kwargs.preserve_thinking`; conflicting values are rejected |
-| `text.format` | omitted or `{"type":"text"}` only |
+| `text.format` | omitted, `{"type":"text"}`, `{"type":"json_object"}` or `{"type":"json_schema", "name", "schema", ...}` (`name` required; strict or not), enforced as Chat Completions' `response_format` is ([constrained output](#constrained-output)); `client.responses.parse(text_format=...)` returns a Response whose `output_parsed` is the parsed object |
 | `tools` | direct function definitions or namespace groups containing function definitions; see [Function tools](#function-tools) |
-| `tool_choice` | `auto`, `none`, or function-only `allowed_tools` with mode `auto`; a namespaced selection carries both `namespace` and `name` |
-| `parallel_tool_calls` | `true` by default; `false` is accepted only when no effective tool is callable |
+| `tool_choice` | `auto`, `none`, `required`, a named `{"type":"function","name"}` or `{"type":"custom","name"}`, or function-only `allowed_tools` with mode `auto` or `required`; `required` and a named tool are enforced by a constraint (an empty `allowed_tools` set leaves nothing to force); a namespaced selection carries both `namespace` and `name` |
+| `parallel_tool_calls` | `true` by default; `false` is enforced: the output stops after the first call |
 | `max_tool_calls` | non-negative integer accepted as a hosted-tool no-op; NInferno does not execute hosted tools |
 | `truncation` | omitted or `disabled`; overlong input fails instead of silently dropping Items |
 | `top_logprobs` | `0..20`: alternatives per token in `output_text.logprobs`; nonzero asks for log probabilities as the include below does |
@@ -1328,10 +1366,11 @@ and its location in the request. The location appears both in the error `param` 
 `tools[0].function.name` or `messages[2].tool_calls[0].function.name`) and in the message text.
 
 Unsupported Create fields include Conversations, prompt templates, context management, hosted
-moderation, Structured Outputs/JSON mode, `include` values other than `reasoning.encrypted_content`,
-background execution, compaction, files/audio, and OpenAI-hosted and MCP tools. Except for the two
-explicitly documented placeholders (`reasoning.summary` and the local raw-reasoning mirror), these
-are compatibility boundaries rather than silently accepted approximations.
+moderation, `include` values other than `reasoning.encrypted_content` and
+`message.output_text.logprobs`, background execution, compaction, files/audio, and OpenAI-hosted
+and MCP tools. Except for the two explicitly documented placeholders (`reasoning.summary` and the
+local raw-reasoning mirror), these are compatibility boundaries rather than silently accepted
+approximations.
 
 ### Input Items
 
@@ -1423,7 +1462,10 @@ They may also be grouped in a Responses namespace:
   would end the agent's turn and lose the parallel calls beside it. Declared names pick the call
   region first, so a quoted example of an undeclared call does not displace a declared call after
   it. Llama 3's JSON form, whose call opens like any JSON answer, still needs a declared name.
-- `allowed_tools` with mode `auto` filters that set without changing declaration order.
+- `allowed_tools` with mode `auto` filters that set without changing declaration order (unless the
+  server runs with `--tool-order sorted`, which renders every set sorted by name); mode `required`
+  also forces a call among them (an empty `tools` list leaves no tool to call, and the answer is
+  unconstrained text).
   `tool_choice:"none"` disables structured tool output even when the history contains earlier calls.
 - Function definitions are request configuration rather than conversation Items. They must be sent
   again on tool-result turns.
@@ -1442,7 +1484,8 @@ They may also be grouped in a Responses namespace:
 - Deferred loading, output schemas, and caller restrictions that exclude direct invocation are
   rejected because their semantics cannot be honored.
 - Tools may also arrive as `additional_tools` input Items (`{"type": "additional_tools", "tools":
-  [...]}`, as Codex sends them). Their tools join the request's `tools`, in input order, and the
+  [...]}`, as Codex sends them). Their tools join the request's `tools`, in input order (sorted by
+  name under `--tool-order sorted`), and the
   Item makes no message. A later Item may define a tool or namespace again. The latest definition
   replaces the earlier one where it stands, and a namespace keeps the description it was first
   declared with.
@@ -1562,8 +1605,10 @@ Resource behavior:
 | `POST /v1/responses/{id}/cancel` | explicitly fails because background execution is unsupported |
 | `POST /v1/responses/compact` | explicitly fails with `compaction_not_supported` |
 
-- `store:false` Responses cannot be retrieved or used as `previous_response_id`. LRU eviction and
-  explicit deletion also make an ID unavailable.
+- `store:false` Responses cannot be retrieved or used as `previous_response_id`. LRU eviction,
+  explicit deletion and a restart (the store is in process memory) also make an ID unavailable.
+  Naming one as `previous_response_id` fails with status 400 and `previous_response_not_found`,
+  the answer on which OpenAI clients resend the full input without it.
 - A request whose input and `previous_response_id` context alone exceed the configured store
   capacity fails with `response_store_capacity_exceeded` and status 400 before generation. One whose
   output then makes the Response larger than the store is answered unstored: the Response says
@@ -1718,7 +1763,8 @@ pages (`document_too_large`).
 
 ### Errors and streaming
 
-- Every Messages response carries a `request-id` header. Error bodies also carry `request_id` and use
+- Every Messages response carries a `request-id` header: the client's own `X-Request-Id` when it is
+  a plain token, as on the OpenAI paths ([request IDs](#request-ids)), else a `req_…` id. Error bodies also carry `request_id` and use
   Anthropic error categories.
 - Local admission overload maps to HTTP 529 and queue/media timeouts to HTTP 504.
 - Streaming owns the full Anthropic block lifecycle for Thinking, text, and tool use.
@@ -1802,6 +1848,8 @@ contract.
 | `--api-key-file PATH` | the same key read from a file (one line) | unset; `NINFERNO_API_KEY` when neither is given |
 | `--cors` | permissive browser CORS headers | off |
 | `--max-request-mib N` | body-size limit before JSON parsing (a body nesting arrays and objects deeper than 128 levels is refused with HTTP 400) | `384` |
+| `--request-body-min-kib-per-sec N` | a request body must grow by at least N KiB/s over every 10 seconds, else the read stops with HTTP 408 `request_body_too_slow` and the connection closes; `0` off | `16` |
+| `--max-request-json-values N` | most JSON values (scalars, arrays, objects, object keys) a request body may hold; more is HTTP 400 `request_json_too_large`, stopped while the body is parsed. Each value costs about 100 bytes of memory whatever its text size, so this, not `--max-request-mib`, bounds the parse | `1000000` |
 | `--max-request-messages N` | most messages in one request (Responses: `input` Items); more is HTTP 400 `too_many_messages` before the prompt is parsed or rendered | `16384` |
 | `--drain-timeout-ms N` | longest wait for requests in flight after SIGTERM/SIGINT | `60000` |
 | `--health-stall-ms N` | `/health` is 503 while the Engine has work and makes no progress this long; `0` off | `60000` |
@@ -1925,6 +1973,7 @@ not take at startup.
 | `--frequency-penalty F` | process-level frequency-penalty override | unset |
 | `--seed N` | fixed seed when a request omits one | fresh random seed per request |
 | `--greedy` | force exact argmax for all requests | off |
+| `--tool-order request\|sorted` | `sorted` renders a request's tools sorted by name, so that a client that sends one set in varying order (MCP servers registering in another order) keeps its cached prefix; a request with a duplicate name or a cache boundary after a tool keeps its order | `request` |
 
 ### Media
 
@@ -2161,9 +2210,18 @@ rides on the round's own synchronization.
 
 ### Input and output memory
 
-Input memory is bounded by the outstanding-request count and the per-request `--max-request-mib`
-limit. Media requests additionally share one preparation permit, so a waiting media request retains
-the same cancellation and timeout deadline. Model output is bounded by the same finite request count
+A request body is parsed into a document before admission, on an HTTP worker, so up to one parse per
+worker (49 by default) runs at once, not one per admission slot. Raw bytes are bounded by
+`--max-request-mib`, but a body of many small values costs far more than its size (`{}` is three
+bytes of text and about 80 bytes in memory, a factor of 25), so the number of values is bounded as
+well: `--max-request-json-values` (1,000,000, about 100 MB per parse). A request with large media
+has few values, and its bytes are held once. Lower the limit to bound the sum on a small host. When
+a request that built a large document ends (text of 1 MiB or more, or 10,000 or more values, a
+parse that was stopped at the limit included), the server returns the freed memory of its worker
+thread to the operating system once its connection ends. Replayed tool-call arguments are kept as
+text and parsed by the chat template, so all of them share one budget of
+`--max-request-json-values`. Media requests additionally share one preparation permit, so a waiting
+media request retains the same cancellation and timeout deadline. Model output is bounded by the same finite request count
 and each request's effective output-token limit. Output callbacks and network serialization run
 outside the GPU executor and do not delay formation of the next batch.
 
@@ -2543,15 +2601,16 @@ SPEC:
 - **Dense decoders** (dense_decoder and moe_decoder artifacts: gpt-oss, Llama, Muse Glimmer, ...)
   keep their full layers' keys and values in FP8 rows by default on sm_89 and newer
   (`--kv-dtype auto`). `--kv-dtype bf16` restores BF16. Below sm_89 the software conversion makes
-  FP8 slower (RTX 3090 gpt-oss at 88K: 136 -> 91 t/s), so `auto` stays BF16 there. Their sliding
-  rings stay BF16 unless `--sliding-kv-dtype fp8`.
+  FP8 slower (RTX 3090 gpt-oss at 88K: 136 -> 91 t/s), so `auto` stays BF16 there. A dense_decoder's
+  sliding rings follow its KV cache (FP8 under FP8 KV); a moe_decoder's (gpt-oss) stay BF16 unless
+  `--sliding-kv-dtype fp8`.
 - gpt-oss-20b at about 88K context decodes 157 -> 185 t/s (RTX 4090), 159 -> 192 (RTX 5080), and 316
   -> 350 at 48K (RTX 5090), with perplexity on a book unchanged within noise (windows 256 and 2048).
   Short requests are unchanged. The prefill of a long prompt costs 2-5 % more (the attention widens
   the FP8 tiles in shared memory).
 - **Gemma 4** keeps its full layers' keys and values in FP8 by default on sm_89 and newer
-  (`--kv-dtype bf16` restores BF16). FP8 sliding rings are opt-in with `--sliding-kv-dtype fp8`;
-  the rings grow with every slot and cached state (31B: 0.78 MiB per ring row in BF16, window
+  (`--kv-dtype bf16` restores BF16), and its sliding rings follow: FP8 under FP8 KV, BF16 with
+  `--sliding-kv-dtype bf16` or under BF16 KV. The rings grow with every slot and cached state (31B: 0.78 MiB per ring row in BF16, window
   1024 + chunk - 1 rows each).
 - Measured with every layer in FP8 against BF16 (`ninferno-gemma4 score`, 32 chat windows of 2,047
   scored tokens, 65,504 in all): mean next-token NLL moves by -0.002 +- 0.018 and +0.007 +- 0.014
@@ -2645,10 +2704,12 @@ Compatible prefixes are reused for both text and multimodal histories unless the
 | 400 | (no code; `param` names the field) | a sampling value out of range: `temperature` [0,2] (Chat, Responses) or [0,1] (Messages), `top_p` and `min_p` [0,1], `top_k` [0,64], penalties [-2,2] |
 | 401 | `invalid_api_key` | missing or wrong key with `--api-key` set (Anthropic shape on `/v1/messages`) |
 | 400 | `invalid_assistant_history`, `invalid_tool_history` | unrepresentable Responses history |
+| 400 | `previous_response_not_found` | `previous_response_id` names a Response the store no longer has (a restart, an eviction, a `DELETE`, or `store: false`), on Create and `input_tokens`; OpenAI clients then retry once with the full input |
 | 400 | `response_store_capacity_exceeded` | the request's input and context are larger than the response store (an answer that outgrows it after generation is returned unstored) |
 | 403 | `cross_origin_request` | request with `Origin` while `--cors` is off |
-| 404 | `response_not_found` | unknown stored Response |
+| 404 | `response_not_found` | unknown stored Response on `GET`, `DELETE` or `input_items` of `/v1/responses/{id}` |
 | 404 | `not_found` | a path no endpoint serves (JSON body naming the endpoints) |
+| 408 | `request_body_too_slow` | body arriving slower than `--request-body-min-kib-per-sec` |
 | 413 | `request_too_large` | body above `--max-request-mib` |
 | 415 | `unsupported_content_encoding` | compressed request body |
 | 429 | `server_overloaded` | request capacity full (`Retry-After` 1 s) |

@@ -333,9 +333,13 @@ Outputs at most 512 tokens, context 4,096. Fastest settings:
   - `fp8` for Gemma 4's full-attention layers on `sm_89` and up, `bf16` below that;
   - `bf16` for Nemotron-H.
 - Gemma 4 takes `bf16` or `fp8`. With `fp8`, the full-attention layers' page pool holds E4M3 codes
-  with an FP32 scale per position and KV head (any head size). Sliding-window rings stay BF16.
-- Accuracy of `fp8` against BF16 keys and values, on chat answers: top-1 agreement 0.98-0.99, ΔNLL
-  within 0.004 (Gemma 4 12B QAT, and 26B-A4B with BF16 activations). Under the default
+  with an FP32 scale per position and KV head (any head size). The sliding-window rings follow the
+  KV cache: FP8 under `fp8` (`--sliding-kv-dtype bf16` keeps them BF16).
+- Accuracy of `fp8` on the full layers alone against BF16 keys and values, on chat answers: top-1
+  agreement 0.98-0.99, ΔNLL within 0.004 (Gemma 4 12B QAT, and 26B-A4B with BF16 activations). With
+  the rings in FP8 too, the default, NLL stays within noise and top-1 agreement is 75-97 % on
+  Gemma 4 26B-A4B and 31B ([serving reference](reference/serving.md#fp8-keys-and-values)); 12B
+  Q4_K_M answers agree at about 0.95 (#543). Under the default
   `--activations fast` the gap is larger on models whose prefill runs 4-bit activations (NVFP4,
   W4A4; Gemma 4 26B-A4B top-1 0.94), because that profile amplifies small cache changes. For
   maximum accuracy use `--activations exact`.

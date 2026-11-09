@@ -13,15 +13,19 @@
 #include "convert/acquire.h"
 #include "convert/drafters.h"
 
+#include "artifact/fixture.h"
+#include "spec/fingerprint.h"
 #include "spec/manifest.h"
 #include "support/temp_dir.h"
 
 #include <nlohmann/json.hpp>
 
 #include <cmath>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -34,6 +38,11 @@ namespace {
 int failures = 0;
 
 bool line_starts_warning(const std::string& line) { return line.starts_with("warning: "); }
+
+std::string read_text(const std::filesystem::path& path) {
+    std::ifstream stream(path);
+    return {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+}
 
 void expect(bool condition, const std::string& what, const std::string& detail = "") {
     if (!condition) {
@@ -161,6 +170,58 @@ void lineage() {
     expect(plan.source == "none" && plan.entry.empty() && plan.drafters.empty() &&
                plan.profiles.empty(),
            "a descendant of another geometry is not the entry's");
+}
+
+// A kept artifact planned again after a registry update takes the base model its manifest
+// recorded: describe_artifact reads no model card, and a fine-tune's drafter is the one its
+// lineage matched.
+void reused_lineage() {
+    cv::ManifestState manifest;
+    manifest.lineage = {"org/muse"};
+    auto bare        = cv::plan_drafters(muse(), registry());
+    expect(bare.matched_by != "lineage",
+           "an artifact described without its lineage is not matched through it");
+    auto t = cv::reused_target(muse(), manifest);
+    expect(t.lineage == manifest.lineage, "the manifest's base models are the target's lineage");
+    auto plan = cv::plan_drafters(t, registry());
+    expect(plan.matched_by == "lineage" && plan.entry == "muse" && plan.drafters.size() == 1,
+           "a fine-tune planned again keeps the drafter its lineage matched");
+    auto described    = muse();
+    described.lineage = {"org/muse", "org/other"};
+    manifest.lineage  = {"org/muse", "org/third"};
+    expect(cv::reused_target(described, manifest).lineage ==
+               std::vector<std::string>({"org/muse", "org/other", "org/third"}),
+           "a base model both name is listed once");
+}
+
+// A directory of GGUF shards leaves no .gguf path in the artifact: its manifest knows the model
+// was a GGUF, as a start with the download present does, so the default start does not draft it.
+void reused_gguf_source() {
+    cv::ManifestState manifest;
+    auto described = muse();
+    expect(!cv::reused_target(described, manifest).gguf_source,
+           "a checkpoint's artifact is not a GGUF's");
+    manifest.gguf_source = true;
+    expect(cv::reused_target(described, manifest).gguf_source,
+           "a GGUF's artifact, whose source path is no .gguf file, is a GGUF's by its manifest");
+    // A failed drafter makes the manifest incomplete: attached again only if the source is not a
+    // GGUF, which the default start does not draft.
+    manifest.exists           = true;
+    manifest.parsed           = true;
+    manifest.registry_current = true;
+    manifest.failed           = true;
+    const auto action         = [&](bool gguf) {
+        return cv::decide_drafters(cv::Drafters::Default, gguf, false, manifest, false).kind;
+    };
+    expect(action(described.gguf_source) == cv::DrafterActionKind::Attach,
+           "the artifact alone would be taken for a checkpoint's");
+    expect(action(cv::reused_target(described, manifest).gguf_source) ==
+               cv::DrafterActionKind::Nothing,
+           "a GGUF's shards with a failed drafter are not drafted by default");
+    described.gguf_source = true;
+    manifest.gguf_source  = false;
+    expect(cv::reused_target(described, manifest).gguf_source,
+           "what the artifact says of its source is kept");
 }
 
 void dense_scope() {
@@ -469,6 +530,212 @@ void retry_failed_drafter() {
     expect(with(R"({"drafters": [{"name": "mtp", "status": "embedded"}]})"),
            "a manifest that names no registry: attaching is to do");
     expect(with("{"), "an unreadable manifest: attaching is to do");
+    // An attached drafter whose artifact is gone, or is no longer the artifact the manifest
+    // recorded, is attached again (otherwise every start serves plain: "changed since attach").
+    const auto gone = (dir / "gone.ninferno").string();
+    expect(with("{" + registry + R"("drafters": [{"name": "assistant", "status": "converted",
+                "artifact": ")" +
+                gone + R"(", "artifact_id": "00"}]})"),
+           "an attached drafter whose artifact is gone: attaching is to do");
+    // A drafter the user gave (--drafter-artifact) is not planned again when its file is gone: a
+    // plan without that flag would drop the entry.
+    expect(!with("{" + registry + R"("drafters": [{"name": "mine", "status": "attached",
+                "artifact": ")" +
+                 gone + R"(", "artifact_id": "00"}]})"),
+           "a given drafter whose file is gone keeps its entry: nothing to plan");
+    // ... and is named for a start that requires its drafters, which stops on it; a drafter the
+    // registry planned is not (it is planned and attached again).
+    const auto given_gone = cv::given_drafters_changed(artifact);
+    expect(given_gone.size() == 1 && given_gone[0] == "mine",
+           "a given drafter whose file is gone is named for a required start");
+    with("{" + registry + R"("drafters": [{"name": "assistant", "status": "converted",
+                "artifact": ")" +
+         gone + R"(", "artifact_id": "00"}]})");
+    expect(cv::given_drafters_changed(artifact).empty(),
+           "a planned drafter whose file is gone is not a given one");
+    const auto other = dir / "other.ninferno";
+    std::ofstream(other) << "not an artifact";
+    expect(with("{" + registry + R"("drafters": [{"name": "assistant", "status": "converted",
+                "artifact": ")" +
+                other.string() + R"(", "artifact_id": "00"}]})"),
+           "an attached drafter whose artifact cannot be read: attaching is to do");
+    expect(cv::refresh_changed_drafters(artifact).empty(),
+           "a drafter file that cannot be read is not refreshed (an attach plans it again)");
+    // A drafter file here written again since (its id is no longer the recorded one) takes its new
+    // id, whatever the start asks of drafters: nothing is fetched, the other entries are kept.
+    // A drafter whose vocabulary cannot be read (the fixture's tokenizer.json is not a tokenizer)
+    // is left to an attach, and the others are refreshed all the same.
+    const ninferno::test::artifact_fixture::Fixture unreadable;
+    unreadable.write();
+    std::ofstream(unreadable.entry.string() + ".conversion.json") << "{}";
+    // A vocabulary the fingerprint can read.
+    ninferno::test::artifact_fixture::Fixture drafter;
+    const std::string tokenizer = R"({"model": {"vocab": {"a": 0, "b": 1}}})";
+    for (std::size_t i = 0; i < tokenizer.size(); ++i) {
+        drafter.payload[i] = std::byte(tokenizer[i]);
+    }
+    drafter.root["objects"][0]["bytes"] = tokenizer.size();
+    drafter.write();
+    std::ofstream(drafter.entry.string() + ".conversion.json") << "{}";
+    const auto id    = ninferno::spec::artifact_id_hex(drafter.entry);
+    const auto entry = [&](const std::string& status, const std::string& recorded) {
+        return R"({"name": "assistant", "status": ")" + status + R"(", "artifact": ")" +
+               drafter.entry.string() + R"(", "artifact_id": ")" + recorded + R"("})";
+    };
+    const auto manifest = [&](const std::string& target, const std::string& drafters) {
+        return "{" + registry + R"("target": )" + target + R"(, "drafters": [)" + drafters + "]}";
+    };
+    const std::string companion = R"({"name": "dflash2", "status": "failed: SSL connect error"})";
+    // The attach's checks, stood in by the vocabulary they compare (check_drafter itself is
+    // tested apart); the production one describes the target, which this test has none of.
+    std::string wanted = ninferno::spec::artifact_vocab_fingerprint(drafter.entry).value().value;
+    int checked        = 0;
+    const cv::DrafterCheck passes = [&](const Json&, const std::filesystem::path& file) {
+        ++checked;
+        return ninferno::spec::artifact_vocab_fingerprint(file).value().value == wanted;
+    };
+    const auto refresh = [&] { return cv::refresh_changed_drafters(artifact, passes); };
+    expect(!with(manifest("{}", entry("cached", id))), "the recorded id: nothing to do");
+    expect(refresh().empty() && checked == 0, "the recorded id: nothing checked or refreshed");
+    expect(with(manifest("{}", entry("converted", "00") + ", " + companion)),
+           "a drafter written again since: attaching is to do");
+    const auto refreshed = refresh();
+    expect(refreshed.size() == 1 && refreshed[0] == "assistant",
+           "the changed drafter is refreshed");
+    const auto after = Json::parse(read_text(ninferno::spec::manifest_path(artifact)));
+    expect(after["drafters"][0]["artifact_id"] == id &&
+               after["drafters"][0]["status"] == "converted",
+           "the refreshed drafter takes the file's id and keeps its status");
+    expect(after["drafters"][1]["status"] == "failed: SSL connect error",
+           "another drafter's failure is kept for its retry");
+    expect(refresh().empty(), "refreshed once: nothing more to do");
+    // One drafter whose vocabulary cannot be read does not stop the others' refresh.
+    const std::string bad = R"({"name": "other", "status": "cached", "artifact": ")" +
+                            unreadable.entry.string() + R"(", "artifact_id": "00"})";
+    with(manifest("{}", bad + ", " + entry("cached", "00")));
+    const auto past_bad = refresh();
+    expect(past_bad.size() == 1 && past_bad[0] == "assistant",
+           "a drafter of an unreadable vocabulary is skipped, the next one refreshed");
+    // Checks that cannot run on the file refuse it like checks that fail: its id is kept, so an
+    // attach does not take it for a cache.
+    const auto past = Json::parse(read_text(ninferno::spec::manifest_path(artifact)));
+    expect(past["drafters"][0].value("refused_artifact_id", std::string()) ==
+               ninferno::spec::artifact_id_hex(unreadable.entry),
+           "a file the checks cannot read is recorded as refused");
+    // A replacement the checks refuse keeps the entry as it was: the next start looks at the file
+    // again, and takes a later replacement that passes.
+    wanted = "v1:another";
+    with(manifest("{}", entry("cached", "00")));
+    expect(refresh().empty(), "a replacement the checks refuse is not refreshed");
+    const auto refused = Json::parse(read_text(ninferno::spec::manifest_path(artifact)));
+    expect(refused["drafters"][0]["status"] == "cached" &&
+               refused["drafters"][0]["artifact_id"] == "00",
+           "a refused replacement leaves the entry as it was");
+    // The refused file is named on the entry, so an attach converts it again instead of taking it
+    // for its cache.
+    expect(refused["drafters"][0].value("refused_artifact_id", std::string()) == id,
+           "the refused file's id is kept on the entry");
+    wanted = ninferno::spec::artifact_vocab_fingerprint(drafter.entry).value().value;
+    expect(refresh().size() == 1, "the next start takes a replacement that passes");
+    const auto taken = Json::parse(read_text(ninferno::spec::manifest_path(artifact)));
+    expect(!taken["drafters"][0].contains("refused_artifact_id"),
+           "a replacement taken clears the refusal");
+    // The production checks describe the target: one that cannot be read refreshes nothing.
+    with(manifest("{}", entry("cached", "00")));
+    expect(cv::refresh_changed_drafters(artifact).empty(),
+           "no target to check against: nothing refreshed");
+    // Never attached (failed), or without its conversion report (a conversion stopped half way):
+    // left to an attach.
+    with(manifest("{}", entry("failed: x", "00")));
+    expect(refresh().empty(), "a failed drafter was never attached");
+    std::filesystem::remove(drafter.entry.string() + ".conversion.json");
+    with(manifest("{}", entry("cached", "00")));
+    expect(refresh().empty(), "no conversion report: not refreshed");
+    // A file the user gave (--drafter-artifact) has no conversion report and stays theirs.
+    with(manifest("{}", entry("attached", "00")));
+    expect(refresh().size() == 1, "a given drafter file is refreshed");
+    const auto given = Json::parse(read_text(ninferno::spec::manifest_path(artifact)));
+    expect(given["drafters"][0]["status"] == "attached" &&
+               given["drafters"][0]["artifact_id"] == id,
+           "a given drafter keeps its status and takes the file's id");
+
+    // What the manifest says, read once: a bundle's plan and its failed drafter, a failed variant,
+    // the target's lineage and source.
+    const auto state_of = [&](const std::string& head, const std::string& drafters) {
+        std::ofstream(ninferno::spec::manifest_path(artifact))
+            << "{" << head << registry << R"("drafters": [)" << drafters << "]}";
+        return cv::read_manifest_state(artifact);
+    };
+    const std::string failed_dflash = R"({"name": "dflash", "status": "failed: x"})";
+    const std::string failed_variant =
+        R"({"name": "dflash.q8", "quant": "q8", "status": "failed: x"})";
+    const std::string declaration = R"("matched_by": "declaration", )";
+    std::filesystem::remove(ninferno::spec::manifest_path(artifact));
+    expect(!cv::read_manifest_state(artifact).exists, "no manifest: it does not exist");
+    {
+        const auto state = state_of("", failed_dflash);
+        expect(state.exists && state.parsed && state.registry_current && state.failed &&
+                   !state.bundle_planned && !state.bundle_failed,
+               "a failed drafter of a registry plan");
+    }
+    {
+        const auto state = state_of(declaration, failed_dflash);
+        expect(state.bundle_planned && state.bundle_failed && state.failed,
+               "a failed drafter of a bundle's plan");
+        expect(cv::drafters_incomplete(state), "a failed bundle drafter: attaching is to do");
+    }
+    {
+        const auto state = state_of(declaration, R"({"name": "dflash", "status": "converted"})");
+        expect(state.bundle_planned && !state.bundle_failed && !cv::drafters_incomplete(state),
+               "a bundle's plan with nothing failed");
+    }
+    {
+        const auto state = state_of(declaration, failed_variant);
+        expect(state.bundle_planned && !state.bundle_failed && !state.failed &&
+                   !cv::drafters_incomplete(state),
+               "a failed variant of a bundle's plan is optional");
+        expect(!state_of("", failed_variant).failed, "a failed variant is not a failure");
+    }
+    {
+        // A bundle's drafter whose file is gone (or was refused by the refresh) cannot be planned
+        // again without the checkpoint: --with-drafters fails on it (#503 review).
+        const std::string changed =
+            R"({"name": "dflash", "status": "cached", "artifact": "/nowhere/dflash.ninferno",
+                "artifact_id": "00"})";
+        const auto bundle = state_of(declaration, changed);
+        expect(bundle.changed && bundle.bundle_failed && cv::drafters_incomplete(bundle),
+               "a changed drafter of a bundle's plan is lost like a failed one");
+        expect(cv::decide_drafters(cv::Drafters::Require, false, false, bundle, false).kind ==
+                   cv::DrafterActionKind::Fail,
+               "--with-drafters fails on a bundle's changed drafter once the download is gone");
+        const auto registry_plan = state_of("", changed);
+        expect(registry_plan.changed && !registry_plan.bundle_failed,
+               "a registry plan's changed drafter is planned again, not failed");
+    }
+    {
+        const std::string lacking = R"({"name": "dflash2", "status": "not in the artifact: x"})";
+        const auto checkpoint     = state_of(R"("target": {"gguf_source": false}, )", lacking);
+        expect(checkpoint.missing_companion && cv::drafters_incomplete(checkpoint),
+               "a checkpoint's missing companion is retried");
+        const auto gguf = state_of(R"("target": {"gguf_source": true}, )", lacking);
+        expect(gguf.gguf_source && gguf.missing_companion && !cv::drafters_incomplete(gguf),
+               "a GGUF's missing companion is not retried");
+    }
+    {
+        const auto state = state_of(R"("target": {"lineage": ["org/base", 3, "org/other"]}, )", "");
+        expect(state.lineage == std::vector<std::string>({"org/base", "org/other"}),
+               "the target's lineage is read from the manifest");
+    }
+    {
+        std::ofstream(ninferno::spec::manifest_path(artifact))
+            << R"({"registry_sha256": "0000", "matched_by": "declaration", "drafters": []})";
+        const auto state = cv::read_manifest_state(artifact);
+        expect(state.parsed && !state.registry_current && cv::drafters_incomplete(state),
+               "another registry's bundle plan: attaching is to do");
+        std::ofstream(ninferno::spec::manifest_path(artifact)) << "{";
+        const auto broken = cv::read_manifest_state(artifact);
+        expect(broken.exists && !broken.parsed && !broken.bundle_failed, "an unreadable manifest");
+    }
 }
 
 // A drafter that cannot be had stops a start that asked for it (--with-drafters) and is a warning
@@ -614,11 +881,168 @@ void companion_failure_is_retried() {
            "a failure carries only to the drafter of its name");
 }
 
+// What acquire_model does about a reused artifact's drafters, for every start mode, source and
+// manifest. Each row lists the actions for the start modes Default, Attach, Require, Off, first
+// with the download gone, then with it present, each for a checkpoint and a GGUF model:
+// N nothing, A attach, C companions then attach, R reconvert, P replan from the checkpoint,
+// W warn, F fail.
+void decide_table() {
+    using K             = cv::DrafterActionKind;
+    const auto manifest = [](bool exists, bool current, bool failed, bool bundle,
+                             bool bundle_failed, bool missing_companion, bool gguf_source) {
+        cv::ManifestState state;
+        state.exists            = exists;
+        state.parsed            = exists;
+        state.registry_current  = current;
+        state.failed            = failed;
+        state.bundle_planned    = bundle;
+        state.bundle_failed     = bundle_failed;
+        state.missing_companion = missing_companion;
+        state.gguf_source       = gguf_source;
+        return state;
+    };
+
+    struct Row {
+        const char* name;
+        cv::ManifestState state;
+        const char* actions; // gone: checkpoint, GGUF; present: checkpoint, GGUF
+    };
+
+    const Row rows[] = {
+        {"no manifest", manifest(false, false, false, false, false, false, false),
+         "AAAN NAAN RRRN NCCN"},
+        {"complete", manifest(true, true, false, false, false, false, false),
+         "NNNN NNNN NNNN NNNN"},
+        {"another registry", manifest(true, false, false, false, false, false, false),
+         "AAAN NAAN PPPN NCCN"},
+        {"a failed drafter", manifest(true, true, true, false, false, false, false),
+         "AAAN NAAN PPPN NCCN"},
+        {"a bundle's plan, another registry",
+         manifest(true, false, false, true, false, false, false), "NNNN NNNN PPPN NCCN"},
+        {"a bundle's failed drafter", manifest(true, true, true, true, true, false, false),
+         "WWFN NWFN PPPN NCCN"},
+        {"a missing companion", manifest(true, true, false, false, false, true, false),
+         "AAFN NAAN PPPN NCCN"},
+        {"a GGUF's missing companion", manifest(true, true, false, false, false, true, true),
+         "NNFN NNNN NNNN NNNN"},
+    };
+    const cv::Drafters modes[] = {cv::Drafters::Default, cv::Drafters::Attach,
+                                  cv::Drafters::Require, cv::Drafters::Off};
+    const auto code            = [](K kind) {
+        switch (kind) {
+        case K::Nothing:
+            return 'N';
+        case K::Attach:
+            return 'A';
+        case K::CompanionsThenAttach:
+            return 'C';
+        case K::Reconvert:
+            return 'R';
+        case K::ReplanFromCheckpoint:
+            return 'P';
+        case K::Warn:
+            return 'W';
+        case K::Fail:
+            return 'F';
+        }
+        return '?';
+    };
+    for (const auto& row : rows) {
+        std::string made;
+        for (const bool present : {false, true}) {
+            for (const bool gguf : {false, true}) {
+                for (const auto mode : modes) {
+                    made += code(cv::decide_drafters(mode, gguf, present, row.state, false).kind);
+                }
+                made += ' ';
+            }
+        }
+        made.pop_back();
+        expect(made == row.actions, std::string("drafter action: ") + row.name,
+               "made " + made + ", wanted " + row.actions);
+    }
+    // A caller that named the components converts nothing in: a GGUF's artifact is attached to.
+    expect(cv::decide_drafters(cv::Drafters::Attach, true, true, rows[0].state, true).kind ==
+               K::Attach,
+           "named components: a GGUF's artifact is attached to, not converted again");
+    expect(cv::decide_drafters(cv::Drafters::Default, true, true, rows[0].state, true).kind ==
+               K::Nothing,
+           "named components: a GGUF is not drafted by default");
+    // The words of the two ways a bundle's failed drafter ends a start whose download is gone.
+    const auto fail =
+        cv::decide_drafters(cv::Drafters::Require, false, false, rows[5].state, false);
+    expect(fail.message.find("fetch the model again") != std::string::npos,
+           "a failed bundle drafter says to fetch the model again");
+    const auto warn = cv::decide_drafters(cv::Drafters::Attach, false, false, rows[5].state, false);
+    expect(warn.message.find("fetch the model again") != std::string::npos,
+           "a warned bundle drafter says to fetch the model again");
+    // --with-drafters on a model whose download is gone and whose companion is not in the
+    // artifact (a checkpoint's Qwen3.8 DFlash2); a GGUF's is lacking when its components were named
+    // without it, and fetching again changes nothing: the way out is to fetch the model again.
+    const auto lacking =
+        cv::decide_drafters(cv::Drafters::Require, false, false, rows[6].state, false);
+    expect(lacking.kind == K::Fail &&
+               lacking.message.find("not in the artifact") != std::string::npos &&
+               lacking.message.find("fetch the model again") != std::string::npos,
+           "a missing companion fails --with-drafters, saying to fetch the model again",
+           lacking.message);
+    expect(cv::decide_drafters(cv::Drafters::Require, true, false, rows[7].state, false).kind ==
+               K::Nothing,
+           "a GGUF's missing companion keeps the old row: fetching again would not add it");
+    auto both              = rows[5].state;
+    both.missing_companion = true;
+    expect(cv::decide_drafters(cv::Drafters::Require, false, false, both, false)
+               .message.starts_with("failed"),
+           "a failed drafter is reported before a missing companion");
+    expect(cv::drafters_enabled(cv::Drafters::Default, false) &&
+               !cv::drafters_enabled(cv::Drafters::Default, true) &&
+               cv::drafters_enabled(cv::Drafters::Attach, true) &&
+               cv::drafters_enabled(cv::Drafters::Require, true) &&
+               !cv::drafters_enabled(cv::Drafters::Off, false),
+           "drafters are on by default for a checkpoint, when asked for a GGUF, never when off");
+}
+
+// A drafter the user gave on an earlier start is kept when the drafters are planned again without
+// that flag (another drafter's retry, a registry update); a start that gives the name again takes
+// the new mapping instead.
+void keeps_given_drafters() {
+    const ninferno::test::artifact_fixture::Fixture target;
+    target.write();
+    const auto manifest_path = ninferno::spec::manifest_path(target.entry);
+    const std::string old    = R"({"drafters": [
+        {"name": "mine", "status": "attached", "artifact": "/models/mine.ninferno", "artifact_id": "ab"},
+        {"name": "assistant", "status": "failed: SSL connect error"}]})";
+    std::ofstream(manifest_path) << old;
+    (void)cv::attach_drafters(cv::DrafterPlan{}, target.entry, cv::AttachOptions{});
+    const auto kept  = Json::parse(read_text(manifest_path));
+    const auto names = [](const Json& m) {
+        std::vector<std::string> out;
+        for (const auto& d : m.at("drafters")) { out.push_back(d.value("name", std::string())); }
+        return out;
+    };
+    expect(names(kept) == std::vector<std::string>{"mine"} &&
+               kept["drafters"][0]["artifact_id"] == "ab",
+           "a given drafter the new plan does not name is kept as it was");
+    std::ofstream(manifest_path) << old;
+    cv::AttachOptions again;
+    again.drafter_artifacts["mine"] = "/models/other.ninferno";
+    (void)cv::attach_drafters(cv::DrafterPlan{}, target.entry, again);
+    // The new mapping is this start's (here a file that is not there), never the earlier one.
+    const auto given = Json::parse(read_text(manifest_path));
+    expect(
+        std::none_of(given.at("drafters").begin(), given.at("drafters").end(),
+                     [](const Json& d) { return d.value("artifact_id", std::string()) == "ab"; }),
+        "a start that gives the name again does not keep the old mapping");
+}
+
 } // namespace
 
 int main() {
     num_target_layers();
+    keeps_given_drafters();
     lineage();
+    reused_lineage();
+    reused_gguf_source();
     dense_scope();
     nemotron_geometry();
     nemotron_mapper();
@@ -628,6 +1052,7 @@ int main() {
     retry_failed_drafter();
     automatic_drafter_missing();
     companion_failure_is_retried();
+    decide_table();
     if (failures == 0) { std::cout << "drafter plan: ok\n"; }
     return failures == 0 ? 0 : 1;
 }

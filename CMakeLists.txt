@@ -14,21 +14,33 @@ if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
   set(CMAKE_CUDA_ARCHITECTURES 120a CACHE STRING "CUDA architectures to build")
 endif()
 # 120f (the sm_12x family target, every consumer Blackwell including later members) and 121a
-# build the full engine too: its kernels gate on the sm_12x family (__CUDA_ARCH_FAMILY_SPECIFIC__
-# 1200 or 1210).
+# build the full engine too: its kernels gate on the sm_12x family (NINFERNO_ARCH_FAMILY_SPECIFIC,
+# core/arch_family.cuh: 1200 or 1210).
 set(NINFERNO_FULL_CUDA_ARCHS "120a" "121a" "120f")
 set(NINFERNO_CUDA_ARCHS ${NINFERNO_FULL_CUDA_ARCHS} "89" "86" "80" "75" "70")
 if(NOT CMAKE_CUDA_ARCHITECTURES IN_LIST NINFERNO_CUDA_ARCHS)
   if(CMAKE_CUDA_ARCHITECTURES MATCHES "^[0-9]+$" AND CMAKE_CUDA_ARCHITECTURES GREATER_EQUAL 70)
     message(WARNING
       "CMAKE_CUDA_ARCHITECTURES ${CMAKE_CUDA_ARCHITECTURES}: building the generic engine (no "
-      "NVFP4 kernels), not measured on such a GPU. Measured: 120a (full), 89, 86, 80, 75, 70.")
+      "NVFP4 kernels), not measured on such a GPU. Measured: 120a (full), 89, 86, 80, 75, 70; "
+      "also accepted: 121a, 120f (full).")
   else()
     message(FATAL_ERROR
-      "NInferno supports CMAKE_CUDA_ARCHITECTURES 120a (Blackwell), 89 (Ada), 86 and 80 (Ampere), "
-      "75 (Turing), 70 (Volta) or a plain architecture number >= 70 (generic engine); got "
-      "'${CMAKE_CUDA_ARCHITECTURES}'")
+      "NInferno supports CMAKE_CUDA_ARCHITECTURES 120a, 121a or 120f (Blackwell, full engine), "
+      "89 (Ada), 86 and 80 (Ampere), 75 (Turing), 70 (Volta) or a plain architecture number >= 70 "
+      "(generic engine); got '${CMAKE_CUDA_ARCHITECTURES}'")
   endif()
+endif()
+# CMake's own CUDA architecture validator accepts the family suffix "f" only from 3.31.8 and
+# 4.0.2 on (earlier versions match "[0-9]+a?" and fail inside project() with an unrelated-looking
+# message). Name the reason here, before project() runs.
+if(CMAKE_CUDA_ARCHITECTURES MATCHES "f$" AND
+   (CMAKE_VERSION VERSION_LESS 3.31.8 OR
+    (CMAKE_VERSION VERSION_GREATER_EQUAL 4.0 AND CMAKE_VERSION VERSION_LESS 4.0.2)))
+  message(FATAL_ERROR
+    "CMAKE_CUDA_ARCHITECTURES ${CMAKE_CUDA_ARCHITECTURES} needs CMake 3.31.8 / 4.0.2 or later "
+    "(this is ${CMAKE_VERSION}). 120a builds the same full engine for every RTX 50 card with "
+    "this CMake; or install a newer CMake (pip install cmake).")
 endif()
 if(CMAKE_CUDA_ARCHITECTURES IN_LIST NINFERNO_FULL_CUDA_ARCHS)
   set(NINFERNO_WITH_NVFP4 ON)

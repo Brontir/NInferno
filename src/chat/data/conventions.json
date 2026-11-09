@@ -86,6 +86,10 @@
                 "<|call|>",
                 "<|endoftext|>"
             ],
+            "recipient_separators": [
+                " ",
+                "<|channel|>"
+            ],
             "roles": {
                 "system": "system",
                 "developer": "developer",
@@ -134,6 +138,9 @@
             "stops": [
                 "<|eot|>"
             ],
+            "recipient_separators": [
+                " "
+            ],
             "roles": {
                 "system": "system",
                 "user": "user",
@@ -181,6 +188,7 @@
             "close": "<|end|>",
             "canonical_close": "",
             "budget_control": "",
+            "refuses_text_with_thinking": "Cannot pass both content and thinking",
             "content_open": [
                 "<|start|>assistant<|channel|>final<|message|>",
                 "<|channel|>final<|message|>"

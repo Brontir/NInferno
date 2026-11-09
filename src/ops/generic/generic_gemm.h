@@ -697,6 +697,29 @@ struct KernelResources {
     bool latency_variant = false;
 };
 
+// The compiled facts the cost model read for one register-MMA schedule of one format (#556): what
+// price_routes took from rmma_resources. A test installs a sink to digest exactly these reads (the
+// selector golden keys a facts-priced board's file by them); nothing is recorded otherwise.
+struct RmmaFactRead {
+    QType qtype;
+    int schedule;
+    Epilogue epilogue;
+    KernelResources facts;
+};
+
+class ScopedRmmaFactsSink {
+public:
+    explicit ScopedRmmaFactsSink(std::vector<RmmaFactRead>& sink) noexcept;
+    ~ScopedRmmaFactsSink();
+    ScopedRmmaFactsSink(const ScopedRmmaFactsSink&)            = delete;
+    ScopedRmmaFactsSink& operator=(const ScopedRmmaFactsSink&) = delete;
+
+private:
+    std::vector<RmmaFactRead>* previous_;
+};
+
+void note_rmma_fact_read(const RmmaFactRead& read) noexcept;
+
 // What register-MMA schedule `schedule` runs for a `tokens`-token call of `weight` under `epilogue`
 // on the current device: the same launch path as run_route takes (the codec's decoder, its wide or
 // latency variant by the same rules), described instead of launched. nullopt where the schedule is
@@ -1001,6 +1024,10 @@ bool ggml_mmq_gated_pair(const Tensor& x, const PairHalf& gate, const PairHalf& 
 // Calls routed to ggml's matrix or vector kernel that ran A16 instead (a workspace short of the
 // route, an unaligned x or rows off its multiple), since the process started.
 [[nodiscard]] std::uint64_t ggml_mmq_fallback_count() noexcept;
+// Instrumentation (tests; one relaxed fetch_add per joined launch): launches that ran joined to the
+// call before them (launch_overlap's join), since the process
+// started: the segmented chain's and the tests' view of what the rule granted.
+[[nodiscard]] std::uint64_t instrumentation_joined_launches() noexcept;
 // Calls whose route ran another one with other bytes (any family: a workspace short of it, an
 // unaligned x, a shape it cannot hold), since the process started; each pair of routes is also
 // said once on stderr. A demotion that keeps the bytes (staged or NVFP4 tiled to the register MMA
@@ -1156,14 +1183,15 @@ struct PreparedRule {
 [[nodiscard]] bool prepared_rules_match(const PreparedRule& a, const PreparedRule& b) noexcept;
 // The overlap a launch allows its neighbours (#309), run_route's one rule. Three events apart:
 // join (this launch starts under the call before it, which it waits for before exiting:
-// Call::join_previous), release (the next launch may begin once every CTA of this one has triggered,
-// after its own wait under prefetch, or exited: the next call may then read this launch's inputs,
-// not yet its output; release is not completion,
-// and this launch's scratch stays in use until it finishes), prefetch (its weight stream starts
-// under the previous kernel, GemmArgs::pdl_prefetch). Each refused names why: the call did not
-// ask, the family or epilogue does not join, the pre-quantized R8 form (its quantizer's
-// workspace is read to the end; the next call's quantizer could take it), no programmatic
-// dependent launch on the device, a call wider than the prefetch's tokens, or a joined call.
+// Call::join_previous), release (the next launch may begin once every CTA of this one has
+// triggered, after its own wait under prefetch, or exited: the next call may then read this
+// launch's inputs, not yet its output; release is not completion, and this launch's scratch stays
+// in use until it finishes), prefetch (its weight stream starts under the previous kernel,
+// GemmArgs::pdl_prefetch). Each refused names why: the call did not ask, the family or epilogue
+// does not join, the pre-quantized R8 form (it neither joins, its quantizer and kernel launching in
+// stream order, nor releases: the next call's quantizer could take the workspace it still reads),
+// no programmatic dependent launch on the device, a call wider than the prefetch's tokens, or a
+// joined call.
 enum class OverlapRefusal { None, NotAsked, Family, Epilogue, PrequantizedR8, NoPdl, Wide, Joined };
 [[nodiscard]] std::string_view overlap_refusal_name(OverlapRefusal why) noexcept;
 struct LaunchOverlap {
@@ -1208,5 +1236,12 @@ void linear_relu2(const Tensor& x, const Weight& w, Tensor& out, LinearPolicy po
 // linear_swiglu with the gate's GELU (tanh form) in place of its SiLU.
 void linear_geglu(const Tensor& x, const Weight& gate_up, Tensor& out, LinearPolicy policy,
                   WorkspaceArena* workspace, cudaStream_t stream);
+
+// Under NINFERNO_PROJECTION_RECORD=<file>: each distinct (op, route, T, N, K) a specialized
+// projection dispatch took, appended as "<op> <route> <T> <N> <K>". A debug trace of the
+// width-dependent route choice (A4 or A16 by call width) that NINFERNO_ROUTE_RECORD, which holds
+// generic-path problems only, does not show. Off (no file), a call costs one test.
+void record_projection_route(const char* op, const char* route, std::int32_t tokens, std::int32_t n,
+                             std::int32_t k);
 
 } // namespace ninferno::ops::detail::generic

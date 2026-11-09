@@ -71,11 +71,16 @@ private:
 // longer list is refused with a 400 before any of it is parsed or rendered, so a request of a
 // million tiny messages does not hold a worker while the template walks it.
 inline constexpr std::size_t kDefaultMaxRequestMessages = 16384;
+// Values (scalars, arrays, objects and object keys) a request body's JSON may hold. Each becomes a
+// node of the parsed document, about 100 bytes whatever its text size (`{}` is three bytes of
+// text), so the limit bounds the memory a parse takes, which the body size in bytes does not.
+inline constexpr std::size_t kDefaultMaxRequestJsonValues = 1'000'000;
 
 // Server-side context needed while parsing/validating a request.
 struct RequestLimits {
     int default_max_tokens   = 8192;
     std::size_t max_messages = kDefaultMaxRequestMessages;
+    std::size_t max_json_values = kDefaultMaxRequestJsonValues;
 };
 
 enum class ContentKind {

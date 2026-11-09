@@ -5,6 +5,7 @@
 namespace ninferno::models::qwen3_5::execution {
 
 [[nodiscard]] std::size_t mtp_projection_workspace_bytes(const MtpProjectionParameters& parameters,
+                                                         const AttentionConfig& config,
                                                          std::int32_t first, std::int32_t last);
 [[nodiscard]] std::size_t mtp_kv_workspace_bytes(const MtpProjectionParameters& parameters,
                                                  const AttentionConfig& config, std::int32_t first,

@@ -29,8 +29,8 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
     OpenAIChatRequest request;
     try {
         const RequestLimits limits = request_limits();
-        request                    = parse_chat_completion_request(parse_json_body(req), limits,
-                                                                   options_.auto_system_shared_prefix);
+        request = parse_chat_completion_request(parse_json_body(req, limits), limits,
+                                                options_.auto_system_shared_prefix);
     } catch (const ApiException& exception) {
         refuse(req, res, exception.error());
         return;

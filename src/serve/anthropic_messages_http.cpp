@@ -16,11 +16,12 @@
 namespace ninferno::serve {
 
 void HttpServer::handle_count_tokens(const httplib::Request& req, httplib::Response& res) {
-    const std::string request_id = new_anthropic_request_id();
+    const std::string request_id = request_id_of(req, new_anthropic_request_id());
     res.set_header("request-id", request_id);
     try {
+        const RequestLimits limits = request_limits();
         const AnthropicCountTokensRequest request =
-            parse_anthropic_count_tokens_request(parse_json_body(req), request_limits());
+            parse_anthropic_count_tokens_request(parse_json_body(req, limits), limits);
         const int input_tokens = service_->count_prompt_tokens(
             request.generation, [&req] { return client_disconnected(req); });
         res.set_content(make_anthropic_count_tokens_response(input_tokens), "application/json");
@@ -36,13 +37,13 @@ void HttpServer::handle_count_tokens(const httplib::Request& req, httplib::Respo
 }
 
 void HttpServer::handle_messages(const httplib::Request& req, httplib::Response& res) {
-    const std::string request_id = new_anthropic_request_id();
+    const std::string request_id = request_id_of(req, new_anthropic_request_id());
     res.set_header("request-id", request_id);
 
     AnthropicMessagesRequest request;
     try {
         const RequestLimits limits = request_limits();
-        request                   = parse_anthropic_messages_request(parse_json_body(req), limits);
+        request = parse_anthropic_messages_request(parse_json_body(req, limits), limits);
     } catch (const ApiException& exception) {
         refuse(req, res, exception.error());
         return;

@@ -91,14 +91,19 @@ void project(const Tensor& x_matrix, const SegmentedProjectionWeights& w,
 
     std::int32_t logical = 0; // logical row of the current slice group
     std::size_t i        = 0;
-    // Every call reads x and writes its own output rows: from the second on, a call may run
-    // alongside the one before it (generic::Call::join_previous), which releases it
-    // (release_next). A call runs once the next one is known, so the last one releases nothing.
+    // Every call reads x and writes its own output rows, so a call may run alongside the one
+    // before it (generic::Call::join_previous) once that one lets it start (release_next). The
+    // chain asks only what the launches grant: a call runs once the next one is known (the last
+    // releases nothing), and the next asks to join only if run() reports that this one released
+    // (generic::launch_overlap: a route that does not release, such as the pre-quantized R8 form
+    // or a device without programmatic dependent launch, gives the next call no join to ask for).
     std::optional<generic::Call> pending;
     LinearPolicy pending_policy = LinearPolicy::A16Only;
     const auto launch           = [&](bool next) {
         pending->release_next = next;
-        generic::run(*pending, pending_policy, &workspace, stream);
+        bool released         = false;
+        generic::run(*pending, pending_policy, &workspace, stream, &released);
+        return released;
     };
     while (i < w.slices.size()) {
         std::size_t j        = i + 1;
@@ -135,8 +140,7 @@ void project(const Tensor& x_matrix, const SegmentedProjectionWeights& w,
             }
             require(taken > 0, "segmented projection: output mapping failed");
             call.rows          = taken;
-            call.join_previous = pending.has_value();
-            if (pending) launch(true);
+            call.join_previous = pending.has_value() && launch(true);
             pending        = call;
             pending_policy = first.policy;
             done += taken;

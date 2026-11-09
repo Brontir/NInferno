@@ -71,11 +71,18 @@ PromptLayout inspect_prompt_layout(const text::TemplateOutput& output,
             header_end = source.size();
         }
         const auto body_begin = std::min(source.size(), header_end + turns->header_end.size());
-        const auto role =
-            turns->role(source.substr(pos + start.size(), header_end - pos - start.size()));
+        const auto header     = source.substr(pos + start.size(), header_end - pos - start.size());
+        const auto role       = turns->role(header);
         if (!role) {
             // A turn the conventions do not name (a harmony tool call or tool response addressed
             // to a recipient) counts as a tool turn for the replacement-suffix boundary below.
+            // The model's own call turn (TurnMarkup::assistant_addressed) opens where the request
+            // that wrote it opened its generation prompt, an execution boundary of that request:
+            // it splits the prefill here too, or that request's checkpoint (#572) is never
+            // restored. It is no message: the rewrite point and the message list stay as they are.
+            if (pos > 0 && turns->assistant_addressed(header)) {
+                result.execution_boundaries.push_back(pos);
+            }
             request_could_end_before = true;
             pos                      = find_marker(output, start, body_begin);
             continue;

@@ -46,7 +46,8 @@ std::string serve_usage_text(const char* argv0) {
            "[--drain-timeout-ms N] "
            "[--health-stall-ms N] [--device N|pci:BUSID|GPU-UUID] "
            "[--context-cost-presets FILE] "
-           "[--max-request-mib N] [--max-request-messages N] "
+           "[--max-request-mib N] [--request-body-min-kib-per-sec N] "
+           "[--max-request-messages N] [--max-request-json-values N] "
            "[--media-cache-mib N] [--media-live-mib N] "
            "[--media-preprocess-threads N] "
            "[--device-state-slots N] [--host-state-slots N] [--host-kv-mib N] "
@@ -72,7 +73,7 @@ std::string serve_usage_text(const char* argv0) {
            "[--no-auto-system-shared-prefix] [--trust-cache-hints] [--cache-keep-tokens N] "
            "[--cors] [--usage-chunk-choice] "
            "[--temperature F] [--top-p F] [--top-k N] [--min-p F] [--presence-penalty F] "
-           "[--frequency-penalty F] [--seed N] [--greedy]\n"
+           "[--frequency-penalty F] [--seed N] [--greedy] [--tool-order request|sorted]\n"
            "       [--log-level trace|debug|info|warning|error|critical|off]\n" +
            std::string(product::kEngineFlagsUsage) +
            "       [--drafter-registry FILE]\n"
@@ -113,9 +114,15 @@ std::string serve_usage_text(const char* argv0) {
            std::to_string(kDefaultMaxTokens) +
            " when omitted\n"
            "       --max-request-mib defaults to 384 and is enforced before JSON parsing\n"
+           "       --request-body-min-kib-per-sec defaults to " +
+           std::to_string(kDefaultRequestBodyMinKibPerSec) +
+           "; a request body arriving slower than that over 10 s is a 408 (0: no limit)\n"
            "       --max-request-messages defaults to " +
            std::to_string(kDefaultMaxRequestMessages) +
            "; a request with more messages (Responses: input Items) is a 400\n"
+           "       --max-request-json-values defaults to " +
+           std::to_string(kDefaultMaxRequestJsonValues) +
+           "; a body whose JSON holds more values (about 100 bytes of memory each) is a 400\n"
            "       --media-cache-mib defaults to 1024; 0 disables retained media reuse\n"
            "       --media-live-mib defaults to 2048 and bounds all live BF16 patch payloads\n"
            "       --media-preprocess-threads defaults to 0 (auto, at most 16 workers)\n"
@@ -205,6 +212,8 @@ std::string serve_usage_text(const char* argv0) {
            "       sampler defaults come from the loaded model and resolved thinking mode; "
            "server flags and request fields override individual values.\n"
            "       --greedy forces temperature 0 (exact argmax).\n"
+           "       --tool-order sorted renders a request's tools sorted by name, so that a client\n"
+           "       sending one set in varying order keeps its cached prefix (default: request).\n"
            "       --activations exact keeps BF16 activations on every quantized linear: an\n"
            "       answer does not depend on batch neighbours, prompt cuts, the prefix cache or\n"
            "       speculation; fast encodes NVFP4 activations in four bits on wide calls; int8\n"
@@ -382,6 +391,8 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.health_stall_ms = count("--health-stall-ms");
         } else if (arg == "--max-request-mib") {
             options.max_request_bytes = mib("--max-request-mib", false);
+        } else if (arg == "--request-body-min-kib-per-sec") {
+            options.request_body_min_kib_per_sec = count("--request-body-min-kib-per-sec");
         } else if (arg == "--max-request-messages") {
             const std::uint64_t messages =
                 parse_u64(require_value("--max-request-messages"), "max-request-messages");
@@ -389,6 +400,13 @@ ServeOptions parse_serve_options(int argc, char** argv) {
                 throw std::invalid_argument("--max-request-messages is out of range");
             }
             options.max_request_messages = static_cast<std::size_t>(messages);
+        } else if (arg == "--max-request-json-values") {
+            const std::uint64_t values =
+                parse_u64(require_value("--max-request-json-values"), "max-request-json-values");
+            if (values == 0 || values > std::numeric_limits<std::uint32_t>::max()) {
+                throw std::invalid_argument("--max-request-json-values is out of range");
+            }
+            options.max_request_json_values = static_cast<std::size_t>(values);
         } else if (arg == "--media-cache-mib") {
             options.media_cache_bytes = mib("--media-cache-mib", true);
         } else if (arg == "--media-live-mib") {
@@ -557,6 +575,12 @@ ServeOptions parse_serve_options(int argc, char** argv) {
                        options.sampling_overrides)) {
         } else if (arg == "--greedy") {
             options.greedy = true;
+        } else if (arg == "--tool-order") {
+            const std::string order = require_value("--tool-order");
+            if (order != "request" && order != "sorted") {
+                throw std::invalid_argument("--tool-order must be request or sorted");
+            }
+            options.sort_tools = order == "sorted";
         } else if (product::parse_engine_flag(
                        arg, [&] { return require_value(arg.c_str()); }, options.pacing,
                        options.maintainer, product::TunerFlags::Refused)) {
