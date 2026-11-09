@@ -1158,9 +1158,29 @@ ToolCallOutputDecoder::finish(bool cut_off, std::optional<std::string_view> stop
         stop_text && last_open.start != std::string::npos && !last_open.close.empty() &&
         !rtrim_format_whitespace(tool_region_).ends_with(last_open.close) &&
         !stop_swallows(*stop_text, last_open.close);
+    // A stop that, past the closing markup it swallowed, began another call
+    // ("</tool_call>\n<tool_call>"): the model was writing one more call when the stop matched.
+    // The calls closed before it are kept, and that one is counted as cut, so the turn does not
+    // read as a complete call set.
+    const auto next_call_cut = [&](std::initializer_list<std::string_view> swallowed) {
+        if (!stop_text) { return std::uint32_t{0}; }
+        std::string_view rest = *stop_text;
+        const auto skip_space = [&] {
+            while (!rest.empty() && is_format_whitespace(rest.front())) { rest.remove_prefix(1); }
+        };
+        for (const std::string_view closer : swallowed) {
+            skip_space();
+            if (stop_swallows(rest, closer)) {
+                rest.remove_prefix(std::min(rest.size(), closer.size()));
+            }
+        }
+        skip_space();
+        return std::uint32_t{!rest.empty() && syntax_->match_start(rest) != CallStart::No};
+    };
     if (saw_tool_marker_ && parsed.is_tool_call_response && !stopped_unclosed) {
         held_.clear();
         tool_region_.clear();
+        parsed.diagnostics.cut_calls_dropped += next_call_cut({last_open.close});
         // The prose before a recovered later marker, and text after complete calls.
         return Terminal{.content     = std::move(parsed.content),
                         .tool_calls  = std::move(parsed.tool_calls),
@@ -1184,6 +1204,7 @@ ToolCallOutputDecoder::finish(bool cut_off, std::optional<std::string_view> stop
                 held_.clear();
                 tool_region_.clear();
                 completed.diagnostics.closed_calls = 1;
+                completed.diagnostics.cut_calls_dropped += next_call_cut({kFunctionClose, kToolClose});
                 return Terminal{.content     = std::move(completed.content),
                                 .tool_calls  = std::move(completed.tool_calls),
                                 .diagnostics = completed.diagnostics};
@@ -1214,6 +1235,8 @@ ToolCallOutputDecoder::finish(bool cut_off, std::optional<std::string_view> stop
                 held_.clear();
                 tool_region_.clear();
                 completed.diagnostics.closed_calls = 1;
+                completed.diagnostics.cut_calls_dropped += next_call_cut(
+                    {contract_->format == ToolCallFormat::QwenXml ? kToolClose : syntax_->close()});
                 return Terminal{.content     = std::move(completed.content),
                                 .tool_calls  = std::move(completed.tool_calls),
                                 .diagnostics = completed.diagnostics};
