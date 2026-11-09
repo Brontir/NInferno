@@ -917,10 +917,8 @@ constexpr bool r8_one_slot_build() {
 
 int rules_r8(const Problem& p, std::int32_t tokens) {
     if (p.qtype == QType::Q8_G32_FP16) return r8_index(4, 1);
-    // IQ1_S / IQ1_M: grid-lookup decoders of IQ2's weight, scheduled with them.
-    const bool iq2 = p.qtype == QType::GGML_IQ2_XXS || p.qtype == QType::GGML_IQ2_XS ||
-                     p.qtype == QType::GGML_IQ2_S || p.qtype == QType::GGML_IQ1_S ||
-                     p.qtype == QType::GGML_IQ1_M;
+    // IQ1_S / IQ1_M: grid-lookup decoders of IQ2's weight, scheduled with them (sched_iq2).
+    const bool iq2 = format_traits(p.qtype).sched_iq2;
     if (tokens >= 2) return iq2 && (tokens >= 4 || p.n >= 34816) ? r8_index(4, 2) : r8_index(4, 1);
     // Turing (the RTX 2080 Ti, tu102:68sm, ninferno_r8_schedule_bench on the IQ3 16 GB
     // artifacts' 63 problems: picks +6.25 % above the best schedules in sum) decodes the codebook
@@ -929,8 +927,7 @@ int rules_r8(const Problem& p, std::int32_t tokens) {
     // Q3_K 5120x17408 add 112.9 -> 89.0); Q6_K gains two rows per warp from N = 8192 or K = 4096
     // (the 248320x2048 lm_head 807 -> 723 us, 2816x8192 w8r2 42.3 -> w4r2 40.3).
     if (!device_class().features.mma_bf16_native) {
-        const bool decode_heavy = iq2 || p.qtype == QType::GGML_IQ3_S ||
-                                  p.qtype == QType::GGML_IQ3_XXS || p.qtype == QType::GGML_Q3_K;
+        const bool decode_heavy = format_traits(p.qtype).decode_heavy;
         if (decode_heavy && p.k >= 5120) return r8_index(8, 2);
         // Volta (an sm_70 build, whose R8 kernel is the one-slot form: generic_r8.cuh
         // NINFERNO_R8_ONE_SLOT; a GPU without mma.sync) keeps one row per warp for Q6_K at every N

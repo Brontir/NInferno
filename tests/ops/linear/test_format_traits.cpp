@@ -1,8 +1,9 @@
 // The format traits table (ops/generic/format_traits.h) against the switches it replaced: for
-// every QType value, the old predicate (kept below, verbatim, in `legacy`, until a follow-up
-// deletes it) and the new read of the table agree; where the predicate is public in
-// generic_gemm.h, the engine's function agrees as well. Values the enum does not name read as
-// "no capability" in both.
+// every QType value, the old predicate (kept below in `legacy`, logically equivalent, comments
+// stripped, until a follow-up deletes it) and the new read of the table agree; where the predicate
+// is public in generic_gemm.h, the engine's function agrees as well. Values the enum does not
+// name read as "no capability" in both. That every named QType has a row is a static_assert in
+// the header; kNamed below only repeats it as a runtime check.
 #include "ops/common/native_nvfp4.h"
 #include "ops/generic/format_traits.h"
 #include "ops/generic/generic_gemm.h"
@@ -66,6 +67,22 @@ bool light_ggml_step(QType q) {
 }
 
 bool tall_tile_format(QType q) { return q == QType::GGML_Q4_K; }
+
+// generic_workspace.cpp's own copy of the Q4/Q5/Q6 G64 test (the I8 workspace), and rules_r8's
+// IQ2 class and decode-heavy set.
+bool workspace_qx(QType q) {
+    return q == QType::Q4_G64_FP16 || q == QType::Q5_G64_FP16 || q == QType::Q6_G64_FP16;
+}
+
+bool sched_iq2(QType q) {
+    return q == QType::GGML_IQ2_XXS || q == QType::GGML_IQ2_XS || q == QType::GGML_IQ2_S ||
+           q == QType::GGML_IQ1_S || q == QType::GGML_IQ1_M;
+}
+
+bool decode_heavy(QType q) {
+    return sched_iq2(q) || q == QType::GGML_IQ3_S || q == QType::GGML_IQ3_XXS ||
+           q == QType::GGML_Q3_K;
+}
 
 bool w4a8_ws_extra_format(QType q) {
     return q == QType::GGML_IQ4_XS || q == QType::GGML_IQ2_XS || q == QType::GGML_IQ2_XXS ||
@@ -303,6 +320,9 @@ int main() {
         const bool native = kNativeNvfp4;
         agree(legacy::i8_format(q), t.qx_g64, "i8_format", v);
         agree(legacy::qx_format(q), t.qx_g64, "qx_format", v);
+        agree(legacy::workspace_qx(q), t.qx_g64, "workspace I8 format", v);
+        agree(legacy::sched_iq2(q), t.sched_iq2, "rules_r8 iq2 class", v);
+        agree(legacy::decode_heavy(q), t.decode_heavy, "rules_r8 decode_heavy", v);
         agree(legacy::mmq_verify_format(q), t.mmq_verify, "mmq_verify_format", v);
         agree(legacy::light_ggml_step(q), t.light_step, "light_ggml_step", v);
         agree(legacy::tall_tile_format(q), t.tall_tile, "tall_tile_format", v);
