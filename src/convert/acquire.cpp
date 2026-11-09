@@ -833,17 +833,6 @@ std::optional<fs::path> kept_for_options(const fs::path& cache, const std::strin
                          content_options_key(baked, nullptr, context));
 }
 
-// Whether a snapshot serves a GGUF file: its model is that file, not the directory, and the
-// options key then has no snapshot to read resources from (acquire_model).
-static bool has_gguf_file(const fs::path& snapshot) {
-    std::error_code ec;
-    for (auto it = fs::directory_iterator(snapshot, ec); !ec && it != fs::directory_iterator();
-         it.increment(ec)) {
-        if (it->path().extension() == ".gguf") { return true; }
-    }
-    return false;
-}
-
 fs::path conversion_directory(const fs::path& commit_dir, const std::string& key) {
     return key.empty() ? commit_dir : commit_dir / ("options-" + key);
 }
@@ -995,16 +984,23 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                                 // as it was written, once that snapshot was known (below, after
                                 // the fetch): the caller's template a resource where the model
                                 // ships none, a resource that is the snapshot's own file none.
-                                const auto held_snapshot  = repo_dir / "snapshots" / held_commit;
+                                const auto held_snapshot = repo_dir / "snapshots" / held_commit;
+                                // The model that snapshot serves, chosen as the fetch chooses it
+                                // (a GGUF file of it, or the directory), and asked as the fetch's
+                                // model is asked below.
+                                FetchOptions held_fetch = options.fetch;
+                                held_fetch.quant        = quant;
+                                const auto held_model =
+                                    snapshot_model(held_snapshot, held_fetch, repo);
                                 AcquireOptions as_written = options;
                                 if (!options.chat_template.empty() &&
-                                    !local_support_facts(held_snapshot).chat_template) {
+                                    !local_support_facts(held_model).chat_template) {
                                     as_written.convert.resources.emplace_back(
                                         "chat_template.jinja", options.chat_template);
                                 }
                                 OptionsKeyContext written_context = key_context;
-                                if (!has_gguf_file(held_snapshot)) {
-                                    written_context.snapshot = held_snapshot;
+                                if (fs::is_directory(held_model)) {
+                                    written_context.snapshot = held_model;
                                 }
                                 const std::string written_key =
                                     content_options_key(as_written, nullptr, written_context);
