@@ -123,7 +123,7 @@ ninferno_add_op_test(ninferno_linear_candidates_test
 
 # The generic path's choices on thirteen substituted boards against selector_golden/<board>.txt:
 # a selector change shows line by line; a refactor must leave every file as it was.
-ninferno_add_op_test(ninferno_selector_golden_test LABELS host golden slow
+ninferno_add_op_test(ninferno_selector_golden_test LABELS gpu golden slow
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_selector_golden.cpp"
   LIBRARIES ninferno_linear_test_support)
 target_compile_definitions(ninferno_selector_golden_test PRIVATE
