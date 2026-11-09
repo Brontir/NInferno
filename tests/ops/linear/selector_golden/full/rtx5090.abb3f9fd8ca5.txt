@@ -1,4 +1,5 @@
 # rtx5090 gb202:170sm sm120
+# facts abb3f9fd8ca5
 bf16 256x2048 not packed: row-split test packer: unsupported qtype
 bf16 1024x4096 not packed: row-split test packer: unsupported qtype
 bf16 2048x1024 not packed: row-split test packer: unsupported qtype

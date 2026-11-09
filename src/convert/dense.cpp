@@ -108,6 +108,8 @@ struct Rotary {
     // applies (original_max_position_embeddings); empty when the rope has one mode.
     std::vector<float> long_inv_freq;
     std::uint64_t long_after = 0;
+    // YaRN: the context length the checkpoint was scaled from (original_max_position_embeddings).
+    std::uint64_t yarn_original = 0;
 };
 
 // LongRoPE's per-pair rescale: 1 / (factor[i] * theta^(2i/dim)), transformers'
@@ -231,6 +233,7 @@ Rotary rotary(const OJson& p, std::uint64_t dim, std::uint64_t max_positions,
         YarnRope rope         = yarn_rope(theta, dim, yarn);
         out.inv_freq          = std::move(rope.inv_freq);
         out.attention_scaling = rope.attention_scaling;
+        out.yarn_original     = static_cast<std::uint64_t>(yarn.original);
         return out;
     }
     refuse(where + ": rope_type " + type + " is not implemented");
@@ -472,24 +475,8 @@ Resolved resolve_nemotron_h(const OJson& raw, const std::string& architecture,
 // The MTP drafter's config, defined with the other NemotronH builders below.
 Resolved resolve_nemotron_h_mtp(const OJson& raw, const std::string& architecture);
 
-Resolved resolve(const OJson& source, bool checkpoint_has_head) {
-    const auto architecture = declared_architecture(source);
-    if (architecture == "NemotronHMtpForCausalLM") {
-        return resolve_nemotron_h_mtp(source, architecture);
-    }
-    if (!is_dense_architecture(architecture)) {
-        refuse("unsupported architecture " + architecture);
-    }
-    const OJson& raw = text_part(source);
-    const auto* type_value = member(raw, "model_type");
-    const std::string model_type =
-        type_value && type_value->is_string() ? type_value->get<std::string>() : "";
-    if (!kTextModelTypes.contains(model_type)) {
-        refuse("text model_type '" + model_type + "' is not a dense decoder this adapter knows");
-    }
-    if (model_type == "nemotron_h") {
-        return resolve_nemotron_h(raw, architecture, checkpoint_has_head);
-    }
+// What a dense decoder of this adapter does not implement: refused before any field is read.
+void refuse_unimplemented(const OJson& raw, const std::string& model_type) {
     if (flag(raw, "mlp_bias")) { refuse("mlp_bias is not implemented"); }
     if (truthy(member(raw, "attn_logit_softcapping"))) {
         refuse("attn_logit_softcapping (a capped attention score) is not implemented");
@@ -497,85 +484,23 @@ Resolved resolve(const OJson& source, bool checkpoint_has_head) {
     if (flag(raw, "use_sliding_window") && model_type != "mistral") {
         refuse("use_sliding_window (a partial sliding-window layout) is not implemented");
     }
-    const auto hidden = positive(member(raw, "hidden_size"), "text.hidden_size");
-    const auto heads  = positive(member(raw, "num_attention_heads"), "text.num_attention_heads");
-    const auto* kv_value = member(raw, "num_key_value_heads");
-    const auto kv =
-        present(kv_value) ? positive(kv_value, "text.num_key_value_heads") : heads;
-    const auto* head_dim_value = member(raw, "head_dim");
-    const auto head_dim = present(head_dim_value) ? positive(head_dim_value, "text.head_dim")
-                                                  : hidden / heads;
-    const auto layers = positive(member(raw, "num_hidden_layers"), "text.num_hidden_layers");
-    const auto max_positions =
-        positive(member(raw, "max_position_embeddings"), "text.max_position_embeddings");
-    const auto* act = member(raw, "hidden_act");
-    if (act == nullptr || act->is_null()) { act = member(raw, "hidden_activation"); } // Gemma
-    const std::string activation = act && act->is_string() ? act->get<std::string>() : "silu";
-    if (activation != "silu" && activation != "gelu_pytorch_tanh") {
-        refuse("hidden_act " + activation + " is not implemented");
-    }
+}
 
-    Resolved out;
-    OJson c                    = OJson::object();
-    const bool moe             = is_moe_type(model_type);
-    c["architectures"] = OJson::array({moe ? "MoeDecoderForCausalLM" : "DenseDecoderForCausalLM"});
-    c["model_type"]    = moe ? "moe_decoder" : "dense_decoder";
-    c["source_architecture"]   = architecture;
-    c["source_model_type"]     = model_type;
-    c["hidden_size"]           = hidden;
-    c["vocab_size"]            = positive(member(raw, "vocab_size"), "text.vocab_size");
-    c["num_hidden_layers"]     = layers;
-    c["max_position_embeddings"] = max_positions;
-    c["num_attention_heads"]   = heads;
-    c["num_key_value_heads"]   = kv;
-    c["head_dim"]              = head_dim;
-    c["intermediate_size"] = positive(member(raw, "intermediate_size"), "text.intermediate_size");
-    c["rms_norm_eps"]      = f32_value(member(raw, "rms_norm_eps"), 1e-6, "text.rms_norm_eps");
-    c["hidden_act"]        = activation;
-    const bool olmo        = model_type == "olmo2" || model_type == "olmo3";
-    const bool gemma       = model_type == "gemma3_text";
-    // Muse Glimmer (transformers MuseGlimmerTextModel): Gemma 2's sandwich of (1 + w) norms with
-    // its own post-norm epsilon, a final norm with the plain gain w, q/k norms without weight, an
-    // RMS-normalized (weightless) embedding, a sigmoid gate on the attention context
-    // (self_attn.gate_proj) and logits multiplied by output_multiplier before the soft cap.
-    const bool muse        = model_type == "muse_glimmer_text";
-    // Gemma 3: pre- and post-norms around both sublayers, every gain 1 + w (Gemma3RMSNorm).
-    c["norm_placement"]    = olmo ? "post" : gemma || muse ? "sandwich" : "pre";
-    c["norm_unit_offset"]  = gemma || muse;
-    c["qk_norm"]           = olmo ? "projection"
-                             : model_type == "qwen3" || model_type == "qwen3_moe" || gemma ? "head"
-                             : muse                                                        ? "head_unscaled"
-                                                                                           : "none";
-    if (muse) {
-        c["final_norm_unit_offset"] = false;
-        c["post_norm_eps"]          = f32_value(member(raw, "post_norm_eps"), 1e-8, "text.post_norm_eps");
-        c["embedding_norm"]         = true;
-        c["attention_output_gate"]  = true;
-        c["logit_multiplier"] =
-            f32_value(member(raw, "output_multiplier"), 1.0, "text.output_multiplier");
+// Biases, by each model's attention module: {qkv, output}.
+std::pair<bool, bool> attention_biases(const OJson& raw, const std::string& model_type) {
+    if (model_type == "qwen2") { return {true, false}; }
+    if (model_type == "seed_oss") {
+        return {flag(raw, "attention_bias"), flag(raw, "attention_out_bias")};
     }
-    if (moe) { c["moe"] = moe_block(raw, model_type); }
-    // gpt-oss: a learned sink logit per query head joins every softmax denominator.
-    c["attention_sinks"] = model_type == "gpt_oss";
-    if (const auto* cap = member(raw, "final_logit_softcapping"); truthy(cap)) {
-        c["final_logit_softcapping"] = cap->get<double>();
-    }
+    if (model_type == "mistral" || model_type == "ministral3") { return {false, false}; }
+    const bool bias = flag(raw, "attention_bias");
+    return {bias, bias};
+}
 
-    // Biases, by each model's attention module.
-    bool qkv_bias = false, output_bias = false;
-    if (model_type == "qwen2") {
-        qkv_bias = true;
-    } else if (model_type == "seed_oss") {
-        qkv_bias    = flag(raw, "attention_bias");
-        output_bias = flag(raw, "attention_out_bias");
-    } else if (model_type != "mistral" && model_type != "ministral3") {
-        qkv_bias = output_bias = flag(raw, "attention_bias");
-    }
-    c["attention_bias"]        = qkv_bias;
-    c["attention_output_bias"] = output_bias;
-
-    // Scales and the muP multipliers (Granite); the embedding and logit ones are folded into the
-    // tables below and recorded here for provenance.
+// Scales and the muP multipliers (Granite); the embedding and logit ones are folded into the
+// tables and recorded in the config for provenance.
+void resolve_scales(const OJson& raw, const std::string& model_type, std::uint64_t hidden,
+                    std::uint64_t head_dim, bool gemma, bool muse, OJson& c, Resolved& out) {
     double scale = 1.0 / std::sqrt(static_cast<double>(head_dim));
     if (model_type == "granite") {
         scale                    = number(raw, "attention_multiplier", scale);
@@ -594,9 +519,8 @@ Resolved resolve(const OJson& source, bool checkpoint_has_head) {
         scale *= factor->get<double>();
     }
     if (gemma) {
-        out.embedding_multiplier =
-            static_cast<double>(bf16_to_f32(f32_to_bf16(static_cast<float>(
-                std::sqrt(static_cast<double>(hidden))))));
+        out.embedding_multiplier = static_cast<double>(
+            bf16_to_f32(f32_to_bf16(static_cast<float>(std::sqrt(static_cast<double>(hidden))))));
     }
     c["attention_scale"]      = static_cast<double>(static_cast<float>(scale));
     c["embedding_multiplier"] = out.embedding_multiplier;
@@ -604,9 +528,12 @@ Resolved resolve(const OJson& source, bool checkpoint_has_head) {
     if (!(out.logits_scaling > 0) || !(out.embedding_multiplier > 0)) {
         refuse("embedding_multiplier and logits_scaling must be positive");
     }
+}
 
-    // Layer pattern: explicit layer_types, or one window on every layer (Mistral's
-    // sliding_window, which Ministral 3 and Mistral 3.x leave null), and NoPE layers (SmolLM3).
+// Layer pattern: explicit layer_types, or one window on every layer (Mistral's sliding_window,
+// which Ministral 3 and Mistral 3.x leave null).
+OJson layer_kinds(const OJson& raw, const std::string& model_type, std::uint64_t layers,
+                  std::uint64_t max_positions) {
     OJson kinds = OJson::array();
     if (const auto* types = member(raw, "layer_types"); types && types->is_array()) {
         if (types->size() != layers) { refuse("layer_types must cover every layer"); }
@@ -638,19 +565,19 @@ Resolved resolve(const OJson& source, bool checkpoint_has_head) {
             kinds.push_back(slides ? "sliding_attention" : "full_attention");
         }
     }
-    if (std::any_of(kinds.begin(), kinds.end(),
-                    [](const OJson& k) { return k == "sliding_attention"; })) {
-        c["sliding_window"] = positive(member(raw, "sliding_window"), "text.sliding_window");
-    }
-    c["layer_types"] = kinds;
+    return kinds;
+}
 
+// The layers that rotate: all but NoPE layers (SmolLM3's no_rope_layers). A per-layer rope base
+// (Muse Glimmer's layer_rope_theta): 0 is a NoPE layer; any other value must be the base its
+// layer type's rope parameters already carry (one group per type).
+std::vector<bool> rotated_layers(const OJson& raw, const std::string& model_type,
+                                 const OJson& kinds, std::uint64_t layers) {
     std::vector<bool> rotated(layers, true);
     if (const auto* nope = member(raw, "no_rope_layers"); nope && nope->is_array()) {
         if (nope->size() != layers) { refuse("no_rope_layers must cover every layer"); }
         for (std::uint64_t i = 0; i < layers; ++i) { rotated[i] = truthy(&(*nope)[i]); }
     }
-    // A per-layer rope base (Muse Glimmer's layer_rope_theta): 0 is a NoPE layer; any other value
-    // must be the base its layer type's rope parameters already carry (one group per type).
     if (const auto* thetas = member(raw, "layer_rope_theta"); thetas && thetas->is_array()) {
         if (thetas->size() != layers) { refuse("layer_rope_theta must cover every layer"); }
         for (std::uint64_t i = 0; i < layers; ++i) {
@@ -666,23 +593,30 @@ Resolved resolve(const OJson& source, bool checkpoint_has_head) {
             }
         }
     }
-    // One rope group per layer type (their parameters may differ, OLMo 3), NoPE layers none.
-    OJson groups = OJson::object();
+    return rotated;
+}
+
+// One rope group per layer type (their parameters may differ, OLMo 3), NoPE layers none:
+// layer_rope, rope_groups and Llama 4's query temperature (query_scale).
+void resolve_rope(const OJson& raw, const std::string& model_type, const OJson& kinds,
+                  const std::vector<bool>& rotated, std::uint64_t head_dim,
+                  std::uint64_t max_positions, OJson& c) {
+    OJson groups     = OJson::object();
     OJson layer_rope = OJson::array();
     std::optional<std::pair<double, std::uint64_t>> temperature;
-    for (std::uint64_t i = 0; i < layers; ++i) {
+    for (std::uint64_t i = 0; i < rotated.size(); ++i) {
         const auto kind = kinds[i].get<std::string>();
         if (!rotated[i]) {
             layer_rope.push_back(nullptr);
             continue;
         }
         if (!groups.contains(kind)) {
-            const auto p       = rope_parameters(raw, model_type, kind);
+            const auto p = rope_parameters(raw, model_type, kind);
             const double partial =
                 number(p, "partial_rotary_factor", number(raw, "partial_rotary_factor", 1.0));
             const auto dim = static_cast<std::uint64_t>(static_cast<double>(head_dim) * partial);
             if (dim == 0 || dim % 2 || dim > head_dim) { refuse("invalid partial rotary width"); }
-            const auto r = rotary(p, dim, max_positions, "text.rope(" + kind + ")");
+            const auto r           = rotary(p, dim, max_positions, "text.rope(" + kind + ")");
             OJson g                = OJson::object();
             g["rope_type"]         = r.type;
             g["rope_theta"]        = number(p, "rope_theta", 10000.0);
@@ -693,11 +627,13 @@ Resolved resolve(const OJson& source, bool checkpoint_has_head) {
             g["inv_freq"] = std::move(freq);
             if (!r.long_inv_freq.empty()) {
                 OJson long_freq = OJson::array();
-                for (const float f : r.long_inv_freq) { long_freq.push_back(static_cast<double>(f)); }
+                for (const float f : r.long_inv_freq) {
+                    long_freq.push_back(static_cast<double>(f));
+                }
                 g["long_inv_freq"] = std::move(long_freq);
                 g["long_after"]    = r.long_after;
             }
-            groups[kind]  = std::move(g);
+            groups[kind] = std::move(g);
             if (const auto* beta = member(p, "llama_4_scaling_beta"); truthy(beta)) {
                 const auto period = positive(member(p, "original_max_position_embeddings"),
                                              "text.rope.original_max_position_embeddings");
@@ -711,17 +647,115 @@ Resolved resolve(const OJson& source, bool checkpoint_has_head) {
     if (temperature) {
         c["query_scale"] = OJson{{"beta", temperature->first}, {"period", temperature->second}};
     }
+}
 
+// Left unset (absent, or null as in RedHatAI's SmolLM3-3B-FP8-dynamic re-save), the flag is the
+// checkpoint's to answer, as for GGUF: no output head tensor means the embedding is the head. A
+// declared value is taken as declared.
+bool tied_embeddings(const OJson& raw, const OJson& source, bool checkpoint_has_head) {
     const OJson* tied = member(raw, "tie_word_embeddings");
     if (tied == nullptr || tied->is_null()) { tied = member(source, "tie_word_embeddings"); }
-    // Left unset (absent, or null as in RedHatAI's SmolLM3-3B-FP8-dynamic re-save), the flag is
-    // the checkpoint's to answer, as for GGUF: no output head tensor means the embedding is the
-    // head. A declared value is taken as declared.
     if (tied != nullptr && !tied->is_null() && !tied->is_boolean()) {
         refuse("tie_word_embeddings must be boolean");
     }
-    c["tie_word_embeddings"] =
-        tied != nullptr && tied->is_boolean() ? tied->get<bool>() : !checkpoint_has_head;
+    return tied != nullptr && tied->is_boolean() ? tied->get<bool>() : !checkpoint_has_head;
+}
+
+Resolved resolve(const OJson& source, bool checkpoint_has_head) {
+    const auto architecture = declared_architecture(source);
+    if (architecture == "NemotronHMtpForCausalLM") {
+        return resolve_nemotron_h_mtp(source, architecture);
+    }
+    if (!is_dense_architecture(architecture)) {
+        refuse("unsupported architecture " + architecture);
+    }
+    const OJson& raw       = text_part(source);
+    const auto* type_value = member(raw, "model_type");
+    const std::string model_type =
+        type_value && type_value->is_string() ? type_value->get<std::string>() : "";
+    if (!kTextModelTypes.contains(model_type)) {
+        refuse("text model_type '" + model_type + "' is not a dense decoder this adapter knows");
+    }
+    if (model_type == "nemotron_h") {
+        return resolve_nemotron_h(raw, architecture, checkpoint_has_head);
+    }
+    refuse_unimplemented(raw, model_type);
+    const auto hidden    = positive(member(raw, "hidden_size"), "text.hidden_size");
+    const auto heads     = positive(member(raw, "num_attention_heads"), "text.num_attention_heads");
+    const auto* kv_value = member(raw, "num_key_value_heads");
+    const auto kv = present(kv_value) ? positive(kv_value, "text.num_key_value_heads") : heads;
+    const auto* head_dim_value = member(raw, "head_dim");
+    const auto head_dim =
+        present(head_dim_value) ? positive(head_dim_value, "text.head_dim") : hidden / heads;
+    const auto layers = positive(member(raw, "num_hidden_layers"), "text.num_hidden_layers");
+    const auto max_positions =
+        positive(member(raw, "max_position_embeddings"), "text.max_position_embeddings");
+    const auto* act = member(raw, "hidden_act");
+    if (act == nullptr || act->is_null()) { act = member(raw, "hidden_activation"); } // Gemma
+    const std::string activation = act && act->is_string() ? act->get<std::string>() : "silu";
+    if (activation != "silu" && activation != "gelu_pytorch_tanh") {
+        refuse("hidden_act " + activation + " is not implemented");
+    }
+
+    Resolved out;
+    OJson c            = OJson::object();
+    const bool moe     = is_moe_type(model_type);
+    c["architectures"] = OJson::array({moe ? "MoeDecoderForCausalLM" : "DenseDecoderForCausalLM"});
+    c["model_type"]    = moe ? "moe_decoder" : "dense_decoder";
+    c["source_architecture"]     = architecture;
+    c["source_model_type"]       = model_type;
+    c["hidden_size"]             = hidden;
+    c["vocab_size"]              = positive(member(raw, "vocab_size"), "text.vocab_size");
+    c["num_hidden_layers"]       = layers;
+    c["max_position_embeddings"] = max_positions;
+    c["num_attention_heads"]     = heads;
+    c["num_key_value_heads"]     = kv;
+    c["head_dim"]                = head_dim;
+    c["intermediate_size"] = positive(member(raw, "intermediate_size"), "text.intermediate_size");
+    c["rms_norm_eps"]      = f32_value(member(raw, "rms_norm_eps"), 1e-6, "text.rms_norm_eps");
+    c["hidden_act"]        = activation;
+    const bool olmo        = model_type == "olmo2" || model_type == "olmo3";
+    const bool gemma       = model_type == "gemma3_text";
+    // Muse Glimmer (transformers MuseGlimmerTextModel): Gemma 2's sandwich of (1 + w) norms with
+    // its own post-norm epsilon, a final norm with the plain gain w, q/k norms without weight, an
+    // RMS-normalized (weightless) embedding, a sigmoid gate on the attention context
+    // (self_attn.gate_proj) and logits multiplied by output_multiplier before the soft cap.
+    const bool muse = model_type == "muse_glimmer_text";
+    // Gemma 3: pre- and post-norms around both sublayers, every gain 1 + w (Gemma3RMSNorm).
+    c["norm_placement"]   = olmo ? "post" : gemma || muse ? "sandwich" : "pre";
+    c["norm_unit_offset"] = gemma || muse;
+    c["qk_norm"]          = olmo ? "projection"
+                            : model_type == "qwen3" || model_type == "qwen3_moe" || gemma ? "head"
+                            : muse ? "head_unscaled"
+                                   : "none";
+    if (muse) {
+        c["final_norm_unit_offset"] = false;
+        c["post_norm_eps"]  = f32_value(member(raw, "post_norm_eps"), 1e-8, "text.post_norm_eps");
+        c["embedding_norm"] = true;
+        c["attention_output_gate"] = true;
+        c["logit_multiplier"] =
+            f32_value(member(raw, "output_multiplier"), 1.0, "text.output_multiplier");
+    }
+    if (moe) { c["moe"] = moe_block(raw, model_type); }
+    // gpt-oss: a learned sink logit per query head joins every softmax denominator.
+    c["attention_sinks"] = model_type == "gpt_oss";
+    if (const auto* cap = member(raw, "final_logit_softcapping"); truthy(cap)) {
+        c["final_logit_softcapping"] = cap->get<double>();
+    }
+    const auto [qkv_bias, output_bias] = attention_biases(raw, model_type);
+    c["attention_bias"]                = qkv_bias;
+    c["attention_output_bias"]         = output_bias;
+    resolve_scales(raw, model_type, hidden, head_dim, gemma, muse, c, out);
+
+    const OJson kinds = layer_kinds(raw, model_type, layers, max_positions);
+    if (std::any_of(kinds.begin(), kinds.end(),
+                    [](const OJson& k) { return k == "sliding_attention"; })) {
+        c["sliding_window"] = positive(member(raw, "sliding_window"), "text.sliding_window");
+    }
+    c["layer_types"] = kinds;
+    resolve_rope(raw, model_type, kinds, rotated_layers(raw, model_type, kinds, layers), head_dim,
+                 max_positions, c);
+    c["tie_word_embeddings"] = tied_embeddings(raw, source, checkpoint_has_head);
     out.config               = std::move(c);
     return out;
 }
@@ -1579,6 +1613,12 @@ OJson resolved_rope(const OJson& source, std::uint64_t dim, std::uint64_t max_po
     OJson freq               = OJson::array();
     for (const float f : r.inv_freq) { freq.push_back(static_cast<double>(f)); }
     out["inv_freq"] = std::move(freq);
+    // The length a YaRN rope was scaled from, when shorter than the positions the checkpoint
+    // addresses: a DFlash drafter without a sliding layer reads no further than this
+    // (DFlashConfig::full_window).
+    if (r.yarn_original != 0 && r.yarn_original < max_positions) {
+        out["original_max_position_embeddings"] = r.yarn_original;
+    }
     return out;
 }
 

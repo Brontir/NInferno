@@ -1,8 +1,4 @@
-#include "ops/softmax_attention/dense/context/launch.h"
-#include "core/per_device.h"
-
-#include "core/device.h"
-#include "ops/softmax_attention/dense/context/kernel.cuh"
+#include "ops/softmax_attention/dense/context/launch_common.cuh"
 
 #include <algorithm>
 #include <cstdint>
@@ -15,40 +11,6 @@ namespace {
 // outside [1, this] was not made by it.
 constexpr std::int32_t kContextAttentionMaxSplits = 64;
 
-template <class Geo, int Tokens, class Launch>
-void dispatch_token_case(Launch&& launch) {
-    launch.template operator()<Tokens, kContextQueryWarps<Geo, Tokens>>();
-}
-
-template <class Geo, class Launch>
-void dispatch_tokens(std::int32_t tokens, Launch&& launch) {
-    switch (tokens) {
-#define NINFERNO_CONTEXT_ATTENTION_TOKEN_CASE(TOKENS)                                              \
-    case TOKENS:                                                                                   \
-        dispatch_token_case<Geo, TOKENS>(launch);                                                  \
-        return
-        NINFERNO_CONTEXT_ATTENTION_TOKEN_CASE(1);
-        NINFERNO_CONTEXT_ATTENTION_TOKEN_CASE(2);
-        NINFERNO_CONTEXT_ATTENTION_TOKEN_CASE(3);
-        NINFERNO_CONTEXT_ATTENTION_TOKEN_CASE(4);
-        NINFERNO_CONTEXT_ATTENTION_TOKEN_CASE(5);
-        NINFERNO_CONTEXT_ATTENTION_TOKEN_CASE(6);
-        NINFERNO_CONTEXT_ATTENTION_TOKEN_CASE(7);
-        NINFERNO_CONTEXT_ATTENTION_TOKEN_CASE(8);
-        NINFERNO_CONTEXT_ATTENTION_TOKEN_CASE(9);
-        NINFERNO_CONTEXT_ATTENTION_TOKEN_CASE(10);
-        NINFERNO_CONTEXT_ATTENTION_TOKEN_CASE(11);
-        NINFERNO_CONTEXT_ATTENTION_TOKEN_CASE(12);
-        NINFERNO_CONTEXT_ATTENTION_TOKEN_CASE(13);
-        NINFERNO_CONTEXT_ATTENTION_TOKEN_CASE(14);
-        NINFERNO_CONTEXT_ATTENTION_TOKEN_CASE(15);
-        NINFERNO_CONTEXT_ATTENTION_TOKEN_CASE(16);
-#undef NINFERNO_CONTEXT_ATTENTION_TOKEN_CASE
-    default:
-        throw std::invalid_argument("context_softmax_attention: unsupported T");
-    }
-}
-
 std::int32_t profile_group(ContextAttentionProfile profile) {
     return profile == ContextAttentionProfile::D64Q64K8 ? ContextQueryD64::Group
                                                         : ContextQueryD128::Group;
@@ -60,7 +22,7 @@ void launch_profile(const Tensor& q, const Tensor& query_k, const Tensor& query_
                     const Tensor& table_rows, float scale, const PagedKVBatchLayerView& context,
                     const ContextAttentionPlan& plan, Tensor& partial_acc, Tensor& partial_m,
                     Tensor& partial_l, Tensor& out, cudaStream_t stream) {
-    dispatch_tokens<Geo>(q.ne[2], [&]<int Tokens, int Warps>() {
+    dispatch_tokens<Geo>(q.ne[2], "context_softmax_attention", [&]<int Tokens, int Warps>() {
         const bool direct = plan.route == ContextAttentionRoute::Direct;
         if (plan.warps != Warps || plan.split_capacity < 1 ||
             plan.split_capacity > kContextAttentionMaxSplits ||
@@ -142,19 +104,7 @@ void launch_profile(const Tensor& q, const Tensor& query_k, const Tensor& query_
                 static_cast<__nv_bfloat16*>(out.data));
             CUDA_CHECK(cudaGetLastError());
         };
-        constexpr int Rows = Warps * 16;
-        if (plan.key_block == 32) {
-            if constexpr (Rows <= 64) {
-                launch.template operator()<32>();
-                return;
-            }
-        } else if (plan.key_block == 64) {
-            if constexpr (Tokens > 8) {
-                launch.template operator()<64>();
-                return;
-            }
-        }
-        throw std::invalid_argument("context_softmax_attention: inconsistent plan");
+        select_key_block<Tokens, Warps>(plan, "context_softmax_attention", launch);
     });
 }
 

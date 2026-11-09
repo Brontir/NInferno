@@ -185,13 +185,17 @@ void linear_swiglu(const Tensor& x, const Weight& gate_up_weight, Tensor& out, L
     }
     // An NVFP4 prefill call the generic W4A8 takes (owned_prefill_w4a8) leaves the plan, which has
     // no 8-bit form.
+    const bool w4a8 = detail::generic::owned_prefill_w4a8(gate_up_weight, policy, t);
     const bool registered =
         shape_plan_runs(gate_up_weight.qtype, gate_up_weight.n, gate_up_weight.k, policy) &&
         (gate_up_weight.layout != QuantLayout::RowSplit ||
          gate_up_weight.padded_shape[1] == gate_up_weight.k) &&
-        !prefill_a8 && !detail::generic::owned_prefill_w4a8(gate_up_weight, policy, t) &&
-        !detail::generic::volta_tiled_route(gate_up_weight, policy, t);
+        !prefill_a8 && !w4a8 && !detail::generic::volta_tiled_route(gate_up_weight, policy, t);
     if (!registered && detail::generic::supports(gate_up_weight)) {
+        if (w4a8) {
+            detail::generic::record_projection_route("linear_swiglu", "w4a8", t, gate_up_weight.n,
+                                                     gate_up_weight.k);
+        }
         if (t <= 0 || x.ne[0] != gate_up_weight.k || out.ne[0] * 2 != gate_up_weight.n ||
             out.ne[1] != t) {
             throw std::invalid_argument("linear_swiglu: invalid tensor shape");

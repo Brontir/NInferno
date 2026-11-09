@@ -835,6 +835,143 @@ int test_bare_json_call_dropped() {
 }
 
 // What a syntax's grammar admits, its parser turns into calls.
+// A caller's stop string ends a forced call's output (finish with the stop text): what is no
+// complete call is dropped and counted, never returned as text, in every call syntax; a call that
+// the stop left complete except for its closing markup is closed and kept; a stop that can match
+// between a call's parts closes nothing.
+int test_forced_stop_cut() {
+    int failures = 0;
+
+    struct Sample {
+        ToolCallFormat format;
+        std::string call; // one complete call
+    };
+
+    const Sample samples[] = {
+        {ToolCallFormat::QwenXml,
+         "<tool_call>\n<function=weather>\n<parameter=city>\nOslo\n</parameter>\n"
+         "<parameter=days>\n2\n</parameter>\n</function>\n</tool_call>"},
+        {ToolCallFormat::HermesJson,
+         "<tool_call>\n{\"name\": \"weather\", \"arguments\": {\"city\": \"Oslo\", \"days\": 2}}\n"
+         "</tool_call>"},
+        {ToolCallFormat::Gemma4,
+         "<|tool_call>call:weather{city:<|\"|>Oslo<|\"|>,days:2}<tool_call|>"},
+        {ToolCallFormat::MistralJson, "[TOOL_CALLS]weather[ARGS]{\"city\": \"Oslo\", \"days\": 2}"},
+        {ToolCallFormat::Llama3Json,
+         "{\"name\": \"weather\", \"parameters\": {\"city\": \"Oslo\", \"days\": 2}}"},
+        {ToolCallFormat::Harmony,
+         "<|start|>assistant<|channel|>commentary to=functions.weather <|constrain|>json"
+         "<|message|>{\"city\": \"Oslo\", \"days\": 2}<|call|>"},
+        {ToolCallFormat::Pythonic,
+         "<function_calls>weather(city=\"Oslo\", days=2)</function_calls>"},
+        {ToolCallFormat::GraniteJson, "<|tool_call|>[{\"name\": \"weather\", \"arguments\": "
+                                      "{\"city\": \"Oslo\", \"days\": 2}}]"},
+        {ToolCallFormat::Atem,
+         " to=weather<|message|><atem:function_calls>\n<atem:invoke name=\"weather\">\n"
+         "<atem:parameter name=\"city\">Oslo</atem:parameter>\n"
+         "<atem:parameter name=\"days\">2</atem:parameter>\n</atem:invoke>\n"
+         "</atem:function_calls>"},
+    };
+    const auto decode = [&](ToolCallFormat format, const std::string& text, std::string_view stop) {
+        ninferno::chat::ToolCallOutputDecoder decoder(contract(format), 64);
+        std::string visible = decoder.feed(text);
+        auto terminal       = decoder.finish(true, stop);
+        terminal.content    = visible + terminal.content;
+        return terminal;
+    };
+    for (const Sample& sample : samples) {
+        const std::string name(ninferno::chat::tool_call_format_name(sample.format));
+        // The stop cut the call in its arguments: nothing of it reaches the client as text.
+        const std::string cut = sample.call.substr(0, sample.call.find("Oslo") + 2);
+        const auto dropped    = decode(sample.format, cut, "Observation");
+        failures += check(dropped.content.empty() && dropped.tool_calls.empty() &&
+                              dropped.diagnostics.cut_calls_dropped == 1,
+                          name + ": a call cut by a stop string reached the content");
+    }
+
+    const auto qwen = [&](const std::string& text, std::string_view stop) {
+        return decode(ToolCallFormat::QwenXml, text, stop);
+    };
+    const std::string open =
+        "<tool_call>\n<function=weather>\n<parameter=city>\nOslo\n</parameter>\n"
+        "<parameter=days>\n2\n</parameter>\n";
+    // The stop matched the closing markup alone: the call is complete and kept.
+    for (const std::string_view stop : {"</function>", "\n</function>", "</fun"}) {
+        const auto closed = qwen(open, stop);
+        failures +=
+            check(closed.tool_calls.size() == 1 && closed.content.empty() &&
+                      closed.diagnostics.cut_calls_dropped == 0,
+                  "a stop in the closing markup lost a complete Qwen call: " + std::string(stop));
+    }
+    const auto tool_close = qwen(open + "</function>\n", "</tool_call>");
+    failures += check(tool_close.tool_calls.size() == 1 && tool_close.content.empty(),
+                      "a stop on </tool_call> lost a complete Qwen call");
+    // A stop that also matches between parameters must not close a call with parameters missing.
+    for (const std::string_view stop : {"<parameter", "\n<", "<", "Oslo"}) {
+        const auto between = qwen("<tool_call>\n<function=weather>\n<parameter=city>\nOslo\n"
+                                  "</parameter>\n",
+                                  stop);
+        failures += check(between.tool_calls.empty() && between.content.empty() &&
+                              between.diagnostics.cut_calls_dropped == 1,
+                          "a stop between parameters closed a Qwen call: " + std::string(stop));
+    }
+    // The other syntaxes with a close marker close the same way.
+    const auto hermes = decode(
+        ToolCallFormat::HermesJson,
+        "<tool_call>\n{\"name\": \"weather\", \"arguments\": {\"city\": \"Oslo\", \"days\": 2}}\n",
+        "</tool_call>");
+    failures += check(hermes.tool_calls.size() == 1 && hermes.content.empty(),
+                      "a stop on </tool_call> lost a complete Hermes call");
+    const auto gemma =
+        decode(ToolCallFormat::Gemma4, "<|tool_call>call:weather{city:<|\"|>Oslo<|\"|>,days:2}",
+               "<tool_call|>");
+    failures += check(gemma.tool_calls.size() == 1 && gemma.content.empty() &&
+                          gemma.diagnostics.cut_calls_dropped == 0,
+                      "a stop on <tool_call|> lost a complete Gemma call");
+    // A stop of fewer than three closer bytes matched before the closer: these parsers would close
+    // the complete body at the end of the output, but such a stop also matches inside a call, so
+    // the call is dropped.
+    const auto hermes_short = decode(
+        ToolCallFormat::HermesJson,
+        "<tool_call>\n{\"name\": \"weather\", \"arguments\": {\"city\": \"Oslo\", \"days\": 2}}",
+        "\n<");
+    failures += check(hermes_short.tool_calls.empty() && hermes_short.content.empty() &&
+                          hermes_short.diagnostics.cut_calls_dropped == 1,
+                      "a short stop before </tool_call> kept a Hermes call");
+    const auto gemma_short = decode(ToolCallFormat::Gemma4,
+                                    "<|tool_call>call:weather{city:<|\"|>Oslo<|\"|>,days:2}", "<t");
+    failures += check(gemma_short.tool_calls.empty() && gemma_short.content.empty() &&
+                          gemma_short.diagnostics.cut_calls_dropped == 1,
+                      "a short stop before <tool_call|> kept a Gemma call");
+    // The closer quoted inside the arguments is no close: the call the stop ended is still dropped,
+    // not published, nor returned as text.
+    const auto quoted = decode(ToolCallFormat::HermesJson,
+                               "<tool_call>\n{\"name\": \"weather\", \"arguments\": {\"city\": "
+                               "\"</tool_call>\", \"days\": 2}}",
+                               "\n<");
+    failures += check(quoted.tool_calls.empty() && quoted.content.empty() &&
+                          quoted.diagnostics.cut_calls_dropped == 1,
+                      "a closer quoted in the arguments closed a stopped Hermes call");
+    // An open marker quoted in the unfinished call's arguments is not where that call starts: the
+    // complete call before it is kept, the cut one dropped.
+    const auto quoted_open = decode(
+        ToolCallFormat::HermesJson,
+        "<tool_call>\n{\"name\": \"weather\", \"arguments\": {\"city\": \"Oslo\", \"days\": 2}}\n"
+        "</tool_call>\n<tool_call>\n{\"name\": \"weather\", \"arguments\": {\"city\": "
+        "\"<tool_call>",
+        "Observation");
+    failures +=
+        check(quoted_open.tool_calls.size() == 1 && quoted_open.content.empty() &&
+                  quoted_open.diagnostics.cut_calls_dropped == 1,
+              "an opener quoted in a cut call's arguments lost the complete call before it");
+    // A stop inside the call's open marker: its start is dropped, not the answer.
+    const auto in_opener = qwen("<tool", "_call>");
+    failures += check(in_opener.tool_calls.empty() && in_opener.content.empty() &&
+                          in_opener.diagnostics.cut_calls_dropped == 1,
+                      "a stop inside <tool_call> returned the marker's start as text");
+    return failures;
+}
+
 int test_structural_tags() {
     int failures = 0;
     const std::vector<ToolCallConstraintTool> tools = {
@@ -1361,6 +1498,7 @@ int main() {
     failures += test_bare_json_call_dropped();
     failures += test_parsers();
     failures += test_streaming_decoder();
+    failures += test_forced_stop_cut();
     failures += test_structural_tags();
     failures += test_argument_key_order();
     failures += test_codec();

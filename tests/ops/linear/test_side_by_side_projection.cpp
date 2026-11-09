@@ -13,6 +13,7 @@
 #include "ninferno/ops/segmented_projection.h"
 
 #include "core/arena.h"
+#include "ops/generic/generic_gemm.h"
 #include "ops/linear/linear_registry.h"
 #include "ops/linear/linear_test_common.h"
 #include "ops/op_tester.h"
@@ -21,6 +22,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -58,9 +60,39 @@ const char* name(QType q) {
                                             : "fp8_row_bf16";
 }
 
+// The joins the segmented chain is granted (#309): call i joins the call before it where that one
+// released, and a launch releases where launch_overlap says so for the route it runs (the one
+// side_by_side_admits resolved). The last call releases nothing.
+std::uint64_t granted_joins(const std::vector<Weight>& weights, ops::LinearPolicy policy,
+                            std::int32_t t) {
+    namespace g        = ops::detail::generic;
+    const auto overlap = [&](const Weight& w, bool join_asked, bool release_asked) {
+        const g::Problem problem{w.qtype, policy, w.n, w.k, g::Epilogue::Store};
+        const g::CallLayout layout{.x_aligned16    = true,
+                                   .ldx            = w.k,
+                                   .tokens         = t,
+                                   .rows           = w.n,
+                                   .segments       = 1,
+                                   .epilogue       = g::Epilogue::Store,
+                                   .workspace_free = std::numeric_limits<std::size_t>::max()};
+        const g::ResolvedRoute resolved = g::resolve_route(
+            g::select_route(problem, w, t, ops::prefill_routes_active()), w, layout);
+        return g::launch_overlap(resolved, g::Epilogue::Store, t, join_asked, release_asked,
+                                 ninferno::device_class().features.pdl);
+    };
+    std::uint64_t joins = 0;
+    for (std::size_t i = 1; i < weights.size(); ++i) {
+        joins += overlap(weights[i - 1], false, true).releases() &&
+                         overlap(weights[i], true, false).joins()
+                     ? 1
+                     : 0;
+    }
+    return joins;
+}
+
 // One layer's projections of x [K, T]: separately, then side by side; the outputs must match.
 int check(const std::vector<Slice>& slices, std::int32_t k, std::int32_t t,
-          ops::LinearPolicy policy, std::uint32_t seed, int& admitted) {
+          ops::LinearPolicy policy, std::uint32_t seed, int& admitted, bool direct = false) {
     std::string label = "[";
     for (std::size_t i = 0; i < slices.size(); ++i) {
         label += (i ? " " : "") + std::string(name(slices[i].qtype)) + ":" +
@@ -85,12 +117,12 @@ int check(const std::vector<Slice>& slices, std::int32_t k, std::int32_t t,
     }
     // What the dense pass would do with these weights: join them only where every one admits it.
     for (std::size_t i = 0; i < slices.size(); ++i) {
-        if (!ops::detail::side_by_side_admits(weights[i], policy, t)) {
+        if (!direct && !ops::detail::side_by_side_admits(weights[i], policy, t)) {
             std::cout << "refused " << label << ": output " << i << "\n";
             return 0;
         }
     }
-    ++admitted;
+    if (!direct) ++admitted;
     const auto activation = make_linear_activation(k, t, seed + 7U, ActivationCompute::A16);
     DeviceBuffer x(activation.size() * 2);
     x.copy_from_host(activation.data(), x.bytes);
@@ -125,8 +157,18 @@ int check(const std::vector<Slice>& slices, std::int32_t k, std::int32_t t,
     for (std::size_t i = 0; i < slices.size(); ++i) {
         ops::linear(tx, weights[i], ts[i], policy, workspace, nullptr);
     }
+    const std::uint64_t joins_before = ops::detail::generic::instrumentation_joined_launches();
     ops::segmented_projection(tx, segmented, outputs, workspace, nullptr);
     cuda_check(cudaDeviceSynchronize(), "run");
+    // The chain joins exactly where the launches release (the rule, not a flag of its own).
+    const std::uint64_t launched =
+        ops::detail::generic::instrumentation_joined_launches() - joins_before;
+    const std::uint64_t grants = granted_joins(weights, policy, t);
+    if (launched != grants) {
+        std::cerr << "FAIL " << label << ": " << launched << " joined launches, the rule grants "
+                  << grants << std::endl;
+        return 1;
+    }
 
     for (std::size_t i = 0; i < slices.size(); ++i) {
         const std::size_t count = static_cast<std::size_t>(slices[i].rows) * t;
@@ -205,6 +247,26 @@ int main() {
                                           ops::LinearPolicy::AllowA4}) {
                     failures += check(layer, 2048, t, policy, seed++, admitted);
                 }
+            }
+        }
+    }
+    // The chain by itself, admission skipped: on a device without PDL it must join nothing (it
+    // asked every later call to join before #309's chain rule, whatever the launches granted), and
+    // wherever it runs the joins are the rule's.
+    {
+        std::uint32_t seed                           = 901;
+        int unused                                   = 0;
+        const std::vector<std::vector<Slice>> chains = {
+            {{f32, 1024}, {f32, 256}, {b16, 256}, {f32, 1024}},
+            {{q8, 1536}, {q8, 768}},
+            {{k4, 1024}, {k4, 256}, {k6, 256}},
+        };
+        for (const auto& chain : chains) {
+            const bool runs = std::ranges::all_of(
+                chain, [](const Slice& slice) { return qtype_runs(slice.qtype, "direct chain"); });
+            if (!runs) continue;
+            for (const std::int32_t t : {1, 3, 4}) {
+                failures += check(chain, 2048, t, ops::LinearPolicy::A16Only, seed++, unused, true);
             }
         }
     }

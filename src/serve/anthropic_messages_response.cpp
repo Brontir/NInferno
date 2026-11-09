@@ -47,7 +47,7 @@ struct StopPresentation {
 };
 
 StopPresentation stop_presentation(const GenerationOutcome& outcome) {
-    if (!outcome.tool_calls.empty()) { return StopPresentation{.reason = "tool_use"}; }
+    if (calls_end_turn(outcome)) { return StopPresentation{.reason = "tool_use"}; }
     switch (outcome.finish_reason) {
     case ninferno::FinishReason::OutputLimit:
     case ninferno::FinishReason::Repetition:

@@ -705,6 +705,7 @@ void parse_input(const Json& input, const RequestLimits& limits, OpenAIResponses
         out.input_items.push_back(std::move(canonical));
     }
     assistant.flush(out.input_turns);
+    check_history_call_arguments(out.input_turns, limits, "input");
 }
 
 struct ParsedPromptFields {

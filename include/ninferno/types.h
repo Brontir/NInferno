@@ -1016,6 +1016,9 @@ struct PromptOptions {
     // With tool_calls_discarded and no tool_jsons: the declarations the request refused and the
     // prompt omits. They only shape how a call written anyway is read and cut.
     std::vector<std::string> refused_tool_jsons;
+    // tool_choice required or named: the answer is the calls alone. A call that a caller's stop
+    // string cuts off is dropped (counted in the parse diagnostics), never returned as text.
+    bool tool_calls_forced = false;
 };
 
 enum class CacheRetentionHint : std::uint8_t {

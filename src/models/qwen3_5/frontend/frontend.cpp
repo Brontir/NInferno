@@ -1133,7 +1133,7 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
         (options.tool_calls_enabled || (options.tool_calls_discarded && options.cut_bare_calls)) &&
             !contract_tools.empty(),
         impl_->chat_template.conventions().tools.format,
-        options.tool_calls_discarded && options.cut_bare_calls);
+        options.tool_calls_discarded && options.cut_bare_calls, options.tool_calls_forced);
     const std::optional<std::uint32_t> leading_boundary =
         leading_instruction_boundary(message_roles);
     std::vector<PromptCacheMarker> rendered_markers = cache_hints.markers;

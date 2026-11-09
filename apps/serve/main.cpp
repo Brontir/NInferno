@@ -2,6 +2,7 @@
 #include "core/device_class.h"
 #include "ops/generic/build_manifest.h"
 #include "ops/generic/route_tune_tool.h"
+#include "ops/generic/selector_facts.h"
 #include "../cli/spec_tune.h"
 #include "runtime/engine/decision_fingerprint.h"
 #include "product/logging/logging.h"
@@ -171,6 +172,11 @@ int main(int argc, char** argv) {
     // GPU's own engine (tools/kit/measure.py): the route tuner and the speculation tune.
     if (argc >= 2 && std::string_view(argv[1]) == "route-tune") {
         return ninferno::tools::route_tune_main(argc - 1, argv + 1);
+    }
+    // The release checks that its kernels are the ones the selector goldens were made for
+    // (tools/release/package.sh, #556).
+    if (argc >= 2 && std::string_view(argv[1]) == "selector-facts") {
+        return ninferno::tools::selector_facts_main(argc - 1, argv + 1);
     }
     if (argc >= 2 && (std::string_view(argv[1]) == "spec-tune" ||
                       std::string_view(argv[1]) == "spec-reselect")) {

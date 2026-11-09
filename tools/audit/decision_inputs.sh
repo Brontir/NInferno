@@ -113,6 +113,7 @@ forbidden_for_monitor_user="$(include_of "$clock_headers")|$names"
 # "file|text" pairs: a hit in that file whose line holds that text is not an offence.
 allowed=(
   'src/ops/generic/generic_gemm.cpp|getenv("NINFERNO_ROUTE_RECORD")' # the problems reached, a dump
+  'src/ops/generic/generic_gemm.cpp|getenv("NINFERNO_PROJECTION_RECORD")' # the routes taken, a dump
 )
 
 # The file's code lines as "line:text": `//` comment lines and the lines of /* */ blocks are left

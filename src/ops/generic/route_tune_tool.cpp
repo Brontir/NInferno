@@ -401,13 +401,16 @@ int route_tune_main(int argc, char** argv) {
                         routes_csv << ",,";
                     }
                     // How the sample was timed (#518): "copies", consecutive calls over `calls`
-                    // weight copies between one event pair (a decode width under --rotate 1), or
-                    // "flushed", one call after the L2 flush; the median of `samples` of them.
+                    // weight copies between one event pair (a decode width under --rotate 1),
+                    // "flushed", one call after the L2 flush, or "warm", one call where the timer
+                    // has no flush buffer (#574); the median of `samples` of them.
                     const bool rotated = over_copies && !spare.empty();
                     routes_csv << ',' << run_id << ',' << device_id << ','
-                               << (rotated ? "copies" : "flushed") << ','
-                               << (rotated ? 1 + spare.size() : std::size_t{1}) << ',' << samples
-                               << '\n';
+                               << (rotated           ? "copies"
+                                   : timer.flushes() ? "flushed"
+                                                     : "warm")
+                               << ',' << (rotated ? 1 + spare.size() : std::size_t{1}) << ','
+                               << samples << '\n';
                 }
                 return us; // microseconds
             };
