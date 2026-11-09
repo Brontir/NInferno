@@ -1744,6 +1744,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     // step whose long prompt differs scores them again.
     std::optional<std::size_t> chosen;
     std::uint32_t settled = 0;
+    bool resolved         = false;
     Task priced           = task;
     for (const std::uint32_t context : task.contexts) {
         Task at     = task;
@@ -1754,13 +1755,18 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
             }
             priced = at;
         }
+        std::vector<std::size_t> holding;
         for (std::size_t i = 0; i < out.scored.size(); ++i) {
             const Scored& s = out.scored[i];
             if (!eligible(s) || s.own_context < context) { continue; }
+            holding.push_back(i);
             if (!chosen || better(s, i, out.scored[*chosen], *chosen)) { chosen = i; }
         }
         if (chosen) {
-            settled = context;
+            const std::size_t best = *chosen;
+            chosen   = resolve_within_resolution(out.scored, holding, best, out.resolution);
+            resolved = *chosen != best;
+            settled  = context;
             break;
         }
     }
@@ -1779,8 +1785,9 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         // The terms rest on two cards (no reason written): a closed Gates::accuracy kept them out.
         defaults_why = "the accuracy gate is closed";
     }
-    out.chosen  = chosen;
-    out.context = settled;
+    out.chosen                     = chosen;
+    out.context                    = settled;
+    out.resolved_within_resolution = resolved;
     for (Scored& s : out.scored) { s.fits = s.own_context >= settled; }
     const Scored& c = out.scored[*chosen];
     out.why = quant.label + ": every stream holds " + std::to_string(settled) + " tokens; KV " +
@@ -1794,7 +1801,10 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
               (out.chunk_by_speed ? "; chunk " + std::to_string(c.candidate.chunk) +
                                         ": the fastest prefill on the reference card"
                                   : "") +
-              (model.drafters.empty() ? std::string() : "; speculation " + c.drafter);
+              (model.drafters.empty() ? std::string() : "; speculation " + c.drafter) +
+              (resolved ? "; inside the speed estimate's resolution (" + fixed(100 * out.resolution, 1) +
+                              " %) of the best worth, the one holding more context"
+                        : "");
     // The coupled storages' other values beside the chosen (to explain them; never chosen).
     std::vector<Candidate> variants;
     if (model.recurrent && !pins.state) {
@@ -1824,6 +1834,23 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         out.scored.push_back(std::move(s));
     }
     return out;
+}
+
+std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
+                                      const std::vector<std::size_t>& eligible, std::size_t anchor,
+                                      double resolution) noexcept {
+    std::size_t pick = anchor;
+    if (!(resolution > 0)) { return pick; }
+    const Scored& a = scored[anchor];
+    if (!(a.decision_seconds > 0)) { return pick; }
+    for (const std::size_t i : eligible) {
+        const Scored& s = scored[i];
+        if (!(s.decision_seconds > 0) || s.accuracy.kld > a.accuracy.kld + kWorthTie) { continue; }
+        if (std::log(s.decision_seconds / a.decision_seconds) > resolution + kWorthTie) { continue; }
+        const Scored& p = scored[pick];
+        if (s.own_context > p.own_context || (s.own_context == p.own_context && i < pick)) { pick = i; }
+    }
+    return pick;
 }
 
 std::vector<Alternative> explain(const Choice& choice) {
@@ -1894,6 +1921,13 @@ std::vector<Alternative> explain(const Choice& choice) {
                 alt.why_not  = axis == Axis::Chunk
                                    ? "the default chunk stands (no measured chunk shares decide here)"
                                    : "the family's default stands (no decision constants for this generation)";
+            } else if (s.worth > chosen.worth + kWorthTie) {
+                // Only the resolution rule picks a lower worth: this one is the best worth's.
+                alt.why_code = "within_resolution";
+                alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) +
+                               " above the chosen, but inside the speed estimate's resolution (" +
+                               fixed(100 * choice.resolution, 1) +
+                               " % decode rms) the chosen holds more context";
             } else if (std::abs(s.worth - chosen.worth) <= kWorthTie && s.own_context != chosen.own_context) {
                 alt.why_code = "tie_context";
                 alt.why_not  = "the same worth: the chosen keeps more context per stream";

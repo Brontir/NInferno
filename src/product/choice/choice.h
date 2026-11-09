@@ -476,6 +476,11 @@ struct Choice {
     // speed difference is indistinguishable (explain: within_resolution); the point estimate still
     // decides, deterministically.
     double resolution = 0;
+    // The resolution moved the pick: a candidate with the same or a better accuracy and a speed
+    // inside `resolution` of the best worth's holds more context, and took it (see
+    // resolve_within_resolution). False: the best worth (then the longer context, then the
+    // enumeration order) stood.
+    bool resolved_within_resolution = false;
     std::string why;                   // one line: what decided it
 };
 
@@ -504,5 +509,15 @@ struct Alternative {
     std::string why_code; // "" (chosen), no_fit, lower_worth, within_resolution, tie_context, tie_order, default, unmeasured, coupled
 };
 [[nodiscard]] std::vector<Alternative> explain(const Choice& choice);
+
+// The tie rule inside the speed estimate's resolution (#301). `eligible` lists indices into
+// `scored` (the candidates that hold the asked context); `anchor` is the one with the best worth
+// among them. A candidate is indistinguishable from the anchor when its modelled accuracy (KLD) is
+// no worse and its request time is longer by no more than `resolution` (worth units: ln of the
+// time ratio). Among the anchor and those, the pick is the one holding the most own context per
+// stream (the cheaper memory), then the earlier in `scored`. A resolution of 0 returns `anchor`.
+[[nodiscard]] std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
+                                                    const std::vector<std::size_t>& eligible,
+                                                    std::size_t anchor, double resolution) noexcept;
 
 } // namespace ninferno::product::choice

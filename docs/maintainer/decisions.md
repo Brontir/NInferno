@@ -1690,3 +1690,20 @@ differently), as they already did between a prefill chunk of 128 and 1024: on na
 Q6_K (the Q4_0 and IQ decodes give other fixed shares: they keep the fewest tiles until their grids); the RTX 5070 Ti and 5060 Ti prefill Q4_K / Q6_K
 on the W4A8 tiles, not this kernel, which steps the same way (RTX 5060 Ti 104 -> 107 ms from 144 to
 256 tokens): its 64 x 64 against 128 x 64 tile steps need their own grid.
+
+## 75. Inside the speed estimate's resolution the cheaper memory decides (#301, 09.11, rule; not yet run on the stands)
+
+**Decision.** `choose()` finds the best worth, then treats a candidate as indistinguishable from it
+when its modelled KLD is no worse and its request time on the reference card is longer by no more
+than `Choice::resolution` (the generation's decode rms, `ln` of the time ratio). Among the best and
+those, the candidate holding the most own context per stream wins, then the earlier in the
+canonical enumeration (`resolve_within_resolution`). A candidate that gives accuracy up never
+enters: the resolution is the speed term's uncertainty, the KLD term is not. Without a reference
+card the resolution is 0 and nothing changes. `Choice::resolved_within_resolution` and the `why`
+line say when the rule moved the pick; `explain` labels the passed-over best worth
+`within_resolution`. Candidates that can move: those with an equal-KLD, slightly slower, wider-memory
+sibling (an MoE's narrower chunk, a KV codec of the same accuracy class, 4070 Ti at 32K x 4 above:
+FP8 with chunk 1024 is 0.0173 away, resolution 0.0226).
+
+Regret against recorded measurements: `tools/bench/selection_regret.py` and `regret_collect.py`
+(held-out observed regret). Left: run them over the stands' route-sweeps for the moved picks.
