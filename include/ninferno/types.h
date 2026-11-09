@@ -805,10 +805,6 @@ struct OutputConstraintOptions {
     // Null means unconstrained. The constraint applies to the content after the reasoning section
     // when the prompt starts in reasoning, and from the first generated token otherwise.
     std::shared_ptr<const OutputConstraint> compiled;
-    // The constraint is the engine's own steer (PromptSummary::refusal_tag), not the answer's
-    // format: it reads special-token bytes whatever the output presentation shows, so its
-    // visibility need not match OutputOptions.
-    bool header_steer = false;
 };
 
 struct OutputConstraintStats {

@@ -1631,15 +1631,47 @@ int test_refusal_structural_tag() {
     }
     const std::string tag =
         ninferno::chat::tool_call_syntax(ToolCallFormat::Harmony).refusal_structural_tag();
-    const auto parsed = nlohmann::json::parse(tag, nullptr, false);
-    failures += check(!parsed.is_discarded() && parsed.at("type") == "structural_tag" &&
-                          parsed.at("format").at("type") == "any_text",
-                      "harmony refusal tag is free text");
-    const auto& excludes = parsed.at("format").at("excludes");
-    failures += check(
-        std::find(excludes.begin(), excludes.end(), "<|channel|>commentary") != excludes.end() &&
-            std::find(excludes.begin(), excludes.end(), "<|start|>assistant to") != excludes.end(),
-        "harmony refusal tag closes commentary and the role recipient");
+    const ninferno::structured::ConstraintCompiler compiler(byte_vocabulary());
+    ninferno::OutputConstraintSpec spec;
+    spec.kind                   = ninferno::OutputConstraintKind::StructuralTag;
+    spec.special_tokens_visible = true;
+    spec.definition             = tag;
+    const auto compiled         = compiler.compile(spec);
+    // The prompt ends at "<|start|>assistant": the output begins with the header. Every
+    // sequence is fed byte by byte; the constraint must refuse it before its end (or accept it).
+    const auto admits = [&](std::string_view text) {
+        ninferno::structured::RequestConstraint request(compiled, false);
+        std::vector<ninferno::TokenId> tokens;
+        for (const char c : text) { tokens.push_back(static_cast<unsigned char>(c)); }
+        request.commit(tokens);
+        return !request.violated();
+    };
+    for (const std::string_view ok : {
+             "<|channel|>analysis<|message|>think to=x commentary<|end|>",
+             "<|channel|>final<|message|>It is sunny; set x to=3, a commentary.",
+             "<|channel|>analysis<|message|>a<|end|><|start|>assistant<|channel|>final<|message|>b",
+             "Hello there",
+             "commentary is a word",
+             "<tool_call> as text",
+         }) {
+        failures += check(admits(ok), "refusal tag admits: " + std::string(ok));
+    }
+    for (const std::string_view bad : {
+             " to=functions.x<|channel|>final<|message|>",
+             " to=python<|channel|>analysis<|message|>",
+             "  to=X <|constrain|>json<|message|>",
+             "\nto=functions.x",
+             "<|channel|>commentary to=functions.x",
+             "<|channel|>analysis to=python<|message|>",
+             "<|channel|>analysis<|constrain|>json",
+             "<|channel|>final <|constrain|>json",
+             "<|channel|>analysis<|message|>a<|end|><|start|>assistant<|channel|>commentary",
+             "<|channel|>analysis<|message|>a<|end|><|start|>assistant to=functions.x",
+             "<|channel|>analysis<|message|>a<|end|><|start|>assistant<|channel|>analysis to=python",
+             "<|channel|>final<|message|>b<|start|>assistant<|channel|>commentary",
+         }) {
+        failures += check(!admits(bad), "refusal tag refuses: " + std::string(bad));
+    }
     return failures;
 }
 

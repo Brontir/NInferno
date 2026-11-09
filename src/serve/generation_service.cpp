@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <cstdio>
 #include <cstdlib>
 #include <iterator>
 #include <mutex>
@@ -862,11 +863,18 @@ PreparedRequest GenerationService::prepare_impl(const GenerationRequest& request
         // constraint of its own keeps it (#546).
         if (!prompt.summary().refusal_tag.empty() && !request.output_constraint) {
             OutputConstraintRequest steer;
-            steer.kind                              = ninferno::OutputConstraintKind::StructuralTag;
-            steer.definition                        = prompt.summary().refusal_tag;
-            steer.param                             = "tool_choice";
-            request_options.constraint.compiled     = compile_output_constraint(steer, false, true);
-            request_options.constraint.header_steer = true;
+            steer.kind       = ninferno::OutputConstraintKind::StructuralTag;
+            steer.definition = prompt.summary().refusal_tag;
+            steer.param      = "tool_choice";
+            try {
+                request_options.constraint.compiled = compile_output_constraint(
+                    steer, false,
+                    request_options.output.raw || request_options.output.preserve_special_tokens);
+            } catch (const ApiException& exception) {
+                // A plain none request never fails for its steer: the cut alone answers.
+                std::fprintf(stderr, "[serve] tool_choice none steer not applied: %s\n",
+                             exception.what());
+            }
             check_preparation_control(prepared.lifetime->deadline, is_cancelled);
         }
         // A budget applies where the output thinks: from the prompt's start, or from the opener
