@@ -2306,6 +2306,7 @@ public:
     static constexpr std::string_view kAnyRecipient = " to=";
     static constexpr std::string_view kMessage      = "<|message|>";
     static constexpr std::string_view kCall         = "<|call|>";
+    static constexpr std::string_view kEnd          = "<|end|>";
 
     [[nodiscard]] std::string_view open() const noexcept override { return kOpen; }
     [[nodiscard]] ParsedToolCallOutput parse(const std::string& text, std::size_t max_length,
@@ -2339,8 +2340,12 @@ public:
                                any_recipient && to != std::string_view::npos) {
                         name_at = to + kAnyRecipient.size();
                     }
+                    // A call is on the commentary channel; under none a built-in tool's on the
+                    // analysis channel too ("<|channel|>analysis to=python code").
                     if (name_at == std::string_view::npos ||
-                        header.find("<|channel|>commentary") == std::string_view::npos) {
+                        (header.find("<|channel|>commentary") == std::string_view::npos &&
+                         !(any_recipient &&
+                           header.find("<|channel|>analysis") != std::string_view::npos))) {
                         return FallbackReason::MalformedStructure;
                     }
                     std::size_t name_end = name_at;
@@ -2351,6 +2356,20 @@ public:
                     std::string name(header.substr(name_at, name_end - name_at));
                     pos = header_end + kMessage.size();
                     skip_format_whitespace(region, pos);
+                    if (any_recipient && (pos == region.size() || region[pos] != '{')) {
+                        // Under none an addressed message is refused whatever it carries (python
+                        // writes code, not JSON): the body runs to <|call|>, <|end|>, the next
+                        // message or the end of the output.
+                        std::size_t body_end = region.size();
+                        for (const std::string_view mark : {kCall, kEnd, kOpen}) {
+                            body_end = std::min(body_end, region.find(mark, pos));
+                        }
+                        calls.push_back(ParsedCall{std::move(name), "{}"});
+                        pos = body_end;
+                        if (starts_with_at(region, pos, kCall)) { pos += kCall.size(); }
+                        if (starts_with_at(region, pos, kEnd)) { pos += kEnd.size(); }
+                        continue;
+                    }
                     if (pos == region.size() || region[pos] != '{') {
                         return FallbackReason::MalformedStructure;
                     }

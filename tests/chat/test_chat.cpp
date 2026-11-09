@@ -75,6 +75,17 @@ int test_harmony_any_recipient_under_none() {
                                   "<|message|>{\"code\": \"1\"}<|call|>");
     failures += check(python.content.empty() && python.tool_calls.size() == 1,
                       "a role recipient under none was shown: " + python.content);
+    // Built-in tools as gpt-oss writes them: code on the analysis channel, not JSON.
+    for (const std::string& builtin :
+         {std::string("<|start|>assistant<|channel|>analysis to=python code<|message|>print(1)"
+                      "<|call|>"),
+          std::string("<|start|>assistant to=python<|channel|>commentary code<|message|>"
+                      "import os\nprint(os.getcwd())")}) {
+        const auto cut = run(true, builtin);
+        failures += check(cut.content.empty() && cut.tool_calls.size() == 1 &&
+                              cut.tool_calls[0].name == "python",
+                          "a built-in tool's code under none was shown: " + cut.content);
+    }
     const auto kept = run(false, invented);
     failures += check(kept.content == invented && kept.tool_calls.empty(),
                       "an invented recipient became a call of an ordinary turn");
