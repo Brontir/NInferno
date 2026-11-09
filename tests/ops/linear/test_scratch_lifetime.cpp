@@ -2,8 +2,10 @@
 // rule on hand-built chains, and the chains launch_overlap's refusals produce for the pre-quantized
 // R8 form and its neighbours. Host only: launches are described, nothing runs, and CPU ordering
 // tests do not prove CUDA ordering (the GPU race checks are separate).
+#include "core/weight_view.h"
 #include "ops/generic/scratch_lifetime.h"
 
+#include <cstdint>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -30,27 +32,48 @@ g::ResolvedRoute route(g::Family family, bool prequantized) {
     return r;
 }
 
-// The prepared representation a family's launch reads, as prepared_rule says (nullopt: it reads x
-// as BF16 or quantizes inside the kernel). The tests hand the rule in; the production caller passes
-// prepared_rule(route, weight).
+// A weight as the converter lays it out, at an aligned stand-in address (never read).
+struct Described {
+    ninferno::WeightParent parent;
+    ninferno::WeightView view;
+    ninferno::Weight weight;
+
+    Described(ninferno::QType qtype, std::int32_t n, std::int32_t k) {
+        parent.data                  = reinterpret_cast<const std::byte*>(std::uintptr_t{1} << 32);
+        const std::uint64_t shape[2] = {static_cast<std::uint64_t>(n),
+                                        static_cast<std::uint64_t>(k)};
+        parent.geometry =
+            ninferno::weight_geometry(qtype, ninferno::default_weight_layout(qtype), shape);
+        view.shape = {shape[0], shape[1]};
+        view.parts = {ninferno::WeightRegion{&parent, 0, shape[0] * shape[1]}};
+        weight     = ninferno::native_weight(view, 0.0F);
+    }
+
+    Described(const Described&)            = delete;
+    Described& operator=(const Described&) = delete;
+};
+
+// The prepared representation a route's launch reads: the production rule on a weight of the
+// format the family takes (nullopt: it reads x as BF16 or quantizes inside the kernel).
 std::optional<g::PreparedRule> rule_of(const g::ResolvedRoute& r) {
-    using P = g::PreparedRepresentation;
+    static const Described q4k(ninferno::QType::GGML_Q4_K, 4096, 4096);
+    static const Described q8(ninferno::QType::Q8_G32_FP16, 4096, 4096);
+    static const Described q4g64(ninferno::QType::Q4_G64_FP16, 4096, 4096);
+    static const Described nv(ninferno::QType::NVFP4, 4096, 4096);
+    static const Described bf16(ninferno::QType::BF16, 4096, 4096);
     switch (r.executed.family) {
-    case g::Family::R8Mma:
-        return r.r8_prequantized ? std::optional<g::PreparedRule>{{P::W4a8Blocks, 0, 0, false}}
-                                 : std::nullopt;
     case g::Family::GgmlVec:
-        return g::PreparedRule{P::GgmlQ8_1, 0, 0, false};
     case g::Family::GgmlMmq:
-        return g::PreparedRule{P::GgmlQ8_1Mmq, 0, 0, false};
+        return g::prepared_rule(r, q4k.weight);
+    case g::Family::R8Mma:
     case g::Family::W4a8Mma:
-        return g::PreparedRule{P::W4a8Blocks, 0, 0, false};
+        return g::prepared_rule(r, q8.weight);
     case g::Family::I8Mma:
-        return g::PreparedRule{P::I8Blocks64, 0, 0, true};
+        return g::prepared_rule(r, q4g64.weight);
     case g::Family::W4a4Mma:
-        return g::PreparedRule{P::Nvfp4, 0, 0, true};
+        return g::prepared_rule(r, nv.weight);
     default:
-        return std::nullopt;
+        return g::prepared_rule(r, bf16.weight);
     }
 }
 
@@ -165,10 +188,9 @@ int main() {
                   !g::launch_lifetime("proj1", no_pdl, false, std::nullopt, std::nullopt)
                        .starts_early,
               "join asked, no PDL: stream order");
-        auto reader = g::launch_lifetime("reader", first_o, false, std::nullopt, std::nullopt);
+        auto reader = g::launch_lifetime("reader", first_o, true, std::nullopt, std::nullopt);
         reader.add(
             {kA, g::ScratchAccess::Read, g::ScratchFirst::AfterWait, g::ScratchLast::AtExit});
-        reader.releases = true; // as if PDL were on
         auto joined     = g::launch_lifetime("joined", no_pdl, false, std::nullopt, std::nullopt);
         joined.add(
             {kA, g::ScratchAccess::Write, g::ScratchFirst::BeforeWait, g::ScratchLast::AtExit});
@@ -190,7 +212,19 @@ int main() {
         b.starts_early = false;
         check(!g::first_scratch_violation({a, b, c}).has_value(),
               "a launch ordered after its predecessor's completion cuts the chain");
+        // B starts early under A but does not release: C starts at B's completion, which is after
+        // A's too (B waits for A before it exits), so C may write what A reads.
+        b.starts_early = true;
+        b.releases     = false;
+        check(!g::first_scratch_violation({a, b, c}).has_value(),
+              "a non-releasing middle launch cuts the chain: C starts after B completes");
     }
+    // B starts early under A but does not release: C starts at B's completion, which is after
+    // A's too (B waits for A before it exits), so C may write what A reads.
+    b.starts_early = true;
+    b.releases     = false;
+    check(!g::first_scratch_violation({a, b, c}).has_value(),
+          "a non-releasing middle launch cuts the chain: C starts after B completes");
 
     // Across every family, epilogue, width, ask and PDL setting: a launch that reads a prepared
     // scratch region never releases through launch_overlap (the restriction it keeps).

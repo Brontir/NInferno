@@ -21,6 +21,7 @@
 #include "ops/generic/generic_gemm.h"
 
 #include <array>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -156,7 +157,12 @@ launch_lifetime(std::string_view name, const LaunchOverlap& overlap, bool pdl,
                 const std::optional<PreparedRule>& rule,
                 const std::optional<ScratchRegion>& prepared) noexcept {
     LaunchLifetime out;
-    out.name         = name;
+    out.name = name;
+    // `pdl` is the argument launch_overlap was given; the refusals it recorded must agree with it.
+    assert(!(overlap.releases() || overlap.prefetches()) || pdl);
+    assert(
+        (overlap.release != OverlapRefusal::NoPdl && overlap.prefetch != OverlapRefusal::NoPdl) ||
+        !pdl);
     out.starts_early = pdl && (overlap.joins() || overlap.prefetches());
     out.releases     = overlap.releases();
     if (prepared && rule) {
