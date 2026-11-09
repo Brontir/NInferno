@@ -115,8 +115,8 @@ void test_every_kind_carried() {
 // from the price there (the gain does not climb with load), with that count named.
 void test_gain_note_names_where_the_price_is_held_from() {
     const auto note_at = [](std::uint32_t streams,
-                            std::vector<pr::choice::DrafterOption::JointScale> joint =
-                                {{.streams = 2, .scale = 0.45}}) {
+                            std::vector<pr::choice::DrafterOption::JointScale> joint = {
+                                {.streams = 2, .scale = 0.45}}) {
         pr::ServedChoice served;
         pr::choice::DrafterOption option;
         option.label   = "mtp:3";
