@@ -1102,22 +1102,56 @@ bool table_covers(const MoeWeights& weights, const MoeConfig& config, std::int32
 
 MoePlan select_plan(const MoeWeights& weights, const MoeConfig& config, std::int32_t tokens,
                     bool prefill) {
+    return moe_plan_query(weights, config, tokens, prefill).plan;
+}
+
+const char* authority_name(MoeAuthority authority) {
+    switch (authority) {
+    case MoeAuthority::Invariant: return "invariant";
+    case MoeAuthority::Tuner: return "tuner";
+    case MoeAuthority::TableAsMeasured: return "table";
+    case MoeAuthority::TableW4a8: return "table+w4a8";
+    case MoeAuthority::TableClassA8: return "table+class-a8";
+    case MoeAuthority::TableR8Refused: return "table-r8-refused";
+    case MoeAuthority::VoltaHmma: return "volta-hmma";
+    case MoeAuthority::PrefillW4a8: return "prefill-w4a8";
+    case MoeAuthority::PrefillSchedule: return "prefill-schedule";
+    case MoeAuthority::SpeedW4a8: return "speed-w4a8";
+    case MoeAuthority::DecodeR8: return "decode-r8";
+    case MoeAuthority::DecodeStreaming: return "decode-streaming";
+    }
+    return "?";
+}
+
+MoePlanQuery moe_plan_query(const MoeWeights& weights, const MoeConfig& config,
+                            std::int32_t tokens, bool prefill) {
     // A route-table band first (measured and published), then the load-time tuner's plan, then
     // the heuristics. The tuner covers decode widths only, under the default route profile.
     if (!invariant_routes_active() && tokens <= kTuneMaxTokens) {
         if (auto tuned = tuned_plan(weights, config, tokens);
             tuned && !table_covers(weights, config, tokens) &&
             r8_stages_admitted(weights, *tuned, tokens)) {
-            return *tuned;
+            return {*tuned, MoeAuthority::Tuner};
         }
     }
-    return untuned_plan(weights, config, tokens, prefill);
+    MoeAuthority why = MoeAuthority::DecodeStreaming;
+    MoePlan plan     = untuned_plan_why(weights, config, tokens, prefill, why);
+    return {plan, why};
 }
 
 MoePlan untuned_plan(const MoeWeights& weights, const MoeConfig& config, std::int32_t tokens,
                      bool prefill) {
+    MoeAuthority why = MoeAuthority::DecodeStreaming;
+    return untuned_plan_why(weights, config, tokens, prefill, why);
+}
+
+MoePlan untuned_plan_why(const MoeWeights& weights, const MoeConfig& config, std::int32_t tokens,
+                         bool prefill, MoeAuthority& why) {
     const Geometry g = validate(weights, config);
-    if (invariant_routes_active()) { return invariant_plan(g, tokens); }
+    if (invariant_routes_active()) {
+        why = MoeAuthority::Invariant;
+        return invariant_plan(g, tokens);
+    }
     // A wide call outside the prefill profile takes the grouped W4A8 on the plan's own register-MMA
     // schedules where the banks admit it, as the prefill profile does from T=17: the int8 tier is
     // 2-4x BF16 on every card (ad102 op bench, Gemma 4 26B Q4_0 experts: T=64 947 -> 771 us,
@@ -1144,14 +1178,22 @@ MoePlan untuned_plan(const MoeWeights& weights, const MoeConfig& config, std::in
     if (auto tuned =
             w4a8_prefill ? std::nullopt : table_plan(route_key(weights, config), tokens, prefill)) {
         if (!(prefill && tokens >= 17) || plan_is_token_invariant(*tuned)) {
-            if (const MoePlan wide = speed_w4a8(*tuned); wide.w4a8()) { return wide; }
+            if (const MoePlan wide = speed_w4a8(*tuned); wide.w4a8()) {
+                why = MoeAuthority::TableW4a8;
+                return wide;
+            }
             // A table's R8 stages run only where this layer admits them (the streaming register
             // MMA otherwise). A band of register-MMA stages takes the class's A8 gate/up on top
             // unless it is marked A16; its schedules stay as measured.
-            if (!r8_stages_admitted(weights, *tuned, tokens)) { return without_r8(*tuned, g); }
+            if (!r8_stages_admitted(weights, *tuned, tokens)) {
+                why = MoeAuthority::TableR8Refused;
+                return without_r8(*tuned, g);
+            }
             if (tuned->gate_up_r8 < 0 && tuned->down_r8 < 0 && !tuned->a16) {
+                why = MoeAuthority::TableClassA8;
                 return heuristic_r8(weights, g, *tuned, tokens, true);
             }
+            why = MoeAuthority::TableAsMeasured;
             return *tuned;
         }
     }
@@ -1160,12 +1202,23 @@ MoePlan untuned_plan(const MoeWeights& weights, const MoeConfig& config, std::in
     if (tokens >= 17 && volta_hmma_admitted(weights, g)) {
         MoePlan v    = plan_for(g, tokens, true);
         v.volta_hmma = true;
+        why          = MoeAuthority::VoltaHmma;
         return v;
     }
-    if (prefill && tokens >= 17) { return with_w4a8(p, weights, w4a8_prefill); }
-    if (const MoePlan wide = speed_w4a8(p); wide.w4a8()) { return wide; }
-    return heuristic_r8(weights, g, p, tokens);
+    if (prefill && tokens >= 17) {
+        why = w4a8_prefill ? MoeAuthority::PrefillW4a8 : MoeAuthority::PrefillSchedule;
+        return with_w4a8(p, weights, w4a8_prefill);
+    }
+    if (const MoePlan wide = speed_w4a8(p); wide.w4a8()) {
+        why = MoeAuthority::SpeedW4a8;
+        return wide;
+    }
+    const MoePlan decode = heuristic_r8(weights, g, p, tokens);
+    why = decode.gate_up_r8 >= 0 || decode.down_r8 >= 0 ? MoeAuthority::DecodeR8
+                                                        : MoeAuthority::DecodeStreaming;
+    return decode;
 }
+
 
 std::size_t plan_workspace_bytes(const MoeWeights& weights, const MoeConfig& config,
                                  std::int32_t tokens, const MoePlan& plan) {

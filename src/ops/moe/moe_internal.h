@@ -397,6 +397,33 @@ inline constexpr std::int32_t kTuneMaxTokens = 16;
                                                 std::int32_t tokens);
 [[nodiscard]] MoePlan untuned_plan(const MoeWeights& weights, const MoeConfig& config,
                                    std::int32_t tokens, bool prefill);
+
+// Which authority of select_plan's cascade answered (#616): the plan's reason, for the plan
+// goldens (tests/ops/test_moe_plan_golden.cpp) and the manifest.
+enum class MoeAuthority {
+    Invariant,       // the invariant profile's fixed streaming K split
+    Tuner,           // the load-time tuner's plan
+    TableAsMeasured, // a route-table band, as measured
+    TableW4a8,       // a route-table band, the grouped W4A8 on top of its schedules
+    TableClassA8,    // a route-table band of register-MMA stages, the class's A8 gate/up on top
+    TableR8Refused,  // a route-table band whose R8 stages this layer does not admit
+    VoltaHmma,       // T >= 17 on a build without mma.sync
+    PrefillW4a8,     // a prefill call of T >= 17 on the grouped W4A8
+    PrefillSchedule, // a prefill call of T >= 17 on the one register-MMA prefill schedule
+    SpeedW4a8,       // a wide call outside the prefill profile on the grouped W4A8
+    DecodeR8,        // decode width, the class's default A8 route
+    DecodeStreaming, // decode width, the streaming register-MMA schedule
+};
+[[nodiscard]] const char* authority_name(MoeAuthority authority);
+struct MoePlanQuery {
+    MoePlan plan;
+    MoeAuthority authority = MoeAuthority::DecodeStreaming;
+};
+// select_plan with its reason; pure (no kernel runs, no device memory read).
+[[nodiscard]] MoePlanQuery moe_plan_query(const MoeWeights& weights, const MoeConfig& config,
+                                          std::int32_t tokens, bool prefill);
+[[nodiscard]] MoePlan untuned_plan_why(const MoeWeights& weights, const MoeConfig& config,
+                                       std::int32_t tokens, bool prefill, MoeAuthority& why);
 [[nodiscard]] bool table_covers(const MoeWeights& weights, const MoeConfig& config,
                                 std::int32_t tokens);
 // Forgets every tuned plan (tests).
