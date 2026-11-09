@@ -73,7 +73,6 @@ struct LaunchLifetime {
 };
 
 enum class ScratchHazard {
-    StartsWithoutRelease, // starts under a predecessor that never lets it begin
     WriteAfterRead,       // writes a region the predecessor reads until it exits
     ReadAfterWrite,       // reads a region the predecessor writes (its output is not yet there)
     WriteAfterWrite,      // both write the region
@@ -81,8 +80,6 @@ enum class ScratchHazard {
 
 [[nodiscard]] constexpr std::string_view scratch_hazard_name(ScratchHazard h) noexcept {
     switch (h) {
-    case ScratchHazard::StartsWithoutRelease:
-        return "starts_without_release";
     case ScratchHazard::WriteAfterRead:
         return "write_after_read";
     case ScratchHazard::ReadAfterWrite:
@@ -96,7 +93,7 @@ enum class ScratchHazard {
 struct ScratchViolation {
     std::size_t launch      = 0; // the launch that starts early
     std::size_t predecessor = 0; // the earlier launch still running
-    ScratchHazard hazard    = ScratchHazard::StartsWithoutRelease;
+    ScratchHazard hazard    = ScratchHazard::WriteAfterRead;
 };
 
 // The hazard between a running predecessor use `before` and a use `now` of a launch that starts
@@ -117,17 +114,22 @@ struct ScratchViolation {
 
 // Every launch that starts early is checked against the launch before it and, conservatively,
 // against each earlier one while the launches in between also started early (a chain of early
-// starts may all be running at once). Returns the first violation in launch order, or nothing.
+// starts may all be running at once). A predecessor that does not release triggers implicitly at
+// its exit, so a launch under it starts at its completion: no overlap, nothing to check.
+// Assumption of the look-back: every early-starting kernel waits for its predecessor's full
+// completion (griddepcontrol.wait) before it exits (generic_gemm.cuh, generic_r8.cuh), so a launch
+// is never concurrent with the one two back unless the one between also released. This is read
+// from the kernels, not derived here. Real kernels call trigger_dependents at their start, or just
+// after the wait under prefetch, so AtTrigger is reachable only from constructed cases.
+// Returns the first violation in launch order, or nothing.
 [[nodiscard]] inline std::optional<ScratchViolation>
 first_scratch_violation(const std::vector<LaunchLifetime>& launches) noexcept {
     for (std::size_t i = 1; i < launches.size(); ++i) {
         const LaunchLifetime& now = launches[i];
         if (!now.starts_early) continue;
-        if (!launches[i - 1].releases) {
-            return ScratchViolation{i, i - 1, ScratchHazard::StartsWithoutRelease};
-        }
         for (std::size_t j = i; j-- > 0;) {
             const LaunchLifetime& before = launches[j];
+            if (!before.releases) break; // the launch after it starts at its completion
             for (std::size_t a = 0; a < before.use_count; ++a) {
                 for (std::size_t b = 0; b < now.use_count; ++b) {
                     if (const auto h = use_hazard(before.uses[a], now.uses[b])) {
@@ -141,20 +143,23 @@ first_scratch_violation(const std::vector<LaunchLifetime>& launches) noexcept {
     return std::nullopt;
 }
 
-// A launch of `resolved` under the overlap launch_overlap grants it, with the prepared-activation
-// region it reads when it has one (the pre-quantized R8 form's quantizer output; the ggml vector
-// kernel's shared q8_1 activation). Every such kernel reads the region until it exits and is
-// launched in stream order after the quantizer, so its read is AfterWait.
+// A launch under the overlap launch_overlap grants it, with the prepared-activation region it
+// reads. `rule` is prepared_rule(route, weight) of the launch's route (nullopt: the kernel reads x
+// as BF16 or quantizes it inside itself, so it reads no prepared scratch); the caller passes it so
+// this description cannot drift from the representation rule (#308). A join or prefetch only
+// starts early where the device has PDL: without it the launch falls back to stream order
+// (generic_gemm_launch.cuh, generic_r8.cuh). The read is stamped AfterWait and AtExit by a
+// convention, not derived from the kernels: a consumer of prepared bytes is launched in stream
+// order after its quantizer and reads them to its end.
 [[nodiscard]] inline LaunchLifetime
-launch_lifetime(std::string_view name, const ResolvedRoute& resolved, const LaunchOverlap& overlap,
+launch_lifetime(std::string_view name, const LaunchOverlap& overlap, bool pdl,
+                const std::optional<PreparedRule>& rule,
                 const std::optional<ScratchRegion>& prepared) noexcept {
     LaunchLifetime out;
     out.name         = name;
-    out.starts_early = overlap.joins() || overlap.prefetches();
+    out.starts_early = pdl && (overlap.joins() || overlap.prefetches());
     out.releases     = overlap.releases();
-    const bool reads_prepared =
-        resolved.r8_prequantized || resolved.executed.family == Family::GgmlVec;
-    if (prepared && reads_prepared) {
+    if (prepared && rule) {
         out.add({*prepared, ScratchAccess::Read, ScratchFirst::AfterWait, ScratchLast::AtExit});
     }
     return out;
