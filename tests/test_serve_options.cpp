@@ -41,6 +41,14 @@ ServeOptions parse(std::vector<std::string> arguments) {
 int main() {
     int failures = 0;
 
+    // #526: the minimum request-body rate has a default and can be changed or turned off.
+    failures +=
+        check(parse({"ninferno-serve", "m.ninferno"}).request_body_min_kib_per_sec == 16 &&
+                  parse({"ninferno-serve", "m.ninferno", "--request-body-min-kib-per-sec", "64"})
+                          .request_body_min_kib_per_sec == 64 &&
+                  parse({"ninferno-serve", "m.ninferno", "--request-body-min-kib-per-sec", "0"})
+                          .request_body_min_kib_per_sec == 0,
+              "--request-body-min-kib-per-sec: default 16, overridable, 0 off");
     // #527: the limit on the values of a request body's JSON has a default and can be changed.
     failures +=
         check(parse({"ninferno-serve", "m.ninferno"}).max_request_json_values ==
@@ -369,6 +377,18 @@ int main() {
             parse({"ninferno-serve", "model.ninferno", "--tool-order", "sorted"}).sort_tools &&
             !parse({"ninferno-serve", "model.ninferno", "--tool-order", "request"}).sort_tools,
         "--tool-order request|sorted, request by default");
+    failures +=
+        check(!defaults.drop_tools_under_none &&
+                  parse({"ninferno-serve", "model.ninferno", "--tool-choice-none", "drop-tools"})
+                      .drop_tools_under_none &&
+                  !parse({"ninferno-serve", "model.ninferno", "--tool-choice-none", "steer"})
+                       .drop_tools_under_none,
+              "--tool-choice-none steer|drop-tools, steer by default");
+    bool unknown_tool_choice_none_rejected = false;
+    try {
+        (void)parse({"ninferno-serve", "model.ninferno", "--tool-choice-none", "ignore"});
+    } catch (const std::invalid_argument&) { unknown_tool_choice_none_rejected = true; }
+    failures += check(unknown_tool_choice_none_rejected, "--tool-choice-none accepted a bad mode");
     bool unknown_tool_order_rejected = false;
     try {
         (void)parse({"ninferno-serve", "model.ninferno", "--tool-order", "first-seen"});

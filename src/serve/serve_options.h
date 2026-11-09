@@ -19,6 +19,7 @@ namespace ninferno::serve {
 // clamps the request to its effective context capacity.
 inline constexpr int kDefaultMaxTokens                    = 8192;
 inline constexpr std::size_t kDefaultMaxRequestBytes      = 384ULL << 20;
+inline constexpr std::uint32_t kDefaultRequestBodyMinKibPerSec = 16;
 inline constexpr std::size_t kDefaultResponseStoreRecords = 1024;
 inline constexpr std::size_t kDefaultResponseStoreBytes   = 256ULL << 20;
 
@@ -97,6 +98,9 @@ struct ServeOptions {
     // long (a hung device wait, a wedged executor); 0 disables the check.
     std::uint32_t health_stall_ms = 60000;
     std::size_t max_request_bytes          = kDefaultMaxRequestBytes;
+    // A request body that grows slower than this over a 10-second window is cut off with a 408, so
+    // a sender that trickles it cannot hold an HTTP worker; 0 disables the check.
+    std::uint32_t request_body_min_kib_per_sec = kDefaultRequestBodyMinKibPerSec;
     std::size_t media_cache_bytes          = kDefaultMediaCacheBytes;
     std::size_t media_live_bytes           = kDefaultMediaLiveBytes;
     std::uint32_t media_preprocess_threads = 0;
@@ -186,6 +190,11 @@ struct ServeOptions {
     // --tool-order sorted: render a request's tools sorted by name, so that a client that sends
     // one set in varying order keeps its cached prefix (default: the request's order).
     bool sort_tools = false;
+    // --tool-choice-none drop-tools: tool_choice none removes the tool declarations from the
+    // prompt (vLLM's opt-in --exclude-tools-when-tool-choice-none; the conversation's cached prefix
+    // is lost). Default (steer): they stay, and the last user turn ends with a line saying that
+    // tools are unavailable.
+    bool drop_tools_under_none = false;
     DecodePacingOptions pacing;          // --decode-steps, --decode-wait, --cuda-sync
     MaintainerOptions maintainer;        // --route-table ... --debug-poison-skip
     // --drafter-registry FILE: the drafter registry instead of the compiled-in one

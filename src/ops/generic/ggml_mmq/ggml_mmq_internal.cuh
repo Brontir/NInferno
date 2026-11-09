@@ -7,6 +7,8 @@
 #include "ggml_mmq.h"
 
 #include "core/cuda_error.h"
+#include "core/generation.h"
+#include "core/mmq_columns.h"
 #include "core/per_device.h"
 #include "core/pdl.cuh"
 
@@ -20,6 +22,29 @@
         ::ninferno::pdl::wait_for_dependencies();                                                  \
         ::ninferno::pdl::trigger_dependents();                                                     \
     } while (0)
+
+// The 80- and 96-column tiles are built only for the architectures whose generation takes them
+// (core/generation.h mmq_work_tiles); the others never launch them. The device pass cannot call
+// the generation table, so the one range it holds is spelled here and checked against the table.
+namespace ninferno::ops::ggml_mmq::detail {
+[[nodiscard]] __host__ __device__ constexpr bool work_tiles_arch(int cc) {
+    return (cc >= 810 && cc < 890) || (cc >= 1200 && cc < 1300);
+}
+
+constexpr bool work_tiles_arch_matches_table() {
+    for (int cc = 700; cc <= 1300; cc += 10) {
+        if (work_tiles_arch(cc) != mmq_work_tiles_measured(cc / 100, cc / 10 % 10)) return false;
+    }
+    return true;
+}
+
+static_assert(work_tiles_arch_matches_table());
+} // namespace ninferno::ops::ggml_mmq::detail
+#if defined(__CUDA_ARCH__)
+#    define NINFERNO_MMQ_SKIP_SPECIALIZATION(J)                                                    \
+        (((J) == 80 || (J) == 96) &&                                                               \
+         !::ninferno::ops::ggml_mmq::detail::work_tiles_arch(__CUDA_ARCH__))
+#endif
 
 #include "ggml-cuda/common.cuh"
 #include "ggml-cuda/mmq.cuh"
@@ -74,8 +99,7 @@ inline void check(cudaError_t status, const char* what) {
     throw std::invalid_argument("ggml mmq: unknown block format");
 }
 
-// Column tiles instantiated; a product takes the fewest column tiles they allow.
-inline constexpr int kColumnTiles[] = {16, 32, 64, 128};
+// Column tiles instantiated (core/mmq_columns.h): a product takes the width whose tiles cost least.
 
 struct Launch {
     int J              = 0;
@@ -90,19 +114,28 @@ struct Launch {
     int k_vram         = 0; // the config's K_vram: a stream-k block's unit of work along k
 };
 
+// mmq_columns::work_tiles_format in ggml's names (test_route_classes checks the launch against the
+// table for every format).
+template <ggml_type type>
+inline constexpr bool kWorkTilesFormat = type == GGML_TYPE_Q4_K || type == GGML_TYPE_Q6_K;
+
 template <ggml_type type>
 Launch select_launch(int rows, int columns, int k) {
     const DeviceFacts& device = device_facts();
     Launch best;
-    int best_tiles = INT_MAX;
-    for (const int J : kColumnTiles) {
+    double best_cost        = 1e300;
+    const int major         = device.cc / 100;
+    const int minor         = device.cc / 10 % 10;
+    const bool work_table   = mmq_columns::uses_work_table(major, minor, kWorkTilesFormat<type>);
+    const double tile_fixed = mmq_columns::tile_fixed(major, minor, kWorkTilesFormat<type>);
+    for (const int J : mmq_columns::tiles(major, minor, kWorkTilesFormat<type>)) {
         const ggml_cuda_mmq_config config = ggml_cuda_mmq_get_config(type, J, false, device.cc);
         if (config.type == GGML_TYPE_COUNT) continue;
         const std::size_t shared = mmq_get_nbytes_shared(config, device.cc);
         if (shared > device.shared_per_block_optin) continue;
-        const int tiles = (columns + J - 1) / J;
-        if (tiles < best_tiles) {
-            best_tiles    = tiles;
+        const double cost = mmq_columns::launch_cost(columns, J, work_table, tile_fixed);
+        if (cost < best_cost) {
+            best_cost     = cost;
             best.k_vram   = config.K_vram;
             best.J        = J;
             best.I        = config.I;
@@ -110,7 +143,6 @@ Launch select_launch(int rows, int columns, int k) {
             best.shared   = shared;
             best.stream_k = config.stream_k;
         }
-        if (tiles == 1) break;
     }
     if (best.J == 0) throw std::invalid_argument("ggml mmq: no tile fits this device");
     best.row_tiles    = (rows + best.I - 1) / best.I;
@@ -128,6 +160,12 @@ Launch select_launch(int rows, int columns, int k) {
         best.blocks = tiles;
     }
     return best;
+}
+
+// The column tile (J) a product of `columns` launches on this device.
+template <ggml_type type>
+int column_tile_impl(int rows, int columns, int k) {
+    return select_launch<type>(rows, columns, k).J;
 }
 
 template <ggml_type type>
@@ -203,6 +241,12 @@ void product_impl(const Planes& w, int blocks_per_row, int rows, int k, const vo
     case 64:
         return launch<type, 64>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
                                 out_column_stride, f, stream);
+    case 80:
+        return launch<type, 80>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
+                                out_column_stride, f, stream);
+    case 96:
+        return launch<type, 96>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
+                                out_column_stride, f, stream);
     case 128:
         return launch<type, 128>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
                                  out_column_stride, f, stream);
@@ -214,7 +258,8 @@ void product_impl(const Planes& w, int blocks_per_row, int rows, int k, const vo
 } // namespace ninferno::ops::ggml_mmq::detail
 
 #define NINFERNO_GGML_MMQ_INSTANCE(TYPE)                                                           \
-    template std::size_t ninferno::ops::ggml_mmq::detail::fixup_bytes_impl<TYPE>(int, int, int);        \
+    template std::size_t ninferno::ops::ggml_mmq::detail::fixup_bytes_impl<TYPE>(int, int, int);   \
+    template int ninferno::ops::ggml_mmq::detail::column_tile_impl<TYPE>(int, int, int);           \
     template void ninferno::ops::ggml_mmq::detail::product_impl<TYPE>(                             \
         const ninferno::ops::ggml_mmq::Planes&, int, int, int, const void*, int, float*,           \
         std::int64_t, void*, cudaStream_t)

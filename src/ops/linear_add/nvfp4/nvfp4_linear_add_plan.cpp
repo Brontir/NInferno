@@ -2,6 +2,7 @@
 #include "core/weight.h"
 
 #include "ops/common/route_probe.h"
+#include "ops/generic/generic_gemm.h"
 #include "ops/linear/nvfp4/nvfp4_layout.h"
 
 #include <algorithm>
@@ -46,6 +47,20 @@ Nvfp4LinearAddRoute resolve_route(std::int32_t output_rows, std::int32_t input_r
                                                            : Nvfp4LinearAddRoute::A16;
 }
 
+// A16Exact outside A16Only is the verify band (nvfp4_verify_exact): the exact kernel at 2..8 tokens
+// under a policy that is not the exact contract, recorded as a16_verify.
+const char* route_name(Nvfp4LinearAddRoute route, LinearPolicy policy) {
+    switch (route) {
+    case Nvfp4LinearAddRoute::A16:
+        return "a16";
+    case Nvfp4LinearAddRoute::A16Exact:
+        return policy == LinearPolicy::A16Only ? "a16_exact" : "a16_verify";
+    case Nvfp4LinearAddRoute::A4:
+        return "a4";
+    }
+    return "?";
+}
+
 
 } // namespace
 
@@ -66,6 +81,8 @@ void nvfp4_linear_add_dispatch(const Tensor& x, const Weight& weight, Tensor& re
                                LinearPolicy policy, WorkspaceArena& workspace,
                                cudaStream_t stream) {
     const Nvfp4LinearAddRoute route = resolve_route(weight.n, weight.k, policy, x.ne[1]);
+    generic::record_projection_route("linear_add", route_name(route, policy), x.ne[1], weight.n,
+                                     weight.k);
     if (route == Nvfp4LinearAddRoute::A16Exact) {
         nvfp4_linear_add_exact_launch(x, weight, residual, stream);
         return;

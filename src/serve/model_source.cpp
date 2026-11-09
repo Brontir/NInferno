@@ -239,10 +239,10 @@ ModelSource resolve_model_source(const ServeOptions& options,
     acquire.fetch.log      = log;
     acquire.convert.recipe            = options.recipe;
     acquire.convert.round_tiny_scales = options.round_tiny_scales;
-    // --chat-template: the conversion's template too (a base model ships none).
-    if (!options.chat_template_path.empty()) {
-        acquire.convert.resources.emplace_back("chat_template.jinja", options.chat_template_path);
-    }
+    // --chat-template is applied when the model runs (every family's frontend compiles it from the
+    // path), not baked into the artifact: a cached default conversion serves it. Only a model
+    // that ships no template (a base model) is converted with it (acquire_model).
+    acquire.chat_template  = options.chat_template_path;
     acquire.convert.log    = log;
     acquire.reuse          = true;
     acquire.repository     = fs::current_path();

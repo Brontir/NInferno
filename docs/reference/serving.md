@@ -628,6 +628,31 @@ line and on every refused request (a 4xx before generation is logged too).
 - On Linux, accepted connections also use TCP keepalive and a 15-second `TCP_USER_TIMEOUT`.
   Together with the heartbeat, a dead or unacknowledging peer is normally cancelled within about 20
   seconds, including while the request is waiting or prefilling.
+- Every connection holds one HTTP worker while its request is read. The request line and headers
+  have a 5-second total deadline. A body must grow by at least `--request-body-min-kib-per-sec`
+  (16 KiB/s) over every 10-second window, counting the bytes of chunk framing as well, otherwise
+  the server answers HTTP 408 `request_body_too_slow` and closes the connection. A sender that
+  trickles a body therefore holds a worker for about ten seconds, not for as long as it likes.
+- The worker pool is finite (49 workers by default) and, on Linux, queues at most half as many
+  more connections (at least 16). A connection past the queue is answered at once on the accepting
+  thread: `GET /health` with the health answer, anything else with HTTP 503, `Retry-After: 5` and
+  code `server_busy`. Senders that fill the pool therefore cannot make the server unreachable to a
+  liveness probe, and nobody waits in an unbounded queue. That `/health` answer reports the Engine
+  (liveness): a saturated pool does not make it unhealthy. A past-the-queue connection that has sent
+  no bytes yet (a connection a proxy opened ahead and keeps idle) is closed without an answer, which
+  proxies treat as an ordinary idle close and retry; only a connection with request bytes gets the
+  503. A 503 is written before the request is read: a small request is read and dropped so the
+  client sees the answer, a large one still in flight may reset the connection.
+  - Linux hands a connection to the server when its first bytes arrive (`TCP_DEFER_ACCEPT`); a
+    client that connects and says nothing is handed over by the kernel's SYN-ACK retransmit
+    after about 3-7 s, so it waits that long instead of taking a worker at once.
+  - The queue size is a choice, not a limit of the design: half the pool, at least 16, so the default
+    pool holds 49 workers and 24 queued connections, 73 in all. A client or SDK pool beyond that is
+    answered 503 with `Retry-After: 5`, which the OpenAI and Anthropic SDKs retry. A bench that opens
+    more connections than that at once should lower its concurrency or retry.
+  - On other systems the queue is unbounded as before and only the body rate applies. A connection that is queued waits for a worker to free up, which
+  takes seconds. On a network where clients are hostile, a buffering reverse proxy in front still
+  helps: it sends the body to NInferno only once it has received all of it.
 - A peer whose TCP stack remains connected and acknowledges data cannot be distinguished from a
   reading application. Proxies must close their upstream NInferno connection when the downstream
   client disappears.
@@ -736,7 +761,17 @@ llama.cpp-style base URLs.
   Completions only: Responses refuses it as an unknown parameter, Anthropic Messages ignores it
   with the unknown-field warning.
 - Up to sixteen stop strings, applied to the answer only (a stop never ends a thinking model's
-  reasoning). Empty strings mean none and are dropped.
+  reasoning). Empty strings mean none and are dropped. Under `tool_choice` `required` or a named
+  function, a stop string that matches inside a call ends the output like any other stop, but the
+  unfinished call is dropped (counted as `cut_calls_dropped` in the request log), not returned as
+  text: the answer is empty or holds only the calls that were complete before the stop. A call
+  that the stop left complete except for its closing markup is closed and kept (Qwen XML, Hermes
+  JSON, Gemma 4; only for a stop that shares three bytes with the closer it swallowed). A syntax
+  without a close marker (Mistral, Llama 3, harmony, Pythonic, Granite, Atem) loses the whole
+  call region that the stop cut, its complete calls included. When a
+  call was dropped, the turn reports `stop` / `stop_sequence` even if complete calls precede it, so
+  a client does not take them for all the calls the model meant to make. With
+  `tool_choice` `auto` the unfinished markup stays text, like any malformed call.
 - The thinking switch as `enable_thinking`, `chat_template_kwargs.enable_thinking`, Ollama's `think`
   and `thinking: {"type": "enabled" | "disabled"}`; conflicting values are refused. A chat template
   that renders the same prompt either way (gpt-oss's harmony template, which always reasons) has no
@@ -767,14 +802,41 @@ llama.cpp-style base URLs.
   (after any reasoning, a forced answer is the call or calls, with no text before them). `none`
   keeps the declarations in the prompt, as vLLM does by default, so a turn without calls (an
   agent's compaction or summary) reuses the conversation's cached prefix. No output is read back
-  as a call then, and the model is kept from opening one: the syntax's call opener (`<tool_call>`,
+  as a call then. The last user turn ends with the fixed line `Tools are unavailable for this reply;
+  answer in plain text.` (after a blank line; when the last message is a tool
+  result, at the end of that result's content, since a user turn added after it would make the
+  template re-render the reasoning of the whole agent turn; after a system or developer message
+  nothing is added). The line is always English and counts in `prompt_tokens`, `input_tokens` and
+  `count_tokens`, because both the Qwen and Gemma 4 templates declare the tools in the system
+  prompt and the call is otherwise the model's near-certain next token. `--tool-choice-none
+  drop-tools` sends no declarations instead (vLLM's opt-in `--exclude-tools-when-tool-choice-none`;
+  the cached prefix is lost, the line is not added, and a call written anyway is still cut). The model is also kept from opening a call: the syntax's call opener (`<tool_call>`,
   `<|tool_call>`, `[TOOL_CALLS]`, `<|tool_call|>`, `<function_calls>`) and its closer
-  (`</tool_call>`, `<tool_call|>`, `</function_calls>`) get a `logit_bias` of -100 when the template's tokenizer encodes each as one token, so the answer
-  is text. A `logit_bias` of your own for that
-  token is replaced by the ban. Syntaxes without such an opener (gpt-oss harmony, Atem, Llama 3
-  JSON) are not steered; a call they write anyway is cut out of the answer, as is one written as
-  plain text (a Qwen model kept from `<tool_call>` can still write a bare `<function=...>`, which
-  is cut too).
+  (`</tool_call>`, `<tool_call|>`, `</function_calls>`), and the template's tool-result opener and
+  closer (`<tool_response>`, `<|tool_response>`, ...), get a `logit_bias` of -100 when the
+  template's tokenizer encodes each as one token. A `logit_bias` of your own for such a token is
+  replaced by the ban. A model refused its call would otherwise write the next structural token it
+  knows. Its reasoning markers (`<think>`, `</think>`, `<|channel>`, `<channel|>`) are not banned
+  (a model that may reason needs them, and one that may not uses them as the way out of a
+  refused call, where banned they leave filler that looks like an answer); outside reasoning, the
+  first marker of the call, tool-result or reasoning kind ends the turn instead: the text written
+  before it is the answer, the marker is not published, and `finish_reason` is `stop`. A refused
+  call that leaves only markup is therefore an empty `content` with `finish_reason` `stop`, never
+  markup. A reasoning tag that is plain vocabulary (Qwen's `<think>`) ends the turn only where
+  the answer begins with it; after text it is prose that may quote the tag. `ignore_eos` does not
+  change this: it keeps the model's own end-of-turn tokens from stopping the output, not this
+  rule. Syntaxes without such an opener (gpt-oss harmony, Atem, Llama 3 JSON) are not steered; a
+  call they write anyway is cut out of the answer, as is one written as plain text (a Qwen model
+  kept from `<tool_call>` can still write a bare `<function=...>`). A bare `{"name": "...",
+  "arguments": ...}` object naming a declared tool (Hermes JSON) or Gemma 4's `call:...` is cut
+  only where it begins the answer, never under `response_format`, and the text after it stays
+  (streamed as it comes; a second bare call after the first stays text). The leading object is a
+  call only when its top-level keys are `name` plus exactly one of `arguments` and `parameters`
+  (and optionally `id`, `type`); a tool definition, a router object or a lookup result is text, as
+  is a fenced ```` ```json ```` block. An answer that is exactly a call object at its start is thus
+  treated as a call and cut. A first stray reasoning close (`</think>`, `<channel|>`) before the answer is
+  dropped (Gemma 4 writes one after a tool response and then answers); a second ends the turn, so an
+  answer that is only such closes is empty.
 - `strict:true`, whose arguments the same constraint holds to the declared JSON Schema in every
   call syntax ([key order](#key-order-under-an-output-constraint)), and
   `parallel_tool_calls:false`, under which generation stops after the first call.
@@ -1813,6 +1875,7 @@ contract.
 | `--api-key-file PATH` | the same key read from a file (one line) | unset; `NINFERNO_API_KEY` when neither is given |
 | `--cors` | permissive browser CORS headers | off |
 | `--max-request-mib N` | body-size limit before JSON parsing (a body nesting arrays and objects deeper than 128 levels is refused with HTTP 400) | `384` |
+| `--request-body-min-kib-per-sec N` | a request body must grow by at least N KiB/s over every 10 seconds, else the read stops with HTTP 408 `request_body_too_slow` and the connection closes; `0` off | `16` |
 | `--max-request-json-values N` | most JSON values (scalars, arrays, objects, object keys) a request body may hold; more is HTTP 400 `request_json_too_large`, stopped while the body is parsed. Each value costs about 100 bytes of memory whatever its text size, so this, not `--max-request-mib`, bounds the parse | `1000000` |
 | `--max-request-messages N` | most messages in one request (Responses: `input` Items); more is HTTP 400 `too_many_messages` before the prompt is parsed or rendered | `16384` |
 | `--drain-timeout-ms N` | longest wait for requests in flight after SIGTERM/SIGINT | `60000` |
@@ -1938,6 +2001,7 @@ not take at startup.
 | `--seed N` | fixed seed when a request omits one | fresh random seed per request |
 | `--greedy` | force exact argmax for all requests | off |
 | `--tool-order request\|sorted` | `sorted` renders a request's tools sorted by name, so that a client that sends one set in varying order (MCP servers registering in another order) keeps its cached prefix; a request with a duplicate name or a cache boundary after a tool keeps its order | `request` |
+| `--tool-choice-none steer\|drop-tools` | `steer` keeps a `tool_choice` `none` request's tool declarations (the cached prefix) and ends its last user turn with the line `Tools are unavailable for this reply; answer in plain text.`; `drop-tools` removes the declarations (a re-prefill). Recorded in the server-start record | `steer` |
 
 ### Media
 
@@ -2634,7 +2698,17 @@ Compatible prefixes are reused for both text and multimodal histories unless the
 ### Finish reasons, tools and usage
 
 - Output-limit and context-capacity finishes map to `length` / `max_tokens`. Ordinary model or
-  string stops map to `stop` / `end_turn`.
+  string stops map to `stop` / `end_turn`. A turn with tool calls reports `tool_calls` /
+  `tool_use`, unless the output was cut short (output limit, context capacity, a repetition loop):
+  then it reports `length` / `max_tokens` (`model_context_window_exceeded` for the context) and
+  still carries the calls that were complete, as Responses does with `incomplete`. A client that
+  runs calls only on `tool_calls` / `tool_use` thus does not run a cut turn's calls and can retry
+  with a larger limit. A repetition loop cuts like the limit does: the call it loops in is dropped
+  (a Qwen call that is complete up to its `</parameter>` is not closed then, since more parameters
+  may have followed). Responses reports a cut turn as `incomplete` with `incomplete_details.reason`
+  always `max_output_tokens` (the protocol's only reason, also for the context and repetition),
+  and the complete calls stay in the turn's output items and in the history a later request
+  continues from (`previous_response_id`).
 - Function tools are rendered into the model prompt and generated calls are parsed into protocol
   responses. NInferno does not execute tools. It enforces client JSON Schema through constrained
   decoding only where stated above (forced or `strict` tool calls and JSON `response_format`).
@@ -2663,6 +2737,7 @@ Compatible prefixes are reused for both text and multimodal histories unless the
 | 403 | `cross_origin_request` | request with `Origin` while `--cors` is off |
 | 404 | `response_not_found` | unknown stored Response on `GET`, `DELETE` or `input_items` of `/v1/responses/{id}` |
 | 404 | `not_found` | a path no endpoint serves (JSON body naming the endpoints) |
+| 408 | `request_body_too_slow` | body arriving slower than `--request-body-min-kib-per-sec` |
 | 413 | `request_too_large` | body above `--max-request-mib` |
 | 415 | `unsupported_content_encoding` | compressed request body |
 | 429 | `server_overloaded` | request capacity full (`Retry-After` 1 s) |

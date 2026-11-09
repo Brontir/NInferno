@@ -249,7 +249,9 @@ public:
              Committer* committer = nullptr, std::uint64_t window = 0)
         : stores_(std::move(stores)), plan_(plan), writer_(writer), order_(std::move(order)),
           tasks_(make_tasks(plan, order_)),
-          threads_(threads ? threads : std::clamp(std::thread::hardware_concurrency(), 1U, 16U)),
+          threads_(threads ? static_cast<unsigned>(std::min<std::size_t>(
+                                 threads, std::max<std::size_t>(tasks_.size(), 1)))
+                           : std::clamp(std::thread::hardware_concurrency(), 1U, 16U)),
           keep_cache_(keep_cache), committer_(committer), window_(window),
           remaining_(plan.weights.size()) {
         for (const auto& task : tasks_) { ++remaining_[task.job]; }
@@ -281,12 +283,19 @@ public:
             }
         }
         std::thread committing;
-        if (committer_) {
-            committing = std::thread([this] { commit_loop(); });
-        }
         std::vector<std::thread> workers;
-        for (unsigned t = 0; t < threads_; ++t) {
-            workers.emplace_back([this] { work(); });
+        // A thread that cannot be created (a process or memory limit, an absurd --threads) must
+        // not unwind past joinable threads (std::terminate leaves the temporary behind): the
+        // run goes on with the workers it has, or fails cleanly when it has none.
+        try {
+            if (committer_) {
+                committing = std::thread([this] { commit_loop(); });
+            }
+            for (unsigned t = 0; t < threads_; ++t) {
+                workers.emplace_back([this] { work(); });
+            }
+        } catch (...) {
+            if (workers.empty() || (committer_ && !committing.joinable())) { fail(); }
         }
         for (auto& worker : workers) { worker.join(); }
         {
@@ -2014,6 +2023,20 @@ ConvertResult convert(const ConvertOptions& options) {
     for (const auto& resource : plan.resources) { prologue += resource.bytes->size(); }
     std::vector<std::uint64_t> output_bytes;
     for (const auto& job : plan.weights) { output_bytes.push_back(job.geometry.bytes); }
+    if (!options.consume_source) {
+        // Before the free-space check: what an interrupted run left would be counted against it
+        // (its parts by the entry's name, as many as that run's layout had).
+        const auto directory = options.out.parent_path().empty() ? std::filesystem::path(".")
+                                                                 : options.out.parent_path();
+        std::vector<std::string> names = {options.out.filename().string()};
+        for (const auto& file : layout.files) {
+            if (file.path) { names.push_back(*file.path); }
+        }
+        if (const auto stale = ArtifactWriter::remove_stale_temporaries(directory, names)) {
+            log("removed " + std::to_string(stale) + " leftover temporary file" +
+                (stale == 1 ? "" : "s") + " of interrupted conversions in " + directory.string());
+        }
+    }
     const auto available    = free_bytes(options.out, options);
     const auto needed       = layout.file_bytes() + kSpaceMargin;
     const auto journal_path = std::filesystem::path(output + ".journal");

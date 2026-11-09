@@ -468,6 +468,7 @@ std::string format_server_start_json(
              {"api_key_configured", !options.api_key.empty()},
              {"cors_enabled", options.enable_cors},
              {"max_request_bytes", options.max_request_bytes},
+             {"request_body_min_kib_per_sec", options.request_body_min_kib_per_sec},
              {"max_request_json_values", options.max_request_json_values},
              {"media_cache_bytes", options.media_cache_bytes},
              {"media_live_bytes", options.media_live_bytes},
@@ -581,6 +582,7 @@ std::string format_server_start_json(
              {"greedy", options.greedy}};
     // It changes the rendered prompt, so a replay from the log needs it.
     record["tool_order"] = options.sort_tools ? "sorted" : "request";
+    record["tool_choice_none"] = options.drop_tools_under_none ? "drop-tools" : "steer";
     record["memory"] =
         Json{{"weights", arena_json(memory.weights)},
              {"sequence", arena_json(memory.sequence)},

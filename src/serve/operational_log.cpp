@@ -230,6 +230,10 @@ OperationalRecord render_request_done(const RequestLogContext& context,
         out << pretty_code(ninferno::finish_reason_name(outcome.finish_reason));
     } else {
         out << "tool calls " << product::format_pretty_count(outcome.tool_calls.size());
+        // A turn the output limit (or the context, or a loop) cut short is not a finished one.
+        if (output_was_cut(outcome)) {
+            out << ", " << pretty_code(ninferno::finish_reason_name(outcome.finish_reason));
+        }
     }
     out << " | prompt "
         << product::format_pretty_count(

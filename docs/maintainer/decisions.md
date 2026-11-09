@@ -1635,3 +1635,58 @@ context 0: the wider chunk's workspace), so FP8's bytes buy the chunk. Against t
 -0.0451; the old pick, INT8 with chunk 1024, is about -0.001 (the sum of the two single-axis gaps; not
 scored on its own): inside the resolution, the point estimate decides. Dense models, the other families and every card without a reference card keep their
 defaults (Qwen3-8B, Qwen3.5-4B / 9B, Qwen3.8-27B, gemma-4-31B and -12b, Muse-Glimmer: no change).
+
+## 74. ggml's matrix kernel takes the column tile of least work where the generation row says so (#524, 08.11, measured)
+
+**Decision.** Where the generation row has `mmq_work_tiles` (GA10x: RTX 3060, 3090; GB20x: RTX
+5090), a prefill product on ggml's matrix kernel of a format the grids ran (Q4_K and Q6_K, the
+linears of the Q4_K_M model measured: `mmq_columns::work_tiles_format`) takes, among J = 16, 32, 64, 80, 96, 128, the width
+whose tiles cost least, ceil(t / J) x (f + (1 - f) J / 128) of a 128-column tile's K steps, the
+narrower on a tie; f is the row's `mmq_tile_fixed` (GA10x 0.20, GB20x 0.10). Every other generation,
+and every other format there, keeps J = 16, 32, 64, 128 and the fewest tiles. The kernel's `select_launch`, the estimate's
+`mmq_linears_seconds` and cost_route's MMQ term (generic_cost.cpp, which priced continuous 8-column
+steps: 144 tokens as two 128-column tiles) read the one table (core/mmq_columns.h). J = 112 is not
+instantiated.
+
+**Why.** A tile is 128 weight rows x J tokens over the whole K; the rows' decode is the same for every
+J and the MMA, the y tile's loads and its share of the epilogue are in J, so a tile costs a fixed
+part plus a part in J. A slice of 144 columns on two 128-column tiles pays for 256; two 80-column
+tiles pay f + 0.625 (1 - f) of each. The part in J is no fixed fraction of a card: the int8 MMA alone
+is 4096 of a GA10x Q4_K tile's 10600 SM-clocks a 256-value K step (1024 MMAs of 4096 MACs at 1024
+MACs a clock), a generation with a higher MMA rate (ga100) has a smaller part in J and a larger
+fixed share, so the share is measured per generation on its cards, not carried: the forced-J grids
+(8 widths x 21 slice sizes, N = 16..512, Qwen3-8B Q4_K_M, `--no-prefix-reuse`, four requests a
+point) give the regret of the model's picks against the best width of the set as a function of f:
+RTX 3060 0.00 % at 0.25-0.30 (0.21 % at 0.15-0.20), RTX 3090 0.00 % at 0.15-0.20 (0.28 % at
+0.25-0.30), RTX 5090 0.06 % at 0.10 (0.31 % at 0.05, 0.45 % at 0.15-0.20); 0.43 (the RTX 4060 Ti's
+point, DECISIONS 69) costs 0.28 %, 0.70 %, 1.0 %. GA10x takes 0.20 (the two cards' common best
+range), GB20x 0.10 (one card: the RTX 5070 Ti was busy). Ada (RTX 4090, 4060 Ti) and Turing
+(RTX 2080 Ti) were not run over the widths (their stands were loaded by other builds): they keep the
+fewest tiles, a row joins by its own grid.
+
+**Measured** (A B A B, three rounds of four requests, the same binary with `old` and `new` tables):
+RTX 5090 (f 0.10) 144..160-token prompts 25.1..25.3 -> 20.9..21.0 ms (-17 %), 136 -13 %, 176..192
+-11 %, 264..288 -13 %, 320 -8 %, 96 -8 %; 200..224 -2 %, 256, 384, 512 unchanged; the 136..256 mix
+25.3 -> 23.2 ms (-8.3 %). RTX 3090 (f 0.20, the final table): 144..160 59.8..59.9 -> 48.5..48.6 ms
+(-18.8 %), 136 -15.8 %, 176..192 -12.5..-12.9 %, 264..288 -13.3 %, 320 -5.6 %, 96 -10.5 %, 448
+-2.9 %; 128, 200..256, 384, 512 unchanged; the 136..256 mix 60.4 -> 55.1 ms (-8.7 %). RTX 3060
+(against master, f 0.43 and without J = 112, whose picks differ from f 0.20 only at 289..320 and
+448): 136..160 tokens 141.9..143.0 -> 114.4..115.6 ms (-19 %), 168..192 -14..-12.6 %, 264 / 288
+-11 / -13.6 %, mix 145.1 -> 133.2 ms (-8.2 %, predicted -7.8 % before the measurement).
+
+**Widths.** 80 and 96 carry the gain. J = 112 was 6 % slower than 128 for one tile of 97..112 columns
+on the RTX 3060 (99.8 against 93.8 ms) while the model priced it cheaper, and the 5090's grid shows
+it no better than 128 for 97..128 columns: not instantiated. 48 adds 0.1 %. The 80- and 96-column
+kernels are compiled only for the architectures whose row takes them (`work_tiles_arch` in
+ggml_mmq_internal.cuh, checked against the table by a static_assert; the skip is the kernel's own
+unused-specialization exit in mmq.cuh), so Ada, Turing, Hopper and the others keep their code size.
+A width costs about 0.2 MB and 1.1 s of compile a format and architecture it is built for.
+
+**Numerics.** A product's sums depend on the column tile count (stream-k splits the K steps
+differently), as they already did between a prefill chunk of 128 and 1024: on natural text the mean
+|logprob| difference old vs new is 0.000-0.03, old build's chunks 128 vs 1024 0.003-0.026.
+
+**Not done.** Ada, Turing, Volta and Thor rows (own grids); the A10; other formats than Q4_K and
+Q6_K (the Q4_0 and IQ decodes give other fixed shares: they keep the fewest tiles until their grids); the RTX 5070 Ti and 5060 Ti prefill Q4_K / Q6_K
+on the W4A8 tiles, not this kernel, which steps the same way (RTX 5060 Ti 104 -> 107 ms from 144 to
+256 tokens): its 64 x 64 against 128 x 64 tile steps need their own grid.

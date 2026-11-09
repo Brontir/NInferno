@@ -3,6 +3,7 @@
 
 #include "artifact/fixture.h"
 #include "convert/acquire.h"
+#include "convert/cache.h"
 #include "core/sys.h"
 #include "spec/fingerprint.h"
 #include "spec/profile.h"
@@ -1101,6 +1102,133 @@ void test_processes([[maybe_unused]] const std::string& self) {
     check(pool.free_port(18100) >= 18100, "a free port");
 }
 
+// Deleting a converted model through the UI removes that conversion alone (#553): a conversion
+// with options of its own lives in <commit>/options-<hash>/ and is not the default one's to take
+// along, whichever is deleted first.
+void test_delete_options() {
+    namespace fs = std::filesystem;
+    const auto root =
+        fs::temp_directory_path() / ("ninferno_ui_options_" + std::to_string(::getpid()));
+    fs::remove_all(root);
+    const auto commit = root / "hub/models--org--m/ninferno" / std::string(40, 'c');
+    const auto custom = commit / "options-0123456789ab";
+    const auto make   = [&] {
+        fs::remove_all(root);
+        fs::create_directories(custom);
+        for (const auto& f :
+             {commit / "m.dense_bf16.ninferno", commit / "m.dense_bf16.ninferno.conversion.json",
+              custom / "m.dense_bf16.ninferno", custom / ".convert.lock"}) {
+            std::ofstream(f) << "x";
+        }
+        std::ofstream(custom / "m.dense_bf16.ninferno.options") << "--vocab q8\n--name mine\n";
+    };
+    check(is_default_conversion(commit / "m.dense_bf16.ninferno") &&
+              !is_default_conversion(custom / "m.dense_bf16.ninferno"),
+          "a plain launch looks at default conversions only");
+    make();
+    check(conversion_options(custom / "m.dense_bf16.ninferno") == "--vocab q8, --name mine",
+          "the options of an optioned conversion are listed");
+    check(conversion_options(commit / "m.dense_bf16.ninferno").empty(),
+          "the default conversion lists none");
+
+    UiOptions options;
+    options.offline      = true;
+    options.serve_binary = "/bin/false";
+    options.hub_cache    = root / "hub";
+
+    struct NoGpu final : GpuSource {
+        std::vector<GpuStat> snapshot() override { return {}; }
+
+        std::string error() const override { return {}; }
+    };
+
+    App app(options, std::make_unique<NoGpu>());
+    httplib::Server server;
+    app.install(server);
+    const int port = server.bind_to_any_port("127.0.0.1");
+    std::thread thread([&] { server.listen_after_bind(); });
+    server.wait_until_ready();
+    httplib::Client client("127.0.0.1", port);
+    const auto remove = [&](const fs::path& artifact) {
+        return client.Post("/api/delete", nlohmann::json{{"artifact", artifact.string()}}.dump(),
+                           "application/json");
+    };
+
+    // The default first: the optioned conversion (possibly serving) and the commit stay.
+    auto res = remove(commit / "m.dense_bf16.ninferno");
+    check(res && res->status == 200, "the default conversion is deleted");
+    check(!fs::exists(commit / "m.dense_bf16.ninferno") &&
+              !fs::exists(commit / "m.dense_bf16.ninferno.conversion.json"),
+          "with its sidecars");
+    check(fs::exists(custom / "m.dense_bf16.ninferno") &&
+              fs::exists(custom / "m.dense_bf16.ninferno.options"),
+          "the optioned conversion is still there");
+    // Then the optioned one, now the last: its directory goes with its lock, and the commit's.
+    res = remove(custom / "m.dense_bf16.ninferno");
+    check(res && res->status == 200, "the optioned conversion is deleted");
+    check(!fs::exists(custom) && !fs::exists(commit), "an emptied options directory and commit go");
+
+    // The optioned one first: the default stays, and the options directory is gone.
+    make();
+    res = remove(custom / "m.dense_bf16.ninferno");
+    check(res && res->status == 200, "the optioned conversion is deleted first");
+    check(!fs::exists(custom) && fs::exists(commit / "m.dense_bf16.ninferno"),
+          "its directory (lock included) goes, the default stays");
+
+    // The default has a speculation manifest naming its drafter (and itself, as the target): an
+    // optioned sibling of the same file name is no drafter of it, whatever the text of the
+    // manifest says. Deleting the default leaves the sibling and the commit.
+    {
+        make();
+        const auto drafter = commit / "d.dflash.ninferno";
+        std::ofstream(drafter) << "x";
+        const auto manifest = std::string("{\"schema\":1,\"target\":{\"artifact\":\"") +
+                              (commit / "m.dense_bf16.ninferno").string() +
+                              "\"},\"drafters\":[{\"name\":\"d\",\"artifact\":\"" +
+                              drafter.string() + "\"}]}";
+        std::ofstream(commit / "m.dense_bf16.ninferno.speculation.json") << manifest;
+        res = remove(commit / "m.dense_bf16.ninferno");
+        check(res && res->status == 200, "the default with a manifest is deleted");
+        check(fs::exists(custom / "m.dense_bf16.ninferno") && fs::exists(commit),
+              "an optioned sibling of the same name is not taken for the manifest's drafter");
+    }
+
+    // A conversion still being written has no .ninferno yet, only its lock (held) and a young
+    // temporary: it is not an empty directory. Deleting the default must leave it, the commit and
+    // the repository (the snapshot it reads).
+    {
+        fs::remove_all(root);
+        fs::create_directories(commit / "options-aaaaaaaaaaaa");
+        fs::create_directories(root / "hub/models--org--m/snapshots" / std::string(40, 'c'));
+        std::ofstream(root / "hub/models--org--m/snapshots" / std::string(40, 'c') /
+                      "model.safetensors")
+            << "w";
+        std::ofstream(commit / "m.dense_bf16.ninferno") << "x";
+        std::ofstream(commit / "m.dense_bf16.ninferno.conversion.json") << "{}";
+        const auto lock = commit / "options-aaaaaaaaaaaa" / ".convert.lock";
+        std::ofstream(commit / "options-aaaaaaaaaaaa" / ".m.dense_bf16.ninferno.AbC123.tmp") << "t";
+        const int fd = ninferno::sys::open(lock, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+        check(fd >= 0 && ninferno::sys::lock(fd, false) == 0, "the test holds a conversion's lock");
+        res = remove(commit / "m.dense_bf16.ninferno");
+        check(res && res->status == 200, "the default is deleted while another conversion runs");
+        check(fs::exists(lock) && fs::exists(commit) &&
+                  fs::exists(root / "hub/models--org--m/snapshots" / std::string(40, 'c') /
+                             "model.safetensors"),
+              "a running conversion, its commit and the snapshot it reads stay");
+        // The lock released, the temporary young: still taken for a writer without locks.
+        ninferno::sys::close(fd);
+        check(ninferno::convert::conversion_in_progress(commit),
+              "a young temporary is a conversion in progress");
+        fs::remove(commit / "options-aaaaaaaaaaaa" / ".m.dense_bf16.ninferno.AbC123.tmp");
+        check(!ninferno::convert::conversion_in_progress(commit),
+              "an unlocked lock file alone is not");
+    }
+
+    server.stop();
+    thread.join();
+    fs::remove_all(root);
+}
+
 void test_http() {
     UiOptions options;
     options.offline      = true;
@@ -1360,6 +1488,7 @@ int main(int argc, char** argv) {
     test_catalog();
     test_processes(ninferno::sys::self_exe().string());
     test_http();
+    test_delete_options();
     if (failures != 0) {
         std::cerr << failures << " ui check(s) failed" << std::endl;
         return 1;

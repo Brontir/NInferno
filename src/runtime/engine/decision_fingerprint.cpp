@@ -37,7 +37,7 @@ namespace {
 // credentials, update checks and where a tool finds its inputs (the desktop UI's access key,
 // catalog and updater, apps/ui). Every decision is an option. The <dump>_ROWS names are built at
 // run time from their dump's name (models/common/layer_dump.h).
-constexpr std::array<std::string_view, 23> kNonDecisionVariables{
+constexpr std::array<std::string_view, 24> kNonDecisionVariables{
     "NINFERNO_DENSE_DUMP_ROWS",
     "NINFERNO_GEMMA4_DUMP_ROWS",
     "NINFERNO_QWEN_DUMP_ROWS",
@@ -52,6 +52,7 @@ constexpr std::array<std::string_view, 23> kNonDecisionVariables{
     "NINFERNO_PDFIUM",
     "NINFERNO_QWEN_DUMP",
     "NINFERNO_QWEN_DUMP_KINDS",
+    "NINFERNO_PROJECTION_RECORD",
     "NINFERNO_ROUTE_RECORD",
     "NINFERNO_SCORE_ARGMAX",
     "NINFERNO_SCORE_LOGITS",
