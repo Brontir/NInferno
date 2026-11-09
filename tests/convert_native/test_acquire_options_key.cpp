@@ -7,7 +7,9 @@
 // (existing caches stay valid), options-<key> inside it otherwise.
 
 #include "convert/acquire.h"
+#include "convert/options_key.h"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -232,6 +234,24 @@ int main() {
         write_text(root / "src2" / "a.bin", "aaab");
         check(cv::content_options_key(a) != cv::content_options_key(b),
               "a source with another byte is another key");
+    }
+    // A file over 64 MiB is its size and the bytes of its head and tail: a copy under another
+    // modification time is the same file, a byte changed in its head another.
+    {
+        std::string big(65U << 20, '\0');
+        for (std::size_t i = 0; i < big.size(); i += 4096) { big[i] = static_cast<char>(i >> 12); }
+        write_text(root / "big1.bin", big);
+        write_text(root / "big2.bin", big);
+        fs::last_write_time(root / "big2.bin",
+                            fs::last_write_time(root / "big1.bin") - std::chrono::hours(48));
+        check(cv::content_identity(root / "big1.bin") == cv::content_identity(root / "big2.bin"),
+              "a large file copied under another time keeps its identity");
+        big[100] = 'x';
+        write_text(root / "big2.bin", big);
+        check(cv::content_identity(root / "big1.bin") != cv::content_identity(root / "big2.bin"),
+              "a large file with another byte in its head is another identity");
+        fs::remove(root / "big1.bin");
+        fs::remove(root / "big2.bin");
     }
     // The caller's own chat template (serve --chat-template) is applied at run time: no option.
     {
