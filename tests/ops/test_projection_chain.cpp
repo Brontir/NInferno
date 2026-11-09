@@ -162,6 +162,20 @@ int main() {
         // Totals 0.501 and 0.492 are 1.8 % apart: a tie at 2 %, and one launch wins.
         expect(chosen(a, 0.02, 0.001) == "fused", "a launch price, then a tie by the resolution");
     }
+    // The band does not drift: A 1.000 / 3 launches, B 1.015 / 2, C 1.030 / 1 at 2 %. B is inside
+    // the band of the minimum A, C outside (3 %): B, in every order.
+    {
+        const Alternative A{"A", {Step{1.000, 3}}};
+        const Alternative B{"B", {Step{1.015, 2}}};
+        const Alternative C{"C", {Step{1.030, 1}}};
+        const std::vector<std::vector<Alternative>> orders{{A, B, C}, {C, B, A}, {B, A, C},
+                                                           {B, C, A}, {A, C, B}, {C, A, B}};
+        for (const auto& order : orders) {
+            expect(chosen(order, 0.02) == "B", "three alternatives: B, the order does not matter");
+            expect(chosen(order, 0.0) == "A", "three alternatives, resolution 0: the minimum");
+            expect(chosen(order, 0.04) == "C", "three alternatives, 4 %: C is in the band");
+        }
+    }
     // Unpriced alternatives are skipped; with none priced nothing is selected.
     {
         chain::PairPrices p;
