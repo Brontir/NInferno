@@ -581,9 +581,10 @@ OJson block_dflash_config(const OJson& source, std::optional<std::uint64_t> toke
             theta             = member(typed && typed->is_object() ? *typed : *rope, "rope_theta");
         }
     }
-    // The drafter runs one rope over every layer (DFlashConfig::rope_inv_freq): sliding layers keyed
-    // to a rope of their own (rope_parameters.sliding_attention) cannot run on it.
-    if (const auto* rope = member(source, "rope_parameters"); sliding && rope && rope->is_object()) {
+    // The drafter runs one rope over every layer (DFlashConfig::rope_inv_freq): sliding layers
+    // keyed to a rope of their own (rope_parameters.sliding_attention) cannot run on it.
+    if (const auto* rope = member(source, "rope_parameters");
+        sliding && rope && rope->is_object()) {
         const auto* full  = member(*rope, "full_attention");
         const auto* local = member(*rope, "sliding_attention");
         if (full && local && full->is_object() && local->is_object() && *full != *local) {
