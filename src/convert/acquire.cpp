@@ -833,6 +833,20 @@ std::optional<fs::path> kept_for_options(const fs::path& cache, const std::strin
                          content_options_key(baked, nullptr, context));
 }
 
+namespace {
+
+// A model that ships no chat template (known: none) is converted with the caller's as its
+// resource; one that ships its own, or whose answer is unknown, is not (#583). The conversion
+// after the fetch and the refetch lookup of the kept one ask it the same way.
+void bake_chat_template(ConvertOptions& convert, const AcquireOptions& options,
+                        const fs::path& model) {
+    if (!options.chat_template.empty() && local_support_facts(model).chat_template == false) {
+        convert.resources.emplace_back("chat_template.jinja", options.chat_template);
+    }
+}
+
+} // namespace
+
 fs::path conversion_directory(const fs::path& commit_dir, const std::string& key) {
     return key.empty() ? commit_dir : commit_dir / ("options-" + key);
 }
@@ -996,11 +1010,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                                 const auto chosen = snapshot_model(held_snapshot, held_fetch, repo);
                                 const fs::path held_model = chosen.value_or(held_snapshot);
                                 AcquireOptions as_written = options;
-                                if (!options.chat_template.empty() &&
-                                    local_support_facts(held_model).chat_template == false) {
-                                    as_written.convert.resources.emplace_back(
-                                        "chat_template.jinja", options.chat_template);
-                                }
+                                bake_chat_template(as_written.convert, options, held_model);
                                 OptionsKeyContext written_context = key_context;
                                 if (fs::is_directory(held_model)) {
                                     written_context.snapshot = held_model;
@@ -1179,10 +1189,7 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
     // Known now: a resource that is the snapshot's own file is no option (the key before the
     // fetch counted it).
     if (convert_options.out.empty()) {
-        if (!options.chat_template.empty() &&
-            local_support_facts(fetched.model).chat_template == false) {
-            convert_options.resources.emplace_back("chat_template.jinja", options.chat_template);
-        }
+        bake_chat_template(convert_options, options, fetched.model);
         if (fs::is_directory(fetched.model)) { key_context.snapshot = fetched.model; }
         variant_key =
             content_options_key(options, &options_described, key_context, &options_identity);
