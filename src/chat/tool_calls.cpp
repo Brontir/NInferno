@@ -1111,11 +1111,16 @@ std::optional<std::size_t> any_json_value_end(std::string_view text, std::size_t
 std::optional<std::string> without_leading_call_keys(std::string_view held,
                                                      std::span<const std::string_view> header) {
     if (header.empty() || header.front() != "{") { return std::string(held); }
+    // An id and a type, each short, and the whitespace around them: bytes past that hold no call
+    // header (the hold stays bounded however the bytes go on).
+    constexpr std::size_t kLongestLeadingKeys = 768;
+    if (held.size() > kLongestLeadingKeys) { return std::string(held); }
     std::size_t pos = 0;
     skip_format_whitespace(held, pos);
     if (pos == held.size() || held[pos] != '{') { return std::string(held); }
     const std::size_t open = pos++;
     bool skipped           = false;
+    int keys               = 0;
     for (;;) {
         std::size_t key = pos;
         skip_format_whitespace(held, key);
@@ -1129,7 +1134,8 @@ std::optional<std::string> without_leading_call_keys(std::string_view held,
                 return std::nullopt;
             }
         }
-        if (name.empty()) { break; }
+        // Each of the two keys once: a third leading key is no call's header.
+        if (name.empty() || ++keys > 2) { break; }
         std::size_t at = key + name.size();
         skip_format_whitespace(held, at);
         if (at == held.size()) { return std::nullopt; }
