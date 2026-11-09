@@ -850,7 +850,15 @@ std::optional<models::DrafterStateShape> plan_drafter_state_of_config(const json
             const double scaling = number(*rope, "attention_scaling");
             // Published without the length, YaRN's factor tells it: the converter writes that
             // factor's default attention scaling, from which the runtime tells the same length.
-            const double published = number(*rope, "factor");
+            // An attention factor set apart (attention_factor, or mscale with mscale_all_dim) is
+            // not that default: the runtime tells no length from it, and the layers stay paged.
+            const auto set = [&](const char* name) {
+                const auto it = rope->find(name);
+                return it != rope->end() && !it->is_null();
+            };
+            const bool own_scaling =
+                set("attention_factor") || (set("mscale") && set("mscale_all_dim"));
+            const double published = own_scaling ? 0.0 : number(*rope, "factor");
             if (original == 0 && yarn && positions != 0 && (scaling > 1.0 || published >= 2.0)) {
                 const double factor = scaling > 1.0 ? std::exp((scaling - 1.0) / 0.1) : published;
                 const double whole  = std::round(factor);

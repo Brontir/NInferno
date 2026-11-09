@@ -1343,6 +1343,15 @@ void test_gptoss_drafter_rings() {
         check(state && state->local_layers == 0 && state->full_layers == 8,
               "rope_parameters over rope_scaling: " + parameters.dump());
     }
+    // An attention factor of its own (not YaRN's default) tells no length: paged.
+    for (const json& own :
+         {json{{"rope_type", "yarn"}, {"factor", 32.0}, {"attention_factor", 1.2}},
+          json{
+              {"rope_type", "yarn"}, {"factor", 32.0}, {"mscale", 1.0}, {"mscale_all_dim", 1.0}}}) {
+        const auto state = drafter("rope_scaling", own);
+        check(state && state->local_layers == 0 && state->full_layers == 8,
+              "an overridden YaRN attention factor stays paged: " + own.dump());
+    }
     const auto keyed = drafter("rope_parameters", json{{"full_attention", yarn_4096}});
     check(keyed && keyed->local_layers == 8 && keyed->window == 4096,
           "gpt-oss drafter rings from rope_parameters keyed by layer type");
