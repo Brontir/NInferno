@@ -829,11 +829,19 @@ std::optional<models::DrafterStateShape> plan_drafter_state_of_config(const json
     if (out.local_layers == 0 && number(config, "head_dim") == 64) {
         const std::uint32_t positions = u32(number(config, "max_position_embeddings"));
         std::uint32_t original        = 0;
-        // The converter's precedence (convert/dense.cpp rope_parameters): transformers-5
-        // rope_parameters (keyed by layer type, or flat) over the legacy rope_scaling.
+        // As the DFlash converter reads it (convert/gemma4.cpp block_dflash_config): a published
+        // rope is resolved only where rope_scaling is given, and then with the precedence of
+        // convert/dense.cpp rope_parameters: transformers-5 rope_parameters (keyed by layer type,
+        // or flat) over the legacy rope_scaling. rope_parameters alone leaves the rope unscaled.
+        const auto scaling_given = [&] {
+            const auto it = config.find("rope_scaling");
+            return it != config.end() && !it->is_null() && !(it->is_object() && it->empty());
+        }();
         const auto rope_of = [&](const char* key) -> const json* {
             const auto it = config.find(key);
             if (it == config.end() || !it->is_object()) { return nullptr; }
+            if (std::string_view(key) == "rope") { return &*it; }
+            if (!scaling_given) { return nullptr; }
             if (std::string_view(key) != "rope_parameters") { return &*it; }
             if (const auto typed = it->find("full_attention");
                 typed != it->end() && typed->is_object()) {

@@ -1393,9 +1393,28 @@ void test_gptoss_drafter_rings() {
         check(beside && beside->local_layers == 8 && beside->window == 4096,
               "a YaRN length beside rope_scaling rings");
     }
-    const auto keyed = drafter("rope_parameters", json{{"full_attention", yarn_4096}});
-    check(keyed && keyed->local_layers == 8 && keyed->window == 4096,
-          "gpt-oss drafter rings from rope_parameters keyed by layer type");
+    // rope_parameters alone: the DFlash converter keeps the rope unscaled (no length), paged; with
+    // rope_scaling given, the keyed rope_parameters is the rope it resolves.
+    const auto alone = drafter("rope_parameters", json{{"full_attention", yarn_4096}});
+    check(alone && alone->local_layers == 0 && alone->full_layers == 8,
+          "rope_parameters without rope_scaling stays paged");
+    {
+        json c           = {{"architectures", {"DFlashDraftModel"}},
+                            {"model_type", "dflash"},
+                            {"num_hidden_layers", 8},
+                            {"num_attention_heads", 64},
+                            {"num_key_value_heads", 8},
+                            {"head_dim", 64},
+                            {"max_position_embeddings", 131072},
+                            {"layer_types", layers},
+                            {"rope_scaling", {{"rope_type", "default"}}},
+                            {"rope_parameters", {{"full_attention", yarn_4096}}},
+                            {"dflash_config",
+                             {{"target_layer_ids", {1, 6, 11, 16, 21}}, {"mask_token_id", 200000}}}};
+        const auto keyed = pr::plan_drafter_state_of_config(c, 2880);
+        check(keyed && keyed->local_layers == 8 && keyed->window == 4096,
+              "gpt-oss drafter rings from rope_parameters keyed by layer type");
+    }
 }
 
 int main() {
