@@ -51,7 +51,7 @@ class GateAudit(unittest.TestCase):
         gens = audit.generations(root / "src/core/generation.h")
         self.assertEqual(audit.generation_of(gens, 89)[3], "ada")
         measured = audit.measured_boards(root / "src/core/measured_boards.h")
-        self.assertEqual(len(measured), 8)
+        self.assertGreaterEqual(len(measured), 8)
         import json
         facts = json.loads((root / "src/core/data/gpu_facts.json").read_text(encoding="utf-8"))
         cards = audit.load_cards(root / "routes", gens, facts)

@@ -56,7 +56,7 @@ loses. All prompts are far above every ridge, i.e. compute-bound prefill.
 | GB20x | 5070 Ti -> 5090 | w4a8 | 4 / 4 | 9.0 % | 5.1 % |
 
 Ada transfers at the gate level in the compute-bound regime on every measured pair (distance up to
-2.4 in the tables). GB20x does not: the label cannot be carried between 70 and 170 SMs in either
+4.3, the 4060 Ti and the 4090). GB20x does not: the label cannot be carried between 70 and 170 SMs in either
 direction, up to 9 % of prefill time. This is the information the production rule already uses (the
 5070 Ti takes the 5060 Ti's `false`, the 4070 Ti the L4's `true` at 0.797); the audit adds the
 size of the loss when the donor is the wrong side.
