@@ -584,12 +584,8 @@ OJson block_dflash_config(const OJson& source, std::optional<std::uint64_t> toke
     result["rope_theta"]   = f32(theta, label + ".rope_theta");
     // A scaled rope (gpt-oss's drafter: YaRN, as its target) is resolved into the frequency table
     // over the whole head, as transformers computes it.
-    if (const auto* scaling = member(source, "rope_scaling");
-        present(scaling) && !(scaling->is_object() && scaling->empty())) {
-        const auto* limit = member(source, "max_position_embeddings");
-        result["rope"]    = resolved_rope(source, result["head_dim"].get<std::uint64_t>(),
-                                          present(limit) ? limit->get<std::uint64_t>() : 0,
-                                          label + ".rope_scaling");
+    if (auto rope = dflash_rope(source, result["head_dim"].get<std::uint64_t>(), label)) {
+        result["rope"] = std::move(*rope);
     }
     result["rms_norm_eps"] = f32(member(source, "rms_norm_eps"), label + ".rms_norm_eps");
     result["block_size"]   = positive(member(source, "block_size"), label + ".block_size");

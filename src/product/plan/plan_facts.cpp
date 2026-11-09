@@ -11,6 +11,7 @@
 #include "convert/gguf.h"
 #include "convert/gguf_resources.h"
 #include "core/device_class.h"
+#include "core/dflash_ring.h"
 #include "core/ggml_frag.h"
 #include "core/machine_facts.h"
 #include "spec/pairs.h"
@@ -822,84 +823,40 @@ std::optional<models::DrafterStateShape> plan_drafter_state_of_config(const json
     out.window      = out.local_layers != 0 ? u32(number(config, "sliding_window")) : 0;
     // A drafter without a sliding layer whose YaRN rope was scaled from a length a ring holds
     // (gpt-oss's 4096 of 131072): the runtime runs every layer as a sliding one of that window
-    // (speculation::parse_dflash_config, #564), its keys and values in rings, not pages. The
-    // length as published (rope_scaling, rope_parameters) or as converted (rope), and for an
-    // artifact converted before the converter recorded it, told by YaRN's default attention factor
-    // 0.1 ln(factor) + 1 as the runtime's yarn_original_length tells it.
-    if (out.local_layers == 0 && number(config, "head_dim") == 64) {
+    // (speculation::parse_dflash_config, #564), its keys and values in rings, not pages. The rope
+    // is the one the converter writes (convert::dflash_rope), or the converted artifact's own, and
+    // the window is told from it as the runtime tells it (core/dflash_ring.h).
+    if (out.local_layers == 0) {
         const std::uint32_t positions = u32(number(config, "max_position_embeddings"));
-        std::uint32_t original        = 0;
-        // As the DFlash converter reads it (convert/gemma4.cpp block_dflash_config): a published
-        // rope is resolved only where rope_scaling is given, and then with the precedence of
-        // convert/dense.cpp rope_parameters: transformers-5 rope_parameters (keyed by layer type,
-        // or flat) over the legacy rope_scaling. rope_parameters alone leaves the rope unscaled.
-        const auto scaling_given = [&] {
-            const auto it = config.find("rope_scaling");
-            return it != config.end() && !it->is_null() && !(it->is_object() && it->empty());
-        }();
-        const auto rope_of = [&](const char* key) -> const json* {
-            const auto it = config.find(key);
-            if (it == config.end() || !it->is_object()) { return nullptr; }
-            if (std::string_view(key) == "rope") { return &*it; }
-            if (!scaling_given) { return nullptr; }
-            if (std::string_view(key) != "rope_parameters") { return &*it; }
-            if (const auto typed = it->find("full_attention");
-                typed != it->end() && typed->is_object()) {
-                return &*typed;
-            }
-            return it->contains("rope_theta") || it->contains("rope_type") ? &*it : nullptr;
-        };
-        for (const char* key : {"rope", "rope_parameters", "rope_scaling"}) {
-            const json* rope = rope_of(key);
-            if (rope == nullptr) { continue; }
-            // Only a YaRN rope bounds the drafter (the converter records the length for YaRN
-            // alone): its type as the converter reads it, rope_type or the legacy type.
-            auto type = rope->find("rope_type");
-            if (type == rope->end() || !type->is_string()) { type = rope->find("type"); }
-            const bool yarn = type != rope->end() && type->is_string() && *type == "yarn";
-            original        = yarn ? u32(number(*rope, "original_max_position_embeddings")) : 0;
-            // Phi-3 keeps the length beside rope_scaling, not in it: the converter copies it in.
-            if (yarn && original == 0 && std::string_view(key) == "rope_scaling") {
-                original = u32(number(config, "original_max_position_embeddings"));
-            }
-            // The attention scaling the runtime reads its length back from (yarn_original_length):
-            // as converted (rope), or as the converter computes it from a published rope
-            // (core/yarn.h yarn_rope): attention_factor, else mscale over mscale_all_dim, else
-            // YaRN's default 0.1 ln(factor) + 1. A value 0, false or null is unset, as there.
-            const auto truthy = [&](const char* name) {
-                const auto it = rope->find(name);
-                return it != rope->end() && !it->is_null() &&
-                       !(it->is_boolean() && !it->get<bool>()) &&
-                       !(it->is_number() && it->get<double>() == 0.0);
-            };
-            const auto mscale_of = [](double scale, double m) {
-                return scale <= 1 ? 1.0 : 0.1 * m * std::log(scale) + 1.0;
-            };
-            double scaling = 0.0;
-            if (std::string_view(key) == "rope") {
-                scaling = number(*rope, "attention_scaling");
-            } else {
-                const double factor = number(*rope, "factor");
-                scaling             = truthy("attention_factor") ? number(*rope, "attention_factor")
-                                      : truthy("mscale") && truthy("mscale_all_dim")
-                                          ? mscale_of(factor, number(*rope, "mscale")) /
-                                    mscale_of(factor, number(*rope, "mscale_all_dim"))
-                                          : mscale_of(factor, 1.0);
-            }
-            if (original == 0 && yarn && positions != 0 && scaling > 1.0) {
-                const double factor = std::exp((scaling - 1.0) / 0.1);
-                const double whole  = std::round(factor);
-                if (whole >= 2.0 && std::fabs(factor - whole) <= 1e-3 * whole &&
-                    positions % static_cast<std::uint32_t>(whole) == 0) {
-                    original = positions / static_cast<std::uint32_t>(whole);
-                }
-            }
-            break;
+        const std::uint32_t head_dim  = u32(number(config, "head_dim"));
+        std::optional<convert::OJson> rope;
+        if (const auto it = config.find("rope"); it != config.end() && it->is_object()) {
+            rope = convert::OJson::parse(it->dump());
+        } else if (head_dim != 0) {
+            // A rope the converter refuses converts no drafter: nothing to plan rings for.
+            try {
+                rope =
+                    convert::dflash_rope(convert::OJson::parse(config.dump()), head_dim, "drafter");
+            } catch (const std::exception&) {}
         }
-        if ((original == 2048 || original == 4096) && original < positions) {
-            out.local_layers = out.full_layers;
-            out.full_layers  = 0;
-            out.window       = original;
+        if (rope && rope->is_object()) {
+            const auto length     = rope->find("original_max_position_embeddings");
+            const auto recorded   = length != rope->end() && length->is_number()
+                                        ? std::optional<std::uint64_t>(length->get<std::uint64_t>())
+                                        : std::nullopt;
+            const auto type       = rope->find("rope_type");
+            const bool yarn       = type != rope->end() && type->is_string() && *type == "yarn";
+            const auto scaling    = rope->find("attention_scaling");
+            const float attention = scaling != rope->end() && scaling->is_number()
+                                        ? static_cast<float>(scaling->get<double>())
+                                        : 0.0F;
+            const std::uint32_t window = core::dflash_ring_window(
+                core::yarn_original_length(recorded, yarn, attention, positions), head_dim);
+            if (window != 0) {
+                out.local_layers = out.full_layers;
+                out.full_layers  = 0;
+                out.window       = window;
+            }
         }
     }
     out.kv_heads    = static_cast<std::int32_t>(u32(number(config, "num_key_value_heads")));

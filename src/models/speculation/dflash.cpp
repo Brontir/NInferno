@@ -3,6 +3,7 @@
 #include "artifact/reader.h"
 #include "models/common/config_json.h"
 #include "models/common/loading.h"
+#include "core/dflash_ring.h"
 #include "core/weight_view.h"
 #include "ninferno/ops/linear.h"
 
@@ -29,33 +30,6 @@ std::int32_t positive(const artifact::Json& json, const char* key) {
         throw artifact::ArtifactError(std::string("dflash config: ") + key + " exceeds int32");
     }
     return static_cast<std::int32_t>(value);
-}
-
-// The context length a YaRN rope was scaled from, when it is shorter than the positions the drafter
-// addresses (0: none). The converter records it (original_max_position_embeddings, only when it is
-// below max_position_embeddings). An artifact converted before that is told by YaRN's default
-// attention factor, 0.1 ln(factor) + 1, with factor = max / original a whole number; it serves
-// only the gpt-oss drafters cached then (1.3466 -> 32, 131072 / 32 = 4096). An attention_factor or
-// mscale set explicitly in the checkpoint gives no whole factor there: no length.
-std::int32_t yarn_original_length(const artifact::Json& rope, std::uint32_t max_positions,
-                                  float attention_scaling) {
-    if (max_positions == 0) { return 0; }
-    if (rope.contains("original_max_position_embeddings")) {
-        const auto original = json_dimension(rope, "original_max_position_embeddings");
-        return original < max_positions && original <= static_cast<std::uint32_t>(INT32_MAX)
-                   ? static_cast<std::int32_t>(original)
-                   : 0;
-    }
-    if (rope.value("rope_type", std::string()) != "yarn" || !(attention_scaling > 1.0F)) {
-        return 0;
-    }
-    const double factor = std::exp((static_cast<double>(attention_scaling) - 1.0) / 0.1);
-    const double whole  = std::round(factor);
-    if (whole < 2.0 || std::fabs(factor - whole) > 1e-3 * whole ||
-        max_positions % static_cast<std::uint32_t>(whole) != 0) {
-        return 0;
-    }
-    return static_cast<std::int32_t>(max_positions / static_cast<std::uint32_t>(whole));
 }
 
 } // namespace
@@ -110,8 +84,14 @@ DFlashConfig parse_dflash_config(const artifact::Json& c) {
         }
         out.rope_attention_scaling = json_positive_float(rope, "attention_scaling");
         out.rope_scaled            = true;
-        window_candidate =
-            yarn_original_length(rope, out.max_positions, out.rope_attention_scaling);
+        const std::optional<std::uint64_t> recorded =
+            rope.contains("original_max_position_embeddings")
+                ? std::optional<std::uint64_t>(
+                      json_dimension(rope, "original_max_position_embeddings"))
+                : std::nullopt;
+        window_candidate = static_cast<std::int32_t>(
+            core::yarn_original_length(recorded, rope.value("rope_type", std::string()) == "yarn",
+                                       out.rope_attention_scaling, out.max_positions));
     } else {
         for (std::int32_t i = 0; i < out.head_dim; i += 2) {
             const float exponent = static_cast<float>(i) / static_cast<float>(out.head_dim);
@@ -171,9 +151,9 @@ DFlashConfig parse_dflash_config(const artifact::Json& c) {
     // reads the paged context through its window (full_window).
     if (window_candidate > 0 && std::all_of(out.windows.begin(), out.windows.end(),
                                             [](std::int32_t w) { return w == 0; })) {
-        // The dense drafter's rings at D64 (gpt-oss's) only: a D128 drafter of this shape would
-        // run on the Qwen Program's int8 local path, never qualified for it.
-        if (out.head_dim == 64 && (window_candidate == 2048 || window_candidate == 4096)) {
+        if (const auto ring = core::dflash_ring_window(static_cast<std::uint32_t>(window_candidate),
+                                                       static_cast<std::uint32_t>(out.head_dim));
+            ring != 0) {
             out.sliding_window = window_candidate;
             std::fill(out.windows.begin(), out.windows.end(), window_candidate);
             out.sliding_block = true; // a full layer's block sees itself whole
