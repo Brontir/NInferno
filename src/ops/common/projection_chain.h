@@ -16,13 +16,24 @@
 // route_cost_constants.h, so a caller passes it only where that model prices its L2 term and 0
 // elsewhere, which reads at the DRAM's); no constant is added here. The tensor counts as held in
 // the L2 when twice its bytes fit, the generic model's own rule (its weights stream through the
-// L2 beside it). The launch count is no price (no launch
-// constant is fitted); it breaks a tie.
+// L2 beside it).
 //
-// Selection: the lowest total seconds among the priced alternatives; totals within a relative 1e-9
-// of each other are a tie (the repo's kWorthTie band, product/choice/choice_constants.h), and a tie
-// goes to fewer launches, then to the earlier alternative in the caller's canonical order. An
-// alternative with an unpriced step (or a non-finite one, or a step of no launch) is not
+// Launches: a launch has a measured cost per generation, but this header holds none. The choice
+// has it (kKernelCost, src/product/choice/choice_constants.h: the seconds a kernel costs beyond
+// its bytes, per generation and card count, with the graph gap) and so has the speculation code
+// (kLaunchTime, src/spec/round_cost.h, Ada only). select() takes it as `launch_seconds`, the
+// caller's number, added to every launch of a chain; 0 (the default) prices no launch, and the
+// launch count then only breaks a tie. Roadmap #617 step B unifies the constants; they are not
+// moved here.
+//
+// Selection: the lowest total seconds (steps plus launches x launch_seconds) among the priced
+// alternatives. Totals whose ln ratio is within `resolution` are a tie: the speed estimate's
+// resolution (#301, DECISIONS 75), which the caller reads where it prices (product::choice::Choice
+// ::resolution: the reference card's generation's measured decode error, worth_band(card), in ln
+// time units; this device-free header does not include it). A tie goes to fewer launches, then to
+// the earlier alternative in the caller's canonical order. A resolution of 0 compares exactly. The
+// band is not transitive, so each alternative is compared with the best so far, in the canonical
+// order. An alternative with an unpriced step (or a non-finite one, or a step of no launch) is not
 // selectable; none priced selects nothing (the caller keeps its rule).
 
 #include <algorithm>
@@ -34,9 +45,6 @@
 #include <vector>
 
 namespace ninferno::ops::detail::chain {
-
-// Seconds within this relative band are a tie.
-inline constexpr double kTie = 1e-9;
 
 struct Step {
     std::optional<double> seconds; // nullopt: the cost model does not price this step
@@ -104,25 +112,39 @@ projection_step_seconds(std::optional<double> route_seconds, double output_bytes
     return bytes_read / read_bw + bytes_written / memory.dram_bytes_per_second;
 }
 
-// The index of the selected alternative, nullopt when none is priced.
-[[nodiscard]] inline std::optional<std::size_t>
-select(const std::vector<Alternative>& alternatives) {
+// Whether two totals are indistinguishable at `resolution` (the ln of their ratio at most). Equal
+// totals always are; a zero total is within the band of nothing but another zero.
+[[nodiscard]] inline bool within_resolution(double a, double b, double resolution) {
+    if (a == b) { return true; }
+    if (!(resolution > 0.0) || !(a > 0.0) || !(b > 0.0)) { return false; }
+    return std::abs(std::log(a / b)) <= resolution;
+}
+
+// The index of the selected alternative, nullopt when none is priced. `resolution` is in ln time
+// units (0, negative or non-finite: exact comparison); `launch_seconds` is added per launch (0,
+// negative or non-finite: launches are no price). Where a caller gets them: the header comment.
+[[nodiscard]] inline std::optional<std::size_t> select(const std::vector<Alternative>& alternatives,
+                                                       double resolution     = 0.0,
+                                                       double launch_seconds = 0.0) {
+    if (!std::isfinite(resolution) || !(resolution > 0.0)) { resolution = 0.0; }
+    if (!std::isfinite(launch_seconds) || !(launch_seconds > 0.0)) { launch_seconds = 0.0; }
     std::optional<std::size_t> best;
-    Price best_price;
+    double best_total = 0.0;
+    int best_launches = 0;
     for (std::size_t i = 0; i < alternatives.size(); ++i) {
         const auto p = price(alternatives[i]);
         if (!p) { continue; }
-        bool better = !best;
+        const double total = p->seconds + p->launches * launch_seconds;
+        bool better        = !best;
         if (best) {
-            const double tol = kTie * std::max(p->seconds, best_price.seconds);
             // Strictly better only: a tie that fewer launches do not break leaves the earlier one.
-            better = p->seconds < best_price.seconds - tol ||
-                     (std::abs(p->seconds - best_price.seconds) <= tol &&
-                      p->launches < best_price.launches);
+            better = within_resolution(total, best_total, resolution) ? p->launches < best_launches
+                                                                      : total < best_total;
         }
         if (better) {
-            best       = i;
-            best_price = *p;
+            best          = i;
+            best_total    = total;
+            best_launches = p->launches;
         }
     }
     return best;

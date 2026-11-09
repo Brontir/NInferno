@@ -1,7 +1,8 @@
 // Whole-chain pricing and selection of a projection chain's fusion alternatives (#310,
 // ops/common/projection_chain.h): output writes added to every projection step, the pointwise
-// read at the L2's or the DRAM's bandwidth, the lowest chain seconds, a tie (relative 1e-9) to
-// fewer launches, then to the canonical order; unpriced steps are not selectable. No GPU.
+// read at the L2's or the DRAM's bandwidth, the lowest chain seconds, a tie (ln ratio within the
+// speed estimate's resolution) to fewer launches, then to the canonical order, an optional price
+// per launch; unpriced steps are not selectable. No GPU.
 #include "ops/common/projection_chain.h"
 
 #include <algorithm>
@@ -31,8 +32,9 @@ bool near(double a, double b) {
     return std::abs(a - b) <= 1e-12 * std::max(std::abs(a), std::abs(b));
 }
 
-std::string chosen(const std::vector<Alternative>& a) {
-    const auto i = chain::select(a);
+std::string chosen(const std::vector<Alternative>& a, double resolution = 0.0,
+                   double launch_seconds = 0.0) {
+    const auto i = chain::select(a, resolution, launch_seconds);
     return i ? a[*i].name : std::string("none");
 }
 
@@ -106,16 +108,59 @@ int main() {
         expect(chosen(chain::pair_alternatives(p)) == "fused", "tie, equal launches: order");
         p.fused_launches = 3;
         expect(chosen(chain::pair_alternatives(p)) == "separate", "tie, fused has more launches");
-        // A difference inside the band is a tie, outside it is not.
-        p.fused = 0.5 * (1.0 + 1.0e-11);
-        expect(chosen(chain::pair_alternatives(p)) == "separate", "inside the band: a tie");
-        // The band decides here: fused is dearer by 1e-11 but has fewer launches.
+        // Resolution 0 compares exactly: any difference decides, launches break only equality.
         p.fused_launches = 1;
+        p.fused          = 0.5 * (1.0 + 1.0e-11);
+        expect(chosen(chain::pair_alternatives(p)) == "separate", "resolution 0: cheaper wins");
+        p.fused = 0.5;
         expect(chosen(chain::pair_alternatives(p)) == "fused",
-               "inside the band, fewer launches win though dearer");
+               "resolution 0: equal, fewer launches");
+        // A resolution of 2 %: fused dearer by 1 % is a tie and wins on launches (1 against 2);
+        // dearer by 3 % is outside the band.
+        p.fused = 0.5 * 1.01;
+        expect(chosen(chain::pair_alternatives(p), 0.02) == "fused",
+               "inside the resolution, fewer launches win though dearer");
+        expect(chosen(chain::pair_alternatives(p)) == "separate", "the same at resolution 0");
+        p.fused = 0.5 * 1.03;
+        expect(chosen(chain::pair_alternatives(p), 0.02) == "separate", "outside the resolution");
+        // Inside the band with more launches on the cheaper side: fewer launches still win.
+        p.fused          = 0.5 * 0.99;
         p.fused_launches = 3;
-        p.fused          = 0.5 * (1.0 - 1.0e-6);
-        expect(chosen(chain::pair_alternatives(p)) == "fused", "outside the band: cheaper wins");
+        expect(chosen(chain::pair_alternatives(p), 0.02) == "separate",
+               "inside the resolution, the cheaper one has more launches: it loses");
+        expect(chosen(chain::pair_alternatives(p)) == "fused", "the same at resolution 0");
+        p.fused_launches = 2;
+        expect(chosen(chain::pair_alternatives(p), 0.02) == "fused",
+               "inside the resolution, equal launches: canonical order (fused is first)");
+        // The band is in ln units: its edge is a tie, a hair beyond it is not.
+        p.fused_launches = 1;
+        p.fused          = 0.5 * std::exp(0.05);
+        expect(chosen(chain::pair_alternatives(p), 0.05 * (1.0 + 1.0e-6)) == "fused",
+               "at the edge of the band: a tie");
+        expect(chosen(chain::pair_alternatives(p), 0.05 * (1.0 - 1.0e-6)) == "separate",
+               "beyond the band: not a tie");
+        // Invalid resolutions compare exactly.
+        p.fused = 0.5 * 1.01;
+        expect(chosen(chain::pair_alternatives(p), -1.0) == "separate", "negative resolution");
+        expect(chosen(chain::pair_alternatives(p), std::nan("")) == "separate", "NaN resolution");
+    }
+    // Launch pricing: launch_seconds is added per launch. Fused is 1 launch at 0.50, separate 2
+    // launches at 0.49.
+    {
+        chain::PairPrices p;
+        p.fused      = 0.50;
+        p.first      = 0.245;
+        p.second     = 0.245;
+        p.memory     = mem;
+        const auto a = chain::pair_alternatives(p);
+        expect(chosen(a) == "separate", "no launch price: the cheaper chain");
+        expect(chosen(a, 0.0, 0.001) == "separate", "a cheap launch: 0.501 against 0.492");
+        expect(chosen(a, 0.0, 0.02) == "fused", "a dear launch: 0.52 against 0.53");
+        expect(chosen(a, 0.0, -1.0) == "separate", "a negative launch price is none");
+        expect(chosen(a, 0.0, std::numeric_limits<double>::infinity()) == "separate",
+               "a non-finite launch price is none");
+        // Totals 0.501 and 0.492 are 1.8 % apart: a tie at 2 %, and one launch wins.
+        expect(chosen(a, 0.02, 0.001) == "fused", "a launch price, then a tie by the resolution");
     }
     // Unpriced alternatives are skipped; with none priced nothing is selected.
     {
