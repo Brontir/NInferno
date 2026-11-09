@@ -2022,6 +2022,7 @@ ninferno::PromptInput none_input(std::optional<bool> thinking) {
     result.messages.push_back(std::move(user));
     result.options.tool_jsons.push_back(
         R"({"type":"function","function":{"name":"inspect","parameters":{"type":"object"}}})");
+    result.options.tool_calls_enabled   = false;
     result.options.tool_calls_discarded = true;
     result.options.enable_thinking      = thinking;
     return result;
