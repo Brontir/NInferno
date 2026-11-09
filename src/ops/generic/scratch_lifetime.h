@@ -73,9 +73,9 @@ struct LaunchLifetime {
 };
 
 enum class ScratchHazard {
-    WriteAfterRead,       // writes a region the predecessor reads until it exits
-    ReadAfterWrite,       // reads a region the predecessor writes (its output is not yet there)
-    WriteAfterWrite,      // both write the region
+    WriteAfterRead,  // writes a region the predecessor reads until it exits
+    ReadAfterWrite,  // reads a region the predecessor writes (its output is not yet there)
+    WriteAfterWrite, // both write the region
 };
 
 [[nodiscard]] constexpr std::string_view scratch_hazard_name(ScratchHazard h) noexcept {

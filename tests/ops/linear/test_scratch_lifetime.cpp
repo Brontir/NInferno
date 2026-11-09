@@ -39,12 +39,18 @@ std::optional<g::PreparedRule> rule_of(const g::ResolvedRoute& r) {
     case g::Family::R8Mma:
         return r.r8_prequantized ? std::optional<g::PreparedRule>{{P::W4a8Blocks, 0, 0, false}}
                                  : std::nullopt;
-    case g::Family::GgmlVec: return g::PreparedRule{P::GgmlQ8_1, 0, 0, false};
-    case g::Family::GgmlMmq: return g::PreparedRule{P::GgmlQ8_1Mmq, 0, 0, false};
-    case g::Family::W4a8Mma: return g::PreparedRule{P::W4a8Blocks, 0, 0, false};
-    case g::Family::I8Mma: return g::PreparedRule{P::I8Blocks64, 0, 0, true};
-    case g::Family::W4a4Mma: return g::PreparedRule{P::Nvfp4, 0, 0, true};
-    default: return std::nullopt;
+    case g::Family::GgmlVec:
+        return g::PreparedRule{P::GgmlQ8_1, 0, 0, false};
+    case g::Family::GgmlMmq:
+        return g::PreparedRule{P::GgmlQ8_1Mmq, 0, 0, false};
+    case g::Family::W4a8Mma:
+        return g::PreparedRule{P::W4a8Blocks, 0, 0, false};
+    case g::Family::I8Mma:
+        return g::PreparedRule{P::I8Blocks64, 0, 0, true};
+    case g::Family::W4a4Mma:
+        return g::PreparedRule{P::Nvfp4, 0, 0, true};
+    default:
+        return std::nullopt;
     }
 }
 
@@ -119,7 +125,7 @@ int main() {
         // completion (the trigger is implicit at exit): nothing overlaps, so nothing conflicts.
         auto v = g::first_scratch_violation({projection, early_quantizer(kA)});
         check(!v.has_value(), "an early start under a non-releasing launch is not a hazard");
-        const auto mma     = route(g::Family::RegisterMma, false);
+        const auto mma      = route(g::Family::RegisterMma, false);
         const auto prefetch = g::launch_lifetime(
             "decode_prefetch", g::launch_overlap(mma, g::Epilogue::Store, 1, false, false, true),
             true, std::nullopt, std::nullopt);
@@ -148,21 +154,24 @@ int main() {
         const auto mma      = route(g::Family::RegisterMma, false);
         const auto first_o  = g::launch_overlap(mma, g::Epilogue::Store, 1, false, true, true);
         const auto second_o = g::launch_overlap(mma, g::Epilogue::Store, 1, true, false, true);
-        const auto first    = g::launch_lifetime("proj0", first_o, true, std::nullopt, std::nullopt);
-        const auto second   = g::launch_lifetime("proj1", second_o, true, std::nullopt, std::nullopt);
+        const auto first  = g::launch_lifetime("proj0", first_o, true, std::nullopt, std::nullopt);
+        const auto second = g::launch_lifetime("proj1", second_o, true, std::nullopt, std::nullopt);
         check(first.releases && second.starts_early &&
                   !g::first_scratch_violation({first, second}).has_value(),
               "two register-MMA projections: join under a released predecessor, no scratch shared");
         // Without PDL a join falls back to stream order: it does not start early at all.
         const auto no_pdl = g::launch_overlap(mma, g::Epilogue::Store, 1, true, false, false);
         check(no_pdl.joins() &&
-                  !g::launch_lifetime("proj1", no_pdl, false, std::nullopt, std::nullopt).starts_early,
+                  !g::launch_lifetime("proj1", no_pdl, false, std::nullopt, std::nullopt)
+                       .starts_early,
               "join asked, no PDL: stream order");
         auto reader = g::launch_lifetime("reader", first_o, false, std::nullopt, std::nullopt);
-        reader.add({kA, g::ScratchAccess::Read, g::ScratchFirst::AfterWait, g::ScratchLast::AtExit});
+        reader.add(
+            {kA, g::ScratchAccess::Read, g::ScratchFirst::AfterWait, g::ScratchLast::AtExit});
         reader.releases = true; // as if PDL were on
         auto joined     = g::launch_lifetime("joined", no_pdl, false, std::nullopt, std::nullopt);
-        joined.add({kA, g::ScratchAccess::Write, g::ScratchFirst::BeforeWait, g::ScratchLast::AtExit});
+        joined.add(
+            {kA, g::ScratchAccess::Write, g::ScratchFirst::BeforeWait, g::ScratchLast::AtExit});
         check(!g::first_scratch_violation({reader, joined}).has_value(),
               "join=true, pdl=false: clean");
     }
