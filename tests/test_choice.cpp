@@ -28,7 +28,8 @@
 
 namespace {
 
-// The kernel's column tile picks (core/mmq_columns.h): GA10x takes the least work of its widths,
+// The kernel's column tile picks (core/mmq_columns.h): GA10x, Ada and GB20x take the least work of
+// their widths,
 // every other card the fewest tiles of 16, 32, 64, 128. Never wider than the fixup plane's bound
 // (ggml_mmq fixup_bound: the column count rounded up to a power of two from 16, at most 128).
 namespace pins {
@@ -41,8 +42,10 @@ static_assert(pick(144, 8, 6, true) == 80 && pick(160, 8, 6, true) == 80 &&
 static_assert(pick(144, 12, 0, true) == 80 && pick(192, 12, 0, true) == 96 &&
               pick(224, 12, 0, true) == 80 && pick(256, 12, 0, true) == 128 &&
               pick(16, 12, 0, true) == 16);
-static_assert(pick(144, 8, 9, true) == 128 && pick(192, 8, 9, true) == 128 &&
-              pick(16, 8, 9, true) == 16 && pick(144, 7, 5, true) == 128);
+// Ada takes the least work too (f 0.20, as GA10x); Turing keeps the fewest tiles.
+static_assert(pick(144, 8, 9, true) == 80 && pick(192, 8, 9, true) == 96 &&
+              pick(224, 8, 9, true) == 128 && pick(16, 8, 9, true) == 16 &&
+              pick(144, 7, 5, true) == 128);
 // A format the grids did not run keeps the fewest tiles on every card
 // (mmq_columns::work_tiles_format).
 static_assert(pick(144, 8, 6, false) == 128 && pick(192, 12, 0, false) == 128 &&
