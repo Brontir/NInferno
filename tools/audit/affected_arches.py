@@ -52,21 +52,35 @@ ARCH_NAME_PATTERNS = [
 ]
 # Arches outside the five lab arches cannot be tested on one stand: run everything.
 OTHER_ARCH_NAME = r"sm_?(80|90|100|103)|ga100|gh100|hopper|a100|h100"
+# Host-only: no read of the card's compute capability, generation, nvfp4 or mma_slow facts (checked
+# by grep). src/ui (catalog.cpp, app.cpp pick fp4 by cc), src/serve (request_log.cpp reads the
+# capability), apps/cli, apps/serve and apps/ui are not listed: they answer "all".
 HOST_PREFIXES = (
-    "src/chat/", "src/serve/", "src/ui/", "src/convert/", "src/connect/", "src/artifact/",
-    "src/media/", "src/text/", "src/structured/", "apps/cli/", "apps/connect/", "apps/convert/",
-    "apps/serve/", "apps/ui/", "tests/chat/", "tests/convert/", "tests/convert_native/",
-    "tests/artifact/", "tests/release/", "tests/fixtures/", "tools/", "docs/", ".github/",
+    "src/chat/", "src/connect/", "src/media/", "src/text/", "src/structured/", "src/convert/",
+    "src/artifact/", "apps/connect/", "apps/convert/", "tests/chat/", "tests/convert/",
+    "tests/convert_native/", "tests/artifact/", "tests/release/", "tests/fixtures/", "tools/",
+    "docs/", ".github/",
 )
+# Arch-keyed allowlists of the SASS audits are data of device code.
+ALL_PATTERNS_EXTRA = [r"(^|/)pdl_[a-z_]*\.txt$", r"^tools/pdl_"]
 HOST_FILE = re.compile(
-    r"^src/models/[^/]+/frontend/|^tests/test_(ui|http|openai|anthropic|request_log|cli|connect|pdf|media|host|load_refusals|"
-    r"kit|registry|admission)[^/]*$")
-HOST_EXT = (".md", ".txt", ".yml", ".yaml")
-ARCH_MACROS = re.compile(r"NINFERNO_BUILD_ARCH|WITHOUT_NVFP4|__CUDA_ARCH__")
+    r"^tests/test_(connect|pdf|media|host|load_refusals|kit|registry|admission)[^/]*$")
+HOST_EXT = (".md", ".yml", ".yaml")
+ARCH_MACROS = re.compile(
+    r"NINFERNO_BUILD_ARCH\w*|WITHOUT_NVFP4|WITH_NVFP4|__CUDA_ARCH__|NINFERNO_(?:VOLTA|HMMA)\w*|"
+    r"NINFERNO_ARCH_FAMILY_SPECIFIC|NINFERNO_FULL_CUDA_ARCHS")
 DEVICE_EXT = (".cu", ".cuh")
 SOURCE_EXT = (".cu", ".cuh", ".h", ".hpp", ".cpp", ".cc", ".inl")
 DATA_EXT = (".json", ".txt", ".csv")
 INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]', re.M)
+
+
+def guard_arches(cond):
+    """The lab arches an `if(...)` condition on the build arch names, e.g. ARCH STREQUAL "70"."""
+    if "ARCH" not in cond:
+        return set()
+    table = (("70", "sm_70"), ("75", "sm_75"), ("86", "sm_86"), ("89", "sm_89"), ("120", "sm_120a"))
+    return {arch for num, arch in table if re.search(r"\b%s\b" % num, cond)}
 
 
 class Verdict:
@@ -129,7 +143,7 @@ class Repo:
 
     def _walk(self):
         out = []
-        for top in ("src", "apps", "tests", "third_party"):
+        for top in ("src", "apps", "tests", "third_party", "include"):
             base = self.root / top
             if not base.is_dir():
                 continue
@@ -145,12 +159,58 @@ class Repo:
             return ""
 
     def resolve(self, includer, name):
-        parts = [p for p in (PurePosixPath(includer).parent / name).parts if p != "."]
+        parts = []
+        for part in (PurePosixPath(includer).parent / name).parts:
+            if part == "..":
+                if parts:
+                    parts.pop()
+            elif part != ".":
+                parts.append(part)
         local = "/".join(parts)
         if local in self.fileset:
             return local
-        hits = self.by_suffix.get(name, [])
+        tail = [q for q in PurePosixPath(name).parts if q not in ("..", ".")]
+        hits = self.by_suffix.get("/".join(tail), [])
         return hits[0] if hits else None
+
+    def cmake_listing(self):
+        """basename -> one entry per listing: the set of arches of its guards, None if unguarded."""
+        if getattr(self, "_listing", None) is None:
+            listing = {}
+            for cm in self.root.rglob("*"):
+                if not (cm.name == "CMakeLists.txt" or cm.suffix == ".cmake") or not cm.is_file():
+                    continue
+                if any(part in ("build", ".git") for part in cm.parts):
+                    continue
+                stack = []
+                for line in cm.read_text(encoding="utf-8", errors="replace").splitlines():
+                    code = line.split("#")[0]
+                    m = re.match(r"\s*(if|elseif|else|endif)\s*\((.*)", code, re.I)
+                    if m:
+                        kw = m.group(1).lower()
+                        if kw == "if":
+                            stack.append(m.group(2))
+                        elif kw in ("elseif", "else") and stack:
+                            stack[-1] = m.group(2)
+                        elif kw == "endif" and stack:
+                            stack.pop()
+                        continue
+                    arches = {a for g in stack for a in guard_arches(g)}
+                    for f in re.findall(r"[\w./${}-]+\.(?:cuh|cu|cpp|h)\b", code):
+                        listing.setdefault(PurePosixPath(f).name, []).append(arches or None)
+            self._listing = listing
+        return self._listing
+
+    def built_on(self, path):
+        """The one arch whose tree alone builds a listed source; "all" if unguarded or on several
+        trees; None if no cmake file lists it (a header)."""
+        entries = self.cmake_listing().get(PurePosixPath(path).name)
+        if not entries:
+            return None
+        if any(e is None for e in entries):
+            return "all"
+        union = set().union(*entries)
+        return next(iter(union)) if len(union) == 1 else "all"
 
     def headers_reached_from_cu(self):
         if self.device_headers is None:
@@ -183,9 +243,15 @@ def classify(paths, repo, read=None):
         if re.search(OTHER_ARCH_NAME, name):
             v.add_all(p, "arch outside the lab set")
             continue
+        if any(re.search(pat, p) for pat in ALL_PATTERNS_EXTRA):
+            v.add_all(p, "allowlist of a device audit")
+            continue
         named = [a for a, pat in ARCH_NAME_PATTERNS if re.search(pat, name)]
-        if len(named) == 1 and p.endswith(SOURCE_EXT + DATA_EXT):
-            v.add_arch(p, named[0], "per-arch file name")
+        if len(named) == 1 and p.endswith(DATA_EXT):
+            v.add_arch(p, named[0], "per-arch data file name")
+            continue
+        if len(named) == 1 and p.endswith(SOURCE_EXT) and repo.built_on(p) == named[0]:
+            v.add_arch(p, named[0], "built on that arch's tree alone (cmake guard)")
             continue
         if p in device:
             v.add_all(p, "header included by a .cu file")

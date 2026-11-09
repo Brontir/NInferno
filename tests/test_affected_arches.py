@@ -57,11 +57,9 @@ class Classify(unittest.TestCase):
 
     def test_per_arch_names(self):
         cases = {
-            "src/ops/generic/generic_volta_hmma.cu": ["sm_70"],
-            "src/ops/foo_sm75_tile.cu": ["sm_75"],
-            "src/ops/gemma4/turing_decode.cu": ["sm_75"],
+            "profiles/gv100.json": ["sm_70"],
             "profiles/rtx4090.json": ["sm_89"],
-            "src/ops/blackwell_fp4.cu": ["sm_120a"],
+            "tools/x_sm75_table.txt": ["sm_75"],
         }
         for path, arches in cases.items():
             with self.subTest(path=path):
@@ -69,14 +67,48 @@ class Classify(unittest.TestCase):
                 self.assertEqual(res["arches"], arches)
                 self.assertFalse(res["all"])
 
+    def test_volta_cu_built_everywhere_is_all(self):
+        files = {"src/ops/sources.cmake": 'target_sources(ops PRIVATE "${D}/volta_a.cu")\n',
+                 "src/ops/volta_a.cu": "int takes() { return 0; }\n"}
+        res = self.run_diff(["src/ops/volta_a.cu"], files)
+        self.assertEqual(res["arches"], ALL)
+
+    def test_volta_define_and_header_answer_all(self):
+        files = {"src/ops/volta_b.cu": "#ifdef NINFERNO_VOLTA_SPLITD\n#endif\n",
+                 "src/ops/volta_h.cuh": "",
+                 "src/ops/k.cu": '#include "volta_h.cuh"\n'}
+        self.assertEqual(self.run_diff(["src/ops/volta_b.cu"], files)["arches"], ALL)
+        self.assertEqual(self.run_diff(["src/ops/volta_h.cuh"])["arches"], ALL)
+
+    def test_cu_listed_only_under_an_arch_guard_is_that_arch(self):
+        files = {"src/ops/sources.cmake":
+                 'if(NINFERNO_BUILD_ARCH STREQUAL "70")\n  "${D}/volta_c.cu"\nendif()\n',
+                 "src/ops/volta_c.cu": ""}
+        self.assertEqual(self.run_diff(["src/ops/volta_c.cu"], files)["arches"], ["sm_70"])
+
+    def test_ui_serve_and_pdl_allowlists_are_all(self):
+        for path in ("src/ui/catalog.cpp", "src/serve/request_log.cpp", "apps/cli/main.cpp",
+                     "tests/ops/pdl_audit_sabotage_allow.txt", "tools/pdl_prewait_loads.txt"):
+            with self.subTest(path=path):
+                self.assertTrue(self.run_diff([path])["all"])
+
+    def test_include_dir_and_dotdot_includes(self):
+        files = {"src/ops/k.cu": '#include "../util/../api/h.h"\n#include "ninferno/pub.h"\n',
+                 "src/api/h.h": "", "include/ninferno/pub.h": ""}
+        self.assertTrue(self.run_diff(["src/api/h.h"], files)["all"])
+        self.assertIn("header", self.run_diff(["include/ninferno/pub.h"])["reasons"]["include/ninferno/pub.h"])
+
     def test_two_arch_files_union(self):
+        self.tree({"src/ops/sources.cmake":
+                   'if(NINFERNO_BUILD_ARCH STREQUAL "70")\n volta_a.cu\nendif()\n'
+                   'if(NINFERNO_BUILD_ARCH STREQUAL "89")\n b_sm89.cu\nendif()\n'})
         res = self.run_diff(["src/ops/volta_a.cu", "src/ops/b_sm89.cu"])
         self.assertEqual(res["arches"], ["sm_70", "sm_89"])
         self.assertEqual(res["stands"]["sm_70"], ["lgv100"])
         self.assertEqual(res["stands"]["sm_89"], ["l4060", "l4070", "l4090"])
 
     def test_host_only_is_any_one_arch(self):
-        res = self.run_diff(["src/chat/tool_calls.cpp", "src/serve/a.cpp", "docs/x.md",
+        res = self.run_diff(["src/chat/tool_calls.cpp", "src/convert/a.cpp", "docs/x.md",
                              "tests/chat/test_chat.cpp"])
         self.assertEqual(res["arches"], [])
         self.assertTrue(res["host"])
@@ -93,7 +125,8 @@ class Classify(unittest.TestCase):
         self.assertEqual(res["ctest"], "no test needed")
 
     def test_ninja_listing_maps_objects_to_sources(self):
-        self.tree({"src/ops/volta_a.cu": "", "src/chat/c.cpp": ""})
+        self.tree({"src/ops/volta_a.cu": "", "src/chat/c.cpp": "",
+                   "src/ops/sources.cmake": 'if(NINFERNO_BUILD_ARCH STREQUAL "70")\n volta_a.cu\nendif()\n'})
         repo = aa.Repo(self.root)
         text = (
             "[1/3] Building CUDA object src/ops/CMakeFiles/ops.dir/volta_a.cu.o\n"
@@ -111,7 +144,7 @@ class Classify(unittest.TestCase):
         self.tree({})
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            aa.main(["--root", str(self.root), "--files", "src/ops/volta_a.cu", "--json"])
+            aa.main(["--root", str(self.root), "--files", "profiles/gv100.json", "--json"])
         self.assertEqual(json.loads(out.getvalue())["arches"], ["sm_70"])
 
 
