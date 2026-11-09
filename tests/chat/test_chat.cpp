@@ -86,6 +86,16 @@ int test_harmony_any_recipient_under_none() {
                               cut.tool_calls[0].name == "python",
                           "a built-in tool's code under none was shown: " + cut.content);
     }
+    // The answer after a refused call's <|end|> is the answer; code that opens with { is code.
+    const auto answered =
+        run(true, "<|start|>assistant<|channel|>analysis to=python code<|message|>print(1)<|end|>"
+                  "<|start|>assistant<|channel|>final<|message|>The answer.");
+    failures += check(answered.content == "The answer." && answered.tool_calls.size() == 1,
+                      "the answer after a refused call was lost: " + answered.content);
+    const auto braces = run(true, "<|start|>assistant to=python<|channel|>commentary code"
+                                  "<|message|>{1, 2}<|call|>");
+    failures += check(braces.content.empty() && braces.tool_calls.size() == 1,
+                      "code opening with a brace under none was shown: " + braces.content);
     const auto kept = run(false, invented);
     failures += check(kept.content == invented && kept.tool_calls.empty(),
                       "an invented recipient became a call of an ordinary turn");

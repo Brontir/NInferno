@@ -2346,6 +2346,13 @@ public:
                         (header.find("<|channel|>commentary") == std::string_view::npos &&
                          !(any_recipient &&
                            header.find("<|channel|>analysis") != std::string_view::npos))) {
+                        // Under none a message to no one after refused calls ends them (the model
+                        // answers after its <|end|>): the answer is the last message's text,
+                        // without its header (an analysis message before it is no answer).
+                        if (any_recipient && !calls.empty()) {
+                            calls.trailing = region.rfind(kMessage) + kMessage.size();
+                            return FallbackReason::TrailingContent;
+                        }
                         return FallbackReason::MalformedStructure;
                     }
                     std::size_t name_end = name_at;
@@ -2356,7 +2363,18 @@ public:
                     std::string name(header.substr(name_at, name_end - name_at));
                     pos = header_end + kMessage.size();
                     skip_format_whitespace(region, pos);
-                    if (any_recipient && (pos == region.size() || region[pos] != '{')) {
+                    // The arguments, when the body is a JSON object.
+                    std::optional<std::size_t> end;
+                    OrderedJson arguments;
+                    if (pos < region.size() && region[pos] == '{') {
+                        end = json_value_end(region, pos);
+                        if (end) {
+                            arguments =
+                                OrderedJson::parse(region.substr(pos, *end - pos), nullptr, false);
+                            if (arguments.is_discarded() || !arguments.is_object()) { end.reset(); }
+                        }
+                    }
+                    if (any_recipient && !end) {
                         // Under none an addressed message is refused whatever it carries (python
                         // writes code, not JSON): the body runs to <|call|>, <|end|>, the next
                         // message or the end of the output.
@@ -2370,20 +2388,12 @@ public:
                         if (starts_with_at(region, pos, kEnd)) { pos += kEnd.size(); }
                         continue;
                     }
-                    if (pos == region.size() || region[pos] != '{') {
-                        return FallbackReason::MalformedStructure;
-                    }
-                    const std::optional<std::size_t> end = json_value_end(region, pos);
                     if (!end) { return FallbackReason::MalformedStructure; }
-                    const OrderedJson arguments =
-                        OrderedJson::parse(region.substr(pos, *end - pos), nullptr, false);
-                    if (arguments.is_discarded() || !arguments.is_object()) {
-                        return FallbackReason::MalformedStructure;
-                    }
                     calls.push_back(ParsedCall{std::move(name), arguments.dump()});
                     pos = *end;
                     skip_format_whitespace(region, pos);
                     if (starts_with_at(region, pos, kCall)) { pos += kCall.size(); }
+                    if (any_recipient && starts_with_at(region, pos, kEnd)) { pos += kEnd.size(); }
                 }
             });
     }
