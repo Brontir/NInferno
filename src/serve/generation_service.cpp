@@ -857,6 +857,19 @@ PreparedRequest GenerationService::prepare_impl(const GenerationRequest& request
             biases.push_back(
                 ninferno::LogitBias{.token = banned, .bias = -ninferno::kLogitBiasLimit});
         }
+        // tool_choice none on a format whose call is a message of its own: the header of that
+        // message is closed by a constraint (a bias cannot, " to" is a word). A request with a
+        // constraint of its own keeps it (#546).
+        if (!prompt.summary().refusal_tag.empty() && !request.output_constraint) {
+            OutputConstraintRequest steer;
+            steer.kind       = ninferno::OutputConstraintKind::StructuralTag;
+            steer.definition = prompt.summary().refusal_tag;
+            steer.param      = "tool_choice";
+            request_options.constraint.compiled =
+                compile_output_constraint(steer, false, true);
+            request_options.constraint.header_steer = true;
+            check_preparation_control(prepared.lifetime->deadline, is_cancelled);
+        }
         // A budget applies where the output thinks: from the prompt's start, or from the opener
         // the model writes itself (Gemma 4). --default-thinking-budget applies where the template
         // can end thinking early; a budget the request itself gives on a template that cannot is

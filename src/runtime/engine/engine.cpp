@@ -613,7 +613,8 @@ GenerationHandle Engine::submit(PreparedPrompt prompt, RequestOptions options,
             }
         }
         const bool visible = options.output.raw || options.output.preserve_special_tokens;
-        if (structured::vocabulary_view(*constraint->compiled()).special_tokens_visible != visible) {
+        if (!options.constraint.header_steer &&
+            structured::vocabulary_view(*constraint->compiled()).special_tokens_visible != visible) {
             throw std::invalid_argument(
                 "output constraint special-token visibility does not match OutputOptions");
         }

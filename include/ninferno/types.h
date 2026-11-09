@@ -805,6 +805,10 @@ struct OutputConstraintOptions {
     // Null means unconstrained. The constraint applies to the content after the reasoning section
     // when the prompt starts in reasoning, and from the first generated token otherwise.
     std::shared_ptr<const OutputConstraint> compiled;
+    // The constraint is the engine's own steer (PromptSummary::refusal_tag), not the answer's
+    // format: it reads special-token bytes whatever the output presentation shows, so its
+    // visibility need not match OutputOptions.
+    bool header_steer = false;
 };
 
 struct OutputConstraintStats {
@@ -1156,6 +1160,11 @@ struct PromptSummary {
     // (generation_service) adds each as a logit_bias of -100 that replaces the request's own entry
     // for it; an embedder of the Engine applies them the same way.
     std::vector<TokenId> banned_tokens;
+    // A structural tag (OutputConstraintKind::StructuralTag, special tokens visible) the serve
+    // layer compiles as the request's header steer when it carries no constraint of its own:
+    // tool_choice none on a format whose call is a message of its own (harmony), where a header
+    // constraint is the only way to keep the model from writing it. Empty: none.
+    std::string refusal_tag;
 
     // The request thinks: its prompt starts the reasoning (Qwen), or leaves the model to open it
     // (Gemma 4 with thinking on, gpt-oss). It selects the thinking sampler preset and speculation.

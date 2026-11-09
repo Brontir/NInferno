@@ -1030,7 +1030,8 @@ PromptSummary PreparedPrompt::summary() const {
                          .prompt_tokens           = checked_token_count(data_->token_ids.size()),
                          .has_media               = data_->has_media(),
                          .thinking_budget_control = data_->thinking_budget_control,
-                         .banned_tokens           = data_->banned_tokens};
+                         .banned_tokens           = data_->banned_tokens,
+                         .refusal_tag             = data_->refusal_tag};
 }
 
 PromptPreparationStats PreparedPrompt::preparation_stats() const noexcept {
@@ -1249,6 +1250,10 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
         // can be banned; the other syntaxes keep the cut alone.
         result.answer_only   = true;
         result.banned_tokens = impl_->output->call_tokens;
+        if (const auto format = impl_->chat_template.conventions().tools.format;
+            format != chat::ToolCallFormat::None) {
+            result.refusal_tag = chat::tool_call_syntax(format).refusal_structural_tag();
+        }
     }
     result.identity.reusable = true;
     result.context_cache     = prepare_context_cache(
