@@ -780,13 +780,28 @@ Json choice_json(const ServedChoice& served) {
             // The one-request gain at the depth this load drafts times R_1 / R_C, the round cost's
             // price of the streams' rows verified together (spec/round_cost.h).
             gain["joint_verify_scale"] = round_to(d.joint_scale_at(streams), 3);
-            // The price at exactly this count, else the one held from the nearest smaller count.
+            // The count the gain comes from, as speedup_at takes it: the price at exactly this
+            // count (else the one-request gain, 0 here), held to the least price at a smaller one.
+            double least            = d.base_gain_at(streams);
             std::uint32_t held_from = 0;
             for (const choice::DrafterOption::JointScale& j : d.joint) {
-                if (j.streams > streams) { break; }
-                held_from = j.streams;
+                if (j.streams == streams) {
+                    least     = d.base_gain_at(streams) * j.scale;
+                    held_from = streams;
+                }
             }
-            if (held_from == streams) {
+            for (const choice::DrafterOption::JointScale& j : d.joint) {
+                if (j.streams >= streams) { break; }
+                const double priced = d.base_gain_at(j.streams) * j.scale;
+                if (priced < least) {
+                    least     = priced;
+                    held_from = j.streams;
+                }
+            }
+            if (held_from == 0) {
+                gain["note"] = "a ceiling: one request's gain at the depth this load drafts; the "
+                               "verify of the streams' rows together is not priced";
+            } else if (held_from == streams) {
                 gain["note"] = "the one-request gain at the depth this load drafts, priced for the "
                                "streams' rows verified together (the round cost's R_1 / R_C); the "
                                "requests' attention and state bytes are not in it";
