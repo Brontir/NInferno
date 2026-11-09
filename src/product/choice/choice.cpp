@@ -837,6 +837,8 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         const bool measured_format = l.format.empty()
                                          ? format == &formats[1] || format == &formats[3]
                                          : l.format == "ggml_q4_k" || l.format == "ggml_q6_k";
+        // A guard for a future Q2_K step row: today step_of prices Q2_K as the int8 share, so no
+        // Q2_K linear reaches here (cost_route, ops/generic/generic_cost.cpp, has the live cap).
         // The widest tile the card's shared memory holds for the linear's format (a label's
         // format: its tile's, Q3_K .. Q4_1 of `formats`).
         const int widest = mmq_columns::widest_tile(

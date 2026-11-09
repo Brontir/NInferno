@@ -63,6 +63,10 @@ static_assert(ninferno::mmq_columns::widest_tile(ninferno::QType::GGML_Q2_K, 7, 
 static_assert(ninferno::mmq_columns::widest_tile(ninferno::QType::GGML_Q4_K, 7, 5) == 128);
 static_assert(ninferno::mmq_columns::widest_tile(ninferno::QType::GGML_Q2_K, 8, 6) == 128);
 static_assert(ninferno::mmq_columns::widest_tile(ninferno::QType::GGML_Q2_K, 7, 0) == 128);
+// cost_route's MMQ column count (min(128, widest, 8-column steps)) for Q2_K at 100 tokens on sm_75
+// is 64: two 64-column tiles, as the kernel runs.
+static_assert(std::min(128, ninferno::mmq_columns::widest_tile(ninferno::QType::GGML_Q2_K, 7, 5)) ==
+              64);
 // A Turing Q2_K product of 65..128 columns takes two 64-column tiles, not one of 128.
 static_assert(pick(100, 7, 5, false,
                    ninferno::mmq_columns::widest_tile(ninferno::QType::GGML_Q2_K, 7, 5)) == 64);
