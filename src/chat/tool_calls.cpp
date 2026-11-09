@@ -1322,8 +1322,14 @@ ToolCallOutputDecoder::finish(bool cut_off, std::optional<std::string_view> stop
 
     // A forced call's stop that matched inside the call's open marker ("_call>" in "<tool_call>"):
     // what is held is the start of that marker (feed holds text only while it may begin a call),
-    // the start of a call, never the answer.
-    if (stop_text && !saw_tool_marker_ && !held_.empty()) {
+    // the start of a call, never the answer. A stop that was the whole opener at the output's
+    // start ("<tool_call>" itself) leaves nothing held, and cut a call all the same.
+    const auto stop_opened_call = [&] {
+        std::string_view stop = *stop_text;
+        while (!stop.empty() && is_format_whitespace(stop.front())) { stop.remove_prefix(1); }
+        return !emitted_text_ && !stop.empty() && syntax_->match_start(stop) != CallStart::No;
+    };
+    if (stop_text && !saw_tool_marker_ && (!held_.empty() || stop_opened_call())) {
         held_.clear();
         tool_region_.clear();
         ToolCallParseDiagnostics diagnostics = parsed.diagnostics;

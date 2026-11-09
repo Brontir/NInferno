@@ -720,6 +720,16 @@ int test_forced_stop_cut() {
                               next.diagnostics.cut_calls_dropped == 1,
                           "a stop that began the next call was not counted: " + std::string(stop));
     }
+    // A stop that is the whole opener at the output's start leaves nothing held: the call it cut
+    // is counted all the same.
+    for (const std::string_view stop : {
+        "<tool_call>", "
+                           < tool_call > "}) {
+                           const auto whole = qwen("", stop);
+        failures += check(whole.tool_calls.empty() && whole.content.empty() &&
+                              whole.diagnostics.cut_calls_dropped == 1,
+                          "a stop that was the whole opener was not counted: " + std::string(stop));
+    }
     const auto hermes_next = decode(
         ToolCallFormat::HermesJson,
         "<tool_call>\n{\"name\": \"weather\", \"arguments\": {\"city\": \"Oslo\", \"days\": 2}}\n",
