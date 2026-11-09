@@ -791,6 +791,21 @@ std::optional<fs::path> kept_for_options(const fs::path& cache, const std::strin
                                          const std::string& revision, const AcquireOptions& options,
                                          const OptionsKeyContext& context) {
     const auto& c = options.convert;
+    // A model that ships no chat template is converted with the caller's as its resource, which
+    // makes the conversion an optioned one only once the model is fetched (acquire_model); the
+    // key before the fetch does not know. That is the conversion a start with --chat-template
+    // writes for a model whose answer is unknown (a GGUF naming a base repository) or none, so
+    // it is looked for first: the plain one (made without the template) must not win over it,
+    // or the same command would take one artifact with the download gone and write another
+    // with it there (#587). A model that ships a template never has a baked conversion.
+    if (!options.chat_template.empty()) {
+        AcquireOptions baked = options;
+        baked.convert.resources.emplace_back("chat_template.jinja", options.chat_template);
+        if (auto kept = kept_artifact(cache, repo, revision, options.fetch.quant, c.recipe,
+                                      content_options_key(baked, nullptr, context))) {
+            return kept;
+        }
+    }
     if (auto kept = kept_artifact(cache, repo, revision, options.fetch.quant, c.recipe,
                                   content_options_key(options, nullptr, context))) {
         return kept;
@@ -823,14 +838,7 @@ std::optional<fs::path> kept_for_options(const fs::path& cache, const std::strin
             }
         }
     }
-    // A model that ships no chat template is converted with the caller's as its resource, which
-    // makes the conversion an optioned one only once the model is fetched (acquire_model); the
-    // key before the fetch does not know. Looked for under that key too.
-    if (options.chat_template.empty()) { return std::nullopt; }
-    AcquireOptions baked = options;
-    baked.convert.resources.emplace_back("chat_template.jinja", options.chat_template);
-    return kept_artifact(cache, repo, revision, options.fetch.quant, c.recipe,
-                         content_options_key(baked, nullptr, context));
+    return std::nullopt;
 }
 
 namespace {
