@@ -205,12 +205,20 @@ std::optional<std::string> owned_launch_id(QType qtype, std::int32_t n, std::int
 
 std::optional<double> linear_q8_requested_bytes(const Weight& w, std::int32_t tokens) {
     if (w.qtype != QType::Q8_G32_FP16 || tokens <= 0 || w.n <= 0 || w.k <= 0 ||
-        w.layout == QuantLayout::GgmlFrag || !linear_shape_registered(w.qtype, w.n, w.k) ||
-        linear_decision(w, LinearPolicy::A16Only, tokens).claim != LinearClaim::Owned) {
+        w.layout == QuantLayout::GgmlFrag || !linear_shape_registered(w.qtype, w.n, w.k)) {
+        return std::nullopt;
+    }
+    // A host without a device (the host-only warm-up check) prices nothing: the fused kernel keeps
+    // the call, as wherever the separate side is unpriced.
+    const DeviceClass* device = nullptr;
+    try {
+        device = &device_class();
+    } catch (const std::runtime_error&) { return std::nullopt; }
+    if (linear_decision(w, LinearPolicy::A16Only, tokens).claim != LinearClaim::Owned) {
         return std::nullopt;
     }
     const auto tile = q8_launch_tile(select_q8_a16_launch(w.n, w.k, tokens));
-    if (!tile || (tile->mma && !device_class().features.mma_bf16_native)) { return std::nullopt; }
+    if (!tile || (tile->mma && !device->features.mma_bf16_native)) { return std::nullopt; }
     const auto cdiv = [](double a, double b) { return std::ceil(a / b); };
     const double n = w.n, k = w.k, t = tokens;
     // The row-split Q8_G32 payload of the weight's own rows: codes and an FP16 scale a 32 (a row
