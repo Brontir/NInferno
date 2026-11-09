@@ -114,7 +114,7 @@ int main() {
         expect(chosen(chain::pair_alternatives(p)) == "fused",
                "inside the band, fewer launches win though dearer");
         p.fused_launches = 3;
-        p.fused = 0.5 * (1.0 - 1.0e-6);
+        p.fused          = 0.5 * (1.0 - 1.0e-6);
         expect(chosen(chain::pair_alternatives(p)) == "fused", "outside the band: cheaper wins");
     }
     // Unpriced alternatives are skipped; with none priced nothing is selected.
