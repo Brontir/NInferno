@@ -2538,9 +2538,10 @@ public:
              OrderedJson{{"type", "or"},
                          {"elements", OrderedJson::array({literal("analysis"), literal("final")})}},
              literal(kMessage), text()});
-        const OrderedJson plain = sequence(
-            {OrderedJson{{"type", "regex"}, {"pattern", "[^ \\t\\n<]|[ \\t\\n]+[^ \\t\\nt<]|<[^|]"}},
-             text()});
+        const OrderedJson plain =
+            sequence({OrderedJson{{"type", "regex"},
+                                  {"pattern", "[^ \\t\\n<]|[ \\t\\n]+[^ \\t\\nt<]|<[^|]"}},
+                      text()});
         return OrderedJson{
             {"type", "structural_tag"},
             {"format",
