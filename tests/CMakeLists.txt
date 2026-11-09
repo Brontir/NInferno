@@ -55,6 +55,12 @@ ninferno_add_test(ninferno_spec_draft_head_test NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_spec_draft_head.cpp"
   LIBRARIES ninferno_spec)
 
+# DSpine (spec/dspine.h): the published config's refusals and tensor contract, the arithmetic's
+# invariants. No GPU.
+ninferno_add_test(ninferno_spec_dspine_test NEEDS_SOURCE_DIR
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_spec_dspine.cpp"
+  LIBRARIES ninferno_spec)
+
 # tools/spec/registry_add.py: the "*" fallback and the load table warnings, no GPU.
 add_test(NAME ninferno_registry_add_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_registry_add.py)
