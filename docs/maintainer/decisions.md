@@ -1690,3 +1690,38 @@ differently), as they already did between a prefill chunk of 128 and 1024: on na
 Q6_K (the Q4_0 and IQ decodes give other fixed shares: they keep the fewest tiles until their grids); the RTX 5070 Ti and 5060 Ti prefill Q4_K / Q6_K
 on the W4A8 tiles, not this kernel, which steps the same way (RTX 5060 Ti 104 -> 107 ms from 144 to
 256 tokens): its 64 x 64 against 128 x 64 tile steps need their own grid.
+
+## 75. The vector kernel's T = 4 loss on Ampere is instruction-bound; the gated pairs stay on the band until they are measured (#521, 09.11, measured)
+
+**Decision.** No route change. #560's bounded twin took the part of the loss that has a counted
+saving; the rest sits in the gated gate/up launches, and the issue's data has no gated-shape row, so
+no rule is written for it (a rule would move calls nobody timed).
+
+**Cause, from facts.** The vector kernel's slice loop is 105 + 37 T warp instructions per 2048
+weights (SASS, sm_86 and sm_89 alike), 16 T of them dp4a on the half-rate INT pipe; the register
+MMA's loop has no T term. The instruction cost per weight is the same on every GA10x/AD10x card, so
+what differs is the DRAM time it hides behind: per T the kernel adds rho = 37 / (1152 x
+(4 x SMs x clk / BW)) of the DRAM time.
+
+| card | SMs x GHz / (GB/s) | predicted rho | measured a16 gain at T = 4 (before #560) |
+|---|---|---|---|
+| RTX 3060 | 0.138 | 5.8 % | +5.4..6.9 % |
+| RTX 3090 | 0.166 | 5.4 % | +4.6..7.9 % |
+| RTX 5060 Ti | 0.206 | 3.9 % | +0.9..1.9 % |
+| RTX 4090 | 0.352 | 2.5 % | -1.3..-2.3 % (the vector kernel wins) |
+
+The order of the cards and the sign are right; the per-T slope is 1.4-1.6x the count on both the
+3090 and the 4090 (a post-hoc SASS count, not a pre-registered hit). A second term, CTA residency
+(85 registers: 5 CTAs of 128 threads per SM against 7 at 72), explained the 3090's jump at T = 4 and
+was taken in #560 for the plain non-gated instance. Predicted +5..6 % at C = 4 on the 3060, measured
++1.6 % (Qwen3.5-9B) and +2.8 % (Gemma 4 12B): the twin covers down, attention and the LM head,
+about 47 % of Gemma's decode parameters, 47 % x 6 % = 2.8 % (Qwen: 2.8 % predicted, 1.6 % measured,
+unsplit per shape).
+
+**Open.** The gated launches (about half the weight bytes) keep the unbounded instance; a bound there
+costs registers (110 for 3 columns) or spills. The candidate rule, "T <= 3 for a gated pair where
+SMs x clk / BW is under ~0.17", has its threshold between two measured cards (3090 loses, 5060 Ti
+ties), and it would move exactly the gated pairs of boards under it: the RTX 3060 and 3090 (GA106,
+GA102), and no board measured above it (4090, 5060 Ti, 5070 Ti unchanged). Whether the gated pair at
+T = 4 is better as two twinned non-gated launches or as the register MMA is untimed. Next:
+`route-tune` on the gate/up shapes (T = 3, 4) on the 3060 and 3090 before any code.
