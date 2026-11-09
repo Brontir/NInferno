@@ -1878,11 +1878,12 @@ void joint_price_scales_the_gain(const json& fixture) {
     d.joint = {
         {.streams = 2, .scale = 0.8}, {.streams = 3, .scale = 0.5}, {.streams = 5, .scale = 0.1}};
     check(d.speedup_at(1) == 2.0 && std::abs(d.speedup_at(2) - 1.2) < 1e-12 &&
-              std::abs(d.speedup_at(3) - 0.75) < 1e-12 && d.speedup_at(4) == 1.5 &&
-              d.speedup_at(5) == 1.0,
-          "gain by streams: bound x joint scale where priced, the ceiling where not, plain from "
+              std::abs(d.speedup_at(3) - 0.75) < 1e-12 &&
+              std::abs(d.speedup_at(4) - 0.75) < 1e-12 && d.speedup_at(5) == 1.0,
+          "gain by streams: bound x joint scale where priced, the least priced below where not, "
+          "plain from "
           "its bound");
-    check(!d.joint_priced_at(1) && d.joint_priced_at(2) && !d.joint_priced_at(4) &&
+    check(!d.joint_priced_at(1) && d.joint_priced_at(2) && d.joint_priced_at(4) &&
               !d.joint_priced_at(5),
           "priced at the listed streams below the plain bound");
     b.model.drafters        = {d};
@@ -1893,7 +1894,7 @@ void joint_price_scales_the_gain(const json& fixture) {
     ch::Candidate without = with;
     without.drafter       = 0;
     for (const auto& [streams, gain] :
-         std::vector<std::pair<std::uint32_t, double>>{{1, 2.0}, {2, 1.2}, {3, 0.75}, {4, 1.5}}) {
+         std::vector<std::pair<std::uint32_t, double>>{{1, 2.0}, {2, 1.2}, {3, 0.75}, {4, 0.75}}) {
         const double a =
             ch::speed_of(b.model, b.card, b.quants[0], with, streams, 4096).decode_per_stream;
         const double p =
@@ -1901,6 +1902,41 @@ void joint_price_scales_the_gain(const json& fixture) {
         check(p > 0 && std::abs(a / p - gain) < 1e-9,
               "decode at " + std::to_string(streams) + " streams: x" + std::to_string(gain));
     }
+}
+
+// The gain is monotone in the streams once the joint verify is priced (#303): mtp:3 priced at two
+// streams (4 rows each, 8 verify rows) below 1, three streams (12 rows) not priced: its gain is
+// no more than two streams', never the one-request 2.0 again.
+void joint_price_keeps_the_gain_monotone() {
+    ch::DrafterOption d{"mtp:3", "mtp", 2.0, 0, "measured"};
+    d.joint = {{.streams = 2, .scale = 0.45}};
+    check(d.speedup_at(1) == 2.0 && std::abs(d.speedup_at(2) - 0.9) < 1e-12 &&
+              d.speedup_at(3) <= d.speedup_at(2) && d.speedup_at(8) <= d.speedup_at(2),
+          "an unpriced count of streams does not climb back above the priced one below it");
+    ch::DrafterOption unpriced{"mtp:3", "mtp", 2.0, 0, "measured"};
+    check(unpriced.speedup_at(3) == 2.0 && !unpriced.joint_priced_at(3),
+          "before any count is priced the one-request gain stands");
+}
+
+// The joint verify's scales go through the replay record (#303): written as text and read back, a
+// choice at three streams replays to the same, and the record holds them.
+void joint_price_replays(const json& fixture) {
+    Bench b = nine_b(fixture, "RTX 4090");
+    ch::DrafterOption d{"mtp:3", "mtp", 2.0, 0, "measured"};
+    d.joint                   = {{.streams = 2, .scale = 0.45}};
+    b.model.drafters          = {d};
+    b.model.default_drafter   = 1;
+    const ch::Allowed allowed = ch::allowed_axes(b.model, KvCacheStorage::Int8Group64);
+    ch::Task task;
+    task.concurrency              = 3;
+    const ch::ChoiceRecord record = ch::record_choice(b.model, b.card, b.quants[0], allowed, {},
+                                                      task, oracle(b, 40e9), ch::Gates{true, true});
+    const std::string text        = record.inputs.dump();
+    check(text.find("\"joint\"") != std::string::npos && text.find("0.45") != std::string::npos,
+          "the record holds the joint scales");
+    const ch::Choice again = ch::replay_choice(nlohmann::ordered_json::parse(text));
+    check(ch::choice_summary(again) == ch::choice_summary(record.choice),
+          "a choice with joint scales replays to the same");
 }
 
 // The order a manifest lists its drafters in does not decide: two drafters of equal worth tie
@@ -2309,6 +2345,8 @@ int main() {
     drafter_order_does_not_decide(fixture);
     load_bounds_the_gain(fixture);
     joint_price_scales_the_gain(fixture);
+    joint_price_keeps_the_gain_monotone();
+    joint_price_replays(fixture);
     axis_order_does_not_decide(fixture);
     board_facts_do_not_decide(fixture);
     choices_replay(fixture);

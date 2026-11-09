@@ -130,16 +130,19 @@ DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk
         }
         // The joint verify's price (#303): at C streams the profile runs the depth its load table
         // bounds (the configuration's below the first bound), and a round of C x (depth + 1) rows
-        // costs more than one request's, R_1 / R_C of it, where the round cost prices it.
+        // costs more than one request's, R_1 / R_C of it, where the round cost prices it. A
+        // DFlash bound's draft width (LoadBound::width) is not read: the facts price the drafter's
+        // whole block (load_gain refuses it past the priced rows), the widest it can run.
         for (std::int32_t streams = 2; streams <= spec::kPricedVerifyRows; ++streams) {
             if (option.plain_from_streams != 0 &&
                 static_cast<std::uint32_t>(streams) >= option.plain_from_streams) {
                 break;
             }
+            // The last bound at or below these streams, as the load table above reads it.
             std::int32_t depth = c.config.k;
             for (const spec::LoadBound& bound : p.load) {
                 if (bound.lanes > streams) { break; }
-                depth = std::min(depth, bound.depth);
+                depth = std::min(bound.depth, c.config.k);
             }
             spec::SpecConfig at = c.config;
             at.k                = depth;

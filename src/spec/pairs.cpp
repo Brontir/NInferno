@@ -247,6 +247,8 @@ void price_by_facts(Profile& p, const RoundCostEstimate& estimate) {
     }
 }
 
+std::map<std::string, std::vector<RoundLaunches>> round_launches(const Profile& tune);
+
 // The price of the requests' joint verify (#303), for a profile at home: for each choice's
 // configuration and every depth up to it, R_1 / R_C at C = 2..kPricedVerifyRows streams where the
 // round cost prices it (load_gain at a gain of 1), on the lab board's rates and the lab artifact's
@@ -264,17 +266,35 @@ void price_joint(Profile& p, const MeasuredPair& pair) {
     if (p.fit_fallback && p.fit_fallback->config.enabled()) {
         configs.push_back(p.fit_fallback->config);
     }
+    const auto launches = round_launches(pair.tune);
     for (SpecConfig config : configs) {
         const ProposalRows rows = config.proposal_head ? pair.tune.proposal_rows : ProposalRows{};
         const std::int32_t deepest = config.k;
         for (std::int32_t k = 1; k <= deepest; ++k) {
-            config.k         = k;
+            config.k = k;
+            // The kernels a round's graphs launch are one round's whatever the streams (a joint
+            // verify is wider, not longer in launches), so both R_1 and R_C carry the same launch
+            // term, priced as round_cost_estimate prices them (each section's counts, averaged;
+            // none for a depth the lab did not count).
+            const auto counted = launches.find(config.label());
+            const std::vector<RoundLaunches> sections =
+                counted != launches.end() && lab.launch_bytes() > 0
+                    ? counted->second
+                    : std::vector<RoundLaunches>{RoundLaunches{}};
             auto& by_streams = p.joint_scale[config.label()];
             for (std::int32_t streams = 2; streams <= kPricedVerifyRows; ++streams) {
-                if (const auto ratio = load_gain(*pair.round_facts, config, lab.kappa(), 1.0,
-                                                 streams, rows, 0, {})) {
-                    by_streams[streams] = *ratio;
+                double sum  = 0;
+                bool priced = true;
+                for (const RoundLaunches& section : sections) {
+                    const auto ratio = load_gain(*pair.round_facts, config, lab.kappa(), 1.0,
+                                                 streams, rows, lab.launch_bytes(), section);
+                    if (!ratio) {
+                        priced = false;
+                        break;
+                    }
+                    sum += *ratio;
                 }
+                if (priced) { by_streams[streams] = sum / static_cast<double>(sections.size()); }
             }
             if (by_streams.empty()) { p.joint_scale.erase(config.label()); }
         }

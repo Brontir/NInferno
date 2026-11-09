@@ -69,6 +69,36 @@ void test_every_kind_carried() {
     check(offers(" mtp:") && offers(" dflash2:"),
           "the drafter axis offers MTP and DFlash2 (offers:" + offered + ")");
 
+    // The joint verify's scales follow the load table's depth in force (#303): bounds "2:1,3:k"
+    // run depth 1 at two streams and the configuration's depth k at three (the last bound at or
+    // below, not the least), each priced at its own configuration; streams below the first bound
+    // run k, and a scale the profile lacks leaves its streams unpriced.
+    {
+        pr::SpeculationSubject bounded = subject;
+        spec::Profile& profile         = bounded.resolved->profile;
+        const spec::SpecConfig config  = spec::pick(profile, true).config;
+        check(config.enabled() && config.k >= 2, "the sibling pair drafts MTP at depth 2 or more");
+        spec::SpecConfig shallow = config;
+        shallow.k                = 1;
+        profile.load             = {spec::LoadBound{.lanes = 2, .depth = 1},
+                                    spec::LoadBound{.lanes = 3, .depth = config.k}};
+        profile.joint_scale.clear();
+        profile.joint_scale[shallow.label()] = {{2, 0.5}, {3, 0.7}};
+        profile.joint_scale[config.label()]  = {{2, 0.9}, {3, 0.25}, {4, 0.2}};
+        const pr::DrafterAxis with_bounds    = pr::drafter_axis(bounded, pr::SpeculationAsk{});
+        const auto mtp_option =
+            std::find_if(with_bounds.options.begin(), with_bounds.options.end(),
+                         [](const auto& o) { return o.label.rfind("mtp:", 0) == 0; });
+        check(mtp_option != with_bounds.options.end(), "the bounded profile offers MTP");
+        if (mtp_option != with_bounds.options.end()) {
+            const auto& joint = mtp_option->joint;
+            check(
+                joint.size() == 3 && joint[0].streams == 2 && joint[0].scale == 0.5 &&
+                    joint[1].streams == 3 && joint[1].scale == 0.25 && joint[2].streams == 4 &&
+                    joint[2].scale == 0.2,
+                "the scale of each streams count is its depth in force's: 1 at two, k from three");
+        }
+    }
     const pr::SpeculationSubject chosen = pr::subject_of_mode(subject, spec::Mode::DFlash2);
     check(chosen.resolved && drafts_with(chosen.resolved->profile, spec::Mode::DFlash2) &&
               chosen.resolved->source.find("sibling") == std::string::npos,
