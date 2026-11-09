@@ -619,8 +619,11 @@ int run_column_tiles() {
         {Type::IQ1_S, QType::GGML_IQ1_S}};
     for (const auto& [type, qtype] : formats) {
         const bool format = ninferno::mmq_columns::work_tiles_format(qtype);
+        // The widest tile the device holds for the format: a wide product launches it.
+        const int widest = ninferno::ops::ggml_mmq::column_tile(type, 4096, 512, 4096);
         for (int columns = 1; columns <= 512; ++columns) {
-            const int picked = ninferno::mmq_columns::pick(columns, d.major, d.minor, format);
+            const int picked =
+                ninferno::mmq_columns::pick(columns, d.major, d.minor, format, widest);
             const int taken  = ninferno::ops::ggml_mmq::column_tile(type, 4096, columns, 4096);
             ++checked;
             if (taken != picked && failures++ < 10) {
