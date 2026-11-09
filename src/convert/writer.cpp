@@ -62,6 +62,11 @@ constexpr std::uint64_t kDirectBlock = 4096;
 // is never freed, so the handler only reads. Each slot carries a sequence number, odd while its
 // name is being written or cleared; the handler copies a name and uses the copy only if the
 // sequence did not move meanwhile, so a slot being reused is skipped, never read torn.
+//
+// The targets one writer publishes form a group: each slot names the group's leader (the first
+// target's slot), and the leader's `committed` keeps them all once every file is in place. One
+// store commits the artifact whole, so a signal while the slots are released afterwards removes
+// none of it, never some. Slots are never freed, so the leader a handler reads is always a slot.
 constexpr std::size_t kChunkSlots = 256;
 constexpr std::size_t kMaxChunks  = 64;
 constexpr std::size_t kSlotLength = 4096;
@@ -69,6 +74,8 @@ constexpr std::size_t kSlotLength = 4096;
 struct TemporarySlot {
     std::atomic<bool> used{false};
     std::atomic<unsigned> sequence{0};
+    std::atomic<TemporarySlot*> leader{nullptr}; // the group's leader slot, nullptr: no group
+    std::atomic<bool> committed{false};          // a leader's: its group's files stay
     std::filesystem::path::value_type name[kSlotLength]; // name[0] == 0: nothing registered
 };
 
@@ -95,6 +102,10 @@ void unlink_registered() {
             copy[length] = 0;
             std::atomic_thread_fence(std::memory_order_acquire);
             if (slot.sequence.load(std::memory_order_relaxed) != before) { continue; }
+            if (const TemporarySlot* leader = slot.leader.load(std::memory_order_acquire);
+                leader != nullptr && leader->committed.load(std::memory_order_acquire)) {
+                continue;
+            }
 #ifdef _WIN32
             _wunlink(copy);
 #else
@@ -168,14 +179,18 @@ TemporarySlot* claim_slot() {
 }
 
 // The slot holding `path`, or nullptr (the table is full, or the name is too long: a temporary
-// is then removed by the stale sweep of a later run instead).
-TemporarySlot* register_temporary(const std::filesystem::path& path) {
+// is then removed by the stale sweep of a later run instead). A published target joins the group
+// of `leader` (itself when `lead`).
+TemporarySlot* register_temporary(const std::filesystem::path& path,
+                                  TemporarySlot* leader = nullptr, bool lead = false) {
     const auto& native = path.native();
     if (native.size() >= kSlotLength) { return nullptr; }
     install_signal_cleanup();
     TemporarySlot* slot = claim_slot();
     if (slot == nullptr) { return nullptr; }
     slot->sequence.fetch_add(1);
+    slot->committed.store(false, std::memory_order_relaxed);
+    slot->leader.store(lead ? slot : leader, std::memory_order_release);
     std::copy(native.begin(), native.end(), slot->name);
     slot->name[native.size()] = 0;
     slot->sequence.fetch_add(1);
@@ -186,7 +201,9 @@ void unregister_temporary(TemporarySlot* slot) noexcept {
     if (slot == nullptr) { return; }
     slot->sequence.fetch_add(1);
     slot->name[0] = 0;
+    slot->leader.store(nullptr, std::memory_order_relaxed);
     slot->sequence.fetch_add(1);
+    slot->committed.store(false);
     slot->used.store(false);
 }
 
@@ -968,9 +985,11 @@ void ArtifactWriter::finish(const std::function<std::string()>& seal) {
         // Each target is registered before it becomes visible (a signal while it is published
         // removes it), and its temporary goes, slot and name, once it is: at most one slot more
         // than the files is ever taken (an artifact of thousands of shards fits the table).
+        TemporarySlot* leader = nullptr; // the group of the published targets
         for (const auto i : order) {
             const auto target            = file_path(i);
-            TemporarySlot* const visible = register_temporary(target);
+            TemporarySlot* const visible = register_temporary(target, leader, leader == nullptr);
+            if (leader == nullptr) { leader = visible; }
             std::error_code linked;
             std::filesystem::create_hard_link(temporary_[i], target, linked);
             // A file system without hard links (exFAT, FAT32, many network and cloud-synced
@@ -996,8 +1015,10 @@ void ArtifactWriter::finish(const std::function<std::string()>& seal) {
         temporary_.clear();
         for (const int fd : fds_) { sys::close(fd); }
         fds_.clear();
-        release_slots();
+        // Every file is in place: one store keeps them all (see TemporarySlot), then the slots go.
+        if (leader != nullptr) { leader->committed.store(true, std::memory_order_release); }
         finished_ = true;
+        release_slots();
     } catch (...) {
         abort();
         throw;
@@ -1032,10 +1053,13 @@ void ArtifactWriter::abort() noexcept {
 }
 
 void ArtifactWriter::release_slots() noexcept {
-    for (auto* slots : {&temporary_slots_, &published_slots_}) {
-        for (void* slot : *slots) { unregister_temporary(static_cast<TemporarySlot*>(slot)); }
-        slots->clear();
+    for (void* slot : temporary_slots_) { unregister_temporary(static_cast<TemporarySlot*>(slot)); }
+    temporary_slots_.clear();
+    // The group's leader last: the others name it until they are gone.
+    for (auto it = published_slots_.rbegin(); it != published_slots_.rend(); ++it) {
+        unregister_temporary(static_cast<TemporarySlot*>(*it));
     }
+    published_slots_.clear();
 }
 
 } // namespace ninferno::convert
