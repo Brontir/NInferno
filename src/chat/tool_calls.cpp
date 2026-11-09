@@ -2300,68 +2300,122 @@ private:
 };
 
 // OpenAI harmony (gpt-oss): a call is a message of its own to a function recipient,
-//   <|start|>assistant<|channel|>commentary to=functions.NAME <|constrain|>json<|message|>{...}<|call|>
+//   <|start|>assistant<|channel|>commentary to=functions.NAME
+//   <|constrain|>json<|message|>{...}<|call|>
 // with the recipient written in the channel or in the role (" to=functions.NAME<|channel|>...");
 // <|call|> ends generation, so a reply's last call may arrive without it.
+// Under tool_choice none (ToolCallOutputContract::discarded) a message to any recipient is a call
+// the turn refuses: gpt-oss, kept from its functions, addresses tools of its own ("to=tool file",
+// "to=python"), and a recipient is structure, never prose, so that message is cut like a declared
+// tool's (#578).
 class HarmonySyntax final : public ToolCallSyntax {
 public:
-    static constexpr std::string_view kOpen      = "<|start|>assistant";
-    static constexpr std::string_view kRecipient = "to=functions.";
-    static constexpr std::string_view kMessage   = "<|message|>";
-    static constexpr std::string_view kCall      = "<|call|>";
+    static constexpr std::string_view kOpen         = "<|start|>assistant";
+    static constexpr std::string_view kRecipient    = "to=functions.";
+    static constexpr std::string_view kAnyRecipient = " to=";
+    static constexpr std::string_view kMessage      = "<|message|>";
+    static constexpr std::string_view kCall         = "<|call|>";
+    static constexpr std::string_view kEnd          = "<|end|>";
 
     [[nodiscard]] std::string_view open() const noexcept override { return kOpen; }
     [[nodiscard]] ParsedToolCallOutput parse(const std::string& text, std::size_t max_length,
                                              const Contract& contract) const override {
-        return parse_calls(text, kOpen, max_length, contract,
-                           [](std::string_view region, ParsedCalls& calls) {
-            std::size_t pos = 0;
-            for (;;) {
-                skip_format_whitespace(region, pos);
-                if (pos == region.size()) {
-                    return calls.empty() ? FallbackReason::MalformedStructure
-                                         : FallbackReason::None;
+        const bool any_recipient = contract.discarded;
+        return parse_calls(
+            text, kOpen, max_length, contract,
+            [any_recipient](std::string_view region, ParsedCalls& calls) {
+                // Under none, where the refused calls end (a message to no one, or a header the
+                // limit cut): the answer is the last message's text when that message is a final
+                // one to no one; a region ending in a call, an analysis message or a cut header
+                // leaves none.
+                const auto answer_after_calls = [&] {
+                    const std::size_t last      = region.rfind(kOpen);
+                    const std::size_t body      = region.find(kMessage, last);
+                    const std::string_view head = body == std::string_view::npos
+                                                      ? std::string_view()
+                                                      : region.substr(last, body - last);
+                    calls.trailing = head.find("<|channel|>final") != std::string_view::npos &&
+                                             head.find(kAnyRecipient) == std::string_view::npos
+                                         ? body + kMessage.size()
+                                         : region.size();
+                    return FallbackReason::TrailingContent;
+                };
+                std::size_t pos = 0;
+                for (;;) {
+                    skip_format_whitespace(region, pos);
+                    if (pos == region.size()) {
+                        return calls.empty() ? FallbackReason::MalformedStructure
+                                             : FallbackReason::None;
+                    }
+                    if (!starts_with_at(region, pos, kOpen)) {
+                        calls.trailing = pos;
+                        return calls.empty() ? FallbackReason::MalformedStructure
+                                             : FallbackReason::TrailingContent;
+                    }
+                    const std::size_t header_end = region.find(kMessage, pos);
+                    if (header_end == std::string_view::npos) {
+                        if (any_recipient && !calls.empty()) { return answer_after_calls(); }
+                        return FallbackReason::MalformedStructure;
+                    }
+                    const std::string_view header = region.substr(pos, header_end - pos);
+                    std::size_t name_at           = std::string_view::npos;
+                    if (const std::size_t at = header.find(kRecipient);
+                        at != std::string_view::npos) {
+                        name_at = at + kRecipient.size();
+                    } else if (const std::size_t to = header.find(kAnyRecipient);
+                               any_recipient && to != std::string_view::npos) {
+                        name_at = to + kAnyRecipient.size();
+                    }
+                    // A call is on the commentary channel; under none a built-in tool's on the
+                    // analysis channel too ("<|channel|>analysis to=python code").
+                    if (name_at == std::string_view::npos ||
+                        (header.find("<|channel|>commentary") == std::string_view::npos &&
+                         !(any_recipient &&
+                           header.find("<|channel|>analysis") != std::string_view::npos))) {
+                        if (any_recipient && !calls.empty()) { return answer_after_calls(); }
+                        return FallbackReason::MalformedStructure;
+                    }
+                    std::size_t name_end = name_at;
+                    while (name_end < header.size() && !is_format_whitespace(header[name_end]) &&
+                           header[name_end] != '<') {
+                        ++name_end;
+                    }
+                    std::string name(header.substr(name_at, name_end - name_at));
+                    pos = header_end + kMessage.size();
+                    skip_format_whitespace(region, pos);
+                    // The arguments, when the body is a JSON object.
+                    std::optional<std::size_t> end;
+                    OrderedJson arguments;
+                    if (pos < region.size() && region[pos] == '{') {
+                        end = json_value_end(region, pos);
+                        if (end) {
+                            arguments =
+                                OrderedJson::parse(region.substr(pos, *end - pos), nullptr, false);
+                            if (arguments.is_discarded() || !arguments.is_object()) { end.reset(); }
+                        }
+                    }
+                    if (any_recipient && !end) {
+                        // Under none an addressed message is refused whatever it carries (python
+                        // writes code, not JSON): the body runs to <|call|>, <|end|>, the next
+                        // message or the end of the output.
+                        std::size_t body_end = region.size();
+                        for (const std::string_view mark : {kCall, kEnd, kOpen}) {
+                            body_end = std::min(body_end, region.find(mark, pos));
+                        }
+                        calls.push_back(ParsedCall{std::move(name), "{}"});
+                        pos = body_end;
+                        if (starts_with_at(region, pos, kCall)) { pos += kCall.size(); }
+                        if (starts_with_at(region, pos, kEnd)) { pos += kEnd.size(); }
+                        continue;
+                    }
+                    if (!end) { return FallbackReason::MalformedStructure; }
+                    calls.push_back(ParsedCall{std::move(name), arguments.dump()});
+                    pos = *end;
+                    skip_format_whitespace(region, pos);
+                    if (starts_with_at(region, pos, kCall)) { pos += kCall.size(); }
+                    if (any_recipient && starts_with_at(region, pos, kEnd)) { pos += kEnd.size(); }
                 }
-                if (!starts_with_at(region, pos, kOpen)) {
-                    calls.trailing = pos;
-                    return calls.empty() ? FallbackReason::MalformedStructure
-                                         : FallbackReason::TrailingContent;
-                }
-                const std::size_t header_end = region.find(kMessage, pos);
-                if (header_end == std::string_view::npos) {
-                    return FallbackReason::MalformedStructure;
-                }
-                const std::string_view header = region.substr(pos, header_end - pos);
-                const std::size_t recipient   = header.find(kRecipient);
-                if (recipient == std::string_view::npos ||
-                    header.find("<|channel|>commentary") == std::string_view::npos) {
-                    return FallbackReason::MalformedStructure;
-                }
-                std::size_t name_end = recipient + kRecipient.size();
-                while (name_end < header.size() && !is_format_whitespace(header[name_end]) &&
-                       header[name_end] != '<') {
-                    ++name_end;
-                }
-                std::string name(header.substr(recipient + kRecipient.size(),
-                                               name_end - recipient - kRecipient.size()));
-                pos = header_end + kMessage.size();
-                skip_format_whitespace(region, pos);
-                if (pos == region.size() || region[pos] != '{') {
-                    return FallbackReason::MalformedStructure;
-                }
-                const std::optional<std::size_t> end = json_value_end(region, pos);
-                if (!end) { return FallbackReason::MalformedStructure; }
-                const OrderedJson arguments =
-                    OrderedJson::parse(region.substr(pos, *end - pos), nullptr, false);
-                if (arguments.is_discarded() || !arguments.is_object()) {
-                    return FallbackReason::MalformedStructure;
-                }
-                calls.push_back(ParsedCall{std::move(name), arguments.dump()});
-                pos = *end;
-                skip_format_whitespace(region, pos);
-                if (starts_with_at(region, pos, kCall)) { pos += kCall.size(); }
-            }
-        });
+            });
     }
     [[nodiscard]] std::string structural_tag(std::span<const ToolCallConstraintTool> tools,
                                              ToolCallRequirement requirement,
