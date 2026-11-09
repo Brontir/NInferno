@@ -1310,7 +1310,8 @@ void test_gptoss_drafter_rings() {
               {{"rope_type", "yarn"},
                {"attention_scaling", scaling},
                {"original_max_position_embeddings", 4096}}},
-             {"rope", {{"rope_type", "yarn"}, {"attention_scaling", scaling}}}}) {
+             {"rope", {{"rope_type", "yarn"}, {"attention_scaling", scaling}}},
+             {"rope_scaling", {{"rope_type", "yarn"}, {"factor", 32.0}}}}) {
         const auto state = drafter(key, rope);
         check(state && state->local_layers == 8 && state->full_layers == 0 && state->window == 4096,
               std::string("gpt-oss drafter rings from ") + key + " " + rope.dump());

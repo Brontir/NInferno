@@ -833,10 +833,14 @@ std::optional<models::DrafterStateShape> plan_drafter_state_of_config(const json
             const auto rope = config.find(key);
             if (rope == config.end() || !rope->is_object()) { continue; }
             original             = u32(number(*rope, "original_max_position_embeddings"));
+            const auto type      = rope->find("rope_type");
+            const bool yarn      = type != rope->end() && type->is_string() && *type == "yarn";
             const double scaling = number(*rope, "attention_scaling");
-            if (original == 0 && rope->value("rope_type", std::string()) == "yarn" &&
-                scaling > 1.0 && positions != 0) {
-                const double factor = std::exp((scaling - 1.0) / 0.1);
+            // Published without the length, YaRN's factor tells it: the converter writes that
+            // factor's default attention scaling, from which the runtime tells the same length.
+            const double published = number(*rope, "factor");
+            if (original == 0 && yarn && positions != 0 && (scaling > 1.0 || published >= 2.0)) {
+                const double factor = scaling > 1.0 ? std::exp((scaling - 1.0) / 0.1) : published;
                 const double whole  = std::round(factor);
                 if (whole >= 2.0 && std::fabs(factor - whole) <= 1e-3 * whole &&
                     positions % static_cast<std::uint32_t>(whole) == 0) {
