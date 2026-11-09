@@ -130,17 +130,17 @@ ninferno_add_op_test(ninferno_softmax_attention_test LABELS gpu slow
 # process on the RTX 5090 host, past the timeout, and the runs are independent.
 add_test(NAME ninferno_softmax_attention_test
   COMMAND ninferno_softmax_attention_test --other-only)
-ninferno_label_tests(ninferno_softmax_attention_test LABELS host slow)
+ninferno_label_tests(ninferno_softmax_attention_test LABELS gpu slow)
 set(ninferno_softmax_attention_runs ninferno_softmax_attention_test)
 foreach(kv bf16 int8 fp8 nvfp4 k8v4)
   add_test(NAME ninferno_softmax_attention_${kv}_test
     COMMAND ninferno_softmax_attention_test --kv-dtype ${kv})
-  ninferno_label_tests(ninferno_softmax_attention_${kv}_test LABELS host slow)
+  ninferno_label_tests(ninferno_softmax_attention_${kv}_test LABELS gpu slow)
   list(APPEND ninferno_softmax_attention_runs ninferno_softmax_attention_${kv}_test)
 endforeach()
 add_test(NAME ninferno_softmax_attention_unwritten_test
   COMMAND ninferno_softmax_attention_test --unwritten-only)
-ninferno_label_tests(ninferno_softmax_attention_unwritten_test LABELS host slow)
+ninferno_label_tests(ninferno_softmax_attention_unwritten_test LABELS gpu slow)
 list(APPEND ninferno_softmax_attention_runs ninferno_softmax_attention_unwritten_test)
 set_tests_properties(${ninferno_softmax_attention_runs} PROPERTIES SKIP_RETURN_CODE 77)
 
@@ -162,11 +162,11 @@ ninferno_add_op_test(ninferno_context_kv_materialize_test LABELS gpu slow
 
 add_test(NAME ninferno_kv_cache_append_nvfp4_test
   COMMAND ninferno_kv_cache_append_test --nvfp4-only)
-ninferno_label_tests(ninferno_kv_cache_append_nvfp4_test LABELS host)
+ninferno_label_tests(ninferno_kv_cache_append_nvfp4_test LABELS gpu)
 
 add_test(NAME ninferno_kv_cache_append_k8v4_test
   COMMAND ninferno_kv_cache_append_test --k8v4-only)
-ninferno_label_tests(ninferno_kv_cache_append_k8v4_test LABELS host)
+ninferno_label_tests(ninferno_kv_cache_append_k8v4_test LABELS gpu)
 
 set_tests_properties(
   ninferno_kv_cache_append_nvfp4_test
