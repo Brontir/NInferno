@@ -1,6 +1,6 @@
-// The route tuner (route_tune_tool.h): offline autotuner for the generic projection path. It writes a
-// per-GPU-class route table (ninferno-route-table/1; include/ninferno/ops/route_table.h) so that a
-// new model gets tuned routes as data, with no C++. It runs as `ninferno-serve route-tune` (a
+// The route tuner (route_tune_tool.h): offline autotuner for the generic projection path. It writes
+// a per-GPU-class route table (ninferno-route-table/1; include/ninferno/ops/route_table.h) so that
+// a new model gets tuned routes as data, with no C++. It runs as `ninferno-serve route-tune` (a
 // release, through the dispatcher's engine for the GPU) and as the bench's ninferno_route_tune.
 //
 //   ninferno-serve route-tune --shapes FILE [--out routes/<key>.json] [--key chip|variant|arch]
@@ -36,6 +36,10 @@
 // --select-reps N adds select_ns, the host time of one select_route of that call (the mean of N,
 // after a first one that fills the selection's caches): an eager call selects its route on the
 // host, so the selection is a share of a host-bound decode step.
+// --describe 1 skips the sweep and prints, per problem and point (--points, else the band points),
+// the description of the call the production path makes (generic::describe_call, #298): the route
+// asked and run, workspace, tile, logical traffic, prepared activation, the cost model's price and
+// the compiled kernel's resources on this board.
 // --a8-candidates 1 admits and selects a GGUF block format under the default policy (AllowA8):
 // the W4A8 tiles, R8 and ggml's matrix kernel are timed and priced at every width beside the A16
 // routes (--routes-out, --selected-out, whose rows then say a8: the AllowA8 case they time), but
@@ -53,6 +57,7 @@
 #include "ops/generic/generic_ggml_internal.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
 #include "ops/generic/random_weight.h"
+#include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
 #include "ops/generic/route_tune_tool.h"
 
@@ -215,6 +220,38 @@ int route_tune_main(int argc, char** argv) {
         std::cerr << "device " << device.name << " class " << device.id() << " (table key "
                   << key << "), "
                   << problems.size() << " problems\n";
+
+        // --describe 1 (#298): no sweep. For every problem and point (--points, else the decode and
+        // wide band points) the route the production path runs and what describes it, one line
+        // each on stdout: generic::describe_call (the resolved route, its workspace, tile, logical
+        // traffic, prepared activation, cost-model price and the compiled kernel's registers,
+        // shared memory, threads and grid): the same functions the launch and the selector ask.
+        if (opt.count("--describe") && opt["--describe"] == "1") {
+            std::vector<std::int32_t> points = custom_points;
+            if (points.empty()) {
+                points = decode_points();
+                for (const auto t : wide_points()) points.push_back(t);
+            }
+            for (const Problem& p : problems) {
+                const auto policy = p.compute == generic::ComputeClass::A4
+                                        ? ops::LinearPolicy::AllowA4
+                                    : p.compute == generic::ComputeClass::A8 || a8_candidates
+                                        ? ops::LinearPolicy::AllowA8
+                                        : ops::LinearPolicy::A16Only;
+                for (const std::int32_t t : points) {
+                    // The workspace the plan reserves for the call (no weight: the conservative
+                    // reservation of a weight whose column order is unknown).
+                    const generic::Problem gp{p.qtype, policy, p.n, p.k, p.epilogue};
+                    const std::size_t own = generic::workspace_capacity_bytes(gp, nullptr, t, t);
+                    const auto d = generic::describe_call(device, p.qtype, policy, p.epilogue, p.n,
+                                                          p.k, t, own, false, 0, true);
+                    std::cout << generic::qtype_name(p.qtype) << ' ' << p.n << 'x' << p.k
+                              << " T=" << t << ": "
+                              << (d ? generic::describe_text(*d) : std::string("none")) << '\n';
+                }
+            }
+            return 0;
+        }
 
         std::vector<std::int32_t> prefill_points;
         for (int t = chunk / 2; t <= 8 * chunk; t *= 2) prefill_points.push_back(t);

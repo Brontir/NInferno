@@ -22,6 +22,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 
 namespace ninferno::ops::detail::generic {
 
@@ -54,5 +55,50 @@ resolved_route_query(const DeviceClass& device, QType qtype, LinearPolicy policy
                      std::optional<std::size_t> workspace_free, bool prefill = false,
                      std::int32_t parent_rows = 0, bool x_aligned16 = true, int ldx = 0,
                      int segments = 1);
+
+// What a route is, for a call (#298): one read-only description assembled from the facts the
+// launch path and the cost model already own; nothing here is stored or fitted. Every field is the
+// answer of the function the launch (or the selector) asks: `resolved` of resolve_route, the
+// workspace of route_workspace_bytes (ggml's matrix kernel: mmq_workspace_bytes, the slice
+// run_route launches), the tile and traffic of route_tile and route_traffic (declared geometry
+// and a prediction of requested bytes, not counters), `prepared` of prepared_rule, the price of
+// route_cost_seconds, and the kernel of route_resources (the compiled registers, shared memory,
+// threads and grid, read from the HOST GPU's binary: only when asked for).
+// The description is of the call route_query describes: the engine's contiguous, aligned
+// activation, the weight in the converter's layout (see above), not a recorded call's own layout.
+struct RouteDescription {
+    ResolvedRoute resolved;
+    std::size_t workspace_bytes = 0; // what `resolved.executed` takes from the call's workspace
+    std::optional<RouteTile> tile;
+    std::optional<RouteTraffic> traffic;
+    std::optional<PreparedRule> prepared;
+    std::optional<double> cost_seconds; // cost_route's time where it prices the route
+    std::optional<KernelResources> kernel;
+};
+
+// The description of a call that runs `asked` (an explicit route, as the tuner and the pin tests
+// give one): nullopt where the generic path does not read such a weight or route_admits refuses the
+// route for it. `workspace_free`: as resolved_route_query's. `with_kernel` reads the compiled
+// kernel's resources on the host GPU (CUDA required; a failed read leaves `kernel` empty).
+[[nodiscard]] std::optional<RouteDescription>
+describe_route(const DeviceClass& device, Route asked, QType qtype, LinearPolicy policy,
+               Epilogue epilogue, std::int32_t n, std::int32_t k, std::int32_t tokens,
+               std::optional<std::size_t> workspace_free, std::int32_t parent_rows = 0,
+               bool with_kernel = false);
+
+// The description of the call the selector routes: the route run() hands on
+// (resolved_route_query's choice), described as describe_route does. nullopt where route_query
+// gives none.
+[[nodiscard]] std::optional<RouteDescription>
+describe_call(const DeviceClass& device, QType qtype, LinearPolicy policy, Epilogue epilogue,
+              std::int32_t n, std::int32_t k, std::int32_t tokens,
+              std::optional<std::size_t> workspace_free, bool prefill = false,
+              std::int32_t parent_rows = 0, bool with_kernel = false);
+
+// One line of key=value fields: "asked=<route> runs=<route> [demoted=<why>] [r8_prequantized]
+// workspace=<bytes> [tile=<rows>x<tokens>[ ksplit=<n>]] [weight_bytes=<b> activation_bytes=<b>
+// output_bytes=<b>] [prepared=<rep>] [cost_us=<t>] [regs=<r> local=<b> smem=<static>+<dynamic>
+// threads=<t> grid=<x>x<y>x<z>]".
+[[nodiscard]] std::string describe_text(const RouteDescription& description);
 
 } // namespace ninferno::ops::detail::generic
