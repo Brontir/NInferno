@@ -331,8 +331,9 @@ void read_gguf_facts(const fs::path& path, SupportFacts& out) {
                 count_gguf_matrices(file, out);
                 // A chat_template.jinja beside it is its template, as the converter reads it
                 // (and the hub facts count it).
+                std::error_code beside;
                 out.chat_template = file.has("tokenizer.chat_template") ||
-                                    fs::exists(path.parent_path() / "chat_template.jinja");
+                                    fs::exists(path.parent_path() / "chat_template.jinja", beside);
                 // A base repository named (base_tokenizer's): its template, not known yet.
                 if (!*out.chat_template && gguf_metadata_base_repository(file.metadata)) {
                     out.chat_template.reset();
