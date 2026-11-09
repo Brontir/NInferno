@@ -1620,6 +1620,30 @@ int test_codec() {
     return failures;
 }
 
+// tool_choice none steer (#578): harmony closes the headers that address a message, the other
+// syntaxes need no header constraint.
+int test_refusal_structural_tag() {
+    int failures = 0;
+    for (const auto format :
+         {ToolCallFormat::QwenXml, ToolCallFormat::HermesJson, ToolCallFormat::Gemma4}) {
+        failures += check(ninferno::chat::tool_call_syntax(format).refusal_structural_tag().empty(),
+                          "no refusal tag outside harmony");
+    }
+    const std::string tag =
+        ninferno::chat::tool_call_syntax(ToolCallFormat::Harmony).refusal_structural_tag();
+    const auto parsed = nlohmann::json::parse(tag, nullptr, false);
+    failures += check(!parsed.is_discarded() && parsed.at("type") == "structural_tag" &&
+                          parsed.at("format").at("type") == "any_text",
+                      "harmony refusal tag is free text");
+    const auto& excludes = parsed.at("format").at("excludes");
+    failures += check(std::find(excludes.begin(), excludes.end(), "<|channel|>commentary") !=
+                              excludes.end() &&
+                          std::find(excludes.begin(), excludes.end(), "<|start|>assistant to") !=
+                              excludes.end(),
+                      "harmony refusal tag closes commentary and the role recipient");
+    return failures;
+}
+
 } // namespace
 
 int main() {
@@ -1627,6 +1651,7 @@ int main() {
     failures += test_conventions();
     failures += test_bare_json_call_dropped();
     failures += test_harmony_any_recipient_under_none();
+    failures += test_refusal_structural_tag();
     failures += test_parsers();
     failures += test_streaming_decoder();
     failures += test_forced_stop_cut();
