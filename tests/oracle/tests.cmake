@@ -9,6 +9,7 @@ target_link_libraries(ninferno_hf_oracle_runner PRIVATE ninferno_engine ninferno
 add_test(NAME ninferno_hf_oracle_test
   COMMAND ${NINFERNO_CONVERT_PYTHON} -B "${CMAKE_CURRENT_LIST_DIR}/hf_oracle.py"
     $<TARGET_FILE:ninferno-convert> $<TARGET_FILE:ninferno_hf_oracle_runner> "${PROJECT_SOURCE_DIR}")
+ninferno_label_tests(ninferno_hf_oracle_test LABELS gpu)
 set_tests_properties(ninferno_hf_oracle_test PROPERTIES SKIP_RETURN_CODE 77)
 
 # Greedy ids of raw token input through the public Engine (quick family cross-checks).

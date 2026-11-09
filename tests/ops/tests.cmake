@@ -41,20 +41,24 @@ endforeach()
 # Four runs of one executable (test_moe.cpp --part): the random formats in three shares and the
 # shipped layers, plans and refusals took 125 s in one process on the RTX 5090; the runs are
 # independent, so ctest -j spreads them. ninferno_moe_test keeps its name for the layers.
-ninferno_add_op_test(ninferno_moe_test
+ninferno_add_op_test(ninferno_moe_test LABELS gpu slow
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_moe.cpp"
   LIBRARIES ninferno_ops
   NO_DEFAULT_TEST)
 add_test(NAME ninferno_moe_test COMMAND ninferno_moe_test --part layers)
+ninferno_label_tests(ninferno_moe_test LABELS gpu slow)
 set(ninferno_moe_runs ninferno_moe_test)
 foreach(share 0 1 2)
   add_test(NAME ninferno_moe_random${share}_test COMMAND ninferno_moe_test --part random${share})
+  ninferno_label_tests(ninferno_moe_random${share}_test LABELS gpu)
   list(APPEND ninferno_moe_runs ninferno_moe_random${share}_test)
 endforeach()
 # MXFP4 banks on the block-scaled MMA with MXFP8 activations (sm_120a default; skips elsewhere).
 add_test(NAME ninferno_moe_mx8_test COMMAND ninferno_moe_test --part mx8)
+ninferno_label_tests(ninferno_moe_mx8_test LABELS gpu)
 # The int8 W4A8 of MXFP4 banks, which sm_120a builds otherwise leave for the block-scaled MMA.
 add_test(NAME ninferno_moe_int8_test COMMAND ninferno_moe_test --part int8)
+ninferno_label_tests(ninferno_moe_int8_test LABELS gpu)
 list(APPEND ninferno_moe_runs ninferno_moe_mx8_test ninferno_moe_int8_test)
 set_tests_properties(${ninferno_moe_runs} PROPERTIES SKIP_RETURN_CODE 77)
 
@@ -92,12 +96,12 @@ ninferno_add_op_test(ninferno_mma_fragments_test
 
 # The SM-count launch rules (ops/common/sm_wave_rules.h): the RTX 5090's decisions unchanged at
 # 170 SMs, the other boards' answers printed and pinned. No GPU.
-ninferno_add_test(ninferno_sm_wave_rules_test
+ninferno_add_test(ninferno_sm_wave_rules_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_sm_wave_rules.cpp"
   LIBRARIES ninferno_core)
 
 # Per-GPU-class route_as overrides of the shape-owned Linear tables: loader and lookup.
-ninferno_add_op_test(ninferno_shape_routes_test
+ninferno_add_op_test(ninferno_shape_routes_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_shape_routes.cpp"
   LIBRARIES ninferno_ops)
 
@@ -110,11 +114,11 @@ if(NINFERNO_WITH_NVFP4)
     LIBRARIES ninferno_ops)
 endif()
 
-ninferno_add_op_test(ninferno_candidate_selector_test
+ninferno_add_op_test(ninferno_candidate_selector_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_candidate_selector.cpp"
   LIBRARIES ninferno_ops)
 
-ninferno_add_op_test(ninferno_softmax_attention_test
+ninferno_add_op_test(ninferno_softmax_attention_test LABELS gpu slow
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/softmax_attention/main.cpp"
           "${CMAKE_CURRENT_LIST_DIR}/softmax_attention/causal_cache.cpp"
           "${CMAKE_CURRENT_LIST_DIR}/softmax_attention/plain_and_packed.cpp"
@@ -126,14 +130,17 @@ ninferno_add_op_test(ninferno_softmax_attention_test
 # process on the RTX 5090 host, past the timeout, and the runs are independent.
 add_test(NAME ninferno_softmax_attention_test
   COMMAND ninferno_softmax_attention_test --other-only)
+ninferno_label_tests(ninferno_softmax_attention_test LABELS host slow)
 set(ninferno_softmax_attention_runs ninferno_softmax_attention_test)
 foreach(kv bf16 int8 fp8 nvfp4 k8v4)
   add_test(NAME ninferno_softmax_attention_${kv}_test
     COMMAND ninferno_softmax_attention_test --kv-dtype ${kv})
+  ninferno_label_tests(ninferno_softmax_attention_${kv}_test LABELS host slow)
   list(APPEND ninferno_softmax_attention_runs ninferno_softmax_attention_${kv}_test)
 endforeach()
 add_test(NAME ninferno_softmax_attention_unwritten_test
   COMMAND ninferno_softmax_attention_test --unwritten-only)
+ninferno_label_tests(ninferno_softmax_attention_unwritten_test LABELS host slow)
 list(APPEND ninferno_softmax_attention_runs ninferno_softmax_attention_unwritten_test)
 set_tests_properties(${ninferno_softmax_attention_runs} PROPERTIES SKIP_RETURN_CODE 77)
 
@@ -149,15 +156,17 @@ ninferno_add_op_test(ninferno_rmsnorm_rope_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_rmsnorm_rope.cpp"
   LIBRARIES ninferno_ops)
 
-ninferno_add_op_test(ninferno_context_kv_materialize_test
+ninferno_add_op_test(ninferno_context_kv_materialize_test LABELS gpu slow
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_context_kv_materialize.cpp"
   LIBRARIES ninferno_ops)
 
 add_test(NAME ninferno_kv_cache_append_nvfp4_test
   COMMAND ninferno_kv_cache_append_test --nvfp4-only)
+ninferno_label_tests(ninferno_kv_cache_append_nvfp4_test LABELS host)
 
 add_test(NAME ninferno_kv_cache_append_k8v4_test
   COMMAND ninferno_kv_cache_append_test --k8v4-only)
+ninferno_label_tests(ninferno_kv_cache_append_k8v4_test LABELS host)
 
 set_tests_properties(
   ninferno_kv_cache_append_nvfp4_test
@@ -192,6 +201,7 @@ add_test(NAME ninferno_pdl_sass_audit_test
     --build "${PROJECT_BINARY_DIR}" --source "${PROJECT_SOURCE_DIR}"
     --allow "${PROJECT_SOURCE_DIR}/tools/pdl_prewait_loads.txt"
     --cuobjdump "${NINFERNO_CUDA_BIN}/cuobjdump")
+ninferno_label_tests(ninferno_pdl_sass_audit_test LABELS host slow)
 set_tests_properties(ninferno_pdl_sass_audit_test PROPERTIES SKIP_RETURN_CODE 77)
 add_library(ninferno_pdl_audit_sabotage OBJECT "${CMAKE_CURRENT_LIST_DIR}/pdl_audit_sabotage.cu")
 ninferno_test_includes(ninferno_pdl_audit_sabotage)
@@ -200,6 +210,7 @@ add_test(NAME ninferno_pdl_sass_audit_sabotage_test
     --objects $<TARGET_OBJECTS:ninferno_pdl_audit_sabotage>
     --allow "${CMAKE_CURRENT_LIST_DIR}/pdl_audit_sabotage_allow.txt"
     --expect "pdl_audit_hoisted_consumer:0" --cuobjdump "${NINFERNO_CUDA_BIN}/cuobjdump")
+ninferno_label_tests(ninferno_pdl_sass_audit_sabotage_test LABELS host)
 set_tests_properties(ninferno_pdl_sass_audit_sabotage_test PROPERTIES SKIP_RETURN_CODE 77)
 
 # The Qwen3.5 and Gemma 4 warp top-8 selections against FP64: negative logits, exact ties at
@@ -271,13 +282,13 @@ include("${CMAKE_CURRENT_LIST_DIR}/linear_swiglu/tests.cmake")
 
 # The causal cache attention's one admitted domain (#312): each refusal named with its kind, the
 # plans and the workspace query agreeing at the boundaries for every KV storage. No GPU.
-ninferno_add_op_test(ninferno_causal_admission_test
+ninferno_add_op_test(ninferno_causal_admission_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/softmax_attention/test_causal_admission.cpp"
   LIBRARIES ninferno_ops)
 
 # The position-aligned KV splits of the invariant route profile (CausalKvPartition): a host replica
 # of the aligned grouped kernel's split walk gives every token its decode's partials under any
 # prompt chunking; prints the split plan per SM count. No GPU.
-ninferno_add_test(ninferno_causal_position_partition_test
+ninferno_add_test(ninferno_causal_position_partition_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/softmax_attention/test_causal_position_partition.cpp"
   LIBRARIES ninferno::cudart)

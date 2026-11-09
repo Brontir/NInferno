@@ -175,6 +175,7 @@ nvcc -O3 -std=c++17 -arch=native tools/hbm_bandwidth_probe.cu -o build/hbm_bandw
 | `generate_jinja_unicode.py` | Regenerates Jinja's Unicode full-case exceptions and contextual-case properties from `SpecialCasing.txt` and `DerivedCoreProperties.txt`. |
 | `docs/gen_performance.py [--check]` | Generates the [performance pages](../docs/performance/README.md) from `docs/performance/data/`; `--check` fails when a page differs from the data. |
 | `docs/check_anchors.py ROOT` | Fails when a relative Markdown link names a missing file, or an `#anchor` no heading of its target (GitHub slugs); links in code are skipped. |
+| `audit/ctest_labels.sh [BUILD_DIR]` | Fails on a CTest test without a label from host, gpu, real, golden, slow (see tests/README.md). |
 | `audit/ctest_skips.sh BUILD_DIR` | Counts cases skipped inside passing CTest tests, by reason and by test. |
 | `audit/decision_inputs.sh` | Fails when a listed decision file (planners, scheduler, speculation, routes, linear dispatch, attention and MoE plans, machine facts) includes a clock or timing header, names a clock, a timer or a clock read, reads the environment (`getenv`, `_wgetenv`, `sys::env`, ...) or queries free memory (registered as `ninferno_decision_inputs_test` on UNIX hosts). |
 | `audit/legacy_stream_calls.sh SOURCE_ROOT` | Audits synchronous CUDA copies and fills on the legacy default stream (registered as `ninferno_legacy_stream_audit_test`). |

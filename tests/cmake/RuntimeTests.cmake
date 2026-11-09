@@ -1,68 +1,68 @@
-ninferno_add_test(ninferno_admission_policy_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_admission_policy.cpp"
+ninferno_add_test(ninferno_admission_policy_test LABELS host SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_admission_policy.cpp"
   LIBRARIES ninferno_runtime_support)
 
-ninferno_add_test(ninferno_structured_output_test
+ninferno_add_test(ninferno_structured_output_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_structured_output.cpp"
   LIBRARIES ninferno_structured)
 
-ninferno_add_test(ninferno_context_cost_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_context_cost.cpp"
+ninferno_add_test(ninferno_context_cost_test LABELS host SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_context_cost.cpp"
   LIBRARIES ninferno_runtime_support ninferno::json)
 
-ninferno_add_test(ninferno_resource_manager_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_resource_manager.cpp"
+ninferno_add_test(ninferno_resource_manager_test LABELS host SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_resource_manager.cpp"
   LIBRARIES ninferno_runtime_support)
 
-ninferno_add_test(ninferno_interleave_cost_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_interleave_cost.cpp"
+ninferno_add_test(ninferno_interleave_cost_test LABELS host SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_interleave_cost.cpp"
   LIBRARIES ninferno_runtime_support)
 
-ninferno_add_test(ninferno_kv_capacity_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_kv_capacity.cpp"
+ninferno_add_test(ninferno_kv_capacity_test LABELS host SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_kv_capacity.cpp"
   LIBRARIES ninferno_runtime_support)
 
 # The startup plan ladder: its rungs, their bytes, the selection and the warm-up's check, the
 # explicit pins, and the plan-levels review's scenarios against a continuous fit. CPU.
-ninferno_add_test(ninferno_plan_ladder_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_plan_ladder.cpp"
+ninferno_add_test(ninferno_plan_ladder_test LABELS host SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_plan_ladder.cpp"
   LIBRARIES ninferno_runtime_support)
 
-ninferno_add_test(ninferno_context_cache_defaults_test
+ninferno_add_test(ninferno_context_cache_defaults_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_context_cache_defaults.cpp"
   LIBRARIES ninferno_engine ninferno_core ninferno::json)
 
 # The Engine refuses unreadable route options before the device (admit_engine_options).
-ninferno_add_test(ninferno_engine_route_options_test
+ninferno_add_test(ninferno_engine_route_options_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_engine_route_options.cpp"
   LIBRARIES ninferno_engine ninferno_core ninferno::json)
 
 # The route pins without a device: spellings, the engine-flag parser, the --activations refusals,
 # the ledger's coverage check and the MoE path choice (ops/route_pins.h).
-ninferno_add_test(ninferno_route_pins_test
+ninferno_add_test(ninferno_route_pins_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_route_pins.cpp"
   LIBRARIES ninferno_engine ninferno_core ninferno::json)
 
-ninferno_add_test(ninferno_sampling_defaults_test
+ninferno_add_test(ninferno_sampling_defaults_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_sampling_defaults.cpp"
   LIBRARIES ninferno_engine ninferno_core)
 
 # What a load refuses before the device: Qwen-only options on other families, unknown tuner
 # variable values. CPU.
-ninferno_add_test(ninferno_load_refusals_test
+ninferno_add_test(ninferno_load_refusals_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_load_refusals.cpp"
   LIBRARIES ninferno_engine ninferno_core ninferno::json)
 
 # The kernel warm-up's prefill width set: the exact band, the route table's breakpoints, and every
 # kernel class of the exported plan choosers at or below chunk. CPU.
-ninferno_add_test(ninferno_warmup_widths_test NEEDS_SOURCE_DIR
+ninferno_add_test(ninferno_warmup_widths_test LABELS host NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_warmup_widths.cpp"
   LIBRARIES ninferno_engine ninferno_core ninferno::json)
 
 # The kernel warm-up's record kept across starts: round trip, misses on another key, schema or a
 # broken file, the agreement of two loops, and the switch that turns it off. CPU.
-ninferno_add_test(ninferno_warmup_cache_test
+ninferno_add_test(ninferno_warmup_cache_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_warmup_cache.cpp"
   LIBRARIES ninferno_engine ninferno_core ninferno::json)
 
 # The decision fingerprint: canonical text, a pinned value, every input reaching it, the SHA-256
 # vectors, the inventory of NINFERNO_* variables read in src/, and the source files it names by
 # content (presets, MoE-tune cache, drafter). CPU.
-ninferno_add_test(ninferno_decision_fingerprint_test NEEDS_SOURCE_DIR
+ninferno_add_test(ninferno_decision_fingerprint_test LABELS host golden NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_decision_fingerprint.cpp"
   LIBRARIES ninferno_engine ninferno_runtime_support ninferno_ops ninferno_core)
 
@@ -73,6 +73,6 @@ ninferno_add_op_test(ninferno_decision_routes_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_decision_routes.cpp"
   LIBRARIES ninferno_engine ninferno_runtime_support ninferno_ops ninferno_core)
 
-ninferno_add_test(ninferno_process_options_lease_test
+ninferno_add_test(ninferno_process_options_lease_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_process_options_lease.cpp"
   LIBRARIES ninferno_runtime_support)

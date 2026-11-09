@@ -25,6 +25,29 @@ cmake --build build --parallel --target ninferno_sampling_test
 ctest --test-dir build -R ninferno_sampling_test --output-on-failure
 ```
 
+## Labels
+
+Every test carries labels, and `tools/audit/ctest_labels.sh build` (the `ninferno_ctest_labels_test`
+test) fails on a test without one. A test added with `ninferno_add_test(<name> LABELS ...)` or
+`ninferno_add_op_test` (labeled `gpu` unless it says otherwise) gets them there; a test added with a
+bare `add_test()` calls `ninferno_label_tests(<name> LABELS ...)` next to it.
+
+| Label | Meaning |
+|---|---|
+| `host` | Runs and passes with no GPU: `CUDA_VISIBLE_DEVICES= ctest -L host`. Never combined with `gpu` or `real`. |
+| `gpu` | Needs a CUDA device; exits 77 (skipped) or fails without one. |
+| `real` | Needs a model artifact, tokenizer fixtures or another input the checkout does not carry, and skips (77) without it. A real test that also runs the engine is `real` and `gpu`. |
+| `golden` | Compares against a committed golden: the selector, choice and plan goldens. |
+| `slow` | Over 60 s on a lab stand. Add it to other labels: `ctest -L host -LE slow`. |
+
+```bash
+ctest --test-dir build -L host -N                         # list what runs without a GPU
+CUDA_VISIBLE_DEVICES= ctest --test-dir build -L host -j8  # run it
+ctest --test-dir build -LE slow                           # everything but the slow ones
+```
+
+Plain `ctest` still runs every test.
+
 ## Build options
 
 | Option | Default | Meaning |

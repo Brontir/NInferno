@@ -1,8 +1,8 @@
-ninferno_add_test(ninferno_qwen3_5_loading_real_test
+ninferno_add_test(ninferno_qwen3_5_loading_real_test LABELS real gpu
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_loading_real.cpp"
   LIBRARIES ninferno_model_loading)
 
-ninferno_add_test(ninferno_qwen3_5_loading_test
+ninferno_add_test(ninferno_qwen3_5_loading_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_loading.cpp"
   LIBRARIES ninferno_model_loading)
 
@@ -10,20 +10,20 @@ set_tests_properties(
   ninferno_qwen3_5_loading_real_test
   PROPERTIES SKIP_RETURN_CODE 77)
 
-ninferno_add_test(ninferno_qwen3_5_frontend_test
+ninferno_add_test(ninferno_qwen3_5_frontend_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_frontend.cpp"
   NEEDS_SOURCE_DIR
   LIBRARIES ninferno_engine ninferno_core ninferno::json)
 
 # Output presentation is invariant to how generated tokens are cut into rounds.
-ninferno_add_test(ninferno_qwen3_5_output_slicing_test
+ninferno_add_test(ninferno_qwen3_5_output_slicing_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_output_slicing.cpp"
   NEEDS_SOURCE_DIR
   LIBRARIES ninferno_engine ninferno_core ninferno::json)
 
 # Parity with transformers on a checkpoint's own tokenizer files (hf_tokenizer_parity.py writes
 # them and the expected ids; NINFERNO_TOKENIZER_PARITY_DIR names them). Skipped without them.
-ninferno_add_test(ninferno_qwen3_5_tokenizer_parity_test
+ninferno_add_test(ninferno_qwen3_5_tokenizer_parity_test LABELS real
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_tokenizer_parity.cpp"
   LIBRARIES ninferno_engine ninferno_core ninferno::json)
 
@@ -34,14 +34,14 @@ set_tests_properties(
 # Both Split regexes a Qwen3.5+ tokenizer.json declares (Qwen3.5's, and Qwen2's that transformers 5
 # re-saves write) against the `tokenizers` ids of the real files, embedded by
 # hf_tokenizer_split_variants.py in tokenizer_split_variants_fixture.h.
-ninferno_add_test(ninferno_qwen3_5_tokenizer_split_variants_test
+ninferno_add_test(ninferno_qwen3_5_tokenizer_split_variants_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_tokenizer_split_variants.cpp"
   LIBRARIES ninferno_model_loading ninferno::json)
 
 # Prompts rendered through the serve request path and the Qwen frontend equal
 # transformers' apply_chat_template on a checkpoint's own files (hf_chat_template_parity.py
 # writes them and the reference; NINFERNO_CHAT_TEMPLATE_PARITY_DIR names them). Skipped without them.
-ninferno_add_test(ninferno_qwen3_5_chat_template_parity_test
+ninferno_add_test(ninferno_qwen3_5_chat_template_parity_test LABELS real
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_chat_template_parity.cpp"
   LIBRARIES ninferno_serve ninferno_engine ninferno_core ninferno::json)
 
@@ -49,25 +49,25 @@ set_tests_properties(
   ninferno_qwen3_5_chat_template_parity_test
   PROPERTIES SKIP_RETURN_CODE 77)
 
-ninferno_add_test(ninferno_qwen3_5_runtime_mechanisms_test
+ninferno_add_test(ninferno_qwen3_5_runtime_mechanisms_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_runtime_mechanisms.cpp"
   LIBRARIES ninferno_engine ninferno_core)
 
 # The MTP layer's packed Q/K/gate/V parent (host only): fused Op forms, and a BF16 MoE parent
 # (nvidia / RedHatAI NVFP4 35B-A3B releases) sized for the generic linear instead of refused.
-ninferno_add_test(ninferno_qwen3_5_mtp_projection_plan_test
+ninferno_add_test(ninferno_qwen3_5_mtp_projection_plan_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_mtp_projection_plan.cpp"
   LIBRARIES ninferno_engine ninferno_core ninferno::json)
 
 # Decode round pacing (host only): steps and waits on quiet, lagging and fixed hosts.
-ninferno_add_test(ninferno_qwen3_5_round_pacing_test
+ninferno_add_test(ninferno_qwen3_5_round_pacing_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_round_pacing.cpp")
 
 # Ordinary decode run-ahead through the Engine: eight steps per round emit exactly the tokens of
 # one step per round (stops mid-round, stop strings across rounds, limits, two rows, sampling, a
 # follow-up past the sliding window, cancellation). NINFERNO_TEST_RUN_AHEAD_ARTIFACTS names the
 # artifacts; skipped without it. GPU + artifacts.
-ninferno_add_test(ninferno_qwen3_5_ordinary_run_ahead_real_test
+ninferno_add_test(ninferno_qwen3_5_ordinary_run_ahead_real_test LABELS real gpu
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_ordinary_run_ahead_real.cpp"
   LIBRARIES ninferno_engine)
 
@@ -79,7 +79,7 @@ set_tests_properties(
 # that spins (stops, limits, two rows, sampling, prefix reuse, cancellation) under
 # --activations exact. NINFERNO_TEST_SPEC_WAIT_ARTIFACT names the artifact (DFlash K=3 unless
 # NINFERNO_TEST_SPEC_WAIT_BACKEND / _K / _DRAFTER say otherwise); skipped without it. GPU + artifact.
-ninferno_add_test(ninferno_qwen3_5_speculative_wait_real_test
+ninferno_add_test(ninferno_qwen3_5_speculative_wait_real_test LABELS real gpu
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_speculative_wait_real.cpp"
   LIBRARIES ninferno_engine)
 
@@ -87,7 +87,7 @@ set_tests_properties(
   ninferno_qwen3_5_speculative_wait_real_test
   PROPERTIES SKIP_RETURN_CODE 77)
 
-ninferno_add_test(ninferno_qwen3_5_state_image_test
+ninferno_add_test(ninferno_qwen3_5_state_image_test LABELS gpu
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_state_image.cpp"
   LIBRARIES ninferno_engine ninferno_core)
 
@@ -95,11 +95,11 @@ set_tests_properties(
   ninferno_qwen3_5_state_image_test
   PROPERTIES SKIP_RETURN_CODE 77)
 
-ninferno_add_test(ninferno_qwen3_5_state_image_layout_test
+ninferno_add_test(ninferno_qwen3_5_state_image_layout_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_state_image_layout.cpp"
   LIBRARIES ninferno_engine ninferno_core)
 
-ninferno_add_test(ninferno_qwen3_5_context_store_test
+ninferno_add_test(ninferno_qwen3_5_context_store_test LABELS gpu
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_context_store.cpp"
   LIBRARIES ninferno_engine ninferno_core)
 
@@ -107,7 +107,7 @@ set_tests_properties(
   ninferno_qwen3_5_context_store_test
   PROPERTIES SKIP_RETURN_CODE 77)
 
-ninferno_add_test(ninferno_qwen3_5_prefix_real_test
+ninferno_add_test(ninferno_qwen3_5_prefix_real_test LABELS real gpu
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_engine_prefix_real.cpp"
   LIBRARIES ninferno_engine ninferno_artifact)
 
@@ -115,7 +115,7 @@ set_tests_properties(
   ninferno_qwen3_5_prefix_real_test
   PROPERTIES SKIP_RETURN_CODE 77)
 
-ninferno_add_test(ninferno_qwen3_5_score_real_test
+ninferno_add_test(ninferno_qwen3_5_score_real_test LABELS real gpu
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_engine_score_real.cpp"
   LIBRARIES ninferno_engine)
 
@@ -123,7 +123,7 @@ set_tests_properties(
   ninferno_qwen3_5_score_real_test
   PROPERTIES SKIP_RETURN_CODE 77)
 
-ninferno_add_test(ninferno_qwen3_5_vision_workspace_real_test
+ninferno_add_test(ninferno_qwen3_5_vision_workspace_real_test LABELS real gpu
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_vision_workspace.cpp"
   LIBRARIES ninferno_model_runtime ninferno_engine ninferno_artifact)
 
@@ -131,7 +131,7 @@ set_tests_properties(
   ninferno_qwen3_5_vision_workspace_real_test
   PROPERTIES SKIP_RETURN_CODE 77)
 
-ninferno_add_test(ninferno_qwen3_5_dflash2_real_test
+ninferno_add_test(ninferno_qwen3_5_dflash2_real_test LABELS real gpu
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_engine_dflash2_real.cpp"
   LIBRARIES ninferno_engine ninferno_artifact)
 
@@ -139,7 +139,7 @@ set_tests_properties(
   ninferno_qwen3_5_dflash2_real_test
   PROPERTIES SKIP_RETURN_CODE 77)
 
-ninferno_add_test(ninferno_qwen3_5_dflash_prefill_real_test
+ninferno_add_test(ninferno_qwen3_5_dflash_prefill_real_test LABELS real gpu
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_dflash_prefill_real.cpp"
   LIBRARIES ninferno_model_runtime ninferno_model_loading ninferno_core)
 
@@ -147,7 +147,7 @@ set_tests_properties(
   ninferno_qwen3_5_dflash_prefill_real_test
   PROPERTIES SKIP_RETURN_CODE 77)
 
-ninferno_add_test(ninferno_qwen3_5_moe_real_test
+ninferno_add_test(ninferno_qwen3_5_moe_real_test LABELS real gpu
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_engine_moe_real.cpp"
   LIBRARIES ninferno_engine ninferno_artifact)
 
@@ -155,7 +155,7 @@ set_tests_properties(
   ninferno_qwen3_5_moe_real_test
   PROPERTIES SKIP_RETURN_CODE 77)
 
-ninferno_add_test(ninferno_qwen3_5_dflash_real_test
+ninferno_add_test(ninferno_qwen3_5_dflash_real_test LABELS real gpu slow
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_engine_dflash_real.cpp"
   LIBRARIES ninferno_engine ninferno_artifact)
 
@@ -163,7 +163,7 @@ set_tests_properties(
   ninferno_qwen3_5_dflash_real_test
   PROPERTIES SKIP_RETURN_CODE 77)
 
-ninferno_add_test(ninferno_qwen3_5_speculative_invariants_real_test
+ninferno_add_test(ninferno_qwen3_5_speculative_invariants_real_test LABELS real gpu slow
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_engine_speculative_invariants_real.cpp"
   LIBRARIES ninferno_engine ninferno_artifact)
 
@@ -175,15 +175,16 @@ set_tests_properties(
 # (#440).
 add_test(NAME ninferno_qwen3_5_speculative_invariants_real_fast_test
   COMMAND ninferno_qwen3_5_speculative_invariants_real_test)
+ninferno_label_tests(ninferno_qwen3_5_speculative_invariants_real_fast_test LABELS real gpu slow)
 set_tests_properties(
   ninferno_qwen3_5_speculative_invariants_real_fast_test
   PROPERTIES SKIP_RETURN_CODE 77 ENVIRONMENT "NINFERNO_TEST_ACTIVATIONS=fast")
 
-ninferno_add_test(ninferno_tool_call_parser_test
+ninferno_add_test(ninferno_tool_call_parser_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../../test_tool_call_parser.cpp"
   LIBRARIES ninferno_engine ninferno_structured ninferno::json)
 
-ninferno_add_test(ninferno_qwen3_5_visual_scatter_test
+ninferno_add_test(ninferno_qwen3_5_visual_scatter_test LABELS gpu
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_visual_scatter.cpp"
   LIBRARIES ninferno_engine ninferno_core)
 
@@ -205,7 +206,7 @@ target_link_libraries(ninferno_qwen3_5_prefix_probe PRIVATE ninferno_engine ninf
 
 # Determinism contracts (solo, sampling parameters, batch composition, A->B->A with the prefix
 # cache, process restarts) on NINFERNO_TEST_ARTIFACT; skipped without it.
-ninferno_add_test(ninferno_qwen3_5_determinism_real_test
+ninferno_add_test(ninferno_qwen3_5_determinism_real_test LABELS real gpu slow
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_engine_determinism_real.cpp"
   LIBRARIES ninferno_engine ninferno_artifact ninferno::json ninferno::cudart)
 

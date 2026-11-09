@@ -33,8 +33,33 @@ function(ninferno_link_ops target scope)
   endif()
 endfunction()
 
+# Every test carries labels (tools/audit/ctest_labels.sh fails on a test without):
+#   host    runs and passes with no GPU (CUDA_VISIBLE_DEVICES= ctest -L host)
+#   gpu     needs a CUDA device
+#   real    needs a model artifact or fixtures it does not carry, and skips (exit 77) without
+#   golden  compares against a committed golden (selector, choice and plan goldens)
+#   slow    over 60 s on a lab stand
+# A test combines them: a gpu test is also slow, a real one is also gpu.
+set(NINFERNO_TEST_LABEL_NAMES host gpu real golden slow)
+
+# ninferno_label_tests(<test>... LABELS <label>...): sets the labels of tests registered with add_test.
+function(ninferno_label_tests)
+  cmake_parse_arguments(PARSE_ARGV 0 arg "" "" "LABELS")
+  if(NOT arg_UNPARSED_ARGUMENTS OR NOT arg_LABELS)
+    message(FATAL_ERROR "ninferno_label_tests(<test>... LABELS <label>...): tests and labels are both needed")
+  endif()
+  foreach(label IN LISTS arg_LABELS)
+    if(NOT label IN_LIST NINFERNO_TEST_LABEL_NAMES)
+      message(FATAL_ERROR "unknown test label '${label}' on ${arg_UNPARSED_ARGUMENTS}; known: ${NINFERNO_TEST_LABEL_NAMES}")
+    endif()
+  endforeach()
+  set_tests_properties(${arg_UNPARSED_ARGUMENTS} PROPERTIES LABELS "${arg_LABELS}")
+endfunction()
+
+# ninferno_add_test(<name> LABELS <label>... SOURCES ... LIBRARIES ... [NEEDS_SOURCE_DIR] [NO_DEFAULT_TEST])
+# LABELS is required unless NO_DEFAULT_TEST: the caller then labels the runs it registers.
 function(ninferno_add_test name)
-  cmake_parse_arguments(PARSE_ARGV 1 arg "NEEDS_SOURCE_DIR;NO_DEFAULT_TEST" "" "SOURCES;LIBRARIES")
+  cmake_parse_arguments(PARSE_ARGV 1 arg "NEEDS_SOURCE_DIR;NO_DEFAULT_TEST" "" "SOURCES;LIBRARIES;LABELS")
   add_executable(${name} ${arg_SOURCES})
   ninferno_test_includes(${name})
   if(arg_LIBRARIES STREQUAL "ninferno_ops")
@@ -49,7 +74,11 @@ function(ninferno_add_test name)
   endif()
   # NO_DEFAULT_TEST: the caller registers the executable's runs itself (e.g. one per case group).
   if(NOT arg_NO_DEFAULT_TEST)
+    if(NOT arg_LABELS)
+      message(FATAL_ERROR "ninferno_add_test(${name}): LABELS host|gpu|real|golden|slow is required")
+    endif()
     add_test(NAME ${name} COMMAND ${name})
+    ninferno_label_tests(${name} LABELS ${arg_LABELS})
   endif()
 endfunction()
 
@@ -63,8 +92,13 @@ function(ninferno_op_oracle_options target)
   endif()
 endfunction()
 
+# An op test runs kernels against an oracle: gpu unless LABELS says otherwise.
 function(ninferno_add_op_test name)
-  ninferno_add_test(${name} ${ARGN})
+  if("LABELS" IN_LIST ARGN)
+    ninferno_add_test(${name} ${ARGN})
+  else()
+    ninferno_add_test(${name} LABELS gpu ${ARGN})
+  endif()
   if(NOT "NO_DEFAULT_TEST" IN_LIST ARGN)
     set_tests_properties(${name} PROPERTIES SKIP_RETURN_CODE 77)
   endif()
