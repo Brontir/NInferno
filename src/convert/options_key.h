@@ -18,10 +18,11 @@ struct OptionPart {
 };
 
 // A file or a directory tree by its content: a file of at most 64 MiB by the SHA-256 of its bytes,
-// a larger one (a GGUF or checkpoint shard) by its size, modification time and the SHA-256 of its
-// first 16 MiB (the header and the tensor index) and its last MiB, which hashing it whole would not
-// repay for a key; a directory by every file under it, in name order. "unreadable:<path>" when it
-// cannot be read.
+// a larger one (a GGUF or checkpoint shard) by its size and the SHA-256 of its first 16 MiB (the
+// header, the tensor index and the first tensors) and its last MiB, which hashing it whole would
+// not repay for a key (an edit of the middle alone, keeping the size, is not seen; a copy under
+// another time is the same file); a directory by every file under it, in name order.
+// "unreadable:<path>" when it cannot be read.
 [[nodiscard]] std::string content_identity(const std::filesystem::path& path);
 
 // "" when there is no part; else 12 hex digits of the parts' identity, `described` (when given)
