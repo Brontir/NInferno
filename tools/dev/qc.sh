@@ -188,7 +188,7 @@ if [ -z "$QC_NO_TESTS" ] && [ -n "$EXES" ]; then
     # a failure whose output says there is no CUDA device only needs a GPU: not counted
     awk '
       function flush() { if (name != "") { if (bad && gpu) print "  needs-GPU (not run): " name; else if (bad) { print "  REAL FAILURE: " name; real++ } } name = ""; bad = gpu = 0 }
-      /^ *[0-9]+\/[0-9]+ Test +#/ { flush(); name = $0; sub(/^ *[0-9]+\/[0-9]+ Test +#[0-9]+: /, "", name); sub(/ \.+.*/, "", name); bad = ($0 ~ /\*\*\*|Failed|Exception|Timeout/) }
+      /^ *[0-9]+\/[0-9]+ Test +#/ { flush(); name = $0; sub(/^ *[0-9]+\/[0-9]+ Test +#[0-9]+: /, "", name); sub(/ \.+.*/, "", name); bad = ($0 ~ /\*\*\*(Failed|Exception|Timeout|Not Run)/) }
       /cudaErrorNoDevice|no CUDA-capable device|CUDA_VISIBLE_DEVICES/ { gpu = 1 }
       END { flush(); exit real ? 1 : 0 }' "$L/qc_ctest_$TAG.log"
     if [ $? -ne 0 ]; then
