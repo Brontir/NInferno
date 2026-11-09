@@ -60,10 +60,20 @@ python3 -m tools.convert \
   cache's free space is checked.
 - `--fetch` without `--out` writes the artifact to
   `<cache>/models--org--name/ninferno/<commit>/<stem>.<recipe>.ninferno`, and running the same
-  command again reuses it. The kept artifact is found by commit, quant and recipe, so a flag
-  that changes what is written (`--components`, `--layout`, `--vocab`, `--drafter-quant`,
-  `--proposal`, `--include`, `--no-drafters`, `--max-file-bytes`, ...) converts again and
-  replaces it, and an explicit `--out` is never reused. `--model` needs `--out`.
+  command again reuses it. The kept artifact is found by commit, quant and recipe. A flag that
+  changes what is written (`--components`, `--layout`, `--vocab`, `--drafter-quant`, `--name`,
+  `--resource`, `--source`, `--proposal`, `--include`, `--no-drafters`, `--max-file-bytes`,
+  `--round-tiny-scales`, ...; `ninferno-serve --round-tiny-scales` too) keeps
+  its conversion apart, in `ninferno/<commit>/options-<hash>/` beside the default one. The hash
+  covers every such option (a resource, `--source` and `--drafter-artifact` by the content of their files; a file over 64 MiB by its size, its first 16 MiB and its last MiB), in a canonical form (`--include` sorted, `--vocab native`, a `--model-id` equal to the repository, a resource identical to the snapshot's own file are the defaults), `<artifact>.options` lists them,
+  and the log says "converted earlier with ..." when a rerun reuses it. A rerun with the same
+  options reuses that conversion (also when its download was removed: the lookup of the kept conversion names the options too, and ninferno-ui's plain launch of a repository serves default conversions only); a run without them converts the model's default one, or reuses
+  it, and never takes the other. Conversions made before this rule stay where they are, as the
+  default. A drafter converted separately follows the same rule for `--round-tiny-scales`,
+  `--maintainer-quantize` and `--max-file-bytes` (its own `options-<hash>/`), and one converted with
+  other copied resources (a different template) is converted again. A `--drafter-quant` equal to the
+  registry's declared value is still an option of its own. An explicit `--out` is never reused.
+  `--model` needs `--out`.
 - A conversion writes into hidden `.<file>.XXXXXX.tmp` files beside the target and renames them in
   when it is done. Ctrl+C, SIGTERM (on Windows also Ctrl+Break and closing the console) and a
   failure remove them. After a hard kill (SIGKILL, the out-of-memory killer, a power loss) the next

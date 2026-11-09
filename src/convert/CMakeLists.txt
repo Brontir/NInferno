@@ -24,6 +24,7 @@ add_library(ninferno_convert STATIC
   drafters.cpp
   support.cpp
   acquire.cpp
+  options_key.cpp
 )
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 ninferno_internal_includes(ninferno_convert)

@@ -143,6 +143,13 @@ void save_hub_token(const std::string& token);
 [[nodiscard]] std::string snapshot_quant_label(const std::filesystem::path& snapshot,
                                                const FetchOptions& options, const std::string& repo);
 
+// The model fetch_model() serves from the cached `snapshot` for `options`: the GGUF file it
+// would choose, else the snapshot directory itself; none where that choice fails (an ambiguous
+// label, a file it names missing).
+[[nodiscard]] std::optional<std::filesystem::path>
+snapshot_model(const std::filesystem::path& snapshot, const FetchOptions& options,
+               const std::string& repo);
+
 // The first bytes of the GGUF model fetch_model() would choose for `spec` (options.revision,
 // options.quant), to read its metadata before the whole file is downloaded: `bytes` of it by an
 // HTTP range request (all of it when smaller), or the cached file's. A revision pinned to a commit

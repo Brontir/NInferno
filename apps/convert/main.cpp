@@ -526,34 +526,14 @@ int main(int argc, char** argv) {
             acquire.base_tokenizer_files = base_tokenizer_files;
             acquire.fetch_only           = fetch_only;
             acquire.log                  = options.log;
-            // A rerun without --out finds the artifact the first run converted. The kept
-            // artifact is keyed by commit, quant and recipe only, so a flag that changes what
-            // is written converts again; an explicit --out is never reused (nor locked).
-            static const std::set<std::string, std::less<>> kContentFlags = {
-                "--components",
-                "--layout",
-                "--vocab",
-                "--drafter-quant",
-                "--round-tiny-scales",
-                "--maintainer-quantize",
-                "--proposal",
-                "--no-proposal",
-                "--proposal-rows",
-                "--ranking",
-                "--include",
-                "--name",
-                "--resource",
-                "--source",
-                "--no-base-tokenizer",
-                "--model-id",
-                "--drafter-artifact",
-                "--no-drafters",
-                "--with-drafters",
-                "--max-file-bytes"};
+            // A rerun without --out finds the artifact the first run converted. A conversion
+            // with options of its own (--vocab, --resource, --components, ...) is kept apart from
+            // the default one, under options-<hash> (acquire_model: content_options_key), so a
+            // rerun reuses its own and a plain run never takes it. --with-drafters converts the
+            // drafters in and replaces the kept artifact; an explicit --out is never reused (nor
+            // locked).
             acquire.reuse = options.out.empty() &&
-                            std::none_of(given.begin(), given.end(), [](const std::string& flag) {
-                                return kContentFlags.contains(flag);
-                            });
+                            std::find(given.begin(), given.end(), "--with-drafters") == given.end();
             if (options.rows_per_chunk == 0) {
                 throw std::runtime_error("--rows-per-chunk must be positive");
             }
