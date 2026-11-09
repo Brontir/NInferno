@@ -76,8 +76,14 @@ struct TemporarySlot {
     std::atomic<unsigned> sequence{0};
     std::atomic<TemporarySlot*> leader{nullptr}; // the group's leader slot, nullptr: no group
     std::atomic<bool> committed{false};          // a leader's: its group's files stay
-    std::filesystem::path::value_type name[kSlotLength]; // name[0] == 0: nothing registered
+    // name[0] == 0: nothing registered. Each character atomic: a handler on another thread reads
+    // it while a slot is written (the sequence then discards the copy), and that read is no race.
+    std::atomic<std::filesystem::path::value_type> name[kSlotLength];
 };
+
+// A handler may only touch lock-free atomics.
+static_assert(std::atomic<std::filesystem::path::value_type>::is_always_lock_free &&
+              std::atomic<unsigned>::is_always_lock_free && std::atomic<bool>::is_always_lock_free);
 
 struct SlotChunk {
     TemporarySlot slots[kChunkSlots];
@@ -93,11 +99,14 @@ void unlink_registered() {
         if (chunk == nullptr) { break; }
         for (auto& slot : chunk->slots) {
             const unsigned before = slot.sequence.load(std::memory_order_acquire);
-            if ((before & 1U) != 0 || slot.name[0] == 0) { continue; }
+            if ((before & 1U) != 0 || slot.name[0].load(std::memory_order_relaxed) == 0) {
+                continue;
+            }
             std::size_t length = 0;
-            while (length + 1 < kSlotLength && slot.name[length] != 0) {
-                copy[length] = slot.name[length];
-                ++length;
+            for (; length + 1 < kSlotLength; ++length) {
+                const auto c = slot.name[length].load(std::memory_order_relaxed);
+                if (c == 0) { break; }
+                copy[length] = c;
             }
             copy[length] = 0;
             std::atomic_thread_fence(std::memory_order_acquire);
@@ -167,7 +176,7 @@ TemporarySlot* claim_slot() {
         if (chunk == nullptr) {
             chunk = new (std::nothrow) SlotChunk;
             if (chunk == nullptr) { return nullptr; }
-            for (auto& slot : chunk->slots) { slot.name[0] = 0; }
+            for (auto& slot : chunk->slots) { slot.name[0].store(0, std::memory_order_relaxed); }
             holder.store(chunk, std::memory_order_release);
         }
         for (auto& slot : chunk->slots) {
@@ -191,8 +200,10 @@ TemporarySlot* register_temporary(const std::filesystem::path& path,
     slot->sequence.fetch_add(1);
     slot->committed.store(false, std::memory_order_relaxed);
     slot->leader.store(lead ? slot : leader, std::memory_order_release);
-    std::copy(native.begin(), native.end(), slot->name);
-    slot->name[native.size()] = 0;
+    for (std::size_t i = 0; i < native.size(); ++i) {
+        slot->name[i].store(native[i], std::memory_order_relaxed);
+    }
+    slot->name[native.size()].store(0, std::memory_order_relaxed);
     slot->sequence.fetch_add(1);
     return slot;
 }
@@ -200,7 +211,7 @@ TemporarySlot* register_temporary(const std::filesystem::path& path,
 void unregister_temporary(TemporarySlot* slot) noexcept {
     if (slot == nullptr) { return; }
     slot->sequence.fetch_add(1);
-    slot->name[0] = 0;
+    slot->name[0].store(0, std::memory_order_relaxed);
     slot->leader.store(nullptr, std::memory_order_relaxed);
     slot->sequence.fetch_add(1);
     slot->committed.store(false);
