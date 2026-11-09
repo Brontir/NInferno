@@ -41,15 +41,19 @@ struct FormatTraits {
     // formats of the I8 tile and of the int8 prefill tiers (i8_format, qx_format).
     bool qx_g64 = false;
     // [measured rule] The codebook formats, whose register-MMA dequant looks every value up in a
-    // grid per token tile: they take MMQ at verify widths (mmq_verify_format). RTX 4090 cellgt ABBA
-    // (UD-Q4_K_XL 27B DFlash2, Muse 30B Q4_K_M), RTX 5070 Ti, RTX 2080 Ti (IQ4_XS lost 23-38 % on
-    // the register MMA there); see mmq_verify_rule in generic_gemm.cpp.
+    // grid per token tile: they take MMQ at verify widths (mmq_verify_format). Evidence: ISTA IQ3_S
+    // 27B C4 MTP3, 16-token verify, every iq / K-quant band on mmq: L4 79.4 -> 89.2 tok/s
+    // (+12.3 %), RTX 5070 Ti 242.7 -> 270.9 (+11.6 %); RTX 4090 cellgt ABBA (UD-Q4_K_XL 27B
+    // DFlash2, Muse 30B Q4_K_M) is why the K-quants are NOT in the set (their affine dequant is
+    // cheap); RTX 2080 Ti (IQ4_XS lost 23-38 % on the register MMA there). See mmq_verify_rule.
     bool mmq_verify = false;
     // [measured rule] Formats measured faster on the four-warp ring step of the ggml-step decoder
     // (light_ggml_step): RTX 5080, T = 1, n = 3840..12288 (the comment of light_ggml_step).
     bool light_step = false;
-    // [measured rule] The format whose 64x64 register-MMA tile (seven boards, ptxas sm_86..sm_120)
-    // spills where its 128x32 tile spills less.
+    // [measured rule] The format whose 128x32 register-MMA tile was 10..20 % faster than the 64x64
+    // one from 97 tokens, on all seven boards timed. [compiled fact behind it]
+    // ptxas shows the 64x64 tile spilling where the 128x32 tile spills less (sm_86..sm_120); that
+    // is the reason, not the evidence.
     bool tall_tile = false;
     // [compiled] The W4A8 codec (classic tile) of the format.
     Support w4a8 = Support::No;
@@ -68,8 +72,13 @@ struct FormatTraits {
     // [compiled] R8 has its pre-quantized (W4A8 plane) verify form for the format
     // (r8_verify_compiled, with r8).
     bool r8_prequant = true;
-    // [measured rule] R8 takes the format at verify widths on every card (r8_verify_supports):
-    // the formats R8 verify was timed on (r8_verify_takes_shape: Q4_0 RTX 4090 / 3090 A B B A).
+    // [measured rule] R8 takes the format at verify widths on every card (r8_verify_supports).
+    // Evidence by row: IQ2_S, IQ3_S, IQ3_XXS: RTX 5080 shape micro-benchmark, T = 4, quantize + R8
+    // against the register MMA 0.73-0.91 on the large shapes; IQ2_XXS and IQ2_XS: not separately
+    // measured (they follow their family); Q8_G32: RTX 5090 and 5070 Ti bench, RTX 4090 spec-tune;
+    // Q4_0: end to end on RTX 4090 / 5090 (generic_gemm.h, r8_verify_supports comment), and the
+    // Q4_0 RTX 4090 / 3090 A B B A of r8_verify_takes_shape is the shape-threshold evidence
+    // (n * k >= 24M values), not the format's.
     bool r8_verify = false;
     // [codec fact] The K values one R8 step of the format covers (r8_k_values).
     std::uint8_t r8_k_values = 32;
