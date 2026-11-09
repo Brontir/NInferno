@@ -2280,13 +2280,12 @@ int test_none_ends_at_structural_tokens() {
         failures += check(decision.accepted_tokens == 4 && !decision.finished(),
                           "tool calls enabled ended the turn at a structural token");
     }
-    // An output constraint (response_format) leaves bare calls alone.
+    // An output constraint (response_format) owns the output: no tool-call decoder reads it.
     {
         ninferno::PromptInput input  = none_input(true);
         input.options.cut_bare_calls = false;
         const auto prompt            = frontend.prepare(input);
-        failures += check(FrontendFactory::inspect(prompt).tool_call_output != nullptr &&
-                              !FrontendFactory::inspect(prompt).tool_call_output->discarded,
+        failures += check(FrontendFactory::inspect(prompt).tool_call_output == nullptr,
                           "an output constraint still cut bare calls");
     }
     return failures;
