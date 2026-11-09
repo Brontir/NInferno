@@ -505,6 +505,7 @@ std::optional<std::size_t> workspace_free(const DeviceArena* workspace) {
 
 std::atomic<std::uint64_t> mmq_fallbacks{0};
 std::atomic<std::uint64_t> route_demotions{0};
+std::atomic<std::uint64_t> joined_launches{0};
 
 // A demotion that keeps the bytes: the staged MMA and the NVFP4 tiled route hand a call they
 // cannot read to the register MMA of the same summation order.
@@ -3365,6 +3366,10 @@ std::uint64_t ggml_mmq_fallback_count() noexcept {
     return mmq_fallbacks.load(std::memory_order_relaxed);
 }
 
+std::uint64_t instrumentation_joined_launches() noexcept {
+    return joined_launches.load(std::memory_order_relaxed);
+}
+
 std::uint64_t route_demotion_count() noexcept {
     return route_demotions.load(std::memory_order_relaxed);
 }
@@ -3548,7 +3553,10 @@ LaunchOverlap launch_overlap(const ResolvedRoute& resolved, Epilogue epilogue, i
         return epilogue == Epilogue::Store ? OverlapRefusal::None : OverlapRefusal::Epilogue;
     };
     LaunchOverlap out;
+    // The pre-quantized R8 form does not join either: its quantizer and kernel launch in stream
+    // order (generic_r8.cuh kPre), so a join flag would only claim an overlap that never happens.
     out.join = joinable(join_asked);
+    if (out.join == OverlapRefusal::None && r8_pre) out.join = OverlapRefusal::PrequantizedR8;
     // The pre-quantized R8 form does not release: the next call's quantizer could take the
     // workspace it still reads (its kernel ignores the flag too, generic_r8.cuh kPre). Without
     // PDL nothing starts early (run_route keeps the kernel's flag, a no-op there).
@@ -3937,6 +3945,7 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
                                                  call.join_previous, call.release_next,
                                                  pdl_device());
     args.join_previous = overlap.joins() ? 1 : 0;
+    if (overlap.joins()) joined_launches.fetch_add(1, std::memory_order_relaxed);
     args.release_next  = overlap.releases() || overlap.release == OverlapRefusal::NoPdl ? 1 : 0;
     if (released != nullptr) *released = overlap.releases();
     args.pdl_prefetch = overlap.prefetches() ? 1 : 0;
