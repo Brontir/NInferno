@@ -1,0 +1,62 @@
+diff --git a/src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh b/src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh
+index 17b9748a..5af94911 100644
+--- a/src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh
++++ b/src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh
+@@ -40,7 +40,7 @@ constexpr bool work_tiles_arch_matches_table() {
+ 
+ static_assert(work_tiles_arch_matches_table());
+ } // namespace ninferno::ops::ggml_mmq::detail
+-#if defined(__CUDA_ARCH__)
++#if 0 // grid hook: every width compiled for every architecture
+ #    define NINFERNO_MMQ_SKIP_SPECIALIZATION(J)                                                    \
+         (((J) == 80 || (J) == 96) &&                                                               \
+          !::ninferno::ops::ggml_mmq::detail::work_tiles_arch(__CUDA_ARCH__))
+@@ -49,7 +49,10 @@ static_assert(work_tiles_arch_matches_table());
+ #include "ggml-cuda/common.cuh"
+ #include "ggml-cuda/mmq.cuh"
+ 
++#include <algorithm>
+ #include <climits>
++#include <cstdlib>
++#include <vector>
+ #include <cstddef>
+ #include <cstdint>
+ #include <mutex>
+@@ -126,9 +129,21 @@ Launch select_launch(int rows, int columns, int k) {
+     double best_cost        = 1e300;
+     const int major         = device.cc / 100;
+     const int minor         = device.cc / 10 % 10;
+-    const bool work_table   = mmq_columns::uses_work_table(major, minor, kWorkTilesFormat<type>);
+-    const double tile_fixed = mmq_columns::tile_fixed(major, minor, kWorkTilesFormat<type>);
+-    for (const int J : mmq_columns::tiles(major, minor, kWorkTilesFormat<type>)) {
++    // GRID HOOK (temporary, never merged; tools/bench/run_524_turing_grid.sh applies it):
++    // NINFERNO_MMQ_J=<w> forces one width (16 32 48 64 80 96 112 128); NINFERNO_MMQ_MODE=old|new
++    // takes the DECISIONS 69 table (fewest tiles) or the work table with NINFERNO_MMQ_F as f.
++    const char* mode        = std::getenv("NINFERNO_MMQ_MODE");
++    static const int forced = std::getenv("NINFERNO_MMQ_J") ? std::atoi(std::getenv("NINFERNO_MMQ_J")) : 0;
++    static const double fenv = std::getenv("NINFERNO_MMQ_F") ? std::atof(std::getenv("NINFERNO_MMQ_F")) : 0.25;
++    const bool prod_work    = mmq_columns::uses_work_table(major, minor, kWorkTilesFormat<type>);
++    const bool work_table   = mode ? std::string(mode) == "new" : prod_work;
++    const double tile_fixed = mode ? fenv : mmq_columns::tile_fixed(major, minor, kWorkTilesFormat<type>);
++    std::vector<int> js;
++    if (forced != 0) js = {forced};
++    else if (mode && std::string(mode) == "old") js = {16, 32, 64, 128};
++    else if (mode) js = {16, 32, 64, 80, 96, 128};
++    else for (const int J : mmq_columns::tiles(major, minor, kWorkTilesFormat<type>)) js.push_back(J);
++    for (const int J : js) {
+         const ggml_cuda_mmq_config config = ggml_cuda_mmq_get_config(type, J, false, device.cc);
+         if (config.type == GGML_TYPE_COUNT) continue;
+         const std::size_t shared = mmq_get_nbytes_shared(config, device.cc);
+@@ -238,6 +253,12 @@ void product_impl(const Planes& w, int blocks_per_row, int rows, int k, const vo
+     case 32:
+         return launch<type, 32>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
+                                 out_column_stride, f, stream);
++    case 48:
++        return launch<type, 48>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
++                                out_column_stride, f, stream);
++    case 112:
++        return launch<type, 112>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
++                                 out_column_stride, f, stream);
+     case 64:
+         return launch<type, 64>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
+                                 out_column_stride, f, stream);

@@ -1690,3 +1690,16 @@ differently), as they already did between a prefill chunk of 128 and 1024: on na
 Q6_K (the Q4_0 and IQ decodes give other fixed shares: they keep the fewest tiles until their grids); the RTX 5070 Ti and 5060 Ti prefill Q4_K / Q6_K
 on the W4A8 tiles, not this kernel, which steps the same way (RTX 5060 Ti 104 -> 107 ms from 144 to
 256 tokens): its 64 x 64 against 128 x 64 tile steps need their own grid.
+
+**Turing, predicted, to verify (#524).** RTX 2080 Ti (sm_75, 68 SMs, 64 KiB of shared memory): f 0.20,
+best range 0.15-0.25. Its int8 tensor rate per SM is GA10x's (2048 ops a clock, `s8` 2048 on both
+rows) and the K-quant decode runs on the same 64 int32 lanes, so a tile's split between the fixed
+decode and the part in J is GA10x's and Ada's; the lack of cp.async (synchronous weight loads) can
+only raise the fixed share. The Q4_K / Q6_K tile is 45.4 KB (J 16) to 62.0 KB (J 128): all eight
+widths fit 64 KiB (Q2_K's 128-column tile, 70 144 B, does not: `widest_tile` 64, it keeps the
+fewest tiles). On 68 SMs a 4096-row product (32 row tiles) fills 94 % of a wave with two tiles of
+80, 96 or 128 columns against 1.41 waves for three of 64, so the padding that 80 / 96 save at
+136..192 tokens turns into time more cleanly than on the 3090's 82 SMs. Predicted A/B at f 0.20:
+144..160 tokens -14..-19 %, 176..192 -9..-13 %, 208..256 within 0.5 %. The Turing row keeps the
+fewest tiles until `tools/bench/run_524_turing_grid.sh` (forced-width grid, then the A/B) has run
+on l2080 and the grid agrees. Nothing is changed by this note.
