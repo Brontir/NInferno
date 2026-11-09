@@ -1,16 +1,22 @@
 // Whole-chain pricing and selection of a projection chain's fusion alternatives (#310,
-// ops/common/projection_chain.h): the lowest chain seconds, a tie to fewer launches, then to the
-// canonical order; unpriced steps are not selectable. No GPU.
+// ops/common/projection_chain.h): output writes added to every projection step, the pointwise
+// read at the L2's or the DRAM's bandwidth, the lowest chain seconds, a tie (relative 1e-9) to
+// fewer launches, then to the canonical order; unpriced steps are not selectable. No GPU.
 #include "ops/common/projection_chain.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace {
 
-using namespace ninferno::ops::detail::chain;
+namespace chain = ninferno::ops::detail::chain;
+using chain::Alternative;
+using chain::Step;
 
 int failures = 0;
 
@@ -21,70 +27,134 @@ void expect(bool ok, const std::string& what) {
     }
 }
 
+bool near(double a, double b) {
+    return std::abs(a - b) <= 1e-12 * std::max(std::abs(a), std::abs(b));
+}
+
 std::string chosen(const std::vector<Alternative>& a) {
-    const auto i = select(a);
+    const auto i = chain::select(a);
     return i ? a[*i].name : std::string("none");
 }
 
 } // namespace
 
 int main() {
-    // Price: seconds and launches add; an unpriced step, a negative one or an empty chain has none.
+    // 1 TB/s DRAM, a 4 MB L2 at 4 TB/s.
+    const chain::Memory mem{1.0e12, 4.0e6, 4.0e12};
+    // Price: seconds and launches add; an unpriced, negative or infinite step, a step with no
+    // launch, or an empty chain has none.
     {
-        const auto p = price(Alternative{"x", {Step{1.0e-5, 1}, Step{2.0e-5, 2}}});
-        expect(p && p->seconds == 1.0e-5 + 2.0e-5 && p->launches == 3, "sum of steps");
-        expect(!price(Alternative{"x", {Step{1.0e-5, 1}, Step{std::nullopt, 1}}}), "unpriced step");
-        expect(!price(Alternative{"x", {}}), "empty chain");
-        expect(!price(Alternative{"x", {Step{-1.0, 1}}}), "negative seconds refused");
+        const auto p = chain::price(Alternative{"x", {Step{1.0e-5, 1}, Step{2.0e-5, 2}}});
+        expect(p && near(p->seconds, 3.0e-5) && p->launches == 3, "sum of steps");
+        expect(!chain::price(Alternative{"x", {Step{1.0e-5, 1}, Step{std::nullopt, 1}}}),
+               "unpriced step");
+        expect(!chain::price(Alternative{"x", {}}), "empty chain");
+        expect(!chain::price(Alternative{"x", {Step{-1.0, 1}}}), "negative seconds refused");
+        expect(!chain::price(Alternative{"x", {Step{1.0e-5, 0}}}), "launches = 0 refused");
+        expect(!chain::price(Alternative{"x", {Step{std::numeric_limits<double>::infinity(), 1}}}),
+               "infinite seconds refused");
+        std::vector<Alternative> a{
+            Alternative{"inf", {Step{std::numeric_limits<double>::infinity(), 1}}},
+            Alternative{"ok", {Step{1.0, 1}}}};
+        expect(chosen(a) == "ok", "an infinite step is not selectable");
     }
-    // Pairs: the cheaper chain wins whichever side it is on.
+    // Projection step: the output write over the DRAM bandwidth is added.
     {
-        PairPrices p{50.0e-6, 1, 30.0e-6, 30.0e-6};
-        expect(chosen(pair_alternatives(p)) == "fused", "fused 50 < 60");
+        const auto s = chain::projection_step_seconds(1.0e-5, 1.0e6, mem);
+        expect(s && near(*s, 1.0e-5 + 1.0e-6), "output write added");
+        expect(!chain::projection_step_seconds(std::nullopt, 1.0e6, mem), "unpriced route");
+        expect(!chain::projection_step_seconds(1.0e-5, 1.0e6, chain::Memory{}), "no bandwidth");
+    }
+    // Pointwise read: at the L2's bandwidth when the intermediate fits, else at the DRAM's.
+    {
+        const auto in_l2   = chain::pointwise_seconds(2.0e6, 1.0e6, 2.0e6, mem);
+        const auto in_dram = chain::pointwise_seconds(2.0e6, 1.0e6, 8.0e6, mem);
+        expect(in_l2 && near(*in_l2, 2.0e6 / 4.0e12 + 1.0e6 / 1.0e12), "read from the L2");
+        expect(in_dram && near(*in_dram, 2.0e6 / 1.0e12 + 1.0e6 / 1.0e12), "read from the DRAM");
+        // An unknown L2 falls back to the DRAM.
+        const auto no_l2 =
+            chain::pointwise_seconds(2.0e6, 1.0e6, 2.0e6, chain::Memory{1.0e12, 0, 0});
+        expect(no_l2 && near(*no_l2, 3.0e6 / 1.0e12), "no L2 facts: the DRAM");
+        expect(!chain::pointwise_seconds(1.0, 1.0, 1.0, chain::Memory{}), "no DRAM bandwidth");
+    }
+    // Pairs: both alternatives write the same outputs; the cheaper chain wins on either side.
+    {
+        chain::PairPrices p;
+        p.fused        = 50.0e-6;
+        p.first        = 30.0e-6;
+        p.second       = 30.0e-6;
+        p.output_bytes = 1.0e6;
+        p.memory       = mem;
+        expect(chosen(chain::pair_alternatives(p)) == "fused", "fused 50 < 60");
+        const auto fused = chain::price(chain::pair_alternatives(p)[0]);
+        const auto sep   = chain::price(chain::pair_alternatives(p)[1]);
+        expect(fused && sep && near(fused->seconds, 50.0e-6 + 2.0e-6) &&
+                   near(sep->seconds, 60.0e-6 + 2.0e-6),
+               "each alternative pays the two outputs once");
         p.fused = 70.0e-6;
-        expect(chosen(pair_alternatives(p)) == "separate", "separate 60 < 70");
+        expect(chosen(chain::pair_alternatives(p)) == "separate", "separate 60 < 70");
     }
-    // Ties: equal seconds go to fewer launches, then to the canonical order.
+    // Ties: equal seconds (within the relative band) go to fewer launches, then to the order.
     {
-        PairPrices p{0.5, 1, 0.25, 0.25};
-        expect(chosen(pair_alternatives(p)) == "fused", "tie, fused has 1 launch against 2");
+        chain::PairPrices p;
+        p.fused  = 0.5;
+        p.first  = 0.25;
+        p.second = 0.25;
+        p.memory = mem;
+        expect(chosen(chain::pair_alternatives(p)) == "fused", "tie, fused has 1 launch against 2");
         p.fused_launches = 2;
-        expect(chosen(pair_alternatives(p)) == "fused", "tie, equal launches: canonical order");
+        expect(chosen(chain::pair_alternatives(p)) == "fused", "tie, equal launches: order");
         p.fused_launches = 3;
-        expect(chosen(pair_alternatives(p)) == "separate", "tie, fused has more launches");
+        expect(chosen(chain::pair_alternatives(p)) == "separate", "tie, fused has more launches");
+        // A difference inside the band is a tie, outside it is not.
+        p.fused = 0.5 * (1.0 + 1.0e-11);
+        expect(chosen(chain::pair_alternatives(p)) == "separate", "inside the band: a tie");
+        p.fused = 0.5 * (1.0 - 1.0e-6);
+        expect(chosen(chain::pair_alternatives(p)) == "fused", "outside the band: cheaper wins");
     }
     // Unpriced alternatives are skipped; with none priced nothing is selected.
     {
-        PairPrices p{std::nullopt, 1, 30.0e-6, 30.0e-6};
-        expect(chosen(pair_alternatives(p)) == "separate", "fused unpriced");
+        chain::PairPrices p;
+        p.first  = 30.0e-6;
+        p.second = 30.0e-6;
+        p.memory = mem;
+        expect(chosen(chain::pair_alternatives(p)) == "separate", "fused unpriced");
         p.first = std::nullopt;
-        expect(chosen(pair_alternatives(p)) == "none", "nothing priced");
-        expect(!select({}), "no alternatives");
+        expect(chosen(chain::pair_alternatives(p)) == "none", "nothing priced");
+        expect(!chain::select({}), "no alternatives");
     }
-    // SwiGLU: the pointwise chain pays the 2 x inter x tokens read and the inter x tokens write
-    // through the DRAM bandwidth; the fused epilogue wins at equal projection time.
-    {
-        SwigluPrices p;
-        p.fused                 = 100.0e-6;
-        p.projection            = 100.0e-6;
-        p.inter                 = 8192;
-        p.tokens                = 64;
-        p.dram_bytes_per_second = 1.0e12;
-        const auto alt          = swiglu_alternatives(p);
-        const auto pr           = price(alt[1]);
-        const double bytes      = 3.0 * 8192 * 64 * 2; // read 2x, write 1x of inter x tokens BF16
-        expect(pr && pr->launches == 2 && pr->seconds == 100.0e-6 + bytes / 1.0e12,
-               "pointwise price");
+    // SwiGLU, intermediate in the L2 (inter 8192, 64 tokens: 2 MB gate/up matrix, 4 MB L2) and out
+    // of it (256 tokens: 8 MB).
+    for (const int tokens : {64, 256}) {
+        chain::SwigluPrices p;
+        p.fused          = 100.0e-6;
+        p.projection     = 100.0e-6;
+        p.inter          = 8192;
+        p.tokens         = tokens;
+        p.memory         = mem;
+        const double out = 8192.0 * tokens * 2.0;
+        const bool fits  = 2.0 * out <= mem.l2_bytes;
+        expect(fits == (tokens == 64), "fixture: the 64-token matrix fits, the 256-token one not");
+        const auto alt = chain::swiglu_alternatives(p);
+        const auto fp  = chain::price(alt[0]);
+        const auto pp  = chain::price(alt[1]);
+        const double read =
+            2.0 * out / (fits ? mem.l2_bytes_per_second : mem.dram_bytes_per_second);
+        expect(fp && near(fp->seconds, 100.0e-6 + out / 1.0e12) && fp->launches == 1,
+               "fused epilogue: projection plus its inter x tokens write");
+        expect(pp && pp->launches == 2 &&
+                   near(pp->seconds, 100.0e-6 + 2.0 * out / 1.0e12 + read + out / 1.0e12),
+               "projection, matrix write, read back, product write");
         expect(chosen(alt) == "fused_epilogue", "fused epilogue at equal projection time");
-        // A fused kernel slower than the projection plus the pointwise kernel loses.
-        p.fused = 100.0e-6 + 2.0 * bytes / 1.0e12;
-        expect(chosen(swiglu_alternatives(p)) == "projection_then_pointwise",
+        // A fused kernel slower than the whole unfused chain loses.
+        p.fused = 100.0e-6 + 3.0 * out / 1.0e12 + 2.0 * read;
+        expect(chosen(chain::swiglu_alternatives(p)) == "projection_then_pointwise",
                "slow epilogue loses");
-        // No bandwidth: the pointwise side is unpriced, the fused epilogue is the only one.
-        p.dram_bytes_per_second = 0.0;
-        expect(chosen(swiglu_alternatives(p)) == "fused_epilogue", "no bandwidth keeps the fused");
+        // No bandwidth: nothing is priced.
+        p.memory = chain::Memory{};
+        expect(chosen(chain::swiglu_alternatives(p)) == "none", "no bandwidth: no price");
     }
     if (failures != 0) { return 1; }
-    std::puts("projection chain: lowest seconds, then fewer launches, then canonical order");
+    std::puts("projection chain: output writes, L2 or DRAM read, lowest seconds, launches, order");
     return 0;
 }
