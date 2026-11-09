@@ -1158,6 +1158,51 @@ int test_replacement_suffix_boundaries() {
                  "replacement-suffix execution boundaries do not follow the turn roles");
 }
 
+// The model's own call turn to a recipient (harmony's "assistant to=functions.x...", unnamed by the
+// roles) splits the prefill at its begin, where the request that wrote it opened its generation
+// prompt (#572); a tool response addressed to the assistant does not.
+int test_assistant_call_turn_boundary() {
+    ninferno::chat::ChatConventions conventions;
+    conventions.turns =
+        ninferno::chat::TurnMarkup{.name                 = "test",
+                                   .open                 = "<|start|>",
+                                   .header_end           = "<|message|>",
+                                   .close                = "<|end|>",
+                                   .after_close          = "",
+                                   .roles                = {{"system", ninferno::ChatRole::System},
+                                                            {"developer", ninferno::ChatRole::Developer},
+                                                            {"user", ninferno::ChatRole::User},
+                                                            {"assistant", ninferno::ChatRole::Assistant}},
+                                   .recipient_separators = {" ", "<|channel|>"}};
+    const std::vector<std::pair<std::string, std::string>> turns{
+        {"system", "S"},
+        {"user", "U"},
+        {"assistant to=functions.x<|channel|>commentary json", "{}"},
+        {"functions.x to=assistant<|channel|>commentary", "R"},
+        {"assistant", ""}};
+    ninferno::text::TemplateOutput output;
+    std::vector<std::size_t> begins;
+    std::vector<std::size_t> bodies;
+    for (std::size_t i = 0; i < turns.size(); ++i) {
+        begins.push_back(output.text.size());
+        output.text += "<|start|>" + turns[i].first + "<|message|>";
+        bodies.push_back(output.text.size());
+        if (i + 1 < turns.size()) { output.text += turns[i].second + "<|end|>"; }
+    }
+    const fi::PromptLayout layout = fi::inspect_prompt_layout(output, {}, conventions);
+    const std::vector<std::size_t> expected{
+        begins[2],             // the call turn, where the previous request's prompt opened
+        begins[4], bodies[4]}; // generation prompt
+    int failures = check(layout.execution_boundaries == expected,
+                         "the assistant's call turn does not split the prefill at its begin");
+    failures += check(layout.messages.size() == 3, "the call turn became a message");
+    failures += check(conventions.turns->assistant_addressed("assistant<|channel|>commentary") &&
+                          !conventions.turns->assistant_addressed("assistantx") &&
+                          !conventions.turns->assistant_addressed("functions.x to=assistant"),
+                      "assistant_addressed misreads a header");
+    return failures;
+}
+
 // Harmony renders a system then a developer message ahead of the first user turn: both are
 // leading instructions, so the first user turn does not split the prefill; a developer message
 // after that user turn does.
@@ -3545,6 +3590,7 @@ int main() {
     failures += test_rewrite_checkpoint_trace();
     failures += test_replacement_suffix_boundaries();
     failures += test_leading_instruction_run_boundaries();
+    failures += test_assistant_call_turn_boundary();
     failures += test_adjacent_tool_message_boundary();
     failures += test_literal_cache_boundary();
     failures += test_selected_template_recovery_boundary();

@@ -30,8 +30,15 @@ struct TurnMarkup {
     // "<|tool_response>", harmony's "<|call|>"), whether or not the template offers tools.
     std::vector<std::string> stops;
     std::vector<std::pair<std::string, ChatRole>> roles;  // header text -> role
+    // What follows an assistant header where the turn is addressed to a recipient: harmony's
+    // "assistant to=functions.x<|channel|>commentary" (" "), its "assistant<|channel|>commentary"
+    // ("<|channel|>"), Atem's "assistant to=x" (" "). Empty: the markup addresses no turn.
+    std::vector<std::string> recipient_separators;
 
     [[nodiscard]] std::optional<ChatRole> role(std::string_view header) const noexcept;
+    // Whether an unnamed header is the model's own turn to a recipient (a tool call): a header the
+    // roles name Assistant, then a recipient separator.
+    [[nodiscard]] bool assistant_addressed(std::string_view header) const noexcept;
 };
 
 struct ReasoningMarkup {
