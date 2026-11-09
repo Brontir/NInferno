@@ -714,7 +714,7 @@ int test_worker_queue_counts_connections_in_hand() {
     ninferno::serve::WorkerQueue queue(2, 1);
     std::mutex mutex;
     std::condition_variable wake;
-    bool release = false;
+    bool release    = false;
     const auto held = [&] {
         std::unique_lock lock(mutex);
         wake.wait(lock, [&] { return release; });

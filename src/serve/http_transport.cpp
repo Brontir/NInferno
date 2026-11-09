@@ -67,11 +67,14 @@ bool WorkerQueue::enqueue(std::function<void()> connection) {
         return false;
     }
     if (limit_ == 0) { in_hand_.fetch_add(1, std::memory_order_acq_rel); }
+
     // Counted out when the connection ends, however it ends.
     struct Release {
         std::atomic<std::size_t>& count;
+
         ~Release() { count.fetch_sub(1, std::memory_order_acq_rel); }
     };
+
     const bool queued = pool_.enqueue([this, connection = std::move(connection)] {
         const Release release{in_hand_};
         connection();
