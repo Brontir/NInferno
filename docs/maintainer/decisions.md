@@ -1691,7 +1691,7 @@ Q6_K (the Q4_0 and IQ decodes give other fixed shares: they keep the fewest tile
 on the W4A8 tiles, not this kernel, which steps the same way (RTX 5060 Ti 104 -> 107 ms from 144 to
 256 tokens): its 64 x 64 against 128 x 64 tile steps need their own grid.
 
-## 75. The vector kernel's T = 4 loss on Ampere is instruction-bound; the gated pairs stay on the band until they are measured (#521, 09.11, measured)
+## 76. The vector kernel's T = 4 loss on Ampere is instruction-bound; the gated pairs stay on the band until they are measured (#521, 09.11, measured)
 
 **Decision.** No route change. #560's bounded twin took the part of the loss that has a counted
 saving; the rest sits in the gated gate/up launches, and the issue's data has no gated-shape row, so

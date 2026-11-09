@@ -1,0 +1,8 @@
+# #521: gated gate/up products (SwiGLU / GeGLU: n = gate rows, the file lists the pair as the tuner
+# times it, 2n rows) of the models of the issue, Q4_K_M (gate/up are Q4_K), and the same n x k as a
+# plain store, whose time twice is the "two non-gated launches" alternative at T = 4.
+# Qwen3-8B and Qwen3.5-9B: hidden 4096, intermediate 12288. Gemma 4 12B: hidden 3840, intermediate 15360.
+q4k a16 swiglu 12288 4096
+q4k a16 store 12288 4096
+q4k a16 swiglu 15360 3840
+q4k a16 store 15360 3840
