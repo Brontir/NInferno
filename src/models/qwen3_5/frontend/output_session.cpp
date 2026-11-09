@@ -1005,7 +1005,8 @@ PublishedOutput OutputSession::commit_preview() {
                         : std::nullopt;
         chat::ToolCallOutputDecoder::Terminal terminal = impl_->tool_call_output.finish(
             impl_->finish_reason == FinishReason::OutputLimit ||
-                impl_->finish_reason == FinishReason::ContextCapacity || forced_stop,
+                impl_->finish_reason == FinishReason::ContextCapacity ||
+                impl_->finish_reason == FinishReason::Repetition || forced_stop,
             stop_text ? std::optional<std::string_view>(*stop_text) : std::nullopt);
         impl_->tool_calls                              = std::move(terminal.tool_calls);
         impl_->tool_call_parse                         = terminal.diagnostics;

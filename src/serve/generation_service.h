@@ -132,11 +132,21 @@ struct GenerationOutcome {
     GenerationMetrics metrics;
 };
 
-// The calls end the turn: complete calls were published and none was dropped as unfinished. A turn
-// that lost a call to a cut (a stop string in a forced call) reports its stop instead, so a client
-// does not run the calls believing they are all there were.
+// The output was cut short rather than finished by the model or a stop declaration: an output
+// limit, the context capacity, or a repetition loop.
+[[nodiscard]] inline bool output_was_cut(const GenerationOutcome& outcome) noexcept {
+    return outcome.finish_reason == ninferno::FinishReason::OutputLimit ||
+           outcome.finish_reason == ninferno::FinishReason::ContextCapacity ||
+           outcome.finish_reason == ninferno::FinishReason::Repetition;
+}
+
+// The calls end the turn (`tool_calls` / `tool_use`): complete calls were published, the output
+// was not cut short, and no call was dropped as unfinished. A turn that was cut, or that lost a
+// call (a stop string in a forced call), reports its cut or stop instead, with the complete calls
+// still in the body: a client must not run them believing they are all the model meant to make.
 [[nodiscard]] inline bool calls_end_turn(const GenerationOutcome& outcome) noexcept {
-    return !outcome.tool_calls.empty() && outcome.tool_call_parse.cut_calls_dropped == 0;
+    return !outcome.tool_calls.empty() && !output_was_cut(outcome) &&
+           outcome.tool_call_parse.cut_calls_dropped == 0;
 }
 
 struct StreamSink {
