@@ -1204,7 +1204,8 @@ ToolCallOutputDecoder::finish(bool cut_off, std::optional<std::string_view> stop
                 held_.clear();
                 tool_region_.clear();
                 completed.diagnostics.closed_calls = 1;
-                completed.diagnostics.cut_calls_dropped += next_call_cut({kFunctionClose, kToolClose});
+                completed.diagnostics.cut_calls_dropped +=
+                    next_call_cut({kFunctionClose, kToolClose});
                 return Terminal{.content     = std::move(completed.content),
                                 .tool_calls  = std::move(completed.tool_calls),
                                 .diagnostics = completed.diagnostics};
