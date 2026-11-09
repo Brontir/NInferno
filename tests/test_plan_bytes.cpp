@@ -1363,6 +1363,18 @@ void test_gptoss_drafter_rings() {
         check(state && state->local_layers == 8 && state->window == 4096,
               "a default YaRN attention factor rings: " + as_default.dump());
     }
+    // Another rope with the same length bounds nothing (the converter records it for YaRN only);
+    // the legacy key `type` names YaRN as rope_type does.
+    const auto llama3 = drafter("rope_scaling", json{{"rope_type", "llama3"},
+                                                     {"factor", 32.0},
+                                                     {"original_max_position_embeddings", 4096}});
+    check(llama3 && llama3->local_layers == 0 && llama3->full_layers == 8,
+          "a llama3 rope with an original length stays paged");
+    const auto legacy = drafter(
+        "rope_scaling",
+        json{{"type", "yarn"}, {"factor", 32.0}, {"original_max_position_embeddings", 4096}});
+    check(legacy && legacy->local_layers == 8 && legacy->window == 4096,
+          "a YaRN rope named by the legacy type rings");
     const auto keyed = drafter("rope_parameters", json{{"full_attention", yarn_4096}});
     check(keyed && keyed->local_layers == 8 && keyed->window == 4096,
           "gpt-oss drafter rings from rope_parameters keyed by layer type");

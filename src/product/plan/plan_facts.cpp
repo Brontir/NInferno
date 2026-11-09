@@ -844,9 +844,12 @@ std::optional<models::DrafterStateShape> plan_drafter_state_of_config(const json
         for (const char* key : {"rope", "rope_parameters", "rope_scaling"}) {
             const json* rope = rope_of(key);
             if (rope == nullptr) { continue; }
-            original        = u32(number(*rope, "original_max_position_embeddings"));
-            const auto type = rope->find("rope_type");
+            // Only a YaRN rope bounds the drafter (the converter records the length for YaRN
+            // alone): its type as the converter reads it, rope_type or the legacy type.
+            auto type = rope->find("rope_type");
+            if (type == rope->end() || !type->is_string()) { type = rope->find("type"); }
             const bool yarn = type != rope->end() && type->is_string() && *type == "yarn";
+            original        = yarn ? u32(number(*rope, "original_max_position_embeddings")) : 0;
             // The attention scaling the runtime reads its length back from (yarn_original_length):
             // as converted (rope), or as the converter computes it from a published rope
             // (core/yarn.h yarn_rope): attention_factor, else mscale over mscale_all_dim, else
