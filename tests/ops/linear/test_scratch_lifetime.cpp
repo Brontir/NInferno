@@ -191,7 +191,7 @@ int main() {
         auto reader = g::launch_lifetime("reader", first_o, true, std::nullopt, std::nullopt);
         reader.add(
             {kA, g::ScratchAccess::Read, g::ScratchFirst::AfterWait, g::ScratchLast::AtExit});
-        auto joined     = g::launch_lifetime("joined", no_pdl, false, std::nullopt, std::nullopt);
+        auto joined = g::launch_lifetime("joined", no_pdl, false, std::nullopt, std::nullopt);
         joined.add(
             {kA, g::ScratchAccess::Write, g::ScratchFirst::BeforeWait, g::ScratchLast::AtExit});
         check(!g::first_scratch_violation({reader, joined}).has_value(),
