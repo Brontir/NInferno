@@ -755,6 +755,18 @@ int test_forced_stop_cut() {
     failures += check(quoted.tool_calls.empty() && quoted.content.empty() &&
                           quoted.diagnostics.cut_calls_dropped == 1,
                       "a closer quoted in the arguments closed a stopped Hermes call");
+    // An open marker quoted in the unfinished call's arguments is not where that call starts: the
+    // complete call before it is kept, the cut one dropped.
+    const auto quoted_open = decode(
+        ToolCallFormat::HermesJson,
+        "<tool_call>\n{\"name\": \"weather\", \"arguments\": {\"city\": \"Oslo\", \"days\": 2}}\n"
+        "</tool_call>\n<tool_call>\n{\"name\": \"weather\", \"arguments\": {\"city\": "
+        "\"<tool_call>",
+        "Observation");
+    failures +=
+        check(quoted_open.tool_calls.size() == 1 && quoted_open.content.empty() &&
+                  quoted_open.diagnostics.cut_calls_dropped == 1,
+              "an opener quoted in a cut call's arguments lost the complete call before it");
     // A stop inside the call's open marker: its start is dropped, not the answer.
     const auto in_opener = qwen("<tool", "_call>");
     failures += check(in_opener.tool_calls.empty() && in_opener.content.empty() &&

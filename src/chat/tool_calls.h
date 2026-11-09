@@ -183,6 +183,10 @@ public:
                                   std::optional<std::string_view> stop_text = std::nullopt);
 
 private:
+    // After a forced call's stop: the last call's open marker, the last one that follows complete
+    // calls (an open marker quoted inside a call's arguments is none).
+    [[nodiscard]] ToolCallSyntax::LastCall stopped_last_call() const;
+
     std::shared_ptr<const ToolCallOutputContract> contract_;
     const ToolCallSyntax* syntax_ = nullptr;  // the contract format's syntax
     // Bytes that may still begin the call region (ToolCallSyntax::match_start).

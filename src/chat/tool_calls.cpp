@@ -1115,6 +1115,30 @@ bool stop_swallows(std::string_view stop, std::string_view closer) {
 
 } // namespace
 
+ToolCallSyntax::LastCall ToolCallOutputDecoder::stopped_last_call() const {
+    ToolCallSyntax::LastCall last = syntax_->last_call(tool_region_);
+    const std::string_view open   = syntax_->open();
+    // Whether the region before `at` is complete calls only (or nothing): a stop's region is calls
+    // only, so a call starts exactly there.
+    const auto calls_before = [&](std::size_t at) {
+        const std::string before = rtrim_format_whitespace(tool_region_.substr(0, at));
+        if (std::all_of(before.begin(), before.end(),
+                        [](char byte) { return is_format_whitespace(byte); })) {
+            return true;
+        }
+        const ParsedToolCallOutput parsed =
+            syntax_->parse(before, max_tool_name_length_, *contract_);
+        return parsed.is_tool_call_response && !parsed.tool_calls.empty() && parsed.content.empty();
+    };
+    while (!open.empty() && last.start != std::string::npos && last.start > 0 &&
+           !calls_before(last.start)) {
+        const std::size_t earlier = tool_region_.rfind(open, last.start - 1);
+        if (earlier == std::string::npos) { break; }
+        last = syntax_->last_call(std::string_view(tool_region_).substr(0, earlier + open.size()));
+    }
+    return last;
+}
+
 ToolCallOutputDecoder::Terminal
 ToolCallOutputDecoder::finish(bool cut_off, std::optional<std::string_view> stop_text) {
     if (finished_) { throw std::logic_error("tool-call output decoder is already finished"); }
@@ -1203,8 +1227,9 @@ ToolCallOutputDecoder::finish(bool cut_off, std::optional<std::string_view> stop
     // prose that follows complete calls), or does not parse up to that marker, stays text.
     const std::string_view close = syntax_->close();
     if (cut_off && saw_tool_marker_ && !close.empty()) {
-        const ToolCallSyntax::LastCall last_call = syntax_->last_call(tool_region_);
-        const std::size_t last                   = last_call.start;
+        const ToolCallSyntax::LastCall last_call =
+            stop_text ? stopped_last_call() : syntax_->last_call(tool_region_);
+        const std::size_t last = last_call.start;
         // Whether the last call has no close marker: after a forced call's stop the region is calls
         // only, so it is closed exactly when it ends with the marker (one quoted in its arguments
         // is none); otherwise no marker follows its open one.
