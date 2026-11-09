@@ -39,8 +39,8 @@ std::string chosen(const std::vector<Alternative>& a) {
 } // namespace
 
 int main() {
-    // 1 TB/s DRAM, a 4 MB L2 at 4 TB/s.
-    const chain::Memory mem{1.0e12, 4.0e6, 4.0e12};
+    // 1 TB/s DRAM, a 4 MiB L2 at 4 TB/s.
+    const chain::Memory mem{1.0e12, 4194304.0, 4.0e12};
     // Price: seconds and launches add; an unpriced, negative or infinite step, a step with no
     // launch, or an empty chain has none.
     {
@@ -128,8 +128,8 @@ int main() {
         expect(chosen(chain::pair_alternatives(p)) == "none", "nothing priced");
         expect(!chain::select({}), "no alternatives");
     }
-    // SwiGLU, intermediate in the L2 (inter 8192, 64 tokens: 2 MB gate/up matrix, 4 MB L2) and out
-    // of it (256 tokens: 8 MB).
+    // SwiGLU, intermediate in the L2 (inter 8192, 64 tokens: 2 MiB gate/up matrix, 4 MiB L2) and
+    // out of it (256 tokens: 8 MiB).
     for (const int tokens : {64, 256}) {
         chain::SwigluPrices p;
         p.fused          = 100.0e-6;
@@ -138,7 +138,7 @@ int main() {
         p.tokens         = tokens;
         p.memory         = mem;
         const double out = 8192.0 * tokens * 2.0;
-        const bool fits  = 2.0 * out <= mem.l2_bytes;
+        const bool fits  = 2.0 * (2.0 * out) <= mem.l2_bytes; // twice the 2 x inter x T matrix
         expect(fits == (tokens == 64), "fixture: the 64-token matrix fits, the 256-token one not");
         const auto alt = chain::swiglu_alternatives(p);
         const auto fp  = chain::price(alt[0]);
