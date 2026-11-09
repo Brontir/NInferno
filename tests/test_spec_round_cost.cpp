@@ -467,7 +467,8 @@ int main() {
             const auto& base_lab = pair_of(kQ9, "ad104:60sm");
             auto lab             = base_lab;
             for (auto& m : lab.tune.measurements) {
-                m.graph_rounds  = std::max<std::int64_t>(m.config.enabled() ? m.rounds : m.tokens, 1);
+                m.graph_rounds =
+                    std::max<std::int64_t>(m.config.enabled() ? m.rounds : m.tokens, 1);
                 m.graph_kernels = (m.config.enabled() ? 500 : 311) * m.graph_rounds;
             }
             auto second         = lab;
@@ -497,8 +498,7 @@ int main() {
                 // The no-launch scale is the same pair without counts (the earlier block's value).
                 auto second_plain         = base_lab;
                 second_plain.tune.key.gpu = "ad102:128sm";
-                const auto plain_home =
-                    sp::profile_for_target({&base_lab, &second_plain}, "sm89");
+                const auto plain_home = sp::profile_for_target({&base_lab, &second_plain}, "sm89");
                 const auto plain      = plain_home.joint_scale.find(chosen.label());
                 expect(plain != plain_home.joint_scale.end() && plain->second.contains(2) &&
                            without && near(plain->second.at(2), *without, 1e-12),
