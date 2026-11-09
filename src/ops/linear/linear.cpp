@@ -375,6 +375,9 @@ bool dispatch_linear(const Tensor& x, const Weight& w, Tensor& out, LinearPolicy
     const detail::LinearDecision decision = detail::linear_decision(w, policy, x.ne[1]);
     policy                                = decision.policy;
     if (decision.claim != detail::LinearClaim::Owned && detail::generic::supports(w)) {
+        if (decision.claim == detail::LinearClaim::OwnedPrefillW4a8) {
+            detail::generic::record_projection_route("linear", "w4a8", x.ne[1], w.n, w.k);
+        }
         if (release_next) {
             return detail::generic::linear_release_next(x, w, out, policy, workspace, stream);
         }

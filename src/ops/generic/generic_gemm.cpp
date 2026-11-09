@@ -1072,7 +1072,28 @@ void record_problem(const Problem& p, const Weight& w) {
                                        << p.k << '\n';
 }
 
+struct RecordedProjections {
+    std::mutex mutex;
+    std::set<std::tuple<std::string, std::string, std::int32_t, std::int32_t, std::int32_t>> seen;
+};
+
+RecordedProjections& recorded_projections() {
+    static RecordedProjections state;
+    return state;
+}
+
 } // namespace
+
+void record_projection_route(const char* op, const char* route, std::int32_t tokens, std::int32_t n,
+                             std::int32_t k) {
+    static const char* path = std::getenv("NINFERNO_PROJECTION_RECORD");
+    if (path == nullptr || *path == 0) return;
+    RecordedProjections& s = recorded_projections();
+    std::lock_guard lock(s.mutex);
+    if (!s.seen.insert({op, route, tokens, n, k}).second) return;
+    std::ofstream(path, std::ios::app)
+        << op << ' ' << route << ' ' << tokens << ' ' << n << ' ' << k << '\n';
+}
 
 bool w4a8_ws_supports(QType q) {
     return q == QType::GGML_IQ3_XXS || q == QType::GGML_IQ2_S || q == QType::GGML_Q4_K ||
