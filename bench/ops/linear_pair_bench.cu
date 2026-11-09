@@ -1,6 +1,7 @@
 // Cold-cache benchmark for the two registered public Q8 LinearPair geometries.
 
 #include "core/weight.h"
+#include "ninferno/ops/linear.h"
 #include "ninferno/ops/linear_pair.h"
 
 #include "core/device.h"
@@ -33,11 +34,15 @@ const double kDeviceReadGBs        = bench::device_roofs().read_gbs;
 const double kDeviceBf16Tflops     = bench::device_roofs().bf16_fp32acc_tflops;
 
 enum class Execution : std::uint8_t { Eager, Graph };
+// What the call runs: linear_pair (its own choice), or the two linear() calls it would otherwise
+// make (the alternative the pair decision prices against).
+enum class Alternative : std::uint8_t { Pair, Separate };
 
 struct Options {
     std::vector<std::int32_t> tokens{1, 2, 4, 8, 16, 32, 48, 64, 96, 128};
     std::int32_t k            = 0;
     Execution execution       = Execution::Graph;
+    Alternative alternative   = Alternative::Pair;
     int warmup                = 5;
     int repeat                = 30;
     std::uint64_t flush_bytes = 256ULL << 20;
@@ -142,6 +147,14 @@ Options parse_options(int argc, char** argv) {
                 options.execution = Execution::Graph;
             else
                 throw std::invalid_argument("--execution must be eager or graph");
+        } else if (argument == "--alternative") {
+            const std::string_view value = next("--alternative value");
+            if (value == "pair")
+                options.alternative = Alternative::Pair;
+            else if (value == "separate")
+                options.alternative = Alternative::Separate;
+            else
+                throw std::invalid_argument("--alternative must be pair or separate");
         } else if (argument == "--warmup") {
             options.warmup = parse_nonnegative_int(next("--warmup value"), "warmup");
         } else if (argument == "--repeat") {
@@ -155,7 +168,8 @@ Options parse_options(int argc, char** argv) {
         } else if (argument == "--help" || argument == "-h") {
             std::printf("Usage: %s --k 2048|5120 "
                         "[--tokens 1,2,... | --sweep START:END[:STEP]] "
-                        "[--execution eager|graph] [--warmup N] [--repeat N] [--flush-mib N]\n",
+                        "[--execution eager|graph] [--alternative pair|separate] [--warmup N] "
+                        "[--repeat N] [--flush-mib N]\n",
                         argv[0]);
             std::exit(0);
         } else {
@@ -211,10 +225,11 @@ int main(int argc, char** argv) {
         const Weight first_weight  = bench::row_view(parent.weight, kFirstRow, kRows);
         const Weight second_weight = bench::row_view(parent.weight, kSecondRow, kRows);
 
-        std::printf("# gpu=%s public=linear_pair shape=two_adjacent_Q8[1024,%d] "
+        std::printf("# gpu=%s public=linear_pair alternative=%s shape=two_adjacent_Q8[1024,%d] "
                     "execution=%s cache=cold read_reference=%.1f_GB/s "
                     "bf16_tc_reference=%.1f_TFLOP/s\n",
-                    properties.name, options.k,
+                    properties.name,
+                    options.alternative == Alternative::Separate ? "separate" : "pair", options.k,
                     options.execution == Execution::Graph ? "graph_replay" : "eager",
                     kDeviceReadGBs, kDeviceBf16Tflops);
 
@@ -224,7 +239,12 @@ int main(int argc, char** argv) {
             Tensor first(first_output.p, DType::BF16, {kRows, tokens});
             Tensor second(second_output.p, DType::BF16, {kRows, tokens});
             const auto launch = [&](cudaStream_t launch_stream) {
-                ops::linear_pair(x, first_weight, second_weight, first, second, launch_stream);
+                if (options.alternative == Alternative::Separate) {
+                    ops::linear(x, first_weight, first, launch_stream);
+                    ops::linear(x, second_weight, second, launch_stream);
+                } else {
+                    ops::linear_pair(x, first_weight, second_weight, first, second, launch_stream);
+                }
             };
             bench::ColdTiming timing;
             if (options.execution == Execution::Graph) {
