@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
