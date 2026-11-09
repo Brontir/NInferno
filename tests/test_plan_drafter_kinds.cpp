@@ -108,10 +108,42 @@ void test_every_kind_carried() {
           "MTP chosen: the sibling's pair serves");
 }
 
+// The plan JSON's drafter gain note says where the joint verify's price comes from (#303): priced
+// at exactly the task's streams, the round cost's; at more streams than the last priced count, held
+// from the price there (the gain does not climb with load), with that count named.
+void test_gain_note_names_where_the_price_is_held_from() {
+    const auto note_at = [](std::uint32_t streams) {
+        pr::ServedChoice served;
+        pr::choice::DrafterOption option;
+        option.label   = "mtp:3";
+        option.speedup = 2.0;
+        option.joint   = {{.streams = 2, .scale = 0.45}};
+        served.drafter_options.push_back(option);
+        served.task.concurrency = streams;
+        pr::choice::Scored scored;
+        scored.candidate.drafter = 1;
+        scored.drafter           = "mtp:3";
+        served.choice.scored.push_back(scored);
+        served.choice.chosen = 0;
+        return pr::choice_json(served)["chosen"]["drafter_gain"];
+    };
+    const auto priced = note_at(2);
+    check(priced["joint_verify_scale"] == 0.45 && !priced.contains("joint_priced_at_streams") &&
+              priced["note"].get<std::string>().find("priced for the streams' rows") !=
+                  std::string::npos,
+          "priced at exactly the streams: the priced note");
+    const auto held = note_at(3);
+    check(held["joint_verify_scale"] == 0.45 && held["joint_priced_at_streams"] == 2 &&
+              held["note"].get<std::string>().find("held from the price at 2 streams") !=
+                  std::string::npos,
+          "priced only at fewer streams: the note says it is held from that count");
+}
+
 } // namespace
 
 int main() {
     test_every_kind_carried();
+    test_gain_note_names_where_the_price_is_held_from();
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;

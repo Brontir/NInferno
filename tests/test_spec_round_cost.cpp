@@ -460,6 +460,51 @@ int main() {
                        a.known && b.known && near(a.cost.at(mtp3), b.cost.at(mtp3), 1e-12),
                    "launch counts average over the sections, not their rounds");
         }
+        // price_joint's launch path (#303): with the lab's kernel counts, the joint scale is
+        // load_gain's with the same launch term on R_1 and R_C, (verify_C + draft_C + L n_round) /
+        // (plain_C + L n_step) over the one-stream's, not the no-launch ratio.
+        {
+            const auto& base_lab = pair_of(kQ9, "ad104:60sm");
+            auto lab             = base_lab;
+            for (auto& m : lab.tune.measurements) {
+                m.graph_rounds  = std::max<std::int64_t>(m.config.enabled() ? m.rounds : m.tokens, 1);
+                m.graph_kernels = (m.config.enabled() ? 500 : 311) * m.graph_rounds;
+            }
+            auto second         = lab;
+            second.tune.key.gpu = "ad102:128sm";
+            const auto home     = sp::profile_for_target({&lab, &second}, "sm89");
+            const auto chosen   = home.overall.config;
+            const auto rates    = sp::card_rates_of_board(lab.lab_board);
+            const auto found    = home.joint_scale.find(chosen.label());
+            expect(chosen.enabled() && rates.launch_bytes() > 0 &&
+                       found != home.joint_scale.end() && found->second.contains(2),
+                   "a counted lab prices its choice's joint verify at two streams");
+            if (chosen.enabled() && rates.launch_bytes() > 0 && found != home.joint_scale.end() &&
+                found->second.contains(2)) {
+                const sp::ProposalRows rows =
+                    chosen.proposal_head ? lab.tune.proposal_rows : sp::ProposalRows{};
+                const sp::RoundLaunches counted{.round = 500, .step = 311};
+                const auto with = sp::load_gain(*lab.round_facts, chosen, rates.kappa(), 1.0, 2,
+                                                rows, rates.launch_bytes(), counted);
+                const auto without =
+                    sp::load_gain(*lab.round_facts, chosen, rates.kappa(), 1.0, 2, rows);
+                const double scale = found->second.at(2);
+                expect(with && without && near(scale, *with, 1e-12),
+                       "the joint scale carries the lab's kernel launches");
+                expect(with && without && std::abs(*with - *without) > 1e-9 &&
+                           std::abs(scale - *without) > 1e-9,
+                       "the launch term moves the scale off the no-launch ratio");
+                // The no-launch scale is the same pair without counts (the earlier block's value).
+                auto second_plain         = base_lab;
+                second_plain.tune.key.gpu = "ad102:128sm";
+                const auto plain_home =
+                    sp::profile_for_target({&base_lab, &second_plain}, "sm89");
+                const auto plain      = plain_home.joint_scale.find(chosen.label());
+                expect(plain != plain_home.joint_scale.end() && plain->second.contains(2) &&
+                           without && near(plain->second.at(2), *without, 1e-12),
+                       "without counts the scale is the no-launch ratio");
+            }
+        }
         // The lab's rows ride in its tune (spec-tune records them): they round-trip; zero rows are
         // refused.
         auto pair                            = full_head_pair(kQ9, "ad104:60sm");

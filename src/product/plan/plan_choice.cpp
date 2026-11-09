@@ -780,9 +780,25 @@ Json choice_json(const ServedChoice& served) {
             // The one-request gain at the depth this load drafts times R_1 / R_C, the round cost's
             // price of the streams' rows verified together (spec/round_cost.h).
             gain["joint_verify_scale"] = round_to(d.joint_scale_at(streams), 3);
-            gain["note"] = "the one-request gain at the depth this load drafts, priced for the "
-                           "streams' rows verified together (the round cost's R_1 / R_C); the "
-                           "requests' attention and state bytes are not in it";
+            // The price at exactly this count, else the one held from the nearest smaller count.
+            std::uint32_t held_from = 0;
+            for (const choice::DrafterOption::JointScale& j : d.joint) {
+                if (j.streams > streams) { break; }
+                held_from = j.streams;
+            }
+            if (held_from == streams) {
+                gain["note"] = "the one-request gain at the depth this load drafts, priced for the "
+                               "streams' rows verified together (the round cost's R_1 / R_C); the "
+                               "requests' attention and state bytes are not in it";
+            } else {
+                gain["joint_priced_at_streams"] = held_from;
+                gain["note"] = "the one-request gain at the depth this load drafts, held from the "
+                               "price at " +
+                               std::to_string(held_from) +
+                               " streams (the round cost's R_1 / R_C there; the joint verify at "
+                               "this count is not priced), the gain not climbing with load; the "
+                               "requests' attention and state bytes are not in it";
+            }
         } else if (!plain && streams > 1) {
             gain["note"] = "a ceiling: one request's gain at the depth this load drafts; the verify "
                            "of the streams' rows together is not priced";
