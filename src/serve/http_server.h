@@ -3,6 +3,7 @@
 #include "serve/cache_hint.h"
 #include "serve/generation_service.h"
 #include "serve/operational_log.h"
+#include "serve/http_transport.h"
 #include "serve/openai_responses_store.h"
 #include "serve/request_log.h"
 #include "serve/serve_options.h"
@@ -134,6 +135,9 @@ private:
                 const ApiError& error) const;
 
     void register_routes();
+    // The /health answer (status code and JSON body), also given to a connection the worker pool
+    // refused (answer_overloaded_connection).
+    [[nodiscard]] HealthReply health_reply() const;
     void handle_chat_completions(const httplib::Request& req, httplib::Response& res);
     void handle_messages(const httplib::Request& req, httplib::Response& res);
     void handle_count_tokens(const httplib::Request& req, httplib::Response& res);
