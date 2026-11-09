@@ -1352,6 +1352,17 @@ void test_gptoss_drafter_rings() {
         check(state && state->local_layers == 0 && state->full_layers == 8,
               "an overridden YaRN attention factor stays paged: " + own.dump());
     }
+    // Unset as the converter reads it (0, false, null), or set to YaRN's own default: the
+    // converter writes the default scaling, the runtime tells 4096 from it, a ring.
+    for (const json& as_default :
+         {json{{"rope_type", "yarn"}, {"factor", 32.0}, {"attention_factor", 0}},
+          json{{"rope_type", "yarn"}, {"factor", 32.0}, {"mscale", 1.0}, {"mscale_all_dim", 0}},
+          json{{"rope_type", "yarn"}, {"factor", 32.0}, {"attention_factor", nullptr}},
+          json{{"rope_type", "yarn"}, {"factor", 32.0}, {"attention_factor", scaling}}}) {
+        const auto state = drafter("rope_scaling", as_default);
+        check(state && state->local_layers == 8 && state->window == 4096,
+              "a default YaRN attention factor rings: " + as_default.dump());
+    }
     const auto keyed = drafter("rope_parameters", json{{"full_attention", yarn_4096}});
     check(keyed && keyed->local_layers == 8 && keyed->window == 4096,
           "gpt-oss drafter rings from rope_parameters keyed by layer type");

@@ -844,23 +844,35 @@ std::optional<models::DrafterStateShape> plan_drafter_state_of_config(const json
         for (const char* key : {"rope", "rope_parameters", "rope_scaling"}) {
             const json* rope = rope_of(key);
             if (rope == nullptr) { continue; }
-            original             = u32(number(*rope, "original_max_position_embeddings"));
-            const auto type      = rope->find("rope_type");
-            const bool yarn      = type != rope->end() && type->is_string() && *type == "yarn";
-            const double scaling = number(*rope, "attention_scaling");
-            // Published without the length, YaRN's factor tells it: the converter writes that
-            // factor's default attention scaling, from which the runtime tells the same length.
-            // An attention factor set apart (attention_factor, or mscale with mscale_all_dim) is
-            // not that default: the runtime tells no length from it, and the layers stay paged.
-            const auto set = [&](const char* name) {
+            original        = u32(number(*rope, "original_max_position_embeddings"));
+            const auto type = rope->find("rope_type");
+            const bool yarn = type != rope->end() && type->is_string() && *type == "yarn";
+            // The attention scaling the runtime reads its length back from (yarn_original_length):
+            // as converted (rope), or as the converter computes it from a published rope
+            // (core/yarn.h yarn_rope): attention_factor, else mscale over mscale_all_dim, else
+            // YaRN's default 0.1 ln(factor) + 1. A value 0, false or null is unset, as there.
+            const auto truthy = [&](const char* name) {
                 const auto it = rope->find(name);
-                return it != rope->end() && !it->is_null();
+                return it != rope->end() && !it->is_null() &&
+                       !(it->is_boolean() && !it->get<bool>()) &&
+                       !(it->is_number() && it->get<double>() == 0.0);
             };
-            const bool own_scaling =
-                set("attention_factor") || (set("mscale") && set("mscale_all_dim"));
-            const double published = own_scaling ? 0.0 : number(*rope, "factor");
-            if (original == 0 && yarn && positions != 0 && (scaling > 1.0 || published >= 2.0)) {
-                const double factor = scaling > 1.0 ? std::exp((scaling - 1.0) / 0.1) : published;
+            const auto mscale_of = [](double scale, double m) {
+                return scale <= 1 ? 1.0 : 0.1 * m * std::log(scale) + 1.0;
+            };
+            double scaling = 0.0;
+            if (std::string_view(key) == "rope") {
+                scaling = number(*rope, "attention_scaling");
+            } else {
+                const double factor = number(*rope, "factor");
+                scaling             = truthy("attention_factor") ? number(*rope, "attention_factor")
+                                      : truthy("mscale") && truthy("mscale_all_dim")
+                                          ? mscale_of(factor, number(*rope, "mscale")) /
+                                    mscale_of(factor, number(*rope, "mscale_all_dim"))
+                                          : mscale_of(factor, 1.0);
+            }
+            if (original == 0 && yarn && positions != 0 && scaling > 1.0) {
+                const double factor = std::exp((scaling - 1.0) / 0.1);
                 const double whole  = std::round(factor);
                 if (whole >= 2.0 && std::fabs(factor - whole) <= 1e-3 * whole &&
                     positions % static_cast<std::uint32_t>(whole) == 0) {
