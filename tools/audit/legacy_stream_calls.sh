@@ -45,6 +45,7 @@ tests/ops/linear/test_generic_linear.cpp|9|legacy-stream reference, fills and la
 tests/ops/linear/test_side_by_side_projection.cpp|2|poison fills before launches on the legacy stream (stream nullptr), cudaDeviceSynchronize before reads
 tests/ops/linear/test_dense_tune.cpp|1|download(): D2H after the call stream is synchronized
 tests/ops/linear/test_linear_gemma4_shapes.cpp|6|staging on the legacy stream the launches also use
+tests/ops/linear/test_ggml_vec_twin.cpp|5|uploads, fills and reads on the legacy stream its vec_product launches use (stream nullptr), cudaDeviceSynchronize before reads
 tests/ops/linear/test_linear_gemma4_token_invariance.cpp|1|D2H after cudaDeviceSynchronize
 tests/ops/linear/test_qwen_prefill_token_invariance.cpp|3|the test's launch stream is the legacy stream; cuda_synchronize before reads
 tests/ops/linear/test_segmented_swiglu.cpp|1|poison fill before the launches on the legacy stream (stream nullptr), cudaDeviceSynchronize before reads

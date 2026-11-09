@@ -379,17 +379,20 @@ std::optional<std::string> parse_assistant_reasoning(const Json& message, std::s
         }
         return message.at(key).get<std::string>();
     };
-    // vLLM historically used reasoning_content and now also accepts reasoning. They carry the
-    // same assistant-history semantics, so equal aliases normalize to one Engine field.
-    std::optional<std::string> content   = parse("reasoning_content");
-    std::optional<std::string> reasoning = parse("reasoning");
-    if (content && content->empty()) { content.reset(); }
-    if (reasoning && reasoning->empty()) { reasoning.reset(); }
-    if (content && reasoning && *content != *reasoning) {
-        bad_request("conflicting assistant reasoning and reasoning_content values", "messages",
-                    "conflicting_template_option");
+    // vLLM historically used reasoning_content and now also accepts reasoning; transformers also
+    // takes `thinking` (the gpt-oss template's field). They carry the same assistant-history
+    // semantics, so equal aliases normalize to one Engine field.
+    std::optional<std::string> found;
+    for (const char* key : {"reasoning_content", "reasoning", "thinking"}) {
+        std::optional<std::string> value = parse(key);
+        if (!value || value->empty()) { continue; }
+        if (found && *found != *value) {
+            bad_request("conflicting assistant reasoning, reasoning_content and thinking values",
+                        "messages", "conflicting_template_option");
+        }
+        found = std::move(value);
     }
-    return reasoning ? reasoning : content;
+    return found;
 }
 
 void validate_message_name(const Json& item) {
@@ -407,7 +410,7 @@ void validate_non_assistant_fields(const Json& item, ChatRole role) {
         bad_request("function_call is only valid on assistant messages", "messages");
     }
     if (role == ChatRole::Assistant) { return; }
-    for (const char* key : {"reasoning", "reasoning_content"}) {
+    for (const char* key : {"reasoning", "reasoning_content", "thinking"}) {
         if (!item.contains(key) || item.at(key).is_null()) { continue; }
         if (!item.at(key).is_string()) {
             bad_request(std::string(key) + " must be a string", "messages");

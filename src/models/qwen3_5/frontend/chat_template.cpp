@@ -40,6 +40,7 @@ struct ContentSource {
     std::vector<std::uint32_t> part_tags;
     std::vector<std::optional<std::size_t>> part_media;
     std::uint32_t reasoning_tag = 0;
+    std::uint32_t thinking_tag  = 0;
 };
 
 void merge_option(Json& context, std::string_view key, const Json& value) {
@@ -202,8 +203,24 @@ RenderedChat CompiledChatTemplate::render(const std::vector<ChatMessage>& messag
             throw std::invalid_argument("system and developer messages may contain only text");
         }
     }
+    // A template that reads a tool-call turn's analysis from `thinking` and can render only one of
+    // text and thinking (conventions: refuses_text_with_thinking) renders the reasoning, which
+    // the model's next step depends on, and not the text. Decided from the template, never from a
+    // refusal: any other refusal retries the messages as given.
+    std::vector<ChatMessage> reasoned;
+    if (conventions_.reasoning && conventions_.reasoning->refuses_text_with_thinking) {
+        for (std::size_t i = 0; i < messages.size(); ++i) {
+            const auto& turn = messages[i];
+            if (turn.role != ChatRole::Assistant || turn.tool_calls.empty() ||
+                turn.reasoning_content.empty() || turn.has_media() || turn.parts.empty())
+                continue;
+            if (reasoned.empty()) reasoned = messages;
+            reasoned[i].parts.clear();
+        }
+    }
+    const std::vector<ChatMessage>& given = reasoned.empty() ? messages : reasoned;
     try {
-        return render_once(messages, options, control);
+        return render_once(given, options, control);
     } catch (const std::invalid_argument&) {
         // Only the first message keeps an instruction role: the stock templates also refuse a
         // second one that opens the conversation (two system messages, a Responses `instructions`
@@ -212,7 +229,7 @@ RenderedChat CompiledChatTemplate::render(const std::vector<ChatMessage>& messag
         std::vector<ChatMessage> demoted;
         for (std::size_t i = leading; i < messages.size(); ++i) {
             if (!instruction(messages[i].role)) continue;
-            if (demoted.empty()) demoted = messages;
+            if (demoted.empty()) demoted = given;
             demoted[i].role = ChatRole::User;
         }
         // A tool the client declared without a description renders without one, exactly as
@@ -230,7 +247,7 @@ RenderedChat CompiledChatTemplate::render(const std::vector<ChatMessage>& messag
             if (!described) described = options;
             described->tool_jsons[i] = tool.dump();
         }
-        const std::vector<ChatMessage>& retried = demoted.empty() ? messages : demoted;
+        const std::vector<ChatMessage>& retried = demoted.empty() ? given : demoted;
         if (!demoted.empty()) {
             try {
                 return render_once(demoted, options, control);
@@ -340,6 +357,12 @@ RenderedChat CompiledChatTemplate::render_once(const std::vector<ChatMessage>& m
         if (!message.reasoning_content.empty()) {
             value["reasoning_content"] = message.reasoning_content;
             origin.reasoning_tag       = tag(pointer + "/reasoning_content");
+            // The reasoning also reaches the template as `thinking`, the field the gpt-oss template
+            // reads to keep a tool-call turn's analysis (the one place harmony keeps CoT in
+            // inference). This alias is NInferno's adapter, not the template's input as the client
+            // sent it. Templates that read only reasoning_content never see it.
+            value["thinking"]   = message.reasoning_content;
+            origin.thinking_tag = tag(pointer + "/thinking");
         }
         if (!message.tool_calls.empty()) {
             value["tool_calls"] = Json::array();
@@ -484,6 +507,7 @@ RenderedChat CompiledChatTemplate::render_once(const std::vector<ChatMessage>& m
         };
         for (const auto& region : output.regions) {
             if (region.tag == origin.tag || region.tag == origin.reasoning_tag ||
+                region.tag == origin.thinking_tag ||
                 std::find(origin.part_tags.begin(), origin.part_tags.end(), region.tag) !=
                     origin.part_tags.end()) {
                 include({region.begin, region.end});
@@ -499,6 +523,17 @@ RenderedChat CompiledChatTemplate::render_once(const std::vector<ChatMessage>& m
     for (std::size_t i = 0; i < messages.size(); ++i) {
         if (!message_blocks[i]) continue;
         const auto& block = layout.messages[*message_blocks[i]];
+        // A tool call written outside the block that holds the turn's text or analysis (gpt-oss
+        // writes the call as an assistant block of its own) is not part of what that block's end
+        // closes: the boundary is proven by a prefix render instead.
+        if (!messages[i].tool_calls.empty() && conventions_.turns &&
+            std::string_view(output.text)
+                .substr(block.end)
+                .starts_with(std::string(conventions_.turns->open) +
+                             std::string(role_name(ChatRole::Assistant)))) {
+            (void)prefix(i + 1);
+            continue;
+        }
         if (block.closed && block_users[*message_blocks[i]] == 1)
             result.message_boundaries[i + 1] = block.end;
         const std::string_view close = conventions_.tools.response_boundary;

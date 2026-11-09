@@ -1096,6 +1096,14 @@ int test_reasoning_and_extensions() {
     failures += check(parse(body).generation.messages.back().reasoning_content == "different",
                       "an empty reasoning alias does not conflict with a meaningful alias");
     body = base_request();
+    body["messages"].push_back(
+        Json{{"role", "assistant"}, {"content", "answer"}, {"thinking", "thought"}});
+    failures += check(parse(body).generation.messages.back().reasoning_content == "thought",
+                      "assistant thinking is an alias of reasoning_content");
+    body["messages"].back()["reasoning"] = "different";
+    failures += check(api_error([&] { (void)parse(body); }).code == "conflicting_template_option",
+                      "thinking conflicting with reasoning rejected");
+    body = base_request();
     body["messages"].push_back(Json{
         {"role", "assistant"}, {"content", nullptr}, {"reasoning_content", "unfinished thought"}});
     failures +=

@@ -148,6 +148,9 @@ ChatConventions resolve_conventions(std::string_view source) {
             .budget_control  = entry->at("budget_control").get<std::string>(),
             .content_open    = entry->value("content_open", std::vector<std::string>{}),
         };
+        const auto refusal = entry->value("refuses_text_with_thinking", std::string{});
+        result.reasoning->refuses_text_with_thinking =
+            !refusal.empty() && source.find(refusal) != std::string_view::npos;
     }
     if (const Json* entry = first_match("tools", source)) {
         result.tools = ToolMarkup{
