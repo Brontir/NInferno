@@ -56,6 +56,10 @@ ninferno_add_test(ninferno_gate_atlas_test
 ninferno_add_test(ninferno_route_cost_constants_test NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_route_cost_constants.cpp")
 
+# The register MMA's min-term MMA over the weight MMAs (ops/generic/rmma_min_term.h, #501). No GPU.
+ninferno_add_test(ninferno_rmma_min_term_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_rmma_min_term.cpp")
+
 ninferno_add_test(ninferno_decode_graph_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_decode_graph.cpp"
   LIBRARIES ninferno_core)
 

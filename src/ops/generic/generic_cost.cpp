@@ -12,6 +12,7 @@
 #include "ops/generic/generic_schedules.h"
 #include "ops/generic/generic_select_internal.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
+#include "ops/generic/rmma_min_term.h"
 #include "ops/generic/route_cost_constants.h"
 
 #include <algorithm>
@@ -251,9 +252,11 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         return std::max(1.0, std::min(limit, std::floor(regs_sm / per_cta)));
     };
     // Time of `ctas` CTAs of `rows` output rows x `cols` (K over `cluster` CTAs) of `threads`
-    // threads, at most `occ` resident per SM; `local_bytes` is the spill per thread of the kernel.
+    // threads, at most `occ` resident per SM; `local_bytes` is the spill per thread of the kernel;
+    // `tensor_ones` the register MMA's min-term MMA over the weight MMAs (rmma_min_term_factor).
     const auto cost = [&](double rows, double cols, double threads, double cluster, double occ,
-                          double warps_k, bool pipelined, double eff, double local_bytes = 0.0) {
+                          double warps_k, bool pipelined, double eff, double local_bytes = 0.0,
+                          double tensor_ones = 1.0) {
         const double tiles = cdiv(tokens, cols);
         const double gx    = cdiv(n, rows);
         const double ctas  = gx * tiles * cluster;
@@ -264,7 +267,7 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         // than SMs up to 20x).
         const double warps = std::min(q, std::max(occ, 1.0)) * threads / 32;
         const double mem   = std::max(q * rows * kc * bpw / bw_sm, n * k * bpw / bw);
-        const double mma   = q * 2.0 * rows * sets * cols * kc / peak_sm;
+        const double mma   = q * 2.0 * rows * sets * cols * kc / peak_sm * tensor_ones;
         // The CTAs the busiest SM runs one residency after another each pay their warps'
         // dependent chain: the exposed load latency of a K step (register MMA: 16 K per warp, 150
         // cycles) or of a pipeline stage (64 K, 500 cycles: the barrier and the cp.async wait).
@@ -286,6 +289,9 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         // residency round fetches each of its tiles once for all of them. A spilled register
         // goes through the L1 twice a K step. These terms add (a max of the DRAM and the L2 time
         // did worse on the 5090 and 4090: an empirical choice, not a derived overlap).
+        // OPEN (#501): inside one wave the DRAM reads overlap the tensor work, and the model adds
+        // them; the overlap depends on the resident warps and the loads' lead (not described yet),
+        // and a max inside the wave moved the 5070 Ti worst 1.31 -> 1.66 in the replica.
         const double dram = n * k * bpw / bw;
         const double l2_w = q * kc * rows * bpw / l2_sm;
         const double per_round =
@@ -336,8 +342,14 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         const double occ = rmma_occupancy(threads, kept);
         const Route r{Family::RegisterMma, static_cast<std::uint8_t>(i)};
         const auto tile = *route_tile(r, problem.epilogue, tokens);
+        // The min-term decoders' extra MMA against ones (#501): absent where the tile adds the
+        // activation sums in FP32 (four or more token tiles on a tensor-core part, when the call
+        // asks, rmma_add_sums) and on Volta, whose build has no tensor MMA and always adds.
+        const bool adds_sums = !d.features.mma_tensor || (s.n_tiles >= 4 && rmma_add_sums());
+        const double ones =
+            rmma_min_term_factor(problem.qtype, static_cast<int>(sets), s.m_tiles, adds_sums);
         offer(r, cost(tile.out_rows, tile.tokens, threads, tile.k_split, occ, s.warps_k, false, 1,
-                      kept ? kept->local_bytes : 0.0));
+                      kept ? kept->local_bytes : 0.0, ones));
     }
     a8_candidates(problem, weight, tokens, d, offer);
     if (emulated) return true;
