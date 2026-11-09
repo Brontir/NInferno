@@ -1916,6 +1916,14 @@ void joint_price_keeps_the_gain_monotone() {
     ch::DrafterOption unpriced{"mtp:3", "mtp", 2.0, 0, "measured"};
     check(unpriced.speedup_at(3) == 2.0 && !unpriced.joint_priced_at(3),
           "before any count is priced the one-request gain stands");
+    // A count priced above the least price below it is held there too: 2.0 x 0.5 at two streams,
+    // 2.0 x 0.9 at three, so three streams gain no more than two's 1.0.
+    ch::DrafterOption climbing{"mtp:3", "mtp", 2.0, 0, "measured"};
+    climbing.joint = {{.streams = 2, .scale = 0.5}, {.streams = 3, .scale = 0.9}};
+    check(std::abs(climbing.speedup_at(2) - 1.0) < 1e-12 &&
+              std::abs(climbing.speedup_at(3) - 1.0) < 1e-12 &&
+              std::abs(climbing.speedup_at(4) - 1.0) < 1e-12,
+          "a priced count of streams does not climb above the least price below it");
 }
 
 // The joint verify's scales go through the replay record (#303): written as text and read back, a
