@@ -132,13 +132,6 @@ DFlashConfig parse_dflash_config(const artifact::Json& c) {
         }
         out.windows.push_back(name == "full_attention" ? 0 : out.sliding_window);
     }
-    // A drafter with no sliding layer reads the whole context in every layer: past the length its
-    // YaRN rope was scaled from (and trained on) its acceptance falls (#549). With a sliding layer
-    // the full layer is FOLD's business (qwen3_5), not this bound.
-    if (std::all_of(out.windows.begin(), out.windows.end(),
-                    [](std::int32_t w) { return w == 0; })) {
-        out.full_window = window_candidate;
-    }
     const auto& draft = c.at("dflash_config");
     const auto& taps  = draft.at("target_layer_ids");
     // Without a recorded depth the taps are bounded here by the largest (distinct, in range of a
@@ -168,6 +161,23 @@ DFlashConfig parse_dflash_config(const artifact::Json& c) {
                 "dflash config: dflash_config.sliding_attention_mask must be block or causal");
         }
         out.sliding_block = mask == "block";
+    }
+    // A drafter with no sliding layer reads the whole context in every layer: past the length its
+    // YaRN rope was scaled from (and trained on) its acceptance falls (#549). With a sliding layer
+    // the full layer is FOLD's business (qwen3_5), not this bound. A bound the cyclic rings hold
+    // (2048 or 4096 rows, gpt-oss's 4096) makes every layer a sliding one of that window (#564):
+    // its keys and values live in a ring of the window, not in pages of the whole context, and
+    // the block still sees itself whole (sliding_window_attention is symmetric). Another bound
+    // reads the paged context through its window (full_window).
+    if (window_candidate > 0 && std::all_of(out.windows.begin(), out.windows.end(),
+                                            [](std::int32_t w) { return w == 0; })) {
+        if (window_candidate == 2048 || window_candidate == 4096) {
+            out.sliding_window = window_candidate;
+            std::fill(out.windows.begin(), out.windows.end(), window_candidate);
+            out.sliding_block = true; // a full layer's block sees itself whole
+        } else {
+            out.full_window = window_candidate;
+        }
     }
     return out;
 }

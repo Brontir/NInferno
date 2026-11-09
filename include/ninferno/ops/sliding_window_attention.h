@@ -21,9 +21,11 @@ struct SlidingWindowAttentionExecutionEnvelope {
 /**
  * Symmetric non-causal sliding-window grouped-query attention.
  *
- * The registered profiles are D=128, Hq=32, Hkv=8 (group 4), window/cyclic capacity 2048 or
- * 4096, scale=1/sqrt(128), T=1..16, and B=1..8. q/out are contiguous BF16 [128,32,T,B],
- * query_k/query_v are contiguous BF16 [128,8,T,B], positions is contiguous device I32 [T,B], and
+ * The registered profiles are D=128, Hq=32, Hkv=8 (group 4; the Qwen, Gemma 4 and Muse drafters)
+ * and D=64, Hq=64, Hkv=8 (group 8; gpt-oss's drafter, whose full layers read their trained window,
+ * BF16 context only), window/cyclic capacity 2048 or 4096, scale=1/sqrt(D), T=1..16, and B=1..8.
+ * q/out are contiguous BF16 [D,Hq,T,B], query_k/query_v are contiguous BF16 [D,Hkv,T,B],
+ * positions is contiguous device I32 [T,B], and
  * valid_columns and lanes are contiguous device I32 [B]. Row b has V=valid_columns[b] live query
  * columns, positions[i,b]=L+i for i<V, and lanes[b] selects its cyclic-cache lane. Columns i>=V
  * are an inert physical tail and produce exact BF16 zero.
@@ -34,7 +36,7 @@ struct SlidingWindowAttentionExecutionEnvelope {
  * temporary key at p_j is visible
  * exactly when abs(p_j-p_i)<window. Thus distance window-1 is included and distance window is
  * excluded; every live query also sees every live temporary query row in its batch row. Query
- * head h reads KV head floor(h/4).
+ * head h reads KV head floor(h/group).
  *
  * The independent oracle evaluates the complete formula naively in FP64 from represented BF16
  * query/context K and BF16 query V / FP16 cached V, using a stable Softmax over exactly that

@@ -11,10 +11,11 @@ enum class SlidingWindowAttentionRoute {
     SplitKv,
 };
 
+// The route and its splits depend on the window, the query width, the batch and the envelope, not
+// on the head geometry: the profiles of one window share their graph topology classes.
 struct SlidingWindowAttentionPlan {
     SlidingWindowAttentionRoute route;
     std::int32_t tokens;
-    std::int32_t warps;
     std::int32_t key_block;
     std::int32_t reduce_warps;
     std::int32_t split_capacity;
@@ -29,8 +30,8 @@ sliding_window_attention_resolve_plan(std::uint32_t window, std::int32_t tokens,
 
 void sliding_window_attention_launch(const Tensor& q, const Tensor& query_k, const Tensor& query_v,
                                      const Tensor& positions, const Tensor& valid_columns,
-                                     const Tensor& lanes, float scale,
-                                     const CyclicKVCacheLayerView& context,
+                                     const Tensor& lanes, AttentionHeadGeometry geometry,
+                                     float scale, const CyclicKVCacheLayerView& context,
                                      const SlidingWindowAttentionPlan& plan, Tensor& partial_acc,
                                      Tensor& partial_m, Tensor& partial_l, Tensor& out,
                                      cudaStream_t stream);

@@ -819,6 +819,23 @@ std::optional<models::DrafterStateShape> plan_drafter_state_of_config(const json
         }
     }
     out.window      = out.local_layers != 0 ? u32(number(config, "sliding_window")) : 0;
+    // A drafter without a sliding layer whose YaRN rope was scaled from a length a ring holds
+    // (gpt-oss's 4096 of 131072): the runtime runs every layer as a sliding one of that window
+    // (speculation::parse_dflash_config, #564), its keys and values in rings, not pages.
+    if (out.local_layers == 0) {
+        for (const char* key : {"rope_scaling", "rope_parameters"}) {
+            const auto rope = config.find(key);
+            if (rope == config.end() || !rope->is_object()) { continue; }
+            const std::uint32_t original = u32(number(*rope, "original_max_position_embeddings"));
+            if ((original == 2048 || original == 4096) &&
+                original < u32(number(config, "max_position_embeddings"))) {
+                out.local_layers = out.full_layers;
+                out.full_layers  = 0;
+                out.window       = original;
+            }
+            break;
+        }
+    }
     out.kv_heads    = static_cast<std::int32_t>(u32(number(config, "num_key_value_heads")));
     out.head_dim    = static_cast<std::int32_t>(u32(number(config, "head_dim")));
     const auto taps = draft->find("target_layer_ids");

@@ -144,17 +144,17 @@ void DenseExecution::check_drafter() const {
                                     "mask; this drafter's sliding layers are causal in the block");
     }
     // The drafter's attention runs on the profiles the Program's Ops register: D=128 with 32
-    // query and 8 key/value heads (a sliding layer's window 2048 or 4096), or D=64 with 64 and 8
-    // on full layers only (gpt-oss's drafter), and a batch of at most 8 rows.
+    // query and 8 key/value heads, or D=64 with 64 and 8 (gpt-oss's drafter, whose layers read
+    // their trained window, #564), a sliding layer's window 2048 or 4096, and a batch of at most
+    // 8 rows.
     static_assert(kMaximumConcurrency <= 8, "the drafter's attention Ops take at most 8 rows");
-    const bool d128 = dc.head_dim == 128 && dc.query_heads == 32 && dc.kv_heads == 8 &&
-                      (!sliding || dc.sliding_window == 2048 || dc.sliding_window == 4096);
-    const bool d64  = dc.head_dim == 64 && dc.query_heads == 64 && dc.kv_heads == 8 && !sliding;
+    const bool window = !sliding || dc.sliding_window == 2048 || dc.sliding_window == 4096;
+    const bool d128   = dc.head_dim == 128 && dc.query_heads == 32 && dc.kv_heads == 8 && window;
+    const bool d64    = dc.head_dim == 64 && dc.query_heads == 64 && dc.kv_heads == 8 && window;
     if (!d128 && !d64) {
         throw std::invalid_argument(
             "dflash: the Program's drafter attention runs D=128 with 32 query and 8 key/value "
-            "heads (sliding windows 2048 or 4096), or D=64 with 64 and 8 on full layers; this "
-            "drafter has D=" +
+            "heads, or D=64 with 64 and 8, sliding windows 2048 or 4096; this drafter has D=" +
             std::to_string(dc.head_dim) + ", " + std::to_string(dc.query_heads) + " query and " +
             std::to_string(dc.kv_heads) + " key/value heads, window " +
             std::to_string(dc.sliding_window));

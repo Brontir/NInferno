@@ -50,7 +50,8 @@ struct DFlashConfig {
     bool rope_scaled             = false; // the table is the artifact's (not rope_theta's)
     // The rows every layer of a drafter without a sliding layer reads (the last ones): the context
     // length its YaRN rope was scaled from, shorter than max_positions, which it was trained on
-    // and past which its acceptance falls (#549). 0: all rows.
+    // and past which its acceptance falls (#549). 0: all rows. A length a ring holds (2048, 4096)
+    // is no full_window: every layer is then a sliding one of that window (windows, #564).
     std::int32_t full_window = 0;
     // q/k/v/o projections carry biases (gpt-oss's drafter); the key and value biases apply to the
     // context keys and values as well.

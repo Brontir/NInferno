@@ -24,9 +24,13 @@ using namespace ninferno;
 using namespace ninferno::test;
 
 namespace {
-constexpr int D = 128, Hq = 32, Hkv = 8, Lanes = 8;
-constexpr float Scale = 0.08838834764831844055f;
-constexpr ops::AttentionHeadGeometry Geometry{D, Hq, Hkv};
+constexpr int Lanes = 8;
+// The profile under test (use_profile): D128 with 32/8 heads, then D64 with 64/8 (#564).
+int D       = 128;
+int Hq      = 32;
+int Hkv     = 8;
+float Scale = 0.08838834764831844055f;
+ops::AttentionHeadGeometry Geometry{D, Hq, Hkv};
 // BF16 output alone can round by 1/256 relative. Allow that final rounding plus
 // FP16 P/V arithmetic, while bounding aggregate error more tightly than the old BF16 partial route.
 constexpr ReductionCriterion Criterion{2.3e-3, 3e-4, 4.5e-3};
@@ -51,7 +55,16 @@ std::vector<std::uint16_t> fp16_bits(std::vector<float>& v) {
 
 // Int8Group64 ring rows (core/cyclic_kv_cache.h): per lane the codes [D] x padded x heads, then
 // the FP16 G64 scales [2] x padded x heads.
-constexpr int Int8Row = D + 2 * (D / 64);
+int Int8Row = D + 2 * (D / 64);
+
+void use_profile(int d, int query_heads) {
+    D        = d;
+    Hq       = query_heads;
+    Hkv      = 8;
+    Scale    = 1.0f / std::sqrt(static_cast<float>(d));
+    Geometry = {D, Hq, Hkv};
+    Int8Row  = D + 2 * (D / 64);
+}
 
 // One G64 group as the append kernels encode it: scale FP16-RNE(absmax / 127), codes RNE(x / scale)
 // clamped to +-127; x becomes the decoded code * scale (rounded to the storage type by the caller).
@@ -470,6 +483,78 @@ int append_int8_case(int window, int width, int batch, int first) {
     return failures;
 }
 
+// kv_cache_append_prefix into a BF16 ring at the profile under test: K bit for bit and V as
+// FP16_RNE(BF16) at slot p mod window, every other byte untouched (#564: the D64 ring).
+int append_bf16_case(int window, int width, int batch, int first) {
+    const int padded       = window + 8;
+    const std::size_t rows = static_cast<std::size_t>(padded) * Hkv;
+    const std::size_t ring = static_cast<std::size_t>(D) * rows * Lanes;
+    std::vector<std::uint16_t> expect_k(ring, 0x5a5a), expect_v(ring, 0x5a5a);
+    const std::size_t kv_count = static_cast<std::size_t>(D) * Hkv * width * batch;
+    std::vector<float> k(kv_count), v(kv_count);
+    fill_uniform(k, 700U + width, -2.0f, 2.0f);
+    fill_uniform(v, 701U + width, -3.0f, 3.0f);
+    round_to_bf16(k);
+    round_to_bf16(v);
+    std::vector<int> positions(width * batch), counts(batch), lanes(batch);
+    for (int b = 0; b < batch; ++b) {
+        counts[b] = width - (b % 2);
+        lanes[b]  = LaneOrder[b];
+        for (int t = 0; t < width; ++t) positions[b * width + t] = first + 37 * b + t;
+    }
+    const auto kb = bf16_bits(k);
+    auto v_copy   = v;
+    const auto vh = fp16_bits(v_copy);
+    for (int b = 0; b < batch; ++b)
+        for (int t = 0; t < counts[b]; ++t)
+            for (int h = 0; h < Hkv; ++h) {
+                const int slot = positions[b * width + t] & (window - 1);
+                for (int d = 0; d < D; ++d) {
+                    const std::size_t src =
+                        ((static_cast<std::size_t>(b) * width + t) * Hkv + h) * D + d;
+                    const std::size_t dst = static_cast<std::size_t>(lanes[b]) * rows * D +
+                                            (static_cast<std::size_t>(h) * padded + slot) * D + d;
+                    expect_k[dst] = kb[src];
+                    expect_v[dst] = vh[src];
+                }
+            }
+    GuardedDeviceBuffer ck(ring * 2), cv(ring * 2), dk(kv_count * 2), dv(kv_count * 2),
+        dp(positions.size() * 4), dc(batch * 4), dl(batch * 4);
+    ck.fill(0x5a);
+    cv.fill(0x5a);
+    const auto vb = bf16_bits(v);
+    dk.copy_from_host(kb.data(), kb.size() * 2);
+    dv.copy_from_host(vb.data(), vb.size() * 2);
+    dp.copy_from_host(positions.data(), positions.size() * 4);
+    dc.copy_from_host(counts.data(), batch * 4);
+    dl.copy_from_host(lanes.data(), batch * 4);
+    const CyclicKVCacheLayerView view{.k = Tensor(ck.data(), DType::BF16, {D, padded, Hkv, Lanes}),
+                                      .v = Tensor(cv.data(), DType::FP16, {D, padded, Hkv, Lanes}),
+                                      .capacity        = static_cast<std::uint32_t>(window),
+                                      .padded_capacity = static_cast<std::uint32_t>(padded),
+                                      .num_kv_heads    = Hkv,
+                                      .head_dim        = D,
+                                      .lane_capacity   = Lanes};
+    DeviceContext device;
+    ops::kv_cache_append_prefix(
+        Tensor(dk.data(), DType::BF16, {D, Hkv, width, batch}),
+        Tensor(dv.data(), DType::BF16, {D, Hkv, width, batch}),
+        Tensor(dp.data(), DType::I32, {width, batch}), Tensor(dc.data(), DType::I32, {batch}),
+        Tensor(dl.data(), DType::I32, {batch}),
+        {static_cast<std::uint32_t>(width - 1), static_cast<std::uint32_t>(width)}, view,
+        device.stream);
+    cuda_synchronize(device.stream);
+    const std::string label = "bf16 ring append D=" + std::to_string(D) +
+                              " window=" + std::to_string(window) + " W=" + std::to_string(width) +
+                              " B=" + std::to_string(batch);
+    int failures =
+        verify_exact((label + " K").c_str(), from_device<std::uint16_t>(ck.data(), ring), expect_k);
+    failures +=
+        verify_exact((label + " V").c_str(), from_device<std::uint16_t>(cv.data(), ring), expect_v);
+    failures += ck.verify_guards(label + " K guards") + cv.verify_guards(label + " V guards");
+    return failures;
+}
+
 int qualify() {
     int failures = 0;
     Cache cache(2048);
@@ -559,6 +644,31 @@ int qualify() {
         failures += append_int8_case(4096, 7, 8, 0);
         failures += append_int8_case(2048, 1, 2, 5);
     }
+    // #564: the D64 profile (gpt-oss's drafter, 64/8 heads, BF16 rings) over both windows, the
+    // direct and split routes, every width, a wrapped ring and a full window.
+    use_profile(64, 64);
+    {
+        Cache ring(4096);
+        for (int width = 1; width <= 16; ++width)
+            failures += run_case(ring, width, width % 8 + 1, -1, width % 2 ? 96 : 4096,
+                                 Prefix::Mixed, width == 1 || width == 16);
+        failures += run_case(ring, 16, 2, 8194, 8194, Prefix::Mixed, true);
+        failures += run_case(ring, 8, 1, 4096, 4096, Prefix::Full, true);
+        failures += run_case(ring, 16, 8, 4096, 262144, Prefix::Zero, true);
+        failures += ring.verify();
+        Cache narrow(2048);
+        for (int batch : {1, 6, 8})
+            failures += run_case(narrow, 16, batch, 2048, 2048, Prefix::Mixed, false);
+        failures += run_case(narrow, 3, 1, -1, 96, Prefix::Mixed, true);
+        failures += narrow.verify();
+        failures += append_bf16_case(4096, 16, 3, 4090);
+        failures += append_bf16_case(2048, 7, 8, 0);
+        failures += append_bf16_case(4096, 1, 2, 5);
+        failures += append_bf16_case(2048, 16, 1, 1);
+    }
+    use_profile(128, 32);
+    failures += append_bf16_case(2048, 16, 3, 2040);
+    failures += append_bf16_case(4096, 1, 8, 4095);
     return failures;
 }
 } // namespace
