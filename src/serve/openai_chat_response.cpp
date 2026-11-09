@@ -285,6 +285,7 @@ std::string make_chat_completion_response(const OpenAIChatResponseIdentity& iden
                                           const GenerationOutcome& outcome) {
     Json message = {{"role", "assistant"}, {"content", outcome.text}, {"refusal", nullptr}};
     const bool has_tool_calls = !outcome.tool_calls.empty();
+    const bool calls_end      = calls_end_turn(outcome);
     // vLLM/SGLang-compatible reasoning_content preserves the Engine's Reasoning/Content split.
     if (!outcome.reasoning.empty()) { message["reasoning_content"] = outcome.reasoning; }
     if (has_tool_calls) {
@@ -294,14 +295,14 @@ std::string make_chat_completion_response(const OpenAIChatResponseIdentity& iden
     }
 
     Json payload       = base_payload(identity, "chat.completion");
-    payload["choices"] = Json::array(
-        {Json{{"index", 0},
-              {"message", std::move(message)},
-              {"logprobs", outcome.logprobs ? Json{{"content", openai_logprob_content(*outcome.logprobs)},
-                                                   {"refusal", nullptr}}
-                                            : Json(nullptr)},
-              {"finish_reason",
-               has_tool_calls ? Json("tool_calls") : Json(finish_reason(outcome.finish_reason))}}});
+    payload["choices"] = Json::array({Json{
+        {"index", 0},
+        {"message", std::move(message)},
+        {"logprobs", outcome.logprobs ? Json{{"content", openai_logprob_content(*outcome.logprobs)},
+                                             {"refusal", nullptr}}
+                                      : Json(nullptr)},
+        {"finish_reason",
+         calls_end ? Json("tool_calls") : Json(finish_reason(outcome.finish_reason))}}});
     payload["usage"]   = usage_json(usage_from(outcome));
     payload["timings"] = timings_json(outcome_timings(outcome));
     return payload.dump();
@@ -471,7 +472,7 @@ std::vector<std::string> OpenAIChatStream::finish(const GenerationOutcome& outco
     }
     // The terminal event carries the final timings unless the usage chunk that follows does.
     const char* reason =
-        outcome.tool_calls.empty() ? finish_reason(outcome.finish_reason) : "tool_calls";
+        calls_end_turn(outcome) ? "tool_calls" : finish_reason(outcome.finish_reason);
     events.push_back(
         stream_event(Json::object(), reason, include_usage_ ? Json(nullptr) : final_timings));
     if (include_usage_) {
