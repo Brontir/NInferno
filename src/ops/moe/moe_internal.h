@@ -415,10 +415,12 @@ enum class MoeAuthority {
     DecodeStreaming, // decode width, the streaming register-MMA schedule
 };
 [[nodiscard]] const char* authority_name(MoeAuthority authority);
+
 struct MoePlanQuery {
     MoePlan plan;
     MoeAuthority authority = MoeAuthority::DecodeStreaming;
 };
+
 // select_plan with its reason; pure (no kernel runs, no device memory read).
 [[nodiscard]] MoePlanQuery moe_plan_query(const MoeWeights& weights, const MoeConfig& config,
                                           std::int32_t tokens, bool prefill);

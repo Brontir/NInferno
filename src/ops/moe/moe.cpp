@@ -1107,24 +1107,36 @@ MoePlan select_plan(const MoeWeights& weights, const MoeConfig& config, std::int
 
 const char* authority_name(MoeAuthority authority) {
     switch (authority) {
-    case MoeAuthority::Invariant: return "invariant";
-    case MoeAuthority::Tuner: return "tuner";
-    case MoeAuthority::TableAsMeasured: return "table";
-    case MoeAuthority::TableW4a8: return "table+w4a8";
-    case MoeAuthority::TableClassA8: return "table+class-a8";
-    case MoeAuthority::TableR8Refused: return "table-r8-refused";
-    case MoeAuthority::VoltaHmma: return "volta-hmma";
-    case MoeAuthority::PrefillW4a8: return "prefill-w4a8";
-    case MoeAuthority::PrefillSchedule: return "prefill-schedule";
-    case MoeAuthority::SpeedW4a8: return "speed-w4a8";
-    case MoeAuthority::DecodeR8: return "decode-r8";
-    case MoeAuthority::DecodeStreaming: return "decode-streaming";
+    case MoeAuthority::Invariant:
+        return "invariant";
+    case MoeAuthority::Tuner:
+        return "tuner";
+    case MoeAuthority::TableAsMeasured:
+        return "table";
+    case MoeAuthority::TableW4a8:
+        return "table+w4a8";
+    case MoeAuthority::TableClassA8:
+        return "table+class-a8";
+    case MoeAuthority::TableR8Refused:
+        return "table-r8-refused";
+    case MoeAuthority::VoltaHmma:
+        return "volta-hmma";
+    case MoeAuthority::PrefillW4a8:
+        return "prefill-w4a8";
+    case MoeAuthority::PrefillSchedule:
+        return "prefill-schedule";
+    case MoeAuthority::SpeedW4a8:
+        return "speed-w4a8";
+    case MoeAuthority::DecodeR8:
+        return "decode-r8";
+    case MoeAuthority::DecodeStreaming:
+        return "decode-streaming";
     }
     return "?";
 }
 
-MoePlanQuery moe_plan_query(const MoeWeights& weights, const MoeConfig& config,
-                            std::int32_t tokens, bool prefill) {
+MoePlanQuery moe_plan_query(const MoeWeights& weights, const MoeConfig& config, std::int32_t tokens,
+                            bool prefill) {
     // A route-table band first (measured and published), then the load-time tuner's plan, then
     // the heuristics. The tuner covers decode widths only, under the default route profile.
     if (!invariant_routes_active() && tokens <= kTuneMaxTokens) {
@@ -1214,8 +1226,8 @@ MoePlan untuned_plan_why(const MoeWeights& weights, const MoeConfig& config, std
         return wide;
     }
     const MoePlan decode = heuristic_r8(weights, g, p, tokens);
-    why = decode.gate_up_r8 >= 0 || decode.down_r8 >= 0 ? MoeAuthority::DecodeR8
-                                                        : MoeAuthority::DecodeStreaming;
+    why                  = decode.gate_up_r8 >= 0 || decode.down_r8 >= 0 ? MoeAuthority::DecodeR8
+                                                                         : MoeAuthority::DecodeStreaming;
     return decode;
 }
 
