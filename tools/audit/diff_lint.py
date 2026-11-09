@@ -1,23 +1,30 @@
 #!/usr/bin/env python3
 """Mechanical review lint for a PR diff (issue #611, step 3). Needs no build and no GPU.
 
-Three rules, all heuristic and tuned to stay quiet:
-  dup-block        a run of >= 4 consecutive added non-blank lines that also appears elsewhere in the
-                   same file (other added lines or the post-change content). Reported on the later copy.
-  removed-def      a C/C++ function or method definition removed from .h/.cpp/.cu/.cuh whose name is still
-                   called (`name(`) in the tree at the head, while no declaration or definition of that
-                   name is left.
-  removed-include  a removed quoted #include whose header declares a type the file still uses, and the
-                   header is not reachable through the includes the file still has (a transitive include
-                   hides the mistake, so the file still compiles and is not flagged).
+A text heuristic, not a compiler: it works on bare names and never resolves overloads, namespaces or
+macros. Where it is not precise it warns; it fails only where a finding is near certain.
 
-dup-block only warns (a ::warning annotation, exit 0); the other two rules fail the check.
+  removed-def      (FAILS, exit 1) a C/C++ function or method definition removed from .h/.cpp/.cu/.cuh
+                   whose bare name is still called as `name(` in the tree at the head. Not reported when
+                   any declaration or definition of that name remains (overloads, moves, a return type on
+                   the line above), when the only uses are member initializers or comments, or when the
+                   name is passed to an UPPER_CASE macro (it may be generated). Operators, constructors,
+                   destructors, names under 3 characters and `main` are skipped.
+  removed-include  (WARNS) a removed quoted #include whose header defines, at column 0, a type the file
+                   still uses, when no remaining include reaches the header. Forward declarations count
+                   as a declaration; a file with an include that cannot be resolved is skipped.
+  dup-block        (WARNS) a run of >= 4 consecutive added non-blank lines that repeats in the same file
+                   (other added lines or old content); only copies of 10+ lines, or a copy that is the
+                   whole added run, are reported, on the later copy.
 
-Escape: a line containing `diff-lint: allow` is never reported (for removed-def and removed-include the
-marker may sit on the removed line or on the reported line).
+A warning is printed as a GitHub `::warning` annotation and does not change the exit code.
 
-Usage: diff_lint.py [--base REF] [--head REV]   (default: merge base with origin/master, HEAD)
-Exit 1 on a removed-def or removed-include finding.
+Escapes: `// diff-lint: allow` on the reported line (for the removal rules also on the removed line); or,
+for a deliberate removal, a line `diff-lint: allow removed-def NAME` (or `removed-include HEADER`) in a
+commit message of the PR.
+
+Usage: diff_lint.py [--base REF] [--head REV] [--exact]   (default: merge base with origin/master, HEAD)
+Exit 1 on a removed-def finding.
 """
 import argparse
 import os
@@ -32,7 +39,7 @@ DEF_EXT = {".h", ".cpp", ".cu", ".cuh"}
 SKIP_DIRS = ("third_party/", "routes/", "build/")
 MIN_RUN = 4
 LONG_COPY = 10
-WARN_RULES = {"dup-block"}  # repeated blocks are often intended; they warn and never fail the exit code
+WARN_RULES = {"dup-block", "removed-include"}  # not precise enough to fail a check: they warn, exit 0
 KEYWORDS = {"if", "for", "while", "switch", "catch", "return", "else", "new", "delete", "throw", "case",
             "goto", "sizeof", "co_return", "co_await", "co_yield", "using", "typedef", "operator", "do",
             "defined", "alignof", "decltype", "static_assert", "namespace", "template", "typename"}
@@ -250,33 +257,58 @@ def removed_definitions(removed_lines):
     return out
 
 
-def still_defined(tree, name):
-    """True when a declaration or definition (a type word before `name(`) remains in the tree."""
-    rx = re.compile(rf"(?:^|[^\w.>:])(\w[\w:<>,*&\]]*)[ \t*&]+(?:\w+::)*{re.escape(name)}[ \t]*\(")
-    for _p, _n, line in tree.grep(rf"\b{re.escape(name)}[ \t]*\(", CXX_EXT):
-        m = rx.search(line)
-        if m and m.group(1) not in KEYWORDS:
-            return True
-    return False
+DECL_TYPE_END = re.compile(r"[\w>*&\]]\s*$")
 
 
-def removed_calls(tree, removed_by_path):
-    """Findings for removed definitions whose name is still called."""
-    out, seen = [], set()
+def classify(tree, name, hit):
+    """'comment', 'allowed', 'decl' (a declaration or definition), 'init' (member init) or 'call'."""
+    path, n, line = hit
+    stripped = line.strip()
+    if stripped.startswith(("//", "*", "/*")):
+        return "comment"
+    if ALLOW in line:
+        return "allowed"
+    nm = re.escape(name)
+    m = re.search(rf"\b{nm}[ \t]*\(", line)
+    if not m:  # a mention without a call: `name` as a macro argument
+        return "macro" if re.search(rf"[(,][ \t]*{nm}\b", line) and re.search(r"\b[A-Z][A-Z0-9_]{2,}[ \t]*\(", line) \
+            else "other"
+    before = line[:m.start()]
+    # a type word before the name on this line: `double Class::name(` / `static int name(`
+    tm = re.search(r"(?:^|[^\w.>:])(\w[\w:<>*&\]]*)[ \t*&]+(?:\w+::)*$", before)
+    if tm and tm.group(1) not in KEYWORDS:
+        return "decl"
+    # the return type on the line above: `double\nname(int k) const;`
+    if re.fullmatch(r"[ \t]*(?:\w+::)*", before) and n > 1:
+        prev = (tree.read(path) or "").splitlines()
+        prev = prev[n - 2] if n - 2 < len(prev) else ""
+        if prev.strip() and DECL_TYPE_END.search(prev) and not prev.strip().startswith(("#", "//", "return", "else")) \
+                and prev.split()[-1] not in KEYWORDS:
+            return "decl"
+    # a member initializer `: name(x)` or `, name(x)` at paren depth 0 of an unfinished statement
+    if not line.rstrip().endswith(";") and re.search(r"(?:^|[:,])[ \t]*$|\)[ \t]*(?:noexcept[ \t]*)?:[ \t]*$", before):
+        if before.count("(") <= before.count(")"):
+            return "init"
+    return "call"
+
+
+def removed_calls(tree, removed_by_path, allow=frozenset()):
+    """Findings for removed definitions whose bare name is still called."""
+    out, seen, mentions = [], set(), {}
     for path, hunks in removed_by_path:
         if not lintable(path, DEF_EXT):
             continue
         for hunk in hunks:
             for name, old_line in removed_definitions(hunk):
-                if (path, name) in seen:
+                if (path, name) in seen or ("removed-def", name) in allow:
                     continue
                 seen.add((path, name))
-                uses = []
-                for p, n, line in tree.grep(rf"\b{re.escape(name)}[ \t]*\(", CXX_EXT):
-                    if line.strip().startswith(("//", "*", "/*")) or ALLOW in line:
-                        continue
-                    uses.append((p, n))
-                if not uses or still_defined(tree, name):
+                if name not in mentions:  # one grep per name serves the call sites and the "still defined" test
+                    mentions[name] = [(h, classify(tree, name, h))
+                                      for h in tree.grep(rf"\b{re.escape(name)}\b", CXX_EXT)]
+                kinds = {k for _, k in mentions[name]}
+                uses = [h[:2] for h, k in mentions[name] if k == "call"]
+                if not uses or "decl" in kinds or "macro" in kinds:
                     continue
                 sites = ", ".join(f"{p}:{n}" for p, n in uses[:3]) + (" ..." if len(uses) > 3 else "")
                 p0, n0 = uses[0]
@@ -289,8 +321,14 @@ def removed_calls(tree, removed_by_path):
 # ---------------------------------------------------------------- rule: removed include still needed
 
 INC_RX = re.compile(r'^\s*#\s*include\s+"([^"]+)"')
-TYPE_RX = re.compile(r"\b(?:struct|class|enum(?:\s+class)?|union)\s+(\w+)\s*(?:final\s*)?(?::[^;{]*)?\{"
-                     r"|\busing\s+(\w+)\s*=")
+BODY = r"\s*(?:final\s*)?(?::[^;{]*)?\{"
+# A type the file or a reachable header declares anywhere (a forward declaration counts).
+ANY_TYPE_RX = re.compile(r"\b(?:struct|class|enum(?:\s+class)?|union)\s+(\w+)(?:" + BODY + r"|\s*;)"
+                         r"|\busing\s+(\w+)\s*=")
+# A type the removed header owns: defined at column 0 only, so nested member aliases and member types
+# (`using value_type = ...` inside a struct) are not mistaken for names a user of the header needs.
+OWN_TYPE_RX = re.compile(r"^(?:struct|class|enum(?:\s+class)?|union)\s+(\w+)" + BODY + r"|^using\s+(\w+)\s*=",
+                         re.M)
 
 
 def strip_noise(text):
@@ -299,8 +337,8 @@ def strip_noise(text):
     return re.sub(r'"(?:\\.|[^"\\\n])*"', '""', text)
 
 
-def types_of(text):
-    return {g for m in TYPE_RX.finditer(strip_noise(text)) for g in m.groups() if g}
+def types_of(text, rx=ANY_TYPE_RX):
+    return {g for m in rx.finditer(strip_noise(text)) for g in m.groups() if g}
 
 
 def resolve(names, including, inc):
@@ -314,8 +352,8 @@ def resolve(names, including, inc):
 
 
 def closure(tree, names, path, memo):
-    """Every repo file reachable from path through quoted includes (path itself included)."""
-    seen, stack = set(), [path]
+    """(files reachable from path through quoted includes, whether every include was resolved)."""
+    seen, stack, complete = set(), [path], True
     while stack:
         p = stack.pop()
         if p in seen:
@@ -323,24 +361,34 @@ def closure(tree, names, path, memo):
         seen.add(p)
         if p not in memo:
             incs = [INC_RX.match(line) for line in (tree.read(p) or "").splitlines()]
-            memo[p] = [r for r in (resolve(names, p, m.group(1)) for m in incs if m) if r]
-        stack.extend(memo[p])
-    return seen
+            found = [(m.group(1), resolve(names, p, m.group(1))) for m in incs if m]
+            memo[p] = ([r for _, r in found if r], all(r for _, r in found))
+        stack.extend(memo[p][0])
+        complete = complete and memo[p][1]
+    return seen, complete
 
 
-def removed_includes(tree, files):
-    """Findings for a removed quoted include that the file still needs."""
-    out, names, memo = [], set(tree.names()), {}
+def removed_includes(tree, files, allow=frozenset()):
+    """Findings for a removed quoted include that the file still needs (a type, nothing else)."""
+    out, names, memo, tcache = [], set(tree.names()), {}, {}
+
+    def types(path):  # each file's types are collected once
+        if path not in tcache:
+            tcache[path] = types_of(tree.read(path) or "")
+        return tcache[path]
+
     for path, d in files.items():
         if not lintable(path, CXX_EXT):
             continue
         text = tree.read(path)
         gone = [(n, m.group(1)) for hunk in d["removed"] for n, t in hunk
-                for m in [INC_RX.match(t)] if m and ALLOW not in t]
+                for m in [INC_RX.match(t)] if m and ALLOW not in t and ("removed-include", m.group(1)) not in allow]
         if text is None or not gone:
             continue
-        reach = closure(tree, names, path, memo)
-        own = types_of(text)
+        reach, complete = closure(tree, names, path, memo)
+        if not complete:  # an include we cannot follow may bring the type: no precise answer
+            continue
+        own = types(path)
         body_lines = strip_noise(text).splitlines()
         raw_lines = text.splitlines()
         for old_line, inc in gone:
@@ -348,9 +396,9 @@ def removed_includes(tree, files):
             htext = tree.read(header) if header else None
             if htext is None or header in reach:
                 continue
-            syms = {s for s in types_of(htext) if len(s) >= 4} - own
+            syms = {s for s in types_of(htext, OWN_TYPE_RX) if len(s) >= 4} - own
             for other in reach - {path}:
-                syms -= types_of(tree.read(other) or "")
+                syms -= types(other)
             for sym in sorted(syms):
                 rx = re.compile(rf"\b{re.escape(sym)}\b")
                 hit = next((n for n, line in enumerate(body_lines, 1)
@@ -365,7 +413,7 @@ def removed_includes(tree, files):
 
 # ---------------------------------------------------------------- driver
 
-def lint(diff_text, tree):
+def lint(diff_text, tree, allow=frozenset()):
     files = parse_diff(diff_text)
     findings = []
     for path, d in files.items():
@@ -373,8 +421,8 @@ def lint(diff_text, tree):
             findings += dup_blocks(path, d["added"], tree.read(path))
     removed = [(p, d["removed"]) for p, d in files.items()]
     removed += [(p, [rows]) for p, rows in parse_deleted(diff_text).items()]
-    findings += removed_calls(tree, removed)
-    findings += removed_includes(tree, files)
+    findings += removed_calls(tree, removed, allow)
+    findings += removed_includes(tree, files, allow)
     return sorted(set(findings))
 
 
@@ -390,7 +438,9 @@ def main(argv=None):
                               errors="replace", check=True).stdout
 
     base = a.base if a.exact else git("merge-base", a.base, a.head).strip()
-    found = lint(git("diff", "-U0", "--no-color", "-M", base, a.head), GitTree(a.head))
+    allow = set(re.findall(r"diff-lint: allow (removed-def|removed-include) (\S+)",
+                           git("log", "--format=%B", f"{base}..{a.head}")))
+    found = lint(git("diff", "-U0", "--no-color", "-M", base, a.head), GitTree(a.head), allow)
     errors = [f for f in found if f[2] not in WARN_RULES]
     for path, line, rule, why in found:
         if rule in WARN_RULES:  # a GitHub annotation; it does not fail the check

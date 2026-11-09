@@ -1,5 +1,8 @@
 """tools/audit/diff_lint.py on planted diffs: each rule fires on the mistake and stays quiet on the
 look-alikes. Plain git diff -U0 text and an in-memory tree; no git, no GPU."""
+import contextlib
+import io
+import os
 import subprocess
 import sys
 import tempfile
@@ -211,22 +214,120 @@ class RealBugs(unittest.TestCase):
                          [("tests/ops/linear/test_scratch_lifetime.cpp", "dup-block")])
 
 
-class Driver(unittest.TestCase):
-    def test_dup_block_warns_without_failing_and_removed_def_fails(self):
-        body = ["void a() {"] + LONG + ["}", "", "void b() {"] + LONG + ["}"]
-        if True:
-            def run(text_diff, tree):
-                found = dl.lint(text_diff, tree)
-                errors = [f for f in found if f[2] not in dl.WARN_RULES]
-                return found, errors
-            found, errors = run(diff("t.cpp", added=body), dl.DictTree({"t.cpp": "\n".join(body) + "\n"}))
-            self.assertEqual((rules(found), errors), (["dup-block"], []))
-            found, errors = run(diff("a.cpp", removed=DEF), dl.DictTree({"b.cpp": "void f() { x.measured_at(3); }\n"}))
-            self.assertEqual(rules(errors), ["removed-def"])
+class FalsePositives(unittest.TestCase):
+    """Correct code that an earlier version flagged."""
+
+    def lint(self, removed, **files):
+        return dl.lint(diff("a.cpp", removed=removed), dl.DictTree(files))
+
+    def test_member_init_is_not_a_call(self):
+        w = ["    int area() const {", "        return w_ * h_;", "    }"]
+        t = {"b.h": "struct B {\n    B(int w) : area(w) {}\n    int a() : x(1), area(2) {}\n};\n"}
+        self.assertEqual(self.lint(w, **t), [])
+        t = {"b.h": "struct B {\n    B(int w)\n        : area(w) {}\n};\n"}
+        self.assertEqual(self.lint(w, **t), [])
+        # an argument is still a call
+        t = {"b.h": "void f() {\n    g(1, area(w));\n}\n"}
+        self.assertEqual(rules(self.lint(w, **t)), ["removed-def"])
+
+    def test_declaration_with_the_return_type_on_the_line_above(self):
+        t = {"b.h": "struct B {\n    [[nodiscard]] double\n    measured_at(int k) const;\n};\n",
+             "c.cpp": "void f(B b) { b.measured_at(1); }\n"}
+        self.assertEqual(self.lint(DEF, **t), [])
+
+    def test_a_call_on_a_continuation_line_is_still_a_call(self):
+        t = {"c.cpp": "void f(B b) {\n    use(1,\n        measured_at(2));\n}\n"}
+        self.assertEqual(rules(self.lint(DEF, **t)), ["removed-def"])
+
+    def test_name_passed_to_a_macro_may_be_generated(self):
+        t = {"m.h": "DEFINE_ACCESSOR(measured_at)\n", "c.cpp": "void f(B b) { b.measured_at(1); }\n"}
+        self.assertEqual(self.lint(DEF, **t), [])
+        t = {"m.h": "DEFINE_ACCESSOR(int, measured_at)\n", "c.cpp": "void f(B b) { b.measured_at(1); }\n"}
+        self.assertEqual(self.lint(DEF, **t), [])
+
+    def test_forward_declaration_replaces_the_include(self):
+        header = {"src/widget.h": "#pragma once\nstruct Widget {\n    int size;\n};\n"}
+        for fwd in ("struct Widget;", "class Widget;"):
+            user = fwd + "\nint f(const Widget& w);\n"
+            t = dl.DictTree({**header, "src/use.cpp": user})
+            self.assertEqual(dl.lint(diff("src/use.cpp", removed=['#include "widget.h"']), t), [], fwd)
+
+    def test_member_alias_is_not_a_header_type(self):
+        header = {"src/vec.h": "#pragma once\nstruct Vec {\n    using value_type = int;\n    struct Inner {\n    };\n};\n"}
+        user = "int f(value_type v, Inner i);\n"
+        t = dl.DictTree({**header, "src/use.cpp": user})
+        self.assertEqual(dl.lint(diff("src/use.cpp", removed=['#include "vec.h"']), t), [])
+
+    def test_unresolvable_include_makes_removed_include_skip_the_file(self):
+        header = {"src/widget.h": "#pragma once\nstruct Widget {\n    int size;\n};\n"}
+        user = '#include "generated_elsewhere.h"\nint f(const Widget& w);\n'
+        t = dl.DictTree({**header, "src/use.cpp": user})
+        self.assertEqual(dl.lint(diff("src/use.cpp", removed=['#include "widget.h"']), t), [])
 
 
-    def test_empty_diff_is_clean(self):
-        self.assertEqual(dl.lint("", dl.DictTree({})), [])
+def git_repo_main(before, after, message="change", extra_message=None):
+    """Commit two states of a tiny repo and run main() on the second; (exit code, stdout)."""
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@t", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
+
+    def git(*args):
+        subprocess.run(["git", *args], check=True, capture_output=True, env=env)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        old = os.getcwd()
+        os.chdir(tmp)
+        try:
+            git("init", "-q")
+            for state, msg in ((before, "base"), (after, message)):
+                for path, text in state.items():
+                    Path(path).parent.mkdir(parents=True, exist_ok=True)
+                    Path(path).write_text(text, encoding="utf-8", newline="\n")
+                git("add", "-A")
+                git("commit", "-q", "-m", msg)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = dl.main(["--base", "HEAD~1", "--head", "HEAD", "--exact"])
+            return code, out.getvalue()
+        finally:
+            os.chdir(old)
+
+
+class Main(unittest.TestCase):
+    CALLER = "void f(DrafterOption o) { o.measured_at(3); }\n"
+    LONGTEXT = "\n".join(["void a() {"] + LONG + ["}", "", "void b() {"] + LONG + ["}"]) + "\n"
+
+    def test_clean_diff_exits_0_silently(self):
+        code, out = git_repo_main({"a.cpp": "int x;\n"}, {"a.cpp": "int x;\nint y;\n"})
+        self.assertEqual((code, out), (0, ""))
+
+    def test_removed_def_fails(self):
+        code, out = git_repo_main({"a.cpp": "\n".join(DEF) + "\n", "b.cpp": self.CALLER}, {"a.cpp": "", "b.cpp": self.CALLER})
+        self.assertEqual(code, 1)
+        self.assertIn("b.cpp:1: [removed-def]", out)
+
+    def test_removed_def_allowed_by_the_commit_message(self):
+        code, out = git_repo_main({"a.cpp": "\n".join(DEF) + "\n", "b.cpp": self.CALLER},
+                                  {"a.cpp": "", "b.cpp": self.CALLER},
+                                  message="drop it\n\ndiff-lint: allow removed-def measured_at")
+        self.assertEqual((code, out), (0, ""))
+
+    def test_removed_def_allowed_at_the_call_site(self):
+        caller = "void f(DrafterOption o) { o.measured_at(3); } // diff-lint: allow\n"
+        code, out = git_repo_main({"a.cpp": "\n".join(DEF) + "\n", "b.cpp": caller}, {"a.cpp": "", "b.cpp": caller})
+        self.assertEqual((code, out), (0, ""))
+
+    def test_dup_block_warns_with_an_annotation_and_exits_0(self):
+        code, out = git_repo_main({"t.cpp": "int x;\n"}, {"t.cpp": self.LONGTEXT})
+        self.assertEqual(code, 0)
+        self.assertTrue(out.startswith("::warning file=t.cpp,line=15,title=diff-lint dup-block::"), out)
+
+    def test_removed_include_warns_and_exits_0(self):
+        before = {"src/widget.h": "#pragma once\nstruct Widget {\n    int size;\n};\n",
+                  "src/use.cpp": '#include "widget.h"\nint f(const Widget& w);\n'}
+        after = {"src/widget.h": before["src/widget.h"], "src/use.cpp": "int f(const Widget& w);\n"}
+        code, out = git_repo_main(before, after)
+        self.assertEqual(code, 0)
+        self.assertIn("::warning file=src/use.cpp,line=1,title=diff-lint removed-include::", out)
 
 
 if __name__ == "__main__":
