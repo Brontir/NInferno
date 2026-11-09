@@ -1,6 +1,7 @@
 #include "convert/drafters.h"
 
 #include "core/ascii.h"
+#include "core/hex.h"
 #include "convert/files.h"
 #include "core/cache_file.h"
 #include "core/clock.h"
@@ -855,10 +856,18 @@ std::string reported_id(const fs::path& artifact) {
     } catch (const std::exception&) { return {}; }
 }
 
-// The id of the file itself, "" where it cannot be read (truncated, replaced by another file).
+// The id of the artifact itself, "" where any of its files cannot be read (truncated, replaced by
+// another file, a part missing): every part is opened, which checks its header and its length
+// against the directory.
 std::string readable_id(const fs::path& artifact) {
     try {
-        return spec::artifact_id_hex(artifact);
+        const artifact::Reader reader(artifact);
+        // An empty read: Reader opens (and checks) the part before reading nothing from it.
+        for (std::size_t part = 1; part < reader.directory().files.size(); ++part) {
+            (void)reader.read_direct(part, 0, {});
+        }
+        const auto& id = reader.artifact_id();
+        return hex_encode(id.data(), id.size());
     } catch (const std::exception&) { return {}; }
 }
 
