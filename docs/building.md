@@ -55,14 +55,16 @@ It needs `patchelf` (it points the bundled libraries' run path at their own dire
 access (PDFium and the chat page are downloaded). `tools/release/install.sh` installs such an
 archive (`NINFERNO_ARCHIVE=FILE`) or downloads the one for the GPU it finds.
 
-The release toolkit is pinned to its patch level (`tests/ops/linear/selector_golden/facts_index.txt`,
-`release`), because on sm_86 and sm_120 the selector's choices follow the registers nvcc compiles
-for the register-MMA kernels. `package.sh` (and `package-native.ps1`) check it twice: the nvcc
-version, and the kernels themselves. After building the `86` and `120a` engines each runs
-`ninferno-serve selector-facts` on a GPU of that generation, which prints the digest of the
-kernel facts the selector's price reads (the digest the goldens are keyed by) for each golden
-board, and compares it with the release entries of `facts_index.txt`. A mismatch (another flag,
-source or compiler build) stops the release; without such a GPU on the build machine it stops
-too, unless `NINFERNO_SKIP_FACTS_CHECK=1` (`-SkipFactsCheck`) says the facts were not checked.
-After a kernel change, regenerate the entries with `ninferno_selector_golden_test --update` on the
-release toolkit.
+The release toolkit is pinned to its patch level (the `nvcc` line of
+`src/ops/generic/data/kernel_facts/sm_<arch>.txt`), because on sm_86 and sm_120 the selector's
+choices follow the registers nvcc compiles for the register-MMA kernels. Those registers are
+committed per architecture as kernel-facts snapshots, written from the release toolchain's binaries
+with `cuobjdump` (`tools/kernel_facts/kernel_facts.py`, no GPU), and the engine prices from the
+snapshot, never from the kernels of the machine it runs on: a build with another nvcc decides as
+the release does. `package.sh` (and `package-native.ps1`) check it twice: the nvcc version against
+the snapshots, and each engine's kernels against its snapshot (`kernel_facts.py check` on the
+linked binary; on a GPU of the generation also `ninferno-serve selector-facts`, the running
+kernels' attributes against it). A mismatch (another flag, source or compiler build) stops the
+release. After a kernel change, regenerate the snapshot of each architecture from a build of it
+(`ninja ninferno_kernel_facts_update` in a test tree, or `kernel_facts.py extract` on the release
+binary), then the selector goldens that move with it (`ninferno_selector_golden_test --update`).
