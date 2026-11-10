@@ -146,7 +146,9 @@ bool rmsnorm_rope_text_heads(std::int32_t query_heads, std::int32_t key_heads) {
 std::int32_t rmsnorm_rope_text_fused_max_tokens(const DeviceClass& device, std::int32_t query_heads,
                                                 std::int32_t key_heads) {
     // Not calibrated: nothing to compute (this runs for every layer's call).
-    const auto& excess = detail::generic::route_cost::pending_fit("fused_text_excess_cycles").value;
+    static constexpr const auto& fit =
+        detail::generic::route_cost::pending_fit("fused_text_excess_cycles"); // compile-time lookup
+    const auto& excess = fit.value;
     if (!excess) return kFusedTextDefaultMaximumTokens;
     const std::int32_t bound =
         detail::text_fused_max_tokens_with_excess(device, query_heads, key_heads, *excess);

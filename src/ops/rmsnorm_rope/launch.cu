@@ -43,11 +43,9 @@ void launch_text(const Tensor& positions, const Tensor& q_norm_weight, const Ten
 } // namespace
 
 int text_kernel_resident_ctas() {
-    int resident = 0;
-    CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-        &resident, rmsnorm_rope_d256_text_kernel<32, 2, kTextHeadsPerBlock>,
-        kTextHeadsPerBlock * 32, 0));
-    return resident;
+    return kernel_resident_ctas_per_sm(
+        reinterpret_cast<const void*>(rmsnorm_rope_d256_text_kernel<32, 2, kTextHeadsPerBlock>),
+        kTextHeadsPerBlock * 32, 0);
 }
 
 void rmsnorm_rope_pair_launch(const Tensor& positions, const Tensor& q_norm_weight,
