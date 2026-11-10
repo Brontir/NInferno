@@ -91,7 +91,7 @@ set_tests_properties(ninferno_route_table_evidence_test PROPERTIES LABELS host)
 add_test(NAME ninferno_mmq_transfer_audit_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_mmq_transfer_audit.py)
 
-# tools/audit/board_literal_lint.py: no hand-written Board{...} literal outside the registry
+# tools/audit/board_literal_lint.py: no hand-written board literal (any spelling) outside the registry
 # (roadmap #612 step 9), and the tree is clean. No GPU.
 add_test(NAME ninferno_board_literal_lint_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_board_literal_lint.py)
