@@ -23,9 +23,9 @@ The binary is the linked executable or shared library (any program that links ni
 under relocatable device code the per-unit objects report no shared memory and a smaller stack
 for a kernel, the device link decides them. `cuobjdump` and `cu++filt` come from the CUDA
 toolkit's bin directory (--cuda-bin, else the directory of `nvcc` on PATH, else CUDA_PATH). The
-SASS pass streams the whole binary's disassembly (gigabytes for a release engine; minutes) and
-keeps only the register-MMA kernels' loops; --sass-dump reads a saved `cuobjdump -sass` instead,
---no-sass leaves the loop columns out (a resources-only check).
+SASS pass disassembles the register-MMA kernels in batches (--sass-batch; about ten minutes for
+an engine's 2400 kernels, 1.5 GB of memory) and keeps only their loops; --sass-dump reads a saved
+`cuobjdump -sass` instead, --no-sass leaves the loop columns out (a resources-only check).
 
 A kernel's key: the decoder type, the schedule's template arguments (warps_m, warps_k, m_tiles,
 n_tiles, cluster: the entries of NINFERNO_GENERIC_RMMA_SCHEDULES, generic_schedules.h), the
@@ -231,35 +231,50 @@ def extract_resources(binary, cuda_bin, dump=None):
     return rows, keys
 
 
-def sass_lines(binary, cuda_bin, arch, sass_dump=None):
-    """The lines of `cuobjdump -sass` for one image of the binary, streamed, or of a saved dump."""
+SASS_BATCH = 256
+
+
+def sass_lines(binary, cuda_bin, arch, sass_dump=None, names=None, batch=SASS_BATCH):
+    """The lines of `cuobjdump -sass` for one image of the binary, streamed, or of a saved dump.
+    With `names` (the mangled functions wanted) and a batch size, cuobjdump is run per batch with
+    --function: disassembling a whole linked image at once holds the image's worth of state
+    (nvdisasm took 26 GB on a 370 MB relocatable sm_75 binary and was killed on a 30 GB host),
+    per batch it stays near 1.5 GB at about a quarter of a second per function; batch 0 streams
+    the whole image in one run (faster where the memory is there)."""
     if sass_dump:
         with open(sass_dump, errors="replace") as f:
             yield from f
         return
-    # stderr goes to a file, not a pipe: a pipe nobody drains while the dump streams would stall
-    # cuobjdump once its warnings fill it.
-    with tempfile.TemporaryFile(mode="w+", errors="replace") as errors:
-        proc = subprocess.Popen([cuda_tool("cuobjdump", cuda_bin), "-sass", "-arch", arch, binary],
-                                stdout=subprocess.PIPE, stderr=errors, text=True, errors="replace",
-                                bufsize=1 << 20)
-        try:
-            yield from proc.stdout
-        finally:
-            if proc.poll() is None:  # the consumer stopped early: do not leave the dump running
-                proc.kill()
-            code = proc.wait()
-        errors.seek(0)
-        if code != 0:
-            fail(f"cuobjdump -sass failed on {binary}: {errors.read().strip()[:400]}")
+    tool = cuda_tool("cuobjdump", cuda_bin)
+    batches = [None] if not names or batch <= 0 else \
+        [names[i:i + batch] for i in range(0, len(names), batch)]
+    for chunk in batches:
+        command = [tool, "-sass", "-arch", arch]
+        if chunk is not None:
+            command += ["-fun", ",".join(chunk)]
+        command.append(binary)
+        # stderr goes to a file, not a pipe: a pipe nobody drains while the dump streams would
+        # stall cuobjdump once its warnings (a function absent from one image) fill it.
+        with tempfile.TemporaryFile(mode="w+", errors="replace") as errors:
+            proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=errors, text=True,
+                                    errors="replace", bufsize=1 << 20)
+            try:
+                yield from proc.stdout
+            finally:
+                if proc.poll() is None:  # the consumer stopped early: do not leave the dump running
+                    proc.kill()
+                code = proc.wait()
+            errors.seek(0)
+            if code != 0:
+                fail(f"cuobjdump -sass failed on {binary}: {errors.read().strip()[:400]}")
 
 
-def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None):
+def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None, batch=SASS_BATCH):
     """{key: LoopCounts} of the rmma kernels `keys` ({mangled: key}) of one image, from its SASS.
     A kernel disassembled twice in the image (two units) must agree."""
     counts = {}
-    for name, body in sass_counts.iter_functions(sass_lines(binary, cuda_bin, arch, sass_dump),
-                                                 lambda n: n in keys):
+    lines = sass_lines(binary, cuda_bin, arch, sass_dump, sorted(keys), batch)
+    for name, body in sass_counts.iter_functions(lines, lambda n: n in keys):
         key = keys[name]
         c = sass_counts.loop_counts(body, key_tiles(key))
         if key in counts and counts[key] != c:
@@ -269,7 +284,8 @@ def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None):
     return counts
 
 
-def extract_rows(binary, cuda_bin, arch, dump=None, sass_dump=None, sass=True):
+def extract_rows(binary, cuda_bin, arch, dump=None, sass_dump=None, sass=True,
+                 batch=SASS_BATCH):
     """{key: (registers, stack, local, shared, LoopCounts)} of one image of the binary (`arch`:
     the label, "89"); the LoopCounts is None under sass=False."""
     rows, keys = extract_resources(binary, cuda_bin, dump)
@@ -277,7 +293,7 @@ def extract_rows(binary, cuda_bin, arch, dump=None, sass_dump=None, sass=True):
     resources = rows[image]
     if not sass:
         return {k: (*v, None) for k, v in resources.items()}
-    counts = extract_counts(binary, cuda_bin, image, keys[image], sass_dump)
+    counts = extract_counts(binary, cuda_bin, image, keys[image], sass_dump, batch)
     missing = sorted(k for k in resources if k not in counts)
     if missing:
         fail(f"{len(missing)} rmma kernels of {image} have resources but no SASS, first "
@@ -407,7 +423,7 @@ def image_arch(rows, arch):
 
 def cmd_extract(args):
     rows = extract_rows(args.binary, args.cuda_bin, args.arch, args.dump, args.sass_dump,
-                        not args.no_sass)
+                        not args.no_sass, args.sass_batch)
     if not rows:
         fail("no rmma_kernel in the binary")
     audit = loop_audit(rows)
@@ -443,7 +459,8 @@ def cmd_check(args):
     # kernel set is all that is compared, so the SASS pass (minutes) is not run.
     with_sass = not args.no_sass and not other_nvcc and \
         any(v[4] is not None for v in expected.values())
-    got = extract_rows(args.binary, args.cuda_bin, arch, args.dump, args.sass_dump, with_sass)
+    got = extract_rows(args.binary, args.cuda_bin, arch, args.dump, args.sass_dump, with_sass,
+                       args.sass_batch)
     if not with_sass:
         expected = {k: (*v[:4], None) for k, v in expected.items()}
     missing = sorted(k for k in expected if k not in got)
@@ -497,6 +514,9 @@ def main(argv=None):
         p.add_argument("--sass-dump", help="a saved `cuobjdump -sass` output of the image instead")
         p.add_argument("--no-sass", action="store_true",
                        help="resources only: no SASS pass, no loop columns")
+        p.add_argument("--sass-batch", type=int, default=SASS_BATCH,
+                       help="kernels per cuobjdump run of the SASS pass (0: the whole image at "
+                            f"once; default {SASS_BATCH}, bounded memory)")
         p.add_argument("--cuda-bin", help="directory of cuobjdump and cu++filt")
         p.add_argument("--nvcc", help="the nvcc version the binary was built with")
     e = sub.choices["extract"]
