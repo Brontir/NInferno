@@ -1,8 +1,11 @@
 # #521: gated gate/up products (SwiGLU / GeGLU: n = gate rows, the file lists the pair as the tuner
 # times it, 2n rows) of the models of the issue, Q4_K_M (gate/up are Q4_K), and the same n x k as a
-# plain store, whose time twice is an upper bound of the "two non-gated launches" alternative at T = 4
-# (each single call carries its own activation quantisation; see the header of run_521_gateup.sh).
-# Qwen3-8B and Qwen3.5-9B: hidden 4096, intermediate 12288. Gemma 4 12B: hidden 3840, intermediate 15360.
+# plain store, whose time twice is an estimate of the "two non-gated launches" alternative (each
+# single call carries its own activation quantisation; see the header of run_521_gateup.sh).
+# The summary expects every swiglu line at every point, and a store line of the same n x k for its
+# twin.
+# Qwen3-8B and Qwen3.5-9B: hidden 4096, intermediate 12288.
+# Gemma 4 12B: hidden 3840, intermediate 15360.
 q4k a16 swiglu 12288 4096
 q4k a16 store 12288 4096
 q4k a16 swiglu 15360 3840
