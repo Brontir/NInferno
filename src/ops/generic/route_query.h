@@ -74,8 +74,8 @@ struct RouteDescription {
     std::optional<RouteTile> tile;
     std::optional<RouteTraffic> traffic;
     std::optional<PreparedRule> prepared;
-    // cost_route's time where it prices the route, over the call's share of the weight. For a
-    // slice of a fused parent this is not the selector's number: select_route prices the parent.
+    // cost_route's time where it prices the route, over the call's share of the weight: the
+    // selector's own number for a slice of a fused parent too (bytes_per_weight, #640).
     std::optional<double> cost_seconds;
     std::optional<KernelResources> kernel;
 };
