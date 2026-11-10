@@ -282,6 +282,45 @@ class Collect(unittest.TestCase):
         return collect.collect([sel], [routes], "held-board", "held-model", "rev", "build",
                                "both", [], [], "tests", collect.board_facts(facts_json, pci_id))
 
+    def collect_recorded(self, sel_pci, route_pci, pci_id=None):
+        """One case of an ad104:60sm board whose rows record a PCI id (#684)."""
+        facts_json = Path(__file__).resolve().parents[1] / "src/core/data/gpu_facts.json"
+        device = "ad104:60sm GPU-0a1b2c3d"
+        sel = self.write("s.csv", SELECTED_HEAD.rstrip("\n") + ",pci_device_id\n"
+                         + f"q8,a16,store,64,64,1,rmma.a,rmma.a,r1,{device},{sel_pci}\n")
+        routes = self.write("p.csv", HEAD.rstrip("\n") + ",pci_device_id\n"
+                            + f"q8,a16,store,64,64,1,rmma.a,10,r1,{device},flushed,1,15,{route_pci}\n")
+        facts = collect.board_facts(facts_json, pci_id) if pci_id else None
+        return collect.collect([sel], [routes], "held-board", "held-model", "rev", "build",
+                               "both", [], [], "tests", facts, gpu_facts=facts_json)
+
+    def test_a_recorded_pci_id_tells_two_skus_of_one_class_apart(self):
+        # An RTX 4070 Ti (0x2782) and an RTX 4500 Ada (0x27b1) are both ad104:60sm: the class
+        # check accepts either, the recorded id only the board the rows ran on.
+        with self.assertRaisesRegex(ValueError, r"RTX 4500 Ada Generation \(0x27b1\).*0x2782"):
+            self.collect_recorded("0x2782", "0x2782", pci_id="0x27B1")
+        doc = self.collect_recorded("0x2782", "0x2782", pci_id="0x2782")
+        self.assertEqual(doc["pci_device_id"], "0x2782")
+        self.assertEqual(doc["board_facts"]["held-board"]["dram_gbps"], 504.0)
+
+    def test_without_pci_id_the_recorded_id_reads_the_board_facts(self):
+        doc = self.collect_recorded("0x27B1", "0x27b1")
+        self.assertEqual(doc["board_facts"]["held-board"]["name"], "RTX 4500 Ada Generation")
+        self.assertEqual(doc["board_facts"]["held-board"]["dram_gbps"], 432.0)
+
+    def test_an_empty_or_absent_pci_id_keeps_the_class_check(self):
+        doc = self.collect_recorded("", "")
+        self.assertNotIn("pci_device_id", doc)
+        self.assertNotIn("board_facts", doc)
+        doc = self.collect_recorded("", "", pci_id="0x27B1")  # the class check alone accepts it
+        self.assertEqual(doc["board_facts"]["held-board"]["dram_gbps"], 432.0)
+
+    def test_files_of_two_pci_ids_are_refused(self):
+        with self.assertRaisesRegex(ValueError, "PCI ids 0x2782, 0x27b1"):
+            self.collect_recorded("0x2782", "0x27b1")
+        with self.assertRaisesRegex(ValueError, "not a hex id"):
+            self.collect_recorded("0x2782", "rtx")
+
     def test_a_board_of_the_same_sms_and_another_chip_is_refused(self):
         # A GTX 1660 Ti's rows (tu116:24sm, with the device's UUID after the class id) and the
         # PCI id of an RTX 4060 (ad107, 24 SMs): the Ada ridge is not this board's.
