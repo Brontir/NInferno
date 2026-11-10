@@ -4,6 +4,7 @@
 // static_asserts pin the literals those rules carried before.
 #include "ops/generic/codec_traits.h"
 
+#include "ops/generic/format_traits.h"
 #include "ops/generic/generic_w4a8.cuh"
 
 #include <array>
@@ -66,6 +67,23 @@ constexpr bool each_codec_once() {
 }
 
 static_assert(each_codec_once());
+
+// Every format the generic path may run as W4A8 or R8 (format_traits.h) has its codec here: a
+// codec added to a launch list and missed here would read the default traits, and r8_fits would
+// size its shared memory short.
+constexpr bool every_w4a8_r8_format_listed() {
+    for (const FormatTraits& t : kFormatTraits) {
+        if (t.w4a8 == Support::No && t.r8 == Support::No) continue;
+        const auto codec = format_facts(t.q).codec;
+        if (!codec) return false;
+        bool found = false;
+        for (const Row& r : kRows) found = found || r.codec == *codec;
+        if (!found) return false;
+    }
+    return true;
+}
+
+static_assert(every_w4a8_r8_format_listed());
 
 constexpr CodecTraits traits_of(WeightCodec codec) {
     for (const Row& r : kRows) {
