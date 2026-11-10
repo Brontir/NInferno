@@ -24,4 +24,15 @@ std::size_t volta_cutlass_workspace_bytes(std::int32_t, std::int32_t, std::int32
     return 0;
 }
 
+std::size_t volta_cutlass_chunk_bytes(std::int32_t, std::int32_t, std::int32_t, bool, std::size_t) {
+    return 0;
+}
+
+// The kernel a route would launch is read from the device's binary (generic_describe.cpp): a host
+// with no device describes none.
+std::optional<KernelResources> route_resources(Route, const Weight&, Epilogue, std::int32_t,
+                                               std::int32_t, std::optional<bool>) {
+    return std::nullopt;
+}
+
 } // namespace ninferno::ops::detail::generic

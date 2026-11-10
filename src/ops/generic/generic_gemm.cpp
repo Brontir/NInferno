@@ -490,41 +490,6 @@ bool ggml_mmq_admits(const Weight& w, LinearPolicy policy) { return mmq_admits(w
 
 bool ggml_vec_admits(const Weight& w, LinearPolicy policy) { return vec_admits(w, policy); }
 
-Route r8_rules_route(const Problem& problem, std::int32_t tokens) {
-    return Route{Family::R8Mma, static_cast<std::uint8_t>(rules_r8(problem, tokens))};
-}
-
-std::optional<RouteTraffic> route_traffic(Route route, const Weight& weight,
-                                          const Problem& problem, std::int32_t tokens) {
-    const auto tile = route_tile(route, problem.epilogue, tokens);
-    if (!tile || problem.n <= 0 || problem.k <= 0 || tokens <= 0) return std::nullopt;
-    const double n = problem.n, k = problem.k, t = tokens;
-    const auto cdiv = [](double a, double b) { return std::ceil(a / b); };
-    // The activation in the route's representation: bytes a value, the K and the tokens it holds.
-    // BF16 for the A16 tiles; W4A8 one byte a value and an FP16 scale a 32 (and the block sum,
-    // 40 bytes a 32, for a format with a min), K in whole 128-value tiles; I8 an FP32 scale and an int32 sum a 64-value group, tokens padded to whole 256-token
-    // tiles.
-    double x_bytes = 2.0, x_k = k, x_t = t;
-    const QType q  = problem.qtype;
-    const bool has_min = q == QType::GGML_Q4_1 || q == QType::GGML_Q5_1 || q == QType::GGML_Q4_K ||
-                         q == QType::GGML_Q5_K;
-    if (route.family == Family::W4a8Mma) {
-        x_bytes = (has_min ? 40.0 : 36.0) / 32.0;
-        x_k     = cdiv(k, 128.0) * 128.0;
-    } else if (route.family == Family::I8Mma) {
-        x_bytes = 1.0 + 8.0 / 64.0;
-        x_t     = i8_padded_tokens(tokens);
-    }
-    const double weight_reads = cdiv(t, tile->tokens);
-    // The register MMA holds its operands in registers: each of a CTA's row warps loads the
-    // activation slice itself (the shared-memory tiles stage it once for the CTA).
-    const double x_readers =
-        route.family == Family::RegisterMma ? rmma_schedule_info(route.schedule).warps_m : 1.0;
-    const double bpw = static_cast<double>(weight.payload_bytes) / (n * k);
-    return RouteTraffic{n * k * bpw * weight_reads,
-                        x_t * x_k * x_bytes * cdiv(n, tile->out_rows) * x_readers, n * t * 2.0};
-}
-
 std::optional<Route> volta_fixed_route(const Problem& problem, const Weight& weight,
                                        std::int32_t tokens) {
     if (const auto r = volta_tiled_route(weight, problem.policy, tokens)) return r;
@@ -587,32 +552,6 @@ bool pin_family_on_device(DecodeRoute family) {
 bool r8_tunable(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
     return r8_verify_tunable(w, policy, tokens) ||
            (vec_rule(w, policy, tokens) && r8_call(w, policy, tokens));
-}
-
-std::optional<PreparedRule> prepared_rule(const ResolvedRoute& route, const Weight& weight) {
-    using R = PreparedRepresentation;
-    switch (route.executed.family) {
-    case Family::GgmlVec:
-        return PreparedRule{R::GgmlQ8_1};
-    case Family::W4a8Mma:
-        return PreparedRule{R::W4a8Blocks, w4a8_ld(weight.k)};
-    case Family::R8Mma:
-        if (!route.r8_prequantized) { return std::nullopt; } // quantized inside the kernel
-        return PreparedRule{R::W4a8Blocks, weight.k};
-    case Family::I8Mma:
-        return PreparedRule{R::I8Blocks64};
-    case Family::GgmlMmq:
-        return PreparedRule{R::GgmlQ8_1Mmq, 0, static_cast<std::int32_t>(weight.qtype)};
-    case Family::W4a4Mma:
-        return PreparedRule{R::Nvfp4, 0, 0, true};
-    case Family::RegisterMma:
-    case Family::Scalar:
-    case Family::TiledMma:
-    case Family::StagedMma:
-    case Family::Nvfp4TiledMma:
-        return std::nullopt;
-    }
-    return std::nullopt;
 }
 
 bool prepared_rules_match(const PreparedRule& a, const PreparedRule& b) noexcept {
@@ -765,15 +704,6 @@ std::vector<FamilyAlternative> family_alternatives(const Problem& problem, const
          {Family::W4a4Mma, Family::Nvfp4TiledMma, Family::GgmlMmq, Family::GgmlVec}) {
         take(f, other_family_coverage(f, w, problem.policy), R8CallRefusal::None);
     }
-    return out;
-}
-
-std::optional<double> route_cost_seconds(const Problem& problem, const Weight& w, Route route,
-                                         std::int32_t tokens) {
-    std::optional<double> out;
-    price_routes(problem, w, tokens, [&](Route r, double time) {
-        if (r.family == route.family && r.schedule == route.schedule) out = time;
-    });
     return out;
 }
 
