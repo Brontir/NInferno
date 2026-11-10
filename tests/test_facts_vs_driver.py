@@ -165,10 +165,26 @@ class Compare(unittest.TestCase):
         d["engine_table_facts"]["source"] = 2  # a desktop board read as extrapolated: wrong
         self.assertEqual(statuses(d)[("table", "engine_source")], "mismatch")
 
+    @staticmethod
+    def device_a100():
+        # A100 SXM4 80GB (0x20B2), a server board: the one form a MIG slice comes from.
+        d = device_4090()
+        d["queried"].update(pci_device_id=0x20B2, name="NVIDIA A100-SXM4-80GB", major=8, minor=0,
+                            sms=108, l2_bytes=40 * MIB, global_bytes=int(80 * 1024 * MIB * 0.99),
+                            memory_bus_bits=5120, memory_clock_khz=1_593_000,
+                            sm_clock_khz=1_410_000)
+        d["engine_table_facts"].update(sku="A100 SXM4 80GB", reference_clock_khz=1_410_000,
+                                       memory_bus_bits=5120, memory_clock_khz=1_593_000,
+                                       l2_mib=40.0)
+        return d
+
+    def test_whole_a100_matches(self):
+        self.assert_no_mismatch(self.device_a100())
+
     def test_slice_keeps_the_rows_values(self):
         # A MIG slice reports fewer SMs; the engine prices its share and keeps the row's values.
-        d = device_4090()
-        d["queried"]["sms"] = 64
+        d = self.device_a100()
+        d["queried"]["sms"] = 42
         d["engine_table_facts"]["source"] = 2
         s = self.assert_no_mismatch(d)
         self.assertEqual(s[("table", "sms")], "info")
@@ -176,20 +192,26 @@ class Compare(unittest.TestCase):
         self.assertEqual(s[("table", "engine_l2_mib")], "match")
 
     def test_mig_slice_reports_its_part(self):
-        # A half slice: half the SMs, the L2, the memory and the bus. Information, not failures;
-        # a whole board reporting the same smaller values still fails.
-        d = device_4090()
-        d["queried"].update(sms=64, l2_bytes=36 * MIB, global_bytes=12 * 1024 * MIB,
-                            memory_bus_bits=192)
+        # A 3g.40gb slice: 42 SMs, half the L2, memory and bus. Information, not failures; the
+        # whole board reporting the same smaller values fails, and so does a desktop board with
+        # fewer SMs than its row (no desktop board partitions).
+        d = self.device_a100()
+        d["queried"].update(sms=42, l2_bytes=20 * MIB, global_bytes=40 * 1024 * MIB,
+                            memory_bus_bits=2560)
         d["engine_table_facts"]["source"] = 2
         s = self.assert_no_mismatch(d)
         for field in ("sms", "l2_mib", "vram_gib", "bus_bits"):
             self.assertEqual(s[("table", field)], "info", field)
-        d["queried"]["sms"] = 128
+        d["queried"]["sms"] = 108
         d["engine_table_facts"]["source"] = 1
         s = statuses(d)
         self.assertEqual(s[("table", "l2_mib")], "mismatch")
         self.assertEqual(s[("table", "vram_gib")], "mismatch")
+        d = device_4090()
+        d["queried"].update(sms=64, l2_bytes=36 * MIB)
+        s = statuses(d)
+        self.assertEqual(s[("table", "sms")], "mismatch")
+        self.assertEqual(s[("table", "l2_mib")], "mismatch")
 
     def test_engine_table_reading_against_the_json(self):
         d = device_4090()

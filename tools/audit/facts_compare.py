@@ -100,18 +100,19 @@ def compare_device(device, row):
     else:
         cc = q["major"] * 10 + q["minor"]
         out.append(result("table", "cc", row["cc"], cc, "match" if row["cc"] == cc else "mismatch"))
+        # A MIG slice (only a server board partitions) reports its part of the SMs, the L2, the
+        # memory and the bus; the engine prices the board's row at the slice's share of the SMs,
+        # so a smaller value is the slice's, not a wrong row. A desktop or laptop board reporting
+        # fewer SMs than its row is a wrong row.
+        slice_part = row.get("form") == "server" and 0 < q["sms"] < row["sms"]
         if row["sms"] == q["sms"]:
             out.append(result("table", "sms", row["sms"], q["sms"], "match"))
-        elif 0 < q["sms"] < row["sms"]:
+        elif slice_part:
             out.append(result("table", "sms", row["sms"], q["sms"], "info",
                               "a slice of the board (MIG): the engine prices its share"))
         else:
             out.append(result("table", "sms", row["sms"], q["sms"], "mismatch"))
         expected = engine_expected(q, row)
-        # A MIG slice reports its part of the L2, the memory and the bus; the engine prices the
-        # board's row at the slice's share of the SMs, so a smaller value is the slice's, not a
-        # wrong row.
-        slice_part = 0 < q["sms"] < row["sms"]
         part_note = "a slice's part of the board's (MIG): the engine prices the row at its share"
         l2 = row.get("l2_mib")
         if l2 is None:
