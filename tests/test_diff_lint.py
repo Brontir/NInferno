@@ -358,8 +358,27 @@ def git_repo_main(before, after, message="change", extra_message=None):
             os.chdir(old)
 
 
+class TreeNames(unittest.TestCase):
+    def test_a_non_ascii_name_is_read_verbatim(self):
+        # git C-quotes such a name by default ("\303\274nit.cpp"): its extension would read
+        # `.cpp"` and --scan-tree would skip the file.
+        env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+               "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
+        with tempfile.TemporaryDirectory() as tmp:
+            name = "src/ünit.cpp"
+            Path(tmp, "src").mkdir()
+            Path(tmp, name).write_text('const char* s = "oops\n;\n', encoding="utf-8", newline="\n")
+            for args in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "x"]):
+                subprocess.run(["git", *args], cwd=tmp, check=True, capture_output=True, env=env)
+            tree = dl.GitTree("HEAD", cwd=tmp)
+            self.assertIn(name, tree.names())
+            self.assertEqual([h[:2] for h in tree.grep("oops", {".cpp"})], [(name, 1)])
+            self.assertIsNotNone(tree.read(name))
+
+
 class Main(unittest.TestCase):
-    CALLER = "void f(DrafterOption o) { o.measured_at(3); }\n"
+    CALLER ="void f(DrafterOption o) { o.measured_at(3); }\n"
     LONGTEXT = "\n".join(["void a() {"] + LONG + ["}", "", "void b() {"] + LONG + ["}"]) + "\n"
 
     def test_clean_diff_exits_0_silently(self):

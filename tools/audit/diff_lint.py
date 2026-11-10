@@ -82,8 +82,11 @@ class GitTree:
         return r.returncode, r.stdout.decode("utf-8", "replace")
 
     def names(self):
+        # -z: every name verbatim and NUL-ended. Without it git C-quotes a name with a non-ASCII or
+        # special character ("\303\274nit.cpp"), whose extension then reads `.cpp"`.
         if self._names is None:
-            self._names = self._git("ls-tree", "-r", "--name-only", self.rev)[1].splitlines()
+            out = self._git("ls-tree", "-r", "-z", "--name-only", self.rev)[1]
+            self._names = [n for n in out.split("\0") if n]
         return self._names
 
     def read(self, path):
@@ -94,13 +97,18 @@ class GitTree:
 
     def grep(self, pattern, exts):
         """(path, line number, line) for every ERE match in files of the given extensions."""
-        _, out = self._git("grep", "-n", "-I", "-E", "-e", pattern, self.rev, "--")
-        hits = []
-        for row in out.splitlines():
-            parts = row.split(":", 3)  # rev:path:line:text
-            if len(parts) == 4 and lintable(parts[1], exts):
-                hits.append((parts[1], int(parts[2]), parts[3]))
+        # -z: `rev:path` NUL line NUL text, the path verbatim (not C-quoted, a `:` in it kept).
+        _, out = self._git("grep", "-z", "-n", "-I", "-E", "-e", pattern, self.rev, "--")
+        hits, head = [], self.rev + ":"
+        for m in GREP_ROW.finditer(out):
+            path = m.group(1)[len(head):] if m.group(1).startswith(head) else m.group(1)
+            if lintable(path, exts):
+                hits.append((path, int(m.group(2)), m.group(3).rstrip("\r")))
         return hits
+
+
+# One row of `git grep -z -n`: the name, the line number, the line.
+GREP_ROW = re.compile(r"([^\0]*)\0(\d+)\0([^\n]*)\n?")
 
 
 class DictTree:
