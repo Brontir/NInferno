@@ -632,9 +632,17 @@ def cxx_open_lines(text):
     if0 = 0  # nesting depth inside a `#if 0` group
     chains = []  # per open conditional group: whether a branch with a literal-true condition was taken
     spliced = False  # the previous line was a // comment ending in a backslash: this line is comment too
+    # The open block comment began a line (only whitespace and closed comments before its `/*`).
+    # The whole comment is one space to the preprocessor, so where it closes, the rest of its last
+    # line is the start of that line: `/* note` + `*/ #if 0` is a directive.
+    block_blank = False
     for num, line in enumerate(text.split("\n"), 1):
         line = line.rstrip("\r")
         i, n, quote, carry = 0, len(line), carry, None
+        if block and block_blank and quote is None and raw is None and not spliced:
+            j = line.find("*/")
+            if j >= 0:  # blanked in place, so every column keeps its meaning
+                line, block = " " * (j + 2) + line[j + 2:], False
         if quote is None and raw is None and not block and not spliced:
             # A comment is whitespace to the preprocessor: `#/**/if 0` and `/* note */ #if 0` are
             # directives. The mask keeps every column, so a position found in it is one in the line.
@@ -711,6 +719,7 @@ def cxx_open_lines(text):
             elif line.startswith("//", i):
                 spliced, i = line.endswith("\\"), n  # a trailing backslash splices the next line in
             elif line.startswith("/*", i):
+                block_blank = re.sub(r"/\*.*?\*/", " ", line[:i]).strip() == ""
                 block, i = True, i + 2
             elif c == '"':
                 m = RAW_PREFIX.search(line[:i])

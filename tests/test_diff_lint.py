@@ -748,6 +748,21 @@ class MaskAndLiteralFixes(unittest.TestCase):
         # a comment that only looks like a directive opener is not one
         self.assertEqual(lits("t.cpp", "/* #if 0 */\nconst char* s = \"oops\n;\n"), [2])
 
+    def test_a_directive_after_a_comment_of_several_lines(self):
+        # The comment is one space to the preprocessor: where it began a line, the `#` after its
+        # close starts that line.
+        for opener in ("/* note\n*/ #if 0", "  /* a\n b\n */#if 0", "/* x */ /* note\n*/ # if 0",
+                       "/* note\n*/ /* more */ #if 0"):
+            with self.subTest(opener=opener):
+                rest = "\nprose don't\n#endif\nint a;\n"
+                self.assertEqual(lits("t.cpp", opener + rest), [])
+        # After code, or after a directive's own text, the `#` is in the middle of a line: no
+        # directive, so the prose below is code.
+        for opener in ("int a; /* note\n*/ #if 0", "#define X 1 /* note\n*/ #if 0"):
+            with self.subTest(opener=opener):
+                lines = opener.count("\n") + 2
+                self.assertEqual(lits("t.cpp", opener + "\nprose don't\n#endif\nint a;\n"), [lines])
+
     def test_a_leading_dot_number_takes_a_digit_separator(self):
         self.assertEqual(lits("t.cpp", "double x = .1'2;\nint a;\n"), [])
         self.assertEqual(lits("t.cpp", "double x = f(.25'0, 1.5'0e1'0);\n"), [])
