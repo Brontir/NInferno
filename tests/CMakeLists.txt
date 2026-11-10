@@ -65,6 +65,10 @@ ninferno_add_test(ninferno_spec_dspine_test NEEDS_SOURCE_DIR
 add_test(NAME ninferno_registry_add_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_registry_add.py)
 
+# tools/dev/qc.sh: the dyndep early-stop pattern is a real regex.
+add_test(NAME ninferno_qc_sh_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_qc_sh.py)
+
 # tools/kit/validate.py: the user measurement kit's rejection rules and verdicts, no GPU.
 add_test(NAME ninferno_kit_validate_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_kit_validate.py)

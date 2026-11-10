@@ -166,7 +166,7 @@ def stale_units(target):  # compile units ninja would run for target (dry run): 
     # Stopped early: a dyndep file is missing or does not list a source the branch added ("loading 'x.dd'",
     # "not mentioned in its dyndep file"), or ninja aborted twice. Then the count is only a lower bound.
     early = r.returncode != 0
-    if early and not aborted(r) and not re.search(r"CXX\.dd", txt):
+    if early and not aborted(r) and not re.search(r"\bCXX\.dd\b", txt):
         raise subprocess.CalledProcessError(r.returncode, "ninja -n " + target, r.stdout, r.stderr)
     units = set()   # a stale C++ unit prints "Scanning X" and "Building CXX object X.o": count it once, by its source
     for line in r.stdout.splitlines():
