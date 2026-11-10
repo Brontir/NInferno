@@ -773,9 +773,15 @@ struct ChunkShare {
 
 inline constexpr ChunkShare kMoeChunkShare[] = {
     {8, 0.409}, {16, 0.635}, {32, 0.813}, {64, 0.952}, {128, 1.0}};
-// The shares decide an MoE's chunk on a generation with a reference card (by speed alone: a chunk has
-// no accuracy term, so the accuracy terms' cards do not hold it).
-inline constexpr bool kMoeChunkTwoCards = true; // RTX 4070 Ti and 4090
+// The shares decide an MoE's chunk on the generation they were measured on
+// (kMoeChunkCurveGeneration, two cards: RTX 4070 Ti and 4090), on its reference card, by speed
+// alone (a chunk has no accuracy term, so the accuracy terms' cards do not hold it). Another
+// generation whose own MoE prefill rate rests on two lab cards (kPrefillEta) carries the curve's
+// slope unchanged to estimate its best chunk (Choice::chunk_estimate); a generation's rows estimate
+// for another, they do not decide
+// (#300), so its pick stays the default until a sweep on it is measured.
+inline constexpr bool kMoeChunkTwoCards                    = true;
+inline constexpr std::string_view kMoeChunkCurveGeneration = "ada";
 inline constexpr std::uint32_t kDefaultChunk = 1024;
 inline constexpr std::uint32_t kMoeChunks[] = {1024, 2048, 4096};
 
