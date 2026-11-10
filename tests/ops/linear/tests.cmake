@@ -139,6 +139,14 @@ ninferno_add_op_test(ninferno_selector_golden_test
 target_compile_definitions(ninferno_selector_golden_test PRIVATE
   NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden")
 
+# The register-MMA kernel's static shared memory as constexpr geometry (ops/generic/rmma_geometry.h,
+# static_asserted by the kernel) equals every row of every kernel-facts snapshot (#612 step 5); CPU.
+ninferno_add_op_test(ninferno_rmma_geometry_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_rmma_geometry.cpp"
+  LIBRARIES ninferno_ops)
+target_compile_definitions(ninferno_rmma_geometry_test PRIVATE
+  NINFERNO_KERNEL_FACTS_DIR="${PROJECT_SOURCE_DIR}/src/ops/generic/data/kernel_facts")
+
 # The kernel-facts snapshots the register-MMA price reads (ops/generic/kernel_facts.h, #612).
 # Three checks, from the data inwards:
 # - ninferno_kernel_facts_test: this build's register-MMA kernels, read off the linked binary with

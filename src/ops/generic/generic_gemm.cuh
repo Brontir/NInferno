@@ -31,6 +31,7 @@
 #include "ops/common/memory.cuh"
 #include "ops/common/mma.cuh"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/rmma_geometry.h"
 #include "ops/generic/ggml_iq_tables.cuh"
 #include "ops/linear/fp8/fp8_a16_codec.cuh"
 
@@ -3261,6 +3262,8 @@ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Late
     unsigned act_ring[kAhead ? 2 : 1][1][kAhead ? 2 * J : 1];
     __shared__ uint2 act_stage[kStaged ? 2 : 1][kStaged ? Schedule::kWarpsM * WK : 1]
                               [kStaged ? J : 1][32];
+    static_assert(!kStaged ||
+                  sizeof(act_stage) == geometry::rmma_act_stage_bytes(Schedule::kWarpsM, WK, J));
     const auto stage_act = [&](auto slot_tag, int step) {
         if constexpr (kStaged) {
             constexpr int slot = decltype(slot_tag)::value;
@@ -3438,6 +3441,8 @@ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Late
     bool live = true;
     if constexpr (WK > 1) {
         __shared__ float partial[WK - 1][Schedule::kWarpsM][kSets][MT][NT][4][32];
+        static_assert(sizeof(partial) ==
+                      geometry::rmma_partial_bytes(Schedule::kWarpsM, WK, kSets, MT, NT));
         if (warp_k > 0) {
 #pragma unroll
             for (int s = 0; s < kSets; ++s)
@@ -3476,6 +3481,8 @@ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Late
         namespace cg = cooperative_groups;
         const cg::cluster_group cluster = cg::this_cluster();
         __shared__ float rank_partial[Schedule::kWarpsM][kSets][MT][NT][4][32];
+        static_assert(sizeof(rank_partial) ==
+                      geometry::rmma_rank_partial_bytes(Schedule::kWarpsM, kSets, MT, NT, C, true));
         if (live) {
 #pragma unroll
             for (int s = 0; s < kSets; ++s)
