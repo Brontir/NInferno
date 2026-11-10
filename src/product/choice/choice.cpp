@@ -545,6 +545,25 @@ Route route_of(const QuantOption& quant, ActivationMode activations, const CardF
 
 namespace {
 
+// The weight format a linear's file names (ggml_q4_k, ...) as the engine's QType; a name the matrix
+// kernel does not run (bf16, q8_g32_fp16) gives one with no tile of its own (widest_tile: 128).
+QType qtype_of_name(std::string_view name) noexcept {
+    static constexpr std::pair<std::string_view, QType> kNames[] = {
+        {"ggml_q2_k", QType::GGML_Q2_K},       {"ggml_q3_k", QType::GGML_Q3_K},
+        {"ggml_q4_k", QType::GGML_Q4_K},       {"ggml_q5_k", QType::GGML_Q5_K},
+        {"ggml_q6_k", QType::GGML_Q6_K},       {"ggml_iq4_xs", QType::GGML_IQ4_XS},
+        {"ggml_iq3_xxs", QType::GGML_IQ3_XXS}, {"ggml_iq3_s", QType::GGML_IQ3_S},
+        {"ggml_q4_0", QType::GGML_Q4_0},       {"ggml_q4_1", QType::GGML_Q4_1},
+        {"ggml_q5_0", QType::GGML_Q5_0},       {"ggml_q5_1", QType::GGML_Q5_1},
+        {"ggml_iq4_nl", QType::GGML_IQ4_NL},   {"ggml_iq2_xxs", QType::GGML_IQ2_XXS},
+        {"ggml_iq2_xs", QType::GGML_IQ2_XS},   {"ggml_iq2_s", QType::GGML_IQ2_S},
+        {"ggml_iq1_s", QType::GGML_IQ1_S}};
+    for (const auto& [n, q] : kNames) {
+        if (n == name) { return q; }
+    }
+    return QType::BF16;
+}
+
 // A dense model's int8 route on the int8 tiles (Q8 weights): the tile's clock count at the model's
 // hidden width (2 x 64 x 64 operations a tile over c0 + K c1 SM-clocks, against the s8 rate a
 // SM-clock), Turing's measured row, else the generation's int8 row, transferred.
@@ -754,6 +773,14 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         reads_q41 = reads_q41 || format == q41;
         return named ? format->step : label_step;
     };
+    // The label's weight format as a QType (the formats table's order: Q3_K, Q4_K, Q5_K, Q6_K,
+    // IQ4_XS, Q4_1).
+    const QType label_qtype = format == &formats[0]   ? QType::GGML_Q3_K
+                              : format == &formats[1] ? QType::GGML_Q4_K
+                              : format == &formats[2] ? QType::GGML_Q5_K
+                              : format == &formats[3] ? QType::GGML_Q6_K
+                              : format == &formats[4] ? QType::GGML_IQ4_XS
+                                                      : QType::GGML_Q4_1;
     double clocks = 0, bytes = 0;
     // A linear of a format not read takes the share (the dense int8 prefill rate on its flops) beside
     // the read ones' tiles: one such tensor no longer drops the whole file's tiles for the share
@@ -810,11 +837,17 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         const bool measured_format = l.format.empty()
                                          ? format == &formats[1] || format == &formats[3]
                                          : l.format == "ggml_q4_k" || l.format == "ggml_q6_k";
+        // A guard for a future Q2_K step row: today step_of prices Q2_K as the int8 share, so no
+        // Q2_K linear reaches here (cost_route, ops/generic/generic_cost.cpp, has the live cap).
+        // The widest tile the card's shared memory holds for the linear's format (a label's
+        // format: its tile's, Q3_K .. Q4_1 of `formats`).
+        const int widest = mmq_columns::widest_tile(
+            l.format.empty() ? label_qtype : qtype_of_name(l.format), card.major, card.minor);
         for (double done = 0; done < tokens; done += kMmqSliceTokens) {
             const double t = std::min(kMmqSliceTokens, tokens - done);
             // The column tile the kernel's table takes (core/mmq_columns.h).
-            const int width =
-                mmq_columns::pick(static_cast<int>(t), card.major, card.minor, measured_format);
+            const int width      = mmq_columns::pick(static_cast<int>(t), card.major, card.minor,
+                                                     measured_format, widest);
             const double columns = width;
             const double tiles = std::ceil(n / kMmqTile) * std::ceil(t / columns);
             const double waves = std::ceil(tiles / sms);
@@ -1744,6 +1777,8 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     // step whose long prompt differs scores them again.
     std::optional<std::size_t> chosen;
     std::uint32_t settled = 0;
+    bool resolved         = false;
+    std::size_t anchor    = 0;
     Task priced           = task;
     for (const std::uint32_t context : task.contexts) {
         Task at     = task;
@@ -1754,13 +1789,19 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
             }
             priced = at;
         }
+        std::vector<std::size_t> holding;
         for (std::size_t i = 0; i < out.scored.size(); ++i) {
             const Scored& s = out.scored[i];
             if (!eligible(s) || s.own_context < context) { continue; }
+            holding.push_back(i);
             if (!chosen || better(s, i, out.scored[*chosen], *chosen)) { chosen = i; }
         }
         if (chosen) {
-            settled = context;
+            const std::size_t best = *chosen;
+            chosen   = resolve_within_resolution(out.scored, holding, best, out.resolution);
+            resolved = *chosen != best;
+            anchor   = best;
+            settled  = context;
             break;
         }
     }
@@ -1779,22 +1820,29 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         // The terms rest on two cards (no reason written): a closed Gates::accuracy kept them out.
         defaults_why = "the accuracy gate is closed";
     }
-    out.chosen  = chosen;
-    out.context = settled;
+    out.chosen                     = chosen;
+    out.context                    = settled;
+    out.resolved_within_resolution = resolved;
+    out.anchor                     = anchor;
+    out.anchor_worth               = out.scored[anchor].worth;
     for (Scored& s : out.scored) { s.fits = s.own_context >= settled; }
     const Scored& c = out.scored[*chosen];
-    out.why = quant.label + ": every stream holds " + std::to_string(settled) + " tokens; KV " +
-              std::string(kv_cache_storage_name(c.candidate.kv)) + ", activations " +
-              activation_name(c.candidate.activations) +
-              (out.by_worth
-                   ? ": the best worth on the " + std::string(generation_of(card)) +
-                         " reference card (" + fixed(c.decision_seconds, 2) + " s on " +
-                         request_mix_text(priced) + " there, KLD " + fixed(c.accuracy.kld, 4) + ")"
-                   : ": the family's defaults (" + defaults_why + ")") +
-              (out.chunk_by_speed ? "; chunk " + std::to_string(c.candidate.chunk) +
-                                        ": the fastest prefill on the reference card"
-                                  : "") +
-              (model.drafters.empty() ? std::string() : "; speculation " + c.drafter);
+    out.why =
+        quant.label + ": every stream holds " + std::to_string(settled) + " tokens; KV " +
+        std::string(kv_cache_storage_name(c.candidate.kv)) + ", activations " +
+        activation_name(c.candidate.activations) +
+        (out.by_worth
+             ? (resolved ? ": the more accurate one inside the speed estimate's resolution (" +
+                               fixed(100 * out.resolution, 1) + " %) of the best worth"
+                         : std::string(": the best worth")) +
+                   " on the " + std::string(generation_of(card)) + " reference card (" +
+                   fixed(c.decision_seconds, 2) + " s on " + request_mix_text(priced) +
+                   " there, KLD " + fixed(c.accuracy.kld, 4) + ")"
+             : ": the family's defaults (" + defaults_why + ")") +
+        (out.chunk_by_speed ? "; chunk " + std::to_string(c.candidate.chunk) +
+                                  ": the fastest prefill on the reference card"
+                            : "") +
+        (model.drafters.empty() ? std::string() : "; speculation " + c.drafter);
     // The coupled storages' other values beside the chosen (to explain them; never chosen).
     std::vector<Candidate> variants;
     if (model.recurrent && !pins.state) {
@@ -1824,6 +1872,31 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         out.scored.push_back(std::move(s));
     }
     return out;
+}
+
+std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
+                                      const std::vector<std::size_t>& eligible, std::size_t anchor,
+                                      double resolution) noexcept {
+    std::size_t pick = anchor;
+    if (!(resolution > 0)) { return pick; }
+    const Scored& a = scored[anchor];
+    if (!(a.decision_seconds > 0)) { return pick; }
+    for (const std::size_t i : eligible) {
+        const Scored& s = scored[i];
+        // Strictly more accurate (a NaN KLD never is), and not slower than the resolution.
+        if (!(s.decision_seconds > 0) || !(s.accuracy.kld + kWorthTie < a.accuracy.kld)) {
+            continue;
+        }
+        if (std::log(s.decision_seconds / a.decision_seconds) > resolution + kWorthTie) {
+            continue;
+        }
+        const Scored& p = scored[pick];
+        if (pick == anchor || s.accuracy.kld < p.accuracy.kld - kWorthTie ||
+            (std::abs(s.accuracy.kld - p.accuracy.kld) <= kWorthTie && i < pick)) {
+            pick = i;
+        }
+    }
+    return pick;
 }
 
 std::vector<Alternative> explain(const Choice& choice) {
@@ -1894,7 +1967,34 @@ std::vector<Alternative> explain(const Choice& choice) {
                 alt.why_not  = axis == Axis::Chunk
                                    ? "the default chunk stands (no measured chunk shares decide here)"
                                    : "the family's default stands (no decision constants for this generation)";
-            } else if (std::abs(s.worth - chosen.worth) <= kWorthTie && s.own_context != chosen.own_context) {
+            } else if (choice.resolved_within_resolution && &s == &choice.scored[choice.anchor]) {
+                // The best worth, passed over by the resolution rule for the more accurate one.
+                alt.why_code = "within_resolution";
+                alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) +
+                              " above the chosen, inside the speed estimate's resolution (" +
+                              fixed(100 * choice.resolution, 1) +
+                              " % decode rms): the chosen is the more accurate (KLD " +
+                              fixed(chosen.accuracy.kld, 4) + " against " +
+                              fixed(s.accuracy.kld, 4) + ")";
+            } else if (s.worth > chosen.worth + kWorthTie) {
+                // Not the anchor, yet above the moved pick. Inside the band (no slower than the
+                // anchor by more than the resolution) the chosen is the most accurate; outside it,
+                // the rule does not weigh this one at all (resolve_within_resolution).
+                const Scored& a   = choice.scored[choice.anchor];
+                const bool inside = s.decision_seconds > 0 && a.decision_seconds > 0 &&
+                                    std::log(s.decision_seconds / a.decision_seconds) <=
+                                        choice.resolution + kWorthTie;
+                alt.why_code = inside ? "within_resolution" : "outside_resolution";
+                alt.why_not =
+                    "worth " + fixed(s.worth - chosen.worth, 3) + " above the chosen, " +
+                    (inside ? std::string("which is the more accurate inside the speed "
+                                          "estimate's resolution of the best worth")
+                            : "but slower than the best worth by more than the speed "
+                              "estimate's resolution (" +
+                                  fixed(100 * choice.resolution, 1) +
+                                  " %): the rule picks the most accurate inside that band");
+            } else if (std::abs(s.worth - chosen.worth) <= kWorthTie &&
+                       s.own_context != chosen.own_context) {
                 alt.why_code = "tie_context";
                 alt.why_not  = "the same worth: the chosen keeps more context per stream";
             } else if (std::abs(s.worth - chosen.worth) <= kWorthTie) {
@@ -1906,8 +2006,9 @@ std::vector<Alternative> explain(const Choice& choice) {
                                          : "the same in every respect for this request: the listing's order";
             } else if (s.decision_seconds > 0 && chosen.decision_seconds > 0 &&
                        chosen.worth - s.worth <=
-                           std::min(choice.resolution,
-                                    std::abs(std::log(s.decision_seconds / chosen.decision_seconds))) +
+                           std::min(
+                               choice.resolution,
+                               std::abs(std::log(s.decision_seconds / chosen.decision_seconds))) +
                                kWorthTie &&
                        chosen.worth - s.worth > kWorthTie) {
                 // It loses by less than the estimate's uncertainty about the two's speeds: the
@@ -1925,6 +2026,42 @@ std::vector<Alternative> explain(const Choice& choice) {
                 alt.why_code = "lower_worth";
                 alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) + " against the chosen";
             }
+            out.push_back(std::move(alt));
+        }
+    }
+    // The best worth the resolution rule passed over is always listed, also where it differs from
+    // the chosen on more than one main axis (same_but then never admits it): under the first
+    // main axis it differs on.
+    if (choice.resolved_within_resolution) {
+        const Scored& anchor = choice.scored[choice.anchor];
+        const bool listed    = std::any_of(out.begin(), out.end(),
+                                           [&](const Alternative& a) { return a.scored == &anchor; });
+        if (!listed && &anchor != &chosen) {
+            const Candidate& x = anchor.candidate;
+            const Axis axis    = x.kv != c.kv                     ? Axis::Kv
+                                 : x.activations != c.activations ? Axis::Activations
+                                 : x.drafter != c.drafter         ? Axis::Drafter
+                                 : x.chunk != c.chunk             ? Axis::Chunk
+                                 : x.state != c.state             ? Axis::State
+                                                                  : Axis::Ring;
+            Alternative alt;
+            alt.axis   = axis;
+            alt.scored = &anchor;
+            // Its value names every main axis it differs on, so the row is not read as the
+            // one-axis swap listed above it.
+            for (const Axis other : {Axis::Kv, Axis::Activations, Axis::Drafter, Axis::Chunk}) {
+                if (value_of(anchor, other) == value_of(chosen, other)) { continue; }
+                alt.value += (alt.value.empty() ? "" : " + ") + value_of(anchor, other);
+            }
+            if (alt.value.empty()) { alt.value = value_of(anchor, axis); }
+            alt.why_code = "within_resolution";
+            alt.why_not  = "worth " + fixed(anchor.worth - chosen.worth, 3) +
+                          " above the chosen, inside the speed estimate's resolution (" +
+                          fixed(100 * choice.resolution, 1) +
+                          " % decode rms): the chosen is the more accurate (KLD " +
+                          fixed(chosen.accuracy.kld, 4) + " against " +
+                          fixed(anchor.accuracy.kld, 4) +
+                          "); the best worth, which differs on more than this axis";
             out.push_back(std::move(alt));
         }
     }
