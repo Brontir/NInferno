@@ -31,6 +31,7 @@ struct FittedHoldout {
         {}; // one row of a table with a record of its own (kSmallTEta: the generation)
 };
 
+inline constexpr std::string_view kRouteCost     = "src/ops/generic/route_cost_constants.h";
 inline constexpr std::string_view kChoice        = "src/product/choice/choice_constants.h";
 inline constexpr std::string_view kGeneration    = "src/core/generation.h";
 inline constexpr std::string_view kRoundCost     = "src/spec/round_cost.h";
