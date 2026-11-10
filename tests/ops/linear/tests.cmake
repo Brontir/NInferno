@@ -97,6 +97,13 @@ ninferno_add_op_test(ninferno_launch_overlap_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_launch_overlap.cpp"
   LIBRARIES ninferno_linear_test_support)
 
+# Scratch read lifetimes of generic launches (#309): which launch reads or writes which workspace
+# region until when, and that no launch starting under its predecessor takes a region it still
+# uses (host only).
+ninferno_add_op_test(ninferno_scratch_lifetime_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_scratch_lifetime.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
 # A route's tile and logical traffic (#298): the schedules' declared geometry (host only).
 ninferno_add_op_test(ninferno_route_traffic_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_traffic.cpp"
@@ -106,6 +113,11 @@ ninferno_add_op_test(ninferno_route_traffic_test
 # per board): every choice admitted, no feature the board lacks, its own route table.
 ninferno_add_op_test(ninferno_route_classes_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_classes.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
+# The format traits table against the predicates it replaced, for every QType.
+ninferno_add_op_test(ninferno_format_traits_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_format_traits.cpp"
   LIBRARIES ninferno_linear_test_support)
 
 # ops::linear's candidates per call (#306): the owned Q8 kernel's launch and the generic route,

@@ -336,7 +336,8 @@ inline constexpr std::int32_t kMmqMinTokens = 5;
 // the GV100 and 86 on the RTX 4090, well past eight. Measured: RTX 5090 and 5070 Ti (the bench),
 // RTX 4090 (Qwen3.5-9B Q8_0 spec-tune, dflash:7 229 -> 273 tok/s).
 [[nodiscard]] std::int32_t r8_verify_widest(QType qtype);
-// The formats whose R8 codec has the verify-width form compiled: every R8 format but Q3_K.
+// The formats whose R8 codec has the verify-width form compiled: every R8 format but Q3_K and
+// Q2_K (r8_prequant = false in format_traits.h).
 [[nodiscard]] bool r8_verify_compiled(QType qtype);
 // Whether a call of 2..r8_verify_widest tokens takes R8 on this device: the formats measured faster
 // there (r8_verify_supports) where the MMA takes BF16 operands itself; every compiled format where
