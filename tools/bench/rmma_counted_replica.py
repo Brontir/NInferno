@@ -75,8 +75,7 @@ A16_SCALE = 1.11
 K = dict(rmma_step_cycles=150.0, rmma_step_k=16.0, rmma_saturating_warps=11.0,
          rmma_heavy_saturating_warps=8.0, l2_ga10x=32.0, l2_gb20x=24.0, rmma_heavy_step_k=128.0,
          spill_accesses_per_step=2.0, l1_bytes_per_sm_clock=128.0, reg_alloc_per_warp=256.0,
-         cluster_reduce_cycles=30.0, warp_reduce_cycles=2.75, min_warp_fill=0.05,
-         l1_hit_latency_cycles=32.0)
+         cluster_reduce_cycles=30.0, warp_reduce_cycles=2.75, min_warp_fill=0.05)
 ROUTE = re.compile(r"rmma\.m(\d+)\.n(\d+)\.w(\d+)x(\d+)(?:\.c(\d+))?")
 MMA_FLOPS = {"16816": 4096, "1688": 2048, "1684": 1024}
 LAWS = ("today", "ones", "ones_spill", "issue_max", "issue_nofill", "timeline")
@@ -197,10 +196,15 @@ def price(chip, call, inst, sched, law):
     t = dict(occ=occ, q=q, warps=warps, rounds=rounds, mem=mem, dram=dram, l2_w=l2_w, l2_x=l2_x,
              spill=spill, mma=mma, reduce=reduce, chain=chain, fill=fill, iters=0.0,
              mma_counted=mma, spill_counted=spill, issue=0.0, int_pipe=0.0, fp_pipe=0.0)
-    # The counted terms (rmma_counted_terms.h) per warp-iteration of the K loop.
+    # The counted terms (rmma_counted_terms.h) per warp-iteration of the K loop. The spill waits
+    # the chip's measured L1 hit latency (kernel_facts.h l1_hit_latency_cycles: the ISA row's
+    # dependent L1 load at one resident warp); a chip without the row has no counted terms, as in
+    # the engine.
     usable = inst is not None and inst.get("loops", 0) == 1 and inst.get("k_iter", 0) > 0 \
         and inst.get("mma", 0) > inst.get("mma_ones", 0)
-    if usable:
+    isa = chip.get("isa")
+    l1_hit = isa.get("l1_latency_w1") if isa else None
+    if usable and l1_hit:
         iters = (kc / wk) / inst["k_iter"]
         wi = q * (wm * wk) * iters
         shape = inst["mma_shape"].split(".")[1] if "." in inst["mma_shape"] else "16816"
@@ -208,7 +212,7 @@ def price(chip, call, inst, sched, law):
         per_slot = 1.0 / (chip["schedulers"] * clk)
         t.update(iters=iters,
                  mma_counted=wi * inst["mma"] * flops / peak_sm,
-                 spill_counted=wi * inst["local"] * K["l1_hit_latency_cycles"]
+                 spill_counted=wi * inst["local"] * l1_hit
                  / max(1.0, warps / chip["schedulers"]) / clk,
                  int_pipe=wi * inst["int"] * chip["int_cycles"] * per_slot,
                  fp_pipe=wi * inst["fp"] * chip["fp_cycles"] * per_slot)
@@ -216,8 +220,7 @@ def price(chip, call, inst, sched, law):
     heavy_bytes = dram + l2_w + l2_x
     # The per-warp timeline (the module docstring), in seconds of the busiest SM.
     t["timeline"] = float("nan")
-    isa = chip.get("isa")
-    if usable and isa:
+    if usable and l1_hit:
         # The warps the SM holds follow the kernel's registers on every board (the heavy form's
         # occupancy, which the plain form skips): 116 registers x 128 threads hold 4 CTAs, not
         # the thread limit's 12, and q CTAs then take ceil(q / 4) rounds.
@@ -337,6 +340,11 @@ def main():
             inst, st = find_instance(snap, r["fmt"], r["sched"], EPILOGUE[r["epi"]],
                                      r["registers"], r["local"])
             status[st] += 1
+            # "ambiguous": two variants of the kernel (the plain and the latency one) keep the
+            # registers and the spill the sweep recorded, and the CSV does not say which ran.
+            # Their loops differ, so the row is priced with the plain one for the dump and left
+            # out of the ratios and the regret of every law.
+            scored = st != "ambiguous"
             sets = 2.0 if r["epi"] == "swiglu" else 1.0
             call = dict(n=r["n"], k=r["k"], T=r["T"], sets=sets, bpw=BPW[r["fmt"]] * sets,
                         heavy=r["fmt"] in HEAVY_FORMATS and chip["heavy_ok"])
@@ -344,20 +352,24 @@ def main():
             for l in laws:
                 seconds, terms = price(chip, call, inst, r["sched"], l)
                 preds[l] = seconds * 1e6
-                ratio[l][band(r["T"])].append(preds[l] / r["median"])
+                if scored:
+                    ratio[l][band(r["T"])].append(preds[l] / r["median"])
             if r["model"] and "today" in preds:
                 today_vs_model.append(preds["today"] / r["model"])
             if terms["issue"] > terms["dram"] + terms["l2_w"] + terms["l2_x"] + terms["spill_counted"] + terms["mma_counted"]:
                 issue_binds += 1
-            problems[(r["fmt"], r["epi"], r["n"], r["k"], r["T"])].append((r["median"], preds, r["route"]))
+            if scored:
+                problems[(r["fmt"], r["epi"], r["n"], r["k"], r["T"])].append(
+                    (r["median"], preds, r["route"]))
             if dump:
                 scale = lambda x: terms[x] * (1e6 if x not in ("occ", "warps", "iters", "fill") else 1)
                 dump.writerow([name, r["fmt"], r["epi"], r["n"], r["k"], r["T"], r["route"],
                                r["median"], r["model"]] + [f"{preds.get(l, float('nan')):.3f}" for l in a.law]
                               + [f"{scale(x):.5g}" for x in term_names])
         print(f"\n== {name} (sm_{chip['arch']}, heavy form {'on' if chip['heavy_ok'] else 'off'}): "
-              f"{len(rows)} register-MMA rows at T >= {a.tmin}; instances {dict(status)}; "
-              f"the issue bound above the bytes-plus-tensor sum on {issue_binds} rows")
+              f"{len(rows)} register-MMA rows at T >= {a.tmin}; instances {dict(status)}"
+              + (" (the ambiguous ones are not scored)" if status["ambiguous"] else "")
+              + f"; the issue bound above the bytes-plus-tensor sum on {issue_binds} rows")
         if today_vs_model:
             xs = sorted(today_vs_model)
             print(f"  today's replica / the CSV's model_us: geomean {geomean(xs):.4f}, "
