@@ -41,12 +41,28 @@ def load_stands():
         if name:
             raise SystemExit(f"{STANDS_ENV}={name}: no such file")
         return stands, None
-    data = json.loads(path.read_text(encoding="utf-8"))
-    for arch, names in data.get("stands", {}).items():
+    # The machines are advice only: a malformed file is reported and read as none, so it never
+    # changes which arches the diff affects or the exit code.
+    def unusable(why):
+        print(f"warning: {path}: {why}; no machines listed", file=sys.stderr)
+        return {a: [] for a in ARCHES}, None
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return unusable(f"not readable JSON ({e})")
+    table = data.get("stands", {}) if isinstance(data, dict) else None
+    if not isinstance(table, dict):
+        return unusable('"stands" is not an object')
+    for arch, names in table.items():
         if arch not in stands:
-            raise SystemExit(f"{path}: unknown arch {arch}")
+            print(f"warning: {path}: unknown arch {arch}, skipped", file=sys.stderr)
+            continue
+        if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+            return unusable(f"{arch} is not a list of names")
         stands[arch] = list(names)
-    return stands, data.get("any_one")
+    any_one = data.get("any_one")
+    return stands, any_one if isinstance(any_one, str) else None
 
 
 # Paths whose change can move any arch's behaviour.

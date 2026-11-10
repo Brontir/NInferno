@@ -138,6 +138,22 @@ class Classify(unittest.TestCase):
         finally:
             aa.STANDS_LOCAL = saved
 
+    def test_malformed_stands_file_lists_no_machine(self):
+        bad = self.root / "bad.json"
+        for text in ("{not json", '{"stands": ["sm_70"]}', '{"stands": {"sm_70": "stand-a"}}',
+                     '{"stands": {"sm_99": ["x"]}, "any_one": 3}', "[]"):
+            with self.subTest(text=text):
+                bad.write_text(text, encoding="utf-8")
+                os.environ[aa.STANDS_ENV] = str(bad)
+                try:
+                    res = self.run_diff(["src/ops/volta_a.cu"],
+                                        {"src/ops/sources.cmake":
+                                         'if(NINFERNO_BUILD_ARCH STREQUAL "70")\n volta_a.cu\nendif()\n'})
+                finally:
+                    del os.environ[aa.STANDS_ENV]
+                self.assertEqual(res["arches"], ["sm_70"])
+                self.assertEqual(res["stands"]["sm_70"], [])
+
     def test_host_only_is_any_one_arch(self):
         res = self.run_diff(["src/chat/tool_calls.cpp", "src/convert/a.cpp", "docs/x.md",
                              "tests/chat/test_chat.cpp"])
