@@ -11,6 +11,7 @@
 #include "core/weight.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_gemm_internal.h"
+#include "ops/generic/route_table.h"
 #include "ops/generic/selector_facts.h"
 #include "ninferno/ops/prefill_routes.h"
 
@@ -147,17 +148,13 @@ int main() {
                                               << " " << shape.n << "x" << shape.k << " "
                                               << generic::epilogue_name(epilogue) << " schedule "
                                               << schedule << " T=" << tokens
-                                              << (invariant ? " invariant" : "")
-                                              << ":
-                                        host : "
+                                              << (invariant ? " invariant" : "") << ":\n  host:   "
                                               << (host_error.empty() ? text(host_side)
                                                                      : "threw " + host_error)
-                                              << "
-                                               launch : "
+                                              << "\n  launch: "
                                               << (launch_error.empty() ? text(launched)
                                                                        : "threw " + launch_error)
-                                              << "
-                                                 ";
+                                              << "\n";
                                 }
                             }
                         }
