@@ -45,6 +45,11 @@ set_tests_properties(ninferno_device_image_negative_test PROPERTIES SKIP_RETURN_
 ninferno_add_test(ninferno_machine_facts_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_machine_facts.cpp"
   LIBRARIES ninferno_core)
+# The constexpr board registry (core/board_registry.h) against the reference table, and the
+# measured boards against the figures they were spelled with before it. No GPU.
+ninferno_add_test(ninferno_board_registry_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_board_registry.cpp"
+  LIBRARIES ninferno_core)
 # The MMQ prefill gate's decision atlas over that table (#373, core/gate_atlas.h); `--json` prints
 # it. No GPU.
 ninferno_add_test(ninferno_gate_atlas_test

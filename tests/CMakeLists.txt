@@ -56,6 +56,12 @@ ninferno_add_test(ninferno_spec_draft_head_test NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_spec_draft_head.cpp"
   LIBRARIES ninferno_spec)
 
+# DSpine (spec/dspine.h): the published config's refusals and tensor contract, the arithmetic's
+# invariants. No GPU.
+ninferno_add_test(ninferno_spec_dspine_test NEEDS_SOURCE_DIR
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_spec_dspine.cpp"
+  LIBRARIES ninferno_spec)
+
 # tools/spec/registry_add.py: the "*" fallback and the load table warnings, no GPU.
 add_test(NAME ninferno_registry_add_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_registry_add.py)
@@ -71,6 +77,10 @@ add_test(NAME ninferno_selection_regret_test
 # tools/bench/regret_collect.py: route sweeps and the production selection into its input, no GPU.
 add_test(NAME ninferno_regret_collect_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_regret_collect.py)
+
+# tools/bench/mmq_transfer_audit.py: same-generation MMQ transfer by workload regime (#373), no GPU.
+add_test(NAME ninferno_mmq_transfer_audit_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_mmq_transfer_audit.py)
 
 # Repository hygiene, no GPU: only scripts (a #! first line) may be committed executable.
 add_test(NAME ninferno_file_modes_test
