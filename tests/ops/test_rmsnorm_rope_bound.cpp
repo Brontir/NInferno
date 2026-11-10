@@ -58,7 +58,8 @@ int main() {
     expect(w4090 > 0 && w4060 > 0, "Ada: a launch node, so a bound");
     expect(w4090 > w4060, "a faster DRAM amortises more launches: the 4090 fuses wider");
     const double ratio = static_cast<double>(w4090) / static_cast<double>(w4060);
-    const double want  = rtx4090.dram_gbps() / rtx4060ti.dram_gbps();
+    const double want =
+        machine_facts_of(rtx4090).dram_gbps() / machine_facts_of(rtx4060ti).dram_gbps();
     expect(ratio > 0.97 * want && ratio < 1.03 * want, "the width scales with the DRAM rate");
     expect(d::text_fused_max_tokens_with_excess(rtx4090, 16, 4, excess) >
                d::text_fused_max_tokens_with_excess(rtx4090, 32, 2, excess),
