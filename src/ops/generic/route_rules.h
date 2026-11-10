@@ -197,11 +197,12 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "formats below that too (mmq_verify_rule)",
      ""},
     {"mmq_verify_rule: single-sequence rounds", Basis::Measured, "generic_gemm.cpp",
-     "ops::round_lanes() != 1 && mmq_verify_format(w.qtype);", 1, "gb203:70sm", "RTX 5070 Ti",
+     "tokens >= kMmqVerifyMinTokens && lanes != 1 &&", 1, "gb203:70sm", "RTX 5070 Ti",
      "the measured band is 9..16 tokens of several sequences (a C4 verify): one sequence keeps its "
-     "register MMA at every width (ops::round_lanes() == 1): a C1 MTP round of 5..8 tokens and a "
-     "C1 copy round of 16 lost on mmq (RTX 5070 Ti C1 117.0 -> 115.2 tok/s, all of it in the copy "
-     "rounds), while the C4 verify gains (233.5 -> 249.3)",
+     "register MMA at every width (lanes == 1; a caller that names no lane count reads "
+     "ops::round_lanes()): a C1 MTP round of 5..8 tokens and a C1 copy round of 16 lost on mmq "
+     "(RTX 5070 Ti C1 117.0 -> 115.2 tok/s, all of it in the copy rounds), while the C4 verify "
+     "gains (233.5 -> 249.3)",
      ""},
     // The prefill band's edge: ONE definition (ops/route_pins.h), the widest speculative verify
     // plus one; the others below are defined from it, because their comments call the same width.
@@ -720,7 +721,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "30B MLP and a synthetic [4096, 4096]; below one wave, or at one token tile, it loses (up to "
      "5x at T = 32)",
      ""},
-    {"auto_route: NVFP4 half the L2", Basis::PlacedBetweenMeasured, "generic_gemm.cpp",
+    {"nvfp4_half_l2: half the L2", Basis::PlacedBetweenMeasured, "route_authorities.cpp",
      "if (2 * weight_bytes <= device_class().l2_bytes) {", 0, "ad102:128sm", "RTX 4090",
      "an NVFP4 weight that fits half the L2 takes the invariant profile's register MMA: RTX 4090, "
      "Gemma 4 26B shapes 1024..8192 x 2112..8192 at T 17..128, where the 128x128 prefill tile ran "
