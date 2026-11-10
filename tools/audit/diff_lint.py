@@ -7,19 +7,24 @@ Comments and string/char/raw-string literals are blanked (mask_cxx) before any r
 definitions, calls, includes or types; only the repeated-block rule and the escape markers read raw text.
 Where it is not precise it warns; it fails only where a finding is near certain.
 
-  removed-def      (FAILS, exit 1) a C/C++ function or method definition removed from .h/.cpp/.cu/.cuh
-                   whose bare name is still called as `name(` in the tree at the head. Not reported when
+  removed-def      (WARNS) a C/C++ function or method definition removed from .h/.cpp/.cu/.cuh
+                   whose bare name is still called as `name(` in the tree at the head. On the history
+                   of master about half of its findings were false (a same-named member, lambda or
+                   class), so it warns and never fails a check. Not reported when
                    any declaration or definition of that name remains (overloads, moves, a return type on
                    the line above), when the only uses are member initializers or comments, or when the
                    name is passed to an UPPER_CASE macro (it may be generated). Operators, constructors,
-                   destructors, names under 3 characters and `main` are skipped.
-  bad-literal      (FAILS, exit 1) an added line in a .c/.cc/.cpp/.cu/.h/.cuh/.hpp/.inl file that ends
+                   destructors, names of a class or struct, names under 3 characters and `main` are
+                   skipped; `std::name(` is not a call, and neither is `x.name(` of a removed free function.
+  bad-literal      (FAILS, exit 1) an added line in a .c/.cc/.cpp/.cu/.h/.cuh/.hpp/.inl/.inc file that ends
                    inside an ordinary string or char literal (a real newline where `\n` was meant), or in a
                    .py file inside a single-quoted string. Comments, escapes, '"', C++ raw strings (tracked
-                   across lines in the whole file) and Python triple quotes are understood.
+                   across lines in the whole file), `#error`/`#warning` text, `#if 0` blocks and Python
+                   triple quotes are understood. CMake, shell, JSON and YAML files are not checked.
   removed-include  (WARNS) a removed quoted #include whose header defines, at column 0, a type the file
                    still uses, when no remaining include reaches the header. Forward declarations count
-                   as a declaration; a file with an include that cannot be resolved is skipped.
+                   as a declaration; a file with an include that cannot be resolved is skipped, except
+                   for an unresolved `.inc` (generated tables), which is ignored.
   dup-block        (WARNS) a run of >= 4 consecutive added non-blank lines that repeats in the same file
                    (other added lines or old content); only copies of 10+ lines, or a copy that is the
                    whole added run, are reported, on the later copy.
@@ -32,7 +37,7 @@ commit message of the PR.
 
 Usage: diff_lint.py [--base REF] [--head REV] [--exact]   (default: merge base with origin/master, HEAD)
        diff_lint.py --scan-tree [--head REV]   (bad-literal over every line of the tree, not a diff)
-Exit 1 on a removed-def or bad-literal finding.
+Exit 1 on a bad-literal finding.
 """
 import argparse
 import os
@@ -44,11 +49,11 @@ ALLOW = "diff-lint: allow"
 CODE_EXT = {".h", ".hpp", ".cpp", ".cc", ".c", ".cu", ".cuh", ".py", ".sh", ".cmake"}
 CXX_EXT = {".h", ".hpp", ".cpp", ".cc", ".c", ".cu", ".cuh"}
 DEF_EXT = {".h", ".cpp", ".cu", ".cuh"}
-LIT_CXX_EXT = {".c", ".cc", ".cpp", ".cu", ".h", ".cuh", ".hpp", ".inl"}
+LIT_CXX_EXT = {".c", ".cc", ".cpp", ".cu", ".h", ".cuh", ".hpp", ".inl", ".inc"}
 SKIP_DIRS = ("third_party/", "routes/", "build/")
 MIN_RUN = 4
 LONG_COPY = 10
-WARN_RULES = {"dup-block", "removed-include"}  # not precise enough to fail a check: they warn, exit 0
+WARN_RULES = {"dup-block", "removed-include", "removed-def"}  # not precise enough to fail a check: they warn, exit 0
 KEYWORDS = {"if", "for", "while", "switch", "catch", "return", "else", "new", "delete", "throw", "case",
             "goto", "sizeof", "co_return", "co_await", "co_yield", "using", "typedef", "operator", "do",
             "defined", "alignof", "decltype", "static_assert", "namespace", "template", "typename"}
@@ -122,49 +127,65 @@ HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
 def parse_diff(text):
-    """{new path: {"added": [(line, text)], "removed": [[(old line, text)] per hunk]}}."""
-    files, cur = {}, None
-    old = new = 0
+    """{new path: {"added": [(line, text)], "removed": [[(old line, text)] per hunk], "old": old path}}.
+
+    The hunk header's line counts say how many rows still belong to the hunk, so an added line that
+    reads `++ x` or a removed one that reads `-- x` is not taken for a file header."""
+    files, cur, old_path = {}, None, None
+    old = new = left_old = left_new = 0
     for row in text.splitlines():
+        if left_old > 0 or left_new > 0:
+            if row.startswith("+") and left_new > 0:
+                if cur is not None:
+                    cur["added"].append((new, row[1:]))
+                new, left_new = new + 1, left_new - 1
+                continue
+            if row.startswith("-") and left_old > 0:
+                if cur is not None:
+                    cur["removed"][-1].append((old, row[1:]))
+                old, left_old = old + 1, left_old - 1
+                continue
+            if row.startswith(("\\", " ")):  # "\ No newline at end of file", or a context row
+                if row.startswith(" "):
+                    old, new, left_old, left_new = old + 1, new + 1, left_old - 1, left_new - 1
+                continue
         if row.startswith("diff "):
-            cur = None
+            cur = old_path = None
         elif row.startswith("+++ "):
             if row.endswith("/dev/null"):
                 cur = None
             else:
                 path = row[6:] if row.startswith("+++ b/") else row[4:]
-                cur = files.setdefault(path, {"added": [], "removed": []})
+                cur = files.setdefault(path, {"added": [], "removed": [], "old": old_path or path})
         elif row.startswith("--- "):
-            continue
+            old_path = None if row.endswith("/dev/null") else row[6:] if row.startswith("--- a/") else row[4:]
         elif HUNK.match(row):
             m = HUNK.match(row)
             old, new = int(m.group(1)), int(m.group(3))
+            left_old = 1 if m.group(2) is None else int(m.group(2))
+            left_new = 1 if m.group(4) is None else int(m.group(4))
             if cur is not None:
                 cur["removed"].append([])
-        elif cur is not None and row.startswith("+"):
-            cur["added"].append((new, row[1:]))
-            new += 1
-        elif cur is not None and row.startswith("-"):
-            cur["removed"][-1].append((old, row[1:]))
-            old += 1
     return files
 
 
 def parse_deleted(text):
     """Removed lines of deleted files: {old path: [(line, text)]}."""
-    out, path, pending, old = {}, None, None, 0
+    out, path, pending, old, left = {}, None, None, 0, 0
     for row in text.splitlines():
-        if row.startswith("diff "):
+        if left > 0 and row.startswith("-"):
+            if path:
+                out.setdefault(path, []).append((old, row[1:]))
+            old, left = old + 1, left - 1
+        elif row.startswith("diff "):
             path = pending = None
         elif row.startswith("--- "):
             pending = None if row.endswith("/dev/null") else row[6:]
         elif row.startswith("+++ "):
             path = pending if row.endswith("/dev/null") else None
         elif HUNK.match(row):
-            old = int(HUNK.match(row).group(1))
-        elif path and row.startswith("-"):
-            out.setdefault(path, []).append((old, row[1:]))
-            old += 1
+            m = HUNK.match(row)
+            old, left = int(m.group(1)), 1 if m.group(2) is None else int(m.group(2))
     return out
 
 
@@ -242,13 +263,36 @@ DEF_RX = re.compile(
     r"[ \t\n]*(?:const|noexcept|override|final|&&|&|\s)*(?::[^{;]*)?\{")
 
 
-def removed_definitions(removed_lines):
-    """[(unqualified name, old line)] for definitions in the removed lines of one hunk."""
+def old_file_lines(base, path):
+    """(raw lines, masked lines) of `path` at the base, or None when there is no base tree or file.
+
+    A hunk of `-U0` shows only the removed lines. Masked on their own, the tail of a block comment
+    or the middle of a raw string looks like code; masked inside the whole old file it does not."""
+    if base is None:
+        return None
+    cache = base.__dict__.setdefault("_old", {})
+    if path not in cache:
+        text = base.read(path)
+        cache[path] = None if text is None else (text.split("\n"), mask_cxx(text).split("\n"))
+    return cache[path]
+
+
+def mask_removed(removed_lines, old):
+    """The removed lines of one hunk with comments and literals blanked: in the context of the whole
+    old file `old` when it is known and agrees with the hunk, else on their own."""
+    if old is not None:
+        raw, masked = old
+        if all(0 < n <= len(raw) and raw[n - 1].rstrip("\r") == t.rstrip("\r") for n, t in removed_lines):
+            return [masked[n - 1].rstrip("\r").ljust(len(t)) for n, t in removed_lines]
+    return mask_cxx("\n".join(t for _, t in removed_lines)).split("\n")
+
+
+def removed_definitions(removed_lines, old=None):
+    """[(unqualified name, old line, is a member)] for definitions in the removed lines of one hunk."""
     if not removed_lines:
         return []
-    raw_text = "\n".join(t for _, t in removed_lines)
-    texts = raw_text.split("\n")
-    text = mask_cxx(raw_text)  # a commented-out or quoted signature is not a definition
+    texts = [t for _, t in removed_lines]
+    text = "\n".join(mask_removed(removed_lines, old))  # a commented-out or quoted signature is not a definition
     starts = [0]
     for t in texts:
         starts.append(starts[-1] + len(t) + 1)
@@ -263,7 +307,9 @@ def removed_definitions(removed_lines):
         idx = max(i for i, s in enumerate(starts[:-1]) if s <= m.start(2))
         if ALLOW in texts[idx]:
             continue
-        out.append((name, removed_lines[idx][0]))
+        # a member: qualified (`Class::name`) or indented (defined inside a class or a nested scope)
+        head = max(i for i, s in enumerate(starts[:-1]) if s <= m.start(1))
+        out.append((name, removed_lines[idx][0], "::" in m.group(2) or texts[head][:1] in (" ", "\t")))
     return out
 
 
@@ -278,8 +324,11 @@ def masked_lines(tree, path):
     return cache[path]
 
 
-def classify(tree, name, hit):
-    """'comment', 'allowed', 'decl' (a declaration or definition), 'init' (member init) or 'call'."""
+def classify(tree, name, hit, member=False):
+    """'comment', 'allowed', 'decl' (a declaration or definition), 'init' (member init) or 'call'.
+
+    `member`: the removed definition is a member function, so `x.name(` and `x->name(` still call it;
+    for a free function they call something else."""
     path, n, raw = hit
     masked = masked_lines(tree, path)
     line = masked[n - 1] if n - 1 < len(masked) else mask_cxx(raw)  # comments and literals blanked
@@ -288,10 +337,19 @@ def classify(tree, name, hit):
     if ALLOW in raw:
         return "allowed"
     nm = re.escape(name)
-    m = re.search(rf"\b{nm}[ \t]*\(", line)
-    if not m:  # a mention without a call: `name` as a macro argument
-        return "macro" if re.search(rf"[(,][ \t]*{nm}\b", line) and re.search(r"\b[A-Z][A-Z0-9_]{2,}[ \t]*\(", line) \
-            else "other"
+    # `x.name(`, `x->name(`, `std::name(` and `::name(` call something else than a free function `name`
+    ms = [m for m in re.finditer(rf"\b{nm}[ \t]*\(", line)
+          if not re.search(r"(?:\bstd::|(?<![\w>]):: ?)[ \t]*$", line[:m.start()])
+          and (member or not re.search(r"(?:\.|->)[ \t]*$", line[:m.start()]))]
+    if not ms:  # a mention without a call: `name` as a macro argument, or a variable named like it
+        if re.search(rf"[(,][ \t]*{nm}\b", line) and re.search(r"\b[A-Z][A-Z0-9_]{2,}[ \t]*\(", line):
+            return "macro"
+        # a variable, lambda or parameter of that name: `auto name = [`, `Type name{`, `Type name,`
+        vm = re.search(rf"(?:^|[^\w.>:])(\w[\w:<>*&\]]*|\w[\w:]*<[^;=]*>)[ \t*&]+{nm}[ \t]*(?:=(?!=)|\{{|;|,|\))", line)
+        if vm and vm.group(1) not in KEYWORDS:
+            return "decl"
+        return "other"
+    m = ms[0]
     before = line[:m.start()]
     # a type word before the name on this line: `double Class::name(` / `static int name(`
     tm = re.search(r"(?:^|[^\w.>:])(\w[\w:<>*&\]]*)[ \t*&]+(?:\w+::)*$", before)
@@ -303,31 +361,40 @@ def classify(tree, name, hit):
         if prev.strip() and DECL_TYPE_END.search(prev) and not prev.strip().startswith(("#", "//", "return", "else")) \
                 and prev.split()[-1] not in KEYWORDS:
             return "decl"
-    # a member initializer `: name(x)` or `, name(x)` at paren depth 0 of an unfinished statement
-    if not line.rstrip().endswith(";") and re.search(r"(?:^|[:,])[ \t]*$|\)[ \t]*(?:noexcept[ \t]*)?:[ \t]*$", before):
+    # a member initializer `: name(x)` or `, name(x)` at paren depth 0 of an unfinished statement; at the
+    # start of a line only when the line above is itself part of an initializer list (ends in `:` or `,`),
+    # not a statement that begins a multi-line call
+    if not line.rstrip().endswith(";") and re.search(r"(?:(?<!:):|,)[ \t]*$|\)[ \t]*(?:noexcept[ \t]*)?:[ \t]*$", before):
         if before.count("(") <= before.count(")"):
+            return "init"
+    if not line.rstrip().endswith(";") and not before.strip() and n > 1:
+        prev = next((p.strip() for p in reversed(masked[max(0, n - 4):n - 1]) if p.strip()), "")
+        if prev.endswith((",", ":")) and not prev.startswith("#"):
             return "init"
     return "call"
 
 
-def removed_calls(tree, removed_by_path, allow=frozenset()):
+def removed_calls(tree, removed_by_path, allow=frozenset(), base=None):
     """Findings for removed definitions whose bare name is still called."""
     out, seen, mentions = [], set(), {}
-    for path, hunks in removed_by_path:
-        if not lintable(path, DEF_EXT):
+    for path, hunks, old_path in removed_by_path:
+        if not lintable(path, DEF_EXT) or not any(hunks):
             continue
+        old = old_file_lines(base, old_path)
         for hunk in hunks:
-            for name, old_line in removed_definitions(hunk):
+            for name, old_line, member in removed_definitions(hunk, old):
                 if (path, name) in seen or ("removed-def", name) in allow:
                     continue
                 seen.add((path, name))
-                if name not in mentions:  # one grep per name serves the call sites and the "still defined" test
-                    mentions[name] = [(h, classify(tree, name, h))
-                                      for h in tree.grep(rf"\b{re.escape(name)}\b", CXX_EXT)]
-                kinds = {k for _, k in mentions[name]}
-                uses = [h[:2] for h, k in mentions[name] if k == "call"]
+                if (name, member) not in mentions:  # one grep serves the call sites and the "still defined" test
+                    mentions[name, member] = [(h, classify(tree, name, h, member))
+                                              for h in tree.grep(rf"\b{re.escape(name)}\b", CXX_EXT)]
+                kinds = {k for _, k in mentions[name, member]}
+                uses = [h[:2] for h, k in mentions[name, member] if k == "call"]
                 if not uses or "decl" in kinds or "macro" in kinds:
                     continue
+                if tree.grep(rf"\b(class|struct) +{re.escape(name)}\b", CXX_EXT):  # git grep -E: no `(?:`, no `\t`
+                    continue  # the name of a class: what was removed is a constructor, `name(` builds an object
                 sites = ", ".join(f"{p}:{n}" for p, n in uses[:3]) + (" ..." if len(uses) > 3 else "")
                 p0, n0 = uses[0]
                 out.append((p0, n0, "removed-def",
@@ -339,6 +406,7 @@ def removed_calls(tree, removed_by_path, allow=frozenset()):
 # ---------------------------------------------------------------- rule: removed include still needed
 
 INC_RX = re.compile(r'^\s*#\s*include\s+"([^"]+)"')
+ANY_INC_RX = re.compile(r'[ \t]*#[ \t]*include[ \t]*[<"]([^>"]+)[>"]')  # quoted or angle
 BODY = r"\s*(?:final\s*)?(?::[^;{]*)?\{"
 # A type the file or a reachable header declares anywhere (a forward declaration counts).
 ANY_TYPE_RX = re.compile(r"\b(?:struct|class|enum(?:\s+class)?|union)\s+(\w+)(?:" + BODY + r"|\s*;)"
@@ -351,6 +419,7 @@ OWN_TYPE_RX = re.compile(r"^(?:struct|class|enum(?:\s+class)?|union)\s+(\w+)" + 
 
 RAW_PREFIX = re.compile(r"(?:u8|u|U|L)?R$")
 INCLUDE_HEAD = re.compile(r"[ \t]*#[ \t]*include[ \t]*$")
+DIAG_HEAD = re.compile(r"[ \t]*#[ \t]*(?:error|warning)\b")  # the text of #error / #warning is prose, not tokens
 
 
 def mask_cxx(text):
@@ -386,12 +455,17 @@ def mask_cxx(text):
             blank(i, j)
             i = j
         elif c == '"' or c == "'":
-            head = text[text.rfind("\n", 0, i) + 1:i]
-            if c == '"' and INCLUDE_HEAD.match(head):
+            ls = text.rfind("\n", 0, i) + 1
+            head = text[ls:i]
+            if DIAG_HEAD.match(head):
+                e = text.find("\n", i)
+                i = n if e < 0 else e
+                continue
+            if c == '"' and INCLUDE_HEAD.match("".join(out[ls:i])):  # a comment before it does not hide the path
                 j = text.find('"', i + 1)
                 i = n if j < 0 else j + 1
                 continue
-            if c == "'" and re.search(r"[0-9][0-9A-Za-z_.]*$", head):  # a digit separator: 1'000'000
+            if c == "'" and re.search(r"(?<![\w.])[0-9][0-9A-Za-z_.]*$", head):  # a digit separator: 1'000'000
                 i += 1
                 continue
             m = RAW_PREFIX.search(head) if c == '"' else None
@@ -438,13 +512,14 @@ def closure(tree, names, path, memo):
         if p not in memo:
             incs = [INC_RX.match(line) for line in mask_cxx(tree.read(p) or "").splitlines()]
             found = [(m.group(1), resolve(names, p, m.group(1))) for m in incs if m]
-            memo[p] = ([r for _, r in found if r], all(r for _, r in found))
+            # an unresolved `.inc` is a generated table: it is ignored, any other unresolved include is unknown
+            memo[p] = ([r for _, r in found if r], all(r or inc.endswith(".inc") for inc, r in found))
         stack.extend(memo[p][0])
         complete = complete and memo[p][1]
     return seen, complete
 
 
-def removed_includes(tree, files, allow=frozenset()):
+def removed_includes(tree, files, allow=frozenset(), base=None):
     """Findings for a removed quoted include that the file still needs (a type, nothing else)."""
     out, names, memo, tcache = [], set(tree.names()), {}, {}
 
@@ -457,16 +532,20 @@ def removed_includes(tree, files, allow=frozenset()):
         if not lintable(path, CXX_EXT):
             continue
         text = tree.read(path)
+        old = old_file_lines(base, d.get("old") or path)
+        added_incs = {m.group(1) for _, t in d["added"] for m in [ANY_INC_RX.match(t)] if m}
         gone = [(n, m.group(1)) for hunk in d["removed"]
-                for (n, t), c in zip(hunk, mask_cxx("\n".join(t for _, t in hunk)).split("\n"))
-                for m in [INC_RX.match(c)] if m and ALLOW not in t and ("removed-include", m.group(1)) not in allow]
+                for (n, t), c in zip(hunk, mask_removed(hunk, old))
+                for m in [INC_RX.match(c)] if m and ALLOW not in t and not any(a == m.group(1) or m.group(1).endswith("/" + a) for a in added_incs)  # swapped for an angle include
+                and ("removed-include", m.group(1)) not in allow]
         if text is None or not gone:
             continue
         reach, complete = closure(tree, names, path, memo)
         if not complete:  # an include we cannot follow may bring the type: no precise answer
             continue
-        own = types(path)
         body_lines = mask_cxx(text).splitlines()
+        # the file's own types and functions: a name it defines itself is not needed from the header
+        own = types(path) | {m.group(2).split("::")[-1] for m in DEF_RX.finditer("\n".join(body_lines))}
         raw_lines = text.splitlines()
         for old_line, inc in gone:
             header = resolve(names, path, inc)
@@ -490,6 +569,9 @@ def removed_includes(tree, files, allow=frozenset()):
 
 # ---------------------------------------------------------------- rule: line ends inside a string literal
 
+DIRECTIVE_RX = re.compile(r"[ \t]*#[ \t]*(\w+)(.*)")
+
+
 def cxx_open_lines(text):
     """1-based numbers of lines that end inside an ordinary string or char literal (C/C++).
 
@@ -497,10 +579,27 @@ def cxx_open_lines(text):
     are tracked across lines; a backslash at the end of the line
     continues the literal and is not reported. After a report the scan restarts in code on the next line."""
     bad, block, raw, carry = [], False, None, None  # raw: the closing `)delim"` while inside a raw string
+    if0 = 0  # nesting depth inside a `#if 0` group
     spliced = False  # the previous line was a // comment ending in a backslash: this line is comment too
     for num, line in enumerate(text.split("\n"), 1):
         line = line.rstrip("\r")
         i, n, quote, carry = 0, len(line), carry, None
+        if quote is None and raw is None and not block and not spliced:
+            dm = DIRECTIVE_RX.match(line)
+            kind, rest = (dm.group(1), dm.group(2).strip()) if dm else ("", "")
+            if if0:  # the text of a `#if 0` group is not code: prose with an apostrophe is fine there
+                if kind in ("if", "ifdef", "ifndef"):
+                    if0 += 1
+                elif kind == "endif":
+                    if0 -= 1
+                elif kind in ("else", "elif") and if0 == 1:
+                    if0 = 0
+                continue
+            if kind == "if" and re.fullmatch(r"0[ \t]*(?://.*|/\*.*)?", rest):
+                if0 = 1
+                continue
+            if kind in ("error", "warning"):  # the text is a message
+                continue
         if spliced:
             spliced, i = line.endswith("\\"), n
         while i < n:
@@ -611,7 +710,8 @@ def bad_literals(path, content, only=None):
 
 # ---------------------------------------------------------------- driver
 
-def lint(diff_text, tree, allow=frozenset()):
+def lint(diff_text, tree, allow=frozenset(), base=None):
+    """`base`: the tree before the change, for masking removed lines inside the whole old file."""
     files = parse_diff(diff_text)
     findings = []
     for path, d in files.items():
@@ -620,10 +720,10 @@ def lint(diff_text, tree, allow=frozenset()):
     for path, d in files.items():
         if lintable(path, LIT_CXX_EXT | {".py"}) and d["added"]:
             findings += bad_literals(path, tree.read(path), {n for n, _ in d["added"]})
-    removed = [(p, d["removed"]) for p, d in files.items()]
-    removed += [(p, [rows]) for p, rows in parse_deleted(diff_text).items()]
-    findings += removed_calls(tree, removed, allow)
-    findings += removed_includes(tree, files, allow)
+    removed = [(p, d["removed"], d.get("old") or p) for p, d in files.items()]
+    removed += [(p, [rows], p) for p, rows in parse_deleted(diff_text).items()]
+    findings += removed_calls(tree, removed, allow, base)
+    findings += removed_includes(tree, files, allow, base)
     return sorted(set(findings))
 
 
@@ -649,7 +749,7 @@ def main(argv=None):
     base = a.base if a.exact else git("merge-base", a.base, a.head).strip()
     allow = set(re.findall(r"diff-lint: allow (removed-def|removed-include) (\S+)",
                            git("log", "--format=%B", f"{base}..{a.head}")))
-    found = lint(git("diff", "-U0", "--no-color", "-M", base, a.head), GitTree(a.head), allow)
+    found = lint(git("diff", "-U0", "--no-color", "-M", base, a.head), GitTree(a.head), allow, GitTree(base))
     errors = [f for f in found if f[2] not in WARN_RULES]
     for path, line, rule, why in found:
         if rule in WARN_RULES:  # a GitHub annotation; it does not fail the check

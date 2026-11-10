@@ -2,6 +2,7 @@
 look-alikes. Plain git diff -U0 text and an in-memory tree; no git, no GPU."""
 import contextlib
 import io
+import json
 import os
 import subprocess
 import sys
@@ -177,37 +178,47 @@ class RemovedInclude(unittest.TestCase):
         self.assertEqual(dl.lint(self.removed('#include "widget.h" // diff-lint: allow'), t), [])
 
 
-def real_commit(sha):
-    ok = subprocess.run(["git", "cat-file", "-e", sha + "^{commit}"], cwd=REPO, capture_output=True).returncode == 0
-    return ok
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "diff_lint"
 
 
-def lint_commit(sha):
-    d = subprocess.run(["git", "diff", "-U0", "-M", sha + "^", sha], cwd=REPO, capture_output=True,
-                       text=True, encoding="utf-8", errors="replace").stdout
-    return dl.lint(d, dl.GitTree(sha, cwd=REPO))
+def lint_fixture(name):
+    """Lint a recorded real change: its diff against a tree built from the recorded head files
+    (`text`: the whole file; `sparse`: only the listed lines, at their line numbers)."""
+    data = json.loads((FIXTURES / f"{name}.json").read_text(encoding="utf-8"))
+    files = {}
+    for path, f in data["files"].items():
+        if "text" in f:
+            files[path] = f["text"]
+        else:
+            rows = [""] * max(int(n) for n in f["sparse"])
+            for n, text in f["sparse"].items():
+                rows[int(n) - 1] = text
+            files[path] = "\n".join(rows) + "\n"
+    return dl.lint(data["diff"], dl.DictTree(files))
 
 
-@unittest.skipUnless(real_commit("bd51efb1") and real_commit("7275afba") and real_commit("ec402086"),
-                     "the real commits are not in this clone")
 class RealBugs(unittest.TestCase):
+    """Three real mistakes that reached review (#599, #600, #602), recorded as fixtures so that they
+    are checked wherever the tests run, with or without the history."""
+
     def test_599_deleted_measured_at_still_called(self):
-        found = [f for f in lint_commit("bd51efb1") if f[2] == "removed-def"]
+        found = [f for f in lint_fixture("pr599_removed_def") if f[2] == "removed-def"]
         self.assertEqual(len(found), 1)
         self.assertIn("`measured_at(`", found[0][3])
         self.assertIn("src/product/choice/choice.h", found[0][3])
+        self.assertIn("called at 5 site(s)", found[0][3])
 
     def test_600_header_tail_pasted_twice_warns(self):
-        found = lint_commit("ec402086")
+        found = lint_fixture("pr600_dup_block")
         self.assertTrue(found and all(f[2] == "dup-block" for f in found))
         self.assertTrue(all(f[0] == "src/product/choice/choice.h" for f in found))
 
     def test_602_block_pasted_twice_warns_only_below_the_long_copy_threshold(self):
         # The pasted test block is 5 lines, under the 10-line threshold: silent by default.
-        self.assertEqual(lint_commit("7275afba"), [])
+        self.assertEqual(lint_fixture("pr602_dup_block"), [])
         old, dl.LONG_COPY = dl.LONG_COPY, 4
         try:
-            found = lint_commit("7275afba")
+            found = lint_fixture("pr602_dup_block")
         finally:
             dl.LONG_COPY = old
         self.assertEqual([(f[0], f[2]) for f in found],
@@ -258,7 +269,7 @@ class FalsePositives(unittest.TestCase):
         t = dl.DictTree({**header, "src/use.cpp": user})
         self.assertEqual(dl.lint(diff("src/use.cpp", removed=['#include "vec.h"']), t), [])
 
-    LIVE_FOO = {"c.cpp": "std::function<int(int)> foo = pick();\nint g() { return foo(1); }\n"}
+    LIVE_FOO = {"c.cpp": "int pick();\nint g() { return foo(1); }\n"}
 
     def test_removed_block_comment_with_a_signature_is_not_a_definition(self):
         removed = ["/*", " * old version:", " * int foo(int x) {", " *     return x;", " * }", " */"]
@@ -354,10 +365,12 @@ class Main(unittest.TestCase):
         code, out = git_repo_main({"a.cpp": "int x;\n"}, {"a.cpp": "int x;\nint y;\n"})
         self.assertEqual((code, out), (0, ""))
 
-    def test_removed_def_fails(self):
+    def test_removed_def_warns_and_exits_0(self):
+        # On the history of master most removed-def findings were false: it must never fail a check.
         code, out = git_repo_main({"a.cpp": "\n".join(DEF) + "\n", "b.cpp": self.CALLER}, {"a.cpp": "", "b.cpp": self.CALLER})
-        self.assertEqual(code, 1)
-        self.assertIn("b.cpp:1: [removed-def]", out)
+        self.assertEqual(code, 0)
+        self.assertTrue(out.startswith("::warning file=b.cpp,line=1,title=diff-lint removed-def::"), out)
+        self.assertNotIn("error(s)", out)
 
     def test_removed_def_allowed_by_the_commit_message(self):
         code, out = git_repo_main({"a.cpp": "\n".join(DEF) + "\n", "b.cpp": self.CALLER},
@@ -478,6 +491,222 @@ class BadLiteral(unittest.TestCase):
         code, out = git_repo_main({"t.cpp": "int x;\n"}, {"t.cpp": 'int x;\nconst char* s = "a\n";\n'})
         self.assertEqual(code, 1)
         self.assertIn("t.cpp:2: [bad-literal]", out)
+
+
+def lint_old(old_text, removed_range, new_text, other_files, path="a.cpp", rename_to=None):
+    """Lint a hunk that removes lines `removed_range` (1-based, inclusive) of `old_text`, with the old
+    file given as the base tree."""
+    old_rows = old_text.split("\n")
+    first, last = removed_range
+    new_path = rename_to or path
+    d = (f"diff --git a/{path} b/{new_path}\n--- a/{path}\n+++ b/{new_path}\n"
+         f"@@ -{first},{last - first + 1} +{first - 1},0 @@\n"
+         + "".join("-" + r + "\n" for r in old_rows[first - 1:last]))
+    head = dl.DictTree({new_path: new_text, **other_files})
+    return dl.lint(d, head, base=dl.DictTree({path: old_text}))
+
+
+class WholeOldFileMask(unittest.TestCase):
+    """A -U0 hunk shows only the removed lines; comments and literals are masked in the old file."""
+    CALLER = {"b.cpp": "int g() { return lib.foo_helper(1) + foo_helper(2); }\n"}
+
+    def test_tail_of_a_block_comment_is_not_a_definition(self):
+        old = "/*\nold version:\nint foo_helper(int x) {\n    return x;\n}\n*/\nint keep;\n"
+        self.assertEqual(lint_old(old, (3, 5), "/*\nold version:\n*/\nint keep;\n", self.CALLER), [])
+
+    def test_comment_lines_without_a_leading_star(self):
+        old = "int a;\n/* the former body\nint foo_helper(int x) {\n    return x + 1;\n}\nend of note */\n"
+        self.assertEqual(lint_old(old, (3, 5), "int a;\n/* the former body\nend of note */\n", self.CALLER), [])
+
+    def test_middle_of_a_raw_string_is_not_a_definition(self):
+        old = 'const char* k = R"cuda(\nint foo_helper(int x) {\n    return x;\n}\n)cuda";\n'
+        self.assertEqual(lint_old(old, (2, 4), 'const char* k = R"cuda(\n)cuda";\n', self.CALLER), [])
+
+    def test_commented_out_include_in_a_block_is_not_a_removed_include(self):
+        old = '/* disabled:\n#include "widget.h"\n*/\nint f(const Widget& w);\n'
+        files = {"widget.h": "#pragma once\nstruct Widget {\n    int size;\n};\n"}
+        self.assertEqual(lint_old(old, (2, 2), "/* disabled:\n*/\nint f(const Widget& w);\n", files), [])
+
+    def test_a_definition_after_the_end_of_a_comment_on_the_same_line_is_found(self):
+        old = '/* see "x\n*/ int foo_helper(int x) {\n    return x;\n}\n'
+        found = lint_old(old, (2, 4), "/* see \"x\n*/\n", self.CALLER)
+        self.assertEqual(rules(found), ["removed-def"])
+
+    def test_a_real_definition_after_a_comment_tail_is_found(self):
+        old = "/*\nnote\n*/\nint foo_helper(int x) {\n    return x;\n}\n"
+        found = lint_old(old, (3, 6), "/*\nnote\n", self.CALLER)
+        self.assertEqual(rules(found), ["removed-def"])
+
+    def test_a_renamed_file_is_masked_by_its_old_content(self):
+        old = "/*\nold version:\nint foo_helper(int x) {\n    return x;\n}\n*/\n"
+        self.assertEqual(lint_old(old, (3, 5), "/*\nold version:\n*/\n", self.CALLER, rename_to="c.cpp"), [])
+        old = "int foo_helper(int x) {\n    return x;\n}\n"
+        found = lint_old(old, (1, 3), "", self.CALLER, rename_to="c.cpp")
+        self.assertEqual(rules(found), ["removed-def"])
+
+    def test_a_base_that_does_not_match_the_hunk_is_not_trusted(self):
+        # the old text at those line numbers is another text: the hunk is masked on its own
+        old = "// unrelated\n// unrelated\n// unrelated\n"
+        d = diff("a.cpp", removed=["int foo_helper(int x) {", "    return x;", "}"])
+        found = dl.lint(d, dl.DictTree({"a.cpp": "", **self.CALLER}), base=dl.DictTree({"a.cpp": old}))
+        self.assertEqual(rules(found), ["removed-def"])
+
+    def test_parse_diff_keeps_the_old_path(self):
+        d = "diff --git a/o.cpp b/n.cpp\n--- a/o.cpp\n+++ b/n.cpp\n@@ -1 +1,0 @@\n-int x;\n"
+        self.assertEqual(dl.parse_diff(d)["n.cpp"]["old"], "o.cpp")
+
+
+class ParseDiffCounts(unittest.TestCase):
+    def test_rows_that_look_like_file_headers_are_content(self):
+        d = ("diff --git a/a.cpp b/a.cpp\n--- a/a.cpp\n+++ b/a.cpp\n@@ -4,2 +4,2 @@\n--- gone\n-- also gone\n"
+             "+++ new\n+++ b/fake.cpp\n")
+        files = dl.parse_diff(d)
+        self.assertEqual(list(files), ["a.cpp"])
+        self.assertEqual(files["a.cpp"]["removed"], [[(4, "-- gone"), (5, "- also gone")]])
+        self.assertEqual(files["a.cpp"]["added"], [(4, "++ new"), (5, "++ b/fake.cpp")])
+
+    def test_deleted_file_rows_that_look_like_headers(self):
+        d = "diff --git a/a.cpp b/a.cpp\n--- a/a.cpp\n+++ /dev/null\n@@ -1,2 +0,0 @@\n--- x\n-int y;\n"
+        self.assertEqual(dl.parse_deleted(d), {"a.cpp": [(1, "-- x"), (2, "int y;")]})
+
+
+class RemovedDefFalseAlarms(unittest.TestCase):
+    FREE = ["int digest_of(int x) {", "    return x;", "}"]
+    MEMBER = ["    int digest_of(int x) const {", "        return x;", "    }"]
+
+    def lint(self, removed, **files):
+        return dl.lint(diff("a.cpp", removed=removed), dl.DictTree(files))
+
+    def test_a_member_call_is_not_a_call_of_a_removed_free_function(self):
+        files = {"b.cpp": "int g(S s) { return s.digest_of(1) + p->digest_of(2) + std::digest_of(3); }\n"}
+        self.assertEqual(self.lint(self.FREE, **files), [])
+
+    def test_a_member_call_still_counts_for_a_removed_member(self):
+        files = {"b.cpp": "int g(S s) { return s.digest_of(1); }\n"}
+        self.assertEqual(rules(self.lint(self.MEMBER, **files)), ["removed-def"])
+        qualified = ["int S::digest_of(int x) const {", "    return x;", "}"]
+        self.assertEqual(rules(self.lint(qualified, **files)), ["removed-def"])
+
+    def test_a_namespace_qualified_call_is_still_a_call(self):
+        files = {"b.cpp": "int g() { return detail::digest_of(1); }\n"}
+        self.assertEqual(rules(self.lint(self.FREE, **files)), ["removed-def"])
+
+    def test_std_and_global_qualified_calls_are_other_functions(self):
+        files = {"b.cpp": "int g() { return std::digest_of(1) + ::digest_of(2); }\n"}
+        self.assertEqual(self.lint(self.FREE, **files), [])
+
+    def test_a_lambda_or_variable_of_the_same_name_is_a_declaration(self):
+        for line in ("    const auto digest_of = [&](int x) { return x; };", "    std::function<int(int)> digest_of;",
+                     "    int digest_of{3};", "int g(int digest_of, int y) { return y; }"):
+            files = {"b.cpp": f"{line}\nint h() {{ return digest_of(2); }}\n"}
+            self.assertEqual(self.lint(self.FREE, **files), [], line)
+
+    def test_a_plain_use_of_the_name_is_not_a_declaration(self):
+        files = {"b.cpp": "int h(int y) {\n    return digest_of(y);\n}\nint k = 3 + digest_of;\n"}
+        self.assertEqual(rules(self.lint(self.FREE, **files)), ["removed-def"])
+
+    def test_the_constructor_of_a_class_of_that_name_is_not_a_removed_function(self):
+        ctor = ["    explicit RequestError(int m) {", "    }"]
+        caller = "void f() { throw RequestError(\"x\"); }\n"
+        for head in ("struct RequestError : std::exception {", "class RequestError final : public Base {"):
+            self.assertEqual(self.lint(ctor, **{"e.h": head + "\n};\n", "b.cpp": caller}), [], head)
+        # a name that is not a class stays a finding
+        self.assertEqual(rules(self.lint(ctor, **{"b.cpp": caller})), ["removed-def"])
+
+    def test_the_constructor_skip_works_with_git_grep(self):
+        # GitTree.grep is `git grep -E`: the class lookup must be written in that dialect
+        ctor = "    explicit RequestError(int m) {\n    }\n"
+        caller = 'void f() { throw RequestError("x"); }\n'
+        code, out = git_repo_main({"e.h": "struct RequestError : std::exception {\n" + ctor + "};\n", "b.cpp": caller},
+                                  {"e.h": "struct RequestError : std::exception {\n};\n", "b.cpp": caller})
+        self.assertEqual((code, out), (0, ""))
+
+    def test_the_name_filter(self):
+        caller = {"b.cpp": "int g() { return run(1) + RUN(2) + main(3); }\n"}
+        for sig in ("int RUN(int x) {", "int main(int x) {"):
+            self.assertEqual(self.lint([sig, "}"], **caller), [], sig)
+        files = {"b.cpp": "int g() { return ab(1); }\n"}
+        self.assertEqual(self.lint(["int ab(int x) {", "}"], **files), [])  # shorter than 3 characters
+
+    def test_vendored_and_generated_trees_are_not_read(self):
+        files = {"third_party/x/b.cpp": "int g() { return digest_of(1); }\n", "build/c.cpp": "int h() { return digest_of(2); }\n"}
+        self.assertEqual(self.lint(self.FREE, **files), [])
+
+    def test_a_call_that_starts_a_multi_line_statement_is_a_call(self):
+        # not a member initializer: the line above ends a statement
+        files = {"b.cpp": "void f() {\n    int a = 1;\n    digest_of(\n        a);\n}\n"}
+        found = self.lint(self.FREE, **files)
+        self.assertEqual([(f[2], f[1]) for f in found], [("removed-def", 3)])
+        files = {"b.cpp": "void f() {\n    if (x) {\n    }\n    digest_of(\n        1);\n}\n"}
+        self.assertEqual(rules(self.lint(self.FREE, **files)), ["removed-def"])
+
+    def test_a_member_initializer_on_its_own_line_is_still_an_initializer(self):
+        files = {"b.h": "struct B {\n    B(int w) :\n        other_(1),\n        digest_of(w) {}\n};\n"}
+        self.assertEqual(self.lint(self.MEMBER, **files), [])
+        files = {"b.h": "struct B {\n    B(int w)\n        : other_(1),\n          digest_of(w) {}\n};\n"}
+        self.assertEqual(self.lint(self.MEMBER, **files), [])
+
+
+class RemovedIncludeFixes(unittest.TestCase):
+    HEADER = {"src/widget.h": "#pragma once\nstruct Widget {\n    int size;\n};\n"}
+
+    def lint(self, user, removed=('#include "widget.h"',), added=(), **files):
+        t = dl.DictTree({**self.HEADER, "src/use.cpp": user, **files})
+        return dl.lint(diff("src/use.cpp", removed=list(removed), added=list(added)), t)
+
+    def test_an_unresolved_generated_table_does_not_skip_the_file(self):
+        user = '#include "core/rows_generated.inc"\nint f(const Widget& w);\n'
+        self.assertEqual(rules(self.lint(user)), ["removed-include"])
+
+    def test_an_unresolved_header_still_skips_the_file(self):
+        user = '#include "core/rows_generated.h"\nint f(const Widget& w);\n'
+        self.assertEqual(self.lint(user), [])
+
+    def test_a_function_of_the_file_with_the_name_of_a_header_type_is_not_needed(self):
+        header = {"src/err.h": "#pragma once\nstruct parse_error {\n};\n"}
+        user = "int parse_error(int x) {\n    return x;\n}\nint g() { return parse_error(1); }\n"
+        t = dl.DictTree({**header, "src/use.cpp": user})
+        self.assertEqual(dl.lint(diff("src/use.cpp", removed=['#include "err.h"']), t), [])
+
+    def test_a_quoted_include_swapped_for_an_angle_include_is_not_removed(self):
+        user = "#include <widget.h>\nint f(const Widget& w);\n"
+        self.assertEqual(self.lint(user, added=["#include <widget.h>"]), [])
+        self.assertEqual(rules(self.lint("int f(const Widget& w);\n", added=["#include <other.h>"])), ["removed-include"])
+
+    def test_a_relative_quoted_include_swapped_for_a_search_path_angle_include(self):
+        user = "#include <nlohmann/json.hpp>\nint f(const Json& w);\n"
+        files = {"third_party/nlohmann/json.hpp": "struct Json {\n};\n"}
+        d = diff("src/use.cpp", removed=['#include "../third_party/nlohmann/json.hpp"'], added=["#include <nlohmann/json.hpp>"])
+        self.assertEqual(dl.lint(d, dl.DictTree({"src/use.cpp": user, **files})), [])
+
+
+class MaskAndLiteralFixes(unittest.TestCase):
+    def test_a_u8_char_literal_is_not_a_digit_separator(self):
+        out = dl.mask_cxx("auto c = u8'a'; int after = foo(1);\n")
+        self.assertEqual(out, "auto c = u8' '; int after = foo(1);\n")
+
+    def test_the_include_path_after_a_block_comment_is_kept(self):
+        self.assertIn('#include "x.h"', dl.mask_cxx('/* c */ #include "x.h"\nint x;\n'))
+
+    def test_error_and_warning_text_may_hold_an_apostrophe(self):
+        self.assertEqual(lits("t.cpp", "#error don't build this\nint x;\n"), [])
+        self.assertEqual(lits("t.cpp", "  #  warning this isn't supported\nint x;\n"), [])
+        self.assertEqual(dl.mask_cxx("#error don't\nint h = foo(1); char c = 'x';\n"),
+                         "#error don't\nint h = foo(1); char c = ' ';\n")
+        # a real broken literal on the next line is still found
+        self.assertEqual(lits("t.cpp", "#error don't\nconst char* s = \"oops\n;\n"), [2])
+
+    def test_if_0_groups_may_hold_prose(self):
+        self.assertEqual(lits("t.cpp", "#if 0\ndon't \"do this\n#endif\nint i;\n"), [])
+        self.assertEqual(lits("t.cpp", "#if 0 // old\nit's\n#if X\nnot ok'\n#endif\nstill off'\n#endif\nint i;\n"), [])
+        # #else ends the dead group; code after it is checked again
+        self.assertEqual(lits("t.cpp", "#if 0\nit's\n#else\nconst char* s = \"oops\n;\n#endif\n"), [4])
+        # a group that is not `#if 0` is code
+        self.assertEqual(lits("t.cpp", "#if 1\nconst char* s = \"oops\n;\n#endif\n"), [2])
+        self.assertEqual(lits("t.cpp", "#if 0 || X\nconst char* s = \"oops\n;\n#endif\n"), [2])
+
+    def test_inc_files_are_checked(self):
+        self.assertEqual(lits("rows.inc", 'const char* s = "oops\n;\n'), [1])
 
 
 if __name__ == "__main__":
