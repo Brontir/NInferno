@@ -306,7 +306,9 @@ int main(int argc, char** argv) {
                      std::to_string(*defined) + "), the descriptor " + std::to_string(rule.value));
             }
         } else if (literal.find("constexpr") != std::string::npos &&
-                   literal.find(" = ") != std::string::npos) {
+                   literal.find(" = ") != std::string::npos && literal.back() == ';') {
+            // A complete scalar definition that the pattern above missed; a literal that is the
+            // start of an array's initializer (kPrefillBandTokens) has no `;` and is only counted.
             fail(name + ": a constant's definition the test cannot read");
         }
     }
