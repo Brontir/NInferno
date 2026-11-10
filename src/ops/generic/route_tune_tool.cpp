@@ -521,7 +521,8 @@ int route_tune_main(int argc, char** argv) {
                 if (selected_csv) {
                     const generic::Problem gp{p.qtype, policy, p.n, p.k, p.epilogue};
                     // The one selection: its route is timed, its authority and evidence are the
-                    // row's last columns.
+                    // row's last columns. They describe `asked`; regret_collect.py keys regret on
+                    // `selected` (the route that ran after resolve_route), which can differ.
                     const generic::RouteAnswer answer =
                         generic::select_answer(gp, w.weight, t, ops::prefill_routes_active());
                     const generic::Route asked = answer.route;

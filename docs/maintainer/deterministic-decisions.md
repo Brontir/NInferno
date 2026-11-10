@@ -594,16 +594,26 @@ again from the text alone, on a CPU against a board's class and a release's tabl
 or the lines that moved. They are in the startup log at debug level after the canonical text, and in
 the request log's server-start record (`decision.routes`).
 
-The `route_evidence` section (#614) has the same keys and the same line shape, each run naming beside the 
-route the authority that answered and the evidence it rests on: `<route> authority=<name> evidence=<kind>`, and for an 
-answer taken from another board `donor=<board or class> d=<distance>`. Kinds: `pin`, `measured` (this board's own), 
-`ranker` (the cost model or a rule), `carried` (a board within the carry distance), `transferred`, `borrowed`. It comes 
-from the same selection as the route line, so the two never name different routes, and `replay_route_evidence` asks 
-again from the text like `replay_routes`. It is in the manifest text (the startup log at debug level, the server-start 
-record's `decision.route_evidence`) and in no hash: not in the fingerprint and not in the manifest's `nm1-` id, so 
-every earlier fingerprint and manifest id holds. The same fields end a `describe_call` description (`ninferno_route_tune 
---describe 1`: ` authority=<name> evidence=<kind>[ donor=<board> d=<distance>]` after the kernel fields; a described 
-explicit route has none), and `ninferno_route_tune --selected-out` rows end with the `authority,evidence` columns.
+The `route_evidence` section (#614) has the same keys and a line of the same runs, each run naming
+beside the route the authority that answered and the evidence it rests on:
+`<route> authority=<name> evidence=<kind>`, and for an answer taken from another board
+`donor=<board or class> d=<distance>`. A line carries a `one lane` or
+`several lanes` clause where that round's runs (route and evidence) differ from the width-alone
+runs, so it can carry one where its routes line has none, when only the authority differs.
+Kinds: `pin`, `measured` (this board's own), `ranker` (the cost model, or a rule: a derivation from
+the card's facts, or a literal fitted on one or more measured cards and applied to every board;
+the evidence does not tell the two apart, and names no donor), `carried` (a board within the carry
+distance), `transferred`, `borrowed`. Each section asks the same deterministic selector, so the
+two name the same route at every width; `replay_route_evidence` asks again from the text like
+`replay_routes`. It is in the manifest text (the startup log at debug level, the server-start
+record's `decision.route_evidence`) and in no hash: not in the fingerprint and not in the
+manifest's `nm1-` id, so every earlier fingerprint and manifest id holds. The same fields end a
+`describe_call` description (`ninferno_route_tune --describe 1`:
+` authority=<name> evidence=<kind>[ donor=<board> d=<distance>]` after the kernel fields; a
+described explicit route has none), and they name the route the call asked for: for a call without
+workspace that takes the A16 heuristic's route, that heuristic's authority. `ninferno_route_tune
+--selected-out` rows end with the `authority,evidence` columns, which describe the asked route
+(the `selected` column is the route that ran after resolve_route).
 
 ## What will be promised
 

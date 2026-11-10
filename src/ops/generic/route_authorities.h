@@ -13,7 +13,9 @@
 // Evidence kinds. Pin: a maintainer's choice (a route pin, a route probe). Measured: timed on this
 // board (a route table measured here, the dense tuner's entry of this class and build, the R8
 // decode table of this board). Ranker: the cost model where it prices the call, else a rule (a
-// derivation from the card's facts, or a literal of one or more measured cards). Carried: a
+// derivation from the card's facts, or a literal of one or more measured cards, fitted there and
+// applied to every board). The printed kind does not tell these apart and names no donor; the cost
+// model and a rule differ in Evidence::ranker, which is not printed. Carried: a
 // measurement of a board within kCarryDistance (core/measured_boards.h), every quantity compared.
 // Transferred: a measurement of a farther board, carried by the authority's own rule. Borrowed: an
 // exact-key entry taken from a farther table because the nearest lacked it (route_table.cpp

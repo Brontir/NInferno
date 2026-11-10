@@ -50,8 +50,9 @@ std::string line_of(const DeviceClass& device, const generic::SeenProblem& s,
     const ops::ScopedInvariantRoutes profile(invariant);
     const generic::Problem& p = s.problem;
     const auto ask            = [&](std::int32_t tokens, bool prefill) {
-        // One query for both sections: the route is the answer's, so the two sections cannot name
-        // different routes for a width.
+        // Both sections ask this one query (each section on its own pass: the selector is
+        // deterministic, so the two name the same route for a width), and the route is the
+        // answer's.
         const auto answer =
             generic::route_answer_query(device, p.qtype, p.policy, p.epilogue, p.n, p.k, tokens,
                                                    prefill, s.parent_rows, s.layout);

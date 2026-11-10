@@ -27,7 +27,10 @@
 // The route_evidence section (#614, A3) has the same keys and the same shape of line, each run
 // naming the evidence beside the route: "<route> authority=<name> evidence=<kind>[ donor=<board>
 // d=<distance>]" (route_authorities.h evidence_text). Its routes are those of the routes section
-// (one route_answer_query gives both). It is in the manifest text, not in the fingerprint and not
+// (both ask route_answer_query, which is deterministic; each section makes its own pass). A
+// lanes clause appears where that round's runs, evidence included, differ from the width-alone
+// runs, so an evidence line can carry one where its routes line has none. It is in the manifest
+// text, not in the fingerprint and not
 // in the manifest's hash (decision_fingerprint.h), so the id of every existing manifest holds.
 
 #include "core/device_class.h"

@@ -87,10 +87,11 @@ struct RouteDescription {
     // slice of a fused parent this is not the selector's number: select_route prices the parent.
     std::optional<double> cost_seconds;
     std::optional<KernelResources> kernel;
-    // The selector's answer the call took: its authority and evidence, from the same select_answer
-    // that gave `resolved.asked` (describe_call). Empty for describe_route, whose route is the
-    // caller's, not a selection. The call can still leave the selected route afterwards
-    // (workspace_free_route, resolve_route: `resolved.reason`); the evidence is of the selection.
+    // The authority and evidence of the route the call asked for (`resolved.asked`), from the
+    // walk that gave that route (describe_call): select_answer's, or, for a call without workspace
+    // that takes the A16 heuristic's route (workspace_free_route), that heuristic's. Empty for
+    // describe_route, whose route is the caller's, not a selection. resolve_route can still demote
+    // the asked route afterwards (`resolved.reason`); the evidence is of the asked route.
     std::optional<Evidence> evidence;
 };
 

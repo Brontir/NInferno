@@ -45,6 +45,21 @@ void describe_weight(DescribedWeight& out, QType qtype, Epilogue epilogue, std::
     out.weight          = native_weight(out.view, nvfp4 ? 1.0F : 0.0F);
 }
 
+// workspace_free_route with the evidence of the walk that gave the route it hands on: the
+// selection's own where the call keeps its route, the A16 heuristic's where a call without
+// workspace takes that heuristic's route instead (the walk workspace_free_route makes).
+RouteAnswer workspace_free_answer(const RouteAnswer& selected, const Problem& problem,
+                                  const Weight& weight, std::int32_t tokens, bool prefill,
+                                  bool workspace) {
+    const Route kept =
+        workspace_free_route(selected.route, problem, weight, tokens, prefill, workspace);
+    if (kept == selected.route) return selected;
+    return heuristic_answer(
+        ask_below_profiles(tokens, prefill),
+        Problem{problem.qtype, LinearPolicy::A16Only, problem.n, problem.k, problem.epilogue},
+        weight);
+}
+
 // The engine's call as route_query describes it: `n` rows, K-wide contiguous x unless `ldx` says.
 CallLayout engine_call(std::int32_t n, std::int32_t k, std::int32_t tokens, Epilogue epilogue,
                        std::optional<std::size_t> workspace_free, bool x_aligned16, int ldx,
@@ -203,9 +218,10 @@ std::optional<RouteDescription> describe_call(const DeviceClass& device, QType q
     describe_weight(described, qtype, epilogue, n, k, parent_rows);
     if (!supports(described.weight)) return std::nullopt;
     const Problem problem{qtype, policy, n, k, epilogue};
-    const RouteAnswer answer = select_answer(problem, described.weight, tokens, prefill);
-    const Route asked        = workspace_free_route(answer.route, problem, described.weight, tokens,
-                                                    prefill, workspace_free.has_value());
+    const RouteAnswer answer =
+        workspace_free_answer(select_answer(problem, described.weight, tokens, prefill), problem,
+                              described.weight, tokens, prefill, workspace_free.has_value());
+    const Route asked            = answer.route;
     const ResolvedRoute resolved = resolve_route(
         asked, described.weight, engine_call(n, k, tokens, epilogue, workspace_free, true, 0, 1));
     RouteDescription out =

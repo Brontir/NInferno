@@ -6,7 +6,11 @@
 // a Measured answer is this board's (distance 0), a Carried answer's donor lies within
 // kCarryDistance, a Borrowed or Transferred answer names its donor, and the invariant profile is
 // answered by its own authority alone. The tally of answers per board and authority is printed:
-// which authority decides how much of the grid on which board.
+// which authority decides how much of the grid on which board. Every authority is also asked
+// directly (check_direct): where it answers, its evidence names it, so a label cannot be wrong or
+// swapped on an authority the walk reaches rarely or never. The printed words of the evidence kinds
+// are pinned as literals (check_words), and a description without workspace carries the evidence
+// of the route it names.
 //
 // The routes themselves are the goldens' business; this test holds the evidence.
 #include "ops/quantized_weight.h"
@@ -47,7 +51,14 @@ int g_failed = 0;
 // every kind of evidence must have answered somewhere, or be listed with why it cannot.
 std::set<std::string> g_reached_sources;
 std::set<std::string> g_reached_kinds;
-int g_described = 0, g_describe_threw = 0;
+int g_described = 0, g_describe_threw = 0, g_describe_attempts = 0;
+// Authorities asked directly (check_direct): each answers under its own name wherever it answers,
+// whether or not an earlier authority would have answered first in the walk.
+std::set<std::string> g_direct_sources;
+int g_direct_answers = 0;
+// Described calls without workspace whose asked route is not the selection's (the A16 heuristic's
+// instead): the evidence must be that heuristic's.
+int g_substituted = 0;
 
 void fail(const std::string& what) {
     ++g_failed;
@@ -112,9 +123,98 @@ int check_lists() {
     return g_failed;
 }
 
+// The words the evidence prints, as literals (not through evidence_kind_name): a reader of a
+// manifest, a description or the tuner's CSV sees these, and tools/bench/regret_collect.py groups
+// by them.
+void check_words() {
+    using K = generic::Evidence::Kind;
+
+    struct Word {
+        K kind;
+        const char* word;
+    };
+
+    constexpr Word words[] = {
+        {K::Pin, "pin"},         {K::Measured, "measured"},       {K::Ranker, "ranker"},
+        {K::Carried, "carried"}, {K::Transferred, "transferred"}, {K::Borrowed, "borrowed"}};
+    std::set<std::string> distinct;
+    for (const Word& w : words) {
+        distinct.insert(w.word);
+        const std::string name = generic::evidence_kind_name(w.kind);
+        if (name != w.word) fail(std::string("evidence kind prints '") + name + "', not " + w.word);
+        generic::Evidence e;
+        e.kind = w.kind;
+        e.ranker =
+            w.kind == K::Ranker ? generic::Evidence::Ranker::Rule : generic::Evidence::Ranker::None;
+        e.source               = "route-table";
+        const std::string text = generic::evidence_text(e);
+        if (text != std::string("authority=route-table evidence=") + w.word) {
+            fail("evidence_text of " + std::string(w.word) + ": '" + text + "'");
+        }
+        const std::string columns = generic::evidence_columns(e);
+        if (columns != std::string("route-table,") + w.word) {
+            fail("evidence_columns of " + std::string(w.word) + ": '" + columns + "'");
+        }
+    }
+    if (distinct.size() != 6) fail("the kinds are not six distinct words");
+    // A donor and its distance: three decimals, whatever the locale.
+    generic::Evidence carried;
+    carried.kind     = K::Carried;
+    carried.ranker   = generic::Evidence::Ranker::None;
+    carried.source   = "route-table";
+    carried.donor    = "tu102";
+    carried.distance = 0.069;
+    if (generic::evidence_text(carried) !=
+        "authority=route-table evidence=carried donor=tu102 d=0.069") {
+        fail("evidence_text with a donor: '" + generic::evidence_text(carried) + "'");
+    }
+    if (generic::evidence_columns(carried) != "route-table,carried") {
+        fail("evidence_columns with a donor: '" + generic::evidence_columns(carried) + "'");
+    }
+    generic::Evidence borrowed = carried;
+    borrowed.kind              = K::Borrowed;
+    borrowed.donor             = "8.9:128sm";
+    borrowed.distance          = 0.5;
+    if (generic::evidence_text(borrowed) !=
+        "authority=route-table evidence=borrowed donor=8.9:128sm d=0.500") {
+        fail("evidence_text of a borrowed answer: '" + generic::evidence_text(borrowed) + "'");
+    }
+}
+
 bool same_evidence(const generic::Evidence& a, const generic::Evidence& b) {
     return a.kind == b.kind && a.ranker == b.ranker && a.source == b.source && a.donor == b.donor &&
            a.distance == b.distance;
+}
+
+// Every authority of the three lists asked directly on one ask: where it answers, its evidence
+// names it (r8-rules also answers as r8-table, where the decode table does), whatever authority
+// would have answered first in the walk. The walk's tally cannot tell a wrong name from a right
+// one on an authority it never reaches, nor two names swapped; this can.
+void check_direct(const generic::Ask& ask, const generic::Problem& problem, const Weight& w,
+                  const std::set<std::string_view>& names, const std::string& where) {
+    for (const auto list : {generic::select_authorities(), generic::auto_authorities(),
+                            generic::rule_authorities()}) {
+        for (const generic::NamedAuthority& a : list) {
+            try {
+                const auto answer = a.answer(ask, problem, w);
+                if (!answer) continue;
+                ++g_direct_answers;
+                const std::string_view source = answer->evidence.source;
+                const bool right =
+                    source == a.name || (a.name == "r8-rules" && source == "r8-table");
+                if (!right) {
+                    fail(where + ": " + std::string(a.name) + " answered as '" +
+                         std::string(source) + "'");
+                }
+                if (names.count(source) == 0) {
+                    fail(where + ": " + std::string(a.name) + " answered as an unlisted source");
+                }
+                g_direct_sources.insert(std::string(a.name));
+            } catch (const std::exception& error) {
+                fail(where + ": " + std::string(a.name) + " threw " + error.what());
+            }
+        }
+    }
 }
 
 // The evidence the other readers print is the selection's own: route_answer_query (the decision
@@ -122,9 +222,9 @@ bool same_evidence(const generic::Evidence& a, const generic::Evidence& b) {
 // carries its evidence (describe_text prints it, so does the route tuner's CSV through
 // evidence_columns). `described`: also describe a call (the cost model prices it, which can need a
 // device: a throw there is counted, not failed).
-void check_readers(const DeviceClass& device, const generic::Problem& problem, std::int32_t t,
-                   bool prefill, const generic::RouteAnswer& a, const std::string& where,
-                   bool described) {
+void check_readers(const DeviceClass& device, const generic::Problem& problem, const Weight& w,
+                   std::int32_t t, bool prefill, const generic::RouteAnswer& a,
+                   const std::string& where, bool described) {
     const auto q = generic::route_answer_query(device, problem.qtype, problem.policy,
                                                problem.epilogue, problem.n, problem.k, t, prefill);
     if (!q) {
@@ -142,6 +242,7 @@ void check_readers(const DeviceClass& device, const generic::Problem& problem, s
         fail(where + ": evidence_columns '" + columns + "'");
     }
     if (!described) return;
+    ++g_describe_attempts;
     try {
         const auto d =
             generic::describe_call(device, problem.qtype, problem.policy, problem.epilogue,
@@ -157,6 +258,45 @@ void check_readers(const DeviceClass& device, const generic::Problem& problem, s
         const std::string text = generic::describe_text(*d);
         const std::string tail = " " + generic::evidence_text(a.evidence);
         if (!text.ends_with(tail)) fail(where + ": describe_text does not end with " + tail);
+    } catch (const std::exception&) { ++g_describe_threw; }
+    // Without workspace a W4A4, W4A8 or I8 selection runs the A16 heuristic's route instead
+    // (workspace_free_route): the description names that route, and the evidence is the evidence
+    // of the walk that gave it, never the selection's of another route.
+    ++g_describe_attempts;
+    try {
+        const auto d =
+            generic::describe_call(device, problem.qtype, problem.policy, problem.epilogue,
+                                   problem.n, problem.k, t, std::nullopt, prefill);
+        ++g_described;
+        if (!d || !d->evidence) {
+            fail(where + ": describe_call without workspace carries no evidence");
+            return;
+        }
+        const generic::Problem a16{problem.qtype, LinearPolicy::A16Only, problem.n, problem.k,
+                                   problem.epilogue};
+        const generic::RouteAnswer heuristic =
+            generic::heuristic_answer(generic::ask_below_profiles(t, prefill), a16, w);
+        const bool kept = d->resolved.asked == a.route;
+        if (!kept) ++g_substituted;
+        const generic::RouteAnswer& owner = kept ? a : heuristic;
+        if (!kept && !(d->resolved.asked == heuristic.route)) {
+            fail(where + ": without workspace the call asks for " +
+                 generic::route_name(d->resolved.asked) + ", neither the selection's " +
+                 generic::route_name(a.route) + " nor the A16 heuristic's " +
+                 generic::route_name(heuristic.route));
+        } else if (!same_evidence(*d->evidence, owner.evidence)) {
+            fail(where + ": without workspace the call asks for " +
+                 generic::route_name(d->resolved.asked) + " with the evidence of " +
+                 generic::route_name(a.route) + " (" + generic::evidence_text(*d->evidence) +
+                 "), not of its own walk (" + generic::evidence_text(owner.evidence) + ")");
+        }
+        const std::string text = generic::describe_text(*d);
+        if (!text.starts_with("asked=" + generic::route_name(d->resolved.asked) + " ")) {
+            fail(where + ": describe_text does not start with the asked route");
+        }
+        if (!text.ends_with(" " + generic::evidence_text(d->evidence.value()))) {
+            fail(where + ": describe_text does not end with its evidence");
+        }
     } catch (const std::exception&) { ++g_describe_threw; }
 }
 
@@ -196,6 +336,10 @@ void check_evidence(const generic::RouteAnswer& a, const std::set<std::string_vi
     case K::Borrowed:
         if (e.donor.empty()) fail(where + ": borrowed from nobody");
         break;
+    }
+    // evidence_text prints the donor as one token, and the CSV column holds no comma.
+    if (e.donor.find_first_of(" ,") != std::string::npos) {
+        fail(where + ": donor '" + e.donor + "' has a space or a comma");
     }
     if (e.source == "cost-model" && e.ranker != R::Cost) fail(where + ": the cost model as a rule");
     if (e.source == "route-pin" || e.source == "route-probe") {
@@ -248,6 +392,12 @@ std::string known_source(const KnownCase& c) {
             generic::select_answer(problem, w, c.tokens, c.prefill).evidence;
         g_reached_sources.insert(std::string(e.source));
         g_reached_kinds.insert(generic::evidence_kind_name(e.kind));
+        // The same call, every authority asked on its own (the pin, the probe and the profile are
+        // in force here, which the board grids never set but for the invariant profile).
+        check_direct(generic::resolve_ask(c.tokens, c.prefill), problem, w, listed_sources(),
+                     std::string(c.board) + " " + generic::qtype_name(c.qtype) +
+                         " known case, profile " + std::to_string(c.profile) +
+                         " T=" + std::to_string(c.tokens));
         return std::string(e.source);
     } catch (const std::exception& error) { return std::string("threw ") + error.what(); }
 }
@@ -287,15 +437,13 @@ void check_known() {
 
 // Authorities and kinds the grids above never reach, with why. Anything else unreached fails: a
 // new authority, or a restatement that moved the last call off one, must say so here.
+// The walk may leave an authority unreached when an earlier one always answers first (the staged
+// MMA, the fallbacks); check_direct asks every authority on its own, so what the walk misses is
+// still held by name there. Only these two cannot answer on a substituted board at all.
 const std::map<std::string_view, std::string_view> kUnreached = {
     {"dense-tune", "routes timed on a device are not a substituted board's "
                    "(tuned_dense_route: substituted_foreign_class) and no tune runs here"},
     {"dense-tune-prefill-band", "the same tuner's bands, the same refusal for a substituted board"},
-    {"staged-rule", "no format of the grid is left to the staged MMA: the tiled and register "
-                    "routes answer first (observed on the facts boards, not derived)"},
-    {"staged-fallback", "the same: a supported weight of the grid never reaches it"},
-    {"scalar-fallback", "the safety net: answers only when every authority before it abstains "
-                        "for a supported weight, which no format of the grid does"},
 };
 const std::map<std::string_view, std::string_view> kUnreachedKinds = {};
 
@@ -304,6 +452,16 @@ void check_coverage(const std::set<std::string_view>& names) {
     for (const std::string_view n : names) {
         if (g_reached_sources.count(std::string(n)) == 0 && kUnreached.count(n) == 0) {
             missing += " " + std::string(n);
+        }
+    }
+    // Every listed authority answered under its own name when asked on its own.
+    std::string missing_direct;
+    for (const auto list : {generic::select_authorities(), generic::auto_authorities(),
+                            generic::rule_authorities()}) {
+        for (const generic::NamedAuthority& a : list) {
+            if (g_direct_sources.count(std::string(a.name)) == 0 && kUnreached.count(a.name) == 0) {
+                missing_direct += " " + std::string(a.name);
+            }
         }
     }
     std::string missing_kinds;
@@ -315,11 +473,26 @@ void check_coverage(const std::set<std::string_view>& names) {
         }
     }
     std::cout << "unreached authorities:" << (missing.empty() ? " none" : missing) << '\n'
+              << "authorities never answering when asked directly:"
+              << (missing_direct.empty() ? " none" : missing_direct) << '\n'
               << "unreached evidence kinds:" << (missing_kinds.empty() ? " none" : missing_kinds)
               << '\n'
+              << "direct answers compared: " << g_direct_answers << '\n'
               << "descriptions compared: " << g_described << " (threw " << g_describe_threw
-              << ")\n";
+              << " of " << g_describe_attempts << " asked)\n"
+              << "descriptions without workspace on another route than the selection's: "
+              << g_substituted << '\n';
     if (!missing.empty()) fail("authorities never reached:" + missing);
+    if (!missing_direct.empty()) fail("authorities never answering on their own:" + missing_direct);
+    // Without a GPU the cost model's price of a gated route throws (route_cost_seconds reads the
+    // host GPU's compiled facts): counted. A quarter of the asked descriptions is the bound,
+    // chosen (not fitted): a description that throws is not compared, so a change that made most
+    // of them throw would empty the check above.
+    if (g_describe_attempts == 0 || g_describe_threw * 4 > g_describe_attempts) {
+        fail("descriptions that threw: " + std::to_string(g_describe_threw) + " of " +
+             std::to_string(g_describe_attempts));
+    }
+    if (g_substituted == 0) fail("no described call without workspace left the selection's route");
     if (!missing_kinds.empty()) fail("evidence kinds never reached:" + missing_kinds);
 }
 
@@ -365,10 +538,23 @@ int run_board(const generic::FactsBoard& b, const std::set<std::string_view>& na
                                     generic::select_answer(problem, w, t, prefill);
                                 check_evidence(a, names, where, profile == 2);
                                 ++tally[a.evidence.source];
-                                check_readers(
-                                    board, problem, t, prefill, a, where,
+                                const bool sampled =
                                     shape.n == 4096 && epilogue == generic::Epilogue::Store &&
-                                        (t == 1 || t == 4 || t == 17 || t == 64 || t == 512));
+                                    (t == 1 || t == 4 || t == 17 || t == 64 || t == 512);
+                                check_readers(board, problem, w, t, prefill, a, where, sampled);
+                                // Every authority on its own at the sampled calls, for the round
+                                // of one sequence and of several (the MMQ verify rule reads it).
+                                if (sampled) {
+                                    const generic::Profile ask_profile =
+                                        profile == 2 ? generic::Profile::Invariant
+                                        : prefill    ? generic::Profile::Prefill
+                                                     : generic::Profile::Speed;
+                                    for (const int lanes : {1, 4}) {
+                                        check_direct(
+                                            generic::Ask{ask_profile, t, lanes}, problem, w, names,
+                                            where + " direct lanes " + std::to_string(lanes));
+                                    }
+                                }
                             } catch (const std::exception& error) {
                                 fail(where + ": threw " + error.what());
                             }
@@ -390,6 +576,7 @@ int main() {
     try {
         const auto names = listed_sources();
         check_lists();
+        check_words();
         check_selected_header();
         check_known();
         for (const generic::FactsBoard& b : generic::kFactsBoards) run_board(b, names);
