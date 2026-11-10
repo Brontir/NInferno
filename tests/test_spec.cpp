@@ -937,7 +937,7 @@ int test_source_identity() {
     failures += check(id && art::is_source_identity(*id), "a recorded conversion has an identity");
     // The same conversion elsewhere (another artifact id, path, file split): the same identity.
     auto moved                                           = d;
-    moved.provenance["sources"]["base"]["path"]          = "/root/hf/other";
+    moved.provenance["sources"]["base"]["path"]          = "/home/b/other";
     std::get<art::TensorObject>(moved.objects[0]).offset = 4096;
     std::swap(moved.objects[0], moved.objects[1]);
     failures += check(art::source_identity(moved) == id,

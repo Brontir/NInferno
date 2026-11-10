@@ -184,7 +184,7 @@ ProvenancePin g_pins[] = {
     {"rtx5070ti", "table+class-a8", moe::Evidence::Kind::Borrowed, "gb206", 2.25184, true,
      moe::Evidence::Kind::Carried, "rtx5080", 0.570089, false},
     {"rtx5090", "table+class-a8", moe::Evidence::Kind::Measured, "", 0, true,
-     moe::Evidence::Kind::Measured, "rtx5090", 0, false},
+     moe::Evidence::Kind::Measured, "", 0, false},
     {"rtx5070ti",
      "decode-r8",
      moe::Evidence::Kind::Carried,
@@ -279,6 +279,9 @@ bool evidence_fits(const moe::MoePlanQuery& q, const ops::MoeWeights& weights,
     if (e.source != source_of(q.authority)) return false;
     const bool overlaid = q.authority == moe::MoeAuthority::TableClassA8;
     if (e.overlay.has_value() != overlaid) return false;
+    // The evidence contract: a Measured answer, and a Measured overlay, name no donor.
+    if (e.kind == K::Measured && !e.donor.empty()) return false;
+    if (e.overlay && e.overlay->kind == K::Measured && !e.overlay->donor.empty()) return false;
     const moe::Evidence a8 = moe::class_a8_route_evidence();
     switch (q.authority) {
     case moe::MoeAuthority::Tuner:

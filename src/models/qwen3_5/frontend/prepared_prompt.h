@@ -162,6 +162,9 @@ struct PreparedPromptData {
     // The tokens a tool_choice none request must not sample (empty: none): the tool-call and
     // tool-result markers.
     std::vector<TokenId> banned_tokens;
+    // A structural tag that closes the header positions of a call under tool_choice none
+    // (chat::ToolCallSyntax::refusal_structural_tag; empty: none).
+    std::string refusal_tag;
     // The call is refused: the output ends at a structural token outside reasoning
     // (OutputStart::answer_only).
     bool answer_only = false;

@@ -14,9 +14,14 @@ the PCI-ID table (src/core/data/gpu_facts.json). Prints:
      (k <= 7) a plan picks for a target the other card measured: the other card's tokens a round
      over this card's R(facts), each section weighted as the mix (section_weight), against the
      configuration this card's own tune measured fastest (k <= 7);
-  4. with --hard DIR (hard50 results: DIR/<stand>/<tag>/{plain,mtp:K,dflash:K}.json), the speedup
+  4. with --hard DIR (hard50 results: DIR/<board>/<tag>/{plain,mtp:K,dflash:K}.json, <board> a PCI
+     device id such as 0x2782, or a name --hard-ids maps to one), the speedup
      E / R(facts) on each card with that card left out of its generation's eta fit, against the
      measured speedup (E counted as tokens - 1 - accepted - plain steps rounds).
+A card is its chip and SM count ("ad104:60sm"): boards with other ids or names but the same chip and
+SM count are grouped as one card, and where a run was measured does not name it. Each row still uses
+its own board's memory rate, bus width and boost clock.
+A generation with one card has no hold-out; --hard prints a note on stderr for each directory it skips.
 """
 import argparse
 import collections
@@ -24,6 +29,7 @@ import glob
 import json
 import math
 import os
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -31,8 +37,6 @@ REG = json.loads((ROOT / "src/spec/data/drafter_registry.json").read_text(encodi
 BOARDS = {g["id"].upper(): g for g in json.loads((ROOT / "src/core/data/gpu_facts.json").read_text(encoding="utf-8"))["gpus"]}
 GEN = {70: "volta", 75: "turing", 86: "ga10x", 89: "ada", 120: "gb20x"}
 SHARE = 0.30
-STANDS = {"l4070": "0x2782", "l4090": "0x2684", "l4060": "0x2805", "l5070": "0x2C05", "l5090": "0x2B85",
-          "l3060": "0x2503", "l2080": "0x1E04", "lgv100": "0x1DBA"}  # the registry pairs' lab_board (by name below), not the stands' own ids (0x2504, 0x1E07: same rates)
 HARD_TAGS = {"q9b_q4km": "unsloth/Qwen3.5-9B-MTP-GGUF@9716a636ee4bddc3fed678220b7a33dd2a4160ae Q4_K_M",
              "g12_q4km": "unsloth/gemma-4-12b-it-GGUF@fc034cfff751157913579611efad8462ac1be606 Q4_K_M",
              "oss20": "ggml-org/gpt-oss-20b-GGUF@15dcfc7e7c608c6161507211ed43c5b590801b4b MXFP4",
@@ -43,8 +47,11 @@ HARD_TAGS = {"q9b_q4km": "unsloth/Qwen3.5-9B-MTP-GGUF@9716a636ee4bddc3fed678220b
 def board(pci):
     r = BOARDS[pci.upper()]
     s8 = 512 if r["cc"] == 70 else 2048  # core/generation.h s8; Volta dp4a's 512
-    return dict(name=r["name"], gen=GEN[r["cc"]], bw=r["bus_bits"] / 8 * r["gbps"] * 1e9,
-                peak=s8 * r["sms"] * r["boost_mhz"] * 1e6)
+    # Boards are grouped by chip and SM count (the registry's own tune key), never by a name, a PCI
+    # id or where a run was measured: two measurements of one chip are one card. The grouping only
+    # decides what is held out; bw and peak below are this board's own rates.
+    return dict(name=r["name"], card=f'{r["chip"]}:{r["sms"]}sm', gen=GEN[r["cc"]],
+                bw=r["bus_bits"] / 8 * r["gbps"] * 1e9, peak=s8 * r["sms"] * r["boost_mhz"] * 1e6)
 
 
 def frac(p, rows):
@@ -180,21 +187,21 @@ def cross(rows):
           "\n|---|---|---|---|---|---|")
     plans = []
     for g in sorted({r["board"]["gen"] for r in rows}):
-        names = sorted({r["board"]["name"] for r in rows if r["board"]["gen"] == g and fitted(r)})
-        if len(names) < 2:
+        cards = sorted({r["board"]["card"] for r in rows if r["board"]["gen"] == g and fitted(r)})
+        if len(cards) < 2:
             continue
-        for name in names:
-            eta = fit([r for r in rows if r["board"]["gen"] == g and fitted(r) and r["board"]["name"] != name])
-            own = [r for r in rows if r["board"]["name"] == name and r["fam"] == "qwen" and not r["q8"] and r["k"] <= 7]
+        for card in cards:
+            eta = fit([r for r in rows if r["board"]["gen"] == g and fitted(r) and r["board"]["card"] != card])
+            own = [r for r in rows if r["board"]["card"] == card and r["fam"] == "qwen" and not r["q8"] and r["k"] <= 7]
             e = [r["meas"] / R(r["p"]["round_facts"], r["mode"], r["k"], kappa(r["board"], eta), r["rows"]) - 1 for r in own]
-            print(f"| {g} | {name} | {eta:.3f} | {len(e)} | {100 * sum(e) / len(e):+.1f} % | {100 * (sum(x * x for x in e) / len(e)) ** .5:.1f} % |")
+            print(f"| {g} | {card} | {eta:.3f} | {len(e)} | {100 * sum(e) / len(e):+.1f} % | {100 * (sum(x * x for x in e) / len(e)) ** .5:.1f} % |")
             # The plan for a target the generation's other card measured, priced for this card.
             for p in REG["pairs"]:
-                if "round_facts" not in p or "lab_board" not in p or board(p["lab_board"])["name"] != name:
+                if "round_facts" not in p or "lab_board" not in p or board(p["lab_board"])["card"] != card:
                     continue
                 for q in REG["pairs"]:
                     if (q is p or q.get("target") != p["target"] or "lab_board" not in q
-                            or board(q["lab_board"])["gen"] != g or board(q["lab_board"])["name"] == name):
+                            or board(q["lab_board"])["gen"] != g or board(q["lab_board"])["card"] == card):
                         continue
                     b = board(p["lab_board"]); own_s = sections(p); other = sections(q)
                     plain = {f: v[0] for f, v in own_s["plain"].items()}
@@ -218,8 +225,8 @@ def cross(rows):
                         best[c] = (mix_speedup(pred, plain), mix_speedup(meas, plain))
                     if best:
                         pc = max(best, key=lambda c: best[c][0]); mc = max(best, key=lambda c: best[c][1])
-                        plans.append((name, p["target_repo"].split("@")[0] + " " + p["target_repo"].split(" ")[-1],
-                                      board(q["lab_board"])["name"], pc, best[pc][0], best[pc][1], mc, best[mc][1]))
+                        plans.append((card, p["target_repo"].split("@")[0] + " " + p["target_repo"].split(" ")[-1],
+                                      board(q["lab_board"])["card"], pc, best[pc][0], best[pc][1], mc, best[mc][1]))
     print("\n| card | target | E from | plan picks | predicted x | measured x of it | measured best | its x |"
           "\n|---|---|---|---|---|---|---|---|")
     for t in plans:
@@ -233,6 +240,7 @@ def fitted(r):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--hard")
+    ap.add_argument("--hard-ids", help="JSON {directory name: PCI device id} for --hard directories")
     args = ap.parse_args()
     rows = rows_of_registry()
     gens = sorted({r["board"]["gen"] for r in rows})
@@ -241,28 +249,55 @@ def main():
     for g in gens:
         sel = [r for r in rows if r["board"]["gen"] == g and fitted(r)]
         etas[g] = fit(sel)
-        print(f"| {g} | {etas[g]:.3f} | {', '.join(sorted({r['board']['name'] for r in sel}))} |")
+        print(f"| {g} | {etas[g]:.3f} | {', '.join(sorted({r['board']['card'] for r in sel}))} |")
     print("\n| card | family | k | rounds | R measured / R facts: mean | rms |\n|---|---|---|---|---|---|")
     grp = collections.defaultdict(list)
     for r in rows:
-        key = (r["board"]["name"], r["fam"] + (" MoE" if r["moe"] else "") + (" Q8_0" if r["q8"] else ""),
+        key = (r["board"]["card"], r["fam"] + (" MoE" if r["moe"] else "") + (" Q8_0" if r["q8"] else ""),
                "8-16" if r["k"] > 7 else "1-7")
         grp[key].append(r["meas"] / R(r["p"]["round_facts"], r["mode"], r["k"], kappa(r["board"], etas[r["board"]["gen"]]), r["rows"]) - 1)
-    for (name, fam, ks), e in sorted(grp.items()):
-        print(f"| {name} | {fam} | {ks} | {len(e)} | {100 * sum(e) / len(e):+.1f} % | {100 * (sum(x * x for x in e) / len(e)) ** .5:.1f} % |")
+    for (card, fam, ks), e in sorted(grp.items()):
+        print(f"| {card} | {fam} | {ks} | {len(e)} | {100 * sum(e) / len(e):+.1f} % | {100 * (sum(x * x for x in e) / len(e)) ** .5:.1f} % |")
     cross(rows)
     if args.hard:
-        print("\n| held-out card | model | config | E | measured x | predicted x | error |\n|---|---|---|---|---|---|---|")
+        print("\n| held-out card (board) | model | config | E | measured x | predicted x | error |\n|---|---|---|---|---|---|---|")
         pairs = {p["target_repo"]: p for p in REG["pairs"] if "round_facts" in p}
+        # A directory names its board by PCI id, or through --hard-ids; the board's facts give the
+        # card (chip and SM count), held out of the eta fit with every registry row of that card,
+        # whichever id the row or the directory carries.
+        ids = json.loads(Path(args.hard_ids).read_text(encoding="utf-8")) if args.hard_ids else {}
+        if not isinstance(ids, dict):
+            ap.error("--hard-ids must hold a JSON object {directory name: PCI device id}")
+
+        def skip(d, why):
+            print(f"fit_eta --hard: skipped {d}: {why}", file=sys.stderr)
+
         for d in sorted(glob.glob(os.path.join(args.hard, "*", "*"))):
-            stand, tag = Path(d).parts[-2:]
+            board_dir, tag = Path(d).parts[-2:]
             key = HARD_TAGS.get(tag)
-            if key not in pairs or stand not in STANDS or not os.path.exists(os.path.join(d, "plain.json")):
+            pci = ids.get(board_dir, board_dir)
+            if not isinstance(pci, str):
+                skip(d, f"--hard-ids maps {board_dir!r} to {pci!r}, not a PCI device id string")
                 continue
-            b = board(STANDS[stand])
-            sel = [r for r in rows if r["board"]["gen"] == b["gen"] and fitted(r) and r["board"]["name"] != b["name"]]
+            named = pci
+            pci = pci.upper()
+            if key not in pairs:
+                skip(d, f"tag {tag!r} is not one of the known tags {sorted(HARD_TAGS)}")
+                continue
+            if pci not in BOARDS:
+                skip(d, f"{named!r} is not a PCI device id of src/core/data/gpu_facts.json (name the directory so, or map it with --hard-ids)")
+                continue
+            if BOARDS[pci]["cc"] not in GEN:
+                skip(d, f"compute capability {BOARDS[pci]['cc']} of {named!r} has no generation row in GEN")
+                continue
+            if not os.path.exists(os.path.join(d, "plain.json")):
+                skip(d, "no plain.json")
+                continue
+            b = board(pci)
+            sel = [r for r in rows if r["board"]["gen"] == b["gen"] and fitted(r) and r["board"]["card"] != b["card"]]
             if not sel:
-                continue  # its generation has no other card
+                skip(d, f"generation {b['gen']} has no other card than {b['card']}")
+                continue
             eta = fit(sel)
             plain = json.load(open(os.path.join(d, "plain.json")))["summary"]
             for f in sorted(glob.glob(os.path.join(d, "*.json"))):
@@ -278,7 +313,7 @@ def main():
                     continue
                 E = (acc + rounds) / rounds
                 S = run["summary"]["tok_s"] / plain["tok_s"]
-                print(f"| {b['name']} | {tag} | {c} | {E:.2f} | {S:.2f} | {E / rp:.2f} | {100 * (E / rp / S - 1):+.0f} % |")
+                print(f"| {b['card']} {b['name']} | {tag} | {c} | {E:.2f} | {S:.2f} | {E / rp:.2f} | {100 * (E / rp / S - 1):+.0f} % |")
 
 
 if __name__ == "__main__":
