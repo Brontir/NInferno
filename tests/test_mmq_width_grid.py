@@ -348,6 +348,15 @@ class Readers(Base):
         self.assertEqual(rc, 0, err)
         self.assertAlmostEqual(self.fitted(out)[0], 0.12, delta=1e-3)
 
+    def test_the_fit_counts_tiles_in_columns(self):
+        # at k 7 the kit's sizes have the same tile counts in tokens and in columns (the margins); at k 40
+        # they do not, and only a fit in columns = N - k recovers the law exactly
+        sizes = [n for n in g.SIZES if n >= 64]
+        rc, out, err = self.run_main("grid", *self.law_files(0.12, sizes=sizes, k=40))
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.fitted(out), (0.12, 0.12, 0.12))
+        self.assertIn("residual rms 0.000 ms", out)
+
     def test_the_fit_is_deterministic(self):
         # the same cells give the same interval to the last bit (a fixed bootstrap seed)
         rng = random.Random(3)
