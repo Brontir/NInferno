@@ -10,21 +10,44 @@ derivation that would change one stays a proposal until it is predicted and then
 ## The mechanism (code)
 
 `measured::table_answer` (`core/measured_boards.h`) is the one lookup of a measured value table by
-board: `Own` (the board is a table row, distance 0), `Carried` (a row within
-`measured::kCarryDistance`, so every compared quantity is near), `Fallback` (no row is near: the
-table's declared literal, no donor). It selects the donor with `nearest_known_measured`, exactly as
-the lookups did before, so a disposition cannot disagree with the value.
+board. It answers in the words the measured gates use (`measured::Disposition`,
+`core/measured_disposition.h`, shared with `GateAnswer`):
 
-- `moe::a8_route_answer(Board)` (`ops/moe/moe_internal.h`): the class A8 route with its disposition;
-  `a8_default_route()` is the same lookup on the running device.
+- `Measured`: the board's facts are a table row's (distance 0, every quantity known). It does not say
+  that this very SKU was run: an RTX 5090 D has the 5090's SMs, L2 and bandwidth and takes the 5090's
+  row, though only the 5090 was measured.
+- `Carried`: a row within `measured::kCarryDistance`, every compared quantity known.
+- `Incomplete`: no row with every quantity known is within the distance, but the nearest row by plain
+  distance is, with its L2 or bandwidth unknown on either side. The distance could then understate
+  the difference, so the table's literal answers (as a bounded gate takes the unmeasured default for
+  an Incomplete donor), and the label says the facts could not tell.
+- `None`: no row is within the distance; the table's declared literal, no donor.
+
+It selects the donor with `nearest_known_measured`, exactly as the lookups did before, so a
+disposition cannot disagree with the value. A complete row that answers makes the answer `Measured`
+or `Carried` even where a nearer row is `Incomplete`.
+
+- `moe::a8_route_answer(Board)` (`ops/moe/moe_internal.h`): the class A8 route with its disposition.
+  `a8_default_route()` is that answer on the running device, and `class_a8_route_evidence()` reads
+  the same answer's disposition, distance and donor, so the route and its evidence cannot differ.
 - `sparse_moe_q4_groupwise_frontier_answer(Board)` (`ops/sparse_moe/prefill`): the first T of the
   grouped prefill route for Q4/Q5 and Q4/Q6 groupwise banks, with its disposition.
-- `tests/ops/test_table_dispositions.cpp` checks both against the production lookups on the selector
-  boards and pins the disposition of every target SKU of `core/data/gpu_facts.json` in
-  `tests/ops/table_dispositions/dispositions.txt` (host only; `--update` rewrites it).
+- `tests/ops/test_table_dispositions.cpp` checks both against the production lookups, ties the
+  route's evidence to the answer, checks twelve SKUs against answers written by hand from the
+  measurement comments beside the tables, checks the counts below, and pins the disposition of every
+  target SKU of `core/data/gpu_facts.json` (keyed by PCI id) in
+  `tests/ops/table_dispositions/dispositions.txt` (host only; `--update` rewrites it from the code
+  under test, so that file pins behaviour, it is not an independent expectation).
 
-Counts over the 105 target SKUs: A8 route Own 4 / Carried 8 / Fallback 93; Q4 frontier Own 4 /
-Carried 13 / Fallback 88.
+**What the counts below are over.** They are over the published-facts table: each SKU's board is
+built from its `gpu_facts.json` row (`measured::table_board`), whose L2 is the row's `l2_mib`. Three
+rows have no `l2_mib` (A10G, GeForce RTX 3080 12GB, RTX PRO 6000 Blackwell Server Edition), so their
+board has an unknown L2 and they are `Incomplete` wherever a measured row is near. A device reports
+its L2 through the driver, so on hardware those three would be `Carried` (or `None`) by their real
+distance, not `Incomplete`. The table is not a statement about what a device of that SKU gets.
+
+Counts over the 105 target SKUs (measured / carried / incomplete / none):
+A8 route @A8TXT@; Q4 frontier @Q4TXT@.
 
 ## `a8_default_route`
 
@@ -40,16 +63,14 @@ have a row and every other format takes w4r1. It is already fact-based, and it s
 **What cannot be derived now.**
 - The per-T edge (w4r1 to w4r2 at T = 3 or 4 on the RTX 5090 and 5080, w2r1 at T = 4..7 on the 5080)
   is a 2-9 % difference between schedules (a 2 us timer step at the small calls). The cost model
-  prices no grouped stage (step 4 builds `price_moe_stage`), and the laws tried for R8 against the
-  register MMA (Little's law, registers, bursts, TLB, instruction count) each ranked one card wrong.
-  The best predictor has rms 9-13 % on the RTX 4090 and 11-22 % on the RTX 3060, larger than the
-  difference to be decided. A rule with that resolution would only restate three boards.
+  prices no grouped stage yet, so there is no predicted schedule to compare the measurements with; a
+  rule fitted to three boards' sweeps would only restate them.
 - The down schedule (2 x 2 on the RTX 4090, 4 x 1 on the 5080) is a 1-2 % effect at Qwen3.6 decode.
 
 **Disposition: declared.**
 - Rows (RTX 4090, 5090, 5080): measured with `bench/ops/moe_bench.cu --a8 1 --plans sweep`, the
-  numbers in `moe.cpp` beside the table. Disposition `Own` on those boards; `Carried` within distance
-  1.0 (RTX PRO 6000 Blackwell 0.35 from the 5090, RTX 5070 Ti 0.57 and the laptop 5090 0.13 from the
+  numbers in `moe.cpp` beside the table. `Measured` on those boards; `Carried` within distance 1.0
+  (RTX PRO 6000 Blackwell 0.35 from the 5090, RTX 5070 Ti 0.57 and the laptop 5090 0.13 from the
   5080, RTX 4090 D, 6000 Ada and L40 at 0.17 / 0.43 / 0.58 from the 4090).
 - Fallback literal (`kFallbackA8Route`): w4r1 on gate/up at every T, the register MMA on the down.
   Provenance: the load-time tuner's choices on eight cards (A100, RTX 2080 Ti, 3090, 4060 Ti, 5060
@@ -57,13 +78,17 @@ have a row and every other format takes w4r1. It is already fact-based, and it s
   w4r1, where the register MMA lost by x1.15..1.36 (V100 x3.5..4). On the one card where the schedule
   was measured against it (RTX 4060 Ti) every schedule is within 1..3 % of w4r1: the literal's cost,
   where measured, is at most that.
-- 93 of 105 SKUs take the Fallback: every Ampere, Turing, Volta, Hopper, datacenter Blackwell, and
-  Ada card outside distance 1.0 of the 4090. That is the table's real coverage; it is labelled, not
-  hidden.
+- The literal answers @A8LITERAL@ of 105 SKUs (`None` @A8NONE@, `Incomplete` @A8INC@): every Ampere,
+  Turing and Volta card (no row of those instruction sets), every Ada card outside distance 1.0 of
+  the 4090 (L40S, RTX 4080 and SUPER, the 4070 and 4060 families, L4, RTX 2000..4500 Ada, the Ada
+  laptop parts), and the consumer Blackwell cards outside reach of the 5090 and 5080: the RTX 5070,
+  5060 Ti, 5060, the 5080 Laptop and, `Incomplete`, the RTX PRO 6000 Blackwell Server Edition (its L2
+  is not in the facts table). Hopper and datacenter Blackwell (H100, H200, H800, B200) are not among
+  the 105 target SKUs. That is the table's real coverage; it is labelled, not hidden.
 
-**What would move it.** Step 4 (a priced grouped stage with a replica against the sweeps on disk)
-turns the Fallback from a literal into a ranked answer if its residual is below the 3-9 % to be
-decided; step 5's Ampere sweep fills the Ampere row from measurement.
+**What would move it.** A priced grouped stage in the cost model (a replica against the sweeps on
+disk) would turn the literal from a constant into a ranked answer if its residual is below the 3-9 %
+to be decided, and a sweep on an Ampere card would fill the Ampere row from measurement.
 
 ## The sparse MoE Q4/Q5 groupwise frontier
 
@@ -87,18 +112,20 @@ parameters fits them exactly, which is a fit, not a derivation.
 **Disposition: declared.** Rows RTX 5090, 4090 (`kSparseMoePrefillQ4Q5Min` = 47) and RTX 3090 (17),
 measured ABBA as above; `Carried` within 1.0 (RTX PRO 6000 0.35, 4090 D 0.17, 6000 Ada 0.43, L40
 0.58; 3090 Ti 0.14, 3080 0.70, 3080 Ti 0.07, A6000 0.32, A5000 0.64, A40 0.46, A10 0.83).
-Fallback literal: 47, the Blackwell/Ada edge.
+Fallback literal: 47, the Blackwell/Ada edge. The literal answers @Q4LITERAL@ of 105 SKUs (`None`
+@Q4NONE@, `Incomplete` @Q4INC@).
 
-**Open risk, found by this disposition.** 88 of 105 SKUs take the 47 literal, among them Ampere cards
-the table does not reach: the RTX 3060, 3060 Ti, 3070, 3070 Ti, A4000, A10G, 3050, A2 and the 3080
-12 GB. The only Ampere measurement (3090) lost 28 % at C4 with
-47 against 17. The 3060 is a lab card, so this is checkable: a C4 sweep at frontier 47 / 25 / 17 on
-the 3060 would show whether the Ampere step carries to the whole generation. If it does, a
-generation-keyed rule (a frontier of 17 for a board without Ada's tensor-core rate) would turn those
-Ampere SKUs from Fallback to a measured-and-labelled answer. That is a behaviour change and needs the
-GPU run; nothing here changes the default. It is recorded as the follow-up, not applied.
+**Open risk.** Ampere cards outside the 3090's reach take the 47 literal: the RTX 3060, 3060 Ti,
+3070, 3070 Ti, A4000, 3050 and A2. (The A10G and the RTX 3080 12GB are `Incomplete` in the facts
+table only because it has no L2 for them; a device reports its own L2 and would be `Carried` from the
+3090 at its real distance.) The only Ampere measurement (3090) lost 28 % at C4 with 47 against 17,
+so the step may carry to the whole generation. A C4 sweep at frontier 47 / 25 / 17 on an RTX 3060
+would show whether it does; if it does, a generation-keyed rule (a frontier of 17 for a board
+without Ada's tensor-core rate) would turn those SKUs into a measured-and-labelled answer. That is a
+behaviour change and needs the GPU run; nothing here changes the default.
 
 ## Verified and not verified
 
-Host test and the production-equality checks pass on the base build. Not verified: the dispositions'
-meaning on a GPU (no kernel runs here), and the open Ampere frontier risk above (needs the 3060 sweep).
+The host test and the production-equality checks run without a GPU. Not verified: the dispositions'
+meaning on a GPU (no kernel runs in the test), and the open Ampere frontier risk above (it needs the
+sweep on an Ampere card).

@@ -143,7 +143,7 @@ std::string g_board; // the board being dumped
 
 // Provenance pinned as literals, one per kind: some answer on this board under this authority
 // carries exactly this evidence, so a wrong donor, kind or distance out of table_origin, fill_from
-// or a8_class_entry shows as a pin never met. Read off the base build's dump (the routes/ tables
+// or a8_route_answer shows as a pin never met. Read off the base build's dump (the routes/ tables
 // of the repository at the time of writing); a changed table moves a pin together with the
 // route it means to move. Distances to 1e-4.
 struct ProvenancePin {
