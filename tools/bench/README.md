@@ -35,6 +35,7 @@ python3 tools/bench/run_ninferno_bench_matrix.py --preset core             # run
 | `regret_collect.py` | The lab collector for `selection_regret.py`: `ninferno_route_tune --selected-out` (the route the production path runs per problem and width) and one `--routes-out` sweep per pass into its input ([below](#offline-selection-regret)). |
 | `mmq_transfer_audit.py` | Offline audit of how the MMQ choice transfers between same-generation cards (#373): route-table agreement and gate-label regret by workload regime, from `routes/*.json` and `data/mmq_paired_prefill.json`; no GPU ([report](../../docs/maintainer/mmq-transfer-audit.md)). |
 | `quality_rows.py` | Perplexity and KL divergence of each `--activations` mode against `exact` on the fixed corpus, appended as `docs/performance/` rows. |
+| `isa_probe/` | The ISA facts of one card for the register-MMA price (#613 PR-2): `isa_probe.cu` measures tensor pipe cycles per MMA, the dependent MMA latency, INT32 / FP32 cycles per warp instruction and the L1 / L2 / DRAM / shared load latencies alone and under 2-8 chasing warps, in SM clocks; `isa_probe.py run --arch 89` builds and runs it (about 20 s, the GPU idle), `merge` writes the row into `src/core/data/isa_facts.json` (provenance Measured, card, nvcc, driver, date); `isa_probe_ncu.sh` cross-checks the tensor figure with Nsight Compute. |
 
 ## Offline selection regret
 

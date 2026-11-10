@@ -1,0 +1,5 @@
+{
+  "schema": 1,
+  "note": "ISA facts per architecture measured by tools/bench/isa_probe (isa_probe.cu, merged by isa_probe.py), in SM clocks: tensor pipe cycles per MMA at the SM and per partition, the dependent MMA latency, INT32 / FP32 cycles per warp instruction, dependent L1 / L2 / DRAM load latencies alone and under 2, 4, 8 chasing warps per SM, shared-memory latency. Every row names the card, the probe version, nvcc, driver and runtime and the date it was measured; provenance is Measured for all of them. The per-warp timeline law of the register-MMA price (#613 PR-7b) reads this table; tests/test_isa_facts.py pins the schema.",
+  "arches": {}
+}
