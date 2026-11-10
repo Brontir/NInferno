@@ -455,6 +455,15 @@ void layer_checks() {
                   matches(mixed_price->dram_seconds * board.dram_bytes_per_s,
                           layer_bytes_by_hand(w, experts, top_k, 4, relu2, true, true)),
               "a mixed layer (R8 gate/up, register MMA down) carries the combine, unpriced" + tag);
+        // The other way: a register MMA gate/up and an R8 down stage. Each stage takes its own
+        // kernel: the R8 down stage leaves the layer unpriced and its CTAs fuse the combine.
+        moe::MoePlan r8_down;
+        r8_down.down_r8       = 0;
+        const auto down_price = moe::moe_layer_price(w, layer->config, r8_down, 4, board);
+        check(down_price && !down_price->compute_priced && !down_price->compute_note.empty() &&
+                  matches(down_price->dram_seconds * board.dram_bytes_per_s,
+                          layer_bytes_by_hand(w, experts, top_k, 4, relu2, false, false)),
+              "a mixed layer (register MMA gate/up, R8 down) is unpriced and has no combine" + tag);
     }
 }
 
