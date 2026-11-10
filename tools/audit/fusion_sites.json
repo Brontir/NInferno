@@ -799,7 +799,7 @@
                 ],
                 "priced": {
                     "status": "literal",
-                    "by": "column bounds in the plan (not priced); the 2..32 materialize rule and the per-chip small-T MMA bands are recorded in q4_q5_gdn_input_plan.cpp: per-layer timing (27B DFlash2 verify at T = 6 on an RTX 5090: 56.8 + 22.0 us a layer; Quadro GV100: 864 + 217 us a layer at T = 5; lines 79-83) and ninferno_gdn_input_proj_bench, 27B form, warm graph, on RTX 5090, RTX 4090 and RTX 3090 (lines 89-94, table kMmaMeasured); the one-token rule comes from the RTX 3090 decode census at 19.5K (59.1 + 24.6 us a layer against 55.0 + 17.1) and RTX 4080 SUPER 81.1 against 85.0 us (lines 102-107); the fused case 1, 2, 3, 5, 6 list itself has no recorded source (pre-public commit bdb0b27d6, no body)",
+                    "by": "column bounds in the plan (not priced); the 2..32 materialize rule and the per-chip small-T MMA bands are recorded in q4_q5_gdn_input_plan.cpp: per-layer timing (27B DFlash2 verify at T = 6 on an RTX 5090: 56.8 + 22.0 us a layer; a Volta build, which the plan writes as the V100 (gv100): 864 + 217 us a layer at T = 5; lines 79-83) and ninferno_gdn_input_proj_bench, 27B form, warm graph, on RTX 5090, RTX 4090 and RTX 3090 (lines 89-94, table kMmaMeasured); the one-token rule comes from the RTX 3090 decode census at 19.5K (59.1 + 24.6 us a layer against 55.0 + 17.1) and RTX 4080 SUPER 81.1 against 85.0 us (lines 102-107); the fused case 1, 2, 3, 5, 6 list itself has no recorded source (pre-public commit bdb0b27d6, no body)",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
