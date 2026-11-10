@@ -102,7 +102,7 @@ ninferno_add_op_test(ninferno_launch_overlap_test LABELS host
 # Scratch read lifetimes of generic launches (#309): which launch reads or writes which workspace
 # region until when, and that no launch starting under its predecessor takes a region it still
 # uses (host only).
-ninferno_add_op_test(ninferno_scratch_lifetime_test
+ninferno_add_op_test(ninferno_scratch_lifetime_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_scratch_lifetime.cpp"
   LIBRARIES ninferno_linear_test_support)
 
@@ -125,7 +125,7 @@ ninferno_add_op_test(ninferno_route_classes_test LABELS host
   LIBRARIES ninferno_linear_test_support)
 
 # The format traits table against the predicates it replaced, for every QType.
-ninferno_add_op_test(ninferno_format_traits_test
+ninferno_add_op_test(ninferno_format_traits_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_format_traits.cpp"
   LIBRARIES ninferno_linear_test_support)
 
@@ -154,7 +154,10 @@ target_compile_definitions(ninferno_selector_golden_test PRIVATE
 #   cuobjdump (tools/kernel_facts/kernel_facts.py), equal the committed snapshot of its
 #   architecture; no GPU. Skips (77) where this nvcc is not the snapshot's (ptxas then allocates
 #   other registers by construction; the price reads the snapshot either way). A mismatch names
-#   the kernels and the command that regenerates the file.
+#   the kernels and the command that regenerates the file. Where the snapshot carries loop counts
+#   and the nvcc is its own, the check disassembles every kernel, which takes minutes (560 s in
+#   one sm_120a build); a snapshot without them is compared in seconds. Labeled slow, so
+#   `ctest -L host -LE slow` leaves it out.
 # - ninferno_kernel_facts_lookup_test: every snapshot parses, the release engine of each lab
 #   capability is found, and every facts-priced golden board's price reads facts; no GPU.
 # - ninferno_kernel_facts_live_test: on a GPU that runs this build's SASS, the running kernels'
@@ -180,7 +183,7 @@ add_test(NAME ninferno_kernel_facts_test
   COMMAND ${Python3_EXECUTABLE} -B ${PROJECT_SOURCE_DIR}/tools/kernel_facts/kernel_facts.py check
     --binary ${ninferno_kernel_facts_binary} --expected ${ninferno_kernel_facts_snapshot}
     --nvcc ${CMAKE_CUDA_COMPILER_VERSION} --cuda-bin ${ninferno_cuda_bin})
-ninferno_label_tests(ninferno_kernel_facts_test LABELS host)
+ninferno_label_tests(ninferno_kernel_facts_test LABELS host slow)
 set_tests_properties(ninferno_kernel_facts_test PROPERTIES SKIP_RETURN_CODE 77)
 # `ninja ninferno_kernel_facts_update`: the snapshot of this build's architecture rewritten from
 # its binary into the source tree (then regenerate the selector goldens that move with it).
@@ -193,7 +196,7 @@ add_custom_target(ninferno_kernel_facts_update
   DEPENDS ninferno_selector_golden_test
   VERBATIM)
 
-ninferno_add_op_test(ninferno_kernel_facts_lookup_test
+ninferno_add_op_test(ninferno_kernel_facts_lookup_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_kernel_facts.cpp"
   LIBRARIES ninferno_linear_test_support)
 

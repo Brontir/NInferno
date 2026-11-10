@@ -111,7 +111,8 @@ if(UNIX)
 endif()
 
 # Every test carries a label (host, gpu, real, golden, slow). Reads the build's own test list; needs
-# python3, ctest and a POSIX shell, so UNIX hosts only (CI and the Linux stands).
+# python3, ctest and a POSIX shell, so it is registered on UNIX hosts only. It runs with a Linux
+# build's ctest; no CI workflow configures a build, so CI does not run it.
 if(UNIX)
   add_test(NAME ninferno_ctest_labels_test
     COMMAND bash "${PROJECT_SOURCE_DIR}/tools/audit/ctest_labels.sh" "${PROJECT_BINARY_DIR}")
