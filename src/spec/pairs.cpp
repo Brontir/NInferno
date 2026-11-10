@@ -258,6 +258,14 @@ std::map<std::string, std::vector<RoundLaunches>> round_launches(const Profile& 
 // On another card (`head_rows` the artifact's proposal head there, as round_cost_estimate takes
 // it) the same function at that card's rates: the table the load bound is derived from
 // (facts_load).
+//
+// A pair's round on another card is priced by the bytes (price_by_facts) and then raised by the
+// lab card's measured excess over its bytes (round_cost_estimate: cost *= excess), while R_1 / R_C
+// here is the bytes' ratio alone. Their product is the joint verify's gain only if that excess
+// scales R_1 and R_C alike (a share of every round's cost, which cancels in the ratio). If it is a
+// fixed cost per round (launches, a sync) it weighs more on the one-stream round than on a joint
+// one of the same launches, R_1 / R_C is then too low and the table errs towards plain decode (the
+// launch term of round_launches is added to both where counted, which is the part of it known).
 void price_joint(Profile& p, const MeasuredPair& pair, const CardRates& lab,
                  const ProposalRows* head_rows = nullptr) {
     p.joint_scale.clear();
@@ -707,7 +715,7 @@ std::vector<LoadBound> facts_load(const Profile& p) {
                                       std::pair{&p.non_thinking, false}}) {
         if (c->config.enabled()) { choices.emplace_back(c, thinking); }
     }
-    std::vector<LoadBound> out;
+    std::vector<std::int32_t> depths; // from 2 streams on, up to the first plain
     std::int32_t previous = std::numeric_limits<std::int32_t>::max();
     for (std::int32_t streams = 2; streams <= kPricedVerifyRows + 1 && previous > 0; ++streams) {
         std::int32_t depth = choices.empty() ? 0 : std::numeric_limits<std::int32_t>::max();
@@ -730,13 +738,10 @@ std::vector<LoadBound> facts_load(const Profile& p) {
             }
             depth = std::min(depth, best_depth);
         }
-        // Only a fall in depth is recorded: a bound is a ceiling and the table is ascending in
-        // streams, so a stream count that would run deeper than the one before stays at it (the
-        // table is clipped to its running minimum, never raised again as streams grow).
-        if (depth < previous) { out.push_back(LoadBound{.lanes = streams, .depth = depth}); }
-        previous = depth;
+        depths.push_back(depth);
+        previous = std::min(previous, depth);
     }
-    return out;
+    return clipped_load(depths);
 }
 
 // Another card's: its tokens a round (the pair's, on any card), its rounds priced for this card by
@@ -848,6 +853,21 @@ Profile transferred(const std::vector<const MeasuredPair*>& current, const GpuKe
 }
 
 } // namespace
+
+std::vector<LoadBound> clipped_load(const std::vector<std::int32_t>& depths) {
+    std::vector<LoadBound> out;
+    std::int32_t previous = std::numeric_limits<std::int32_t>::max();
+    for (std::size_t i = 0; i < depths.size(); ++i) {
+        if (depths[i] < previous) {
+            out.push_back(LoadBound{.lanes = static_cast<std::int32_t>(i) + 2, .depth = depths[i]});
+        }
+        previous = std::min(previous, depths[i]);
+    }
+    return out;
+}
+
+namespace {
+
 
 // The steps in order: the card's own record (own_lab_pair), else another card's priced by the facts
 // (priced_by_facts_for), else this generation's lab cards (generation_median, or the one there is),

@@ -628,8 +628,15 @@ int main() {
     // the depth falls (a table is clipped to its running minimum). From theory, not read back from
     // the product's tables: C x (k + 1) verify rows are priced up to kPricedVerifyRows (8), so a
     // depth-3 round is priced at 2 streams only; a DFlash choice's block (16 rows) is not priced at
-    // 2 streams at all, which holds a profile with one at plain from 2.
+    // 2 streams at all, which holds a profile with one at plain from 2. Gemma's 2:3,3:0 is that
+    // computed result: at 3 streams a depth-3 round is 12 rows (not priced, so plain), and the
+    // other depth the lab measured is both priced there (C x (k + 1) <= 8) and gains over plain
+    // decode; it is a computed result, not a measurement.
     {
+        const auto no_counts = [](sp::MeasuredPair pair) {
+            for (auto& m : pair.tune.measurements) { m.graph_kernels = m.graph_rounds = 0; }
+            return pair;
+        };
         const std::string gemma =
             "unsloth/gemma-4-12b-it-GGUF@fc034cfff751157913579611efad8462ac1be606 Q4_K_M";
         const sp::GpuKey small = card("ad106:34sm", "ad106", "sm89", 89, 34, 2535, 288);
@@ -637,9 +644,15 @@ int main() {
         for (const auto& [target, expected] :
              {std::pair<std::string, const char*>{std::string(kQ9), "2:0"},
               std::pair<std::string, const char*>{gemma, "2:3,3:0"}}) {
-            auto lab = pair_of(target, "ad104:60sm");
-            // Without the kernel counts the scale is the round cost's own ratio (no launch term).
-            for (auto& m : lab.tune.measurements) { m.graph_kernels = m.graph_rounds = 0; }
+            // With the registry's kernel counts (the launch term in both rounds) the tables are the
+            // same; without them the scale below is the round cost's own ratio.
+            const auto counted = pair_of(target, "ad104:60sm");
+            for (const sp::GpuKey* rtx : {&small, &large}) {
+                const sp::Profile p = sp::profile_for_target({&counted}, "sm89", {}, rtx);
+                expect(sp::load_label(p.load) == expected,
+                       target.substr(0, 24) + " with kernel counts: load " + sp::load_label(p.load));
+            }
+            const auto lab = no_counts(counted);
             std::vector<sp::Profile> by_card;
             for (const sp::GpuKey* rtx : {&small, &large}) {
                 sp::Profile p = sp::profile_for_target({&lab}, "sm89", {}, rtx);
@@ -661,6 +674,8 @@ int main() {
                     const auto ratio      = sp::load_gain(*lab.round_facts, config,
                                                           sp::card_rates(rtx).kappa(), 1.0, 2, rows);
                     const auto found      = by_card[i].joint_scale.find(config.label());
+                    // The plumbing (this card's rates, the head rows, the depth's table), not
+                    // load_gain's math, which the checks above pin.
                     expect(ratio && found != by_card[i].joint_scale.end() &&
                                found->second.contains(2) &&
                                std::abs(found->second.at(2) - *ratio) < 1e-9,
@@ -674,6 +689,10 @@ int main() {
             }
         }
     }
+    // A table is clipped to its running minimum: a depth that rises again is not written.
+    expect(sp::load_label(sp::clipped_load({3, 3, 2, 0})) == "2:3,4:2,5:0", "falls are recorded");
+    expect(sp::load_label(sp::clipped_load({2, 2, 3, 2})) == "2:2", "a rise is clipped, no 4:2");
+    expect(sp::load_label(sp::clipped_load({2, 2, 2, 1, 3})) == "2:2,5:1", "2, 2, 2, 1, 3");
     // The card that measured a pair takes its own measurement, its tune keyed by class id or chip.
     {
         const auto rtx4070ti = card("ad104:60sm", "ad104", "sm89", 89, 60, 2610, 504);

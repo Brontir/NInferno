@@ -434,7 +434,8 @@ SpeculationSubject subject_of_mode(SpeculationSubject subject, spec::Mode mode) 
     // A load table was measured with the default's drafter: another kind's is not known, so one
     // request speculates and two or more decode plainly (as for a pair measured elsewhere).
     if (tuned != mode && !p.load.empty()) {
-        p.load = {spec::LoadBound{.lanes = 2, .depth = 0}};
+        p.load       = {spec::LoadBound{.lanes = 2, .depth = 0}};
+        p.load_basis = "literal";
     }
     return subject;
 }

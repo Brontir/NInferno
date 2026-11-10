@@ -125,6 +125,11 @@ struct RoundCostEstimate {
 // that a user's spec-tune can be held to it (tools/kit/validate.py).
 [[nodiscard]] std::map<std::string, double> profile_round_costs(const Profile& profile);
 
+// A load table from the depth in force at 2, 3, ... streams: a bound is a ceiling, so the table is
+// clipped to its running minimum and a bound is written only where the depth falls. Depths
+// 3, 3, 2, 0 give 2:3,4:2,5:0; 2, 2, 3, 2 give 2:2 alone (the rise is clipped, no 4:2 follows).
+[[nodiscard]] std::vector<LoadBound> clipped_load(const std::vector<std::int32_t>& depths);
+
 // The profile of a target from its pairs measured on the lab's cards (the same target and drafters),
 // the same whatever the order of `measured` (records ordered by GPU class id, then content):
 //   1. With `gpu`, a card other than the measuring one prices its rounds by the facts

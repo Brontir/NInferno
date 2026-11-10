@@ -1144,24 +1144,21 @@ void test_speculation_order() {
     }
     // The served profile's load basis reaches the plan's (facts, literal, measured), where its
     // table is the one in force.
-    for (const char* basis : {"facts", "literal"}) {
+    check(subject.resolved.has_value(), "the subject carries a resolved profile");
+    for (const char* basis : {"facts", "literal", "measured"}) {
         pr::SpeculationSubject labelled = subject;
-        if (!labelled.resolved) { continue; }
         labelled.resolved->profile.load_basis = basis;
         labelled.resolved->profile.load       = {{.lanes = 2, .depth = 3}};
         const pr::LaunchPlanOptions o         = pr::launch_options({.max_concurrency = 4});
         const pr::PlannedSpeculation planned =
             pr::plan_with_speculation(facts, device, o.options, &labelled, o.ask);
         const pr::SpeculationReport& r = planned.speculation;
-        const bool profile_served =
-            std::any_of(r.fallbacks.begin(), r.fallbacks.end(),
-                        [](const auto& s) { return s.served && s.step == "profile"; });
-        std::printf("load basis %s: profile served %d, load %zu, plan says %s\n", basis,
-                    profile_served ? 1 : 0, r.load.size(), r.load_basis.c_str());
-        if (profile_served && !r.load.empty()) {
-            check(r.load_basis == basis, std::string("the profile's load basis ") + basis +
-                                             " reaches the plan: " + r.load_basis);
-        }
+        check(std::any_of(r.fallbacks.begin(), r.fallbacks.end(),
+                          [](const auto& s) { return s.served && s.step == "profile"; }),
+              "the profile is served");
+        check(!r.load.empty(), "the profile's load table is in force");
+        check(r.load_basis == basis, std::string("the profile's load basis ") + basis +
+                                         " reaches the plan: " + r.load_basis);
     }
     // An explicit --spec none is plain, one step.
     const pr::LaunchPlanOptions none = pr::launch_options({.spec = "none"});
