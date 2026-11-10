@@ -12,6 +12,14 @@ build's route correctness tests (ninferno_linear_generic_test, ninferno_route_cl
 on this board; the statement is copied into the document. Without it every candidate is
 `unmeasured` and the evaluator reports the cases incomplete.
 
+A --selected CSV may also carry `authority` and `evidence` columns (the route authority that
+answered and the kind of evidence it rests on, #614 route authorities); each case then records
+them, and selection_regret.py groups regret by board x regime x authority. Without the columns
+(written before route_tune named them) both read "unknown": the collector still works on old data.
+--pci-id adds the board's compute capability, SMs, DRAM rate, boost clock and `mma_slow` (no tensor
+cores) from gpu_facts.json to the document, from which selection_regret.py computes the card's
+ridge for its regimes; the rows' device must be that board's class (chip or architecture, and SMs).
+
 Each row names its run, board and timing protocol (#518): a pass's --selected-out and --routes-out
 must come from one run, every file from one board, and a case's passes from one protocol ("copies":
 consecutive calls over weight copies, a decode width under --rotate 1; "flushed": one call after
@@ -21,6 +29,7 @@ named them) is refused: its passes could not be told apart.
 import argparse
 import csv
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -69,6 +78,7 @@ POLICY = {"a16": "A16Only", "a8": "AllowA8", "a4": "AllowA4"}
 
 ROUTE_COLUMNS = KEY + ("route", "median_us", "run", "device", "protocol", "calls", "samples")
 SELECTED_COLUMNS = KEY + ("selected", "run", "device")
+UNKNOWN = "unknown"
 
 
 def identity(path, rows, column):
@@ -99,24 +109,58 @@ def describe(protocol):
     return f"one call after an L2 flush, median of {samples} samples"
 
 
-def read_selections(paths):
+def read_selections(paths, authorities=None):
+    """{(problem, T): the selected route} of the passes, which must agree. `authorities`, a dict,
+    is filled with {(problem, T): (authority, evidence)} from the optional columns of the same
+    names ("unknown" where a file has none or a row leaves one empty)."""
     selected = None
     for path in paths:
         run = {}
+        meta = {}
         for row in read_rows(path, SELECTED_COLUMNS):
             key = key_of(row)
             route = row["selected"].strip()
             if key in run and run[key] != route:
                 raise ValueError(f"{path}: {case_id(key)} selected twice ({run[key]}, {route})")
             run[key] = route
+            named = ((row.get("authority") or "").strip() or UNKNOWN,
+                     (row.get("evidence") or "").strip() or UNKNOWN)
+            if meta.setdefault(key, named) != named:
+                raise ValueError(f"{path}: {case_id(key)} answered twice with different "
+                                 f"authority or evidence ({meta[key]}, {named})")
         if selected is not None and run != selected:
             raise ValueError(f"{path}: the selection differs from the first pass's")
+        if authorities is not None:
+            for key, value in meta.items():
+                first = authorities.setdefault(key, value)
+                for what, a, b in zip(("authority", "evidence"), first, value):
+                    if a != b:
+                        raise ValueError(f"{path}: {case_id(key)} names another {what} than the "
+                                         f"first pass's ({a}, {b})")
         selected = run
     return selected
 
 
+def board_facts(gpu_facts, pci_id):
+    """The row of core/data/gpu_facts.json for a PCI device id (hex string), as the numbers the
+    ridge needs: compute capability, SMs, DRAM GB/s (bus bits x Gbps / 8), boost clock, and
+    whether the board lacks tensor cores (`mma_slow`: the generation's tensor rate is not its).
+    With them the row's name and chip, by which collect() tells it is the board of the CSVs."""
+    wanted = int(str(pci_id), 16)
+    data = json.loads(Path(gpu_facts).read_text(encoding="utf-8"))
+    for row in data["gpus"]:
+        if int(row["id"], 16) == wanted:
+            slow = row.get("mma_slow", False)
+            if type(slow) is not bool:
+                raise ValueError(f"{gpu_facts}: {row['id']}: mma_slow is not true or false")
+            return {"name": row["name"], "chip": row["chip"], "cc": int(row["cc"]),
+                    "sms": int(row["sms"]), "dram_gbps": row["bus_bits"] * row["gbps"] / 8.0,
+                    "boost_mhz": row["boost_mhz"], "mma_slow": slow}
+    raise ValueError(f"{gpu_facts}: no row for PCI id {pci_id}")
+
+
 def collect(selected_csvs, pass_csvs, board, model, revision, build_id, holdout, fit_boards,
-            fit_models, qualified):
+            fit_models, qualified, facts=None):
     if not pass_csvs:
         raise ValueError("at least one --routes pass")
     if isinstance(selected_csvs, (str, Path)):
@@ -125,7 +169,8 @@ def collect(selected_csvs, pass_csvs, board, model, revision, build_id, holdout,
     if len(selected_csvs) != len(pass_csvs):
         raise ValueError(f"{len(selected_csvs)} --selected files for {len(pass_csvs)} passes: "
                          "one per pass")
-    selected = read_selections(selected_csvs)
+    authorities = {}
+    selected = read_selections(selected_csvs, authorities)
     passes = {}
     protocols = {}  # (problem, T) -> {protocol: the passes that timed it so}
     boards = set()
@@ -187,7 +232,8 @@ def collect(selected_csvs, pass_csvs, board, model, revision, build_id, holdout,
                         f"{POLICY.get(compute, compute)}, speed route profile, " +
                         (describe(next(iter(protocols[key]))) if key in protocols else "no route timed"),
             "numerical_contract": f"{compute} activations under {POLICY.get(compute, compute)}",
-            "selected": selected[key], "candidates": candidates,
+            "selected": selected[key], "candidates": candidates, "t": int(t),
+            "authority": authorities[key][0], "evidence": authorities[key][1],
         })
     if not cases:
         raise ValueError("no selections")
@@ -198,7 +244,22 @@ def collect(selected_csvs, pass_csvs, board, model, revision, build_id, holdout,
     }
     if qualified:
         document["qualification"] = qualified
-    document["device"] = boards.pop()  # route_tune's device class id, as every row named it
+    device = boards.pop()
+    if facts:
+        # The registry row must be the board these CSVs came from. The device's class id names
+        # its chip and its SMs ("tu116:24sm"); the SMs alone do not tell a GTX 1660 Ti from an
+        # RTX 4060 (ad107, 24 SMs too), whose ridge the first does not have. A board whose chip
+        # the class tables do not hold is named by its architecture ("sm90:132sm", an H100).
+        named = re.match(r"([^:\s]+):(\d+)sm\b", device)
+        if not named:
+            raise ValueError(f"--pci-id: the rows' device {device} is not a class id "
+                             "(<chip>:<SMs>sm), so the board cannot be told; leave --pci-id out")
+        if (named[1] not in (facts["chip"], f"sm{facts['cc']}")
+                or int(named[2]) != facts["sms"]):
+            raise ValueError(f"--pci-id names {facts['name']} ({facts['chip']}, sm{facts['cc']}, "
+                             f"{facts['sms']} SMs); the rows' device is {device}")
+        document["board_facts"] = {board: facts}
+    document["device"] = device  # route_tune's device class id, as every row named it
     return document
 
 
@@ -217,12 +278,17 @@ def main(argv=None):
     parser.add_argument("--fit-models", default="", help="comma-separated")
     parser.add_argument("--qualified", default="",
                         help="the correctness tests that passed on this build and board")
+    parser.add_argument("--pci-id", default="",
+                        help="the board's PCI device id (hex), for the ridge of the report's regimes")
+    parser.add_argument("--gpu-facts", type=Path,
+                        default=Path(__file__).resolve().parents[2] / "src/core/data/gpu_facts.json")
     args = parser.parse_args(argv)
     split = lambda s: [x for x in (v.strip() for v in s.split(",")) if x]
     try:
+        facts = board_facts(args.gpu_facts, args.pci_id) if args.pci_id else None
         document = collect(args.selected, args.routes, args.board, args.model,
                            args.selector_revision, args.build_id, args.holdout,
-                           split(args.fit_boards), split(args.fit_models), args.qualified)
+                           split(args.fit_boards), split(args.fit_models), args.qualified, facts)
     except (OSError, ValueError, KeyError, AttributeError, TypeError) as error:  # a short row
         print(f"regret_collect: {error}", file=sys.stderr)
         return 2
