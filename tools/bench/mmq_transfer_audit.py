@@ -4,7 +4,7 @@
 Two layers, both from data in the repository; it never selects a route, fits a constant or runs a GPU.
 
 1. Route tables (routes/*.json): for every same-generation card pair and every problem both tables
-   hold, does the route the small-T `bands` pick at width T agree (ggml_mmq or not, and the exact
+   hold, does the route the table gives at width T agree (ggml_mmq or not, and the exact
    route)? Split by workload regime. A table records only the winner per band, so this layer
    reports AGREEMENT and COVERAGE, never regret (no timing of the route the other card chose).
 2. Gate labels (core/measured_boards.h kMmqPrefillPays, as the production rule carries them) against
@@ -13,7 +13,8 @@ Two layers, both from data in the repository; it never selects a route, fits a c
    label picks than on the faster of {mmq, w4a8}, per format and prompt length.
 
 Regimes come from architecture facts only: decode T<=4 (the vec/R8 row range), verify 5..16 (below
-the 17-token prefill the MMQ gate is defined for: generic_gemm.cpp mmq_prefill_wins), and prefill
+the 17-token prefill the MMQ gate is defined for: generic_gemm.cpp mmq_prefill_wins), wide
+speed-profile calls T>=17 (a verify or decode of several streams, read from `bands`), and prefill
 T>=17 split by the card's own ridge, T* = int8 ops/s * bytes_per_value / (2 * DRAM bytes/s), with
 the generation's int8 tensor rate (core/generation.h s8), SMs and the reference boost clock
 (core/data/gpu_facts.json). A pair straddles when the two cards' ridges differ: widths between
@@ -36,8 +37,9 @@ PREFILL_MIN = 17  # route_table.cpp kPrefillMinTokens
 T_GRID = list(range(1, 17)) + [17, 20, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024,
                                2048, 4096]
 MMQ = "ggml_mmq"
-REGIMES = ["decode T<=4", "verify T5-16", "prefill memory-bound (both)",
+REGIMES = ["decode T<=4", "verify T5-16", "wide speed T>=17", "prefill memory-bound (both)",
            "prefill straddles ridge", "prefill compute-bound (both)"]
+WIDE = REGIMES[2]
 # routes file -> card id used in the paired timings
 PAIRED_CARDS = {"tu102": "rtx2080ti", "ga106": "rtx3060", "ad106": "rtx4060ti",
                 "ad104-60sm": "rtx4070ti", "ad102": "rtx4090", "gb203-70sm": "rtx5070ti",
@@ -131,11 +133,12 @@ def load_cards(routes_dir, gen_rows, facts):
     return cards
 
 
-def route_at(entry, t):
-    """The route the table gives at t under the profile that serves t: prefill calls (t >= 17)
-    run the prefill profile, which reads prefill_bands and then prefill; decode and verify calls
-    read bands (route_table.cpp table_route)."""
-    if t >= PREFILL_MIN:
+def route_at(entry, t, prefill):
+    """The route the table gives at width t under one profile, as route_table.cpp table_route
+    reads it: the prefill profile at t >= 17 reads prefill_bands and then prefill; the speed
+    profile (decode, and verify, whose width is tokens x streams and so also reaches 17 and more)
+    reads bands."""
+    if prefill and t >= PREFILL_MIN:
         for lo, hi, route in entry.get("prefill_bands", []):
             if lo <= t <= hi:
                 return route
@@ -152,10 +155,10 @@ def regime(t, ridges):
     if t <= VERIFY_MAX:
         return REGIMES[1]
     if t < min(ridges):
-        return REGIMES[2]
-    if t < max(ridges):
         return REGIMES[3]
-    return REGIMES[4]
+    if t < max(ridges):
+        return REGIMES[4]
+    return REGIMES[5]
 
 
 def table_audit(cards):
@@ -176,15 +179,21 @@ def table_audit(cards):
                      for r in REGIMES}
             for key in shared:
                 for t in T_GRID:
-                    ra, rb = route_at(ca["entries"][key], t), route_at(cb["entries"][key], t)
-                    if ra is None or rb is None:
-                        continue
-                    s = stats[regime(t, ridges)]
-                    s["points"] += 1
-                    s["mmq_a"] += ra == MMQ
-                    s["mmq_b"] += rb == MMQ
-                    s["mmq_agree"] += (ra == MMQ) == (rb == MMQ)
-                    s["route_agree"] += ra == rb
+                    # Below 17 one profile reads the table; from 17 both do, each its own field.
+                    views = [(regime(t, ridges), True)]
+                    if t >= PREFILL_MIN:
+                        views.append((WIDE, False))
+                    for name, prefill in views:
+                        ra = route_at(ca["entries"][key], t, prefill)
+                        rb = route_at(cb["entries"][key], t, prefill)
+                        if ra is None or rb is None:
+                            continue
+                        s = stats[name]
+                        s["points"] += 1
+                        s["mmq_a"] += ra == MMQ
+                        s["mmq_b"] += rb == MMQ
+                        s["mmq_agree"] += (ra == MMQ) == (rb == MMQ)
+                        s["route_agree"] += ra == rb
             same_cc = ca["board"]["cc"] == cb["board"]["cc"]
             pairs.append({"generation": gen, "a": a, "b": b,
                           "distance": distance(ca["board"], cb["board"]) if same_cc else None,

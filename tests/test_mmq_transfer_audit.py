@@ -7,19 +7,23 @@ sys.path.insert(0, str(ROOT / "tools" / "bench"))
 import mmq_transfer_audit as audit
 
 
-def card(generation, ridge, bands, cc=89, sms=60, dram=500.0, l2=48.0):
+def card(generation, ridge, bands, cc=89, sms=60, dram=500.0, l2=48.0, prefill="staged"):
+    # The loader admits only a token-invariant prefill route (never ggml_mmq), from 17 tokens.
     return {"name": "x", "generation": generation, "ridge_t": ridge,
             "board": {"cc": cc, "sms": sms, "dram_gbps": dram, "l2_mib": l2},
-            "entries": {("q4k", "a16", "store", 1, 1): {"bands": bands, "prefill_bands": bands}}}
+            "entries": {("q4k", "a16", "store", 1, 1): {"bands": bands, "prefill": prefill}}}
 
 
 class TableAudit(unittest.TestCase):
-    def test_prefill_widths_read_the_prefill_fields(self):
+    def test_each_profile_reads_its_own_fields(self):
         entry = {"bands": [[1, 99999, "ggml_mmq"]], "prefill_bands": [[17, 64, "rmma"]],
                  "prefill": "staged"}
-        self.assertEqual(audit.route_at(entry, 16), "ggml_mmq")
-        self.assertEqual(audit.route_at(entry, 17), "rmma")
-        self.assertEqual(audit.route_at(entry, 65), "staged")
+        for prefill in (True, False):
+            self.assertEqual(audit.route_at(entry, 16, prefill), "ggml_mmq")
+        self.assertEqual(audit.route_at(entry, 17, True), "rmma")
+        self.assertEqual(audit.route_at(entry, 65, True), "staged")
+        self.assertEqual(audit.route_at(entry, 65, False), "ggml_mmq")  # a wide verify
+        self.assertIsNone(audit.route_at({"bands": [[1, 99999, "rmma"]]}, 17, True))
 
     def test_regimes_and_disagreement(self):
         a = card("g", 100, [[1, 4, "vec"], [5, 40, "ggml_mmq"], [41, 99999, "rmma"]])
@@ -29,6 +33,14 @@ class TableAudit(unittest.TestCase):
         self.assertEqual(r["decode T<=4"]["mmq_agree"], r["decode T<=4"]["points"])
         self.assertEqual(r["verify T5-16"]["mmq_agree"], 0)  # mmq on A only
         self.assertEqual(r["verify T5-16"]["mmq_a"], r["verify T5-16"]["points"])
+        # From 17 the speed profile's bands disagree (rmma on A from 41, mmq on B); the prefill
+        # profile reads the prefill route on both.
+        wide = r["wide speed T>=17"]
+        self.assertEqual(wide["mmq_b"], wide["points"])
+        self.assertGreater(wide["points"] - wide["mmq_agree"], 0)
+        for name in ("prefill memory-bound (both)", "prefill straddles ridge",
+                     "prefill compute-bound (both)"):
+            self.assertEqual(r[name]["mmq_agree"], r[name]["points"])
         # ridges 100 and 300: 17..99 memory-bound on both, 100..299 straddle, 300+ compute-bound
         self.assertGreater(r["prefill straddles ridge"]["points"], 0)
         self.assertEqual(audit.regime(150, [100, 300]), "prefill straddles ridge")
