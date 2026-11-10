@@ -54,6 +54,9 @@ fact int32_cycles_per_warp_instruction 2.01 clk
             for lv, v in (("l2", 260.0), ("dram", 560.0), ("dram_tlbwarm", 520.0))
             for w in (1, 2, 4, 8)) + \
     "fact sm_clock_mhz_chase 2520.0 mhz\nfact shared_latency 29.5 clk\n" \
+    "".join(f"fact lat_{op} {v:.1f} clk\n" for op, v in (
+        ("imad", 4.5), ("iadd", 4.0), ("lop3", 4.2), ("prmt", 4.4), ("shf", 4.5), ("hfma2", 5.0),
+        ("ffma", 4.1), ("shfl", 24.0), ("cvt_i2f_f2i", 6.0), ("cvt_f32_f16", 5.5))) + \
     "note the SM clock ranged 2400..2535 MHz over the L2 / DRAM chases\nselfcheck ok\nend\n"
 
 
@@ -129,7 +132,10 @@ class IsaFacts(unittest.TestCase):
                 self.assertIn(field, row, f"{key} lacks {field}")
             for field in ("probe", "nvcc", "driver", "runtime"):
                 self.assertIn(field, row["tool"], f"{key} tool lacks {field}")
-            self.assertEqual(set(row["facts"]), set(ip.FACTS), key)
+            # Every fact of the table's list, except those a later probe added (the ALU
+            # latencies), which a row keeps lacking until its card is probed again.
+            self.assertTrue(set(ip.FACTS) - ip.OPTIONAL_FACTS <= set(row["facts"]), key)
+            self.assertTrue(set(row["facts"]) <= set(ip.FACTS), key)
             # The measured tensor rate against the generation row's bf16 rate (core/generation.h)
             # where both are the same operation: the native BF16 m16n8k16 with FP32 accumulate,
             # cc 80 and up. Before that the row is a fitted aggregate of an emulated path (Volta's

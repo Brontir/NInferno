@@ -46,7 +46,14 @@ FACTS = (
     "dram_tlbwarm_latency_w8", "dram_tlbwarm_latency_ns_w1", "dram_tlbwarm_latency_ns_w2",
     "dram_tlbwarm_latency_ns_w4", "dram_tlbwarm_latency_ns_w8",
     "sm_clock_mhz_chase", "shared_latency",
+    # Dependent (issue-to-use) latencies of the decode chains' ops, one warp a chain; the
+    # conversion pairs per op.
+    "lat_imad", "lat_iadd", "lat_lop3", "lat_prmt", "lat_shf", "lat_hfma2", "lat_ffma", "lat_shfl",
+    "lat_cvt_i2f_f2i", "lat_cvt_f32_f16",
 )
+# Facts a row may lack: those a later probe added (the dependent ALU latencies, probe 11), so the
+# rows measured by earlier probes stay valid until their card is probed again.
+OPTIONAL_FACTS = frozenset(f for f in FACTS if f.startswith("lat_"))
 UNITS = {"tensor_flops_per_sm_clock": "flop", "resident_ctas_per_sm": "count",
          "sm_clock_mhz_chase": "mhz"}
 
@@ -82,7 +89,7 @@ def parse_run(text):
             head[parts[0]] = " ".join(parts[1:])
         else:
             raise ValueError(f"unknown line: {line!r}")
-    missing = [f for f in FACTS if f not in facts]
+    missing = [f for f in FACTS if f not in facts and f not in OPTIONAL_FACTS]
     if missing or not ended or not checked:
         raise ValueError(f"incomplete run: missing {missing}, ended={ended}, selfcheck={checked}")
     if failures:
@@ -120,7 +127,7 @@ def row_of(head, facts, source):
         "tool": {"probe": head["probe"], "nvcc": head["nvcc"], "driver": head.get("driver", ""),
                  "runtime": head.get("runtime", "")},
         "notes": head.get("notes", []),
-        "facts": {name: facts[name] for name in FACTS},
+        "facts": {name: facts[name] for name in FACTS if name in facts},
     }
 
 
@@ -236,7 +243,10 @@ def cmd_show(a):
         print(f"sm_{key}: {row['card']} ({row['mma_shape']}, nvcc {row['tool']['nvcc']}, "
               f"{row['source']})")
         for name in FACTS:
-            v = row["facts"][name]
+            v = row["facts"].get(name)
+            if v is None:
+                print(f"  {name:36s} {'-':>10s} (not measured by this row's probe)")
+                continue
             print(f"  {name:36s} {v['value']:10.3f} {v['unit']}")
     return 0
 

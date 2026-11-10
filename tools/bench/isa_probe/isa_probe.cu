@@ -214,6 +214,65 @@ __global__ void int32_throughput(Span* spans, float* sink, unsigned m, unsigned 
     if (s == 12345u) sink[0] = 1.f;
 }
 
+// ---- Dependent latencies of the ALU ops the decode chains use ----
+// One warp per SM runs a chain of kLatencyLinks dependent ops of one kind (each written in PTX
+// so ptxas keeps the op: IMAD, IADD3, LOP3, PRMT, SHF, HFMA2, FFMA, SHFL, and the conversion pairs
+// I2F+F2I and F2F f32->f16->f32, reported per op); cycles per link are the op's issue-to-use
+// latency. Each is held against the published range of the Volta..Blackwell SM (ALU 2-16 clk,
+// SHFL 10-60) by the self-check.
+enum class Op { IMAD, IADD, LOP3, PRMT, SHF, HFMA2, FFMA, SHFL, CVT_I2F_F2I, CVT_F32_F16 };
+
+template <Op op>
+__device__ __forceinline__ void dep_step(unsigned& x, unsigned k, unsigned m) {
+    if constexpr (op == Op::IMAD) {
+        asm volatile("mad.lo.u32 %0, %0, %1, %2;" : "+r"(x) : "r"(k), "r"(m));
+    } else if constexpr (op == Op::IADD) {
+        // x + x: two dependent adds of a loop-invariant k would pair into one IADD3 (x + k + k)
+        // and read as half the latency; a doubling cannot pair (x + x + x is not 4x).
+        asm volatile("add.u32 %0, %0, %0;" : "+r"(x));
+    } else if constexpr (op == Op::LOP3) {
+        asm volatile("lop3.b32 %0, %0, %1, %2, 0x96;" : "+r"(x) : "r"(k), "r"(m));
+    } else if constexpr (op == Op::PRMT) {
+        asm volatile("prmt.b32 %0, %0, %1, 0x3210;" : "+r"(x) : "r"(k));
+    } else if constexpr (op == Op::SHF) {
+        asm volatile("shf.l.wrap.b32 %0, %0, %1, %2;" : "+r"(x) : "r"(k), "r"(m));
+    } else if constexpr (op == Op::HFMA2) {
+        asm volatile("fma.rn.f16x2 %0, %0, %1, %2;" : "+r"(x) : "r"(k), "r"(m));
+    } else if constexpr (op == Op::FFMA) {
+        float f = __uint_as_float(x);
+        asm volatile("fma.rn.f32 %0, %0, %1, %2;"
+                     : "+f"(f)
+                     : "f"(__uint_as_float(k)), "f"(__uint_as_float(m)));
+        x = __float_as_uint(f);
+    } else if constexpr (op == Op::SHFL) {
+        // The source lane is the chained value itself (the 0x1f clamp takes it modulo 32): a
+        // constant lane let ptxas fold the whole chain away (probe 11 read 0 clk). From x = lane
+        // + 1 every lane reads its right neighbour, a rotation that never settles.
+        asm volatile("shfl.sync.idx.b32 %0, %0, %0, 0x1f, 0xffffffff;" : "+r"(x));
+    } else if constexpr (op == Op::CVT_I2F_F2I) {
+        float f;
+        asm volatile("cvt.rn.f32.s32 %0, %1;" : "=f"(f) : "r"(x));
+        asm volatile("cvt.rzi.s32.f32 %0, %1;" : "=r"(x) : "f"(f));
+    } else {
+        unsigned short h;
+        float f = __uint_as_float(x);
+        asm volatile("cvt.rn.f16.f32 %0, %1;" : "=h"(h) : "f"(f));
+        asm volatile("cvt.f32.f16 %0, %1;" : "=f"(f) : "h"(h));
+        x = __float_as_uint(f);
+    }
+}
+
+template <Op op>
+__global__ void dep_latency(Span* spans, unsigned* sink, unsigned k, unsigned m) {
+    unsigned x = threadIdx.x + 1u;
+    for (int i = 0; i < 64; ++i) dep_step<op>(x, k, m); // warm the pipe
+    const long long t0 = clock64();
+    for (int i = 0; i < kLatencyLinks; ++i) dep_step<op>(x, k, m);
+    const long long t1 = clock64();
+    if (threadIdx.x == 0) spans[blockIdx.x] = {t0, t1, smid()};
+    if (x == 0xffffffffu) sink[0] = x;
+}
+
 // ---- Memory latencies ----
 // Every chasing warp owns a sub-buffer of `m` elements (a power of two) holding one cycle through
 // all of them in pseudo-random order (a full-period LCG, fill_cycle: the line of the next link is
@@ -392,7 +451,7 @@ int main() {
     CHECK(cudaDriverGetVersion(&driver));
     CHECK(cudaRuntimeGetVersion(&runtime));
     const int cc = p.major * 10 + p.minor;
-    std::printf("probe isa_probe 10\n");
+    std::printf("probe isa_probe 12\n");
     std::printf("card %s\n", p.name);
     std::printf("cc %d\n", cc);
     std::printf("sms %d\n", p.multiProcessorCount);
@@ -449,6 +508,31 @@ int main() {
     const double fp32_floor = cc >= 80 ? 1.0 : 2.0;
     check(fp32 >= 0.97 * fp32_floor, "FP32 cycles per warp instruction under the lane floor");
     check(i32 >= 0.97 * 2.0, "INT32 cycles per warp instruction under the lane floor");
+
+    // Dependent latencies of the decode chain's ops, one warp per SM; the conversion pairs count
+    // two ops a link and are reported per op.
+    const auto dep = [&](auto launch, const char* name, double ops_per_link, double lo, double hi) {
+        launch();
+        launch();
+        const double clk_per_op = median_span(pr.collect(pr.sms)) / kLatencyLinks / ops_per_link;
+        fact(name, clk_per_op, "clk");
+        check(clk_per_op >= lo && clk_per_op <= hi,
+              std::string(name) + " outside its published range");
+    };
+#define ISA_PROBE_DEP(OP, NAME, OPS, LO, HI)                                                       \
+    dep([&] { dep_latency<Op::OP><<<pr.sms, 32>>>(pr.spans, pr.usink, 3u, 0x1234567u); }, NAME,    \
+        OPS, LO, HI)
+    ISA_PROBE_DEP(IMAD, "lat_imad", 1.0, 2.0, 16.0);
+    ISA_PROBE_DEP(IADD, "lat_iadd", 1.0, 2.0, 16.0);
+    ISA_PROBE_DEP(LOP3, "lat_lop3", 1.0, 2.0, 16.0);
+    ISA_PROBE_DEP(PRMT, "lat_prmt", 1.0, 2.0, 16.0);
+    ISA_PROBE_DEP(SHF, "lat_shf", 1.0, 2.0, 16.0);
+    ISA_PROBE_DEP(HFMA2, "lat_hfma2", 1.0, 2.0, 16.0);
+    ISA_PROBE_DEP(FFMA, "lat_ffma", 1.0, 2.0, 16.0);
+    ISA_PROBE_DEP(SHFL, "lat_shfl", 1.0, 10.0, 60.0);
+    ISA_PROBE_DEP(CVT_I2F_F2I, "lat_cvt_i2f_f2i", 2.0, 2.0, 32.0);
+    ISA_PROBE_DEP(CVT_F32_F16, "lat_cvt_f32_f16", 2.0, 2.0, 32.0);
+#undef ISA_PROBE_DEP
 
     // Memory latencies: per chasing warp a sub-buffer holding one pseudo-random cycle (fill_cycle).
     // L1: 4 KB a warp (32 KB at 8 warps, inside every L1), L1-cached loads. L2: 64 KB a warp
