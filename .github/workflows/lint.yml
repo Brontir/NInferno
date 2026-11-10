@@ -49,7 +49,9 @@ jobs:
             1) echo "Run: git clang-format \$(git merge-base HEAD origin/$BASE_REF)"; exit 1 ;;
             *) echo "git clang-format failed (exit $rc)"; exit "$rc" ;;
           esac
-      - name: Diff lint (fails on removed definitions still called; warns on removed includes and pasted blocks)
+      - name: Diff lint tests
+        run: python3 -B -m unittest tests/test_diff_lint.py
+      - name: Diff lint (fails on removed definitions still called and broken string literals; warns on removed includes and pasted blocks)
         if: github.event_name == 'pull_request'
         env:
           BASE_REF: ${{ github.base_ref }}
