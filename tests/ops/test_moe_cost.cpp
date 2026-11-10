@@ -222,7 +222,13 @@ void replica(const std::filesystem::path& routes_dir) {
                                hidden = e.at("hidden"), inter = e.at("inter");
             // Nemotron's mixer is the one non-gated (relu^2) layer of the tables.
             const bool relu2           = hidden == 2688;
-            const auto layer           = build(*q, *dq, experts, top_k, hidden, inter, relu2);
+            std::unique_ptr<Built> layer;
+            try {
+                layer = build(*q, *dq, experts, top_k, hidden, inter, relu2);
+            } catch (const std::invalid_argument& error) {
+                std::printf("%-10s skipped a layer: %s\n", source.board, error.what());
+                continue;
+            }
             const moe::MoeRouteKey key = moe::route_key(layer->weights, layer->config);
             for (const auto& [field, prefill] :
                  {std::pair{"evidence_us", true}, std::pair{"evidence_decode_us", false}}) {
