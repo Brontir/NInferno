@@ -38,9 +38,12 @@ struct RoutePins {
 
 // The bands: a prefill pin applies to calls of kPrefillPinMinTokens tokens or more (the prefill
 // route profile's band, prefill_routes.h), a decode pin to calls of 1..kDecodePinMaxTokens (decode
-// and speculative verify).
-inline constexpr std::int32_t kPrefillPinMinTokens = 17;
+// and speculative verify). The two bands are adjacent: the prefill band starts one past the widest
+// speculative verify. This is the one definition of that width; generic_gemm.h
+// (kPrefillBandMinTokens) and route_table.cpp (the first band a table may hold) take it from here.
 inline constexpr std::int32_t kDecodePinMaxTokens  = 16;
+inline constexpr std::int32_t kPrefillPinMinTokens = kDecodePinMaxTokens + 1;
+static_assert(kPrefillPinMinTokens == 17);
 
 // Sets the process's pins and clears the ledger.
 void set_route_pins(const RoutePins& pins) noexcept;
