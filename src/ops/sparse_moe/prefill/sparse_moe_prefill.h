@@ -2,7 +2,8 @@
 
 #include "core/weight.h"
 #include "core/arena.h"
-#include "core/measured_boards.h"
+#include "core/device_class.h"
+#include "core/measured_disposition.h"
 #include "core/tensor.h"
 #include "ninferno/ops/sparse_moe.h"
 
@@ -166,13 +167,15 @@ allocate_sparse_moe_prefill_workspace(Arena& arena, std::int32_t capacity_tokens
                                                          bool prefill_profile) noexcept;
 
 // What the Q4/Q5 and Q4/Q6 groupwise frontier of a board rests on (#616 step 3), by the lookup the
-// frontier makes: Own (a measured board: RTX 5090, 4090, 3090), Carried (a measured board within
-// measured::kCarryDistance), or Fallback (kSparseMoePrefillQ4Q5Min, a declared literal; no donor).
-// See docs/maintainer/table-dispositions.md.
+// frontier makes: Measured (the board's facts are a measured board's: RTX 5090, 4090, 3090),
+// Carried (a measured board within measured::kCarryDistance), Incomplete (the nearest measured
+// board has a fact unknown, L2 or bandwidth) or None (no measured board within reach); the last two
+// take kSparseMoePrefillQ4Q5Min, a declared literal, no donor. See
+// docs/maintainer/table-dispositions.md.
 struct SparseMoeFrontierAnswer {
-    std::int32_t min_tokens                = kSparseMoePrefillQ4Q5Min;
-    measured::TableDisposition disposition = measured::TableDisposition::Fallback;
-    double distance                        = 0;
+    std::int32_t min_tokens           = kSparseMoePrefillQ4Q5Min;
+    measured::Disposition disposition = measured::Disposition::None;
+    double distance                   = 0;
     std::optional<Board> donor;
 };
 

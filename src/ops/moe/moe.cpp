@@ -997,19 +997,7 @@ MoePlan heuristic_r8(const MoeWeights& w, const Geometry& g, MoePlan p, std::int
     return with_r8(p, gate_up, down ? gate_up : -1);
 }
 
-// The measured board whose A8 route this device takes (within kCarryDistance), null: none.
-const ClassA8Route* a8_class_entry() {
-    return measured::table_answer(std::span(kA8Routes), board_of(device_class()),
-                                  measured::kCarryDistance)
-        .entry;
-}
-
 } // namespace
-
-std::optional<A8Route> a8_default_route() {
-    const ClassA8Route* entry = a8_class_entry();
-    return entry != nullptr ? entry->route : kFallbackA8Route;
-}
 
 A8RouteAnswer a8_route_answer(const Board& board) {
     const auto answer =
@@ -1020,6 +1008,10 @@ A8RouteAnswer a8_route_answer(const Board& board) {
     out.distance    = answer.distance;
     if (answer.entry != nullptr) { out.donor = answer.entry->board; }
     return out;
+}
+
+std::optional<A8Route> a8_default_route() {
+    return a8_route_answer(board_of(device_class())).route;
 }
 
 namespace {
@@ -1281,15 +1273,19 @@ std::optional<MoeAnswer> invariant_authority(const MoeCall& c) {
                      by_rule("invariant-profile")};
 }
 
-// The evidence of the class's A8 route: the measured board whose route this device takes, else
-// the fallback route (a literal of eight measured cards, no donor).
+// The evidence of the class's A8 route, read from the one answer a8_default_route gives
+// (a8_route_answer): the measured board whose route this device takes (Measured or Carried), else
+// the fallback route (a literal of eight measured cards, no donor; None or Incomplete).
 Evidence a8_route_evidence() {
-    Evidence e = by_rule("decode");
-    if (const ClassA8Route* entry = a8_class_entry()) {
+    Evidence e        = by_rule("decode");
+    const auto answer = a8_route_answer(board_of(device_class()));
+    using D           = measured::Disposition;
+    if (answer.donor && (answer.disposition == D::Measured || answer.disposition == D::Carried)) {
         e.ranker   = Evidence::Ranker::None;
-        e.distance = board_distance(board_of(device_class()), entry->board);
-        e.kind     = e.distance == 0 ? Evidence::Kind::Measured : Evidence::Kind::Carried;
-        e.donor    = board_label(entry->board);
+        e.distance = answer.distance;
+        e.kind     = answer.disposition == D::Measured ? Evidence::Kind::Measured
+                                                       : Evidence::Kind::Carried;
+        e.donor    = board_label(*answer.donor);
     } else {
         e.donor = "fallback-a8-route";
     }
