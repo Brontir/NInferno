@@ -16,12 +16,12 @@ int resident_ctas_per_sm(const DeviceClass& d, const KernelShape& k) {
     cudaOccDeviceProp p;
     p.computeMajor                = d.major;
     p.computeMinor                = d.minor;
-    p.maxThreadsPerBlock          = 1024;
+    p.maxThreadsPerBlock          = kOccupancyMaxThreadsPerBlock;
     p.maxThreadsPerMultiprocessor = d.max_threads_per_sm;
-    p.regsPerBlock                = 64 * 1024;
+    p.regsPerBlock                = kOccupancyRegsPerBlock;
     p.regsPerMultiprocessor       = d.registers_per_sm;
-    p.warpSize                    = 32;
-    p.sharedMemPerBlock           = 48 * 1024;
+    p.warpSize                    = kOccupancyWarpSize;
+    p.sharedMemPerBlock           = kOccupancySharedPerBlock;
     p.sharedMemPerMultiprocessor  = d.smem_per_sm;
     p.numSms                      = d.sms;
     p.sharedMemPerBlockOptin      = d.smem_per_block_optin;

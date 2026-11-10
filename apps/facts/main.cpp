@@ -7,8 +7,10 @@
 //
 //   ninferno-facts-probe [--device N]
 //
-// Output: {"devices": [{"index", "queried": {...}, "synthetic": {...}, "raw": {...}}, ...]}.
+// Output: {"devices": [{"index", "queried": {...}, "synthetic": {...}, "raw": {...},
+// "engine_table_facts": {...}, "engine_occupancy_limits": {...}}, ...]}.
 #include "core/device_class.h"
+#include "core/kernel_occupancy.h"
 
 #include <cuda_runtime.h>
 
@@ -119,10 +121,16 @@ int main(int argc, char** argv) {
                        {"memory_bus_bits", facts.memory_bus_bits},
                        {"memory_clock_khz", facts.memory_clock_khz},
                        {"l2_mib", facts.l2_mib}};
+            // The values resident_ctas_per_sm assumes, under the raw attribute's own names.
+            Json occupancy{{"shared_per_block_default", ninferno::kOccupancySharedPerBlock},
+                           {"registers_per_block", ninferno::kOccupancyRegsPerBlock},
+                           {"max_threads_per_block", ninferno::kOccupancyMaxThreadsPerBlock},
+                           {"warp_size", ninferno::kOccupancyWarpSize}};
             devices.push_back(Json{{"index", device},
                                    {"queried", class_of(q)},
                                    {"synthetic", class_of(synthetic)},
                                    {"raw", std::move(raw)},
+                                   {"engine_occupancy_limits", std::move(occupancy)},
                                    {"engine_table_facts", std::move(table)}});
         }
         std::puts(Json{{"devices", std::move(devices)}}.dump(1).c_str());

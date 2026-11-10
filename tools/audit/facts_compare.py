@@ -2,14 +2,18 @@
 
 Input: one device of ninferno-facts-probe's JSON ("queried": the engine's own query,
 "synthetic": synthetic_device_class for the same compute capability, "raw": CUDA attributes the
-query does not keep, "engine_table_facts": MachineFacts as the engine reads the table) and the
+query does not keep, "engine_table_facts": MachineFacts as the engine reads the table, "engine_occupancy_limits": the
+per-block limits resident_ctas_per_sm assumes) and the
 board's row of src/core/data/gpu_facts.json. Output: one result per field.
 
   table  the gpu_facts.json row against the driver: cc, SMs, L2, bus width, memory data rate,
          boost clock, memory size; and against the engine's own reading of the table;
   arch   the architecture limits synthetic_device_class writes for the compute capability
          against the queried ones (shared memory per block and per SM, threads, blocks and
-         registers per SM) and the reserved-shared invariant of the queried class.
+         registers per SM) and the reserved-shared invariant of the queried class; the board
+         feature mma_slow (a difference fails); the per-block limits the occupancy calculator
+         assumes (kernel_occupancy.h, "engine_occupancy_limits": shared memory per block, registers
+         per block, threads per block, warp size) against the driver's raw attributes.
 
 status: match, mismatch (fails the run), unavailable (the driver gave no value: not a failure),
 info (a difference that is not a failure: a feature the build lacks, the persisting-L2 cap, a
@@ -134,7 +138,11 @@ def engine_expected(q, row):
     return out
 
 
-DEVICE_PARTS = ("queried", "synthetic", "engine_table_facts")
+DEVICE_PARTS = ("queried", "synthetic", "engine_table_facts", "engine_occupancy_limits")
+# The raw attributes kernel_occupancy.h assumes a value for (engine_occupancy_limits, same names).
+OCCUPANCY_LIMITS = ("shared_per_block_default", "registers_per_block", "max_threads_per_block",
+                    "warp_size")
+BOARD_FEATURES = ("mma_slow",)
 
 
 def validate_probe(probe_output):
@@ -155,6 +163,10 @@ def validate_probe(probe_output):
                 "reserved_shared_per_block" not in device["raw"]:
             raise ValueError(f"invalid probe output: device {position} has no \"raw\" object "
                              "with reserved_shared_per_block")
+        missing = [k for k in OCCUPANCY_LIMITS if k not in device["engine_occupancy_limits"]]
+        if missing:
+            raise ValueError(f"invalid probe output: device {position}: engine_occupancy_limits "
+                             f"has no {', '.join(missing)}")
         if not isinstance(device["synthetic"].get("features"), dict) or \
                 not isinstance(device["queried"].get("features"), dict):
             raise ValueError(f"invalid probe output: device {position} has no \"features\" object")
@@ -315,9 +327,21 @@ def compare_device(device, row):
     out.append(result("arch", "persisting_l2_max_bytes", s["persisting_l2_max_bytes"], persisting,
                       "match" if s["persisting_l2_max_bytes"] == persisting else "info",
                       "synthetic writes 3/4 of the L2; the driver's cap is the board's"))
+    # The per-block limits resident_ctas_per_sm assumes, against what the driver says.
+    for name in OCCUPANCY_LIMITS:
+        want, got = device["engine_occupancy_limits"][name], raw.get(name)
+        if unavailable(got):
+            out.append(result("arch", f"occupancy_{name}", want, got, "unavailable"))
+        else:
+            out.append(result("arch", f"occupancy_{name}", want, got,
+                              "match" if want == got else "mismatch",
+                              "the occupancy calculator's assumed limit against the driver's"))
     for name, want in s["features"].items():
         got = q["features"].get(name)
-        out.append(result("arch", f"feature_{name}", want, got, "match" if want == got else "info",
+        # mma_slow is a board fact set on both classes (it turns tensor routes off), so a
+        # difference is a failure; the other features are what the build can launch.
+        differs = "mismatch" if name in BOARD_FEATURES else "info"
+        out.append(result("arch", f"feature_{name}", want, got, "match" if want == got else differs,
                           "queried features are the device's row in common with the build's"))
     return out
 

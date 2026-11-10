@@ -35,6 +35,9 @@ def device_4090():
     return {"index": 0, "queried": queried, "synthetic": synthetic,
             "raw": {"reserved_shared_per_block": 1024, "shared_per_block_default": 49152,
                     "registers_per_block": 65536, "max_threads_per_block": 1024, "warp_size": 32},
+            "engine_occupancy_limits": {"shared_per_block_default": 49152,
+                                        "registers_per_block": 65536,
+                                        "max_threads_per_block": 1024, "warp_size": 32},
             "engine_table_facts": {"source": 1, "sku": "GeForce RTX 4090",
                                    "reference_clock_khz": 2_520_000, "memory_bus_bits": 384,
                                    "memory_clock_khz": 10_500_000, "l2_mib": 72.0}}
@@ -101,6 +104,25 @@ class Compare(unittest.TestCase):
         d = device_4090()
         d["raw"]["reserved_shared_per_block"] = 0  # opt-in + reserved no longer the per-SM figure
         self.assertEqual(statuses(d)[("arch", "smem_optin_plus_reserved_is_per_sm")], "mismatch")
+
+    def test_mma_slow_is_a_board_fact(self):
+        d = device_4090()
+        d["queried"]["features"]["mma_slow"] = True
+        self.assertEqual(statuses(d)[("arch", "feature_mma_slow")], "mismatch")
+
+    def test_occupancy_limits_against_the_drivers_raw_values(self):
+        for field, driver in (("shared_per_block_default", 32768), ("registers_per_block", 32768),
+                              ("max_threads_per_block", 512), ("warp_size", 16)):
+            d = device_4090()
+            d["raw"][field] = driver
+            s = statuses(d)
+            self.assertEqual(s[("arch", f"occupancy_{field}")], "mismatch", field)
+            self.assertEqual([k for k, v in s.items() if v == "mismatch"],
+                             [("arch", f"occupancy_{field}")], field)
+        d = device_4090()
+        d["raw"]["warp_size"] = -1  # the driver could not answer
+        self.assertEqual(statuses(d)[("arch", "occupancy_warp_size")], "unavailable")
+        self.assertEqual(statuses(device_4090())[("arch", "occupancy_warp_size")], "match")
 
     def test_features_and_persisting_l2_are_information(self):
         d = device_4090()
@@ -328,10 +350,16 @@ class Cli(unittest.TestCase):
         del no_persisting["queried"]["persisting_l2_max_bytes"]
         no_raw = device_4090()
         del no_raw["raw"]
+        no_occupancy = device_4090()
+        del no_occupancy["engine_occupancy_limits"]
+        no_warp = device_4090()
+        del no_warp["engine_occupancy_limits"]["warp_size"]
         no_reserved = device_4090()
         del no_reserved["raw"]["reserved_shared_per_block"]
         for name, probe in (("empty list", {"devices": []}), ("no devices key", {}),
                             ("no raw", {"devices": [no_raw]}),
+                            ("no occupancy limits", {"devices": [no_occupancy]}),
+                            ("occupancy limit key missing", {"devices": [no_warp]}),
                             ("no reserved shared", {"devices": [no_reserved]}),
                             ("devices not a list", {"devices": {"0": device_4090()}}),
                             ("not an object", []), ("device not an object", {"devices": [1]}),
@@ -346,6 +374,24 @@ class Cli(unittest.TestCase):
             self.assertEqual(done.returncode, 2, name + ": " + done.stdout)
             self.assertIn("invalid probe output", done.stderr, name)
             self.assertIsNone(summary, name)
+
+    def test_board_and_build_features_in_the_cli(self):
+        slow = device_4090()
+        slow["queried"]["features"]["mma_slow"] = True
+        done, summary = self.run_cli({"devices": [slow]})
+        self.assertEqual(done.returncode, 1)
+        self.assertEqual([m["field"] for m in summary["devices"][0]["mismatches"]],
+                         ["feature_mma_slow"])
+        build = device_4090()
+        build["queried"]["features"]["pdl"] = True  # what the build lacks: information only
+        done, summary = self.run_cli({"devices": [build]})
+        self.assertEqual(done.returncode, 0, done.stdout)
+        warp = device_4090()
+        warp["raw"]["warp_size"] = 16
+        done, summary = self.run_cli({"devices": [warp]})
+        self.assertEqual(done.returncode, 1)
+        self.assertEqual([m["field"] for m in summary["devices"][0]["mismatches"]],
+                         ["occupancy_warp_size"])
 
     def test_a_missing_probe_is_exit_2(self):
         done = subprocess.run([sys.executable, "-B", str(ROOT / "tools" / "audit" / "facts_vs_driver.py"),
