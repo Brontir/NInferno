@@ -1127,6 +1127,8 @@ const char* authority_name(MoeAuthority authority) {
         return "prefill-schedule";
     case MoeAuthority::SpeedW4a8:
         return "speed-w4a8";
+    case MoeAuthority::SpeedSchedule:
+        return "speed-schedule";
     case MoeAuthority::DecodeR8:
         return "decode-r8";
     case MoeAuthority::DecodeStreaming:
@@ -1202,8 +1204,12 @@ MoePlan untuned_plan_why(const MoeWeights& weights, const MoeConfig& config, std
                 return without_r8(*tuned, g);
             }
             if (tuned->gate_up_r8 < 0 && tuned->down_r8 < 0 && !tuned->a16) {
-                why = MoeAuthority::TableClassA8;
-                return heuristic_r8(weights, g, *tuned, tokens, true);
+                const MoePlan on_top = heuristic_r8(weights, g, *tuned, tokens, true);
+                // The class's route may add nothing (A16 policy, no R8 at this width, R8 not
+                // admitted): then the band stands as measured.
+                why = on_top.gate_up_r8 >= 0 || on_top.down_r8 >= 0 ? MoeAuthority::TableClassA8
+                                                                    : MoeAuthority::TableAsMeasured;
+                return on_top;
             }
             why = MoeAuthority::TableAsMeasured;
             return *tuned;
@@ -1226,8 +1232,11 @@ MoePlan untuned_plan_why(const MoeWeights& weights, const MoeConfig& config, std
         return wide;
     }
     const MoePlan decode = heuristic_r8(weights, g, p, tokens);
-    why                  = decode.gate_up_r8 >= 0 || decode.down_r8 >= 0 ? MoeAuthority::DecodeR8
-                                                                         : MoeAuthority::DecodeStreaming;
+    // plan_for's wide schedule (T >= 64 outside the prefill band, the grouped W4A8 refused) is not
+    // a decode schedule.
+    why = decode.gate_up_r8 >= 0 || decode.down_r8 >= 0 ? MoeAuthority::DecodeR8
+          : tokens >= 64                               ? MoeAuthority::SpeedSchedule
+                                                       : MoeAuthority::DecodeStreaming;
     return decode;
 }
 

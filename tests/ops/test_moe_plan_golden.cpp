@@ -45,7 +45,24 @@ namespace moe     = ninferno::ops::detail::moe;
 namespace qw      = ninferno::test::quantized_weight;
 using ops::LinearPolicy;
 
-constexpr const auto& kBoards = generic::kFactsBoards;
+// The selector goldens' boards and the ones whose routes/ tables carry MoE entries that those
+// lack (this golden's own, so the selector goldens do not move): the RTX 3060 (ga106), the RTX
+// 4070 (ad104, 46 SMs) and the RTX 4070 Ti (ad104-60sm).
+constexpr generic::FactsBoard kExtraBoards[] = {
+    {"rtx3060", 0x2503, 8, 6, 28, 2, 12, 1777, 7501, 192},
+    {"rtx4070", 0x2786, 8, 9, 46, 36, 12, 2475, 10501, 192},
+    {"rtx4070ti", 0x2782, 8, 9, 60, 48, 12, 2610, 10501, 192},
+};
+
+const std::vector<generic::FactsBoard>& boards() {
+    static const std::vector<generic::FactsBoard> all = [] {
+        std::vector<generic::FactsBoard> v(std::begin(generic::kFactsBoards),
+                                           std::end(generic::kFactsBoards));
+        v.insert(v.end(), std::begin(kExtraBoards), std::end(kExtraBoards));
+        return v;
+    }();
+    return all;
+}
 
 constexpr const char* kBuildSet =
 #if NINFERNO_BUILD_ARCH == 70
@@ -63,6 +80,12 @@ struct Layer {
     std::int32_t experts, top_k, hidden, inter;
     QType gate_up, down;
     bool relu2 = false;
+    // The banks in ggml_frag_v1, as expert_bank_layout's Auto makes shipped artifacts (Q4_K,
+    // IQ3_XXS, IQ2_S; Q4_0 from K = 1024): the weight descriptor says so, and nothing here reads
+    // the payload.
+    bool frag_gate_up = false, frag_down = false;
+    // Columns of the gate/up bank past H (a padded GGUF: Nemotron-H, H 2688, K 2816).
+    std::int32_t pad = 0;
 };
 
 // Each model in the formats its checkpoints ship in (GGUF K-quants and IQ, published int4,
@@ -84,6 +107,26 @@ const Layer kLayers[] = {
     {"gpt-oss-20b", 32, 4, 2880, 2880, QType::GGML_Q4_0, QType::GGML_Q4_0},
     {"nemotron-3.5-30b-a3b", 128, 6, 2688, 1856, QType::NVFP4, QType::NVFP4, true},
     {"nemotron-3.5-30b-a3b", 128, 6, 2688, 1856, QType::GGML_Q5_1, QType::GGML_Q5_0, true},
+    // The layers the route tables key (gb202 / gb203 / gb203-70sm: Qwen3-30B-A3B NVFP4;
+    // gb203: Nemotron IQ3_XXS, padded, frag).
+    {"qwen3-30b-a3b", 128, 8, 2048, 768, QType::NVFP4, QType::NVFP4},
+    {"nemotron-3.5-30b-a3b", 128, 6, 2688, 2048, QType::GGML_IQ3_XXS, QType::GGML_IQ3_XXS, true,
+     true, true, 128},
+    {"nemotron-3.5-30b-a3b", 128, 6, 2688, 2048, QType::GGML_IQ3_XXS, QType::GGML_IQ3_XXS, true,
+     false, false, 128},
+    // The same banks in fragment order (frag at Auto): the R8 fragment rules, the codec refusals,
+    // Volta's HMMA layout rule and the W4A8 fragment admission.
+    {"qwen3.6-35b-a3b", 256, 8, 2048, 512, QType::GGML_Q4_K, QType::GGML_Q6_K, false, true, false},
+    {"qwen3.6-35b-a3b", 256, 8, 2048, 512, QType::GGML_IQ2_S, QType::GGML_IQ4_XS, false, true,
+     false},
+    {"qwen3.6-35b-a3b", 256, 8, 2048, 512, QType::GGML_IQ2_S, QType::GGML_IQ3_XXS, false, true,
+     true},
+    {"qwen3.6-35b-a3b", 256, 8, 2048, 512, QType::GGML_IQ3_XXS, QType::GGML_IQ4_XS, false, true,
+     false},
+    {"gemma-4-26b-a4b", 128, 8, 2816, 704, QType::GGML_IQ2_S, QType::GGML_IQ4_NL, false, true,
+     false},
+    {"gemma-4-26b-a4b", 128, 8, 2816, 704, QType::GGML_Q4_0, QType::GGML_Q4_0, false, true, false},
+    {"gpt-oss-20b", 32, 4, 2880, 2880, QType::GGML_Q4_0, QType::GGML_Q4_0, false, true, true},
 };
 
 constexpr std::int32_t kTokens[] = {1, 2, 3, 4, 5, 6, 7, 8, 16, 17, 32, 64, 128, 512, 2048};
@@ -104,7 +147,8 @@ std::string describe(const ops::MoeWeights& weights, const ops::MoeConfig& confi
     const moe::MoeStageRoutes stages = moe::stage_routes(weights, q.plan);
     std::ostringstream out;
     out << moe::plan_name(q.plan) << " jobs=" << q.plan.job_columns << " "
-        << moe::authority_name(q.authority);
+        << moe::authority_name(q.authority) << " stages=" << stages.gate_up.name << ","
+        << stages.down.name;
     for (const auto& [name, s] : {std::pair{"gate_up", &stages.gate_up}, {"down", &stages.down}}) {
         if (s->r8 != moe::BankRefusal::None) out << " " << name << ".r8=" << refusal(s->r8);
         if (s->w4a8 != moe::BankRefusal::None) out << " " << name << ".w4a8=" << refusal(s->w4a8);
@@ -116,7 +160,12 @@ std::string layer_name(const Layer& l) {
     return std::string(l.model) + " " + generic::qtype_name(l.gate_up) + "/" +
            generic::qtype_name(l.down) + " E" + std::to_string(l.experts) + " k" +
            std::to_string(l.top_k) + " H" + std::to_string(l.hidden) + " F" +
-           std::to_string(l.inter) + (l.relu2 ? " relu2" : "");
+           std::to_string(l.inter) + (l.relu2 ? " relu2" : "") +
+           (l.pad != 0 ? " pad" + std::to_string(l.pad) : "") +
+           (l.frag_gate_up || l.frag_down
+                ? std::string(" frag:") + (l.frag_gate_up ? "gate_up" : "") +
+                      (l.frag_gate_up && l.frag_down ? "+" : "") + (l.frag_down ? "down" : "")
+                : "");
 }
 
 // Appends the layer's lines to each board's dump.
@@ -133,8 +182,8 @@ void dump_layer(const Layer& l, std::map<std::string, std::string>& dumps) {
             return o;
         };
 
-        gate_up.emplace(qw::make_patterned_weight(l.gate_up, l.experts * sets * l.inter, l.hidden,
-                                                  7U, options_for(l.gate_up)));
+        gate_up.emplace(qw::make_patterned_weight(l.gate_up, l.experts * sets * l.inter,
+                                                  l.hidden + l.pad, 7U, options_for(l.gate_up)));
         down.emplace(qw::make_patterned_weight(l.down, l.experts * l.hidden, l.inter, 9U,
                                                options_for(l.down)));
     } catch (const std::invalid_argument& error) {
@@ -157,8 +206,10 @@ void dump_layer(const Layer& l, std::map<std::string, std::string>& dumps) {
         weights.router                       = r;
         weights.gate_up                      = gate_up->device_weight(payload);
         weights.down                         = down->device_weight(payload);
+        if (l.frag_gate_up) weights.gate_up.layout = QuantLayout::GgmlFrag;
+        if (l.frag_down) weights.down.layout = QuantLayout::GgmlFrag;
     }
-    for (const generic::FactsBoard& b : kBoards) {
+    for (const generic::FactsBoard& b : boards()) {
         std::string& out = dumps[b.name];
         if (!gate_up) {
             out += unpacked;
@@ -221,17 +272,24 @@ int main(int argc, char** argv) {
         bool update = false;
         for (int i = 1; i < argc; ++i) update = update || std::string_view(argv[i]) == "--update";
         std::map<std::string, std::string> dumps;
-        for (const generic::FactsBoard& b : kBoards) {
+        for (const generic::FactsBoard& b : boards()) {
             dumps[b.name] = std::string("# ") + b.name + " " + kBuildSet + "\n";
         }
         for (const Layer& l : kLayers) dump_layer(l, dumps);
         int failed = 0;
-        for (const generic::FactsBoard& b : kBoards) {
+        for (const generic::FactsBoard& b : boards()) {
             const auto path        = golden_dir() / kBuildSet / (std::string(b.name) + ".txt");
             const std::string& now = dumps[b.name];
             if (update) {
                 std::filesystem::create_directories(path.parent_path());
-                std::ofstream(path, std::ios::binary) << now;
+                std::ofstream file(path, std::ios::binary);
+                file << now;
+                file.flush();
+                if (!file.good()) {
+                    std::cerr << b.name << ": cannot write " << path.string() << '
+'; ++failed;
+                    continue;
+                }
                 std::cout << b.name << ": wrote " << path.string() << '\n';
                 continue;
             }
