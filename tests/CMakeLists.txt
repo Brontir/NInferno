@@ -69,6 +69,12 @@ add_test(NAME ninferno_registry_add_test
 add_test(NAME ninferno_kit_validate_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_kit_validate.py)
 
+# The facts-vs-driver comparison (tools/audit/facts_vs_driver.py) on canned driver output (#612
+# step 2), no GPU.
+add_test(NAME ninferno_facts_vs_driver_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_facts_vs_driver.py)
+set_tests_properties(ninferno_facts_vs_driver_test PROPERTIES LABELS host)
+
 # tools/bench/selection_regret.py: the offline selection regret's statuses, holdouts and exit codes
 # (#301), no GPU.
 add_test(NAME ninferno_selection_regret_test

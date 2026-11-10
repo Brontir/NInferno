@@ -1,0 +1,153 @@
+"""tools/audit/facts_compare.py and facts_vs_driver.py on canned driver output, no GPU (#612 step 2).
+
+The canned device is an RTX 4090 as ninferno-facts-probe prints it: the driver's values in
+"queried", synthetic_device_class's architecture limits in "synthetic", the raw attributes the
+query does not keep. Each test changes one thing and checks the field that must fail.
+"""
+import copy
+import json
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools" / "audit"))
+import facts_compare  # noqa: E402
+import facts_vs_driver  # noqa: E402
+
+MIB = 1024 * 1024
+FEATURES = {"mma_bf16": True, "mma_bf16_native": True, "mma_tensor": True, "mma_fp8": True,
+            "mma_f8f6f4": False, "mma_mxf4nvf4": False, "tma": False, "pdl": False,
+            "clusters": False, "mma_slow": False}
+
+
+def device_4090():
+    queried = {"name": "NVIDIA GeForce RTX 4090", "pci_device_id": 0x2684, "chip": "ad102",
+               "major": 8, "minor": 9, "sms": 128, "l2_bytes": 72 * MIB,
+               "global_bytes": 25_757_220_864, "smem_per_block_optin": 101376,
+               "smem_per_sm": 102400, "max_threads_per_sm": 1536, "max_blocks_per_sm": 24,
+               "registers_per_sm": 65536, "persisting_l2_max_bytes": 54 * MIB,
+               "memory_bus_bits": 384, "memory_clock_khz": 10_501_000, "sm_clock_khz": 2_520_000,
+               "features": dict(FEATURES)}
+    synthetic = dict(copy.deepcopy(queried), name="synthetic sm89")
+    return {"index": 0, "queried": queried, "synthetic": synthetic,
+            "raw": {"reserved_shared_per_block": 1024, "shared_per_block_default": 49152,
+                    "registers_per_block": 65536, "max_threads_per_block": 1024, "warp_size": 32},
+            "engine_table_facts": {"source": 1, "sku": "GeForce RTX 4090",
+                                   "reference_clock_khz": 2_520_000, "memory_bus_bits": 384,
+                                   "memory_clock_khz": 10_500_000, "l2_mib": 72.0}}
+
+
+ROWS = facts_vs_driver.load_rows(facts_vs_driver.FACTS)
+
+
+def statuses(device):
+    row = ROWS.get(device["queried"]["pci_device_id"])
+    return {(r["source"], r["field"]): r["status"] for r in facts_compare.compare_device(device, row)}
+
+
+class Compare(unittest.TestCase):
+    def test_a_matching_board_has_no_mismatch(self):
+        s = statuses(device_4090())
+        self.assertNotIn("mismatch", s.values(), [k for k, v in s.items() if v == "mismatch"])
+        self.assertEqual(s[("table", "sms")], "match")
+        self.assertEqual(s[("table", "memory_clock_khz")], "match")  # 10 501 000 within 0.5 % of 10.5 M
+        self.assertEqual(s[("arch", "smem_optin_plus_reserved_is_per_sm")], "match")
+
+    def test_each_table_field_fails_alone(self):
+        for field, change in (
+                ("sms", lambda q: q.update(sms=114)),
+                ("l2_mib", lambda q: q.update(l2_bytes=64 * MIB)),
+                ("bus_bits", lambda q: q.update(memory_bus_bits=320)),
+                ("memory_clock_khz", lambda q: q.update(memory_clock_khz=10_600_000)),  # +0.95 %
+                ("boost_clock_khz", lambda q: q.update(sm_clock_khz=2_700_000)),
+                ("vram_gib", lambda q: q.update(global_bytes=12 * 1024 * MIB)),
+                ("cc", lambda q: q.update(minor=6))):
+            d = device_4090()
+            change(d["queried"])
+            self.assertEqual(statuses(d)[("table", field)], "mismatch", field)
+
+    def test_memory_clock_tolerance_edge(self):
+        for khz, want in ((10_500_000 * 1.0049, "match"), (10_500_000 * 0.9951, "match"),
+                          (10_500_000 * 1.0051, "mismatch")):
+            d = device_4090()
+            d["queried"]["memory_clock_khz"] = int(khz)
+            self.assertEqual(statuses(d)[("table", "memory_clock_khz")], want, khz)
+
+    def test_a_driver_that_does_not_say_is_unavailable_not_a_failure(self):
+        d = device_4090()
+        d["queried"].update(memory_bus_bits=0, memory_clock_khz=-1, sm_clock_khz=0)
+        s = statuses(d)
+        for field in ("bus_bits", "memory_clock_khz", "boost_clock_khz"):
+            self.assertEqual(s[("table", field)], "unavailable", field)
+        self.assertNotIn("mismatch", [v for k, v in s.items() if k[0] == "table" and not k[1].startswith("engine_")])
+
+    def test_unknown_pci_id_has_no_row(self):
+        d = device_4090()
+        d["queried"]["pci_device_id"] = 0xDEAD
+        self.assertEqual(statuses(d)[("table", "row")], "mismatch")
+
+    def test_synthetic_limits_against_the_queried_ones(self):
+        # The Volta case: the driver says 2048 threads an SM where the synthetic class wrote 1536.
+        d = device_4090()
+        d["queried"]["max_threads_per_sm"] = 2048
+        d["queried"]["max_blocks_per_sm"] = 32
+        s = statuses(d)
+        self.assertEqual(s[("arch", "max_threads_per_sm")], "mismatch")
+        self.assertEqual(s[("arch", "max_blocks_per_sm")], "mismatch")
+        self.assertEqual(s[("arch", "registers_per_sm")], "match")
+        d = device_4090()
+        d["raw"]["reserved_shared_per_block"] = 0  # opt-in + reserved no longer the per-SM figure
+        self.assertEqual(statuses(d)[("arch", "smem_optin_plus_reserved_is_per_sm")], "mismatch")
+
+    def test_features_and_persisting_l2_are_information(self):
+        d = device_4090()
+        d["queried"]["features"]["pdl"] = True
+        d["queried"]["persisting_l2_max_bytes"] = 40 * MIB
+        s = statuses(d)
+        self.assertEqual(s[("arch", "feature_pdl")], "info")
+        self.assertEqual(s[("arch", "persisting_l2_max_bytes")], "info")
+
+    def test_engine_table_reading_against_the_json(self):
+        d = device_4090()
+        d["engine_table_facts"]["l2_mib"] = 64.0
+        self.assertEqual(statuses(d)[("table", "engine_l2_mib")], "mismatch")
+        d = device_4090()
+        d["engine_table_facts"]["sku"] = ""
+        self.assertEqual(statuses(d)[("table", "engine_sku")], "mismatch")
+
+
+class Cli(unittest.TestCase):
+    def run_cli(self, probe):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "probe.json"
+            path.write_text(json.dumps(probe), encoding="utf-8")
+            out = Path(tmp) / "summary.json"
+            done = subprocess.run([sys.executable, "-B", str(ROOT / "tools" / "audit" / "facts_vs_driver.py"),
+                                   "--probe-json", str(path), "--json-out", str(out)],
+                                  capture_output=True, text=True)
+            return done, (json.loads(out.read_text(encoding="utf-8")) if out.exists() else None)
+
+    def test_exit_codes_and_summary(self):
+        good, summary = self.run_cli({"devices": [device_4090()]})
+        self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
+        self.assertTrue(summary["ok"])
+        self.assertIn("device 0: NVIDIA GeForce RTX 4090", good.stdout)
+        bad_device = copy.deepcopy(device_4090())
+        bad_device["queried"]["l2_bytes"] = 64 * MIB
+        bad, summary = self.run_cli({"devices": [device_4090(), bad_device]})
+        self.assertEqual(bad.returncode, 1)
+        self.assertFalse(summary["ok"])
+        self.assertEqual([m["field"] for m in summary["devices"][1]["mismatches"]], ["l2_mib"])
+        self.assertEqual(summary["devices"][0]["mismatches"], [])
+
+    def test_a_missing_probe_is_exit_2(self):
+        done = subprocess.run([sys.executable, "-B", str(ROOT / "tools" / "audit" / "facts_vs_driver.py"),
+                               "--probe", str(ROOT / "no_such_probe")], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 2)
+
+
+if __name__ == "__main__":
+    unittest.main()
