@@ -15,16 +15,23 @@
 
 #include "ops/generic/route_rules.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <map>
+#include <optional>
 #include <regex>
 #include <set>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace rr = ninferno::ops::detail::generic::route_rules;
 
@@ -63,6 +70,135 @@ std::size_t count_of(const std::string& haystack, const std::string& needle) {
         ++n;
     }
     return n;
+}
+
+// The value of the right-hand side of a constant's definition: a number (with its integer or float
+// suffix), the names of other constants, parentheses and the operators << * / + - (C++ precedence:
+// shift lowest). `lookup` gives the text of a named constant's definition, or nothing.
+class ConstantExpression {
+public:
+    using Lookup = std::function<std::optional<std::string>(const std::string&)>;
+
+    ConstantExpression(std::string text, Lookup lookup, int depth = 0)
+        : text_(std::move(text)), lookup_(std::move(lookup)), depth_(depth) {}
+
+    // nullopt where the text is not an expression this class reads (the caller fails the rule).
+    std::optional<double> value() {
+        const double v = shift();
+        skip();
+        if (!ok_ || at_ != text_.size()) return std::nullopt;
+        return v;
+    }
+
+private:
+    void skip() {
+        while (at_ < text_.size() && text_[at_] == ' ') ++at_;
+    }
+
+    bool take(const char* token) {
+        skip();
+        const std::size_t n = std::char_traits<char>::length(token);
+        if (text_.compare(at_, n, token) != 0) return false;
+        at_ += n;
+        return true;
+    }
+
+    double shift() {
+        double v = add();
+        while (ok_ && take("<<")) {
+            const double r = add();
+            if (r < 0 || r > 62) ok_ = false;
+            v = static_cast<double>(static_cast<long long>(v) << static_cast<int>(r));
+        }
+        return v;
+    }
+
+    double add() {
+        double v = mul();
+        while (ok_) {
+            if (take("+"))
+                v += mul();
+            else if (take("-"))
+                v -= mul();
+            else
+                break;
+        }
+        return v;
+    }
+
+    double mul() {
+        double v = primary();
+        while (ok_) {
+            if (take("*"))
+                v *= primary();
+            else if (take("/")) {
+                const double d = primary();
+                if (d == 0)
+                    ok_ = false;
+                else
+                    v /= d;
+            } else
+                break;
+        }
+        return v;
+    }
+
+    double primary() {
+        skip();
+        if (at_ >= text_.size()) {
+            ok_ = false;
+            return 0;
+        }
+        if (take("(")) {
+            const double v = shift();
+            if (!take(")")) ok_ = false;
+            return v;
+        }
+        if (take("-")) return -primary();
+        const char c = text_[at_];
+        if (std::isdigit(static_cast<unsigned char>(c)) || c == '.') {
+            const char* begin = text_.c_str() + at_;
+            char* end         = nullptr;
+            const double v    = std::strtod(begin, &end);
+            at_ += static_cast<std::size_t>(end - begin);
+            while (at_ < text_.size() && std::strchr("uUlLfF", text_[at_]) != nullptr) ++at_;
+            return v;
+        }
+        if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
+            std::size_t stop = at_;
+            while (stop < text_.size() &&
+                   (std::isalnum(static_cast<unsigned char>(text_[stop])) || text_[stop] == '_')) {
+                ++stop;
+            }
+            const std::string name = text_.substr(at_, stop - at_);
+            at_                    = stop;
+            const auto definition  = depth_ < 8 ? lookup_(name) : std::nullopt;
+            const auto v = definition ? ConstantExpression(*definition, lookup_, depth_ + 1).value()
+                                      : std::nullopt;
+            if (!v) {
+                ok_ = false;
+                return 0;
+            }
+            return *v;
+        }
+        ok_ = false;
+        return 0;
+    }
+
+    std::string text_;
+    Lookup lookup_;
+    int depth_;
+    std::size_t at_ = 0;
+    bool ok_        = true;
+};
+
+// The right-hand side of `constexpr <type> <name> = <expr>;` in `text`, if it stands there.
+std::optional<std::string> definition_of_constant(const std::string& text,
+                                                  const std::string& name) {
+    const std::regex pattern(R"(constexpr [^=;]*\b)" + name + " = ([^;]+);");
+    std::smatch match;
+    if (!std::regex_search(text, match, pattern)) return std::nullopt;
+    return match[1].str();
 }
 
 // Names the scan finds that no selection compares a call against, with the reason.
@@ -150,15 +286,28 @@ int main(int argc, char** argv) {
                  std::to_string(found) + " times outside comments in " + std::string(rule.file) +
                  ", the descriptor says " + std::to_string(rule.occurrences));
         }
-        // A named constant: the number the source defines is the descriptor's.
-        static const std::regex definition(R"(constexpr [^=;]*\b(k[A-Z]\w*) = ([0-9.]+);)");
+        // A named constant: the number the source defines is the descriptor's. The definition may
+        // be an expression (a shift, a quotient, a product with another constant): it is
+        // evaluated, and one this test cannot read is a failure, never a skipped comparison.
+        static const std::regex definition(R"(constexpr [^=;]*\b(k[A-Z]\w*) = ([^;]+);)");
         std::smatch match;
         if (std::regex_search(literal, match, definition)) {
             if (match[1].str() != name) { fail(name + ": its literal defines " + match[1].str()); }
-            if (std::fabs(std::stod(match[2].str()) - rule.value) > 1e-12) {
-                fail(name + ": the source says " + match[2].str() + ", the descriptor " +
-                     std::to_string(rule.value));
+            const auto lookup = [&](const std::string& other) -> std::optional<std::string> {
+                if (const auto own = definition_of_constant(file, other)) return own;
+                return definition_of_constant(source("../../core/units.h"), other);
+            };
+            const auto defined = ConstantExpression(match[2].str(), lookup).value();
+            if (!defined) {
+                fail(name + ": cannot evaluate the source's '" + match[2].str() + "'");
+            } else if (std::fabs(*defined - rule.value) >
+                       1e-12 * std::max(1.0, std::fabs(rule.value))) {
+                fail(name + ": the source says " + match[2].str() + " (" +
+                     std::to_string(*defined) + "), the descriptor " + std::to_string(rule.value));
             }
+        } else if (literal.find("constexpr") != std::string::npos &&
+                   literal.find(" = ") != std::string::npos) {
+            fail(name + ": a constant's definition the test cannot read");
         }
     }
     // The guard: every bounding constant of the selection code is a described rule or a listed
