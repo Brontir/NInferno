@@ -10,6 +10,7 @@ Inputs (repeatable, mixable):
                       route_tune --routes-out passes of one board and its --selected-out file. These
                       are accepted without the run/device columns regret_collect.py demands, because
                       the existing sweep archive predates them (see data/sweep_archive.json).
+  --band-weights J    override the default weights (the benchmark mix's time share per band) with JSON
   --pick model        with --routes: score the pick of the model price (lowest model_us) instead of
                       the recorded production selection.
 """
@@ -127,13 +128,22 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected"):
     return rows, skipped
 
 
+# The benchmark mix (DECISIONS 50, "the weights" paragraph of the request-mix decision): 20 short
+# requests of 2048 prompt + 512 answer tokens and 6 long ones of about 24576 + 512
+# (docs/performance/methodology.md). The engine prefills in chunks of 2048 (prefill_chunk in
+# src/models/*/session.h), so every prompt token runs at a width of 129 or more: the prefill band.
+# Answers run at the benchmark's concurrency 1..8, which is the decode band; speculation would
+# widen that to a verify of k+1 rows, but the repo has no single default depth, so none is assumed.
+BENCH_TOKENS = {"prefill": 20 * 2048 + 6 * 24576, "decode": 26 * 512}
+
+
 def stats(rows):
     """Time-weighted regret: extra time of the picks over the best, as a share of the best time."""
     sel = math.fsum(r["selected_ms"] for r in rows)
     best = math.fsum(r["best_ms"] for r in rows)
     ratios = [r["selected_ms"] / r["best_ms"] for r in rows]
     return {
-        "cases": len(rows), "selected_ms": sel, "best_ms": best,
+        "cases": len(rows), "tokens": sum(r["t"] for r in rows), "selected_ms": sel, "best_ms": best,
         "weighted_regret": sel / best - 1,
         "geomean_regret": math.exp(math.fsum(map(math.log, ratios)) / len(ratios)) - 1,
         "worst_regret": max(ratios) - 1,
@@ -146,11 +156,27 @@ def by_band(rows):
             for b in BAND_NAMES if any(band_of(r["t"]) == b for r in rows)}
 
 
+def bench_weights(bands_of_group):
+    """Time share of the benchmark mix per band on this group's rows.
+
+    benchmark tokens in the band x the best observed time per token there (sum of best times over
+    the sum of T of the group's cases in the band). Bands the mix has no tokens in, or the group
+    has no cases in, weigh 0. Facts of the mix and measured times only; nothing is fitted.
+    """
+    out = {}
+    for band, tokens in BENCH_TOKENS.items():
+        got = bands_of_group.get(band)
+        if got and got["tokens"]:
+            out[band] = tokens * got["best_ms"] / got["tokens"]
+    return out
+
+
 def report(rows, skipped=0, band_weights=None):
     """Per band overall, then per board / format / route family, each by band.
 
-    `band_weights` (band -> weight) adds one workload-weighted number per group: the weighted mean of
-    its band regrets. The default report has none, since no workload mix is frozen yet.
+    Every group gets "weights" and "weighted": the mean of its band regrets weighted by the time the
+    benchmark mix spends in each band on that group's rows (bench_weights), or by `band_weights`
+    (band -> weight) when given.
     """
     for r in rows:
         r["family"] = family_of(r["selected"])
@@ -165,12 +191,14 @@ def report(rows, skipped=0, band_weights=None):
         if unknown or any(w < 0 for w in band_weights.values()) or not any(band_weights.values()):
             raise ValueError(f"band weights must name {BAND_NAMES} and not all be zero")
         out["band_weights"] = band_weights
-        groups = [out["overall"]] + [g for k in out if k.startswith("by_") for g in out[k].values()]
-        for group in groups:
-            w = {b: band_weights.get(b, 0) for b in group}
-            total = sum(w.values())
-            group["weighted"] = (sum(group[b]["weighted_regret"] * w[b] for b in w) / total
-                                 if total else None)
+    groups = [out["overall"]] + [g for k in out if k.startswith("by_") for g in out[k].values()]
+    for group in groups:
+        weights = band_weights or bench_weights(group)
+        w = {b: weights.get(b, 0) for b in group}
+        total = sum(w.values())
+        group["weights"] = {b: v / total for b, v in w.items()} if total else {}
+        group["weighted"] = (sum(group[b]["weighted_regret"] * w[b] for b in w) / total
+                             if total else None)
     return out
 
 
@@ -181,10 +209,12 @@ def pct(x):
 def markdown(rep):
     lines = ["# Band-weighted selection regret", "",
              f"{rep['cases']} cases ({rep['cases_skipped']} skipped). Each cell is the extra time "
-             "of the picks over the best observed route, summed over the band's cases (time-weighted).",
+             "of the picks over the best observed route, summed over the band's cases (time-weighted). "
+             "`weighted` averages the bands by the time the benchmark mix spends in each on that "
+             "board (prefill and decode tokens x best time per token; other bands weigh 0).",
              "", "Bands (T): " + ", ".join(f"{n} {lo}-{hi if hi else '+'}"
                                            for n, (lo, hi) in rep["bands"].items()), ""]
-    weighted = "band_weights" in rep
+    weighted = True
 
     def table(title, groups):
         head = ["| " + title + " | " + " | ".join(f"{b} (n)" for b in BAND_NAMES)

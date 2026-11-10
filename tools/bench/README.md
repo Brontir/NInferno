@@ -149,8 +149,17 @@ at T 48+. `regret_bands.py` reports the extra time of the recorded picks over th
 route, **summed over the cases of a band** (time-weighted: a long GEMM counts for what it costs, a
 tiny one barely), for the bands decode (T 1-8), verify (9-16), narrow (17-32), wide (33-128) and
 prefill (129+), by board, format and route family (the part of the route name before the first dot).
-No workload mix is frozen, so the default report has one number per band and no cross-band average;
-`--band-weights` adds a weighted mean once a mix is chosen. A pick the sweep did not time, or that
+Each group also gets one `weighted` number, the mean of its band regrets by the time the benchmark
+mix spends in each band on that board (DECISIONS 50 takes its weights from the benchmark; the mix is
+20 requests of 2048 prompt + 512 answer tokens and 6 of 24576 + 512, `docs/performance/methodology.md`).
+The weight of a band is the mix's tokens that run at its widths times the best observed time per
+token there (sum of best times over the sum of T of the group's cases), normalized:
+prefill tokens, 20 x 2048 + 6 x 24576, go to the prefill band, because the engine prefills in chunks
+of 2048 (`prefill_chunk`, `src/models/*/session.h`); the 26 x 512 answer tokens go to the decode band
+(concurrency 1-8). With a drafter an answer would run at verify width k+1, but the repo has no one
+default depth, so none is assumed. Bands without benchmark tokens (verify, narrow, wide) weigh 0 in
+the mean and stay in the per-band table. The JSON carries every group's `weights`. `--band-weights`
+overrides them. A pick the sweep did not time, or that
 is not an a16 route in an a16 case, is counted as skipped, never as zero regret.
 
 ```bash

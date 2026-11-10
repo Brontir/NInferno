@@ -87,6 +87,21 @@ class Report(unittest.TestCase):
         with self.assertRaises(ValueError):
             bands.report(rows, band_weights={"decode": 0})
 
+    def test_default_weights_are_the_benchmark_time_share(self):
+        doc = document([
+            case("q4k.a16.store.n1.k1.T1", "b", "rmma.a", {"rmma.a": 2, "rmma.b": 1}),
+            case("q4k.a16.store.n1.k1.T512", "b", "rmma.a", {"rmma.a": 100, "rmma.b": 50}),
+            case("q4k.a16.store.n1.k1.T40", "b", "rmma.a", {"rmma.a": 9, "rmma.b": 3}),
+        ])
+        rows, _ = bands.rows_from_document(doc)
+        group = bands.report(rows)["by_board"]["b"]
+        # decode: 13312 tokens x 1 ms/token; prefill: 188416 tokens x 50/512 ms/token.
+        decode, prefill = 13312 * 1.0, 188416 * 50 / 512
+        self.assertAlmostEqual(group["weights"]["decode"], decode / (decode + prefill))
+        self.assertAlmostEqual(group["weights"]["prefill"], prefill / (decode + prefill))
+        self.assertEqual(group["weights"].get("wide", 0), 0)
+        self.assertAlmostEqual(group["weighted"], 1.0)  # both bands lose 2x
+
     def test_incomplete_cases_are_counted_not_scored(self):
         bad = case("q4k.a16.store.n1.k1.T3", "b1", "rmma.a", {"rmma.a": 1, "rmma.b": 1})
         bad["candidates"].append({"id": "rmma.c", "status": "unmeasured", "reason": "timeout"})
