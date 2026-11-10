@@ -649,8 +649,7 @@ int main() {
             for (std::int32_t streams = 2; streams <= sp::kPricedVerifyRows; ++streams) {
                 std::printf("%.3f ", gain_at(streams));
             }
-            std::printf("-> plain from %d
-", from);
+            std::printf("-> plain from %d\n", from);
             expect(from == 2 || gain_at(from - 1) > 1.0, std::string(name) + ": drafting still pays one stream below the bound");
             expect(from > sp::kPricedVerifyRows || gain_at(from) <= 1.0 || gain_at(from) == 0.0,
                    std::string(name) + ": the bound's own stream count does not pay");
