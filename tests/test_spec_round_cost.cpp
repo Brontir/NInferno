@@ -466,10 +466,11 @@ int main() {
         {
             const auto& base_lab = pair_of(kQ9, "ad104:60sm");
             auto lab             = base_lab;
-            // Only mtp:3 drafts (4 rows a stream: priced at two streams); the registry's own
-            // choice may be a DFlash block or a depth past the priced rows, which has no scale.
+            // Only mtp:3 (with or without the head) drafts (4 rows a stream: priced at two
+            // streams); the registry's own choice may be a DFlash block or a depth past the priced
+            // rows, which has no scale.
             std::erase_if(lab.tune.measurements, [](const auto& m) {
-                return m.config.enabled() && m.config.label() != "mtp:3";
+                return m.config.enabled() && (m.config.mode != sp::Mode::Mtp || m.config.k != 3);
             });
             for (auto& m : lab.tune.measurements) {
                 m.graph_rounds =
@@ -503,7 +504,8 @@ int main() {
                 // The no-launch scale is the same pair without counts (the earlier block's value).
                 auto second_plain = base_lab;
                 std::erase_if(second_plain.tune.measurements, [](const auto& m) {
-                    return m.config.enabled() && m.config.label() != "mtp:3";
+                    return m.config.enabled() &&
+                           (m.config.mode != sp::Mode::Mtp || m.config.k != 3);
                 });
                 second_plain.tune.key.gpu = "ad102:128sm";
                 const auto plain_home = sp::profile_for_target({&base_lab, &second_plain}, "sm89");
