@@ -771,16 +771,13 @@ struct ChunkShare {
 
 inline constexpr ChunkShare kMoeChunkShare[] = {
     {8, 0.409}, {16, 0.635}, {32, 0.813}, {64, 0.952}, {128, 1.0}};
-// The shares decide an MoE's chunk (by speed alone: a chunk has no accuracy term, so the accuracy
-// terms' cards do not hold it, and the board's own facts may price it) where the generation's basis
-// allows (choice.h ChunkBasis): the generation the shares were measured on
-// (kMoeChunkCurveGeneration, two cards: RTX 4070 Ti and 4090) on its reference card; a generation
-// whose MoE prefill rate rests on two lab cards (kPrefillEta) on the board itself, the curve
-// carried as it stands. The law behind carrying it: the share is a function of the tokens an expert
-// takes alone (its tiles fill by count: kExpertJobSlots), the saturated rate it is a share of being
-// the generation's own. A rescaling of the tokens axis by the DRAM-to-int8 ridge (tried,
-// 2026-11-10) made the Blackwell prefill points worse (worst 20.5 % against the 17 % bound), so the
-// curve is not rescaled.
+// The shares decide an MoE's chunk on the generation they were measured on
+// (kMoeChunkCurveGeneration, two cards: RTX 4070 Ti and 4090), on its reference card, by speed
+// alone (a chunk has no accuracy term, so the accuracy terms' cards do not hold it). Another
+// generation whose own MoE prefill rate rests on two lab cards (kPrefillEta) carries the curve's
+// slope unchanged to estimate its best chunk (Choice::chunk_estimate); a generation's rows estimate
+// for another, they do not decide
+// (#300), so its pick stays the default until a sweep on it is measured.
 inline constexpr bool kMoeChunkTwoCards                    = true;
 inline constexpr std::string_view kMoeChunkCurveGeneration = "ada";
 inline constexpr std::uint32_t kDefaultChunk = 1024;

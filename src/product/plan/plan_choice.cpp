@@ -718,6 +718,8 @@ Json choice_json(const ServedChoice& served) {
     }
     out["kv_options"] = kv;
     out["activations_allowed"] = modes;
+    // The chunk a carried curve predicts (an estimate for an A/B; the pick is the default).
+    if (served.choice.chunk_estimate != 0) { out["chunk_estimate"] = served.choice.chunk_estimate; }
     if (!served.choice.chosen) {
         out["chosen"] = nullptr;
         return out;

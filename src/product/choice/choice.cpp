@@ -392,8 +392,7 @@ double attention_seconds(const ModelFacts& model, const CardFacts& card, double 
 
 // An MoE's prefill share at a chunk (kMoeChunkShare, linear in log2 of the tokens each expert takes).
 double chunk_share(const ModelFacts& model, std::uint32_t chunk) noexcept {
-    const double x =
-        static_cast<double>(chunk) * model.experts_per_token / std::max(model.experts, 1);
+    const double x = static_cast<double>(chunk) * model.experts_per_token / std::max(model.experts, 1);
     const std::size_t n = std::size(kMoeChunkShare);
     if (x <= kMoeChunkShare[0].tokens_per_expert) { return kMoeChunkShare[0].share; }
     for (std::size_t i = 1; i < n; ++i) {
@@ -499,7 +498,7 @@ std::string fixed(double value, int digits) {
     return out.str();
 }
 
-Scored score(const ModelFacts& model, const CardFacts& card, const CardFacts* priced,
+Scored score(const ModelFacts& model, const CardFacts& card, const std::optional<Reference>& ref,
              const QuantOption& quant, const Candidate& c, const Task& task,
              const OwnContextFn& own_context) {
     Scored s;
@@ -510,8 +509,8 @@ Scored score(const ModelFacts& model, const CardFacts& card, const CardFacts* pr
                              task.prompt);
     s.accuracy    = accuracy_of(model, quant, c, card);
     s.seconds     = request_seconds(model, card, quant, c, task);
-    if (priced != nullptr) {
-        s.decision_seconds = request_seconds(model, *priced, quant, c, task);
+    if (ref) {
+        s.decision_seconds = request_seconds(model, ref->card, quant, c, task);
         s.worth = -std::log(s.decision_seconds) - task.accuracy_weight * s.accuracy.kld;
     }
     return s;
@@ -608,7 +607,9 @@ double linear_prefill(const ModelFacts& model, const CardFacts& card, const Quan
                                      ? tiles_eta(card, model.hidden, transferred)
                                      : prefill_eta(model.moe(), gen, route, transferred);
     double rate = eta * peak(card, route) / (2 * params);
-    if (model.moe() && model.experts_per_token > 0) { rate *= chunk_share(model, filled); }
+    if (model.moe() && model.experts_per_token > 0) {
+        rate *= chunk_share(model, filled);
+    }
     return rate;
 }
 
@@ -1549,16 +1550,17 @@ std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates)
 ChunkBasis chunk_basis_of(const ModelFacts& model, const CardFacts& card, const Gates& gates) {
     if (!gates.moe_chunk || !model.moe()) { return ChunkBasis::None; }
     const std::string_view gen = generation_of(card);
-    if (const auto ref = reference_of(card, gates); ref && ref->chunk_decides) {
-        return gen == kMoeChunkCurveGeneration ? ChunkBasis::Own : ChunkBasis::DerivedFromFacts;
+    // The generation the shares were measured on, with its reference card: they decide.
+    if (const auto ref = reference_of(card, gates);
+        ref && ref->chunk_decides && gen == kMoeChunkCurveGeneration) {
+        return ChunkBasis::Own;
     }
     if (!generation_known(card.major, card.minor)) { return ChunkBasis::Transferred; }
-    // The generation's own MoE prefill rate on two lab cards: the saturated rate the chunk's share
-    // is a share of is then its own, and only the shares' axis is carried (by the ridge).
+    // Another generation whose own MoE prefill rate rests on two lab cards: its saturated rate
+    // times the measured shares' slope, carried unchanged, estimates the chunk but never decides
+    // it (#300: another generation's rows estimate, they do not decide).
     for (const PrefillEta& row : kPrefillEta) {
-        if (row.moe && row.generation == gen && row.cards >= 2) {
-            return ChunkBasis::DerivedFromFacts;
-        }
+        if (row.moe && row.generation == gen && row.cards >= 2) { return ChunkBasis::CarriedCurve; }
     }
     return ChunkBasis::Transferred;
 }
@@ -1714,14 +1716,9 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     }
     const std::optional<Reference> ref = reference_of(card, gates);
     out.by_worth       = decides_switches(model, card, gates);
+    out.resolution     = ref ? worth_band(ref->card) : 0;
     out.chunk_basis                    = chunk_basis_of(model, card, gates);
-    out.chunk_by_speed                 = !pins.chunk && (out.chunk_basis == ChunkBasis::Own ||
-                                         out.chunk_basis == ChunkBasis::DerivedFromFacts);
-    // What a candidate is priced on: the reference card where there is one, else, for a chunk
-    // derived from the board's facts, the board itself (the only axis it decides: no accuracy
-    // term).
-    const CardFacts* decision_card = ref ? &ref->card : (out.chunk_by_speed ? &card : nullptr);
-    out.resolution                 = decision_card != nullptr ? worth_band(*decision_card) : 0;
+    out.chunk_by_speed                 = out.chunk_basis == ChunkBasis::Own && !pins.chunk;
     // The enumeration order breaks exact ties (better()): one canonical order of each axis's
     // values (allowed_axes'), never the order a caller listed them in (#301).
     std::vector<KvCacheStorage> kvs = pins.kv ? std::vector<KvCacheStorage>{*pins.kv} : allowed.kv;
@@ -1762,10 +1759,9 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
             const Coupled coupled = coupled_storages(model, kv, mode, pins);
             for (const std::size_t drafter : drafters) {
                 for (const std::uint32_t chunk : chunks) {
-                    out.scored.push_back(
-                        score(model, card, decision_card, quant,
-                              {kv, coupled.ring, coupled.state, mode, chunk, drafter}, task,
-                              own_context));
+                    out.scored.push_back(score(model, card, ref, quant,
+                                               {kv, coupled.ring, coupled.state, mode, chunk, drafter},
+                                               task, own_context));
                 }
             }
         }
@@ -1808,7 +1804,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         at.contexts = {context};
         if (at.long_prompt() != priced.long_prompt()) {
             for (Scored& s : out.scored) {
-                s = score(model, card, decision_card, quant, s.candidate, at, own_context);
+                s = score(model, card, ref, quant, s.candidate, at, own_context);
             }
             priced = at;
         }
@@ -1850,6 +1846,26 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     out.anchor_worth               = out.scored[anchor].worth;
     for (Scored& s : out.scored) { s.fits = s.own_context >= settled; }
     const Scored& c = out.scored[*chosen];
+    // The chunk a carried curve predicts (an estimate to verify, never a pick): the widest-chunk
+    // candidates of the chosen configuration that hold the settled context, on the board's own
+    // rates; a wider chunk must be faster by more than the tie to displace the narrower.
+    if (out.chunk_basis == ChunkBasis::CarriedCurve && !pins.chunk) {
+        double best        = request_seconds(model, card, quant, c.candidate, priced);
+        out.chunk_estimate = c.candidate.chunk;
+        for (const std::uint32_t chunk : kMoeChunks) {
+            Candidate v = c.candidate;
+            v.chunk     = chunk;
+            if (chunk == c.candidate.chunk || (own_context && own_context(v) < settled)) {
+                continue;
+            }
+            const double seconds = request_seconds(model, card, quant, v, priced);
+            if ((chunk < out.chunk_estimate && seconds <= best * (1 + kWorthTie)) ||
+                seconds < best * (1 - kWorthTie)) {
+                best               = seconds;
+                out.chunk_estimate = chunk;
+            }
+        }
+    }
     out.why =
         quant.label + ": every stream holds " + std::to_string(settled) + " tokens; KV " +
         std::string(kv_cache_storage_name(c.candidate.kv)) + ", activations " +
@@ -1862,11 +1878,9 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
                    fixed(c.decision_seconds, 2) + " s on " + request_mix_text(priced) +
                    " there, KLD " + fixed(c.accuracy.kld, 4) + ")"
              : ": the family's defaults (" + defaults_why + ")") +
-        (out.chunk_by_speed
-             ? "; chunk " + std::to_string(c.candidate.chunk) +
-                   (ref ? ": the fastest prefill on the reference card"
-                        : ": the fastest prefill on this board (derived from its facts)")
-             : "") +
+        (out.chunk_by_speed ? "; chunk " + std::to_string(c.candidate.chunk) +
+                                  ": the fastest prefill on the reference card"
+                            : "") +
         (model.drafters.empty() ? std::string() : "; speculation " + c.drafter);
     // The coupled storages' other values beside the chosen (to explain them; never chosen).
     std::vector<Candidate> variants;
@@ -1891,7 +1905,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         }
     }
     for (const Candidate& v : variants) {
-        Scored s  = score(model, card, decision_card, quant, v, priced, own_context);
+        Scored s  = score(model, card, ref, quant, v, priced, own_context);
         s.variant = true;
         s.fits    = s.own_context >= settled;
         out.scored.push_back(std::move(s));
