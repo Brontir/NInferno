@@ -71,6 +71,12 @@ add_test(NAME ninferno_selection_regret_test
 add_test(NAME ninferno_regret_collect_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_regret_collect.py)
 
+# tools/bench/gap_map.py: measured times against the counted DRAM and tensor laws (#619), on
+# synthetic inputs, no GPU.
+add_test(NAME ninferno_gap_map_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_gap_map.py)
+set_tests_properties(ninferno_gap_map_test PROPERTIES LABELS host)
+
 # Repository hygiene, no GPU: only scripts (a #! first line) may be committed executable.
 add_test(NAME ninferno_file_modes_test
   COMMAND bash "${PROJECT_SOURCE_DIR}/tools/check_file_modes.sh")
