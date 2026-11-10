@@ -97,6 +97,9 @@ std::optional<R8TableHit> tuned_r8(const Problem& p);
 
 // The route selection's rules and fixed routes, which route_authorities.cpp asks in order
 // (generic_gemm.cpp holds the bodies and their measurements).
+// Whether a call of T tokens takes R8 (decode, T <= kR8DecodeTokens, and the activation fits;
+// r8_call_refusal, generic_gemm.h, names why not).
+bool r8_call(const Weight& w, LinearPolicy policy, std::int32_t tokens);
 // The verify widths the vector kernel takes by rule: 2..4 tokens with tensor mma.sync, every
 // width it reads without.
 bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens);

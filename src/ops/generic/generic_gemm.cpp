@@ -356,13 +356,13 @@ bool allows_r8(const Weight& w, LinearPolicy policy) {
            aligned_to(w.qdata, 16);
 }
 
-namespace {
-
 // Whether a call of T tokens takes R8 (decode, T <= kR8DecodeTokens, and the activation fits):
 // r8_call_refusal names why not.
 bool r8_call(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
     return r8_call_refusal(w, policy, tokens) == R8CallRefusal::None;
 }
+
+namespace {
 
 // The bytes per block of each plane: the code plane (the whole block where blocks are unchanged),
 // the high and the scale plane (core/weight.h ggml_plane_bytes).
@@ -2890,9 +2890,6 @@ std::optional<RouteTraffic> route_traffic(Route route, const Weight& weight,
     const double bpw = static_cast<double>(weight.payload_bytes) / (n * k);
     return RouteTraffic{n * k * bpw * weight_reads,
                         x_t * x_k * x_bytes * cdiv(n, tile->out_rows) * x_readers, n * t * 2.0};
-}
-
-    return Route{Family::Scalar, 0};
 }
 
 std::optional<Route> volta_tiled_route(const Weight& weight, LinearPolicy policy,

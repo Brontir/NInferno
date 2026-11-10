@@ -32,6 +32,7 @@
 namespace {
 
 using namespace ninferno;
+using namespace ninferno::test;
 namespace generic = ninferno::ops::detail::generic;
 using ops::LinearPolicy;
 
