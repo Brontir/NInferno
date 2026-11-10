@@ -529,7 +529,7 @@
                 "priced": {
                     "status": "literal",
                     "by":
-                        "two cards: RTX 3090 gains and RTX 5090 losses (comment in moe.cpp) as a PDL flag and a 32-assignment bound",
+                        "two cards, RTX 3090 (gains) and RTX 5090 (losses), measured end to end per model (comment above route_in_router in moe.cpp); the PDL flag and the 32-assignment bound are the rule",
                     "unpriced": "the launch saving per generation"
                 },
                 "byte_promise": "Equal",
@@ -630,7 +630,7 @@
                 ],
                 "priced": {
                     "status": "literal",
-                    "by": "token bound 16 and a format predicate",
+                    "by": "token bound 16 (the decode/verify widths) and a format predicate; card: not recorded, method: not recorded (include/ninferno/ops/segmented_projection.h gives no measurement)",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
@@ -665,7 +665,7 @@
                 "priced": {
                     "status": "literal",
                     "by":
-                        "column bounds 16 / 42 (42 is the measured speed frontier of the 27B kernel)",
+                        "column bounds 16 / 42 (42 is the measured speed frontier of the 27B kernel, bf16_gdn_gating_proj_plan.cpp); card: not recorded",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
@@ -698,7 +698,7 @@
                 ],
                 "priced": {
                     "status": "literal",
-                    "by": "column bounds in the plan (not priced)",
+                    "by": "column bounds in the plan (not priced); card: not recorded, method: not recorded (no comment or commit in the plan file gives a measurement)",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
@@ -731,7 +731,7 @@
                 ],
                 "priced": {
                     "status": "literal",
-                    "by": "column bounds in the plan (not priced)",
+                    "by": "column bounds in the plan (not priced); card: not recorded, method: not recorded (no comment or commit in the plan file gives a measurement)",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
@@ -765,7 +765,7 @@
                 ],
                 "priced": {
                     "status": "literal",
-                    "by": "column bounds in the plan (not priced)",
+                    "by": "column bounds in the plan (not priced); card: not recorded, method: not recorded (no comment or commit in the plan file gives a measurement)",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
@@ -799,7 +799,7 @@
                 ],
                 "priced": {
                     "status": "literal",
-                    "by": "column bounds in the plan (not priced)",
+                    "by": "column bounds in the plan (not priced); card: not recorded, method: not recorded (no comment or commit in the plan file gives a measurement)",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
@@ -1235,14 +1235,14 @@
                 "priced": {
                     "status": "literal",
                     "by":
-                        "the column table kRoutes (ranges are constants, not prices), measured on one host (one card; the commit does not name it) in commit 5b4303c0e (the retune around the #261 linear routes)",
+                        "the column table kRoutes (ranges are constants, not prices), measured on the public op, cold L2, median of three sessions in commit 5b4303c0e (the retune around the #261 linear routes); card: not recorded (one host, the commit does not name the card)",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
                 "invariant_pin": "unreviewed",
                 "parity_test": null,
                 "oracle_test": "tests/ops/linear_swiglu/test_q4_a16.cpp",
-                "one_card_literal": true,
+                "one_card_literal": false,
                 "evidence": [
                     "src/ops/linear_swiglu/q4/q4_linear_swiglu_plan.cpp",
                     "commit 5b4303c0e: perf(ops): retune the Q4 34816x5120 LinearSwiGLU dispatch (second 128-column tile costs 226-290 us almost independently of live columns)"
