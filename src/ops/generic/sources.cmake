@@ -38,7 +38,8 @@ add_library(ninferno_ops_host STATIC
   "${CMAKE_CURRENT_LIST_DIR}/../route_table.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_ggml_host.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/selector_facts_host.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/generic_facts_sink.cpp")
+  "${CMAKE_CURRENT_LIST_DIR}/generic_facts_sink.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_resolve.cpp")
 ninferno_internal_includes(ninferno_ops_host)
 target_include_directories(ninferno_ops_host PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_definitions(ninferno_ops_host PRIVATE NINFERNO_HOST_ONLY)
