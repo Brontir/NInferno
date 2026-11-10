@@ -87,7 +87,8 @@ def ridges_of(document, generation_header):
     Q4_K): ops/s x bytes per value / (2 x DRAM bytes/s). A board with none has no ridge, nor has
     one without tensor cores (`mma_slow`, a GTX 16): the generation's tensor rate is not its."""
     require(isinstance(document, dict), "expected JSON object")
-    facts = document.get("board_facts") or {}
+    # Absent is "no facts"; a value that is not an object (null, false, a list) is a bad document.
+    facts = document.get("board_facts", {})
     require(isinstance(facts, dict), "board_facts: expected object")
     if not facts:
         return {}

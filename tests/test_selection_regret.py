@@ -319,10 +319,17 @@ class SelectionRegretTest(unittest.TestCase):
             data["board_facts"] = {"held-board": bad}
             with self.assertRaises(ValueError):
                 regret.ridges_of(data, GENERATION_HEADER)
+        # A value that is not an object is refused, the falsy ones too: only an absent field (or
+        # an empty object) means "no facts".
+        for bad in ("x", None, False, 0, []):
+            data = document()
+            data["board_facts"] = bad
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                regret.ridges_of(data, GENERATION_HEADER)
         data = document()
-        data["board_facts"] = "x"
-        with self.assertRaises(ValueError):
-            regret.ridges_of(data, GENERATION_HEADER)
+        self.assertEqual(regret.ridges_of(data, GENERATION_HEADER), {})
+        data["board_facts"] = {}
+        self.assertEqual(regret.ridges_of(data, GENERATION_HEADER), {})
         with tempfile.TemporaryDirectory() as directory:  # the CLI exits 2, not a traceback
             data = document()
             data["board_facts"] = {"held-board": {"cc": 120}}
@@ -347,10 +354,15 @@ class SelectionRegretTest(unittest.TestCase):
         report = regret.evaluate(data, None, regret.ridges_of(data, GENERATION_HEADER))
         group = report["by_board_regime_authority"][0]
         self.assertEqual((group["regime"], group["ridge_t"]), ("T>=17 ridge unknown", None))
-        for bad in (1, "true", None):
+        for bad in (0, 1, "true", None):
             data["board_facts"] = {"held-board": dict(facts, mma_slow=bad)}
-            with self.assertRaises(ValueError, msg=bad):
+            with self.assertRaises(ValueError, msg=repr(bad)):
                 regret.ridges_of(data, GENERATION_HEADER)
+        with tempfile.TemporaryDirectory() as directory:  # and the CLI exits 2
+            path = Path(directory) / "input.json"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(regret.main([str(path)]), 2)
 
     def test_a_compute_capability_without_a_generation_row_has_no_ridge(self):
         data = document()

@@ -134,7 +134,8 @@ authority that answered, e.g. `route-table`, `cost-model`, `r8-table`) and `evid
 `measured`, `ranker`, `carried`, `transferred`, `borrowed`); each case records them with its width
 `t`. A file without the columns reads `unknown` for both, so the tools work on older data.
 `regret_collect.py --pci-id 0x2B85` adds the board's compute capability, SMs, DRAM rate, boost
-clock and `mma_slow` from `core/data/gpu_facts.json`; `selection_regret.py` reports
+clock and `mma_slow` from `core/data/gpu_facts.json` (the row's chip and SMs must be the rows'
+device class, or the files are refused); `selection_regret.py` reports
 `by_board_regime_authority`: per board x regime x authority the usual summary and the evidence
 kinds. Regimes by T: decode T<=4, verify 5..16, and from 17 below or above the card's ridge
 T* = s8 x SMs x boost clock x 4.5/8 / (2 x DRAM bytes/s), as the MMQ transfer audit computes it

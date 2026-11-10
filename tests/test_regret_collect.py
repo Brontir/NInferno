@@ -259,14 +259,44 @@ class Collect(unittest.TestCase):
             self.collect_with_authority(["authority", "evidence"],
                                         [",route-table,measured", ",cost-model,measured"])
 
-    def test_a_wrong_pci_id_is_refused_by_the_device_sms(self):
-        root = Path(__file__).resolve().parents[1]
-        rtx5090 = collect.board_facts(root / "src/core/data/gpu_facts.json", "0x2B85")  # 170 SMs
+    def test_a_wrong_pci_id_is_refused_by_the_device_class(self):
+        facts_json = Path(__file__).resolve().parents[1] / "src/core/data/gpu_facts.json"
+        rtx5090 = collect.board_facts(facts_json, "0x2B85")  # gb202, 170 SMs
+        self.assertEqual(rtx5090["chip"], "gb202")
         with self.assertRaisesRegex(ValueError, "170 SMs"):
             self.collect_with_authority([], [""], facts=rtx5090)  # the rows say ga106:28sm
-        right = dict(rtx5090, sms=28)
+        # The SMs alone do not name the board: another chip of 28 SMs is refused too.
+        with self.assertRaisesRegex(ValueError, "a gb202 of 28 SMs"):
+            self.collect_with_authority([], [""], facts=dict(rtx5090, sms=28))
+        right = dict(rtx5090, chip="ga106", sms=28)
         doc = self.collect_with_authority([], [""], facts=right)
         self.assertEqual(doc["board_facts"]["held-board"]["sms"], 28)
+
+    def test_a_board_of_the_same_sms_and_another_chip_is_refused(self):
+        # A GTX 1660 Ti's rows (tu116:24sm, with the device's UUID after the class id) and the
+        # PCI id of an RTX 4060 (ad107, 24 SMs): the Ada ridge is not this board's.
+        facts_json = Path(__file__).resolve().parents[1] / "src/core/data/gpu_facts.json"
+        device = "tu116:24sm GPU-0a1b2c3d"
+        sel = self.write("s.csv", SELECTED_HEAD
+                         + f"q8,a16,store,64,64,1,rmma.a,rmma.a,r1,{device}\n")
+        routes = self.write("p.csv", HEAD
+                            + f"q8,a16,store,64,64,1,rmma.a,10,r1,{device},flushed,1,15\n")
+
+        def collected(pci_id):
+            return collect.collect([sel], [routes], "held-board", "held-model", "rev", "build",
+                                   "both", [], [], "tests",
+                                   collect.board_facts(facts_json, pci_id))
+
+        with self.assertRaisesRegex(ValueError, "GeForce RTX 4060, a ad107 of 24 SMs"):
+            collected("0x2882")
+        self.assertIs(collected("0x2182")["board_facts"]["held-board"]["mma_slow"], True)
+
+    def test_a_registry_flag_that_is_not_a_boolean_is_refused(self):
+        row = {"id": "0x2182", "name": "a board", "chip": "tu116", "cc": 75, "sms": 24,
+               "bus_bits": 192, "gbps": 12.0, "boost_mhz": 1770, "mma_slow": "false"}
+        path = self.write("facts.json", json.dumps({"gpus": [row]}))
+        with self.assertRaisesRegex(ValueError, "mma_slow"):
+            collect.board_facts(path, "0x2182")
 
 
 if __name__ == "__main__":
