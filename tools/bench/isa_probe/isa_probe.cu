@@ -227,7 +227,9 @@ __device__ __forceinline__ void dep_step(unsigned& x, unsigned k, unsigned m) {
     if constexpr (op == Op::IMAD) {
         asm volatile("mad.lo.u32 %0, %0, %1, %2;" : "+r"(x) : "r"(k), "r"(m));
     } else if constexpr (op == Op::IADD) {
-        asm volatile("add.u32 %0, %0, %1;" : "+r"(x) : "r"(k));
+        // x + x: two dependent adds of a loop-invariant k would pair into one IADD3 (x + k + k)
+        // and read as half the latency; a doubling cannot pair (x + x + x is not 4x).
+        asm volatile("add.u32 %0, %0, %0;" : "+r"(x));
     } else if constexpr (op == Op::LOP3) {
         asm volatile("lop3.b32 %0, %0, %1, %2, 0x96;" : "+r"(x) : "r"(k), "r"(m));
     } else if constexpr (op == Op::PRMT) {
@@ -243,7 +245,10 @@ __device__ __forceinline__ void dep_step(unsigned& x, unsigned k, unsigned m) {
                      : "f"(__uint_as_float(k)), "f"(__uint_as_float(m)));
         x = __float_as_uint(f);
     } else if constexpr (op == Op::SHFL) {
-        asm volatile("shfl.sync.idx.b32 %0, %0, %1, 0x1f, 0xffffffff;" : "+r"(x) : "r"(k & 31u));
+        // The source lane is the chained value itself (the 0x1f clamp takes it modulo 32): a
+        // constant lane let ptxas fold the whole chain away (probe 11 read 0 clk). From x = lane
+        // + 1 every lane reads its right neighbour, a rotation that never settles.
+        asm volatile("shfl.sync.idx.b32 %0, %0, %0, 0x1f, 0xffffffff;" : "+r"(x));
     } else if constexpr (op == Op::CVT_I2F_F2I) {
         float f;
         asm volatile("cvt.rn.f32.s32 %0, %1;" : "=f"(f) : "r"(x));
@@ -446,7 +451,7 @@ int main() {
     CHECK(cudaDriverGetVersion(&driver));
     CHECK(cudaRuntimeGetVersion(&runtime));
     const int cc = p.major * 10 + p.minor;
-    std::printf("probe isa_probe 11\n");
+    std::printf("probe isa_probe 12\n");
     std::printf("card %s\n", p.name);
     std::printf("cc %d\n", cc);
     std::printf("sms %d\n", p.multiProcessorCount);
