@@ -202,9 +202,17 @@ def price(chip, call, inst, sched, law):
     t["timeline"] = float("nan")
     isa = chip.get("isa")
     if usable and isa:
-        w = isa_warps(warps)
+        # The warps the SM holds follow the kernel's registers on every board (the heavy form's
+        # occupancy, which the plain form skips): 116 registers x 128 threads hold 4 CTAs, not
+        # the thread limit's 12, and q CTAs then take ceil(q / 4) rounds.
+        unit = K["reg_alloc_per_warp"]
+        per_cta = math.ceil(inst["registers"] * 32.0 / unit) * unit * (threads / 32.0)
+        occ_t = max(1.0, min(limit, math.floor(chip["regs_sm"] / per_cta)))
+        warps_t = min(q, occ_t) * threads / 32
+        rounds_t = math.ceil(q / occ_t)
+        w = isa_warps(warps_t)
         ns_to_clk = clk / 1e9
-        sched_warps = max(1.0, warps / chip["schedulers"])
+        sched_warps = max(1.0, warps_t / chip["schedulers"])
         steps = inst["k_iter"] / 16.0
         acc = mt * nt * sets + (nt if inst["mma_ones"] > 0 else 0)
         l1 = isa[f"l1_latency_w{w}"]
@@ -220,18 +228,19 @@ def price(chip, call, inst, sched, law):
             # the HFMA2 latency, converts at the I2F / F2I one, the rest (MOV, branches, uniform)
             # at the ALU floor. The warp issues the other instructions under it, one a clock,
             # so an iteration is no shorter than its count.
-            chain = (inst["cp_mma"] * isa["mma_dependent_latency"] +
-                     (inst["cp_ld"] + inst["cp_lds"]) * l1 + inst["cp_shfl"] * isa["lat_shfl"] +
-                     (inst["cp_int"] + inst["cp_other"]) * isa["lat_imad"] +
-                     inst["cp_fp"] * isa["lat_hfma2"] + inst["cp_cvt"] * isa["lat_cvt_i2f_f2i"])
-            t_chain = max(float(inst["total"]), chain)
+            chain_clk = (inst["cp_mma"] * isa["mma_dependent_latency"] +
+                         (inst["cp_ld"] + inst["cp_lds"]) * l1 + inst["cp_shfl"] * isa["lat_shfl"] +
+                         (inst["cp_int"] + inst["cp_other"]) * isa["lat_imad"] +
+                         inst["cp_fp"] * isa["lat_hfma2"] + inst["cp_cvt"] * isa["lat_cvt_i2f_f2i"])
+            t_chain = max(float(inst["total"]), chain_clk)
         else:
             t_chain = (inst["total"] + (0.0 if inst["latency"] else steps * l1)
                        + inst["mma"] / acc * isa["mma_dependent_latency"] + inst["local"] * l1)
         t_weight = isa[f"dram_tlbwarm_latency_ns_w{w}"] * ns_to_clk
         t_it = max(t_sched, t_chain, t_weight)
-        t.update(tl_sched=t_sched, tl_chain=t_chain, tl_weight=t_weight, tl_iter=t_it)
-        compute = rounds * iters * t_it / clk
+        t.update(tl_sched=t_sched, tl_chain=t_chain, tl_weight=t_weight, tl_iter=t_it,
+                 tl_occ=occ_t, tl_warps=warps_t, tl_rounds=rounds_t)
+        compute = rounds_t * iters * t_it / clk
         bytes_bw = max(dram, l2_w + l2_x)
         t["timeline"] = max(compute, bytes_bw) + reduce
     if law == "today":
