@@ -28,7 +28,8 @@ target_include_directories(ninferno_ops PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/gen
 # links it PUBLIC; the shared-ops test library takes it whole (tests/cmake/NInfernoTests.cmake).
 add_library(ninferno_ops_host STATIC
   "${CMAKE_CURRENT_LIST_DIR}/kernel_facts.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/generic_routes.cpp")
+  "${CMAKE_CURRENT_LIST_DIR}/generic_routes.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_select.cpp")
 ninferno_internal_includes(ninferno_ops_host)
 target_include_directories(ninferno_ops_host PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_definitions(ninferno_ops_host PRIVATE NINFERNO_HOST_ONLY)
