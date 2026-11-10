@@ -73,15 +73,16 @@ void rmsnorm_rope(const Tensor& positions, const Tensor& q_norm_weight, const Te
 [[nodiscard]] bool rmsnorm_rope_text_heads(std::int32_t query_heads, std::int32_t key_heads);
 
 // The widest text-form call (tokens) a dispatch should still fuse for one geometry on `device`:
-// the launches the fusion saves (three kernels become one: two) against the per-token slope it
+// the launches the fusion saves (three kernels become one: two) against the per-token time it
 // loses to the three separate kernels, which each choose their own shape (the launch-amortisation
-// law, ops/common/sm_wave_rules.h launch_amortized_tokens). The launch is the generation's graph
-// node (core/cost_constants.h launch_node_seconds), the bytes a token's heads read and write at
-// the board's DRAM rate. One constant is not a fact: the fused kernel's per-token excess over the
-// separate ones, Fitted, not yet calibrated (the cross-generation A/B of #617 G sets it). Until it
-// is, and wherever the generation has no launch node, the answer is 256, the width measured on the
-// RTX 5090 (the fused form won through it and lost at 1024). Both forms are the same arithmetic
-// bit for bit.
+// law, ops/common/sm_wave_rules.h launch_amortized_tokens: a per-warp latency chain over the
+// board's SMs, resident warps and clock). The launch is the generation's graph node
+// (core/cost_constants.h launch_node_seconds). One constant is not a fact: the fused kernel's chain
+// excess in SM cycles, Fitted and not calibrated (route_cost::kPendingFits). Until it is, and
+// wherever the generation has no launch node, the answer is 256, the width measured on the RTX 5090
+// (the fused form won through it and lost at 1024). A call wider than a graph is captured for pays
+// the eager launch, so the bound is understated there. Both forms are the same arithmetic bit for
+// bit.
 [[nodiscard]] std::int32_t rmsnorm_rope_text_fused_max_tokens(const DeviceClass& device,
                                                               std::int32_t query_heads,
                                                               std::int32_t key_heads);

@@ -3,7 +3,7 @@
 // fused Op that replaces them. `--crossover` times both routes in CUDA graphs of many repetitions
 // (so a launch costs its graph-node cost, as in the decode and prefill graphs), prints a CSV, the
 // width where the fused route stops winning, and the per-token excess the launch-amortisation law
-// of rmsnorm_rope_text_fused_max_tokens implies (#617 G).
+// of rmsnorm_rope_text_fused_max_tokens implies under both normalisers (#617 G).
 #include "ninferno/ops/rmsnorm_rope.h"
 
 #include "core/cost_constants.h"
@@ -18,6 +18,7 @@
 #include <cuda_profiler_api.h>
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -391,11 +392,17 @@ double text_route_us(const Options& options, Route route, int query_heads, int k
 }
 
 // Both routes over the widths; the crossover is where fused - split turns positive (log-T
-// interpolation between the two widths). The law (T* = 2 L BW / (excess B), B the geometry's bytes
-// a token, rmsnorm_rope_text_fused_max_tokens) gives the implied excess from the measured T*, with
-// L the generation's launch node where it has one and the measured saving at the narrowest width
-// (two launches saved there, the slope's share small) otherwise; and a direct estimate from the
-// widest points' slope difference.
+// interpolation between the two widths). Two readings of the per-token time the fused route loses
+// (sm_wave_rules.h launch_amortized_tokens; they predict the same on boards of one generation
+// whose DRAM rate per SM is alike, so run a pair that differs):
+//   latency:  T* = 2 L x SMs x warps_per_SM x clock / (excess_cycles x heads)   [the law in the
+//   code] DRAM:     T* = 2 L x DRAM_rate / (excess x bytes_per_token)                 [the
+//   alternative]
+// Each is inverted from the measured T*, with L the generation's launch node where it has one
+// ("table_L") and the measured saving at the narrowest width (two launches saved there, the slope's
+// share small) otherwise ("measured_L"); the constant that stays the same across boards is the
+// right normaliser. A direct estimate from the two widest points' slope difference is printed
+// beside them as a check.
 void run_crossover(const Options& options, cudaStream_t stream) {
     const DeviceClass& device = device_class();
     const double bw           = machine_facts_of(device).dram_gbps() * 1.0e9;
@@ -403,9 +410,15 @@ void run_crossover(const Options& options, cudaStream_t stream) {
                                      ? generation_row(device.major, device.minor).name
                                      : "");
     const double node_l = launch_node_seconds(generation);
-    std::printf("# device=%s generation=%s dram_gbps=%.1f launch_node_us=%s graph_reps=%d\n",
-                device.name.c_str(), generation.c_str(), bw / 1.0e9,
-                node_l > 0.0 ? std::to_string(node_l * 1.0e6).c_str() : "none", options.graph_reps);
+    const int sms       = device.sms;
+    const double warps_per_sm =
+        3.0 * std::min(device.max_blocks_per_sm, device.max_threads_per_sm / 96);
+    const double clock_hz = machine_facts_of(device).reference_clock_khz * 1.0e3;
+    std::printf("# device=%s generation=%s sms=%d warps_per_sm=%.0f clock_mhz=%.0f dram_gbps=%.1f "
+                "launch_node_us=%s graph_reps=%d\n",
+                device.name.c_str(), generation.c_str(), sms, warps_per_sm, clock_hz / 1.0e6,
+                bw / 1.0e9, node_l > 0.0 ? std::to_string(node_l * 1.0e6).c_str() : "none",
+                options.graph_reps);
     std::printf("geometry,T,fused_us,split_us,fused_minus_split_us\n");
     for (const auto& [qh, kh] : options.geometries) {
         std::vector<int> ts;
@@ -438,6 +451,7 @@ void run_crossover(const Options& options, cudaStream_t stream) {
         }
         if (diff.front() > 0.0) { crossover = 0.0; } // fused already loses at the narrowest
         const double bytes_token = (qh + kh) * 256.0 * 2.0 * 2.0;
+        const double heads       = qh + kh;
         const double saved_us    = -diff.front();
         const double l_measured  = saved_us * 1.0e-6 / 2.0;
         std::printf("# %d+%d: crossover_T=%s measured_saving_at_T%d_us=%.3f "
@@ -447,25 +461,28 @@ void run_crossover(const Options& options, cudaStream_t stream) {
                     : crossover == 0.0 ? "<narrowest"
                                        : ">widest",
                     ts.front(), saved_us, l_measured * 1.0e6);
+        // seconds of SM-clock-cycle-normalised lane time one token's heads take per excess cycle
+        const double lat_scale = sms * warps_per_sm * clock_hz / heads; // T* = 2 L x this / cycles
         if (crossover > 0.0) {
             for (const auto& [label, l] : {std::pair<const char*, double>{"measured_L", l_measured},
                                            std::pair<const char*, double>{"table_L", node_l}}) {
                 if (!(l > 0.0)) { continue; }
-                std::printf(
-                    "# %d+%d: implied_excess_%s=%.4f  (excess = 2 L BW / (T* B), L=%.3f us)\n", qh,
-                    kh, label, 2.0 * l * bw / (crossover * bytes_token), l * 1.0e6);
+                std::printf("# %d+%d: %s=%.3f us: implied_excess_cycles=%.1f "
+                            "implied_excess_dram_fraction=%.4f\n",
+                            qh, kh, label, l * 1.0e6, 2.0 * l * lat_scale / crossover,
+                            2.0 * l * bw / (crossover * bytes_token));
             }
         }
-        // Direct: the slope difference of the two widest points, as a fraction of the fused
-        // pass's DRAM time per token.
+        // Direct: the slope difference of the two widest points (seconds a token), in cycles of
+        // the latency reading and as a fraction of the fused pass's DRAM time a token.
         if (ts.size() >= 2) {
             const std::size_t n  = ts.size();
             const double slope_f = (fused_us[n - 1] - fused_us[n - 2]) / (ts[n - 1] - ts[n - 2]);
             const double slope_s = (split_us[n - 1] - split_us[n - 2]) / (ts[n - 1] - ts[n - 2]);
-            const double dram_us_per_token = bytes_token / bw * 1.0e6;
+            const double delta   = (slope_f - slope_s) * 1.0e-6; // seconds a token
             std::printf("# %d+%d: slope_fused=%.5f us/token slope_split=%.5f us/token "
-                        "excess_direct=%.4f\n",
-                        qh, kh, slope_f, slope_s, (slope_f - slope_s) / dram_us_per_token);
+                        "excess_direct_cycles=%.1f excess_direct_dram_fraction=%.4f\n",
+                        qh, kh, slope_f, slope_s, delta * lat_scale, delta / (bytes_token / bw));
         }
     }
 }

@@ -13,9 +13,10 @@ namespace ninferno::ops::detail {
 // tokens x ceil((Q + K heads) / 3) blocks of three warps.
 inline constexpr int kTextHeadsPerBlock = 3;
 
-// The launch-amortisation law with an explicit per-token excess (rmsnorm_rope_text_fused_max_tokens
-// passes the Fitted constant, 0 until calibrated): 0 where the generation has no launch node, the
-// geometry is not instantiated or the excess is not positive.
+// The launch-amortisation law with an explicit chain excess in SM cycles
+// (rmsnorm_rope_text_fused_max_tokens passes the pending Fitted constant once calibrated): 0 where
+// the generation has no launch node, the geometry is not instantiated or the excess is not
+// positive.
 std::int32_t text_fused_max_tokens_with_excess(const DeviceClass& device, std::int32_t query_heads,
                                                std::int32_t key_heads, double excess);
 

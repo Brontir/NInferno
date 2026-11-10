@@ -3,6 +3,7 @@
 #include "core/cost_constants.h"
 #include "core/generation.h"
 #include "ops/common/sm_wave_rules.h"
+#include "ops/generic/route_cost_constants.h"
 #include "ops/rmsnorm_rope/launch.h"
 
 #include <array>
@@ -112,31 +113,25 @@ constexpr std::array<std::array<std::int32_t, 2>, 5> kTextGeometries{
 // The width measured on the RTX 5090, where the law has no calibration yet (see the header).
 constexpr std::int32_t kFusedTextDefaultMaximumTokens = 256;
 
-// Fitted, uncalibrated (0): the fused kernel's per-token time beyond the separate kernels', as a
-// fraction of the fused pass's DRAM time. The two have the same DRAM bytes (the three kernels'
-// intermediates stay in the L2 at these widths), so it is the fused kernel's per-warp latency
-// chain, not bytes: no fact gives it. Bracket once the 5090's measurement is read with its
-// generation's launch node (gb20x has no row in launch_node_seconds yet): the crossover lies in
-// [256, 1024) tokens there. Calibrate on one Ada card (RTX 4060 Ti, 4070 Ti, 4090: the launch node
-// is Ada's) and verify on another: the law predicts 4090 / 4060 Ti = 3.5 at one geometry.
-constexpr double kFusedTextSlopeExcess = 0.0;
-
-// A token's heads: each head's 256 BF16 values read once and written once.
-constexpr double kTextBytesPerHead = 256.0 * 2.0 * 2.0;
-
 } // namespace
 
 namespace detail {
 
 std::int32_t text_fused_max_tokens_with_excess(const DeviceClass& device, std::int32_t query_heads,
-                                               std::int32_t key_heads, double excess) {
+                                               std::int32_t key_heads, double excess_cycles) {
     if (!rmsnorm_rope_text_heads(query_heads, key_heads)) return 0;
     const std::string_view generation = generation_known(device.major, device.minor)
                                             ? generation_row(device.major, device.minor).name
                                             : std::string_view{};
+    const double launch               = launch_node_seconds(generation);
+    if (!(launch > 0.0)) return 0;
+    const int warps_per_sm =
+        ninferno::ops::detail::sm_rules::resident_ctas_per_sm(
+            device.max_blocks_per_sm, device.max_threads_per_sm, kTextHeadsPerBlock * 32) *
+        kTextHeadsPerBlock;
     return ninferno::ops::detail::sm_rules::launch_amortized_tokens(
-        2, launch_node_seconds(generation), machine_facts_of(device).dram_gbps() * 1.0e9,
-        (query_heads + key_heads) * kTextBytesPerHead, excess);
+        2, launch, device.sms, warps_per_sm, machine_facts_of(device).reference_clock_khz * 1.0e3,
+        query_heads + key_heads, excess_cycles);
 }
 
 } // namespace detail
@@ -150,8 +145,13 @@ bool rmsnorm_rope_text_heads(std::int32_t query_heads, std::int32_t key_heads) {
 
 std::int32_t rmsnorm_rope_text_fused_max_tokens(const DeviceClass& device, std::int32_t query_heads,
                                                 std::int32_t key_heads) {
-    const std::int32_t bound = detail::text_fused_max_tokens_with_excess(
-        device, query_heads, key_heads, kFusedTextSlopeExcess);
+    // Not calibrated: nothing to compute (this runs for every layer's call).
+    const auto& excess = detail::generic::route_cost::kPendingFits
+                             [detail::generic::route_cost::pending_fused_text_excess_cycles]
+                                 .value;
+    if (!excess) return kFusedTextDefaultMaximumTokens;
+    const std::int32_t bound =
+        detail::text_fused_max_tokens_with_excess(device, query_heads, key_heads, *excess);
     return bound > 0 ? bound : kFusedTextDefaultMaximumTokens;
 }
 

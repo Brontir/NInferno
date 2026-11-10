@@ -1,14 +1,15 @@
 // The fused text qk-norm + RoPE's width bound as the dispatch reads it
 // (rmsnorm_rope_text_fused_max_tokens, #617 G), on substituted boards: the production composition,
-// not a copy of its arithmetic. The Fitted per-token excess is not calibrated, so every board and
-// geometry answers 256 (the RTX 5090's measured width). The law's own composition (launch node of
-// the generation, DRAM rate of the board, bytes a geometry moves) is checked with an explicit
-// excess. No GPU.
+// not a copy of its arithmetic. The Fitted chain excess is pending (route_cost::kPendingFits), so
+// every board and geometry answers 256 (the RTX 5090's measured width). The law's own composition
+// (launch node of the generation, DRAM rate of the board, bytes a geometry moves) is checked with
+// an explicit excess. No GPU.
 #include "core/device_class.h"
 #include "core/units.h"
 #include "ninferno/ops/rmsnorm_rope.h"
 #include "ops/rmsnorm_rope/launch.h"
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -49,21 +50,23 @@ int main() {
         expect(ops::rmsnorm_rope_text_fused_max_tokens(*d, 12, 3) == 256, "default off-table");
     }
 
-    // The law with an explicit excess: Ada has a launch node, the others (here gb20x, Turing) do
-    // not yet and so answer 0; the bound follows the board's DRAM rate and the geometry's bytes.
+    // The law with an explicit chain excess (cycles): a composition check of the dispatch's inputs
+    // (launch node of the generation, SMs, resident warps, clock, heads of the geometry), not a
+    // prediction of any board. Ada has a launch node; gb20x and Turing have none yet and answer 0.
     namespace d         = ninferno::ops::detail;
-    const double excess = 0.1;
+    const double excess = 2000.0;
     const auto w4090    = d::text_fused_max_tokens_with_excess(rtx4090, 32, 2, excess);
     const auto w4060    = d::text_fused_max_tokens_with_excess(rtx4060ti, 32, 2, excess);
     expect(w4090 > 0 && w4060 > 0, "Ada: a launch node, so a bound");
-    expect(w4090 > w4060, "a faster DRAM amortises more launches: the 4090 fuses wider");
     const double ratio = static_cast<double>(w4090) / static_cast<double>(w4060);
     const double want =
-        machine_facts_of(rtx4090).dram_gbps() / machine_facts_of(rtx4060ti).dram_gbps();
-    expect(ratio > 0.97 * want && ratio < 1.03 * want, "the width scales with the DRAM rate");
-    expect(d::text_fused_max_tokens_with_excess(rtx4090, 16, 4, excess) >
-               d::text_fused_max_tokens_with_excess(rtx4090, 32, 2, excess),
-           "per geometry: fewer heads move fewer bytes a token, so fuse wider (16+4 over 32+2)");
+        (128.0 / 34.0) * (machine_facts_of(rtx4090).reference_clock_khz /
+                          static_cast<double>(machine_facts_of(rtx4060ti).reference_clock_khz));
+    expect(ratio > 0.97 * want && ratio < 1.03 * want, "the width composes SMs and clock");
+    const auto narrow = d::text_fused_max_tokens_with_excess(rtx4090, 16, 4, excess);
+    const auto wide   = d::text_fused_max_tokens_with_excess(rtx4090, 32, 2, excess);
+    expect(narrow > wide && std::abs(static_cast<double>(narrow) / wide - 34.0 / 20.0) < 0.03,
+           "per geometry: the width composes the heads a token (16+4 over 32+2 is 34/20)");
     expect(d::text_fused_max_tokens_with_excess(rtx5090, 32, 2, excess) == 0 &&
                d::text_fused_max_tokens_with_excess(rtx2080ti, 32, 2, excess) == 0,
            "a generation without a launch node answers 0");

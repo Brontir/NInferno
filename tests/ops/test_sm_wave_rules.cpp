@@ -99,24 +99,32 @@ void report_nvfp4(int sms) {
 } // namespace
 
 // The launch-amortisation law (rmsnorm_rope's fused width): T* = saved launches x launch seconds x
-// DRAM rate / (excess x bytes a token). Floor, no rounding to a grid; scales with the launch and
-// the rate, against the bytes and the excess; 0 where an input is unknown or the excess is not
-// calibrated.
+// SMs x warps an SM x clock / (excess cycles x heads a token). Floor, no rounding to a grid; scales
+// with each factor; 0 where an input is unknown or the excess is not calibrated. A composition
+// check of the formula, not a prediction of any board.
 void check_launch_amortized() {
     using sm_rules::launch_amortized_tokens;
-    const double bytes = 34.0 * 1024.0;
-    const auto t       = launch_amortized_tokens(2, 1.5e-6, 288.0e9, bytes, 0.1);
-    expect(t == static_cast<std::int32_t>(2 * 1.5e-6 * 288.0e9 / (0.1 * bytes)),
+    const auto t = launch_amortized_tokens(2, 1.5e-6, 34, 48, 2.5e9, 34.0, 2000.0);
+    expect(t == static_cast<std::int32_t>(2 * 1.5e-6 * 34 * 48 * 2.5e9 / (2000.0 * 34.0)),
            "law: the stated formula, floored");
-    expect(launch_amortized_tokens(2, 1.5e-6, 576.0e9, bytes, 0.1) >= 2 * t - 1,
-           "law: twice the DRAM rate, twice the width");
-    expect(launch_amortized_tokens(2, 1.5e-6, 288.0e9, 2 * bytes, 0.1) <= t / 2 + 1,
-           "law: twice the bytes a token, half the width");
-    expect(launch_amortized_tokens(0, 1.5e-6, 288.0e9, bytes, 0.1) == 0 &&
-               launch_amortized_tokens(2, 0.0, 288.0e9, bytes, 0.1) == 0 &&
-               launch_amortized_tokens(2, 1.5e-6, 0.0, bytes, 0.1) == 0 &&
-               launch_amortized_tokens(2, 1.5e-6, 288.0e9, 0.0, 0.1) == 0 &&
-               launch_amortized_tokens(2, 1.5e-6, 288.0e9, bytes, 0.0) == 0,
+    expect(launch_amortized_tokens(2, 1.5e-6, 68, 48, 2.5e9, 34.0, 2000.0) >= 2 * t - 1,
+           "law: twice the SMs, twice the width");
+    expect(launch_amortized_tokens(2, 1.5e-6, 34, 48, 2.5e9, 68.0, 2000.0) <= t / 2 + 1,
+           "law: twice the heads a token, half the width");
+    expect(launch_amortized_tokens(2, 3.0e-6, 34, 48, 2.5e9, 34.0, 2000.0) >= 2 * t - 1,
+           "law: twice the launch, twice the width");
+    expect(sm_rules::resident_ctas_per_sm(24, 1536, 96) == 16 &&
+               sm_rules::resident_ctas_per_sm(16, 1024, 96) == 10 &&
+               sm_rules::resident_ctas_per_sm(32, 2048, 96) == 21 &&
+               sm_rules::resident_ctas_per_sm(0, 1536, 96) == 0,
+           "resident CTAs: the thread and slot limits");
+    expect(launch_amortized_tokens(0, 1.5e-6, 34, 48, 2.5e9, 34.0, 2000.0) == 0 &&
+               launch_amortized_tokens(2, 0.0, 34, 48, 2.5e9, 34.0, 2000.0) == 0 &&
+               launch_amortized_tokens(2, 1.5e-6, 0, 48, 2.5e9, 34.0, 2000.0) == 0 &&
+               launch_amortized_tokens(2, 1.5e-6, 34, 0, 2.5e9, 34.0, 2000.0) == 0 &&
+               launch_amortized_tokens(2, 1.5e-6, 34, 48, 0.0, 34.0, 2000.0) == 0 &&
+               launch_amortized_tokens(2, 1.5e-6, 34, 48, 2.5e9, 0.0, 2000.0) == 0 &&
+               launch_amortized_tokens(2, 1.5e-6, 34, 48, 2.5e9, 34.0, 0.0) == 0,
            "law: unknown inputs or an uncalibrated excess answer 0 (the caller's default)");
 }
 

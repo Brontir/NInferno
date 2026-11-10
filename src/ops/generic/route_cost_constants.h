@@ -14,6 +14,7 @@
 #include "core/cost_constants.h"
 
 #include <array>
+#include <optional>
 #include <span>
 #include <cstddef>
 #include <string_view>
@@ -201,5 +202,23 @@ inline constexpr Listed kRouteCostConstants[] = {
     listed(kMmqChainCycles, Kind::Cycles),
     listed(kMmqSliceSeconds, Kind::Seconds),
 };
+
+// A Fitted constant whose calibration measurement is not taken yet: it has no value (a Constant
+// cannot hold "unknown"), and the code that reads it keeps its default while `value` is empty.
+// test_route_cost_constants checks every entry is Fitted and empty; a calibrated one moves into
+// kRouteCostConstants with its Holdout record.
+struct PendingFit {
+    std::string_view name;
+    Provenance from;
+    std::optional<double> value;
+};
+
+inline constexpr PendingFit kPendingFits[] = {
+    // The fused text qk-norm + RoPE's per-warp chain excess over the three separate kernels, in
+    // SM cycles (sm_wave_rules.h launch_amortized_tokens). Calibrated by the crossover bench
+    // (bench/ops/rmsnorm_rope_bench.cu --crossover, #617 G).
+    {"fused_text_excess_cycles", Provenance::Fitted, std::nullopt},
+};
+inline constexpr std::size_t pending_fused_text_excess_cycles = 0;
 
 } // namespace ninferno::ops::detail::generic::route_cost
