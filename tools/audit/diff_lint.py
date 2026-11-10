@@ -136,9 +136,10 @@ def diff_path(field, prefix):
         while i < len(raw):
             c = raw[i]
             if c == "\\" and i + 1 < len(raw):
-                if raw[i + 1] in "01234567":
-                    out.append(int(raw[i + 1:i + 4], 8))
-                    i += 4
+                octal = re.match(r"[0-7]{1,3}", raw[i + 1:])
+                if octal:  # git writes three digits; fewer are read as far as they go
+                    out.append(int(octal.group(0), 8) & 0xFF)
+                    i += 1 + len(octal.group(0))
                     continue
                 out.append(C_ESCAPES.get(raw[i + 1], ord(raw[i + 1])))
                 i += 2
@@ -802,7 +803,7 @@ def main(argv=None):
     base = a.base if a.exact else git("merge-base", a.base, a.head).strip()
     allow = set(re.findall(r"diff-lint: allow (removed-def|removed-include) (\S+)",
                            git("log", "--format=%B", f"{base}..{a.head}")))
-    found = lint(git("diff", "-U0", "--no-color", "-M", base, a.head), GitTree(a.head), allow, GitTree(base))
+    found = lint(git("diff", "-U0", "--no-color", "-M", "--src-prefix=a/", "--dst-prefix=b/", base, a.head), GitTree(a.head), allow, GitTree(base))
     errors = [f for f in found if f[2] not in WARN_RULES]
     for path, line, rule, why in found:
         if rule in WARN_RULES:  # a GitHub annotation; it does not fail the check

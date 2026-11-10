@@ -749,6 +749,9 @@ class QuotedPaths(unittest.TestCase):
         self.assertEqual(rules(found), ["unread-file"])
         self.assertNotIn("unread-file", dl.WARN_RULES)
 
+    def test_a_short_octal_escape_does_not_stop_the_lint(self):
+        self.assertEqual(dl.diff_path('"b/x\\1y.cpp"', "b/"), "x\x01y.cpp")
+
 
 if __name__ == "__main__":
     unittest.main()
