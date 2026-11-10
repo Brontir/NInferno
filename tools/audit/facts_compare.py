@@ -31,7 +31,8 @@ validate_probe rejects a document with a key missing or of the wrong type before
 Not compared, because the driver cannot answer or the probe does not print it: tdp_w, pcie,
 segment, form, the driver's name against the row's (the engine's SKU is compared with it), the
 MachineFacts share, and every feature but mma_slow (the build's, engine against engine). The
-MachineFacts driver_read is compared (engine_driver_read, engine_row_driver_read). feature_mma_slow queried against synthetic is "derived": both classes read the same row,
+MachineFacts driver_read is compared (engine_driver_read, engine_row_driver_read).
+feature_mma_slow queried against synthetic is "derived": both classes read the same row,
 so it only catches a query that did not store the facts. Whether the engine's mma_slow is the
 row's is the engine_mma_slow check. A row without l2_mib is a mismatch on every board of it.
 
@@ -78,7 +79,7 @@ ENGINE_MIN_MEMORY_CLOCK_KHZ = 100000
 ENGINE_BUS_CHANNEL_BITS = 32
 # A CUDA ordinal: a chosen bound, far above any machine's device count.
 MAX_DEVICE_INDEX = 4096
-VERIFIED_SOURCE = 1 # FactSource::Verified: the engine reads the row as it is
+VERIFIED_SOURCE = 1  # FactSource::Verified: the engine reads the row as it is
 EXTRAPOLATED_SOURCE = 2  # FactSource::Extrapolated: a laptop, a memory variant or a slice
 
 
@@ -158,7 +159,8 @@ def check_variants(row):
             # machine_facts reads a driver bus width only in whole 32-bit channels: any other
             # width is "as good as unreported", so the engine would not take this board's bus.
             raise ValueError(f"{where}: bus_bits is not a whole number of "
-                             f"{ENGINE_BUS_CHANNEL_BITS}-bit channels (the engine would not read it)")
+                             f"{ENGINE_BUS_CHANNEL_BITS}-bit channels "
+                             "(the engine would not read it)")
         if all(v[key] == row[key] for key in v):
             raise ValueError(f"{where}: a variant that does not differ from the row")
 
@@ -413,6 +415,14 @@ def compare_row(q, row, mig_mode):
     return out, slice_part
 
 
+def engine_snapped_khz(khz):
+    """The engine's llround(snap_to_fact_grid(khz)) for a positive integer kHz (mirrors
+    snap_to_fact_grid and its caller in src/core/machine_facts.cpp): the nearest point of the
+    2^(k/16) grid on the log2 scale, then rounded half away from zero to a whole kHz."""
+    k = math.floor(16.0 * math.log2(khz) + 0.5)
+    return math.floor(2.0 ** (k / 16.0) + 0.5)
+
+
 def compare_engine(device, row):
     """The engine's reading of the row against the JSON, and the query's stored facts against it."""
     out = []
@@ -503,10 +513,12 @@ def compare_engine(device, row):
         same("engine_memory_bus_bits", alone["memory_bus_bits"], stored["memory_bus_bits"],
              stored_note)
     if read_clock:
-        # The engine writes the driver's clock on the 2^(1/16) grid; only its bounds are checked.
-        add("engine_memory_clock_khz", alone["memory_clock_khz"], stored["memory_clock_khz"],
-            "match" if 0 < stored["memory_clock_khz"] < alone["memory_clock_khz"] else "mismatch",
-            "the driver's clock on the grid: under the row's, never unknown")
+        # The engine writes the driver's clock on the 2^(1/16) grid, rounded to a whole kHz:
+        # exactly that value, not a bound.
+        want_clock = engine_snapped_khz(mem)
+        add("engine_memory_clock_khz", want_clock, stored["memory_clock_khz"],
+            "match" if stored["memory_clock_khz"] == want_clock else "mismatch",
+            "the driver's clock snapped to the 2^(1/16) grid (snap_to_fact_grid, llround)")
     else:
         same("engine_memory_clock_khz", alone["memory_clock_khz"], stored["memory_clock_khz"],
              stored_note)

@@ -71,6 +71,12 @@ def row_of(pci_id, **change):
     return dict(copy.deepcopy(ROWS[pci_id]), **change)
 
 
+# llround(snap_to_fact_grid(x)) of src/core/machine_facts.cpp, worked out by hand from
+# 2^(round(16 log2 x) / 16): the clock the engine writes for a driver reading of x kHz.
+SNAP_9_000_000 = 9_147_842
+SNAP_10_001_000 = 9_975_792  # the RTX 4070 GDDR6 board's driver reading, 10 001 000 kHz
+
+
 def statuses(device, row="table"):
     if row == "table":
         row = ROWS.get(device["queried"]["pci_device_id"])
@@ -333,15 +339,30 @@ class Compare(unittest.TestCase):
         # driver's bus and clock are information, the engine reads them (source 2).
         d = device_4090()
         d["queried"].update(memory_bus_bits=256, memory_clock_khz=9_000_000)
-        d["engine_table_facts"].update(source=2, memory_bus_bits=256, memory_clock_khz=9_000_000,
+        d["engine_table_facts"].update(source=2, memory_bus_bits=256, memory_clock_khz=SNAP_9_000_000,
                                        driver_read=True)
         row = row_of(0x2684, variants=[{"bus_bits": 256, "gbps": 18.0}])
         s = no_mismatch(self, statuses(d, row))
         self.assertEqual(s[("table", "engine_memory_bus_bits")], "match")
         d["engine_table_facts"]["memory_clock_khz"] = 11_000_000  # faster than the row's: wrong
         self.assertEqual(statuses(d, row)[("table", "engine_memory_clock_khz")], "mismatch")
-        d["engine_table_facts"].update(memory_clock_khz=9_000_000, memory_bus_bits=192)
+        d["engine_table_facts"].update(memory_clock_khz=SNAP_9_000_000, memory_bus_bits=192)
         self.assertEqual(statuses(d, row)[("table", "engine_memory_bus_bits")], "mismatch")
+
+    def test_a_read_memory_clock_must_be_the_exact_snapped_value(self):
+        # The engine writes llround(snap_to_fact_grid(driver clock)): any other value is wrong,
+        # a tiny one included, and so is the raw driver reading.
+        row = row_of(0x2684, variants=[{"gbps": 18.0}])
+        d = device_4090()
+        d["queried"]["memory_clock_khz"] = 10_001_000
+        d["engine_table_facts"].update(memory_clock_khz=SNAP_10_001_000, source=2, driver_read=True)
+        self.assertEqual(facts_compare.engine_snapped_khz(10_001_000), SNAP_10_001_000)
+        self.assertEqual(facts_compare.engine_snapped_khz(9_000_000), SNAP_9_000_000)
+        self.assertEqual(statuses(d, row)[("table", "engine_memory_clock_khz")], "match")
+        for wrong in (1, SNAP_10_001_000 - 1, SNAP_10_001_000 + 1, 10_001_000, 10_500_000):
+            d["engine_table_facts"]["memory_clock_khz"] = wrong
+            self.assertEqual(statuses(d, row)[("table", "engine_memory_clock_khz")], "mismatch",
+                             wrong)
 
     def test_a_recorded_memory_size_under_the_id_is_information(self):
         # RTX 5060 Ti (0x2D04): the row is the 16 GB board, and the 8 GB one shares the id.
@@ -421,7 +442,7 @@ class Compare(unittest.TestCase):
         slow_row = row_of(0x2684, variants=[{"gbps": 18.0}])
         slow = device_4090()
         slow["queried"]["memory_clock_khz"] = 9_000_000
-        slow["engine_table_facts"].update(memory_clock_khz=9_000_000, source=2, driver_read=True)
+        slow["engine_table_facts"].update(memory_clock_khz=SNAP_9_000_000, source=2, driver_read=True)
         self.assertEqual(self.driver_read_of(slow, slow_row), "match")
         slow["engine_table_facts"]["driver_read"] = False
         self.assertEqual(self.driver_read_of(slow, slow_row), "mismatch")
@@ -491,7 +512,7 @@ class Compare(unittest.TestCase):
         slow_row = row_of(0x2684, variants=[{"gbps": 18.0}])
         slow = device_4090()
         slow["queried"]["memory_clock_khz"] = 9_000_000
-        slow["engine_table_facts"].update(memory_clock_khz=9_000_000, source=1)
+        slow["engine_table_facts"].update(memory_clock_khz=SNAP_9_000_000, source=1)
         self.assertEqual(statuses(slow, slow_row)[("table", "engine_source")], "mismatch")
         slow["engine_table_facts"]["source"] = 2
         self.assertEqual(statuses(slow, slow_row)[("table", "engine_source")], "match")
