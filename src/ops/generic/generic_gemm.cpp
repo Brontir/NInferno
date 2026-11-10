@@ -551,9 +551,9 @@ std::size_t fixed_parents_prefill_a8_workspace_bytes(std::initializer_list<Fixed
             max_tokens < kQ8PrefillA8Tokens) {
             return 0;
         }
-        bytes = std::max(
-            bytes, workspace_capacity_bytes({parent.qtype, policy, parent.rows, k, Epilogue::Store},
-                                            nullptr, std::max(min_tokens, kQ8PrefillA8Tokens), max_tokens));
+        bytes = std::max(bytes, workspace_capacity_bytes(
+                                    {parent.qtype, policy, parent.rows, k, Epilogue::Store},
+                                    nullptr, std::max(min_tokens, kQ8PrefillA8Tokens), max_tokens));
     }
     return bytes;
 }

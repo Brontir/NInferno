@@ -25,8 +25,8 @@ namespace generic = ninferno::ops::detail::generic;
 using ops::LinearPolicy;
 
 int check() {
-    int failures = 0;
-    const char* names[] = {"Q4_G64_FP16", "GGML_Q4_K", "GGML_IQ2_S", "BF16"};
+    int failures          = 0;
+    const char* names[]   = {"Q4_G64_FP16", "GGML_Q4_K", "GGML_IQ2_S", "BF16"};
     const QType formats[] = {QType::Q4_G64_FP16, QType::GGML_Q4_K, QType::GGML_IQ2_S, QType::BF16};
     for (std::size_t i = 0; i < 4; ++i) {
         try {
@@ -47,8 +47,8 @@ int check() {
                 try {
                     (void)generic::select_route(problem, w, t, t > 64);
                 } catch (const std::exception& e) {
-                    std::cerr << "select_route(" << names[i] << ", T=" << t << ") threw: " << e.what()
-                              << "\n";
+                    std::cerr << "select_route(" << names[i] << ", T=" << t
+                              << ") threw: " << e.what() << "\n";
                     ++failures;
                 }
             }
@@ -59,9 +59,7 @@ int check() {
     // schedules are never used.
     const std::string id = device_class().id();
     bool has_table       = false;
-    for (const auto& t : generic::kR8DecodeTables) {
-        has_table = has_table || t.gpu == id;
-    }
+    for (const auto& t : generic::kR8DecodeTables) { has_table = has_table || t.gpu == id; }
     try {
         const bool present = generic::r8_decode_table() != nullptr;
         if (has_table && !present) {

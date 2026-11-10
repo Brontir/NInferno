@@ -265,7 +265,8 @@ namespace {
 // The codebook formats only: their register-MMA dequant looks every value up in a grid table per
 // token tile, which the matrix kernel's one decode a call saves. The K-quants' affine dequant is
 // cheap, and there the register MMA keeps the band (RTX 4090, cellgt ABBA: UD-Q4_K_XL 27B DFlash2
-// C1 115.7 -> 111.7 and C4 271.5 -> 263.1 with them in the rule, Muse 30B Q4_K_M C4 282.7 -> 267.6).
+// C1 115.7 -> 111.7 and C4 271.5 -> 263.1 with them in the rule, Muse 30B Q4_K_M C4 282.7 ->
+// 267.6).
 bool mmq_verify_format(QType q) { return format_traits(q).mmq_verify; }
 
 constexpr std::int32_t kMmqVerifyMinTokens = 9;
@@ -289,9 +290,7 @@ bool mmq_verify_rule(const Weight& w, LinearPolicy policy, std::int32_t rows, st
 int sm_count() {
     try {
         return device_class().sms;
-    } catch (const std::exception&) {
-        return 1;
-    }
+    } catch (const std::exception&) { return 1; }
 }
 
 
@@ -400,9 +399,7 @@ bool ring_swiglu_four_warps(QType q) {
     try {
         const auto& d = device_class();
         return turing_cc(d.major, d.minor) && dram_bytes_per_sm_cycle() >= kRmmaLatencySwiGluBytes;
-    } catch (const std::exception&) {
-        return false;
-    }
+    } catch (const std::exception&) { return false; }
 }
 
 // The K values one register-MMA step of the format covers: four runs of its decoder (rmma_kernel's
@@ -416,11 +413,9 @@ std::int64_t rmma_k_step(QType qtype, std::int32_t k) {
     WeightCodec codec{};
     try {
         codec = codec_of(weight);
-    } catch (const std::invalid_argument&) {
-        return 128;
-    }
-    const bool quad_u4 = (codec == WeightCodec::U4ZpG32 || codec == WeightCodec::U4ZpG64) &&
-                         k > 0 && (k % 128) == 0;
+    } catch (const std::invalid_argument&) { return 128; }
+    const bool quad_u4 =
+        (codec == WeightCodec::U4ZpG32 || codec == WeightCodec::U4ZpG64) && k > 0 && (k % 128) == 0;
     const int run = quad_u4 ? 32 : run_values(codec);
     return run >= 128 ? run : 4 * run;
 }
@@ -456,7 +451,7 @@ int rmma_k_split_fit(int index, const Problem& problem, std::int64_t ctas, std::
     }
     const std::int64_t step  = rmma_k_step(problem.qtype, problem.k);
     const std::int64_t steps = (static_cast<std::int64_t>(problem.k) + step - 1) / step;
-    const auto refills = [&](int warps_k) { return (steps + warps_k - 1) / warps_k > 2; };
+    const auto refills       = [&](int warps_k) { return (steps + warps_k - 1) / warps_k > 2; };
     // The warps a SM holds at 128 registers a thread (kRmmaMinBlocks).
     constexpr std::int64_t kSlotWarps = 65536 / (32 * 128);
     if (info.warps_k <= 4 || refills(info.warps_k) || !refills(4) || ctas * 4 < kSlotWarps * sms) {
@@ -552,9 +547,7 @@ bool w4a8_ws_extra(QType q) {
         try {
             const auto& d = device_class();
             return gb20x_cc(d.major, d.minor) || ada_cc(d.major, d.minor);
-        } catch (const std::exception&) {
-            return false;
-        }
+        } catch (const std::exception&) { return false; }
     });
 }
 
@@ -568,9 +561,7 @@ bool w4a8_ws_wins(const Problem& p, const Weight& w) {
         blackwell     = gb20x_cc(d.major, d.minor);
         ada           = ada_cc(d.major, d.minor);
         ampere        = ampere_cc(d.major, d.minor);
-    } catch (const std::exception&) {
-        return false;
-    }
+    } catch (const std::exception&) { return false; }
     // Ampere, sm_80 and sm_86 alike (measured on an RTX 3090, ga102: the tile forced on every
     // format it reads, one 16K prompt, D WS
     // WS D): Muse 30B Q4_K_M prefill 1278 / 1273 -> 1398 / 1399 t/s, Qwen3.8 27B UD-Q4_K_XL 1290 /
@@ -619,9 +610,7 @@ bool w4a8_wide_q4k(const Problem& p, std::int32_t tokens) {
         const std::int64_t ctas =
             ((p.n + rows_per_block - 1) / rows_per_block) * ((tokens + 127) / 128);
         return 4 * ctas >= 3 * static_cast<std::int64_t>(d.sms);
-    } catch (const std::exception&) {
-        return false;
-    }
+    } catch (const std::exception&) { return false; }
 }
 
 // R8 decode (T = 1) on the RTX 5080 at Qwen3.5-4B/9B shapes: Q8 is fastest on
@@ -745,9 +734,7 @@ const R8DecodeTable* r8_decode_table() {
             return nearest_known_measured(std::span(kR8DecodeTables), board_of(device_class()),
                                           kR8CarryDistance);
         });
-    } catch (const std::exception&) {
-        return nullptr;
-    }
+    } catch (const std::exception&) { return nullptr; }
 }
 
 std::optional<int> tuned_r8(const Problem& p) {
@@ -789,8 +776,7 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                     double bytes = 0.0; // a device whose class cannot be read: eight warps
                     try {
                         bytes = dram_bytes_per_sm_cycle();
-                    } catch (const std::exception&) {
-                    }
+                    } catch (const std::exception&) {}
                     if (bytes > 0.0 && bytes < kRmmaQ6kFourWarpBytes) {
                         return rmma_k_split_fit(rmma_index(1, 4, 1, 1), problem, ctas, sms);
                     }
@@ -799,17 +785,16 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
             } else if (tokens <= 16) {
                 // 9..16 tokens (verify of an 8- or 16-token draft): one 8-token tile per CTA would
                 // put two or three CTA columns on the token axis, each streaming and decoding the
-                // whole weight. Four K-split warps with two tiles cover 16 tokens per column: 1.00-1.12
-                // of the best of seven schedules against 1.24-1.58 for w1x8 n1 (geomean per format,
-                // RTX 5080, Q8/Q4_0/IQ4_XS/Q4_K/Q5_K/Q6_K/IQ3_XXS at 27B/31B/35B
-                // shapes; at T = 24 Q8 1.35 against 1.68).
-                // A call of at most one CTA per SM through T = 16 takes the decode split of K
-                // above (two CTA columns): the four-warp tiles leave SMs idle on that grid. The
-                // dense tuner's timings of nine cards (sm_70 to sm_120) had the rule above lose
-                // such calls (n = 48..2048 rows: K/V, gates, small outputs) by x1.4..2.1 (median
-                // per card) to the sixteen-warp split; on the RTX 5090 the CTA pair or cluster of
-                // eight was 0..17 % faster still (n = 48 and 1024, T = 12 and 16: 8..20 us against
-                // 16..41 for the rule).
+                // whole weight. Four K-split warps with two tiles cover 16 tokens per
+                // column: 1.00-1.12 of the best of seven schedules against 1.24-1.58 for w1x8 n1
+                // (geomean per format, RTX 5080, Q8/Q4_0/IQ4_XS/Q4_K/Q5_K/Q6_K/IQ3_XXS at
+                // 27B/31B/35B shapes; at T = 24 Q8 1.35 against 1.68). A call of at most one CTA
+                // per SM through T = 16 takes the decode split of K above (two CTA columns): the
+                // four-warp tiles leave SMs idle on that grid. The dense tuner's timings of nine
+                // cards (sm_70 to sm_120) had the rule above lose such calls (n = 48..2048 rows:
+                // K/V, gates, small outputs) by x1.4..2.1 (median per card) to the sixteen-warp
+                // split; on the RTX 5090 the CTA pair or cluster of eight was 0..17 % faster still
+                // (n = 48 and 1024, T = 12 and 16: 8..20 us against 16..41 for the rule).
                 const std::int64_t ctas = (static_cast<std::int64_t>(problem.n) + 15) / 16;
                 const std::int64_t sms  = sm_count();
                 if (ctas <= sms) return one_wave_split(ctas, sms);
@@ -825,14 +810,14 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
         // tokens 32 per column cover it with the same grid and half the MMA work, and through 64
         // two columns of 32 while one column leaves SMs idle (fewer than two CTAs per SM). RTX 4080
         // Super (ad103:80sm, the dense tuner's prefill bands, A16 IQ1_S, IQ1_M and Q2_K at 5120 to
-        // 17408 rows, time of m1.n8 over the best): T = 17 and 32 1.48-3.21 on every problem; T = 64
-        // 1.20-1.58 below 160 CTAs, 1.00 at 272. RTX 5090 (gb202:170sm), Q6_K A16 output head
+        // 17408 rows, time of m1.n8 over the best): T = 17 and 32 1.48-3.21 on every problem; T =
+        // 64 1.20-1.58 below 160 CTAs, 1.00 at 272. RTX 5090 (gb202:170sm), Q6_K A16 output head
         // (248320 rows): m1.n4 the best at T = 17 (1.22) and 32 (1.54), m1.n8 at 64. RTX 5060 Ti
         // (gb206:36sm, the same artifacts as the 4080 SUPER): T = 17 and 32 1.60-2.14 on every
         // problem. In the product (ninferno-perplexity at context 32, tuner off on both arms): 4080
         // SUPER Qwen3.8-27B IQ3 246.6 -> 252.9 tok/s, the 5090's Q4_K_XL even.
         const std::int64_t ctas = (static_cast<std::int64_t>(problem.n) + 63) / 64;
-        const bool narrow_band = tokens <= 32 || (tokens <= 64 && ctas < 2 * sm_count());
+        const bool narrow_band  = tokens <= 32 || (tokens <= 64 && ctas < 2 * sm_count());
         return rmma_index(4, 1, 1, narrow_band ? 4 : 8);
     }
     if (tokens <= 16 || (split != 8 && tokens < kRmmaMidMinTokens)) return narrow();
@@ -888,10 +873,10 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
 
 int heuristic_w4a8(const Problem& problem, const Weight& weight, std::int32_t tokens) {
     constexpr int k32x128 = 0, k128x128 = 2, k128x64 = 3, k64x64 = 4, k128x64ws = 5;
-    // 17..32 tokens (verify of a 16-token draft, short prompts): 32 tokens by 128 rows wastes less of
-    // the tile than 64x64 and reads each weight tile once per 128 rows. (RTX 5080,
-    // 7 GGUF formats at 27B/31B/35B shapes, time over the best of seven routes, geomean per format)
-    // at T = 17: 32x128 1.05-1.45 against 64x64 1.14-1.57, better for every format at 17, 20, 24, 32.
+    // 17..32 tokens (verify of a 16-token draft, short prompts): 32 tokens by 128 rows wastes less
+    // of the tile than 64x64 and reads each weight tile once per 128 rows. (RTX 5080, 7 GGUF
+    // formats at 27B/31B/35B shapes, time over the best of seven routes, geomean per format) at T =
+    // 17: 32x128 1.05-1.45 against 64x64 1.14-1.57, better for every format at 17, 20, 24, 32.
     if (tokens <= 32) return k32x128;
     if (tokens <= 64) return k64x64;
     // From 65 tokens a 128-token tile reads each weight tile once where 64x64 reads it twice, but
@@ -1126,8 +1111,8 @@ bool r8_verify_takes(QType qtype) {
 // The build admits a tile its architecture holds; an sm_80 build run on a later 99 KiB part
 // (forward-compatible SASS) must still turn the 144-160 KiB tiles away, so the device decides too.
 bool staged_device_fits(int schedule) {
-    const auto s     = kStagedSchedules.at(static_cast<std::size_t>(schedule));
-    const auto bytes = static_cast<std::size_t>(s.rows + s.tokens) * 64 * 2 * s.stages;
+    const auto s      = kStagedSchedules.at(static_cast<std::size_t>(schedule));
+    const auto bytes  = static_cast<std::size_t>(s.rows + s.tokens) * 64 * 2 * s.stages;
     std::size_t limit = 0;
     try {
         limit = device_class().smem_per_block_optin;
@@ -1262,8 +1247,7 @@ bool supports(const Weight& w) {
     case QType::GGML_TQ1_0:
     case QType::GGML_TQ2_0:
     case QType::GGML_Q1_0:
-    case QType::GGML_Q2_0:
-    {
+    case QType::GGML_Q2_0: {
         const auto plane = ggml_plane_bytes(w.qtype);
         return w.layout == QuantLayout::GgmlPlanes && w.scales != nullptr &&
                (w.qhigh != nullptr || plane.high == 0) &&
@@ -1276,8 +1260,7 @@ bool supports(const Weight& w) {
                (w.k % 64) == 0 && std::isfinite(w.weight_scale_divisor) &&
                w.weight_scale_divisor > 0.0F;
     case QType::MXFP4:
-        return w.layout == QuantLayout::BlockScaleK32E8M0 && w.scales != nullptr &&
-               (w.k % 32) == 0;
+        return w.layout == QuantLayout::BlockScaleK32E8M0 && w.scales != nullptr && (w.k % 32) == 0;
     case QType::Q4_G64_FP16:
     case QType::Q8_G32_FP16:
         return w.layout == QuantLayout::RowSplit && w.scales != nullptr &&
@@ -1299,8 +1282,8 @@ bool rmma_tile_compiled(WeightCodec codec, int m_tiles, int n_tiles, std::int32_
     // run_values: 32 for a decoder of 32-value blocks, 128 for the ggml 32-blocks that step four
     // blocks at a time; both read 32 values per decode (kRun == 32). So does the u4 G32/G64
     // quad-run decoder that launch_rmma_u4zp_g32/_g64 (and the MoE launches) take at K % 128 == 0.
-    const bool quad_u4 = (codec == WeightCodec::U4ZpG32 || codec == WeightCodec::U4ZpG64) &&
-                         k > 0 && (k % 128) == 0;
+    const bool quad_u4 =
+        (codec == WeightCodec::U4ZpG32 || codec == WeightCodec::U4ZpG64) && k > 0 && (k % 128) == 0;
     return !((run_values(codec) >= 32 || quad_u4) && m_tiles * n_tiles >= 16);
 }
 
@@ -1375,7 +1358,7 @@ R8CallRefusal r8_call_refusal(const Weight& w, LinearPolicy policy, std::int32_t
     }
     if (tokens > r8_verify_widest(w.qtype)) return R8CallRefusal::VerifyWidth;
     return r8_verify_takes_shape(w.qtype, w.n, w.k) ? R8CallRefusal::None
-                                                     : R8CallRefusal::VerifyShape;
+                                                    : R8CallRefusal::VerifyShape;
 }
 
 ScheduleRefusal r8_refusal(int index, const Weight& w, LinearPolicy policy) {
@@ -1408,8 +1391,8 @@ ScheduleRefusal w4a8_refusal(int index, const Weight& w, LinearPolicy policy) {
     }
     // The classic tiles read a ggml high plane a byte at a time; the producer tiles in vector
     // words (generic_refusal), and IQ3_XXS's sign plane 8 bytes at a time (w4a8_ws_admits).
-    const bool high_off = w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr &&
-                          !aligned_to(w.qhigh, 16);
+    const bool high_off =
+        w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16);
     if (!aligned_to(w.qdata, 16) || (producer && high_off) ||
         (producer && w.qtype == QType::GGML_IQ3_XXS && !aligned_to(w.qhigh, 8))) {
         return ScheduleRefusal::Alignment;
@@ -1439,14 +1422,14 @@ ScheduleRefusal rmma_refusal(int index, const Weight& w) {
     if (codec == WeightCodec::Fp8 || codec == WeightCodec::Fp8RowF32 ||
         codec == WeightCodec::Fp8B128 || codec == WeightCodec::Bf16 ||
         codec == WeightCodec::Mxfp4 || codec == WeightCodec::U4Zp ||
-        codec == WeightCodec::U4ZpG64 ||
-        codec == WeightCodec::GgmlQ4K || codec == WeightCodec::GgmlQ5K ||
-        codec == WeightCodec::GgmlQ6K || codec == WeightCodec::GgmlQ3K ||
-        codec == WeightCodec::GgmlQ2K || codec == WeightCodec::GgmlIq4Xs ||
-        codec == WeightCodec::GgmlIq3Xxs || codec == WeightCodec::GgmlIq3S ||
-        codec == WeightCodec::GgmlQ40 || codec == WeightCodec::GgmlQ41 ||
-        codec == WeightCodec::GgmlQ50 || codec == WeightCodec::GgmlQ51 ||
-        codec == WeightCodec::GgmlIq4Nl || is_ggml_block(w.qtype)) {
+        codec == WeightCodec::U4ZpG64 || codec == WeightCodec::GgmlQ4K ||
+        codec == WeightCodec::GgmlQ5K || codec == WeightCodec::GgmlQ6K ||
+        codec == WeightCodec::GgmlQ3K || codec == WeightCodec::GgmlQ2K ||
+        codec == WeightCodec::GgmlIq4Xs || codec == WeightCodec::GgmlIq3Xxs ||
+        codec == WeightCodec::GgmlIq3S || codec == WeightCodec::GgmlQ40 ||
+        codec == WeightCodec::GgmlQ41 || codec == WeightCodec::GgmlQ50 ||
+        codec == WeightCodec::GgmlQ51 || codec == WeightCodec::GgmlIq4Nl ||
+        is_ggml_block(w.qtype)) {
         return aligned_to(w.qdata, 16) ? ScheduleRefusal::None : ScheduleRefusal::Alignment;
     }
     return aligned_to(w.qdata, 8) ? ScheduleRefusal::None : ScheduleRefusal::Alignment;
@@ -1651,7 +1634,7 @@ bool route_is_token_invariant(Route route) {
     case Family::Nvfp4TiledMma:
         return nvfp4_tiled_schedule_info(route.schedule).classes == 1; // rmma WarpsK == 1
     case Family::Scalar:
-        return true; // one lane order per element, independent of T
+        return true;      // one lane order per element, independent of T
     case Family::GgmlMmq: // stream-k splits K by the call's tile count
         return false;
     case Family::GgmlVec: // a lane's slices and one butterfly per token, whatever T
@@ -1718,8 +1701,9 @@ int i8_pick(const Problem& problem, QType qtype, std::int32_t tokens) {
     double best_cost  = 0;
     for (int i = 0; i < i8_schedule_count(); ++i) {
         if (!i8_fits(i, qtype)) continue;
-        const auto s       = kI8Schedules[i];
-        const double ctas  = std::ceil(problem.n * sets / s.block_n) * std::ceil(tokens / double(s.block_m));
+        const auto s = kI8Schedules[i];
+        const double ctas =
+            std::ceil(problem.n * sets / s.block_n) * std::ceil(tokens / double(s.block_m));
         const double waves = std::ceil(ctas / sms);
         const double cost  = waves * s.block_m * s.block_n / kI8Eff[i];
         if (best < 0 || cost < best_cost) {
@@ -1763,10 +1747,12 @@ std::optional<Route> w4a8_route(const Problem& problem, const Weight& weight, st
 std::optional<Route> staged_speed_route(const Problem& problem, const Weight& weight,
                                         std::int32_t tokens) {
     if (tokens < kRmmaMidMinTokens) return std::nullopt;
+
     struct Pick {
         int rows, cols, stages;
         double waves;
     };
+
     for (const Pick p : {Pick{256, 128, 2, 2.0}, Pick{128, 64, 2, 1.0}, Pick{64, 64, 3, 0.5}}) {
         if (speed_waves(problem.n, tokens, p.rows, p.cols) < p.waves) continue;
         for (int i = 0; i < staged_schedule_count(); ++i) {
@@ -1818,7 +1804,8 @@ Route heuristic_route(const Problem& problem, const Weight& weight, std::int32_t
     // Where the BF16 MMA is emulated (Turing), the band between R8 / the vector kernel and W4A8
     // takes ggml's int8 matrix kernel for the formats it reads: the register MMA there runs on
     // the emulation, about three times its native cost.
-    if (mmq_verify_rule(weight, problem.policy, problem.n, tokens)) return Route{Family::GgmlMmq, 0};
+    if (mmq_verify_rule(weight, problem.policy, problem.n, tokens))
+        return Route{Family::GgmlMmq, 0};
     // NVFP4 A16 outside the invariant profile stays on the register MMA: against its prefill
     // schedule the tiled route loses on the Muse gate/up and synthetic shapes (+11..+20%)
     // and wins on the down projection only from T = 2048. A route table may still name it.
@@ -1919,8 +1906,7 @@ std::optional<Route> pinned_route(const Problem& problem, const Weight& weight, 
 std::optional<Route> volta_hmma_route(const Problem& problem, const Weight& weight,
                                       std::int32_t tokens) {
     if (tokens < kVoltaHmmaMinTokens || tokens > kVoltaHmmaMaxTokens ||
-        current_features().mma_tensor || !supports(weight) ||
-        !volta_hmma_codec(codec_of(weight)) ||
+        current_features().mma_tensor || !supports(weight) || !volta_hmma_codec(codec_of(weight)) ||
         (weight.k % volta_hmma_k_multiple(codec_of(weight))) != 0) {
         return std::nullopt;
     }
@@ -1944,8 +1930,8 @@ Route select_route(const Problem& problem, const Weight& weight, std::int32_t to
                       static_cast<std::uint8_t>(invariant_rmma(problem.k, tokens))};
         if (!route_admits(r, weight, problem.policy)) return Route{Family::Scalar, 0};
         // NVFP4 wide calls: the tiled kernel sums in the register MMA's order (the same bytes).
-        if (const auto t =
-                nvfp4_tiled_route(problem, weight, rmma_schedule_info(r.schedule).warps_k, tokens)) {
+        if (const auto t = nvfp4_tiled_route(problem, weight,
+                                             rmma_schedule_info(r.schedule).warps_k, tokens)) {
             return *t;
         }
         return r;
@@ -1954,8 +1940,8 @@ Route select_route(const Problem& problem, const Weight& weight, std::int32_t to
     if (const std::int8_t forced = route_probe_state.quantized_act; forced >= 0) {
         const bool prefill_band = prefill && tokens >= 17;
         if (forced == 1 && allows_w4a4(weight, problem.policy)) {
-            const Route r{Family::W4a4Mma,
-                          static_cast<std::uint8_t>(heuristic_w4a4(problem.n, tokens, prefill_band))};
+            const Route r{Family::W4a4Mma, static_cast<std::uint8_t>(
+                                               heuristic_w4a4(problem.n, tokens, prefill_band))};
             if (route_admits(r, weight, problem.policy)) return r;
         }
         if (forced == 1 && r8_call(weight, problem.policy, tokens)) {
@@ -2025,7 +2011,7 @@ Route auto_route(const Problem& problem, const Weight& weight, std::int32_t toke
     const bool vec     = vec_rule(weight, problem.policy, tokens);
     const bool a8      = a8_wide || vec || r8_call(weight, problem.policy, tokens) ||
                     mmq_verify_rule(weight, problem.policy, problem.n, tokens);
-    const auto tuned   = a8 ? std::optional<Route>{} : table_route(problem, tokens, prefill);
+    const auto tuned = a8 ? std::optional<Route>{} : table_route(problem, tokens, prefill);
     if (tuned) {
         // Under the prefill profile a format with a tiled codec keeps its tiled route: the tiled
         // and register-MMA families sum in different orders.
@@ -2037,8 +2023,8 @@ Route auto_route(const Problem& problem, const Weight& weight, std::int32_t toke
             return *tuned;
         }
     }
-    // The dense tuner's choice at decode widths (generic_tune.cpp): an A16 schedule for an A16 call,
-    // an R8 schedule for an R8 decode call; never a W4A8 call.
+    // The dense tuner's choice at decode widths (generic_tune.cpp): an A16 schedule for an A16
+    // call, an R8 schedule for an R8 decode call; never a W4A8 call.
     if (!a8_wide) {
         // Under the vector kernel's rule any timed route that beat it may stand in.
         const bool r8_ok = r8_call(weight, problem.policy, tokens) ||
@@ -2193,9 +2179,9 @@ bool r8_verify_tunable(const Weight& w, LinearPolicy policy, std::int32_t tokens
 // kPrefillMinTokens) decodes its weight once and multiplies on CUTLASS's sm_70 GEMM. The tiled
 // kernel (HMMA m8n8k4 on sm_70, generic_tiled.cuh) decodes a 128-row slice of the weight in each
 // CTA, once per 128-token block: ceil(N / 128) CTAs a block, in waves of the SMs, each wave as long
-// as one CTA's decode of 128 x K weights (0.37 .. 0.47 ms at K = 4096 on the V100). The decoded copy
-// spreads the same decode over every SM, then reads two FP16 bytes a weight into the GEMM, so it
-// costs in proportion to N and wins wherever the tile's grid leaves SMs idle or takes a second
+// as one CTA's decode of 128 x K weights (0.37 .. 0.47 ms at K = 4096 on the V100). The decoded
+// copy spreads the same decode over every SM, then reads two FP16 bytes a weight into the GEMM, so
+// it costs in proportion to N and wins wherever the tile's grid leaves SMs idle or takes a second
 // wave. V100 (ninferno_linear_bench, T = 32..240, the tile's time against the copy's): Q4_K 24576 x
 // 4096 (192 CTAs: 2.4 waves) 1.36..2.29 ms against 1.20..1.40, 4096 x 12288 (32 CTAs) 1.07..1.31
 // against 0.82..0.88, 4096 x 4096 0.36..0.44 against 0.27..0.28, Q5_K 4096 x 12288 1.13..1.37
@@ -2204,14 +2190,14 @@ bool r8_verify_tunable(const Weight& w, LinearPolicy policy, std::int32_t tokens
 // (0.82..0.93 against 0.52..0.54). A Qwen3.5 9B layer's four linears: 14 % less time at T = 64,
 // 35 % at T = 192.
 // The copy's narrowest margin above is 1.13 (24576 x 4096 below 129 tokens) at the V100's 870
-// GB/s, and its time is its bytes over the DRAM rate while the tile's is its waves on the SMs (80 on
-// every Volta part): a board under 870 / 1.13 GB/s (the Titan V's 653) or of unknown bandwidth
+// GB/s, and its time is its bytes over the DRAM rate while the tile's is its waves on the SMs (80
+// on every Volta part): a board under 870 / 1.13 GB/s (the Titan V's 653) or of unknown bandwidth
 // keeps the tile below kVoltaTileMaxTokens, where two token blocks already decode the weight twice.
 constexpr std::int32_t kVoltaCutlassMinTokens = 17;
 
-constexpr std::int32_t kVoltaTileMaxTokens    = 256;
+constexpr std::int32_t kVoltaTileMaxTokens = 256;
 
-constexpr double kVoltaCopyMinDramGbps        = 870.0 / 1.13;
+constexpr double kVoltaCopyMinDramGbps = 870.0 / 1.13;
 
 bool volta_cutlass_takes(std::int32_t tokens) {
     static PerDevice<bool> enabled;
