@@ -176,8 +176,9 @@ std::vector<std::string> device_fact_notes(const DeviceClass& d) {
     if (!d.chip_from_pci) {
         char id[16];
         std::snprintf(id, sizeof(id), "0x%04X", static_cast<unsigned>(d.pci_device_id));
-        const std::string why = d.pci_device_id == 0 ? std::string("PCI id unreadable")
-                                                     : std::string("PCI id ") + id + " in no chip block";
+        const std::string why  = d.pci_device_id == 0
+                                     ? std::string("PCI id unreadable")
+                                     : std::string("PCI id ") + id + " in no chip block";
         const std::string arch = gpu_arch_id(d.major, d.minor);
         // The PCI-ID reference table may still know the board (H100: its chip has no block): its
         // facts are the table's, only the per-chip keys are guessed.
@@ -260,8 +261,9 @@ DriverReport driver_report_of(const DeviceClass& d) noexcept {
 MachineFacts machine_facts_of(const DeviceClass& d) { return machine_facts(driver_report_of(d)); }
 
 Board board_of(const DeviceClass& d) noexcept {
-    return {d.major, d.minor, d.sms, static_cast<double>(d.l2_bytes) / (1 << 20), d.dram_gbps(),
-            d.features.mma_slow};
+    return {d.major,       d.minor,
+            d.sms,         static_cast<double>(d.l2_bytes) / (1 << 20),
+            d.dram_gbps(), d.features.mma_slow};
 }
 
 namespace {
@@ -405,8 +407,8 @@ std::vector<std::string> gpu_similar_chips(int major, int minor, int sms, std::s
 
 std::vector<std::string> gpu_class_chain(std::string_view chip, int sms, std::string_view arch) {
     std::vector<std::string> chain;
-    for (std::string key : {gpu_class_id(chip, sms), std::string(chip), std::string(arch),
-                            std::string("*")}) {
+    for (std::string key :
+         {gpu_class_id(chip, sms), std::string(chip), std::string(arch), std::string("*")}) {
         if (!key.empty() && std::find(chain.begin(), chain.end(), key) == chain.end()) {
             chain.push_back(std::move(key));
         }
