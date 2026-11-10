@@ -502,6 +502,173 @@
           "unit": "clk"
         }
       }
+    },
+    "120a": {
+      "provenance": "Measured",
+      "source": "isa_probe_120a.txt",
+      "card": "NVIDIA GeForce RTX 5090",
+      "cc": 120,
+      "sms": 170,
+      "l2_bytes": 100663296,
+      "mma_shape": "hmma_16816_f32_bf16",
+      "mma_flops": 4096,
+      "tool": {
+        "probe": "isa_probe 9",
+        "nvcc": "13.4.92",
+        "driver": "13040",
+        "runtime": "13040"
+      },
+      "notes": [],
+      "facts": {
+        "resident_ctas_per_sm": {
+          "value": 4.0,
+          "unit": "count"
+        },
+        "mma_cycles_per_sm": {
+          "value": 8.003,
+          "unit": "clk"
+        },
+        "mma_cycles_per_partition": {
+          "value": 32.01,
+          "unit": "clk"
+        },
+        "tensor_flops_per_sm_clock": {
+          "value": 511.808,
+          "unit": "flop"
+        },
+        "mma_dependent_latency": {
+          "value": 34.542,
+          "unit": "clk"
+        },
+        "fp32_cycles_per_warp_instruction": {
+          "value": 1.027,
+          "unit": "clk"
+        },
+        "int32_cycles_per_warp_instruction": {
+          "value": 2.01,
+          "unit": "clk"
+        },
+        "l1_latency_w1": {
+          "value": 43.887,
+          "unit": "clk"
+        },
+        "l1_latency_w2": {
+          "value": 43.887,
+          "unit": "clk"
+        },
+        "l1_latency_w4": {
+          "value": 43.887,
+          "unit": "clk"
+        },
+        "l1_latency_w8": {
+          "value": 45.918,
+          "unit": "clk"
+        },
+        "l2_latency_w1": {
+          "value": 360.966,
+          "unit": "clk"
+        },
+        "l2_latency_w2": {
+          "value": 359.177,
+          "unit": "clk"
+        },
+        "l2_latency_w4": {
+          "value": 359.165,
+          "unit": "clk"
+        },
+        "l2_latency_w8": {
+          "value": 357.471,
+          "unit": "clk"
+        },
+        "dram_latency_w1": {
+          "value": 826.442,
+          "unit": "clk"
+        },
+        "dram_latency_w2": {
+          "value": 827.719,
+          "unit": "clk"
+        },
+        "dram_latency_w4": {
+          "value": 826.607,
+          "unit": "clk"
+        },
+        "dram_latency_w8": {
+          "value": 840.642,
+          "unit": "clk"
+        },
+        "l2_latency_ns_w1": {
+          "value": 124.758,
+          "unit": "ns"
+        },
+        "l2_latency_ns_w2": {
+          "value": 124.156,
+          "unit": "ns"
+        },
+        "l2_latency_ns_w4": {
+          "value": 124.156,
+          "unit": "ns"
+        },
+        "l2_latency_ns_w8": {
+          "value": 123.609,
+          "unit": "ns"
+        },
+        "dram_latency_ns_w1": {
+          "value": 285.625,
+          "unit": "ns"
+        },
+        "dram_latency_ns_w2": {
+          "value": 286.031,
+          "unit": "ns"
+        },
+        "dram_latency_ns_w4": {
+          "value": 285.742,
+          "unit": "ns"
+        },
+        "dram_latency_ns_w8": {
+          "value": 290.594,
+          "unit": "ns"
+        },
+        "dram_tlbwarm_latency_w1": {
+          "value": 868.434,
+          "unit": "clk"
+        },
+        "dram_tlbwarm_latency_w2": {
+          "value": 840.512,
+          "unit": "clk"
+        },
+        "dram_tlbwarm_latency_w4": {
+          "value": 872.113,
+          "unit": "clk"
+        },
+        "dram_tlbwarm_latency_w8": {
+          "value": 913.434,
+          "unit": "clk"
+        },
+        "dram_tlbwarm_latency_ns_w1": {
+          "value": 300.0,
+          "unit": "ns"
+        },
+        "dram_tlbwarm_latency_ns_w2": {
+          "value": 290.625,
+          "unit": "ns"
+        },
+        "dram_tlbwarm_latency_ns_w4": {
+          "value": 301.375,
+          "unit": "ns"
+        },
+        "dram_tlbwarm_latency_ns_w8": {
+          "value": 315.625,
+          "unit": "ns"
+        },
+        "sm_clock_mhz_chase": {
+          "value": 2893.336,
+          "unit": "mhz"
+        },
+        "shared_latency": {
+          "value": 33.997,
+          "unit": "clk"
+        }
+      }
     }
   }
 }
