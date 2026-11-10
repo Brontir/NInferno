@@ -1254,7 +1254,11 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
         // of a message would bend the text: it keeps the cut alone. The steer spells the output
         // from its first token, where the model may open its reasoning (the constraint gate
         // steps over that section); a prompt that already holds the reasoning, or declines it,
-        // keeps the cut alone too.
+        // keeps the cut alone too (the gate would hold the grammar from the first token and
+        // refuse the analysis). starts_in_reasoning and reasoning_open_allowed are defensive for
+        // harmony: its generation prompt is a bare "<|start|>assistant" (no analysis marker in
+        // the prompt), so a new turn never starts in it and may always open it; a declined
+        // reasoning (a template with a thinking switch) is tested.
         if (const auto format = impl_->chat_template.conventions().tools.format;
             format != chat::ToolCallFormat::None &&
             options.continuation == PromptContinuationMode::NewAssistantTurn &&

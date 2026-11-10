@@ -2515,9 +2515,14 @@ int test_none_gemma_channel_head_token() {
 // A gpt-oss (harmony) frontend: the markers at gpt-oss-20b's own ids, all special tokens as in
 // its tokenizer, <|return|> and <|call|> its eos. The template names every harmony marker (the
 // conventions are read from them); the part that runs renders the turns and the generation prompt
-// "<|start|>assistant".
-Frontend harmony_frontend() {
+// "<|start|>assistant". With a thinking switch, enable_thinking false adds a system message
+// (gpt-oss's own template has no switch).
+Frontend harmony_frontend(bool thinking_switch = false) {
     const std::string harmony_template =
+        std::string(thinking_switch
+                        ? "{%- if enable_thinking is defined and not enable_thinking -%}"
+                          "<|start|>system<|message|>no reasoning<|end|>{%- endif -%}"
+                        : "") +
         "{%- for m in messages -%}<|start|>{{ m.role }}<|message|>{{ m.content }}<|end|>"
         "{%- endfor -%}"
         "{%- if false -%}<|start|>assistant<|channel|>analysis<|message|>t<|end|>"
@@ -2578,6 +2583,16 @@ int test_none_harmony_header_steer() {
     failures += check(qwen.prepare(none_input(true)).summary().refusal_tag.empty() &&
                           qwen.prepare(none_input(false)).summary().refusal_tag.empty(),
                       "tool_choice none on the Qwen template carried a header steer");
+    // A harmony template with a thinking switch, thinking declined: the gate would hold the
+    // grammar from the first token, which the tag (written for an analysis the gate steps over)
+    // does not fit, so the cut alone answers. Thinking on keeps the steer.
+    const Frontend switched = harmony_frontend(true);
+    const auto declined     = switched.prepare(none_input(false));
+    failures += check(FrontendFactory::inspect(declined).reasoning_declined,
+                      "the harmony fixture's thinking switch did not decline the reasoning");
+    failures += check(declined.summary().refusal_tag.empty() &&
+                          switched.prepare(none_input(true)).summary().refusal_tag == tag,
+                      "a declined reasoning carried the header steer (or thinking on lost it)");
 
     // The recorded outputs: the channel form, and an analysis then the final message.
     const auto tokens = [&](std::string_view text) {

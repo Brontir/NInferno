@@ -785,8 +785,11 @@ struct OutputConstraintSpec {
     // The request's matcher then keeps the header (it does not drop it, as it does for a grammar
     // of the answer's text) and keeps its place across a reasoning section the model opens: the
     // reasoning's text and its terminator are not the grammar's, what follows them is (the
-    // tool_choice none steer of PromptSummary::refusal_tag). A presented output only: a raw one
-    // shows the reasoning to the grammar too. The output presentation is unchanged.
+    // tool_choice none steer of PromptSummary::refusal_tag). A presented output only: under
+    // OutputOptions::raw the request's gate is the grammar's from the first token, so the
+    // grammar reads the reasoning too, and the harmony refusal tag then refuses any analysis
+    // text (an embedder that asks for raw output should not install the steer; the serve layer
+    // never sets raw). The output presentation is unchanged.
     bool reads_answer_header = false;
 };
 

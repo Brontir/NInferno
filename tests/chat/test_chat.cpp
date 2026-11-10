@@ -1803,6 +1803,7 @@ constexpr TokenId kIs              = 382;   // " is"
 constexpr TokenId kSunny           = 46726; // " sunny"
 constexpr TokenId kNo              = 3160;  // "No"
 constexpr TokenId kTool            = 4584;  // " tool"
+constexpr TokenId kGtNewline       = 523;   // ">\n" ('>' and a newline, one token)
 // Ids 0..200018: the last added token is 200018.
 constexpr std::uint32_t kDomain = 200019;
 
@@ -1856,6 +1857,7 @@ ninferno::structured::GrammarVocabulary gpt_oss_vocabulary() {
         {oss::kSunny, " sunny"},
         {oss::kNo, "No"},
         {oss::kTool, " tool"},
+        {oss::kGtNewline, ">\n"},
         {oss::kConstrain, "<|constrain|>"},
         {oss::kChannel, "<|channel|>"},
         {oss::kStart, "<|start|>"},
@@ -2091,6 +2093,48 @@ int test_refusal_tag_gpt_oss_tokens() {
             failures += check(commit(thought, {oss::kEnd, oss::kStart, oss::kAssistant}) &&
                                   next(thought) == channel,
                               "the accepted prefix of the window commits" + label);
+        }
+        // 6. The open marker spelled in bytes up to "<|message|", then ">\n" completes it and
+        // goes on: the grammar reads the marker's bytes only (the newline is the analysis's) and,
+        // after <|end|>, goes on from the marker, committed and through one speculative window.
+        {
+            Tokens spelled = {oss::kChannel, oss::kAnalysis};
+            for (const char c : std::string_view("<|message|")) {
+                spelled.push_back(oss::byte(static_cast<unsigned char>(c)));
+            }
+            const Tokens last_byte = sorted({oss::byte('>'), oss::kGtNewline});
+            auto request           = steered_request(compiled);
+            failures += check(commit(request, spelled) && next(request) == last_byte,
+                              "the marker's last byte: '>' or '>\\n'" + label);
+            failures += check(commit(request, {oss::kGtNewline}),
+                              "'>\\n' completes the marker and opens the analysis" + label);
+            next(request);
+            failures += check(reasoning_row(), "after '>\\n': the analysis, free" + label);
+            failures += check(commit(request, {oss::kIt, oss::kEnd}) && next(request) == after_end,
+                              "after a spelled marker and <|end|>: only <|start|>" + label);
+            failures +=
+                check(commit(request, {oss::kStart, oss::kAssistant, oss::kChannel, oss::kFinal,
+                                       oss::kMessage, oss::kNo, oss::kReturn}) &&
+                          request.stats().complete,
+                      "the final message completes after a spelled marker" + label);
+
+            auto fresh    = steered_request(compiled);
+            Tokens window = spelled;
+            window.insert(window.end(), {oss::kGtNewline, oss::kIt, oss::kEnd, oss::kStart});
+            std::vector<std::uint32_t> rows((window.size() + 1) * words);
+            fresh.fill_round(window, rows.data(), words);
+            const auto at = [&](std::size_t index) { return admitted(rows, index * words, words); };
+            const std::size_t gt = spelled.size(); // the row ">\n" is drafted at
+            const auto free_row  = [&](std::size_t index) {
+                const Tokens tokens = at(index);
+                return tokens.size() == oss::kDomain - stops.size() &&
+                       !std::binary_search(tokens.begin(), tokens.end(), oss::kReturn);
+            };
+            failures += check(at(gt) == last_byte && free_row(gt + 1) && free_row(gt + 2) &&
+                                  at(gt + 3) == after_end && at(gt + 4) == role,
+                              "a window through a spelled marker and <|end|>" + label);
+            failures += check(!fresh.violated() && next(fresh) == channel,
+                              "the window left the committed state at the start" + label);
         }
     }
     return failures;
