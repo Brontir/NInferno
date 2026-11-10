@@ -11,7 +11,9 @@ kernel-facts snapshots committed per architecture (`src/ops/generic/data/kernel_
 `ops/generic/kernel_facts.h`, #612), never from the running GPU's kernels, so every machine decides
 as the release does whatever its nvcc or driver, any board is priced on a CPU, and the selector
 goldens are one file per board. The snapshots are written from the release toolchain's binaries
-(`tools/kernel_facts/kernel_facts.py`, `cuobjdump --dump-resource-usage`, no GPU); every build
+(`tools/kernel_facts/kernel_facts.py`, `cuobjdump --dump-resource-usage` for the resources and
+`cuobjdump -sass` for the K loop's instruction counts per iteration, the counted facts of #613:
+`tools/kernel_facts/sass_counts.py`; no GPU); every build
 asserts its own kernels equal its snapshot (`ninferno_kernel_facts_test`), and the release runs the
 live check on a GPU of the generation (`ninferno-serve selector-facts`). A device that runs PTX the
 driver compiled has no facts: it is priced by threads alone and takes no variant.
@@ -283,7 +285,7 @@ Rules apply in this order:
 | Kind | Source | Examples |
 |---|---|---|
 | Discrete | driver | generation and instruction set, SM count, L2, shared memory per block and SM, registers, VRAM class, driver model, MIG, display attached |
-| Discrete | kernel-facts snapshot (committed per architecture) | a compiled kernel's registers, stack and static shared memory, and the occupancy computed from them (`core/kernel_occupancy.h`) |
+| Discrete | kernel-facts snapshot (committed per architecture) | a compiled kernel's registers, stack and static shared memory, the occupancy computed from them (`core/kernel_occupancy.h`), and its K loop's instruction counts per iteration (MMAs by shape, loads by space and bytes, ALU work; #613) |
 | Discrete | PCI ID | segment (GeForce / pro / datacenter), exceptions (TU116/117: no fast tensor MMA; L40: half rate) |
 | Discrete | OS, once at startup | the process's CPU bandwidth quota: the tightest along its cgroup and the cgroup's parents (v2 `cpu.max`, v1 `cpu.cfs_quota_us` / `cpu.cfs_period_us`), and the logical CPU count |
 | Continuous | PCI-ID reference table only | reference clock, bus width x memory clock, TDP, nominal VRAM, source |

@@ -70,6 +70,12 @@ add_test(NAME ninferno_selection_regret_test
 # tools/bench/regret_collect.py: route sweeps and the production selection into its input, no GPU.
 add_test(NAME ninferno_regret_collect_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_regret_collect.py)
+# tools/kernel_facts/sass_counts.py and the loop columns of kernel_facts.py (#613): the K loop
+# found from a small SASS text's control flow, its counts, the snapshot round trip and the check's
+# verdicts. No GPU, no CUDA toolkit.
+add_test(NAME ninferno_kernel_facts_sass_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_kernel_facts_sass.py)
+set_tests_properties(ninferno_kernel_facts_sass_test PROPERTIES LABELS host)
 
 # Repository hygiene, no GPU: only scripts (a #! first line) may be committed executable.
 add_test(NAME ninferno_file_modes_test

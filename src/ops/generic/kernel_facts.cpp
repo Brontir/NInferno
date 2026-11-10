@@ -53,6 +53,16 @@ Snapshot parse(std::string_view text) {
                 k.epilogue >> latency >> add_sums >> f.registers >> f.stack_bytes >>
                 f.local_bytes >> f.static_shared_bytes;
             if (!fields) throw std::runtime_error("kernel facts: malformed row: " + line);
+            // Schema 2: the K loop's counts follow (tools/kernel_facts/sass_counts.py COLUMNS).
+            if (fields >> std::ws; !fields.eof()) {
+                LoopCounts l;
+                fields >> l.loops >> l.k_iter >> l.mma >> l.mma_ones >> l.mma_shape >> l.ldg >>
+                    l.ldg_bytes >> l.ld >> l.ld_bytes >> l.ldgsts >> l.ldgsts_bytes >> l.lds >>
+                    l.lds_bytes >> l.sts >> l.sts_bytes >> l.local >> l.local_bytes >> l.shfl >>
+                    l.int_alu >> l.fp_alu >> l.uniform >> l.other >> l.total;
+                if (!fields) throw std::runtime_error("kernel facts: malformed loop: " + line);
+                f.loop = std::move(l);
+            }
             k.latency  = latency != 0;
             k.add_sums = add_sums != 0;
             s.rows.emplace(row_key(k), f);

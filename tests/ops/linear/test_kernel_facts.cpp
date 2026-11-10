@@ -237,6 +237,55 @@ void occupancy_from_facts() {
     expect(ninferno::resident_ctas_per_sm(sm120, {0, 0, 128, 0}) == 0, "unknown registers fit");
 }
 
+void loop_counts_read() {
+    // The K loop's counts (schema 2, #613 PR-3) of the BF16 decoder on the four-warp K-split
+    // schedule, in every snapshot that carries them: one loop, two K steps of 4 * kRun = 32 values
+    // (k_iter 64), one m16n8k16 MMA per 16 K per tile (4 per iteration) on a tensor-core build,
+    // the weights read by global loads, and the total above the parts it is made of. A snapshot
+    // without the columns (schema 1) reads nullopt and is named, not failed.
+    kf::RmmaKernelKey key;
+    key.decoder = "Bf16Decoder";
+    key.warps_m = 1;
+    key.warps_k = 4;
+    key.m_tiles = key.n_tiles = key.cluster = 1;
+    for (const auto arch : kf::snapshot_archs()) {
+        const std::string name = "sm_" + std::string(arch);
+        const auto facts       = kf::rmma_facts(arch, key);
+        if (!facts) continue; // snapshots_parse reports it
+        if (!facts->loop) {
+            std::cout << name << ": no loop counts (schema 1)\n";
+            continue;
+        }
+        const kf::LoopCounts& l = *facts->loop;
+        std::cout << name << ": Bf16Decoder 1 4 1 1 1 loop: " << l.mma << ' ' << l.mma_shape
+                  << ", k_iter " << l.k_iter << ", " << l.ldg << " LDG (" << l.ldg_bytes << " B), "
+                  << l.total << " instructions\n";
+        expect(l.loops == 1, name + ": " + std::to_string(l.loops) + " candidate loops");
+        expect(l.total > 0 && l.total >= l.mma + l.ldg + l.ld + l.int_alu + l.fp_alu,
+               name + ": the total is below its parts");
+        expect(l.ldg > 0 && l.ldg_bytes == 32 * 16 * static_cast<std::size_t>(l.ldg),
+               name + ": the BF16 weights are 16-byte global loads");
+        if (arch == "70") {
+            // Volta multiplies with FFMAs (NINFERNO_FMA_MMA): no tensor MMA, no K from shapes.
+            expect(l.mma == 0 && l.k_iter == 0 && l.fp_alu > 0, name + ": the FFMA loop");
+            continue;
+        }
+        expect(l.k_iter == 64, name + ": k_iter " + std::to_string(l.k_iter));
+        expect(l.mma == 4 && l.mma_ones == 0, name + ": " + std::to_string(l.mma) + " MMAs");
+        expect(l.mma_shape.rfind("HMMA.", 0) == 0, name + ": shape " + l.mma_shape);
+    }
+    // A min-term decoder's loop counts its ones-MMAs apart, and they never make K.
+    key.decoder = "GgmlQ45KQuadDecoder<4>";
+    for (const auto arch : kf::snapshot_archs()) {
+        const auto facts = kf::rmma_facts(arch, key);
+        if (!facts || !facts->loop || arch == "70") continue;
+        const kf::LoopCounts& l = *facts->loop;
+        expect(l.mma_ones > 0 && l.mma_ones < l.mma && l.k_iter == 256,
+               "sm_" + std::string(arch) + ": Q4_K ones-MMAs " + std::to_string(l.mma_ones) +
+                   " of " + std::to_string(l.mma) + ", k_iter " + std::to_string(l.k_iter));
+    }
+}
+
 } // namespace
 
 int main() {
@@ -244,6 +293,7 @@ int main() {
         snapshots_parse();
         release_engines();
         canonical_names();
+        loop_counts_read();
         occupancy_from_facts();
         boards_read_facts();
         build_kernels_find_facts();

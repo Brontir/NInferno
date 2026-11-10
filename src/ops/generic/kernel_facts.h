@@ -31,11 +31,46 @@ struct RmmaKernelKey {
     bool add_sums = false;
 };
 
+// The instructions of the kernel's K loop, counted once per loop iteration off the SASS
+// (tools/kernel_facts/sass_counts.py, #613 PR-3: how the loop is found and what a static count
+// means). One iteration of rmma_kernel's loop is two K steps; k_iter is the K values a warp's
+// weight MMAs cover in it (2 * 4 * Decoder::kRun where the loop was found), so a count per K
+// value is count / k_iter. Bytes are what the warp's instructions request (32 lanes times the
+// width), not unique memory traffic. Facts for the price's terms (kernel_roofline.h): mma and
+// mma_shape feed the tensor-pipe term, the loads the LSU and spill terms, int_alu and fp_alu the
+// issue term. Nothing reads them yet.
+struct LoopCounts {
+    int loops  = 0; // candidate K loops found: 1 normally; 0 none (every count is 0); 2+ ambiguous
+    int k_iter = 0; // K values per warp per iteration from the weight MMAs; 0 unknown
+    int mma    = 0; // tensor-core MMAs, the min-term ones included
+    int mma_ones = 0; // of them, the min-term MMAs with a 1.0 operand (Q4_K / Q5_K / Q4_1 / Q5_1)
+    std::string mma_shape;        // the MMA opcode ("HMMA.16816.F32.BF16"), "-" without one
+    int ldg                  = 0; // global loads
+    std::size_t ldg_bytes    = 0;
+    int ld                   = 0; // generic loads (the activations)
+    std::size_t ld_bytes     = 0;
+    int ldgsts               = 0; // asynchronous global-to-shared copies
+    std::size_t ldgsts_bytes = 0;
+    int lds                  = 0; // shared loads
+    std::size_t lds_bytes    = 0;
+    int sts                  = 0; // shared stores
+    std::size_t sts_bytes    = 0;
+    int local                = 0; // local loads and stores: the spills in the loop
+    std::size_t local_bytes  = 0;
+    int shfl                 = 0;
+    int int_alu              = 0;
+    int fp_alu               = 0;
+    int uniform              = 0; // uniform-datapath instructions
+    int other                = 0; // branches, barriers, convergence, constant loads, NOP
+    int total                = 0;
+};
+
 struct KernelFacts {
     int registers                   = 0; // per thread
     std::size_t stack_bytes         = 0; // per thread: the stack frame (spills and stack arrays)
     std::size_t local_bytes         = 0; // per thread: other local memory
     std::size_t static_shared_bytes = 0; // per CTA
+    std::optional<LoopCounts> loop;      // schema 2 snapshots; nullopt in a resources-only one
 
     // Per thread: every local-memory byte (the driver's localSizeBytes), the one spill measure
     // the price, the wide rule and the live check all read.
