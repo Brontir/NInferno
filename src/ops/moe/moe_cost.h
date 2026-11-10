@@ -38,25 +38,26 @@ namespace ninferno::ops::detail::moe {
 // The facts of a board a stage's price reads (DeviceClass::facts and the generation table); nullopt
 // where the board has no roofline (a clock, a bus width or a memory clock unknown).
 struct MoeBoardFacts {
-    double dram_bytes_per_s       = 0;
-    int sms                       = 0;
-    double clock_hz               = 0;
-    double bf16_ops_per_clock_sm  = 0; // dense MMA rate: the register MMA, Volta's HMMA
-    double s8_ops_per_clock_sm    = 0; // the int8 tier; 0 where the generation has none (Volta)
+    double dram_bytes_per_s      = 0;
+    int sms                      = 0;
+    double clock_hz              = 0;
+    double bf16_ops_per_clock_sm = 0; // dense MMA rate: the register MMA, Volta's HMMA
+    double s8_ops_per_clock_sm   = 0; // the int8 tier; 0 where the generation has none (Volta)
 };
+
 [[nodiscard]] std::optional<MoeBoardFacts> moe_board_facts(const DeviceClass& device);
 
 // One grouped stage's problem: the bank's bytes as stored (Weight::payload_bytes), the experts, the
 // top-k, the rows each expert's span has and its output rows (half of them under a gate and up),
 // the columns (K) of the stage.
 struct MoeStageShape {
-    Stage stage            = Stage::GateUp;
-    double bank_bytes      = 0;
-    std::int32_t experts   = 0;
-    std::int32_t top_k     = 0;
-    std::int32_t rows      = 0; // per expert
-    std::int32_t out_rows  = 0; // per assignment
-    std::int32_t cols      = 0;
+    Stage stage           = Stage::GateUp;
+    double bank_bytes     = 0;
+    std::int32_t experts  = 0;
+    std::int32_t top_k    = 0;
+    std::int32_t rows     = 0; // per expert
+    std::int32_t out_rows = 0; // per assignment
+    std::int32_t cols     = 0;
 };
 
 struct MoeStagePrice {
@@ -75,8 +76,7 @@ struct MoeStagePrice {
 // The price of a stage of `shape` at `tokens` on `kind`; nullopt where the board has no rate the
 // kind needs (the int8 tier on Volta) or the shape is empty.
 [[nodiscard]] std::optional<MoeStagePrice> price_moe_stage(const MoeStageShape& shape,
-                                                           MoeStageKernel kind,
-                                                           std::int32_t tokens,
+                                                           MoeStageKernel kind, std::int32_t tokens,
                                                            const MoeBoardFacts& board);
 
 // The shape of a layer's GateUp or Down stage from its weights (the router gives E).
@@ -97,21 +97,21 @@ struct MoeCandidate {
     std::string why;
     std::optional<double> seconds;
 };
+
 [[nodiscard]] const char* moe_candidate_status_name(MoeCandidate::Status status);
 [[nodiscard]] const char* moe_kernel_name(MoeStageKernel kind);
 
 // The candidates of `stage` (GateUp or Down) of a call of `tokens` under select_plan's plan.
 [[nodiscard]] std::vector<MoeCandidate> moe_candidates(const MoeWeights& weights,
-                                                       const MoeConfig& config,
-                                                       std::int32_t tokens, bool prefill,
-                                                       Stage stage);
+                                                       const MoeConfig& config, std::int32_t tokens,
+                                                       bool prefill, Stage stage);
 
 // The layer's two grouped stages on `plan` (each stage's kernel from stage_routes), seconds; the
 // router and combine launches, whose bytes the law prices as the router's weights, are added.
 // nullopt where a stage has no price.
 [[nodiscard]] std::optional<double> moe_layer_seconds(const MoeWeights& weights,
-                                                      const MoeConfig& config,
-                                                      const MoePlan& plan, std::int32_t tokens,
+                                                      const MoeConfig& config, const MoePlan& plan,
+                                                      std::int32_t tokens,
                                                       const MoeBoardFacts& board);
 
 } // namespace ninferno::ops::detail::moe

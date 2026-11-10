@@ -57,9 +57,9 @@ const generic::FactsBoard& board_named(const std::string& name) {
 
 std::optional<QType> qtype_of(const std::string& s) {
     static const std::map<std::string, QType> names = {
-        {"nvfp4", QType::NVFP4},        {"mxfp4", QType::MXFP4},
-        {"iq3s", QType::GGML_IQ3_S},    {"iq2s", QType::GGML_IQ2_S},
-        {"iq4xs", QType::GGML_IQ4_XS},  {"iq4nl", QType::GGML_IQ4_NL},
+        {"nvfp4", QType::NVFP4},         {"mxfp4", QType::MXFP4},
+        {"iq3s", QType::GGML_IQ3_S},     {"iq2s", QType::GGML_IQ2_S},
+        {"iq4xs", QType::GGML_IQ4_XS},   {"iq4nl", QType::GGML_IQ4_NL},
         {"iq3xxs", QType::GGML_IQ3_XXS}, {"q8", QType::Q8_G32_FP16}};
     const auto it = names.find(s);
     return it == names.end() ? std::nullopt : std::optional<QType>(it->second);
@@ -116,12 +116,12 @@ void law_checks() {
 
     const moe::MoeBoardFacts board{1e12, 100, 2e9, 512.0, 2048.0};
     moe::MoeStageShape s;
-    s.bank_bytes = 1e9;
-    s.experts    = 100;
-    s.top_k      = 10;
-    s.rows       = 1000;
-    s.out_rows   = 500;
-    s.cols       = 1000;
+    s.bank_bytes      = 1e9;
+    s.experts         = 100;
+    s.top_k           = 10;
+    s.rows            = 1000;
+    s.out_rows        = 500;
+    s.cols            = 1000;
     const auto decode = moe::price_moe_stage(s, moe::MoeStageKernel::RegisterMma, 1, board);
     check(decode && decode->dram_seconds > decode->compute_seconds,
           "a one-token stage is bandwidth-bound");
@@ -158,8 +158,8 @@ void candidate_checks() {
                 for (const auto& c : candidates) {
                     selected += c.status == moe::MoeCandidate::Status::Selected;
                     if (c.status == moe::MoeCandidate::Status::Inadmissible) {
-                        check(!c.why.empty() && !c.seconds, std::string(name) +
-                                                               ": an inadmissible candidate says why");
+                        check(!c.why.empty() && !c.seconds,
+                              std::string(name) + ": an inadmissible candidate says why");
                     }
                     if (c.status == moe::MoeCandidate::Status::Dominated ||
                         c.status == moe::MoeCandidate::Status::PricedBelow) {
@@ -191,8 +191,11 @@ void replica(const std::filesystem::path& routes_dir) {
         const char* file;
         const char* board;
     };
-    const Source sources[] = {{"ad106.json", "rtx4060ti"}, {"gb202.json", "rtx5090"},
-                              {"gb203.json", "rtx5080"},   {"gb203-70sm.json", "rtx5070ti"},
+
+    const Source sources[] = {{"ad106.json", "rtx4060ti"},
+                              {"gb202.json", "rtx5090"},
+                              {"gb203.json", "rtx5080"},
+                              {"gb203-70sm.json", "rtx5070ti"},
                               {"gb206.json", "rtx5060ti"}};
     std::printf("replica: price_moe_stage (bytes law + roofline, no fitted constant) against the "
                 "sweeps in routes/*.json\n");
@@ -201,7 +204,7 @@ void replica(const std::filesystem::path& routes_dir) {
     for (const Source& source : sources) {
         std::ifstream in(routes_dir / source.file);
         check(static_cast<bool>(in), std::string("cannot read ") + source.file);
-        const Json table = Json::parse(in);
+        const Json table    = Json::parse(in);
         const DeviceClass d = generic::board_device_class(board_named(source.board));
         const ScopedDeviceClass scoped(d);
         const auto facts = moe::moe_board_facts(d);
@@ -209,25 +212,25 @@ void replica(const std::filesystem::path& routes_dir) {
         if (!facts) continue;
         std::vector<Row> rows;
         for (const Json& e : table.value("moe", Json::array())) {
-            const auto q = qtype_of(e.at("format").get<std::string>());
+            const auto q  = qtype_of(e.at("format").get<std::string>());
             const auto dq = qtype_of(e.value("down_format", e.at("format").get<std::string>()));
             if (!q || !dq) continue;
             const std::int32_t experts = e.at("experts"), top_k = e.at("top_k"),
                                hidden = e.at("hidden"), inter = e.at("inter");
             // Nemotron's mixer is the one non-gated (relu^2) layer of the tables.
-            const bool relu2 = hidden == 2688;
-            const auto layer = build(*q, *dq, experts, top_k, hidden, inter, relu2);
+            const bool relu2           = hidden == 2688;
+            const auto layer           = build(*q, *dq, experts, top_k, hidden, inter, relu2);
             const moe::MoeRouteKey key = moe::route_key(layer->weights, layer->config);
-            for (const auto& [field, prefill] : {std::pair{"evidence_us", true},
-                                                  std::pair{"evidence_decode_us", false}}) {
+            for (const auto& [field, prefill] :
+                 {std::pair{"evidence_us", true}, std::pair{"evidence_decode_us", false}}) {
                 if (!e.contains(field)) continue;
                 for (const Json& row : e.at(field)) {
-                    const std::int32_t t = row.at(0);
+                    const std::int32_t t   = row.at(0);
                     const double chosen_us = row.at(2).get<double>();
-                    const auto plan = moe::table_plan(key, t, prefill);
+                    const auto plan        = moe::table_plan(key, t, prefill);
                     if (!plan || chosen_us <= 0) continue;
-                    const auto seconds = moe::moe_layer_seconds(layer->weights, layer->config,
-                                                                *plan, t, *facts);
+                    const auto seconds =
+                        moe::moe_layer_seconds(layer->weights, layer->config, *plan, t, *facts);
                     if (!seconds) continue;
                     rows.push_back({*seconds, chosen_us * 1e-6});
                 }
@@ -266,11 +269,12 @@ void replica(const std::filesystem::path& routes_dir) {
                     geomean_ratio(rows), lo, hi, concordance, ties);
         // A floor: no stage runs faster than its bytes and its roofline, so the prediction never
         // exceeds the measurement by more than the uniform-routing assumption's slack.
-        check(hi <= 1.10, std::string(source.board) + ": a row's predicted floor exceeds its "
-                                                       "measured time by more than 10 % (" +
+        check(hi <= 1.10, std::string(source.board) +
+                              ": a row's predicted floor exceeds its "
+                              "measured time by more than 10 % (" +
                               std::to_string(hi) + ")");
         check(concordance > 0.5, std::string(source.board) + ": the prediction orders the rows "
-                                                              "no better than chance");
+                                                             "no better than chance");
     }
 }
 

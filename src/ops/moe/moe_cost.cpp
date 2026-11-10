@@ -50,8 +50,8 @@ std::optional<MoeStagePrice> price_moe_stage(const MoeStageShape& shape, MoeStag
     }
     const double assignments = static_cast<double>(tokens) * shape.top_k;
     const double touched     = expected_experts_touched(shape.experts, shape.top_k, tokens);
-    const double act_value   = int8_activations(kind) ? kInt8ActivationBytesPerValue
-                                                      : kBf16BytesPerValue;
+    const double act_value =
+        int8_activations(kind) ? kInt8ActivationBytesPerValue : kBf16BytesPerValue;
     MoeStagePrice out;
     out.bytes = shape.bank_bytes * touched / shape.experts + assignments * shape.cols * act_value +
                 assignments * shape.out_rows * kBf16BytesPerValue;
@@ -80,7 +80,7 @@ std::optional<MoeStagePrice> price_moe_stage(const MoeStageShape& shape, MoeStag
 std::optional<MoeStageShape> moe_stage_shape(const MoeWeights& weights, const MoeConfig& config,
                                              Stage stage) {
     if (stage != Stage::GateUp && stage != Stage::Down) return std::nullopt;
-    const Weight& bank        = bank_of(weights, stage);
+    const Weight& bank         = bank_of(weights, stage);
     const std::int32_t experts = static_cast<std::int32_t>(weights.router.n);
     if (experts <= 0 || bank.n <= 0 || bank.n % experts != 0) return std::nullopt;
     MoeStageShape s;
@@ -130,14 +130,13 @@ std::vector<MoeCandidate> moe_candidates(const MoeWeights& weights, const MoeCon
                                          std::int32_t tokens, bool prefill, Stage stage) {
     std::vector<MoeCandidate> out;
     if (stage != Stage::GateUp && stage != Stage::Down) return out;
-    const Weight& bank       = bank_of(weights, stage);
-    const MoePlanQuery query = moe_plan_query(weights, config, tokens, prefill);
-    const MoeStageRoutes routes = stage_routes(weights, query.plan);
-    const MoeStageKernel selected =
-        (stage == Stage::Down ? routes.down : routes.gate_up).kernel;
-    const DeviceClass& device = device_class();
-    const auto board          = moe_board_facts(device);
-    const auto shape          = moe_stage_shape(weights, config, stage);
+    const Weight& bank            = bank_of(weights, stage);
+    const MoePlanQuery query      = moe_plan_query(weights, config, tokens, prefill);
+    const MoeStageRoutes routes   = stage_routes(weights, query.plan);
+    const MoeStageKernel selected = (stage == Stage::Down ? routes.down : routes.gate_up).kernel;
+    const DeviceClass& device     = device_class();
+    const auto board              = moe_board_facts(device);
+    const auto shape              = moe_stage_shape(weights, config, stage);
 
     const auto admitted = [&](MoeStageKernel kind, std::string& why) {
         switch (kind) {
@@ -191,7 +190,7 @@ std::vector<MoeCandidate> moe_candidates(const MoeWeights& weights, const MoeCon
             c.why    = "R8's issue-rate work has no term in the law: not comparable";
         } else {
             c.status = price->seconds < selected_price->seconds ? MoeCandidate::Status::PricedBelow
-                                                                 : MoeCandidate::Status::Dominated;
+                                                                : MoeCandidate::Status::Dominated;
         }
         out.push_back(std::move(c));
     }
@@ -212,9 +211,10 @@ std::optional<double> moe_layer_seconds(const MoeWeights& weights, const MoeConf
         seconds += price->seconds;
     }
     // The router: its weights, the activation and the logits, once.
-    const double router_bytes = static_cast<double>(weights.router.payload_bytes) +
-                                static_cast<double>(tokens) * weights.router.k * kBf16BytesPerValue +
-                                static_cast<double>(tokens) * weights.router.n * 4.0;
+    const double router_bytes =
+        static_cast<double>(weights.router.payload_bytes) +
+        static_cast<double>(tokens) * weights.router.k * kBf16BytesPerValue +
+        static_cast<double>(tokens) * weights.router.n * 4.0;
     return seconds + router_bytes / board.dram_bytes_per_s;
 }
 
