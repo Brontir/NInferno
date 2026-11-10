@@ -93,6 +93,12 @@ add_test(NAME ninferno_kernel_facts_sass_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_kernel_facts_sass.py)
 set_tests_properties(ninferno_kernel_facts_sass_test PROPERTIES LABELS host)
 
+# tools/audit/diff_lint.py: broken string literals, duplicated added blocks, removed definitions
+# still called and removed includes still needed, on planted diffs (#611), no GPU.
+add_test(NAME ninferno_diff_lint_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_diff_lint.py)
+set_tests_properties(ninferno_diff_lint_test PROPERTIES LABELS host)
+
 # tools/audit/affected_arches.py: a diff to the arches and stands to test, synthetic diffs, no GPU
 # (#611).
 add_test(NAME ninferno_affected_arches_test

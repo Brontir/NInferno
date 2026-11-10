@@ -1,0 +1,33 @@
+{
+ "about": "Pull request 599: a member function was deleted from choice.h while three call sites remained. The diff is the real change to choice.h; the files hold the lines of the head that mention the name, at their real line numbers (other lines are blank).",
+ "diff": "diff --git a/src/product/choice/choice.h b/src/product/choice/choice.h\nindex 924b8a183..335ea417a 100644\n--- a/src/product/choice/choice.h\n+++ b/src/product/choice/choice.h\n@@ -73,0 +74 @@ struct DrafterOption {\n+\n@@ -76,3 +77,3 @@ struct DrafterOption {\n-    // no measurement gives is not counted). A ceiling: the verify of the streams' rows together\n-    // costs more than one request's, and that is not priced. Ascending by streams; empty: `speedup`\n-    // wherever it speculates.\n+    // no measurement gives is not counted). One request's gain: the verify of the streams' rows\n+    // together costs more than one request's, which `joint` prices where it can. Ascending by\n+    // streams; empty: `speedup` wherever it speculates.\n@@ -90 +91 @@ struct DrafterOption {\n-    // by streams; a count of streams not listed is not priced (the gain stays that ceiling).\n+    // by streams; a count of streams not listed is not priced (see speedup_at).\n@@ -98,5 +99,3 @@ struct DrafterOption {\n-    // The gain at `streams` streams: plain decode's 1 from plain_from_streams on, else the load\n-    // table's at its last bound below, scaled by the joint verify's price where it is priced\n-    // (below 1 when the round at that load no longer pays: the choice then weighs plain decode),\n-    // else `speedup`.\n-    [[nodiscard]] double speedup_at(std::uint32_t streams) const noexcept {\n+    // The load table's gain at `streams` streams, before the joint price: plain decode's 1 from\n+    // plain_from_streams on, else the table's at its last bound below, else `speedup`.\n+    [[nodiscard]] double base_gain_at(std::uint32_t streams) const noexcept {\n@@ -108,0 +108,11 @@ struct DrafterOption {\n+        return gain;\n+    }\n+\n+    // The gain at `streams` streams: base_gain_at scaled by the joint verify's price where it is\n+    // priced (below 1 when the round at that load no longer pays: the choice then weighs plain\n+    // decode). Once any smaller count of streams is priced, an unpriced count never gains more\n+    // than the least gain priced below it (the gain does not climb back to the one-request\n+    // ceiling as the load grows); before any is priced it is that ceiling.\n+    [[nodiscard]] double speedup_at(std::uint32_t streams) const noexcept {\n+        if (plain_from_streams != 0 && streams >= plain_from_streams) { return 1; }\n+        double gain = base_gain_at(streams);\n@@ -110 +120,4 @@ struct DrafterOption {\n-            if (j.streams == streams) { return gain * j.scale; }\n+            if (j.streams > streams) { break; }\n+            const double priced = base_gain_at(j.streams) * j.scale;\n+            if (j.streams == streams) { return priced; }\n+            gain = std::min(gain, priced);\n@@ -115 +128 @@ struct DrafterOption {\n-    // R_1 / R_C at `streams` streams (1 where it is not priced).\n+    // R_1 / R_C as counted at `streams` streams (1 where nothing is priced at or below it).\n@@ -117,4 +130,2 @@ struct DrafterOption {\n-        for (const JointScale& j : joint) {\n-            if (j.streams == streams) { return j.scale; }\n-        }\n-        return 1;\n+        const double base = base_gain_at(streams);\n+        return base > 0 ? speedup_at(streams) / base : 1;\n@@ -123,2 +134,2 @@ struct DrafterOption {\n-    // Whether the gain at `streams` streams is priced for the joint verify, not a one-request\n-    // ceiling.\n+    // Whether the gain at `streams` streams rests on the joint verify's price (priced there or\n+    // below), not on a one-request ceiling.\n@@ -128,14 +139 @@ struct DrafterOption {\n-                           [&](const JointScale& j) { return j.streams == streams; });\n-    }\n-    // Whether a measurement gives the gain at `streams` streams: `measured`, and the load table's\n-    // bound in force there measured at its depth (a published profile lists no depths but its\n-    // choice's). Plain decode's from plain_from_streams on is no gain to measure.\n-    [[nodiscard]] bool measured_at(std::uint32_t streams) const noexcept {\n-        if (!measured) { return false; }\n-        if (plain_from_streams != 0 && streams >= plain_from_streams) { return true; }\n-        bool known = true;\n-        for (const LoadGain& g : load) {\n-            if (g.streams > streams) { break; }\n-            known = g.measured;\n-        }\n-        return known;\n+                           [&](const JointScale& j) { return j.streams <= streams; });\n",
+ "files": {
+  "src/product/choice/choice.cpp": {
+   "sparse": {
+    "1320": "        if (d.measured_at(static_cast<std::uint32_t>(rows))) {",
+    "1731": "                                       [&](const DrafterOption& d) { return d.measured_at(streams); });"
+   }
+  },
+  "src/product/plan/plan_choice.cpp": {
+   "sparse": {
+    "757": "                                served.drafter_options[s.candidate.drafter - 1].measured_at("
+   }
+  },
+  "src/spec/registry.h": {
+   "sparse": {
+    "121": "    // newer registry can be told from an older one; each profile carries its \"measured_at\" date"
+   }
+  },
+  "tests/test_choice.cpp": {
+   "sparse": {
+    "1853": "    check(d.measured_at(1) && d.measured_at(3) && !d.measured_at(4) && !d.measured_at(7) &&",
+    "1854": "              d.measured_at(8),"
+   }
+  },
+  "tests/test_spec.cpp": {
+   "sparse": {
+    "1053": "            stamped = stamped && profile.value(\"measured_at\", \"\").size() == 10 &&"
+   }
+  }
+ }
+}
