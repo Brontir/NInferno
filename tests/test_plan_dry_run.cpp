@@ -1424,7 +1424,10 @@ void test_rows_at_choice() {
 // every plan fixture of this file on five generations, at two contexts and one and four streams.
 // (The summation class is a function of the activation mode and the route set, not an output of
 // the choice or the dry run: it has no field to compare here.)
-std::string b1_signature(const pr::PlanSourceFacts& facts, const pr::DryRunInputs& inputs) {
+int b1_choices = 0, b1_by_worth = 0, b1_chunk_by_speed = 0;
+
+std::string b1_signature(const pr::PlanSourceFacts& facts, const pr::DryRunInputs& inputs,
+                         bool count = false) {
     std::ostringstream out;
     const pr::PlannedSpeculation planned = pr::plan_model(facts, inputs);
     const rt::DryRunPlan& plan           = planned.plan;
@@ -1439,6 +1442,16 @@ std::string b1_signature(const pr::PlanSourceFacts& facts, const pr::DryRunInput
     }
     const auto served = pr::choose_at_weights(facts, inputs, inputs.pins);
     out << " | choice ";
+    if (count) {
+        // A plan that fits must have a choice, or "none" would be a baseline that holds trivially.
+        check(!plan.fits || (served && served->choice.chosen),
+              "B1 under exact: a plan that fits has a choice to compare");
+        if (served && served->choice.chosen) {
+            ++b1_choices;
+            b1_by_worth += served->choice.by_worth ? 1 : 0;
+            b1_chunk_by_speed += served->choice.chunk_by_speed ? 1 : 0;
+        }
+    }
     if (served && served->choice.chosen) {
         const auto& c = served->choice.scored[*served->choice.chosen].candidate;
         out << "kv " << ninferno::kv_cache_storage_name(c.kv) << " ring "
@@ -1493,16 +1506,23 @@ void test_exact_reads_no_continuous_fact() {
                     inputs.options          = o.options;
                     inputs.ask              = o.ask;
                     inputs.pins.activations = launch.activations_pinned();
-                    const std::string base  = b1_signature(facts, inputs);
+                    const std::string base  = b1_signature(facts, inputs, true);
 
                     struct Move {
                         const char* what;
                         double clock, bandwidth, l2;
                     };
 
-                    for (const Move& m : {Move{"all x2", 2, 2, 2}, Move{"all x0.5", .5, .5, .5},
-                                          Move{"clock x2", 2, 1, 1}, Move{"bandwidth x2", 1, 2, 1},
-                                          Move{"l2 x2", 1, 1, 2}, Move{"all unknown", 0, 0, 0}}) {
+                    // The all-x2 and all-x0.5 moves keep every ratio of the facts, so a price that
+                    // reads only ratios would pass them by construction; the single-fact moves
+                    // and the unknown ones do not.
+                    for (const Move& m :
+                         {Move{"all x2", 2, 2, 2}, Move{"all x0.5", .5, .5, .5},
+                          Move{"clock x2", 2, 1, 1}, Move{"bandwidth x2", 1, 2, 1},
+                          Move{"l2 x2", 1, 1, 2}, Move{"clock x0.5", .5, 1, 1},
+                          Move{"bandwidth x0.5", 1, .5, 1}, Move{"l2 x0.5", 1, 1, .5},
+                          Move{"clock unknown", 0, 1, 1}, Move{"bandwidth unknown", 1, 0, 1},
+                          Move{"l2 unknown", 1, 1, 0}, Move{"all unknown", 0, 0, 0}}) {
                         pr::DryRunInputs moved = inputs;
                         moved.gpu.sm_clock_khz = static_cast<int>(stock.sm_clock_khz * m.clock);
                         moved.gpu.dram_gbps    = stock.dram_gbps * m.bandwidth;
@@ -1519,7 +1539,11 @@ void test_exact_reads_no_continuous_fact() {
             }
         }
     }
-    std::cout << "B1 under exact: " << compared << " perturbed plans compared\n";
+    check(b1_choices > 0 && b1_by_worth > 0 && b1_chunk_by_speed > 0,
+          "B1 under exact: the baselines include choices decided by worth and by chunk speed");
+    std::cout << "B1 under exact: " << compared << " perturbed plans compared against "
+              << b1_choices << " choices (" << b1_by_worth << " by worth, " << b1_chunk_by_speed
+              << " chunk by speed)\n";
 }
 
 // One price for a quantization whichever facts carry it (product::quant_option_of): a hub row's

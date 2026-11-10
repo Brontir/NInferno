@@ -1,14 +1,17 @@
 // Property tests for the projection selector's decisions, set 1 (roadmap #620 step 6; the
 // specification is Roadmap 0's report 08, Q3). Every property runs over the board rows of
 // core/data/gpu_facts.json through the same substitution the selector goldens use
-// (selector_facts.h board_device_class, ScopedDeviceClass), so it needs no GPU: a host without a
-// device prices the register MMA by threads alone (generic_cost.cpp rmma_kept), the same on every
-// substituted board.
+// (selector_facts.h board_device_class, ScopedDeviceClass), so it needs no GPU to run. Where a
+// device is visible, the register-MMA price reads the registers and spill of the HOST GPU's
+// compiled kernels (generic_cost.cpp rmma_kept -> rmma_resources, cudaFuncGetAttributes); without
+// one it prices by threads alone. The same facts are read for every substituted board, so the
+// properties hold on either, but the counts of P1 differ a little between the two.
 //
 //   P1  price monotone: for every priced route of a call of 17 tokens or more, a board with 1.25x
-//       the SMs, or 1.25x the DRAM bandwidth, all else equal, prices it no slower (within the
-//       model's 1 % resolution). The price (price_routes), not the choice.
-//   P3  non-fact fields: the board's labels (names, PCI address, UUID, ordinal), the table's
+//       the SMs, or 1.25x the DRAM bandwidth, all else equal, prices it no slower (to 1e-9). The
+//       price (price_routes), not the choice.
+//   P3  fields the selector does not read: the board's labels (names, PCI address, UUID, ordinal),
+//   the table's
 //       sources and notes, TDP, nominal VRAM, PCIe generation, segment and the memory size the
 //       driver reports move no route. Boards of the table that differ in their PCI id alone
 //       (SKU twins) choose alike.
@@ -41,10 +44,12 @@
 #include <cmath>
 #include <cstdint>
 #include <exception>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <optional>
 #include <set>
+#include <span>
 #include <sstream>
 #include <string>
 #include <tuple>
@@ -64,6 +69,8 @@ struct Known {
     const char* property;
     const char* key;
     const char* cause;
+    int max_count; // the cases the waiver covers, at most (a host with a GPU reads other registers)
+    double max_ratio; // the worst price ratio it covers
 };
 
 // The price of a route on a board with more SMs is higher by up to 1.5x for the families below
@@ -72,15 +79,24 @@ struct Known {
 // busiest SM `q` CTAs of bytes at bw / sms, with q = ceil(CTAs / sms): bw / sms is that SM's share
 // only when every SM pulls at once, so a grid whose last wave leaves SMs idle (50 -> 62 SMs for
 // 100 CTAs: q stays 2, q x sms goes 100 -> 124) is overcharged when SMs are added. The DRAM floor
-// n k bpw / bw does not move with the SMs. Bandwidth x1.25 fails nowhere.
+// n k bpw / bw does not move with the SMs. The warp-fill term moves with it too: the warps resident
+// on the busy SM, min(q, occ) x threads / 32, divide the whole time (clamped below by
+// kMinWarpFill), so a q that drops with more SMs lowers the fill and raises the time. Bandwidth
+// x1.25 fails nowhere.
+//
+// The waiver is narrow. A failing case is waived only with a wave witness: the same route priced
+// on twice the SMs is no slower than on the stock board, so a price that keeps rising with the
+// SMs (a bw / sqrt(sms) share, say) is not waived. A waived group may not grow past max_count nor
+// past max_ratio, and one that stops failing is an XPASS that fails the test, so the list is
+// pruned as the model is fixed. The tolerance is 1e-9: the price is deterministic.
 constexpr const char* kWaveCause =
-    "price_routes charges the busiest SM q = ceil(CTAs/sms) CTAs of bytes at bw/sms (wave "
-    "quantization of the memory term)";
+    "price_routes charges the busiest SM q = ceil(CTAs/sms) CTAs of bytes at bw/sms and divides "
+    "by a warp fill that depends on q (wave quantization of the memory term)";
 constexpr Known kKnown[] = {
-    {"P1 sms x1.25", "RegisterMma", kWaveCause},
-    {"P1 sms x1.25", "StagedMma", kWaveCause},
-    {"P1 sms x1.25", "W4a8Mma", kWaveCause},
-    {"P1 sms x1.25", "I8Mma", kWaveCause},
+    {"P1 sms x1.25", "RegisterMma", kWaveCause, 300000, 1.50},
+    {"P1 sms x1.25", "StagedMma", kWaveCause, 20000, 1.30},
+    {"P1 sms x1.25", "W4a8Mma", kWaveCause, 30000, 1.60},
+    {"P1 sms x1.25", "I8Mma", kWaveCause, 3000, 1.30},
 };
 
 // ---- Findings ----------------------------------------------------------------------------------
@@ -224,7 +240,9 @@ std::size_t differing_lines(const std::string& a, const std::string& b) {
 
 // ---- P1: the price is monotone in SMs and bandwidth ---------------------------------------------
 
-// The weight as the converter lays it out, its bytes never read (route_query.cpp describe_weight).
+// The weight as the converter lays it out, its bytes never read. A copy of route_query.cpp's
+// describe_weight (private there; price_routes needs the Weight, route_query returns only the
+// route).
 struct DescribedWeight {
     WeightParent parent;
     WeightView view;
@@ -268,7 +286,7 @@ bool prices_of(const DeviceClass& d, const generic::Problem& problem, const Weig
     });
 }
 
-constexpr double kResolution = 0.01; // the model's resolution: 1 % (report 08, Q3 P1)
+constexpr double kResolution = 1e-9; // the price is deterministic: no resolution is needed
 constexpr double kScale      = 1.25;
 
 DeviceClass with_sms(DeviceClass d) {
@@ -291,6 +309,8 @@ void property_price_monotone(const std::vector<Row>& rows) {
             continue;
         }
         const DeviceClass more_sms = with_sms(base);
+        DeviceClass double_sms     = base;
+        double_sms.sms             = base.sms * 2;
         const DeviceClass more_bw  = with_bandwidth(base);
         for (const QType q : kFormats) {
             for (const Shape s : kShapes) {
@@ -322,11 +342,22 @@ void property_price_monotone(const std::vector<Row>& rows) {
                                     if (it == prices->end()) { continue; }
                                     ++cases_checked;
                                     if (it->second <= seconds * (1.0 + kResolution)) { continue; }
+                                    std::string key = family_name(route.first);
+                                    if (prices == &sms) {
+                                        // The wave witness: on twice the SMs the route is no
+                                        // slower than on the stock board, or it is no wave.
+                                        Prices twice;
+                                        prices_of(double_sms, problem, w.weight, t, twice);
+                                        const auto w2 = twice.find(route);
+                                        if (w2 == twice.end() ||
+                                            w2->second > seconds * (1.0 + kResolution)) {
+                                            key += " (no wave witness)";
+                                        }
+                                    }
                                     std::ostringstream text;
                                     text << where << ": " << seconds << " s -> " << it->second
                                          << " s";
-                                    note(property, family_name(route.first), row.name, text.str(),
-                                         it->second / seconds);
+                                    note(property, key, row.name, text.str(), it->second / seconds);
                                 }
                             }
                         }
@@ -339,53 +370,57 @@ void property_price_monotone(const std::vector<Row>& rows) {
               << " without a roofline\n";
 }
 
-// ---- P3: labels and non-fact fields move nothing ------------------------------------------------
+// ---- P3: fields the selector does not read move nothing
+// ------------------------------------------------
 
-// The same board with every field that is not a fact the selector may read changed.
-std::vector<std::pair<std::string, DeviceClass>> relabelled(const Row& row, const DeviceClass& d) {
+// A board built as board_device_class builds it (synthetic_device_class from the row's numbers,
+// the driver's values, the facts from machine_facts over `table`), with `edit` applied to the
+// driver-side fields first: every derived field (mma_slow, the facts) follows from the relabelled
+// inputs, none is edited on a built class.
+DeviceClass rebuilt(const Row& row, const std::vector<GpuFactsRow>& table,
+                    const std::function<void(DeviceClass&)>& edit) {
+    const generic::FactsBoard& b = row.board;
+    DeviceClass d                = synthetic_device_class(b.pci_device_id, b.major, b.minor, b.sms,
+                                                          b.l2_mib * kMiB, b.memory_gib * 1024 * kMiB);
+    d.sm_clock_khz               = b.sm_clock_mhz * 1000;
+    d.memory_clock_khz           = b.memory_clock_mhz * 1000;
+    d.memory_bus_bits            = b.bus_bits;
+    edit(d);
+    d.facts = machine_facts(driver_report_of(d), table);
+    return d;
+}
+
+// The same board with fields the projection selector does not read changed. (Segment, TDP and the
+// PCIe generation are facts a B2 decision may read, machine_facts.h; the selector reads none of
+// them, and this is what the property pins.)
+std::vector<std::pair<std::string, DeviceClass>> relabelled(const Row& row) {
+    const std::span<const GpuFactsRow> embedded = gpu_facts_table();
+    const std::vector<GpuFactsRow> stock(embedded.begin(), embedded.end());
     std::vector<std::pair<std::string, DeviceClass>> out;
-    {
-        DeviceClass v = d;
-        v.name        = "another name";
-        v.facts.sku   = "another sku";
-        out.emplace_back("names", std::move(v));
+    out.emplace_back("names", rebuilt(row, stock, [](DeviceClass& d) { d.name = "another name"; }));
+    out.emplace_back("ordinal, PCI address, UUID", rebuilt(row, stock, [](DeviceClass& d) {
+                         d.device              = 3;
+                         d.identity.pci_domain = 1;
+                         d.identity.pci_bus    = 0x41;
+                         d.identity.uuid.fill(0xAB);
+                     }));
+    out.emplace_back("reported memory size", rebuilt(row, stock, [](DeviceClass& d) {
+                         d.global_bytes = d.global_bytes * 2 + 4096;
+                     }));
+    // The table row's non-clock fields, through the loader's own derivation of the facts.
+    std::vector<GpuFactsRow> table = stock;
+    for (GpuFactsRow& r : table) {
+        if (r.pci_device_id != row.source->pci_device_id) { continue; }
+        r.name     = "renamed in the table";
+        r.note     = "a different note";
+        r.sources  = {"https://example.invalid/other"};
+        r.tdp_w    = r.tdp_w * 2 + 1;
+        r.vram_gib = r.vram_gib * 2 + 1;
+        r.pcie_gen = r.pcie_gen == 5 ? 3 : 5;
+        r.segment  = r.segment == Segment::Datacenter ? Segment::GeForce : Segment::Datacenter;
     }
-    {
-        DeviceClass v         = d;
-        v.device              = 3;
-        v.identity.pci_domain = 1;
-        v.identity.pci_bus    = 0x41;
-        v.identity.uuid.fill(0xAB);
-        out.emplace_back("ordinal, PCI address, UUID", std::move(v));
-    }
-    {
-        DeviceClass v    = d;
-        v.facts.tdp_w    = v.facts.tdp_w * 2 + 1;
-        v.facts.vram_gib = v.facts.vram_gib * 2 + 1;
-        v.facts.pcie_gen = v.facts.pcie_gen == 5 ? 3 : 5;
-        v.facts.segment =
-            v.facts.segment == Segment::Datacenter ? Segment::GeForce : Segment::Datacenter;
-        v.global_bytes = v.global_bytes * 2 + 4096;
-        out.emplace_back("tdp, vram, pcie generation, segment, reported memory", std::move(v));
-    }
-    {
-        // The table's text fields, through the loader's own derivation of the facts.
-        std::vector<GpuFactsRow> table(gpu_facts_table().begin(), gpu_facts_table().end());
-        for (GpuFactsRow& r : table) {
-            if (r.pci_device_id != row.source->pci_device_id) { continue; }
-            r.name     = "renamed in the table";
-            r.note     = "a different note";
-            r.sources  = {"https://example.invalid/other"};
-            r.tdp_w    = r.tdp_w * 2 + 1;
-            r.vram_gib = r.vram_gib * 2 + 1;
-            r.pcie_gen = r.pcie_gen == 5 ? 3 : 5;
-            r.segment  = r.segment == Segment::Datacenter ? Segment::GeForce : Segment::Datacenter;
-        }
-        DeviceClass v = d;
-        v.facts       = machine_facts(driver_report_of(d), table);
-        out.emplace_back("the table row's name, note, sources, tdp, vram, pcie, segment",
-                         std::move(v));
-    }
+    out.emplace_back("the table row's name, note, sources, tdp, vram, pcie, segment",
+                     rebuilt(row, table, [](DeviceClass&) {}));
     return out;
 }
 
@@ -393,11 +428,11 @@ void property_non_fact_fields(const std::vector<Row>& rows) {
     for (const Row& row : rows) {
         const DeviceClass d     = generic::board_device_class(row.board);
         const std::string stock = decisions_of(d);
-        for (const auto& [what, variant] : relabelled(row, d)) {
+        for (const auto& [what, variant] : relabelled(row)) {
             ++cases_checked;
             const std::string changed = decisions_of(variant);
             if (changed == stock) { continue; }
-            note("P3 non-fact fields", what, row.name,
+            note("P3 unread fields", what, row.name,
                  row.name + " (" + what + "): " + std::to_string(differing_lines(stock, changed)) +
                      " decisions move, first " + first_difference(stock, changed));
         }
@@ -420,7 +455,7 @@ void property_non_fact_fields(const std::vector<Row>& rows) {
             const std::string a = decisions_of(generic::board_device_class(group[0]->board));
             const std::string b = decisions_of(generic::board_device_class(group[i]->board));
             if (a == b) { continue; }
-            note("P3 non-fact fields", "SKU twins (PCI id alone differs)",
+            note("P3 unread fields", "SKU twins (PCI id alone differs)",
                  group[0]->name + " / " + group[i]->name,
                  group[0]->name + " vs " + group[i]->name + ": " +
                      std::to_string(differing_lines(a, b)) + " decisions move, first " +
@@ -496,15 +531,20 @@ int main() {
             std::cout << "\n    e.g. " << g.example << '\n';
             if (known) {
                 std::cout << "    cause: " << known->cause << '\n';
+                if (g.count > known->max_count || g.worst > known->max_ratio) {
+                    std::cout << "    WAIVER EXCEEDED: at most " << known->max_count
+                              << " cases and x" << known->max_ratio << '\n';
+                    ++unexpected;
+                }
             } else {
                 ++unexpected;
             }
         }
         for (const Known& k : kKnown) {
-            if (k.property[0] == '\0') { continue; }
             if (groups.find({k.property, k.key}) == groups.end()) {
                 std::cout << "XPASS " << k.property << " [" << k.key
                           << "] no longer fails: remove it from kKnown\n";
+                ++unexpected;
             }
         }
         std::cout << cases_checked << " cases checked, " << groups.size() << " failing group(s), "
