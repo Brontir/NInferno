@@ -309,7 +309,7 @@ inline constexpr PredictionError kDecodePredictionError[] = {{"ada", 0.0226}, {"
 // board's own bytes rate, SMs and clock), and the constant is sqrt(mean(ln(predicted /
 // measured)^2)) over them. ninferno_choice_test recomputes it (transferred_resolution) and prints
 // each generation's share.
-inline constexpr double kTransferredDecodeError = 0.05;
+inline constexpr double kTransferredDecodeError = 0.3412;
 
 // kDp4aOpsPerSmClock (a generation without an int8 MMA decodes its int8 route at it, choice.cpp
 // decode_int8_peak): core/cost_constants.h, a chip fact shared with spec/round_cost.h.
