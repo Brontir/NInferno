@@ -56,7 +56,7 @@ nvcc 13.4.92
 shape hmma_16816_f32_bf16 4096
 fact mma_cycles_per_sm 8.012 clk
 fact mma_cycles_per_partition 32.048 clk
-fact tensor_flops_per_sm_clock 511.2 flop
+fact tensor_flops_per_sm_clock 511.233 flop
 fact mma_cycles_per_sm_w4 8.3 clk
 fact mma_cycles_per_sm_w8 8.1 clk
 fact mma_cycles_per_sm_w16 8.0 clk
@@ -169,6 +169,8 @@ class IsaFacts(unittest.TestCase):
         volta = SAMPLE.replace("shape hmma_16816_f32_bf16 4096", "shape hmma_884_f32_f16 512") \
             .replace("cc 89", "cc 70").replace("fact mma_cycles_per_sm 8.012 clk",
                                                "fact mma_cycles_per_sm 2.014 clk") \
+            .replace("fact mma_cycles_per_partition 32.048", "fact mma_cycles_per_partition 8.056") \
+            .replace("fact tensor_flops_per_sm_clock 511.233", "fact tensor_flops_per_sm_clock 254.220") \
             .replace("arch sm_89", "arch sm_70").replace("sass_per_mma 1", "sass_per_mma 4")
         head, facts = ip.parse_run(volta)
         row = ip.row_of(head, facts, "isa_probe_70.txt")
@@ -591,6 +593,48 @@ class IsaFacts(unittest.TestCase):
             ip.parse_run(SAMPLE + "garbage line\n")
         with self.assertRaises(ValueError):
             ip.parse_run(SAMPLE.replace("fact mma_cycles_per_sm 8.012 clk", "fact mma_cycles_per_sm"))
+
+    def test_facts_inside_the_bounds_the_architecture_and_the_probe_allow(self):
+        def with_mma(sm, partition=None, rate=None, latency=None, **lines):
+            """SAMPLE with mma_cycles_per_sm `sm` and what the probe derives from it (consistent
+            unless given), other fact lines replaced by `lines` (name -> printed value)."""
+            text = SAMPLE
+            for name, value in (("mma_cycles_per_sm", sm),
+                                ("mma_cycles_per_partition", partition or f"{4 * float(sm):.3f}"),
+                                ("tensor_flops_per_sm_clock", rate or f"{4096 / float(sm):.3f}"),
+                                ("mma_dependent_latency",
+                                 latency or f"{max(33.1, 2 * float(sm)):.3f}")) + tuple(lines.items()):
+                text = re.sub(rf"^fact {name} \S+ ", f"fact {name} {value} ", text, flags=re.M)
+            return text
+
+        def refused(text, why):
+            with self.assertRaises(ValueError) as e:
+                ip.parse_run(text)
+            self.assertIn(why, str(e.exception))
+
+        # A positive finite but extreme mma_cycles_per_sm is refused, not derived into an
+        # infinite or zero tensor_flops_per_sm_clock (4096 / 1e-320 overflows, / 1e308 is 0.0).
+        for sm in ("1e-320", "1e308", "1.999", "256.001"):
+            refused(with_mma(sm, partition="32.048", rate="511.233", latency="33.1"),
+                    "outside the probe's 16..2048")
+        # The edges of the probe's self-check range (isa_probe.cu): 2048 and 16 flop a clock.
+        for sm, rate in (("2.000", 2048.0), ("256.000", 16.0)):
+            row = ip.row_of(*ip.parse_run(with_mma(sm)), "x")
+            self.assertEqual(row["facts"]["tensor_flops_per_sm_clock"]["value"], rate)
+        # Fewer warps run the same MMAs: none beats the pipe's 2048 flop a clock.
+        refused(with_mma("8.012", mma_cycles_per_sm_w4="1.999"), "above the pipe's 2048")
+        ip.parse_run(with_mma("8.012", mma_cycles_per_sm_w4="2.000"))
+        # What the probe derives from mma_cycles_per_sm agrees with it to the printed places.
+        refused(with_mma("8.012", partition="32.051"), "is not 4 x mma_cycles_per_sm")
+        ip.parse_run(with_mma("8.012", partition="32.050"))
+        refused(with_mma("8.012", rate="511.300"), "is not the shape line's 4096 flops")
+        ip.parse_run(with_mma("8.012", rate="511.265"))
+        refused(with_mma("8.012", latency="16.022"), "under half the issue interval")
+        ip.parse_run(with_mma("8.012", latency="16.023"))
+        # A dependent latency is at least one clock.
+        refused(with_mma("8.012", lat_ffma="0.999"), "lat_ffma 0.999 is under one clock")
+        refused(with_mma("8.012", l1_latency_w1="0.5"), "l1_latency_w1 0.5 is under one clock")
+        ip.parse_run(with_mma("8.012", lat_ffma="1.000"))
 
     def test_a_run_owes_the_facts_of_its_probe_version(self):
         # A run carries every fact its own probe version prints and none a later version added:

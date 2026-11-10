@@ -183,7 +183,8 @@ def parse_run(text):
     fact of the run's probe version is missing, a fact is unknown, of a later version, given
     twice, not a positive finite number or in another unit than its own, a fact the version no
     longer prints is there, a header field the version owes is missing or no count, the source
-    hash is no sha256, or the build's -arch is not the card's architecture."""
+    hash is no sha256, the build's -arch is not the card's architecture, or a fact is outside
+    what the architecture and the probe's own arithmetic allow (fact_bound_refusal)."""
     head, facts, ended, failures, checked = {}, {}, False, [], False
     legacy = []
     for line in text.splitlines():
@@ -288,7 +289,65 @@ def parse_run(text):
                 SHAPE_FLOPS[shape[0]]:
             raise ValueError(f"sass_per_mma {head['sass_per_mma']} SASS MMAs are not the "
                              f"{SHAPE_FLOPS[shape[0]]} flops of one {shape[0]}")
+    refusal = fact_bound_refusal(shape[0], int(shape[1]), facts)
+    if refusal:
+        raise ValueError(refusal)
     return head, facts
+
+
+# isa_probe.cu prints every fact with three decimals (fact(): "%.3f"), so a printed value lies
+# within half its last place of the value the probe computed.
+PRINTED_HALF_PLACE = 0.0005
+# The probe's own self-check of the saturated tensor rate (isa_probe.cu, after the
+# tensor_flops_per_sm_clock fact): no SM it knows issues a dense MMA above 2048 flop a clock (the
+# GA100 / GH100 class) or below one m8n8k4 (512 flop) in 32 clocks. A run outside it fails that
+# check, so a file outside it is no output of a probe that passed.
+TENSOR_RATE_RANGE = (16.0, 2048.0)
+MMA_CYCLE_FACTS = ("mma_cycles_per_sm", "mma_cycles_per_sm_w4", "mma_cycles_per_sm_w8",
+                   "mma_cycles_per_sm_w16")
+
+
+def fact_bound_refusal(shape, printed_flops, facts):
+    """Why a run's facts are outside what the architecture and the probe's own arithmetic allow,
+    or None. `shape` is the run's MMA shape, `printed_flops` the flops its shape line printed.
+
+    - The tensor rate (the shape's flops over mma_cycles_per_sm, as row_of derives it) is inside
+      the probe's self-check range; the 4, 8 and 16 warp loops, the same MMAs with fewer warps,
+      do not beat the pipe's 2048 flop a clock either. This keeps the derived row finite and
+      positive.
+    - What the probe computes from mma_cycles_per_sm agrees with it to the printed places:
+      mma_cycles_per_partition is 4 x it, tensor_flops_per_sm_clock is the printed flops over it,
+      and mma_dependent_latency is at least half the issue interval (2 x it), the probe's check.
+    - A dependent latency in clocks is at least one clock: the link that uses a result issues
+      after the one that made it.
+    """
+    h = PRINTED_HALF_PLACE
+    low, high = TENSOR_RATE_RANGE
+    flops = SHAPE_FLOPS[shape]
+    sm = facts["mma_cycles_per_sm"]["value"]
+    if not low <= flops / sm <= high:
+        return (f"mma_cycles_per_sm {sm} gives {flops / sm:.6g} flop a clock for {shape}, outside "
+                f"the probe's {low:g}..{high:g}")
+    for name in MMA_CYCLE_FACTS[1:]:
+        if name in facts and flops / facts[name]["value"] > high:
+            return (f"{name} {facts[name]['value']} gives {flops / facts[name]['value']:.6g} flop "
+                    f"a clock for {shape}, above the pipe's {high:g}")
+    partition = facts["mma_cycles_per_partition"]["value"]
+    if abs(partition - 4.0 * sm) > 5 * h:
+        return f"mma_cycles_per_partition {partition} is not 4 x mma_cycles_per_sm {sm}"
+    rate = facts["tensor_flops_per_sm_clock"]["value"]
+    if not printed_flops / (sm + h) - h <= rate <= printed_flops / (sm - h) + h:
+        return (f"tensor_flops_per_sm_clock {rate} is not the shape line's {printed_flops} flops "
+                f"over mma_cycles_per_sm {sm}")
+    latency = facts["mma_dependent_latency"]["value"]
+    if latency < 2.0 * sm - 3 * h:
+        return (f"mma_dependent_latency {latency} is under half the issue interval "
+                f"(2 x mma_cycles_per_sm {sm})")
+    for name, fact in facts.items():
+        if fact["unit"] == "clk" and ("latency" in name or name.startswith("lat_")) and \
+                fact["value"] < 1.0:
+            return f"{name} {fact['value']} is under one clock"
+    return None
 
 
 def idle_refusal(notes):
