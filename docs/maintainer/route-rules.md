@@ -26,22 +26,23 @@ where they do not say. `Structural`: follows from a kernel's shape, a contract, 
 layout or another constant, not from a timing. `Measured`: a timing or product run in the record
 names the value or the margin it was held to, on the boards the entry names.
 `PlacedBetweenMeasured`: the record has measured points on both sides and the value was put
-between them, so the line
-itself has no measurement. `Fitted`: chosen to make a rule match timings of several boards, not
-derived from a fact; the entry names those boards. `ScaledFromOneBoard`: one board's measured
-margin carried to other boards by a stated model, no second board measured
-(`kVoltaCopyMinDramGbps`). `Unknown`: the record does not say what the edge rests on (the rule's
-action may still be measured); a choice nobody timed is `Unknown`, not `Structural`. The class is
-judgement and the test cannot check it is right: where an edge is only the widest speculative
-verify (16 tokens) while the timings sit inside it, the tolerance says so. A `Measured` rule may
-rest on one board and still apply to every board: 22 of the 38 `Measured` entries name a single
-card (count them from `--list`), and for example `kR8MaxTokens` and `kR8DecodeTokens` (RTX 5080),
-the single-sequence rule of mmq verify (RTX 5070 Ti), the narrow-through-16 rule (RTX 5090) and
+between them, so the line itself has no measurement. `Fitted`: chosen to make a rule match
+timings of several boards, not derived from a fact; the entry names those boards.
+`ScaledFromOneBoard`: one board's measured margin carried to other boards by a stated model, no
+second board measured (`kVoltaCopyMinDramGbps`). `Unknown`: the record does not say what the edge
+rests on (the rule's action may still be measured); a choice nobody timed is `Unknown`, not
+`Structural`. The class is judgement and the test cannot check it is right: where an edge is only
+the widest speculative verify (16 tokens) while the timings sit inside it, the tolerance says so. A
+`Measured` rule may rest on one board and still apply to every board: 19 of the 34 `Measured`
+entries name a single card (count them from `--list`), and for example `kR8MaxTokens` and
+`kR8DecodeTokens` (RTX 5080), the single-sequence rule of mmq verify (RTX 5070 Ti), the narrow-through-16 rule (RTX 5090) and
 `w4a8_ws_wins: ampere` (RTX 3090, taken for sm_80 and sm_86) decide on every card. The class says
 what the timing was, not how far the rule reaches; the `boards` field is where to look. A step
 that holds fitted or placed constants out of a derivation reads this field, not the prose;
-`--list` prints it and
-the test prints the count per class.
+`--list` prints it and the test prints the count per class. Where a descriptor only says where a
+value comes from (the engine's round width at the call, the Ask's lane count handed on), it is
+`Structural` with unknown boards and its tolerance names the entry that holds the timing; several
+descriptors then share one record, and none of them is a second measurement.
 
 It is a record, not a mechanism. The code keeps its own literals and nothing reads the descriptor
 at run time. `ninferno_route_rules_test` (`--list` prints the table) holds the two to each other:
@@ -64,9 +65,10 @@ at run time. `ninferno_route_rules_test` (`--list` prints the table) holds the t
 - a literal that defines a constant is the whole definition (to its `;`; an array with every
   element), defines the descriptor's name, is that name's only definition in its file (the test
   reads text, not the preprocessor, so a second definition under `#if` fails), and its number is
-  computed as C++ computes it (integers stay integers; `0b`, octal, `'` separators and qualified
-  names are read; what the evaluator does not implement is refused, never skipped; the conversion
-  to the constant's declared type is not applied, and no constant in the sources needs it) and
+  computed by the test's own evaluator (integers stay integers; `0b`, octal, `'` separators and
+  qualified names are read; what the evaluator does not implement is refused, never skipped; the
+  conversion to the constant's declared type is not applied, and no constant in the sources needs
+  it) and
   must equal the descriptor's `value`; a condition's `value` is 0 or a number its literal writes;
 - the boards, cards and tolerance fields are never empty;
 - every definition under `src/ops/generic` (subdirectories; `.h`, `.hpp`, `.hh`, `.cpp`, `.cc`,
@@ -74,11 +76,11 @@ at run time. `ninferno_route_rules_test` (`--list` prints the table) holds the t
   pins, route table, prefill routes, a selector header put there) and in
   `src/core/measured_boards.h` of a name `kX` that says it bounds something (`Min`, `Max`,
   `Tokens`, `Fill`, `Distance`, `Values`, `Bytes`, `Gbps`, `Margin`, `Slack`, `Columns`, `Rows`,
-  `Limit`, `Measured`,
-  `Threshold`), as a `const`, `constexpr`, `static` or `inline` variable or array (initialised by
-  `=`, braces or parentheses, later declarators of one declaration included) or a `#define`, has a
-  descriptor or an entry of the test's list of non-rules, keyed by file and name, with the reason
-  and the number of definitions the file holds, so a second definition of a listed name fails.
+  `Limit`, `Measured`, `Threshold`), as a `const`, `constexpr`, `static` or `inline` variable or
+  array (initialised by `=`, braces or parentheses, later declarators of one declaration included)
+  or a `#define`, has a descriptor or an entry of the test's list of non-rules, keyed by file and
+  name, with the reason and the number of definitions the file holds, so a second definition of a
+  listed name fails.
 
 ## What is not covered
 
@@ -95,7 +97,14 @@ in `route_authorities.cpp` (the authority cascade: `nvfp4_half_l2`, `r8_schedule
   entries changes decisions, and only the selector goldens (`test_selector_golden`) hold the
   order, not this record;
 - a rule switched off by an early return, and a new bare-literal gate added inside an authority;
-
+- the format membership of the measured rules: `heuristic_w4a8: 65..127 formats` holds the
+  `tokens < kW4a8WideMinTokens` edge, not the `wide_format` switch in `generic_gemm.cpp` that says
+  which formats take the wider tile, and the per-format flags in `format_traits.h` (`r8_verify`,
+  `mmq_verify`, `light_step`) are not held at all: adding or removing a format in either passes
+  the test;
+- the bare kernel counts of the cost model in `generic_cost.cpp` (the 384, 128 and 256 threads a
+  CTA, the stage factors 3 and 2): they are not constants the guard names, and the cost model's
+  constants registered in `route_cost_constants.h` are not these;
 - names that are not camel-case `kX` constants or carry none of the words above (snake_case
   variables, `kMmqPrefillSlice` in `generic_ggml_internal.h`), enumerators and template
   parameters: found only where a descriptor's literal names them;
@@ -145,9 +154,8 @@ follows from how the test reads text):
 - a use of a named constant: the constants' values are held, and the use sites are held only where
   a descriptor's literal contains the use (`volta_copy_pays`, the uses of `kRmmaMidMinTokens` and
   `kSpeedFill` inside the `heuristic_rmma` literals). A comparison changed at any other use (`>=` to
-  `<=`), a use scaled or replaced by a bare
-  literal, or a wrapper function of the constant changed, passes. A variable shadowed or changed
-  before a described condition passes;
+  `<=`), a use scaled or replaced by a bare literal, or a wrapper function of the constant
+  changed, passes. A variable shadowed or changed before a described condition passes;
 - a described statement moved, or an enclosing gate changed, where the descriptor's literal does
   not carry the neighbour that pins it: the cascades named above do, the rest of
   `heuristic_rmma`, `heuristic_w4a8` and `staged_speed_route` do not (a moved `if` or an inverted
@@ -191,6 +199,6 @@ question about a line nobody measured.
 Where the provenance of a rule was found: the comments at its use in `generic_gemm.cpp`,
 `generic_gemm.h` and `route_authorities.cpp` (quoted in the tolerance where they state a margin),
 `decisions.md` 58 for the verify widths, and `deterministic-decisions.md` for the rules that rest
-on few boards (the R8 rule's
-SM-count edge, placed between the two measured boards, 84 and 170 SMs). The history before the
+on few boards (the R8 rule's SM-count edge, placed between the two measured boards, 84 and 170
+SMs). The history before the
 0.1.0 squash is not in the repository.

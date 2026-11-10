@@ -160,8 +160,10 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
     {"r8_verify_tunable: lower edge", Basis::Structural, "generic_gemm.cpp",
      "return tokens >= 2 && tokens <= kR8VerifyTokens && allows_r8(w, policy) &&", 2, kUnknown,
      kUnknown,
-     "the verify band of R8 starts at two tokens (T = 1 is the decode rule, kR8DecodeTokens); the "
-     "record names no board or margin for the lower edge. The same edge is written again at "
+     "the verify band of R8 starts at two tokens (T = 1 is the decode rule, kR8DecodeTokens: the "
+     "complement of that rule, but a bare 2 in the code, not defined from it, so the number is not "
+     "tied to it by the compiler); the record names no board or margin for the lower edge. The "
+     "same edge is written again at "
      "r8_prequantized (route demotion, generic_gemm.cpp) and in generic_workspace.cpp "
      "(route_workspace_bytes, the interval plan): a change of the edge is a change in four places",
      ""},
@@ -213,16 +215,24 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
     // Where `lanes` comes from: the one-argument overload reads the engine's round width at the
     // call; route_authorities.cpp's two Ask builders do the same, so a constant there would turn
     // the lane rule on or off for every call.
-    {"mmq_verify_rule: lanes at the call", Basis::Measured, "generic_gemm.cpp",
-     "return mmq_verify_rule(w, policy, rows, tokens, ops::round_lanes());", 0, "gb203:70sm",
-     "RTX 5070 Ti",
+    {"mmq_verify_rule: lanes at the call", Basis::Structural, "generic_gemm.cpp",
+     "return mmq_verify_rule(w, policy, rows, tokens, ops::round_lanes());", 0, kUnknown, kUnknown,
      "the lane count of the single-sequence rule above is the engine's own round width "
-     "(ops::round_lanes()), not a constant: the same record as that descriptor",
+     "(ops::round_lanes()), not a constant: a contract of where the value comes from, with no "
+     "timing of its own (the timing is the single-sequence rule's, RTX 5070 Ti)",
      ""},
-    {"Ask: lanes at the builders", Basis::Measured, "route_authorities.cpp",
-     "tokens, ops::round_lanes()};", 0, "gb203:70sm", "RTX 5070 Ti",
+    {"Ask: lanes at the builders", Basis::Structural, "route_authorities.cpp",
+     "tokens, ops::round_lanes()};", 0, kUnknown, kUnknown,
      "resolve_ask and ask_below_profiles read the lane count from ops::round_lanes() (the rule "
-     "above reads it from the Ask); the same record as mmq_verify_rule's single-sequence rule",
+     "above reads it from the Ask): a contract of where the value comes from, with no timing of "
+     "its own (the timing is mmq_verify_rule's single-sequence rule, RTX 5070 Ti)",
+     "", 2},
+    {"mmq_verify_rule: lanes handed over", Basis::Structural, "route_authorities.cpp",
+     "mmq_verify_rule(weight, problem.policy, problem.n, ask.tokens, ask.lanes)", 0, kUnknown,
+     kUnknown,
+     "the two authority sites that call the rule pass the Ask's lane count on, not a constant (a "
+     "constant would turn the single-sequence rule on or off for every call): a contract of where "
+     "the value comes from, with no timing of its own",
      "", 2},
     // The prefill band's edge: ONE definition (ops/route_pins.h), the widest speculative verify
     // plus one; the others below are defined from it, because their comments call the same width.
@@ -343,9 +353,9 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "4096, keeps the tile ahead below 129 tokens (0.37..0.47 ms against 0.50)",
      ""},
     {"kVoltaTileMaxTokens", Basis::Unknown, "generic_gemm.cpp",
-     "constexpr std::int32_t kVoltaTileMaxTokens = 256;", 256, "gv100:80sm",
-     "V100 (the rule, for boards under the copy's bandwidth bound, is not measured on them)",
-     "none recorded: no timing places 256 (on the V100 the copy's bandwidth bound already passes, "
+     "constexpr std::int32_t kVoltaTileMaxTokens = 256;", 256, kUnknown, kUnknown,
+     "none recorded: no timing places 256 (the rule, for boards under the copy's bandwidth bound, "
+     "is not measured on them; on the V100 the copy's bandwidth bound already passes, "
      "so the edge decides only on boards nobody measured); the comment's reason, that two token "
      "blocks decode the weight twice, holds from 129 tokens with 128-token blocks and so does not "
      "place the edge at 256 either",
@@ -407,8 +417,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
     {"vec_max_tokens: two passes without tensor MMA", Basis::Unknown, "generic_gemm.cpp",
      "return f.mma_tensor && !f.mma_slow ? ggml_mmq::kVecMaxColumns : 2 * "
      "ggml_mmq::kVecMaxColumns;",
-     2, "gv100:80sm", "V100",
-     "the basis is Unknown because the one timing is at a draft window of about ten tokens: "
+     2, kUnknown, kUnknown,
+     "the basis is Unknown because the one timing (V100) is at a draft window of about ten tokens: "
      "without tensor mma.sync (Volta) a call of 9..16 tokens runs the vector kernel eight columns "
      "at a time: V100, Gemma 4 31B Q4_K_XL MTP, draft window 10: the emulated register-MMA tiles "
      "1.0..2.6 ms a call, 67 % of the run; the timing is at one draft window (about ten tokens), "
@@ -481,10 +491,11 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
     {"tune fits: FLOP bound", Basis::Unknown, "generic_tune.cpp",
      "2.0 * model_call.rows * k * t <= 2.5e11", 2.5e11, kUnknown, kUnknown,
      "the widest prefill band whose call is within 250 GFLOP is tuned; none recorded", ""},
-    {"kRmmaWideSpillSlack", Basis::Measured, "generic_gemm_internal.h",
+    {"kRmmaWideSpillSlack", Basis::PlacedBetweenMeasured, "generic_gemm_internal.h",
      "inline constexpr std::size_t kRmmaWideSpillSlack = 16;", 16, "ad102:128sm", "RTX 4090",
-     "sm_89's one-row-set tiles keep 8 bytes of loop-invariant state in local memory; SwiGLU's "
-     "128-register tiles spill 160 bytes in the loop (RTX 4090 w1x16 at T = 6: 100.3 -> 103.9 us)",
+     "sm_89's one-row-set tiles keep 8 bytes of loop-invariant state in local memory (admitted); "
+     "SwiGLU's 128-register tiles spill 160 bytes in the loop (RTX 4090 w1x16 at T = 6: 100.3 -> "
+     "103.9 us); nothing between 8 and 160 bytes measured, so the 16 itself has no timing",
      ""},
     {"kVecMaxColumns", Basis::Structural, "ggml_mmq/ggml_mmq.h",
      "inline constexpr int kVecMaxColumns = 8;", 8, kUnknown, kUnknown,
@@ -712,7 +723,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "route.family == Family::R8Mma && call.tokens >= 2 && call.tokens <= kR8VerifyTokens &&", 2,
      kUnknown, kUnknown,
      "the verify band of R8 again (r8_verify_tunable's two tokens to kR8VerifyTokens): the "
-     "pre-quantized verify form; T = 1 is the decode rule; no board or margin recorded",
+     "pre-quantized verify form; T = 1 is the decode rule (kR8DecodeTokens; the 2 is a bare "
+     "literal, the complement of that rule, not defined from it); no board or margin recorded",
      ""},
     {"kMinChunkWeightRows", Basis::Unknown, "generic_volta_cutlass.cu",
      "constexpr std::int32_t kMinChunkWeightRows = 256;", 256, "gv100:80sm", "V100 (80 SMs)",
@@ -772,21 +784,23 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "the half-L2 line; the layout is a fact of the format, no timing places it",
      ""},
     {"r8_schedule: the decode table's width", Basis::Structural, "route_authorities.cpp",
-     "const auto hit = ask.tokens == 1 ? tuned_r8(problem) : std::nullopt;", 1, "gb203:84sm",
-     "RTX 5080",
+     "const auto hit = ask.tokens == 1 ? tuned_r8(problem) : std::nullopt;", 1, kUnknown, kUnknown,
      "the nearest measured board's decode table is consulted at one token only: its entries are "
-     "T = 1 timings (kR8DecodeTokens' record) and none exist for other widths; the same bare 1 is "
-     "written in heuristic_r8 (generic_gemm.cpp, the next descriptor)",
+     "T = 1 timings (r8_decode_table.h, written by tools/bench/r8_decode_table.py) and none exist "
+     "for other widths; the gate follows from the table's layout, and no board places it (the "
+     "table holds nine boards, none of them the RTX 5080 of the decode rule kR8DecodeTokens); "
+     "the same bare 1 is written in heuristic_r8 (generic_gemm.cpp, the next descriptor)",
      ""},
     {"heuristic_r8: the decode table's width", Basis::Structural, "generic_gemm.cpp",
      "if (tokens == 1) { if (const auto tuned = tuned_r8(p)) return tuned->schedule; }", 1,
-     "gb203:84sm", "RTX 5080",
+     kUnknown, kUnknown,
      "the same one-token gate as r8_schedule's, written again in the heuristic's own path; the "
-     "table has T = 1 entries only",
+     "table (r8_decode_table.h) has T = 1 entries only; no board places the gate",
      ""},
-    {"rmma_narrow_fallback: narrow tiles", Basis::Measured, "route_authorities.cpp",
-     "for (const int n_tiles : {2, 1}) { const int index = rmma_index(4, 1, 1, n_tiles);", 0,
-     "gv100:80sm, tu102:68sm", "V100, RTX 2080 Ti",
+    {"rmma_narrow_fallback: narrow tiles", Basis::Unknown, "route_authorities.cpp",
+     "for (const int n_tiles : {2, 1}) { const int index = rmma_index(4, 1, 1, n_tiles); const "
+     "Route narrow{Family::RegisterMma, static_cast<std::uint8_t>(index)};",
+     0, "gv100:80sm, tu102:68sm", "V100, RTX 2080 Ti",
      "the narrower register-MMA tiles the dense tuner picks where the BF16 MMA is emulated (m1.n2 "
      "then m1.n1 of four row warps), taken when the build does not hold the speed profile's tile: "
      "V100 and RTX 2080 Ti, BF16 N 1536 K 2048, T 17..2048; one shape on two boards, no margin "

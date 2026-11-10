@@ -13,8 +13,9 @@
 // space) and a trailing comma before a `}`; a literal that opens with `if(` is not found behind an
 // `else`. A literal that defines a constant is complete (it ends in `;`, an array carries all its
 // elements), defines the descriptor's name, is that name's only definition in the file, and
-// evaluates (as C++ does, integers staying integers) to `value`, or to the number each element of
-// an array says; a literal that is a condition has `value` 0 or a number written in it.
+// evaluates (by the test's own evaluator, integers staying integers) to `value`, or to the number
+// each element of an array says; a literal that is a condition has `value` 0 or a number written in
+// it.
 //
 // The guard over the sources: every definition of a name kX that says it bounds something (Min,
 // Max, Tokens, Fill, Distance, Values, Bytes, Gbps, Margin, Slack, Columns, Rows, Limit, Measured,
@@ -329,7 +330,7 @@ std::vector<Definition> definitions_in(const std::string& text) {
     return out;
 }
 
-// ---- The value of a constant's initialiser, as C++ computes it ----------------------------------
+// ---- The value of a constant's initialiser, by the test's own evaluator -------------------------
 
 // An integer carries the width (32 or 64 bits) and signedness of its C++ type, so `7 / 2` is 3,
 // `0u - 1` wraps and an int that does not fit is refused; a floating value is a double.
