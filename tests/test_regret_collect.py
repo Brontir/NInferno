@@ -193,6 +193,53 @@ class Collect(unittest.TestCase):
             collect.collect(sel, [self.write("p1.csv", HEAD)], "b", "m", "r", "i", "both", [], [],
                             "q")
 
+    def collect_with_authority(self, columns, extras):
+        """One pass per element of `extras`, whose selected CSV carries `columns` after `device`
+        with that element's values on its one row."""
+        sweep = "q8,a16,store,64,64,1,rmma.a,10\nq8,a16,store,64,64,1,rmma.b,12\n"
+        sel = []
+        for i, extra in enumerate(extras, 1):
+            head = SELECTED_HEAD.rstrip("\n") + "".join("," + c for c in columns) + "\n"
+            row = f"q8,a16,store,64,64,1,rmma.a,rmma.a,r{i},ga106:28sm{extra}\n"
+            sel.append(self.write(f"sel{i}.csv", head + row))
+        routes = [self.write(f"p{i}.csv", HEAD + stamp(sweep, f"r{i}", True))
+                  for i in range(1, len(extras) + 1)]
+        return collect.collect(sel, routes, "held-board", "held-model", "rev", "build", "both",
+                               [], [], "tests")
+
+    def test_authority_and_evidence_columns_reach_the_cases(self):
+        doc = self.collect_with_authority(["authority", "evidence"],
+                                          [",route-table,measured", ",route-table,measured"])
+        (case,) = doc["cases"]
+        self.assertEqual((case["authority"], case["evidence"], case["t"]),
+                         ("route-table", "measured", 1))
+
+    def test_old_selected_files_read_unknown(self):
+        doc = self.collect_with_authority([], ["", ""])
+        (case,) = doc["cases"]
+        self.assertEqual((case["authority"], case["evidence"]), ("unknown", "unknown"))
+        empty = self.collect_with_authority(["authority", "evidence"], [",,", ",,"])
+        self.assertEqual(empty["cases"][0]["authority"], "unknown")
+        # and the document evaluates, grouped under "unknown"
+        report = regret.evaluate(json.loads(json.dumps(doc)))
+        self.assertEqual(report["by_board_regime_authority"][0]["authority"], "unknown")
+
+    def test_passes_naming_another_authority_are_refused(self):
+        with self.assertRaisesRegex(ValueError, "another authority"):
+            self.collect_with_authority(["authority", "evidence"],
+                                        [",route-table,measured", ",cost-model,ranker"])
+
+    def test_board_facts_from_the_registry_for_the_ridge(self):
+        root = Path(__file__).resolve().parents[1]
+        facts = collect.board_facts(root / "src/core/data/gpu_facts.json", "0x2B85")
+        self.assertEqual((facts["cc"], facts["sms"], facts["boost_mhz"]), (120, 170, 2407))
+        self.assertAlmostEqual(facts["dram_gbps"], 512 * 28.0 / 8)
+        with self.assertRaises(ValueError):
+            collect.board_facts(root / "src/core/data/gpu_facts.json", "0xFFFF")
+        doc = self.run_collect(["q8,a16,store,64,64,1,rmma.a,10\n"],
+                               "q8,a16,store,64,64,1,rmma.a,rmma.a\n")
+        self.assertNotIn("board_facts", doc)
+
 
 if __name__ == "__main__":
     unittest.main()

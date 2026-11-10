@@ -12,6 +12,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "bench"))
 import selection_regret as regret
 
+GENERATION_HEADER = Path(__file__).resolve().parents[1] / "src" / "core" / "generation.h"
+
 
 def measured(key, times):
     return {"id": key, "status": "ok", "samples_ms": dict(zip(("a", "b", "c"), times))}
@@ -244,6 +246,70 @@ class SelectionRegretTest(unittest.TestCase):
             path.write_text("[" * 100000 + "]" * 100000, encoding="utf-8")
             with contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(regret.main([str(path)]), 2)
+
+    def test_regret_by_board_regime_and_authority(self):
+        def case(t, authority, evidence, selected_ms, best_ms, board="held-board"):
+            c = {"id": f"q4k.a16.store.n1.k1.T{t}", "board": board, "model": "held-model",
+                 "workload": "w", "numerical_contract": "c", "selected": "selected",
+                 "candidates": [measured("selected", [selected_ms] * 3),
+                                measured("best", [best_ms] * 3)]}
+            if authority is not None:
+                c["authority"], c["evidence"] = authority, evidence
+            return c
+        data = document()
+        data["cases"] = [case(1, "r8-table", "measured", 11, 10),
+                         case(4, "r8-table", "measured", 12, 10),
+                         case(8, "cost-model", "ranker", 10, 10),
+                         case(64, "cost-model", "ranker", 15, 10),
+                         case(512, "route-table", "borrowed", 13, 10),
+                         case(513, None, None, 10, 10)]  # an old row: no authority, no evidence
+        data["board_facts"] = {"held-board": {"cc": 120, "sms": 170, "dram_gbps": 1792.0,
+                                              "boost_mhz": 2407}}
+        ridges = regret.ridges_of(data, GENERATION_HEADER)
+        # s8 2048 x 170 SMs x 2407 MHz x 0.5625 B/value / (2 x 1792 GB/s) = 131.5
+        self.assertAlmostEqual(ridges["held-board"], 2048 * 170 * 2407e6 * 4.5 / 8 / (2 * 1792e9),
+                               places=6)
+        self.assertAlmostEqual(ridges["held-board"], 131.54, places=1)
+        report = regret.evaluate(data, None, ridges)
+        groups = {(g["regime"], g["authority"]): g for g in report["by_board_regime_authority"]}
+        self.assertEqual(set(groups), {("decode T<=4", "r8-table"),
+                                       ("verify T5-16", "cost-model"),
+                                       ("T>=17 below ridge", "cost-model"),
+                                       ("T>=17 above ridge", "route-table"),
+                                       ("T>=17 above ridge", "unknown")})
+        self.assertEqual(groups[("decode T<=4", "r8-table")]["cases"], 2)
+        self.assertAlmostEqual(groups[("decode T<=4", "r8-table")]["max_regret"], 0.2)
+        self.assertEqual(groups[("decode T<=4", "r8-table")]["evidence"], {"measured": 2})
+        self.assertEqual(groups[("T>=17 above ridge", "route-table")]["evidence"],
+                         {"borrowed": 1})
+        self.assertEqual(groups[("T>=17 above ridge", "unknown")]["evidence"], {"unknown": 1})
+        self.assertEqual(groups[("T>=17 above ridge", "unknown")]["ridge_t"], ridges["held-board"])
+        # Sorted by board, then regime order, then authority.
+        order = [(g["regime"], g["authority"]) for g in report["by_board_regime_authority"]]
+        self.assertEqual(order[0], ("decode T<=4", "r8-table"))
+        self.assertEqual(order[-1], ("T>=17 above ridge", "unknown"))
+
+    def test_without_authority_or_ridge_old_data_still_reports(self):
+        data = document()  # no authority, no evidence, no t, no board_facts
+        report = regret.evaluate(data, None, regret.ridges_of(data, GENERATION_HEADER))
+        self.assertEqual(report["cases"][0]["authority"], "unknown")
+        self.assertEqual(report["cases"][0]["t"], 4)  # from the id "decode-t4"
+        (group,) = report["by_board_regime_authority"]
+        self.assertEqual((group["regime"], group["authority"]), ("decode T<=4", "unknown"))
+        self.assertIsNone(group["ridge_t"])
+        # Wide calls without a ridge are said so, not placed on either side of it.
+        self.assertEqual(regret.regime_of(64, None), "T>=17 ridge unknown")
+        self.assertEqual(regret.regime_of(None, 100.0), "unknown width")
+        self.assertEqual(regret.regime_of(16, 100.0), "verify T5-16")
+        self.assertEqual(regret.regime_of(99, 100.0), "T>=17 below ridge")
+        self.assertEqual(regret.regime_of(100, 100.0), "T>=17 above ridge")
+
+    def test_bad_authority_or_width_rejected(self):
+        for field, value in (("authority", " "), ("evidence", ""), ("t", 0), ("t", "4")):
+            data = document()
+            data["cases"][0][field] = value
+            with self.assertRaises(ValueError):
+                regret.evaluate(data)
 
 
 if __name__ == "__main__":
