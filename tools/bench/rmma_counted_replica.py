@@ -26,7 +26,10 @@ engine, matched by the registers and spill the sweep recorded), then with the co
                partition), (b) the warp's own dependent chain, its instructions one a clock plus
                the activation loads inside every 16-K step at the L1 hit latency (none on the
                latency instances, which prefetch them), the accumulator chains at the MMA latency
-               and the spill reloads at the L1 latency, (c) the next iteration's weights landing,
+               and the spill reloads at the L1 latency -- or, from a schema 3 snapshot, the
+               loop's longest register-dependence chain (cp_* columns) with each class at its
+               measured dependent latency (lat_*), no shorter than the instruction count --
+               (c) the next iteration's weights landing,
                the DRAM latency with the TLB warm at the resident warps (the ring fetches one step
                ahead); the SM's time is rounds x iterations x that, no shorter than its bytes over
                the DRAM and L2 rates, plus the K-split reduce. Every number is the kernel's count
@@ -208,8 +211,23 @@ def price(chip, call, inst, sched, law):
         t_sched = sched_warps * max(inst["total"], inst["int"] * isa["int32_cycles_per_warp_instruction"],
                                     inst["fp"] * isa["fp32_cycles_per_warp_instruction"],
                                     inst["mma"] * isa["mma_cycles_per_partition"])
-        t_chain = (inst["total"] + (0.0 if inst["latency"] else steps * l1)
-                   + inst["mma"] / acc * isa["mma_dependent_latency"] + inst["local"] * l1)
+        if inst.get("cp_mma") is not None and "lat_imad" in isa:
+            # Schema 3: the loop's longest register-dependence chain, its instructions counted
+            # per latency class (sass_counts.py CP_FIELDS), each at the card's measured dependent
+            # latency: the MMA accumulator at the MMA latency, global / local and shared loads at
+            # the L1 hit latency (no shared-load fact yet), shuffles, the integer decode at the
+            # IMAD latency (LOP3 / PRMT / SHF are equal, IADD3 one clock more), the float math at
+            # the HFMA2 latency, converts at the I2F / F2I one, the rest (MOV, branches, uniform)
+            # at the ALU floor. The warp issues the other instructions under it, one a clock,
+            # so an iteration is no shorter than its count.
+            chain = (inst["cp_mma"] * isa["mma_dependent_latency"] +
+                     (inst["cp_ld"] + inst["cp_lds"]) * l1 + inst["cp_shfl"] * isa["lat_shfl"] +
+                     (inst["cp_int"] + inst["cp_other"]) * isa["lat_imad"] +
+                     inst["cp_fp"] * isa["lat_hfma2"] + inst["cp_cvt"] * isa["lat_cvt_i2f_f2i"])
+            t_chain = max(float(inst["total"]), chain)
+        else:
+            t_chain = (inst["total"] + (0.0 if inst["latency"] else steps * l1)
+                       + inst["mma"] / acc * isa["mma_dependent_latency"] + inst["local"] * l1)
         t_weight = isa[f"dram_tlbwarm_latency_ns_w{w}"] * ns_to_clk
         t_it = max(t_sched, t_chain, t_weight)
         t.update(tl_sched=t_sched, tl_chain=t_chain, tl_weight=t_weight, tl_iter=t_it)

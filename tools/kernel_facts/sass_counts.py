@@ -618,16 +618,22 @@ def critical_path(body, order):
     """The counts per latency class (CP_FIELDS) along the longest nominally weighted chain of
     register dependences through the instructions `order` (body indices, in iteration order):
     instruction i depends on the latest earlier instruction of the chain that wrote a register it
-    reads (RZ / URZ aside); a dependence on a register no earlier instruction wrote is a value
-    from the previous iteration or the prologue and carries no edge."""
+    reads (RZ / URZ aside; the destination is not a read, an accumulator is read as its own
+    operand); a dependence on a register no earlier instruction wrote is a value from the
+    previous iteration or the prologue and carries no edge."""
     classes = []
     dist, best_from = [], []
     last_writer = {}
     for i in order:
         _, _, opcode, operands = body[i]
         cls = cp_class(opcode)
+        tokens = operand_tokens(operands)
         written = written_registers(opcode, operands)
-        reads = {r for r in READ_REGISTER.findall(operands) if r not in ("RZ", "URZ")}
+        dest = destination(opcode, tokens)
+        sources = list(tokens)
+        if dest is not None:
+            sources.remove(dest)
+        reads = {r for t in sources for r in READ_REGISTER.findall(t) if r not in ("RZ", "URZ")}
         pred, longest = -1, 0.0
         for r in reads:
             w = last_writer.get(r)
