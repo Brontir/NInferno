@@ -49,9 +49,16 @@ constexpr int kUnroll       = 8;    // independent streams per thread
 constexpr int kLatencyLinks = 4096; // links of a dependent chain
 
 struct Span {
-    long long begin, end;
+    long long begin, end; // clock64: SM clocks
     int sm;
+    long long ns_begin = 0, ns_end = 0; // %globaltimer: wall nanoseconds (the chases only)
 };
+
+__device__ __forceinline__ long long globaltimer_ns() {
+    long long t;
+    asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t));
+    return t;
+}
 
 __device__ __forceinline__ int smid() {
     int id;
@@ -190,7 +197,9 @@ __device__ __forceinline__ unsigned load_link(const unsigned* p) {
     if constexpr (Cg) {
         asm volatile("ld.global.cg.u32 %0, [%1];" : "=r"(v) : "l"(p));
     } else {
-        v = *p;
+        // The L1-cached path spelled out: a plain `*p` on a const __restrict__ pointer may take
+        // the read-only (texture) path, whose hit is longer than the L1's.
+        asm volatile("ld.global.ca.u32 %0, [%1];" : "=r"(v) : "l"(p));
     }
     return v;
 }
@@ -202,10 +211,12 @@ __global__ void chase(const unsigned* __restrict__ buf, unsigned m, Span* spans,
     const unsigned* mine = buf + static_cast<size_t>(warp) * m;
     unsigned idx         = 0;
     for (int i = 0; i < kLatencyLinks; ++i) idx = load_link<Cg>(mine + idx);
+    const long long n0 = globaltimer_ns();
     const long long t0 = clock64();
     for (int i = 0; i < kLatencyLinks; ++i) idx = load_link<Cg>(mine + idx);
     const long long t1           = clock64();
-    spans[blockIdx.x * 8 + warp] = {t0, t1, smid()};
+    const long long n1           = globaltimer_ns();
+    spans[blockIdx.x * 8 + warp] = {t0, t1, smid(), n0, n1};
     if (idx == 0xffffffffu) sink[0] = idx;
 }
 
@@ -306,7 +317,7 @@ int main() {
     CHECK(cudaDriverGetVersion(&driver));
     CHECK(cudaRuntimeGetVersion(&runtime));
     const int cc = p.major * 10 + p.minor;
-    std::printf("probe isa_probe 2\n");
+    std::printf("probe isa_probe 4\n");
     std::printf("card %s\n", p.name);
     std::printf("cc %d\n", cc);
     std::printf("sms %d\n", p.multiProcessorCount);
@@ -378,14 +389,23 @@ int main() {
     unsigned* buf = nullptr;
     CHECK(cudaMalloc(&buf, (size_t{1} << 25) * 8 * sizeof(unsigned)));
     std::map<std::string, double> lat;
+    std::vector<double> mhz; // the SM clock seen by each L2 / DRAM chase
+
     // The spans of the chasing warps: entry CTA x 8 + warp, the first `warps` of every CTA.
+    struct Chase {
+        double clk, ns, mhz; // per link in SM clocks and wall ns; the SM clock the chase ran at
+    };
+
     const auto chase_clocks = [&](int warps) {
-        std::vector<double> d;
+        std::vector<double> clk, ns;
         for (const Span& s : pr.collect(pr.sms * 8)) {
             const int entry = static_cast<int>(&s - pr.host.data());
-            if (entry % 8 < warps) d.push_back(static_cast<double>(s.end - s.begin));
+            if (entry % 8 >= warps) continue;
+            clk.push_back(static_cast<double>(s.end - s.begin));
+            ns.push_back(static_cast<double>(s.ns_end - s.ns_begin));
         }
-        return median(d) / kLatencyLinks;
+        const double c = median(clk), n = median(ns);
+        return Chase{c / kLatencyLinks, n / kLatencyLinks, n > 0 ? c / n * 1e3 : 0.0};
     };
     for (const Level& lv : levels) {
         const size_t total = static_cast<size_t>(lv.m) * 8;
@@ -397,26 +417,44 @@ int main() {
             } else {
                 chase<false><<<pr.sms, 32 * warps>>>(buf, lv.m, pr.spans, pr.usink);
             }
-            const double clk = chase_clocks(warps);
+            const Chase c = chase_clocks(warps);
             char name[64];
             std::snprintf(name, sizeof name, "%s_latency_w%d", lv.name, warps);
-            fact(name, clk, "clk");
-            lat[name] = clk;
+            fact(name, c.clk, "clk");
+            lat[name] = c.clk;
+            if (lv.cg) {
+                // Beyond the SM the latency is wall time: the L2 and DRAM figures are reported in
+                // ns as well, with the SM clock the chase ran at (clock64 over globaltimer), so a
+                // clock that moved between chases shows instead of passing for a latency change.
+                std::snprintf(name, sizeof name, "%s_latency_ns_w%d", lv.name, warps);
+                fact(name, c.ns, "ns");
+                lat[name] = c.ns;
+                mhz.push_back(c.mhz);
+            }
         }
     }
+    fact("sm_clock_mhz_chase", median(mhz), "mhz");
+    check(mhz.size() == 8 && *std::max_element(mhz.begin(), mhz.end()) <=
+                                 1.05 * *std::min_element(mhz.begin(), mhz.end()),
+          "the SM clock moved by over 5 % between the L2 / DRAM chases (lock the clocks: "
+          "nvidia-smi -lgc)");
     chase_shared<<<pr.sms, 128>>>(pr.spans, pr.usink);
     chase_shared<<<pr.sms, 128>>>(pr.spans, pr.usink);
     fact("shared_latency", median_span(pr.collect(pr.sms)) / kLatencyLinks, "clk");
     // The levels must separate: an L2 hit is further than an L1 hit, DRAM further than the L2 at
     // every warp count (chains that alias into L2-resident lines would read as the L2), and more
-    // chasing warps never make a warp's latency shorter.
+    // chasing warps never make a warp's latency shorter (in SM clocks for the L1, in wall ns for
+    // the L2 and DRAM).
     check(lat["l2_latency_w1"] > 2.0 * lat["l1_latency_w1"], "L2 latency not above 2x L1");
     for (int w : {1, 2, 4, 8}) {
         const std::string ws = "_latency_w" + std::to_string(w);
-        check(lat["dram" + ws] > 1.2 * lat["l2" + ws],
+        const std::string ns = "_latency_ns_w" + std::to_string(w);
+        check(lat["dram" + ns] > 1.2 * lat["l2" + ns],
               "DRAM latency not above 1.2x L2 at w" + std::to_string(w));
-        for (const char* lv : {"l1", "l2", "dram"})
-            check(lat[lv + ws] >= 0.95 * lat[std::string(lv) + "_latency_w1"],
+        check(lat["l1" + ws] >= 0.95 * lat["l1_latency_w1"],
+              "l1 latency falls under the lone warp's at w" + std::to_string(w));
+        for (const char* lv : {"l2", "dram"})
+            check(lat[lv + ns] >= 0.95 * lat[std::string(lv) + "_latency_ns_w1"],
                   std::string(lv) + " latency falls under the lone warp's at w" +
                       std::to_string(w));
     }

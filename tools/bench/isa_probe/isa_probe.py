@@ -32,8 +32,20 @@ FACTS = (
     "mma_dependent_latency", "fp32_cycles_per_warp_instruction",
     "int32_cycles_per_warp_instruction", "l1_latency_w1", "l1_latency_w2", "l1_latency_w4",
     "l1_latency_w8", "l2_latency_w1", "l2_latency_w2", "l2_latency_w4", "l2_latency_w8",
-    "dram_latency_w1", "dram_latency_w2", "dram_latency_w4", "dram_latency_w8", "shared_latency",
+    "dram_latency_w1", "dram_latency_w2", "dram_latency_w4", "dram_latency_w8",
+    # Beyond the SM the latency is wall time: the L2 and DRAM figures in ns too, and the SM clock
+    # the chases ran at (so a clock that moved shows as such, not as a latency change).
+    "l2_latency_ns_w1", "l2_latency_ns_w2", "l2_latency_ns_w4", "l2_latency_ns_w8",
+    "dram_latency_ns_w1", "dram_latency_ns_w2", "dram_latency_ns_w4", "dram_latency_ns_w8",
+    "sm_clock_mhz_chase", "shared_latency",
 )
+UNITS = {"tensor_flops_per_sm_clock": "flop", "resident_ctas_per_sm": "count",
+         "sm_clock_mhz_chase": "mhz"}
+
+
+def unit_of(name):
+    """The unit a fact is reported in: SM clocks unless listed, wall ns for the `_ns_` facts."""
+    return UNITS.get(name, "ns" if "_ns_" in name else "clk")
 HEADER = ("probe", "card", "cc", "sms", "l2_bytes", "driver", "runtime", "nvcc", "shape")
 
 
