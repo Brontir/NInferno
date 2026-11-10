@@ -187,9 +187,13 @@ void check_known() {
         {"rtx4090", q8, big, a16, 4, false, 2, "route-probe"},
         {"rtx4090", q8, big, a16, 4, false, 3, "route-pin"},
         {"rtx4090", q8, big, a16, 512, true, 4, "route-pin"},
-        {"rtx4090", q4k, big, a16, 512, true, 0, "mmq-prefill-gate"},
-        {"rtx4090", q8, big, a16, 64, false, 0, "route-table"},
-        {"rtx4090", q8, big, a16, 1, false, 0, "r8-rules"},
+        {"rtx4090", q4k, big, a16, 512, true, 0, "route-table"},
+        {"rtx4090", q4k, {17408, 5120}, a16, 512, true, 0, "?"},
+        {"rtx4090", q4k, {256, 2048}, a16, 128, true, 0, "?"},
+        {"rtx4090", q4k, {1024, 4096}, a16, 512, true, 0, "?"},
+        {"rtx4090", q4k, big, a16, 1, false, 0, "?"},
+        {"rtx4090", q8, big, a16, 64, false, 0, "cost-model"},
+        {"rtx4090", q8, big, a16, 1, false, 0, "rmma-rule"},
     };
     for (const KnownCase& c : cases) {
         const std::string got = known_source(c);
