@@ -2,7 +2,10 @@
 """Mechanical review lint for a PR diff (issue #611, step 3). Needs no build and no GPU.
 
 A text heuristic, not a compiler: it works on bare names and never resolves overloads, namespaces or
-macros. Where it is not precise it warns; it fails only where a finding is near certain.
+macros.
+Comments and string/char/raw-string literals are blanked (mask_cxx) before any regex looks for
+definitions, calls, includes or types; only the repeated-block rule and the escape markers read raw text.
+Where it is not precise it warns; it fails only where a finding is near certain.
 
   removed-def      (FAILS, exit 1) a C/C++ function or method definition removed from .h/.cpp/.cu/.cuh
                    whose bare name is still called as `name(` in the tree at the head. Not reported when
@@ -243,8 +246,9 @@ def removed_definitions(removed_lines):
     """[(unqualified name, old line)] for definitions in the removed lines of one hunk."""
     if not removed_lines:
         return []
-    text = "\n".join(t for _, t in removed_lines)
-    texts = text.split("\n")
+    raw_text = "\n".join(t for _, t in removed_lines)
+    texts = raw_text.split("\n")
+    text = mask_cxx(raw_text)  # a commented-out or quoted signature is not a definition
     starts = [0]
     for t in texts:
         starts.append(starts[-1] + len(t) + 1)
@@ -266,13 +270,22 @@ def removed_definitions(removed_lines):
 DECL_TYPE_END = re.compile(r"[\w>*&\]]\s*$")
 
 
+def masked_lines(tree, path):
+    """The lines of `path` at the head with comments and literals blanked (computed once per file)."""
+    cache = tree.__dict__.setdefault("_masked", {})
+    if path not in cache:
+        cache[path] = mask_cxx(tree.read(path) or "").split(chr(10))
+    return cache[path]
+
+
 def classify(tree, name, hit):
     """'comment', 'allowed', 'decl' (a declaration or definition), 'init' (member init) or 'call'."""
-    path, n, line = hit
-    stripped = line.strip()
-    if stripped.startswith(("//", "*", "/*")):
+    path, n, raw = hit
+    masked = masked_lines(tree, path)
+    line = masked[n - 1] if n - 1 < len(masked) else mask_cxx(raw)  # comments and literals blanked
+    if not line.strip() or raw.strip().startswith(("//", "*", "/*")):
         return "comment"
-    if ALLOW in line:
+    if ALLOW in raw:
         return "allowed"
     nm = re.escape(name)
     m = re.search(rf"\b{nm}[ \t]*\(", line)
@@ -286,8 +299,7 @@ def classify(tree, name, hit):
         return "decl"
     # the return type on the line above: `double\nname(int k) const;`
     if re.fullmatch(r"[ \t]*(?:\w+::)*", before) and n > 1:
-        prev = (tree.read(path) or "").splitlines()
-        prev = prev[n - 2] if n - 2 < len(prev) else ""
+        prev = masked[n - 2] if n - 2 < len(masked) else ""
         if prev.strip() and DECL_TYPE_END.search(prev) and not prev.strip().startswith(("#", "//", "return", "else")) \
                 and prev.split()[-1] not in KEYWORDS:
             return "decl"
@@ -337,14 +349,72 @@ OWN_TYPE_RX = re.compile(r"^(?:struct|class|enum(?:\s+class)?|union)\s+(\w+)" + 
                          re.M)
 
 
-def strip_noise(text):
-    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
-    text = re.sub(r"//[^\n]*", " ", text)
-    return re.sub(r'"(?:\\.|[^"\\\n])*"', '""', text)
+RAW_PREFIX = re.compile(r"(?:u8|u|U|L)?R$")
+INCLUDE_HEAD = re.compile(r"[ \t]*#[ \t]*include[ \t]*$")
+
+
+def mask_cxx(text):
+    """`text` with comments and the insides of string, char and raw-string literals blanked to spaces.
+
+    Same length and same newlines, so offsets and line numbers still match the original. The quotes stay.
+    A `//` comment that ends with a backslash goes on in the next line (line splicing), a literal that is
+    still open at a newline ends there, and the path in `#include "x.h"` is kept as it stands."""
+    out, i, n = list(text), 0, len(text)
+
+    def blank(a, b):
+        for k in range(a, min(b, n)):
+            if out[k] not in "\r\n":
+                out[k] = " "
+
+    while i < n:
+        c = text[i]
+        if text.startswith("//", i):
+            j = i
+            while j < n:
+                e = text.find("\n", j)
+                e = n if e < 0 else e
+                if e < n and text[j:e].rstrip("\r").endswith("\\"):
+                    j = e + 1
+                else:
+                    j = e
+                    break
+            blank(i, j)
+            i = j
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            blank(i, j)
+            i = j
+        elif c == '"' or c == "'":
+            head = text[text.rfind("\n", 0, i) + 1:i]
+            if c == '"' and INCLUDE_HEAD.match(head):
+                j = text.find('"', i + 1)
+                i = n if j < 0 else j + 1
+                continue
+            if c == "'" and re.search(r"[0-9][0-9A-Za-z_.]*$", head):  # a digit separator: 1'000'000
+                i += 1
+                continue
+            m = RAW_PREFIX.search(head) if c == '"' else None
+            d = re.match(r"[^\s()\\]{0,16}\(", text[i + 1:i + 19]) if m else None
+            if d and not (m.start() > 0 and (head[m.start() - 1].isalnum() or head[m.start() - 1] == "_")):
+                close = ")" + d.group(0)[:-1] + '"'
+                j = text.find(close, i + d.end())
+                j = n if j < 0 else j
+                blank(i + 1, j)
+                i = min(n, j + len(close))
+                continue
+            j = i + 1
+            while j < n and text[j] != c and text[j] != "\n":
+                j += 2 if text[j] == "\\" else 1
+            blank(i + 1, j)
+            i = j + 1 if j < n and text[j] == c else j
+        else:
+            i += 1
+    return "".join(out)
 
 
 def types_of(text, rx=ANY_TYPE_RX):
-    return {g for m in rx.finditer(strip_noise(text)) for g in m.groups() if g}
+    return {g for m in rx.finditer(mask_cxx(text)) for g in m.groups() if g}
 
 
 def resolve(names, including, inc):
@@ -366,7 +436,7 @@ def closure(tree, names, path, memo):
             continue
         seen.add(p)
         if p not in memo:
-            incs = [INC_RX.match(line) for line in (tree.read(p) or "").splitlines()]
+            incs = [INC_RX.match(line) for line in mask_cxx(tree.read(p) or "").splitlines()]
             found = [(m.group(1), resolve(names, p, m.group(1))) for m in incs if m]
             memo[p] = ([r for _, r in found if r], all(r for _, r in found))
         stack.extend(memo[p][0])
@@ -387,15 +457,16 @@ def removed_includes(tree, files, allow=frozenset()):
         if not lintable(path, CXX_EXT):
             continue
         text = tree.read(path)
-        gone = [(n, m.group(1)) for hunk in d["removed"] for n, t in hunk
-                for m in [INC_RX.match(t)] if m and ALLOW not in t and ("removed-include", m.group(1)) not in allow]
+        gone = [(n, m.group(1)) for hunk in d["removed"]
+                for (n, t), c in zip(hunk, mask_cxx("\n".join(t for _, t in hunk)).split("\n"))
+                for m in [INC_RX.match(c)] if m and ALLOW not in t and ("removed-include", m.group(1)) not in allow]
         if text is None or not gone:
             continue
         reach, complete = closure(tree, names, path, memo)
         if not complete:  # an include we cannot follow may bring the type: no precise answer
             continue
         own = types(path)
-        body_lines = strip_noise(text).splitlines()
+        body_lines = mask_cxx(text).splitlines()
         raw_lines = text.splitlines()
         for old_line, inc in gone:
             header = resolve(names, path, inc)
@@ -419,18 +490,19 @@ def removed_includes(tree, files, allow=frozenset()):
 
 # ---------------------------------------------------------------- rule: line ends inside a string literal
 
-RAW_PREFIX = re.compile(r"(?:u8|u|U|L)?R$")
-
-
 def cxx_open_lines(text):
     """1-based numbers of lines that end inside an ordinary string or char literal (C/C++).
 
-    Comments and raw strings R"d(...)d" are tracked across lines; a backslash at the end of the line
+    Comments (a `//` comment ending in a backslash goes on in the next line) and raw strings R"d(...)d"
+    are tracked across lines; a backslash at the end of the line
     continues the literal and is not reported. After a report the scan restarts in code on the next line."""
     bad, block, raw, carry = [], False, None, None  # raw: the closing `)delim"` while inside a raw string
+    spliced = False  # the previous line was a // comment ending in a backslash: this line is comment too
     for num, line in enumerate(text.split("\n"), 1):
         line = line.rstrip("\r")
         i, n, quote, carry = 0, len(line), carry, None
+        if spliced:
+            spliced, i = line.endswith("\\"), n
         while i < n:
             c = line[i]
             if raw is not None:
@@ -456,7 +528,7 @@ def cxx_open_lines(text):
                     quote = None
                 i += 1
             elif line.startswith("//", i):
-                i = n  # (a trailing backslash would continue a comment: harmless to ignore)
+                spliced, i = line.endswith("\\"), n  # a trailing backslash splices the next line in
             elif line.startswith("/*", i):
                 block, i = True, i + 2
             elif c == '"':

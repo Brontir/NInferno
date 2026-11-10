@@ -258,6 +258,60 @@ class FalsePositives(unittest.TestCase):
         t = dl.DictTree({**header, "src/use.cpp": user})
         self.assertEqual(dl.lint(diff("src/use.cpp", removed=['#include "vec.h"']), t), [])
 
+    LIVE_FOO = {"c.cpp": "std::function<int(int)> foo = pick();\nint g() { return foo(1); }\n"}
+
+    def test_removed_block_comment_with_a_signature_is_not_a_definition(self):
+        removed = ["/*", " * old version:", " * int foo(int x) {", " *     return x;", " * }", " */"]
+        self.assertEqual(self.lint(removed, **self.LIVE_FOO), [])
+        self.assertEqual(self.lint(["/* int foo(int x) { return x; } */"], **self.LIVE_FOO), [])
+
+    def test_removed_line_comment_with_a_signature_is_not_a_definition(self):
+        removed = ["// int foo(int x) {", "//     return x;", "// }"]
+        self.assertEqual(self.lint(removed, **self.LIVE_FOO), [])
+
+    def test_removed_string_with_a_signature_is_not_a_definition(self):
+        removed = ['const char* sample = "int foo(int x) {";', 'const char* more = R"(', "int foo(int x) {", ')";']
+        self.assertEqual(self.lint(removed, **self.LIVE_FOO), [])
+
+    def test_a_real_removed_definition_of_the_same_shape_is_still_flagged(self):
+        found = self.lint(["int foo(int x) {", "    return x;", "}"], **self.LIVE_FOO)
+        self.assertEqual(rules(found), ["removed-def"])
+        self.assertEqual(found[0][:2], ("c.cpp", 2))
+
+    def test_a_definition_removed_with_a_comment_above_it_is_still_flagged(self):
+        removed = ["/* int foo(int x) { fake } */", "// foo(int x) { also fake }", "int foo(int x) {", "    return x;", "}"]
+        self.assertEqual(rules(self.lint(removed, **self.LIVE_FOO)), ["removed-def"])
+
+    def test_function_like_text_in_a_string_is_not_a_call(self):
+        files = {"b.cpp": 'const char* text = "foo(1)";\n'}
+        self.assertEqual(self.lint(["int foo(int x) {", "    return x;", "}"], **files), [])
+        files = {"b.cpp": 'const char* text = R"(\nfoo(1)\n)";\n'}
+        self.assertEqual(self.lint(["int foo(int x) {", "    return x;", "}"], **files), [])
+        files = {"b.cpp": 'const char* text = "foo(1)";\nint h() { return foo(2); }\n'}
+        found = self.lint(["int foo(int x) {", "    return x;", "}"], **files)
+        self.assertEqual([f[:2] for f in found], [("b.cpp", 2)])
+
+    def test_a_commented_out_declaration_does_not_hide_a_live_call(self):
+        files = {"b.h": "// int foo(int x);\n", "c.cpp": "int h() { return foo(2); }\n"}
+        self.assertEqual(rules(self.lint(["int foo(int x) {", "    return x;", "}"], **files)), ["removed-def"])
+
+    def test_commented_out_include_is_not_a_removed_include(self):
+        user = '#include "widget.h"\nint f(const Widget& w);\n'
+        files = {"src/widget.h": "#pragma once\nstruct Widget {\n    int size;\n};\n", "src/use.cpp": user.split("\n", 1)[1]}
+        t = dl.DictTree(files)
+        d = diff("src/use.cpp", removed=["/*", '#include "widget.h"', "*/"])
+        self.assertEqual(dl.lint(d, t), [])
+
+    def test_mask_keeps_length_and_newlines(self):
+        src = 'int a; // x \\\n"cont\n/* b\n"c" */ const char* s = "q\\"r"; char c = \'"\'; int n = 1\'000;\n'
+        out = dl.mask_cxx(src)
+        self.assertEqual(len(out), len(src))
+        self.assertEqual([i for i, c in enumerate(out) if c == "\n"], [i for i, c in enumerate(src) if c == "\n"])
+        self.assertNotIn("cont", out)
+        self.assertIn("int a;", out)
+        self.assertIn("1'000", out)
+        self.assertIn('#include "x.h"', dl.mask_cxx('#include "x.h" // y\n'))
+
     def test_unresolvable_include_makes_removed_include_skip_the_file(self):
         header = {"src/widget.h": "#pragma once\nstruct Widget {\n    int size;\n};\n"}
         user = '#include "generated_elsewhere.h"\nint f(const Widget& w);\n'
@@ -407,6 +461,15 @@ class BadLiteral(unittest.TestCase):
 
     def test_python_triple_quote_then_broken_line(self):
         self.assertEqual(lits("t.py", 'x = """a\nb"""\ny = \'oops\n\'\n'), [3])
+
+    def test_line_comment_ending_in_a_backslash_continues_onto_the_next_line(self):
+        self.assertEqual(lits("t.cpp", '// docs \\\n"unterminated-looking text\nint x;\n'), [])
+        self.assertEqual(lits("t.cpp", '// a \\\n// b \\\n"c\nint x;\n'), [])
+        self.assertEqual(lits("t.cpp", 'int x; // a \\\n"c\nint y;\n'), [])
+
+    def test_the_comment_ends_where_the_backslash_chain_ends(self):
+        self.assertEqual(lits("t.cpp", '// a \\\n// b\nconst char* s = "oops\n;\n'), [3])
+        self.assertEqual(lits("t.cpp", '// a \\ b\nconst char* s = "oops\n;\n'), [2])
 
     def test_other_files_are_not_checked(self):
         self.assertEqual(lits("t.sh", 'echo "a\nb"\n'), [])
