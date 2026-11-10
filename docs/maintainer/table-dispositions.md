@@ -142,7 +142,8 @@ answer. That is a behaviour change and needs the GPU run; nothing here changes t
 
 The host test and the production-equality checks run without a GPU. The production-equality checks
 cover the sixteen boards the selector goldens are kept for (`generic::kFactsBoards`, each under
-`ScopedDeviceClass`), not the 105 rows. The tie rule of the lookup (two rows at equal distance: the
-earlier answers) is pinned by a local two-row case in the test, not by any row. Not verified: the
+`ScopedDeviceClass`), not the 105 rows. The tie rule of the donor lookup (`nearest_known_measured`;
+two rows at equal distance: the earlier answers) is pinned by a local two-row case in the test, not
+by any row; the tie of `nearest_measured` is not pinned. Not verified: the
 dispositions' meaning on a GPU (no kernel runs in the test), and the open Ampere frontier risk above
 (it needs the sweep on an Ampere card).
