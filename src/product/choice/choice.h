@@ -511,7 +511,9 @@ struct Alternative {
     std::string value;
     const Scored* scored = nullptr;
     std::string why_not;  // "" for the chosen value
-    std::string why_code; // "" (chosen), no_fit, lower_worth, within_resolution, tie_context, tie_order, default, unmeasured, coupled
+    std::string
+        why_code; // "" (chosen), no_fit, lower_worth, within_resolution, outside_resolution,
+                  // tie_context, tie_order, default, unmeasured, coupled
 };
 [[nodiscard]] std::vector<Alternative> explain(const Choice& choice);
 

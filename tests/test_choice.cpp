@@ -1950,19 +1950,33 @@ void resolution_labels(const json& fixture) {
             check(c.by_worth ? c.resolution > 0 && c.resolution < 0.1 : true,
                   name + ": a resolution where the worth decides");
             const ch::Scored& best = chosen(c);
+            if (c.resolved_within_resolution) {
+                const auto alts = ch::explain(c);
+                const auto anchors =
+                    std::count_if(alts.begin(), alts.end(), [&](const ch::Alternative& a) {
+                        return a.scored == &c.scored[c.anchor];
+                    });
+                check(anchors == 1, name + ": the passed-over best worth is listed exactly once");
+            }
             for (const ch::Alternative& a : ch::explain(c)) {
-                if (a.scored == nullptr || (a.why_code != "within_resolution" && a.why_code != "lower_worth")) {
+                if (a.scored == nullptr ||
+                    (a.why_code != "within_resolution" && a.why_code != "lower_worth" &&
+                     a.why_code != "outside_resolution")) {
                     continue;
                 }
                 const double gap   = best.worth - a.scored->worth;
                 if (gap < -1e-9) {
-                    // The best worth, passed over inside the resolution for the more accurate one;
-                    // any other above the pick stays a loss.
-                    const bool anchor = a.scored == &c.scored[c.anchor];
-                    check(anchor == (a.why_code == "within_resolution") &&
-                              (!anchor || c.resolved_within_resolution),
-                          name + " " + a.value +
-                              ": a higher worth is within_resolution only as the anchor");
+                    // Above the pick only under a pick the resolution rule moved: the best worth
+                    // and the others inside its band are within_resolution, the ones slower than
+                    // it by more than the resolution are outside_resolution; never lower_worth.
+                    const ch::Scored& anchor = c.scored[c.anchor];
+                    const bool inside        = a.scored == &anchor ||
+                                        std::log(a.scored->decision_seconds /
+                                                 anchor.decision_seconds) <= c.resolution + 1e-9;
+                    check(c.resolved_within_resolution &&
+                              a.why_code == (inside ? "within_resolution" : "outside_resolution"),
+                          name + " " + a.value + ": a higher worth is " +
+                              (inside ? "within_resolution" : "outside_resolution"));
                     continue;
                 }
                 const double apart = std::abs(std::log(a.scored->decision_seconds / best.decision_seconds));

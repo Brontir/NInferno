@@ -1944,12 +1944,22 @@ std::vector<Alternative> explain(const Choice& choice) {
                               fixed(chosen.accuracy.kld, 4) + " against " +
                               fixed(s.accuracy.kld, 4) + ")";
             } else if (s.worth > chosen.worth + kWorthTie) {
-                // Not the anchor, yet above the moved pick: it lies inside the anchor's band too
-                // (between the two), and the chosen is the more accurate one there.
-                alt.why_code = "within_resolution";
-                alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) +
-                              " above the chosen, which is more accurate inside the speed "
-                              "estimate's resolution";
+                // Not the anchor, yet above the moved pick. Inside the band (no slower than the
+                // anchor by more than the resolution) the chosen is the most accurate; outside it,
+                // the rule does not weigh this one at all (resolve_within_resolution).
+                const Scored& a   = choice.scored[choice.anchor];
+                const bool inside = s.decision_seconds > 0 && a.decision_seconds > 0 &&
+                                    std::log(s.decision_seconds / a.decision_seconds) <=
+                                        choice.resolution + kWorthTie;
+                alt.why_code = inside ? "within_resolution" : "outside_resolution";
+                alt.why_not =
+                    "worth " + fixed(s.worth - chosen.worth, 3) + " above the chosen, " +
+                    (inside ? std::string("which is the more accurate inside the speed "
+                                          "estimate's resolution of the best worth")
+                            : "but slower than the best worth by more than the speed "
+                              "estimate's resolution (" +
+                                  fixed(100 * choice.resolution, 1) +
+                                  " %): the rule picks the most accurate inside that band");
             } else if (std::abs(s.worth - chosen.worth) <= kWorthTie &&
                        s.own_context != chosen.own_context) {
                 alt.why_code = "tie_context";
@@ -2002,9 +2012,15 @@ std::vector<Alternative> explain(const Choice& choice) {
                                  : x.state != c.state             ? Axis::State
                                                                   : Axis::Ring;
             Alternative alt;
-            alt.axis     = axis;
-            alt.scored   = &anchor;
-            alt.value    = value_of(anchor, axis);
+            alt.axis   = axis;
+            alt.scored = &anchor;
+            // Its value names every main axis it differs on, so the row is not read as the
+            // one-axis swap listed above it.
+            for (const Axis other : {Axis::Kv, Axis::Activations, Axis::Drafter, Axis::Chunk}) {
+                if (value_of(anchor, other) == value_of(chosen, other)) { continue; }
+                alt.value += (alt.value.empty() ? "" : " + ") + value_of(anchor, other);
+            }
+            if (alt.value.empty()) { alt.value = value_of(anchor, axis); }
             alt.why_code = "within_resolution";
             alt.why_not  = "worth " + fixed(anchor.worth - chosen.worth, 3) +
                           " above the chosen, inside the speed estimate's resolution (" +
@@ -2012,7 +2028,7 @@ std::vector<Alternative> explain(const Choice& choice) {
                           " % decode rms): the chosen is the more accurate (KLD " +
                           fixed(chosen.accuracy.kld, 4) + " against " +
                           fixed(anchor.accuracy.kld, 4) +
-                          "); it differs on more axes than this one";
+                          "); the best worth, which differs on more than this axis";
             out.push_back(std::move(alt));
         }
     }
