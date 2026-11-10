@@ -792,6 +792,7 @@ Json choice_json(const ServedChoice& served) {
             }
             for (const choice::DrafterOption::JointScale& j : d.joint) {
                 if (j.streams >= streams) { break; }
+                if (!d.bound_measured_at(j.streams)) { continue; } // a placeholder bounds nothing
                 const double priced = d.base_gain_at(j.streams) * j.scale;
                 if (priced < least) {
                     least     = priced;

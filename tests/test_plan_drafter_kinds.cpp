@@ -114,23 +114,26 @@ void test_every_kind_carried() {
 // at exactly the task's streams, the round cost's; at more streams than the last priced count, held
 // from the price there (the gain does not climb with load), with that count named.
 void test_gain_note_names_where_the_price_is_held_from() {
-    const auto note_at = [](std::uint32_t streams,
-                            std::vector<pr::choice::DrafterOption::JointScale> joint = {
-                                {.streams = 2, .scale = 0.45}}) {
-        pr::ServedChoice served;
-        pr::choice::DrafterOption option;
-        option.label   = "mtp:3";
-        option.speedup = 2.0;
-        option.joint   = std::move(joint);
-        served.drafter_options.push_back(option);
-        served.task.concurrency = streams;
-        pr::choice::Scored scored;
-        scored.candidate.drafter = 1;
-        scored.drafter           = "mtp:3";
-        served.choice.scored.push_back(scored);
-        served.choice.chosen = 0;
-        return pr::choice_json(served)["chosen"]["drafter_gain"];
-    };
+    const auto note_at =
+        [](std::uint32_t streams,
+           std::vector<pr::choice::DrafterOption::JointScale> joint = {{.streams = 2,
+                                                                        .scale   = 0.45}},
+           std::vector<pr::choice::DrafterOption::LoadGain> load    = {}) {
+            pr::ServedChoice served;
+            pr::choice::DrafterOption option;
+            option.label   = "mtp:3";
+            option.speedup = 2.0;
+            option.joint   = std::move(joint);
+            option.load    = std::move(load);
+            served.drafter_options.push_back(option);
+            served.task.concurrency = streams;
+            pr::choice::Scored scored;
+            scored.candidate.drafter = 1;
+            scored.drafter           = "mtp:3";
+            served.choice.scored.push_back(scored);
+            served.choice.chosen = 0;
+            return pr::choice_json(served)["chosen"]["drafter_gain"];
+        };
     const auto priced = note_at(2);
     check(priced["joint_verify_scale"] == 0.45 && !priced.contains("joint_priced_at_streams") &&
               priced["note"].get<std::string>().find("priced for the streams' rows") !=
@@ -148,6 +151,16 @@ void test_gain_note_names_where_the_price_is_held_from() {
               least["note"].get<std::string>().find("held from the price at 2 streams") !=
                   std::string::npos,
           "a count priced above a smaller count's price: the note names the smaller count");
+    // An unmeasured bound at 2 streams holds a placeholder: the gain at 4 is 4's own price, and
+    // the note says so (speedup_at skips it alike).
+    const auto unmeasured =
+        note_at(4, {{.streams = 2, .scale = 0.9}, {.streams = 4, .scale = 0.8}},
+                {{.streams = 2, .speedup = 1.0, .depth = 1, .bounded = true, .measured = false},
+                 {.streams = 4, .speedup = 1.6, .depth = 3, .bounded = true}});
+    check(!unmeasured.contains("joint_priced_at_streams") &&
+              unmeasured["note"].get<std::string>().find("priced for the streams' rows") !=
+                  std::string::npos,
+          "an unmeasured smaller bound: the note names this count's own price");
 }
 
 } // namespace
