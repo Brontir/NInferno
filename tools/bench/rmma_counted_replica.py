@@ -343,8 +343,10 @@ def main():
             # "ambiguous": two variants of the kernel (the plain and the latency one) keep the
             # registers and the spill the sweep recorded, and the CSV does not say which ran.
             # Their loops differ, so the row is priced with the plain one for the dump and left
-            # out of the ratios and the regret of every law.
-            scored = st != "ambiguous"
+            # out of the ratios and the regret of every law. So is a row no instance matches
+            # ("fallback": the sweep's build was another commit, and the plain variant's counts
+            # are not that kernel's; "noinst": the snapshot has no such kernel).
+            scored = st == "ok"
             sets = 2.0 if r["epi"] == "swiglu" else 1.0
             call = dict(n=r["n"], k=r["k"], T=r["T"], sets=sets, bpw=BPW[r["fmt"]] * sets,
                         heavy=r["fmt"] in HEAVY_FORMATS and chip["heavy_ok"])
@@ -368,7 +370,7 @@ def main():
                               + [f"{scale(x):.5g}" for x in term_names])
         print(f"\n== {name} (sm_{chip['arch']}, heavy form {'on' if chip['heavy_ok'] else 'off'}): "
               f"{len(rows)} register-MMA rows at T >= {a.tmin}; instances {dict(status)}"
-              + (" (the ambiguous ones are not scored)" if status["ambiguous"] else "")
+              + (" (only the ok ones are scored)" if len(rows) != status["ok"] else "")
               + f"; the issue bound above the bytes-plus-tensor sum on {issue_binds} rows")
         if today_vs_model:
             xs = sorted(today_vs_model)
