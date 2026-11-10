@@ -13,6 +13,7 @@
 #include "ops/generic/route_table.h"
 
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -21,6 +22,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace ninferno::tools {
@@ -63,8 +65,13 @@ std::string board_key(std::string_view name) {
 const GpuFactsRow* find_board(std::string_view arg) {
     const auto table = gpu_facts_table();
     if (arg.rfind("0x", 0) == 0 || arg.rfind("0X", 0) == 0) {
-        const auto id =
-            static_cast<std::uint32_t>(std::strtoul(std::string(arg).c_str(), nullptr, 16));
+        std::uint32_t id     = 0;
+        const char* digits   = arg.data() + 2;
+        const auto [end, ec] = std::from_chars(digits, arg.data() + arg.size(), id, 16);
+        if (digits == arg.data() + arg.size() || ec != std::errc() ||
+            end != arg.data() + arg.size()) {
+            return nullptr;
+        }
         for (const auto& row : table) {
             if (row.pci_device_id == id) return &row;
         }
@@ -143,6 +150,28 @@ std::optional<Route> parse_route(std::string_view s) {
     return Route{f, static_cast<std::uint8_t>(index)};
 }
 
+// A whole decimal integer in [lo, hi]: trailing text, an empty value or one out of range is an
+// error, not the prefix std::atoi would take.
+std::int32_t whole_number(std::string_view option, const std::string& v, long long lo,
+                          long long hi) {
+    long long value      = 0;
+    const auto [end, ec] = std::from_chars(v.data(), v.data() + v.size(), value);
+    if (v.empty() || ec != std::errc() || end != v.data() + v.size() || value < lo || value > hi) {
+        throw std::invalid_argument("bad value " + v + " for " + std::string(option));
+    }
+    return static_cast<std::int32_t>(value);
+}
+
+// A whole finite non-negative decimal number.
+double finite_number(std::string_view option, const std::string& v) {
+    char* end          = nullptr;
+    const double value = v.empty() ? 0.0 : std::strtod(v.c_str(), &end);
+    if (v.empty() || end != v.c_str() + v.size() || !std::isfinite(value) || value < 0) {
+        throw std::invalid_argument("bad value " + v + " for " + std::string(option));
+    }
+    return value;
+}
+
 // Throws std::invalid_argument on a malformed command line.
 Options parse(int argc, char** argv) {
     Options o;
@@ -162,11 +191,11 @@ Options parse(int argc, char** argv) {
             o.format = find_format(v);
             if (!o.format) throw std::invalid_argument("unknown format " + v);
         } else if (a == "--n") {
-            o.n = std::atoi(v.c_str());
+            o.n = whole_number(a, v, 1, 1 << 30);
         } else if (a == "--k") {
-            o.k = std::atoi(v.c_str());
+            o.k = whole_number(a, v, 1, 1 << 30);
         } else if (a == "--t") {
-            o.t = std::atoi(v.c_str());
+            o.t = whole_number(a, v, 1, 1 << 20);
         } else if (a == "--epilogue") {
             if (v == "store") {
                 o.epilogue = Epilogue::Store;
@@ -186,9 +215,9 @@ Options parse(int argc, char** argv) {
                 throw std::invalid_argument("unknown policy " + v);
             }
         } else if (a == "--registers") {
-            o.registers = std::atoi(v.c_str());
+            o.registers = whole_number(a, v, 1, 255);
         } else if (a == "--local-bytes") {
-            o.local_bytes = std::atof(v.c_str());
+            o.local_bytes = finite_number(a, v);
         } else if (a == "--route") {
             o.only = parse_route(v);
             if (!o.only)
@@ -317,7 +346,16 @@ int run(const Options& o) {
         std::printf("kernel facts: none given (priced by threads alone; the selector may have read "
                     "its own)\n");
     }
-    std::printf("selector offered %zu routes; terms in microseconds\n\n", priced.size());
+    // select_route prices routes (cost_route) only from 17 tokens outside the prefill band and
+    // never for NVFP4; elsewhere it picks by rule, and these are the formula's figures alone.
+    if (o.t >= 17 && qtype != QType::NVFP4) {
+        std::printf("selector offered %zu routes; terms in microseconds\n\n", priced.size());
+    } else {
+        std::printf("outside the selector's pricing domain (it prices from 17 tokens, never "
+                    "NVFP4, and picks by rule here): %zu routes, the formula's figures only; terms "
+                    "in microseconds\n\n",
+                    priced.size());
+    }
 
     const bool one = o.only.has_value();
     if (!one) {
