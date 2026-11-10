@@ -30,6 +30,7 @@ double bytes_per_weight(const Weight& weight, const Problem& problem) {
 
 namespace {
 
+// FUSION-SITE: activation_quantizer_launch
 template <class Offer>
 void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t tokens,
                    const DeviceClass& d, const Offer& offer) {
