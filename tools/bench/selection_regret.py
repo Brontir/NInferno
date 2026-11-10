@@ -85,6 +85,7 @@ def ridges_of(document, generation_header):
     """{board: ridge T*} for the boards the document gives `board_facts`, the way #605 computes it
     (int8 tensor rate of the generation x SMs x boost clock, over DRAM rate, for the 4.5-bit
     Q4_K): ops/s x bytes per value / (2 x DRAM bytes/s). A board with none has no ridge."""
+    require(isinstance(document, dict), "expected JSON object")
     facts = document.get("board_facts") or {}
     require(isinstance(facts, dict), "board_facts: expected object")
     if not facts:
