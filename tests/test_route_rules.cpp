@@ -867,6 +867,8 @@ const std::vector<NotRule>& not_rules() {
         {"ggml_mmq/ggml_vec.cu", "kRows", 1, "a kernel's tile rows (a tile shape, counted)"},
         {"kernel_facts.cpp", "kColumns", 1,
          "the kernel facts file's column header (a file format)"},
+        {"kernel_facts.cpp", "kLoopColumnsLength", 1,
+         "the length of the column header without the schedule (a file format)"},
         {"kernel_facts.cpp", "kResourceColumnsLength", 1,
          "the length of the resources-only column header (a file format)"},
         {"scratch_lifetime.h", "kMaxScratchUses", 1, "scratch lifetime bookkeeping"},
