@@ -119,7 +119,10 @@ struct ScratchViolation {
 // Every launch that starts early is checked against the launch before it and, conservatively,
 // against each earlier one while the launches in between also started early (a chain of early
 // starts may all be running at once). A predecessor that does not release triggers implicitly at
-// its exit, so a launch under it starts at its completion: no overlap, nothing to check.
+// its exit, so a launch under it starts at its completion: no overlap with its reads. Its writes
+// are visible only after the dependent's wait, so the immediate predecessor's writes are still
+// checked against uses before that wait; a non-releasing launch further back is not (no
+// constructor and no kernel makes a scratch use before the wait today).
 // Assumption of the look-back: every early-starting kernel waits for its predecessor's full
 // completion (griddepcontrol.wait) before it exits (generic_gemm.cuh, generic_r8.cuh), so a launch
 // is never concurrent with the one two back unless the one between also released. This is read
