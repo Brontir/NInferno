@@ -168,11 +168,30 @@ std::string_view source_of(moe::MoeAuthority a) {
     return "?";
 }
 
-// Whether an answer of this label is a table's or the tuner's (measured or carried), not a rule's.
-bool measured_label(moe::MoeAuthority a) {
-    using A = moe::MoeAuthority;
-    return a == A::Tuner || a == A::TableAsMeasured || a == A::TableW4a8 || a == A::TableClassA8 ||
-           a == A::TableR8Refused;
+// Whether an answer's evidence is what its authority gives: the source names the authority; a
+// table's is measured here (no donor) or carried (a donor class); the tuner's is measured; the
+// decode R8 route's names the measured board it was taken from (measured at distance 0, else
+// carried) or, with none near, the fallback literal; every other rule is a ranker's, no donor.
+bool evidence_fits(const moe::MoePlanQuery& q) {
+    using K       = moe::Evidence::Kind;
+    const auto& e = q.evidence;
+    if (e.source != source_of(q.authority)) return false;
+    const bool board_donor = e.donor == "rtx4090" || e.donor == "rtx5090" || e.donor == "rtx5080";
+    switch (q.authority) {
+    case moe::MoeAuthority::Tuner:
+        return e.kind == K::Measured && e.donor.empty();
+    case moe::MoeAuthority::TableAsMeasured:
+    case moe::MoeAuthority::TableW4a8:
+    case moe::MoeAuthority::TableClassA8:
+    case moe::MoeAuthority::TableR8Refused:
+        return (e.kind == K::Measured && e.donor.empty()) ||
+               (e.kind == K::Carried && !e.donor.empty());
+    case moe::MoeAuthority::DecodeR8:
+        if (e.kind == K::Ranker) return e.donor == "fallback-a8-route";
+        return board_donor && (e.kind == (e.distance == 0 ? K::Measured : K::Carried));
+    default:
+        return e.kind == K::Ranker && e.donor.empty();
+    }
 }
 
 const char* refusal(moe::BankRefusal why) { return moe::bank_refusal_name(why); }
@@ -184,12 +203,7 @@ std::string describe(const ops::MoeWeights& weights, const ops::MoeConfig& confi
     const moe::MoePlanQuery q = moe::moe_plan_query(weights, config, t, prefill);
     // The evidence names the authority that answered; a table's or the tuner's is measured or
     // carried, a rule's a ranker's (the decode R8 route carries a board's when one is near).
-    if (q.evidence.source != source_of(q.authority) ||
-        (measured_label(q.authority) && q.evidence.kind == moe::Evidence::Kind::Ranker) ||
-        (!measured_label(q.authority) && q.authority != moe::MoeAuthority::DecodeR8 &&
-         q.evidence.kind != moe::Evidence::Kind::Ranker)) {
-        ++g_evidence_mismatches;
-    }
+    if (!evidence_fits(q)) { ++g_evidence_mismatches; }
     const moe::MoeStageRoutes stages = moe::stage_routes(weights, q.plan);
     std::ostringstream out;
     out << moe::plan_name(q.plan) << " jobs=" << q.plan.job_columns << " "
@@ -327,15 +341,13 @@ int main(int argc, char** argv) {
             "tuner",        "invariant-profile", "route-table", "volta-hmma",
             "prefill-w4a8", "prefill-schedule",  "speed-w4a8",  "decode"};
         if (moe::authority_order() != expected_order) {
-            std::cerr << "moe plan golden: the authority order moved
-                         ";
-                ++failed;
+            std::cerr << "moe plan golden: the authority order moved\n";
+            ++failed;
         }
         if (g_evidence_mismatches != 0) {
             std::cerr << "moe plan golden: " << g_evidence_mismatches
-                      << " answers whose evidence does not match their authority
-                         ";
-                ++failed;
+                      << " answers whose evidence does not match their authority\n";
+            ++failed;
         }
         for (const generic::FactsBoard& b : boards()) {
             const auto path        = golden_dir() / kBuildSet / (std::string(b.name) + ".txt");
