@@ -8,6 +8,7 @@
 #include "ops/common/arch_limits.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_gemm_internal.h"
+#include "ops/generic/generic_select_detail.h"
 #include "ops/generic/generic_select_internal.h"
 
 #include <cstdint>

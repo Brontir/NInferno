@@ -4,6 +4,7 @@
 // CUDA runtime.
 
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_shared_bytes.h"
 #include "ops/common/arch_limits.h"
 #include "ops/common/native_nvfp4.h"
