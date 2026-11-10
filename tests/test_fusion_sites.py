@@ -1,7 +1,7 @@
 """tools/audit/fusion_sites.json against the code, no GPU (#617 step A).
 
-The registry lists every fusion site: a place where ops can run as one fused kernel or as separate
-launches. The code side is a marker line `// FUSION-SITE: <id>` directly above the signature of the
+The registry lists the fusion sites found so far (the markers enumerate it; a site nobody has marked
+is not in it): places where ops can run as one fused kernel or as separate launches. The code side is a marker line `// FUSION-SITE: <id>` directly above the signature of the
 function that decides the site today. The marker is the enumeration point on purpose: a grep over
 a list of function names would pass when someone adds a new decision function beside them, and a
 marker moves with its function when the function is renamed or moved. A new site then needs two
@@ -83,20 +83,35 @@ def names_function(line, name):
     return bool(m) and not (set(re.findall(r"\w+", m.group(1))) & KEYWORDS)
 
 
+# What may stand between a definition's parameter list and its `{`: qualifiers, attributes, a trailing
+# return type, a requires clause. Anything else (`==`, `,`, `<`, a lambda introducer) is an expression.
+TAIL = re.compile(
+    r"^(?:\s|const\b|volatile\b|noexcept(?:\([^)]*\))?|override\b|final\b|&&?|\[\[[^\]]*\]\]"
+    r"|->[^;{=]*|requires\b[^;{]*)*$")
+
+
 def starts_definition(lines, j):
-    """True when the statement that starts at line j reaches a `{` before a `;` outside every
-    parenthesis: a function definition, not a call (whose braced or lambda arguments sit inside
-    the parentheses) or a declaration."""
-    depth = 0
+    """True when the statement that starts at line j is a function definition: after the closing
+    parenthesis of the first parameter list only qualifier tokens stand before the `{`, and the
+    `{` comes before any `;`. A call whose arguments hold braces or lambdas, or an expression
+    statement such as `select(a) == T{1};`, is not."""
+    depth, closed, tail = 0, False, ""
     for k in range(j, min(j + 12, len(lines))):
-        for ch in re.sub(r"//.*", "", lines[k]):
+        for ch in re.sub(r"//.*", "", lines[k]) + "\n":
+            if depth == 0 and closed:
+                if ch == "{":
+                    return bool(TAIL.match(tail))
+                if ch == ";":
+                    return False
+                tail += ch
+                continue
             if ch == "(":
                 depth += 1
             elif ch == ")":
                 depth -= 1
-            elif depth <= 0 and ch == "{":
-                return True
-            elif depth <= 0 and ch == ";":
+                if depth == 0:
+                    closed = True
+            elif depth == 0 and ch == ";":
                 return False
     return False
 

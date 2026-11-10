@@ -1848,6 +1848,7 @@ void launch_sparse_moe_prefill_nvfp4(const __nv_bfloat16* input, const SparseMoe
 
 } // namespace
 
+// FUSION-SITE: sparse_moe_prefill_route
 void sparse_moe_prefill_launch(const Tensor& x, const SparseMoeWeights& weights,
                                Tensor& destination, const SparseMoePrefillPlan& plan,
                                const SparseMoePrefillWorkspace& workspace,
