@@ -60,12 +60,11 @@ ninferno_add_test(ninferno_gate_atlas_test
 # (ops/generic/route_cost_constants.h); `--list` prints them. No GPU.
 ninferno_add_test(ninferno_route_cost_constants_test NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_route_cost_constants.cpp")
-# Also: every Fitted constant carries a Holdout record (core/holdout.h).
 set_tests_properties(ninferno_route_cost_constants_test PROPERTIES LABELS host)
 
-# The holdout records of the other fitted constants (core/fitted_holdouts.h): the choice's speed
-# model, the generation row's scales, the speculation launch time and routed share, the SM-wave
-# rule. An Unset record, an unrecorded constant of choice_constants.h or a wrong count fails. No GPU.
+# The holdout records of every fitted constant (core/fitted_holdouts.h, the one mechanism): each
+# key matches its definition in its file, every Fitted-marked definition of the covered files has
+# a record or sits on the test's not-fitted list, an Unset record or a wrong total fails. No GPU.
 ninferno_add_test(ninferno_fitted_holdouts_test NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_fitted_holdouts.cpp")
 set_tests_properties(ninferno_fitted_holdouts_test PROPERTIES LABELS host)
