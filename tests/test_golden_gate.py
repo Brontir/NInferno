@@ -43,13 +43,30 @@ class PathMatching(unittest.TestCase):
 
     def test_decision_files(self):
         for f in ["src/ops/generic/generic_cost.cpp", "src/ops/generic/selector_facts.h", "routes/gb202.json",
-                  "routes/tuner/dense_tune.json", "src/core/data/gpu_facts.json", "src/product/choice/choice.cpp",
+                  "routes/tuner/dense_tune.json", "src/core/data/gpu_facts.json",
                   "src/ops/generic/data/kernel_facts/a/b.json", "src/ops/generic/my_route_authorities.cpp"]:
             self.assertTrue(self.match(f), f)
 
     def test_other_files(self):
-        for f in ["README.md", "src/ops/generic/generic_tiled.cu", "src/core/data/other.json", "routesx/a.json"]:
+        for f in ["README.md", "src/ops/generic/generic_gemm_q8.cu", "src/core/data/other.json", "routesx/a.json",
+                  "src/product/choice/choice.cpp"]:
             self.assertFalse(self.match(f), f)
+
+    def test_device_files_with_host_decision_functions_are_decision_files(self):
+        for f in ["src/ops/generic/generic_tiled.cu", "src/ops/generic/generic_staged.cu",
+                  "src/ops/generic/generic_volta_hmma.cu", "src/ops/generic/generic_volta_cutlass.cu",
+                  "src/ops/generic/generic_volta_gemv.cu", "src/ops/generic/ggml_mmq/ggml_vec.cu",
+                  # the files these functions move to (generic_routes.cpp, ggml_mmq_host.cpp) match the
+                  # src/ops/generic/*.cpp glob, whichever change lands first
+                  "src/ops/generic/generic_routes.cpp", "src/ops/generic/ggml_mmq_host.cpp"]:
+            self.assertTrue(self.match(f), f)
+
+    def test_glob_ends_are_anchored(self):
+        rx = gg.glob_to_regex("src/*.h")
+        self.assertTrue(rx.match("src/a.h"))
+        self.assertFalse(rx.match("src/a.hpp"))  # not end-anchored: would match
+        self.assertFalse(rx.match("xsrc/a.h"))  # a search instead of a match: would match
+        self.assertFalse(gg.decision_files(["old/routes/a.json"], PATHS))
 
     def test_double_star(self):
         rx = gg.glob_to_regex("a/**/b.txt")
@@ -74,6 +91,8 @@ NOT_DECIDING = {
     "src/core/weight_view.cpp", "src/core/weight_view.h",
     # device code reached through the listed ggml_mmq.cu / generic_gemm.cpp: it computes, the
     # selector reads none of its constants
+    "src/ops/generic/generic_staged.cuh", "src/ops/generic/generic_tiled.cuh",
+    "src/ops/generic/generic_volta_hmma.cuh",  # kernel templates of the listed generic_*.cu files
     "src/ops/common/e2m1.cuh", "src/ops/common/fp8_e4m3.cuh", "src/ops/common/memory.cuh",
     "src/ops/common/mma.cuh", "src/ops/generic/generic_gemm.cuh", "src/ops/generic/ggml_iq_tables.cuh",
     "src/ops/linear/fp8/fp8_a16_codec.cuh",
@@ -109,6 +128,9 @@ NOT_DECIDING = {
     "src/product/plan/plan_facts.cpp", "src/spec/round_cost.cpp",  # plan, spec costs
     "src/runtime/engine/engine.cpp", "src/runtime/engine/model_instance.cpp",  # engine setup
     "src/runtime/engine/warmup_widths.cpp",
+    # the configuration choice (product code): the golden test links core and ops only, so nothing here
+    # can move a selector golden
+    "src/product/choice/choice.cpp",
 }
 # Includes that resolve to no tracked file: generated at build time (name -> the generator input,
 # which must be listed) or third-party code.
@@ -119,7 +141,7 @@ GENERATED = {
     # which sm_*.txt snapshots are embedded is decided by sources.cmake (listed too)
     "ops/generic/embedded_kernel_facts.h": "src/ops/generic/embedded_kernel_facts.h.in",
 }
-THIRD_PARTY = ("ggml-cuda/", "nlohmann/")
+THIRD_PARTY = ("ggml-cuda/", "nlohmann/", "cutlass/")
 INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]', re.M)
 SOURCE_EXT = (".h", ".hpp", ".cuh", ".cpp", ".cu", ".cc")
 
@@ -201,9 +223,11 @@ class Closure(unittest.TestCase):
 # (tools/kernel_facts, tools/bench/r8_decode_table.py, route_table_merge.py, moe_tune_to_table.py)
 # are run by hand, not by the build; what they write is listed, so a change shows in that file.
 EXCLUDED = [
-    ("**/*.cu", "device code: it computes the route it is given; what a kernel costs the selector "
+    ("**/*.cu", "device code: kernels compute the route they are given; what a kernel costs the selector "
                 "(registers, spills) is read from the kernel-facts snapshots, which are listed, and a kernel "
-                "change that moves them fails ninferno_kernel_facts_test until they are regenerated"),
+                "change that moves them fails ninferno_kernel_facts_test until they are regenerated. A .cu "
+                "file that also defines a host function the selector calls is NOT covered by this line: it "
+                "is listed in decision_paths.txt, and HostFunctions below finds a new one by name"),
     ("**/*.cuh", "device code, as .cu"),
     ("src/core/cyclic_kv_cache.cpp", "KV cache state"), ("src/core/paged_kv_cache.cpp", "KV cache state"),
     ("src/core/host_kv_arena.cpp", "KV cache state"), ("src/core/linear_attention_state.cpp", "state"),
@@ -242,7 +266,8 @@ EXCLUDED = [
     ("src/ui/**", "web UI: not linked into the golden test"),
 ]
 EXCLUDED_RX = [(g, gg.glob_to_regex(g), why) for g, why in EXCLUDED]
-NON_CODE_EXT = (".json", ".inc", ".in", ".cmake", ".txt", ".html", ".manifest")
+NON_CODE_EXT = (".json", ".inc", ".in", ".cmake", ".txt", ".html", ".manifest", ".csv", ".tsv", ".def", ".yaml",
+                ".yml", ".toml")
 SOURCE_LIST_ROOTS = ("src/core", "src/ops")
 LISTED_SOURCE = re.compile(r'["\s]((?:\$\{CMAKE_CURRENT_LIST_DIR\}/)?[\w/.\-]+\.(?:cpp|cu))\b')
 
@@ -301,9 +326,9 @@ class Completeness(unittest.TestCase):
     def test_the_gate_guards_itself(self):
         # a PR that edits the manifest, the gate, its diff tool, its workflow or its tests is a
         # decision-path change: it needs a golden change or the label, and the reviewer sees it
-        for f in ("tools/audit/decision_paths.txt", "tools/audit/golden_gate.py", "tools/audit/golden_diff.py",
-                  ".github/workflows/golden-gate.yml", "tests/test_golden_gate.py"):
+        for f in gg.GATE_FILES:
             self.assertTrue(gg.decision_files([f], PATHS), f)
+            self.assertTrue((ROOT / f).exists(), f)
 
     def test_build_inputs_of_the_embedded_kernel_facts_and_the_direct_selector_inputs(self):
         for f in ("src/ops/generic/sources.cmake", "src/ops/generic/embedded_kernel_facts.h.in",
@@ -311,11 +336,271 @@ class Completeness(unittest.TestCase):
                   "src/core/mmq_columns.h", "src/core/measured_boards.h"):
             self.assertTrue(gg.decision_files([f], PATHS), f)
 
-    def test_workflow_reruns_on_an_edited_description(self):
+    def test_workflow_reruns_on_label_events_and_on_edit_of_the_description_or_base(self):
         text = (ROOT / ".github/workflows/golden-gate.yml").read_text(encoding="utf-8")
         types = re.search(r"types:\s*\[([^\]]*)\]", text).group(1)
         for t in ("opened", "synchronize", "reopened", "labeled", "unlabeled", "edited"):
             self.assertIn(t, types)
+
+
+# Host functions in device files. A .cu file in the selector's own directory can define host
+# functions the selector calls (is this codec tiled, does this schedule fit, how big is the
+# workspace); they are decisions, and the golden moves when they change. They are found by name,
+# not by file: a function declared in a listed header under src/ops/generic and defined in a .cu
+# file that is not listed fails the test, wherever it lives today and wherever it moves to.
+# Launchers (launch_*) run a route and are not decisions.
+HOST_FN_SCOPE = gg.glob_to_regex("src/ops/generic/**/*.cu*")  # .cu and .cuh
+HOST_FN_HEADERS = gg.glob_to_regex("src/ops/generic/**/*.h")
+HOST_FN_DECL = re.compile(r"^[ \t]*(?:\[\[nodiscard\]\]\s*)?(?:inline\s+|constexpr\s+|static\s+)*[\w:<>,*&\s]+?[\s*&]"
+                          r"(\w+)\s*\([^;{]*\)\s*(?:const\s*)?(?:noexcept\s*)?;", re.M)
+HOST_FN_DEF = re.compile(r"^(?![ \t#/])(?!static\b|template\b|__)[\w:<>,*&\s]*?[\s*&](\w+)\s*\([^;{]*\)\s*"
+                         r"(?:const\s*)?(?:noexcept\s*)?\{", re.M)
+RUNS_A_ROUTE = "launch_"
+
+
+def read_text(f, extra):
+    return extra[f] if f in extra else (ROOT / f).read_text(encoding="utf-8", errors="replace")
+
+
+def host_decision_functions(files, extra=None):
+    """{unlisted .cu file: sorted names of host functions it defines that a listed header declares}."""
+    extra = extra or {}
+    declared = set()
+    for f in files:
+        if f.endswith(".h") and HOST_FN_HEADERS.match(f) and gg.decision_files([f], PATHS):
+            declared |= set(HOST_FN_DECL.findall(read_text(f, extra)))
+    declared -= {"if", "for", "while", "switch", "return", "sizeof", "decltype"}  # not functions
+    out = {}
+    for f in sorted(set(files) | set(extra)):
+        if not (f.endswith((".cu", ".cuh")) and HOST_FN_SCOPE.match(f)) or gg.decision_files([f], PATHS):
+            continue
+        found = sorted(n for n in set(HOST_FN_DEF.findall(read_text(f, extra)))
+                       if n in declared and not n.startswith(RUNS_A_ROUTE))
+        if found:
+            out[f] = found
+    return out
+
+
+class HostFunctions(unittest.TestCase):
+    def test_no_unlisted_device_file_defines_a_host_function_the_selector_calls(self):
+        self.assertEqual(host_decision_functions(tracked()), {},
+                         "list these .cu files in tools/audit/decision_paths.txt (or move the host function "
+                         "into a listed .cpp file)")
+
+    def test_a_new_host_decision_function_in_a_device_file_is_caught(self):
+        files = tracked()
+        new = {"src/ops/generic/generic_new_kernel.cu":
+               "namespace ninferno {\nbool tiled_fits(int schedule, WeightCodec codec) {\n    return true;\n}\n}\n"}
+        self.assertEqual(host_decision_functions(files, new),
+                         {"src/ops/generic/generic_new_kernel.cu": ["tiled_fits"]})
+
+    def test_the_finder_sees_the_functions_of_the_listed_files(self):
+        # the same finder, with the manifest ignored, must find each function named in the review of #649
+        files = tracked()
+        saved = list(PATHS)
+        PATHS[:] = [p for p in saved if not p[0].endswith(".cu")]
+        try:
+            found = host_decision_functions(files)
+        finally:
+            PATHS[:] = saved
+        for f, name in [("src/ops/generic/generic_tiled.cu", "tiled_fits"),
+                        ("src/ops/generic/generic_tiled.cu", "tiled_supports"),
+                        ("src/ops/generic/generic_staged.cu", "staged_fits"),
+                        ("src/ops/generic/generic_volta_hmma.cu", "volta_hmma_takes"),
+                        ("src/ops/generic/generic_volta_cutlass.cu", "volta_cutlass_workspace_bytes"),
+                        ("src/ops/generic/generic_volta_cutlass.cu", "volta_cutlass_chunk_bytes"),
+                        ("src/ops/generic/ggml_mmq/ggml_vec.cu", "vec_supported")]:
+            self.assertIn(name, found.get(f, []), f"{f}: {name}")
+
+    def test_a_launcher_is_not_a_decision(self):
+        new = {"src/ops/generic/generic_new_kernel.cu":
+               "namespace ninferno {\nvoid launch_rmma_q4(int schedule, Epilogue e, const GemmArgs& args,\n"
+               "                    cudaStream_t stream) {\n}\n}\n"}
+        self.assertEqual(host_decision_functions(tracked(), new), {})
+
+
+class Workflow(unittest.TestCase):
+    """The workflow file is the only thing that wires the two scripts to the event: pin the wiring."""
+
+    @classmethod
+    def setUpClass(cls):
+        raw = (ROOT / ".github/workflows/golden-gate.yml").read_text(encoding="utf-8")
+        cls.text = "\n".join(l for l in raw.splitlines() if not l.lstrip().startswith("#"))
+
+    def test_runs_on_pull_request_never_pull_request_target(self):
+        self.assertRegex(self.text, r"(?m)^  pull_request:\s*$")
+        self.assertNotIn("pull_request_target", self.text)
+        self.assertRegex(self.text, r"(?m)^  contents: read\s*$")
+
+    def test_full_history_so_the_merge_base_exists(self):
+        self.assertRegex(self.text, r"fetch-depth:\s*0\b")
+
+    def test_gate_gets_the_event_the_base_ref_and_the_manifest(self):
+        run = re.search(r'python3 -B "\$gate/golden_gate.py"[^\n]*', self.text).group(0)
+        for part in ('--base-ref "$BASE_REF"', '--event "$GITHUB_EVENT_PATH"', "--paths tools/audit/decision_paths.txt"):
+            self.assertIn(part, run)
+        self.assertIn("BASE_REF: ${{ github.base_ref }}", self.text)
+
+    def test_scripts_come_from_the_base_branch_when_it_has_them(self):
+        self.assertIn('gate="$RUNNER_TEMP/gate"', self.text)
+        for name in ("golden_gate.py", "golden_diff.py"):
+            self.assertIn(f'git show "origin/$BASE_REF:tools/audit/{name}" > "$RUNNER_TEMP/gate/{name}"', self.text)
+
+    def test_the_gate_cannot_fail_open(self):
+        self.assertNotIn("|| true", self.text)
+        self.assertNotIn("continue-on-error", self.text)
+        self.assertNotIn("if: always()", self.text)
+        self.assertRegex(self.text, r'(?m)^\s*exit "\$rc"\s*$')  # the gate's own code is the step's code
+
+    def test_exit_2_prints_a_hint(self):
+        self.assertRegex(self.text, r'\[ "\$rc" -eq 2 \]')
+        self.assertIn("::error::", self.text)
+        self.assertIn("a PR of its own", self.text)
+
+    def test_both_test_files_run(self):
+        for name in ("tests/test_golden_gate.py", "tests/test_golden_diff.py"):
+            self.assertRegex(self.text, r"python3 -B " + re.escape(name))
+
+
+GOLDEN_BASE = ("# v100 gv100:80sm sm70\n"
+               "q4 p0 store 256x2048 speed T=1..16 rmma.m1.n2.w4x1 ws=0\n"
+               "q4 p0 store 256x2048 speed T=17..2048 tiled.128x128 ws=0\n")
+GOLDEN_MOVED = GOLDEN_BASE.replace("T=17..2048 tiled.128x128", "T=17..2048 tiled.64x128")
+GOLDEN_FILE = "tests/ops/linear/selector_golden/full/v100.txt"
+MISSING = object()  # gate(tool=MISSING): the diff tool is not there
+
+
+class EndToEnd(unittest.TestCase):
+    """Both scripts run as processes, beside each other, over a small git repository (as in CI)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        root = Path(cls.tmp.name)
+        cls.repo, cls.scripts = root / "repo", root / "gate"
+        cls.repo.mkdir()
+        cls.scripts.mkdir()
+        for name in ("golden_gate.py", "golden_diff.py"):
+            (cls.scripts / name).write_text((ROOT / "tools/audit" / name).read_text(encoding="utf-8"), encoding="utf-8")
+        cls.paths = root / "paths.txt"
+        cls.paths.write_text("routes/**\n", encoding="utf-8")
+        cls.git("init", "-q", "-b", "master")
+        cls.git("config", "user.email", "t@example.com")
+        cls.git("config", "user.name", "t")
+        cls.git("config", "core.autocrlf", "false")
+        cls.write({"routes/a.json": "{}\n", "README.md": "x\n", GOLDEN_FILE: GOLDEN_BASE})
+        cls.git("add", "-A")
+        cls.git("commit", "-q", "-m", "base")
+        cls.git("update-ref", "refs/remotes/origin/master", "HEAD")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    @classmethod
+    def git(cls, *args):
+        return subprocess.run(["git", *args], cwd=cls.repo, check=True, capture_output=True, text=True).stdout
+
+    @classmethod
+    def write(cls, files):
+        for rel, text in files.items():
+            p = cls.repo / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text, encoding="utf-8", newline="\n")
+
+    def gate(self, files, labels=(), tool=None, base="master", remove=()):
+        """Commit `files` on a branch off origin/master, run golden_gate.py as a process: (rc, stdout, stderr)."""
+        self.git("checkout", "-q", "-B", "pr", "refs/remotes/origin/master")
+        self.write(files)
+        for rel in remove:
+            (self.repo / rel).unlink()
+        self.git("add", "-A")
+        self.git("commit", "-q", "--allow-empty", "-m", "change")
+        ev = Path(self.tmp.name) / "event.json"
+        ev.write_text(json.dumps(event(*labels)), encoding="utf-8")
+        tool_path = self.scripts / "golden_diff.py"
+        original = tool_path.read_text(encoding="utf-8")
+        if tool == MISSING:
+            tool_path.unlink()
+        elif tool is not None:
+            tool_path.write_text(tool, encoding="utf-8")
+        try:
+            p = subprocess.run([sys.executable, "-B", str(self.scripts / "golden_gate.py"), "--base-ref", base,
+                                "--event", str(ev), "--paths", str(self.paths), "--repo", str(self.repo)],
+                               capture_output=True, text=True)
+        finally:
+            tool_path.write_text(original, encoding="utf-8")
+        return p.returncode, p.stdout, p.stderr
+
+    def test_decision_change_with_equal_goldens_is_refused_and_the_label_passes_it(self):
+        rc, out, _ = self.gate({"routes/a.json": '{"x": 1}\n'})
+        self.assertEqual(rc, 1, out)
+        self.assertIn("goldens-equal", out)
+        rc, out, _ = self.gate({"routes/a.json": '{"x": 1}\n'}, labels=["goldens-equal"])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("claims", out)
+
+    def test_moved_goldens_pass_without_the_label_and_show_the_summary(self):
+        rc, out, _ = self.gate({"routes/a.json": '{"x": 1}\n', GOLDEN_FILE: GOLDEN_MOVED})
+        self.assertEqual(rc, 0, out)
+        self.assertIn("total: ", out)
+        self.assertIn("tiled.64x128", out)
+
+    def test_an_added_board_file_counts_as_moved(self):
+        rc, out, _ = self.gate({"routes/a.json": '{"x": 1}\n',
+                                "tests/ops/linear/selector_golden/full/v101.txt": GOLDEN_BASE})
+        self.assertEqual(rc, 0, out)
+        self.assertIn("1 board files added/removed", out)
+
+    def test_a_meta_only_change_counts_as_moved(self):
+        rc, out, _ = self.gate({"routes/a.json": '{"x": 1}\n',
+                                GOLDEN_FILE: GOLDEN_BASE.replace("# v100 gv100:80sm sm70", "# v100 gv100:80sm sm71")})
+        self.assertEqual(rc, 0, out)
+        self.assertIn("1 meta changes", out)
+
+    def test_a_removed_board_file_counts_as_moved(self):
+        rc, out, _ = self.gate({"routes/a.json": '{"x": 1}\n'}, remove=[GOLDEN_FILE])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("1 board files added/removed", out)
+
+    def test_no_decision_file_changed_passes_without_running_the_diff(self):
+        rc, out, _ = self.gate({"README.md": "y\n"}, tool="raise SystemExit('must not run')\n")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("nothing to check", out)
+
+    def test_goldens_only_says_so(self):
+        rc, out, _ = self.gate({GOLDEN_FILE: GOLDEN_MOVED})
+        self.assertEqual(rc, 0, out)
+        self.assertIn("reviewer reads the golden diff", out)
+
+    def test_moe_plan_goldens_are_named_and_not_read(self):
+        rc, out, _ = self.gate({"routes/a.json": '{"x": 1}\n', "tests/ops/moe_plan_golden/base/a.txt": "x\n"})
+        self.assertEqual(rc, 1, out)  # selector goldens are equal: still refused
+        self.assertIn("1 MoE plan golden file(s) changed; the gate does not read them", out)
+        self.assertIn("MoE plan goldens are not read", out)
+
+    def test_editing_the_gate_itself_is_called_out(self):
+        rc, out, _ = self.gate({"tools/audit/golden_gate.py": "# edited\n"})
+        self.assertIn("edits the gate itself", out)
+        self.assertIn("tools/audit/golden_gate.py", out)
+
+    def test_a_broken_diff_tool_is_exit_2_whatever_its_own_code(self):
+        for name, tool in [("syntax error", "def broken(:\n"),
+                           ("sys.exit with a message", "import sys\nsys.exit('boom')\n"),
+                           ("empty file", ""),
+                           ("uncaught exception", "raise RuntimeError('boom')\n")]:
+            rc, out, err = self.gate({"routes/a.json": '{"x": 1}\n'}, tool=tool)
+            self.assertEqual(rc, 2, f"{name}: {out}{err}")
+        rc, _, _ = self.gate({"routes/a.json": '{"x": 1}\n'}, labels=["goldens-equal"], tool="def broken(:\n")
+        self.assertEqual(rc, 2)  # the label does not help
+
+    def test_a_missing_diff_tool_is_exit_2(self):
+        rc, out, err = self.gate({"routes/a.json": '{"x": 1}\n'}, tool=MISSING)
+        self.assertEqual(rc, 2, out + err)
+
+    def test_an_unknown_base_ref_is_exit_2(self):
+        rc, out, err = self.gate({"routes/a.json": '{"x": 1}\n'}, base="no-such-branch")
+        self.assertEqual(rc, 2, out + err)
 
 
 class ToolFailuresExitTwo(unittest.TestCase):
@@ -393,6 +678,7 @@ REVERSE_HEADERS = {
     "src/ops/generic/generic_select_internal.h", "src/ops/generic/format_traits.h",
     "src/ops/generic/generic_gemm.h", "src/ops/route_pins.h", "src/core/mmq_columns.h",
     "src/core/board_registry.h", "src/core/cost_constants.h", "src/core/machine_facts.h",
+    "src/ops/generic/generic_gemm_internal.h", "src/ops/generic/ggml_mmq/ggml_mmq.h",
 }
 REVERSE_SCOPE = [gg.glob_to_regex(g) for g in ("src/**/*.cpp", "src/**/*.cu")]
 
@@ -418,8 +704,10 @@ def reverse_includers(files):
 class Reverse(unittest.TestCase):
     def test_sources_including_a_listed_header_are_listed_or_not_deciding(self):
         files = tracked()
+        # device files of the generic directory are judged by function (HostFunctions), not by include
         missing = sorted(f for f in reverse_includers(files)
-                         if f not in NOT_DECIDING and not gg.decision_files([f], PATHS))
+                         if f not in NOT_DECIDING and not gg.decision_files([f], PATHS)
+                         and not (f.endswith(".cu") and HOST_FN_SCOPE.match(f)))
         self.assertEqual(missing, [], "list them in decision_paths.txt, or in NOT_DECIDING with a reason")
 
 

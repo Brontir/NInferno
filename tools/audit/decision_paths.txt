@@ -1,5 +1,9 @@
 # Files whose change can move a selector golden (tests/ops/linear/selector_golden): the route
-# selector, its cost model, the route tables, the device facts and the choice sources.
+# selector, its cost model, the route tables, the device facts and the files those are built from.
+# The golden test links the core and ops libraries only: product code (src/product/**, for example
+# the configuration choice) cannot move it and is not listed. The MoE plan goldens
+# (tests/ops/moe_plan_golden) are a second family: golden_gate.py does not read them, and the MoE
+# decision code is not listed.
 # Used by tools/audit/golden_gate.py (CI: a change here with no golden change needs the
 # `goldens-equal` label). One glob per line; `*` stays in one path segment, `**` crosses
 # directories. A pattern that matches no file today is allowed (a planned location).
@@ -32,7 +36,6 @@ src/core/device_class.*
 src/core/device_class_host.*
 src/core/arch_registry.h
 src/core/generation.*
-src/product/choice/**
 src/ops/generic/data/kernel_facts/**
 # headers the selector sources compile in (checked by tests/test_golden_gate.py: every file in
 # their include closure is listed here or named there as not deciding)
@@ -65,6 +68,17 @@ src/core/arch_family.cuh
 src/ops/generic/random_weight.h
 src/ops/generic/ggml_mmq/ggml_mmq.cu
 src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh
+# device files that also define host functions the selector calls (tiled_supports, tiled_fits,
+# staged_fits, volta_hmma_takes, volta_cutlass_workspace_bytes, vec_supported, ...).
+# tests/test_golden_gate.py finds such a function by name wherever it is defined, so a new one in
+# another .cu file fails by name. If those functions move into src/ops/generic/*.cpp files (the
+# globs below list them), these lines may stay: a literal line is only checked to name a file.
+src/ops/generic/generic_tiled.cu
+src/ops/generic/generic_staged.cu
+src/ops/generic/generic_volta_hmma.cu
+src/ops/generic/generic_volta_cutlass.cu
+src/ops/generic/generic_volta_gemv.cu
+src/ops/generic/ggml_mmq/ggml_vec.cu
 src/ops/moe/moe_internal.h
 include/ninferno/ops/linear.h
 include/ninferno/ops/moe.h
@@ -92,6 +106,7 @@ src/ops/prefill_routes.cpp
 tools/audit/decision_paths.txt
 tools/audit/golden_gate.py
 tools/audit/golden_diff.py
+tests/test_golden_diff.py
 .github/workflows/golden-gate.yml
 # sources that read the selector's own headers (found by the reverse check in tests/test_golden_gate.py)
 src/ops/generic/*.cpp

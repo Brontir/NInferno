@@ -11,6 +11,10 @@
    Goldens equal and the PR carries the label `goldens-equal`: pass, print the author's claim.
    Goldens equal and no label: fail.
 The labels come from the pull_request event payload, so the job needs no token.
+Only the selector goldens (tests/ops/linear/selector_golden) are read. The MoE plan goldens
+(tests/ops/moe_plan_golden) are not compared: a change there is counted and named, nothing more.
+The label is not tied to a commit: it stays on after later pushes, and the author's claim then
+covers them all.
 Exit: 0 pass, 1 gate failed, 2 the tools themselves failed.
 """
 import argparse
@@ -24,6 +28,13 @@ LABEL = "goldens-equal"
 HERE = Path(__file__).resolve().parent
 PATHS_FILE = HERE / "decision_paths.txt"
 GOLDEN_DIFF = HERE / "golden_diff.py"
+SELECTOR_GOLDENS = "tests/ops/linear/selector_golden/"
+MOE_GOLDENS = "tests/ops/moe_plan_golden/"
+# the gate's own files: a PR that edits them changes what the gate checks
+GATE_FILES = ("tools/audit/decision_paths.txt", "tools/audit/golden_gate.py", "tools/audit/golden_diff.py",
+              "tests/test_golden_diff.py", "tests/test_golden_gate.py", ".github/workflows/golden-gate.yml")
+# the line golden_diff prints whenever it exits 1 on purpose (--fail-on-change)
+TOTAL_LINE = re.compile(r"^total: \d+ decisions changed", re.M)
 
 
 def glob_to_regex(pattern):
@@ -74,8 +85,8 @@ def decide(touched, golden_rc, labels):
         return 0, ("decision path changed and the goldens moved: "
                    "the summary above is for the reviewer")
     if LABEL in labels:
-        return 0, (f"label `{LABEL}`: the author claims this change is golden-equal; "
-                   "the goldens are equal")
+        return 0, (f"label `{LABEL}`: the author claims every selector decision is as it was; "
+                   "the selector goldens are equal (MoE plan goldens are not compared)")
     return 1, (
         "the decision path changed but no selector golden did.\n"
         "If the change is meant to move decisions, regenerate the goldens "
@@ -83,7 +94,9 @@ def decide(touched, golden_rc, labels):
         "If it is a refactor that leaves every decision as it was, "
         f"add the label `{LABEL}` to the PR;\n"
         "the label event starts a new run. Re-running the old run replays the old payload "
-        "and keeps failing: add the label, do not re-run."
+        "and keeps failing: add the label, do not re-run.\n"
+        f"Only the selector goldens ({SELECTOR_GOLDENS}) are compared; the MoE plan goldens are not read.\n"
+        "The label stays on after later pushes: it is the author's claim for the whole PR."
     )
 
 
@@ -124,6 +137,15 @@ def main(argv=None, run_diff=None, changed_files=None, base_list=None):
             changed = changed_files
         touched = decision_files(changed, patterns)
         golden_rc = 0
+        gate_edits = [f for f in changed if f in GATE_FILES]
+        if gate_edits:
+            print("this PR edits the gate itself, and the workflow that runs here is the PR's own copy: "
+                  "review those files by hand:\n  " + "\n  ".join(gate_edits))
+        moe_goldens = [f for f in changed if f.startswith(MOE_GOLDENS)]
+        if moe_goldens:
+            print(f"{len(moe_goldens)} MoE plan golden file(s) changed; the gate does not read them")
+        if not touched and any(f.startswith(SELECTOR_GOLDENS) for f in changed):
+            print("selector goldens changed, no decision-path file did: the reviewer reads the golden diff")
         if touched:
             print("decision-path files changed:\n  " + "\n  ".join(touched))
             if run_diff is None:
@@ -135,9 +157,13 @@ def main(argv=None, run_diff=None, changed_files=None, base_list=None):
             else:
                 golden_rc, out = run_diff(rng)
             print(out.rstrip())
-            # an old golden_diff dies on an uncaught exception with exit 1, the code of "goldens
-            # changed": a traceback is a tool failure, whatever the code says
-            if golden_rc == 1 and "Traceback (most recent call last)" in out:
+            # Exit 1 is "goldens changed" only if golden_diff reached its summary line. A crash (a
+            # traceback, a syntax error, sys.exit("message")) also exits 1 and prints no such line.
+            if golden_rc == 1 and not TOTAL_LINE.search(out):
+                golden_rc = 2
+            # and exit 0 with nothing printed is not "goldens equal" either: golden_diff always says
+            # at least "no golden changes"
+            if golden_rc == 0 and not out.strip():
                 golden_rc = 2
             if golden_rc not in (0, 1):
                 print("golden_gate: golden_diff failed", file=sys.stderr)
