@@ -3,6 +3,7 @@
 // Private launch entry points of the generic projection path, one per compiled family and format.
 
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/kernel_facts.h"
 
 #include <cuda_runtime.h>
 
@@ -35,6 +36,25 @@ inline void describe_kernel(KernelResources& out, const cudaFuncAttributes& a, d
     out.max_threads_per_block = a.maxThreadsPerBlock;
     out.ptx_version           = a.ptxVersion;
     out.binary_version        = a.binaryVersion;
+    out.grid_x                = grid.x;
+    out.grid_y                = grid.y;
+    out.grid_z                = grid.z;
+    out.latency_variant       = latency;
+}
+
+// The same from a kernel's committed facts (kernel_facts.h, #612): what the register-MMA launch
+// describes. The block limit is the launch bounds' (Schedule::kThreads); the versions are the
+// build's architecture.
+inline void describe_kernel(KernelResources& out, const kernel_facts::KernelFacts& f, dim3 grid,
+                            int threads, std::size_t dynamic_smem, bool latency) noexcept {
+    out.registers             = f.registers;
+    out.local_bytes           = f.spill_bytes();
+    out.static_smem           = f.static_shared_bytes;
+    out.dynamic_smem          = dynamic_smem;
+    out.threads               = threads;
+    out.max_threads_per_block = threads;
+    out.ptx_version           = NINFERNO_BUILD_ARCH;
+    out.binary_version        = NINFERNO_BUILD_ARCH;
     out.grid_x                = grid.x;
     out.grid_y                = grid.y;
     out.grid_z                = grid.z;
@@ -197,8 +217,14 @@ void launch_tiled(int schedule, WeightCodec codec, Epilogue epilogue, const Gemm
 bool volta_cutlass_compiled() noexcept;
 std::size_t volta_cutlass_workspace_bytes(std::int32_t n, std::int32_t k, std::int32_t tokens,
                                           bool swiglu);
+// The bytes of the chunk launch_volta_cutlass takes from `free_bytes` of workspace (halved until
+// it fits); 0 when it would launch nothing for want of room.
+std::size_t volta_cutlass_chunk_bytes(std::int32_t n, std::int32_t k, std::int32_t tokens,
+                                      bool swiglu, std::size_t free_bytes);
+// `free_bytes`: the workspace the chunk is sized to (the call's aligned free space, as
+// volta_cutlass_chunk_bytes takes it).
 bool launch_volta_cutlass(WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
-                          WorkspaceArena& workspace, cudaStream_t stream);
+                          WorkspaceArena& workspace, std::size_t free_bytes, cudaStream_t stream);
 
 // Staged register MMA (generic_staged.cu): BF16 weights only.
 void launch_staged(int schedule, Epilogue epilogue, const GemmArgs& args, cudaStream_t stream);

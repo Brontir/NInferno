@@ -825,8 +825,12 @@ llama.cpp-style base URLs.
   markup. A reasoning tag that is plain vocabulary (Qwen's `<think>`) ends the turn only where
   the answer begins with it; after text it is prose that may quote the tag. `ignore_eos` does not
   change this: it keeps the model's own end-of-turn tokens from stopping the output, not this
-  rule. Syntaxes without such an opener (gpt-oss harmony, Atem, Llama 3 JSON) are not steered; a
-  call they write anyway is cut out of the answer, as is one written as plain text (a Qwen model
+  rule. gpt-oss harmony has no opener token: its call is a message of its own, so the request
+  carries a constraint that closes only the call header positions (`<|channel|>commentary`, a
+  `to` recipient after `<|start|>assistant`, `<|channel|>analysis` or `<|channel|>final`) and
+  leaves the analysis and the answer free; a request with its own constraint, with
+  `ignore_eos`, or continuing an assistant message keeps the cut alone. Atem and Llama 3 JSON are not steered. A call any syntax
+  writes anyway is cut out of the answer, as is one written as plain text (a Qwen model
   kept from `<tool_call>` can still write a bare `<function=...>`). A bare `{"name": "...",
   "arguments": ...}` object naming a declared tool (Hermes JSON) or Gemma 4's `call:...` is cut
   only where it begins the answer, never under `response_format`, and the text after it stays
@@ -2569,6 +2573,8 @@ CHOICE:
 | `resolution` | the speed estimate's resolution wherever a reference exists, as a fraction (0 without one): the generation's own decode error, or for a generation without one the error of carrying Ada's rows onto it (#618); `resolution_basis` says which: an alternative losing by less on a different speed is `within_resolution` (#301); a strictly more accurate candidate inside it of the best worth is chosen over it (DECISIONS 75) |
 | `resolution_basis` | what `resolution` rests on: `none` (no reference card, resolution 0), `own` (the generation's measured decode error), `transferred` (no own error; the measured carry of Ada's rows onto this generation), `unmeasured` (an assumed worst case, the largest measured carry, for a compute capability with no generation row or a generation with no carry measured: a label, not a bound) |
 | `chunk_by_speed` | `true` when an MoE's prefill chunk was the fastest on the generation's reference card; `false` when the default (or the pinned) chunk stood |
+| `chunk_basis` | what the chunk decision rests on: `own` (the generation the shares were measured on: it decides), `carried_curve` (another generation with two cards of MoE prefill rows: its saturated rate times the measured slope estimates the chunk, never decides it), `transferred` (neither), `none` (not an MoE, or the MoE chunk gate is closed) |
+| `chunk_estimate` | with `carried_curve`: the chunk the carried curve predicts fastest on this board; an estimate for an A/B, the pick stays the default |
 | `kv_options` | every `--kv-dtype` codec as a start of this model takes it: `codec`, `allowed`, `why_code` (`""`, `family_codec`: the family keeps BF16 or FP8 only, `head_width`: the Qwen paged pool's layout takes another head width, `shape_unknown`), `why` (English), `slow_on_card` (FP8 codes widened in software: no E4M3 instructions below sm_89; the codec runs, slower). The engine's own rules; ninferno-ui's KV buttons are drawn from it |
 | `activations_allowed` | the `--activations` modes the model's family runs (`fast`, `exact`, and `int8` for Qwen), whatever is pinned: what ninferno-ui's selector offers |
 | `chosen` | `null` when nothing fits (or a pinned `--activations` mode the family does not run: `why` says so); else `quant` (the quantization it was made at), `chunk` (the widest prefill chunk), `kv`, `ring`, `state`, `activations`, `depth` and `decode_tok_s_at_depth` (its decode at the quant table's depth), `drafter_gain` with a drafter (`one_request`: the gain one request measured; `at_concurrency`: the gain counted at the task's concurrency; `bounded_depth` and `depth_measured` where the load table bounds the depth there; `plain_from_streams` where it decodes plainly; `note` under load: a ceiling, the streams' joint verify not priced), and ESTIMATES |

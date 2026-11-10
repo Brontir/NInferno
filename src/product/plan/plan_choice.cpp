@@ -703,7 +703,8 @@ Json choice_json(const ServedChoice& served) {
                 {"resolution", round_to(served.choice.resolution, 4)},
                 {"resolution_basis",
                  std::string(choice::resolution_basis_name(served.choice.resolution_basis))},
-                {"chunk_by_speed", served.choice.chunk_by_speed}};
+                {"chunk_by_speed", served.choice.chunk_by_speed},
+                {"chunk_basis", std::string(choice::chunk_basis_name(served.choice.chunk_basis))}};
     // The activation modes the model runs (a choice the user may pin: --activations), whatever
     // is pinned now: what a selector offers.
     Json modes = Json::array();
@@ -719,6 +720,8 @@ Json choice_json(const ServedChoice& served) {
     }
     out["kv_options"] = kv;
     out["activations_allowed"] = modes;
+    // The chunk a carried curve predicts (an estimate for an A/B; the pick is the default).
+    if (served.choice.chunk_estimate != 0) { out["chunk_estimate"] = served.choice.chunk_estimate; }
     if (!served.choice.chosen) {
         out["chosen"] = nullptr;
         return out;
