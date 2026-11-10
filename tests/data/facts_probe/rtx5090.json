@@ -47,7 +47,7 @@
     "smem_per_block_optin": 101376,
     "smem_per_sm": 102400,
     "max_threads_per_sm": 1536,
-    "max_blocks_per_sm": 32,
+    "max_blocks_per_sm": 24,
     "registers_per_sm": 65536,
     "persisting_l2_max_bytes": 75497472,
     "memory_bus_bits": 0,
