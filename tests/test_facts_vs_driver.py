@@ -175,6 +175,22 @@ class Compare(unittest.TestCase):
         self.assertEqual(s[("table", "engine_reference_clock_khz")], "match")
         self.assertEqual(s[("table", "engine_l2_mib")], "match")
 
+    def test_mig_slice_reports_its_part(self):
+        # A half slice: half the SMs, the L2, the memory and the bus. Information, not failures;
+        # a whole board reporting the same smaller values still fails.
+        d = device_4090()
+        d["queried"].update(sms=64, l2_bytes=36 * MIB, global_bytes=12 * 1024 * MIB,
+                            memory_bus_bits=192)
+        d["engine_table_facts"]["source"] = 2
+        s = self.assert_no_mismatch(d)
+        for field in ("sms", "l2_mib", "vram_gib", "bus_bits"):
+            self.assertEqual(s[("table", field)], "info", field)
+        d["queried"]["sms"] = 128
+        d["engine_table_facts"]["source"] = 1
+        s = statuses(d)
+        self.assertEqual(s[("table", "l2_mib")], "mismatch")
+        self.assertEqual(s[("table", "vram_gib")], "mismatch")
+
     def test_engine_table_reading_against_the_json(self):
         d = device_4090()
         d["engine_table_facts"]["l2_mib"] = 64.0

@@ -108,18 +108,28 @@ def compare_device(device, row):
         else:
             out.append(result("table", "sms", row["sms"], q["sms"], "mismatch"))
         expected = engine_expected(q, row)
+        # A MIG slice reports its part of the L2, the memory and the bus; the engine prices the
+        # board's row at the slice's share of the SMs, so a smaller value is the slice's, not a
+        # wrong row.
+        slice_part = 0 < q["sms"] < row["sms"]
+        part_note = "a slice's part of the board's (MIG): the engine prices the row at its share"
         l2 = row.get("l2_mib")
         if l2 is None:
             out.append(result("table", "l2_mib", None, q["l2_bytes"] / MIB, "mismatch",
                               "the row has no l2_mib (the choice then sees 0)"))
+        elif close(l2 * MIB, q["l2_bytes"], L2_TOLERANCE):
+            out.append(result("table", "l2_mib", l2, q["l2_bytes"] / MIB, "match"))
+        elif slice_part and 0 < q["l2_bytes"] < l2 * MIB:
+            out.append(result("table", "l2_mib", l2, q["l2_bytes"] / MIB, "info", part_note))
         else:
-            out.append(result("table", "l2_mib", l2, q["l2_bytes"] / MIB,
-                              "match" if close(l2 * MIB, q["l2_bytes"], L2_TOLERANCE) else "mismatch"))
+            out.append(result("table", "l2_mib", l2, q["l2_bytes"] / MIB, "mismatch"))
         bus = q["memory_bus_bits"]
         if unavailable(bus):
             out.append(result("table", "bus_bits", row["bus_bits"], bus, "unavailable"))
         elif row["bus_bits"] == bus:
             out.append(result("table", "bus_bits", row["bus_bits"], bus, "match"))
+        elif slice_part and bus < row["bus_bits"]:
+            out.append(result("table", "bus_bits", row["bus_bits"], bus, "info", part_note))
         elif expected["memory_bus_bits"] == bus:
             out.append(result("table", "bus_bits", row["bus_bits"], bus, "info",
                               "a memory variant under the row's id: the engine reads the driver's bus"))
@@ -157,9 +167,14 @@ def compare_device(device, row):
                               "the driver's peak SM clock is far from the row's"))
         vram = row["vram_gib"] * GIB
         ratio = q["global_bytes"] / vram if vram else 0
+        if VRAM_LOW <= ratio <= VRAM_HIGH:
+            vram_status, vram_note = "match", ""
+        elif slice_part and 0 < ratio < VRAM_LOW:
+            vram_status, vram_note = "info", part_note
+        else:
+            vram_status, vram_note = "mismatch", "marketed capacity against the driver's total"
         out.append(result("table", "vram_gib", row["vram_gib"], round(q["global_bytes"] / GIB, 3),
-                          "match" if VRAM_LOW <= ratio <= VRAM_HIGH else "mismatch",
-                          "marketed capacity against the driver's total"))
+                          vram_status, vram_note))
         engine = device.get("engine_table_facts")
         if engine is not None and engine.get("sku"):
             # What machine_facts makes of the row and this driver: the row as it is, or a
