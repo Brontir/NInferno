@@ -650,7 +650,9 @@ int main() {
             }
             if (target == gemma) {
                 const sp::Profile& p = by_card[0];
-                const auto config    = p.overall.config;
+                // The depth a joint verify is priced at 2 streams for (C x (k + 1) <= 8).
+                auto config = p.overall.config;
+                config.k    = 3;
                 const sp::ProposalRows rows =
                     config.proposal_head ? lab.tune.proposal_rows : sp::ProposalRows{};
                 double previous = 0;

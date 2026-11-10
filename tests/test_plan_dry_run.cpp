@@ -1148,6 +1148,7 @@ void test_speculation_order() {
         pr::SpeculationSubject labelled = subject;
         if (!labelled.resolved) { continue; }
         labelled.resolved->profile.load_basis = basis;
+        labelled.resolved->profile.load       = {{.lanes = 2, .depth = 3}};
         const pr::LaunchPlanOptions o         = pr::launch_options({.max_concurrency = 4});
         const pr::PlannedSpeculation planned =
             pr::plan_with_speculation(facts, device, o.options, &labelled, o.ask);
