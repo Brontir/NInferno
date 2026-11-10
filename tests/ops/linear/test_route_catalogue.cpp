@@ -21,6 +21,7 @@
 #include "core/device_class.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/route_authorities.h"
+#include "ops/generic/route_table.h"
 #include "ops/generic/selector_facts.h"
 
 #include <nlohmann/json.hpp>
@@ -58,7 +59,7 @@ void fail(const std::string& what) {
 
 enum class Activation { A16, A8, A4 };
 
-const char* family_name(Family f) {
+const char* catalogue_family_name(Family f) {
     switch (f) {
     case Family::RegisterMma:
         return "rmma";
@@ -128,7 +129,7 @@ std::vector<Route> catalogue() {
 }
 
 std::string label(Route r) {
-    return std::string(family_name(r.family)) + "#" + std::to_string(r.schedule);
+    return std::string(catalogue_family_name(r.family)) + "#" + std::to_string(r.schedule);
 }
 
 // ---- the fields of a route, on their own
