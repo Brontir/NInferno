@@ -109,8 +109,11 @@ describe_call(const DeviceClass& device, QType qtype, LinearPolicy policy, Epilo
 // The selector's cost model as a pure query (price_routes, generic_cost.cpp): every route it
 // offers for such a call on `device`, with its time in seconds (the A16 scale applied), in the
 // order it offers them. Empty where the facts have no roofline, the generic path does not read
-// such a weight, or the width is not priced. What the CPU replica (`ninferno-serve price`) and the
-// kernel-roofline test compare the roofline's terms against.
+// such a weight, or the width is not priced. It prices any width it is given: the selector reads
+// these prices (cost_route) only from 17 tokens and never for NVFP4, and picks by rule elsewhere,
+// so outside that domain they are the formula's figures, not the selector's choice (the CPU
+// replica says so). What the CPU replica (`ninferno-serve price`) and the kernel-roofline test
+// compare the roofline's terms against.
 struct PricedRouteQuery {
     Route route;
     double seconds = 0;

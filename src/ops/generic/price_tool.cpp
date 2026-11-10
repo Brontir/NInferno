@@ -375,7 +375,10 @@ int run(const Options& o) {
     }
     // select_route prices routes (cost_route) only from 17 tokens outside the prefill band and
     // never for NVFP4; elsewhere it picks by rule, and these are the formula's figures alone.
-    if (o.t >= 17 && qtype != QType::NVFP4) {
+    // route_authorities.cpp cost_model's condition (outside the prefill profile, which this tool
+    // does not model).
+    const bool in_domain = o.t >= generic::kPrefillBandMinTokens && qtype != QType::NVFP4;
+    if (in_domain) {
         std::printf("selector offered %zu routes; terms in microseconds\n\n", priced.size());
     } else {
         std::printf("outside the selector's pricing domain (it prices from 17 tokens, never "
@@ -388,30 +391,35 @@ int run(const Options& o) {
     if (!one) {
         std::printf("%-10s %-9s %6s %5s %4s %6s %5s | %9s %9s %9s %9s | %9s %9s %s\n", "route",
                     "tile", "ctas", "waves", "occ", "rounds", "fill", "bytes", "mma", "reduce",
-                    "chain", "total", "selector", "");
+                    "chain", "total", in_domain ? "selector" : "formula", "");
     }
     const auto wants = [&](Route r) { return !one || *o.only == r; };
-    // A route the selector does not admit for this call (route_admits: the family's whole rule on
-    // this build and board, for this format and shape) gets no price: the figures would read as a
-    // route it could take. --route of one is an error.
-    const auto admitted = [&](Route r) {
-        return generic::route_admitted_query(d, r, qtype, o.policy, o.epilogue, o.n, o.k);
-    };
-    const auto refuse = [](Route r, const char* why) {
+    // The selector's two rules, read from the selector: a route it does not admit for this call
+    // (route_admitted_query: route_admits, the family's whole rule on this build and board, for
+    // this format and shape) or does not price on this board (a16_route_priced: price_routes'
+    // pricing rule where the BF16 MMA is emulated) gets no price, since the figures would read as
+    // a route it could take. `blocked` prints the row's reason and gives the exit of a --route of
+    // it (2); nullopt for a route that is priced.
+    const auto blocked = [&](Route r) -> std::optional<int> {
+        const char* why =
+            !generic::route_admitted_query(d, r, qtype, o.policy, o.epilogue, o.n, o.k)
+                ? "not admitted on this build or board for this format"
+            : !generic::a16_route_priced(r, !emulated) ? "not priced where the BF16 MMA is emulated"
+                                                       : nullptr;
+        if (why == nullptr) return std::nullopt;
         const std::string family(generic::family_name(r.family));
-        std::fprintf(stderr, "price: %s:%d %s\n", family.c_str(), static_cast<int>(r.schedule),
-                     why);
+        if (one) {
+            std::fprintf(stderr, "price: %s:%d %s\n", family.c_str(), static_cast<int>(r.schedule),
+                         why);
+        } else {
+            std::printf("%s:%-*d %s\n", family.c_str(),
+                        r.family == Family::RegisterMma ? 5
+                        : r.family == Family::TiledMma  ? 4
+                                                        : 3,
+                        static_cast<int>(r.schedule), why);
+        }
         return 2;
     };
-    const auto not_admitted_line = [](Route r) {
-        const std::string family(generic::family_name(r.family));
-        std::printf("%s:%-*d not admitted on this build or board for this format\n", family.c_str(),
-                    r.family == Family::RegisterMma ? 5
-                    : r.family == Family::TiledMma  ? 4
-                                                    : 3,
-                    static_cast<int>(r.schedule));
-    };
-    constexpr const char* kNotAdmitted = "not admitted on this build or board for this format";
     if (one) { // a schedule past the family's count names no route
         const Family f  = o.only->family;
         const int count = f == Family::RegisterMma ? generic::rmma_schedule_count()
@@ -427,16 +435,8 @@ int run(const Options& o) {
         const Route r{Family::RegisterMma, static_cast<std::uint8_t>(i)};
         if (!wants(r)) continue;
         const auto s = generic::rmma_schedule_info(i);
-        if (!admitted(r)) {
-            if (one) return refuse(r, kNotAdmitted);
-            not_admitted_line(r);
-            continue;
-        }
-        // A pricing rule of price_routes (generic_cost.cpp), not admission: where the BF16 MMA is
-        // emulated it prices no 8-tile schedule.
-        if (emulated && s.n_tiles == 8) {
-            if (one) return refuse(r, "is not priced where the BF16 MMA is emulated");
-            std::printf("rmma:%-5d not priced where the BF16 MMA is emulated\n", i);
+        if (const auto exit = blocked(r)) {
+            if (one) return *exit;
             continue;
         }
         const auto tile = *generic::route_tile(r, o.epilogue, o.t);
@@ -497,21 +497,11 @@ int run(const Options& o) {
             std::printf("%9s %s\n", "", agreement(sel, scaled));
         }
     };
-    if (emulated) {
-        if (one && o.only->family != Family::RegisterMma) {
-            const std::string family(generic::family_name(o.only->family));
-            std::fprintf(stderr, "%s is not priced on this board (emulated tensor cores)\n",
-                         family.c_str());
-            return 2;
-        }
-        return 0;
-    }
     for (int i = 0; i < generic::tiled_schedule_count(); ++i) {
         const Route r{Family::TiledMma, static_cast<std::uint8_t>(i)};
         if (!wants(r)) continue;
-        if (!admitted(r)) {
-            if (one) return refuse(r, kNotAdmitted);
-            not_admitted_line(r);
+        if (const auto exit = blocked(r)) {
+            if (one) return *exit;
             continue;
         }
         const auto s    = generic::tiled_schedule_info(i);
@@ -529,9 +519,8 @@ int run(const Options& o) {
     for (int i = 0; i < generic::staged_schedule_count(); ++i) {
         const Route r{Family::StagedMma, static_cast<std::uint8_t>(i)};
         if (!wants(r)) continue;
-        if (!admitted(r)) {
-            if (one) return refuse(r, kNotAdmitted);
-            not_admitted_line(r);
+        if (const auto exit = blocked(r)) {
+            if (one) return *exit;
             continue;
         }
         const auto s    = generic::staged_schedule_info(i);

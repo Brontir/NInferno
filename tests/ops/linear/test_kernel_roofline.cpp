@@ -386,20 +386,26 @@ void check_price_admitted() {
         }
         ++(admitted ? priced : refused);
     };
+    // Admitted by the selector and priced by price_routes on the board (a16_route_priced: where
+    // the BF16 MMA is emulated, no pipelined tile and no 8-tile strip; the golden check holds
+    // price_routes to the old rule on the emulated golden boards).
     const auto query = [](const g::FactsBoard& board, QType q, std::int32_t k, g::Route r) {
-        return g::route_admitted_query(g::board_device_class(board), r, q, LinearPolicy::A16Only,
-                                       g::Epilogue::Store, 4096, k);
+        const DeviceClass d = g::board_device_class(board);
+        return g::route_admitted_query(d, r, q, LinearPolicy::A16Only, g::Epilogue::Store, 4096,
+                                       k) &&
+               g::a16_route_priced(r, d.features.mma_bf16_native);
     };
     const g::FactsBoard* ada    = facts_board("rtx4090");
     const g::FactsBoard* hopper = facts_board("h100-sxm");
     const g::FactsBoard* gb202  = facts_board("rtx5090");
-    if (!ada || !hopper || !gb202) {
+    const g::FactsBoard* turing = facts_board("rtx2080ti");
+    if (!ada || !hopper || !gb202 || !turing) {
         std::fprintf(stderr, "FAIL: a facts board of check 4 is missing\n");
         ++failures;
         return;
     }
-    // Every route of the three families, against the selector's own rule.
-    for (const g::FactsBoard* board : {ada, gb202, hopper}) {
+    // Every route of the three families, against the selector's own rules.
+    for (const g::FactsBoard* board : {ada, gb202, hopper, turing}) {
         for (const QType q : {QType::BF16, QType::GGML_Q4_K}) {
             const std::pair<g::Family, int> families[] = {
                 {g::Family::RegisterMma, g::rmma_schedule_count()},
@@ -438,6 +444,14 @@ void check_price_admitted() {
         "cluster schedule on a board with clusters, where this build compiles it");
     pin(*ada, QType::BF16, 4000, {F::StagedMma, 0}, false, "K not whole 64-value steps");
     pin(*ada, QType::BF16, 4096, {F::TiledMma, 0}, false, "the tiled kernel has no BF16 tile");
+    // Emulated BF16 MMA (Turing): price_routes prices no pipelined tile and no 8-tile strip
+    // (rmma:10 holds 1x8 tiles), but the 1x1 rmma:19 it prices.
+    pin(*turing, QType::GGML_Q4_K, 4096, {F::TiledMma, 0}, false,
+        "no pipelined tile where the BF16 MMA is emulated");
+    pin(*turing, QType::BF16, 4096, {F::RegisterMma, 10}, false,
+        "no 8-tile strip where the BF16 MMA is emulated");
+    pin(*turing, QType::BF16, 4096, {F::RegisterMma, 19}, true,
+        "a 1x1 schedule where the BF16 MMA is emulated");
     // Tiled schedules whose tiles do not fit this build's block for a format (tiled_fits).
     for (const QType q : kFormats) {
         const auto codec = ninferno::format_facts(q).codec;
@@ -459,11 +473,71 @@ void check_price_admitted() {
     if (bad > 0 || priced == 0) ++failures;
 }
 
+// ---- Check 5: the price tool's command line ----
+// A malformed value is a usage error (2), never the prefix std::atoi would take: a route index
+// with trailing text or none, a number with trailing text, a non-number, a non-finite one. And
+// every board spelling the usage text advertises resolves (a whole price table, exit 0).
+int price_args(std::vector<std::string> args) {
+    args.insert(args.begin(), "price");
+    std::vector<char*> argv;
+    for (auto& a : args) argv.push_back(a.data());
+    std::fflush(stdout);
+    const int rc = ninferno::tools::price_main(static_cast<int>(argv.size()), argv.data());
+    std::fflush(stdout);
+    return rc;
+}
+
+void check_price_arguments() {
+    long bad = 0, cases = 0;
+    const auto call = [](std::vector<std::string> extra, const std::string& board = "rtx4090") {
+        std::vector<std::string> args = {"--board", board, "--format", "bf16", "--n",
+                                         "4096",    "--k", "4096",     "--t",  "64"};
+        args.insert(args.end(), extra.begin(), extra.end());
+        return args;
+    };
+    const auto expect = [&](const std::vector<std::string>& args, int want, const char* what) {
+        ++cases;
+        const int rc = price_args(args);
+        if (rc != want) {
+            std::fprintf(stderr, "FAIL: price %s exits %d, want %d\n", what, rc, want);
+            ++bad;
+        }
+    };
+    expect(call({"--route", "rmma:bogus"}), 2, "--route rmma:bogus");
+    expect(call({"--route", "rmma:1x"}), 2, "--route rmma:1x");
+    expect(call({"--route", "rmma:"}), 2, "--route rmma:");
+    expect(call({"--route", "rmma:256"}), 2, "--route rmma:256");
+    expect(call({"--route", "rmma:-1"}), 2, "--route rmma:-1");
+    expect(call({"--route", "rmma:99"}), 2, "--route rmma:99 (past the family's count)");
+    expect(call({"--n", "4096x"}), 2, "--n 4096x");
+    expect(call({"--k", ""}), 2, "--k ''");
+    expect(call({"--t", "0"}), 2, "--t 0");
+    expect(call({"--registers", "abc"}), 2, "--registers abc");
+    expect(call({"--registers", "300"}), 2, "--registers 300");
+    expect(call({"--local-bytes", "nan"}), 2, "--local-bytes nan");
+    expect(call({"--local-bytes", "inf"}), 2, "--local-bytes inf");
+    expect(call({"--local-bytes", "-4"}), 2, "--local-bytes -4");
+    expect(call({"--local-bytes", "8x"}), 2, "--local-bytes 8x");
+    // The board spellings the usage text prints.
+    const std::string usage = ninferno::tools::price_usage_text();
+    for (const char* board : {"rtx4090", "l4", "a100pcie40gb", "0x2684"}) {
+        if (usage.find(board) == std::string::npos) {
+            std::fprintf(stderr, "FAIL: the usage text no longer prints %s\n", board);
+            ++bad;
+        }
+        const std::string what = std::string("--board ") + board;
+        expect(call({}, board), 0, what.c_str());
+    }
+    std::printf("price arguments: %ld cases, %ld differ\n", cases, bad);
+    if (bad > 0) ++failures;
+}
+
 int main() {
     check_golden();
     check_wiring();
     check_price_formats();
     check_price_admitted();
+    check_price_arguments();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;

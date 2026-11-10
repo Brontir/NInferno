@@ -179,6 +179,20 @@ std::optional<RmmaKept> rmma_kept(int schedule, const Weight& weight, Epilogue e
 
 } // namespace
 
+bool a16_route_priced(Route route, bool bf16_mma_native) {
+    if (bf16_mma_native) return true;
+    switch (route.family) {
+    case Family::RegisterMma:
+        return route.schedule < rmma_schedule_count() &&
+               rmma_schedule_info(route.schedule).n_tiles != 8;
+    case Family::TiledMma:
+    case Family::StagedMma:
+        return false;
+    default:
+        return true;
+    }
+}
+
 // The speed-profile route of a call of 17 tokens or more from a cost model of every tile the
 // build holds for the weight (register MMA, tiled, staged): the kernel roofline
 // (kernel_roofline.h: a tile's bytes and MMA work on the busiest SM, its warp fill, its chain of
@@ -249,10 +263,10 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         // Cluster schedules exist in the full (sm_12x) build only (rmma_schedule_launchable); a
         // substituted board without clusters is refused by route_admits (route_requires).
         if (!rmma_schedule_launchable(i)) continue;
-        if (emulated && s.n_tiles == 8) continue;
+        const Route r{Family::RegisterMma, static_cast<std::uint8_t>(i)};
+        if (!a16_route_priced(r, !emulated)) continue;
         const auto kept = heavy_decoder ? rmma_kept(i, weight, problem.epilogue, tokens, problem.n)
                                         : std::optional<RmmaKept>{};
-        const Route r{Family::RegisterMma, static_cast<std::uint8_t>(i)};
         const auto tile = *route_tile(r, problem.epilogue, tokens);
         kr::RegisterMmaKernel kernel;
         kernel.rows    = tile.out_rows;
@@ -268,10 +282,10 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         offer(r, kr::price_register_mma(chip, cal, call, kernel).total);
     }
     a8_candidates(problem, weight, tokens, d, offer);
-    if (emulated) return true;
     for (int i = 0; i < tiled_schedule_count(); ++i) {
         const auto s = tiled_schedule_info(i);
         const Route r{Family::TiledMma, static_cast<std::uint8_t>(i)};
+        if (!a16_route_priced(r, !emulated)) continue;
         const auto tile = *route_tile(r, problem.epilogue, tokens);
         kr::PipelinedKernel kernel;
         kernel.rows            = tile.out_rows;
@@ -286,6 +300,7 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
     for (int i = 0; i < staged_schedule_count(); ++i) {
         const auto s = staged_schedule_info(i);
         const Route r{Family::StagedMma, static_cast<std::uint8_t>(i)};
+        if (!a16_route_priced(r, !emulated)) continue;
         const auto tile = *route_tile(r, problem.epilogue, tokens);
         kr::PipelinedKernel kernel;
         kernel.rows            = tile.out_rows;
