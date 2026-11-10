@@ -228,7 +228,8 @@ ninferno_add_test(ninferno_selector_golden_host_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_selector_golden.cpp"
   LIBRARIES ninferno_ops_host)
 target_sources(ninferno_selector_golden_host_test PRIVATE
-  ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp)
+  ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp
+  ${PROJECT_SOURCE_DIR}/src/ops/generic/generic_tune_nodevice.cpp)
 target_compile_definitions(ninferno_selector_golden_host_test PRIVATE
   NINFERNO_HOST_ONLY
   NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden")
