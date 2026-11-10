@@ -48,8 +48,7 @@ class PathMatching(unittest.TestCase):
             self.assertTrue(self.match(f), f)
 
     def test_other_files(self):
-        for f in ["README.md", "src/ops/generic/generic_tiled.cu", "tests/ops/linear/test_selector_golden.cpp",
-                  "src/core/data/other.json", "routesx/a.json"]:
+        for f in ["README.md", "src/ops/generic/generic_tiled.cu", "src/core/data/other.json", "routesx/a.json"]:
             self.assertFalse(self.match(f), f)
 
     def test_double_star(self):
@@ -78,6 +77,20 @@ NOT_DECIDING = {
     "src/ops/common/e2m1.cuh", "src/ops/common/fp8_e4m3.cuh", "src/ops/common/memory.cuh",
     "src/ops/common/mma.cuh", "src/ops/generic/generic_gemm.cuh", "src/ops/generic/ggml_iq_tables.cuh",
     "src/ops/linear/fp8/fp8_a16_codec.cuh",
+    # per-op API headers and helpers pulled in beside the selector: they decide nothing
+    "include/ninferno/ops/gemma4_attention.h", "include/ninferno/ops/gemma4_fused.h",
+    "include/ninferno/ops/gemma4_moe.h", "include/ninferno/ops/linear_add.h",
+    "include/ninferno/ops/rmsnorm.h", "include/ninferno/ops/silu_mul.h", "include/ninferno/ops/sparse_moe.h",
+    "src/artifact/file_io.cpp", "src/artifact/file_io.h", "src/artifact/framing.h",  # artifact reading
+    "src/artifact/reader.cpp", "src/artifact/reader.h", "src/artifact/source_identity.cpp",
+    "src/artifact/source_identity.h",
+    "src/artifact/schema.cpp", "src/artifact/schema.h",  # file layout, not format facts
+    "src/core/ascii.h", "src/ops/common/math.cuh", "src/ops/common/math.h", "src/ops/common/warp.cuh",
+    "src/ops/gdn_gating_proj/bf16/bf16_gdn_norm_gating_simt.cuh", "src/ops/gdn_input_proj/gdn_conv.cuh",
+    "src/ops/gdn_input_proj/gdn_projected_conv.cu", "src/ops/gdn_input_proj/gdn_projected_conv.h",
+    "src/ops/generic/segmented_gating.cu",  # kernel
+    # the per-format dispatcher consumes a route; the generic selector (listed) makes the golden choice
+    "src/ops/linear/linear.cpp", "src/ops/linear/linear_registry.h",
 }
 # Includes that resolve to no tracked file: generated at build time (name -> the generator input,
 # which must be listed) or third-party code.
@@ -99,6 +112,7 @@ def include_closure(files):
     """Files reachable from every listed file: its #includes and the .cpp/.cu beside each header."""
     known = set(files)
     seen, todo, unresolved = set(), gg.decision_files(files, PATHS), set()
+    todo.append("tests/ops/linear/test_selector_golden.cpp")  # the golden producer
     while todo:
         f = todo.pop()
         if f in seen:
@@ -108,8 +122,11 @@ def include_closure(files):
             continue
         stem = Path(f).with_suffix("").as_posix()
         todo += [stem + e for e in SOURCE_EXT if stem + e in known]
+        if f.startswith("include/ninferno/"):  # public header -> its implementation under src/
+            impl = "src/" + stem[len("include/ninferno/"):]
+            todo += [impl + e for e in SOURCE_EXT if impl + e in known]
         for name in INCLUDE.findall((ROOT / f).read_text(encoding="utf-8", errors="replace")):
-            for base in (Path(f).parent.as_posix(), "src", "include", ""):
+            for base in (Path(f).parent.as_posix(), "src", "include", "tests", ""):
                 cand = (Path(base) / name).as_posix()
                 if cand in known:
                     todo.append(cand)
@@ -149,6 +166,47 @@ class Closure(unittest.TestCase):
             self.assertTrue(name in GENERATED or name.startswith(THIRD_PARTY), f"unresolved include {name}")
 
 
+# The reverse check asks of the files that read the selector's own headers: is this source part of
+# the decision? Consumers of a route (model programs, per-op dispatch and plan files, kernels, the
+# engine) read a decision, they do not move the selector goldens; they are out of its scope.
+REVERSE_HEADERS = {
+    "src/ops/generic/selector_facts.h", "src/ops/generic/route_query.h", "src/ops/generic/route_table.h",
+    "include/ninferno/ops/route_table.h", "src/ops/generic/route_cost_constants.h",
+    "src/ops/generic/generic_select_internal.h", "src/ops/generic/format_traits.h",
+    "src/ops/generic/generic_gemm.h", "src/ops/route_pins.h", "src/core/mmq_columns.h",
+    "src/core/board_registry.h", "src/core/cost_constants.h", "src/core/machine_facts.h",
+}
+REVERSE_SCOPE = [gg.glob_to_regex(g) for g in (
+    "src/ops/generic/*.cpp", "src/ops/*.cpp", "src/ops/linear/*.cpp", "src/runtime/engine/decision_*.cpp",
+    "src/core/*.cpp")]
+
+
+def reverse_includers(files):
+    """In-scope sources that include one of REVERSE_HEADERS (by path tail)."""
+    tails = {}
+    for h in REVERSE_HEADERS:
+        tails[h.split("/", 1)[1]] = h
+        tails[Path(h).name] = h
+    out = set()
+    for f in files:
+        if not any(rx.match(f) for rx in REVERSE_SCOPE):
+            continue
+        text = (ROOT / f).read_text(encoding="utf-8", errors="replace")
+        for name in INCLUDE.findall(text):
+            h = tails.get(name)
+            if h and (name != Path(h).name or Path(f).parent == Path(h).parent):
+                out.add(f)
+    return out
+
+
+class Reverse(unittest.TestCase):
+    def test_sources_including_a_listed_header_are_listed_or_not_deciding(self):
+        files = tracked()
+        missing = sorted(f for f in reverse_includers(files)
+                         if f not in NOT_DECIDING and not gg.decision_files([f], PATHS))
+        self.assertEqual(missing, [], "list them in decision_paths.txt, or in NOT_DECIDING with a reason")
+
+
 class Labels(unittest.TestCase):
     def test_changed_files_use_nul_separated_no_rename_listing(self):
         calls = []
@@ -166,9 +224,37 @@ class Labels(unittest.TestCase):
                              run_diff=lambda rng: (0, "no golden changes"))
         finally:
             gg.git = orig
-        self.assertIn("-z", calls[0])
-        self.assertIn("--no-renames", calls[0])
+        diff = next(c for c in calls if c[0] == "diff")
+        self.assertIn("-z", diff)
+        self.assertIn("--no-renames", diff)
         self.assertEqual(rc, 0)  # neither "a b.json" nor "old.h" is on the list
+
+    def test_base_list_is_unioned_so_a_dropped_line_does_not_escape(self):
+        head_without = gg.load_patterns("# nothing\n")
+        self.assertEqual(gg.decision_files(["routes/x.json"], head_without), [])
+        base = gg.base_patterns("master", ".", text="routes/**\n")
+        self.assertEqual(gg.decision_files(["routes/x.json"], head_without + base), ["routes/x.json"])
+        with tempfile.TemporaryDirectory() as d:
+            paths = Path(d) / "paths.txt"
+            paths.write_text("# empty head list\n", encoding="utf-8")
+            out = io.StringIO()
+            with redirect_stdout(out):
+                rc = gg.main(["--base-ref", "master", "--paths", str(paths)],
+                             run_diff=lambda rng: (0, "no golden changes"),
+                             changed_files=["routes/x.json"], base_list="routes/**\n")
+        self.assertEqual(rc, 1)  # still gated, no label
+
+    def test_missing_base_list_is_empty(self):
+        orig = gg.git
+
+        def boom(args, cwd):
+            raise gg.subprocess.CalledProcessError(128, "git")
+
+        gg.git = boom
+        try:
+            self.assertEqual(gg.base_patterns("master", "."), [])
+        finally:
+            gg.git = orig
 
     def test_path_with_space_still_matches(self):
         self.assertEqual(gg.decision_files(["routes/a b.json"], PATHS), ["routes/a b.json"])

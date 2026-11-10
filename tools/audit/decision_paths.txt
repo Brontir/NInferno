@@ -73,3 +73,24 @@ cmake/BoardRegistry.cmake
 cmake/EmbedText.cmake
 src/core/CMakeLists.txt
 src/core/embedded_gpu_facts.h.in
+# the golden producer and what it builds weights with
+tests/ops/linear/test_selector_golden.cpp
+tests/ops/quantized_weight.h
+# the implementation behind include/ninferno/ops/prefill_routes.h
+src/ops/prefill_routes.cpp
+# the gate itself: changing it changes what counts as a decision change
+tools/audit/decision_paths.txt
+tools/audit/golden_gate.py
+tools/audit/golden_diff.py
+.github/workflows/golden-gate.yml
+# sources that read the selector's own headers (found by the reverse check in tests/test_golden_gate.py)
+src/ops/generic/*.cpp
+src/runtime/engine/decision_routes.cpp
+src/ops/generic/*.h
+src/ops/weight_input.cpp
+include/ninferno/ops/weight_input.h
+include/ninferno/ops/segmented_projection.h
+src/runtime/engine/decision_*
+src/artifact/formats.*
+src/convert/ggml_tables.inc
+src/artifact/layouts.*

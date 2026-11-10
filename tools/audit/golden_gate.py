@@ -3,8 +3,8 @@
 
   golden_gate.py --base-ref master --event "$GITHUB_EVENT_PATH"
 
-1. The files changed since the merge-base with origin/<base-ref> are matched against
-   tools/audit/decision_paths.txt. No match: pass, nothing more to do.
+1. The files changed since the merge-base with origin/<base-ref> are matched against the union of
+   tools/audit/decision_paths.txt at HEAD and at origin/<base-ref> (a PR cannot drop its own line). No match: pass, nothing more to do.
 2. Otherwise tools/audit/golden_diff.py --range origin/<base-ref>...HEAD summarizes the goldens.
 3. Goldens changed: print the summary, pass (the reviewer reads it).
    Goldens equal and the PR carries the label `goldens-equal`: pass, print the author's claim.
@@ -85,7 +85,17 @@ def git(args, cwd):
     return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout
 
 
-def main(argv=None, run_diff=None, changed_files=None):
+def base_patterns(base_ref, repo, text=None):
+    """The base branch's list: a PR cannot drop its own line to escape the gate. Missing = empty."""
+    if text is None:
+        try:
+            text = git(["show", f"origin/{base_ref}:tools/audit/decision_paths.txt"], repo)
+        except subprocess.CalledProcessError:
+            text = ""
+    return load_patterns(text)
+
+
+def main(argv=None, run_diff=None, changed_files=None, base_list=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--base-ref", required=True, help="the PR's base branch (compared as origin/<base-ref>)")
     ap.add_argument("--event", help="path of the pull_request event payload (GITHUB_EVENT_PATH)")
@@ -95,6 +105,7 @@ def main(argv=None, run_diff=None, changed_files=None):
     event = json.loads(Path(args.event).read_text(encoding="utf-8")) if args.event else {}
     try:
         patterns = load_patterns(Path(args.paths).read_text(encoding="utf-8"))
+        patterns += base_patterns(args.base_ref, args.repo, base_list)  # union of head and base lists
         rng = f"origin/{args.base_ref}...HEAD"
         if changed_files is None:
             changed = [f for f in git(["diff", "--name-only", "--no-renames", "-z", rng], args.repo).split("\0") if f]
