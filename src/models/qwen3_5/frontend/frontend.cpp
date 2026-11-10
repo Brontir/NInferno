@@ -1251,10 +1251,15 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
         result.answer_only   = true;
         result.banned_tokens = impl_->output->call_tokens;
         // A continuation resumes inside a message, where the steer's rule for the first bytes
-        // of a message would bend the text: it keeps the cut alone.
+        // of a message would bend the text: it keeps the cut alone. The steer spells the output
+        // from its first token, where the model may open its reasoning (the constraint gate
+        // steps over that section); a prompt that already holds the reasoning, or declines it,
+        // keeps the cut alone too.
         if (const auto format = impl_->chat_template.conventions().tools.format;
             format != chat::ToolCallFormat::None &&
-            options.continuation == PromptContinuationMode::NewAssistantTurn) {
+            options.continuation == PromptContinuationMode::NewAssistantTurn &&
+            !result.starts_in_reasoning && result.reasoning_open_allowed &&
+            !result.reasoning_declined) {
             result.refusal_tag = chat::tool_call_syntax(format).refusal_structural_tag();
         }
     }

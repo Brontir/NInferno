@@ -826,10 +826,12 @@ llama.cpp-style base URLs.
   the answer begins with it; after text it is prose that may quote the tag. `ignore_eos` does not
   change this: it keeps the model's own end-of-turn tokens from stopping the output, not this
   rule. gpt-oss harmony has no opener token: its call is a message of its own, so the request
-  carries a constraint that closes only the call header positions (`<|channel|>commentary`, a
-  `to` recipient after `<|start|>assistant`, `<|channel|>analysis` or `<|channel|>final`) and
-  leaves the analysis and the answer free; a request with its own constraint, with
-  `ignore_eos`, or continuing an assistant message keeps the cut alone. Atem and Llama 3 JSON are not steered. A call any syntax
+  carries a constraint on the message headers. After `<|start|>assistant` only `<|channel|>`
+  follows, then only `analysis` or `final`, then only `<|message|>`: no recipient, no
+  `commentary` channel, no `<|constrain|>`. The output is at most one analysis message and then
+  the final message, which ends the output; the analysis text and the answer text are free. A
+  request with its own constraint, with `ignore_eos`, or continuing an assistant message keeps
+  the cut alone. Atem and Llama 3 JSON are not steered. A call any syntax
   writes anyway is cut out of the answer, as is one written as plain text (a Qwen model
   kept from `<tool_call>` can still write a bare `<function=...>`). A bare `{"name": "...",
   "arguments": ...}` object naming a declared tool (Hermes JSON) or Gemma 4's `call:...` is cut
