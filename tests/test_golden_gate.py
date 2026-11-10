@@ -255,8 +255,11 @@ EXCLUDED = [
     ("src/ops/moe/moe_tune.cpp", "load-time MoE tuner (times plans); no selector golden reads it"),
     ("cmake/Dependencies.cmake", "third-party fetch"), ("cmake/GitCommit.cmake", "version string"),
     ("cmake/Windows.cmake", "Windows toolchain"), ("cmake/windows-utf8.manifest", "Windows manifest"),
-    ("cmake/NInfernoTargets.cmake", "compile flags (-lineinfo, archive kind); a flag that moves SASS shows "
-                                    "in the kernel-facts snapshot test"),
+    ("cmake/NInfernoTargets.cmake", "compile flags (-lineinfo, archive kind, RDC) and the per-arch source "
+                                    "filter; the selector's NINFERNO_WITHOUT_NVFP4 macro comes from the "
+                                    "root CMakeLists.txt (listed), the filter alone cannot move a golden "
+                                    "(a base build that stopped filtering would not compile), and a flag "
+                                    "that moves SASS shows in the kernel-facts snapshot test"),
     ("src/CMakeLists.txt", "target wiring"),
     ("src/*/CMakeLists.txt", "build files of libraries the golden test does not link"),
     ("src/models/**", "model programs: not linked into the golden test"),
@@ -338,15 +341,26 @@ class Completeness(unittest.TestCase):
                   "src/core/mmq_columns.h", "src/core/measured_boards.h"):
             self.assertTrue(gg.decision_files([f], PATHS), f)
 
-    def test_the_shared_test_target_helpers_and_the_files_wiring_the_golden_in_are_decision_paths(self):
-        # ninferno_add_test / ninferno_link_ops shape every test target, the golden producer
-        # included; the parent files include them and add the golden's directory to the build
-        for f in ("tests/cmake/NInfernoTests.cmake", "tests/cmake/ops_shared_anchor.cpp",
-                  "tests/CMakeLists.txt", "tests/ops/tests.cmake"):
+    def test_the_shared_test_target_helpers_are_decision_paths(self):
+        # ninferno_add_test / ninferno_link_ops shape every test target, the golden producer included
+        for f in ("tests/cmake/NInfernoTests.cmake", "tests/ops/linear/tests.cmake"):
             self.assertTrue(gg.decision_files([f], PATHS), f)
             self.assertTrue((ROOT / f).exists(), f)
-        # the other test lists under tests/cmake declare unrelated targets
-        self.assertFalse(gg.decision_files(["tests/cmake/CoreTests.cmake"], PATHS))
+        # the parent lists only wire targets in (every new host test edits them); the anchor is
+        # one empty function; the other test lists under tests/cmake declare unrelated targets
+        for f in ("tests/CMakeLists.txt", "tests/ops/tests.cmake", "tests/cmake/ops_shared_anchor.cpp",
+                  "tests/cmake/CoreTests.cmake"):
+            self.assertFalse(gg.decision_files([f], PATHS), f)
+
+    def test_the_include_chain_still_reaches_the_golden_producer(self):
+        # the parents are not decision paths, so a change that cuts the chain must fail here
+        def text(f):
+            return (ROOT / f).read_text(encoding="utf-8")
+        top = text("tests/CMakeLists.txt")
+        self.assertIn("include(cmake/NInfernoTests.cmake)", top)
+        self.assertIn("include(ops/tests.cmake)", top)
+        self.assertIn('include("${CMAKE_CURRENT_LIST_DIR}/linear/tests.cmake")', text("tests/ops/tests.cmake"))
+        self.assertIn("ninferno_add_op_test(ninferno_selector_golden_test", text("tests/ops/linear/tests.cmake"))
 
     def test_workflow_reruns_on_label_events_and_on_edit_of_the_description_or_base(self):
         text = (ROOT / ".github/workflows/golden-gate.yml").read_text(encoding="utf-8")
