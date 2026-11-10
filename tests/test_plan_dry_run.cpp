@@ -1458,17 +1458,20 @@ void test_exact_reads_no_continuous_fact() {
         int cc, sms;
         double vram;
     };
+
     struct Family {
         const char* name;
         rt::PlanModelFacts (*make)(std::uint64_t);
     };
+
     int compared = 0;
-    for (const Board& board : {Board{"RTX 5090", 0x2B85, 120, 170, 32}, Board{"RTX 4090", 0x2684, 89, 128, 24},
-                               Board{"RTX 3090", 0x2204, 86, 82, 24}, Board{"RTX 2080 Ti", 0x1E07, 75, 68, 11},
-                               Board{"V100", 0x1DB5, 70, 80, 32}}) {
-        rt::PlanDeviceFacts device = card(board.vram, board.cc);
-        device.pci_device_id       = board.pci;
-        device.sms                 = board.sms;
+    for (const Board& board :
+         {Board{"RTX 5090", 0x2B85, 120, 170, 32}, Board{"RTX 4090", 0x2684, 89, 128, 24},
+          Board{"RTX 3090", 0x2204, 86, 82, 24}, Board{"RTX 2080 Ti", 0x1E07, 75, 68, 11},
+          Board{"V100", 0x1DB5, 70, 80, 32}}) {
+        rt::PlanDeviceFacts device         = card(board.vram, board.cc);
+        device.pci_device_id               = board.pci;
+        device.sms                         = board.sms;
         const ninferno::spec::GpuKey stock = pr::gpu_key_of(device);
         check(stock.sm_clock_khz > 0 && stock.dram_gbps > 0 && stock.l2_bytes > 0,
               std::string(board.name) + ": the key carries the continuous facts to move");
@@ -1491,31 +1494,34 @@ void test_exact_reads_no_continuous_fact() {
                     inputs.ask              = o.ask;
                     inputs.pins.activations = launch.activations_pinned();
                     const std::string base  = b1_signature(facts, inputs);
+
                     struct Move {
                         const char* what;
                         double clock, bandwidth, l2;
                     };
-                    for (const Move& m :
-                         {Move{"all x2", 2, 2, 2}, Move{"all x0.5", .5, .5, .5},
-                          Move{"clock x2", 2, 1, 1}, Move{"bandwidth x2", 1, 2, 1},
-                          Move{"l2 x2", 1, 1, 2}, Move{"all unknown", 0, 0, 0}}) {
+
+                    for (const Move& m : {Move{"all x2", 2, 2, 2}, Move{"all x0.5", .5, .5, .5},
+                                          Move{"clock x2", 2, 1, 1}, Move{"bandwidth x2", 1, 2, 1},
+                                          Move{"l2 x2", 1, 1, 2}, Move{"all unknown", 0, 0, 0}}) {
                         pr::DryRunInputs moved = inputs;
                         moved.gpu.sm_clock_khz = static_cast<int>(stock.sm_clock_khz * m.clock);
                         moved.gpu.dram_gbps    = stock.dram_gbps * m.bandwidth;
                         moved.gpu.l2_bytes     = stock.l2_bytes * m.l2;
                         ++compared;
                         const std::string got = b1_signature(facts, moved);
-                        check(got == base, std::string("B1 under exact moves with the continuous facts (") +
-                                               board.name + " " + family.name + " ctx " +
-                                               std::to_string(context) + " x" + std::to_string(streams) +
-                                               ", " + m.what + "): '" + base + "' -> '" + got + "'");
+                        check(got == base,
+                              std::string("B1 under exact moves with the continuous facts (") +
+                                  board.name + " " + family.name + " ctx " +
+                                  std::to_string(context) + " x" + std::to_string(streams) + ", " +
+                                  m.what + "): '" + base + "' -> '" + got + "'");
                     }
                 }
             }
         }
     }
-    std::cout << "B1 under exact: " << compared << " perturbed plans compared
-";
+    std::cout << "B1 under exact: " << compared
+              << " perturbed plans compared
+                 ";
 }
 
 // One price for a quantization whichever facts carry it (product::quant_option_of): a hub row's

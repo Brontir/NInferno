@@ -73,7 +73,7 @@ constexpr Known kKnown[] = {
 // ---- Findings ----------------------------------------------------------------------------------
 
 struct Group {
-    int count = 0;
+    int count    = 0;
     double worst = 0; // property-specific severity (a price ratio); 0 where none
     std::string example;
     std::set<std::string> rows;
@@ -113,17 +113,17 @@ std::vector<Row> rows_of_table() {
         rows.push_back(std::move(row));
         Row& placed = rows.back();
         // The numbers as the CUDA query reports a stock board (memory clock: half the data rate).
-        placed.board = generic::FactsBoard{
-            placed.name.c_str(),
-            r.pci_device_id,
-            r.major,
-            r.minor,
-            r.sms,
-            static_cast<std::size_t>(std::lround(r.l2_mib)),
-            static_cast<std::size_t>(std::max(1L, std::lround(r.vram_gib))),
-            r.boost_mhz,
-            static_cast<int>(std::lround(r.gbps * 500.0)) + 1,
-            r.bus_bits};
+        placed.board =
+            generic::FactsBoard{placed.name.c_str(),
+                                r.pci_device_id,
+                                r.major,
+                                r.minor,
+                                r.sms,
+                                static_cast<std::size_t>(std::lround(r.l2_mib)),
+                                static_cast<std::size_t>(std::max(1L, std::lround(r.vram_gib))),
+                                r.boost_mhz,
+                                static_cast<int>(std::lround(r.gbps * 500.0)) + 1,
+                                r.bus_bits};
     }
     return rows;
 }
@@ -134,11 +134,10 @@ struct Shape {
     std::int32_t n, k;
 };
 
-constexpr QType kFormats[] = {QType::BF16,         QType::Q4_G64_FP16,  QType::Q8_G32_FP16,
-                              QType::NVFP4,        QType::MXFP4,        QType::GGML_Q4_K,
-                              QType::GGML_Q6_K,    QType::GGML_IQ2_S,   QType::GGML_Q4_0,
-                              QType::GGML_IQ4_XS};
-constexpr Shape kShapes[]  = {{1024, 4096}, {17408, 5120}};
+constexpr QType kFormats[] = {
+    QType::BF16,      QType::Q4_G64_FP16, QType::Q8_G32_FP16, QType::NVFP4,     QType::MXFP4,
+    QType::GGML_Q4_K, QType::GGML_Q6_K,   QType::GGML_IQ2_S,  QType::GGML_Q4_0, QType::GGML_IQ4_XS};
+constexpr Shape kShapes[] = {{1024, 4096}, {17408, 5120}};
 // Every width of the decode, verify and prefill bands the selector tells apart.
 constexpr std::int32_t kTokens[]      = {1, 2, 4, 8, 12, 16, 17, 32, 64, 256, 1024};
 constexpr std::int32_t kPriceTokens[] = {17, 32, 64, 256, 1024};
@@ -166,8 +165,8 @@ std::string decisions_of(const DeviceClass& d) {
                                 << static_cast<int>(e) << '/' << s.n << 'x' << s.k << "/T" << t
                                 << (prefill ? "p" : "") << '=';
                             try {
-                                const auto r = generic::route_query(d, q, policy, e, rows, s.k, t,
-                                                                    prefill);
+                                const auto r =
+                                    generic::route_query(d, q, policy, e, rows, s.k, t, prefill);
                                 out << (r ? generic::route_name(*r) : std::string("none"));
                             } catch (const std::exception& error) {
                                 out << "throw: " << error.what();
@@ -212,17 +211,18 @@ struct DescribedWeight {
     DescribedWeight& operator=(const DescribedWeight&) = delete;
 };
 
-void describe(DescribedWeight& out, QType qtype, Epilogue epilogue, std::int32_t n, std::int32_t k) {
+void describe(DescribedWeight& out, QType qtype, Epilogue epilogue, std::int32_t n,
+              std::int32_t k) {
     const std::uint64_t own = epilogue == Epilogue::SwiGlu ? 2ULL * static_cast<std::uint64_t>(n)
                                                            : static_cast<std::uint64_t>(n);
     const bool nvfp4        = qtype == QType::NVFP4;
     out.parent.data         = reinterpret_cast<const std::byte*>(std::uintptr_t{1} << 32);
     out.parent.weight_scale_divisor = nvfp4 ? 1.0F : 0.0F;
     const std::uint64_t shape[2]    = {own, static_cast<std::uint64_t>(k)};
-    out.parent.geometry = weight_geometry(qtype, default_weight_layout(qtype), shape);
-    out.view.shape      = {own, static_cast<std::uint64_t>(k)};
-    out.view.parts      = {WeightRegion{&out.parent, 0, own * static_cast<std::uint64_t>(k)}};
-    out.weight          = native_weight(out.view, nvfp4 ? 1.0F : 0.0F);
+    out.parent.geometry             = weight_geometry(qtype, default_weight_layout(qtype), shape);
+    out.view.shape                  = {own, static_cast<std::uint64_t>(k)};
+    out.view.parts = {WeightRegion{&out.parent, 0, own * static_cast<std::uint64_t>(k)}};
+    out.weight     = native_weight(out.view, nvfp4 ? 1.0F : 0.0F);
 }
 
 using Prices = std::map<std::pair<int, int>, double>; // (family, schedule) -> seconds
@@ -295,8 +295,7 @@ void property_price_monotone(const std::vector<Row>& rows) {
                                     std::ostringstream text;
                                     text << where << ": " << seconds << " s -> " << it->second
                                          << " s";
-                                    note(property,
-                                         "family " + std::to_string(route.first),
+                                    note(property, "family " + std::to_string(route.first),
                                          row.name, text.str(), it->second / seconds);
                                 }
                             }
@@ -330,12 +329,12 @@ std::vector<std::pair<std::string, DeviceClass>> relabelled(const Row& row, cons
         out.emplace_back("ordinal, PCI address, UUID", std::move(v));
     }
     {
-        DeviceClass v = d;
-        v.facts.tdp_w = v.facts.tdp_w * 2 + 1;
+        DeviceClass v    = d;
+        v.facts.tdp_w    = v.facts.tdp_w * 2 + 1;
         v.facts.vram_gib = v.facts.vram_gib * 2 + 1;
         v.facts.pcie_gen = v.facts.pcie_gen == 5 ? 3 : 5;
-        v.facts.segment  = v.facts.segment == Segment::Datacenter ? Segment::GeForce
-                                                                  : Segment::Datacenter;
+        v.facts.segment =
+            v.facts.segment == Segment::Datacenter ? Segment::GeForce : Segment::Datacenter;
         v.global_bytes = v.global_bytes * 2 + 4096;
         out.emplace_back("tdp, vram, pcie generation, segment, reported memory", std::move(v));
     }
@@ -344,10 +343,10 @@ std::vector<std::pair<std::string, DeviceClass>> relabelled(const Row& row, cons
         std::vector<GpuFactsRow> table(gpu_facts_table().begin(), gpu_facts_table().end());
         for (GpuFactsRow& r : table) {
             if (r.pci_device_id != row.source->pci_device_id) { continue; }
-            r.name    = "renamed in the table";
-            r.note    = "a different note";
-            r.sources = {"https://example.invalid/other"};
-            r.tdp_w   = r.tdp_w * 2 + 1;
+            r.name     = "renamed in the table";
+            r.note     = "a different note";
+            r.sources  = {"https://example.invalid/other"};
+            r.tdp_w    = r.tdp_w * 2 + 1;
             r.vram_gib = r.vram_gib * 2 + 1;
             r.pcie_gen = r.pcie_gen == 5 ? 3 : 5;
             r.segment  = r.segment == Segment::Datacenter ? Segment::GeForce : Segment::Datacenter;
@@ -409,6 +408,7 @@ void property_clock_invariance(const std::vector<Row>& rows) {
     constexpr struct {
         double sm, memory;
     } kVariants[] = {{0.85, 1.0}, {1.0, 0.985}, {1.08, 1.07}, {0.0, 1.0}, {1.0, 0.0}, {0.0, 0.0}};
+
     std::size_t driver_read_rows = 0;
     std::vector<std::string> exempt;
     for (const Row& row : rows) {
@@ -421,15 +421,15 @@ void property_clock_invariance(const std::vector<Row>& rows) {
         const std::string stock = decisions_of(stock_class);
         for (const auto v : kVariants) {
             ++cases_checked;
-            const DeviceClass moved = generic::board_device_class(row.board, v.sm, v.memory);
+            const DeviceClass moved   = generic::board_device_class(row.board, v.sm, v.memory);
             const std::string changed = decisions_of(moved);
             if (changed == stock) { continue; }
             std::ostringstream key;
             key << "SM x" << v.sm << ", memory x" << v.memory;
             note("P6 clock invariance", key.str(), row.name,
-                 row.name + " (" + key.str() + "): " +
-                     std::to_string(differing_lines(stock, changed)) + " decisions move, first " +
-                     first_difference(stock, changed));
+                 row.name + " (" + key.str() +
+                     "): " + std::to_string(differing_lines(stock, changed)) +
+                     " decisions move, first " + first_difference(stock, changed));
         }
     }
     std::cout << "P6: " << rows.size() - driver_read_rows << " rows checked under "
@@ -452,11 +452,12 @@ int main() {
 
         int unexpected = 0;
         for (const auto& [id, g] : groups) {
-            const bool known = std::any_of(std::begin(kKnown), std::end(kKnown), [&](const Known& k) {
-                return id.first == k.property && id.second == k.key;
-            });
-            std::cout << (known ? "XFAIL " : "FAIL  ") << id.first << " [" << id.second << "]: "
-                      << g.count << " case(s) on " << g.rows.size() << " row(s)";
+            const bool known =
+                std::any_of(std::begin(kKnown), std::end(kKnown), [&](const Known& k) {
+                    return id.first == k.property && id.second == k.key;
+                });
+            std::cout << (known ? "XFAIL " : "FAIL  ") << id.first << " [" << id.second
+                      << "]: " << g.count << " case(s) on " << g.rows.size() << " row(s)";
             if (g.worst > 0) { std::cout << ", worst x" << g.worst; }
             std::cout << "\n    e.g. " << g.example << '\n';
             if (!known) { ++unexpected; }
