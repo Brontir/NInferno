@@ -10,6 +10,8 @@ namespace ninferno::ops::detail::generic {
 
 std::optional<Route> tuned_dense_route(const Problem&, std::int32_t) { return std::nullopt; }
 
-std::optional<Route> tuned_prefill_route(const Problem&, std::int32_t, Route) { return std::nullopt; }
+std::optional<Route> tuned_prefill_route(const Problem&, std::int32_t, Route) {
+    return std::nullopt;
+}
 
 } // namespace ninferno::ops::detail::generic
