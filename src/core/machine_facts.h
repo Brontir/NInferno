@@ -105,10 +105,11 @@ struct MachineFacts {
     // The fraction of the board this device is: its SMs over the row's when fewer (a MIG slice);
     // the bandwidth it sees scales with it. 1 otherwise.
     double share = 1.0;
-    // Whether a driver value fed a fact: an unknown id (its clocks on the grid), a laptop row
-    // without the bottom of its range (its clock bounded by the driver's), or a whole board on
-    // another memory than its row's (its bus width or slower memory clock). The decision
-    // fingerprint hashes the driver's values only then.
+    // Whether a driver clock or bus width fed a fact: an unknown id (its clocks on the grid), a
+    // laptop row without the bottom of its range (its clock bounded by the driver's), or a whole
+    // board on another memory than its row's (its bus width or slower memory clock). A slice's
+    // SM count feeds `share`, which the decision fingerprint always hashes, so it does not set
+    // this. The fingerprint hashes the driver's values only when this is set.
     bool driver_read = false;
 
     // Whether the cost model has a roofline: a clock, a bus width and a memory clock.

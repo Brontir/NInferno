@@ -8,6 +8,7 @@
 #include "core/ggml_frag.h"
 #include "core/layout.h"
 #include "ninferno/ops/prefill_routes.h"
+#include "ninferno/ops/route_table.h"
 #include "ops/common/math.h"
 #include "ops/common/native_nvfp4.h"
 #include "ops/generic/generic_gemm.h"
@@ -18,6 +19,7 @@
 #include <algorithm>
 #include <atomic>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <optional>
@@ -995,11 +997,16 @@ MoePlan heuristic_r8(const MoeWeights& w, const Geometry& g, MoePlan p, std::int
     return with_r8(p, gate_up, down ? gate_up : -1);
 }
 
+// The measured board whose A8 route this device takes (within kCarryDistance), null: none.
+const ClassA8Route* a8_class_entry() {
+    return nearest_known_measured(std::span(kA8Routes), board_of(device_class()),
+                                  measured::kCarryDistance);
+}
+
 } // namespace
 
 std::optional<A8Route> a8_default_route() {
-    const ClassA8Route* entry = nearest_known_measured(
-        std::span(kA8Routes), board_of(device_class()), measured::kCarryDistance);
+    const ClassA8Route* entry = a8_class_entry();
     return entry != nullptr ? entry->route : kFallbackA8Route;
 }
 
@@ -1100,11 +1107,6 @@ bool table_covers(const MoeWeights& weights, const MoeConfig& config, std::int32
     return table_plan(route_key(weights, config), tokens, false).has_value();
 }
 
-MoePlan select_plan(const MoeWeights& weights, const MoeConfig& config, std::int32_t tokens,
-                    bool prefill) {
-    return moe_plan_query(weights, config, tokens, prefill).plan;
-}
-
 const char* authority_name(MoeAuthority authority) {
     switch (authority) {
     case MoeAuthority::Invariant:
@@ -1137,109 +1139,301 @@ const char* authority_name(MoeAuthority authority) {
     return "?";
 }
 
-MoePlanQuery moe_plan_query(const MoeWeights& weights, const MoeConfig& config, std::int32_t tokens,
-                            bool prefill) {
-    // A route-table band first (measured and published), then the load-time tuner's plan, then
-    // the heuristics. The tuner covers decode widths only, under the default route profile.
-    if (!invariant_routes_active() && tokens <= kTuneMaxTokens) {
-        if (auto tuned = tuned_plan(weights, config, tokens);
-            tuned && !table_covers(weights, config, tokens) &&
-            r8_stages_admitted(weights, *tuned, tokens)) {
-            return {*tuned, MoeAuthority::Tuner};
-        }
-    }
-    MoeAuthority why = MoeAuthority::DecodeStreaming;
-    MoePlan plan     = untuned_plan_why(weights, config, tokens, prefill, why);
-    return {plan, why};
-}
+namespace {
 
-MoePlan untuned_plan(const MoeWeights& weights, const MoeConfig& config, std::int32_t tokens,
-                     bool prefill) {
-    MoeAuthority why = MoeAuthority::DecodeStreaming;
-    return untuned_plan_why(weights, config, tokens, prefill, why);
-}
+// select_plan's cascade as named authorities (#616 step 2)
+//
+// An authority is a pure function of the call: it answers with a plan, the label the goldens print
+// (MoeAuthority) and the evidence the plan rests on, or abstains. kAuthorities is the order the
+// old cascade asked them in, and the first answer wins: the tuner, the invariant profile, the route
+// table, Volta's HMMA, the prefill call on the grouped W4A8, the prefill call on the one prefill
+// schedule, the wide speed call on the grouped W4A8, the decode heuristics (the class's A8 route).
+// The plans are the ones the cascade gave (ninferno_moe_plan_golden_test holds them byte for
+// byte). The Evidence type mirrors generic::Evidence (route_authorities.h, #614) in kinds and
+// names; it is local to moe until that lands.
 
-MoePlan untuned_plan_why(const MoeWeights& weights, const MoeConfig& config, std::int32_t tokens,
-                         bool prefill, MoeAuthority& why) {
-    const Geometry g = validate(weights, config);
-    if (invariant_routes_active()) {
-        why = MoeAuthority::Invariant;
-        return invariant_plan(g, tokens);
-    }
-    // A wide call outside the prefill profile takes the grouped W4A8 on the plan's own register-MMA
-    // schedules where the banks admit it, as the prefill profile does from T=17: the int8 tier is
-    // 2-4x BF16 on every card (ad102 op bench, Gemma 4 26B Q4_0 experts: T=64 947 -> 771 us,
-    // T=8192 7776 -> 6054 us), and Gemma 4 prefills in the speed profile. Not NVFP4 banks where the
-    // build has the W4A4 kernels: there the grouped W4A8 is the int8 prefill of a W4A16 checkpoint
-    // (prefill profile only, as owned_prefill_w4a8 for the dense projections), and a wide verify
-    // keeps its A16 plan.
-    const bool nvfp4_native =
-        generic::w4a4_schedule_count() > 0 &&
-        (weights.gate_up.qtype == QType::NVFP4 || weights.down.qtype == QType::NVFP4);
-    const auto speed_w4a8 = [&](MoePlan p) {
-        return with_w4a8(p, weights,
-                         !prefill && !nvfp4_native && tokens >= kMoeW4a8SpeedMinTokens && !p.a16 &&
-                             p.gate_up_r8 < 0 && p.down_r8 < 0 &&
-                             p.job_columns % kMoeW4a8BlockM == 0);
-    };
+// What the authorities read, resolved once per call; the pure derived values are computed on
+// demand, where the cascade computed them.
+struct MoeCall {
+    const MoeWeights& weights;
+    const MoeConfig& config;
+    std::int32_t tokens;
+    bool prefill;
+    Geometry g;
+    MoePlan p; // the plan's own schedules for this width (plan_for)
+    // Whether the answers carry their Evidence (moe_plan_query); select_plan, called on every
+    // moe() call, leaves the lookups the evidence needs out.
+    bool want_evidence = false;
+
+    [[nodiscard]] bool prefill_band() const { return prefill && tokens >= 17; }
+
     // A prefill call of 17 tokens or more that admits the grouped W4A8 takes it, as a dense W4A8
     // call does (generic_gemm.cpp select_route): the tables' prefill plans are A16 schedules,
     // measured before the grouped W4A8 was the default, and one would hide it (RTX 5080, gpt-oss
     // MXFP4 experts: the gb203 entry 2950 us at T=1024, the W4A8 2110 us).
-    MoePlan p               = plan_for(g, tokens, prefill);
-    const bool w4a8_prefill = prefill && tokens >= 17 &&
-                              w4a8_bank_admitted(weights) && p.job_columns % kMoeW4a8BlockM == 0;
-    if (auto tuned =
-            w4a8_prefill ? std::nullopt : table_plan(route_key(weights, config), tokens, prefill)) {
-        if (!(prefill && tokens >= 17) || plan_is_token_invariant(*tuned)) {
-            if (const MoePlan wide = speed_w4a8(*tuned); wide.w4a8()) {
-                why = MoeAuthority::TableW4a8;
-                return wide;
-            }
-            // A table's R8 stages run only where this layer admits them (the streaming register
-            // MMA otherwise). A band of register-MMA stages takes the class's A8 gate/up on top
-            // unless it is marked A16; its schedules stay as measured.
-            if (!r8_stages_admitted(weights, *tuned, tokens)) {
-                why = MoeAuthority::TableR8Refused;
-                return without_r8(*tuned, g);
-            }
-            if (tuned->gate_up_r8 < 0 && tuned->down_r8 < 0 && !tuned->a16) {
-                const MoePlan on_top = heuristic_r8(weights, g, *tuned, tokens, true);
-                // The class's route may add nothing (A16 policy, no R8 at this width, R8 not
-                // admitted): then the band stands as measured.
-                why = on_top.gate_up_r8 >= 0 || on_top.down_r8 >= 0 ? MoeAuthority::TableClassA8
-                                                                    : MoeAuthority::TableAsMeasured;
-                return on_top;
-            }
-            why = MoeAuthority::TableAsMeasured;
-            return *tuned;
-        }
+    [[nodiscard]] bool w4a8_prefill() const {
+        return prefill_band() && w4a8_bank_admitted(weights) && p.job_columns % kMoeW4a8BlockM == 0;
     }
-    // Volta from T = 17, under a band of no route table: its own tensor cores (the int8 tier and
-    // the register MMA run emulated there).
-    if (tokens >= 17 && volta_hmma_admitted(weights, g)) {
-        MoePlan v    = plan_for(g, tokens, true);
-        v.volta_hmma = true;
-        why          = MoeAuthority::VoltaHmma;
-        return v;
+
+    // A wide call outside the prefill profile takes the grouped W4A8 on the plan's own
+    // register-MMA schedules where the banks admit it, as the prefill profile does from T=17: the
+    // int8 tier is 2-4x BF16 on every card (ad102 op bench, Gemma 4 26B Q4_0 experts: T=64 947 ->
+    // 771 us, T=8192 7776 -> 6054 us), and Gemma 4 prefills in the speed profile. Not NVFP4 banks
+    // where the build has the W4A4 kernels: there the grouped W4A8 is the int8 prefill of a
+    // W4A16 checkpoint (prefill profile only, as owned_prefill_w4a8 for the dense projections),
+    // and a wide verify keeps its A16 plan.
+    [[nodiscard]] MoePlan speed_w4a8(MoePlan plan) const {
+        const bool nvfp4_native =
+            generic::w4a4_schedule_count() > 0 &&
+            (weights.gate_up.qtype == QType::NVFP4 || weights.down.qtype == QType::NVFP4);
+        return with_w4a8(plan, weights,
+                         !prefill && !nvfp4_native && tokens >= kMoeW4a8SpeedMinTokens &&
+                             !plan.a16 && plan.gate_up_r8 < 0 && plan.down_r8 < 0 &&
+                             plan.job_columns % kMoeW4a8BlockM == 0);
     }
-    if (prefill && tokens >= 17) {
-        why = w4a8_prefill ? MoeAuthority::PrefillW4a8 : MoeAuthority::PrefillSchedule;
-        return with_w4a8(p, weights, w4a8_prefill);
-    }
-    if (const MoePlan wide = speed_w4a8(p); wide.w4a8()) {
-        why = MoeAuthority::SpeedW4a8;
-        return wide;
-    }
-    const MoePlan decode = heuristic_r8(weights, g, p, tokens);
-    // plan_for's wide schedule (T >= 64 outside the prefill band, the grouped W4A8 refused) is not
-    // a decode schedule.
-    why = decode.gate_up_r8 >= 0 || decode.down_r8 >= 0 ? MoeAuthority::DecodeR8
-          : tokens >= 64                                ? MoeAuthority::SpeedSchedule
-                                                        : MoeAuthority::DecodeStreaming;
-    return decode;
+};
+
+struct MoeAnswer {
+    MoePlan plan;
+    MoeAuthority label;
+    Evidence evidence;
+};
+
+using MoeAuthorityFn = std::optional<MoeAnswer> (*)(const MoeCall&);
+
+struct NamedMoeAuthority {
+    std::string_view name; // Evidence::source of its answers
+    MoeAuthorityFn answer;
+};
+
+Evidence by_rule(std::string_view source) {
+    return Evidence{Evidence::Kind::Ranker, Evidence::Ranker::Rule, source, {}, 0};
 }
 
+Evidence measured_here(std::string_view source) {
+    return Evidence{Evidence::Kind::Measured, Evidence::Ranker::None, source, {}, 0};
+}
+
+// The measured board an A8 route entry was timed on, by name.
+std::string board_label(const Board& b) {
+    const auto same = [&](const Board& m) {
+        return b.major == m.major && b.minor == m.minor && b.sms == m.sms;
+    };
+    if (same(measured::kRtx4090)) { return "rtx4090"; }
+    if (same(measured::kRtx5090)) { return "rtx5090"; }
+    if (same(measured::kRtx5080)) { return "rtx5080"; }
+    return std::to_string(b.major) + "." + std::to_string(b.minor) + ":" + std::to_string(b.sms) +
+           "sm";
+}
+
+// What the table entry of this layer rests on. The provenance travels with the entry
+// (table_origin): an entry the loaded table lent from another (fill_from) is Borrowed from that
+// table's class at its distance, whichever table it sits in; an entry of the table itself is
+// Measured where the table is keyed by one of this device's classes, else Carried from the
+// table's class at its distance.
+Evidence table_evidence(const MoeRouteKey& key) {
+    Evidence e;
+    e.ranker          = Evidence::Ranker::None;
+    e.source          = "route-table";
+    const auto origin = table_origin(key);
+    if (!origin) { return e; }
+    if (!origin->lender.empty()) {
+        e.kind     = Evidence::Kind::Borrowed;
+        e.donor    = origin->lender;
+        e.distance = origin->lender_distance;
+    } else if (origin->own) {
+        e.kind = Evidence::Kind::Measured;
+    } else {
+        e.kind  = Evidence::Kind::Carried;
+        e.donor = origin->table_class;
+        e.distance =
+            origin->table_distance; // infinity (another architecture's table) stays infinite
+    }
+    return e;
+}
+
+std::optional<MoeAnswer> tuner_authority(const MoeCall& c) {
+    if (invariant_routes_active() || c.tokens > kTuneMaxTokens) { return std::nullopt; }
+    auto tuned = tuned_plan(c.weights, c.config, c.tokens);
+    if (!tuned || table_covers(c.weights, c.config, c.tokens) ||
+        !r8_stages_admitted(c.weights, *tuned, c.tokens)) {
+        return std::nullopt;
+    }
+    return MoeAnswer{*tuned, MoeAuthority::Tuner, measured_here("tuner")};
+}
+
+// The invariant profile: the streaming K split of every stage at every T.
+std::optional<MoeAnswer> invariant_authority(const MoeCall& c) {
+    if (!invariant_routes_active()) { return std::nullopt; }
+    return MoeAnswer{invariant_plan(c.g, c.tokens), MoeAuthority::Invariant,
+                     by_rule("invariant-profile")};
+}
+
+// The evidence of the class's A8 route: the measured board whose route this device takes, else
+// the fallback route (a literal of eight measured cards, no donor).
+Evidence a8_route_evidence() {
+    Evidence e = by_rule("decode");
+    if (const ClassA8Route* entry = a8_class_entry()) {
+        e.ranker   = Evidence::Ranker::None;
+        e.distance = board_distance(board_of(device_class()), entry->board);
+        e.kind     = e.distance == 0 ? Evidence::Kind::Measured : Evidence::Kind::Carried;
+        // A measured answer has no donor: the board is its own source at distance 0.
+        if (e.distance != 0) { e.donor = board_label(entry->board); }
+    } else {
+        e.donor = "fallback-a8-route";
+    }
+    return e;
+}
+
+// A route-table band (measured and published), unless the grouped W4A8 prefill takes the call.
+std::optional<MoeAnswer> table_authority(const MoeCall& c) {
+    const MoeRouteKey key = route_key(c.weights, c.config);
+    const auto tuned      = c.w4a8_prefill() ? std::nullopt : table_plan(key, c.tokens, c.prefill);
+    if (!tuned || (c.prefill_band() && !plan_is_token_invariant(*tuned))) { return std::nullopt; }
+    const auto answer = [&](MoePlan plan, MoeAuthority label) {
+        if (!c.want_evidence) { return MoeAnswer{std::move(plan), label, Evidence{}}; }
+        Evidence e = table_evidence(key);
+        // The class's A8 route changed the band: the schedule it put on top rests on that route's
+        // provenance, which the table's does not tell.
+        if (label == MoeAuthority::TableClassA8) {
+            const Evidence a8 = a8_route_evidence();
+            e.overlay         = Evidence::Overlay{a8.kind, a8.donor, a8.distance};
+        }
+        return MoeAnswer{std::move(plan), label, std::move(e)};
+    };
+    if (const MoePlan wide = c.speed_w4a8(*tuned); wide.w4a8()) {
+        return answer(wide, MoeAuthority::TableW4a8);
+    }
+    // A table's R8 stages run only where this layer admits them (the streaming register MMA
+    // otherwise). A band of register-MMA stages takes the class's A8 gate/up on top unless it is
+    // marked A16; its schedules stay as measured.
+    if (!r8_stages_admitted(c.weights, *tuned, c.tokens)) {
+        return answer(without_r8(*tuned, c.g), MoeAuthority::TableR8Refused);
+    }
+    if (tuned->gate_up_r8 < 0 && tuned->down_r8 < 0 && !tuned->a16) {
+        const MoePlan on_top = heuristic_r8(c.weights, c.g, *tuned, c.tokens, true);
+        // The class's route may add nothing (A16 policy, no R8 at this width, R8 not admitted):
+        // then the band stands as measured.
+        return answer(on_top, on_top.gate_up_r8 >= 0 || on_top.down_r8 >= 0
+                                  ? MoeAuthority::TableClassA8
+                                  : MoeAuthority::TableAsMeasured);
+    }
+    return answer(*tuned, MoeAuthority::TableAsMeasured);
+}
+
+// Volta from T = 17, under a band of no route table: its own tensor cores (the int8 tier and the
+// register MMA run emulated there).
+std::optional<MoeAnswer> volta_authority(const MoeCall& c) {
+    if (c.tokens < 17 || !volta_hmma_admitted(c.weights, c.g)) { return std::nullopt; }
+    MoePlan v    = plan_for(c.g, c.tokens, true);
+    v.volta_hmma = true;
+    return MoeAnswer{v, MoeAuthority::VoltaHmma, by_rule("volta-hmma")};
+}
+
+std::optional<MoeAnswer> prefill_w4a8_authority(const MoeCall& c) {
+    if (!c.w4a8_prefill()) { return std::nullopt; }
+    return MoeAnswer{with_w4a8(c.p, c.weights, true), MoeAuthority::PrefillW4a8,
+                     by_rule("prefill-w4a8")};
+}
+
+// One register-MMA schedule for every board (kPrefillSchedule): a literal, no board in it.
+std::optional<MoeAnswer> prefill_schedule_authority(const MoeCall& c) {
+    if (!c.prefill_band()) { return std::nullopt; }
+    return MoeAnswer{with_w4a8(c.p, c.weights, false), MoeAuthority::PrefillSchedule,
+                     by_rule("prefill-schedule")};
+}
+
+std::optional<MoeAnswer> speed_w4a8_authority(const MoeCall& c) {
+    const MoePlan wide = c.speed_w4a8(c.p);
+    if (!wide.w4a8()) { return std::nullopt; }
+    return MoeAnswer{wide, MoeAuthority::SpeedW4a8, by_rule("speed-w4a8")};
+}
+
+// Decode widths: the streaming schedules by K, and the class's default A8 route on top (the
+// nearest of three measured boards within kCarryDistance, else the fallback route).
+std::optional<MoeAnswer> decode_authority(const MoeCall& c) {
+    const MoePlan decode = heuristic_r8(c.weights, c.g, c.p, c.tokens);
+    if (decode.gate_up_r8 < 0 && decode.down_r8 < 0) {
+        // plan_for's wide schedule (T >= 64 outside the prefill band, the grouped W4A8 refused) is
+        // not a decode schedule.
+        return MoeAnswer{
+            decode, c.tokens >= 64 ? MoeAuthority::SpeedSchedule : MoeAuthority::DecodeStreaming,
+            by_rule("decode")};
+    }
+    return MoeAnswer{decode, MoeAuthority::DecodeR8,
+                     c.want_evidence ? a8_route_evidence() : by_rule("decode")};
+}
+
+constexpr NamedMoeAuthority kAuthorities[] = {
+    {"tuner", tuner_authority},
+    {"invariant-profile", invariant_authority},
+    {"route-table", table_authority},
+    {"volta-hmma", volta_authority},
+    {"prefill-w4a8", prefill_w4a8_authority},
+    {"prefill-schedule", prefill_schedule_authority},
+    {"speed-w4a8", speed_w4a8_authority},
+    {"decode", decode_authority},
+};
+
+// The first answer of the list, with or without the tuner's place in it.
+MoePlanQuery walk(const MoeWeights& weights, const MoeConfig& config, std::int32_t tokens,
+                  bool prefill, bool with_tuner, bool want_evidence) {
+    const Geometry g = validate(weights, config);
+    const MoeCall call{weights,      config, tokens, prefill, g, plan_for(g, tokens, prefill),
+                       want_evidence};
+    for (const NamedMoeAuthority& a : kAuthorities) {
+        if (!with_tuner && a.name == "tuner") { continue; }
+        if (auto answer = a.answer(call)) {
+            return {answer->plan, answer->label, std::move(answer->evidence)};
+        }
+    }
+    fail("moe: no authority answered"); // the decode authority always answers
+}
+
+} // namespace
+
+// The provenance of the class's A8 route (what DecodeR8 answers and a table band's A8 overlay
+// carry).
+Evidence class_a8_route_evidence() { return a8_route_evidence(); }
+
+std::vector<std::string_view> authority_order() {
+    std::vector<std::string_view> names;
+    for (const NamedMoeAuthority& a : kAuthorities) { names.push_back(a.name); }
+    return names;
+}
+
+const char* evidence_kind_name(Evidence::Kind k) {
+    switch (k) {
+    case Evidence::Kind::Pin:
+        return "pin";
+    case Evidence::Kind::Measured:
+        return "measured";
+    case Evidence::Kind::Ranker:
+        return "ranker";
+    case Evidence::Kind::Carried:
+        return "carried";
+    case Evidence::Kind::Transferred:
+        return "transferred";
+    case Evidence::Kind::Borrowed:
+        return "borrowed";
+    }
+    return "ranker";
+}
+
+MoePlanQuery moe_plan_query(const MoeWeights& weights, const MoeConfig& config, std::int32_t tokens,
+                            bool prefill) {
+    return walk(weights, config, tokens, prefill, true, true);
+}
+
+MoePlan select_plan(const MoeWeights& weights, const MoeConfig& config, std::int32_t tokens,
+                    bool prefill) {
+    return walk(weights, config, tokens, prefill, true, false).plan;
+}
+
+MoePlan untuned_plan(const MoeWeights& weights, const MoeConfig& config, std::int32_t tokens,
+                     bool prefill) {
+    return walk(weights, config, tokens, prefill, false, false).plan;
+}
 
 std::size_t plan_workspace_bytes(const MoeWeights& weights, const MoeConfig& config,
                                  std::int32_t tokens, const MoePlan& plan) {

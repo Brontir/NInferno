@@ -60,6 +60,9 @@ static_assert(same_board_facts(measured::kV100Sxm2, Board{7, 0, 80, 6, 900}));
 // the A10, an RTX 5070 Ti 0.57 from the 5080), not to the next class of card: the RTX 4090's R8
 // decode entries on the 4080 SUPER (1.2) won 41 and lost 30, to -22 %. A board farther from every
 // measured one keeps the unmeasured default.
+// The value is CHOSEN, not measured or derived: the examples above sit below it and the one
+// measured loss (1.2) above it, and nothing measured places the 1.0 between them (route_rules.h
+// lists it with Basis::Unknown).
 inline constexpr double kCarryDistance = 1.0;
 
 // A choice measured on one board: whether it paid there.
