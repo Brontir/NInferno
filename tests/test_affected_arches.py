@@ -804,6 +804,10 @@ class Classify(unittest.TestCase):
             with self.subTest(spelling=spelling):
                 files = {"src/chat/shared.h": "#pragma once\n", "src/ops/k.cu": spelling}
                 self.assertTrue(self.run_diff(["src/chat/shared.h"], files)["all"])
+        # a `/*` inside a string literal hides no include
+        files = {"src/chat/shared.h": "#pragma once\n",
+                 "src/ops/k3.cu": 'const char* k = "/*";\n#include "../chat/shared.h"\nint z;\n'}
+        self.assertTrue(self.run_diff(["src/chat/shared.h"], files)["all"])
         files = {"docs/generated.h": "#pragma once\n",
                  "src/ops/k2.cu": '#include "../../docs/generated.h"\n'}
         res = self.run_diff(["docs/generated.h"], files)

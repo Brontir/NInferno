@@ -442,8 +442,12 @@ def without_comments(text):
 
 
 def include_names(text):
-    """The names of the `#include "..."` and `#include <...>` lines of a source."""
-    return INCLUDE.findall(without_comments(text))
+    """The names of the `#include "..."` and `#include <...>` lines of a source: those of the raw
+    text and those of the text without comments (a `/*` inside a string literal would hide an
+    include from the second alone), so stripping comments only adds edges."""
+    names = INCLUDE.findall(text)
+    seen = set(names)
+    return names + [n for n in INCLUDE.findall(without_comments(text)) if n not in seen]
 
 
 def uses_arch(text):
