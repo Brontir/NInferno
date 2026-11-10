@@ -43,6 +43,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sass_counts  # noqa: E402
@@ -236,13 +237,17 @@ def sass_lines(binary, cuda_bin, arch, sass_dump=None):
         with open(sass_dump, errors="replace") as f:
             yield from f
         return
-    proc = subprocess.Popen([cuda_tool("cuobjdump", cuda_bin), "-sass", "-arch", arch, binary],
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                            errors="replace", bufsize=1 << 20)
-    yield from proc.stdout
-    stderr = proc.stderr.read()
-    if proc.wait() != 0:
-        fail(f"cuobjdump -sass failed on {binary}: {stderr.strip()[:400]}")
+    # stderr goes to a file, not a pipe: a pipe nobody drains while the dump streams would stall
+    # cuobjdump once its warnings fill it.
+    with tempfile.TemporaryFile(mode="w+", errors="replace") as errors:
+        proc = subprocess.Popen([cuda_tool("cuobjdump", cuda_bin), "-sass", "-arch", arch, binary],
+                                stdout=subprocess.PIPE, stderr=errors, text=True, errors="replace",
+                                bufsize=1 << 20)
+        yield from proc.stdout
+        code = proc.wait()
+        errors.seek(0)
+        if code != 0:
+            fail(f"cuobjdump -sass failed on {binary}: {errors.read().strip()[:400]}")
 
 
 def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None):
