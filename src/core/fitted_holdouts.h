@@ -182,7 +182,7 @@ inline constexpr FittedHoldout kChoiceHoldouts[] = {
      Holdout::none(
          "the MoE step rows of speed_measured.json: Ada RTX 4090 (UD-Q4_K_M, UD-Q3_K_S) and RTX "
          "4060 Ti (UD-Q3_K_S); Blackwell RTX 5070 Ti (UD-IQ3_XXS, UD-Q3_K_S) and 5090 (UD-Q3_K_S); "
-         "the mean over the generation's cards (lab/speed_model/fit_moe_decode.py)",
+         "the mean over the generation's cards (tools/fits/speed_model/fit_moe_decode.py)",
          "none left out; the check is the same rows: MoE decode 33 points rms 4.5 % worst 13.5 %; "
          "Ada's 8-row point rests on one card",
          "DECISIONS 65; tests/test_choice.cpp")},
@@ -219,7 +219,7 @@ inline constexpr FittedHoldout kChoiceHoldouts[] = {
     {kChoice, "kTileCost",
      Holdout::none(
          "the census of one ~1.8K-token prompt (nsys, Qwen3.6-35B-A3B's and gpt-oss-20b's calls): "
-         "the RTX 4090 without PDL, the RTX 5070 Ti on a lab build with pdl::supported() false",
+         "the RTX 4090 without PDL, the RTX 5070 Ti on a build with pdl::supported() false",
          "one prompt per card; Ampere takes Ada's int8 row; the rows' `cards` count the cards "
          "whose "
          "census reads them (one for most): a one-card row prices only its boards' estimate",
