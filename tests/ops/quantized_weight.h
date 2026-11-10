@@ -258,12 +258,19 @@ struct PackedWeight {
     std::vector<std::uint8_t> payload;
     std::vector<float> dequant;
     Weight weight{};
+    // The payload's logical size: payload.size() unless the weight was built descriptor-only.
+    std::size_t payload_size            = 0;
     std::uint64_t code_plane_bytes      = 0;
     std::uint64_t high_plane_offset     = 0;
     std::uint64_t high_plane_bytes      = 0;
     std::uint64_t scale_plane_offset    = 0;
     std::uint64_t scale_plane_bytes     = 0;
     std::uint64_t weight_divisor_offset = 0;
+
+    void assign_payload(std::size_t size, int fill, bool descriptor_only) {
+        payload_size = size;
+        payload.assign(descriptor_only ? 0 : size, static_cast<std::uint8_t>(fill));
+    }
 
     Weight device_weight(void* device_payload) const {
         Weight w           = weight;
@@ -356,6 +363,10 @@ struct PatternedWeightOptions {
     // drawn 2^-9 .. 2^-2 at 2^-2 .. 2^5, the rare 2^0 at 2^7; a published gpt-oss checkpoint
     // reaches 2^9). 0..127, so no word reaches 255 (NaN) or wraps.
     int mxfp4_exponent_shift = 0;
+    // Shape, layout, plane offsets and payload_bytes as a full build, but no payload: nothing is
+    // allocated or filled, payload.data() and the plane pointers are null until device_weight()
+    // places the weight at an address. For tests that read descriptors only.
+    bool descriptor_only = false;
 };
 
 // Builds a deterministic full-shape payload without allocating a source or dequantized matrix.
@@ -380,34 +391,38 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
         packed.scale_plane_offset =
             detail::align_up_size(static_cast<std::size_t>(packed.code_plane_bytes), 256);
         packed.scale_plane_bytes = static_cast<std::uint64_t>(n) * 2;
-        packed.payload.assign(
-            static_cast<std::size_t>(packed.scale_plane_offset + packed.scale_plane_bytes), 0);
+        packed.assign_payload(
+            static_cast<std::size_t>(packed.scale_plane_offset + packed.scale_plane_bytes), 0,
+            options.descriptor_only);
 
-        constexpr std::uint8_t kCodes[]{
-            0x00U, 0x80U, 0x01U, 0x81U, 0x07U, 0x87U, 0x08U, 0x88U,
-            0x18U, 0x98U, 0x38U, 0xb8U, 0x44U, 0xc4U, 0x7eU, 0xfeU,
-        };
-        for (std::int32_t row = 0; row < n; ++row) {
-            const std::uint32_t row_mix =
-                static_cast<std::uint32_t>(row) ^ (static_cast<std::uint32_t>(row) >> 7);
-            for (std::int32_t column = 0; column < k; ++column) {
-                const std::uint32_t pattern =
-                    row_mix * 13U + static_cast<std::uint32_t>(column) * 7U + seed;
-                packed.payload[static_cast<std::size_t>(row) * k + column] = kCodes[pattern & 15U];
+        if (!options.descriptor_only) {
+            constexpr std::uint8_t kCodes[]{
+                0x00U, 0x80U, 0x01U, 0x81U, 0x07U, 0x87U, 0x08U, 0x88U,
+                0x18U, 0x98U, 0x38U, 0xb8U, 0x44U, 0xc4U, 0x7eU, 0xfeU,
+            };
+            for (std::int32_t row = 0; row < n; ++row) {
+                const std::uint32_t row_mix =
+                    static_cast<std::uint32_t>(row) ^ (static_cast<std::uint32_t>(row) >> 7);
+                for (std::int32_t column = 0; column < k; ++column) {
+                    const std::uint32_t pattern =
+                        row_mix * 13U + static_cast<std::uint32_t>(column) * 7U + seed;
+                    packed.payload[static_cast<std::size_t>(row) * k + column] =
+                        kCodes[pattern & 15U];
+                }
             }
-        }
-        constexpr std::uint16_t kScales[]{0x3b00U, 0x3b40U, 0x3b80U, 0x3bc0U};
-        for (std::int32_t row = 0; row < n; ++row) {
-            detail::store_u16_le(packed.payload,
-                                 packed.scale_plane_offset + static_cast<std::size_t>(row) * 2,
-                                 kScales[(static_cast<std::uint32_t>(row) + seed) & 3U]);
+            constexpr std::uint16_t kScales[]{0x3b00U, 0x3b40U, 0x3b80U, 0x3bc0U};
+            for (std::int32_t row = 0; row < n; ++row) {
+                detail::store_u16_le(packed.payload,
+                                     packed.scale_plane_offset + static_cast<std::size_t>(row) * 2,
+                                     kScales[(static_cast<std::uint32_t>(row) + seed) & 3U]);
+            }
         }
 
         packed.weight.qtype            = QType::FP8_E4M3FN_ROW_BF16;
         packed.weight.layout           = QuantLayout::RowScale;
         packed.weight.scale_dtype      = DType::BF16;
         packed.weight.payload          = packed.payload.data();
-        packed.weight.payload_bytes    = packed.payload.size();
+        packed.weight.payload_bytes    = packed.payload_size;
         packed.weight.high_plane_bytes = 0;
         packed.weight.qdata            = packed.payload.data();
         packed.weight.qhigh            = nullptr;
@@ -450,33 +465,36 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
         packed.scale_plane_bytes =
             4ULL * (block ? static_cast<std::uint64_t>(row_blocks) * k_blocks
                           : static_cast<std::uint64_t>(n));
-        packed.payload.assign(
-            static_cast<std::size_t>(packed.scale_plane_offset + packed.scale_plane_bytes), 0);
-        for (std::int32_t row = 0; row < n; ++row) {
-            for (std::int32_t column = 0; column < k; ++column) {
-                std::uint8_t code = static_cast<std::uint8_t>(
-                    detail::mix64((static_cast<std::uint64_t>(row) << 32) ^
-                                  static_cast<std::uint64_t>(column) ^
-                                  (static_cast<std::uint64_t>(seed) << 48)));
-                if ((code & 0x7fU) == 0x7fU) { code = static_cast<std::uint8_t>(code ^ 1U); }
-                packed.payload[static_cast<std::size_t>(row) * k + column] = code;
+        packed.assign_payload(
+            static_cast<std::size_t>(packed.scale_plane_offset + packed.scale_plane_bytes), 0,
+            options.descriptor_only);
+        if (!options.descriptor_only) {
+            for (std::int32_t row = 0; row < n; ++row) {
+                for (std::int32_t column = 0; column < k; ++column) {
+                    std::uint8_t code = static_cast<std::uint8_t>(
+                        detail::mix64((static_cast<std::uint64_t>(row) << 32) ^
+                                      static_cast<std::uint64_t>(column) ^
+                                      (static_cast<std::uint64_t>(seed) << 48)));
+                    if ((code & 0x7fU) == 0x7fU) { code = static_cast<std::uint8_t>(code ^ 1U); }
+                    packed.payload[static_cast<std::size_t>(row) * k + column] = code;
+                }
             }
-        }
-        // Multipliers a BF16 word cannot hold (the reason these formats exist), around 2^-8.
-        const std::int32_t scales = block ? row_blocks * k_blocks : n;
-        for (std::int32_t i = 0; i < scales; ++i) {
-            const auto h = detail::mix64(static_cast<std::uint64_t>(i) ^
-                                         (static_cast<std::uint64_t>(seed) << 40));
-            const float scale = 0.0039F * (1.0F + static_cast<float>(h % 1000U) * 1.37e-3F);
-            detail::store_u32_le(packed.payload,
-                                 packed.scale_plane_offset + static_cast<std::size_t>(i) * 4,
-                                 detail::float_bits(scale));
+            // Multipliers a BF16 word cannot hold (the reason these formats exist), around 2^-8.
+            const std::int32_t scales = block ? row_blocks * k_blocks : n;
+            for (std::int32_t i = 0; i < scales; ++i) {
+                const auto h      = detail::mix64(static_cast<std::uint64_t>(i) ^
+                                                  (static_cast<std::uint64_t>(seed) << 40));
+                const float scale = 0.0039F * (1.0F + static_cast<float>(h % 1000U) * 1.37e-3F);
+                detail::store_u32_le(packed.payload,
+                                     packed.scale_plane_offset + static_cast<std::size_t>(i) * 4,
+                                     detail::float_bits(scale));
+            }
         }
         packed.weight.qtype         = qtype;
         packed.weight.layout        = block ? QuantLayout::BlockScale128F32 : QuantLayout::RowScale;
         packed.weight.scale_dtype   = DType::FP32;
         packed.weight.payload       = packed.payload.data();
-        packed.weight.payload_bytes = packed.payload.size();
+        packed.weight.payload_bytes = packed.payload_size;
         packed.weight.qdata         = packed.payload.data();
         packed.weight.qhigh         = nullptr;
         packed.weight.scales        = packed.payload.data() + packed.scale_plane_offset;
@@ -522,14 +540,18 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
             packed.scale_plane_offset =
                 packed.high_plane_offset + detail::align_up_size(packed.high_plane_bytes, 256);
             packed.scale_plane_bytes = nb * plane.scale;
-            packed.payload.assign(
-                static_cast<std::size_t>(packed.scale_plane_offset + packed.scale_plane_bytes), 0);
-            for (std::uint64_t i = 0; i < packed.code_plane_bytes; ++i)
-                packed.payload[i] = byte_at(i);
-            for (std::uint64_t i = 0; i < packed.high_plane_bytes; ++i)
-                packed.payload[packed.high_plane_offset + i] = byte_at(i + (1ULL << 40));
-            for (std::uint64_t h = 0; h < packed.scale_plane_bytes / 2; ++h)
-                detail::store_u16_le(packed.payload, packed.scale_plane_offset + h * 2, half_at(h));
+            packed.assign_payload(
+                static_cast<std::size_t>(packed.scale_plane_offset + packed.scale_plane_bytes), 0,
+                options.descriptor_only);
+            if (!options.descriptor_only) {
+                for (std::uint64_t i = 0; i < packed.code_plane_bytes; ++i)
+                    packed.payload[i] = byte_at(i);
+                for (std::uint64_t i = 0; i < packed.high_plane_bytes; ++i)
+                    packed.payload[packed.high_plane_offset + i] = byte_at(i + (1ULL << 40));
+                for (std::uint64_t h = 0; h < packed.scale_plane_bytes / 2; ++h)
+                    detail::store_u16_le(packed.payload, packed.scale_plane_offset + h * 2,
+                                         half_at(h));
+            }
             packed.weight.layout      = QuantLayout::GgmlPlanes;
             packed.weight.scale_dtype = DType::FP16;
             packed.weight.high_plane_bytes = packed.high_plane_bytes;
@@ -541,12 +563,15 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
             const std::uint64_t block_bytes = qtype == QType::GGML_Q4_K ? 144 : 176;
             packed.code_plane_bytes         = static_cast<std::uint64_t>(n) * blocks * block_bytes;
             packed.scale_plane_offset       = packed.code_plane_bytes;
-            packed.payload.assign(static_cast<std::size_t>(packed.code_plane_bytes), 0);
-            for (std::uint64_t i = 0; i < packed.code_plane_bytes; ++i)
-                packed.payload[i] = byte_at(i);
-            for (std::uint64_t b = 0; b < static_cast<std::uint64_t>(n) * blocks; ++b) {
-                detail::store_u16_le(packed.payload, b * block_bytes, half_at(2 * b));
-                detail::store_u16_le(packed.payload, b * block_bytes + 2, half_at(2 * b + 1));
+            packed.assign_payload(static_cast<std::size_t>(packed.code_plane_bytes), 0,
+                                  options.descriptor_only);
+            if (!options.descriptor_only) {
+                for (std::uint64_t i = 0; i < packed.code_plane_bytes; ++i)
+                    packed.payload[i] = byte_at(i);
+                for (std::uint64_t b = 0; b < static_cast<std::uint64_t>(n) * blocks; ++b) {
+                    detail::store_u16_le(packed.payload, b * block_bytes, half_at(2 * b));
+                    detail::store_u16_le(packed.payload, b * block_bytes + 2, half_at(2 * b + 1));
+                }
             }
             packed.weight.layout = QuantLayout::GgmlBlocks;
             packed.weight.qhigh  = nullptr;
@@ -554,7 +579,7 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
         }
         packed.weight.qtype         = qtype;
         packed.weight.payload       = packed.payload.data();
-        packed.weight.payload_bytes = packed.payload.size();
+        packed.weight.payload_bytes = packed.payload_size;
         packed.weight.qdata         = packed.payload.data();
         packed.weight.group_size    = static_cast<std::uint32_t>(values);
         packed.weight.group         = values;
@@ -582,42 +607,45 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
         packed.scale_plane_offset = packed.high_plane_offset +
                                     detail::align_up_size(packed.high_plane_bytes, 256);
         packed.scale_plane_bytes = static_cast<std::uint64_t>(n) * groups * 2;
-        packed.payload.assign(
-            static_cast<std::size_t>(packed.scale_plane_offset + packed.scale_plane_bytes), 0);
-        for (std::int32_t row = 0; row < n; ++row) {
-            for (std::int32_t column = 0; column < k; column += 2) {
-                const auto code = [&](std::int32_t c) {
-                    return static_cast<std::uint8_t>(
-                        detail::mix64((static_cast<std::uint64_t>(row) << 32) ^
-                                      static_cast<std::uint64_t>(c) ^
-                                      (static_cast<std::uint64_t>(seed) << 48)) &
-                        0x0fU);
-                };
-                packed.payload[static_cast<std::size_t>(row) * k / 2 +
-                               static_cast<std::size_t>(column / 2)] =
-                    static_cast<std::uint8_t>(code(column) | (code(column + 1) << 4));
-            }
-            for (std::int32_t g = 0; g < groups; ++g) {
-                // Zero points 0..16 (8 for a symmetric group, 16 for GPTQ v1's top), binary16
-                // scales around 2^-7 with ten significant bits.
-                const auto h = detail::mix64((static_cast<std::uint64_t>(row) << 20) ^
-                                             static_cast<std::uint64_t>(g) ^
-                                             (static_cast<std::uint64_t>(seed) << 44));
-                const auto zero =
-                    static_cast<std::uint8_t>((h & 3U) == 0 ? 8U : (h >> 2) % 17U);
-                const float scale =
-                    0.0078125F * (1.0F + static_cast<float>((h >> 12) % 1024U) / 1024.0F);
-                const auto at     = static_cast<std::size_t>(row) * groups + g;
-                packed.payload[packed.high_plane_offset + at] = zero;
-                detail::store_u16_le(packed.payload, packed.scale_plane_offset + at * 2,
-                                     detail::f32_to_f16(scale));
+        packed.assign_payload(
+            static_cast<std::size_t>(packed.scale_plane_offset + packed.scale_plane_bytes), 0,
+            options.descriptor_only);
+        if (!options.descriptor_only) {
+            for (std::int32_t row = 0; row < n; ++row) {
+                for (std::int32_t column = 0; column < k; column += 2) {
+                    const auto code = [&](std::int32_t c) {
+                        return static_cast<std::uint8_t>(
+                            detail::mix64((static_cast<std::uint64_t>(row) << 32) ^
+                                          static_cast<std::uint64_t>(c) ^
+                                          (static_cast<std::uint64_t>(seed) << 48)) &
+                            0x0fU);
+                    };
+                    packed.payload[static_cast<std::size_t>(row) * k / 2 +
+                                   static_cast<std::size_t>(column / 2)] =
+                        static_cast<std::uint8_t>(code(column) | (code(column + 1) << 4));
+                }
+                for (std::int32_t g = 0; g < groups; ++g) {
+                    // Zero points 0..16 (8 for a symmetric group, 16 for GPTQ v1's top), binary16
+                    // scales around 2^-7 with ten significant bits.
+                    const auto h = detail::mix64((static_cast<std::uint64_t>(row) << 20) ^
+                                                 static_cast<std::uint64_t>(g) ^
+                                                 (static_cast<std::uint64_t>(seed) << 44));
+                    const auto zero =
+                        static_cast<std::uint8_t>((h & 3U) == 0 ? 8U : (h >> 2) % 17U);
+                    const float scale =
+                        0.0078125F * (1.0F + static_cast<float>((h >> 12) % 1024U) / 1024.0F);
+                    const auto at = static_cast<std::size_t>(row) * groups + g;
+                    packed.payload[packed.high_plane_offset + at] = zero;
+                    detail::store_u16_le(packed.payload, packed.scale_plane_offset + at * 2,
+                                         detail::f32_to_f16(scale));
+                }
             }
         }
         packed.weight.qtype            = qtype;
         packed.weight.layout           = QuantLayout::RowGroupZp;
         packed.weight.scale_dtype      = DType::FP16;
         packed.weight.payload          = packed.payload.data();
-        packed.weight.payload_bytes    = packed.payload.size();
+        packed.weight.payload_bytes    = packed.payload_size;
         packed.weight.high_plane_bytes = packed.high_plane_bytes;
         packed.weight.qdata            = packed.payload.data();
         packed.weight.qhigh            = packed.payload.data() + packed.high_plane_offset;
@@ -643,38 +671,41 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
         packed.scale_plane_offset =
             detail::align_up_size(static_cast<std::size_t>(packed.code_plane_bytes), 256);
         packed.scale_plane_bytes = static_cast<std::uint64_t>(n) * k / 32;
-        packed.payload.assign(
-            static_cast<std::size_t>(packed.scale_plane_offset + packed.scale_plane_bytes), 0);
-        for (std::int32_t row = 0; row < n; ++row) {
-            for (std::int32_t column = 0; column < k; column += 2) {
-                const auto code = [&](std::int32_t c) {
-                    return static_cast<std::uint8_t>(
-                        detail::mix64((static_cast<std::uint64_t>(row) << 32) ^
-                                      static_cast<std::uint64_t>(c) ^
-                                      (static_cast<std::uint64_t>(seed) << 48)) &
-                        0x0fU);
-                };
-                packed.payload[static_cast<std::size_t>(row) * k / 2 +
-                               static_cast<std::size_t>(column / 2)] =
-                    static_cast<std::uint8_t>(code(column) | (code(column + 1) << 4));
-            }
-            for (std::int32_t g = 0; g < k / 32; ++g) {
-                // Exponents 2^-9 .. 2^-2, and now and then 2^0 and the subnormal word 0.
-                const auto h = detail::mix64((static_cast<std::uint64_t>(row) << 20) ^
-                                             static_cast<std::uint64_t>(g) ^ seed);
-                std::uint8_t e = static_cast<std::uint8_t>(118 + (h & 7U));
-                if ((h >> 8) % 61 == 0) { e = 127; }
-                if ((h >> 8) % 97 == 1) { e = 0; }
-                if (e != 0) { e = static_cast<std::uint8_t>(e + options.mxfp4_exponent_shift); }
-                packed.payload[packed.scale_plane_offset +
-                               static_cast<std::size_t>(row) * (k / 32) + g] = e;
+        packed.assign_payload(
+            static_cast<std::size_t>(packed.scale_plane_offset + packed.scale_plane_bytes), 0,
+            options.descriptor_only);
+        if (!options.descriptor_only) {
+            for (std::int32_t row = 0; row < n; ++row) {
+                for (std::int32_t column = 0; column < k; column += 2) {
+                    const auto code = [&](std::int32_t c) {
+                        return static_cast<std::uint8_t>(
+                            detail::mix64((static_cast<std::uint64_t>(row) << 32) ^
+                                          static_cast<std::uint64_t>(c) ^
+                                          (static_cast<std::uint64_t>(seed) << 48)) &
+                            0x0fU);
+                    };
+                    packed.payload[static_cast<std::size_t>(row) * k / 2 +
+                                   static_cast<std::size_t>(column / 2)] =
+                        static_cast<std::uint8_t>(code(column) | (code(column + 1) << 4));
+                }
+                for (std::int32_t g = 0; g < k / 32; ++g) {
+                    // Exponents 2^-9 .. 2^-2, and now and then 2^0 and the subnormal word 0.
+                    const auto h   = detail::mix64((static_cast<std::uint64_t>(row) << 20) ^
+                                                   static_cast<std::uint64_t>(g) ^ seed);
+                    std::uint8_t e = static_cast<std::uint8_t>(118 + (h & 7U));
+                    if ((h >> 8) % 61 == 0) { e = 127; }
+                    if ((h >> 8) % 97 == 1) { e = 0; }
+                    if (e != 0) { e = static_cast<std::uint8_t>(e + options.mxfp4_exponent_shift); }
+                    packed.payload[packed.scale_plane_offset +
+                                   static_cast<std::size_t>(row) * (k / 32) + g] = e;
+                }
             }
         }
         packed.weight.qtype            = QType::MXFP4;
         packed.weight.layout           = QuantLayout::BlockScaleK32E8M0;
         packed.weight.scale_dtype      = DType::U8;
         packed.weight.payload          = packed.payload.data();
-        packed.weight.payload_bytes    = packed.payload.size();
+        packed.weight.payload_bytes    = packed.payload_size;
         packed.weight.qdata            = packed.payload.data();
         packed.weight.scales           = packed.payload.data() + packed.scale_plane_offset;
         packed.weight.group_size       = 32;
@@ -710,64 +741,67 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
         packed.scale_plane_bytes = static_cast<std::uint64_t>(detail::align_up(n, 128)) *
                                    static_cast<std::uint64_t>(k) / 16;
         packed.weight_divisor_offset = packed.scale_plane_offset + packed.scale_plane_bytes;
-        packed.payload.assign(static_cast<std::size_t>(packed.weight_divisor_offset) + 4U, 0);
+        packed.assign_payload(static_cast<std::size_t>(packed.weight_divisor_offset) + 4U, 0,
+                              options.descriptor_only);
 
-        const auto row_seed = [&](std::int32_t row) {
-            return seed + (row >= n / 2 ? options.upper_half_seed : 0U);
-        };
-        for (std::int32_t row = 0; row < n; ++row) {
-            for (std::int32_t column = 0; column < k; column += 2) {
-                const auto code = [&](std::int32_t logical_column) {
-                    return static_cast<std::uint8_t>(
-                        (static_cast<std::uint32_t>(row) * 13U +
-                         static_cast<std::uint32_t>(logical_column) * 7U + row_seed(row)) &
-                        0x0fU);
-                };
-                packed.payload[static_cast<std::size_t>(row) * k / 2 +
-                               static_cast<std::size_t>(column / 2)] =
-                    static_cast<std::uint8_t>(code(column) | (code(column + 1) << 4));
+        if (!options.descriptor_only) {
+            const auto row_seed = [&](std::int32_t row) {
+                return seed + (row >= n / 2 ? options.upper_half_seed : 0U);
+            };
+            for (std::int32_t row = 0; row < n; ++row) {
+                for (std::int32_t column = 0; column < k; column += 2) {
+                    const auto code = [&](std::int32_t logical_column) {
+                        return static_cast<std::uint8_t>(
+                            (static_cast<std::uint32_t>(row) * 13U +
+                             static_cast<std::uint32_t>(logical_column) * 7U + row_seed(row)) &
+                            0x0fU);
+                    };
+                    packed.payload[static_cast<std::size_t>(row) * k / 2 +
+                                   static_cast<std::size_t>(column / 2)] =
+                        static_cast<std::uint8_t>(code(column) | (code(column + 1) << 4));
+                }
             }
-        }
 
-        constexpr std::uint8_t kScaleWords[]{
-            0x00U, // +0
-            0x04U, // 0.0078125
-            0x08U, // 0.015625
-            0x0bU, // 0.021484375
-            0x10U, // 0.03125
-            0x13U, // 0.04296875
-            0x18U, // 0.0625
-            0x1dU, // 0.1015625
-        };
-        const std::int32_t groups_per_row = k / 16;
-        const std::int32_t k_tiles        = k / 64;
-        for (std::int32_t row = 0; row < n; ++row) {
-            const std::int32_t row_tile  = row / 128;
-            const std::int32_t row_inner = row % 128;
-            for (std::int32_t group = 0; group < groups_per_row; ++group) {
-                const std::int32_t scale_tile = group / 4;
-                const std::int32_t scale_lane = group % 4;
-                const std::size_t stored_offset =
-                    packed.scale_plane_offset +
-                    static_cast<std::size_t>(row_tile * k_tiles + scale_tile) * 512U +
-                    static_cast<std::size_t>(row_inner % 32) * 16U +
-                    static_cast<std::size_t>(row_inner / 32) * 4U +
-                    static_cast<std::size_t>(scale_lane);
-                const std::size_t pattern =
-                    (static_cast<std::uint32_t>(row) * 5U + static_cast<std::uint32_t>(group) * 3U +
-                     row_seed(row)) &
-                    7U;
-                packed.payload[stored_offset] = kScaleWords[pattern];
+            constexpr std::uint8_t kScaleWords[]{
+                0x00U, // +0
+                0x04U, // 0.0078125
+                0x08U, // 0.015625
+                0x0bU, // 0.021484375
+                0x10U, // 0.03125
+                0x13U, // 0.04296875
+                0x18U, // 0.0625
+                0x1dU, // 0.1015625
+            };
+            const std::int32_t groups_per_row = k / 16;
+            const std::int32_t k_tiles        = k / 64;
+            for (std::int32_t row = 0; row < n; ++row) {
+                const std::int32_t row_tile  = row / 128;
+                const std::int32_t row_inner = row % 128;
+                for (std::int32_t group = 0; group < groups_per_row; ++group) {
+                    const std::int32_t scale_tile = group / 4;
+                    const std::int32_t scale_lane = group % 4;
+                    const std::size_t stored_offset =
+                        packed.scale_plane_offset +
+                        static_cast<std::size_t>(row_tile * k_tiles + scale_tile) * 512U +
+                        static_cast<std::size_t>(row_inner % 32) * 16U +
+                        static_cast<std::size_t>(row_inner / 32) * 4U +
+                        static_cast<std::size_t>(scale_lane);
+                    const std::size_t pattern =
+                        (static_cast<std::uint32_t>(row) * 5U +
+                         static_cast<std::uint32_t>(group) * 3U + row_seed(row)) &
+                        7U;
+                    packed.payload[stored_offset] = kScaleWords[pattern];
+                }
             }
+            detail::store_u32_le(packed.payload, packed.weight_divisor_offset,
+                                 detail::float_bits(options.weight_scale_divisor));
         }
-        detail::store_u32_le(packed.payload, packed.weight_divisor_offset,
-                             detail::float_bits(options.weight_scale_divisor));
 
         packed.weight.qtype                = QType::NVFP4;
         packed.weight.layout               = QuantLayout::BlockScaleK16M128x4;
         packed.weight.scale_dtype          = DType::FP8_E4M3FN;
         packed.weight.payload              = packed.payload.data();
-        packed.weight.payload_bytes        = packed.payload.size();
+        packed.weight.payload_bytes        = packed.payload_size;
         packed.weight.high_plane_bytes     = 0;
         packed.weight.qdata                = packed.payload.data();
         packed.weight.qhigh                = nullptr;
@@ -812,117 +846,120 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
         packed.high_plane_offset +
         detail::align_up_size(static_cast<std::size_t>(packed.high_plane_bytes), 256);
     packed.scale_plane_bytes = groups * 2;
-    packed.payload.assign(
-        static_cast<std::size_t>(packed.scale_plane_offset + packed.scale_plane_bytes), 0);
+    packed.assign_payload(
+        static_cast<std::size_t>(packed.scale_plane_offset + packed.scale_plane_bytes), 0,
+        options.descriptor_only);
 
-    const std::uint64_t code_bytes_per_group = detail::nibble_bytes_per_group(spec);
-    const std::uint64_t high_bytes_per_group = detail::high_bytes_per_group(spec);
-    if (options.row_split_codes == RowSplitCodePattern::Coordinate) {
-        for (std::uint64_t group_index = 0; group_index < groups; ++group_index) {
-            const std::uint64_t row   = group_index / static_cast<std::uint64_t>(kg);
-            const std::uint64_t group = group_index % static_cast<std::uint64_t>(kg);
+    if (!options.descriptor_only) {
+        const std::uint64_t code_bytes_per_group = detail::nibble_bytes_per_group(spec);
+        const std::uint64_t high_bytes_per_group = detail::high_bytes_per_group(spec);
+        if (options.row_split_codes == RowSplitCodePattern::Coordinate) {
+            for (std::uint64_t group_index = 0; group_index < groups; ++group_index) {
+                const std::uint64_t row   = group_index / static_cast<std::uint64_t>(kg);
+                const std::uint64_t group = group_index % static_cast<std::uint64_t>(kg);
+                if (group >= static_cast<std::uint64_t>(logical_groups)) { continue; }
+                const std::uint32_t row_mix =
+                    static_cast<std::uint32_t>(row ^ (row >> 8) ^ (row >> 16));
+                for (std::uint64_t byte = 0; byte < code_bytes_per_group; ++byte) {
+                    std::uint8_t code = static_cast<std::uint8_t>(
+                        (row_mix * 37u + group * 29u + byte * 17u + seed) & 0xffu);
+                    if (qtype == QType::Q8_G32_FP16 && code == 0x80u) { code = 0x81u; }
+                    packed.payload[static_cast<std::size_t>(group_index * code_bytes_per_group +
+                                                            byte)] = code;
+                }
+                for (std::uint64_t byte = 0; byte < high_bytes_per_group; ++byte) {
+                    packed.payload[static_cast<std::size_t>(
+                        packed.high_plane_offset + group_index * high_bytes_per_group + byte)] =
+                        static_cast<std::uint8_t>(
+                            (row_mix * 43u + group * 31u + byte * 13u + seed * 3u) & 0xffu);
+                }
+            }
+        } else {
+            std::uint8_t code_patterns[256][48]{};
+            std::uint8_t high_patterns[256][16]{};
+            for (std::size_t pattern = 0; pattern < 256; ++pattern) {
+                std::uint64_t state =
+                    detail::mix64(static_cast<std::uint64_t>(seed) << 32 | pattern);
+                for (std::size_t byte = 0; byte < code_bytes_per_group; ++byte) {
+                    state              = detail::mix64(state + byte);
+                    std::uint8_t value = static_cast<std::uint8_t>(state >> 56);
+                    if (qtype == QType::Q8_G32_FP16 && value == 0x80U) { value = 0x81U; }
+                    code_patterns[pattern][byte] = value;
+                }
+                for (std::size_t byte = 0; byte < high_bytes_per_group; ++byte) {
+                    state                        = detail::mix64(state + 0x100U + byte);
+                    high_patterns[pattern][byte] = static_cast<std::uint8_t>(state >> 56);
+                }
+            }
+            for (std::uint64_t group_index = 0; group_index < groups; ++group_index) {
+                const std::uint64_t group = group_index % static_cast<std::uint64_t>(kg);
+                if (group >= static_cast<std::uint64_t>(logical_groups)) { continue; }
+                const std::uint64_t mixed =
+                    detail::mix64(group_index ^ (static_cast<std::uint64_t>(seed) << 17));
+                const std::size_t pattern = static_cast<std::size_t>(mixed & 0xffU);
+                std::memcpy(packed.payload.data() + group_index * code_bytes_per_group,
+                            code_patterns[pattern], code_bytes_per_group);
+                if (high_bytes_per_group != 0) {
+                    std::memcpy(packed.payload.data() + packed.high_plane_offset +
+                                    group_index * high_bytes_per_group,
+                                high_patterns[pattern], high_bytes_per_group);
+                }
+            }
+        }
+        const std::int32_t partial_group_lanes = k % spec.group_size;
+        if (partial_group_lanes != 0) {
+            std::int8_t codes[128]{};
+            const std::int32_t group = logical_groups - 1;
+            for (std::int32_t row = 0; row < n; ++row) {
+                const std::size_t group_index = static_cast<std::size_t>(row) * kg + group;
+                std::uint8_t* nibble = packed.payload.data() + group_index * code_bytes_per_group;
+                std::uint8_t* high   = high_bytes_per_group == 0
+                                           ? nullptr
+                                           : packed.payload.data() + packed.high_plane_offset +
+                                               group_index * high_bytes_per_group;
+                for (std::int32_t lane = 0; lane < partial_group_lanes; ++lane) {
+                    codes[lane] = static_cast<std::int8_t>(
+                        detail::unpack_lowbit_code(nibble, high, spec, lane));
+                }
+                std::fill(codes + partial_group_lanes, codes + spec.group_size,
+                          static_cast<std::int8_t>(0));
+                detail::pack_lowbit_group(codes, spec, nibble, high);
+            }
+        }
+        constexpr std::uint16_t kUnitScales[]  = {0x3800u, 0x3a00u, 0x3c00u, 0x3d00u};
+        constexpr std::uint16_t kSmallScales[] = {0x2040u, 0x2440u, 0x2840u, 0x2c40u};
+        constexpr std::uint16_t kTinyScales[]  = {0x1840u, 0x1c40u, 0x2040u, 0x2440u};
+        const std::uint16_t* scales            = nullptr;
+        switch (options.row_split_scale) {
+        case RowSplitScalePattern::Unit:
+            scales = kUnitScales;
+            break;
+        case RowSplitScalePattern::Small:
+            scales = kSmallScales;
+            break;
+        case RowSplitScalePattern::Tiny:
+            scales = kTinyScales;
+            break;
+        }
+        for (std::uint64_t i = 0; i < groups; ++i) {
+            const std::uint64_t row   = i / static_cast<std::uint64_t>(kg);
+            const std::uint64_t group = i % static_cast<std::uint64_t>(kg);
             if (group >= static_cast<std::uint64_t>(logical_groups)) { continue; }
-            const std::uint32_t row_mix =
-                static_cast<std::uint32_t>(row ^ (row >> 8) ^ (row >> 16));
-            for (std::uint64_t byte = 0; byte < code_bytes_per_group; ++byte) {
-                std::uint8_t code = static_cast<std::uint8_t>(
-                    (row_mix * 37u + group * 29u + byte * 17u + seed) & 0xffu);
-                if (qtype == QType::Q8_G32_FP16 && code == 0x80u) { code = 0x81u; }
-                packed
-                    .payload[static_cast<std::size_t>(group_index * code_bytes_per_group + byte)] =
-                    code;
-            }
-            for (std::uint64_t byte = 0; byte < high_bytes_per_group; ++byte) {
-                packed.payload[static_cast<std::size_t>(
-                    packed.high_plane_offset + group_index * high_bytes_per_group + byte)] =
-                    static_cast<std::uint8_t>(
-                        (row_mix * 43u + group * 31u + byte * 13u + seed * 3u) & 0xffu);
-            }
+            const std::uint64_t scale_index =
+                options.row_split_codes == RowSplitCodePattern::Hashed
+                    ? (detail::mix64(i ^ (static_cast<std::uint64_t>(seed) << 17)) >> 8) & 3U
+                    : (row ^ (row >> 8) ^ group ^ seed) & 3U;
+            detail::store_u16_le(packed.payload,
+                                 static_cast<std::size_t>(packed.scale_plane_offset + i * 2),
+                                 scales[scale_index]);
         }
-    } else {
-        std::uint8_t code_patterns[256][48]{};
-        std::uint8_t high_patterns[256][16]{};
-        for (std::size_t pattern = 0; pattern < 256; ++pattern) {
-            std::uint64_t state = detail::mix64(static_cast<std::uint64_t>(seed) << 32 | pattern);
-            for (std::size_t byte = 0; byte < code_bytes_per_group; ++byte) {
-                state              = detail::mix64(state + byte);
-                std::uint8_t value = static_cast<std::uint8_t>(state >> 56);
-                if (qtype == QType::Q8_G32_FP16 && value == 0x80U) { value = 0x81U; }
-                code_patterns[pattern][byte] = value;
-            }
-            for (std::size_t byte = 0; byte < high_bytes_per_group; ++byte) {
-                state                        = detail::mix64(state + 0x100U + byte);
-                high_patterns[pattern][byte] = static_cast<std::uint8_t>(state >> 56);
-            }
-        }
-        for (std::uint64_t group_index = 0; group_index < groups; ++group_index) {
-            const std::uint64_t group = group_index % static_cast<std::uint64_t>(kg);
-            if (group >= static_cast<std::uint64_t>(logical_groups)) { continue; }
-            const std::uint64_t mixed =
-                detail::mix64(group_index ^ (static_cast<std::uint64_t>(seed) << 17));
-            const std::size_t pattern = static_cast<std::size_t>(mixed & 0xffU);
-            std::memcpy(packed.payload.data() + group_index * code_bytes_per_group,
-                        code_patterns[pattern], code_bytes_per_group);
-            if (high_bytes_per_group != 0) {
-                std::memcpy(packed.payload.data() + packed.high_plane_offset +
-                                group_index * high_bytes_per_group,
-                            high_patterns[pattern], high_bytes_per_group);
-            }
-        }
-    }
-    const std::int32_t partial_group_lanes = k % spec.group_size;
-    if (partial_group_lanes != 0) {
-        std::int8_t codes[128]{};
-        const std::int32_t group = logical_groups - 1;
-        for (std::int32_t row = 0; row < n; ++row) {
-            const std::size_t group_index = static_cast<std::size_t>(row) * kg + group;
-            std::uint8_t* nibble = packed.payload.data() + group_index * code_bytes_per_group;
-            std::uint8_t* high   = high_bytes_per_group == 0
-                                       ? nullptr
-                                       : packed.payload.data() + packed.high_plane_offset +
-                                           group_index * high_bytes_per_group;
-            for (std::int32_t lane = 0; lane < partial_group_lanes; ++lane) {
-                codes[lane] =
-                    static_cast<std::int8_t>(detail::unpack_lowbit_code(nibble, high, spec, lane));
-            }
-            std::fill(codes + partial_group_lanes, codes + spec.group_size,
-                      static_cast<std::int8_t>(0));
-            detail::pack_lowbit_group(codes, spec, nibble, high);
-        }
-    }
-    constexpr std::uint16_t kUnitScales[]  = {0x3800u, 0x3a00u, 0x3c00u, 0x3d00u};
-    constexpr std::uint16_t kSmallScales[] = {0x2040u, 0x2440u, 0x2840u, 0x2c40u};
-    constexpr std::uint16_t kTinyScales[]  = {0x1840u, 0x1c40u, 0x2040u, 0x2440u};
-    const std::uint16_t* scales            = nullptr;
-    switch (options.row_split_scale) {
-    case RowSplitScalePattern::Unit:
-        scales = kUnitScales;
-        break;
-    case RowSplitScalePattern::Small:
-        scales = kSmallScales;
-        break;
-    case RowSplitScalePattern::Tiny:
-        scales = kTinyScales;
-        break;
-    }
-    for (std::uint64_t i = 0; i < groups; ++i) {
-        const std::uint64_t row   = i / static_cast<std::uint64_t>(kg);
-        const std::uint64_t group = i % static_cast<std::uint64_t>(kg);
-        if (group >= static_cast<std::uint64_t>(logical_groups)) { continue; }
-        const std::uint64_t scale_index =
-            options.row_split_codes == RowSplitCodePattern::Hashed
-                ? (detail::mix64(i ^ (static_cast<std::uint64_t>(seed) << 17)) >> 8) & 3U
-                : (row ^ (row >> 8) ^ group ^ seed) & 3U;
-        detail::store_u16_le(packed.payload,
-                             static_cast<std::size_t>(packed.scale_plane_offset + i * 2),
-                             scales[scale_index]);
     }
 
     packed.weight.qtype            = qtype;
     packed.weight.layout           = QuantLayout::RowSplit;
     packed.weight.scale_dtype      = DType::FP16;
     packed.weight.payload          = packed.payload.data();
-    packed.weight.payload_bytes    = packed.payload.size();
+    packed.weight.payload_bytes    = packed.payload_size;
     packed.weight.high_plane_bytes = packed.high_plane_bytes;
     packed.weight.qdata            = packed.payload.data();
     packed.weight.qhigh =
