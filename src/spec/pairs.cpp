@@ -857,10 +857,15 @@ std::vector<LoadBound> clipped_load(const std::vector<std::int32_t>& depths) {
 }
 
 // The load bounds of a profile priced for another card, from the round cost on that card's rates
-// (Profile::joint_scale): at C streams each choice runs the depth d (of those it measured, up to
-// its own) with the greatest gain, its one-request gain at d times R_1(d) / R_C(d), and plain
-// decode where that is at most 1. A bound serves every choice, so the shallowest of them is
-// taken. Past kPricedVerifyRows (a joint verify of more rows than the rounds were measured at) or
+// (Profile::joint_scale). A bound serves every choice at once: under a bound of d at C streams a
+// choice runs min(d, its own depth), at that depth's one-request gain times R_1 / R_C there. So
+// the bound at C is the depth d at which every enabled choice gains (each product above 1, each
+// depth priced and its gain known), and among those the one whose least gain over the choices is
+// greatest, the shallower among equals: the bound is judged by the choice it serves worst, which
+// with one choice is that choice's best depth. Plain decode where no depth serves them all. The
+// counts are taken in order, each within the bound in force at the count before (a table never
+// rises: clipped_load), so a depth is run only at counts where it was shown to serve every choice.
+// Past kPricedVerifyRows (a joint verify of more rows than the rounds were measured at) or
 // where a depth is not priced it is not run; plain decode from the first stream count nothing is
 // priced for. Replaces stand_in_load's ceil(SMs / 10): the compute term of a joint verify
 // overtakes the weight bytes at a row count that grows with SMs x clock x int8 rate over DRAM
@@ -877,31 +882,42 @@ std::vector<LoadBound> facts_load(const Profile& p) {
           std::pair<const Choice*, std::optional<bool>>{&p.non_thinking, false}}) {
         if (c->config.enabled()) { choices.emplace_back(c, thinking); }
     }
+    // A choice's gain at C streams under a bound of `bound`: it runs min(bound, its own depth), at
+    // that depth's one-request gain times R_1 / R_C there; nullopt where either is unknown.
+    const auto gain_under = [&](const Choice& c, std::optional<bool> thinking, std::int32_t bound,
+                                std::int32_t streams) -> std::optional<double> {
+        SpecConfig at     = c.config;
+        at.k              = std::min(bound, c.config.k);
+        const auto priced = p.joint_scale.find(at.label());
+        if (priced == p.joint_scale.end()) { return std::nullopt; }
+        const auto scale = priced->second.find(streams);
+        if (scale == priced->second.end()) { return std::nullopt; }
+        const auto gain = at.k == c.config.k ? std::optional<double>(c.speedup())
+                                             : measured_gain(p, at, thinking);
+        if (!gain) { return std::nullopt; }
+        return *gain * scale->second;
+    };
+    std::int32_t deepest = 0;
+    for (const auto& [c, thinking] : choices) { deepest = std::max(deepest, c->config.k); }
     std::vector<std::int32_t> depths; // from 2 streams on, up to the first plain
-    std::int32_t previous = std::numeric_limits<std::int32_t>::max();
+    std::int32_t previous = deepest;
     for (std::int32_t streams = 2; streams <= kPricedVerifyRows + 1 && previous > 0; ++streams) {
-        std::int32_t depth = choices.empty() ? 0 : std::numeric_limits<std::int32_t>::max();
-        for (const auto& [c, thinking] : choices) {
-            std::int32_t best_depth = 0;
-            double best             = 1.0;
-            for (std::int32_t d = 1; d <= c->config.k; ++d) {
-                SpecConfig at     = c->config;
-                at.k              = d;
-                const auto priced = p.joint_scale.find(at.label());
-                if (priced == p.joint_scale.end()) { continue; }
-                const auto scale = priced->second.find(streams);
-                const auto gain  = d == c->config.k ? std::optional<double>(c->speedup())
-                                                    : measured_gain(p, at, thinking);
-                if (scale == priced->second.end() || !gain) { continue; }
-                if (*gain * scale->second > best) {
-                    best       = *gain * scale->second;
-                    best_depth = d;
-                }
+        std::int32_t depth = 0;
+        double served      = 1.0; // the least gain over the choices at `depth` (plain: 1)
+        for (std::int32_t d = 1; d <= previous; ++d) {
+            double least = std::numeric_limits<double>::max();
+            for (const auto& [c, thinking] : choices) {
+                const auto gain = gain_under(*c, thinking, d, streams);
+                least           = gain ? std::min(least, *gain) : 0.0;
+                if (least <= 1.0) { break; }
             }
-            depth = std::min(depth, best_depth);
+            if (least > served) {
+                served = least;
+                depth  = d;
+            }
         }
         depths.push_back(depth);
-        previous = std::min(previous, depth);
+        previous = depth;
     }
     return clipped_load(depths);
 }

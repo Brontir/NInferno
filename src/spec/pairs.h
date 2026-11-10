@@ -131,10 +131,12 @@ struct RoundCostEstimate {
 [[nodiscard]] std::vector<LoadBound> clipped_load(const std::vector<std::int32_t>& depths);
 
 // The load table of a profile priced for another card, from its joint verify's price
-// (Profile::joint_scale) and its choices' gains: at C = 2, 3, ... streams each choice runs the
-// depth (up to its own) whose one-request gain times R_1 / R_C is greatest, plain decode where
-// none is above 1; the shallowest of the choices', clipped (clipped_load). An unpriced count runs
-// plain decode, so the table ends at plain decode by kPricedVerifyRows + 1 streams at the latest.
+// (Profile::joint_scale) and its choices' gains: at C = 2, 3, ... streams the depth, within the
+// bound at the count before, under which every enabled choice (running min(depth, its own))
+// gains, its one-request gain times R_1 / R_C above 1; among those the one whose least gain over
+// the choices is greatest, plain decode where none serves them all (clipped_load writes it). An
+// unpriced count runs plain decode, so the table ends at plain decode by kPricedVerifyRows + 1
+// streams at the latest.
 [[nodiscard]] std::vector<LoadBound> facts_load(const Profile& profile);
 
 // The profile of a target from its pairs measured on the lab's cards (the same target and drafters),

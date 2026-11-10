@@ -957,6 +957,49 @@ int main() {
                "the overall default's shallower depth at its own sections' gain: plain (" +
                    sp::load_label(sp::facts_load(p)) + ")");
     }
+    // One bound serves every choice: under it each runs min(bound, its own depth), and every one
+    // must gain there. An overall mtp:3 that gains at depth 3 only (1.2 against 0.84 at depth 1,
+    // depth 2 unpriced) beside a thinking mtp:1 that gains at 1 (1.4): the bound at two streams is
+    // 3 (the thinking choice still runs 1), not the thinking choice's 1, which the overall one
+    // would run at a loss.
+    {
+        sp::Profile p;
+        p.overall.config         = sp::SpecConfig::parse("mtp:3");
+        p.overall.tok_s          = 2.0;
+        p.overall.plain_tok_s    = 1.0;
+        p.thinking.config        = sp::SpecConfig::parse("mtp:1");
+        p.thinking.tok_s         = 2.0;
+        p.thinking.plain_tok_s   = 1.0;
+        const sp::SpecConfig one = p.thinking.config;
+        for (const char* family : {"math", "code", "prose", "thinking"}) {
+            const bool thinking = std::string(family) == "thinking";
+            p.measurements.push_back({.family = family, .tokens = 100, .seconds = 1.0});
+            p.measurements.push_back(
+                {.config = one, .family = family, .tokens = 100, .seconds = thinking ? 0.5 : 0.85});
+        }
+        const auto overall_at_one = sp::measured_gain(p, one, std::nullopt);
+        expect(overall_at_one && std::abs(*overall_at_one - 0.2 / 0.1665) < 1e-9,
+               "the overall default's gain at depth 1 over the mix");
+        p.joint_scale[one.label()]              = {{2, 0.7}};
+        p.joint_scale[p.overall.config.label()] = {{2, 0.6}};
+        expect(sp::load_label(sp::facts_load(p)) == "2:3,3:0",
+               "a bound every choice gains under: 3 at two streams (" +
+                   sp::load_label(sp::facts_load(p)) + ")");
+        // The thinking choice loses at its only depth (2 x 0.45): no bound serves both, plain.
+        p.joint_scale[one.label()] = {{2, 0.45}};
+        expect(sp::load_label(sp::facts_load(p)) == "2:0",
+               "no depth serves every choice: plain (" + sp::load_label(sp::facts_load(p)) + ")");
+        // The overall default alone, depth 1 best at two streams (1.2012 x 0.95 against
+        // 2 x 0.55) and losing at three (x 0.5), while depth 3 would gain at three (2 x 0.6):
+        // the bound in force at two streams holds, so three streams decode plainly rather than
+        // run depth 1 at a loss under a table that cannot rise again.
+        p.thinking                              = {};
+        p.joint_scale[one.label()]              = {{2, 0.95}, {3, 0.5}};
+        p.joint_scale[p.overall.config.label()] = {{2, 0.55}, {3, 0.6}};
+        expect(sp::load_label(sp::facts_load(p)) == "2:1,3:0",
+               "each count within the bound before: plain from three (" +
+                   sp::load_label(sp::facts_load(p)) + ")");
+    }
     // A table is clipped to its running minimum: a depth that rises again is not written.
     expect(sp::load_label(sp::clipped_load({3, 3, 2, 0})) == "2:3,4:2,5:0", "falls are recorded");
     expect(sp::load_label(sp::clipped_load({2, 2, 3, 2})) == "2:2", "a rise is clipped, no 4:2");
