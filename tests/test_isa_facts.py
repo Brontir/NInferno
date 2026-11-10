@@ -237,6 +237,9 @@ class IsaFacts(unittest.TestCase):
         for line, bad, said in (
                 ("arch sm_89\n", "arch sm_80\n", "built for sm_80, not sm_89"),
                 ("sass_per_mma 1\n", "sass_per_mma 0\n", "no positive count"),
+                ("sass_per_mma 1\n", "sass_per_mma 2\n", "are not the 4096 flops"),
+                ("selfcheck ok\n", "selfcheck ok\nrefused the SASS of one x\n",
+                 "`run` refused this run: the SASS of one x"),
                 ("sass_per_mma 1\n", "sass_per_mma four\n", "no positive count"),
                 ("mem_clock_khz 10501000\n", "mem_clock_khz -1\n", "mem_clock_khz is no count"),
                 ("mem_clock_khz 10501000\n", "mem_clock_khz fast\n", "mem_clock_khz is no count"),
@@ -291,7 +294,7 @@ class IsaFacts(unittest.TestCase):
         ip.parse_run(earlier_run(16))
 
     def run_faked(self, d, *, before="", after="", during=None, probe_rc=0, mem_khz=None,
-                  waive=False):
+                  waive=False, sass=SASS_89):
         """isa_probe.py run with nvcc, cuobjdump, nvidia-smi and the probe binary faked; the
         exit code, the --out path and stderr."""
         pid = 4321
@@ -321,7 +324,7 @@ class IsaFacts(unittest.TestCase):
             if exe == "nvcc":
                 return ip.subprocess.CompletedProcess(cmd, 0)
             if exe == "cuobjdump":
-                return ip.subprocess.CompletedProcess(cmd, 0, SASS_89, "")
+                return ip.subprocess.CompletedProcess(cmd, 0, sass, "")
             self.assertEqual((exe, cmd[1]), ("nvidia-smi", "--query-compute-apps=gpu_bus_id,pid"))
             return ip.subprocess.CompletedProcess(cmd, 0, next(apps), "")
 
@@ -365,7 +368,11 @@ class IsaFacts(unittest.TestCase):
                 ({"during": "", "waive": True}, 0, None),
                 ({"during": "00000000:01:00.0, [N/A]\n", "waive": True}, 0, None),
                 ({"during": other, "waive": True}, 3, "during the run: 1 (pid 4242)"),
-                ({"mem_khz": 0}, 0, None)):
+                ({"mem_khz": 0}, 0, None),
+                # The SASS of one mma.sync not the shape's flops (an opcode of no known shape):
+                # refused by `run`, and the file says so, so a copy under the row's name is too.
+                ({"sass": SASS_89.replace("HMMA.16816.F32.BF16", "HMMA.F32.BF16")}, 3,
+                 "is not its 4096 flops")):
             with tempfile.TemporaryDirectory() as d:
                 rc, out, err = self.run_faked(d, **kw)
                 self.assertEqual(rc, rc_want, (kw, err))

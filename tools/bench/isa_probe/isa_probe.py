@@ -219,6 +219,9 @@ def parse_run(text):
         elif parts[0] == "note":
             # Information the probe adds (the SM clock's range over the chases): kept, not a fact.
             head.setdefault("notes", []).append(" ".join(parts[1:]))
+        elif parts[0] == REFUSED_LINE:
+            # `run` refused this run and said why in the file itself: no row, whatever its name.
+            raise ValueError(f"`run` refused this run: {' '.join(parts[1:])}")
         elif parts[0] in HEADER or parts[0] in HEADER_SINCE:
             if parts[0] in head:
                 raise ValueError(f"{parts[0]} line given twice")
@@ -277,6 +280,14 @@ def parse_run(text):
         own = "sm_" + arch_key(int(head["cc"]), head["shape"])
         if head["arch"] != own:
             raise ValueError(f"built for {head['arch']}, not {own} (cc {head['cc']})")
+    # The SASS MMAs of one mma.sync, each of the shape's own m x n x k (sass_counts' table), are
+    # the shape's flops: what `run` checked on the opcodes, held here on the count it wrote.
+    if "sass_per_mma" in head:
+        mnk = _sass_counts().MMA_SHAPES.get(shape[0].split("_")[1])
+        if mnk is None or int(head["sass_per_mma"]) * 2 * mnk[0] * mnk[1] * mnk[2] != \
+                SHAPE_FLOPS[shape[0]]:
+            raise ValueError(f"sass_per_mma {head['sass_per_mma']} SASS MMAs are not the "
+                             f"{SHAPE_FLOPS[shape[0]]} flops of one {shape[0]}")
     return head, facts
 
 
@@ -522,8 +533,10 @@ def _during_note(during, bus, own):
             + (f" (pid {', '.join(others)})" if others else ""))
 
 
-# The suffix of a refused run's file: never an isa_probe_<arch>.txt, so never merged as a row.
+# The suffix of a refused run's file (never an isa_probe_<arch>.txt, so never merged as a row),
+# and the line `run` ends it with, which parse_run refuses under any name.
 REFUSED = ".refused"
+REFUSED_LINE = "refused"
 
 
 def cmd_run(a):
@@ -628,7 +641,9 @@ def cmd_run(a):
     # only by a run that is one, so "merge the first run" can never pick up a refused one.
     path = a.out or f"isa_probe_{arch}.txt"
     if refusal:
+        # The reason goes into the file too, so a copy under a row's name is refused by merge.
         path += REFUSED
+        out += f"{REFUSED_LINE} {' '.join(refusal.split())}\n"
     with open(path, "w", newline="\n") as f:
         f.write(out)
     sys.stdout.write(out)
