@@ -15,7 +15,7 @@ spec = importlib.util.spec_from_file_location(
 ip = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ip)
 
-SAMPLE = """probe isa_probe 1
+SAMPLE = """probe isa_probe 2
 card GeForce RTX 4090
 cc 89
 sms 128
@@ -24,6 +24,7 @@ driver 13040
 runtime 13040
 nvcc 13.4.92
 shape hmma_16816_f32_bf16 4096
+fact resident_ctas_per_sm 4.000 count
 fact mma_cycles_per_sm 8.012 clk
 fact mma_cycles_per_partition 32.048 clk
 fact tensor_flops_per_sm_clock 511.2 flop
@@ -32,7 +33,7 @@ fact fp32_cycles_per_warp_instruction 1.004 clk
 fact int32_cycles_per_warp_instruction 2.01 clk
 """ + "".join(f"fact {lv}_latency_w{w} {v + 3 * w:.1f} clk\n"
               for lv, v in (("l1", 34.0), ("l2", 260.0), ("dram", 560.0)) for w in (1, 2, 4, 8)) + \
-    "fact shared_latency 29.5 clk\nend\n"
+    "fact shared_latency 29.5 clk\nselfcheck ok\nend\n"
 
 
 class IsaFacts(unittest.TestCase):
@@ -52,6 +53,14 @@ class IsaFacts(unittest.TestCase):
     def test_refusals(self):
         with self.assertRaises(ValueError):
             ip.parse_run(SAMPLE.replace("end\n", ""))
+        # A run whose self-check failed, or that reports none, is no row.
+        with self.assertRaises(ValueError) as failed:
+            ip.parse_run(SAMPLE.replace("selfcheck ok\n", "selfcheck FAIL DRAM latency not above "
+                                                             "1.2x L2 at w2\nselfcheck FAIL shape "
+                                                             "hmma_884_f32_f16 is not the card's\n"))
+        self.assertIn("DRAM latency", str(failed.exception))
+        with self.assertRaises(ValueError):
+            ip.parse_run(SAMPLE.replace("selfcheck ok\n", ""))
         with self.assertRaises(ValueError):
             ip.parse_run(SAMPLE.replace("fact shared_latency 29.5 clk\n", ""))
         with self.assertRaises(ValueError):
@@ -74,8 +83,8 @@ class IsaFacts(unittest.TestCase):
             self.assertEqual(set(row["facts"]), set(ip.FACTS), key)
             for name, v in row["facts"].items():
                 self.assertGreater(v["value"], 0.0, f"{key} {name}")
-                self.assertEqual(v["unit"], "flop" if name == "tensor_flops_per_sm_clock" else "clk",
-                                 f"{key} {name}")
+                unit = {"tensor_flops_per_sm_clock": "flop", "resident_ctas_per_sm": "count"}
+                self.assertEqual(v["unit"], unit.get(name, "clk"), f"{key} {name}")
             # Loaded latency never falls under the lone warp's; DRAM is further than L2 than L1.
             fa = row["facts"]
             for lv in ("l1", "l2", "dram"):

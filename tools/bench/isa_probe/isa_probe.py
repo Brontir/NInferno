@@ -27,6 +27,7 @@ DEFAULT_TABLE = os.path.join(ROOT, "src", "core", "data", "isa_facts.json")
 SCHEMA = 1
 # Every fact a run reports, in SM clocks unless the unit says otherwise (test_isa_facts pins it).
 FACTS = (
+    "resident_ctas_per_sm",
     "mma_cycles_per_sm", "mma_cycles_per_partition", "tensor_flops_per_sm_clock",
     "mma_dependent_latency", "fp32_cycles_per_warp_instruction",
     "int32_cycles_per_warp_instruction", "l1_latency_w1", "l1_latency_w2", "l1_latency_w4",
@@ -39,7 +40,7 @@ HEADER = ("probe", "card", "cc", "sms", "l2_bytes", "driver", "runtime", "nvcc",
 def parse_run(text):
     """The header fields and the facts of one isa_probe output; ValueError when a line is odd or a
     fact is missing."""
-    head, facts, ended = {}, {}, False
+    head, facts, ended, failures, checked = {}, {}, False, [], False
     for line in text.splitlines():
         parts = line.split()
         if not parts:
@@ -50,13 +51,19 @@ def parse_run(text):
             facts[parts[1]] = {"value": float(parts[2]), "unit": parts[3]}
         elif parts[0] == "end":
             ended = True
+        elif parts[0] == "selfcheck":
+            checked = True
+            if parts[1:2] != ["ok"]:
+                failures.append(" ".join(parts[2:]))
         elif parts[0] in HEADER:
             head[parts[0]] = " ".join(parts[1:])
         else:
             raise ValueError(f"unknown line: {line!r}")
     missing = [f for f in FACTS if f not in facts]
-    if missing or not ended:
-        raise ValueError(f"incomplete run: missing {missing}, ended={ended}")
+    if missing or not ended or not checked:
+        raise ValueError(f"incomplete run: missing {missing}, ended={ended}, selfcheck={checked}")
+    if failures:
+        raise ValueError("the probe's self-check failed: " + "; ".join(failures))
     for k in ("card", "cc", "nvcc", "probe", "shape"):
         if k not in head:
             raise ValueError(f"no {k} line")
@@ -101,13 +108,24 @@ def cmd_run(a):
         cmd = [a.nvcc, "-O3", "-std=c++17", f"-arch=sm_{arch}", "-o", exe, src]
         print("+", " ".join(cmd), file=sys.stderr)
         subprocess.run(cmd, check=True)
-        out = subprocess.run([exe], check=True, capture_output=True, text=True).stdout
-    parse_run(out)
+        # The probe's stderr (CUDA errors) passes through; its stdout is kept whole, so a failed
+        # or refused run still shows what it measured before stopping.
+        run = subprocess.run([exe], stdout=subprocess.PIPE, text=True)
+        out = run.stdout
     path = a.out or f"isa_probe_{arch}.txt"
     with open(path, "w", newline="\n") as f:
         f.write(out)
-    print(f"isa_probe: wrote {path}")
     sys.stdout.write(out)
+    if run.returncode != 0:
+        print(f"isa_probe: the probe exited {run.returncode}; {path} holds its output, not a row "
+              "to merge", file=sys.stderr)
+        return run.returncode
+    try:
+        parse_run(out)
+    except ValueError as e:
+        print(f"isa_probe: {e}; {path} is not a row to merge", file=sys.stderr)
+        return 3
+    print(f"isa_probe: wrote {path}")
     return 0
 
 

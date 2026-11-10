@@ -8,13 +8,18 @@
 //   nvcc -O3 -std=c++17 -arch=sm_<arch> -o isa_probe tools/bench/isa_probe/isa_probe.cu
 // Run (about 20 s, 600 MB of device memory; the GPU should be otherwise idle):
 //   ./isa_probe            # `fact <name> <value> <unit>` lines, parsed by isa_probe.py
+// Exit 0 with `selfcheck ok`; 3 when a result fails the self-check (its reasons printed), 2 on a
+// CUDA error.
 //
-// Method. Throughput: SMs x 4 resident CTAs of 4 warps each run N iterations of U independent
-// instructions; a CTA's clock64 span covers the work of every CTA resident with it, so cycles per
-// instruction per SM = span / (instructions of the SM); the per-partition figure is 4x that.
-// Latency: one warp's lane 0 follows a dependent chain (acc = mma(acc) / idx = buf[idx]); cycles
-// per link include the chain's own address arithmetic (2-3 clocks, the same for every level).
-// Loaded latency: W warps per SM each chase their own chain through the same level.
+// Method. Throughput: SMs x 4 CTAs of 4 warps each run N iterations of U independent
+// instructions; every CTA records its SM (%smid) and its clock64 span, and per SM the span of all
+// its CTAs over the instructions those CTAs issued is the SM's cycles per instruction (the
+// hardware does not spread the CTAs evenly, so the CTA count per SM is read, not assumed); the
+// median over SMs is reported, with the per-partition figure 4x that. Latency: one warp's lane 0
+// follows a dependent chain (acc = mma(acc) / idx = buf[idx]); cycles per link include the chain's
+// own address arithmetic (2-3 clocks, the same for every level). Loaded latency: W warps per SM
+// each chase a chain of their own through the same level, the chains disjoint in lines (each
+// starts n / 8 elements after the previous, a power of two no stride divides).
 
 #include <cuda_runtime.h>
 
@@ -22,6 +27,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <map>
+#include <string>
 #include <vector>
 
 #define CHECK(x)                                                                                   \
@@ -43,13 +50,21 @@ constexpr int kLatencyLinks = 4096; // links of a dependent chain
 
 struct Span {
     long long begin, end;
+    int sm;
 };
 
+__device__ __forceinline__ int smid() {
+    int id;
+    asm volatile("mov.u32 %0, %%smid;" : "=r"(id));
+    return id;
+}
+
 // ---- Tensor pipe ----
-// One MMA of the architecture's shape on packed 1.0 operands; `acc` holds the accumulators.
+// One MMA of the architecture's shape on packed 1.0 operands; `acc` holds the accumulators. The
+// shape code is read back from the device (shape_code), never decided on the host, where
+// __CUDA_ARCH__ is not defined.
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
-#    define ISA_PROBE_SHAPE "hmma_16816_f32_bf16"
-#    define ISA_PROBE_FLOPS 4096
+#    define ISA_PROBE_SHAPE_CODE 2
 
 __device__ __forceinline__ void mma_once(float (&c)[4], unsigned a0, unsigned a1, unsigned a2,
                                          unsigned a3, unsigned b0, unsigned b1) {
@@ -59,8 +74,7 @@ __device__ __forceinline__ void mma_once(float (&c)[4], unsigned a0, unsigned a1
                  : "r"(a0), "r"(a1), "r"(a2), "r"(a3), "r"(b0), "r"(b1));
 }
 #elif defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 750
-#    define ISA_PROBE_SHAPE "hmma_1688_f32_f16"
-#    define ISA_PROBE_FLOPS 2048
+#    define ISA_PROBE_SHAPE_CODE 1
 
 __device__ __forceinline__ void mma_once(float (&c)[4], unsigned a0, unsigned a1, unsigned,
                                          unsigned, unsigned b0, unsigned) {
@@ -70,8 +84,7 @@ __device__ __forceinline__ void mma_once(float (&c)[4], unsigned a0, unsigned a1
                  : "r"(a0), "r"(a1), "r"(b0));
 }
 #else
-#    define ISA_PROBE_SHAPE "hmma_884_f32_f16"
-#    define ISA_PROBE_FLOPS 512
+#    define ISA_PROBE_SHAPE_CODE 0
 
 __device__ __forceinline__ void mma_once(float (&c)[4], unsigned a0, unsigned a1, unsigned,
                                          unsigned, unsigned b0, unsigned b1) {
@@ -84,6 +97,20 @@ __device__ __forceinline__ void mma_once(float (&c)[4], unsigned a0, unsigned a1
                  : "r"(a0), "r"(a1), "r"(b0), "r"(b1));
 }
 #endif
+
+__global__ void shape_code(int* out) {
+#ifdef __CUDA_ARCH__
+    *out = ISA_PROBE_SHAPE_CODE;
+#endif
+}
+
+struct Shape {
+    const char* name;
+    int flops;
+};
+
+constexpr Shape kShapes[] = {
+    {"hmma_884_f32_f16", 512}, {"hmma_1688_f32_f16", 2048}, {"hmma_16816_f32_bf16", 4096}};
 
 __global__ void mma_throughput(Span* spans, float* sink, unsigned a, unsigned b) {
     float acc[kUnroll][4];
@@ -99,7 +126,7 @@ __global__ void mma_throughput(Span* spans, float* sink, unsigned a, unsigned b)
     const long long t1 = clock64();
     float s            = 0.f;
     for (int u = 0; u < kUnroll; ++u) s += acc[u][0] + acc[u][1] + acc[u][2] + acc[u][3];
-    if (threadIdx.x == 0) spans[blockIdx.x] = {t0, t1};
+    if (threadIdx.x == 0) spans[blockIdx.x] = {t0, t1, smid()};
     if (s == 12345.f) sink[0] = s; // keeps the chain alive, never true
 }
 
@@ -108,7 +135,7 @@ __global__ void mma_latency(Span* spans, float* sink, unsigned a, unsigned b) {
     const long long t0 = clock64();
     for (int i = 0; i < kLatencyLinks; ++i) mma_once(acc, a, a, a, a, b, b);
     const long long t1 = clock64();
-    if (threadIdx.x == 0) spans[blockIdx.x] = {t0, t1};
+    if (threadIdx.x == 0) spans[blockIdx.x] = {t0, t1, smid()};
     if (acc[0] + acc[1] + acc[2] + acc[3] == 12345.f) sink[0] = acc[0];
 }
 
@@ -126,7 +153,7 @@ __global__ void fp32_throughput(Span* spans, float* sink, float m, float c) {
     const long long t1 = clock64();
     float s            = 0.f;
     for (int u = 0; u < kUnroll; ++u) s += x[u];
-    if (threadIdx.x == 0) spans[blockIdx.x] = {t0, t1};
+    if (threadIdx.x == 0) spans[blockIdx.x] = {t0, t1, smid()};
     if (s == 12345.f) sink[0] = s;
 }
 
@@ -143,14 +170,15 @@ __global__ void int32_throughput(Span* spans, float* sink, unsigned m, unsigned 
     const long long t1 = clock64();
     unsigned s         = 0;
     for (int u = 0; u < kUnroll; ++u) s += x[u];
-    if (threadIdx.x == 0) spans[blockIdx.x] = {t0, t1};
+    if (threadIdx.x == 0) spans[blockIdx.x] = {t0, t1, smid()};
     if (s == 12345u) sink[0] = 1.f;
 }
 
 // ---- Memory latencies ----
-// `chains` warps per CTA (one CTA per SM) each follow their own chain `buf[idx]` from `start +
-// warp * offset`; lane 0 chases, the warp's other lanes idle. Two passes: the first warms the
-// level, the second is timed.
+// `warps` warps per CTA (one CTA per SM) each follow their own chain `buf[idx]` from `warp x
+// offset`; lane 0 chases, the warp's other lanes idle. Two passes: the first warms the level, the
+// second is timed. Every index read is a value of buf, below n by construction; the start
+// `warp x offset` is below n for offset = n / 8 and at most 8 warps.
 __global__ void chase(const unsigned* __restrict__ buf, unsigned offset, Span* spans,
                       unsigned* sink) {
     const int warp = threadIdx.x / 32;
@@ -160,7 +188,7 @@ __global__ void chase(const unsigned* __restrict__ buf, unsigned offset, Span* s
     const long long t0 = clock64();
     for (int i = 0; i < kLatencyLinks; ++i) idx = buf[idx];
     const long long t1 = clock64();
-    if (warp == 0) spans[blockIdx.x] = {t0, t1};
+    if (warp == 0) spans[blockIdx.x] = {t0, t1, smid()};
     if (idx == 0xffffffffu) sink[0] = idx;
 }
 
@@ -173,7 +201,7 @@ __global__ void chase_shared(Span* spans, unsigned* sink) {
     const long long t0 = clock64();
     for (int i = 0; i < kLatencyLinks; ++i) idx = s[idx];
     const long long t1 = clock64();
-    spans[blockIdx.x]  = {t0, t1};
+    spans[blockIdx.x]  = {t0, t1, smid()};
     if (idx == 0xffffffffu) sink[0] = idx;
 }
 
@@ -183,18 +211,23 @@ __global__ void fill_chain(unsigned* buf, unsigned n, unsigned stride) {
     if (i < n) buf[i] = (i + stride) % n;
 }
 
-double median_span(const std::vector<Span>& spans) {
-    std::vector<double> d;
-    for (const Span& s : spans) d.push_back(static_cast<double>(s.end - s.begin));
+double median(std::vector<double> d) {
     std::sort(d.begin(), d.end());
     return d[d.size() / 2];
 }
 
+double median_span(const std::vector<Span>& spans) {
+    std::vector<double> d;
+    for (const Span& s : spans) d.push_back(static_cast<double>(s.end - s.begin));
+    return median(d);
+}
+
 struct Probe {
-    int sms         = 0;
-    Span* spans     = nullptr;
-    float* fsink    = nullptr;
-    unsigned* usink = nullptr;
+    int sms          = 0;
+    Span* spans      = nullptr;
+    float* fsink     = nullptr;
+    unsigned* usink  = nullptr;
+    double ctas_seen = 0; // the median CTA count per SM the last throughput kernel saw
     std::vector<Span> host;
 
     std::vector<Span>& collect(int ctas) {
@@ -204,19 +237,40 @@ struct Probe {
         return host;
     }
 
-    // Cycles per instruction per SM of a throughput kernel, every SM holding kCtasPerSm CTAs.
+    // Cycles per instruction per SM of a throughput kernel: per SM, the span of all its CTAs over
+    // the instructions they issued; the median over SMs.
     template <typename Kernel, typename... Args>
     double per_sm(Kernel kernel, Args... args) {
         const int ctas = sms * kCtasPerSm;
         kernel<<<ctas, 32 * kWarpsPerCta>>>(spans, fsink, args...); // warm
         kernel<<<ctas, 32 * kWarpsPerCta>>>(spans, fsink, args...);
-        const double span = median_span(collect(ctas));
-        return span / (static_cast<double>(kThroughputN) * kUnroll * kWarpsPerCta * kCtasPerSm);
+        std::map<int, std::vector<Span>> by_sm;
+        for (const Span& s : collect(ctas)) by_sm[s.sm].push_back(s);
+        std::vector<double> cycles, counts;
+        for (const auto& [sm, list] : by_sm) {
+            long long lo = list[0].begin, hi = list[0].end;
+            for (const Span& s : list) {
+                lo = std::min(lo, s.begin);
+                hi = std::max(hi, s.end);
+            }
+            const double work =
+                static_cast<double>(kThroughputN) * kUnroll * kWarpsPerCta * list.size();
+            cycles.push_back(static_cast<double>(hi - lo) / work);
+            counts.push_back(static_cast<double>(list.size()));
+        }
+        ctas_seen = median(counts);
+        return median(cycles);
     }
 };
 
+std::vector<std::string> g_failures;
+
 void fact(const char* name, double value, const char* unit) {
     std::printf("fact %s %.3f %s\n", name, value, unit);
+}
+
+void check(bool ok, const std::string& what) {
+    if (!ok) g_failures.push_back(what);
 }
 
 } // namespace
@@ -227,9 +281,10 @@ int main() {
     int driver = 0, runtime = 0;
     CHECK(cudaDriverGetVersion(&driver));
     CHECK(cudaRuntimeGetVersion(&runtime));
-    std::printf("probe isa_probe 1\n");
+    const int cc = p.major * 10 + p.minor;
+    std::printf("probe isa_probe 2\n");
     std::printf("card %s\n", p.name);
-    std::printf("cc %d%d\n", p.major, p.minor);
+    std::printf("cc %d\n", cc);
     std::printf("sms %d\n", p.multiProcessorCount);
     std::printf("l2_bytes %zu\n", static_cast<size_t>(p.l2CacheSize));
     std::printf("driver %d\n", driver);
@@ -243,26 +298,52 @@ int main() {
     CHECK(cudaMalloc(&pr.fsink, sizeof(float)));
     CHECK(cudaMalloc(&pr.usink, sizeof(unsigned)));
 
+    // The MMA shape the device code took, checked against the card.
+    int* code_dev = nullptr;
+    int code      = -1;
+    CHECK(cudaMalloc(&code_dev, sizeof(int)));
+    shape_code<<<1, 1>>>(code_dev);
+    CHECK(cudaDeviceSynchronize());
+    CHECK(cudaMemcpy(&code, code_dev, sizeof(int), cudaMemcpyDeviceToHost));
+    check(code >= 0 && code < 3, "shape code not read from the device");
+    const Shape shape = kShapes[std::clamp(code, 0, 2)];
+    std::printf("shape %s %d\n", shape.name, shape.flops);
+    const int expected_code = cc >= 80 ? 2 : cc >= 75 ? 1 : 0;
+    check(code == expected_code, std::string("shape ") + shape.name + " is not the card's (cc " +
+                                     std::to_string(cc) + ")");
+
     // Tensor pipe: cycles per MMA at the SM (every partition busy) and the dependent latency.
-    const unsigned ones_bf16 = 0x3f803f80u, ones_f16 = 0x3c003c00u;
-    const unsigned ones = (p.major >= 8) ? ones_bf16 : ones_f16;
+    const unsigned ones = (code == 2) ? 0x3f803f80u /* bf16 1.0 */ : 0x3c003c00u /* f16 1.0 */;
     const double mma_sm = pr.per_sm(mma_throughput, ones, ones);
-    std::printf("shape %s %d\n", ISA_PROBE_SHAPE, ISA_PROBE_FLOPS);
+    fact("resident_ctas_per_sm", pr.ctas_seen, "count");
     fact("mma_cycles_per_sm", mma_sm, "clk");
     fact("mma_cycles_per_partition", mma_sm * 4.0, "clk");
-    fact("tensor_flops_per_sm_clock", ISA_PROBE_FLOPS / mma_sm, "flop");
+    const double tensor_rate = shape.flops / mma_sm;
+    fact("tensor_flops_per_sm_clock", tensor_rate, "flop");
+    // No SM the probe knows issues a dense MMA above 2048 flop a clock (the GA100 / GH100 class)
+    // or below one m8n8k4 in 32 clocks.
+    check(tensor_rate <= 2048.0 && tensor_rate >= 16.0, "tensor rate out of range");
     mma_latency<<<pr.sms, 32>>>(pr.spans, pr.fsink, ones, ones);
     mma_latency<<<pr.sms, 32>>>(pr.spans, pr.fsink, ones, ones);
-    fact("mma_dependent_latency", median_span(pr.collect(pr.sms)) / kLatencyLinks, "clk");
+    const double mma_lat = median_span(pr.collect(pr.sms)) / kLatencyLinks;
+    fact("mma_dependent_latency", mma_lat, "clk");
+    check(mma_lat >= mma_sm * 4.0 * 0.5, "dependent MMA latency under half the issue interval");
 
-    // INT32 / FP32 pipes: cycles per warp instruction per partition.
-    fact("fp32_cycles_per_warp_instruction", pr.per_sm(fp32_throughput, 0.999f, 0.001f) * 4.0,
-         "clk");
-    fact("int32_cycles_per_warp_instruction", pr.per_sm(int32_throughput, 3u, 1u) * 4.0, "clk");
+    // INT32 / FP32 pipes: cycles per warp instruction per partition. The floors are the lane
+    // counts: 32 FP32 lanes a partition from Ampere (1 clock), 16 before (2); 16 INT32 lanes (2).
+    const double fp32 = pr.per_sm(fp32_throughput, 0.999f, 0.001f) * 4.0;
+    const double i32  = pr.per_sm(int32_throughput, 3u, 1u) * 4.0;
+    fact("fp32_cycles_per_warp_instruction", fp32, "clk");
+    fact("int32_cycles_per_warp_instruction", i32, "clk");
+    const double fp32_floor = cc >= 80 ? 1.0 : 2.0;
+    check(fp32 >= 0.97 * fp32_floor, "FP32 cycles per warp instruction under the lane floor");
+    check(i32 >= 0.97 * 2.0, "INT32 cycles per warp instruction under the lane floor");
 
     // Memory latencies. L1: an 8 KB chain, L2: 1 MB, DRAM: a 512 MB chain whose links are 64 KB +
     // 128 B apart (every link a new line and a new DRAM page; 4096 links span 256 MB, past every
-    // L2). Loaded: 1, 2, 4, 8 warps per SM on separate chains of the same level.
+    // L2). Loaded: 1, 2, 4, 8 warps per SM, each on its own chain of the same level starting n / 8
+    // elements after the previous: a power of two no stride divides, so no two chains share a
+    // line within the timed links, and every start is below n.
     struct Level {
         const char* name;
         size_t bytes;
@@ -273,23 +354,41 @@ int main() {
 
     unsigned* buf = nullptr;
     CHECK(cudaMalloc(&buf, 512u << 20));
+    std::map<std::string, double> lat;
     for (const Level& lv : levels) {
         const unsigned n = static_cast<unsigned>(lv.bytes / 4);
         fill_chain<<<(n + 255) / 256, 256>>>(buf, n, lv.stride);
+        CHECK(cudaDeviceSynchronize());
         for (int warps : {1, 2, 4, 8}) {
-            // The warps' chains start a quarter of the level apart (an odd multiple of the stride
-            // keeps them disjoint for the 4096 timed links on every level).
-            const unsigned offset = (n / 4 / lv.stride) * lv.stride + lv.stride;
-            chase<<<pr.sms, 32 * warps>>>(buf, offset, pr.spans, pr.usink);
+            chase<<<pr.sms, 32 * warps>>>(buf, n / 8, pr.spans, pr.usink);
             const double clk = median_span(pr.collect(pr.sms)) / kLatencyLinks;
             char name[64];
             std::snprintf(name, sizeof name, "%s_latency_w%d", lv.name, warps);
             fact(name, clk, "clk");
+            lat[name] = clk;
         }
     }
     chase_shared<<<pr.sms, 128>>>(pr.spans, pr.usink);
     chase_shared<<<pr.sms, 128>>>(pr.spans, pr.usink);
     fact("shared_latency", median_span(pr.collect(pr.sms)) / kLatencyLinks, "clk");
+    // The levels must separate: an L2 hit is further than an L1 hit, DRAM further than the L2 at
+    // every warp count (chains that alias into L2-resident lines would read as the L2), and more
+    // chasing warps never make a warp's latency shorter.
+    check(lat["l2_latency_w1"] > 2.0 * lat["l1_latency_w1"], "L2 latency not above 2x L1");
+    for (int w : {1, 2, 4, 8}) {
+        const std::string ws = "_latency_w" + std::to_string(w);
+        check(lat["dram" + ws] > 1.2 * lat["l2" + ws],
+              "DRAM latency not above 1.2x L2 at w" + std::to_string(w));
+        for (const char* lv : {"l1", "l2", "dram"})
+            check(lat[lv + ws] >= 0.95 * lat[std::string(lv) + "_latency_w1"],
+                  std::string(lv) + " latency falls under the lone warp's at w" +
+                      std::to_string(w));
+    }
+    if (g_failures.empty()) {
+        std::printf("selfcheck ok\n");
+    } else {
+        for (const std::string& f : g_failures) std::printf("selfcheck FAIL %s\n", f.c_str());
+    }
     std::printf("end\n");
-    return 0;
+    return g_failures.empty() ? 0 : 3;
 }
