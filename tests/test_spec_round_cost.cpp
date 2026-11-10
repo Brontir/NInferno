@@ -631,29 +631,42 @@ int main() {
               std::pair<const char*, sp::GpuKey>{
                   "RTX 4090", card("ad102:128sm", "ad102", "sm89", 89, 128, 2520, 1008)}}) {
             sp::Profile p = sp::profile_for_target({&pair_of(kQ9, "ad104:60sm")}, "sm89", {}, &rtx);
-            expect(p.load_basis == "facts" && p.load.size() == 1 && p.load[0].depth == 0 &&
-                       p.load[0].lanes >= 2,
-                   std::string(name) +
-                       ": one plain-from bound, basis facts: " + sp::load_label(p.load));
-            const std::int32_t from = p.load.empty() ? 0 : p.load[0].lanes;
-            const sp::Choice& c     = p.overall;
-            const auto scale        = p.joint_scale.find(c.config.label());
-            const auto gain_at      = [&](std::int32_t streams) {
-                if (scale == p.joint_scale.end() || !scale->second.contains(streams)) {
-                    return 0.0;
-                }
-                return c.speedup() * scale->second.at(streams);
-            };
-            std::printf("%s %s: gain 1 = %.3f, C=2..8: ", name, c.config.label().c_str(),
-                        c.speedup());
+            expect(p.load_basis == "facts" && !p.load.empty() && p.load.back().depth == 0 &&
+                       p.load.back().lanes <= sp::kPricedVerifyRows + 1,
+                   std::string(name) + ": bounds from the facts, plain by the unpriced rows: " +
+                       sp::load_label(p.load));
+            // Each stream count's depth in force, read as the planner reads the table, is the
+            // one that pays the most: its gain over plain (one-request gain at that depth times
+            // R_1 / R_C) above 1, and no other depth the choice measured above it.
+            const sp::Choice& c = p.overall;
+            std::printf("%s %s, load %s:", name, c.config.label().c_str(),
+                        sp::load_label(p.load).c_str());
             for (std::int32_t streams = 2; streams <= sp::kPricedVerifyRows; ++streams) {
-                std::printf("%.3f ", gain_at(streams));
+                std::int32_t depth = c.config.k;
+                for (const auto& b : p.load) {
+                    if (b.lanes > streams) { break; }
+                    depth = std::min(depth, b.depth);
+                }
+                double best = 1.0, in_force = 1.0;
+                for (std::int32_t d = 1; d <= c.config.k; ++d) {
+                    sp::SpecConfig at = c.config;
+                    at.k              = d;
+                    const auto scale  = p.joint_scale.find(at.label());
+                    const auto gain   = d == c.config.k ? std::optional<double>(c.speedup())
+                                                        : sp::measured_gain(p, at, false);
+                    if (scale == p.joint_scale.end() || !scale->second.contains(streams) || !gain) {
+                        continue;
+                    }
+                    const double g = *gain * scale->second.at(streams);
+                    best           = std::max(best, g);
+                    if (d == depth) { in_force = g; }
+                }
+                std::printf(" C=%d d%d x%.2f", streams, depth, in_force);
+                expect(depth == 0 ? best <= 1.0 + 1e-9 : in_force >= best - 1e-9 && in_force > 1.0,
+                       std::string(name) + ": the depth in force at " + std::to_string(streams) +
+                           " streams pays the most");
             }
-            std::printf("-> plain from %d\n", from);
-            expect(from == 2 || gain_at(from - 1) > 1.0,
-                   std::string(name) + ": drafting still pays one stream below the bound");
-            expect(from > sp::kPricedVerifyRows || gain_at(from) <= 1.0 || gain_at(from) == 0.0,
-                   std::string(name) + ": the bound's own stream count does not pay");
+            std::printf("\n");
         }
     }
     // The card that measured a pair takes its own measurement, its tune keyed by class id or chip.

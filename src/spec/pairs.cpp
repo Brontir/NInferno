@@ -688,30 +688,48 @@ const MeasuredPair* own_lab_pair(const std::vector<const MeasuredPair*>& home, c
     return nullptr;
 }
 
-// The streams from which a profile priced for another card decodes plainly: the first C at which
-// no choice's drafting beats plain decode, its one-request gain times R_1 / R_C
-// (Profile::joint_scale, priced on this card's rates) at most 1. Past kPricedVerifyRows (a joint
-// verify of more rows than the rounds were measured at) or where nothing is priced it is plain too,
-// so the bound never runs a depth the facts did not price. Never below 2; at 2 where no choice
-// drafts. Replaces stand_in_load's ceil(SMs / 10) literal, whose reason is this: the compute term
-// of a joint verify overtakes the weight bytes at a row count that grows with SMs x clock x int8
-// rate over DRAM rate.
-std::int32_t facts_load(const Profile& p) {
-    std::int32_t from = kPricedVerifyRows + 1;
-    bool any          = false;
-    for (const Choice* c : {&p.overall, &p.thinking, &p.non_thinking}) {
-        if (!c->config.enabled()) { continue; }
-        any                = true;
-        std::int32_t first = 2;
-        const auto priced  = p.joint_scale.find(c->config.label());
-        for (; first <= kPricedVerifyRows; ++first) {
-            if (priced == p.joint_scale.end()) { break; }
-            const auto scale = priced->second.find(first);
-            if (scale == priced->second.end() || c->speedup() * scale->second <= 1.0) { break; }
-        }
-        from = std::min(from, first);
+// The load bounds of a profile priced for another card, from the round cost on that card's rates
+// (Profile::joint_scale): at C streams each choice runs the depth d (of those it measured, up to
+// its own) with the greatest gain, its one-request gain at d times R_1(d) / R_C(d), and plain
+// decode where that is at most 1. A bound serves every choice, so the shallowest of them is
+// taken. Past kPricedVerifyRows (a joint verify of more rows than the rounds were measured at) or
+// where a depth is not priced it is not run; plain decode from the first stream count nothing is
+// priced for. Replaces stand_in_load's ceil(SMs / 10): the compute term of a joint verify
+// overtakes the weight bytes at a row count that grows with SMs x clock x int8 rate over DRAM
+// rate, which is what the price carries.
+std::vector<LoadBound> facts_load(const Profile& p) {
+    std::vector<std::pair<const Choice*, bool>> choices;
+    for (const auto& [c, thinking] : {std::pair{&p.overall, false}, std::pair{&p.thinking, true},
+                                      std::pair{&p.non_thinking, false}}) {
+        if (c->config.enabled()) { choices.emplace_back(c, thinking); }
     }
-    return any ? std::max<std::int32_t>(2, from) : 2;
+    std::vector<LoadBound> out;
+    std::int32_t previous = std::numeric_limits<std::int32_t>::max();
+    for (std::int32_t streams = 2; streams <= kPricedVerifyRows + 1 && previous > 0; ++streams) {
+        std::int32_t depth = choices.empty() ? 0 : std::numeric_limits<std::int32_t>::max();
+        for (const auto& [c, thinking] : choices) {
+            std::int32_t best_depth = 0;
+            double best             = 1.0;
+            for (std::int32_t d = 1; d <= c->config.k; ++d) {
+                SpecConfig at = c->config;
+                at.k          = d;
+                const auto priced = p.joint_scale.find(at.label());
+                if (priced == p.joint_scale.end()) { continue; }
+                const auto scale = priced->second.find(streams);
+                const auto gain  = d == c->config.k ? std::optional<double>(c->speedup())
+                                                    : measured_gain(p, at, thinking);
+                if (scale == priced->second.end() || !gain) { continue; }
+                if (*gain * scale->second > best) {
+                    best       = *gain * scale->second;
+                    best_depth = d;
+                }
+            }
+            depth = std::min(depth, best_depth);
+        }
+        if (depth < previous) { out.push_back(LoadBound{.lanes = streams, .depth = depth}); }
+        previous = depth;
+    }
+    return out;
 }
 
 // Another card's: its tokens a round (the pair's, on any card), its rounds priced for this card by
@@ -743,12 +761,11 @@ std::optional<Profile> priced_by_facts_for(const std::vector<const MeasuredPair*
         if (const auto estimate = round_cost_estimate(*pair, gpu, rows); estimate.known) {
             Profile p = selected(*pair, false, options, {}, &estimate);
             price_joint(p, *pair, here, rows);
-            const std::int32_t from = facts_load(p);
-            p.load                  = {LoadBound{.lanes = from, .depth = 0}};
-            p.load_basis            = "facts";
+            p.load       = facts_load(p);
+            p.load_basis = "facts";
             if (note != nullptr) {
-                *note = estimate.note + "; plain decode from " + std::to_string(from) +
-                        " streams (the joint verify's price, not a measured table)";
+                *note = estimate.note + "; load bounds " + load_label(p.load) +
+                        " from the joint verify's price on this card";
             }
             return p;
         }
