@@ -24,6 +24,7 @@ static_assert(arch_registry::find(12, 0).smem_per_sm == 100 * 1024);
 static_assert(arch_registry::find(12, 0).max_threads_per_sm == 1536);
 static_assert(arch_registry::find(8, 9).max_blocks_per_sm == 24);
 static_assert(arch_registry::find(8, 6).max_blocks_per_sm == 16);
+static_assert(arch_registry::find(12, 0).max_blocks_per_sm == 24);
 static_assert(arch_registry::find(8, 0).smem_per_block_optin == 163 * 1024);
 static_assert(arch_registry::find(8, 0).smem_per_sm == 164 * 1024);
 static_assert(arch_registry::find(8, 0).max_threads_per_sm == 2048);
@@ -100,8 +101,8 @@ constexpr Synthetic synthetic(int major, int minor) {
                                                  : 1536,
             cc == 75   ? 16
             : cc == 86 ? 16
-            : cc == 89 ? 24
-                       : 32,
+            : cc == 89 || cc == 120 ? 24 // cc 12.0: the driver says 24 (#612 step 2); was 32
+                                    : 32,
             64 * 1024};
 }
 

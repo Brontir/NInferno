@@ -1293,5 +1293,30 @@ class RecordedProbe(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
 
 
+RECORDINGS = ROOT / "tests" / "data" / "facts_probe"
+# Recordings whose comparison still ends in 1, and why (the audit's findings, #612 step 2): the
+# probe's driver values are real; what differs is a chosen comparison window (an overclocked
+# partner board's peak SM clock, Turing's reserved memory) or the Volta synthetic class (see
+# synthetic_device_class). Every other recording must compare clean.
+KNOWN_OPEN = {"rtx2080ti", "rtx3090", "quadro_gv100"}
+
+
+@unittest.skipUnless(RECORDINGS.is_dir(), "no per-card recordings")
+class RecordedProbes(unittest.TestCase):
+    """One real ninferno-facts-probe output per lab card, recorded on that card."""
+
+    def test_every_recording_is_valid_and_the_clean_ones_stay_clean(self):
+        files = sorted(RECORDINGS.glob("*.json"))
+        self.assertTrue(files)
+        for path in files:
+            with self.subTest(card=path.stem):
+                done = subprocess.run(
+                    [sys.executable, "-B", TOOL, "--probe-json", str(path)],
+                    capture_output=True, text=True)
+                self.assertIn(done.returncode, (0, 1), done.stdout + done.stderr)
+                if path.stem not in KNOWN_OPEN:
+                    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
