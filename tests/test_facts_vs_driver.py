@@ -167,10 +167,10 @@ class Compare(unittest.TestCase):
 
     @staticmethod
     def device_a100():
-        # A100 SXM4 80GB (0x20B2), a server board: the one form a MIG slice comes from.
+        # A100 SXM4 80GB (0x20B2): a GA100 board, which MIG partitions.
         d = device_4090()
-        d["queried"].update(pci_device_id=0x20B2, name="NVIDIA A100-SXM4-80GB", major=8, minor=0,
-                            sms=108, l2_bytes=40 * MIB, global_bytes=int(80 * 1024 * MIB * 0.99),
+        d["queried"].update(pci_device_id=0x20B2, name="NVIDIA A100-SXM4-80GB", chip="ga100",
+                            major=8, minor=0, sms=108, l2_bytes=40 * MIB, global_bytes=int(80 * 1024 * MIB * 0.99),
                             memory_bus_bits=5120, memory_clock_khz=1_593_000,
                             sm_clock_khz=1_410_000)
         d["engine_table_facts"].update(sku="A100 SXM4 80GB", reference_clock_khz=1_410_000,
@@ -193,8 +193,8 @@ class Compare(unittest.TestCase):
 
     def test_mig_slice_reports_its_part(self):
         # A 3g.40gb slice: 42 SMs, half the L2, memory and bus. Information, not failures; the
-        # whole board reporting the same smaller values fails, and so does a desktop board with
-        # fewer SMs than its row (no desktop board partitions).
+        # whole board reporting the same smaller values fails, and so does a GeForce board with
+        # fewer SMs than its row (no GeForce board partitions).
         d = self.device_a100()
         d["queried"].update(sms=42, l2_bytes=20 * MIB, global_bytes=40 * 1024 * MIB,
                             memory_bus_bits=2560)

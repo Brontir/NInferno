@@ -53,6 +53,18 @@ def snap_to_fact_grid(x):
     return 2.0 ** (math.floor(16.0 * math.log2(x) + 0.5) / 16.0) if x > 0 else 0.0
 
 
+# The chips NVIDIA partitions with MIG: GA100 (A100, A30, A800), GH100 (H100, H200, H800), GB100
+# (B200), and GB202 on its professional boards (RTX PRO 6000 Blackwell, workstation and server);
+# not GV100 nor any GeForce board.
+MIG_CHIPS = {"ga100", "gh100", "gb100"}
+MIG_PRO_CHIPS = {"gb202"}
+
+
+def mig_capable(row):
+    chip = row.get("chip", "")
+    return chip in MIG_CHIPS or (chip in MIG_PRO_CHIPS and row.get("segment") != "geforce")
+
+
 def is_laptop(row):
     return row.get("form") == "laptop"
 
@@ -100,11 +112,11 @@ def compare_device(device, row):
     else:
         cc = q["major"] * 10 + q["minor"]
         out.append(result("table", "cc", row["cc"], cc, "match" if row["cc"] == cc else "mismatch"))
-        # A MIG slice (only a server board partitions) reports its part of the SMs, the L2, the
-        # memory and the bus; the engine prices the board's row at the slice's share of the SMs,
-        # so a smaller value is the slice's, not a wrong row. A desktop or laptop board reporting
-        # fewer SMs than its row is a wrong row.
-        slice_part = row.get("form") == "server" and 0 < q["sms"] < row["sms"]
+        # A MIG slice reports its part of the SMs, the L2, the memory and the bus; the engine
+        # prices the board's row at the slice's share of the SMs, so a smaller value is the
+        # slice's, not a wrong row. A board without MIG reporting fewer SMs than its row is a
+        # wrong row.
+        slice_part = mig_capable(row) and 0 < q["sms"] < row["sms"]
         if row["sms"] == q["sms"]:
             out.append(result("table", "sms", row["sms"], q["sms"], "match"))
         elif slice_part:
