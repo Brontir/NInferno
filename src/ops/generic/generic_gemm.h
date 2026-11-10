@@ -336,7 +336,8 @@ inline constexpr std::int32_t kMmqMinTokens = 5;
 // the GV100 and 86 on the RTX 4090, well past eight. Measured: RTX 5090 and 5070 Ti (the bench),
 // RTX 4090 (Qwen3.5-9B Q8_0 spec-tune, dflash:7 229 -> 273 tok/s).
 [[nodiscard]] std::int32_t r8_verify_widest(QType qtype);
-// The formats whose R8 codec has the verify-width form compiled: every R8 format but Q3_K.
+// The formats whose R8 codec has the verify-width form compiled: every R8 format but Q3_K and
+// Q2_K (r8_prequant = false in format_traits.h).
 [[nodiscard]] bool r8_verify_compiled(QType qtype);
 // Whether a call of 2..r8_verify_widest tokens takes R8 on this device: the formats measured faster
 // there (r8_verify_supports) where the MMA takes BF16 operands itself; every compiled format where
@@ -678,10 +679,11 @@ struct FamilyAlternative {
 [[nodiscard]] std::optional<double> route_cost_seconds(const Problem& problem, const Weight& weight,
                                                        Route route, std::int32_t tokens);
 
-// The compiled resources of the kernel a launch runs (#298), as the driver reports them for this
-// binary on this device (cudaFuncGetAttributes): exact facts of the build, not predictions; a
-// compiler change moves them, so they are read, never stored in the source. The launch geometry is
-// the call's: its grid, threads and dynamic shared memory.
+// The compiled resources of the kernel a launch runs (#298). The register-MMA kernels' come from
+// the committed kernel-facts snapshot of the SASS the device runs (ops/generic/kernel_facts.h,
+// #612: what ptxas made of the release's kernels, so the price is the same on every machine); the
+// other families' are read from the driver for this binary on this device (cudaFuncGetAttributes).
+// The launch geometry is the call's: its grid, threads and dynamic shared memory.
 struct KernelResources {
     int registers               = 0; // per thread
     std::size_t local_bytes     = 0; // per thread: register spills and stack arrays
