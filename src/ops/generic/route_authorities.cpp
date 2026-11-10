@@ -203,14 +203,15 @@ std::optional<RouteAnswer> route_table_entry(const Ask& ask, const Problem& prob
     e.source   = "route-table";
     e.distance = hit->distance;
     if (!hit->lender.empty()) {
-        e.kind  = Evidence::Kind::Borrowed;
-        e.donor = std::string(hit->lender);
+        e.kind     = Evidence::Kind::Borrowed;
+        e.donor    = hit->lender;
+        e.distance = hit->lender_distance;
     } else if (hit->distance == 0) {
         e.kind = Evidence::Kind::Measured;
     } else {
         e.kind  = hit->distance <= measured::kCarryDistance ? Evidence::Kind::Carried
                                                             : Evidence::Kind::Transferred;
-        e.donor = std::string(hit->gpu_class);
+        e.donor = hit->gpu_class;
     }
     return RouteAnswer{hit->route, std::move(e)};
 }
@@ -296,19 +297,21 @@ std::optional<RouteAnswer> cost_model(const Ask& ask, const Problem& problem,
 std::optional<RouteAnswer> r8_schedule(const Ask& ask, const Problem& problem,
                                        const Weight& weight) {
     if (!r8_call(weight, problem.policy, ask.tokens)) return std::nullopt;
-    RouteAnswer answer = by_rule(r8_rules_route(problem, ask.tokens), "r8-rules");
-    if (ask.tokens == 1) {
-        if (const auto hit = tuned_r8(problem)) {
-            answer.route           = Route{Family::R8Mma, static_cast<std::uint8_t>(hit->schedule)};
-            answer.evidence.ranker = Evidence::Ranker::None;
-            answer.evidence.source = "r8-table";
-            answer.evidence.distance = hit->distance;
-            if (hit->distance == 0) {
-                answer.evidence.kind = Evidence::Kind::Measured;
-            } else {
-                answer.evidence.kind  = Evidence::Kind::Carried;
-                answer.evidence.donor = std::string(hit->gpu);
-            }
+    // The rules' schedule is computed only when the T=1 table does not answer.
+    const auto hit = ask.tokens == 1 ? tuned_r8(problem) : std::nullopt;
+    RouteAnswer answer =
+        hit ? RouteAnswer{Route{Family::R8Mma, static_cast<std::uint8_t>(hit->schedule)},
+                          Evidence{}}
+            : by_rule(r8_rules_route(problem, ask.tokens), "r8-rules");
+    if (hit) {
+        answer.evidence.ranker   = Evidence::Ranker::None;
+        answer.evidence.source   = "r8-table";
+        answer.evidence.distance = hit->distance;
+        if (hit->distance == 0) {
+            answer.evidence.kind = Evidence::Kind::Measured;
+        } else {
+            answer.evidence.kind  = Evidence::Kind::Carried;
+            answer.evidence.donor = std::string(hit->gpu);
         }
     }
     if (route_admits(answer.route, weight, problem.policy)) return answer;
@@ -334,8 +337,12 @@ std::optional<RouteAnswer> mmq_prefill_gate(const Ask& ask, const Problem& probl
     case D::Carried:
         e.kind = Evidence::Kind::Carried;
         break;
-    case D::Transferred:
     case D::Incomplete:
+        // A quantity unknown on either side: the board itself (distance 0) is still the board
+        // measured on; any farther donor is a transfer.
+        e.kind = gate.distance == 0 ? Evidence::Kind::Measured : Evidence::Kind::Transferred;
+        break;
+    case D::Transferred:
     case D::None:
         e.kind = Evidence::Kind::Transferred;
         break;

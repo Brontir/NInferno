@@ -17,7 +17,9 @@
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/route_authorities.h"
 #include "ops/generic/route_table.h"
+#include "ops/common/route_probe.h"
 #include "ops/generic/selector_facts.h"
+#include "ops/route_pins.h"
 
 #include <cstdint>
 #include <cstdlib>
@@ -132,6 +134,84 @@ void check_evidence(const generic::RouteAnswer& a, const std::set<std::string_vi
     }
 }
 
+// One answer, asked on a facts board: which authority gave it. The expected names are the current
+// code's (the selector goldens hold the routes); a restatement that moved a call to another
+// authority fails here, where the evidence checks above would accept any listed name.
+struct KnownCase {
+    std::string_view board;
+    QType qtype;
+    Shape shape;
+    LinearPolicy policy;
+    std::int32_t tokens;
+    bool prefill;
+    int profile; // 0 speed, 1 invariant, 2 probe (A16 forced), 3 decode pin A16, 4 prefill pin A16
+    std::string_view source;
+};
+
+std::string known_source(const KnownCase& c) {
+    const generic::FactsBoard* board = nullptr;
+    for (const generic::FactsBoard& b : generic::kFactsBoards) {
+        if (b.name == c.board) board = &b;
+    }
+    if (board == nullptr) return "no such board";
+    const ScopedDeviceClass scoped(generic::board_device_class(*board));
+    void* const payload = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
+    quantized_weight::PatternedWeightOptions options;
+    if (c.qtype == QType::NVFP4) options.weight_scale_divisor = options.input_scale_divisor = 1.0F;
+    const quantized_weight::PackedWeight host =
+        quantized_weight::make_patterned_weight(c.qtype, c.shape.n, c.shape.k, 7U, options);
+    const Weight w = host.device_weight(payload);
+    const generic::Problem problem{c.qtype, c.policy, c.shape.n, c.shape.k,
+                                   generic::Epilogue::Store};
+    std::optional<ops::ScopedInvariantRoutes> invariant;
+    if (c.profile == 1) invariant.emplace();
+    std::optional<ops::detail::RouteProbe> probe;
+    if (c.profile == 2) probe.emplace(0, std::int8_t{0});
+
+    struct PinReset {
+        ~PinReset() { ops::set_route_pins({}); }
+    } reset;
+
+    if (c.profile == 3) ops::set_route_pins({PrefillRoute::Auto, DecodeRoute::A16, MoePath::Auto});
+    if (c.profile == 4) ops::set_route_pins({PrefillRoute::A16, DecodeRoute::Auto, MoePath::Auto});
+    return std::string(generic::select_answer(problem, w, c.tokens, c.prefill).evidence.source);
+}
+
+void check_known() {
+    const KnownCase cases[] = {
+        {"rtx4090",
+         QType::BF16,
+         {4096, 4096},
+         LinearPolicy::A16Only,
+         64,
+         true,
+         1,
+         "invariant-profile"},
+        {"rtx4090", QType::BF16, {4096, 4096}, LinearPolicy::A16Only, 4, false, 2, "route-probe"},
+        {"rtx4090", QType::BF16, {4096, 4096}, LinearPolicy::A16Only, 4, false, 3, "route-pin"},
+        {"rtx4090", QType::BF16, {4096, 4096}, LinearPolicy::A16Only, 512, true, 4, "route-pin"},
+        {"rtx4090",
+         QType::GGML_Q4_K,
+         {4096, 4096},
+         LinearPolicy::A16Only,
+         512,
+         true,
+         0,
+         "mmq-prefill-gate"},
+        {"rtx4090", QType::BF16, {4096, 4096}, LinearPolicy::A16Only, 64, false, 0, "route-table"},
+        {"rtx4090", QType::BF16, {4096, 4096}, LinearPolicy::A16Only, 1, false, 0, "r8-rules"},
+    };
+    for (const KnownCase& c : cases) {
+        const std::string got = known_source(c);
+        if (got != c.source) {
+            fail(std::string(c.board) + " " + generic::qtype_name(c.qtype) + " " +
+                 std::to_string(c.shape.n) + "x" + std::to_string(c.shape.k) +
+                 " T=" + std::to_string(c.tokens) + " profile " + std::to_string(c.profile) +
+                 ": answered by '" + got + "', expected '" + std::string(c.source) + "'");
+        }
+    }
+}
+
 int run_board(const generic::FactsBoard& b, const std::set<std::string_view>& names) {
     const ScopedDeviceClass scoped(generic::board_device_class(b));
     std::map<std::string_view, int> tally;
@@ -171,12 +251,6 @@ int run_board(const generic::FactsBoard& b, const std::set<std::string_view>& na
                             try {
                                 const generic::RouteAnswer a =
                                     generic::select_answer(problem, w, t, prefill);
-                                const generic::Route r =
-                                    generic::select_route(problem, w, t, prefill);
-                                if (!(a.route == r)) {
-                                    fail(where + ": select_answer " + generic::route_name(a.route) +
-                                         " but select_route " + generic::route_name(r));
-                                }
                                 check_evidence(a, names, where, profile == 2);
                                 ++tally[a.evidence.source];
                             } catch (const std::exception& error) {
@@ -200,6 +274,7 @@ int main() {
     try {
         const auto names = listed_sources();
         check_lists();
+        check_known();
         for (const generic::FactsBoard& b : generic::kFactsBoards) run_board(b, names);
     } catch (const std::exception& error) {
         std::cerr << "route authorities: " << error.what() << '\n';

@@ -456,10 +456,12 @@ void fill_from(Table& table, const std::vector<std::shared_ptr<Table>>& lenders)
     std::string hashes;
     for (const auto& other : lenders) {
         std::size_t lent = 0;
+        const double lender_distance = table_distance(*other);
         for (auto& [key, entry] : other->generic) {
             if (table.problems.count(key) != 0) continue;
-            entry.claim  = false;
-            entry.lender = other->status.gpu_class;
+            entry.claim           = false;
+            entry.lender          = other->status.gpu_class;
+            entry.lender_distance = lender_distance;
             table.generic.emplace(key, std::move(entry));
             table.problems.insert(key);
             ++lent;
@@ -941,7 +943,8 @@ std::optional<TableAnswer> table_route_answer(const Problem& problem, std::int32
     if (it == table->generic.end()) return std::nullopt;
     const RouteEntry& e = it->second;
     const auto answer   = [&](Route route) {
-        return TableAnswer{route, table->distance, table->status.gpu_class, e.lender};
+        return TableAnswer{route, table->distance, table->status.gpu_class, e.lender,
+                           e.lender_distance};
     };
     if (prefill && tokens >= kPrefillMinTokens) {
         for (const auto& band : e.prefill_bands) {

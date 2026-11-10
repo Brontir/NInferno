@@ -42,6 +42,8 @@ struct RouteEntry {
     // The class whose table lent the entry when the nearest board's table lacked it
     // (route_table.cpp fill_from); empty: the table's own.
     std::string lender;
+    // The lending table's board distance to this device (table_distance); 0 for the table's own.
+    double lender_distance = 0;
 };
 
 [[nodiscard]] ComputeClass compute_class(QType qtype, LinearPolicy policy);
@@ -60,13 +62,14 @@ struct RouteEntry {
 // table_route's answer with what it rests on: the board distance of the table to this device
 // (0: measured here, which an unboarded table keyed by one of the device's own classes counts as;
 // a similar chip's unboarded table 1e6 and up), the table's class, and the class whose table lent
-// the entry (RouteEntry::lender; empty: the table's own). The views live as long as the table
-// does: until another table replaces it.
+// the entry (RouteEntry::lender; empty: the table's own) with that lender's distance. The strings
+// are copies: a table published meanwhile does not leave them dangling.
 struct TableAnswer {
     Route route;
     double distance = 0;
-    std::string_view gpu_class;
-    std::string_view lender;
+    std::string gpu_class;
+    std::string lender;
+    double lender_distance = 0;
 };
 
 [[nodiscard]] std::optional<TableAnswer> table_route_answer(const Problem& problem,
