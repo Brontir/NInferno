@@ -77,8 +77,9 @@ bool take_published(const Json& profiles, const Json& published, const GpuKey& g
     try {
         p = profile_from_published(published);
         if (const auto* from = select_load_fallback(profiles, published)) {
-            p.load                  = profile_from_published(*from).load;
-            p.load_basis            = "measured"; // the source profile's own table
+            const Profile source    = profile_from_published(*from);
+            p.load                  = source.load;
+            p.load_basis            = source.load_basis;
             const auto cls          = from->value("gpu_class", std::string());
             const auto others       = from->value("applies_to", Json::array());
             const std::string whose = cls == "*"

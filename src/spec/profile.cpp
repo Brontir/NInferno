@@ -745,6 +745,7 @@ Profile profile_from_published(const Json& published) {
     p.served   = served_from(published);
     p.fit_fallback = fit_fallback_from(published);
     p.load         = load_from(published);
+    if (!p.load.empty()) { p.load_basis = "measured"; } // a published table is a measured one
     p.context_limit = published.value("context_limit", 0U);
     return p;
 }

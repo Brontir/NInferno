@@ -1145,20 +1145,39 @@ void test_speculation_order() {
     // The served profile's load basis reaches the plan's (facts, literal, measured), where its
     // table is the one in force.
     check(subject.resolved.has_value(), "the subject carries a resolved profile");
-    for (const char* basis : {"facts", "literal", "measured"}) {
-        pr::SpeculationSubject labelled       = subject;
-        labelled.resolved->profile.load_basis = basis;
-        labelled.resolved->profile.load       = {{.lanes = 2, .depth = 3}};
-        const pr::LaunchPlanOptions o         = pr::launch_options({.max_concurrency = 4});
-        const pr::PlannedSpeculation planned =
-            pr::plan_with_speculation(facts, device, o.options, &labelled, o.ask);
-        const pr::SpeculationReport& r = planned.speculation;
-        check(std::any_of(r.fallbacks.begin(), r.fallbacks.end(),
-                          [](const auto& s) { return s.served && s.step == "profile"; }),
-              "the profile is served");
-        check(!r.load.empty(), "the profile's load table is in force");
-        check(r.load_basis == basis, std::string("the profile's load basis ") + basis +
-                                         " reaches the plan: " + r.load_basis);
+    if (subject.resolved) {
+        for (const char* basis : {"facts", "literal", "measured"}) {
+            pr::SpeculationSubject labelled       = subject;
+            labelled.resolved->profile.load_basis = basis;
+            labelled.resolved->profile.load       = {{.lanes = 2, .depth = 3}};
+            const pr::LaunchPlanOptions o         = pr::launch_options({.max_concurrency = 4});
+            const pr::PlannedSpeculation planned =
+                pr::plan_with_speculation(facts, device, o.options, &labelled, o.ask);
+            const pr::SpeculationReport& r = planned.speculation;
+            check(std::any_of(r.fallbacks.begin(), r.fallbacks.end(),
+                              [](const auto& s) { return s.served && s.step == "profile"; }),
+                  "the profile is served");
+            check(!r.load.empty(), "the profile's load table is in force");
+            check(r.load_basis == basis, std::string("the profile's load basis ") + basis +
+                                             " reaches the plan: " + r.load_basis);
+        }
+        // A load table measured with the default's drafter is not known for another kind: one
+        // request speculates, two or more decode plainly, and the basis says it is a literal.
+        pr::SpeculationSubject other = subject;
+        auto& profile                = other.resolved->profile;
+        profile.measurements.clear();
+        profile.overall = profile.thinking = profile.non_thinking = {};
+        profile.overall.config   = ninferno::spec::SpecConfig::parse("mtp:3");
+        profile.thinking         = profile.non_thinking = profile.overall;
+        profile.fit_fallback     = ninferno::spec::Choice{};
+        profile.fit_fallback->config = ninferno::spec::SpecConfig::parse("dflash:7");
+        profile.load             = {{.lanes = 2, .depth = 3}};
+        profile.load_basis       = "measured";
+        const pr::SpeculationSubject again =
+            pr::subject_of_mode(other, ninferno::spec::Mode::DFlash);
+        check(again.resolved && ninferno::spec::load_label(again.resolved->profile.load) == "2:0" &&
+                  again.resolved->profile.load_basis == "literal",
+              "another drafter kind: the flat plain-from-2 table, basis literal");
     }
     // An explicit --spec none is plain, one step.
     const pr::LaunchPlanOptions none = pr::launch_options({.spec = "none"});
