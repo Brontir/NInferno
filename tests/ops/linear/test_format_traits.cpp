@@ -2,8 +2,9 @@
 // every QType value, the old predicate (kept below in `legacy`, logically equivalent, comments
 // stripped, until a follow-up deletes it) and the new read of the table agree; where the predicate
 // is public in generic_gemm.h, the engine's function agrees as well. Values the enum does not
-// name read as "no capability" in both. That every named QType has a row is a static_assert in
-// the header; kNamed below only repeats it as a runtime check.
+// name read as "no capability" in both. That every named QType has exactly one row, and every row a
+// named QType, is a static_assert in the header over the compiler's own names of the enumerators
+// (GCC and Clang), so a new QType without a row fails the build; no list here mirrors the enum.
 #include "ops/common/native_nvfp4.h"
 #include "ops/generic/format_traits.h"
 #include "ops/generic/generic_gemm.h"
@@ -11,7 +12,6 @@
 
 #include <cstdint>
 #include <iostream>
-#include <iterator>
 #include <string>
 
 namespace generic = ninferno::ops::detail::generic;
@@ -242,61 +242,12 @@ void agree(bool old_value, bool new_value, const char* what, int q, long k = -1)
     std::cerr << ": old " << old_value << ", table " << new_value << '\n';
 }
 
-// Every enumerator of QType: each must have a row (a missing row would read as "nothing").
-constexpr QType kNamed[] = {
-    QType::Q4_G64_FP16,
-    QType::Q5_G64_FP16,
-    QType::Q6_G64_FP16,
-    QType::Q8_G32_FP16,
-    QType::BF16,
-    QType::FP32,
-    QType::INT32,
-    QType::NVFP4,
-    QType::FP8_E4M3FN_ROW_BF16,
-    QType::MXFP4,
-    QType::FP8_E4M3FN_ROW_F32,
-    QType::FP8_E4M3FN_B128_F32,
-    QType::U4_G128_ZP_FP16,
-    QType::U4_G32_ZP_FP16,
-    QType::U4_G64_ZP_FP16,
-    QType::Q3_G128_FP16,
-    QType::Q3_G64_FP16,
-    QType::GGML_Q4_K,
-    QType::GGML_Q5_K,
-    QType::GGML_Q6_K,
-    QType::GGML_Q3_K,
-    QType::GGML_Q2_K,
-    QType::GGML_IQ4_XS,
-    QType::GGML_IQ3_XXS,
-    QType::GGML_IQ3_S,
-    QType::GGML_Q4_0,
-    QType::GGML_Q4_1,
-    QType::GGML_Q5_0,
-    QType::GGML_Q5_1,
-    QType::GGML_IQ4_NL,
-    QType::GGML_IQ2_XXS,
-    QType::GGML_IQ2_XS,
-    QType::GGML_IQ2_S,
-    QType::GGML_IQ1_S,
-    QType::GGML_IQ1_M,
-    QType::GGML_TQ1_0,
-    QType::GGML_TQ2_0,
-    QType::GGML_Q1_0,
-    QType::GGML_Q2_0,
-};
-
 } // namespace
 
 int main() {
     using generic::admits;
     using generic::format_traits;
 
-    for (const QType q : kNamed) {
-        if (!generic::has_format_row(static_cast<QType>(static_cast<std::uint16_t>(q)))) {
-            ++failures;
-            std::cerr << "FAIL: no traits row for QType " << static_cast<int>(q) << '\n';
-        }
-    }
     // The table names each format once.
     for (std::size_t i = 0; i < generic::kFormatTraits.size(); ++i) {
         for (std::size_t j = i + 1; j < generic::kFormatTraits.size(); ++j) {
@@ -306,11 +257,6 @@ int main() {
                           << static_cast<int>(generic::kFormatTraits[i].q) << '\n';
             }
         }
-    }
-    if (generic::kFormatTraits.size() != std::size(kNamed)) {
-        ++failures;
-        std::cerr << "FAIL: " << generic::kFormatTraits.size() << " rows for " << std::size(kNamed)
-                  << " named formats\n";
     }
 
     // Every value a QType holds in a byte's range, named or not.
