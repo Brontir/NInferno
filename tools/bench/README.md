@@ -129,6 +129,20 @@ one call after the L2 flush, or `warm`, one call where the timer had no flush bu
 one board, and a case's passes from one protocol, or the collector refuses them; each case's
 `workload` states its protocol. Files written before these columns are refused, and so is one run given as two passes.
 
+Regret by authority and regime (#614): a `--selected-out` CSV may also carry `authority` (the route
+authority that answered, e.g. `route-table`, `cost-model`, `r8-table`) and `evidence` (`pin`,
+`measured`, `ranker`, `carried`, `transferred`, `borrowed`); each case records them with its width
+`t`. A file without the columns reads `unknown` for both, so the tools work on older data.
+`regret_collect.py --pci-id 0x2B85` adds the board's compute capability, SMs, DRAM rate, boost
+clock and `mma_slow` from `core/data/gpu_facts.json` (the rows' device must be that board's
+class: its chip, or its architecture where the class has no chip, and its SMs);
+`selection_regret.py` reports `by_board_regime_authority`: per board x regime x authority the
+usual summary and the evidence kinds. Regimes by T: decode T<=4, verify 5..16, and from 17 below
+or above the card's ridge
+T* = s8 x SMs x boost clock x 4.5/8 / (2 x DRAM bytes/s), as the MMQ transfer audit computes it
+(`s8` from `core/generation.h`; `--generation-header`); without board facts, and on a board without
+tensor cores (`mma_slow`), `T>=17 ridge unknown`.
+
 route_tune selects with its problems' policy (an `a16` problem is `A16Only`, the exact mode's
 linears, not the default `AllowA8` path of a published model's projections) and the speed route
 profile (`prefill_routes` inactive, so `T >= 17` is a batched decode call, not a prefill chunk);
