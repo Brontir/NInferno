@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# PR #598 (Refs #501): route-tune regret of master against the PR branch on ONE stand, and the
-# selector goldens.  Usage (on the stand):
+# PR #598 (Refs #501): route-tune regret of master against the PR branch on ONE machine, and the
+# selector goldens.  Usage (on the machine):
 #
-#   tools/bench/run_598_regret.sh regret  TAG ARCH      # l3060 86; l5090 120a; l5070 120a
+#   tools/bench/run_598_regret.sh regret  TAG ARCH      # sm_86 board: 86; sm_120a boards: 120a
 #   tools/bench/run_598_regret.sh goldens TAG ARCH      # regenerate selector goldens in the PR tree
 #
 # Environment: PR_SRC (default: the checkout holding this script), MASTER_SRC (default
@@ -46,11 +46,11 @@
 # SELECTOR GOLDENS (after the regret numbers are accepted; each needs a GPU of its arch, because
 # the 86 and 120a boards are keyed by the facts digest of the compiled kernels, and the release
 # toolkit is nvcc 13.4.92, tests/ops/linear/selector_golden/facts_index.txt):
-#     l3060  (86)   -> base/*  (a10, rtx3090 by digest; rtx4060ti, rtx4090, l4, ... from the same build)
-#     l5090  (120a) -> full/*  (rtx5090, rtx5080, rtx5070ti, rtx5060ti, unknown-sm120-48sm, rest)
-#     l2080  (75)   -> sm75/*  (Turing has tensor MMA: rows may move)
-#     lgv100 (70, CUDA 12.8, kt3_v.sh) -> sm70/*  (no tensor MMA: expect NO diff)
-# Per stand:   tools/bench/run_598_regret.sh goldens TAG ARCH
+#     an sm_86 board (86) -> base/*  (a10, rtx3090 by digest; rtx4060ti, rtx4090, l4, ... from the same build)
+#     an sm_120a board (120a) -> full/*  (rtx5090, rtx5080, rtx5070ti, rtx5060ti, unknown-sm120-48sm, rest)
+#     an RTX 2080 Ti (75) -> sm75/*  (Turing has tensor MMA: rows may move)
+#     a Volta board (70, CUDA 12.8 toolkit) -> sm70/*  (no tensor MMA: expect NO diff)
+# Per machine:   tools/bench/run_598_regret.sh goldens TAG ARCH
 # which is: cmake --build build_TAG_ARCH --target ninferno_selector_golden_test -j8 ;
 #           build_TAG_ARCH/.../ninferno_selector_golden_test --update ;
 #           git status --short tests/ops/linear/selector_golden ;
