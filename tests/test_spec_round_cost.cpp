@@ -372,9 +372,81 @@ int main() {
         expect(sp::profile_for_target({&lab}, "sm89").joint_scale.empty(),
                "a profile that is not at home prices no joint verify");
     }
+    // Under the generation median the profile is selected on the record that measured the most
+    // configurations, which may be another card's. A card with a lab record of its own takes the
+    // joint verify's price on its own board's rates: here an RTX 4090 asks, its record measured
+    // one configuration fewer than the RTX 4070 Ti's, and every priced entry is load_gain's at
+    // the RTX 4090's rates, not the RTX 4070 Ti's.
+    {
+        auto wide = pair_of(kQ9, "ad104:60sm");
+        for (auto& m : wide.tune.measurements) { m.graph_kernels = m.graph_rounds = 0; }
+        auto own         = wide;
+        own.tune.key.gpu = "ad102:128sm";
+        own.lab_board    = 0x2684;
+        // A measured configuration no choice runs (the deepest such): without it the own record
+        // covers one configuration fewer, so the profile is selected on the other card's record.
+        const auto both = sp::profile_for_target({&wide, &own}, "sm89");
+        const auto runs = [&](const sp::SpecConfig& c) {
+            return c == both.overall.config || c == both.thinking.config ||
+                   c == both.non_thinking.config ||
+                   (both.fit_fallback && c == both.fit_fallback->config);
+        };
+        std::optional<sp::SpecConfig> dropped;
+        for (const auto& m : own.tune.measurements) {
+            if (m.config.enabled() && m.rounds > 0 && !runs(m.config) &&
+                (!dropped || m.config.k > dropped->k)) {
+                dropped = m.config;
+            }
+        }
+        expect(dropped.has_value(), "the pair measured a configuration no choice runs");
+        if (dropped) {
+            std::erase_if(own.tune.measurements,
+                          [&](const sp::Measurement& m) { return m.config == *dropped; });
+        }
+        const sp::GpuKey rtx4090 = card("ad102:128sm", "ad102", "sm89", 89, 128, 2520, 1008);
+        const auto asked         = sp::profile_for_target({&wide, &own}, "sm89", {}, &rtx4090);
+        const double kappa_own   = sp::card_rates_of_board(own.lab_board).kappa();
+        const double kappa_wide  = sp::card_rates_of_board(wide.lab_board).kappa();
+        expect(kappa_own > 0 && kappa_wide > 0 && !near(kappa_own, kappa_wide, 0.01),
+               "the two boards' rates differ");
+        expect(asked.non_thinking.config == both.non_thinking.config &&
+                   asked.thinking.config == both.thinking.config &&
+                   asked.overall.config == both.overall.config && !asked.joint_scale.empty(),
+               "the median keeps the cards' choice and prices its joint verify");
+        const auto at_kappa = [&](const sp::SpecConfig& at, std::int32_t streams, double kappa) {
+            return sp::load_gain(*own.round_facts, at, kappa, 1.0, streams,
+                                 at.proposal_head ? own.tune.proposal_rows : sp::ProposalRows{});
+        };
+        int compared = 0, apart = 0;
+        for (const auto& [label, by_streams] : asked.joint_scale) {
+            const auto at = sp::SpecConfig::parse(label);
+            for (const auto& [streams, scale] : by_streams) {
+                const auto here  = at_kappa(at, streams, kappa_own);
+                const auto there = at_kappa(at, streams, kappa_wide);
+                expect(here && near(scale, *here, 1e-12),
+                       "the joint scale is priced on the asking card's own board at " + label +
+                           " x" + std::to_string(streams));
+                if (there && !near(scale, *there, 1e-9)) { ++apart; }
+                ++compared;
+            }
+        }
+        expect(compared > 0 && apart > 0,
+               "the own board's price differs from the other record's board's");
+        // No card named: the record the profile was selected on prices it, as before.
+        const auto unnamed = sp::profile_for_target({&wide, &own}, "sm89");
+        bool on_base       = !unnamed.joint_scale.empty();
+        for (const auto& [label, by_streams] : unnamed.joint_scale) {
+            const auto at = sp::SpecConfig::parse(label);
+            for (const auto& [streams, scale] : by_streams) {
+                const auto there = at_kappa(at, streams, kappa_wide);
+                on_base          = on_base && there && near(scale, *there, 1e-12);
+            }
+        }
+        expect(on_base, "with no card named the selected record's board prices the joint verify");
+    }
     // The draft head over the rows an artifact's proposal head carries (#205: MTP reads its own
     // 57,344-row prefix of the 147,456 rows it read before, Qwen3.5-9B Q4_K_M, Q6_K head). The
-    // rounds/s gain R(147,456) / R(57,344) - 1 against hard50's on the RTX 4060 Ti (l4060):
+    // rounds/s gain R(147,456) / R(57,344) - 1 against hard50's on the RTX 4060 Ti:
     // +9.4 / +12.9 / +16.5 / +19.6 % at mtp:2..5.
     {
         const auto& facts = *pair_of(kQ9, "ad104:60sm").round_facts;

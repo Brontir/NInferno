@@ -1936,6 +1936,25 @@ void joint_price_scales_the_gain(const json& fixture) {
     over.joint = {{.streams = 2, .scale = 1.05}};
     check(over.speedup_at(2) == 2.0 && !over.joint_priced_at(2),
           "a scale above 1 does not raise the gain nor count as a price");
+    // Nor is it held to a larger count: where a bound lifts the gain above one request's, the
+    // scale's product at two streams (1.5 x 1.2) is below the gain at three (2.0), and would be
+    // held there as a price.
+    ch::DrafterOption lifted{"mtp:4", "mtp", 1.5, 0, "measured"};
+    lifted.load  = {{.streams = 3, .speedup = 2.0, .depth = 2, .bounded = true}};
+    lifted.joint = {{.streams = 2, .scale = 1.2}};
+    check(lifted.speedup_at(3) == 2.0 && !lifted.joint_priced_at(3) &&
+              lifted.price_source_at(3).streams == 0,
+          "a scale above 1 is not held to a larger count: " + std::to_string(lifted.speedup_at(3)));
+    // A count whose own bound is unmeasured takes no price from a smaller count: the estimate
+    // counts x1 there (measured_at is false), and a price held from two streams (1.1 x 0.8) would
+    // say x0.88.
+    ch::DrafterOption gap{"mtp:4", "mtp", 1.1, 0, "measured"};
+    gap.load  = {{.streams = 3, .speedup = 1.0, .depth = 1, .bounded = true, .measured = false}};
+    gap.joint = {{.streams = 2, .scale = 0.8}};
+    check(!gap.measured_at(3) && gap.speedup_at(3) == 1.0 && !gap.joint_priced_at(3) &&
+              std::abs(gap.speedup_at(2) - 0.88) < 1e-12 && gap.joint_priced_at(2),
+          "a count whose bound is unmeasured takes no price from a smaller count: " +
+              std::to_string(gap.speedup_at(3)));
     // The count that supplies the gain, with its own scale (not R_1 / R_C of no count).
     ch::DrafterOption held{"mtp:4", "mtp", 2.0, 0, "measured"};
     held.load         = {{.streams = 2, .speedup = 1.5, .depth = 2, .bounded = true},
@@ -2021,6 +2040,11 @@ void joint_price_replays(const json& fixture) {
           "joint scales not ascending by streams are rejected");
     check(!reads(nlohmann::ordered_json::array({{{"streams", 2}, {"scale", 0.0}}})),
           "a joint scale that is not positive is rejected");
+    // One request's verify is the base the scale is taken against: an entry below two streams is
+    // not a joint price.
+    check(!reads(nlohmann::ordered_json::array({{{"streams", 1}, {"scale", 0.5}}})) &&
+              !reads(nlohmann::ordered_json::array({{{"streams", 0}, {"scale", 0.5}}})),
+          "a joint scale below two streams is rejected");
 }
 
 // The order a manifest lists its drafters in does not decide: two drafters of equal worth tie

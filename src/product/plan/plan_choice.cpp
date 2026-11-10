@@ -803,7 +803,7 @@ Json choice_json(const ServedChoice& served) {
                                std::to_string(source.streams) +
                                " streams (the round cost's R_1 / R_C there; the joint verify at "
                                "this count is " +
-                               (priced_here ? "priced higher" : "not priced") +
+                               (priced_here ? "priced no lower" : "not priced") +
                                "), the gain not climbing with load; the requests' attention and "
                                "state bytes are not in it";
             }

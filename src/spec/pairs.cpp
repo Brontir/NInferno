@@ -253,7 +253,8 @@ std::map<std::string, std::vector<RoundLaunches>> round_launches(const Profile& 
 // configuration and every depth up to it, R_1 / R_C at C = 2..kPricedVerifyRows streams where the
 // round cost prices it (load_gain at a gain of 1), on the lab board's rates and the lab artifact's
 // draft head (the one the load table was measured on). Nothing without the pair's facts or the
-// board's rates. The load table's depths are among these: a bound runs that depth.
+// board's rates. The load table's depths are among these: a bound runs that depth. `pair` is the
+// record the profile was selected on, or the asking card's own record (generation_median).
 void price_joint(Profile& p, const MeasuredPair& pair) {
     p.joint_scale.clear();
     if (!pair.round_facts) { return; }
@@ -720,7 +721,8 @@ std::optional<Profile> priced_by_facts_for(const std::vector<const MeasuredPair*
 // This generation's lab cards (two or more): their median round cost per configuration, on the
 // record that measured the most configurations (the card's own among equals; tokens a round are the
 // pair's on any card). Two or more that choose alike keep every measured depth and their load
-// bounds when equal, as long as the median keeps their choice.
+// bounds when equal, as long as the median keeps their choice; the joint verify is then priced on
+// `own_pair`'s board (the asking card's own record) where there is one, else on that record's.
 Profile generation_median(const std::vector<const MeasuredPair*>& home,
                           const MeasuredPair* own_pair, std::string_view generation,
                           const SelectOptions& options, std::string* note) {
@@ -756,6 +758,12 @@ Profile generation_median(const std::vector<const MeasuredPair*>& home,
                 return p.load == each.front().load;
             });
             if (!loads || out.load.empty()) { out.load = {LoadBound{.lanes = 2, .depth = 0}}; }
+            // The joint verify is priced on the asking card's own record where it has one (its
+            // board's rates, its facts and launch counts), not on the base record's board: the
+            // base is the record that measured the most configurations, which may be another
+            // card's. An own record that cannot price (no facts, no rates for its board) prices
+            // nothing: the gain stays a ceiling there, not another board's price.
+            if (own_pair != nullptr && own_pair != &base) { price_joint(out, *own_pair); }
             return out;
         }
     }

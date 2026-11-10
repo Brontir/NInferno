@@ -112,9 +112,11 @@ struct DrafterOption {
     // `streams` 0: no price does, the gain is base_gain_at (a ceiling). The hold rule, once: the
     // gain at a count is base_gain_at scaled by the joint verify's price at that count, and never
     // more than the least gain priced at a smaller count (the gain does not climb back as the load
-    // grows, priced there or not). An entry whose bound is unmeasured holds a placeholder gain and
-    // supplies nothing (neither at its own count nor below), as `measured_at` does not count the
-    // drafter there; an entry that would raise the gain above base_gain_at is clamped away.
+    // grows, priced there or not). Nothing is priced where the drafter is not counted: at a count
+    // whose own bound is unmeasured (`measured_at` is false there, the estimate counts x1, so no
+    // smaller count's price is held to it), and from an entry whose bound is unmeasured (it holds
+    // a placeholder gain). A scale above 1 supplies nothing, at its own count or held to a larger
+    // one: a joint verify never costs less than one request's, so such a scale is not a price.
     struct PriceSource {
         std::uint32_t streams = 0;
         double scale          = 1;
@@ -128,10 +130,11 @@ struct DrafterOption {
             out.gain = 1;
             return out;
         }
-        if (!measured) { return out; } // a gain nobody measured is not priced
+        // A gain nobody measured is not priced: the drafter's, or the bound's in force here.
+        if (!measured || !bound_measured_at(streams)) { return out; }
         for (const JointScale& j : joint) {
             if (j.streams > streams) { break; }
-            if (!bound_measured_at(j.streams)) { continue; }
+            if (!bound_measured_at(j.streams) || j.scale > 1) { continue; }
             const double priced = base_gain_at(j.streams) * j.scale;
             if (priced < out.gain) { out = {j.streams, j.scale, priced}; }
         }
