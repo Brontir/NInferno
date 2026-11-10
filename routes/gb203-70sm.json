@@ -45,7 +45,8 @@
      53.25,
      43.01
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "nvfp4",
@@ -106,7 +107,8 @@
      80.9,
      62.45
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "nvfp4",
@@ -137,7 +139,8 @@
      28.67,
      24.58
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "nvfp4",
@@ -188,7 +191,8 @@
      57.34,
      43.01
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "nvfp4",
@@ -244,7 +248,8 @@
      108.54,
      79.87
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "nvfp4",
@@ -320,7 +325,8 @@
      141.31,
      108.56
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "nvfp4",
@@ -396,7 +402,8 @@
      382.96,
      282.62
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "nvfp4",
@@ -457,7 +464,8 @@
      106.5,
      75.78
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "nvfp4",
@@ -518,7 +526,8 @@
      200.7,
      141.34
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "nvfp4",
@@ -579,7 +588,8 @@
      273.92,
      192.54
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "nvfp4",
@@ -630,7 +640,8 @@
      42.5,
      30.72
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "nvfp4",
@@ -746,7 +757,8 @@
      277.5,
      229.38
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "nvfp4",
@@ -967,7 +979,8 @@
      368.64,
      262.16
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "nvfp4",
@@ -1068,7 +1081,8 @@
      73.73,
      69.63
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "nvfp4",
@@ -1129,7 +1143,8 @@
      131.07,
      79.86
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "nvfp4",
@@ -1170,7 +1185,8 @@
      288.77,
      172.03
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q4",
@@ -1216,7 +1232,8 @@
      182.27,
      133.12
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q4",
@@ -1272,7 +1289,8 @@
      221.18,
      133.12
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q4",
@@ -1308,7 +1326,8 @@
      179.2,
      167.94
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q4",
@@ -1404,7 +1423,8 @@
      489.47,
      391.17
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q4",
@@ -1475,7 +1495,8 @@
      491.52,
      393.22
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q5",
@@ -1556,7 +1577,8 @@
      169.98,
      137.22
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q5",
@@ -1612,7 +1634,8 @@
      217.09,
      172.03
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q5",
@@ -1668,7 +1691,8 @@
      602.11,
      460.8
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q5",
@@ -1699,7 +1723,8 @@
      195.58,
      159.74
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q5",
@@ -1730,7 +1755,8 @@
      230.4,
      161.79
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -1756,7 +1782,8 @@
      22.53,
      14.34
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -1787,7 +1814,8 @@
      133.12,
      116.74
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -1818,7 +1846,8 @@
      145.41,
      131.07
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -1904,7 +1933,8 @@
      1180.68,
      1112.06
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -1965,7 +1995,8 @@
      124.93,
      114.69
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -2061,7 +2092,8 @@
      225.28,
      202.75
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -2107,7 +2139,8 @@
      307.2,
      276.48
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -2173,7 +2206,8 @@
      443.39,
      397.31
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -2224,7 +2258,8 @@
      911.36,
      819.2
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -2335,7 +2370,8 @@
      522.24,
      493.57
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -2371,7 +2407,8 @@
      157.7,
      133.12
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -2467,7 +2504,8 @@
      587.26,
      475.14
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -2493,7 +2531,8 @@
      247.81,
      192.51
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -2519,7 +2558,8 @@
      399.36,
      257.02
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -2545,7 +2585,8 @@
      514.88,
      370.69
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -2581,7 +2622,8 @@
      1002.5,
      719.87
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -2647,7 +2689,8 @@
      139.26,
      131.07
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -2708,7 +2751,8 @@
      141.31,
      108.54
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -2799,7 +2843,8 @@
      83.97,
      65.54
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -2850,7 +2895,8 @@
      145.41,
      110.58
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -2896,7 +2942,8 @@
      47.1,
      43.01
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -2942,7 +2989,8 @@
      86.02,
      77.82
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -2998,7 +3046,8 @@
      227.33,
      208.91
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -3019,7 +3068,8 @@
      297.79,
      217.09
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "format": "q8",
@@ -3050,7 +3100,8 @@
      935.94,
      825.34
     ]
-   ]
+   ],
+   "tuned_on": "gb203:84sm"
   },
   {
    "bands": [
@@ -13676,7 +13727,7 @@
    ]
   }
  ],
- "note": "RTX 5070 Ti (04.11): the generic entries' bands, prefill and prefill_bands re-tuned on this board with ninferno_route_tune over weight copies (#405) and checked by a second pass (99.7 % of the band points held); the route_as and claim entries, tuned_on and the moe section are the RTX 5080's (gb203.json), as this board read them before. The RTX 5080's note: route_as: for a call of t_min..t_max tokens the shape-owned table is asked at T' (ops/common/shape_routes.h); measured with ninferno_linear_route_sweep_bench --random-weight --no-class-table, every override bit-identical to the table's own choice; evidence_us rows are [T, table us, override us], mean over 2 passes; min gain 5.0%, 2.1 us. The entries with \"bands\" (and \"prefill\") are the any-geometry generic path's, tuned per model on the RTX 5080 with ninferno_route_tune (--samples 11); \"tuned_on\" names the model whose problems they are. Entries with \"claim\": true take a problem whose shape also has a shape-owned Linear table (the dispatcher's first choice) at the widths their bands and prefill route cover, under an A16Only policy only: Qwen3.6-27B's five FP8 shapes, whose owned table computes A16 in chunks of 11 tokens (attn_in 14336x5120 at T=512: 4290.6 us owned, 1054.7 us generic; 940f/942f, RTX 5080); a band is claimed only where the generic route was at least 5% faster at the measured widths it covers.",
+ "note": "RTX 5070 Ti (04.11): the generic entries' bands, prefill and prefill_bands re-tuned on this board with ninferno_route_tune over weight copies (#405) and checked by a second pass (99.7 % of the band points held); the route_as and claim entries, tuned_on and the moe section are the RTX 5080's (gb203.json), as this board read them before. The RTX 5080's note: route_as: for a call of t_min..t_max tokens the shape-owned table is asked at T' (ops/common/shape_routes.h); measured with ninferno_linear_route_sweep_bench --random-weight --no-class-table, every override bit-identical to the table's own choice; evidence_us rows are [T, table us, override us], mean over 2 passes; min gain 5.0%, 2.1 us. The entries with \"bands\" (and \"prefill\") are the any-geometry generic path's, tuned per model on the RTX 5080 with ninferno_route_tune (--samples 11); \"tuned_on\" names the model whose problems they are. Entries with \"claim\": true take a problem whose shape also has a shape-owned Linear table (the dispatcher's first choice) at the widths their bands and prefill route cover, under an A16Only policy only: Qwen3.6-27B's five FP8 shapes, whose owned table computes A16 in chunks of 11 tokens (attn_in 14336x5120 at T=512: 4290.6 us owned, 1054.7 us generic; 940f/942f, RTX 5080); a band is claimed only where the generic route was at least 5% faster at the measured widths it covers. 10.11 (#634): the 51 route_as entries carry the RTX 5080's evidence_us unchanged, now labelled tuned_on \"gb203:84sm\" (tests/test_route_table_evidence.py checks the label).",
  "moe": [
   {
    "format": "mxfp4",

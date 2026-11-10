@@ -71,6 +71,11 @@ add_test(NAME ninferno_selection_regret_test
 add_test(NAME ninferno_regret_collect_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_regret_collect.py)
 
+# routes/*.json: evidence_us / tuned_on provenance (#634), no GPU.
+add_test(NAME ninferno_route_table_evidence_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_route_table_evidence.py)
+set_tests_properties(ninferno_route_table_evidence_test PROPERTIES LABELS host)
+
 # Repository hygiene, no GPU: only scripts (a #! first line) may be committed executable.
 add_test(NAME ninferno_file_modes_test
   COMMAND bash "${PROJECT_SOURCE_DIR}/tools/check_file_modes.sh")
