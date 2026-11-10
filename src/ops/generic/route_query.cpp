@@ -98,7 +98,7 @@ namespace {
 RouteDescription describe_resolved(const DescribedWeight& described, const Problem& problem,
                                    const ResolvedRoute& resolved_in, std::int32_t tokens,
                                    std::optional<std::size_t> workspace_free, bool with_kernel) {
-    const Weight& w = described.weight;
+    const Weight& w        = described.weight;
     ResolvedRoute resolved = resolved_in;
     // Volta's prefill band runs a tiled call as CUTLASS over a decoded FP16 copy of the weight
     // rows (run_route, launch_volta_cutlass) when the call has workspace that holds a chunk

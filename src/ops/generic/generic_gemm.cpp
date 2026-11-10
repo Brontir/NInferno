@@ -3430,9 +3430,8 @@ bool volta_cutlass_runs(bool only, std::int32_t tokens) {
 // takes it (volta_cutlass_runs), the build has the kernel, and the call has workspace that holds
 // a chunk. run_route asks it before launching and route_query's description after resolving, so
 // they cannot drift apart.
-bool volta_cutlass_call_runs(WeightCodec codec, std::int32_t n, std::int32_t k,
-                             std::int32_t tokens, bool swiglu,
-                             std::optional<std::size_t> workspace_free) {
+bool volta_cutlass_call_runs(WeightCodec codec, std::int32_t n, std::int32_t k, std::int32_t tokens,
+                             bool swiglu, std::optional<std::size_t> workspace_free) {
     return workspace_free.has_value() && volta_cutlass_compiled() &&
            volta_cutlass_runs(volta_cutlass_only(codec), tokens) &&
            volta_cutlass_chunk_bytes(n, k, tokens, swiglu, *workspace_free) != 0;
@@ -3440,9 +3439,8 @@ bool volta_cutlass_call_runs(WeightCodec codec, std::int32_t n, std::int32_t k,
 
 // A TiledMma call of a CUTLASS-only format (no tile of its own) that volta_cutlass_call_runs
 // refuses runs the scalar kernel: a demotion (other bytes and speed).
-bool volta_tiled_runs_scalar(WeightCodec codec, std::int32_t n, std::int32_t k,
-                             std::int32_t tokens, bool swiglu,
-                             std::optional<std::size_t> workspace_free) {
+bool volta_tiled_runs_scalar(WeightCodec codec, std::int32_t n, std::int32_t k, std::int32_t tokens,
+                             bool swiglu, std::optional<std::size_t> workspace_free) {
     return volta_cutlass_only(codec) &&
            !volta_cutlass_call_runs(codec, n, k, tokens, swiglu, workspace_free);
 }
@@ -3547,7 +3545,8 @@ std::string_view demotion_name(Demotion demotion) noexcept {
     case Demotion::GgmlLayout: return "ggml_layout";
     case Demotion::GgmlWorkspace: return "ggml_workspace";
     case Demotion::Workspace: return "workspace";
-    case Demotion::VoltaCopy: return "volta_copy";
+    case Demotion::VoltaCopy:
+        return "volta_copy";
     }
     return "none";
 }

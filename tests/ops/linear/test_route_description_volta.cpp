@@ -59,9 +59,8 @@ int main() {
         const std::string name = std::to_string(static_cast<int>(qtype));
         const bool only        = generic::volta_cutlass_only(generic::codec_of(w));
         const auto ask         = [&](std::optional<std::size_t> free) {
-            return generic::describe_route(device_class(), tiled, qtype,
-                                           LinearPolicy::A16Only, generic::Epilogue::Store, n, k,
-                                           tokens, free);
+            return generic::describe_route(device_class(), tiled, qtype, LinearPolicy::A16Only,
+                                                   generic::Epilogue::Store, n, k, tokens, free);
         };
         // No workspace: the demotion is said for a CUTLASS-only format, and the tiled route stands
         // for one with a tile of its own.
@@ -76,16 +75,19 @@ int main() {
             check(none->resolved.asked == tiled && none->resolved.executed == scalar &&
                       none->resolved.reason == generic::Demotion::VoltaCopy,
                   name + ": no workspace runs scalar and says why");
-            check(none->workspace_bytes == 0 && none->tile.has_value() == generic::route_tile(scalar, generic::Epilogue::Store, tokens).has_value() &&
-                      none->traffic.has_value(),
-                  name + ": the scalar route's workspace, tile and traffic");
+            check(
+                none->workspace_bytes == 0 &&
+                    none->tile.has_value() ==
+                        generic::route_tile(scalar, generic::Epilogue::Store, tokens).has_value() &&
+                    none->traffic.has_value(),
+                name + ": the scalar route's workspace, tile and traffic");
             // With room for a chunk the copy runs where the build has it; else still scalar.
             const std::size_t room = std::size_t{1} << 30;
             const auto big         = ask(room);
             check(big.has_value(), name + ": described with workspace");
             if (big) {
-                const bool runs =
-                    generic::volta_cutlass_call_runs(generic::codec_of(w), n, k, tokens, false, room);
+                const bool runs = generic::volta_cutlass_call_runs(generic::codec_of(w), n, k,
+                                                                   tokens, false, room);
                 check((big->resolved.executed == tiled) == runs &&
                           (big->resolved.reason == generic::Demotion::None) == runs,
                       name + ": with room the description follows the shared rule");

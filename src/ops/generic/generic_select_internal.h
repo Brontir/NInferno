@@ -62,15 +62,13 @@ bool volta_cutlass_runs(bool only, std::int32_t tokens);
 
 // A TiledMma call that runs CUTLASS over the decoded copy: the band takes it, the build has the
 // kernel and `workspace_free` holds a chunk. run_route and the route description both ask it.
-bool volta_cutlass_call_runs(WeightCodec codec, std::int32_t n, std::int32_t k,
-                             std::int32_t tokens, bool swiglu,
-                             std::optional<std::size_t> workspace_free);
+bool volta_cutlass_call_runs(WeightCodec codec, std::int32_t n, std::int32_t k, std::int32_t tokens,
+                             bool swiglu, std::optional<std::size_t> workspace_free);
 
 // A TiledMma call of a CUTLASS-only format that volta_cutlass_call_runs refuses: run_route runs the
 // scalar kernel and notes a demotion (Demotion::VoltaCopy).
-bool volta_tiled_runs_scalar(WeightCodec codec, std::int32_t n, std::int32_t k,
-                             std::int32_t tokens, bool swiglu,
-                             std::optional<std::size_t> workspace_free);
+bool volta_tiled_runs_scalar(WeightCodec codec, std::int32_t n, std::int32_t k, std::int32_t tokens,
+                             bool swiglu, std::optional<std::size_t> workspace_free);
 
 // GemmArgs::add_sums: outside the invariant and prefill profiles, whose calls keep one summation
 // order at every T (a call there may change width from one chunk or round to the next), a tensor-core
