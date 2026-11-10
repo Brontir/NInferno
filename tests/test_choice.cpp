@@ -2391,10 +2391,11 @@ void transferred_resolution(const json& fixture) {
     }
     check(by_target.size() == std::size(ch::kTransferredDecodeError),
           "every carried target has a stated row");
-    check(std::abs(worst - ch::kCarriedForwardWorstCaseDecodeError) < 0.0015,
-          "the carried-forward worst case is the largest measured transfer");
+    check(std::abs(worst - ch::kUnmeasuredCarryDecodeError) < 0.0015 &&
+              ch::kUnmeasuredCarryDecodeError == ch::largest_transferred_decode_error(),
+          "the unmeasured carry is the largest measured transfer");
     // The basis by board: Ada and Blackwell state their own rows' error; the other known
-    // generations their carried row; a compute capability with no generation row the worst case.
+    // generations their carried row; a compute capability with no generation row the unmeasured carry.
     for (const auto& [name, basis] : std::vector<std::pair<const char*, ch::ResolutionBasis>>{
              {"RTX 4090", ch::ResolutionBasis::Own},
              {"RTX 5090", ch::ResolutionBasis::Own},
@@ -2419,9 +2420,9 @@ void transferred_resolution(const json& fixture) {
     lent.major                   = 13;
     lent.minor                   = 0;
     const ch::Resolution carried = ch::resolution_of(lent);
-    check(carried.basis == ch::ResolutionBasis::WorstCase &&
-              carried.rms == ch::kCarriedForwardWorstCaseDecodeError,
-          "a compute capability with no generation row: the worst case");
+    check(carried.basis == ch::ResolutionBasis::Unmeasured &&
+              carried.rms == ch::kUnmeasuredCarryDecodeError,
+          "a compute capability with no generation row: the unmeasured carry");
 }
 
 // What typing the resolution by the estimate's basis changes (#618 step 3, a behaviour change made

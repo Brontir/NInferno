@@ -317,10 +317,20 @@ struct TransferredError {
 inline constexpr TransferredError kTransferredDecodeError[] = {
     {"ga10x", 0.0786}, {"turing", 0.2151}, {"volta", 0.5447}};
 
-// A board whose compute capability has no generation row lends the nearest one's rows, a carry
-// forward in time that no measured row covers: the explicit worst case, the largest of the measured
-// transfer rows above (the test asserts it). Labelled as such in the plan.
-inline constexpr double kCarriedForwardWorstCaseDecodeError = 0.5447;
+// The largest of the measured carries above.
+constexpr double largest_transferred_decode_error() noexcept {
+    double largest = 0;
+    for (const TransferredError& e : kTransferredDecodeError) {
+        largest = e.rms > largest ? e.rms : largest;
+    }
+    return largest;
+}
+
+// An assumed worst case: the largest measured carry (all of them Ada onto older generations). No
+// measured row bounds a carry onto a newer architecture or below Volta (Pascal); it is a label, not
+// a bound. A board whose compute capability has no generation row (rows lent forward) takes it, and
+// so do the known generations with no row of their own (ga100, hopper, gb100, thor).
+inline constexpr double kUnmeasuredCarryDecodeError = largest_transferred_decode_error();
 
 // kDp4aOpsPerSmClock (a generation without an int8 MMA decodes its int8 route at it, choice.cpp
 // decode_int8_peak): core/cost_constants.h, a chip fact shared with spec/round_cost.h.

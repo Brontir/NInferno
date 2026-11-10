@@ -219,16 +219,18 @@ struct QuantOption {
 // What a speed estimate's resolution rests on (#618). None: no reference, so no estimate decides.
 // Own: the board's generation has measured decode rows and states its error
 // (kDecodePredictionError). Transferred: it has none, but a measured carry of kTransferGeneration's
-// rows onto it states one (kTransferredDecodeError, by target). WorstCase: a compute capability
-// with no generation row, or a known generation with neither: the largest measured carry
-// (kCarriedForwardWorstCaseDecodeError).
-enum class ResolutionBasis : std::uint8_t { None, Own, Transferred, WorstCase };
+// rows onto it states one (kTransferredDecodeError, by target). Unmeasured: a compute capability
+// with no generation row, or a known generation with neither (ga100, hopper, gb100, thor): an
+// assumed worst case, the largest measured carry (all of them Ada onto older generations; no
+// measured row bounds a carry onto a newer architecture or below Volta (Pascal)): a label, not a
+// bound (kUnmeasuredCarryDecodeError).
+enum class ResolutionBasis : std::uint8_t { None, Own, Transferred, Unmeasured };
 
 [[nodiscard]] constexpr std::string_view resolution_basis_name(ResolutionBasis basis) noexcept {
     return basis == ResolutionBasis::None          ? "none"
            : basis == ResolutionBasis::Own         ? "own"
            : basis == ResolutionBasis::Transferred ? "transferred"
-                                                   : "worst_case";
+                                                   : "unmeasured";
 }
 
 struct Resolution {
