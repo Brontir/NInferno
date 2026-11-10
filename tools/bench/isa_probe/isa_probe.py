@@ -243,7 +243,10 @@ def cmd_show(a):
         print(f"sm_{key}: {row['card']} ({row['mma_shape']}, nvcc {row['tool']['nvcc']}, "
               f"{row['source']})")
         for name in FACTS:
-            v = row["facts"][name]
+            v = row["facts"].get(name)
+            if v is None:
+                print(f"  {name:36s} {'-':>10s} (not measured by this row's probe)")
+                continue
             print(f"  {name:36s} {v['value']:10.3f} {v['unit']}")
     return 0
 
