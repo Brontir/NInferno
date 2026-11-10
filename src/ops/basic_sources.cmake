@@ -1,5 +1,6 @@
 target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/weight_input.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/prefill_routes.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/route_pins.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/route_table.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/dense_fused/dense_fused.cu"

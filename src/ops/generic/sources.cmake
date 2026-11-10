@@ -29,13 +29,7 @@ target_include_directories(ninferno_ops PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/gen
 add_library(ninferno_ops_host STATIC
   "${CMAKE_CURRENT_LIST_DIR}/kernel_facts.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_routes.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/generic_select.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/generic_cost.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/generic_coverage.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/generic_workspace.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/generic_describe.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/route_query.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/../prefill_routes.cpp")
+  "${CMAKE_CURRENT_LIST_DIR}/generic_select.cpp")
 ninferno_internal_includes(ninferno_ops_host)
 target_include_directories(ninferno_ops_host PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_definitions(ninferno_ops_host PRIVATE NINFERNO_HOST_ONLY)
@@ -44,9 +38,14 @@ target_link_libraries(ninferno_ops PUBLIC ninferno_ops_host)
 
 ninferno_target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/generic_gemm.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_coverage.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_workspace.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_cost.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_describe.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_ggml.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/build_manifest.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_tune.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/route_query.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/route_tune_tool.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/selector_facts.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_i8.cu"
