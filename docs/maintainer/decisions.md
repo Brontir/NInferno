@@ -1736,8 +1736,8 @@ fails when the shipped registry and the rows disagree, so a registry refresh re-
 
 Leave one card out: ada 0.152 .. 0.180 (without the RTX 4070 Ti, which carries 48 of the 64
 rounds), gb20x 0.159 .. 0.163. The hold-out in the header comment: ada -3.9 / +2.0 / +1.2 %, gb20x
-+3.2 / +3.8 %. The third decimal is a near-tie of the 1 % grid: a 0.5 % change of the Ada
-measurements moves the print by one step.
++3.2 / +3.8 %. The third decimal is a near-tie of the 1 % grid, and the fit is sensitive: every Ada
+measurement scaled by 1.005 or 0.995 moves it to 0.154 or 0.167.
 
 What moves: over every board of `gpu_facts.json` and every registry target with round facts
 (about 10 400 chosen pairs), 53 picks on 33 boards change. The mode (MTP or DFlash) never changes;

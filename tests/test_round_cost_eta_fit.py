@@ -32,7 +32,7 @@ def header_rows() -> dict[str, tuple[float, int]]:
     table = HEADER[start:end]
     rows = ROW.findall(table)
     # Every entry of the table must parse: a row of another shape would otherwise drop out unseen.
-    entries = len(re.findall(r'\{"', table))
+    entries = len(re.findall(r'\{\s*"', table))
     if entries != len(rows):
         raise AssertionError(f"kSmallTEta has {entries} entries, {len(rows)} of them in the shape this test reads")
     return {g: (float(eta), int(cards)) for g, eta, cards in rows}
