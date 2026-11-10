@@ -72,7 +72,12 @@ function(ninferno_add_test name)
       NINFERNO_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
       NINFERNO_PYTHON_EXECUTABLE="${Python3_EXECUTABLE}")
   endif()
-  # NO_DEFAULT_TEST: the caller registers the executable's runs itself (e.g. one per case group).
+  # NO_DEFAULT_TEST: the caller registers the executable's runs itself (e.g. one per case group)
+  # and labels them with ninferno_label_tests; LABELS here would label nothing.
+  if(arg_NO_DEFAULT_TEST AND arg_LABELS)
+    message(FATAL_ERROR "ninferno_add_test(${name}): LABELS with NO_DEFAULT_TEST labels nothing; "
+                        "label the registered runs with ninferno_label_tests")
+  endif()
   if(NOT arg_NO_DEFAULT_TEST)
     if(NOT arg_LABELS)
       message(FATAL_ERROR "ninferno_add_test(${name}): LABELS host|gpu|real|golden|slow is required")
@@ -92,9 +97,10 @@ function(ninferno_op_oracle_options target)
   endif()
 endfunction()
 
-# An op test runs kernels against an oracle: gpu unless LABELS says otherwise.
+# An op test runs kernels against an oracle: gpu unless LABELS says otherwise (a NO_DEFAULT_TEST
+# caller labels its runs itself).
 function(ninferno_add_op_test name)
-  if("LABELS" IN_LIST ARGN)
+  if("LABELS" IN_LIST ARGN OR "NO_DEFAULT_TEST" IN_LIST ARGN)
     ninferno_add_test(${name} ${ARGN})
   else()
     ninferno_add_test(${name} LABELS gpu ${ARGN})

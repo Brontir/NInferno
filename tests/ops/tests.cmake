@@ -41,7 +41,7 @@ endforeach()
 # Four runs of one executable (test_moe.cpp --part): the random formats in three shares and the
 # shipped layers, plans and refusals took 125 s in one process on the RTX 5090; the runs are
 # independent, so ctest -j spreads them. ninferno_moe_test keeps its name for the layers.
-ninferno_add_op_test(ninferno_moe_test LABELS gpu slow
+ninferno_add_op_test(ninferno_moe_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_moe.cpp"
   LIBRARIES ninferno_ops
   NO_DEFAULT_TEST)
@@ -118,7 +118,7 @@ ninferno_add_op_test(ninferno_candidate_selector_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_candidate_selector.cpp"
   LIBRARIES ninferno_ops)
 
-ninferno_add_op_test(ninferno_softmax_attention_test LABELS gpu slow
+ninferno_add_op_test(ninferno_softmax_attention_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/softmax_attention/main.cpp"
           "${CMAKE_CURRENT_LIST_DIR}/softmax_attention/causal_cache.cpp"
           "${CMAKE_CURRENT_LIST_DIR}/softmax_attention/plain_and_packed.cpp"
