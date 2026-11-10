@@ -1,4 +1,5 @@
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/format_traits.h"
 #include "core/per_device.h"
 #include "ops/common/arch_limits.h"
 #include "ops/common/native_nvfp4.h"
@@ -251,10 +252,7 @@ bool allows_w4a8(const Weight& w, LinearPolicy policy) {
 // one 16-byte copy per row), 16-byte code and scale planes.
 // Its parts, which i8_refusal names Format, Alignment and Extent.
 namespace {
-bool i8_format(QType qtype) {
-    return qtype == QType::Q4_G64_FP16 || qtype == QType::Q5_G64_FP16 ||
-           qtype == QType::Q6_G64_FP16;
-}
+bool i8_format(QType qtype) { return format_traits(qtype).qx_g64; }
 
 bool i8_planes_aligned(const Weight& w) {
     const bool q4 = w.qtype == QType::Q4_G64_FP16, q5 = w.qtype == QType::Q5_G64_FP16;
@@ -470,18 +468,8 @@ namespace {
 // The codebook formats only: their register-MMA dequant looks every value up in a grid table per
 // token tile, which the matrix kernel's one decode a call saves. The K-quants' affine dequant is
 // cheap, and there the register MMA keeps the band (RTX 4090, cellgt ABBA: UD-Q4_K_XL 27B DFlash2
-// C1 115.7 -> 111.7 and C4 271.5 -> 263.1 with them in the rule, Muse 30B Q4_K_M C4 282.7 ->
-// 267.6).
-bool mmq_verify_format(QType q) {
-    switch (q) {
-    case QType::GGML_IQ1_S: case QType::GGML_IQ1_M: case QType::GGML_IQ2_XXS:
-    case QType::GGML_IQ2_XS: case QType::GGML_IQ2_S: case QType::GGML_IQ3_XXS: case QType::GGML_IQ3_S:
-    case QType::GGML_IQ4_XS: case QType::GGML_IQ4_NL:
-        return true;
-    default:
-        return false;
-    }
-}
+// C1 115.7 -> 111.7 and C4 271.5 -> 263.1 with them in the rule, Muse 30B Q4_K_M C4 282.7 -> 267.6).
+bool mmq_verify_format(QType q) { return format_traits(q).mmq_verify; }
 constexpr std::int32_t kMmqVerifyMinTokens = 9;
 } // namespace
 
@@ -588,24 +576,7 @@ namespace {
 // decode rather than the weight stream bounds them, by 11-16% at n = 4096..12288 (IQ3_S
 // 4096x2560 11.4 -> 9.7 us, IQ2_S 9216x2560 21.0 -> 18.6 us). Q8 (Q8_0) and Q6_K at K >= 12288
 // were faster on eight warps at every size.
-bool light_ggml_step(QType q) {
-    switch (q) {
-    case QType::GGML_Q4_K:
-    case QType::GGML_Q5_K:
-    case QType::GGML_IQ4_XS:
-    case QType::GGML_IQ3_XXS:
-    case QType::GGML_IQ3_S:
-    case QType::GGML_IQ2_S:
-    case QType::GGML_Q4_0:
-    case QType::GGML_Q4_1:
-    case QType::GGML_Q5_0:
-    case QType::GGML_Q5_1:
-    case QType::GGML_IQ4_NL:
-        return true;
-    default:
-        return false;
-    }
-}
+bool light_ggml_step(QType q) { return format_traits(q).light_step; }
 
 // Shape-class heuristic for the register MMA. It follows what ninferno_route_tune measured across
 // the recorded problems (Qwen3.5 0.8B in four formats on an RTX 5090): at T <= 16 one 16-row M tile
@@ -657,7 +628,7 @@ bool heavy_decode(QType q) { return q != QType::BF16; }
 
 // The format whose 64x64 register-MMA tile spills where its 128x32 tile spills less (ptxas,
 // sm_86..sm_120): Q4_K, whose 128x32 tile was 10..20 % faster on all seven boards from 97 tokens.
-bool tall_tile_format(QType q) { return q == QType::GGML_Q4_K; }
+bool tall_tile_format(QType q) { return format_traits(q).tall_tile; }
 
 // Q6_K's one-tile call on a grid of one to two eight-warp CTAs per SM (sms < ctas <= 2 sms),
 // where the board's DRAM bytes per SM cycle are below this: the four-warp CTA, half the warps on
@@ -828,10 +799,7 @@ namespace {
 // tile also replaces their classic 128x64 tile where a measured choice (the shipped dense tuner
 // table) names it, since those measurements had no producer-warp tile of these formats to time.
 bool w4a8_ws_extra(QType q) {
-    if (q != QType::GGML_IQ4_XS && q != QType::GGML_IQ2_XS && q != QType::GGML_IQ2_XXS &&
-        q != QType::GGML_IQ3_S) {
-        return false;
-    }
+    if (!format_traits(q).w4a8_ws_tuned) return false;
     static PerDevice<bool> on;
     return on.get([](int) {
         try {
@@ -971,10 +939,8 @@ constexpr bool r8_one_slot_build() {
 
 int rules_r8(const Problem& p, std::int32_t tokens) {
     if (p.qtype == QType::Q8_G32_FP16) return r8_index(4, 1);
-    // IQ1_S / IQ1_M: grid-lookup decoders of IQ2's weight, scheduled with them.
-    const bool iq2 = p.qtype == QType::GGML_IQ2_XXS || p.qtype == QType::GGML_IQ2_XS ||
-                     p.qtype == QType::GGML_IQ2_S || p.qtype == QType::GGML_IQ1_S ||
-                     p.qtype == QType::GGML_IQ1_M;
+    // IQ1_S / IQ1_M: grid-lookup decoders of IQ2's weight, scheduled with them (sched_iq2).
+    const bool iq2 = format_traits(p.qtype).sched_iq2;
     if (tokens >= 2) return iq2 && (tokens >= 4 || p.n >= 34816) ? r8_index(4, 2) : r8_index(4, 1);
     // Turing (the RTX 2080 Ti, tu102:68sm, ninferno_r8_schedule_bench on the IQ3 16 GB
     // artifacts' 63 problems: picks +6.25 % above the best schedules in sum) decodes the codebook
@@ -983,8 +949,7 @@ int rules_r8(const Problem& p, std::int32_t tokens) {
     // Q3_K 5120x17408 add 112.9 -> 89.0); Q6_K gains two rows per warp from N = 8192 or K = 4096
     // (the 248320x2048 lm_head 807 -> 723 us, 2816x8192 w8r2 42.3 -> w4r2 40.3).
     if (!device_class().features.mma_bf16_native) {
-        const bool decode_heavy = iq2 || p.qtype == QType::GGML_IQ3_S ||
-                                  p.qtype == QType::GGML_IQ3_XXS || p.qtype == QType::GGML_Q3_K;
+        const bool decode_heavy = format_traits(p.qtype).decode_heavy;
         if (decode_heavy && p.k >= 5120) return r8_index(8, 2);
         // Volta (an sm_70 build, whose R8 kernel is the one-slot form: generic_r8.cuh
         // NINFERNO_R8_ONE_SLOT; a GPU without mma.sync) keeps one row per warp for Q6_K at every N
@@ -1127,11 +1092,7 @@ void record_projection_route(const char* op, const char* route, std::int32_t tok
         << op << ' ' << route << ' ' << tokens << ' ' << n << ' ' << k << '\n';
 }
 
-bool w4a8_ws_supports(QType q) {
-    return q == QType::GGML_IQ3_XXS || q == QType::GGML_IQ2_S || q == QType::GGML_Q4_K ||
-           q == QType::GGML_Q6_K || q == QType::GGML_Q4_0 || q == QType::GGML_IQ4_XS ||
-           q == QType::GGML_IQ2_XS || q == QType::GGML_IQ2_XXS || q == QType::GGML_IQ3_S;
-}
+bool w4a8_ws_supports(QType q) { return format_traits(q).w4a8_ws; }
 
 int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_band) {
     const std::int32_t k = problem.k;
@@ -1539,65 +1500,10 @@ int r8_schedule_count() { return static_cast<int>(kR8Schedules.size()); }
 R8ScheduleInfo r8_schedule_info(int index) {
     return kR8Schedules.at(static_cast<std::size_t>(index));
 }
-bool r8_supports(QType qtype) {
-    switch (qtype) {
-    case QType::GGML_Q4_0:
-    case QType::GGML_Q4_1:
-    case QType::GGML_Q5_0:
-    case QType::GGML_Q5_1:
-    case QType::MXFP4:
-    case QType::GGML_IQ4_NL:
-    case QType::GGML_IQ4_XS:
-    case QType::GGML_Q4_K:
-    case QType::GGML_Q5_K:
-    case QType::GGML_Q6_K:
-    case QType::GGML_Q3_K:
-    case QType::GGML_Q2_K:
-    case QType::Q8_G32_FP16:
-    case QType::Q4_G64_FP16:
-    case QType::Q5_G64_FP16:
-    case QType::Q6_G64_FP16:
-    // The u4 zero-point formats decode as in W4A8 (W4a8U4ZpG): before, a u4 checkpoint's decode
-    // stayed on the A16 register MMA wherever its other formats took R8.
-    case QType::U4_G128_ZP_FP16:
-    case QType::U4_G32_ZP_FP16:
-    case QType::U4_G64_ZP_FP16:
-    case QType::Q3_G128_FP16:
-    case QType::Q3_G64_FP16:
-    case QType::GGML_IQ3_XXS:
-    case QType::GGML_IQ3_S:
-    case QType::GGML_IQ2_XXS:
-    case QType::GGML_IQ2_XS:
-    case QType::GGML_IQ2_S:
-    // IQ1_S / IQ1_M decode as in W4A8 (W4a8Iq1S / W4a8Iq1M): before, their decode stayed on the
-    // A16 register MMA (27B UD-IQ2_XXS on the RTX 2080 Ti, nsys: the IQ1_S rmma calls 7.2 + 4.0 +
-    // 2.6 ms of a 45 ms token).
-    case QType::GGML_IQ1_S:
-    case QType::GGML_IQ1_M:
-        return true;
-    // NINFERNO-SPECIAL(arch:no-fp4-mma): without the native NVFP4 kernels decode multiplies the
-    // doubled E2M1 codes on dp4a (W4a8Nvfp4, as the W4A8 prefill) instead of the BF16 register
-    // MMA. sm_120a keeps its native decode.
-    case QType::NVFP4:
-        return !kNativeNvfp4;
-    default:
-        return false;
-    }
-}
 
-std::int32_t r8_k_values(QType qtype) {
-    switch (qtype) {
-    case QType::GGML_Q4_K:
-    case QType::GGML_Q5_K:
-        return 64;
-    case QType::GGML_Q6_K:
-    case QType::GGML_Q3_K:
-    case QType::GGML_Q2_K:
-        return 128;
-    default:
-        return 32;
-    }
-}
+bool r8_supports(QType qtype) { return admits(format_traits(qtype).r8, kNativeNvfp4); }
+
+std::int32_t r8_k_values(QType qtype) { return format_traits(qtype).r8_k_values; }
 
 bool r8_stage_grid() {
     try {
@@ -1637,27 +1543,15 @@ bool r8_fits(QType qtype, std::int32_t k, std::int32_t tokens) {
     return slots * (static_cast<std::int64_t>(k) / 32) * (sums ? 40 : 36) + grid <=
            kStaticSharedBytesPerBlock;
 }
-bool r8_verify_supports(QType qtype) {
-    switch (qtype) {
-    case QType::Q8_G32_FP16:
-    case QType::GGML_Q4_0:
-    case QType::GGML_IQ3_XXS:
-    case QType::GGML_IQ3_S:
-    case QType::GGML_IQ2_XXS:
-    case QType::GGML_IQ2_XS:
-    case QType::GGML_IQ2_S:
-        return true;
-    default:
-        return false;
-    }
-}
+
+bool r8_verify_supports(QType qtype) { return format_traits(qtype).r8_verify; }
 
 std::int32_t r8_verify_widest(QType qtype) {
     return qtype == QType::Q8_G32_FP16 ? kR8VerifyTokens : 4;
 }
 
 bool r8_verify_compiled(QType qtype) {
-    return r8_supports(qtype) && qtype != QType::GGML_Q3_K && qtype != QType::GGML_Q2_K;
+    return r8_supports(qtype) && format_traits(qtype).r8_prequant;
 }
 
 // Q4_0 at the verify widths (T = 2..4): R8 pays on a large matrix and loses on a small one
@@ -1698,70 +1592,11 @@ bool r8_verify_takes(QType qtype) {
 bool w4a8_k_admits(QType qtype, std::int32_t k) {
     if (k <= 0) return false;
     if (k % 128 == 0) return true;
-    switch (qtype) {
-    case QType::GGML_Q4_0:
-    case QType::GGML_Q4_1:
-    case QType::GGML_Q5_0:
-    case QType::GGML_Q5_1:
-    case QType::GGML_IQ4_NL:
-    case QType::MXFP4:
-    case QType::Q8_G32_FP16:
-    case QType::U4_G32_ZP_FP16:
-        return k % 32 == 0;
-    // The 64-value groups: the zero tail starts on a group boundary (a K of whole groups past the
-    // last 128-value tile, e.g. gpt-oss's 2880 in a native G64 conversion).
-    case QType::Q4_G64_FP16:
-    case QType::Q5_G64_FP16:
-    case QType::Q6_G64_FP16:
-    case QType::U4_G64_ZP_FP16:
-        return k % 64 == 0;
-    default:
-        return false;
-    }
+    const std::int32_t tail = format_traits(qtype).w4a8_tail_k;
+    return tail != 0 && k % tail == 0;
 }
 
-bool w4a8_supports(QType qtype) {
-    switch (qtype) {
-    case QType::GGML_Q4_0:
-    case QType::GGML_Q4_1:
-    case QType::GGML_Q5_0:
-    case QType::GGML_Q5_1:
-    case QType::MXFP4:
-    case QType::GGML_IQ4_NL:
-    case QType::GGML_IQ4_XS:
-    case QType::GGML_Q4_K:
-    case QType::GGML_Q5_K:
-    case QType::GGML_Q6_K:
-    case QType::GGML_Q3_K:
-    case QType::GGML_Q2_K:
-    case QType::U4_G128_ZP_FP16:
-    case QType::U4_G32_ZP_FP16: // the G128 codec with its group index (W4a8U4ZpG)
-    case QType::U4_G64_ZP_FP16:
-    case QType::Q4_G64_FP16:
-    case QType::Q5_G64_FP16:
-    case QType::Q6_G64_FP16:
-    case QType::Q3_G128_FP16:
-    case QType::Q3_G64_FP16:
-    case QType::Q8_G32_FP16:
-    case QType::GGML_IQ3_XXS:
-    case QType::GGML_IQ3_S:
-    case QType::GGML_IQ2_XXS:
-    case QType::GGML_IQ2_XS:
-    case QType::GGML_IQ2_S:
-    case QType::GGML_IQ1_S:
-    case QType::GGML_IQ1_M:
-        return true;
-    // NINFERNO-SPECIAL(arch:no-fp4-mma): the int8 tier multiplies the doubled E2M1 codes exactly
-    // (W4a8Nvfp4) on every build. Without the native NVFP4 kernels (sm_89 / sm_86 builds) it is
-    // the A8 route of every NVFP4 weight; with them (sm_120a) W4A4 keeps the weights it takes
-    // (allows_w4a8), and W4A8 runs the prefill of those whose policy allows A8 but not A4, which
-    // the BF16 register MMA ran before.
-    case QType::NVFP4:
-        return true;
-    default:
-        return false;
-    }
-}
+bool w4a8_supports(QType qtype) { return admits(format_traits(qtype).w4a8, kNativeNvfp4); }
 int nvfp4_tiled_schedule_count() { return static_cast<int>(kNvfp4TiledSchedules.size()); }
 Nvfp4TiledScheduleInfo nvfp4_tiled_schedule_info(int index) {
     return kNvfp4TiledSchedules.at(static_cast<std::size_t>(index));
@@ -2056,10 +1891,7 @@ bool qx_prefill_a8_pays() {
     }
 }
 
-bool qx_format(QType qtype) {
-    return qtype == QType::Q4_G64_FP16 || qtype == QType::Q5_G64_FP16 ||
-           qtype == QType::Q6_G64_FP16;
-}
+bool qx_format(QType qtype) { return format_traits(qtype).qx_g64; }
 
 // Whether the Q4/Q5/Q6 G64 weights take the int8 tiers at prefill: where int8 activations pay
 // (qx_prefill_a8_pays, `pays`), or as a route pin asks (--prefill-route w4a8 or i8: on every card;
