@@ -18,8 +18,8 @@
 // median over SMs is reported, with the per-partition figure 4x that. Latency: one warp's lane 0
 // follows a dependent chain (acc = mma(acc) / idx = buf[idx]); cycles per link include the chain's
 // own address arithmetic (2-3 clocks, the same for every level). Loaded latency: W warps per SM
-// each chase a chain of their own through the same level, the chains disjoint in lines (each
-// starts n / 8 elements after the previous, a power of two no stride divides).
+// each chase a pseudo-random cycle through a sub-buffer of their own (no two warps share a line
+// or an order; the L2 and DRAM loads bypass the L1), each warp timing its own links.
 
 #include <cuda_runtime.h>
 
@@ -175,20 +175,37 @@ __global__ void int32_throughput(Span* spans, float* sink, unsigned m, unsigned 
 }
 
 // ---- Memory latencies ----
-// `warps` warps per CTA (one CTA per SM) each follow their own chain `buf[idx]` from `warp x
-// offset`; lane 0 chases, the warp's other lanes idle. Two passes: the first warms the level, the
-// second is timed. Every index read is a value of buf, below n by construction; the start
-// `warp x offset` is below n for offset = n / 8 and at most 8 warps.
-__global__ void chase(const unsigned* __restrict__ buf, unsigned offset, Span* spans,
-                      unsigned* sink) {
+// Every chasing warp owns a sub-buffer of `m` elements (a power of two) holding one cycle through
+// all of them in pseudo-random order (a full-period LCG, fill_cycle: the line of the next link is
+// unrelated to this one's), so no two warps' chains share a line and no warp's path is another's
+// shifted. One CTA per SM; lane 0 of each of its `warps` warps chases its own chain, the other
+// lanes idle. The first `kLatencyLinks` links warm the level (the lines of a resident level, the
+// TLB of the DRAM one); the timed links continue the cycle from there, so on the DRAM level they
+// are lines no warp has touched. `Cg` loads bypass the L1 (ld.global.cg: cached in L2 only), so an
+// L2 or DRAM figure cannot be an L1 hit; the L1 level uses the default path. Each warp records its
+// own span; the host takes the median over warps and SMs.
+template <bool Cg>
+__device__ __forceinline__ unsigned load_link(const unsigned* p) {
+    unsigned v;
+    if constexpr (Cg) {
+        asm volatile("ld.global.cg.u32 %0, [%1];" : "=r"(v) : "l"(p));
+    } else {
+        v = *p;
+    }
+    return v;
+}
+
+template <bool Cg>
+__global__ void chase(const unsigned* __restrict__ buf, unsigned m, Span* spans, unsigned* sink) {
     const int warp = threadIdx.x / 32;
     if (threadIdx.x % 32 != 0) return;
-    unsigned idx = warp * offset;
-    for (int i = 0; i < kLatencyLinks; ++i) idx = buf[idx];
+    const unsigned* mine = buf + static_cast<size_t>(warp) * m;
+    unsigned idx         = 0;
+    for (int i = 0; i < kLatencyLinks; ++i) idx = load_link<Cg>(mine + idx);
     const long long t0 = clock64();
-    for (int i = 0; i < kLatencyLinks; ++i) idx = buf[idx];
-    const long long t1 = clock64();
-    if (warp == 0) spans[blockIdx.x] = {t0, t1, smid()};
+    for (int i = 0; i < kLatencyLinks; ++i) idx = load_link<Cg>(mine + idx);
+    const long long t1           = clock64();
+    spans[blockIdx.x * 8 + warp] = {t0, t1, smid()};
     if (idx == 0xffffffffu) sink[0] = idx;
 }
 
@@ -205,10 +222,17 @@ __global__ void chase_shared(Span* spans, unsigned* sink) {
     if (idx == 0xffffffffu) sink[0] = idx;
 }
 
-// buf[i] = (i + stride) mod n: a chain whose links are `stride` elements apart.
-__global__ void fill_chain(unsigned* buf, unsigned n, unsigned stride) {
-    const unsigned i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) buf[i] = (i + stride) % n;
+// Eight sub-buffers of `m` elements (m a power of two), each one cycle through all its elements:
+// buf[w * m + i] = (a_w * i + c_w) mod m with a_w = 1 mod 4 and c_w odd is a full-period LCG step,
+// a permutation of a single cycle (Hull-Dobell), whose successive links land on unrelated lines.
+// The multipliers differ per sub-buffer so no two cycles share their order.
+__global__ void fill_cycle(unsigned* buf, unsigned m) {
+    const size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= static_cast<size_t>(m) * 8) return;
+    const unsigned w = static_cast<unsigned>(i / m), x = static_cast<unsigned>(i % m);
+    const unsigned a = 1664525u + 4u * 1000003u * w; // 1 mod 4 for every w
+    const unsigned c = 1013904223u + 2u * 7919u * w; // odd for every w
+    buf[i]           = (a * x + c) & (m - 1u);
 }
 
 double median(std::vector<double> d) {
@@ -294,7 +318,8 @@ int main() {
 
     Probe pr;
     pr.sms = p.multiProcessorCount;
-    CHECK(cudaMalloc(&pr.spans, pr.sms * kCtasPerSm * sizeof(Span)));
+    // Spans: one per CTA of the throughput kernels (4 an SM), one per chasing warp (8 an SM).
+    CHECK(cudaMalloc(&pr.spans, pr.sms * 8 * sizeof(Span)));
     CHECK(cudaMalloc(&pr.fsink, sizeof(float)));
     CHECK(cudaMalloc(&pr.usink, sizeof(unsigned)));
 
@@ -339,29 +364,40 @@ int main() {
     check(fp32 >= 0.97 * fp32_floor, "FP32 cycles per warp instruction under the lane floor");
     check(i32 >= 0.97 * 2.0, "INT32 cycles per warp instruction under the lane floor");
 
-    // Memory latencies. L1: an 8 KB chain, L2: 1 MB, DRAM: a 512 MB chain whose links are 64 KB +
-    // 128 B apart (every link a new line and a new DRAM page; 4096 links span 256 MB, past every
-    // L2). Loaded: 1, 2, 4, 8 warps per SM, each on its own chain of the same level starting n / 8
-    // elements after the previous: a power of two no stride divides, so no two chains share a
-    // line within the timed links, and every start is below n.
+    // Memory latencies: per chasing warp a sub-buffer holding one pseudo-random cycle (fill_cycle).
+    // L1: 4 KB a warp (32 KB at 8 warps, inside every L1), default loads. L2: 128 KB a warp (1 MB
+    // at 8 warps, inside every L2), loads that bypass the L1. DRAM: 128 MB a warp (1 GB at 8
+    // warps; a warp's cycle alone outstrips the largest L2), loads that bypass the L1, the timed
+    // links on lines no warp has touched. Loaded: 1, 2, 4, 8 warps per SM, each on its own chain.
     struct Level {
         const char* name;
-        size_t bytes;
-        unsigned stride; // elements
-    } levels[] = {{"l1", 8u << 10, 33u},
-                  {"l2", 1u << 20, 1057u},
-                  {"dram", 512u << 20, (64u << 10) / 4 + 32u}};
+        unsigned m; // elements a warp
+        bool cg;
+    } levels[] = {{"l1", 1u << 10, false}, {"l2", 1u << 15, true}, {"dram", 1u << 25, true}};
 
     unsigned* buf = nullptr;
-    CHECK(cudaMalloc(&buf, 512u << 20));
+    CHECK(cudaMalloc(&buf, (size_t{1} << 25) * 8 * sizeof(unsigned)));
     std::map<std::string, double> lat;
+    // The spans of the chasing warps: entry CTA x 8 + warp, the first `warps` of every CTA.
+    const auto chase_clocks = [&](int warps) {
+        std::vector<double> d;
+        for (const Span& s : pr.collect(pr.sms * 8)) {
+            const int entry = static_cast<int>(&s - pr.host.data());
+            if (entry % 8 < warps) d.push_back(static_cast<double>(s.end - s.begin));
+        }
+        return median(d) / kLatencyLinks;
+    };
     for (const Level& lv : levels) {
-        const unsigned n = static_cast<unsigned>(lv.bytes / 4);
-        fill_chain<<<(n + 255) / 256, 256>>>(buf, n, lv.stride);
+        const size_t total = static_cast<size_t>(lv.m) * 8;
+        fill_cycle<<<static_cast<unsigned>((total + 255) / 256), 256>>>(buf, lv.m);
         CHECK(cudaDeviceSynchronize());
         for (int warps : {1, 2, 4, 8}) {
-            chase<<<pr.sms, 32 * warps>>>(buf, n / 8, pr.spans, pr.usink);
-            const double clk = median_span(pr.collect(pr.sms)) / kLatencyLinks;
+            if (lv.cg) {
+                chase<true><<<pr.sms, 32 * warps>>>(buf, lv.m, pr.spans, pr.usink);
+            } else {
+                chase<false><<<pr.sms, 32 * warps>>>(buf, lv.m, pr.spans, pr.usink);
+            }
+            const double clk = chase_clocks(warps);
             char name[64];
             std::snprintf(name, sizeof name, "%s_latency_w%d", lv.name, warps);
             fact(name, clk, "clk");
