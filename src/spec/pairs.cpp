@@ -866,7 +866,6 @@ std::vector<LoadBound> clipped_load(const std::vector<std::int32_t>& depths) {
     return out;
 }
 
-namespace {
 
 
 // The steps in order: the card's own record (own_lab_pair), else another card's priced by the facts
