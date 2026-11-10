@@ -48,7 +48,7 @@ inline void describe_kernel(KernelResources& out, const cudaFuncAttributes& a, d
 inline void describe_kernel(KernelResources& out, const kernel_facts::KernelFacts& f, dim3 grid,
                             int threads, std::size_t dynamic_smem, bool latency) noexcept {
     out.registers             = f.registers;
-    out.local_bytes           = f.stack_bytes + f.local_bytes;
+    out.local_bytes           = f.spill_bytes();
     out.static_smem           = f.static_shared_bytes;
     out.dynamic_smem          = dynamic_smem;
     out.threads               = threads;

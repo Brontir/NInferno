@@ -36,6 +36,10 @@ struct KernelFacts {
     std::size_t stack_bytes         = 0; // per thread: the stack frame (spills and stack arrays)
     std::size_t local_bytes         = 0; // per thread: other local memory
     std::size_t static_shared_bytes = 0; // per CTA
+
+    // Per thread: every local-memory byte (the driver's localSizeBytes), the one spill measure
+    // the price, the wide rule and the live check all read.
+    [[nodiscard]] std::size_t spill_bytes() const noexcept { return stack_bytes + local_bytes; }
 };
 
 // A committed snapshot's header, as the file records it.
@@ -91,7 +95,7 @@ struct LiveRead {
 
     [[nodiscard]] bool agrees() const noexcept {
         return snapshot && snapshot->registers == live.registers &&
-               snapshot->stack_bytes + snapshot->local_bytes == live.stack_bytes &&
+               snapshot->spill_bytes() == live.stack_bytes &&
                snapshot->static_shared_bytes == live.static_shared_bytes &&
                snapshot_ctas == live_ctas;
     }
@@ -141,6 +145,8 @@ constexpr std::string_view raw_type_name() {
 // The canonical name of a decoder type, once per type. A decoder whose template argument is an
 // enumerator declares kKeyArgument, its value: compilers spell an enum argument by name
 // (Ggml32::Q4_0), cu++filt by value ((Ggml32)0), and the snapshot keeps the value.
+// kKeyArgument stands for the one template argument of the decoder itself: a decoder with more
+// arguments, or one derived from such a decoder, must not carry or inherit it.
 template <class T>
 const std::string& decoder_name() {
     static const std::string name = [] {

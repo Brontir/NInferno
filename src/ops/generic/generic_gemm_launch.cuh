@@ -200,8 +200,8 @@ bool rmma_wide_pays(const GemmArgs& args) {
     if (!plain || !wide) return false;
     const auto& d = device_class();
     // The board's facts first: the occupancy only where they admit the wide kernel.
-    if (!rmma_wide_rule(dram_bytes_per_sm_cycle(), d.major * 10 + d.minor, true, wide->stack_bytes,
-                        plain->stack_bytes)) {
+    if (!rmma_wide_rule(dram_bytes_per_sm_cycle(), d.major * 10 + d.minor, true,
+                        wide->spill_bytes(), plain->spill_bytes())) {
         return false;
     }
     static PerDevice<std::array<int, 2>> ctas;
