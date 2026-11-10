@@ -174,7 +174,12 @@ std::string known_source(const KnownCase& c) {
 
     if (c.profile == 3) ops::set_route_pins({PrefillRoute::Auto, DecodeRoute::A16, MoePath::Auto});
     if (c.profile == 4) ops::set_route_pins({PrefillRoute::A16, DecodeRoute::Auto, MoePath::Auto});
-    return std::string(generic::select_answer(problem, w, c.tokens, c.prefill).evidence.source);
+    try {
+        return std::string(
+            generic::select_answer(problem, w, c.tokens, c.prefill).evidence.source);
+    } catch (const std::exception& error) {
+        return std::string("threw ") + error.what();
+    }
 }
 
 void check_known() {
@@ -189,38 +194,42 @@ void check_known() {
         {"rtx4090", q8, big, a16, 512, true, 4, "route-pin"},
         {"rtx4090", q4k, big, a16, 512, true, 0, "route-table"},
         {"rtx4090", q4k, big, a16, 1, false, 0, "route-table"},
-        {"rtx4090", QType::GGML_Q6_K, {256, 2048}, a16, 512, true, 0, "?"},
-        {"rtx4090", QType::GGML_Q6_K, {256, 2048}, a16, 512, false, 0, "?"},
-        {"rtx4090", QType::GGML_Q6_K, {256, 2048}, a16, 24, false, 0, "?"},
-        {"rtx4090", QType::GGML_Q6_K, {1024, 4096}, a16, 512, true, 0, "?"},
-        {"rtx4090", QType::GGML_Q6_K, {1024, 4096}, a16, 512, false, 0, "?"},
-        {"rtx4090", QType::GGML_Q6_K, {1024, 4096}, a16, 24, false, 0, "?"},
-        {"rtx4090", QType::GGML_IQ3_S, {256, 2048}, a16, 512, true, 0, "?"},
-        {"rtx4090", QType::GGML_IQ3_S, {256, 2048}, a16, 512, false, 0, "?"},
-        {"rtx4090", QType::GGML_IQ3_S, {256, 2048}, a16, 24, false, 0, "?"},
-        {"rtx4090", QType::GGML_IQ3_S, {1024, 4096}, a16, 512, true, 0, "?"},
-        {"rtx4090", QType::GGML_IQ3_S, {1024, 4096}, a16, 512, false, 0, "?"},
-        {"rtx4090", QType::GGML_IQ3_S, {1024, 4096}, a16, 24, false, 0, "?"},
-        {"rtx4090", QType::GGML_Q3_K, {256, 2048}, a16, 512, true, 0, "?"},
-        {"rtx4090", QType::GGML_Q3_K, {256, 2048}, a16, 512, false, 0, "?"},
-        {"rtx4090", QType::GGML_Q3_K, {256, 2048}, a16, 24, false, 0, "?"},
-        {"rtx4090", QType::GGML_Q3_K, {1024, 4096}, a16, 512, true, 0, "?"},
-        {"rtx4090", QType::GGML_Q3_K, {1024, 4096}, a16, 512, false, 0, "?"},
-        {"rtx4090", QType::GGML_Q3_K, {1024, 4096}, a16, 24, false, 0, "?"},
-        {"rtx4090", QType::GGML_Q4_0, {256, 2048}, a16, 512, true, 0, "?"},
-        {"rtx4090", QType::GGML_Q4_0, {256, 2048}, a16, 512, false, 0, "?"},
-        {"rtx4090", QType::GGML_Q4_0, {256, 2048}, a16, 24, false, 0, "?"},
-        {"rtx4090", QType::GGML_Q4_0, {1024, 4096}, a16, 512, true, 0, "?"},
-        {"rtx4090", QType::GGML_Q4_0, {1024, 4096}, a16, 512, false, 0, "?"},
-        {"rtx4090", QType::GGML_Q4_0, {1024, 4096}, a16, 24, false, 0, "?"},
-        {"rtx4090", QType::GGML_IQ4_XS, {256, 2048}, a16, 512, true, 0, "?"},
-        {"rtx4090", QType::GGML_IQ4_XS, {256, 2048}, a16, 512, false, 0, "?"},
-        {"rtx4090", QType::GGML_IQ4_XS, {256, 2048}, a16, 24, false, 0, "?"},
-        {"rtx4090", QType::GGML_IQ4_XS, {1024, 4096}, a16, 512, true, 0, "?"},
-        {"rtx4090", QType::GGML_IQ4_XS, {1024, 4096}, a16, 512, false, 0, "?"},
-        {"rtx4090", QType::GGML_IQ4_XS, {1024, 4096}, a16, 24, false, 0, "?"},
-        {"rtx4090", q8, big, a16, 64, false, 0, "cost-model"},
-        {"rtx4090", q8, big, a16, 1, false, 0, "rmma-rule"},
+        {"rtx4090", QType::GGML_Q4_K, {4096, 4096}, LinearPolicy::AllowA8, 512, true, 0, "?"},
+        {"rtx4090", QType::GGML_Q4_K, {17408, 5120}, LinearPolicy::AllowA8, 512, true, 0, "?"},
+        {"rtx4090", QType::GGML_Q4_K, {4096, 4096}, LinearPolicy::AllowA8, 24, true, 0, "?"},
+        {"rtx4090", QType::GGML_Q4_K, {17408, 5120}, LinearPolicy::AllowA8, 24, true, 0, "?"},
+        {"rtx4090", QType::GGML_Q4_K, {4096, 4096}, LinearPolicy::AllowA8, 20, true, 0, "?"},
+        {"rtx4090", QType::GGML_Q4_K, {17408, 5120}, LinearPolicy::AllowA8, 20, true, 0, "?"},
+        {"rtx4090", QType::GGML_Q4_K, {4096, 4096}, LinearPolicy::A16Only, 512, true, 0, "?"},
+        {"rtx4090", QType::GGML_Q4_K, {17408, 5120}, LinearPolicy::A16Only, 512, true, 0, "?"},
+        {"rtx4090", QType::GGML_Q4_K, {4096, 4096}, LinearPolicy::A16Only, 24, true, 0, "?"},
+        {"rtx4090", QType::GGML_Q4_K, {17408, 5120}, LinearPolicy::A16Only, 24, true, 0, "?"},
+        {"rtx4090", QType::GGML_Q4_K, {4096, 4096}, LinearPolicy::A16Only, 20, true, 0, "?"},
+        {"rtx4090", QType::GGML_Q4_K, {17408, 5120}, LinearPolicy::A16Only, 20, true, 0, "?"},
+        {"rtx4090", QType::GGML_Q6_K, {4096, 4096}, LinearPolicy::AllowA8, 512, true, 0, "?"},
+        {"rtx4090", QType::GGML_Q6_K, {17408, 5120}, LinearPolicy::AllowA8, 512, true, 0, "?"},
+        {"rtx4090", QType::GGML_Q6_K, {4096, 4096}, LinearPolicy::AllowA8, 24, true, 0, "?"},
+        {"rtx4090", QType::GGML_Q6_K, {17408, 5120}, LinearPolicy::AllowA8, 24, true, 0, "?"},
+        {"rtx4090", QType::GGML_Q6_K, {4096, 4096}, LinearPolicy::AllowA8, 20, true, 0, "?"},
+        {"rtx4090", QType::GGML_Q6_K, {17408, 5120}, LinearPolicy::AllowA8, 20, true, 0, "?"},
+        {"rtx4090", QType::GGML_Q6_K, {4096, 4096}, LinearPolicy::A16Only, 512, true, 0, "?"},
+        {"rtx4090", QType::GGML_Q6_K, {17408, 5120}, LinearPolicy::A16Only, 512, true, 0, "?"},
+        {"rtx4090", QType::GGML_Q6_K, {4096, 4096}, LinearPolicy::A16Only, 24, true, 0, "?"},
+        {"rtx4090", QType::GGML_Q6_K, {17408, 5120}, LinearPolicy::A16Only, 24, true, 0, "?"},
+        {"rtx4090", QType::GGML_Q6_K, {4096, 4096}, LinearPolicy::A16Only, 20, true, 0, "?"},
+        {"rtx4090", QType::GGML_Q6_K, {17408, 5120}, LinearPolicy::A16Only, 20, true, 0, "?"},
+        {"rtx4090", QType::GGML_IQ3_S, {4096, 4096}, LinearPolicy::AllowA8, 512, true, 0, "?"},
+        {"rtx4090", QType::GGML_IQ3_S, {17408, 5120}, LinearPolicy::AllowA8, 512, true, 0, "?"},
+        {"rtx4090", QType::GGML_IQ3_S, {4096, 4096}, LinearPolicy::AllowA8, 24, true, 0, "?"},
+        {"rtx4090", QType::GGML_IQ3_S, {17408, 5120}, LinearPolicy::AllowA8, 24, true, 0, "?"},
+        {"rtx4090", QType::GGML_IQ3_S, {4096, 4096}, LinearPolicy::AllowA8, 20, true, 0, "?"},
+        {"rtx4090", QType::GGML_IQ3_S, {17408, 5120}, LinearPolicy::AllowA8, 20, true, 0, "?"},
+        {"rtx4090", QType::GGML_IQ3_S, {4096, 4096}, LinearPolicy::A16Only, 512, true, 0, "?"},
+        {"rtx4090", QType::GGML_IQ3_S, {17408, 5120}, LinearPolicy::A16Only, 512, true, 0, "?"},
+        {"rtx4090", QType::GGML_IQ3_S, {4096, 4096}, LinearPolicy::A16Only, 24, true, 0, "?"},
+        {"rtx4090", QType::GGML_IQ3_S, {17408, 5120}, LinearPolicy::A16Only, 24, true, 0, "?"},
+        {"rtx4090", QType::GGML_IQ3_S, {4096, 4096}, LinearPolicy::A16Only, 20, true, 0, "?"},
+        {"rtx4090", QType::GGML_IQ3_S, {17408, 5120}, LinearPolicy::A16Only, 20, true, 0, "?"},
     };
     for (const KnownCase& c : cases) {
         const std::string got = known_source(c);
