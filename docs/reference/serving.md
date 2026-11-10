@@ -825,8 +825,12 @@ llama.cpp-style base URLs.
   markup. A reasoning tag that is plain vocabulary (Qwen's `<think>`) ends the turn only where
   the answer begins with it; after text it is prose that may quote the tag. `ignore_eos` does not
   change this: it keeps the model's own end-of-turn tokens from stopping the output, not this
-  rule. Syntaxes without such an opener (gpt-oss harmony, Atem, Llama 3 JSON) are not steered; a
-  call they write anyway is cut out of the answer, as is one written as plain text (a Qwen model
+  rule. gpt-oss harmony has no opener token: its call is a message of its own, so the request
+  carries a constraint that closes only the call header positions (`<|channel|>commentary`, a
+  `to` recipient after `<|start|>assistant`, `<|channel|>analysis` or `<|channel|>final`) and
+  leaves the analysis and the answer free; a request with its own constraint, or with
+  `ignore_eos`, keeps the cut alone. Atem and Llama 3 JSON are not steered. A call any syntax
+  writes anyway is cut out of the answer, as is one written as plain text (a Qwen model
   kept from `<tool_call>` can still write a bare `<function=...>`). A bare `{"name": "...",
   "arguments": ...}` object naming a declared tool (Hermes JSON) or Gemma 4's `call:...` is cut
   only where it begins the answer, never under `response_format`, and the text after it stays

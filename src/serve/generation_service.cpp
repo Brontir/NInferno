@@ -860,8 +860,11 @@ PreparedRequest GenerationService::prepare_impl(const GenerationRequest& request
         }
         // tool_choice none on a format whose call is a message of its own: the header of that
         // message is closed by a constraint (a bias cannot, " to" is a word). A request with a
-        // constraint of its own keeps it (#546).
-        if (!prompt.summary().refusal_tag.empty() && !request.output_constraint) {
+        // constraint of its own keeps it (#546). Under ignore_eos it is not installed: a
+        // constrained output stops at the checkpoint's stop tokens (Engine::submit), which
+        // ignore_eos asks not to do; the cut alone answers there.
+        if (!prompt.summary().refusal_tag.empty() && !request.output_constraint &&
+            !request.ignore_eos) {
             OutputConstraintRequest steer;
             steer.kind       = ninferno::OutputConstraintKind::StructuralTag;
             steer.definition = prompt.summary().refusal_tag;
