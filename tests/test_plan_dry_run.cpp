@@ -1167,12 +1167,12 @@ void test_speculation_order() {
         auto& profile                = other.resolved->profile;
         profile.measurements.clear();
         profile.overall = profile.thinking = profile.non_thinking = {};
-        profile.overall.config   = ninferno::spec::SpecConfig::parse("mtp:3");
-        profile.thinking         = profile.non_thinking = profile.overall;
-        profile.fit_fallback     = ninferno::spec::Choice{};
-        profile.fit_fallback->config = ninferno::spec::SpecConfig::parse("dflash:7");
-        profile.load             = {{.lanes = 2, .depth = 3}};
-        profile.load_basis       = "measured";
+        profile.overall.config = ninferno::spec::SpecConfig::parse("mtp:3");
+        profile.thinking = profile.non_thinking = profile.overall;
+        profile.fit_fallback                    = ninferno::spec::Choice{};
+        profile.fit_fallback->config            = ninferno::spec::SpecConfig::parse("dflash:7");
+        profile.load                            = {{.lanes = 2, .depth = 3}};
+        profile.load_basis                      = "measured";
         const pr::SpeculationSubject again =
             pr::subject_of_mode(other, ninferno::spec::Mode::DFlash);
         check(again.resolved && ninferno::spec::load_label(again.resolved->profile.load) == "2:0" &&
