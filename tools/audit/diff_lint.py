@@ -454,7 +454,7 @@ INCLUDE_HEAD = re.compile(r"[ \t]*#[ \t]*include[ \t]*$")
 DIAG_HEAD = re.compile(r"[ \t]*#[ \t]*(?:error|warning)\b")  # the text of #error / #warning is prose, not tokens
 
 
-def mask_cxx(text):
+def _mask_cxx_physical(text):
     """`text` with comments and the insides of string, char and raw-string literals blanked to spaces.
 
     Same length and same newlines, so offsets and line numbers still match the original. The quotes stay.
@@ -516,6 +516,39 @@ def mask_cxx(text):
             i = j + 1 if j < n and text[j] == c else j
         else:
             i += 1
+    return "".join(out)
+
+
+SPLICE_RX = re.compile(r"\\\r?\n")
+
+
+def mask_cxx(text):
+    """`_mask_cxx_physical` over the text as the preprocessor reads it: each backslash-newline pair is
+    spliced out first, so a comment opener or closer split by one (`/`, backslash, newline, `*`) is still
+    a comment. The result keeps the length and every newline of `text`; a spliced-out backslash is
+    blanked when the characters on both sides of it are blanked."""
+    if not SPLICE_RX.search(text):
+        return _mask_cxx_physical(text)
+    kept, pos, i, n = [], [], 0, len(text)
+    while i < n:
+        m = SPLICE_RX.match(text, i)
+        if m:
+            i = m.end()
+            continue
+        kept.append(text[i])
+        pos.append(i)
+        i += 1
+    masked = _mask_cxx_physical("".join(kept))
+    out = list(text)
+    gone = [masked[k] != ch for k, ch in enumerate(kept)]
+    for k, g in enumerate(gone):
+        if g:
+            out[pos[k]] = " "
+    for k in range(1, len(kept)):  # the splices between kept[k - 1] and kept[k]
+        if gone[k - 1] and gone[k]:
+            for j in range(pos[k - 1] + 1, pos[k]):
+                if out[j] not in "\r\n":
+                    out[j] = " "
     return "".join(out)
 
 
@@ -771,8 +804,11 @@ def cxx_open_lines(text, cxx=True):
     return bad
 
 
-def py_open_lines(text):
-    """1-based numbers of lines that end inside a single-quoted (not triple-quoted) Python string."""
+def py_open_lines(text, comments=None):
+    """1-based numbers of lines that end inside a single-quoted (not triple-quoted) Python string.
+
+    `comments`, when given, collects the numbers of the lines that end in a `#` comment: a backslash at
+    the end of one is part of the comment, not a line continuation."""
     bad, triple, carry = [], None, None
     for num, line in enumerate(text.split("\n"), 1):
         line = line.rstrip("\r")
@@ -797,6 +833,8 @@ def py_open_lines(text):
                     quote = None
                 i += 1
             elif c == "#":
+                if comments is not None:
+                    comments.add(num)
                 break
             elif c in "\"'":
                 if line.startswith(c * 3, i):
@@ -815,10 +853,11 @@ def bad_literals(path, content, only=None):
     if content is None:
         return []
     e = ext(path)
+    comments = set()  # Python lines ending in a `#` comment: a trailing backslash does not continue them
     if e in LIT_CXX_EXT:
         lines = cxx_open_lines(content, e != ".c")
     elif e == ".py":
-        lines = py_open_lines(content)
+        lines = py_open_lines(content, comments)
     else:
         return []
     src = content.split("\n")
@@ -826,7 +865,7 @@ def bad_literals(path, content, only=None):
     for last in lines:
         # the finding belongs to its whole logical line: the physical lines joined by backslashes
         first = last
-        while first > 1 and src[first - 2].rstrip("\r").endswith("\\"):
+        while first > 1 and first - 1 not in comments and src[first - 2].rstrip("\r").endswith("\\"):
             first -= 1
         span = range(first, last + 1)
         mine = [n for n in span if only is None or n in only]

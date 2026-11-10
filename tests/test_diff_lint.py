@@ -774,6 +774,34 @@ class MaskAndLiteralFixes(unittest.TestCase):
         # an allow marker on any line of the span silences it
         self.assertEqual(lits("t.cpp", 'const char* s = "broken\\\ntail; // diff-lint: allow\n', [1]), [])
 
+    def test_a_python_comment_ending_in_a_backslash_does_not_join_the_next_line(self):
+        # only line 1 is added: line 2 is unchanged, its broken literal is not this change's finding
+        self.assertEqual(lits("t.py", '# see C:\\path\\\nx = "broken\ny = 1\n', [1]), [])
+        # an allow marker inside such a comment does not silence the next line
+        self.assertEqual(lits("t.py", '# diff-lint: allow \\\nx = "broken\ny = 1\n', [2]), [2])
+        # the real continuation of code is still joined, also after a comment-free line
+        self.assertEqual(lits("t.py", 'x = "broken\\\ntail\ny = 1\n', [1]), [1])
+        self.assertEqual(lits("t.py", 'x = 1 + \\\n    2; y = "broken\nz = 1\n', [1]), [1])
+        # a `#` inside a string is not a comment
+        self.assertEqual(lits("t.py", 'x = "a#b" \\\n    + "broken\nz = 1\n', [1]), [1])
+
+    def test_a_removed_comment_opener_split_by_a_continuation_masks_the_comment(self):
+        text = 'int a; /\\\n* #include "x.h" */ int b;\n'
+        masked = dl.mask_cxx(text)
+        self.assertEqual(len(masked), len(text))
+        self.assertEqual(masked.count("\n"), text.count("\n"))
+        self.assertNotIn("include", masked)
+        self.assertIn("int b;", masked)
+        # a comment closer split by a continuation, and CRLF line ends
+        masked = dl.mask_cxx('/* note *\\\n/ int b; "lit"\n')
+        self.assertNotIn("note", masked)
+        self.assertIn("int b;", masked)
+        crlf = dl.mask_cxx('int a; /\\\r\n* hidden */ int b;\r\n')
+        self.assertNotIn("hidden", crlf)
+        self.assertIn("int b;", crlf)
+        # a lone `/` before a continuation is code
+        self.assertIn("b /", dl.mask_cxx("int a = b /\\\n c;\n"))
+
     def test_true_and_false_are_literals_in_cpp_only(self):
         # C before C23 reads `true` as an undefined name (0): a .c file gets no answer, not a wrong one
         self.assertEqual(lits("t.cpp", "#if true\nint a;\n#else\ndon't\n#endif\n"), [])
