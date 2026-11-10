@@ -82,6 +82,8 @@ struct Table {
     std::unordered_map<std::uint64_t, std::vector<RouteAsBand>> route_as; // shape-owned tables
     RouteTableStatus status;
     std::optional<Board> board; // the board it was measured on (gpu.board), when recorded
+    // table_distance when it was installed for this device (TableAnswer::distance).
+    double distance = std::numeric_limits<double>::infinity();
 };
 
 std::optional<QType> parse_qtype(const std::string& s) {
@@ -456,7 +458,8 @@ void fill_from(Table& table, const std::vector<std::shared_ptr<Table>>& lenders)
         std::size_t lent = 0;
         for (auto& [key, entry] : other->generic) {
             if (table.problems.count(key) != 0) continue;
-            entry.claim = false;
+            entry.claim  = false;
+            entry.lender = other->status.gpu_class;
             table.generic.emplace(key, std::move(entry));
             table.problems.insert(key);
             ++lent;
@@ -538,6 +541,7 @@ RouteTableStatus publish_loaded_locked(DeviceTables& d, std::shared_ptr<Table> t
     const auto own       = own_keys();
     const auto& key      = table->status.gpu_class;
     const bool elsewhere = std::find(own.begin(), own.end(), key) == own.end();
+    table->distance       = table_distance(*table);
     table->status.loaded  = true;
     table->status.message = "loaded " + summary(table->status) +
                             (elsewhere ? " (measured on " + key + ", the nearest measured board; " +
@@ -915,7 +919,8 @@ std::string format_label(QType q) {
            ")";
 }
 
-std::optional<Route> table_route(const Problem& problem, std::int32_t tokens, bool prefill) {
+std::optional<TableAnswer> table_route_answer(const Problem& problem, std::int32_t tokens,
+                                              bool prefill) {
     DeviceTables& d = here();
     if (d.settled.load(std::memory_order_acquire) && !d.has_generic.load(std::memory_order_acquire)) {
         return std::nullopt;
@@ -935,15 +940,24 @@ std::optional<Route> table_route(const Problem& problem, std::int32_t tokens, bo
     }
     if (it == table->generic.end()) return std::nullopt;
     const RouteEntry& e = it->second;
+    const auto answer   = [&](Route route) {
+        return TableAnswer{route, table->distance, table->status.gpu_class, e.lender};
+    };
     if (prefill && tokens >= kPrefillMinTokens) {
         for (const auto& band : e.prefill_bands) {
-            if (tokens >= band.t_min && tokens <= band.t_max) return band.route;
+            if (tokens >= band.t_min && tokens <= band.t_max) return answer(band.route);
         }
-        return e.prefill;
+        if (e.prefill) return answer(*e.prefill);
+        return std::nullopt;
     }
     for (const auto& band : e.bands) {
-        if (tokens >= band.t_min && tokens <= band.t_max) return band.route;
+        if (tokens >= band.t_min && tokens <= band.t_max) return answer(band.route);
     }
+    return std::nullopt;
+}
+
+std::optional<Route> table_route(const Problem& problem, std::int32_t tokens, bool prefill) {
+    if (const auto answer = table_route_answer(problem, tokens, prefill)) return answer->route;
     return std::nullopt;
 }
 

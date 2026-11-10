@@ -3,12 +3,14 @@
 // Helpers of the generic path's route selection (generic_gemm.cpp) that its other files share.
 
 #include "core/device_class.h"
+#include "core/measured_boards.h"
 #include "ops/generic/generic_gemm.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <string_view>
 
 namespace ninferno::ops::detail::generic {
 
@@ -77,7 +79,70 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
 
 int heuristic_w4a8(const Problem& problem, const Weight& weight, std::int32_t tokens);
 
+// The R8 schedule of a call: at one token the nearest measured board's decode table entry
+// (tuned_r8), else the R8 rules (r8_rules_route).
 int heuristic_r8(const Problem& p, std::int32_t tokens);
+
+// The R8 decode table's entry for the exact problem (r8_decode_table.h), from the table of the
+// nearest measured board within kR8CarryDistance: the schedule, the board's distance to this
+// device (0: the device's own) and the table's board id ("gb202:170sm"); nullopt where no table
+// is near enough or none holds the problem.
+struct R8TableHit {
+    int schedule;
+    double distance;
+    std::string_view gpu;
+};
+
+std::optional<R8TableHit> tuned_r8(const Problem& p);
+
+// The route selection's rules and fixed routes, which route_authorities.cpp asks in order
+// (generic_gemm.cpp holds the bodies and their measurements).
+// The verify widths the vector kernel takes by rule: 2..4 tokens with tensor mma.sync, every
+// width it reads without.
+bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens);
+// ggml's matrix kernel for the verify band: 9..16 tokens of the codebook formats in a round of
+// several sequences (`lanes`: ops::round_lanes(), which the four-argument form reads itself); on
+// an emulated BF16 MMA every mmq format from 9 tokens and the codebook formats from 5.
+bool mmq_verify_rule(const Weight& w, LinearPolicy policy, std::int32_t rows, std::int32_t tokens);
+bool mmq_verify_rule(const Weight& w, LinearPolicy policy, std::int32_t rows, std::int32_t tokens,
+                     int lanes);
+// Whether a tiled-codec call outside the prefill profile takes the tiled route: from
+// kTiledSpeedMinTokens on a native BF16 MMA where its 128x128 tiles fill the SMs (kSpeedFill).
+bool tiled_speed_pays(std::int32_t n, std::int32_t tokens);
+// Outside the prefill profile the staged MMA tile of a BF16 weight from kRmmaMidMinTokens, the
+// largest whose grid still fills the SMs; nullopt where none does or none admits the weight.
+std::optional<Route> staged_speed_route(const Problem& problem, const Weight& weight,
+                                        std::int32_t tokens);
+// The invariant profile's register MMA: the decode split of K for every T.
+int invariant_rmma(std::int32_t k, std::int32_t tokens);
+// The W4A4 tile: the widest under the prefill band, else the widest that still gives every SM a
+// CTA.
+int heuristic_w4a4(std::int32_t rows, std::int32_t tokens, bool prefill_band);
+// Index of the register-MMA schedule with this shape (generic_gemm_launch.cuh's list); 0 where
+// none has it. A cluster split asks for the C == 1 schedule on a build without them.
+int rmma_index(int warps_m, int warps_k, int m_tiles, int n_tiles, int cluster = 1);
+// Whether the device's BF16 MMA is native (sm_80 and up); a device that cannot be queried counts
+// as native.
+bool bf16_mma_native();
+// The NVFP4 tiled route in the order of the register MMA with WarpsK = `classes`, for calls of two
+// token tiles or more whose tiles give every SM at least one CTA; nullopt otherwise.
+std::optional<Route> nvfp4_tiled_route(const Problem& problem, const Weight& weight, int classes,
+                                       std::int32_t tokens);
+// Volta's HMMA route of the verify widths (1..16 tokens of Q4_K / Q5_K / Q6_K or Q8 G32 without
+// tensor mma.sync, outside the vector kernel's and R8's widths); nullopt elsewhere.
+std::optional<Route> volta_hmma_route(const Problem& problem, const Weight& weight,
+                                      std::int32_t tokens);
+// The maintainer's route pin for the call's band (ops/route_pins.h), where its family can compute
+// the call; notes the pin ledger. nullopt: no pin, or the band's pin cannot compute it.
+std::optional<Route> pinned_route(const Problem& problem, const Weight& weight, std::int32_t tokens,
+                                  bool prefill);
+// The automatic selection after the profiles, the probe and Volta's fixed routes
+// (route_authorities.cpp): the route tables, the dense tuner and the rules.
+Route auto_route(const Problem& problem, const Weight& weight, std::int32_t tokens, bool prefill);
+// The MMQ prefill gate's answer for the current device (core/measured_boards.h
+// mmq_prefill_gate), with its donor and disposition; the unmeasured default where no device
+// answers.
+measured::GateAnswer mmq_prefill_device_gate();
 
 // The codecs the tiled route takes on this GPU: tiled_supports, and Q8 where tensor mma.sync is
 // missing (Volta): elsewhere Q8 has its own kernels, on Volta those tiles run on FMAs.

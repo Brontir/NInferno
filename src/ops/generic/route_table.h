@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace ninferno::ops::detail::generic {
@@ -38,6 +39,9 @@ struct RouteEntry {
     // which the dispatcher prefers; a claiming entry's routes replace that table's own choice at the
     // widths the entry covers (store epilogue only; measured against the table's kernels).
     bool claim = false;
+    // The class whose table lent the entry when the nearest board's table lacked it
+    // (route_table.cpp fill_from); empty: the table's own.
+    std::string lender;
 };
 
 [[nodiscard]] ComputeClass compute_class(QType qtype, LinearPolicy policy);
@@ -52,6 +56,21 @@ struct RouteEntry {
 // table on first use).
 [[nodiscard]] std::optional<Route> table_route(const Problem& problem, std::int32_t tokens,
                                                bool prefill);
+
+// table_route's answer with what it rests on: the board distance of the table to this device
+// (0: measured here, which an unboarded table keyed by one of the device's own classes counts as;
+// a similar chip's unboarded table 1e6 and up), the table's class, and the class whose table lent
+// the entry (RouteEntry::lender; empty: the table's own). The views live as long as the table
+// does: until another table replaces it.
+struct TableAnswer {
+    Route route;
+    double distance = 0;
+    std::string_view gpu_class;
+    std::string_view lender;
+};
+
+[[nodiscard]] std::optional<TableAnswer> table_route_answer(const Problem& problem,
+                                                            std::int32_t tokens, bool prefill);
 
 // Whether a claiming entry (RouteEntry::claim) holds the exact problem and a route for this call
 // under an A16Only policy: then the generic path computes it even though its shape has a

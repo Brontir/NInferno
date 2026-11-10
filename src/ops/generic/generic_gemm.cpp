@@ -410,6 +410,12 @@ bool mmq_prefill_device() { return measured::mmq_prefill_device_pays(); }
 
 } // namespace
 
+measured::GateAnswer mmq_prefill_device_gate() {
+    try {
+        return measured::mmq_prefill_gate(board_of(device_class()));
+    } catch (...) { return {}; }
+}
+
 // Without tensor mma.sync (Volta) ggml's matrix kernel is out (device_supported: sm_75 on) and the
 // register-MMA tiles run on FP32 FMAs, so a call of 9..16 tokens (a deep speculative verify) runs
 // the vector kernel eight columns at a time (V100, Gemma 4 31B Q4_K_XL MTP, draft window 10: the
@@ -445,10 +451,13 @@ std::int32_t vec_rule_max_tokens() {
     const std::int32_t widest = vec_max_tokens();
     return widest > ggml_mmq::kVecMaxColumns ? widest : kVecRuleMaxTokens;
 }
+} // namespace
 
 bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
     return tokens >= 2 && tokens <= vec_rule_max_tokens() && vec_call(w, policy, tokens);
 }
+
+namespace {
 
 // Speculative verify (T 9..16) of the codebook formats takes ggml's matrix kernel on
 // every device, ahead of the route tables (which timed A16 schedules only) and the A16 rules: its
@@ -458,11 +467,11 @@ bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
 // mul_mat_q<16> there (92.9 / 280.1). The route_tune grid, one call with L2 flushed, does not show
 // it (L4 rule 1.06 of its best). Where the BF16 MMA is emulated (Turing) every mmq format takes
 // it from 9 tokens, and the codebook formats below that too (mmq_verify_rule).
-bool bf16_mma_native();
 // The codebook formats only: their register-MMA dequant looks every value up in a grid table per
 // token tile, which the matrix kernel's one decode a call saves. The K-quants' affine dequant is
 // cheap, and there the register MMA keeps the band (RTX 4090, cellgt ABBA: UD-Q4_K_XL 27B DFlash2
-// C1 115.7 -> 111.7 and C4 271.5 -> 263.1 with them in the rule, Muse 30B Q4_K_M C4 282.7 -> 267.6).
+// C1 115.7 -> 111.7 and C4 271.5 -> 263.1 with them in the rule, Muse 30B Q4_K_M C4 282.7 ->
+// 267.6).
 bool mmq_verify_format(QType q) {
     switch (q) {
     case QType::GGML_IQ1_S: case QType::GGML_IQ1_M: case QType::GGML_IQ2_XXS:
@@ -474,7 +483,10 @@ bool mmq_verify_format(QType q) {
     }
 }
 constexpr std::int32_t kMmqVerifyMinTokens = 9;
-bool mmq_verify_rule(const Weight& w, LinearPolicy policy, std::int32_t rows, std::int32_t tokens) {
+} // namespace
+
+bool mmq_verify_rule(const Weight& w, LinearPolicy policy, std::int32_t rows, std::int32_t tokens,
+                     int lanes) {
     // The measured band is 9..16 tokens of several sequences (a C4 verify). One sequence keeps its
     // register MMA at every width (ops::round_lanes): a C1 MTP round of 5..8 tokens and a C1 copy
     // round of 16 lost on mmq (RTX 5070 Ti C1 117.0 -> 115.2 tok/s, all of it in the copy rounds:
@@ -486,9 +498,15 @@ bool mmq_verify_rule(const Weight& w, LinearPolicy policy, std::int32_t rows, st
     if (!bf16_mma_native())
         return mmq_call(w, policy, rows, tokens) &&
                (tokens >= kMmqVerifyMinTokens || mmq_verify_format(w.qtype));
-    return mmq_call(w, policy, rows, tokens) && tokens >= kMmqVerifyMinTokens &&
-           ops::round_lanes() != 1 && mmq_verify_format(w.qtype);
+    return mmq_call(w, policy, rows, tokens) && tokens >= kMmqVerifyMinTokens && lanes != 1 &&
+           mmq_verify_format(w.qtype);
 }
+
+bool mmq_verify_rule(const Weight& w, LinearPolicy policy, std::int32_t rows, std::int32_t tokens) {
+    return mmq_verify_rule(w, policy, rows, tokens, ops::round_lanes());
+}
+
+namespace {
 
 // The bytes free in the rest of the arena from its next 256-byte address (nullopt: no arena; 0
 // where that address is already past its end: no route's planes are empty), against
@@ -541,9 +559,10 @@ int sm_count() {
         return 1;
     }
 }
+} // namespace
 
 // Index of the register-MMA schedule with this shape; the list is generic_gemm_launch.cuh's.
-int rmma_index(int warps_m, int warps_k, int m_tiles, int n_tiles, int cluster = 1) {
+int rmma_index(int warps_m, int warps_k, int m_tiles, int n_tiles, int cluster) {
 #ifdef NINFERNO_WITHOUT_NVFP4
     if (cluster > 1) {
         // Thread-block clusters are sm_90+; the Ada build compiles C == 1 schedules only and
@@ -560,6 +579,8 @@ int rmma_index(int warps_m, int warps_k, int m_tiles, int n_tiles, int cluster =
     }
     return 0;
 }
+
+namespace {
 
 // ggml formats that the decode heuristic below measured faster on the four-warp CTA once the
 // eight-warp grid needs a second wave (RTX 5080, T = 1): Q4_K, Q5_K, IQ4_XS, IQ3_XXS and the Q4_0
@@ -637,8 +658,6 @@ bool heavy_decode(QType q) { return q != QType::BF16; }
 // The format whose 64x64 register-MMA tile spills where its 128x32 tile spills less (ptxas,
 // sm_86..sm_120): Q4_K, whose 128x32 tile was 10..20 % faster on all seven boards from 97 tokens.
 bool tall_tile_format(QType q) { return q == QType::GGML_Q4_K; }
-
-bool bf16_mma_native();
 
 // Q6_K's one-tile call on a grid of one to two eight-warp CTAs per SM (sms < ctas <= 2 sms),
 // where the board's DRAM bytes per SM cycle are below this: the four-warp CTA, half the warps on
@@ -727,6 +746,8 @@ int rmma_k_split_fit(int index, const Problem& problem, std::int64_t ctas, std::
     return rmma_index(1, 4, 1, 1);
 }
 
+} // namespace
+
 // Outside the prefill profile a tiled codec's 128x128 kernel pays once its tiles fill kSpeedFill
 // waves of the SMs (from 33 tokens, on a native BF16 MMA): below that the register MMA's
 // narrower tiles fill them (Q4_K n = 1024 at T 64..128: the tiled kernel 5..7x on every board).
@@ -734,6 +755,8 @@ bool tiled_speed_pays(std::int32_t n, std::int32_t tokens) {
     return tokens >= kTiledSpeedMinTokens && bf16_mma_native() &&
            speed_waves(n, tokens, 128, 128) >= kSpeedFill;
 }
+
+namespace {} // namespace
 
 // The invariant profile's register MMA (prefill_routes.h): the decode split of K for every T, so
 // a token's bytes are the same at every width (the order depends on WarpsK alone,
@@ -760,6 +783,8 @@ int heuristic_w4a4(std::int32_t rows, std::int32_t tokens, bool prefill_band) {
     if (grid(32, 128) >= sms) return 1;
     return 0;
 }
+
+namespace {
 
 // W4A8 tiles (indices into kW4a8Schedules), chosen by format and T in the product (RTX 5080,
 // Qwen3.8-27B UD-IQ4_XS p512 under fast). 64 tokens by 64 rows by default (the fastest of ten
@@ -1007,29 +1032,37 @@ constexpr double kR8CarryDistance = 0.5;
 // different classes); null where no measured board is near enough.
 // A device query that fails is not cached (PerDevice retries a make that throws): the next call
 // asks again rather than leaving the device on the heuristics for the process's life.
-const R8DecodeTable* r8_decode_table() {
-    static PerDevice<const R8DecodeTable*> table;
-    try {
-        return table.get([](int) {
-            return nearest_known_measured(std::span(kR8DecodeTables), board_of(device_class()),
-                                          kR8CarryDistance);
-        });
-    } catch (const std::exception&) {
-        return nullptr;
-    }
-}
+struct R8TableLookup {
+    const R8DecodeTable* table = nullptr;
+    double distance            = 0; // board_distance of its board to this device
+};
 
-std::optional<int> tuned_r8(const Problem& p) {
-    const R8DecodeTable* table = r8_decode_table();
-    if (table == nullptr) return std::nullopt;
+R8TableLookup r8_decode_table() {
+    static PerDevice<R8TableLookup> lookup;
+    try {
+        return lookup.get([](int) {
+            const Board board = board_of(device_class());
+            const R8DecodeTable* table =
+                nearest_known_measured(std::span(kR8DecodeTables), board, kR8CarryDistance);
+            return R8TableLookup{table, table ? board_distance(board, table->board) : 0.0};
+        });
+    } catch (const std::exception&) { return {}; }
+}
+} // namespace
+
+std::optional<R8TableHit> tuned_r8(const Problem& p) {
+    const R8TableLookup table = r8_decode_table();
+    if (table.table == nullptr) return std::nullopt;
     const Epilogue epilogue = p.epilogue == Epilogue::AddResidual ? Epilogue::Store : p.epilogue;
-    for (const R8DecodeEntry& e : table->entries) {
+    for (const R8DecodeEntry& e : table.table->entries) {
         if (e.qtype == p.qtype && e.epilogue == epilogue && e.n == p.n && e.k == p.k) {
-            return r8_index(e.warps, e.rows);
+            return R8TableHit{r8_index(e.warps, e.rows), table.distance, table.table->gpu};
         }
     }
     return std::nullopt;
 }
+
+namespace {
 
 // Every distinct problem that reached the generic path on a thread collecting them (seen_problems:
 // an Engine's load, on its own thread, so another live Engine's calls stay out), and under
@@ -1281,7 +1314,7 @@ int heuristic_w4a8(const Problem& problem, const Weight& weight, std::int32_t to
 
 int heuristic_r8(const Problem& p, std::int32_t tokens) {
     if (tokens == 1) {
-        if (const auto tuned = tuned_r8(p)) return *tuned;
+        if (const auto tuned = tuned_r8(p)) return tuned->schedule;
     }
     return rules_r8(p, tokens);
 }
@@ -1645,7 +1678,6 @@ bool r8_verify_takes_shape(QType qtype, std::int64_t n, std::int64_t k) {
     } catch (const std::exception&) { return false; }
 }
 
-namespace {
 // Whether the device's BF16 MMA is native (sm_80 and up); a device that cannot be queried
 // counts as native, the routes that assume nothing about it.
 bool bf16_mma_native() {
@@ -1653,7 +1685,6 @@ bool bf16_mma_native() {
         return device_class().features.mma_bf16_native;
     } catch (const std::exception&) { return true; }
 }
-} // namespace
 
 bool r8_verify_takes(QType qtype) {
     if (r8_verify_supports(qtype)) return true;
@@ -2655,7 +2686,6 @@ SummationOrder summation_order(Route route) {
 
 bool same_summation(Route a, Route b) { return summation_order(a) == summation_order(b); }
 
-namespace {
 // The NVFP4 tiled route in the order of the register MMA with WarpsK = `classes`, for calls of two
 // token tiles or more whose tiles give every SM at least one CTA; nullopt otherwise. Against the
 // invariant register MMA (WarpsK 8) on an RTX 5090: -8..-40% from there on the
@@ -2682,7 +2712,6 @@ std::optional<Route> nvfp4_tiled_route(const Problem& problem, const Weight& wei
     }
     return std::nullopt;
 }
-} // namespace
 
 Route r8_rules_route(const Problem& problem, std::int32_t tokens) {
     return Route{Family::R8Mma, static_cast<std::uint8_t>(rules_r8(problem, tokens))};
@@ -2865,93 +2894,6 @@ std::optional<RouteTraffic> route_traffic(Route route, const Weight& weight,
                         x_t * x_k * x_bytes * cdiv(n, tile->out_rows) * x_readers, n * t * 2.0};
 }
 
-Route heuristic_route(const Problem& problem, const Weight& weight, std::int32_t tokens,
-                      bool prefill) {
-    // Under the prefill profile every call of 17 tokens or more takes one route; outside it, routes
-    // by T band. A4 only where the policy allows it, and never at T <= 16, which is where decode
-    // and speculative verify run.
-    const bool prefill_band = prefill && tokens >= 17;
-    if (tokens >= 17 && allows_w4a4(weight, problem.policy)) {
-        const Route r{Family::W4a4Mma,
-                      static_cast<std::uint8_t>(heuristic_w4a4(problem.n, tokens, prefill_band))};
-        if (route_admits(r, weight, problem.policy)) return r;
-    }
-    // A8 where the policy allows it: ggml's vector kernel for speculative verify (2..8 tokens) of
-    // the ggml block formats it decodes (vec_rule), R8 for decode and for the verify of the other
-    // formats with an R8 codec, W4A8 from 17 tokens; the rest stays A16. The vector kernel streams
-    // each weight row once for every token of the call and runs the epilogue in place: on the RTX
-    // 5090 ISTA IQ3_S MTP3 it beat the R8 and A16 schedules the dense tuner picked there (C1 166 ->
-    // 174 tok/s), whose L2-cold timings of one call at a time miss the stream of a verify step. The
-    // tuner still replaces it where a route beats it by its margin (Muse Glimmer 30B Q4_K_M: the
-    // rule alone lost C1 by 19 %).
-    if (vec_rule(weight, problem.policy, tokens)) return Route{Family::GgmlVec, 0};
-    // From 17 tokens outside the prefill profile the cost model's route of either activation class
-    // (cost_route, a8_candidates); the rules below where the device reports no clocks.
-    if (!prefill_band && tokens >= 17 && problem.qtype != QType::NVFP4) {
-        if (const auto r = cost_route(problem, weight, tokens)) return *r;
-    }
-    if (r8_call(weight, problem.policy, tokens)) {
-        const Route r{Family::R8Mma, static_cast<std::uint8_t>(heuristic_r8(problem, tokens))};
-        if (route_admits(r, weight, problem.policy)) return r;
-    }
-    if (tokens >= 17 && mmq_prefill_wins(problem, weight)) return Route{Family::GgmlMmq, 0};
-    if (tokens >= 17) {
-        if (const auto r = i8_route(problem, weight, tokens)) return *r;
-    }
-    if (tokens >= 17 && allows_w4a8(weight, problem.policy)) {
-        if (const auto r = w4a8_route(problem, weight, tokens)) return *r;
-    }
-    // Where the BF16 MMA is emulated (Turing), the band between R8 / the vector kernel and W4A8
-    // takes ggml's int8 matrix kernel for the formats it reads: the register MMA there runs on
-    // the emulation, about three times its native cost.
-    if (mmq_verify_rule(weight, problem.policy, problem.n, tokens)) return Route{Family::GgmlMmq, 0};
-    // NVFP4 A16 outside the invariant profile stays on the register MMA: against its prefill
-    // schedule the tiled route loses on the Muse gate/up and synthetic shapes (+11..+20%)
-    // and wins on the down projection only from T = 2048. A route table may still name it.
-    // A format with a tiled codec takes it for every prefill-profile call of 17 tokens or more (one
-    // summation order for all of them) and, outside the profile, where its tiles fill the SMs
-    // (tiled_speed_pays).
-    // The first schedule whose tiles fit the build: the tuned 128x128 everywhere but Turing.
-    if (prefill_band || tiled_speed_pays(problem.n, tokens)) {
-        for (int i = 0; i < tiled_schedule_count(); ++i) {
-            const Route r{Family::TiledMma, static_cast<std::uint8_t>(i)};
-            if (route_admits(r, weight, problem.policy)) return r;
-        }
-    }
-    // BF16 weights take the staged register MMA (same bytes, operands through shared memory):
-    // under the prefill profile the first schedule that fits the build, and outside it once its
-    // 64x64 tiles cover half the SMs, with the largest tile whose grid still fills them
-    // (staged_speed_route). Only on the native BF16 MMA: where it is emulated its tiles lost to
-    // the register MMA, x2.5..4 on Turing (RTX 2080 Ti, BF16 N 1536 K 2048, T 17..1024: 142..1005
-    // us against 35..402) and x6..8 on Volta's FP32 FMAs (V100, T 17..128: 942 us against 110).
-    if (bf16_mma_native()) {
-        if (prefill_band) {
-            for (int i = 0; i < staged_schedule_count(); ++i) {
-                const Route r{Family::StagedMma, static_cast<std::uint8_t>(i)};
-                if (route_admits(r, weight, problem.policy)) return r;
-            }
-        } else if (const auto r = staged_speed_route(problem, weight, tokens)) {
-            return *r;
-        }
-    }
-    const Route r{Family::RegisterMma,
-                  static_cast<std::uint8_t>(heuristic_rmma(problem, tokens, prefill_band))};
-    if (route_admits(r, weight, problem.policy)) return r;
-    // A register-MMA tile the build does not hold for the call: the narrower tiles the dense
-    // tuner picks where the BF16 MMA is emulated (m1.n2 and m1.n1 of four row warps: V100 and RTX
-    // 2080 Ti, BF16 N 1536 K 2048, T 17..2048), then the staged MMA, before the scalar route (V100,
-    // gpt-oss BF16 attention at T = 79: the scalar route took 7.3 ms a call).
-    for (const int n_tiles : {2, 1}) {
-        const int index = rmma_index(4, 1, 1, n_tiles);
-        const Route narrow{Family::RegisterMma, static_cast<std::uint8_t>(index)};
-        if (route_admits(narrow, weight, problem.policy)) return narrow;
-    }
-    if (prefill_band || tokens >= kStagedSpeedMinTokens) {
-        for (int i = 0; i < staged_schedule_count(); ++i) {
-            const Route staged{Family::StagedMma, static_cast<std::uint8_t>(i)};
-            if (route_admits(staged, weight, problem.policy)) return staged;
-        }
-    }
     return Route{Family::Scalar, 0};
 }
 
@@ -2977,11 +2919,6 @@ std::optional<Route> volta_tiled_route(const Weight& weight, LinearPolicy policy
     }
     return std::nullopt;
 }
-
-namespace {
-Route auto_route(const Problem& problem, const Weight& weight, std::int32_t tokens, bool prefill);
-std::optional<Route> pinned_route(const Problem& problem, const Weight& weight, std::int32_t tokens,
-                                  bool prefill);
 
 // Without tensor mma.sync (Volta) a call of 1..16 tokens of Q4_K / Q5_K / Q6_K or Q8 G32 takes
 // the HMMA kernel (generic_volta_hmma.cu): it runs as a register-MMA route (run_route launches it
@@ -3014,7 +2951,6 @@ std::optional<Route> volta_hmma_route(const Problem& problem, const Weight& weig
     if (route_admits(r, weight, problem.policy)) return r;
     return std::nullopt;
 }
-} // namespace
 
 std::optional<Route> volta_fixed_route(const Problem& problem, const Weight& weight,
                                        std::int32_t tokens) {
@@ -3022,131 +2958,11 @@ std::optional<Route> volta_fixed_route(const Problem& problem, const Weight& wei
     return volta_hmma_route(problem, weight, tokens);
 }
 
-Route select_route(const Problem& problem, const Weight& weight, std::int32_t tokens,
-                   bool prefill) {
-    // The invariant profile: one summation order per problem at every width, BF16 activations
-    // whatever the policy allows. The scalar route (one lane order per element) takes what the
-    // register MMA cannot read.
-    if (invariant_routes_active()) {
-        const Route r{Family::RegisterMma,
-                      static_cast<std::uint8_t>(invariant_rmma(problem.k, tokens))};
-        if (!route_admits(r, weight, problem.policy)) return Route{Family::Scalar, 0};
-        // NVFP4 wide calls: the tiled kernel sums in the register MMA's order (the same bytes).
-        if (const auto t =
-                nvfp4_tiled_route(problem, weight, rmma_schedule_info(r.schedule).warps_k, tokens)) {
-            return *t;
-        }
-        return r;
-    }
-    // A route probe forcing one activation route for every width (route_probe.h).
-    if (const std::int8_t forced = route_probe_state.quantized_act; forced >= 0) {
-        const bool prefill_band = prefill && tokens >= 17;
-        if (forced == 1 && allows_w4a4(weight, problem.policy)) {
-            const Route r{Family::W4a4Mma,
-                          static_cast<std::uint8_t>(heuristic_w4a4(problem.n, tokens, prefill_band))};
-            if (route_admits(r, weight, problem.policy)) return r;
-        }
-        if (forced == 1 && r8_call(weight, problem.policy, tokens)) {
-            const Route r{Family::R8Mma, static_cast<std::uint8_t>(heuristic_r8(problem, tokens))};
-            if (route_admits(r, weight, problem.policy)) return r;
-        }
-        if (forced == 1 && allows_w4a8(weight, problem.policy)) {
-            if (const auto r = w4a8_route(problem, weight, tokens)) return *r;
-        }
-        const Route r{Family::RegisterMma,
-                      static_cast<std::uint8_t>(heuristic_rmma(problem, tokens, prefill_band))};
-        if (route_admits(r, weight, problem.policy)) return r;
-        return Route{Family::Scalar, 0};
-    }
-    if (const auto r = volta_tiled_route(weight, problem.policy, tokens)) {
-        // Volta keeps its tiled route under a prefill pin (f16 activations: the a16 family's
-        // there), and the ledger notes it, so a pin no prefill call can take is refused.
-        if (tokens >= kPrefillPinMinTokens && route_pins().prefill != PrefillRoute::Auto) {
-            note_prefill_pin(route_pins().prefill == PrefillRoute::A16,
-                             family_bit(PrefillRoute::A16));
-        }
-        return *r;
-    }
-    // A maintainer's route pin (--prefill-route, --decode-route; ops/route_pins.h): the pinned
-    // family where it can compute the call, else the automatic route below. No pin: nothing here.
-    // It acts before Volta's HMMA verify route (volta_fixed_route's second half), the automatic
-    // choice of that band, so an A/B can pin vec or R8 against it.
-    if (const auto pinned = pinned_route(problem, weight, tokens, prefill)) return *pinned;
-    if (const auto r = volta_hmma_route(problem, weight, tokens)) return *r;
     return auto_route(problem, weight, tokens, prefill);
 }
 
 namespace {
 
-// The automatic selection after the profiles, the probe and Volta's fixed routes (select_route).
-Route auto_route(const Problem& problem, const Weight& weight, std::int32_t tokens, bool prefill) {
-    // NVFP4 keeps the width invariance its own kernels give where a device has them (the shape
-    // tables of sm_100+; ops/linear/nvfp4): on sm_89/86 the same projections are the generic
-    // path's, whose speed bands split K by width (heuristic_rmma: 4, 8, 2 or 1 K-warps from 17
-    // tokens), so a prefill token's bytes followed its chunk's size (Gemma 4 --a16 on an RTX 4090,
-    // test_linear_gemma4_token_invariance). An A16 call of 17 tokens or more takes one summation
-    // order at every width; decode and verify (T <= 16) keep their routes. W4A4 and W4A8 sum each
-    // token over its own activation whatever the tile, so A4/A8 calls keep their speed tiles.
-    if (problem.qtype == QType::NVFP4 && tokens >= 17 && !allows_w4a4(weight, problem.policy) &&
-        !allows_w4a8(weight, problem.policy)) {
-        // A weight that fits half the L2 takes the invariant profile's register MMA (the decode
-        // split of K, 16 rows per CTA): its 32-token columns re-read the weight from L2, where the
-        // 128x128 prefill tile left a 1024-row projection eight CTAs (RTX 4090, Gemma 4 26B
-        // shapes 1024..8192 x 2112..8192 at T 17..128: 2-4x slower than the speed bands).
-        // A larger weight takes the prefill profile's route (31B 16384x5376, 43008x5376,
-        // 5376x21504: 0.3-0.8x the speed bands from 32 tokens).
-        const auto weight_bytes =
-            static_cast<std::size_t>(problem.n) * static_cast<std::size_t>(problem.k) * 9 / 16;
-        if (2 * weight_bytes <= device_class().l2_bytes) {
-            const Route r{Family::RegisterMma,
-                          static_cast<std::uint8_t>(invariant_rmma(problem.k, tokens))};
-            if (route_admits(r, weight, problem.policy)) return r;
-        }
-        prefill = true;
-    }
-    // A W4A8 problem of 17 tokens or more takes the W4A8 heuristic: route tables hold A16 schedules
-    // only (compute_class keys these formats as a16 whatever the policy), which apply below that.
-    // An R8 call likewise.
-    // ggml's matrix kernel stands in for the heuristic only: a route table's or the dense tuner's
-    // A16 schedule keeps its shape.
-    const bool a8_wide = tokens >= 17 && allows_w4a8(weight, problem.policy);
-    const bool vec     = vec_rule(weight, problem.policy, tokens);
-    const bool a8      = a8_wide || vec || r8_call(weight, problem.policy, tokens) ||
-                    mmq_verify_rule(weight, problem.policy, problem.n, tokens);
-    const auto tuned   = a8 ? std::optional<Route>{} : table_route(problem, tokens, prefill);
-    if (tuned) {
-        // Under the prefill profile a format with a tiled codec keeps its tiled route: the tiled
-        // and register-MMA families sum in different orders.
-        const bool prefill_band = prefill && tokens >= 17;
-        if (route_admits(*tuned, weight, problem.policy) &&
-            (!prefill_band || route_is_token_invariant(*tuned)) &&
-            !(prefill_band && supports(weight) && tiled_supports(codec_of(weight)) &&
-              tuned->family != Family::TiledMma)) {
-            return *tuned;
-        }
-    }
-    // The dense tuner's choice at decode widths (generic_tune.cpp): an A16 schedule for an A16 call,
-    // an R8 schedule for an R8 decode call; never a W4A8 call.
-    if (!a8_wide) {
-        // Under the vector kernel's rule any timed route that beat it may stand in.
-        const bool r8_ok = r8_call(weight, problem.policy, tokens) ||
-                           r8_verify_tunable(weight, problem.policy, tokens);
-        if (const auto dense = tuned_dense_route(problem, tokens);
-            dense && route_admits(*dense, weight, problem.policy) &&
-            (dense->family == Family::R8Mma ? r8_ok
-                                            : vec || !r8_call(weight, problem.policy, tokens))) {
-            return *dense;
-        }
-    }
-    const Route heuristic = heuristic_route(problem, weight, tokens, prefill);
-    // Its prefill bands: a W4A8 schedule for the W4A8 heuristic (the same bytes at every tile), a
-    // route of the prefill route's summation order under the prefill profile.
-    if (const auto band = tuned_prefill_route(problem, tokens, heuristic);
-        band && route_admits(*band, weight, problem.policy) &&
-        ((band->family == Family::W4a8Mma && heuristic.family == Family::W4a8Mma) ||
-         (prefill && band->family != Family::W4a8Mma && same_summation(*band, heuristic)))) {
-        return *band;
-    }
     return heuristic;
 }
 
@@ -3232,6 +3048,7 @@ constexpr PrefillRoute kPinnedPrefillFamilies[] = {
     PrefillRoute::A16, PrefillRoute::W4a8, PrefillRoute::I8, PrefillRoute::Mmq, PrefillRoute::W4a4};
 constexpr DecodeRoute kPinnedDecodeFamilies[] = {DecodeRoute::A16, DecodeRoute::R8,
                                                  DecodeRoute::Vec, DecodeRoute::Mmq};
+} // namespace
 
 std::optional<Route> pinned_route(const Problem& problem, const Weight& weight, std::int32_t tokens,
                                   bool prefill) {
@@ -3263,6 +3080,7 @@ std::optional<Route> pinned_route(const Problem& problem, const Weight& weight, 
     return std::nullopt;
 }
 
+namespace {
 bool family_on_device(Family family) {
     return has_features(current_features(), route_requires(Route{family, 0}));
 }
