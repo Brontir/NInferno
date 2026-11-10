@@ -193,7 +193,7 @@ class Collect(unittest.TestCase):
             collect.collect(sel, [self.write("p1.csv", HEAD)], "b", "m", "r", "i", "both", [], [],
                             "q")
 
-    def collect_with_authority(self, columns, extras):
+    def collect_with_authority(self, columns, extras, facts=None, rows=1):
         """One pass per element of `extras`, whose selected CSV carries `columns` after `device`
         with that element's values on its one row."""
         sweep = "q8,a16,store,64,64,1,rmma.a,10\nq8,a16,store,64,64,1,rmma.b,12\n"
@@ -201,11 +201,11 @@ class Collect(unittest.TestCase):
         for i, extra in enumerate(extras, 1):
             head = SELECTED_HEAD.rstrip("\n") + "".join("," + c for c in columns) + "\n"
             row = f"q8,a16,store,64,64,1,rmma.a,rmma.a,r{i},ga106:28sm{extra}\n"
-            sel.append(self.write(f"sel{i}.csv", head + row))
+            sel.append(self.write(f"sel{i}.csv", head + row * rows))
         routes = [self.write(f"p{i}.csv", HEAD + stamp(sweep, f"r{i}", True))
                   for i in range(1, len(extras) + 1)]
         return collect.collect(sel, routes, "held-board", "held-model", "rev", "build", "both",
-                               [], [], "tests")
+                               [], [], "tests", facts)
 
     def test_authority_and_evidence_columns_reach_the_cases(self):
         doc = self.collect_with_authority(["authority", "evidence"],
@@ -239,6 +239,30 @@ class Collect(unittest.TestCase):
         doc = self.run_collect(["q8,a16,store,64,64,1,rmma.a,10\n"],
                                "q8,a16,store,64,64,1,rmma.a,rmma.a\n")
         self.assertNotIn("board_facts", doc)
+
+    def test_a_pass_answering_twice_with_different_authority_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "answered twice"):
+            sel = self.write("twice.csv", SELECTED_HEAD.rstrip("\n") + ",authority,evidence\n"
+                             + "q8,a16,store,64,64,1,rmma.a,rmma.a,r1,ga106:28sm,a,measured\n"
+                             + "q8,a16,store,64,64,1,rmma.a,rmma.a,r1,ga106:28sm,b,measured\n")
+            collect.read_selections([sel], {})
+
+    def test_the_message_names_which_column_differs(self):
+        with self.assertRaisesRegex(ValueError, "another evidence"):
+            self.collect_with_authority(["authority", "evidence"],
+                                        [",route-table,measured", ",route-table,borrowed"])
+        with self.assertRaisesRegex(ValueError, "another authority"):
+            self.collect_with_authority(["authority", "evidence"],
+                                        [",route-table,measured", ",cost-model,measured"])
+
+    def test_a_wrong_pci_id_is_refused_by_the_device_sms(self):
+        root = Path(__file__).resolve().parents[1]
+        rtx5090 = collect.board_facts(root / "src/core/data/gpu_facts.json", "0x2B85")  # 170 SMs
+        with self.assertRaisesRegex(ValueError, "170 SMs"):
+            self.collect_with_authority([], [""], facts=rtx5090)  # the rows say ga106:28sm
+        right = dict(rtx5090, sms=28)
+        doc = self.collect_with_authority([], [""], facts=right)
+        self.assertEqual(doc["board_facts"]["held-board"]["sms"], 28)
 
 
 if __name__ == "__main__":

@@ -311,6 +311,52 @@ class SelectionRegretTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 regret.evaluate(data)
 
+    def test_malformed_board_facts_are_invalid_input_not_a_crash(self):
+        good = {"cc": 120, "sms": 170, "dram_gbps": 1792.0, "boost_mhz": 2407}
+        for bad in ("a string", {"cc": 120}, dict(good, sms="170"), dict(good, dram_gbps=0),
+                    dict(good, cc=12.0), dict(good, boost_mhz=float("nan"))):
+            data = document()
+            data["board_facts"] = {"held-board": bad}
+            with self.assertRaises(ValueError):
+                regret.ridges_of(data, GENERATION_HEADER)
+        data = document()
+        data["board_facts"] = "x"
+        with self.assertRaises(ValueError):
+            regret.ridges_of(data, GENERATION_HEADER)
+        with tempfile.TemporaryDirectory() as directory:  # the CLI exits 2, not a traceback
+            data = document()
+            data["board_facts"] = {"held-board": {"cc": 120}}
+            path = Path(directory) / "input.json"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(regret.main([str(path)]), 2)
+
+    def test_a_compute_capability_without_a_generation_row_has_no_ridge(self):
+        data = document()
+        data["board_facts"] = {"held-board": {"cc": 20, "sms": 10, "dram_gbps": 100.0,
+                                              "boost_mhz": 1000}}
+        self.assertEqual(regret.ridges_of(data, GENERATION_HEADER), {})
+        data["cases"][0]["id"] = "wide.T64"
+        report = regret.evaluate(data, None, regret.ridges_of(data, GENERATION_HEADER))
+        self.assertEqual(report["by_board_regime_authority"][0]["regime"], "T>=17 ridge unknown")
+
+    def test_one_ridge_formula(self):
+        import mmq_transfer_audit as audit
+        gens = audit.generations(GENERATION_HEADER)
+        gb20x = audit.generation_of(gens, 120)
+        self.assertAlmostEqual(audit.ridge_t(gb20x, 170, 2407, 1792.0), 131.54, places=1)
+        self.assertIsNone(audit.ridge_t(gb20x, 170, None, 1792.0))
+        self.assertIsNone(audit.ridge_t(audit.generation_of(gens, 70), 80, 1500, 900.0))  # no s8
+
+    def test_t_and_the_id_suffix_must_agree(self):
+        data = document()
+        data["cases"][0]["id"] = "decode.T4"
+        data["cases"][0]["t"] = 4
+        self.assertEqual(regret.evaluate(data)["cases"][0]["t"], 4)
+        data["cases"][0]["t"] = 5
+        with self.assertRaisesRegex(ValueError, "ends in T4"):
+            regret.evaluate(data)
+
 
 if __name__ == "__main__":
     unittest.main()

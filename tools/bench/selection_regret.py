@@ -59,11 +59,14 @@ def unique_object(pairs):
 def width_of(case):
     """The case's T: its `t` field, else the id's `.T<n>` / `-t<n>` suffix, else None."""
     t = case.get("t")
+    found = re.search(r"[.\-][Tt](\d+)$", str(case.get("id", "")))
+    suffix = int(found[1]) if found else None
     if t is not None:
         require(type(t) is int and t >= 1, f"{case.get('id')}: t must be a positive integer")
+        require(suffix is None or suffix == t,
+                f"{case.get('id')}: t is {t} but the id ends in T{suffix}")
         return t
-    found = re.search(r"[.\-][Tt](\d+)$", str(case.get("id", "")))
-    return int(found[1]) if found else None
+    return suffix
 
 
 def regime_of(t, ridge):
@@ -89,11 +92,20 @@ def ridges_of(document, generation_header):
     rows = audit.generations(generation_header)
     out = {}
     for board, f in facts.items():
-        generation = audit.generation_of(rows, f["cc"])
-        s8 = generation[4]
-        if s8 > 0 and f["boost_mhz"] > 0 and f["dram_gbps"] > 0:
-            out[board] = (s8 * f["sms"] * f["boost_mhz"] * 1e6 * audit.BYTES_PER_VALUE
-                          / (2 * f["dram_gbps"] * 1e9))
+        where = f"board_facts.{board}"
+        require(isinstance(f, dict), f"{where}: expected object")
+        for key in ("cc", "sms", "dram_gbps", "boost_mhz"):
+            require(key in f, f"{where}: missing {key}")
+            require(type(f[key]) in (int, float) and math.isfinite(f[key]) and f[key] > 0,
+                    f"{where}.{key}: expected a finite positive number")
+        require(type(f["cc"]) is int, f"{where}.cc: expected an integer")
+        try:
+            generation = audit.generation_of(rows, f["cc"])
+        except ValueError:
+            continue  # a compute capability the generation table lacks: no ridge, said as such
+        ridge = audit.ridge_t(generation, f["sms"], f["boost_mhz"], f["dram_gbps"])
+        if ridge:
+            out[board] = ridge
     return out
 
 

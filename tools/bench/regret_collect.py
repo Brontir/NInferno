@@ -28,6 +28,7 @@ named them) is refused: its passes could not be told apart.
 import argparse
 import csv
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -121,15 +122,20 @@ def read_selections(paths, authorities=None):
             if key in run and run[key] != route:
                 raise ValueError(f"{path}: {case_id(key)} selected twice ({run[key]}, {route})")
             run[key] = route
-            meta[key] = ((row.get("authority") or "").strip() or UNKNOWN,
-                         (row.get("evidence") or "").strip() or UNKNOWN)
+            named = ((row.get("authority") or "").strip() or UNKNOWN,
+                     (row.get("evidence") or "").strip() or UNKNOWN)
+            if meta.setdefault(key, named) != named:
+                raise ValueError(f"{path}: {case_id(key)} answered twice with different "
+                                 f"authority or evidence ({meta[key]}, {named})")
         if selected is not None and run != selected:
             raise ValueError(f"{path}: the selection differs from the first pass's")
         if authorities is not None:
             for key, value in meta.items():
-                if authorities.setdefault(key, value) != value:
-                    raise ValueError(f"{path}: {case_id(key)} names another authority than the "
-                                     f"first pass's ({authorities[key]}, {value})")
+                first = authorities.setdefault(key, value)
+                for what, a, b in zip(("authority", "evidence"), first, value):
+                    if a != b:
+                        raise ValueError(f"{path}: {case_id(key)} names another {what} than the "
+                                         f"first pass's ({a}, {b})")
         selected = run
     return selected
 
@@ -232,9 +238,15 @@ def collect(selected_csvs, pass_csvs, board, model, revision, build_id, holdout,
     }
     if qualified:
         document["qualification"] = qualified
+    device = boards.pop()
     if facts:
+        # The registry row must be the board these CSVs came from: its SMs are in the class id.
+        named = re.search(r":(\d+)sm", device)
+        if named and int(named[1]) != facts["sms"]:
+            raise ValueError(f"--pci-id names a board of {facts['sms']} SMs ({facts['name']}), "
+                             f"the rows' device {device} has {named[1]}")
         document["board_facts"] = {board: facts}
-    document["device"] = boards.pop()  # route_tune's device class id, as every row named it
+    document["device"] = device  # route_tune's device class id, as every row named it
     return document
 
 
