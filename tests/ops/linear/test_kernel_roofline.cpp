@@ -15,6 +15,7 @@
 #include "ninferno/ops/linear.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/kernel_roofline.h"
+#include "ops/generic/price_tool.h"
 #include "ops/generic/route_cost_constants.h"
 #include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
@@ -79,26 +80,24 @@ constexpr bool is_golden_family(g::Family f) {
     return f == g::Family::RegisterMma || f == g::Family::TiledMma || f == g::Family::StagedMma;
 }
 
-// The table was made in the full build for the sm_120a family (NVFP4, so every register-MMA
-// schedule including the cluster K splits launches; 99 KiB of shared memory per block). Which
-// routes a build offers differs by build set, so routes are matched by (family, schedule), never by
-// position: the prices of the routes both sides offer must agree, and a route on one side only
-// must be one this build gates out or in:
-//  - missing now: a register-MMA schedule the build cannot launch (a base or sm70/sm75 build has
-//    no cluster schedules), or a staged schedule whose shared stages do not fit this build's block
-//    (sm75: 64 KiB);
-//  - extra now: only a staged schedule the 99 KiB build gated out and this build's larger block
-//    holds (sm80: 163 KiB). Never a register-MMA route: the table holds every one.
-// A route that is a tiled one, or that is gated nowhere, is a failure.
-bool gate_explains(bool extra, g::Route r) {
-    constexpr std::size_t kBaseShared = 99 * 1024;
+// The table is the UNION of every route any build set offers, each with the price the pre-refactor
+// selector gave it: the full sm_120a build (NVFP4, so the cluster K-split register-MMA schedules
+// launch) and the sm_80 build (163 KiB of shared memory per block, so the deep staged schedules
+// 10-12 fit) merged by merge_kernel_roofline_golden.py, which also requires every route the two
+// price to agree. Which routes a build offers differs by build set, so routes are matched by
+// (family, schedule), never by position:
+//  - a route this build offers must be in the table, with the same price: a route the table has no
+//    price for is a FAILURE (nothing is waived as "gated in");
+//  - a route in the table this build does not offer must be one it gates out: a register-MMA
+//    schedule it cannot launch (a base or sm70/sm75 build has no cluster schedules), or a staged
+//    schedule whose shared stages do not fit its block (sm70: 96 KiB, sm75: 64 KiB, the 99 KiB
+//    builds the deep ones). Any other absence, and any tiled one, is a failure.
+bool gated_out_here(g::Route r) {
     switch (r.family) {
     case g::Family::RegisterMma:
-        return !extra && !g::rmma_schedule_launchable(r.schedule);
+        return !g::rmma_schedule_launchable(r.schedule);
     case g::Family::StagedMma:
-        return extra
-                   ? g::staged_fits(r.schedule) && g::staged_shared_bytes(r.schedule) > kBaseShared
-                   : !g::staged_fits(r.schedule);
+        return !g::staged_fits(r.schedule);
     default:
         return false;
     }
@@ -124,7 +123,7 @@ void check_golden() {
             return;
         }
     }
-    long prices = 0, gated_out = 0, gated_in = 0, bad = 0;
+    long prices = 0, gated_out = 0, bad = 0;
     for (const GoldenCall& c : kGoldenCalls) {
         const DeviceClass d = g::board_device_class(g::kFactsBoards[c.board]);
         const auto priced   = g::priced_routes_query(
@@ -149,12 +148,8 @@ void check_golden() {
                 if (want.family == family && want.schedule == schedule) at = i;
             }
             if (at == c.count) {
-                if (gate_explains(true, got.route)) {
-                    ++gated_in;
-                } else {
-                    fail("offered now, not in the golden, and no gate explains it", family,
-                         schedule, 0, got.seconds);
-                }
+                fail("offered now, and the golden has no price for it", family, schedule, 0,
+                     got.seconds);
                 continue;
             }
             seen[at]                = true;
@@ -169,17 +164,17 @@ void check_golden() {
             const GoldenRoute& want = kGoldenRoutes[c.first + static_cast<long>(i)];
             const g::Route r{static_cast<g::Family>(want.family),
                              static_cast<std::uint8_t>(want.schedule)};
-            if (gate_explains(false, r)) {
+            if (gated_out_here(r)) {
                 ++gated_out;
             } else {
-                fail("in the golden, not offered now, and no gate explains it", want.family,
-                     want.schedule, want.seconds, 0);
+                fail("in the golden, not offered now, and this build does not gate it out",
+                     want.family, want.schedule, want.seconds, 0);
             }
         }
     }
-    std::printf("golden: %zu calls, %ld route prices equal-checked, %ld routes gated out and %ld "
-                "gated in by this build, %ld differ\n",
-                sizeof(kGoldenCalls) / sizeof(kGoldenCalls[0]), prices, gated_out, gated_in, bad);
+    std::printf("golden: %zu calls, %ld route prices compared, %ld routes gated out by this build, "
+                "%ld differ\n",
+                sizeof(kGoldenCalls) / sizeof(kGoldenCalls[0]), prices, gated_out, bad);
     if (bad > 0 || prices == 0) ++failures;
 }
 
@@ -308,9 +303,38 @@ void check_wiring() {
 
 } // namespace
 
+// ---- Check 3: the price tool's format names ----
+// Every name the usage text prints is one `--format` takes (the parser and the help read one list),
+// maps back to the format it names, and the name the help gave for Q4 groupwise is the one that
+// worked before the fix ("q4_g64" is not a route-table name: the table calls it "q4").
+void check_price_formats() {
+    const std::string usage = ninferno::tools::price_usage_text();
+    const auto names        = ninferno::tools::price_format_names();
+    long bad                = 0;
+    for (const std::string& name : names) {
+        const auto found = ninferno::tools::price_find_format(name);
+        if (!found || g::qtype_name(*found) != name) {
+            std::fprintf(stderr, "FAIL: price --format %s is not taken\n", name.c_str());
+            ++bad;
+        }
+        if (usage.find(name) == std::string::npos) {
+            std::fprintf(stderr, "FAIL: the usage text does not print %s\n", name.c_str());
+            ++bad;
+        }
+    }
+    const auto q4 = ninferno::tools::price_find_format("q4");
+    if (!q4 || *q4 != QType::Q4_G64_FP16) {
+        std::fprintf(stderr, "FAIL: price --format q4 is not Q4 groupwise\n");
+        ++bad;
+    }
+    std::printf("price formats: %zu names, %ld differ\n", names.size(), bad);
+    if (bad > 0 || names.empty()) ++failures;
+}
+
 int main() {
     check_golden();
     check_wiring();
+    check_price_formats();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;

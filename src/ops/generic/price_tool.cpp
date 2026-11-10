@@ -22,6 +22,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <system_error>
 #include <vector>
 
@@ -36,17 +37,46 @@ using generic::Family;
 using generic::Route;
 using ops::LinearPolicy;
 
-constexpr const char* kUsage =
-    "usage: ninferno-serve price --board BOARD --format FORMAT --n N --k K --t T\n"
-    "                            [--epilogue store|add|swiglu] [--policy a16|a8]\n"
-    "                            [--registers R] [--local-bytes B] [--route FAMILY:INDEX]\n"
-    "       ninferno-serve price --list-boards\n"
-    "BOARD: a facts-table name without spaces (rtx4090, l4, a100pcie40gb; see --list-boards) or\n"
-    "its PCI id (0x2684).\n"
-    "FORMAT: a route-table format name (q4_g64, q4_k, iq3_s, bf16).\n"
-    "--registers / --local-bytes: the register-MMA kernels' compiled facts, applied to every\n"
-    "schedule of the heavy form (sub-block-scale formats where the board's terms are measured);\n"
-    "absent, it is priced by threads alone, as a process without them is.\n";
+// Every format `--format` takes, by the route table's name (qtype_name): the one list the parser
+// matches against and the help prints, so they cannot drift apart.
+const std::vector<std::pair<QType, std::string>>& known_formats() {
+    static const std::vector<std::pair<QType, std::string>> formats = [] {
+        std::vector<std::pair<QType, std::string>> out;
+        for (int v = 0; v < 256; ++v) {
+            const auto q           = static_cast<QType>(v);
+            const std::string name = generic::qtype_name(q);
+            if (name == "unknown") continue;
+            bool seen = false;
+            for (const auto& have : out) seen = seen || have.second == name;
+            if (!seen) out.emplace_back(q, name);
+        }
+        return out;
+    }();
+    return formats;
+}
+
+std::string usage_text() {
+    std::string formats;
+    for (const auto& format : known_formats()) {
+        if (!formats.empty()) formats += ", ";
+        formats += format.second;
+    }
+    return "usage: ninferno-serve price --board BOARD --format FORMAT --n N --k K --t T\n"
+           "                            [--epilogue store|add|swiglu] [--policy a16|a8]\n"
+           "                            [--registers R] [--local-bytes B] [--route FAMILY:INDEX]\n"
+           "       ninferno-serve price --list-boards\n"
+           "BOARD: a facts-table name without spaces (rtx4090, l4, a100pcie40gb; see "
+           "--list-boards) or\n"
+           "its PCI id (0x2684).\n"
+           "FORMAT: a route-table format name, case and underscores ignored: " +
+           formats +
+           ".\n"
+           "--registers / --local-bytes: the register-MMA kernels' compiled facts, applied to "
+           "every\n"
+           "schedule of the heavy form (sub-block-scale formats where the board's terms are "
+           "measured);\n"
+           "absent, it is priced by threads alone, as a process without them is.\n";
+}
 
 // "GeForce RTX 4090" -> "rtx4090": lower case, the vendor words and the separators dropped.
 std::string board_key(std::string_view name) {
@@ -102,15 +132,12 @@ std::optional<QType> find_format(std::string_view arg) {
     for (const char c : arg) {
         if (c != '_') want += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }
-    for (int v = 0; v < 256; ++v) {
-        const auto q                = static_cast<QType>(v);
-        const std::string_view name = generic::qtype_name(q);
-        if (name == "unknown") continue;
+    for (const auto& format : known_formats()) {
         std::string have;
-        for (const char c : name) {
-            if (c != '_') have += c;
+        for (const char c : format.second) {
+            if (c != '_') have += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         }
-        if (have == want) return q;
+        if (have == want) return format.first;
     }
     return std::nullopt;
 }
@@ -485,13 +512,23 @@ int run(const Options& o) {
 
 } // namespace
 
+std::vector<std::string> price_format_names() {
+    std::vector<std::string> names;
+    for (const auto& format : known_formats()) names.push_back(format.second);
+    return names;
+}
+
+std::optional<QType> price_find_format(std::string_view name) { return find_format(name); }
+
+std::string price_usage_text() { return usage_text(); }
+
 int price_main(int argc, char** argv) {
     Options options;
     try {
         options = parse(argc, argv);
     } catch (const std::invalid_argument& error) {
         if (*error.what() != '\0') std::fprintf(stderr, "price: %s\n", error.what());
-        std::fputs(kUsage, stderr);
+        std::fputs(usage_text().c_str(), stderr);
         return 2;
     }
     try {
