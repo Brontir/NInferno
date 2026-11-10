@@ -649,8 +649,9 @@ int main() {
             const auto counted = pair_of(target, "ad104:60sm");
             for (const sp::GpuKey* rtx : {&small, &large}) {
                 const sp::Profile p = sp::profile_for_target({&counted}, "sm89", {}, rtx);
-                expect(sp::load_label(p.load) == expected,
-                       target.substr(0, 24) + " with kernel counts: load " + sp::load_label(p.load));
+                expect(sp::load_label(p.load) == expected, target.substr(0, 24) +
+                                                               " with kernel counts: load " +
+                                                               sp::load_label(p.load));
             }
             const auto lab = no_counts(counted);
             std::vector<sp::Profile> by_card;

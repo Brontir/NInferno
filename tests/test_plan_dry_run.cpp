@@ -1146,7 +1146,7 @@ void test_speculation_order() {
     // table is the one in force.
     check(subject.resolved.has_value(), "the subject carries a resolved profile");
     for (const char* basis : {"facts", "literal", "measured"}) {
-        pr::SpeculationSubject labelled = subject;
+        pr::SpeculationSubject labelled       = subject;
         labelled.resolved->profile.load_basis = basis;
         labelled.resolved->profile.load       = {{.lanes = 2, .depth = 3}};
         const pr::LaunchPlanOptions o         = pr::launch_options({.max_concurrency = 4});
