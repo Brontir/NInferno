@@ -481,8 +481,8 @@ struct Choice {
     // The resolution moved the pick (#301, DECISIONS 75): among the candidates whose speed is
     // inside `resolution` of the best worth's (the anchor), the one of strictly lower modelled KLD
     // took it (resolve_within_resolution). False: the anchor stood. `anchor` indexes the best
-    // worth in `scored`; `anchor_worth` is its worth (what a cross-quantization band compares, so
-    // that one allowance applies, not two).
+    // worth in `scored`; `anchor_worth` is its worth (the cross-quantization band's top and bound;
+    // a row is admitted by the worth it serves, so one allowance applies, not two).
     bool resolved_within_resolution = false;
     std::size_t anchor              = 0;
     double anchor_worth             = 0;

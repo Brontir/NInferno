@@ -1705,8 +1705,9 @@ A NaN KLD never wins. Without a reference card the resolution is 0 and nothing c
 
 `Choice::resolved_within_resolution`, `anchor` and `anchor_worth` record the move; the `why` line
 says it, and `explain` lists the anchor as `within_resolution` with a positive `worth_delta`. The
-cross-quantization band (plan_quants.cpp) sorts and bands the rows by `anchor_worth`, so a row's
-resolution allowance is spent once, inside its choice, not again in the band. Candidates that can
+cross-quantization band (plan_quants.cpp) sorts and bounds the rows by `anchor_worth` (the band's
+top is the best anchor) and admits and ties them by the worth of the configuration each serves, so a
+moved row trails the top by at most one band in all. Candidates that can
 move: a KV codec or activation mode of the same worth class with a strictly lower KLD that is less
 than the resolution slower; the chunk and the drafter carry no KLD term and never move.
 
