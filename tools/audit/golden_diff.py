@@ -15,7 +15,8 @@ Boards are compared by the file holding the release's choices: with facts_index.
 the file of the row of the `release` nvcc, so a repointed row is a change and several digest files
 of one board are not "removed + added". Added/removed boards are counted apart from decisions.
 A speed-c1 width the dump omits (it answers as speed) is read as the speed route.
-Exit 0 always, unless --fail-on-change (1 when anything changed). An unknown line is an error (2).
+Exit 0 always, unless --fail-on-change (1 when anything changed); a tool failure is 2. The last
+line is `total: ...` when anything changed, else `no golden changes` (info lines come before it).
 
 Line grammar (see dump_body):
   "# <board> <device class id> <arch>"                      first line
@@ -324,7 +325,7 @@ def load_dir(root):
     """(tree {set: {file name: text}}, facts_index text or None) from a selector_golden dir."""
     root = Path(root)
     if not root.is_dir():
-        raise SystemExit(f"golden_diff: not a directory: {root}")
+        raise GoldenParseError(f"not a directory: {root}")
     tree = {}
     for sub in sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith(".")):
         tree[sub.name] = {f.name: f.read_text(encoding="utf-8") for f in sorted(sub.glob("*.txt"))}
@@ -391,15 +392,29 @@ def main(argv=None):
             (old, old_ix), (new, new_ix) = load_dir(args.base_dir), load_dir(args.head_dir)
         out = []
         changed, meta, files = summarize(old, new, args.detail, out, old_ix, new_ix)
-    except (GoldenParseError, subprocess.CalledProcessError) as error:
+    except (GoldenParseError, subprocess.CalledProcessError, OSError, ValueError) as error:
+        # every tool failure is 2 (1 means "goldens changed"): unreadable file, bad encoding, git error
         print(f"golden_diff: {getattr(error, 'stderr', None) or error}", file=sys.stderr)
         return 2
-    print("\n".join(out) if out else "no golden changes")
     anything = changed or meta or files
+    # Exactly one closing line, always, and it is the last: the CI gate reads it. Info lines (a
+    # facts digest that moved with no decision change) come before it and are not a change.
     if anything:
-        print(f"total: {changed} decisions changed, {meta} meta changes, {files} board files added/removed")
+        out.append(f"total: {changed} decisions changed, {meta} meta changes, {files} board files added/removed")
+    else:
+        out.append("no golden changes")
+    print("\n".join(out))
     return 1 if (args.fail_on_change and anything) else 0
 
 
+def run():
+    """Entry point: an exception nothing above caught is a tool failure, exit 2, never the traceback's 1."""
+    try:
+        return main()
+    except Exception as error:  # noqa: BLE001
+        print(f"golden_diff: unexpected {type(error).__name__}: {error}", file=sys.stderr)
+        return 2
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run())

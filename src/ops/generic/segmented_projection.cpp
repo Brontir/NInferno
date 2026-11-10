@@ -116,6 +116,8 @@ void project(const Tensor& x_matrix, const SegmentedProjectionWeights& w,
         const ProjectionSlice& first = w.slices[i];
         std::int32_t done            = 0;
         while (done < rows) {
+            // The weight is the whole parent, the call's rows in call.rows: run() prices those
+            // rows' share of its bytes, not the parent (bytes_per_weight, #640).
             generic::Call call;
             call.x         = &x_matrix;
             call.weight    = &first.parent;
