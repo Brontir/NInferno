@@ -61,7 +61,7 @@ struct Definition {
 std::map<std::string, Definition> definitions_of(const std::string& text, Mode mode) {
     std::map<std::string, Definition> out;
     if (mode == Mode::RowFields) {
-        const std::size_t at  = text.find("struct GenerationRow {");
+        const std::size_t at = text.find("struct GenerationRow {");
         // The struct's closing brace stands at column 0; a "};" inside a field's initializer
         // does not end it.
         const std::size_t end = text.find("\n};", at);
