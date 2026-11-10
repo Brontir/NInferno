@@ -306,8 +306,8 @@ inline constexpr PredictionError kDecodePredictionError[] = {{"ada", 0.0226}, {"
 // rows onto another board. Derived from decode_measured.json, like the rows above: every
 // short-context row (not marked long) of a card whose generation is not kTransferGeneration is
 // priced as if the card were of kTransferGeneration (its rows, the board's own bytes, SMs and
-// clocks), and the constant is sqrt(mean(ln(predicted / measured)^2)) over them. ninferno_choice_test
-// recomputes it ("transferred_resolution") and prints each generation's share.
+// clocks), and the constant is sqrt(mean(ln(predicted / measured)^2)) over them.
+// ninferno_choice_test recomputes it ("transferred_resolution") and prints each generation's share.
 inline constexpr double kTransferredDecodeError = 0.05;
 
 // kDp4aOpsPerSmClock (a generation without an int8 MMA decodes its int8 route at it, choice.cpp

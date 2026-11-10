@@ -519,7 +519,8 @@ Scored score(const ModelFacts& model, const CardFacts& card, const std::optional
         s.decision_seconds = request_seconds(model, ref->card, quant, c, task);
         // What the decision estimate rests on: the weaker of the short and the long request's.
         const double middle = task.prompt + task.answer / 2.0;
-        s.decision_basis    = speed_of(model, ref->card, quant, c, task.concurrency, middle, task.prompt).basis;
+        s.decision_basis =
+            speed_of(model, ref->card, quant, c, task.concurrency, middle, task.prompt).basis;
         if (const std::uint32_t long_prompt = task.long_prompt(); long_prompt > 0) {
             const Speed longer = speed_of(model, ref->card, quant, c, task.concurrency,
                                           long_prompt + task.answer / 2.0, long_prompt);
@@ -1716,7 +1717,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         return out;
     }
     const std::optional<Reference> ref = reference_of(card, gates);
-    out.by_worth       = decides_switches(model, card, gates);
+    out.by_worth                       = decides_switches(model, card, gates);
     out.chunk_by_speed = ref && ref->chunk_decides && model.moe() && !pins.chunk;
     // The reference generation's own resolution until a candidate is scored (an Own estimate's).
     out.resolution = ref ? worth_band(ref->card) : 0;
@@ -1810,9 +1811,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         Task at     = task;
         at.contexts = {context};
         if (at.long_prompt() != priced.long_prompt()) {
-            for (Scored& s : out.scored) {
-                s = price(s.candidate, at);
-            }
+            for (Scored& s : out.scored) { s = price(s.candidate, at); }
             priced = at;
         }
         std::vector<std::size_t> holding;
@@ -1824,7 +1823,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         }
         if (chosen) {
             const std::size_t best = *chosen;
-            chosen   = resolve_within_resolution(out.scored, holding, best);
+            chosen                 = resolve_within_resolution(out.scored, holding, best);
             resolved = *chosen != best;
             anchor   = best;
             settled  = context;
@@ -2047,9 +2046,9 @@ std::vector<Alternative> explain(const Choice& choice) {
                 // at equal accuracy the gap is the speed difference exactly.
                 alt.why_code = "within_resolution";
                 alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) +
-                               " against the chosen, inside the speed estimate's resolution (" +
-                               fixed(100 * pair_resolution(s, chosen), 1) +
-                               " % decode rms): the point estimate decides";
+                              " against the chosen, inside the speed estimate's resolution (" +
+                              fixed(100 * pair_resolution(s, chosen), 1) +
+                              " % decode rms): the point estimate decides";
             } else {
                 alt.why_code = "lower_worth";
                 alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) + " against the chosen";

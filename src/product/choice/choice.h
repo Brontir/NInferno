@@ -464,7 +464,7 @@ struct Scored {
     double decision_seconds = 0;   // request_seconds on the reference card (0: none)
     // The resolution of that estimate (resolution_of the reference card and the basis the estimate
     // rests on; 0 without a reference).
-    double resolution = 0;
+    double resolution         = 0;
     SpeedBasis decision_basis = SpeedBasis::Own;
     double worth = 0;              // -ln(decision_seconds) - lambda kld (0 without a reference)
     bool variant = false;          // a coupled storage's other value beside the chosen (not eligible)
