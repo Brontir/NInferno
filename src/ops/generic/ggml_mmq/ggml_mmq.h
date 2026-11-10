@@ -99,6 +99,11 @@ void quantize_activation(Type type, const __nv_bfloat16* x, int ldx, int k, int 
 // shared memory admit.
 [[nodiscard]] int column_tile(Type type, int rows, int columns, int k);
 
+// The shared memory ggml's kernel takes for a tile of `columns_per_tile` columns of a format on the
+// current device (mmq_get_nbytes_shared; 0: its table has no such tile). core/mmq_columns.h
+// computes the same from the format's layout, and test_route_classes holds the two together.
+[[nodiscard]] std::size_t tile_shared_bytes(Type type, int columns_per_tile);
+
 // out[c * out_column_stride + r] = sum_k W[r, k] x[k, c] in FP32 for rows [0, rows).
 void product(Type type, const Planes& weight, int blocks_per_row, int rows, int k,
              const void* activation, int columns, float* out, std::int64_t out_column_stride,

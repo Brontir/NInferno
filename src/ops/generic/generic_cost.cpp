@@ -124,11 +124,15 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         // The column tile: the kernel's own table where the generation and the format take the
         // work-based one (core/mmq_columns.h), else 8-column steps up to a tile, the shape the
         // efficiency was fitted on.
+        // Never wider than the tile the device's shared memory holds for the format (Turing's
+        // 64 KiB: Q2_K's 128-column tile does not fit, the kernel runs 64).
         const bool format   = mmq_columns::work_tiles_format(problem.qtype);
-        const double cols   = mmq_columns::uses_work_table(d.major, d.minor, format)
-                                  ? static_cast<double>(mmq_columns::pick(static_cast<int>(tt),
-                                                                          d.major, d.minor, true))
-                                  : std::min(rows_t, cdiv(tt, step) * step);
+        const int widest    = mmq_columns::widest_tile(problem.qtype, d.major, d.minor);
+        const double cols =
+            mmq_columns::uses_work_table(d.major, d.minor, format)
+                ? static_cast<double>(
+                      mmq_columns::pick(static_cast<int>(tt), d.major, d.minor, true, widest))
+                : std::min({rows_t, static_cast<double>(widest), cdiv(tt, step) * step});
         const double tiles  = cdiv(n * sets, rows_t) * cdiv(tt, cols);
         const double mem    = n * k * bpw / bw;
         const double mma    = tiles / sms * 2.0 * rows_t * cols * k / peak_sm;
@@ -145,16 +149,17 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
 
 namespace {
 
-// What the compiled register-MMA kernel of a schedule keeps per thread, from the build itself
-// (rmma_resources: the launch described for this call's rows and tokens, never run): its registers
-// decide how many CTAs one SM's register file holds, its local memory is the spill. It rests on
-// the build's kernels and on the host device's: the answer is the running GPU's. Nothing is cached
-// here, and the selector keeps no memo of its own (select_route runs on every launch, and at 17
-// tokens or more outside the prefill profile prices every schedule): what is cached is the kernel
-// attribute read, once per kernel instance and device (launch_rmma_kernel, bounded by the template
-// instances), so a priced call is a describe-mode dispatch, not a driver query per schedule. A
-// process without a device, or a schedule the build does not hold for the weight, has none and is
-// priced by threads alone.
+// What the compiled register-MMA kernel of a schedule keeps per thread, from the committed
+// kernel-facts snapshot of the SASS the device runs (rmma_resources: the launch described for
+// this call's rows and tokens, never run; ops/generic/kernel_facts.h, #612): its registers decide
+// how many CTAs one SM's register file holds, its stack bytes are the spill. The answer is the
+// release engine's, the same on every machine whatever its nvcc or driver (#556). Nothing is
+// cached here, and the selector keeps no memo of its own (select_route runs on every launch, and
+// at 17 tokens or more outside the prefill profile prices every schedule): what is cached is the
+// snapshot read, once per kernel instance and device (launch_rmma_kernel, bounded by the template
+// instances), so a priced call is a describe-mode dispatch, not a table search per schedule. A
+// device that runs PTX the driver compiled, a schedule the build does not hold for the weight, or
+// an instance the snapshot lacks has none and is priced by threads alone.
 struct RmmaKept {
     int registers;
     double local_bytes;
