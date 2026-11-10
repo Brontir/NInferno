@@ -94,7 +94,8 @@ bool gate_explains(bool extra, g::Route r) {
         return extra ? g::rmma_schedule_info(r.schedule).cluster > 1
                      : !g::rmma_schedule_launchable(r.schedule);
     case g::Family::StagedMma:
-        return extra ? g::staged_fits(r.schedule) && ninferno::ops::kMaxSharedBytesPerBlock > kBaseShared
+        return extra ? g::staged_fits(r.schedule) &&
+                           ninferno::ops::kMaxSharedBytesPerBlock > kBaseShared
                      : !g::staged_fits(r.schedule);
     default:
         return false;
@@ -107,13 +108,13 @@ void check_golden() {
         const DeviceClass d = g::board_device_class(g::kFactsBoards[c.board]);
         const auto priced   = g::priced_routes_query(
             d, kGoldenFormats[c.format], LinearPolicy::A16Only, c.epilogue, c.n, c.k, c.tokens);
-        const auto fail = [&](const char* what, int family, int schedule, double want,
-                              double got) {
+        const auto fail = [&](const char* what, int family, int schedule, double want, double got) {
             if (++bad <= 10) {
-                std::fprintf(stderr,
-                             "FAIL %s format %d %dx%d T=%d route %d:%d: %s (golden %.17g now %.17g)\n",
-                             g::kFactsBoards[c.board].name, c.format, c.n, c.k, c.tokens, family,
-                             schedule, what, want, got);
+                std::fprintf(
+                    stderr,
+                    "FAIL %s format %d %dx%d T=%d route %d:%d: %s (golden %.17g now %.17g)\n",
+                    g::kFactsBoards[c.board].name, c.format, c.n, c.k, c.tokens, family, schedule,
+                    what, want, got);
             }
         };
         std::vector<bool> seen(c.count, false);
@@ -160,7 +161,6 @@ void check_golden() {
                 sizeof(kGoldenCalls) / sizeof(kGoldenCalls[0]), prices, gated_out, gated_in, bad);
     if (bad > 0 || prices == 0) ++failures;
 }
-
 
 // ---- Check 2: the selector's wiring ----
 
