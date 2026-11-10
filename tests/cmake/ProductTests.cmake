@@ -176,9 +176,7 @@ ninferno_add_test(ninferno_choice_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_choice.cpp"
   LIBRARIES ninferno_product_choice ninferno_core_host ninferno::json)
 target_include_directories(ninferno_choice_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-# Host-only: no CUDA runtime in its link closure (#620 step 11); the device of a build without one
-# is the stub that throws (src/core/device_class_nodevice.cpp).
-target_sources(ninferno_choice_test PRIVATE ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp)
+# Host-only: no CUDA runtime in its link closure (#620 step 11).
 cmake_language(DEFER CALL ninferno_assert_host_only ninferno_choice_test)
 target_compile_definitions(ninferno_choice_test PRIVATE
   NINFERNO_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
