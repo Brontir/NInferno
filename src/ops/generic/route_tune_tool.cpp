@@ -128,7 +128,7 @@ int route_tune_main(int argc, char** argv) {
                          "[--key chip|variant|arch] [--samples N] [--prefill-chunk C] "
                          "[--prefill-only 1] [--points T,...] [--routes-out FILE.csv] "
                          "[--selected-out FILE.csv] [--select-reps N] [--a8-candidates 1] "
-                         "[--rotate 0|1]\n";
+                         "[--rotate 0|1] [--describe 1]\n";
             return 2;
         }
         const int samples       = opt.count("--samples") ? std::stoi(opt["--samples"]) : 15;

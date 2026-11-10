@@ -47,9 +47,8 @@ int main() {
     // The selector and the cost model read the host GPU's compiled facts (rmma_resources) at wide
     // calls: with no usable device the test skips, as the other linear tests do.
     if (ninferno::test::cuda_unavailable()) {
-        std::cout << "SKIP: no usable CUDA device
-                     ";
-            return 77;
+        std::cout << "SKIP: no usable CUDA device\n";
+        return 77;
     }
     const DeviceClass device =
         synthetic_device_class(0x2684, 8, 9, 128, 72 * kMiB, 24 * 1024 * kMiB);

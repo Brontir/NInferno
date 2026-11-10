@@ -104,8 +104,8 @@ RouteDescription describe_resolved(const DescribedWeight& described, const Probl
                                                    problem.n, problem.epilogue, tokens);
     out.tile            = route_tile(ran, problem.epilogue, tokens);
     // The call's own rows of the weight: a slice of a fused parent reads its share of the payload
-    // (route_traffic takes the payload over the call's n rows as bytes per weight). The stored
-    // matrix's rows are uniform, so the share is exact.
+    // (route_traffic takes the payload over the call's n rows as bytes per weight). The share is
+    // proportional to rows: close, not exact, where scales are swizzled or padded to row tiles.
     Weight call_weight         = w;
     const std::uint64_t own    = problem.epilogue == Epilogue::SwiGlu
                                      ? 2ULL * static_cast<std::uint64_t>(problem.n)
