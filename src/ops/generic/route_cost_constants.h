@@ -77,10 +77,12 @@ inline constexpr Scalar kL1BytesPerSmClock{{128.0}, Provenance::Fact, "l1_bytes_
 // counted K loop. One law a binary, no environment switch; a test flips it for its process through
 // rmma_counted_law_for_test (generic_gemm.h). It ships false until the A/B of the counted law.
 inline constexpr bool kRmmaCountedLaw = false;
-// The L1 hit latency a warp waits on a spilled register's reload (LDL): 32 clocks on Turing, 33 on
-// Ampere, 34 on Ada and Blackwell in the published microbenchmarks; the counted law divides it by
-// the warps a scheduler holds, which overlap each other's waits. A fact of the SM, not of our
-// sweeps.
+// The L1 hit latency a warp waits on a spilled register's reload (LDL); the counted law divides it
+// by the warps a scheduler holds, which overlap each other's waits. One value for every
+// architecture: 32 clocks, Turing's in the published microbenchmarks (33 on Ampere, 34 on Ada and
+// Blackwell there, 3-6 % of this term). It stands in for the per-architecture measured latency (the
+// ISA probe's row, #613), which the counted law is to read before it prices anything: the law is
+// off (kRmmaCountedLaw), so no price depends on this value. A fact of the SM, not of our sweeps.
 inline constexpr Scalar kL1HitLatencyCycles{{32.0}, Provenance::Fact, "l1_hit_latency_cycles"};
 // The register file's allocation unit per warp (256 registers): a CUDA fact of every part the
 // model names.
