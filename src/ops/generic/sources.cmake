@@ -3,7 +3,8 @@
 # The kernel-facts snapshots (#612): data/kernel_facts/sm_<arch>.txt, one per build architecture,
 # all compiled into every build (ops/generic/kernel_facts.h reads them; the tool that writes them
 # is tools/kernel_facts/kernel_facts.py). A new file is picked up at the next configure.
-file(GLOB NINFERNO_KERNEL_FACTS_FILES "${CMAKE_CURRENT_LIST_DIR}/data/kernel_facts/sm_*.txt")
+file(GLOB NINFERNO_KERNEL_FACTS_FILES CONFIGURE_DEPENDS
+     "${CMAKE_CURRENT_LIST_DIR}/data/kernel_facts/sm_*.txt")
 list(SORT NINFERNO_KERNEL_FACTS_FILES)
 set(NINFERNO_KERNEL_FACTS_ARRAYS "")
 set(NINFERNO_KERNEL_FACTS_ENTRIES "")

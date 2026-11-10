@@ -56,7 +56,10 @@ PINNED=$(sed -n 's/^nvcc \(.*\)$/\1/p' "$FACTS/sm_120a.txt")
 for arch in $ARCHS; do
   [ -f "$FACTS/sm_$arch.txt" ] || { echo "package.sh: no kernel-facts snapshot $FACTS/sm_$arch.txt" >&2; exit 1; }
   want=$PINNED
-  if [ "$arch" = 70 ]; then want=$([ -n "$CUDA70" ] && nvcc_version "$CUDA70/bin/nvcc"); fi
+  if [ "$arch" = 70 ]; then
+    want=
+    if [ -n "$CUDA70" ]; then want=$(nvcc_version "$CUDA70/bin/nvcc"); fi
+  fi
   have=$(sed -n 's/^nvcc \(.*\)$/\1/p' "$FACTS/sm_$arch.txt")
   [ -z "$want" ] || [ "$have" = "$want" ] || { echo "package.sh: $FACTS/sm_$arch.txt was made with nvcc $have, this release builds sm_$arch with $want" >&2; exit 1; }
 done

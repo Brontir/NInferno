@@ -138,10 +138,18 @@ constexpr std::string_view raw_type_name() {
 #endif
 }
 
-// The canonical name of a decoder type, once per type.
+// The canonical name of a decoder type, once per type. A decoder whose template argument is an
+// enumerator declares kKeyArgument, its value: compilers spell an enum argument by name
+// (Ggml32::Q4_0), cu++filt by value ((Ggml32)0), and the snapshot keeps the value.
 template <class T>
 const std::string& decoder_name() {
-    static const std::string name = canonical_type_name(raw_type_name<T>());
+    static const std::string name = [] {
+        std::string n = canonical_type_name(raw_type_name<T>());
+        if constexpr (requires { T::kKeyArgument; }) {
+            n = n.substr(0, n.find('<')) + '<' + std::to_string(int{T::kKeyArgument}) + '>';
+        }
+        return n;
+    }();
     return name;
 }
 

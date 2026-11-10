@@ -13,8 +13,9 @@ GPU's kernels, so a decision is the same on every machine, whatever nvcc or driv
 `extract` writes the snapshot (stdout without -o). `check` extracts the same from BIN and compares
 it with FILE row by row: exit 0 where they agree, 1 where they differ (every differing kernel is
 named, with the line to regenerate), 77 where BIN was compiled by another nvcc than FILE records
-(ptxas then allocates other registers by construction; the price still reads FILE, so the
-decisions stay the release's), 3 on a usage or tool error.
+and holds the same kernels (ptxas then allocates other registers by construction; the price still
+reads FILE, so the decisions stay the release's), 3 on a usage or tool error. A kernel added or
+removed fails under any nvcc.
 
 The binary is the linked executable or shared library (any program that links ninferno_ops):
 under relocatable device code the per-unit objects report no shared memory and a smaller stack
@@ -293,17 +294,20 @@ def cmd_check(args):
     with open(args.expected) as f:
         header, expected = parse_snapshot(f.read())
     arch = header["arch"]
-    if args.nvcc and args.nvcc != header["nvcc"]:
-        print(f"kernel_facts: SKIPPED: this build's nvcc {args.nvcc} is not the snapshot's "
-              f"{header['nvcc']} ({args.expected}); ptxas then allocates other registers by "
-              "construction. The price reads the snapshot either way; regenerate it only on the "
-              "release toolchain.")
-        return 77
     rows = extract_rows(args.binary, args.cuda_bin, args.dump)
     got = rows[image_arch(rows, arch)]
     missing = sorted(k for k in expected if k not in got)
     extra = sorted(k for k in got if k not in expected)
-    differ = sorted(k for k in expected if k in got and expected[k] != got[k])
+    other_nvcc = args.nvcc and args.nvcc != header["nvcc"]
+    if other_nvcc and not (missing or extra):
+        # The set of kernels does not depend on the compiler; their registers do.
+        print(f"kernel_facts: SKIPPED the resources: this build's nvcc {args.nvcc} is not the "
+              f"snapshot's {header['nvcc']} ({args.expected}); ptxas then allocates other "
+              "registers by construction. The kernel set agrees. The price reads the snapshot "
+              "either way; regenerate it only on the release toolchain.")
+        return 77
+    differ = [] if other_nvcc else sorted(
+        k for k in expected if k in got and expected[k] != got[k])
     if not (missing or extra or differ):
         print(f"kernel_facts: {len(got)} kernels of sm_{arch} equal {args.expected}")
         return 0

@@ -23,6 +23,13 @@ namespace ninferno::ops::detail::generic {
 // A type in the generic namespace, as the decoders are: its canonical name drops the namespace.
 template <int N>
 struct KernelFactsTestDecoder {};
+// An enumerator argument, as Ggml32Decoder has: the key spells its value, as cu++filt does.
+enum class KernelFactsTestFormat { A, B, C };
+
+template <KernelFactsTestFormat F>
+struct KernelFactsEnumDecoder {
+    static constexpr int kKeyArgument = static_cast<int>(F);
+};
 } // namespace ninferno::ops::detail::generic
 
 namespace {
@@ -111,6 +118,9 @@ void canonical_names() {
            "plain spelling");
     const std::string& name = kf::decoder_name<generic::KernelFactsTestDecoder<7>>();
     expect(name == "KernelFactsTestDecoder<7>", "decoder_name gave '" + name + "'");
+    const std::string& by_value =
+        kf::decoder_name<generic::KernelFactsEnumDecoder<generic::KernelFactsTestFormat::C>>();
+    expect(by_value == "KernelFactsEnumDecoder<2>", "enum decoder_name gave '" + by_value + "'");
     std::cout << "decoder_name: " << name << " (raw '"
               << std::string(kf::raw_type_name<generic::KernelFactsTestDecoder<7>>()) << "')\n";
 }
