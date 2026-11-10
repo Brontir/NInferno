@@ -20,6 +20,7 @@
 #include "spec/registry.h"
 
 #include <algorithm>
+#include <random>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -987,6 +988,31 @@ void test_rule() {
                 check(e.pick && !e.by_worth && e.quality_withheld &&
                           e.rows[e.pick->index].listing.quant == "Q6_K",
                       what + ": an estimated pick keeps the rule's largest");
+            }
+        }
+        // The listing's order does not decide (#618 step 8; the quant rows are ranked here, not
+        // sorted by choose()): the same rows reversed, rotated and shuffled pick the same quant by
+        // the same rule.
+        for (const std::uint32_t context : {0U, 32768U, 131072U}) {
+            const pr::QuantPlan base = planned(mixed, context);
+            if (!base.pick) { continue; }
+            const std::string want = base.rows[base.pick->index].listing.quant;
+            std::vector<std::vector<Row>> orders;
+            orders.emplace_back(mixed.rbegin(), mixed.rend());
+            orders.emplace_back(mixed.begin() + 2, mixed.end());
+            orders.back().insert(orders.back().end(), mixed.begin(), mixed.begin() + 2);
+            for (unsigned seed = 1; seed <= 3; ++seed) {
+                std::vector<Row> shuffled = mixed;
+                std::mt19937 rng(seed);
+                std::shuffle(shuffled.begin(), shuffled.end(), rng);
+                orders.push_back(std::move(shuffled));
+            }
+            for (const std::vector<Row>& order : orders) {
+                const pr::QuantPlan q = planned(order, context);
+                check(q.pick && q.rows[q.pick->index].listing.quant == want &&
+                          q.by_worth == base.by_worth,
+                      "mixed ctx " + std::to_string(context) +
+                          ": the listing's order does not decide the quant (" + want + ")");
             }
         }
         std::cout << "  mixed 27B: " << traded << " of 3 contexts traded among measured rows\n";
