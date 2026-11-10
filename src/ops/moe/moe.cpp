@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <atomic>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <optional>
@@ -1225,26 +1226,27 @@ std::string board_label(const Board& b) {
            "sm";
 }
 
-// What the active route table's MoE band rests on: measured here where the table is keyed by one
-// of this device's own classes and lent none of its MoE layers, else carried (from the class it
-// names, or from the tables that lent layers: which layer was lent is not exposed per MoE entry
-// yet, nor the table's board distance; the dense table's are, #614).
-Evidence table_evidence() {
+// What the table entry of this layer rests on. The provenance travels with the entry
+// (table_origin): an entry the loaded table lent from another (fill_from) is Borrowed from that
+// table's class at its distance, whichever table it sits in; an entry of the table itself is
+// Measured where the table is keyed by one of this device's classes, else Carried from the
+// table's class at its distance.
+Evidence table_evidence(const MoeRouteKey& key) {
     Evidence e;
-    e.ranker                           = Evidence::Ranker::None;
-    e.source                           = "route-table";
-    const ops::RouteTableStatus status = ops::route_table_status();
-    bool own                           = status.gpu_class == ops::route_gpu_class();
-    try {
-        const auto chain = device_class().class_chain();
-        own = own || std::find(chain.begin(), chain.end(), status.gpu_class) != chain.end();
-    } catch (const std::exception&) {}
-    const bool lent = status.borrowed_moe_layers != 0;
-    e.kind          = own && !lent ? Evidence::Kind::Measured : Evidence::Kind::Carried;
-    if (!own) {
-        e.donor = status.gpu_class;
-    } else if (lent) {
-        e.donor = status.borrowed_from;
+    e.ranker          = Evidence::Ranker::None;
+    e.source          = "route-table";
+    const auto origin = table_origin(key);
+    if (!origin) { return e; }
+    if (!origin->lender.empty()) {
+        e.kind     = Evidence::Kind::Borrowed;
+        e.donor    = origin->lender;
+        e.distance = std::isfinite(origin->lender_distance) ? origin->lender_distance : 0;
+    } else if (origin->own) {
+        e.kind = Evidence::Kind::Measured;
+    } else {
+        e.kind     = Evidence::Kind::Carried;
+        e.donor    = origin->table_class;
+        e.distance = std::isfinite(origin->table_distance) ? origin->table_distance : 0;
     }
     return e;
 }
@@ -1266,14 +1268,36 @@ std::optional<MoeAnswer> invariant_authority(const MoeCall& c) {
                      by_rule("invariant-profile")};
 }
 
+// The evidence of the class's A8 route: the measured board whose route this device takes, else
+// the fallback route (a literal of eight measured cards, no donor).
+Evidence a8_route_evidence() {
+    Evidence e = by_rule("decode");
+    if (const ClassA8Route* entry = a8_class_entry()) {
+        e.ranker   = Evidence::Ranker::None;
+        e.distance = board_distance(board_of(device_class()), entry->board);
+        e.kind     = e.distance == 0 ? Evidence::Kind::Measured : Evidence::Kind::Carried;
+        e.donor    = board_label(entry->board);
+    } else {
+        e.donor = "fallback-a8-route";
+    }
+    return e;
+}
+
 // A route-table band (measured and published), unless the grouped W4A8 prefill takes the call.
 std::optional<MoeAnswer> table_authority(const MoeCall& c) {
-    const auto tuned = c.w4a8_prefill()
-                           ? std::nullopt
-                           : table_plan(route_key(c.weights, c.config), c.tokens, c.prefill);
+    const MoeRouteKey key = route_key(c.weights, c.config);
+    const auto tuned      = c.w4a8_prefill() ? std::nullopt : table_plan(key, c.tokens, c.prefill);
     if (!tuned || (c.prefill_band() && !plan_is_token_invariant(*tuned))) { return std::nullopt; }
     const auto answer = [&](MoePlan plan, MoeAuthority label) {
-        return MoeAnswer{std::move(plan), label, c.want_evidence ? table_evidence() : Evidence{}};
+        if (!c.want_evidence) { return MoeAnswer{std::move(plan), label, Evidence{}}; }
+        Evidence e = table_evidence(key);
+        // The class's A8 route changed the band: the schedule it put on top rests on that route's
+        // provenance, which the table's does not tell.
+        if (label == MoeAuthority::TableClassA8) {
+            const Evidence a8 = a8_route_evidence();
+            e.overlay         = Evidence::Overlay{a8.kind, a8.donor, a8.distance};
+        }
+        return MoeAnswer{std::move(plan), label, std::move(e)};
     };
     if (const MoePlan wide = c.speed_w4a8(*tuned); wide.w4a8()) {
         return answer(wide, MoeAuthority::TableW4a8);
@@ -1321,21 +1345,6 @@ std::optional<MoeAnswer> speed_w4a8_authority(const MoeCall& c) {
     const MoePlan wide = c.speed_w4a8(c.p);
     if (!wide.w4a8()) { return std::nullopt; }
     return MoeAnswer{wide, MoeAuthority::SpeedW4a8, by_rule("speed-w4a8")};
-}
-
-// The evidence of the class's A8 route: the measured board whose route this device takes, else
-// the fallback route (a literal of eight measured cards, no donor).
-Evidence a8_route_evidence() {
-    Evidence e = by_rule("decode");
-    if (const ClassA8Route* entry = a8_class_entry()) {
-        e.ranker   = Evidence::Ranker::None;
-        e.distance = board_distance(board_of(device_class()), entry->board);
-        e.kind     = e.distance == 0 ? Evidence::Kind::Measured : Evidence::Kind::Carried;
-        e.donor    = board_label(entry->board);
-    } else {
-        e.donor = "fallback-a8-route";
-    }
-    return e;
 }
 
 // Decode widths: the streaming schedules by K, and the class's default A8 route on top (the

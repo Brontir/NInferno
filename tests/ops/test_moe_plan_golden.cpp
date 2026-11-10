@@ -169,26 +169,39 @@ std::string_view source_of(moe::MoeAuthority a) {
 }
 
 // Whether an answer's evidence is what its authority gives: the source names the authority; a
-// table's is measured here (no donor) or carried (a donor class); the tuner's is measured; the
-// decode R8 route's names the measured board it was taken from (measured at distance 0, else
-// carried) or, with none near, the fallback literal; every other rule is a ranker's, no donor.
+// table's is measured here (no donor), carried (the donor is the table's class) or borrowed (the
+// donor is the table class that lent the entry); the plan of the class's A8 route over a table
+// band also names that route's provenance (overlay): a measured board, measured at distance 0,
+// else carried, or the fallback literal; the tuner's is measured; the decode R8 route's is the
+// same board or the fallback literal; every other rule is a ranker's, no donor.
+bool a8_provenance_fits(moe::Evidence::Kind kind, const std::string& donor, double distance) {
+    using K                = moe::Evidence::Kind;
+    const bool board_donor = donor == "rtx4090" || donor == "rtx5090" || donor == "rtx5080";
+    if (kind == K::Ranker) return donor == "fallback-a8-route";
+    return board_donor && kind == (distance == 0 ? K::Measured : K::Carried);
+}
+
 bool evidence_fits(const moe::MoePlanQuery& q) {
     using K       = moe::Evidence::Kind;
     const auto& e = q.evidence;
     if (e.source != source_of(q.authority)) return false;
-    const bool board_donor = e.donor == "rtx4090" || e.donor == "rtx5090" || e.donor == "rtx5080";
+    const bool overlaid = q.authority == moe::MoeAuthority::TableClassA8;
+    if (e.overlay.has_value() != overlaid) return false;
     switch (q.authority) {
     case moe::MoeAuthority::Tuner:
         return e.kind == K::Measured && e.donor.empty();
+    case moe::MoeAuthority::TableClassA8:
+        if (!a8_provenance_fits(e.overlay->kind, e.overlay->donor, e.overlay->distance)) {
+            return false;
+        }
+        [[fallthrough]];
     case moe::MoeAuthority::TableAsMeasured:
     case moe::MoeAuthority::TableW4a8:
-    case moe::MoeAuthority::TableClassA8:
     case moe::MoeAuthority::TableR8Refused:
         return (e.kind == K::Measured && e.donor.empty()) ||
-               (e.kind == K::Carried && !e.donor.empty());
+               ((e.kind == K::Carried || e.kind == K::Borrowed) && !e.donor.empty());
     case moe::MoeAuthority::DecodeR8:
-        if (e.kind == K::Ranker) return e.donor == "fallback-a8-route";
-        return board_donor && (e.kind == (e.distance == 0 ? K::Measured : K::Carried));
+        return a8_provenance_fits(e.kind, e.donor, e.distance);
     default:
         return e.kind == K::Ranker && e.donor.empty();
     }

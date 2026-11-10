@@ -388,6 +388,21 @@ struct MoeRouteEntry {
     MoeRouteKey key;
     std::vector<MoeRouteBand> bands;
     std::optional<MoePlan> prefill;
+    // Provenance of the entry: the table class that lent it to the table it sits in (empty: the
+    // table's own) and that table's distance (table_distance) when it was lent.
+    std::string lender;
+    double lender_distance = 0;
+};
+
+// Where the route-table entry of a layer key comes from (table_origin): the active table's class
+// and its distance from this device, own (keyed by a class of the device's chain), and, for an
+// entry lent by another table (fill_from), that table's class and distance.
+struct MoeTableOrigin {
+    std::string table_class;
+    double table_distance = 0;
+    bool own              = false;
+    std::string lender;
+    double lender_distance = 0;
 };
 // The load-time tuner (moe_tune.cpp): decode widths it covers, its plan for the layer at T
 // (nullopt: not tuned, or the default stays), and select_plan without it (the route table, else
@@ -431,6 +446,17 @@ struct Evidence {
     std::string_view source;      // the authority's name (authority_order())
     std::string donor;            // the board or table class a Carried answer was measured on
     double distance = 0;          // board_distance to the donor (0: this board)
+
+    // An overlay on the answer's base: the route-table band that the class's A8 route changed
+    // names the A8 route's provenance here (kind, donor, distance), while the fields above stay
+    // the band's.
+    struct Overlay {
+        Kind kind = Kind::Ranker;
+        std::string donor;
+        double distance = 0;
+    };
+
+    std::optional<Overlay> overlay;
 };
 
 [[nodiscard]] const char* evidence_kind_name(Evidence::Kind kind);
@@ -455,6 +481,8 @@ void clear_tuned_plans();
 [[nodiscard]] std::optional<MoePlan> table_plan(const MoeRouteKey& key, std::int32_t tokens,
                                                 bool prefill);
 [[nodiscard]] MoeRouteKey route_key(const MoeWeights& weights, const MoeConfig& config);
+// The provenance of the active table's entry for `key` (nullopt: none).
+[[nodiscard]] std::optional<MoeTableOrigin> table_origin(const MoeRouteKey& key);
 
 // One grouped-GEMM launch of `stage` on a compiled schedule over `grid`; `frag`: the weight is a
 // ggml_frag_v1 bank (core/ggml_frag.h), read by the format's fragment-order decoder.

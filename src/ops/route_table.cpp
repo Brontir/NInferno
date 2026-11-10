@@ -463,10 +463,12 @@ void fill_from(Table& table, const std::vector<std::shared_ptr<Table>>& lenders)
         }
         added += lent;
         for (auto& [key, entry] : other->moe) {
-            if (table.moe.emplace(key, std::move(entry)).second) {
-                ++lent;
-                ++layers;
-            }
+            if (table.moe.count(key) != 0) continue;
+            entry.lender          = other->status.gpu_class;
+            entry.lender_distance = table_distance(*other);
+            table.moe.emplace(key, std::move(entry));
+            ++lent;
+            ++layers;
         }
         if (lent == 0) continue;
         from += (from.empty() ? "" : ", ") + other->status.gpu_class + " " + std::to_string(lent);
@@ -805,6 +807,24 @@ std::optional<MoePlan> table_plan(const MoeRouteKey& key, std::int32_t tokens, b
         if (tokens >= band.t_min && tokens <= band.t_max) return band.plan;
     }
     return std::nullopt;
+}
+
+std::optional<MoeTableOrigin> table_origin(const MoeRouteKey& key) {
+    const auto table = active_table(here());
+    if (!table) return std::nullopt;
+    const auto it = table->moe.find(moe_key_of(key));
+    if (it == table->moe.end()) return std::nullopt;
+    MoeTableOrigin o;
+    o.table_class     = table->status.gpu_class;
+    o.table_distance  = table_distance(*table);
+    o.lender          = it->second.lender;
+    o.lender_distance = it->second.lender_distance;
+    try {
+        const auto chain = device_class().class_chain();
+        o.own            = o.table_class == route_gpu_class() ||
+                std::find(chain.begin(), chain.end(), o.table_class) != chain.end();
+    } catch (const std::exception&) {}
+    return o;
 }
 
 } // namespace moe
