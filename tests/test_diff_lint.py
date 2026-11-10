@@ -727,7 +727,8 @@ class MaskAndLiteralFixes(unittest.TestCase):
 
     def test_other_spellings_of_a_literal_zero_or_one(self):
         # `(0)`, `00`, `0L`, `0x0`, `0'0` are a zero the compiler drops; `(1)`, `1u`, `0x1` are a one.
-        for zero in ("(0)", "00", "0L", "0ull", "0x0", "0b0", "0'0", "((0))", "0 /* off */"):
+        for zero in ("(0)", "00", "0L", "0ull", "0x0", "0b0", "0'0", "((0))", "0 /* off */",
+                     "/* disabled */ 0", "(0 /* why */)", "( /* a */ 0 /* b */ )"):
             with self.subTest(zero=zero):
                 self.assertEqual(lits("t.cpp", f"#if {zero}\nit's\n#endif\nint b;\n"), [])
                 self.assertEqual(lits("t.cpp", f"#if X\n#elif {zero}\nit's\n#endif\n"), [])

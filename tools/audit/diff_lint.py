@@ -603,6 +603,7 @@ COND_LITERAL = re.compile(
 def cond_literal(rest):
     """The value of a condition that is one integer literal (any base, digit separators and suffixes
     allowed, inside any number of parentheses, a trailing comment ignored), else None."""
+    rest = re.sub(r"/\*.*?\*/", " ", rest)  # a comment is whitespace to the preprocessor
     rest = re.sub(r"[ \t]*(?://.*|/\*.*)$", "", rest).strip()
     while rest.startswith("(") and rest.endswith(")"):
         rest = rest[1:-1].strip()
