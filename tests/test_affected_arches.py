@@ -806,8 +806,42 @@ class Classify(unittest.TestCase):
                 self.assertTrue(self.run_diff(["src/chat/shared.h"], files)["all"])
         # a `/*` inside a string literal hides no include
         files = {"src/chat/shared.h": "#pragma once\n",
-                 "src/ops/k3.cu": 'const char* k = "/*";\n#include "../chat/shared.h"\nint z;\n'}
+                 "src/ops/k3.cu": 'const char* k = "/*";\n#include "../chat/shared.h"\nint z; /* c */\n'}
         self.assertTrue(self.run_diff(["src/chat/shared.h"], files)["all"])
+        # the fixture needs the later closer: the comment-stripped text alone loses the include
+        stripped = aa.INCLUDE.findall(aa.without_comments(files["src/ops/k3.cu"]))
+        self.assertEqual(stripped, [])
+        self.assertEqual(aa.include_names(files["src/ops/k3.cu"]), [(True, "../chat/shared.h")])
+
+    def test_a_line_spliced_directive_is_an_include(self):
+        # A backslash-newline joins lines before directives are read (translation phase 2).
+        for spelling in ('#include \\\n"../chat/shared.h"\n', '#in\\\nclude "../chat/shared.h"\n',
+                         '#include \\  \n  <../chat/shared.h>\n', '#\\\ninclude "../chat/shared.h"\n'):
+            with self.subTest(spelling=spelling):
+                files = {"src/chat/shared.h": "#pragma once\n", "src/ops/ks.cu": spelling}
+                self.assertTrue(self.run_diff(["src/chat/shared.h"], files)["all"])
+        # a spliced computed include is an arch-dependent include too
+        self.assertTrue(aa.uses_arch("#include \\\nARCH_HEADER\n"))
+        # CRLF line ends (compared on the text, as the tree writer may translate them)
+        self.assertEqual(aa.include_names('#include \\\r\n"x.h"\r\n'), [(True, "x.h")])
+
+    def test_a_quoted_include_found_next_to_the_includer_is_the_only_edge(self):
+        # third_party/jinja/parser.h `#include "utils.h"` means the utils.h beside it, not every
+        # utils.h of the tree (third_party/flash/utils.h uses an arch macro).
+        files = {"src/text/jinja.cpp": '#include "../../third_party/jinja/parser.h"\n',
+                 "third_party/jinja/parser.h": '#include "utils.h"\n',
+                 "third_party/jinja/utils.h": "#pragma once\n",
+                 "third_party/flash/utils.h": "#pragma once\n#ifdef __CUDA_ARCH__\n#endif\n"}
+        res = self.run_diff(["src/text/jinja.cpp"], files)
+        self.assertFalse(res["all"])
+        self.assertTrue(res["host"])
+        # no file beside the includer: the include directories are searched (every same-named file)
+        files = {"src/text/other.cpp": '#include "../../third_party/other/parser.h"\n',
+                 "third_party/other/parser.h": '#include "utils.h"\n',
+                 "third_party/flash/utils.h": "#pragma once\n#ifdef __CUDA_ARCH__\n#endif\n"}
+        res = self.run_diff(["src/text/other.cpp"], files)
+        self.assertTrue(res["all"])
+        self.assertIn("third_party/flash/utils.h", res["reasons"]["src/text/other.cpp"])
         files = {"docs/generated.h": "#pragma once\n",
                  "src/ops/k2.cu": '#include "../../docs/generated.h"\n'}
         res = self.run_diff(["docs/generated.h"], files)
@@ -889,6 +923,25 @@ class Classify(unittest.TestCase):
                                     {"src/ops/sources.cmake": cmake, "src/ops/volta_j.cu": "",
                                      "src/ops/volta_g.cu": ""})
                 self.assertEqual(res["arches"], ALL)
+
+    def test_a_hash_inside_a_quoted_argument_is_no_comment(self):
+        # `#include` inside CONTENT "..." must not cut the line: the rest of the file would join
+        # one unclosed file( statement and hide the guard of the add_library after it.
+        cmake = ('file(GENERATE OUTPUT x.cpp CONTENT "#include <x.h>\\nint (f);")\n'
+                 'if(NINFERNO_BUILD_ARCH STREQUAL "70")\n add_library(v volta_only.cu)\nendif()\n')
+        res = self.run_diff(["src/ops/volta_only.cu"],
+                            {"src/ops/sources.cmake": cmake, "src/ops/volta_only.cu": ""})
+        self.assertEqual(res["arches"], ["sm_70"])
+        # a multi-line quoted argument and a bracket argument keep their `#` and parentheses too
+        for arg in ('"a # b\n( c"', "[[ # ( ]]", "[=[ # ( ]]  ]=]"):
+            with self.subTest(arg=arg):
+                res = self.run_diff(["src/ops/volta_only.cu"],
+                                    {"src/ops/sources.cmake": f"set(T {arg})\n" + cmake.split("\n", 1)[1],
+                                     "src/ops/volta_only.cu": ""})
+                self.assertEqual(res["arches"], ["sm_70"])
+        # a real comment after a closed string is still cut
+        stmts = aa.cmake_statements('set(A "x") # if(Y)\nset(B 1)\n')
+        self.assertEqual([s.strip() for s in stmts], ['set(A "x")', "set(B 1)"])
 
     def test_guarded_header_is_not_a_translation_unit(self):  # N2, N2b
         guarded = 'if(NINFERNO_BUILD_ARCH STREQUAL "70")\n  volta_tiles.h\nendif()\n'

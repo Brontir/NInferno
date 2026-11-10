@@ -143,7 +143,9 @@ DEVICE_API = re.compile(
 TEXT_CODE_EXT = SOURCE_EXT + (".inc", ".def", ".ipp", ".hh", ".hxx", ".in")
 # `#include MACRO`: the file that is included is chosen by a macro (often an arch-derived one).
 COMPUTED_INCLUDE = re.compile(r"^\s*#\s*include\s+[A-Za-z_]", re.M)
-INCLUDE = re.compile(r'^\s*(?:/\*.*?\*/\s*)*#\s*include\s*[<"]([^>"]+)[>"]', re.M)
+INCLUDE = re.compile(r'^\s*(?:/\*.*?\*/\s*)*#\s*include\s*([<"])([^>"]+)[>"]', re.M)
+# A backslash at the end of a line joins it to the next (translation phase 2).
+LINE_SPLICE = re.compile(r"\\[ \t]*\r?\n")
 
 
 def guard_arches(cond):
@@ -304,9 +306,11 @@ class Repo:
     def cmake_files(self):
         return [n for n in self.all_files() if CMAKE_NAME.search(n)]
 
-    def resolve(self, includer, name):
-        """Every tracked file an `#include "name"` or `<name>` in `includer` can mean: the file in
-        the includer's own directory, and every file whose path ends with the name."""
+    def resolve(self, includer, name, quoted=False):
+        """Every tracked file an `#include "name"` or `<name>` in `includer` can mean. A quoted
+        name is looked up in the includer's own directory first and only then in the include
+        directories, so a hit in the includer's directory is the only answer. Otherwise (angle
+        include, or no local hit): every file whose path ends with the name."""
         parts = []
         for part in (PurePosixPath(includer).parent / name).parts:
             if part == "..":
@@ -315,6 +319,8 @@ class Repo:
             elif part != ".":
                 parts.append(part)
         local = "/".join(parts)
+        if quoted and local in self.fileset:
+            return [local]
         tail = [q for q in PurePosixPath(name).parts if q not in ("..", ".")]
         # An angle include does not search the includer's directory first, and an include
         # directory may hold a same-named file: every candidate is an edge (only widens).
@@ -395,8 +401,8 @@ class Repo:
             stack = [path]
             while stack:
                 f = stack.pop()
-                for name in include_names(self.read(f)):
-                    for h in self.resolve(f, name):
+                for quoted, name in include_names(self.read(f)):
+                    for h in self.resolve(f, name, quoted):
                         if h not in seen:
                             seen.add(h)
                             stack.append(h)
@@ -417,8 +423,8 @@ class Repo:
             stack = [f for f in self.files if f.endswith(".cu")]
             while stack:
                 f = stack.pop()
-                for name in include_names(self.read(f)):
-                    for h in self.resolve(f, name):
+                for quoted, name in include_names(self.read(f)):
+                    for h in self.resolve(f, name, quoted):
                         if h not in seen:
                             seen.add(h)
                             stack.append(h)
@@ -426,18 +432,65 @@ class Repo:
         return self.device_headers
 
 
+def cmake_code(text):
+    """(code, shape) of a CMake file, equal length: `code` is the text without comments, `shape`
+    is the same with the inside of every quoted argument and bracket argument blanked (line breaks
+    kept), so a `#` or a parenthesis inside a string is neither a comment nor a bracket. A line
+    comment runs to the line end, a bracket comment (#[[ ... ]], #[=[ ... ]=]) to its closer; a
+    quoted argument may span lines and holds `\\"` escapes."""
+    code, shape = [], []
+    i, n = 0, len(text)
+
+    def keep(chunk, blank):
+        code.append(chunk)
+        shape.append(re.sub(r"[^\n]", " ", chunk) if blank else chunk)
+
+    while i < n:
+        c = text[i]
+        if c == "#":
+            m = re.compile(r"#\[(=*)\[").match(text, i)
+            if m:
+                end = text.find("]" + m.group(1) + "]", m.end())
+                end = n if end < 0 else end + len(m.group(1)) + 2
+            else:
+                end = text.find("\n", i)
+                end = n if end < 0 else end
+            # a comment leaves its line breaks, so line structure stays that of the file
+            gap = "\n" * text.count("\n", i, end)
+            code.append(gap)
+            shape.append(gap)
+            i = end
+        elif c == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            j = min(j + 1, n)
+            keep(text[i:j], True)
+            i = j
+        else:
+            m = re.compile(r"\[(=*)\[").match(text, i) if c == "[" else None
+            if m:
+                end = text.find("]" + m.group(1) + "]", m.end())
+                end = n if end < 0 else end + len(m.group(1)) + 2
+                keep(text[i:end], True)
+                i = end
+            else:
+                keep(c, False)
+                i += 1
+    return "".join(code), "".join(shape)
+
+
 def cmake_statements(text):
     """The commands of a CMake file as one string each, comments removed, a call that spans lines
-    joined (so `if(A` / `OR B)` is one condition)."""
+    joined (so `if(A` / `OR B)` is one condition). A `#` or a parenthesis inside a quoted or
+    bracket argument is part of the argument."""
     out, buf, depth = [], [], 0
-    # bracket comments (#[[ ... ]], #[=[ ... ]=]) hold no commands: an `if()` inside one opens no guard
-    text = re.sub(r"#\[(=*)\[.*?\]\1\]", "", text, flags=re.S)
-    for line in text.splitlines():
-        code = line.split("#")[0]
+    code_text, shape_text = cmake_code(text)
+    for code, shape in zip(code_text.split("\n"), shape_text.split("\n")):
         if not buf and not code.strip():
             continue
         buf.append(code)
-        depth += code.count("(") - code.count(")")
+        depth += shape.count("(") - shape.count(")")
         if depth <= 0:
             out.append(" ".join(buf))
             buf, depth = [], 0
@@ -458,12 +511,22 @@ def include_names(text):
     """The names of the `#include "..."` and `#include <...>` lines of a source: those of the raw
     text and those of the text without comments (a `/*` inside a string literal would hide an
     include from the second alone), so stripping comments only adds edges."""
-    names = INCLUDE.findall(text)
+    text = spliced(text)
+    names = [(q == '"', n) for q, n in INCLUDE.findall(text)]
     seen = set(names)
-    return names + [n for n in INCLUDE.findall(without_comments(text)) if n not in seen]
+    return names + [(q == '"', n) for q, n in INCLUDE.findall(without_comments(text))
+                    if (q == '"', n) not in seen]
+
+
+def spliced(text):
+    """The text with each backslash-newline pair removed, as the preprocessor joins such lines
+    before it reads a directive (`#include \\` + `"x.h"` is one include). Nothing here reports a
+    line number, so the joined lines are not counted again."""
+    return LINE_SPLICE.sub("", text)
 
 
 def uses_arch(text):
+    text = spliced(text)
     return bool(ARCH_MACROS.search(text) or COMPUTED_INCLUDE.search(text)
                 or COMPUTED_INCLUDE.search(without_comments(text)))
 
