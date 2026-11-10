@@ -88,10 +88,10 @@ int main(int argc, char** argv) {
     // code (the .h and .cpp of ops/generic) is a described rule, except the listed non-rules:
     // sizes and limits that no selection compares a call against.
     static const std::set<std::string> kNotRules = {
-        "kMaxSegments",    // the segmented projection's slot count (an array size)
-        "kMaxScratchUses", // scratch lifetime bookkeeping
-        "kBytes",          // a local buffer size of the tuner's L2 flush
-        "kExactMinor",     // a build switch (an "a" / "f" target's minor)
+        "kMaxSegments",       // the segmented projection's slot count (an array size)
+        "kMaxScratchUses",    // scratch lifetime bookkeeping
+        "kBytes",             // a local buffer size of the tuner's L2 flush
+        "kExactMinor",        // a build switch (an "a" / "f" target's minor)
         "kPrefillBandTokens", // the dense tuner's measured grid of prefill widths, not a comparison
     };
     static const std::regex threshold(
