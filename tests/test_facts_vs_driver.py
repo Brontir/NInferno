@@ -213,6 +213,14 @@ class Compare(unittest.TestCase):
         self.assertEqual(s[("table", "sms")], "mismatch")
         self.assertEqual(s[("table", "l2_mib")], "mismatch")
 
+    def test_mig_by_chip_and_segment(self):
+        # GB202 partitions on its professional boards, not on the GeForce 5090; L40 (AD102) and
+        # V100 (GV100) server boards do not partition at all.
+        for pci, want in ((0x2BB1, True), (0x2BB5, True), (0x2B85, False), (0x26B5, False),
+                          (0x1DB4, False), (0x20B7, True), (0x2330, True), (0x2901, True)):
+            row = ROWS[pci]
+            self.assertEqual(facts_compare.mig_capable(row), want, row["name"])
+
     def test_engine_table_reading_against_the_json(self):
         d = device_4090()
         d["engine_table_facts"]["l2_mib"] = 64.0
