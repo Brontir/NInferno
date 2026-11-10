@@ -1,3 +1,9 @@
+// A host-only translation unit by what it is: per_device.h leaves the CUDA runtime out under the
+// macro, whatever target compiles this file.
+#ifndef NINFERNO_HOST_ONLY
+#    define NINFERNO_HOST_ONLY
+#endif
+
 #include "core/per_device.h"
 
 #include <stdexcept>
