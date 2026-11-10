@@ -503,18 +503,18 @@ DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int m
     // empty until a test asks for it.
     d.features.mma_slow = board_mma_slow(machine_facts_of(d), major, minor, d.chip);
     // The architecture's limits (CUDA programming guide, compute capability tables).
-    const int cc           = major * 10 + minor;
-    d.smem_per_block_optin = cc == 75                  ? 64 * 1024
-                             : cc == 80 || cc == 87      ? 163 * 1024
-                             : cc >= 90 && cc < 120      ? 227 * 1024
-                                                         : 99 * 1024;
-    d.smem_per_sm          = cc == 75                  ? 64 * 1024
-                             : cc == 80 || cc == 87      ? 164 * 1024
-                             : cc >= 90 && cc < 120      ? 228 * 1024
-                                                         : 100 * 1024;
-    d.max_threads_per_sm   = cc == 75 ? 1024 : cc == 80 || (cc >= 90 && cc < 120) ? 2048 : 1536;
-    d.max_blocks_per_sm    = cc == 75 ? 16 : cc == 86 ? 16 : cc == 89 ? 24 : 32;
-    d.registers_per_sm     = 64 * 1024;
+    const int cc              = major * 10 + minor;
+    d.smem_per_block_optin    = cc == 75               ? 64 * 1024
+                                : cc == 80 || cc == 87 ? 163 * 1024
+                                : cc >= 90 && cc < 120 ? 227 * 1024
+                                                       : 99 * 1024;
+    d.smem_per_sm             = cc == 75               ? 64 * 1024
+                                : cc == 80 || cc == 87 ? 164 * 1024
+                                : cc >= 90 && cc < 120 ? 228 * 1024
+                                                       : 100 * 1024;
+    d.max_threads_per_sm      = cc == 75 ? 1024 : cc == 80 || (cc >= 90 && cc < 120) ? 2048 : 1536;
+    d.max_blocks_per_sm       = cc == 75 ? 16 : cc == 86 ? 16 : cc == 89 ? 24 : 32;
+    d.registers_per_sm        = 64 * 1024;
     d.persisting_l2_max_bytes = l2_bytes * 3 / 4;
     return d;
 }
