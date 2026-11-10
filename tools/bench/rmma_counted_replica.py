@@ -20,6 +20,19 @@ engine, matched by the registers and spill the sweep recorded), then with the co
                route_cost::kRmmaCountedLaw)
   issue_max    ones_spill with the issue bound beside the bytes-plus-tensor sum
   issue_nofill max(bytes, tensor, issue) + reduce + chain, no fitted fill at all
+  timeline     the per-warp timeline (#613 PR-7b): one K-loop iteration of a warp takes the longest
+               of (a) its scheduler's issue work for the W warps it holds, max over the pipes of
+               W x count x cycles per instruction (ISA facts: INT32, FP32, the tensor pipe per
+               partition), (b) the warp's own dependent chain, its instructions one a clock plus
+               the activation loads inside every 16-K step at the L1 hit latency (none on the
+               latency instances, which prefetch them), the accumulator chains at the MMA latency
+               and the spill reloads at the L1 latency, (c) the next iteration's weights landing,
+               the DRAM latency with the TLB warm at the resident warps (the ring fetches one step
+               ahead); the SM's time is rounds x iterations x that, no shorter than its bytes over
+               the DRAM and L2 rates, plus the K-split reduce. Every number is the kernel's count
+               (#650) or the card's measured ISA fact (src/core/data/isa_facts.json); no fitted
+               step, fill or chain. A board whose architecture has no ISA row prints "no facts"
+               and is not priced by this law.
 
 and reports, per board and T band, predicted / measured (geomean, p5..p95) and the ranking
 regret (the measured time of the law's pick over the measured best, summed per band), plus the
@@ -57,7 +70,24 @@ K = dict(rmma_step_cycles=150.0, rmma_step_k=16.0, rmma_saturating_warps=11.0,
          l1_hit_latency_cycles=32.0)
 ROUTE = re.compile(r"rmma\.m(\d+)\.n(\d+)\.w(\d+)x(\d+)(?:\.c(\d+))?")
 MMA_FLOPS = {"16816": 4096, "1688": 2048, "1684": 1024}
-LAWS = ("today", "ones", "ones_spill", "issue_max", "issue_nofill")
+LAWS = ("today", "ones", "ones_spill", "issue_max", "issue_nofill", "timeline")
+ISA_LEVELS = (1, 2, 4, 8)
+
+
+def isa_of(repo, arch):
+    """The ISA facts row of architecture label `arch` (src/core/data/isa_facts.json), as a flat
+    name -> value dict, or None where no card of it was measured."""
+    path = os.path.join(repo, "src/core/data/isa_facts.json")
+    if not os.path.exists(path):
+        return None
+    row = json.load(open(path))["arches"].get(arch)
+    return {k: v["value"] for k, v in row["facts"].items()} if row else None
+
+
+def isa_warps(resident_warps):
+    """The measured warp count the loaded latencies are read at: the largest of 1, 2, 4, 8 not
+    above the warps resident on the SM."""
+    return max(w for w in ISA_LEVELS if w <= max(1.0, resident_warps))
 
 
 def chip_of(repo, name):
@@ -70,7 +100,7 @@ def chip_of(repo, name):
         max_thr=1024 if cc == 75 else 1536,
         max_cta=16 if cc in (75, 86) else 24 if cc == 89 else 32,
         regs_sm=65536.0, l2=K["l2_gb20x"] if cc == 120 else K["l2_ga10x"],
-        heavy_ok=cc in (86, 120),
+        heavy_ok=cc in (86, 120), isa=isa_of(repo, ARCH[cc]),
         # rmma_counted_terms.h: INT32 2 clocks a warp instruction, FP32 2 on Turing, 1 after
         int_cycles=2.0, fp_cycles=2.0 if cc == 75 else 1.0, schedulers=4.0)
 
@@ -165,6 +195,27 @@ def price(chip, call, inst, sched, law):
                  fp_pipe=wi * inst["fp"] * chip["fp_cycles"] * per_slot)
         t["issue"] = max(wi * inst["total"] * per_slot, t["int_pipe"], t["fp_pipe"])
     heavy_bytes = dram + l2_w + l2_x
+    # The per-warp timeline (the module docstring), in seconds of the busiest SM.
+    t["timeline"] = float("nan")
+    isa = chip.get("isa")
+    if usable and isa:
+        w = isa_warps(warps)
+        ns_to_clk = clk / 1e9
+        sched_warps = max(1.0, warps / chip["schedulers"])
+        steps = inst["k_iter"] / 16.0
+        acc = mt * nt * sets + (nt if inst["mma_ones"] > 0 else 0)
+        l1 = isa[f"l1_latency_w{w}"]
+        t_sched = sched_warps * max(inst["total"], inst["int"] * isa["int32_cycles_per_warp_instruction"],
+                                    inst["fp"] * isa["fp32_cycles_per_warp_instruction"],
+                                    inst["mma"] * isa["mma_cycles_per_partition"])
+        t_chain = (inst["total"] + (0.0 if inst["latency"] else steps * l1)
+                   + inst["mma"] / acc * isa["mma_dependent_latency"] + inst["local"] * l1)
+        t_weight = isa[f"dram_tlbwarm_latency_ns_w{w}"] * ns_to_clk
+        t_it = max(t_sched, t_chain, t_weight)
+        t.update(tl_sched=t_sched, tl_chain=t_chain, tl_weight=t_weight, tl_iter=t_it)
+        compute = rounds * iters * t_it / clk
+        bytes_bw = max(dram, l2_w + l2_x)
+        t["timeline"] = max(compute, bytes_bw) + reduce
     if law == "today":
         total = ((heavy_bytes + spill if heavy else mem) + mma + reduce) / fill + chain
     elif law == "ones":
@@ -175,6 +226,8 @@ def price(chip, call, inst, sched, law):
         total = max((heavy_bytes + t["spill_counted"] if heavy else mem) + t["mma_counted"] + reduce, t["issue"]) / fill + chain
     elif law == "issue_nofill":
         total = max(heavy_bytes + t["spill_counted"] if heavy else mem, t["mma_counted"], t["issue"]) + reduce + chain
+    elif law == "timeline":
+        return t["timeline"], t
     else:
         raise ValueError(law)
     return total * A16_SCALE, t
@@ -227,10 +280,15 @@ def main():
     for spec in a.sweep:
         name, _, directory = spec.partition("=")
         chip = chip_of(a.repo, name)
+        laws = list(a.law)
+        if "timeline" in laws and not chip["isa"]:
+            print(f"\n== {name}: timeline law: no facts (sm_{chip['arch']} has no ISA row); "
+                  "the other laws follow")
+            laws.remove("timeline")
         snap = load_snapshot(a.repo, chip["arch"])
         rows = [r for r in load_rows(directory) if r["T"] >= a.tmin]
         status = collections.Counter()
-        ratio = {l: collections.defaultdict(list) for l in a.law}
+        ratio = {l: collections.defaultdict(list) for l in laws}
         today_vs_model = []
         problems = collections.defaultdict(list)
         issue_binds = 0
@@ -242,7 +300,7 @@ def main():
             call = dict(n=r["n"], k=r["k"], T=r["T"], sets=sets, bpw=BPW[r["fmt"]] * sets,
                         heavy=r["fmt"] in HEAVY_FORMATS and chip["heavy_ok"])
             preds, terms = {}, {}
-            for l in a.law:
+            for l in laws:
                 seconds, terms = price(chip, call, inst, r["sched"], l)
                 preds[l] = seconds * 1e6
                 ratio[l][band(r["T"])].append(preds[l] / r["median"])
@@ -254,7 +312,7 @@ def main():
             if dump:
                 scale = lambda x: terms[x] * (1e6 if x not in ("occ", "warps", "iters", "fill") else 1)
                 dump.writerow([name, r["fmt"], r["epi"], r["n"], r["k"], r["T"], r["route"],
-                               r["median"], r["model"]] + [f"{preds[l]:.3f}" for l in a.law]
+                               r["median"], r["model"]] + [f"{preds.get(l, float('nan')):.3f}" for l in a.law]
                               + [f"{scale(x):.5g}" for x in term_names])
         print(f"\n== {name} (sm_{chip['arch']}, heavy form {'on' if chip['heavy_ok'] else 'off'}): "
               f"{len(rows)} register-MMA rows at T >= {a.tmin}; instances {dict(status)}; "
@@ -265,7 +323,7 @@ def main():
                   f"within 1 %: {sum(1 for x in xs if abs(x - 1) < 0.01) / len(xs):.1%}")
         print(f"  {'law':13s}" + "".join(f"{b + ' pred/meas':>24s}" for b in ("17-32", "33-128", "129+"))
               + "   regret 17-32 33-128 129+")
-        for l in a.law:
+        for l in laws:
             cells, regret = [], []
             for b in ("17-32", "33-128", "129+"):
                 xs = sorted(ratio[l].get(b, []))
