@@ -257,16 +257,8 @@ constexpr const FormatTraits& format_traits(QType q) noexcept {
     return kNoFormatTraits;
 }
 
-// Whether the enum names the value (a compiler prints an unnamed enumerator as a cast): the rows
-// are checked against the enum itself, not against a second hand-written list of it.
-#if defined(__GNUC__) || defined(__clang__)
-template <QType Q>
-constexpr bool named_qtype() noexcept {
-    constexpr std::string_view where = __PRETTY_FUNCTION__;
-    const std::size_t at             = where.find("Q = ");
-    return at != std::string_view::npos && where[at + 4] != '(';
-}
-
+// Rows against the enum's own names (named_qtype, core/format_facts.h): no second list of it.
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(__CUDACC__)
 constexpr int format_rows_of(QType q) noexcept {
     int n = 0;
     for (const FormatTraits& t : kFormatTraits) n += t.q == q ? 1 : 0;

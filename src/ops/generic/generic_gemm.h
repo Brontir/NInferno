@@ -54,45 +54,9 @@ enum class Epilogue : std::uint8_t {
                  // gelu_gate: GELU's tanh form in place of SiLU, GeGLU)
 };
 
-enum class WeightCodec : std::uint8_t {
-    Bf16,
-    Fp8,
-    Nvfp4,
-    Q4,
-    Q5,
-    Q6,
-    Q8,
-    Mxfp4,
-    Fp8RowF32,
-    Fp8B128,
-    U4Zp,
-    GgmlQ4K,
-    GgmlQ5K,
-    GgmlQ6K,
-    GgmlQ3K,
-    GgmlQ2K,
-    GgmlIq4Xs,
-    GgmlIq3Xxs,
-    GgmlIq3S,
-    GgmlQ40,
-    GgmlQ41,
-    GgmlQ50,
-    GgmlQ51,
-    GgmlIq4Nl,
-    GgmlIq2Xxs,
-    GgmlIq2Xs,
-    GgmlIq2S,
-    GgmlIq1S,
-    GgmlIq1M,
-    GgmlTq10,
-    GgmlTq20,
-    GgmlQ10,
-    GgmlQ20,
-    U4ZpG32,
-    U4ZpG64,
-    Q3G128,
-    Q3G64,
-};
+// The codec that reads a format is a format fact (core/format_facts.h); the name stays here for
+// its readers.
+using ninferno::WeightCodec;
 
 // Device-visible arguments of one generic call. Plain data, passed by value.
 struct GemmArgs {
@@ -744,8 +708,15 @@ struct R8Resources {
     KernelResources kernel;
     bool prequantized = false;
 };
-[[nodiscard]] std::optional<R8Resources> r8_resources(int schedule, const Weight& weight,
-                                                      Epilogue epilogue, std::int32_t tokens);
+
+// `rows`: the call's output rows (SwiGLU: the gate's; 0: the weight's own, as rmma_resources).
+// `prequantized`: the variant the call runs (resolve_route's r8_prequantized): true describes the
+// pre-quantized form (nullopt where the call cannot take it), false the in-kernel quantization
+// (nullopt where R8 does not fit the call without a workspace); nullopt takes the variant a
+// call with the workspace its pre-quantized form needs resolves to.
+[[nodiscard]] std::optional<R8Resources>
+r8_resources(int schedule, const Weight& weight, Epilogue epilogue, std::int32_t tokens,
+             std::int32_t rows = 0, std::optional<bool> prequantized = std::nullopt);
 
 // The kernel `route` runs for the call, for every family whose kernel the generic path launches
 // itself: the register MMA and R8 (rmma_resources, r8_resources) and the shared-memory tiles
@@ -754,11 +725,12 @@ struct R8Resources {
 // the call's first prefill slice, GgmlVec on its first kVecMaxColumns tokens: a wider call's last
 // part can run another instantiation of the kernel), each with the workspace the call needs given
 // and its activation quantizer (and ggml's stream-K fixup and the matrix kernel's epilogue kernel)
-// not described. nullopt where resolve_route takes the call off `route`, on Volta's CUTLASS band of a
-// tiled call, and for the scalar route.
-[[nodiscard]] std::optional<KernelResources> route_resources(Route route, const Weight& weight,
-                                                             Epilogue epilogue,
-                                                             std::int32_t tokens);
+// not described. nullopt where resolve_route takes the call off `route`, on Volta's CUTLASS band of
+// a tiled call, and for the scalar route. `rows` and `r8_prequantized` as r8_resources'; `rows` of
+// any family: the call's output rows, where the weight is a fused parent the call reads a slice of.
+[[nodiscard]] std::optional<KernelResources>
+route_resources(Route route, const Weight& weight, Epilogue epilogue, std::int32_t tokens,
+                std::int32_t rows = 0, std::optional<bool> r8_prequantized = std::nullopt);
 
 // The output tile one CTA of `route` computes for a `tokens`-token call (#298), as the cost model
 // prices it (price_routes, a8_candidates read this): output rows (under SwiGLU each reads its gate
@@ -910,6 +882,15 @@ struct BuildManifest {
 
 // Transient storage a route needs for T tokens (W4A4, W4A8: the quantized activation).
 [[nodiscard]] std::size_t route_workspace_bytes(Route route, std::int32_t k, std::int32_t tokens);
+// The workspace the route a call RUNS takes from the call's workspace, the one rule resolve_route
+// checks the free bytes against and the descriptions report: ggml's matrix kernel its planes for
+// one prefill slice (both halves of a SwiGLU pair), its vector kernel those of its first
+// kVecMaxColumns tokens, R8 the pre-quantized planes only where `r8_prequantized` (else it
+// quantizes inside the CTA and takes none), every other family route_workspace_bytes. `rows` is
+// the call's output rows (SwiGLU: the gate's).
+[[nodiscard]] std::size_t executed_workspace_bytes(Route route, bool r8_prequantized,
+                                                   std::int32_t k, std::int32_t rows,
+                                                   Epilogue epilogue, std::int32_t tokens);
 // Family::GgmlMmq's workspace for a call of `plane_rows` weight rows (SwiGlu: gate and up) and T
 // tokens: the q8_1 activation, the FP32 plane and the stream-k fixup bound.
 // Whether ggml's matrix kernel (Family::GgmlMmq) reads the format.
@@ -1143,6 +1124,7 @@ enum class Demotion : std::uint8_t {
     GgmlLayout,    // ggml's kernels: rows off the matrix kernel's multiple, or too many segments
     GgmlWorkspace, // ggml's kernels: no workspace, or less free than their planes take
     Workspace,     // W4A4, W4A8 or I8 given less workspace than their activation planes take
+    VoltaCopy,     // Volta: a CUTLASS-only format's tiled call with no room for a decoded chunk
 };
 [[nodiscard]] std::string_view demotion_name(Demotion demotion) noexcept;
 
