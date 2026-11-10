@@ -122,8 +122,12 @@ std::optional<Route> parse_route(std::string_view s) {
     const auto colon = s.find(':');
     if (colon == std::string_view::npos) return std::nullopt;
     const std::string_view family = s.substr(0, colon);
-    const int index               = std::atoi(std::string(s.substr(colon + 1)).c_str());
-    if (index < 0 || index > 255) return std::nullopt;
+    const std::string digits(s.substr(colon + 1));
+    if (digits.empty() || digits.find_first_not_of("0123456789") != std::string::npos ||
+        digits.size() > 3)
+        return std::nullopt;
+    const int index = std::stoi(digits);
+    if (index > 255) return std::nullopt;
     Family f;
     if (family == "rmma") {
         f = Family::RegisterMma;
@@ -318,6 +322,17 @@ int run(const Options& o) {
                     "chain", "total", "selector", "");
     }
     const auto wants = [&](Route r) { return !one || *o.only == r; };
+    if (one) { // a schedule past the family's count names no route
+        const Family f  = o.only->family;
+        const int count = f == Family::RegisterMma ? generic::rmma_schedule_count()
+                          : f == Family::TiledMma  ? generic::tiled_schedule_count()
+                                                   : generic::staged_schedule_count();
+        if (o.only->schedule >= count) {
+            std::fprintf(stderr, "price: the family has %d schedules; --route names %d\n", count,
+                         static_cast<int>(o.only->schedule));
+            return 2;
+        }
+    }
     for (int i = 0; i < generic::rmma_schedule_count(); ++i) {
         const Route r{Family::RegisterMma, static_cast<std::uint8_t>(i)};
         if (!wants(r)) continue;
@@ -328,14 +343,16 @@ int run(const Options& o) {
         }
         const auto tile = *generic::route_tile(r, o.epilogue, o.t);
         kr::RegisterMmaKernel kernel;
-        kernel.rows                 = tile.out_rows;
-        kernel.cols                 = tile.tokens;
-        kernel.cluster              = tile.k_split;
-        kernel.threads              = 32.0 * s.warps_m * s.warps_k;
-        kernel.warps_k              = s.warps_k;
-        kernel.heavy                = heavy;
-        kernel.registers            = o.registers;
-        kernel.local_bytes          = o.local_bytes;
+        kernel.rows    = tile.out_rows;
+        kernel.cols    = tile.tokens;
+        kernel.cluster = tile.k_split;
+        kernel.threads = 32.0 * s.warps_m * s.warps_k;
+        kernel.warps_k = s.warps_k;
+        kernel.heavy   = heavy;
+        if (heavy) { // the price reads compiled facts only in the heavy form, as price_routes does
+            kernel.registers   = o.registers;
+            kernel.local_bytes = o.local_bytes;
+        }
         const auto t                = kr::price_register_mma(chip, cal, call, kernel);
         const auto sel              = selector_time(priced, r);
         const std::string tile_text = std::to_string(tile.out_rows) + "x" +
@@ -382,7 +399,15 @@ int run(const Options& o) {
             std::printf("%9s %s\n", "", agreement(sel, scaled));
         }
     };
-    if (emulated) return 0;
+    if (emulated) {
+        if (one && o.only->family != Family::RegisterMma) {
+            const std::string family(generic::family_name(o.only->family));
+            std::fprintf(stderr, "%s is not priced on this board (emulated tensor cores)\n",
+                         family.c_str());
+            return 2;
+        }
+        return 0;
+    }
     for (int i = 0; i < generic::tiled_schedule_count(); ++i) {
         const Route r{Family::TiledMma, static_cast<std::uint8_t>(i)};
         if (!wants(r)) continue;
