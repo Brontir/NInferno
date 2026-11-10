@@ -71,7 +71,7 @@ struct Known {
     // The most the waiver covers, as a share of the cases this property checked for the route's
     // family (not an absolute count: adding board rows to the table must not trip it). A recorded
     // baseline, not a derived bound: the share this test measured when the waiver was written,
-    // rounded up to the next half percent.
+    // rounded up to the next tenth of a percent.
     double max_share;
     // The worst price ratio it covers. 0: the SM ratio of the row's own grid step, the largest
     // ceil(1.25 sms) / sms of the rows checked (a derived bound: the class is defined by it).
@@ -102,12 +102,12 @@ constexpr const char* kWaveCause =
     "price_routes charges the busiest SM q = ceil(CTAs/sms) CTAs of bytes at bw/sms and divides "
     "by a warp fill that depends on q (wave quantization of the memory term)";
 constexpr Known kKnown[] = {
-    {"P1 sms x1.25", "rmma within the SM ratio", kWaveCause, 1.0, 0},
-    {"P1 sms x1.25", "rmma beyond the SM ratio", kWaveCause, 1.0, 1.45},
-    {"P1 sms x1.25", "staged within the SM ratio", kWaveCause, 1.0, 0},
-    {"P1 sms x1.25", "w4a8 within the SM ratio", kWaveCause, 1.0, 0},
-    {"P1 sms x1.25", "w4a8 beyond the SM ratio", kWaveCause, 1.0, 1.53},
-    {"P1 sms x1.25", "i8 within the SM ratio", kWaveCause, 1.0, 0},
+    {"P1 sms x1.25", "rmma within the SM ratio", kWaveCause, 0.351, 0},
+    {"P1 sms x1.25", "rmma beyond the SM ratio", kWaveCause, 0.001, 1.45},
+    {"P1 sms x1.25", "staged within the SM ratio", kWaveCause, 0.436, 0},
+    {"P1 sms x1.25", "w4a8 within the SM ratio", kWaveCause, 0.239, 0},
+    {"P1 sms x1.25", "w4a8 beyond the SM ratio", kWaveCause, 0.025, 1.53},
+    {"P1 sms x1.25", "i8 within the SM ratio", kWaveCause, 0.391, 0},
 };
 
 // ---- Findings ----------------------------------------------------------------------------------
