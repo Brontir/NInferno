@@ -43,49 +43,53 @@ command -v patchelf > /dev/null || { echo "package.sh: patchelf is needed (the b
 NVCC=${CUDACXX:-$(command -v nvcc || echo /usr/local/cuda/bin/nvcc)}
 [ -x "$NVCC" ] || { echo "package.sh: nvcc not found (CUDACXX, PATH or /usr/local/cuda/bin)" >&2; exit 1; }
 CUDA=$("$NVCC" --version | sed -n 's/.*release \([0-9.]*\).*/\1/p')
-# The selector's choices on sm_86 and sm_120 follow the registers this nvcc compiles for the register-MMA
-# kernels (#556: deterministic per binary, the release's toolchain fixes them). The toolkit is pinned
-# to the patch level (nvcc's V13.4.92) in tests/ops/linear/selector_golden/facts_index.txt, which
-# also holds the facts digest of every facts-priced golden board for it.
-GOLDEN=$ROOT/tests/ops/linear/selector_golden
-NVCC_V=$("$NVCC" --version | sed -n 's/.*V\([0-9][0-9.]*\).*/\1/p' | head -n1)
-PINNED=$(sed -n 's/^release \([0-9.]*\)$/\1/p' "$GOLDEN/facts_index.txt")
-[ -n "$PINNED" ] || { echo "package.sh: $GOLDEN/facts_index.txt names no release" >&2; exit 1; }
-[ "$NVCC_V" = "$PINNED" ] || { echo "package.sh: nvcc $NVCC_V, the release is pinned to $PINNED (selector goldens, #556)" >&2; exit 1; }
-for board in $(awk '$1 ~ /^(base|full)\// {print $1}' "$GOLDEN/facts_index.txt" | sort -u); do
-  file=$(awk -v b="$board" -v v="$PINNED" '$1 == b && $4 == v {print $3}' "$GOLDEN/facts_index.txt")
-  [ -n "$file" ] && [ -f "$GOLDEN/${board%%/*}/${board#*/}.$file.txt" ] || {
-    echo "package.sh: no selector golden entry for $board under the pinned nvcc $PINNED" >&2; exit 1; }
+# The selector's choices follow the registers the release's nvcc compiled for the register-MMA
+# kernels, committed per architecture as kernel-facts snapshots (src/ops/generic/data/kernel_facts/,
+# #612; #556): the price reads the snapshot, so the toolkit is pinned to the patch level the
+# snapshots record (nvcc's V13.4.92), and each engine built here must equal its snapshot.
+FACTS=$ROOT/src/ops/generic/data/kernel_facts
+nvcc_version() { "$1" --version | sed -n 's/.*V\([0-9][0-9.]*\).*/\1/p' | head -n1; }
+NVCC_V=$(nvcc_version "$NVCC")
+PINNED=$(sed -n 's/^nvcc \(.*\)$/\1/p' "$FACTS/sm_120a.txt")
+[ -n "$PINNED" ] || { echo "package.sh: $FACTS/sm_120a.txt names no nvcc" >&2; exit 1; }
+[ "$NVCC_V" = "$PINNED" ] || { echo "package.sh: nvcc $NVCC_V, the release is pinned to $PINNED (kernel-facts snapshots, #612)" >&2; exit 1; }
+for arch in $ARCHS; do
+  [ -f "$FACTS/sm_$arch.txt" ] || { echo "package.sh: no kernel-facts snapshot $FACTS/sm_$arch.txt" >&2; exit 1; }
+  want=$PINNED
+  if [ "$arch" = 70 ]; then
+    want=
+    if [ -n "$CUDA70" ]; then want=$(nvcc_version "$CUDA70/bin/nvcc"); fi
+  fi
+  have=$(sed -n 's/^nvcc \(.*\)$/\1/p' "$FACTS/sm_$arch.txt")
+  [ -z "$want" ] || [ "$have" = "$want" ] || { echo "package.sh: $FACTS/sm_$arch.txt was made with nvcc $have, this release builds sm_$arch with $want" >&2; exit 1; }
 done
 
-# The facts of the kernels this tree compiled, from its own engine on a GPU of that generation
-# (`ninferno-serve selector-facts`, the probe the selector goldens are keyed by), against the
-# release entries of facts_index.txt: a flag, a source or a compiler build that changed the
-# kernels is caught here, not by the toolkit's name. No GPU that runs them (exit 2): the release
-# stops, unless NINFERNO_SKIP_FACTS_CHECK=1 (then say so in the release notes); any other failure
-# stops it always.
+# The kernels an engine compiled against its snapshot: the linked binary read with cuobjdump
+# (tools/kernel_facts/kernel_facts.py check: no GPU), and, where a GPU of the generation is on
+# this machine, the running kernels' attributes against it too (`ninferno-serve selector-facts`,
+# the probe the selector goldens are priced by; exit 2 without such a GPU: the release goes on,
+# the first check having passed). A flag, a source or a compiler build that changed the kernels is
+# caught here, not by the toolkit's name.
+check_kernel_facts() {
+  local arch=$1 bin=$2 nvcc_bin=$3
+  check_kernel_facts_as "$arch" "$bin" "$(nvcc_version "$nvcc_bin")" "$(dirname "$nvcc_bin")"
+}
+# The same with the compiler named: a resumed Volta engine was built by CUDA 12.8 (the only
+# compiler the build path takes for it), and any toolkit's cuobjdump reads its sm_70 binary.
+check_kernel_facts_as() {
+  local arch=$1 bin=$2 version=$3 cuda_bin=$4
+  python3 -B "$ROOT/tools/kernel_facts/kernel_facts.py" check --binary "$bin" --expected "$FACTS/sm_$arch.txt" \
+    --nvcc "$version" --cuda-bin "$cuda_bin" \
+    || { echo "package.sh: the sm_$arch kernels differ from their snapshot (kernel-facts snapshots, #612)" >&2; exit 1; }
+}
 check_selector_facts() {
-  local arch=$1 bin=$2 kind out status board boards want got
-  if [ "$arch" = 86 ]; then kind=base; else kind=full; fi
+  local arch=$1 bin=$2 out status
   out=$("$bin" selector-facts) && status=0 || status=$?
-  if [ "$status" = 2 ] && [ "${NINFERNO_SKIP_FACTS_CHECK:-0}" = 1 ]; then
-    echo "package.sh: WARNING: the selector facts of sm_$arch were not checked (NINFERNO_SKIP_FACTS_CHECK=1)" >&2
+  if [ "$status" = 2 ]; then
+    echo "package.sh: 'ninferno-serve selector-facts' found no GPU that runs the sm_$arch kernels on this machine; the live check was not run" >&2
     return 0
   fi
-  if [ "$status" = 2 ]; then
-    echo "package.sh: 'ninferno-serve selector-facts' found no GPU that runs the sm_$arch kernels on this machine" >&2
-    exit 1
-  fi
-  [ "$status" = 0 ] || { echo "package.sh: 'ninferno-serve selector-facts' failed for sm_$arch (exit $status)" >&2; exit 1; }
-  boards=$(awk -v s="$kind" '$1 ~ "^" s "/" {print $1}' "$GOLDEN/facts_index.txt" | sort -u)
-  [ -n "$boards" ] || { echo "package.sh: facts_index.txt has no $kind/ entries to check sm_$arch against" >&2; exit 1; }
-  for board in $boards; do
-    want=$(awk -v b="$board" -v v="$PINNED" '$1 == b && $4 == v {print $2}' "$GOLDEN/facts_index.txt")
-    got=$(awk -v n="${board#*/}" '$1 == n {print $2}' <<< "$out")
-    [ -n "$want" ] && [ "$want" = "$got" ] || {
-      echo "package.sh: sm_$arch kernels give facts '${got:-none}' for ${board#*/}, the release entry is '${want:-none}' (selector goldens, #556)" >&2
-      exit 1; }
-  done
+  [ "$status" = 0 ] || { echo "$out" >&2; echo "package.sh: 'ninferno-serve selector-facts' failed for sm_$arch (exit $status)" >&2; exit 1; }
 }
 
 first=""
@@ -98,6 +102,13 @@ for arch in $ARCHS; do
   if [ "${NINFERNO_PACKAGE_RESUME:-0}" = 1 ] && [ -x "$STAGE/bin/ninferno-serve-sm$arch" ] && [ -f "$STAGE/bin/ninferno-serve.dispatch" ]; then
     echo "package.sh: sm_$arch already packed (resume)"
     # Its facts again: the tree, a flag or the index may have changed since it was staged.
+    if [ "$arch" = 70 ] && [ -z "$CUDA70" ]; then
+      check_kernel_facts_as 70 "$STAGE/bin/ninferno-serve-sm70" \
+        "$(sed -n 's/^nvcc \(.*\)$/\1/p' "$FACTS/sm_70.txt")" "$(dirname "$NVCC")"
+    else
+      arch_nvcc=$NVCC; [ "$arch" = 70 ] && arch_nvcc=$CUDA70/bin/nvcc
+      check_kernel_facts "$arch" "$STAGE/bin/ninferno-serve-sm$arch" "$arch_nvcc"
+    fi
     if [ "$arch" = 86 ] || [ "$arch" = 120a ]; then check_selector_facts "$arch" "$STAGE/bin/ninferno-serve-sm$arch"; fi
     first=${first:-$STAGE}
     engines+="${engines:+, }{\"tag\": \"$arch\", \"arch\": ${arch//[!0-9]/}, \"specific\": $specific, \"ptx\": $ptx}"
@@ -134,6 +145,7 @@ for arch in $ARCHS; do
     cmake --install "$build" --prefix "$STAGE" --strip
     install -m 0755 -s "$build/apps/ninferno-dispatch" "$STAGE/bin/ninferno-serve.dispatch"
   fi
+  check_kernel_facts "$arch" "$build/apps/ninferno-serve" "${extra[0]#-DCMAKE_CUDA_COMPILER=}"
   if [ "$arch" = 86 ] || [ "$arch" = 120a ]; then check_selector_facts "$arch" "$build/apps/ninferno-serve"; fi
   install -m 0755 -s "$build/apps/ninferno-serve" "$STAGE/bin/ninferno-serve-sm$arch"
   [ "${NINFERNO_PACKAGE_CLEAN:-0}" = 1 ] && rm -rf "$build"

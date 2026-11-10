@@ -366,6 +366,31 @@ struct Reference {
                                                      std::uint32_t chunk, bool* transferred = nullptr);
 
 [[nodiscard]] std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates = {});
+
+// What an MoE's chunk decision rests on: Own (the generation the shares were measured on, priced on
+// its reference card: it decides), CarriedCurve (another generation whose MoE prefill rate rests on
+// two lab cards: its saturated rate times the shares' slope, carried unchanged, estimates the best
+// chunk (Choice::chunk_estimate) but never decides it: another generation's rows estimate, #300),
+// Transferred (neither: the default chunk stands, no estimate), None (not an MoE, or the gate is
+// closed).
+enum class ChunkBasis : std::uint8_t { None, Own, CarriedCurve, Transferred };
+
+[[nodiscard]] constexpr std::string_view chunk_basis_name(ChunkBasis basis) noexcept {
+    switch (basis) {
+    case ChunkBasis::None:
+        return "none";
+    case ChunkBasis::Own:
+        return "own";
+    case ChunkBasis::CarriedCurve:
+        return "carried_curve";
+    case ChunkBasis::Transferred:
+        return "transferred";
+    }
+    return "none";
+}
+
+[[nodiscard]] ChunkBasis chunk_basis_of(const ModelFacts& model, const CardFacts& card,
+                                        const Gates& gates = {});
 // Whether the worth decides the KV codec and the activations for `model` on this card: its
 // generation's factors decide and its family's switch terms rest on two cards (accuracy_decides);
 // else the family's defaults stand.
@@ -467,16 +492,30 @@ struct Choice {
     std::uint32_t context = 0;         // the own context per stream the choice settled on
     bool by_worth = false;             // the worth decided the KV codec and activations (else the defaults)
     bool chunk_by_speed = false;       // an MoE's chunk was the fastest (else the default stood)
+    ChunkBasis chunk_basis = ChunkBasis::None; // what the chunk decision rests on
+    // CarriedCurve: the chunk the carried curve predicts fastest on this board (an estimate for an
+    // A/B to verify; the pick stays the default). 0: none.
+    std::uint32_t chunk_estimate = 0;
     // The worth decided the drafter (else the profile's choice stood: no decision constants, or a
     // drafter whose gain no measurement gives).
     bool drafter_by_worth = false;
     // The speed estimate's resolution wherever a reference exists (#301; the chunk axis needs it
-    // where the worth does not decide): the reference card's generation's measured decode error (worth_band), the speed term's uncertainty in worth (-ln seconds) units;
-    // 0 without one. An alternative that loses by no more than the smaller of it and the two's
-    // speed difference is indistinguishable (explain: within_resolution); the point estimate still
-    // decides, deterministically.
+    // where the worth does not decide): the reference card's generation's measured decode error
+    // (worth_band), the speed term's uncertainty in worth (-ln seconds) units; 0 without one. An
+    // alternative that loses by no more than the smaller of it and the two's speed difference is
+    // indistinguishable (explain: within_resolution); the point estimate decides, unless a
+    // candidate that far from the best worth is strictly more accurate
+    // (resolved_within_resolution).
     double resolution = 0;
-    std::string why;                   // one line: what decided it
+    // The resolution moved the pick (#301, DECISIONS 75): among the candidates whose speed is
+    // inside `resolution` of the best worth's (the anchor), the one of strictly lower modelled KLD
+    // took it (resolve_within_resolution). False: the anchor stood. `anchor` indexes the best
+    // worth in `scored`; `anchor_worth` is its worth (the cross-quantization band's top and bound;
+    // a row is admitted by the worth it serves, so one allowance applies, not two).
+    bool resolved_within_resolution = false;
+    std::size_t anchor              = 0;
+    double anchor_worth             = 0;
+    std::string why; // "" when the factors decide, else why the family's defaults stand
 };
 
 // The axes' values the model and the card allow (a family's KV codecs, int8 activations only on
@@ -501,8 +540,21 @@ struct Alternative {
     std::string value;
     const Scored* scored = nullptr;
     std::string why_not;  // "" for the chosen value
-    std::string why_code; // "" (chosen), no_fit, lower_worth, within_resolution, tie_context, tie_order, default, unmeasured, coupled
+    std::string
+        why_code; // "" (chosen), no_fit, lower_worth, within_resolution, outside_resolution,
+                  // tie_context, tie_order, default, unmeasured, coupled
 };
 [[nodiscard]] std::vector<Alternative> explain(const Choice& choice);
+
+// The tie rule inside the speed estimate's resolution (#301, DECISIONS 75, the order of
+// DECISIONS 60's band between quantizations). `eligible` lists indices into `scored` (the
+// candidates that hold the asked context); `anchor` is the one with the best worth among them. A
+// candidate wins only if its modelled KLD is lower than the anchor's by more than kWorthTie and its
+// request time is longer by no more than `resolution` (worth units: ln of the time ratio). Among
+// the winners the lowest KLD, then the lowest index in `scored`; none: the anchor. Context beyond
+// what was asked is headroom (DECISIONS 73) and does not count. A resolution of 0 returns `anchor`.
+[[nodiscard]] std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
+                                                    const std::vector<std::size_t>& eligible,
+                                                    std::size_t anchor, double resolution) noexcept;
 
 } // namespace ninferno::product::choice
