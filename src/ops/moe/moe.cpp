@@ -428,7 +428,7 @@ MoePlan invariant_plan(const Geometry& g, std::int32_t tokens) {
 
 MoePlan plan_for(const Geometry& g, std::int32_t tokens, bool prefill) {
     MoePlan p;
-    const bool wide = (prefill && tokens >= 17) || tokens >= 64;
+    const bool wide = (prefill && tokens >= kMoeBandEdgeTokens) || tokens >= 64;
     if (wide) {
         p.router_schedule = p.gate_up_schedule = p.down_schedule = kPrefillSchedule;
         p.job_columns = kJobColumns;
@@ -610,7 +610,7 @@ bool w4a8_bank_admitted(const MoeWeights& w) {
     return with_w4a8(MoePlan{}, w, true).w4a8();
 }
 
-// Whether a call of T >= 17 takes Volta's grouped HMMA stages (MoePlan::volta_hmma): a build
+// Whether a layer takes Volta's grouped HMMA stages (MoePlan::volta_hmma) from T = 17: a build
 // without mma.sync, both banks of a format with an f16 A fragment (Q4_K in either layout),
 // K a multiple of the format's step, and x rows of whole 4-value groups at 8-byte alignment.
 bool volta_hmma_admitted(const MoeWeights& w, const Geometry& g) {
@@ -626,6 +626,12 @@ bool volta_hmma_admitted(const MoeWeights& w, const Geometry& g) {
     };
     return admits(w.gate_up) && admits(w.down) && g.input % 4 == 0 && g.hidden % 4 == 0 &&
            g.inter % 4 == 0;
+}
+
+// The call-level predicate: the band edge on top of the layer's admission. The workspace bound and
+// the plan check ask volta_hmma_admitted (any width); a call asks this.
+bool volta_hmma_admitted_at(const MoeWeights& w, const Geometry& g, std::int32_t tokens) {
+    return tokens >= kMoeVoltaHmmaMinTokens && volta_hmma_admitted(w, g);
 }
 
 // Whether the heuristic prefill plan takes the grouped W4A8 where the banks admit it: on by
@@ -694,8 +700,9 @@ std::size_t shared_planes_bytes(const MoeWeights& w, std::int32_t min_tokens,
 
 } // namespace
 
-bool moe_volta_hmma_admitted(const MoeWeights& weights, const MoeConfig& config) {
-    return volta_hmma_admitted(weights, validate(weights, config));
+bool moe_volta_hmma_admitted(const MoeWeights& weights, const MoeConfig& config,
+                             std::int32_t tokens) {
+    return volta_hmma_admitted_at(weights, validate(weights, config), tokens);
 }
 
 bool moe_mx8_banks(const MoeWeights& weights) { return mx8_banks(weights); }
@@ -1175,7 +1182,7 @@ struct MoeCall {
     // moe() call, leaves the lookups the evidence needs out.
     bool want_evidence = false;
 
-    [[nodiscard]] bool prefill_band() const { return prefill && tokens >= 17; }
+    [[nodiscard]] bool prefill_band() const { return prefill && tokens >= kMoeBandEdgeTokens; }
 
     // A prefill call of 17 tokens or more that admits the grouped W4A8 takes it, as a dense W4A8
     // call does (generic_gemm.cpp select_route): the tables' prefill plans are A16 schedules,
@@ -1333,9 +1340,7 @@ std::optional<MoeAnswer> table_authority(const MoeCall& c) {
 // Volta from T = 17, under a band of no route table: its own tensor cores (the int8 tier and the
 // register MMA run emulated there).
 std::optional<MoeAnswer> volta_authority(const MoeCall& c) {
-    if (c.tokens < kMoeVoltaHmmaMinTokens || !volta_hmma_admitted(c.weights, c.g)) {
-        return std::nullopt;
-    }
+    if (!volta_hmma_admitted_at(c.weights, c.g, c.tokens)) { return std::nullopt; }
     MoePlan v    = plan_for(c.g, c.tokens, true);
     v.volta_hmma = true;
     return MoeAnswer{v, MoeAuthority::VoltaHmma, by_rule("volta-hmma")};
@@ -1900,8 +1905,8 @@ void moe(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
     // 214 us against the register MMA's 1535 at T = 5). R8 sums a token the same way at every T,
     // so a column's bytes are those of plain decode.
     const std::int32_t r8_tokens = detail::moe::r8_token_limit(w.gate_up);
-    if (!build_features().mma_tensor && t > r8_tokens && t <= 16 && !prefill_routes_active() &&
-        !invariant_routes_active() &&
+    if (!build_features().mma_tensor && t > r8_tokens && t < detail::moe::kMoeBandEdgeTokens &&
+        !prefill_routes_active() && !invariant_routes_active() &&
         detail::moe::select_plan(w, c, r8_tokens, false).gate_up_r8 >= 0) {
         for (std::int32_t begin = 0; begin < t; begin += r8_tokens) {
             const std::int32_t n = std::min(r8_tokens, t - begin);

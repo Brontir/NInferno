@@ -479,10 +479,11 @@ struct MoePlanQuery {
 // select_plan with its reason; pure (no kernel runs, no device memory read).
 [[nodiscard]] MoePlanQuery moe_plan_query(const MoeWeights& weights, const MoeConfig& config,
                                           std::int32_t tokens, bool prefill);
-// Whether the layer's banks and geometry take Volta's grouped HMMA stages (MoePlan::volta_hmma):
-// the predicate select_plan and the workspace bound use, on the build's features. Validates the
-// layer (throws as the Op does).
-[[nodiscard]] bool moe_volta_hmma_admitted(const MoeWeights& weights, const MoeConfig& config);
+// Whether a call of `tokens` takes Volta's grouped HMMA stages (MoePlan::volta_hmma): the band edge
+// (kMoeVoltaHmmaMinTokens), the build's features, both banks and the geometry. The one predicate
+// select_plan and the stage price ask. Validates the layer (throws as the Op does).
+[[nodiscard]] bool moe_volta_hmma_admitted(const MoeWeights& weights, const MoeConfig& config,
+                                           std::int32_t tokens);
 // Whether two plain MXFP4 banks take the block-scaled MMA with MXFP8 activations (route name
 // "w4a8.mx8") where the plan runs the W4A8 tier.
 [[nodiscard]] bool moe_mx8_banks(const MoeWeights& weights);
@@ -544,9 +545,14 @@ inline constexpr int kMoeW4a8BlockM = 64; // slots per CTA (divides kJobColumns)
 // T=17): a prefill chunk of a family that runs its prefill in the speed profile (Gemma 4), a
 // verify of many rows.
 inline constexpr std::int32_t kMoeW4a8SpeedMinTokens = 64;
-// The narrowest call Volta's grouped HMMA stages take (volta_authority); the stage price reads the
-// same figure.
-inline constexpr std::int32_t kMoeVoltaHmmaMinTokens = 17;
+// The decode/prefill band edge: the project-wide width from which a call is in the prefill band
+// (docs/maintainer/environment.md, decisions.md). A CHOSEN value, neither a tile size nor a
+// measured crossover. The prefill profile's wide plan, the prefill W4A8 and Volta's grouped HMMA
+// stages start here.
+inline constexpr std::int32_t kMoeBandEdgeTokens = 17;
+// The narrowest call Volta's grouped HMMA stages take: the band edge. The token condition is part
+// of moe_volta_hmma_admitted, the one predicate both select_plan and the stage price ask.
+inline constexpr std::int32_t kMoeVoltaHmmaMinTokens = kMoeBandEdgeTokens;
 inline constexpr int kMoeW4a8BlockN = 64; // weight tile rows per CTA (32 local rows when gated)
 static_assert(kJobColumns % kMoeW4a8BlockM == 0);
 

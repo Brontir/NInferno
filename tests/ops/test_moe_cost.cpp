@@ -22,9 +22,16 @@
 // ("DRAM-only"), with the number of rows where the roofline (the compute term) binds.
 //
 // Checks on the replica, none of them a fact of a chip or a published number:
-//   - predicted / measured of every replayed row is at most kFloorTolerance (a floor: the price is
-//     the bytes and the unit rates, a lower bound of the call, which the tuner times with the L2
-//     flushed before each sample);
+//   - at T = 1 predicted <= measured, with no tolerance: there the price's weight term is k
+//     experts, which no routing goes below, so the price is a lower bound of the call (bytes at the
+//     board's peak bandwidth, the unit rates). At T > 1 the weight term is the expected coverage
+//     E (1 - (1 - k/E)^T) under uniform routing: an expectation, which a skewed router (fewer
+//     experts) or its spread can put above a measured time, so no bound is asserted on it;
+//   - at every T a strict bound (moe_layer_dram_floor_seconds: k experts' weights of each bank, the
+//     router's weights and x read once; derived at strict_floor_checks) is at most measured, with
+//     no tolerance. The rows come from the bench sweep (evidence_us) and the load-time tuner
+//     (evidence_decode_us); both flush the L2 where the device has room (tune_timer.h), which is
+//     what keeps a weight read from being served by it;
 //   - predicted / measured is at least kRecordedMinRatio of the board: a RECORDED BASELINE of the
 //     current price (the smallest ratio of the run that set it, rounded down), not a derived
 //     figure. It stops the price from collapsing unseen. The distance of the ratio from 1 is the
@@ -148,13 +155,14 @@ void law_checks() {
 
     const moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0};
     moe::MoeStageShape s;
-    s.bank_bytes      = 1e9;
-    s.experts         = 100;
-    s.top_k           = 10;
-    s.rows            = 1000;
-    s.out_rows        = 500;
-    s.cols            = 1000;
-    const auto decode = moe::price_moe_stage(s, moe::MoeStageKernel::RegisterMma, 1, board);
+    s.bank_bytes         = 1e9;
+    s.experts            = 100;
+    s.top_k              = 10;
+    s.rows               = 1000;
+    s.out_rows           = 500;
+    s.cols               = 1000;
+    s.router_quantizes_x = true; // an unpadded x: the router's CTAs wrote the R8 codes
+    const auto decode    = moe::price_moe_stage(s, moe::MoeStageKernel::RegisterMma, 1, board);
     check(decode && decode->dram_seconds > decode->compute_seconds,
           "a one-token stage is bandwidth-bound");
     const double bank_part = 1e9 * 10 / 100; // k of E experts' bytes at T = 1
@@ -191,25 +199,27 @@ void law_checks() {
     const auto down_price = moe::price_moe_stage(down, moe::MoeStageKernel::RegisterMma, 1, board);
     check(down_price && close(down_price->bytes, 1e8 + 10 * 1000 * 2.0 + 10 * 500 * 2.0),
           "a down stage reads one activation row per assignment");
-    // The int8 activation: 36 bytes a 32 values, 40 with a block sum (a format with a min).
+    // The int8 activation as read: 36 bytes a 32 values, 40 with a block sum (a format with a min).
     moe::MoeStageShape k4 = s;
     k4.qtype              = QType::GGML_Q4_K;
     const auto a8_plain   = moe::price_moe_stage(s, moe::MoeStageKernel::W4a8, 1, board);
     const auto a8_min     = moe::price_moe_stage(k4, moe::MoeStageKernel::W4a8, 1, board);
-    // The W4A8 stage first quantizes (reads the BF16 row, writes the codes) and then reads the
-    // codes (36 bytes a 32 values, 40 with a block sum): both passes carry the block sum.
-    check(a8_plain && a8_min && close(a8_min->bytes - a8_plain->bytes, 2 * 1000 * 4.0 / 32.0),
-          "a format with a min adds the block sum to the int8 activation, written and read");
+    // The W4A8 stage first quantizes (reads the BF16 row, writes codes + scale + sum: 40 bytes a
+    // 32-value block whatever the format, over K rounded up to whole blocks: 1000 values are 32
+    // blocks) and then reads the codes (36 bytes a 32 values, 40 with a block sum).
+    const double quantize_bytes = 1000 * 2.0 + 32 * 40.0;
+    check(a8_plain && a8_min && close(a8_min->bytes - a8_plain->bytes, 1000 * 4.0 / 32.0),
+          "a format with a min adds the block sum to the codes the kernel reads, not to the write");
     const double out_bytes = 10 * 500 * 2.0;
-    check(a8_plain && close(a8_plain->bytes,
-                            1e8 + 1000 * (2.0 + 36.0 / 32.0) + 1000 * 36.0 / 32.0 + out_bytes),
-          "W4A8 bytes at T = 1: experts + quantize pass (BF16 in, 36/32 codes out) + codes + "
+    check(a8_plain && close(a8_plain->bytes, 1e8 + quantize_bytes + 1000 * 36.0 / 32.0 + out_bytes),
+          "W4A8 bytes at T = 1: experts + quantize pass (BF16 in, 40-byte blocks out) + codes + "
           "outputs");
-    check(a8_plain && close(a8_plain->quantize_bytes, 1000 * (2.0 + 36.0 / 32.0)),
-          "the quantize pass is read BF16 + written codes, once per x row");
-    check(a8_min && close(a8_min->bytes,
-                          1e8 + 1000 * (2.0 + 40.0 / 32.0) + 1000 * 40.0 / 32.0 + out_bytes),
-          "W4A8 bytes with a min at T = 1: the codes are 40/32 bytes a value");
+    check(a8_plain && close(a8_plain->quantize_bytes, quantize_bytes) && a8_min &&
+              close(a8_min->quantize_bytes, quantize_bytes),
+          "the quantize pass is read BF16 + written blocks, once per x row, the same for every "
+          "format");
+    check(a8_min && close(a8_min->bytes, 1e8 + quantize_bytes + 1000 * 40.0 / 32.0 + out_bytes),
+          "W4A8 bytes with a min at T = 1: the codes are read at 40/32 bytes a value");
     // R8: the gate/up reads the codes the router wrote, the down stage reads the BF16 intermediate.
     const auto r8_gate_up = moe::price_moe_stage(s, moe::MoeStageKernel::R8, 1, board);
     const auto r8_down    = moe::price_moe_stage(down, moe::MoeStageKernel::R8, 1, board);
@@ -217,6 +227,24 @@ void law_checks() {
           "an R8 gate/up reads int8 codes (36/32 bytes a value)");
     check(r8_down && close(r8_down->bytes, 1e8 + 10 * 1000 * 2.0 + out_bytes),
           "an R8 down stage reads the BF16 intermediate, not int8 codes");
+    // A padded gate/up (the router's width 800 under a bank K of 1000): x is not quantized by the
+    // router, an R8 stage reads BF16 x of 800 values; the W4A8 quantize pass walks 800 values
+    // (25 blocks) and the kernel reads the codes over the bank's K.
+    moe::MoeStageShape padded = s;
+    padded.x_cols             = 800;
+    padded.router_quantizes_x = false;
+    const auto r8_padded      = moe::price_moe_stage(padded, moe::MoeStageKernel::R8, 1, board);
+    check(r8_padded && close(r8_padded->bytes, 1e8 + 800 * 2.0 + out_bytes),
+          "an R8 gate/up of a padded x reads BF16 x of the router's width");
+    const auto rmma_padded =
+        moe::price_moe_stage(padded, moe::MoeStageKernel::RegisterMma, 1, board);
+    check(rmma_padded && close(rmma_padded->bytes, 1e8 + 800 * 2.0 + out_bytes),
+          "the register MMA reads BF16 x of the router's width");
+    const auto w4_padded = moe::price_moe_stage(padded, moe::MoeStageKernel::W4a8, 1, board);
+    check(
+        w4_padded && close(w4_padded->quantize_bytes, 800 * 2.0 + 25 * 40.0) &&
+            close(w4_padded->bytes, 1e8 + 800 * 2.0 + 25 * 40.0 + 1000 * 36.0 / 32.0 + out_bytes),
+        "the W4A8 quantize pass walks the router's width, the kernel reads codes over the bank K");
     // Past T = 1 a gate/up stage still reads each token's row of x once (not once in all, not once
     // per assignment): T rows; a down stage one row per assignment.
     const auto two_gate_up = moe::price_moe_stage(s, moe::MoeStageKernel::RegisterMma, 2, board);
@@ -237,6 +265,16 @@ void law_checks() {
               mx8->seconds == mx8->dram_seconds,
           "the block-scaled MXFP8 stage is not priced at the int8 rate");
     check(w4 && w4->compute_priced && w4->compute_note.empty(), "the plain W4A8 stage is priced");
+    // A generation the table has no row of is lent another's rates: not a fact, not priced.
+    moe::MoeBoardFacts lent = board;
+    lent.generation_known   = false;
+    for (const moe::MoeStageKernel kind :
+         {moe::MoeStageKernel::RegisterMma, moe::MoeStageKernel::VoltaHmma,
+          moe::MoeStageKernel::W4a8}) {
+        const auto p = moe::price_moe_stage(s, kind, 4096, lent);
+        check(p && !p->compute_priced && !p->compute_note.empty() && p->seconds == p->dram_seconds,
+              "a lent generation row does not price the compute");
+    }
     moe::MoeBoardFacts emulated = board;
     emulated.bf16_native        = false;
     for (const moe::MoeStageKernel kind :
@@ -301,42 +339,140 @@ void shape_checks() {
           "a bank stored at its logical K is priced at its stored bytes");
 }
 
-// The layer price by hand on the default plan at T = 1: both stages on the register MMA, the
-// router's weights, x and logits, and the separate combine; the gate/up outputs halved for SwiGLU
-// and not for a non-gated expert.
+// The layer price by hand, at several T, on the default plan (both stages on the register MMA), on
+// R8 stages and on a mixed plan: the router's weights, x and logits, the separate combine where the
+// down stage is not R8, the gate/up outputs halved for SwiGLU and not for a non-gated expert. The
+// flags are asserted in both polarities.
+double logical_bytes(const Weight& w) {
+    return static_cast<double>(w.payload_bytes) * static_cast<double>(w.k) /
+           static_cast<double>(std::max<std::int64_t>(w.padded_shape[1], w.k));
+}
+
+// The bytes by hand of one layer call: `gate_up_int8` the gate/up reads the codes of the router's
+// CTAs (R8), `combine` the separate combine is run (the down stage is not R8).
+double layer_bytes_by_hand(const ops::MoeWeights& w, std::int32_t experts, std::int32_t top_k,
+                           std::int32_t tokens, bool relu2, bool gate_up_int8, bool combine) {
+    const double t            = tokens;
+    const double touched      = moe::expected_experts_touched(experts, top_k, tokens);
+    const double gate_up_rows = static_cast<double>(w.gate_up.n) / experts;
+    const double out_rows     = relu2 ? gate_up_rows : gate_up_rows / 2;
+    const double hidden_rows  = static_cast<double>(w.down.n) / experts;
+    const double x_bytes      = gate_up_int8 ? static_cast<double>(w.gate_up.k) * 36.0 / 32.0
+                                             : static_cast<double>(w.router.k) * 2;
+    double bytes              = logical_bytes(w.gate_up) * touched / experts + t * x_bytes +
+                   t * top_k * out_rows * 2 // gate/up: experts, x rows, outputs
+                   + logical_bytes(w.down) * touched / experts +
+                   t * top_k * static_cast<double>(w.down.k) * 2 +
+                   t * top_k * hidden_rows * 2 // down: experts, activation rows, outputs
+                   + static_cast<double>(w.router.payload_bytes) +
+                   t * static_cast<double>(w.router.k) * 2 +
+                   t * static_cast<double>(w.router.n) * 4; // router: weights, x, FP32 logits
+    if (combine) bytes += (t * top_k + t) * hidden_rows * 2;
+    return bytes;
+}
+
 void layer_checks() {
     const DeviceClass scoped_class = generic::board_device_class(board_named("rtx4090"));
     const ScopedDeviceClass scoped(scoped_class);
     const moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0};
-    const auto logical = [](const Weight& w) {
-        return static_cast<double>(w.payload_bytes) * static_cast<double>(w.k) /
-               static_cast<double>(std::max<std::int64_t>(w.padded_shape[1], w.k));
+    moe::MoeBoardFacts tiny_rate    = board; // a unit rate so low that compute binds
+    tiny_rate.bf16_ops_per_clock_sm = 0.001;
+    moe::MoeBoardFacts lent         = board;
+    lent.generation_known           = false;
+    const auto matches              = [](double got, double want) {
+        return std::abs(got - want) <= 1e-9 * want;
     };
     for (const bool relu2 : {false, true}) {
         const std::int32_t experts = 8, top_k = 2, hidden = 2048, inter = 704;
         const auto layer =
             build(QType::Q8_G32_FP16, QType::Q8_G32_FP16, experts, top_k, hidden, inter, relu2);
         const ops::MoeWeights& w = layer->weights;
-        const auto price         = moe::moe_layer_price(w, layer->config, moe::MoePlan{}, 1, board);
-        check(price && price->compute_priced && !price->compute_binds,
-              "a one-token layer on the register MMA is fully priced and bandwidth-bound");
-        if (!price) continue;
-        const double gate_up_rows = static_cast<double>(w.gate_up.n) / experts;
-        const double out_rows     = relu2 ? gate_up_rows : gate_up_rows / 2;
-        const double hidden_rows  = static_cast<double>(w.down.n) / experts;
-        const double expected =
-            logical(w.gate_up) * top_k / experts + static_cast<double>(w.gate_up.k) * 2 +
-            top_k * out_rows * 2 // gate/up: experts, x, outputs
-            + logical(w.down) * top_k / experts + top_k * static_cast<double>(w.down.k) * 2 +
-            top_k * hidden_rows * 2 // down: experts, activation rows, outputs
-            + static_cast<double>(w.router.payload_bytes) + static_cast<double>(w.router.k) * 2 +
-            static_cast<double>(w.router.n) * 4 // router: weights, x, FP32 logits
-            + (top_k + 1) * hidden_rows * 2;    // separate combine: T x k read, T written
-        check(std::abs(price->dram_seconds * board.dram_bytes_per_s - expected) <= 1e-9 * expected,
-              std::string("the layer's bytes by hand (relu2 ") + (relu2 ? "yes" : "no") +
-                  "): " + std::to_string(price->dram_seconds * board.dram_bytes_per_s) + " vs " +
-                  std::to_string(expected));
+        const std::string tag    = std::string(" (relu2 ") + (relu2 ? "yes" : "no") + ")";
+
+        // The default plan: both stages on the register MMA, the combine is separate.
+        for (const std::int32_t tokens : {1, 2, 32}) {
+            const auto price =
+                moe::moe_layer_price(w, layer->config, moe::MoePlan{}, tokens, board);
+            check(price && price->compute_priced && !price->compute_binds &&
+                      price->compute_note.empty(),
+                  "a register MMA layer is fully priced and bandwidth-bound, T = " +
+                      std::to_string(tokens) + tag);
+            if (!price) continue;
+            const double expected =
+                layer_bytes_by_hand(w, experts, top_k, tokens, relu2, false, true);
+            check(matches(price->dram_seconds * board.dram_bytes_per_s, expected),
+                  "the layer's bytes by hand, T = " + std::to_string(tokens) + tag + ": " +
+                      std::to_string(price->dram_seconds * board.dram_bytes_per_s) + " vs " +
+                      std::to_string(expected));
+            check(matches(price->seconds, price->dram_seconds),
+                  "bandwidth-bound: seconds = DRAM seconds, T = " + std::to_string(tokens) + tag);
+        }
+
+        // A rate so low that compute binds: priced, binds, and seconds exceed the DRAM seconds.
+        const auto slow = moe::moe_layer_price(w, layer->config, moe::MoePlan{}, 32, tiny_rate);
+        check(slow && slow->compute_priced && slow->compute_binds &&
+                  slow->seconds > slow->dram_seconds,
+              "a layer whose compute exceeds its DRAM time says so" + tag);
+        // A lent generation row: not priced, with the reason.
+        const auto lent_price = moe::moe_layer_price(w, layer->config, moe::MoePlan{}, 2, lent);
+        check(lent_price && !lent_price->compute_priced && !lent_price->compute_note.empty() &&
+                  !lent_price->compute_binds &&
+                  matches(lent_price->seconds, lent_price->dram_seconds),
+              "a layer on a lent generation row is unpriced, at its DRAM figure" + tag);
+
+        // R8 on both stages: no compute term (flag false, note), the gate/up reads codes, the down
+        // stage the BF16 intermediate, and no separate combine (the R8 down CTAs combine).
+        moe::MoePlan r8;
+        r8.gate_up_r8 = r8.down_r8 = 0;
+        const auto r8_price        = moe::moe_layer_price(w, layer->config, r8, 2, board);
+        check(r8_price && !r8_price->compute_priced && !r8_price->compute_note.empty() &&
+                  !r8_price->compute_binds && matches(r8_price->seconds, r8_price->dram_seconds),
+              "an R8 layer is unpriced: its DRAM figure alone, with a note" + tag);
+        check(r8_price && matches(r8_price->dram_seconds * board.dram_bytes_per_s,
+                                  layer_bytes_by_hand(w, experts, top_k, 2, relu2, true, false)),
+              "an R8 layer's bytes by hand: codes for the gate/up, no separate combine" + tag);
+
+        // Mixed: R8 gate/up and a register MMA down stage (10 of the 75 replayed rows): the combine
+        // is separate, the layer is unpriced because of its R8 stage.
+        moe::MoePlan mixed;
+        mixed.gate_up_r8       = 0;
+        const auto mixed_price = moe::moe_layer_price(w, layer->config, mixed, 4, board);
+        check(mixed_price && !mixed_price->compute_priced && !mixed_price->compute_note.empty() &&
+                  matches(mixed_price->dram_seconds * board.dram_bytes_per_s,
+                          layer_bytes_by_hand(w, experts, top_k, 4, relu2, true, true)),
+              "a mixed layer (R8 gate/up, register MMA down) carries the combine, unpriced" + tag);
     }
+}
+
+// The strict bound by hand. A call of T tokens each picking top-k distinct experts touches at
+// least k experts of each bank (all tokens may pick the same k), so it reads at least k of E
+// experts' weights of the gate/up and of the down bank, the router's weights, and the T rows of x
+// at least once; everything else (a written intermediate, the logits, the activations in between,
+// every expert past k) is left out, since a write into a clean L2 may not reach DRAM and a read of
+// it may be served by it. The bound depends on T only through x.
+void strict_floor_checks() {
+    const DeviceClass scoped_class = generic::board_device_class(board_named("rtx4090"));
+    const ScopedDeviceClass scoped(scoped_class);
+    const moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0};
+    const std::int32_t experts = 8, top_k = 2, hidden = 2048, inter = 704;
+    const auto layer =
+        build(QType::Q8_G32_FP16, QType::Q8_G32_FP16, experts, top_k, hidden, inter, false);
+    const ops::MoeWeights& w = layer->weights;
+    for (const std::int32_t tokens : {1, 2, 32, 512}) {
+        const auto floor = moe::moe_layer_dram_floor_seconds(w, layer->config, tokens, board);
+        const double want =
+            (logical_bytes(w.gate_up) * top_k / experts + logical_bytes(w.down) * top_k / experts +
+             static_cast<double>(w.router.payload_bytes) +
+             static_cast<double>(tokens) * w.router.k * 2) /
+            board.dram_bytes_per_s;
+        check(floor && std::abs(*floor - want) <= 1e-9 * want,
+              "the strict bound by hand, T = " + std::to_string(tokens));
+        const auto price = moe::moe_layer_price(w, layer->config, moe::MoePlan{}, tokens, board);
+        check(floor && price && *floor <= price->dram_seconds,
+              "the strict bound is below the expected-coverage price, T = " +
+                  std::to_string(tokens));
+    }
+    check(!moe::moe_layer_dram_floor_seconds(w, layer->config, 0, board), "no tokens: no bound");
 }
 
 // format_has_min is production's: r8_admits bounds the down stage's quantized activation in shared
@@ -365,18 +501,24 @@ void format_min_binding_checks() {
             ++refused;
             continue;
         }
+        // The formats whose codec keeps a min (Q4_1, Q5_1, Q4_K, Q5_K), as a literal list: neither
+        // the function under test nor the price's own flag.
+        const bool has_min = q == QType::GGML_Q4_1 || q == QType::GGML_Q5_1 ||
+                             q == QType::GGML_Q4_K || q == QType::GGML_Q5_K;
         const bool admitted = moe::r8_admits(layer->weights, layer->weights.down, 1);
-        check(admitted == !moe::moe_format_has_min(q),
+        check(admitted == !has_min, "format " + std::to_string(static_cast<int>(q)) +
+                                        ": r8_admits at K = 40192 is true exactly without a min");
+        check(moe::moe_format_has_min(q) == has_min,
               "format " + std::to_string(static_cast<int>(q)) +
-                  ": r8_admits at K = 40192 agrees with moe_format_has_min");
+                  ": moe_format_has_min is the literal list of the formats with a min");
         ++tested;
-        (moe::moe_format_has_min(q) ? with_min : without_min)++;
+        (has_min ? with_min : without_min)++;
     }
     std::printf("format_has_min binding: %d formats tested (%d with a min, %d without), %d the "
                 "fixture cannot build, %d refused by R8\n",
                 tested, with_min, without_min, not_built, refused);
-    check(with_min >= 1 && without_min >= 1,
-          "the binding test covers a format with a min and one without");
+    check(with_min == 4 && without_min == 12 && not_built == 0 && refused == 0,
+          "the binding test covers the four formats with a min and the twelve without");
 }
 
 // The expert-coverage law has several copies; this one is bound to the runtime's (fixed point,
@@ -500,9 +642,9 @@ void w4a8_admission_checks() {
                 vetoed == 0 ? " (no W4A4 kernels here: the veto itself is not exercised)" : "");
 }
 
-// The thresholds of the header: kFloorTolerance is a floor on the price, kRecordedMinRatio a
-// RECORDED BASELINE per board (see the header), kMinConcordance a chosen margin.
-constexpr double kFloorTolerance = 1.00;
+// The thresholds of the header: the per-board recorded_min_ratio is a RECORDED BASELINE (see the
+// header), kMinConcordance a chosen margin. The upper checks (T = 1, strict bound) have no
+// tolerance.
 constexpr double kMinConcordance = 0.8;
 // The tables carry no activation field; the one non-gated (relu^2) layer is Nemotron's.
 constexpr std::int32_t kRelu2Hidden = 2688;
@@ -512,6 +654,8 @@ struct Row {
     double predicted, measured;
     bool compute_priced; // every stage had its compute term (else a stage stands at its DRAM floor)
     bool compute_binds;  // some stage's compute time exceeded its DRAM time
+    std::int32_t tokens;
+    double strict; // moe_layer_dram_floor_seconds: the bound that holds for any routing
 };
 
 double geomean_ratio(const std::vector<Row>& rows) {
@@ -550,6 +694,8 @@ void replica(const std::filesystem::path& routes_dir) {
         std::size_t expected_rows; // the rows of its table the replica replays, exactly
         // RECORDED BASELINE: the smallest predicted / measured of the run that set it, rounded
         // down (not derived; see the header). The absent terms of moe_cost.h are what it measures.
+        // It guards the lowest row of the board only, and is to be RE-RECORDED when the tables are
+        // re-measured (a re-measurement moves the rows, not the law).
         double recorded_min_ratio;
     };
 
@@ -620,8 +766,14 @@ void replica(const std::filesystem::path& routes_dir) {
                         ++skipped["no price"];
                         continue;
                     }
+                    const auto strict =
+                        moe::moe_layer_dram_floor_seconds(layer->weights, layer->config, t, *facts);
+                    if (!strict) {
+                        ++skipped["no strict bound"];
+                        continue;
+                    }
                     rows.push_back({price->seconds, chosen_us * 1e-6, price->compute_priced,
-                                    price->compute_binds});
+                                    price->compute_binds, t, *strict});
                 }
             }
         }
@@ -676,11 +828,30 @@ void replica(const std::filesystem::path& routes_dir) {
         std::printf("%-10s roofline binds in %zu of %zu rows; all rows: min %.3f max %.3f; "
                     "concordance %.3f; prediction ties %ld\n",
                     source.board, binding, rows.size(), lo, hi, concordance, ties);
-        // The price is a floor: the bytes the kernel reads and the unit rates bound the time from
-        // below (the L2 is flushed before each sample).
-        check(hi <= kFloorTolerance,
-              std::string(source.board) + ": a row's predicted time exceeds its measured time (" +
-                  std::to_string(hi) + " > " + std::to_string(kFloorTolerance) + ")");
+        // T = 1: the price is a lower bound (k experts, whatever the router picks). T > 1: the
+        // strict bound is, the price is only an expectation (the header).
+        double hi_t1 = 0, hi_strict = 0;
+        std::size_t t1_rows = 0;
+        for (const Row& r : rows) {
+            if (r.tokens == 1) {
+                hi_t1 = std::max(hi_t1, r.predicted / r.measured);
+                ++t1_rows;
+            }
+            hi_strict = std::max(hi_strict, r.strict / r.measured);
+        }
+        std::printf("%-10s T = 1 rows: %zu, max predicted / measured %.3f; strict bound / measured "
+                    "max %.3f
+                    ",
+                    source.board,
+                    t1_rows, hi_t1, hi_strict);
+        check(t1_rows >= 1, std::string(source.board) + ": the table has a T = 1 row");
+        check(hi_t1 <= 1.0, std::string(source.board) +
+                                ": a T = 1 row's predicted time exceeds its measured "
+                                "time (" +
+                                std::to_string(hi_t1) + ")");
+        check(hi_strict <= 1.0, std::string(source.board) +
+                                    ": the strict bound exceeds a measured time (" +
+                                    std::to_string(hi_strict) + ")");
         check(lo >= source.recorded_min_ratio,
               std::string(source.board) +
                   ": predicted / measured fell below the recorded baseline (" + std::to_string(lo) +
@@ -699,6 +870,7 @@ int main() {
         law_checks();
         shape_checks();
         layer_checks();
+        strict_floor_checks();
         format_min_binding_checks();
         candidate_checks();
         w4a8_admission_checks();
