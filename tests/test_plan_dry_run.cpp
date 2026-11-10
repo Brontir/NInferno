@@ -26,6 +26,7 @@
 #include <fstream>
 #include <iostream>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -1415,6 +1416,108 @@ void test_rows_at_choice() {
     }
 }
 
+// B1 under `exact` reads no continuous fact (docs/maintainer/deterministic-decisions.md, principle
+// 2; roadmap #620 step 6, property P8). With --activations exact pinned, the clock, the DRAM
+// bandwidth and the L2 of the card's profile key (the facts the configuration choice prices its
+// estimates on) moved to twice, half and none leave the choice's KV codec, ring, recurrent state,
+// activations, chunk and drafter, and the dry run's codecs and selected rung, as they were. Over
+// every plan fixture of this file on five generations, at two contexts and one and four streams.
+// (The summation class is a function of the activation mode and the route set, not an output of
+// the choice or the dry run: it has no field to compare here.)
+std::string b1_signature(const pr::PlanSourceFacts& facts, const pr::DryRunInputs& inputs) {
+    std::ostringstream out;
+    const pr::PlannedSpeculation planned = pr::plan_model(facts, inputs);
+    const rt::DryRunPlan& plan           = planned.plan;
+    out << "planned " << plan.planned << " fits " << plan.fits << " kv "
+        << ninferno::kv_cache_storage_name(plan.kv_cache) << " state "
+        << ninferno::recurrent_state_storage_name(plan.recurrent) << " ladder "
+        << plan.ladder.size();
+    if (const rt::DryRunRung* r = plan.chosen()) {
+        out << " rung " << plan.rung << " ctx " << r->rung.max_context << " pages "
+            << r->rung.kv_pages << " states " << r->rung.cached_states << " chunk "
+            << r->rung.prefill_chunk;
+    }
+    const auto served = pr::choose_at_weights(facts, inputs, inputs.pins);
+    out << " | choice ";
+    if (served && served->choice.chosen) {
+        const auto& c = served->choice.scored[*served->choice.chosen].candidate;
+        out << "kv " << ninferno::kv_cache_storage_name(c.kv) << " ring "
+            << ninferno::kv_cache_storage_name(c.ring) << " state "
+            << ninferno::recurrent_state_storage_name(c.state) << " act "
+            << static_cast<int>(c.activations) << " chunk " << c.chunk << " drafter " << c.drafter;
+    } else {
+        out << "none";
+    }
+    return out.str();
+}
+
+void test_exact_reads_no_continuous_fact() {
+    struct Board {
+        const char* name;
+        std::uint32_t pci;
+        int cc, sms;
+        double vram;
+    };
+    struct Family {
+        const char* name;
+        rt::PlanModelFacts (*make)(std::uint64_t);
+    };
+    int compared = 0;
+    for (const Board& board : {Board{"RTX 5090", 0x2B85, 120, 170, 32}, Board{"RTX 4090", 0x2684, 89, 128, 24},
+                               Board{"RTX 3090", 0x2204, 86, 82, 24}, Board{"RTX 2080 Ti", 0x1E07, 75, 68, 11},
+                               Board{"V100", 0x1DB5, 70, 80, 32}}) {
+        rt::PlanDeviceFacts device = card(board.vram, board.cc);
+        device.pci_device_id       = board.pci;
+        device.sms                 = board.sms;
+        const ninferno::spec::GpuKey stock = pr::gpu_key_of(device);
+        check(stock.sm_clock_khz > 0 && stock.dram_gbps > 0 && stock.l2_bytes > 0,
+              std::string(board.name) + ": the key carries the continuous facts to move");
+        for (const Family& family :
+             {Family{"qwen27b", qwen27b}, Family{"moe35b", moe35b}, Family{"gemma31b", gemma31b},
+              Family{"gptoss20b", gptoss20b}, Family{"nemotron30b", nemotron30b}}) {
+            pr::PlanSourceFacts facts;
+            facts.model = family.make(9 * kGiB);
+            for (const std::uint32_t context : {8192U, 65536U}) {
+                for (const std::uint32_t streams : {1U, 4U}) {
+                    const pr::LaunchAsk launch{.max_context     = context,
+                                               .max_concurrency = streams,
+                                               .spec            = "none",
+                                               .activations     = "exact"};
+                    const pr::LaunchPlanOptions o = pr::launch_options(launch);
+                    pr::DryRunInputs inputs;
+                    inputs.device           = device;
+                    inputs.gpu              = stock;
+                    inputs.options          = o.options;
+                    inputs.ask              = o.ask;
+                    inputs.pins.activations = launch.activations_pinned();
+                    const std::string base  = b1_signature(facts, inputs);
+                    struct Move {
+                        const char* what;
+                        double clock, bandwidth, l2;
+                    };
+                    for (const Move& m :
+                         {Move{"all x2", 2, 2, 2}, Move{"all x0.5", .5, .5, .5},
+                          Move{"clock x2", 2, 1, 1}, Move{"bandwidth x2", 1, 2, 1},
+                          Move{"l2 x2", 1, 1, 2}, Move{"all unknown", 0, 0, 0}}) {
+                        pr::DryRunInputs moved = inputs;
+                        moved.gpu.sm_clock_khz = static_cast<int>(stock.sm_clock_khz * m.clock);
+                        moved.gpu.dram_gbps    = stock.dram_gbps * m.bandwidth;
+                        moved.gpu.l2_bytes     = stock.l2_bytes * m.l2;
+                        ++compared;
+                        const std::string got = b1_signature(facts, moved);
+                        check(got == base, std::string("B1 under exact moves with the continuous facts (") +
+                                               board.name + " " + family.name + " ctx " +
+                                               std::to_string(context) + " x" + std::to_string(streams) +
+                                               ", " + m.what + "): '" + base + "' -> '" + got + "'");
+                    }
+                }
+            }
+        }
+    }
+    std::cout << "B1 under exact: " << compared << " perturbed plans compared
+";
+}
+
 // One price for a quantization whichever facts carry it (product::quant_option_of): a hub row's
 // GGUF header and a start's artifact (its own drafter bundled, its source label in the
 // provenance) give the same bits and decode bytes, the label from either.
@@ -1777,6 +1880,7 @@ int main() {
     test_speculation_order();
     test_properties();
     test_rows_at_choice();
+    test_exact_reads_no_continuous_fact();
     test_quant_option_one_rule();
     test_row_tensor_tables();
     test_cached_quants();
