@@ -43,7 +43,11 @@ static_assert(arch_registry::shared_reserved_per_block(80) == 1024);
 static_assert(arch_registry::shared_reserved_per_block(130) == 1024);
 // The build's own limits are the table's.
 static_assert(ops::kMaxSharedBytesPerBlock ==
-              arch_registry::find(NINFERNO_BUILD_ARCH).smem_per_block_optin);
+              arch_registry::find(NINFERNO_BUILD_ARCH).build_smem_per_block_optin);
+// The build keeps the old limits above sm_90, below the device's.
+static_assert(arch_registry::find(9, 0).build_smem_per_block_optin == 99 * 1024);
+static_assert(arch_registry::find(11, 0).build_smem_per_sm == 100 * 1024);
+static_assert(arch_registry::find(9, 5).smem_per_block_optin == 227 * 1024);
 
 // The old code, verbatim.
 namespace legacy {
@@ -120,38 +124,27 @@ void every_covered_capability_keeps_its_value() {
         const std::string at = "cc " + std::to_string(cc) + ": ";
         const auto& row      = arch_registry::find(cc);
 
-        // arch_limits.h: every capability but sm_71/73/74 (no such chip: the old code gave them
-        // Volta's 96 KiB, the table does not list them) and sm_90..119 (the old code had no
-        // Hopper or datacentre Blackwell row and gave them 99 KiB; no such arch is a build target,
-        // CMakeLists.txt NINFERNO_CUDA_ARCHS; the table now gives their published 227/228 KiB).
-        const bool unbuilt = cc == 71 || cc == 73 || cc == 74 || (cc >= 90 && cc < 120);
-        if (!unbuilt) {
-            expect(ops::shared_bytes_per_block_for_arch(cc) == legacy::arch_block(cc),
-                   at + "arch_limits per block");
-            expect(ops::shared_bytes_per_sm_for_arch(cc) == legacy::arch_sm(cc),
-                   at + "arch_limits per SM");
-        }
+        // arch_limits.h: every capability, sm_71/73/74 and sm_90..119 included (the build keeps the
+        // 99/100 KiB it had for the latter, below the device's 227/228 KiB, until a measured
+        // change).
+        expect(ops::shared_bytes_per_block_for_arch(cc) == legacy::arch_block(cc),
+               at + "arch_limits per block");
+        expect(ops::shared_bytes_per_sm_for_arch(cc) == legacy::arch_sm(cc),
+               at + "arch_limits per SM");
         expect(ops::shared_bytes_reserved_per_block_for_arch(cc) == legacy::arch_reserved(cc),
                at + "arch_limits reserved per block");
 
-        // mmq_columns.h: every capability but the unlisted ones in sm_90..119 (91..99, 101, 102,
-        // 104..109, 111..119: not capabilities NVIDIA has shipped; they get the unlisted row).
-        const bool unlisted_hopper_range = cc >= 90 && cc < 120 && !arch_registry::listed(cc);
-        if (!unlisted_hopper_range) {
-            expect(mmq_columns::shared_per_block(major, minor) == legacy::mmq_block(major, minor),
-                   at + "mmq_columns shared per block");
-        }
-        expect(row.cc == (arch_registry::listed(cc) ? cc : 0), at + "row or the unlisted row");
+        expect(mmq_columns::shared_per_block(major, minor) == legacy::mmq_block(major, minor),
+               at + "mmq_columns shared per block");
+        expect(arch_registry::listed(cc) ? (row.cc <= cc && cc <= row.cc_to) : row.cc == 0,
+               at + "row or the unlisted row");
     }
 }
 
 void the_synthetic_class_keeps_its_value() {
-    // (major, minor): every capability a board or a test builds one for, one the table lists but
-    // no board has (8.7, 7.2, 10.3, 11.0, 12.1) and ones it does not list (8.5, 7.1, 12.5).
-    const int cases[][2] = {{7, 0},  {7, 2},  {7, 5},  {8, 0},  {8, 6},  {8, 7}, {8, 9}, {9, 0},
-                            {10, 0}, {10, 3}, {11, 0}, {12, 0}, {12, 1}, {8, 5}, {7, 1}, {12, 5}};
-    for (const auto& c : cases) {
-        const int major = c[0], minor = c[1];
+    // Every cc 0..129, listed or not.
+    for (int cc = 0; cc < 130; ++cc) {
+        const int major = cc / 10, minor = cc % 10;
         const std::string at =
             "synthetic " + std::to_string(major) + "." + std::to_string(minor) + ": ";
         const DeviceClass d =

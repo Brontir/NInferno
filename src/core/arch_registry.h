@@ -17,9 +17,14 @@ namespace ninferno::arch_registry {
 // One row of the table, in the file's order.
 struct ArchRow {
     int cc;                           // major * 10 + minor; 0 is the row of an unlisted capability
+    int cc_to;                        // the row covers cc..cc_to
     std::size_t smem_per_block_optin; // bytes (cudaDeviceProp::sharedMemPerBlockOptin)
     std::size_t smem_per_sm;          // bytes
-    int smem_reserved_per_block;      // bytes of the SM's shared memory the driver keeps per block
+    // The two limits kernels are compiled against (ops/common/arch_limits.h): the values they had
+    // before this table, below the device's for sm_90..sm_119 until a measured change raises them.
+    std::size_t build_smem_per_block_optin;
+    std::size_t build_smem_per_sm;
+    int smem_reserved_per_block; // bytes of the SM's shared memory the driver keeps per block
     int max_threads_per_sm;
     int max_blocks_per_sm;
     int registers_per_sm;
@@ -32,7 +37,7 @@ inline constexpr ArchRow kRows[] = {
 // The row of a compute capability; the unlisted row (cc 0) when the table has none.
 [[nodiscard]] constexpr const ArchRow& find(int cc) noexcept {
     for (const ArchRow& row : kRows) {
-        if (row.cc == cc && cc != 0) { return row; }
+        if (cc != 0 && row.cc <= cc && cc <= row.cc_to) { return row; }
     }
     return kRows[0];
 }
@@ -44,7 +49,7 @@ inline constexpr ArchRow kRows[] = {
 // Whether the table lists the capability itself (find() would otherwise answer with row 0).
 [[nodiscard]] constexpr bool listed(int cc) noexcept {
     for (const ArchRow& row : kRows) {
-        if (row.cc == cc && cc != 0) { return true; }
+        if (cc != 0 && row.cc <= cc && cc <= row.cc_to) { return true; }
     }
     return false;
 }

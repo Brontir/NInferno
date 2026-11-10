@@ -19,22 +19,25 @@ namespace ninferno::ops {
 // (101376 B opt-in). Most tiles are tuned within 99 KiB; the ones above it (deeper pipelines for a
 // tensor core that outruns its 99 KiB stages) are admitted only where the block holds them. One
 // tree compiles one architecture, so the value holds for host and device code alike. The figures
-// are the rows of the archs table (core/arch_registry.h, generated from core/data/gpu_facts.json).
+// are the build columns of the archs table (core/arch_registry.h, generated from
+// core/data/gpu_facts.json); sm_90 and above keep 99 KiB here, below the device, until a measured
+// change raises them.
 inline constexpr std::size_t shared_bytes_per_block_for_arch(int arch) {
-    return arch_registry::find(arch).smem_per_block_optin;
+    return arch_registry::find(arch).build_smem_per_block_optin;
 }
 #if defined(NINFERNO_BUILD_ARCH)
 inline constexpr std::size_t kMaxSharedBytesPerBlock =
     shared_bytes_per_block_for_arch(NINFERNO_BUILD_ARCH);
 #else
-inline constexpr std::size_t kMaxSharedBytesPerBlock = arch_registry::kRows[0].smem_per_block_optin;
+inline constexpr std::size_t kMaxSharedBytesPerBlock =
+    arch_registry::kRows[0].build_smem_per_block_optin;
 #endif
 
 // The shared memory of one SM, which its resident blocks share (CUDA programming guide, compute
 // capabilities table): Volta 96 KiB, Turing 64 KiB, GA100 and Orin 164 KiB, GA10x Ampere, Ada and
 // consumer Blackwell 100 KiB. From sm_80 the driver reserves 1 KiB of it per resident block.
 inline constexpr std::size_t shared_bytes_per_sm_for_arch(int arch) {
-    return arch_registry::find(arch).smem_per_sm;
+    return arch_registry::find(arch).build_smem_per_sm;
 }
 
 inline constexpr int shared_bytes_reserved_per_block_for_arch(int arch) {
@@ -45,7 +48,7 @@ inline constexpr std::size_t kSharedBytesPerSm = shared_bytes_per_sm_for_arch(NI
 inline constexpr int kSharedBytesReservedPerBlock =
     shared_bytes_reserved_per_block_for_arch(NINFERNO_BUILD_ARCH);
 #else
-inline constexpr std::size_t kSharedBytesPerSm    = arch_registry::kRows[0].smem_per_sm;
+inline constexpr std::size_t kSharedBytesPerSm    = arch_registry::kRows[0].build_smem_per_sm;
 inline constexpr int kSharedBytesReservedPerBlock = arch_registry::kRows[0].smem_reserved_per_block;
 #endif
 
