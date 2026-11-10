@@ -375,6 +375,83 @@ class Cli(unittest.TestCase):
             self.assertIn("invalid probe output", done.stderr, name)
             self.assertIsNone(summary, name)
 
+    def test_each_key_the_comparison_reads_must_be_present_and_typed(self):
+        # (part, key, a bad value or DELETE): a missing key, null, a string or a bool where a
+        # number is read; the CLI must say exit 2, never 0 (a clean audit) or 1 (a mismatch).
+        delete = object()
+        cases = [("raw", "reserved_shared_per_block", None),
+                 ("raw", "reserved_shared_per_block", "1024"), ("raw", "max_threads_per_block", False),
+                 ("queried", "sms", "128"), ("queried", "sms", None), ("queried", "l2_bytes", None),
+                 ("queried", "memory_clock_khz", None), ("queried", "sm_clock_khz", "x"),
+                 ("queried", "global_bytes", None), ("queried", "persisting_l2_max_bytes", None),
+                 ("queried", "name", None), ("queried", "sms", True),
+                 ("queried", "major", float("nan")),
+                 ("engine_table_facts", "memory_bus_bits", None),
+                 ("engine_table_facts", "sku", delete), ("engine_table_facts", "sku", None)]
+        cases += [("engine_occupancy_limits", key, None) for key in facts_compare.OCCUPANCY_LIMITS]
+        for part, keys in facts_compare.NUMBER_KEYS.items():
+            cases += [(part, key, delete) for key in keys]
+        cases.append(("queried", "name", delete))
+        for part, key, bad in cases:
+            d = device_4090()
+            if bad is delete:
+                del d[part][key]
+            else:
+                d[part][key] = bad
+            done, summary = self.run_cli({"devices": [d]})
+            self.assertEqual(done.returncode, 2, f"{part}.{key} = {bad!r}: {done.stdout}")
+            self.assertIn("invalid probe output", done.stderr, f"{part}.{key}")
+            self.assertNotIn("Traceback", done.stderr, f"{part}.{key}")
+            self.assertIsNone(summary, f"{part}.{key}")
+
+    def test_features_and_index_must_be_present(self):
+        def mutate(change):
+            d = device_4090()
+            change(d)
+            return d
+        for name, d in (
+                ("no queried features", mutate(lambda d: d["queried"].pop("features"))),
+                ("no synthetic features", mutate(lambda d: d["synthetic"].pop("features"))),
+                ("synthetic features empty, queried mma_slow set", mutate(
+                    lambda d: (d["synthetic"].update(features={}),
+                               d["queried"]["features"].update(mma_slow=True)))),
+                ("synthetic features without mma_slow",
+                 mutate(lambda d: d["synthetic"]["features"].pop("mma_slow"))),
+                ("queried features without mma_slow",
+                 mutate(lambda d: d["queried"]["features"].pop("mma_slow"))),
+                ("queried features short of a synthetic one",
+                 mutate(lambda d: d["queried"]["features"].pop("pdl"))),
+                ("both features empty", mutate(lambda d: (d["synthetic"].update(features={}),
+                                                          d["queried"].update(features={})))),
+                ("a feature that is not a bool",
+                 mutate(lambda d: d["queried"]["features"].update(pdl=1))),
+                ("index null", mutate(lambda d: d.update(index=None))),
+                ("no index", mutate(lambda d: d.pop("index")))):
+            done, summary = self.run_cli({"devices": [d]})
+            self.assertEqual(done.returncode, 2, name + ": " + done.stdout)
+            self.assertIn("invalid probe output", done.stderr, name)
+
+    def test_the_drivers_no_answer_is_still_unavailable(self):
+        # Present with -1 is the driver saying nothing: exit 0, not 2. A bool is not that number.
+        d = device_4090()
+        d["raw"].update(reserved_shared_per_block=-1, warp_size=-1, max_threads_per_block=-1)
+        done, summary = self.run_cli({"devices": [d]})
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertFalse(facts_compare.unavailable(False))
+        self.assertTrue(facts_compare.unavailable(-1))
+
+    def test_the_probe_prints_every_key_the_comparison_reads(self):
+        # No GPU: the keys facts_compare.py requires against the quoted keys of the probe's source,
+        # so a rename on either side fails here.
+        source = (ROOT / "apps" / "facts" / "main.cpp").read_text(encoding="utf-8")
+        needed = set(facts_compare.DEVICE_PARTS) | {"index", "features"}
+        needed |= {key for keys in facts_compare.NUMBER_KEYS.values() for key in keys}
+        needed |= {key for _, key in facts_compare.STRING_KEYS}
+        needed |= set(facts_compare.BOARD_FEATURES)
+        needed |= set(device_4090()["synthetic"]["features"])
+        for key in sorted(needed):
+            self.assertIn(f'"{key}"', source, f"the probe does not print {key}")
+
     def test_board_and_build_features_in_the_cli(self):
         slow = device_4090()
         slow["queried"]["features"]["mma_slow"] = True

@@ -3,7 +3,8 @@
 
 Runs ninferno-facts-probe (the engine's own device query) on every visible GPU, compares each
 device with its gpu_facts.json row and the synthetic class (tools/audit/facts_compare.py), prints a
-table and writes a JSON summary. Exit 0: no mismatch; 1: a mismatch; 2: the probe did not run.
+table and writes a JSON summary. Exit 0: no mismatch; 1: a mismatch; 2: the probe did not run
+or its output is invalid.
 
   python tools/audit/facts_vs_driver.py --probe build/apps/ninferno-facts-probe
   python tools/audit/facts_vs_driver.py --probe-json canned.json      # no GPU: a recorded output
@@ -66,7 +67,7 @@ def main(argv):
         else:
             ap.error("give --probe or --probe-json")
         summary, text = run(probe_output, load_rows(args.facts))
-    except (OSError, ValueError, KeyError) as error:
+    except (OSError, ValueError, KeyError, TypeError) as error:  # TypeError: a backstop
         print(f"facts_vs_driver: {error}", file=sys.stderr)
         return 2
     print(text)

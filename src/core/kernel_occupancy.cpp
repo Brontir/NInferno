@@ -11,8 +11,7 @@ int resident_ctas_per_sm(const DeviceClass& d, const KernelShape& k) {
     }
     // The device as the calculator describes it: the limits DeviceClass carries (the driver's
     // on a real device, the architecture table's on a synthetic one), the per-block constants of
-    // every architecture from Volta on (1024 threads and 64 K registers per block, 48 KiB of
-    // shared memory without the opt-in).
+    // every architecture from Volta on (the kOccupancy* constants of kernel_occupancy.h).
     cudaOccDeviceProp p;
     p.computeMajor                = d.major;
     p.computeMinor                = d.minor;

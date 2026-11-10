@@ -2,9 +2,10 @@
 
 Input: one device of ninferno-facts-probe's JSON ("queried": the engine's own query,
 "synthetic": synthetic_device_class for the same compute capability, "raw": CUDA attributes the
-query does not keep, "engine_table_facts": MachineFacts as the engine reads the table, "engine_occupancy_limits": the
-per-block limits resident_ctas_per_sm assumes) and the
-board's row of src/core/data/gpu_facts.json. Output: one result per field.
+query does not keep, "engine_table_facts": MachineFacts as the engine reads the table,
+"engine_occupancy_limits": the per-block limits resident_ctas_per_sm assumes) and the board's row
+of src/core/data/gpu_facts.json. Output: one result per field. validate_probe rejects a document
+with a key missing or of the wrong type before any comparison.
 
   table  the gpu_facts.json row against the driver: cc, SMs, L2, bus width, memory data rate,
          boost clock, memory size; and against the engine's own reading of the table;
@@ -12,8 +13,8 @@ board's row of src/core/data/gpu_facts.json. Output: one result per field.
          against the queried ones (shared memory per block and per SM, threads, blocks and
          registers per SM) and the reserved-shared invariant of the queried class; the board
          feature mma_slow (a difference fails); the per-block limits the occupancy calculator
-         assumes (kernel_occupancy.h, "engine_occupancy_limits": shared memory per block, registers
-         per block, threads per block, warp size) against the driver's raw attributes.
+         assumes (kernel_occupancy.h, "engine_occupancy_limits": shared memory per block,
+         registers per block, threads per block, warp size) against the driver's raw attributes.
 
 status: match, mismatch (fails the run), unavailable (the driver gave no value: not a failure),
 info (a difference that is not a failure: a feature the build lacks, the persisting-L2 cap, a
@@ -45,8 +46,13 @@ def result(source, field, expected, actual, status, note=""):
             "status": status, "note": note}
 
 
+def is_number(value):
+    """A finite int or float; a bool is not one."""
+    return type(value) in (int, float) and math.isfinite(value)
+
+
 def unavailable(actual):
-    return actual is None or actual in (0, -1)
+    return actual is None or (is_number(actual) and actual in (0, -1))
 
 
 def close(expected, actual, tolerance):
@@ -138,11 +144,25 @@ def engine_expected(q, row):
     return out
 
 
-DEVICE_PARTS = ("queried", "synthetic", "engine_table_facts", "engine_occupancy_limits")
+DEVICE_PARTS = ("queried", "synthetic", "raw", "engine_table_facts", "engine_occupancy_limits")
 # The raw attributes kernel_occupancy.h assumes a value for (engine_occupancy_limits, same names).
 OCCUPANCY_LIMITS = ("shared_per_block_default", "registers_per_block", "max_threads_per_block",
                     "warp_size")
 BOARD_FEATURES = ("mma_slow",)
+# The class fields the architecture check reads from both classes.
+ARCH_NUMBERS = ("smem_per_block_optin", "smem_per_sm", "max_threads_per_sm", "max_blocks_per_sm",
+                "registers_per_sm", "persisting_l2_max_bytes")
+# Every number the comparison reads. The probe prints each as a number and never as null.
+NUMBER_KEYS = {
+    "queried": ARCH_NUMBERS + ("pci_device_id", "major", "minor", "sms", "l2_bytes", "global_bytes",
+                               "memory_bus_bits", "memory_clock_khz", "sm_clock_khz"),
+    "synthetic": ARCH_NUMBERS,
+    "raw": ("reserved_shared_per_block",) + OCCUPANCY_LIMITS,
+    "engine_table_facts": ("source", "reference_clock_khz", "memory_bus_bits", "memory_clock_khz",
+                           "l2_mib"),
+    "engine_occupancy_limits": OCCUPANCY_LIMITS,
+}
+STRING_KEYS = (("queried", "name"), ("engine_table_facts", "sku"))
 
 
 def validate_probe(probe_output):
@@ -153,29 +173,34 @@ def validate_probe(probe_output):
     if not isinstance(devices, list) or not devices:
         raise ValueError("invalid probe output: \"devices\" is missing, not a list or empty")
     for position, device in enumerate(devices):
-        if not isinstance(device, dict) or "index" not in device:
-            raise ValueError(f"invalid probe output: device {position} is not an object with an index")
+        if not isinstance(device, dict):
+            raise ValueError(f"invalid probe output: device {position} is not an object")
         for part in DEVICE_PARTS:
             if not isinstance(device.get(part), dict):
                 raise ValueError(f"invalid probe output: device {position} has no \"{part}\" object")
-        # The probe always prints raw and the key (-1 when CUDA cannot answer).
-        if not isinstance(device.get("raw"), dict) or \
-                "reserved_shared_per_block" not in device["raw"]:
-            raise ValueError(f"invalid probe output: device {position} has no \"raw\" object "
-                             "with reserved_shared_per_block")
-        missing = [k for k in OCCUPANCY_LIMITS if k not in device["engine_occupancy_limits"]]
-        if missing:
-            raise ValueError(f"invalid probe output: device {position}: engine_occupancy_limits "
-                             f"has no {', '.join(missing)}")
-        if not isinstance(device["synthetic"].get("features"), dict) or \
-                not isinstance(device["queried"].get("features"), dict):
-            raise ValueError(f"invalid probe output: device {position} has no \"features\" object")
-        for part in ("queried", "synthetic"):
-            if "persisting_l2_max_bytes" not in device[part]:
-                raise ValueError(f"invalid probe output: device {position}: {part} has no "
-                                 "persisting_l2_max_bytes")
-        if "sku" not in device["engine_table_facts"]:
-            raise ValueError(f"invalid probe output: device {position}: engine_table_facts has no sku")
+        if not is_number(device.get("index")):
+            raise ValueError(f"invalid probe output: device {position}: \"index\" is not a number")
+        # The probe always prints every key, as a number (the driver's "no answer" is -1, never
+        # null) or, for a name, a string; one that is missing or of another type is a bad capture.
+        for part, keys in NUMBER_KEYS.items():
+            for key in keys:
+                if not is_number(device[part].get(key)):
+                    raise ValueError(f"invalid probe output: device {position}: {part}.{key} "
+                                     "is missing or not a number")
+        for part, key in STRING_KEYS:
+            if not isinstance(device[part].get(key), str):
+                raise ValueError(f"invalid probe output: device {position}: {part}.{key} "
+                                 "is missing or not a string")
+        queried, synthetic = device["queried"].get("features"), device["synthetic"].get("features")
+        for part, features in (("queried", queried), ("synthetic", synthetic)):
+            if not isinstance(features, dict) or \
+                    any(not isinstance(features.get(k), bool) for k in BOARD_FEATURES):
+                raise ValueError(f"invalid probe output: device {position}: {part}.features is "
+                                 f"missing or has no boolean {', '.join(BOARD_FEATURES)}")
+        if any(not isinstance(v, bool) for v in synthetic.values()) or \
+                any(not isinstance(queried.get(k), bool) for k in synthetic):
+            raise ValueError(f"invalid probe output: device {position}: the queried features do "
+                             "not cover the synthetic ones, or a feature is not a boolean")
 
 
 def compare_device(device, row):
@@ -338,8 +363,9 @@ def compare_device(device, row):
                               "the occupancy calculator's assumed limit against the driver's"))
     for name, want in s["features"].items():
         got = q["features"].get(name)
-        # mma_slow is a board fact set on both classes (it turns tensor routes off), so a
-        # difference is a failure; the other features are what the build can launch.
+        # mma_slow is a board fact (it turns tensor routes off) and both classes derive it from
+        # the same function, so a difference means the query did not store the facts or the two
+        # paths resolved a different chip. The other features are what the build can launch.
         differs = "mismatch" if name in BOARD_FEATURES else "info"
         out.append(result("arch", f"feature_{name}", want, got, "match" if want == got else differs,
                           "queried features are the device's row in common with the build's"))
