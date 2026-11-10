@@ -1235,8 +1235,8 @@ MoePlan untuned_plan_why(const MoeWeights& weights, const MoeConfig& config, std
     // plan_for's wide schedule (T >= 64 outside the prefill band, the grouped W4A8 refused) is not
     // a decode schedule.
     why = decode.gate_up_r8 >= 0 || decode.down_r8 >= 0 ? MoeAuthority::DecodeR8
-          : tokens >= 64                               ? MoeAuthority::SpeedSchedule
-                                                       : MoeAuthority::DecodeStreaming;
+          : tokens >= 64                                ? MoeAuthority::SpeedSchedule
+                                                        : MoeAuthority::DecodeStreaming;
     return decode;
 }
 

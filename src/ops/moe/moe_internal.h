@@ -411,7 +411,8 @@ enum class MoeAuthority {
     PrefillW4a8,     // a prefill call of T >= 17 on the grouped W4A8
     PrefillSchedule, // a prefill call of T >= 17 on the one register-MMA prefill schedule
     SpeedW4a8,       // a wide call outside the prefill profile on the grouped W4A8
-    SpeedSchedule,   // T >= 64 outside the prefill band, the grouped W4A8 refused: plan_for's wide one
+    SpeedSchedule,   // T >= 64 outside the prefill band, the grouped W4A8 refused: plan_for's wide
+                     // one
     DecodeR8,        // decode width, the class's default A8 route
     DecodeStreaming, // decode width, the streaming register-MMA schedule
 };
