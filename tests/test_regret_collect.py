@@ -266,30 +266,51 @@ class Collect(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "170 SMs"):
             self.collect_with_authority([], [""], facts=rtx5090)  # the rows say ga106:28sm
         # The SMs alone do not name the board: another chip of 28 SMs is refused too.
-        with self.assertRaisesRegex(ValueError, "a gb202 of 28 SMs"):
+        with self.assertRaisesRegex(ValueError, r"\(gb202, sm120, 28 SMs\)"):
             self.collect_with_authority([], [""], facts=dict(rtx5090, sms=28))
         right = dict(rtx5090, chip="ga106", sms=28)
         doc = self.collect_with_authority([], [""], facts=right)
         self.assertEqual(doc["board_facts"]["held-board"]["sms"], 28)
 
-    def test_a_board_of_the_same_sms_and_another_chip_is_refused(self):
-        # A GTX 1660 Ti's rows (tu116:24sm, with the device's UUID after the class id) and the
-        # PCI id of an RTX 4060 (ad107, 24 SMs): the Ada ridge is not this board's.
+    def collect_on(self, device, pci_id):
+        """One case measured on `device`, collected with the registry row of `pci_id`."""
         facts_json = Path(__file__).resolve().parents[1] / "src/core/data/gpu_facts.json"
-        device = "tu116:24sm GPU-0a1b2c3d"
         sel = self.write("s.csv", SELECTED_HEAD
                          + f"q8,a16,store,64,64,1,rmma.a,rmma.a,r1,{device}\n")
         routes = self.write("p.csv", HEAD
                             + f"q8,a16,store,64,64,1,rmma.a,10,r1,{device},flushed,1,15\n")
+        return collect.collect([sel], [routes], "held-board", "held-model", "rev", "build",
+                               "both", [], [], "tests", collect.board_facts(facts_json, pci_id))
 
-        def collected(pci_id):
-            return collect.collect([sel], [routes], "held-board", "held-model", "rev", "build",
-                                   "both", [], [], "tests",
-                                   collect.board_facts(facts_json, pci_id))
+    def test_a_board_of_the_same_sms_and_another_chip_is_refused(self):
+        # A GTX 1660 Ti's rows (tu116:24sm, with the device's UUID after the class id) and the
+        # PCI id of an RTX 4060 (ad107, 24 SMs): the Ada ridge is not this board's.
+        device = "tu116:24sm GPU-0a1b2c3d"
+        with self.assertRaisesRegex(ValueError, r"GeForce RTX 4060 \(ad107, sm89, 24 SMs\)"):
+            self.collect_on(device, "0x2882")
+        self.assertIs(self.collect_on(device, "0x2182")["board_facts"]["held-board"]["mma_slow"],
+                      True)
 
-        with self.assertRaisesRegex(ValueError, "GeForce RTX 4060, a ad107 of 24 SMs"):
-            collected("0x2882")
-        self.assertIs(collected("0x2182")["board_facts"]["held-board"]["mma_slow"], True)
+    def test_a_board_the_class_names_by_its_architecture_is_accepted(self):
+        # The class tables hold no chip for an H100 or a B200: their class id is the architecture
+        # and the SMs, and the registry row of that architecture and SM count is the board.
+        for device, pci_id, sms in (("sm90:132sm GPU-0a1b2c3d", "0x2330", 132),
+                                    ("sm90:114sm", "0x2331", 114), ("sm100:148sm", "0x2901", 148)):
+            with self.subTest(device=device):
+                doc = self.collect_on(device, pci_id)
+                self.assertEqual(doc["board_facts"]["held-board"]["sms"], sms)
+        # Another architecture, or the other H100's SMs, is still another board.
+        with self.assertRaisesRegex(ValueError, r"\(gh100, sm90, 114 SMs\)"):
+            self.collect_on("sm90:132sm", "0x2331")
+        with self.assertRaisesRegex(ValueError, r"\(gb100, sm100, 148 SMs\)"):
+            self.collect_on("sm90:148sm", "0x2901")
+
+    def test_a_device_that_is_not_a_class_id_cannot_take_board_facts(self):
+        # A hand-made CSV with another device name: nothing says the PCI id is its board.
+        for device in ("board-x", "unknown", "24sm", "tu116:24"):
+            with self.subTest(device=device), \
+                    self.assertRaisesRegex(ValueError, "not a class id"):
+                self.collect_on(device, "0x2182")
 
     def test_a_registry_flag_that_is_not_a_boolean_is_refused(self):
         row = {"id": "0x2182", "name": "a board", "chip": "tu116", "cc": 75, "sms": 24,

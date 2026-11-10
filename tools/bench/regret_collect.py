@@ -18,7 +18,7 @@ them, and selection_regret.py groups regret by board x regime x authority. Witho
 (written before route_tune named them) both read "unknown": the collector still works on old data.
 --pci-id adds the board's compute capability, SMs, DRAM rate, boost clock and `mma_slow` (no tensor
 cores) from gpu_facts.json to the document, from which selection_regret.py computes the card's
-ridge for its regimes; the row's chip and SMs must be the device class the rows name.
+ridge for its regimes; the rows' device must be that board's class (chip or architecture, and SMs).
 
 Each row names its run, board and timing protocol (#518): a pass's --selected-out and --routes-out
 must come from one run, every file from one board, and a case's passes from one protocol ("copies":
@@ -248,11 +248,16 @@ def collect(selected_csvs, pass_csvs, board, model, revision, build_id, holdout,
     if facts:
         # The registry row must be the board these CSVs came from. The device's class id names
         # its chip and its SMs ("tu116:24sm"); the SMs alone do not tell a GTX 1660 Ti from an
-        # RTX 4060 (ad107, 24 SMs too), whose ridge the first does not have.
+        # RTX 4060 (ad107, 24 SMs too), whose ridge the first does not have. A board whose chip
+        # the class tables do not hold is named by its architecture ("sm90:132sm", an H100).
         named = re.match(r"([^:\s]+):(\d+)sm\b", device)
-        if named and (named[1], int(named[2])) != (facts["chip"], facts["sms"]):
-            raise ValueError(f"--pci-id names {facts['name']}, a {facts['chip']} of "
-                             f"{facts['sms']} SMs; the rows' device is {device}")
+        if not named:
+            raise ValueError(f"--pci-id: the rows' device {device} is not a class id "
+                             "(<chip>:<SMs>sm), so the board cannot be told; leave --pci-id out")
+        if (named[1] not in (facts["chip"], f"sm{facts['cc']}")
+                or int(named[2]) != facts["sms"]):
+            raise ValueError(f"--pci-id names {facts['name']} ({facts['chip']}, sm{facts['cc']}, "
+                             f"{facts['sms']} SMs); the rows' device is {device}")
         document["board_facts"] = {board: facts}
     document["device"] = device  # route_tune's device class id, as every row named it
     return document
