@@ -6,32 +6,52 @@ thresholds `rules_r8` compares a call against (the verify branch's two-token edg
 branch's gate and its rules, the Turing and Volta rules), `w4a8_ws_wins` and its neighbour,
 `kVecRuleMaxTokens` and the R8 and vector verify edges, the speed profile's width bands
 (`kRmmaMidMinTokens`, `kTiledSpeedMinTokens`, `kStagedSpeedMinTokens`, `kW4a8WideMinTokens`,
-`kSpeedFill`), the literals inside `heuristic_rmma`, `heuristic_w4a8`, `heuristic_w4a4`,
-`staged_speed_route`, `tiled_speed_pays`, `nvfp4_tiled_route`, `auto_route`'s half-the-L2 rule for
+`kSpeedFill`), the literals inside `heuristic_rmma` (its speed ladder included),
+`rmma_k_split_fit`, `rmma_wide_rule`, `heuristic_w4a8`, `heuristic_w4a4`, `staged_speed_route`,
+`tiled_speed_pays`, `nvfp4_tiled_route`, `auto_route`'s half-the-L2 rule for
 NVFP4 and `spread_smem` with its table of measured boards, the verify widths (`kR8VerifyTokens`,
 `kMmqMinTokens`, `kMmqVerifyMinTokens`), Volta's routes and the byte thresholds of the register
 MMA. Each entry says what the rule is (its literal, as written in the source), what it rests on
-(the boards and cards it was measured on, as device class ids and products) and how much margin
-the record gives (the tolerance). A number that was fitted to measurements says `FITTED` in its
-tolerance and names the boards; where the source gives no record the entry says `unknown` or
-`none recorded`, it never invents one. The kernel hash is empty, because the repository records
-one digest per kernel-facts file, not one per kernel, and no rule records the tree it was timed
-on.
+(a basis class and the boards and cards it was measured on, as device class ids and products) and
+how much margin the record gives (the tolerance). Where the source gives no record the entry says
+`unknown` or `none recorded`, it never invents one. The kernel hash is empty, because the
+repository records one digest per kernel-facts file, not one per kernel, and no rule records the
+tree it was timed on.
+
+The basis is a typed field (`Basis`, as `route_cost_constants.h` types its `Provenance`), read from
+the source comments, `decisions.md` and `deterministic-decisions.md`, and `Unknown` where they do
+not say. `Structural`: follows from a kernel's shape, a contract, the hardware's layout or another
+constant, not from a timing. `Measured`: a timing or product run in the record names the value or
+the margin it was held to, on the boards the entry names. `PlacedBetweenMeasured`: the record has
+measured points on both sides and the value was put between them, so the line itself has no
+measurement. `Fitted`: chosen to make a rule match timings of several boards, not derived from a
+fact; the entry names those boards. `Unknown`: the record does not say what the edge rests on (the
+rule's action may still be measured). A step that holds fitted or placed constants out of a
+derivation reads this field, not the prose; `--list` prints it and the test prints the count per
+class.
 
 It is a record, not a mechanism. The code keeps its own literals and nothing reads the descriptor
 at run time. `ninferno_route_rules_test` (`--list` prints the table) holds the two to each other:
 
-- every literal text must stand in its source file, outside comments and strings, exactly as many
-  times as the descriptor says, whole (a number is not the prefix of a longer number, a name not
-  the tail of a longer one); a comparison's literal carries its action where the action matters;
+- every descriptor has a basis class (the field has no default, so a missing one does not compile),
+  and a `Fitted` or `PlacedBetweenMeasured` one names its boards (class ids) or says none are
+  recorded;
+- every literal text must stand in its source file, outside comments and outside the contents of
+  string and character literals (the reader blanks them, quotes kept, and has a self-check),
+  exactly as many times as the descriptor says, whole (a number is not the prefix of a longer
+  number, a name not the tail of a longer one); whitespace between tokens does not matter (a
+  space between two identifier characters stays one), nor a trailing comma before a `}`; a
+  comparison's literal carries its action where the action matters;
 - a literal that defines a constant is the whole definition (to its `;`; an array with every
   element), defines the descriptor's name, is that name's only definition in its file (the test
   reads text, not the preprocessor, so a second definition under `#if` fails), and its number is
   computed as C++ computes it (integers stay integers; `0b`, octal, `'` separators and qualified
-  names are read; what the evaluator does not implement is refused, never skipped) and must equal
-  the descriptor's `value`; a condition's `value` is 0 or a number its literal writes;
+  names are read; what the evaluator does not implement is refused, never skipped; the conversion
+  to the constant's declared type is not applied, and no constant in the sources needs it) and
+  must equal the descriptor's `value`; a condition's `value` is 0 or a number its literal writes;
 - the boards, cards and tolerance fields are never empty;
-- every definition under `src/ops/generic` (subdirectories; `.h`, `.hpp`, `.cpp`, `.cu`, `.cuh`)
+- every definition under `src/ops/generic` (subdirectories; `.h`, `.hpp`, `.cpp`, `.cc`, `.inc`,
+  `.inl`, `.cu`, `.cuh`) and in `src/ops/route_pins.h` and `src/ops/route_table.cpp`
   of a name `kX` that says it bounds something (`Min`, `Max`, `Tokens`, `Fill`, `Distance`,
   `Values`, `Bytes`, `Gbps`, `Margin`, `Slack`, `Columns`, `Rows`, `Limit`, `Measured`,
   `Threshold`), as a `const`, `constexpr`, `static` or `inline` variable or array (initialised by
@@ -48,17 +68,45 @@ out knowingly:
   variables, `kMmqPrefillSlice` in `generic_ggml_internal.h`), enumerators and template
   parameters: found only where a descriptor's literal names them;
 - thresholds written as a bare literal in an expression that no descriptor names. Known ones: the
-  decode block of `heuristic_rmma` (`tokens <= 8`, `ctas <= 2 * sms`, `ctas > 2 * sms`), which
-  shares one comment with the K-split rule; the `tokens >= 2` and `max_tokens >= 2` edges in
-  `generic_workspace.cpp`, which mirror the verify edge described for `r8_verify_tunable` (its
-  descriptor says so); the shape tables' own bands, which are data (`routes/`); other literal
-  `17`s outside the generic path's selection (the shape-owned linear plans, the Qwen prefill
-  planner's own `kPrefillMinTokens`) and `kVoltaCutlassMinTokens` in `src/product/choice` (a
-  model's copy of Volta's rule): they are not defined from the one constant and equal it today;
+  decode block of `heuristic_rmma` (`tokens <= 8`, `ctas <= 2 * sms`, `ctas > 2 * sms`; the
+  one-wave edge `ctas <= sms` at its two sites is described, and `split == 4` / `split == 8`
+  dispatch on the K split's own result and are not thresholds), which shares one comment with the
+  K-split rule; the `tokens >= 2` and `max_tokens >= 2` edges in `generic_workspace.cpp`, which
+  mirror the verify edge described for `r8_verify_tunable` (its descriptor says so); the shape
+  tables' own bands, which are data (`routes/`); other literal `17`s outside the generic path's
+  selection (the shape-owned linear plans, the Qwen prefill planner's own `kPrefillMinTokens`,
+  `PREFILL_MIN` in `tools/bench/mmq_transfer_audit.py`) and `kVoltaCutlassMinTokens` in
+  `src/product/choice` (a model's copy of Volta's rule): they are not defined from the one
+  constant and equal it today;
+- values that are data or admission, not a selection threshold: the per-board tables in
+  `r8_decode_table.h` (data, keyed by board), `ggml_mmq::kRowMultiple` and `kKMultiple` (the
+  alignment the ggml matrix kernel requires of N and K: a call that fails it cannot take the
+  route), and `generic_cost.cpp`'s `s.n_tiles == 8` (the cost model skips the eight-tile
+  schedules where the BF16 MMA is emulated; the cost model's own constants are registered in
+  `route_cost_constants.h`);
 - the preprocessor: two definitions of a name under `#if` / `#else` count as two definitions;
 - the text scan's own limits: a macro that expands to a comment or to a declaration is not seen,
   and a declaration whose type text holds a `=`, `;`, `{`, `(` or `[` other than `decltype(...)`
   is read from the first of them.
+
+What a described literal's guard does not catch (each was run against the test and passes it):
+
+- arithmetic or logic added at a token boundary of a condition literal: `&& false &&` after a
+  literal that ends in `&&`, `>= kSpeedFill * 2`, a factor written in front of a literal that
+  starts mid-expression;
+- a use of a described constant replaced by a bare literal or scaled at one site, or a wrapper
+  function of it changed; a variable shadowed or changed before a described condition;
+- `if (false)` before, or `#if 0` around, a described statement;
+- a threshold in a form the scan does not read: a function (`constexpr ... kNewFnMaxTokens()
+  { return 96; }`, the form `vec_rule_max_tokens()` already has), a function-like macro, a default
+  argument, `constinit`, a global without `const` / `constexpr` / `static` / `inline`, a member's
+  default initialiser;
+- a descriptor deleted together with its literal: the doc says a derivation PR does that, and the
+  test only requires that the scan finds enough constants.
+
+A literal is also frozen against harmless edits it cannot tell from changes: a renamed local inside
+a described condition, `8` written `0x8`, and one more layout `kMin` in a file whose count is
+listed all fail the test and are updated with the descriptor.
 
 The width of the prefill band is one definition: `kPrefillPinMinTokens` in `ops/route_pins.h`
 (the widest speculative verify, `kDecodePinMaxTokens` = 16, plus one), which is below the generic
@@ -78,7 +126,8 @@ lands it deletes the descriptor with the literal; it does not edit the numbers. 
 retuned in place on one board's timings: a new measurement is a new descriptor field (more boards,
 a tighter tolerance) or a derivation, not a new number. A descriptor whose boards say `unknown` is
 the first candidate for a derivation or a re-measurement, because nothing can be held out against
-it, and a `FITTED` one is a fit, not a derivation.
+it, and a `Fitted` one is a fit, not a derivation; a `PlacedBetweenMeasured` one is the same
+question about a line nobody measured.
 
 Where the provenance of a rule was found: the comments at its use in `generic_gemm.cpp` and
 `generic_gemm.h` (quoted in the tolerance where they state a margin), `decisions.md` 58 for the

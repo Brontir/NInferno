@@ -1,9 +1,14 @@
 // The literal rules of the generic path (ops/generic/route_rules.h), held to the sources they
 // describe. Every descriptor has a unique name, a recorded boards / cards / tolerance field
 // ("unknown" or "none recorded" where the record is silent, never empty) and an empty kernel hash
-// (none is recorded). Its literal stands in its file, outside comments and strings, exactly
-// `occurrences` times, whole (a number is not the prefix of a longer one, a name not the tail of a
-// longer one). A literal that defines a constant is complete (it ends in `;`, an array carries all
+// (none is recorded), and a basis (Structural, Measured, PlacedBetweenMeasured, Fitted or Unknown:
+// the field has no default, so a descriptor without one does not compile; a Fitted or
+// PlacedBetweenMeasured one names its boards or says none are recorded; the count per class is
+// printed). Its literal stands in its file, outside comments and outside the contents of string and
+// character literals, exactly `occurrences` times, whole (a number is not the prefix of a longer
+// one, a name not the tail of a longer one), whatever the whitespace between its tokens (a space
+// between two identifier characters stays one space) and a trailing comma before a `}`. A literal
+// that defines a constant is complete (it ends in `;`, an array carries all
 // its elements), defines the descriptor's name, is that name's only definition in the file, and
 // evaluates (as C++ does, integers staying integers) to `value`, or to the number each element of
 // an array says; a literal that is a condition has `value` 0 or a number written in it.
@@ -12,8 +17,9 @@
 // Max, Tokens, Fill, Distance, Values, Bytes, Gbps, Margin, Slack, Columns, Rows, Limit, Measured,
 // Threshold), a `const`, `constexpr`, `static` or `inline` variable or array (an initialiser by
 // `=`, braces or parentheses, a later declarator of the same declaration included) or a `#define`,
-// in any .h, .hpp, .cpp, .cu or .cuh under src/ops/generic (subdirectories included;
-// route_cost_constants.h has its own registry and test), is keyed by file and name. A described one
+// in any .h, .hpp, .cpp, .cc, .inc, .inl, .cu or .cuh under src/ops/generic (subdirectories
+// included; route_cost_constants.h has its own registry and test) and in ops/route_pins.h and
+// ops/route_table.cpp, is keyed by file and name. A described one
 // is defined once in its file; any other is an entry of kNotRules with its reason and the number of
 // definitions the file holds, so a second definition of a listed name, or of a described one, is a
 // failure. Known limits: a name without kX camel case or without one of those words
@@ -26,6 +32,7 @@
 #include "ops/generic/route_rules.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cerrno>
 #include <climits>
@@ -67,9 +74,11 @@ bool ident_char(char c) { return std::isalnum(static_cast<unsigned char>(c)) != 
 
 bool hex_char(char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; }
 
-// The text without comments, in one pass as the compiler reads it: a `//` or `/*` inside a string,
-// a character literal or a raw string is text; a digit separator (1'000) is not a character
-// literal. A comment becomes one space; newlines of line comments stay.
+// The text without comments and without the contents of string and character literals, in one pass
+// as the compiler reads it: a `//` or `/*` inside a literal is literal text, not a comment; a digit
+// separator (1'000) is not a character literal. A comment becomes one space (the newlines of a line
+// comment stay); a string, character or raw-string literal keeps its quotes and loses what is
+// between them, so a constant or a threshold quoted in a string is not code.
 std::string without_comments(const std::string& t) {
     std::string out;
     out.reserve(t.size());
@@ -95,17 +104,18 @@ std::string without_comments(const std::string& t) {
                 const std::string close = ")" + t.substr(i + 1, open - i - 1) + "\"";
                 const std::size_t end   = t.find(close, open);
                 const std::size_t stop  = end == std::string::npos ? n : end + close.size();
-                out.append(t, i, stop - i);
+                out += "\"\""; // the `R` before it is already in `out`
                 i = stop;
                 continue;
             }
         }
         if (c == '"' ||
             (c == '\'' && !(i > 0 && hex_char(t[i - 1]) && i + 1 < n && hex_char(t[i + 1])))) {
-            const std::size_t from = i++;
+            ++i;
             while (i < n && t[i] != c && t[i] != '\n') i += (t[i] == '\\' && i + 1 < n) ? 2 : 1;
             if (i < n && t[i] == c) ++i;
-            out.append(t, from, i - from);
+            out.push_back(c);
+            out.push_back(c);
             continue;
         }
         out.push_back(c);
@@ -114,9 +124,24 @@ std::string without_comments(const std::string& t) {
     return out;
 }
 
-// Runs of whitespace as one space: clang-format may realign a definition's `=`.
+// The text compared: whitespace is dropped where it does not separate two identifier characters
+// (one space stays there, so `a b` is not `ab`), and a trailing comma before a `}` is dropped, so a
+// re-wrapped brace, a realigned `=` or a clang-format comma is not a change of the rule.
 std::string squeezed(const std::string& text) {
-    return std::regex_replace(text, std::regex(R"(\s+)"), " ");
+    std::string out;
+    out.reserve(text.size());
+    bool gap = false;
+    for (const char c : text) {
+        if (std::isspace(static_cast<unsigned char>(c)) != 0) {
+            gap = true;
+            continue;
+        }
+        if (gap && !out.empty() && ident_char(out.back()) && ident_char(c)) out.push_back(' ');
+        gap = false;
+        if (c == '}' && !out.empty() && out.back() == ',') out.pop_back();
+        out.push_back(c);
+    }
+    return out;
 }
 
 std::string trimmed(const std::string& s) {
@@ -875,6 +900,40 @@ void evaluator_self_test(const std::function<void(const std::string&)>& fail) {
     refused("(1 + 2");
 }
 
+// The text reader's own checks: comments gone, the contents of string, character and raw-string
+// literals gone with their quotes kept, digit separators left alone, whitespace normalised.
+void text_self_test(const std::function<void(const std::string&)>& fail) {
+    const auto same = [&](const std::string& in, const std::string& want) {
+        const std::string got = squeezed(without_comments(in));
+        if (got != squeezed(want)) {
+            fail("text: '" + in + "' reads as '" + got + "', should be '" + squeezed(want) + "'");
+        }
+    };
+    same("int a = 1; // k = 3\nint b;", "int a = 1; int b;");
+    same("int a; /* \"x */ int b;", "int a; int b;");
+    same(R"t(const char* s = "kFoo = 4; // no";)t", R"t(const char* s = "";)t");
+    same(R"t(const char* s = "a\"b // c"; int kMaxA = 5;)t",
+         R"t(const char* s = ""; int kMaxA = 5;)t");
+    same(R"t(char c = '"'; int kMaxB = 6;)t", R"t(char c = ''; int kMaxB = 6;)t");
+    same(R"t(char c = '\''; int kMaxC = 7;)t", R"t(char c = ''; int kMaxC = 7;)t");
+    same(R"t(auto r = R"x(// "k = 1;" )x"; int kMaxD = 8;)t", R"t(auto r = R""; int kMaxD = 8;)t");
+    same("int v = 1'000; // c", "int v = 1'000;");
+    same("a  =\n  1 ;", "a=1;");
+    same("{ {1, 2},\n }", "{{1,2}}");
+    if (squeezed("int  x") != "int x")
+        fail("text: a space between identifiers must stay one space");
+    if (squeezed("int x") == squeezed("intx")) fail("text: 'int x' must differ from 'intx'");
+    for (const Definition& d :
+         definitions_in(without_comments(R"t(const char* s = "constexpr int kMaxZ = 4;";)t"))) {
+        if (d.name == "kMaxZ") fail("text: a definition quoted in a string is read as code");
+    }
+    bool seen = false;
+    for (const Definition& d : definitions_in(without_comments("constexpr int kMaxY = 4; // c"))) {
+        seen = seen || d.name == "kMaxY";
+    }
+    if (!seen) fail("text: a definition in code is not read");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -884,6 +943,8 @@ int main(int argc, char** argv) {
         ++failures;
     };
     evaluator_self_test(fail);
+    text_self_test(fail);
+    std::array<std::size_t, rr::kAllBases.size()> by_basis{};
     std::set<std::string> names;
     std::set<std::pair<std::string, std::string>> described; // (file, name) of the named constants
     for (const auto& rule : rr::kRouteRules) {
@@ -896,6 +957,30 @@ int main(int argc, char** argv) {
         for (const auto field : {rule.boards, rule.cards, rule.tolerance}) {
             if (field.empty()) fail(name + ": a boards / cards / tolerance field is empty");
         }
+        // The basis: one of the classes (the field has no default, so a descriptor without one does
+        // not compile); a fit or a value placed between boards names its boards or says none are
+        // recorded; the class is the field, not a word in the prose.
+        const auto basis_index = static_cast<std::size_t>(rule.basis);
+        if (basis_index >= by_basis.size()) {
+            fail(name + ": a basis that is none of the classes");
+        } else {
+            ++by_basis[basis_index];
+        }
+        if (rule.tolerance.find("FITTED") != std::string_view::npos) {
+            fail(name + ": FITTED in the tolerance prose; the basis field says it");
+        }
+        if (rule.basis == rr::Basis::Fitted || rule.basis == rr::Basis::PlacedBetweenMeasured) {
+            static const std::regex board_id("[a-z]{2}[0-9]{3}:[0-9]+sm");
+            const std::string boards(rule.boards);
+            if (!std::regex_search(boards, board_id) &&
+                boards.find("unknown") == std::string::npos &&
+                boards.find("none recorded") == std::string::npos &&
+                boards.find("see k") == std::string::npos) {
+                fail(name + ": " + std::string(rr::basis_name(rule.basis)) +
+                     " names no board (a class id such as gb202:170sm) and does not say none is "
+                     "recorded");
+            }
+        }
         if (!rule.kernel_hash.empty()) {
             fail(name +
                  ": a kernel hash is set, but none is recorded anywhere to check it against");
@@ -905,7 +990,7 @@ int main(int argc, char** argv) {
             fail(name + ": cannot read " + file_name);
             continue;
         }
-        const std::string literal = squeezed(std::string(rule.literal));
+        const std::string literal = squeezed(without_comments(std::string(rule.literal)));
         const std::size_t found   = count_of(file.squeezed, literal);
         if (found != rule.occurrences) {
             fail(name + ": the literal '" + std::string(rule.literal) + "' stands " +
@@ -977,15 +1062,22 @@ int main(int argc, char** argv) {
     // a listed non-rule, by file and name, with the file's number of definitions.
     std::map<std::pair<std::string, std::string>, std::size_t> seen; // (file, name) -> definitions
     std::size_t scanned = 0;
+    // Everything under src/ops/generic, and the two files beside it that hold constants the
+    // descriptors point at (the pins' band edge and the route table's first prefill width).
+    std::vector<std::string> scan_files = {"../route_pins.h", "../route_table.cpp"};
     for (const auto& item : std::filesystem::recursive_directory_iterator(generic_dir())) {
         const auto ext = item.path().extension();
         if (!item.is_regular_file() ||
-            (ext != ".h" && ext != ".hpp" && ext != ".cpp" && ext != ".cu" && ext != ".cuh")) {
+            (ext != ".h" && ext != ".hpp" && ext != ".cpp" && ext != ".cc" && ext != ".inc" &&
+             ext != ".inl" && ext != ".cu" && ext != ".cuh")) {
             continue;
         }
         const std::string file =
             std::filesystem::relative(item.path(), generic_dir()).generic_string();
         if (file == "route_rules.h" || file == "route_cost_constants.h") continue;
+        scan_files.push_back(file);
+    }
+    for (const std::string& file : scan_files) {
         const Source& s = source_of(file);
         if (!s.readable) {
             fail(file + ": cannot read a scanned file");
@@ -1027,13 +1119,19 @@ int main(int argc, char** argv) {
     }
     if (argc > 1 && std::string(argv[1]) == "--list") {
         for (const auto& rule : rr::kRouteRules) {
-            std::printf("%-44.*s %-10g %.*s | %.*s\n", static_cast<int>(rule.name.size()),
-                        rule.name.data(), rule.value, static_cast<int>(rule.cards.size()),
-                        rule.cards.data(), static_cast<int>(rule.tolerance.size()),
-                        rule.tolerance.data());
+            const std::string_view basis = rr::basis_name(rule.basis);
+            std::printf("%-44.*s %-22.*s %-10g %.*s | %.*s\n", static_cast<int>(rule.name.size()),
+                        rule.name.data(), static_cast<int>(basis.size()), basis.data(), rule.value,
+                        static_cast<int>(rule.cards.size()), rule.cards.data(),
+                        static_cast<int>(rule.tolerance.size()), rule.tolerance.data());
         }
     }
     std::printf("route rules: %zu described, %zu non-rules listed, kernel hash recorded for none\n",
                 std::size(rr::kRouteRules), not_rules().size());
+    std::printf("basis:");
+    for (const rr::Basis b : rr::kAllBases) {
+        std::printf(" %s %zu%s", std::string(rr::basis_name(b)).c_str(),
+                    by_basis[static_cast<std::size_t>(b)], b == rr::kAllBases.back() ? "\n" : ",");
+    }
     return failures == 0 ? 0 : 1;
 }
