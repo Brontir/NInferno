@@ -359,10 +359,11 @@ def returns(names):
     parameter may have a braced default, `Board b = {}`) and a trailing return `-> Board {`."""
     ty = type_name(names)
     # After the parameters: cv and virt-specifiers, `noexcept(...)`, `throw(...)`, a ref-qualifier
-    # (`&`, `&&`) and an attribute (`[[...]]`), in any order.
+    # (`&`, `&&`) and an attribute (`[[...]]`), in any order. `&&|&(?!&)` reads a run of `&` one
+    # way only: `&&?` could split it many ways, and a run with no `{` after it took exponential time.
     paren = r"\s*\((?:[^()]|\([^()]*\))*\)"
     quals = (r"(?:(?:(?:const|volatile|override|final|mutable|constexpr)\b|noexcept\b(?:%s)?|"
-             r"throw%s|&&?|\[\[[^\]]*\]\])\s*)*" % (paren, paren))
+             r"throw%s|&&|&(?!&)|\[\[[^\]]*\]\])\s*)*" % (paren, paren))
     head = (ty + r"(?!\s*::)\s*(?:const\b\s*)?[&*]*\s*(?:\w+\s*::\s*)*\w+\s*"
             r"\((?:[^;{}]|\{[^;{}]*\})*\)\s*" + quals + r"\{")
     trailing = (r"->\s*(?:const\b\s*)?" + ty + r"(?!\s*::)\s*(?:const\b\s*)?[&*]*\s*"

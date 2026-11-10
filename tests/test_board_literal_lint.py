@@ -226,6 +226,18 @@ class Violations(unittest.TestCase):
         self.assertEqual([lit for _n, lit, _l in lint.literals(code)],
                          ["Board b{12,0,170,96,1792}", "{8,6,82,6,936}"])
 
+    def test_a_run_of_ampersands_is_read_in_linear_time(self):
+        # Not C++, but a lint must never hang on what a file holds: before `&&|&(?!&)` a run of
+        # 40 took about 25 s and one of 10 000 never returned.
+        import time
+        for code in ("Board f() " + "&" * 10000 + ";", "Board f() const " + "& " * 5000 + ";"):
+            start = time.perf_counter()
+            lint.violations(code)
+            self.assertLess(time.perf_counter() - start, 2.0, code[:30])
+        # The ref-qualifiers still read: `&`, `&&`, and `& &&`-free forms as before.
+        self.assertEqual(len(lint.violations("Board f() & { return {12, 0, 170, 96, 1792}; }")), 1)
+        self.assertEqual(len(lint.violations("Board f() && { return {12, 0, 170, 96, 1792}; }")), 1)
+
     def test_literal_text_ignores_layout_and_comments(self):
         a = "Board b{12, 0, 170, 96, 1792};"
         b = "Board  b{ 12,   // cc\n 0, 170,\n 96, /* GB/s */ 1792 };"
