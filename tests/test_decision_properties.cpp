@@ -204,6 +204,16 @@ std::string first_difference(const std::string& a, const std::string& b) {
     return "(length differs)";
 }
 
+// The lines of a decision text that name a route: a property over a text of refusals is vacuous.
+std::size_t routes_in(const std::string& dump) {
+    std::istringstream in(dump);
+    std::size_t n = 0;
+    for (std::string line; std::getline(in, line);) {
+        n += line.find("=none") == std::string::npos && line.find("throw:") == std::string::npos;
+    }
+    return n;
+}
+
 std::size_t differing_lines(const std::string& a, const std::string& b) {
     std::istringstream la(a), lb(b);
     std::string x, y;
@@ -439,6 +449,10 @@ void property_clock_invariance(const std::vector<Row>& rows) {
             continue; // priced from the driver's value on purpose (machine_facts.h)
         }
         const std::string stock = decisions_of(stock_class);
+        if (routes_in(stock) == 0) {
+            note("vacuous", "no route chosen", row.name,
+                 row.name + ": every decision is a refusal");
+        }
         for (const auto v : kVariants) {
             ++cases_checked;
             const DeviceClass moved   = generic::board_device_class(row.board, v.sm, v.memory);
