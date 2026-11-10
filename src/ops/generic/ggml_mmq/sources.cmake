@@ -1,5 +1,5 @@
 # ggml's integer tensor-core matrix kernel (third_party/ggml-quants) for the generic path's ggml
-# block formats at speculative-verify widths (generic_gemm.cpp, Family::GgmlMmq). Its own archive:
+# block formats at speculative-verify widths (its admission is generic_select.cpp's, its launch generic_gemm.cpp; Family::GgmlMmq). Its own archive:
 # the ggml headers define CUDA_CHECK and friends, so no other NInferno unit may see them.
 set(NINFERNO_GGML_QUANTS_ROOT "${PROJECT_SOURCE_DIR}/third_party/ggml-quants")
 add_library(ninferno_ggml_mmq STATIC

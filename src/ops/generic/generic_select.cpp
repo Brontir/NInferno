@@ -1,3 +1,10 @@
+// The route selector of the generic path, moved whole out of generic_gemm.cpp (#620): which route
+// a projection call of T tokens takes (select_route and the per-family heuristics behind it), and
+// the admission of each schedule (route_admits, the *_refusal functions, the weight-side format and
+// alignment tests). The launch code (generic_gemm.cpp, run_route) runs the routes chosen here. What
+// the two share is declared in generic_select_detail.h, the only names of this file that leave its
+// anonymous namespaces.
+
 #include "ops/generic/generic_gemm.h"
 
 #include "core/device_class.h"
