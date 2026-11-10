@@ -186,6 +186,11 @@ def parse_run(text):
     shape = head["shape"].split()
     if len(shape) != 2 or not shape[1].isdigit():
         raise ValueError(f"odd shape line: {head['shape']!r}")
+    if shape[0] not in SHAPE_FLOPS:
+        raise ValueError(f"unknown shape: {head['shape']!r}")
+    if shape[0] != shape_of(int(head["cc"])):
+        raise ValueError(f"shape {shape[0]} is not the one of cc {head['cc']} "
+                         f"({shape_of(int(head['cc']))})")
     return head, facts
 
 
@@ -196,11 +201,20 @@ def parse_run(text):
 SHAPE_FLOPS = {"hmma_884_f32_f16": 2048, "hmma_1688_f32_f16": 2048, "hmma_16816_f32_bf16": 4096}
 
 
+def shape_of(cc):
+    """The MMA shape the probe issues on compute capability `cc` (isa_probe.cu, where the device
+    code picks it and the host checks it against the card): Volta's m8n8k4, Turing's m16n8k8 of
+    f16, m16n8k16 of bf16 from Ampere on."""
+    return ("hmma_16816_f32_bf16" if cc >= 80 else
+            "hmma_1688_f32_f16" if cc >= 75 else "hmma_884_f32_f16")
+
+
 def row_of(head, facts, source):
-    """The table's row of one run; `source` names the committed probe output it came from. The
-    tensor rate is derived here: the shape's flops over the measured cycles per MMA per SM."""
-    shape, printed = head["shape"].split()
-    flops = SHAPE_FLOPS.get(shape, int(printed))
+    """The table's row of one run (parse_run's head and facts); `source` names the committed
+    probe output it came from. The tensor rate is derived here: the shape's flops (the table's,
+    never the figure the run printed) over the measured cycles per MMA per SM."""
+    shape = head["shape"].split()[0]
+    flops = SHAPE_FLOPS[shape]
     facts = dict(facts)
     facts["tensor_flops_per_sm_clock"] = {
         "value": round(flops / facts["mma_cycles_per_sm"]["value"], 3), "unit": "flop"}

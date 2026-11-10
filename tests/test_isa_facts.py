@@ -143,6 +143,17 @@ class IsaFacts(unittest.TestCase):
                           ("shape hmma_16816_f32_bf16 4096\n", "shape hmma_16816_f32_bf16\n")):
             with self.assertRaises(ValueError, msg=bad):
                 ip.parse_run(SAMPLE.replace(line, bad))
+        # A shape the probe does not issue, or another compute capability's, is refused: its
+        # flops would give the row a rate of an instruction the card did not run.
+        shape = "shape hmma_16816_f32_bf16 4096\n"
+        for bad, said in (("shape bogus 0\n", "unknown shape"),
+                          ("shape hmma_1688_f32_f16 2048\n", "is not the one of cc 89"),
+                          ("shape hmma_884_f32_f16 2048\n", "is not the one of cc 89")):
+            with self.assertRaises(ValueError, msg=bad) as e:
+                ip.parse_run(SAMPLE.replace(shape, bad))
+            self.assertIn(said, str(e.exception), bad)
+        self.assertEqual([ip.shape_of(cc) for cc in (70, 75, 80, 86, 89, 120)],
+                         ["hmma_884_f32_f16", "hmma_1688_f32_f16"] + ["hmma_16816_f32_bf16"] * 4)
 
     def test_merge_refuses_without_writing(self):
         # A run merge cannot parse leaves the inputs directory and the table as they were, and the
