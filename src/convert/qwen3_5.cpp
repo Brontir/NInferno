@@ -1,6 +1,7 @@
 #include "convert/qwen3_5.h"
 
 #include "convert/formats.h"
+#include "spec/dspine.h"
 
 #include <algorithm>
 #include <cmath>
@@ -266,6 +267,11 @@ OJson vision_config(const OJson& source, const OJson& text) {
 }
 
 OJson draft_config(const OJson& raw, const OJson& target, const std::string& backend) {
+    // A DSpine draft is a DFlash draft by name only (docs/maintainer/dspine.md): converted as one
+    // it would lose its code bridge and draft wrong.
+    if (spec::is_dspine_config(raw)) {
+        throw std::runtime_error("a DSpine drafter (code bridge) is not converted yet");
+    }
     const std::string architecture =
         backend == "dflash2" ? "DFlash2DraftModel" : "DFlashDraftModel";
     fixed(raw, "architectures", OJson::array({architecture}), backend);

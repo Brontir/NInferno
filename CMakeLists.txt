@@ -165,6 +165,7 @@ include(cmake/Windows.cmake)
 include(cmake/Dependencies.cmake)
 include(cmake/NInfernoTargets.cmake)
 include(cmake/EmbedText.cmake)
+include(cmake/BoardRegistry.cmake)
 
 # The operating system calls (src/core/sys.h): every NInferno target links them.
 add_library(ninferno_sys STATIC src/core/sys.cpp $<$<BOOL:${WIN32}>:src/core/sys_win.cpp>)

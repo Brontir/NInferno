@@ -205,6 +205,15 @@ class LoopFinder(unittest.TestCase):
         copied = [(o, "MOV R60, R52 ;" if o == 0x050 else t) for o, t in KERNEL]
         copied = [(o, t.replace("R52, R18", "R60, R18")) for o, t in copied]
         self.assertEqual(ones(copied), [0x190, 0x2c0])
+        # A copy with a modifier on its source (-R52, ~R52, |R52|) makes another pair, not ones:
+        # the MMA reading R60 drops out, the one still reading R52 stays.
+        for source in ("-R52", "~R52", "|R52|"):
+            negated = [(o, t.replace("MOV R60, R52", f"IMAD.MOV.U32 R60, RZ, RZ, {source}"))
+                       for o, t in copied]
+            self.assertEqual(ones(negated), [0x190], source)
+        reuse = [(o, t.replace("MOV R60, R52", "IMAD.MOV.U32 R60, RZ, RZ, R52.reuse"))
+                 for o, t in copied]
+        self.assertEqual(ones(reuse), [0x190, 0x2c0])
         # R52 rewritten after the MMAs inside the body: the first MMA of the next iteration reads
         # it through the back edge, so neither is ones.
         redefined = KERNEL[:38] + [(0x2d5, "IMAD R52, R52, R53, RZ ;")] + KERNEL[38:]
@@ -215,6 +224,17 @@ class LoopFinder(unittest.TestCase):
         self.assertEqual(sc.written_registers("ISETP.GE.AND", "P0, PT, R0, R1, PT"), set())
         self.assertEqual(sc.written_registers("LDG.E.128", "R8, desc[UR8][R2.64]"),
                          {"R8", "R9", "R10", "R11"})
+        # RED reduces into memory; REDUX writes a uniform register; the FP64 ops write a pair
+        # whatever their suffix, F2F / I2F when the result type is F64.
+        self.assertEqual(sc.written_registers("RED.E.ADD.F32.FTZ.RN.STRONG.GPU", "[R2.64], R5"),
+                         set())
+        self.assertEqual(sc.written_registers("REDUX.SUM", "UR4, R5"), {"UR4"})
+        self.assertEqual(sc.written_registers("DADD", "R4, R6, R8"), {"R4", "R5"})
+        self.assertEqual(sc.written_registers("DFMA", "R4, R6, R8, R10"), {"R4", "R5"})
+        self.assertEqual(sc.written_registers("F2F.F64.F32", "R4, R6"), {"R4", "R5"})
+        self.assertEqual(sc.written_registers("I2F.F64.S32", "R4, R6"), {"R4", "R5"})
+        self.assertEqual(sc.written_registers("F2F.F32.F64", "R4, R6"), {"R4"})
+        self.assertEqual(sc.written_registers("STG.E.128", "desc[UR8][R2.64], R8"), set())
 
     def test_irreducible_flow(self):
         # Two blocks that enter each other's middles (no header dominates the other): no natural
