@@ -7,10 +7,13 @@
 //
 //   ninferno-facts-probe [--device N]
 //
-// Output: {"devices": [{"index", "queried": {...}, "synthetic": {...}, "raw": {...},
-// "engine_table_facts": {...}, "engine_occupancy_limits": {...}}, ...]}.
+// Output: {"devices": [{"index", "pci_bus_id", "queried": {...}, "synthetic": {...}, "raw": {...},
+// "engine_occupancy_limits": {...}, "engine_table_facts": {...}, "engine_row_facts": {...}}, ...]}.
+// A device the probe cannot read is {"index", "error"}; the others are still printed.
 #include "core/device_class.h"
 #include "core/kernel_occupancy.h"
+#include "core/machine_facts.h"
+#include "core/per_device.h"
 
 #include <cuda_runtime.h>
 
@@ -69,14 +72,79 @@ Json class_of(const ninferno::DeviceClass& d) {
                 {"features", features_of(d.features)}};
 }
 
-} // namespace
+// MachineFacts as the probe prints them: the query's stored facts and the engine's reading of the
+// table row alone have the same keys.
+Json facts_json(const ninferno::MachineFacts& facts) {
+    return Json{{"source", static_cast<int>(facts.source)},
+                {"sku", facts.sku},
+                {"reference_clock_khz", facts.reference_clock_khz},
+                {"memory_bus_bits", facts.memory_bus_bits},
+                {"memory_clock_khz", facts.memory_clock_khz},
+                {"l2_mib", facts.l2_mib},
+                {"mma_slow", facts.mma_slow}};
+}
+
+// machine_facts of the board's row alone: the id and compute capability the driver reports, the
+// row's own SM count, and no clock or bus (so no value of the driver's is read). An unknown id
+// gives the engine's reading of it, which has no SKU.
+ninferno::MachineFacts row_alone_facts(const ninferno::DeviceClass& q) {
+    const ninferno::GpuFactsRow* row = ninferno::find_gpu_facts(q.pci_device_id);
+    return ninferno::machine_facts({.pci_device_id = q.pci_device_id,
+                                    .major         = q.major,
+                                    .minor         = q.minor,
+                                    .sms           = row != nullptr ? row->sms : 0});
+}
+
+// "domain:bus:device.function" of a CUDA ordinal, empty when the driver does not say.
+std::string pci_bus_id(int device) {
+    char text[32] = {};
+    if (cudaDeviceGetPCIBusId(text, sizeof(text), device) != cudaSuccess) {
+        (void)cudaGetLastError();
+        return {};
+    }
+    return text;
+}
+
+// One device's entry. The queried class is the engine's own; everything else is read beside it.
+Json device_entry(int device) {
+    const ninferno::DeviceClass& q        = ninferno::device_class(device);
+    const ninferno::DeviceClass synthetic = ninferno::synthetic_device_class(
+        q.pci_device_id, q.major, q.minor, q.sms, q.l2_bytes, q.global_bytes);
+    Json raw{
+        {"reserved_shared_per_block", attribute(cudaDevAttrReservedSharedMemoryPerBlock, device)},
+        {"shared_per_block_default", attribute(cudaDevAttrMaxSharedMemoryPerBlock, device)},
+        {"registers_per_block", attribute(cudaDevAttrMaxRegistersPerBlock, device)},
+        {"max_threads_per_block", attribute(cudaDevAttrMaxThreadsPerBlock, device)},
+        {"warp_size", attribute(cudaDevAttrWarpSize, device)}};
+    // The values resident_ctas_per_sm assumes, under the raw attributes' own names.
+    Json occupancy{{"reserved_shared_per_block",
+                    static_cast<int>(ninferno::reserved_shared_bytes_per_cta(q.major))},
+                   {"shared_per_block_default", ninferno::kAssumedSharedPerBlock},
+                   {"registers_per_block", ninferno::kAssumedRegsPerBlock},
+                   {"max_threads_per_block", ninferno::kAssumedMaxThreadsPerBlock},
+                   {"warp_size", ninferno::kAssumedWarpSize}};
+    // What the query stored: runtime code reads q.facts, so a query that does not wire it shows
+    // here instead of being recomputed from the same inputs.
+    return Json{{"index", device},
+                {"pci_bus_id", pci_bus_id(device)},
+                {"queried", class_of(q)},
+                {"synthetic", class_of(synthetic)},
+                {"raw", std::move(raw)},
+                {"engine_occupancy_limits", std::move(occupancy)},
+                {"engine_table_facts", facts_json(q.facts)},
+                {"engine_row_facts", facts_json(row_alone_facts(q))}};
+}
 
 // A whole, non-negative ordinal ("2"), or -1 for anything else ("-1", "abc", "1x").
-static int device_ordinal(const char* text) {
+int device_ordinal(const char* text) {
     char* end        = nullptr;
     const long value = std::strtol(text, &end, 10);
-    return end != text && *end == '\0' && value >= 0 && value < 4096 ? static_cast<int>(value) : -1;
+    return end != text && *end == '\0' && value >= 0 && value < ninferno::kMaxDevices
+               ? static_cast<int>(value)
+               : -1;
 }
+
+} // namespace
 
 int main(int argc, char** argv) {
     int only = -1;
@@ -102,36 +170,12 @@ int main(int argc, char** argv) {
         Json devices = Json::array();
         for (int device = 0; device < count; ++device) {
             if (only >= 0 && device != only) { continue; }
-            const ninferno::DeviceClass& q        = ninferno::device_class(device);
-            const ninferno::DeviceClass synthetic = ninferno::synthetic_device_class(
-                q.pci_device_id, q.major, q.minor, q.sms, q.l2_bytes, q.global_bytes);
-            // What the query stored: runtime code reads q.facts, so a query that does not wire
-            // it shows here instead of being recomputed from the same inputs.
-            const ninferno::MachineFacts& facts = q.facts;
-            Json raw{
-                {"reserved_shared_per_block",
-                 attribute(cudaDevAttrReservedSharedMemoryPerBlock, device)},
-                {"shared_per_block_default", attribute(cudaDevAttrMaxSharedMemoryPerBlock, device)},
-                {"registers_per_block", attribute(cudaDevAttrMaxRegistersPerBlock, device)},
-                {"max_threads_per_block", attribute(cudaDevAttrMaxThreadsPerBlock, device)},
-                {"warp_size", attribute(cudaDevAttrWarpSize, device)}};
-            Json table{{"source", static_cast<int>(facts.source)},
-                       {"sku", facts.sku},
-                       {"reference_clock_khz", facts.reference_clock_khz},
-                       {"memory_bus_bits", facts.memory_bus_bits},
-                       {"memory_clock_khz", facts.memory_clock_khz},
-                       {"l2_mib", facts.l2_mib}};
-            // The values resident_ctas_per_sm assumes, under the raw attribute's own names.
-            Json occupancy{{"shared_per_block_default", ninferno::kOccupancySharedPerBlock},
-                           {"registers_per_block", ninferno::kOccupancyRegsPerBlock},
-                           {"max_threads_per_block", ninferno::kOccupancyMaxThreadsPerBlock},
-                           {"warp_size", ninferno::kOccupancyWarpSize}};
-            devices.push_back(Json{{"index", device},
-                                   {"queried", class_of(q)},
-                                   {"synthetic", class_of(synthetic)},
-                                   {"raw", std::move(raw)},
-                                   {"engine_occupancy_limits", std::move(occupancy)},
-                                   {"engine_table_facts", std::move(table)}});
+            // One board that cannot be read must not lose the others' report.
+            try {
+                devices.push_back(device_entry(device));
+            } catch (const std::exception& error) {
+                devices.push_back(Json{{"index", device}, {"error", error.what()}});
+            }
         }
         std::puts(Json{{"devices", std::move(devices)}}.dump(1).c_str());
         return 0;

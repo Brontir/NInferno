@@ -25,12 +25,13 @@ struct KernelShape {
 // the architecture.
 [[nodiscard]] int resident_ctas_per_sm(const DeviceClass& device, const KernelShape& kernel);
 
-// The per-block constants resident_ctas_per_sm assumes for every architecture from Volta on (the
-// device-wide ones come from DeviceClass). The facts probe prints them beside what the driver says.
-inline constexpr int kOccupancyMaxThreadsPerBlock = 1024;
-inline constexpr int kOccupancyRegsPerBlock       = 64 * 1024;
-inline constexpr int kOccupancyWarpSize           = 32;
-inline constexpr int kOccupancySharedPerBlock     = 48 * 1024; // without the opt-in
+// The per-block limits resident_ctas_per_sm assumes, not reads, for every architecture it models
+// (the device-wide ones come from DeviceClass). The facts probe prints them beside what the driver
+// says, and the facts audit fails when the two differ.
+inline constexpr int kAssumedMaxThreadsPerBlock = 1024;
+inline constexpr int kAssumedRegsPerBlock       = 64 * 1024;
+inline constexpr int kAssumedWarpSize           = 32;
+inline constexpr int kAssumedSharedPerBlock     = 48 * 1024; // without the opt-in
 
 // The shared memory the driver reserves per resident CTA on the architecture (CUDA programming
 // guide: 1 KiB from Ampere on).

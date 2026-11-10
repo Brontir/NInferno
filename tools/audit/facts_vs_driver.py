@@ -3,8 +3,9 @@
 
 Runs ninferno-facts-probe (the engine's own device query) on every visible GPU, compares each
 device with its gpu_facts.json row and the synthetic class (tools/audit/facts_compare.py), prints a
-table and writes a JSON summary. Exit 0: no mismatch; 1: a mismatch; 2: the probe did not run
-or its output is invalid.
+table and writes a JSON summary. Exit 0: no mismatch; 1: a mismatch, or with --strict a field the
+driver did not answer (listed as "unverified" in the summary); 2: the probe did not run or its
+output is invalid. facts_compare.py's docstring says what is and is not compared.
 
   python tools/audit/facts_vs_driver.py --probe build/apps/ninferno-facts-probe
   python tools/audit/facts_vs_driver.py --probe-json canned.json      # no GPU: a recorded output
@@ -22,14 +23,20 @@ import facts_compare  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 FACTS = ROOT / "src" / "core" / "data" / "gpu_facts.json"
+PROBE_TIMEOUT_S = 300
 
 
 def load_rows(path):
     with open(path, encoding="utf-8") as f:
         gpus = json.load(f)["gpus"]
+    rows = {}
     for g in gpus:
-        facts_compare.check_variants(g)
-    return {int(g["id"], 16): g for g in gpus}
+        facts_compare.check_row(g)
+        key = int(g["id"], 16)
+        if key in rows:
+            raise ValueError(f"gpu facts: id {g['id']} appears twice")
+        rows[key] = g
+    return rows
 
 
 def run(probe_output, rows):
@@ -37,9 +44,12 @@ def run(probe_output, rows):
     facts_compare.validate_probe(probe_output)  # ValueError: exit 2, never a clean audit
     results = []
     for device in probe_output["devices"]:
-        q = device["queried"]
-        row = rows.get(q["pci_device_id"])
-        results.append((device["index"], q["name"], facts_compare.compare_device(device, row)))
+        q = device.get("queried", {})
+        row = rows.get(q.get("pci_device_id"))
+        name = q.get("name", "?")
+        if device.get("pci_bus_id"):
+            name += f" [{device['pci_bus_id']}]"
+        results.append((device["index"], name, facts_compare.compare_device(device, row)))
     return facts_compare.summarize(results), "\n\n".join(
         facts_compare.table_text(i, n, r) for i, n, r in results)
 
@@ -51,33 +61,48 @@ def main(argv):
     ap.add_argument("--facts", default=str(FACTS))
     ap.add_argument("--json-out", help="write the JSON summary here (always printed to stdout "
                     "after the table)")
-    ap.add_argument("--device", type=int, help="one CUDA ordinal")
+    ap.add_argument("--device", type=int, help="one CUDA ordinal (with --probe)")
+    ap.add_argument("--strict", action="store_true",
+                    help="exit 1 when a field is unverified (the driver gave no value)")
     args = ap.parse_args(argv)
+    if bool(args.probe) == bool(args.probe_json):
+        ap.error("give --probe or --probe-json, not both and not neither")
+    if args.device is not None and not args.probe:
+        ap.error("--device goes with --probe")
     try:
         if args.probe_json:
             probe_output = json.loads(Path(args.probe_json).read_text(encoding="utf-8"))
-        elif args.probe:
+        else:
             command = [args.probe] + (["--device", str(args.device)] if args.device is not None else [])
-            done = subprocess.run(command, capture_output=True, text=True)
+            try:
+                done = subprocess.run(command, capture_output=True, text=True, encoding="utf-8",
+                                      timeout=PROBE_TIMEOUT_S)
+            except subprocess.TimeoutExpired:
+                print(f"facts_vs_driver: {args.probe} did not finish in {PROBE_TIMEOUT_S} s",
+                      file=sys.stderr)
+                return 2
             if done.returncode != 0:
                 print(f"facts_vs_driver: {args.probe} failed ({done.returncode}): {done.stderr.strip()}",
                       file=sys.stderr)
                 return 2
             probe_output = json.loads(done.stdout)
-        else:
-            ap.error("give --probe or --probe-json")
         summary, text = run(probe_output, load_rows(args.facts))
+        if args.json_out:
+            Path(args.json_out).write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")
     except (OSError, ValueError, KeyError, TypeError) as error:  # TypeError: a backstop
         print(f"facts_vs_driver: {error}", file=sys.stderr)
         return 2
     print(text)
-    out = json.dumps({"ok": summary["ok"], "devices": [
+    out = json.dumps({"ok": summary["ok"], "unverified": summary["unverified"], "devices": [
         {"index": d["index"], "name": d["name"], "counts": d["counts"],
          "mismatches": d["mismatches"]} for d in summary["devices"]]}, indent=1)
     print(out)
-    if args.json_out:
-        Path(args.json_out).write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")
-    return 0 if summary["ok"] else 1
+    if summary["unverified"]:
+        print(f"facts_vs_driver: {len(summary['unverified'])} fields unverified (the driver gave "
+              "no value)", file=sys.stderr)
+    if not summary["ok"]:
+        return 1
+    return 1 if args.strict and summary["unverified"] else 0
 
 
 if __name__ == "__main__":
