@@ -418,16 +418,32 @@ enum class MoeAuthority {
 };
 [[nodiscard]] const char* authority_name(MoeAuthority authority);
 
+// What an answer rests on, in the kinds and names of generic::Evidence (route_authorities.h,
+// #614): Pin (a maintainer's choice), Measured (timed on this board), Ranker (the cost model, or a
+// rule: a derivation from facts or a literal), Carried (a measurement of a board within
+// kCarryDistance), Transferred (a farther board's), Borrowed (an entry lent by another table).
+// Local to moe until #614 lands; then this becomes that type.
+struct Evidence {
+    enum class Kind : std::uint8_t { Pin, Measured, Ranker, Carried, Transferred, Borrowed };
+    enum class Ranker : std::uint8_t { None, Cost, Rule };
+    Kind kind     = Kind::Ranker;
+    Ranker ranker = Ranker::Rule; // Kind::Ranker: which ranker; None otherwise
+    std::string_view source;      // the authority's name (authority_order())
+    std::string donor;            // the board or table class a Carried answer was measured on
+    double distance = 0;          // board_distance to the donor (0: this board)
+};
+[[nodiscard]] const char* evidence_kind_name(Evidence::Kind kind);
 struct MoePlanQuery {
     MoePlan plan;
     MoeAuthority authority = MoeAuthority::DecodeStreaming;
+    Evidence evidence;
 };
+// The authorities select_plan asks, in the order it asks them; the first to answer decides.
+[[nodiscard]] std::vector<std::string_view> authority_order();
 
 // select_plan with its reason; pure (no kernel runs, no device memory read).
 [[nodiscard]] MoePlanQuery moe_plan_query(const MoeWeights& weights, const MoeConfig& config,
                                           std::int32_t tokens, bool prefill);
-[[nodiscard]] MoePlan untuned_plan_why(const MoeWeights& weights, const MoeConfig& config,
-                                       std::int32_t tokens, bool prefill, MoeAuthority& why);
 [[nodiscard]] bool table_covers(const MoeWeights& weights, const MoeConfig& config,
                                 std::int32_t tokens);
 // Forgets every tuned plan (tests).

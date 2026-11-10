@@ -137,13 +137,59 @@ const char* profile_name(Profile p) {
     return p == Profile::Speed ? "speed" : p == Profile::Prefill ? "prefill" : "invariant";
 }
 
+int g_evidence_mismatches = 0;
+
+// The authority list's name behind each label the goldens print.
+std::string_view source_of(moe::MoeAuthority a) {
+    using A = moe::MoeAuthority;
+    switch (a) {
+    case A::Tuner:
+        return "tuner";
+    case A::Invariant:
+        return "invariant-profile";
+    case A::TableAsMeasured:
+    case A::TableW4a8:
+    case A::TableClassA8:
+    case A::TableR8Refused:
+        return "route-table";
+    case A::VoltaHmma:
+        return "volta-hmma";
+    case A::PrefillW4a8:
+        return "prefill-w4a8";
+    case A::PrefillSchedule:
+        return "prefill-schedule";
+    case A::SpeedW4a8:
+        return "speed-w4a8";
+    case A::SpeedSchedule:
+    case A::DecodeR8:
+    case A::DecodeStreaming:
+        return "decode";
+    }
+    return "?";
+}
+
+// Whether an answer of this label is a table's or the tuner's (measured or carried), not a rule's.
+bool measured_label(moe::MoeAuthority a) {
+    using A = moe::MoeAuthority;
+    return a == A::Tuner || a == A::TableAsMeasured || a == A::TableW4a8 || a == A::TableClassA8 ||
+           a == A::TableR8Refused;
+}
+
 const char* refusal(moe::BankRefusal why) { return moe::bank_refusal_name(why); }
 
 // What one call decides: the plan, its authority and each stage's kernel with the banks'
 // refusals of R8 and of the grouped W4A8 where they are not None.
 std::string describe(const ops::MoeWeights& weights, const ops::MoeConfig& config, std::int32_t t,
                      bool prefill) {
-    const moe::MoePlanQuery q        = moe::moe_plan_query(weights, config, t, prefill);
+    const moe::MoePlanQuery q = moe::moe_plan_query(weights, config, t, prefill);
+    // The evidence names the authority that answered; a table's or the tuner's is measured or
+    // carried, a rule's a ranker's (the decode R8 route carries a board's when one is near).
+    if (q.evidence.source != source_of(q.authority) ||
+        (measured_label(q.authority) && q.evidence.kind == moe::Evidence::Kind::Ranker) ||
+        (!measured_label(q.authority) && q.authority != moe::MoeAuthority::DecodeR8 &&
+         q.evidence.kind != moe::Evidence::Kind::Ranker)) {
+        ++g_evidence_mismatches;
+    }
     const moe::MoeStageRoutes stages = moe::stage_routes(weights, q.plan);
     std::ostringstream out;
     out << moe::plan_name(q.plan) << " jobs=" << q.plan.job_columns << " "
@@ -276,7 +322,21 @@ int main(int argc, char** argv) {
             dumps[b.name] = std::string("# ") + b.name + " " + kBuildSet + "\n";
         }
         for (const Layer& l : kLayers) dump_layer(l, dumps);
-        int failed = 0;
+        int failed                                         = 0;
+        const std::vector<std::string_view> expected_order = {
+            "tuner",        "invariant-profile", "route-table", "volta-hmma",
+            "prefill-w4a8", "prefill-schedule",  "speed-w4a8",  "decode"};
+        if (moe::authority_order() != expected_order) {
+            std::cerr << "moe plan golden: the authority order moved
+                         ";
+                ++failed;
+        }
+        if (g_evidence_mismatches != 0) {
+            std::cerr << "moe plan golden: " << g_evidence_mismatches
+                      << " answers whose evidence does not match their authority
+                         ";
+                ++failed;
+        }
         for (const generic::FactsBoard& b : boards()) {
             const auto path        = golden_dir() / kBuildSet / (std::string(b.name) + ".txt");
             const std::string& now = dumps[b.name];
