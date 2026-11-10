@@ -75,7 +75,7 @@ if [ ! -f "$B/build.ninja" ]; then
 fi
 HOMEDIR=$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "$B/CMakeCache.txt")
 [ "$(realpath "$HOMEDIR")" = "$(realpath "$W")" ] || { echo "$B was configured for '$HOMEDIR', not $W; remove it (rm -rf $B) and rerun"; exit 3; }
-( cd "$B" && $LOW ninja build.ninja > "$L/qc_regen.log" 2>&1 9>&- ) || { tail -15 "$L/qc_regen.log"; echo "CMAKE REGENERATE FAILED (cmake error on this branch)"; exit 1; }
+( cd "$B" && $LOW ninja -j"$JOBS" build.ninja > "$L/qc_regen.log" 2>&1 9>&- ) || { tail -15 "$L/qc_regen.log"; echo "CMAKE REGENERATE FAILED (cmake error on this branch)"; exit 1; }
 
 # 3. plan. Lines: TEST<TAB>ctest name<TAB>exe targets (comma) | OBJ<TAB>target | SKIP<TAB>text | NOOP<TAB>text
 cat > "$PLAN.py" <<'PY'
@@ -135,15 +135,15 @@ obj_src = {}   # object path -> its source file (real path), to count one unit o
 for _o, _fs in obj_of.items():
     for _f in _fs: obj_src[_f] = _o
 def stale_floor(target):  # compile commands of the closure whose object is missing or older than a recorded dependency
-    fu = fx = 0
+    stale = {}   # object path -> built by nvcc; a set, so a scan command naming the same object (clang) adds nothing
     for cmd in sh("ninja", "-C", bld, "-t", "commands", target).splitlines():
         m = re.search(r" -o (\S+\.o)", cmd)
         if not m or " -c " not in cmd: continue
         o = m.group(1); t = mt(o)
         if t is None or any((mt(d) or 0) > t for d in deps.get(o, ())):
-            if "nvcc" in cmd: fu += 1
-            else: fx += 1
-    return fu, fx
+            stale[o] = stale.get(o, False) or "nvcc" in cmd
+    fu = sum(1 for v in stale.values() if v)
+    return fu, len(stale) - fu
 def stale_units(target):  # compile units ninja would run for target (dry run): missing, newer dependency, or changed command line
     # A dry run on build.ninja itself stops at the always-dirty glob re-check ("Re-running CMake") and plans
     # nothing, so it reads a copy of the manifest that no rule regenerates (the regeneration already ran above).
@@ -156,7 +156,7 @@ def stale_units(target):  # compile units ninja would run for target (dry run): 
     owners = sorted({m.group(1) for c in sh("ninja", "-C", bld, "-t", "commands", target).splitlines()
                      for m in [re.search(r" -o (\S*CMakeFiles/[^/ ]+\.dir)/", c)] if m})
     dds = [f"{ow}/CXX.dd" for ow in owners if f"{ow}/CXX.dd" in dd_targets]
-    if dds: subprocess.run(["nice", "-n", "19", "ionice", "-c3", "ninja", "-C", bld, "-k", "0"] + dds, capture_output=True, text=True, errors="replace")
+    if dds: subprocess.run(["nice", "-n", "19", "ionice", "-c3", "ninja", "-C", bld, "-k", "0", "-j", os.environ.get("QC_JOBS", "4")] + dds, capture_output=True, text=True, errors="replace")
     def dry_run():
         return subprocess.run(["ninja", "-C", bld, "-f", "qc_dry.ninja", "-n", target], capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
     r = dry_run()
@@ -166,7 +166,7 @@ def stale_units(target):  # compile units ninja would run for target (dry run): 
     # Stopped early: a dyndep file is missing or does not list a source the branch added ("loading 'x.dd'",
     # "not mentioned in its dyndep file"), or ninja aborted twice. Then the count is only a lower bound.
     early = r.returncode != 0
-    if early and not aborted(r) and ".dd" not in txt:
+    if early and not aborted(r) and not re.search(r"CXX\.dd", txt):
         raise subprocess.CalledProcessError(r.returncode, "ninja -n " + target, r.stdout, r.stderr)
     units = set()   # a stale C++ unit prints "Scanning X" and "Building CXX object X.o": count it once, by its source
     for line in r.stdout.splitlines():
