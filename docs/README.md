@@ -57,3 +57,4 @@ reference; the others own narrower contracts:
 | [Maintainer options and environment variables](maintainer/environment.md) | route tables, lab tuners and debug options; the output-only variables for numerics dumps and fault injection |
 | [Linear benchmark](maintainer/linear-benchmark.md) | pure Linear measurement, metrics and suites |
 | [Linear tuning and reports](maintainer/linear-tuning.md) | tuning ranges, priority points, dispatch trade-offs and report format |
+| [Route rules](maintainer/route-rules.md) | the literal thresholds of the generic path's route selection: what each rule is, what it rests on and its margin |

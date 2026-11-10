@@ -80,17 +80,17 @@ law (launch cost, a missing term) is where a prediction has to come first (K4 ru
 Route-table evidence exists for two boards: RTX 3090 and RTX 5080 (the 5070 Ti's copy is the 5080's).
 
 - **Linears, RTX 3090**: median gap 1.7 at T1, 1.8 at T2-4, 2.0 at T5-8, 2.2 at T9-16, all DRAM
-  bound (40 of 520 scored rows fit the 6 MB L2 and are counted apart). Worst: Q5_0 2688x3712 flat
+  bound (40 of 520 rows above the floor fit the 6 MB L2 and are counted apart). Worst: Q5_0 2688x3712 flat
   at 29.7 us over T11-15 (gap 4.0, a call-cost shape, not a bandwidth one); Q4_K / IQ4_XS
   17408x5120 SwiGLU about 2.1-2.2 at T9-16.
-- **Linears, RTX 5080**: 47 of 207 scored rows are DRAM-bound with weights that fit the 64 MB L2;
+- **Linears, RTX 5080**: 47 of 207 rows above the floor are DRAM-bound with weights that fit the 64 MB L2;
   they are counted apart, so the T2-16 medians (1.2) rest on a handful of rows and mean little.
   The tensor-bound rows carry the finding: 3.0 at T17-64 (median), 1.8 at T65-256, 1.4 at T257+.
   Worst: the shape-owned Q5 1024x5120 at T96-128 (53-61 us against 8.9-11.9 us, gap 4.5-6.0) and
   Q4 4096x5120 at T40-48 (72-74 us, gap 4.1-4.8).
 - **Whole decode step, short context** (T = streams; rows decoding from a prompt of a few hundred
   tokens; the per-card, per-model, per-quant groups of the table keep the long-context rows and the
-  two models apart): median over a card's short rows 1.15 (4060 Ti), 1.2 (4070 Ti, 3060, 5070 Ti),
+  two models apart): median over a card's short rows 1.15 (4060 Ti), 1.20 (4070 Ti), 1.23 (3060), 1.25 (5070 Ti),
   1.29 (4090), 1.39 (5090), 1.46 (2080 Ti); Quadro GV100 2.0, worst 3.2 at 8 streams, taken on a hot
   board. At one stream the DRAM share is 0.92 (4060 Ti), 0.89 (4070 Ti), 0.88 (3060), 0.87
   (5070 Ti), 0.84 (4090), 0.80 (2080 Ti), 0.77 (5090), 0.57 (GV100).

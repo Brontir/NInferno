@@ -108,6 +108,20 @@ class Laws(unittest.TestCase):
         self.assertEqual(law["binds"], "tensor")
         self.assertAlmostEqual(law["law"], law["tensor_us"])
 
+    def test_swiglu_doubles_the_tensor_flops(self):
+        gen = gm.generation_of(gm.load_generations(HEADER), 89)
+        one = gm.law_linear(self.board, gen, 4.5, "a16", 4096, 4096, 4096)
+        two = gm.law_linear(self.board, gen, 4.5, "a16", 4096, 4096, 4096, sets=2)
+        self.assertAlmostEqual(two["tensor_us"], 2 * one["tensor_us"])
+        self.assertAlmostEqual(two["law"], 2 * one["law"])
+
+    def test_a8_reads_one_byte_per_activation(self):
+        gen = gm.generation_of(gm.load_generations(HEADER), 89)
+        a16 = gm.law_linear(self.board, gen, 4.5, "a16", 4096, 4096, 64)
+        a8 = gm.law_linear(self.board, gen, 4.5, "a8", 4096, 4096, 64)
+        self.assertAlmostEqual(a8["bytes"], 4096 * 4096 * 4.5 / 8 + 64 * 4096 * 1 + 64 * 4096 * 2)
+        self.assertAlmostEqual(a16["bytes"] - a8["bytes"], 64 * 4096)
+
     def test_swiglu_reads_gate_and_up(self):
         gen = gm.generation_of(gm.load_generations(HEADER), 89)
         one = gm.law_linear(self.board, gen, 4.5, "a16", 4096, 4096, 1)
@@ -275,6 +289,13 @@ class Rows(unittest.TestCase):
         doc = self.decode_doc(sliding_attention_width=512.0)
         doc["rows"][0].update(context=5000, ring="bf16")
         self.assertIsNone(gm.rows_from_decode(doc, self.gens)[0]["gap"])  # ring bytes not in the fixture
+
+    def test_prefill_leaves_out_input_table_and_speculation_bytes(self):
+        doc = self.decode_doc(active_params=1e9, input_table_params=1e8)
+        doc["models"]["M"]["quants"]["Q"]["speculation_bytes"] = 500_000
+        doc["rows"] = [{"card": "C", "model": "M", "quant": "Q", "prompt": 1000, "prefill": 1000.0}]
+        r = gm.rows_from_prefill(doc, self.gens)[0]
+        self.assertAlmostEqual(r["bytes"], 10_000_000 - 2_000_000 - 500_000)
 
     def test_prefill_uses_int8_rate_where_the_generation_has_one(self):
         doc = self.decode_doc(active_params=1e9, input_table_params=1e8)

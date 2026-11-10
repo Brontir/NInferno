@@ -1663,6 +1663,12 @@ int test_refusal_structural_tag() {
              " <b>bold</b>",
              "\n<x> after a newline",
              "t<b> and to<i>",
+             // The parser reads a call only from a header (output start or "<|start|>assistant"
+             // to the first <|message|>) holding " to=" and a commentary or analysis channel.
+             "set x to=3, then <|channel|>final<|message|>It is 3.",
+             "<|channel|>analysis<|message|>a<|end|><|start|>assistant<|channel|>analysis"
+             "<|message|>more thought to=x<|end|><|start|>assistant<|channel|>final<|message|>b",
+             "<|channel|>final<|message|>b to=x<|end|>",
          }) {
         failures += check(admits(ok), "refusal tag admits: " + std::string(ok));
     }
@@ -1688,6 +1694,17 @@ int test_refusal_structural_tag() {
              "<|channel|>analysis<|message|>a<|end|><|start|>assistant<|channel|>analysis "
              "to=python",
              "<|channel|>final<|message|>b<|start|>assistant<|channel|>commentary",
+             // #665: a recipient in the text, then an analysis header with no space after the
+             // channel name (the parser reads each of these as a call to python).
+             "x to=python<|channel|>analysis<|message|>code",
+             "Hello to=python<|channel|>analysis<|message|>",
+             "<|channel|>final<|message|>b to=python<|channel|>analysis<|message|>code",
+             "x<|channel|>analysisx to=python<|message|>",
+             "<|channel|>analysis<|message|>a<|end|><|start|>assistantx to=python"
+             "<|channel|>analysis<|message|>",
+             "<|channel|>analysis<|message|>a<|end|><|start|>assistant<|message|> to=python",
+             "<|channel|>analysis<|message|>a<|end|><|start|>assistant<|channel|>final"
+             "<|message|>b to=x<|start|>assistant<|channel|>analysisx",
          }) {
         failures += check(!admits(bad), "refusal tag refuses: " + std::string(bad));
     }

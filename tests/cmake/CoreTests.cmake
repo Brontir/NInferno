@@ -50,6 +50,15 @@ ninferno_add_test(ninferno_machine_facts_test
 ninferno_add_test(ninferno_board_registry_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_board_registry.cpp"
   LIBRARIES ninferno_core)
+# The format facts table (core/format_facts.h) against the switches and spelling tables it
+# replaced, for every QType value. No GPU.
+ninferno_add_test(ninferno_format_facts_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_format_facts.cpp")
+# The architecture table (core/arch_registry.h) against the per-architecture limits the build, the
+# MMQ tile widths and the synthetic device class held before it. No GPU.
+ninferno_add_test(ninferno_arch_registry_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_arch_registry.cpp"
+  LIBRARIES ninferno_core)
 # The MMQ prefill gate's decision atlas over that table (#373, core/gate_atlas.h); `--json` prints
 # it. No GPU.
 ninferno_add_test(ninferno_gate_atlas_test
@@ -60,6 +69,11 @@ ninferno_add_test(ninferno_gate_atlas_test
 # (ops/generic/route_cost_constants.h); `--list` prints them. No GPU.
 ninferno_add_test(ninferno_route_cost_constants_test NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_route_cost_constants.cpp")
+
+# The generic path's literal rules (ops/generic/route_rules.h: boards, cards, tolerance), held to
+# the sources they describe; `--list` prints them. No GPU.
+ninferno_add_test(ninferno_route_rules_test NEEDS_SOURCE_DIR
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_route_rules.cpp")
 
 ninferno_add_test(ninferno_decode_graph_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_decode_graph.cpp"
   LIBRARIES ninferno_core)
