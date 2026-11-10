@@ -214,19 +214,27 @@ std::optional<RouteTile> route_tile(Route route, Epilogue epilogue, std::int32_t
         const auto s = i8_schedule_info(route.schedule);
         return RouteTile{s.block_n / sets, s.block_m, 1};
     }
-    default: return std::nullopt;
+    default:
+        return std::nullopt;
     }
 }
 
 std::string_view demotion_name(Demotion demotion) noexcept {
     switch (demotion) {
-    case Demotion::None: return "none";
-    case Demotion::Alignment: return "alignment";
-    case Demotion::W4a8Admission: return "w4a8_admission";
-    case Demotion::R8Fit: return "r8_fit";
-    case Demotion::GgmlLayout: return "ggml_layout";
-    case Demotion::GgmlWorkspace: return "ggml_workspace";
-    case Demotion::Workspace: return "workspace";
+    case Demotion::None:
+        return "none";
+    case Demotion::Alignment:
+        return "alignment";
+    case Demotion::W4a8Admission:
+        return "w4a8_admission";
+    case Demotion::R8Fit:
+        return "r8_fit";
+    case Demotion::GgmlLayout:
+        return "ggml_layout";
+    case Demotion::GgmlWorkspace:
+        return "ggml_workspace";
+    case Demotion::Workspace:
+        return "workspace";
     }
     return "none";
 }
@@ -252,8 +260,10 @@ ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call
         if (to.family != route.family || to.schedule != route.schedule) out.reason = why;
         route = to;
     };
-    if (!x16 && route.family == Family::RegisterMma) demote(Route{Family::Scalar, 0}, Demotion::Alignment);
-    if (route.family == Family::TiledMma && !staged) demote(Route{Family::Scalar, 0}, Demotion::Alignment);
+    if (!x16 && route.family == Family::RegisterMma)
+        demote(Route{Family::Scalar, 0}, Demotion::Alignment);
+    if (route.family == Family::TiledMma && !staged)
+        demote(Route{Family::Scalar, 0}, Demotion::Alignment);
     // The NVFP4 tiled route stages activations in 16-byte copies; otherwise the register MMA of
     // the same order takes the call (or the scalar route where that cannot read x either).
     if (route.family == Family::Nvfp4TiledMma && !staged) {
@@ -306,7 +316,8 @@ ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call
     // launch. Without any workspace run() already took A16 (workspace_free_route).
     if ((route.family == Family::W4a4Mma || route.family == Family::W4a8Mma ||
          route.family == Family::I8Mma) &&
-        call.workspace_free && *call.workspace_free < route_workspace_bytes(route, w.k, call.tokens)) {
+        call.workspace_free &&
+        *call.workspace_free < route_workspace_bytes(route, w.k, call.tokens)) {
         demote(a16(), Demotion::Workspace);
     }
     // ggml's matrix kernel needs its planes in the workspace and x in 8-byte words; a call it
@@ -330,7 +341,8 @@ ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call
     } else if (route.family == Family::GgmlVec) {
         if (call.segments > ggml_mmq::kVecMaxSegments) {
             demote(a16(), Demotion::GgmlLayout);
-        } else if (!free_for(vec_workspace_bytes(w.k, std::min(call.tokens, ggml_mmq::kVecMaxColumns)))) {
+        } else if (!free_for(
+                       vec_workspace_bytes(w.k, std::min(call.tokens, ggml_mmq::kVecMaxColumns)))) {
             demote(a16(), Demotion::GgmlWorkspace);
         }
         out.ggml_fallback = route.family != Family::GgmlVec;
