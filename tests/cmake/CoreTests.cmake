@@ -45,6 +45,12 @@ set_tests_properties(ninferno_device_image_negative_test PROPERTIES SKIP_RETURN_
 ninferno_add_test(ninferno_machine_facts_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_machine_facts.cpp"
   LIBRARIES ninferno_core)
+# The ISA facts reader (core/isa_facts.h) against src/core/data/isa_facts.json, field by field
+# (#613). No GPU.
+ninferno_add_test(ninferno_isa_facts_reader_test NEEDS_SOURCE_DIR
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_isa_facts.cpp"
+  LIBRARIES ninferno_core ninferno::json)
+set_tests_properties(ninferno_isa_facts_reader_test PROPERTIES LABELS host)
 # The constexpr board registry (core/board_registry.h) against the reference table, and the
 # measured boards against the figures they were spelled with before it. No GPU.
 ninferno_add_test(ninferno_board_registry_test
