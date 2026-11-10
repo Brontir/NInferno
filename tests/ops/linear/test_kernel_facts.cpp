@@ -271,7 +271,11 @@ void loop_counts_read() {
             continue;
         }
         expect(l.k_iter == 64, name + ": k_iter " + std::to_string(l.k_iter));
-        expect(l.mma == 4 && l.mma_ones == 0, name + ": " + std::to_string(l.mma) + " MMAs");
+        // 64 K per iteration in m16n8k16 MMAs, or in Turing's m16n8k8 ones (HMMA.1688, twice as
+        // many).
+        const int per_k16 = l.mma_shape.find(".1688.") != std::string::npos ? 2 : 1;
+        expect(l.mma == 4 * per_k16 && l.mma_ones == 0,
+               name + ": " + std::to_string(l.mma) + " MMAs of " + l.mma_shape);
         expect(l.mma_shape.rfind("HMMA.", 0) == 0, name + ": shape " + l.mma_shape);
     }
     // A min-term decoder's loop counts its ones-MMAs apart, and they never make K.
