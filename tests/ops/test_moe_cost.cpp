@@ -83,8 +83,11 @@ std::unique_ptr<Built> build(QType gate_up, QType down, std::int32_t experts, st
         return o;
     };
     const std::int32_t sets = relu2 ? 1 : 2;
-    b->gate_up.emplace(
-        qw::make_patterned_weight(gate_up, experts * sets * inter, hidden, 7U, options(gate_up)));
+    // A hidden size that is not whole blocks of 256 is a padded GGUF: gate/up columns to the next
+    // 256 (Nemotron-H, H 2688, K 2816), as the plan goldens build it.
+    const std::int32_t pad = hidden % 256 == 0 ? 0 : (hidden + 255) / 256 * 256 - hidden;
+    b->gate_up.emplace(qw::make_patterned_weight(gate_up, experts * sets * inter, hidden + pad, 7U,
+                                                 options(gate_up)));
     b->down.emplace(qw::make_patterned_weight(down, experts * hidden, inter, 9U, options(down)));
     b->config.top_k = top_k;
     if (relu2) b->config.activation = ops::MoeActivation::Relu2;
@@ -114,7 +117,7 @@ void law_checks() {
               moe::expected_experts_touched(8, 8, 0) == 0.0,
           "no experts or no tokens: none");
 
-    const moe::MoeBoardFacts board{1e12, 100, 2e9, 512.0, 2048.0};
+    const moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0};
     moe::MoeStageShape s;
     s.bank_bytes      = 1e9;
     s.experts         = 100;
