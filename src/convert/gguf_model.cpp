@@ -4,6 +4,7 @@
 #include "convert/ggml_quants.h"
 #include "convert/numerics.h"
 #include "convert/tensor_view.h"
+#include "core/format_facts.h"
 
 #include <algorithm>
 #include <cmath>
@@ -137,32 +138,8 @@ public:
         // K-quant, i-quant and ternary superblocks (256 values along K) and the blocks of Q4_0,
         // Q4_1, Q5_0, Q5_1, IQ4_NL (32 values), Q1_0 (128) and Q2_0 (64) are the engine's ggml_*
         // words unchanged.
-        std::optional<QType> kept;
-        switch (type) {
-        case ggml::Q4_K: kept = QType::GGML_Q4_K; break;
-        case ggml::Q5_K: kept = QType::GGML_Q5_K; break;
-        case ggml::Q6_K: kept = QType::GGML_Q6_K; break;
-        case ggml::Q3_K: kept = QType::GGML_Q3_K; break;
-        case ggml::Q2_K: kept = QType::GGML_Q2_K; break;
-        case ggml::IQ4_XS: kept = QType::GGML_IQ4_XS; break;
-        case ggml::IQ3_XXS: kept = QType::GGML_IQ3_XXS; break;
-        case ggml::IQ3_S: kept = QType::GGML_IQ3_S; break;
-        case ggml::Q4_0: kept = QType::GGML_Q4_0; break;
-        case ggml::Q4_1: kept = QType::GGML_Q4_1; break;
-        case ggml::Q5_0: kept = QType::GGML_Q5_0; break;
-        case ggml::Q5_1: kept = QType::GGML_Q5_1; break;
-        case ggml::IQ4_NL: kept = QType::GGML_IQ4_NL; break;
-        case ggml::IQ2_XXS: kept = QType::GGML_IQ2_XXS; break;
-        case ggml::IQ2_XS: kept = QType::GGML_IQ2_XS; break;
-        case ggml::IQ2_S: kept = QType::GGML_IQ2_S; break;
-        case ggml::IQ1_S: kept = QType::GGML_IQ1_S; break;
-        case ggml::IQ1_M: kept = QType::GGML_IQ1_M; break;
-        case ggml::TQ1_0: kept = QType::GGML_TQ1_0; break;
-        case ggml::TQ2_0: kept = QType::GGML_TQ2_0; break;
-        case ggml::Q1_0: kept = QType::GGML_Q1_0; break;
-        case ggml::Q2_0: kept = QType::GGML_Q2_0; break;
-        default: break;
-        }
+        std::optional<QType> kept = ninferno::ggml_format(type);
+        if (kept && !ninferno::is_ggml_block(*kept)) kept.reset();
         if (kept) {
             const auto values = ggml_block_values(*kept);
             if (same && s_.transform == Transform::None && s_.cols % values == 0 &&

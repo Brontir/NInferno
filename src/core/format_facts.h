@@ -7,8 +7,10 @@
 // formats. Every field holds for every build and every card; which kernels a build compiles for a
 // format and what a card was measured to prefer live elsewhere (ops/generic/format_traits.h).
 //
-// A QType without a row (a value the enum does not name) reads as the default row: no spelling, no
-// codec, no geometry. The checks at the end hold the table to the enum and to itself.
+// The table is host-only: lookups loop over a host constexpr array, so a device-side call would not
+// compile into anything useful. A QType without a row (a value the enum does not name) reads as the
+// default row kNoFormatFacts: no spelling, no codec, no geometry, and a `.q` that means nothing.
+// The checks at the end hold the table to the enum and to itself.
 
 #include <array>
 #include <cstddef>
@@ -500,6 +502,8 @@ inline constexpr std::array kFormats{
 } // namespace format_fact_rows
 
 inline constexpr const auto& kFormatFacts = format_fact_rows::kFormats;
+// The row for a value the table does not name. Its `.q` is a placeholder, never the queried value:
+// tell it apart by `.name.empty()`, not by `.q`.
 inline constexpr FormatFacts kNoFormatFacts{};
 
 // The format's row; the default row for a value the table does not name.
@@ -547,31 +551,12 @@ constexpr std::uint32_t u4_zp_group(QType q) noexcept { return format_facts(q).u
 
 constexpr std::uint32_t q3_group(QType q) noexcept { return format_facts(q).q3_group; }
 
-// Whether the enum names the value (a compiler prints an unnamed enumerator as a cast): the rows
-// are checked against the enum itself, not against a second hand-written list of it. Host
-// compilers only; the device compiler's front end sees the same table in every host unit.
-#if (defined(__GNUC__) || defined(__clang__)) && !defined(__CUDACC__)
-template <QType Q>
-constexpr bool named_qtype() noexcept {
-    constexpr std::string_view where = __PRETTY_FUNCTION__;
-    const std::size_t at             = where.find("Q = ");
-    return at != std::string_view::npos && where[at + 4] != '(';
-}
-
 namespace format_fact_checks {
 
 constexpr int rows_of(QType q) noexcept {
     int n = 0;
     for (const FormatFacts& f : kFormatFacts) n += f.q == q ? 1 : 0;
     return n;
-}
-
-template <std::size_t... V>
-constexpr bool every_named_qtype_has_one_row(std::index_sequence<V...>) noexcept {
-    const bool once =
-        ((!named_qtype<static_cast<QType>(V)>() || rows_of(static_cast<QType>(V)) == 1) && ...);
-    const int named = ((named_qtype<static_cast<QType>(V)>() ? 1 : 0) + ... + 0);
-    return once && static_cast<std::size_t>(named) == kFormatFacts.size();
 }
 
 // No two rows share a spelling, a GGUF id, a codec or an MMQ loader (the maps invert), and every
@@ -607,13 +592,37 @@ constexpr bool rows_consistent() noexcept {
     return true;
 }
 
+static_assert(rows_distinct(), "format_facts.h: spellings, GGUF ids, codecs and MMQ loaders must "
+                               "each name one row");
+static_assert(rows_consistent(), "format_facts.h: a row's geometry fields disagree");
+
+} // namespace format_fact_checks
+
+// Whether the enum names the value (a compiler prints an unnamed enumerator as a cast): the rows
+// are checked against the enum itself, not against a second hand-written list of it. Host
+// compilers only; the device compiler's front end sees the same table in every host unit.
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(__CUDACC__)
+template <QType Q>
+constexpr bool named_qtype() noexcept {
+    constexpr std::string_view where = __PRETTY_FUNCTION__;
+    const std::size_t at             = where.find("Q = ");
+    return at != std::string_view::npos && where[at + 4] != '(';
+}
+
+namespace format_fact_checks {
+
+template <std::size_t... V>
+constexpr bool every_named_qtype_has_one_row(std::index_sequence<V...>) noexcept {
+    const bool once =
+        ((!named_qtype<static_cast<QType>(V)>() || rows_of(static_cast<QType>(V)) == 1) && ...);
+    const int named = ((named_qtype<static_cast<QType>(V)>() ? 1 : 0) + ... + 0);
+    return once && static_cast<std::size_t>(named) == kFormatFacts.size();
+}
+
 // 0..255 covers the enum (its largest value is 43); a value past it would need this raised.
 static_assert(
     every_named_qtype_has_one_row(std::make_index_sequence<256>{}),
     "format_facts.h: every named QType needs exactly one row, and every row a named QType");
-static_assert(rows_distinct(), "format_facts.h: spellings, GGUF ids, codecs and MMQ loaders must "
-                               "each name one row");
-static_assert(rows_consistent(), "format_facts.h: a row's geometry fields disagree");
 
 } // namespace format_fact_checks
 #endif

@@ -85,44 +85,13 @@ struct Table {
     std::optional<Board> board; // the board it was measured on (gpu.board), when recorded
 };
 
+// The format a route spelling names (core/format_facts.h); a format without a route spelling
+// (FP32, INT32) never parses, whatever the string.
 std::optional<QType> parse_qtype(const std::string& s) {
-    if (s == "bf16") return QType::BF16;
-    if (s == "fp8") return QType::FP8_E4M3FN_ROW_BF16;
-    if (s == "nvfp4") return QType::NVFP4;
-    if (s == "q4") return QType::Q4_G64_FP16;
-    if (s == "q5") return QType::Q5_G64_FP16;
-    if (s == "q6") return QType::Q6_G64_FP16;
-    if (s == "q8") return QType::Q8_G32_FP16;
-    if (s == "mxfp4") return QType::MXFP4;
-    if (s == "fp8r32") return QType::FP8_E4M3FN_ROW_F32;
-    if (s == "fp8b128") return QType::FP8_E4M3FN_B128_F32;
-    if (s == "u4zp") return QType::U4_G128_ZP_FP16;
-    if (s == "u4zp32") return QType::U4_G32_ZP_FP16;
-    if (s == "u4zp64") return QType::U4_G64_ZP_FP16;
-    if (s == "q3g128") return QType::Q3_G128_FP16;
-    if (s == "q3g64") return QType::Q3_G64_FP16;
-    if (s == "q4k") return QType::GGML_Q4_K;
-    if (s == "q5k") return QType::GGML_Q5_K;
-    if (s == "q6k") return QType::GGML_Q6_K;
-    if (s == "q3k") return QType::GGML_Q3_K;
-    if (s == "q2k") return QType::GGML_Q2_K;
-    if (s == "iq4xs") return QType::GGML_IQ4_XS;
-    if (s == "iq3xxs") return QType::GGML_IQ3_XXS;
-    if (s == "iq3s") return QType::GGML_IQ3_S;
-    if (s == "q40") return QType::GGML_Q4_0;
-    if (s == "q41") return QType::GGML_Q4_1;
-    if (s == "q50") return QType::GGML_Q5_0;
-    if (s == "q51") return QType::GGML_Q5_1;
-    if (s == "iq4nl") return QType::GGML_IQ4_NL;
-    if (s == "iq2xxs") return QType::GGML_IQ2_XXS;
-    if (s == "iq2xs") return QType::GGML_IQ2_XS;
-    if (s == "iq2s") return QType::GGML_IQ2_S;
-    if (s == "iq1s") return QType::GGML_IQ1_S;
-    if (s == "iq1m") return QType::GGML_IQ1_M;
-    if (s == "tq10") return QType::GGML_TQ1_0;
-    if (s == "tq20") return QType::GGML_TQ2_0;
-    if (s == "q10") return QType::GGML_Q1_0;
-    if (s == "q20") return QType::GGML_Q2_0;
+    if (s.empty()) return std::nullopt;
+    for (const FormatFacts& f : kFormatFacts) {
+        if (f.route == s) return f.q;
+    }
     return std::nullopt;
 }
 

@@ -425,6 +425,125 @@ std::optional<std::string_view> ggml_spelling(std::uint32_t type) {
     return std::nullopt;
 }
 
+// route_table.cpp parse_qtype before the table.
+std::optional<QType> parse_qtype(const std::string& s) {
+    if (s == "bf16") return QType::BF16;
+    if (s == "fp8") return QType::FP8_E4M3FN_ROW_BF16;
+    if (s == "nvfp4") return QType::NVFP4;
+    if (s == "q4") return QType::Q4_G64_FP16;
+    if (s == "q5") return QType::Q5_G64_FP16;
+    if (s == "q6") return QType::Q6_G64_FP16;
+    if (s == "q8") return QType::Q8_G32_FP16;
+    if (s == "mxfp4") return QType::MXFP4;
+    if (s == "fp8r32") return QType::FP8_E4M3FN_ROW_F32;
+    if (s == "fp8b128") return QType::FP8_E4M3FN_B128_F32;
+    if (s == "u4zp") return QType::U4_G128_ZP_FP16;
+    if (s == "u4zp32") return QType::U4_G32_ZP_FP16;
+    if (s == "u4zp64") return QType::U4_G64_ZP_FP16;
+    if (s == "q3g128") return QType::Q3_G128_FP16;
+    if (s == "q3g64") return QType::Q3_G64_FP16;
+    if (s == "q4k") return QType::GGML_Q4_K;
+    if (s == "q5k") return QType::GGML_Q5_K;
+    if (s == "q6k") return QType::GGML_Q6_K;
+    if (s == "q3k") return QType::GGML_Q3_K;
+    if (s == "q2k") return QType::GGML_Q2_K;
+    if (s == "iq4xs") return QType::GGML_IQ4_XS;
+    if (s == "iq3xxs") return QType::GGML_IQ3_XXS;
+    if (s == "iq3s") return QType::GGML_IQ3_S;
+    if (s == "q40") return QType::GGML_Q4_0;
+    if (s == "q41") return QType::GGML_Q4_1;
+    if (s == "q50") return QType::GGML_Q5_0;
+    if (s == "q51") return QType::GGML_Q5_1;
+    if (s == "iq4nl") return QType::GGML_IQ4_NL;
+    if (s == "iq2xxs") return QType::GGML_IQ2_XXS;
+    if (s == "iq2xs") return QType::GGML_IQ2_XS;
+    if (s == "iq2s") return QType::GGML_IQ2_S;
+    if (s == "iq1s") return QType::GGML_IQ1_S;
+    if (s == "iq1m") return QType::GGML_IQ1_M;
+    if (s == "tq10") return QType::GGML_TQ1_0;
+    if (s == "tq20") return QType::GGML_TQ2_0;
+    if (s == "q10") return QType::GGML_Q1_0;
+    if (s == "q20") return QType::GGML_Q2_0;
+    return std::nullopt;
+}
+
+// gguf_model.cpp's kept-block switch (ggml:: ids written as their numbers: ggml_quants.h is the
+// converter's, the values are the GGUF type ids).
+std::optional<QType> kept_block(std::uint32_t type) {
+    std::optional<QType> kept;
+    switch (type) {
+    case 12:
+        kept = QType::GGML_Q4_K;
+        break;
+    case 13:
+        kept = QType::GGML_Q5_K;
+        break;
+    case 14:
+        kept = QType::GGML_Q6_K;
+        break;
+    case 11:
+        kept = QType::GGML_Q3_K;
+        break;
+    case 10:
+        kept = QType::GGML_Q2_K;
+        break;
+    case 23:
+        kept = QType::GGML_IQ4_XS;
+        break;
+    case 18:
+        kept = QType::GGML_IQ3_XXS;
+        break;
+    case 21:
+        kept = QType::GGML_IQ3_S;
+        break;
+    case 2:
+        kept = QType::GGML_Q4_0;
+        break;
+    case 3:
+        kept = QType::GGML_Q4_1;
+        break;
+    case 6:
+        kept = QType::GGML_Q5_0;
+        break;
+    case 7:
+        kept = QType::GGML_Q5_1;
+        break;
+    case 20:
+        kept = QType::GGML_IQ4_NL;
+        break;
+    case 16:
+        kept = QType::GGML_IQ2_XXS;
+        break;
+    case 17:
+        kept = QType::GGML_IQ2_XS;
+        break;
+    case 22:
+        kept = QType::GGML_IQ2_S;
+        break;
+    case 19:
+        kept = QType::GGML_IQ1_S;
+        break;
+    case 29:
+        kept = QType::GGML_IQ1_M;
+        break;
+    case 34:
+        kept = QType::GGML_TQ1_0;
+        break;
+    case 35:
+        kept = QType::GGML_TQ2_0;
+        break;
+    case 41:
+        kept = QType::GGML_Q1_0;
+        break;
+    case 42:
+        kept = QType::GGML_Q2_0;
+        break;
+    default:
+        break;
+    }
+    return kept;
+}
+
 } // namespace legacy
 
 namespace {
@@ -482,6 +601,44 @@ int main() {
         std::optional<std::string_view> spelling;
         if (q) spelling = format_facts(*q).name;
         agree(old_spelling, spelling, "format_of_ggml", static_cast<int>(id));
+    }
+
+    // The route spellings: the new loop over the rows (route_table.cpp parse_qtype) against the old
+    // chain, for every spelling in the table and for junk; a format with no route spelling (FP32,
+    // INT32) and the artifact spellings that are not route spellings must not parse.
+    const auto parse_qtype_new = [](const std::string& str) -> std::optional<QType> {
+        if (str.empty()) return std::nullopt;
+        for (const auto& row : ninferno::kFormatFacts) {
+            if (row.route == str) return row.q;
+        }
+        return std::nullopt;
+    };
+    for (const auto& row : ninferno::kFormatFacts) {
+        if (row.route.empty()) {
+            agree(parse_qtype_new(std::string(row.name)),
+                  legacy::parse_qtype(std::string(row.name)), "unrouted artifact spelling parse",
+                  static_cast<int>(row.q));
+            continue;
+        }
+        const std::string spelling(row.route);
+        agree(parse_qtype_new(spelling), std::optional<QType>(row.q), "route round trip",
+              static_cast<int>(row.q));
+        agree(parse_qtype_new(spelling), legacy::parse_qtype(spelling), "parse_qtype",
+              static_cast<int>(row.q));
+    }
+    for (const char* junk : {"", "Q4", "q4 ", " q4", "q4k ", "Q4K", "ggml_q4_k", "fp32", "int32",
+                             "bf16x", "b", "q", "q4kk", "unknown", "q8_g32_fp16"}) {
+        agree(parse_qtype_new(junk), legacy::parse_qtype(junk), junk, -1);
+    }
+    agree(parse_qtype_new("fp32").has_value(), false, "fp32 must not parse", -1);
+    agree(parse_qtype_new("int32").has_value(), false, "int32 must not parse", -1);
+
+    // gguf_model.cpp kept-block mapping: the old 22-case switch against the table lookup
+    // (ggml_format filtered by is_ggml_block), over ids past the last.
+    for (std::uint32_t id = 0; id < 64; ++id) {
+        std::optional<QType> kept = ninferno::ggml_format(id);
+        if (kept && !ninferno::is_ggml_block(*kept)) kept.reset();
+        agree(legacy::kept_block(id), kept, "kept block", static_cast<int>(id));
     }
 
     if (failures != 0) {
