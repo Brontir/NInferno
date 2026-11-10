@@ -91,6 +91,11 @@ set_tests_properties(ninferno_route_table_evidence_test PROPERTIES LABELS host)
 add_test(NAME ninferno_mmq_transfer_audit_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_mmq_transfer_audit.py)
 
+# tools/audit/golden_diff.py: the compact summary of a selector golden change (#620), no GPU.
+add_test(NAME ninferno_golden_diff_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_golden_diff.py)
+set_tests_properties(ninferno_golden_diff_test PROPERTIES LABELS host)
+
 # Repository hygiene, no GPU: only scripts (a #! first line) may be committed executable.
 add_test(NAME ninferno_file_modes_test
   COMMAND bash "${PROJECT_SOURCE_DIR}/tools/check_file_modes.sh")
