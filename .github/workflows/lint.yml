@@ -28,6 +28,8 @@ jobs:
         run: |
           crlf=$(git ls-files --eol | awk '$1 == "i/crlf" || $1 == "i/mixed" {print $NF}')
           if [ -n "$crlf" ]; then echo "CRLF line endings:"; echo "$crlf"; exit 1; fi
+      - name: No board literal outside the registry
+        run: python3 tools/audit/board_literal_lint.py
       - name: Tracked Python files compile
         run: git ls-files -z '*.py' | xargs -0 python3 -m compileall -q
       # The version the maintainers format with; vendored code under third_party/ keeps its own.

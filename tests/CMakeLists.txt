@@ -75,6 +75,12 @@ add_test(NAME ninferno_regret_collect_test
 add_test(NAME ninferno_mmq_transfer_audit_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_mmq_transfer_audit.py)
 
+# tools/audit/board_literal_lint.py: no hand-written Board{...} literal outside the registry
+# (roadmap #612 step 9), and the tree is clean. No GPU.
+add_test(NAME ninferno_board_literal_lint_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_board_literal_lint.py)
+set_tests_properties(ninferno_board_literal_lint_test PROPERTIES LABELS host)
+
 # Repository hygiene, no GPU: only scripts (a #! first line) may be committed executable.
 add_test(NAME ninferno_file_modes_test
   COMMAND bash "${PROJECT_SOURCE_DIR}/tools/check_file_modes.sh")
