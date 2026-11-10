@@ -1702,22 +1702,30 @@ on the W4A8 tiles, not this kernel, which steps the same way (RTX 5060 Ti 104 ->
 256 tokens): its 64 x 64 against 128 x 64 tile steps need their own grid.
 
 **Turing, predicted, to verify (#524).** RTX 2080 Ti (sm_75, 68 SMs, 64 KiB of shared memory): f 0.20,
-best range 0.15-0.25. This is an assumption, not a derivation: 0.20 is the value measured on GA10x
-(RTX 3060 0.15-0.30, RTX 3090 0.15-0.20) and on Ada (0.15-0.20), assumed for Turing because its int8
-tensor rate per SM is theirs (2048 ops a clock, `s8` 2048 on both rows) and the K-quant decode runs
-on the same 64 int32 lanes. Those two facts do not fix f: GB20x has the same `s8` and the same
-Q4_K / Q6_K tile configuration and measured 0.10 (best 0.05-0.15), so the grid scans f 0.05-0.43. Turing
-holds one block per SM at every width where sm_86's 100 KiB holds two up to J 64, which can raise the
-fixed share of the narrow tiles. The Q4_K / Q6_K tile is 42 048 B (J 16) to 57 856 B (J 128), 38 912 B
-of weight rows plus the y tile and ids (`tile_shared_bytes`, pinned in `tests/test_choice.cpp`): all
-eight widths fit 64 KiB (Q2_K's 128-column tile, 70 144 B, does not: `widest_tile` 64, it keeps the
-fewest tiles). On 68 SMs a 4096-row product (32 row tiles) fills 94 % of a wave with two tiles of
-80, 96 or 128 columns against 1.41 waves for three of 64, so the padding that 80 / 96 save at
-136..192 tokens may turn into time more cleanly than on the 3090's 82 SMs. Predicted A/B if f is 0.20
-(the bracket of the GA10x and Ada results): 144..160 tokens -14..-19 %, 176..192 -9..-13 %, 208..256
-within 0.5 %. The Turing row keeps the fewest tiles until `tools/bench/run_524_turing_grid.sh`
-(forced-width grid, then the A/B; the widths come from a bench-only patch that is never merged into the
-kernel) has run on an RTX 2080 Ti and the grid agrees. Nothing is changed by this note.
+best range 0.15-0.25. This is an assumption, not a derivation: 0.20 is a value measured on other cards,
+assumed for Turing because its int8 tensor rate per SM is theirs (2048 ops a clock, `s8` 2048 on both
+rows) and the K-quant decode runs on the same 64 int32 lanes. The measured ones split two against two:
+RTX 3090 and RTX 4070 Ti are best at 0.15-0.20 (0.28 % and 0.14 % worse at 0.25-0.30), RTX 3060 and
+RTX 4090 are best at 0.25-0.30 (0.21 % and 0.18 % worse at 0.15-0.20), so the neighbouring buckets
+around 0.20 differ by 0.07-0.28 % of mean regret and a single visit cannot separate them. The two
+facts do not fix f either: GB20x has the same `s8` and the same Q4_K / Q6_K tile configuration and
+measured 0.10 (best 0.05-0.15). The grid therefore scores one f per bucket of the table of picks (every
+f from 0 to 1) and the criteria that refute 0.20 are fixed in the kit's header before the run
+(`tools/bench/mmq_width_grid.py`, `CRITERIA`). Turing holds one block per SM at every width where
+sm_86's 100 KiB holds two up to J 64 (shared memory only; registers per thread are not checked),
+which can raise the fixed share of the narrow tiles. The Q4_K / Q6_K tile is 42 048 B (J 16) to
+57 856 B (J 128), 38 912 B of weight rows plus the y tile and ids (`tile_shared_bytes`; the J 128
+values are pinned in `tests/test_choice.cpp`): all eight widths fit 64 KiB (Q2_K's 128-column tile,
+70 144 B, does not: `widest_tile` 64, it keeps the fewest tiles). On 68 SMs a 4096-row product (32 row
+tiles) with two column tiles is 64 CTAs, 94 % of one wave, for 2 x 128 and for 2 x 80 / 96 alike, so
+at 129..192 columns the saving is padding, not waves. The grid's sizes are prompt tokens and the
+kernel sees tokens - k columns (k assumed 7, to be measured by the kit's `kprobe`); the older grids'
+N were columns. The predicted A/B below is in columns, the bracket of the measured cards, not a
+derivation: 144..160 columns -14..-19 %, 176..192 -9..-13 %, 208..256 within 0.5 %. The A/B's new arm
+does not move the host cost model: route choice stays on the production table. The Turing row keeps
+the fewest tiles until `tools/bench/run_524_turing_grid.sh` (forced-width grid, then the A/B; the
+widths come from a bench-only patch that is never merged into the kernel) has run on an RTX 2080 Ti
+and the grid agrees. Nothing is changed by this note.
 
 ## 75. Inside the speed estimate's resolution the more accurate candidate wins (#301, 09.11, rule; not yet run on the stands)
 

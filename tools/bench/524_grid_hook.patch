@@ -1,5 +1,21 @@
+diff --git a/src/ops/generic/ggml_mmq/ggml_mmq.cu b/src/ops/generic/ggml_mmq/ggml_mmq.cu
+index 9e247d085..4ba4ea941 100644
+--- a/src/ops/generic/ggml_mmq/ggml_mmq.cu
++++ b/src/ops/generic/ggml_mmq/ggml_mmq.cu
+@@ -246,8 +246,9 @@ void quantize_activation(Type type, const __nv_bfloat16* x, int ldx, int k, int
+ 
+ std::size_t fixup_bound(int columns) {
+     // A stream-k launch holds at most one 128-row tile of the call's column tile per SM.
+-    int j = 16;
+-    while (j < columns && j < 128) j *= 2;
++    // GRID HOOK: the buffer is sized for the widest forced width (J 128) whatever the call's columns
++    int j = 128;
++    (void) columns;
+     return std::size_t(detail::device_facts().sm_count) * j * 128 * sizeof(float);
+ }
+ 
 diff --git a/src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh b/src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh
-index 17b9748a..5af94911 100644
+index aae368a30..157fad9b9 100644
 --- a/src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh
 +++ b/src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh
 @@ -40,7 +40,7 @@ constexpr bool work_tiles_arch_matches_table() {
@@ -11,17 +27,22 @@ index 17b9748a..5af94911 100644
  #    define NINFERNO_MMQ_SKIP_SPECIALIZATION(J)                                                    \
          (((J) == 80 || (J) == 96) &&                                                               \
           !::ninferno::ops::ggml_mmq::detail::work_tiles_arch(__CUDA_ARCH__))
-@@ -49,7 +49,10 @@ static_assert(work_tiles_arch_matches_table());
+@@ -49,12 +49,15 @@ static_assert(work_tiles_arch_matches_table());
  #include "ggml-cuda/common.cuh"
  #include "ggml-cuda/mmq.cuh"
  
 +#include <algorithm>
  #include <climits>
-+#include <cstdlib>
-+#include <vector>
  #include <cstddef>
  #include <cstdint>
++#include <cstdlib>
  #include <mutex>
+ #include <stdexcept>
+ #include <string>
++#include <vector>
+ 
+ namespace ninferno::ops::ggml_mmq::detail {
+ 
 @@ -126,9 +129,21 @@ Launch select_launch(int rows, int columns, int k) {
      double best_cost        = 1e300;
      const int major         = device.cc / 100;
@@ -47,7 +68,7 @@ index 17b9748a..5af94911 100644
          const ggml_cuda_mmq_config config = ggml_cuda_mmq_get_config(type, J, false, device.cc);
          if (config.type == GGML_TYPE_COUNT) continue;
          const std::size_t shared = mmq_get_nbytes_shared(config, device.cc);
-@@ -238,6 +253,12 @@ void product_impl(const Planes& w, int blocks_per_row, int rows, int k, const vo
+@@ -246,6 +261,12 @@ void product_impl(const Planes& w, int blocks_per_row, int rows, int k, const vo
      case 32:
          return launch<type, 32>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
                                  out_column_stride, f, stream);
