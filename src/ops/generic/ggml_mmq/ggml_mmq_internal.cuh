@@ -28,7 +28,7 @@
 // the generation table, so the one range it holds is spelled here and checked against the table.
 namespace ninferno::ops::ggml_mmq::detail {
 [[nodiscard]] __host__ __device__ constexpr bool work_tiles_arch(int cc) {
-    return (cc >= 810 && cc < 890) || (cc >= 1200 && cc < 1300);
+    return (cc >= 810 && cc < 900) || (cc >= 1200 && cc < 1300);
 }
 
 constexpr bool work_tiles_arch_matches_table() {
@@ -168,6 +168,14 @@ int column_tile_impl(int rows, int columns, int k) {
     return select_launch<type>(rows, columns, k).J;
 }
 
+// ggml's own shared memory of a J-column tile on this device (0: no such tile in its table).
+template <ggml_type type>
+std::size_t tile_shared_bytes_impl(int J) {
+    const int cc                      = device_facts().cc;
+    const ggml_cuda_mmq_config config = ggml_cuda_mmq_get_config(type, J, false, cc);
+    return config.type == GGML_TYPE_COUNT ? 0 : mmq_get_nbytes_shared(config, cc);
+}
+
 template <ggml_type type>
 std::size_t fixup_bytes_impl(int rows, int columns, int k) {
     const Launch l = select_launch<type>(rows, columns, k);
@@ -260,6 +268,7 @@ void product_impl(const Planes& w, int blocks_per_row, int rows, int k, const vo
 #define NINFERNO_GGML_MMQ_INSTANCE(TYPE)                                                           \
     template std::size_t ninferno::ops::ggml_mmq::detail::fixup_bytes_impl<TYPE>(int, int, int);   \
     template int ninferno::ops::ggml_mmq::detail::column_tile_impl<TYPE>(int, int, int);           \
+    template std::size_t ninferno::ops::ggml_mmq::detail::tile_shared_bytes_impl<TYPE>(int);       \
     template void ninferno::ops::ggml_mmq::detail::product_impl<TYPE>(                             \
         const ninferno::ops::ggml_mmq::Planes&, int, int, int, const void*, int, float*,           \
         std::int64_t, void*, cudaStream_t)

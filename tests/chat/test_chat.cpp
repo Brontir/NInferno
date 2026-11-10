@@ -1620,6 +1620,93 @@ int test_codec() {
     return failures;
 }
 
+// tool_choice none steer (#578): harmony closes the headers that address a message, the other
+// syntaxes need no header constraint.
+int test_refusal_structural_tag() {
+    int failures = 0;
+    for (const auto format :
+         {ToolCallFormat::QwenXml, ToolCallFormat::HermesJson, ToolCallFormat::Gemma4}) {
+        failures += check(ninferno::chat::tool_call_syntax(format).refusal_structural_tag().empty(),
+                          "no refusal tag outside harmony");
+    }
+    const std::string tag =
+        ninferno::chat::tool_call_syntax(ToolCallFormat::Harmony).refusal_structural_tag();
+    const ninferno::structured::ConstraintCompiler compiler(byte_vocabulary());
+    ninferno::OutputConstraintSpec spec;
+    spec.kind                   = ninferno::OutputConstraintKind::StructuralTag;
+    spec.special_tokens_visible = true;
+    spec.definition             = tag;
+    const auto compiled         = compiler.compile(spec);
+    // The prompt ends at "<|start|>assistant": the output begins with the header. Every
+    // sequence is fed byte by byte; the constraint must refuse it before its end (or accept it).
+    const auto admits = [&](std::string_view text) {
+        ninferno::structured::RequestConstraint request(compiled, false);
+        std::vector<ninferno::TokenId> tokens;
+        for (const char c : text) { tokens.push_back(static_cast<unsigned char>(c)); }
+        request.commit(tokens);
+        return !request.violated();
+    };
+    for (const std::string_view ok : {
+             "<|channel|>analysis<|message|>think to=x commentary<|end|>",
+             "<|channel|>final<|message|>It is sunny; set x to=3, a commentary.",
+             "<|channel|>analysis<|message|>a<|end|><|start|>assistant<|channel|>final<|message|>b",
+             "Hello there",
+             "commentary is a word",
+             "<tool_call> as text",
+             " the weather is fine",
+             "\nthat works",
+             "today is sunny",
+             "to be sure",
+             "t",
+             "to",
+             " to",
+             " <b>bold</b>",
+             "\n<x> after a newline",
+             "t<b> and to<i>",
+         }) {
+        failures += check(admits(ok), "refusal tag admits: " + std::string(ok));
+    }
+    for (const std::string_view bad : {
+             " to=functions.x<|channel|>final<|message|>",
+             " to=python<|channel|>analysis<|message|>",
+             "  to=X <|constrain|>json<|message|>",
+             "\nto=functions.x",
+             "\rto=functions.x<|channel|>analysis<|message|>",
+             "to=functions.x<|channel|>commentary",
+             "<<|channel|>commentary to=functions.x",
+             " <|channel|>commentary to=functions.x",
+             "t<|channel|>commentary to=functions.x<|message|>{}",
+             "to<|constrain|>json<|message|>{}",
+             " to<|channel|>analysis to=python",
+             "\n<|channel|>final<|constrain|>json",
+             "<|channel|>commentary to=functions.x",
+             "<|channel|>analysis to=python<|message|>",
+             "<|channel|>analysis<|constrain|>json",
+             "<|channel|>final <|constrain|>json",
+             "<|channel|>analysis<|message|>a<|end|><|start|>assistant<|channel|>commentary",
+             "<|channel|>analysis<|message|>a<|end|><|start|>assistant to=functions.x",
+             "<|channel|>analysis<|message|>a<|end|><|start|>assistant<|channel|>analysis "
+             "to=python",
+             "<|channel|>final<|message|>b<|start|>assistant<|channel|>commentary",
+         }) {
+        failures += check(!admits(bad), "refusal tag refuses: " + std::string(bad));
+    }
+    // An answer that is empty, only whitespace, or only a prefix of "to=" or of a structural token
+    // may stop there.
+    for (const std::string_view whole :
+         {"t", "to", " to", "Hello there", "", " ", "\n\t", "<", " <", "t<", "to<"}) {
+        ninferno::structured::ConstraintMatcher matcher(compiled);
+        const bool accepted = matcher.accept_bytes(whole);
+        failures += check(accepted && matcher.completed(),
+                          "refusal tag may stop after: " + std::string(whole));
+    }
+    {
+        ninferno::structured::ConstraintMatcher matcher(compiled);
+        failures += check(!matcher.accept_bytes("to="), "refusal tag refuses to= whole");
+    }
+    return failures;
+}
+
 } // namespace
 
 int main() {
@@ -1627,6 +1714,7 @@ int main() {
     failures += test_conventions();
     failures += test_bare_json_call_dropped();
     failures += test_harmony_any_recipient_under_none();
+    failures += test_refusal_structural_tag();
     failures += test_parsers();
     failures += test_streaming_decoder();
     failures += test_forced_stop_cut();
