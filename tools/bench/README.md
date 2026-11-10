@@ -189,9 +189,9 @@ problem; in either pick), when the pick is of another compute class than the cas
 candidates of its class were timed, or (`--pick model`, T >= 17 only) when the case is NVFP4 (the
 cost model does not rank NVFP4; route_tune writes its `model_us` as a diagnostic), when it is an
 int8 q4 / q5 / q6 case with K a multiple of 512 (the model also prices the I8 tiles there, which
-route_tune does not sweep; route_tune writes no such case today, since it refuses a8 for every
-format but fp8 and sweeps a8 beside a16 only for ggml formats, so the skip guards hand-made or
-archived rows), when the model prices none of the candidates, or when it prices the
+route_tune does not sweep; such cases come from an `--a8-candidates 1` sweep of these ggml
+formats, whose rows are keyed a8 and priced under AllowA8, where the model also prices the I8
+schedules route_tune never times), when the model prices none of the candidates, or when it prices the
 best candidates of two route families equally. When every case is skipped the report is still
 written, listing them, and the exit status is 2. A tie within one family takes the route first in the family's schedule order, as the
 other speed-loop widths of the same problem show it (`cost_route` keeps the first offered on an
