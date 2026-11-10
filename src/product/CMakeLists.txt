@@ -1,3 +1,4 @@
+ninferno_directory_warnings()
 add_library(ninferno_media_acquire STATIC
   media_acquire/acquire.cpp
 )
@@ -40,7 +41,7 @@ add_library(ninferno_product_choice STATIC
   choice/choice_replay.cpp
 )
 ninferno_internal_includes(ninferno_product_choice)
-target_link_libraries(ninferno_product_choice PUBLIC ninferno_core ninferno::json)
+target_link_libraries(ninferno_product_choice PUBLIC ninferno_core_host ninferno::json)
 
 # The plan without the weights (runtime/engine/plan_dry_run.h) from what a model says about itself
 # and what a device is, the speculation a start would serve with, and the largest quantization that
