@@ -512,6 +512,39 @@ class IsaFacts(unittest.TestCase):
             self.assertEqual(os.listdir(inputs), [])
             self.assertFalse(os.path.exists(args.table))
 
+    def test_merge_changes_nothing_when_the_table_cannot_be_saved(self):
+        # A valid run and valid inputs, but the table's path cannot be written: the destination
+        # keeps its older run (or is not created), no temporary file is left, and the error is
+        # the tool's, not a traceback.
+        older = SAMPLE.replace("fact shared_latency 29.5 clk\n", "fact shared_latency 30.5 clk\n")
+        for before in (older, None):
+            with tempfile.TemporaryDirectory() as d:
+                run = os.path.join(d, "run.txt")
+                inputs = os.path.join(d, "inputs")
+                os.mkdir(inputs)
+                dest = os.path.join(inputs, "isa_probe_89.txt")
+                for path, body in ((run, SAMPLE), (dest, before)):
+                    if body is not None:
+                        with open(path, "w", newline="\n") as f:
+                            f.write(body)
+                args = argparse.Namespace(input=run, inputs=inputs,
+                                          table=os.path.join(d, "no such dir", "t.json"))
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(ip.cmd_merge(args), 1)
+                    self.assertEqual(ip.cmd_regenerate(args), 1)
+                self.assertIn("nothing merged", err.getvalue())
+                if before is None:
+                    self.assertEqual(os.listdir(inputs), [])
+                else:
+                    self.assertEqual(os.listdir(inputs), ["isa_probe_89.txt"])
+                    with open(dest) as f:
+                        self.assertEqual(f.read(), older)
+        # A table that can be saved is written whole: no temporary file beside it.
+        with tempfile.TemporaryDirectory() as d:
+            ip.save_table(os.path.join(d, "t.json"), {"schema": 1})
+            self.assertEqual(os.listdir(d), ["t.json"])
+
     def test_merge_restores_when_the_table_cannot_be_built(self):
         # A valid run next to inputs the table cannot be built from (here the same architecture
         # under another file name, then a malformed neighbour) merges nothing: an older run of
