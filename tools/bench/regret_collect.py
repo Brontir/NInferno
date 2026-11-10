@@ -22,7 +22,8 @@ ridge for its regimes; the rows' device must be that board's class (chip or arch
 Rows that carry a `pci_device_id` column (route_tune writes it when the driver reports the id, #684)
 name the board itself: two SKUs of one class (an RTX 4070 Ti and an RTX 4500 Ada are both
 ad104:60sm) are told apart, --pci-id must then be that id, and without --pci-id the board's facts
-are read by the recorded id. Older rows keep the class check alone.
+are read by the recorded id (so --gpu-facts is then opened and must exist; an id it does not list
+leaves only the ridge out). Older rows keep the class check alone.
 
 Each row names its run, board and timing protocol (#518): a pass's --selected-out and --routes-out
 must come from one run, every file from one board, and a case's passes from one protocol ("copies":
