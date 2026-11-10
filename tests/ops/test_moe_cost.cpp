@@ -46,6 +46,7 @@
 #include "core/device_class.h"
 #include "core/weight.h"
 #include "ninferno/ops/moe.h"
+#include "ops/common/native_nvfp4.h"
 #include "ops/generic/selector_facts.h"
 #include "ops/moe/moe_cost.h"
 #include "ops/moe/moe_internal.h"
@@ -626,11 +627,15 @@ void strict_floor_checks() {
 // memory at 36 bytes a 32-value block, 40 with a min. A down bank of K = 40192 (whole 256-value
 // blocks) at T = 1 needs 1256 blocks x 36 = 45216 bytes (fits 49152) without a min, x 40 = 50240
 // (does not) with one, so r8_admits is true exactly for a format without a min. Formats the
-// fixture cannot build, or R8 refuses for another reason, are counted, not silently skipped.
+// fixture cannot build, or R8 refuses for another reason, are counted, not silently skipped. The
+// one refusal a build may have is NVFP4 on a build with the native NVFP4 kernels (sm_120a,
+// kNativeNvfp4): r8_bank_refusal sends it to them (BankRefusal::NativeBuild), so that build tests
+// eleven formats without a min, every other build twelve. Any other refusal fails the test.
 void format_min_binding_checks() {
     const DeviceClass scoped_class = generic::board_device_class(board_named("rtx4090"));
     const ScopedDeviceClass scoped(scoped_class);
     int tested = 0, with_min = 0, without_min = 0, not_built = 0, refused = 0;
+    std::string refusals;
     for (const QType q :
          {QType::GGML_Q4_0, QType::GGML_Q4_1, QType::GGML_Q5_0, QType::GGML_Q5_1, QType::GGML_Q4_K,
           QType::GGML_Q5_K, QType::GGML_Q6_K, QType::GGML_IQ4_NL, QType::GGML_IQ4_XS,
@@ -643,9 +648,17 @@ void format_min_binding_checks() {
             ++not_built;
             continue;
         }
-        if (ops::detail::moe::r8_bank_refusal(layer->weights.down) !=
-            ops::detail::moe::BankRefusal::None) {
+        const moe::BankRefusal refusal = moe::r8_bank_refusal(layer->weights.down);
+        if (refusal != moe::BankRefusal::None) {
             ++refused;
+            refusals += std::string(refusals.empty() ? "" : ", ") + "format " +
+                        std::to_string(static_cast<int>(q)) + ": " +
+                        moe::bank_refusal_name(refusal);
+            check(q == QType::NVFP4 && refusal == moe::BankRefusal::NativeBuild &&
+                      ops::detail::kNativeNvfp4,
+                  "format " + std::to_string(static_cast<int>(q)) + " refused by R8 (" +
+                      moe::bank_refusal_name(refusal) +
+                      "): only NVFP4 on a native NVFP4 build may be");
             continue;
         }
         // The formats whose codec keeps a min (Q4_1, Q5_1, Q4_K, Q5_K), as a literal list: neither
@@ -662,10 +675,16 @@ void format_min_binding_checks() {
         (has_min ? with_min : without_min)++;
     }
     std::printf("format_has_min binding: %d formats tested (%d with a min, %d without), %d the "
-                "fixture cannot build, %d refused by R8\n",
-                tested, with_min, without_min, not_built, refused);
-    check(with_min == 4 && without_min == 12 && not_built == 0 && refused == 0,
-          "the binding test covers the four formats with a min and the twelve without");
+                "fixture cannot build, %d refused by R8%s%s%s (native NVFP4 build: %s)\n",
+                tested, with_min, without_min, not_built, refused, refusals.empty() ? "" : " (",
+                refusals.c_str(), refusals.empty() ? "" : ")",
+                ops::detail::kNativeNvfp4 ? "yes" : "no");
+    // NVFP4 has no min: a native NVFP4 build tests one format without a min fewer.
+    const int native_refused = ops::detail::kNativeNvfp4 ? 1 : 0;
+    check(with_min == 4 && without_min == 12 - native_refused && not_built == 0 &&
+              refused == native_refused,
+          "the binding test covers the four formats with a min and the twelve without (" +
+              std::to_string(12 - native_refused) + " where the build runs NVFP4 natively)");
 }
 
 // The expert-coverage law has several copies; this one is bound to the runtime's (fixed point,
