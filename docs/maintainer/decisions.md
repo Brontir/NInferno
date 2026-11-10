@@ -1712,8 +1712,11 @@ them. The two facts do not fix f either: GB20x has the same `s8` and the same Q4
 configuration and was best at 0.10 alone (0.06 % against 0.31 % at 0.05 and 0.45 % at 0.15-0.20). The
 grid therefore MEASURES f: a least-squares fit of the work law, T = C_N + a x tiles x (1 - J / 128) +
 b x tiles x J / 128 with one constant per size, over all its cells gives f = a / b with a bootstrap
-interval (fixed seed), printed beside the predicted 0.20; the criteria that refute 0.20 (0.20 outside
-the 95 % interval, among others) are fixed in the kit's header before the run
+interval over the width runs (every width is measured twice, 16..128 then 128..16, so a drift in time
+does not line up with J), printed beside the predicted range 0.15-0.25: an interval wholly outside it
+refutes 0.20, wholly inside it stands, across an edge it is undecided, and a lack-of-fit ratio (the
+residual against the cells' own request noise) above 3 means the law does not describe the card and
+gives no verdict on f. These criteria are fixed in the kit's header before the run
 (`tools/bench/mmq_width_grid.py`, `CRITERIA`). The regret per bucket of the table of picks is printed
 as a report only: on the kit's own sizes it cannot tell 0.10 from 0.30, and the regret is taken
 against the six widths the table picks from (J 48 and J 112 are measured too, and shown apart: they

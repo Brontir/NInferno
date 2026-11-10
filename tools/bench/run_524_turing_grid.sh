@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # #524, DECISIONS 74: the forced-width grid and the A/B that qualify the RTX 2080 Ti (Turing, sm_75)
-# for the column tile of least work. Run it on an idle RTX 2080 Ti, nothing else on the GPU.
+# for the column tile of least work. Run it on an idle RTX 2080 Ti, nothing else on the GPU. Another
+# sm_75 board (T4, RTX 2080, ...) is accepted: its name is printed and kept in OUT/gpu.txt, and the
+# notes below that use the RTX 2080 Ti's 68 SMs then do not apply; the result is that board's.
 #
 # BENCH-ONLY HOOK. The widths are forced by tools/bench/524_grid_hook.patch, a patch of
 # src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh (the width choice) and ggml_mmq.cu (the stream-k fixup
@@ -14,8 +16,11 @@
 # measured one, and what would REFUTE f = 0.20 is fixed here, before any data exists
 # (tools/bench/mmq_width_grid.py, CRITERIA, prints the same text at the top of the grid output):
 #   R5 grid: f MEASURED by a least-squares fit of the work law T = C_N + a tiles (1 - J/128)
-#      + b tiles J/128 over all cells (f = a / b, one constant per size) has a 95 % bootstrap interval
-#      (fixed seed) that does not hold 0.20, or the law does not fit.
+#      + b tiles J/128 over all cells (f = a / b, one constant per size, relative residuals), with a
+#      95 % bootstrap interval over the width visits (fixed seed), against the predicted RANGE
+#      0.15..0.25: the whole interval outside refutes, the whole interval inside stands, an interval
+#      across an edge is undecided. When the law does not fit (lack-of-fit ratio above 3: the residual
+#      against the cells' own request noise), R5 gives no verdict on f.
 #   R2 grid: more than 25 % of the sizes have a width picked at f 0.20 that is more than 2 % slower
 #      than the best of the six production widths (J 48 / J 112 are measured, their gains are shown
 #      apart: they win some sizes by padding whatever f is, and the table cannot pick them).
@@ -23,8 +28,8 @@
 #   R4 ab: the mix change lies more than 2 pp outside the predicted mix range.
 #   R1 grid (a report, not a verdict): the regret at f 0.20 against the least over the f buckets;
 #      neighbouring buckets' tables differ at one to three sizes, so it cannot separate 0.10 from 0.30.
-#   Any one of R2..R5 met refutes f = 0.20 for this card; the thresholds and the interval level are
-#   a priori, not fitted.
+#   Any one of R2..R5 met refutes f = 0.20 for this card; the thresholds, the range, the interval
+#   level and the lack-of-fit bound are a priori, not fitted.
 #   - Basis: f 0.20 is a value measured on other cards, assumed equal for Turing because two facts match:
 #     the int8 tensor rate per SM (generation.h s8 2048 on both rows; 215 TOPS at 68 SMs x 1.545 GHz)
 #     and the K-quant decode on the same 64 int32 lanes. The measured cards split two against two:
@@ -65,17 +70,21 @@
 # temporary hooks that were not committed, tools/bench/524_grid_hook.patch is that hook again):
 # Qwen3-8B Q4_K_M, ninferno-serve --no-prefix-reuse --max-concurrency 1 --prefill-chunk 1024 (above the
 # largest size; confirm in the server log that no size was split), 8 forced widths
-# (16 32 48 64 80 96 112 128) x 21 prompt sizes (32..512 tokens), 4 requests a point, thinking off,
+# (16 32 48 64 80 96 112 128) x 21 prompt sizes (32..512 tokens) x 2 visits, 4 requests a point, thinking off,
 # metric = the server's prefill time (timings.prompt_ms of a 1-token chat completion, median, ms)
 # with the prompt size checked per request (timings.prompt_n). A size that cannot be built is skipped
 # and reported (the readers then need it skipped at every width). f is fitted to all cells with its
 # interval (R5); the regret of the model's picks (core/mmq_columns.h rule at each f, widths 16 32 64 80
 # 96 128) against the best of those six widths, mean over the sizes, is printed per f bucket, at f 0.20
-# and for the fewest tiles, with the predicted width per size beside the measured best. The A/B is the same binary with NINFERNO_MMQ_MODE=old
-# (fewest tiles) and =new (work table at F_AB), old new old new old new, 4 requests a size per visit;
-# its table shows the spread of the visits and the predicted range beside each change.
-# One result file per visit (grid_J<w>.jsonl, ab_<round>_<mode>.jsonl): a directory that already
-# holds result files is refused so that no earlier run mixes in; use a new OUT for a new run.
+# and for the fewest tiles, with the predicted width per size beside the measured best. Every width
+# is measured twice, one server run each, in counterbalanced order (16..128, then 128..16), so that a
+# drift in time (clocks, temperature, server start) does not line up with J; the fit's interval is a
+# bootstrap over these 16 width runs. The A/B is the same binary with NINFERNO_MMQ_MODE=old (fewest
+# tiles) and =new (work table at F_AB), counterbalanced by round (old new, new old, old new), 4
+# requests a size per visit; its table shows the spread of the visits and the predicted range beside
+# each change. One result file per visit (grid_J<w>_v<1|2>.jsonl, ab_<round>_<mode>.jsonl): a
+# directory that already holds result files is refused so that no earlier run mixes in; use a new OUT
+# for a new run.
 #
 # Usage (from a clean checkout of the repository, idle RTX 2080 Ti):
 #   MODEL=/path/Qwen3-8B-Q4_K_M.gguf tools/bench/run_524_turing_grid.sh [all|build|probe|grid|ab]
@@ -136,6 +145,7 @@ case "$PHASE" in
   all) refuse_old '*.jsonl' ;;
 esac
 mkdir -p "$OUT"
+echo "$name (sm_${cc/./}, device $DEV)" > "$OUT/gpu.txt"
 
 hook_off() {
   [ "$HOOKED" = 1 ] || return 0
@@ -245,10 +255,13 @@ probe() {
 # interval: K must lie in it. A probe that is not clear, or a K outside: stop before any grid row.
 apply_probe() {
   local line lo hi trusted
-  line=$(grep '^KPROBE ' "$OUT/probe.txt" | tail -1) || { echo "$OUT/probe.txt has no KPROBE line"; exit 1; }
+  line=$(grep '^KPROBE ' "$OUT/probe.txt" || true)
+  line=${line##*$'\n'}
+  [ -n "$line" ] || { echo "$OUT/probe.txt has no KPROBE line"; exit 1; }
   read -r _ lo hi trusted <<< "$line"
   lo=${lo#k_lo=} hi=${hi#k_hi=} trusted=${trusted#trusted=}
-  [[ "$lo" =~ ^-?[0-9]+$ && "$hi" =~ ^-?[0-9]+$ && "$trusted" =~ ^[01]$ ]] ||
+  # k is a whole number of tokens, as K must be
+  [[ "$lo" =~ ^[0-9]+$ && "$hi" =~ ^[0-9]+$ && "$trusted" =~ ^[01]$ ]] ||
     { echo "malformed probe line: $line"; exit 1; }
   if [ "$trusted" != 1 ]; then
     echo "the k probe is not clear (see $OUT/probe.txt): set K by hand and run the grid and ab phases"; exit 1
@@ -263,21 +276,27 @@ apply_probe() {
   fi
 }
 
+# two visits of every width, counterbalanced: 16..128, then 128..16 (one server run per width visit)
 grid() {
   need_hooked_binary
-  for J in 16 32 48 64 80 96 112 128; do
-    SLOG=J$J
-    start_server "J$J" NINFERNO_MMQ_MODE=new NINFERNO_MMQ_J=$J
-    measure "J$J" "$OUT/grid_J$J.jsonl"
-    stop_server
+  local v J
+  for v in 1 2; do
+    for J in $([ "$v" = 1 ] && echo 16 32 48 64 80 96 112 128 || echo 128 112 96 80 64 48 32 16); do
+      SLOG=J${J}_v$v
+      start_server "$SLOG" NINFERNO_MMQ_MODE=new NINFERNO_MMQ_J=$J
+      measure "J$J" "$OUT/grid_J${J}_v$v.jsonl"
+      stop_server
+    done
   done
-  "$PY" tools/bench/mmq_width_grid.py grid "$OUT"/grid_J*.jsonl | tee "$OUT/grid.txt"
+  "$PY" tools/bench/mmq_width_grid.py grid "$OUT"/grid_J*_v*.jsonl | tee "$OUT/grid.txt"
 }
 
 ab() {
   need_hooked_binary
+  local round mode
   for round in 1 2 3; do
-    for mode in old new; do
+    # counterbalanced by round: old new, new old, old new (a drift does not line up with the mode)
+    for mode in $([ "$round" = 2 ] && echo new old || echo old new); do
       SLOG=${mode}_$round
       start_server "$SLOG" NINFERNO_MMQ_MODE=$mode NINFERNO_MMQ_F="$F_AB"
       measure "$mode" "$OUT/ab_${round}_$mode.jsonl" --sizes ab --f "$F_AB"

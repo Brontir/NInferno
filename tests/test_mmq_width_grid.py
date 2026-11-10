@@ -288,17 +288,27 @@ class Readers(Base):
         self.assertIn("R2: not met  (1 of 4 sizes against 1.0)", out)
 
     # --- the law itself, over the kit's own sizes (the reviewer's synthetic grids) -----------------------
-    def law_files(self, f, sizes=None, C=42.0, L=53.0, k=7, noise=0.0, seed=1, grows=0.0):
-        """T = C + grows x N + L x tiles x (f + (1 - f) J / 128) at every width, 4 requests a cell, each
-        times (1 + uniform(-noise / 2, noise / 2)); computed here, not with the module's functions."""
+    def law_files(self, f, sizes=None, C=42.0, L=53.0, k=7, noise=0.0, seed=1, grows=0.0, visits=1, drift=0.0,
+                  shape=None, outlier=False):
+        """T = C + grows x N + L x tiles x (f + (1 - f) J / 128) at every width (computed here, not with
+        the module's functions), 4 requests a cell, each times (1 + uniform(-noise / 2, noise / 2)); one
+        file per width visit, every visit's times scaled by its own (1 + uniform(-drift, drift)) (a server
+        run that drifted); `shape(n, j, work_ms)` replaces the law's work term (a misfit); `outlier`: the
+        last request of every third cell at 5x (a median does not see it, a mean does)."""
         rng = random.Random(seed)
         files = []
-        for j in g.WIDTHS:
-            rows = []
-            for n in sizes or g.SIZES:
-                t = C + grows * n + L * -(-(n - k) // j) * (f + (1 - f) * j / 128)
-                rows.append(row(f"J{j}", n, [t * (1 + rng.uniform(-noise / 2, noise / 2)) for _ in range(4)], k=k))
-            files.append(self.write(f"grid_J{j}.jsonl", rows))
+        for v in range(visits):
+            for j in g.WIDTHS:
+                run = 1 + rng.uniform(-drift, drift)
+                rows = []
+                for i, n in enumerate(sizes or g.SIZES):
+                    w = L * -(-(n - k) // j) * (f + (1 - f) * j / 128)
+                    t = (C + grows * n + (shape(n, j, w) if shape else w)) * run
+                    ms = [t * (1 + rng.uniform(-noise / 2, noise / 2)) for _ in range(4)]
+                    if outlier and i % 3 == 0:
+                        ms[3] *= 5
+                    rows.append(row(f"J{j}", n, ms, k=k))
+                files.append(self.write(f"grid_J{j}_v{v}.jsonl", rows))
         return files
 
     def fitted(self, out):
@@ -312,16 +322,18 @@ class Readers(Base):
         self.assertEqual(rc, 0, err)
         self.assertIn("f 0.20 stands", out)
         self.assertNotIn("REFUTED", out)
+        self.assertIn("over 168 cells (21 sizes x 8 widths x 1 visits", out)  # J 48 / J 112 are fitted too
         self.assertIn("R2: not met  (0 of 21 sizes", out)
         self.assertIn("R5: not met", out)
         self.assertEqual(self.fitted(out), (0.2, 0.2, 0.2))
-        self.assertIn("residual rms 0.000 ms", out)  # the law, with tiles in columns, fits exactly
+        self.assertIn("residual rms 0.00 % of the size's time, lack-of-fit ratio 0.00", out)  # the law, with tiles in columns, fits exactly
         # the two extra widths are shown, as information only
         self.assertIn("J 48 / J 112 beat the best production width at 7 sizes", out)
 
     def test_the_exact_law_away_from_the_assumption_is_refuted_with_the_true_f(self):
         # 0.10 and 0.30 were "stands" or refuted for the wrong reason before; the fit measures them
-        for f in (0.05, 0.10, 0.12, 0.15, 0.25, 0.30, 0.43):
+        # outside the predicted range 0.15..0.25: the whole (zero-width) interval lies outside it
+        for f in (0.05, 0.10, 0.12, 0.14, 0.26, 0.30, 0.43):
             rc, out, err = self.run_main("grid", *self.law_files(f))
             self.assertEqual(rc, 0, err)
             self.assertIn("f 0.20 is REFUTED", out, f)
@@ -329,7 +341,7 @@ class Readers(Base):
             fit, lo, hi = self.fitted(out)
             self.assertAlmostEqual(fit, f, delta=0.01)
             self.assertTrue(lo <= f + 1e-3 and f - 1e-3 <= hi, (f, lo, hi))
-            self.assertIn("residual rms 0.000 ms", out)
+            self.assertIn("residual rms 0.00 % of the size's time, lack-of-fit ratio 0.00", out)
 
     def test_a_noisy_law_recovers_f(self):
         # 2 % request noise (uniform), median of four, fixed seed: f recovered, the interval holds it
@@ -355,14 +367,16 @@ class Readers(Base):
         rc, out, err = self.run_main("grid", *self.law_files(0.12, sizes=sizes, k=40))
         self.assertEqual(rc, 0, err)
         self.assertEqual(self.fitted(out), (0.12, 0.12, 0.12))
-        self.assertIn("residual rms 0.000 ms", out)
+        self.assertIn("residual rms 0.00 % of the size's time, lack-of-fit ratio 0.00", out)
 
     def test_the_fit_is_deterministic(self):
         # the same cells give the same interval to the last bit (a fixed bootstrap seed)
         rng = random.Random(3)
         cells = [(n, *g.law_terms(n - 7, j), (42 + 53 * -(-(n - 7) // j) * (0.2 + 0.8 * j / 128))
                   * (1 + rng.uniform(-0.01, 0.01))) for n in g.SIZES for j in g.WIDTHS]
-        first, second = g.fit_f(cells), g.fit_f(cells)
+        blocks = [j for n in g.SIZES for j in g.WIDTHS]
+        rel = [1.0] * len(cells)
+        first, second = g.fit_f(cells, blocks, rel), g.fit_f(cells, blocks, rel)
         self.assertTrue(first["ok"])
         self.assertEqual(first, second)
         self.assertLess(first["lo"], first["hi"])
@@ -375,7 +389,7 @@ class Readers(Base):
         rc, out, err = self.run_main("grid", *files)
         self.assertEqual(rc, 0, err)
         self.assertIn("R3: MET", out)
-        self.assertIn("R5: MET (refutes f 0.20)  (no f:", out)
+        self.assertIn("R5: NO VERDICT on f  (no f:", out)
         self.assertIn("is REFUTED", out)
 
     def test_noise_is_the_median_range_of_a_cell(self):
@@ -575,16 +589,145 @@ class Readers(Base):
         self.assertIn("do not trust this interval", out)
         self.assertEqual(out.strip().splitlines()[-1], "KPROBE k_lo=6 k_hi=6 trusted=0")
 
+    # --- the prediction is a range; drift, misfit and the bootstrap (the second review) -----------------
+    def ratio(self, out):
+        m = re.search(r"residual rms ([0-9.]+) % of the size's time, lack-of-fit ratio ([0-9.]+|inf)", out)
+        self.assertIsNotNone(m, out)
+        return float(m.group(1)), float(m.group(2))
+
+    def test_the_exact_law_inside_the_predicted_range_stands(self):
+        for f in (0.15, 0.18, 0.22, 0.25):
+            rc, out, err = self.run_main("grid", *self.law_files(f))
+            self.assertEqual(rc, 0, err)
+            self.assertIn("f 0.20 stands", out, f)
+            self.assertIn("R5: not met", out, f)
+            self.assertAlmostEqual(self.fitted(out)[0], f, delta=1e-3)
+
+    def test_a_drift_of_every_width_run_does_not_refute_the_truth(self):
+        # the law at f 0.20, 2 % request noise, each of the 16 width runs (two visits) off by up to +-1 %:
+        # the point test refuted 0.20 in most of such grids; the range test must not
+        for seed in range(4):
+            rc, out, err = self.run_main("grid", *self.law_files(0.20, noise=0.02, visits=2, drift=0.01, seed=seed))
+            self.assertEqual(rc, 0, err)
+            self.assertIn("visits per width: 2", out)
+            self.assertIn("(1000 draws over the 16 width visits", out)  # the unit is the width run
+            self.assertIn("f 0.20 stands", out, seed)
+            self.assertLessEqual(self.ratio(out)[1], g.LOF_MAX)
+
+    def test_one_visit_per_width_warns(self):
+        rc, out, err = self.run_main("grid", *self.law_files(0.20))
+        self.assertEqual(rc, 0, err)
+        self.assertIn("ONE visit per width", out)
+
+    def test_the_noisy_law_fits_to_its_noise(self):
+        # 2 % request noise: the residual is the noise, the ratio near 1 (an rms or a ratio printed as 0
+        # would be wrong here)
+        rc, out, err = self.run_main("grid", *self.law_files(0.20, noise=0.02, visits=2, seed=5))
+        self.assertEqual(rc, 0, err)
+        rms, lof = self.ratio(out)
+        self.assertTrue(0.2 <= rms <= 0.8, rms)
+        self.assertTrue(0.7 <= lof <= 1.4, lof)
+        # pinned for this seed: 336 cells, 313 degrees of freedom (21 size constants and a, b)
+        self.assertIn("residual rms 0.38 % of the size's time, lack-of-fit ratio 1.01", out)
+        self.assertNotIn("does not fit", out.split("verdict on the criteria")[1])
+
+    def test_a_law_that_does_not_hold_gives_no_measurement_of_f(self):
+        # the review's misfit shapes at a true f 0.20: an occupancy step (tiles of J >= 80 cost x1.3) and a
+        # per-tile tail (x(1 + 0.02 (tiles - 1))); the fit would print a confident f for both
+        step = self.law_files(0.20, noise=0.02, visits=2, shape=lambda n, j, w: w * (1.3 if j >= 80 else 1.0))
+        rc, out, err = self.run_main("grid", *step)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("R5: NO VERDICT on f  (the law does not fit this card (ratio", out)
+        self.assertIn("is not a measurement of f", out)
+        self.assertIn("R2: MET", out)  # the table itself loses there: R2 still speaks about it
+        self.assertGreater(self.ratio(out)[1], g.LOF_MAX)
+        tail = self.law_files(0.20, noise=0.02, visits=2, shape=lambda n, j, w: w * (1 + 0.02 * (-(-(n - 7) // j) - 1)))
+        rc, out, err = self.run_main("grid", *tail)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("the law does not fit this card", out)
+        self.assertIn("no verdict on f 0.20: the work law does not describe this card", out)
+        # a milder misfit: the tiles of N > 256 cost x1.25 (ratio about 6, above the a-priori 3)
+        self.assertEqual(g.LOF_MAX, 3.0)
+        late = self.law_files(0.20, noise=0.02, visits=2, shape=lambda n, j, w: w * (1.25 if n > 256 else 1.0))
+        rc, out, err = self.run_main("grid", *late)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("R5: NO VERDICT on f  (the law does not fit this card (ratio 6.08", out)
+
+    def test_an_interval_across_an_edge_is_undecided(self):
+        rc, out, err = self.run_main("grid", *self.law_files(0.15, noise=0.02, visits=2, seed=2))
+        self.assertEqual(rc, 0, err)
+        fit, lo, hi = self.fitted(out)
+        self.assertTrue(lo < 0.15 < hi, (lo, hi))
+        self.assertIn("R5: UNDECIDED", out)
+        self.assertIn("f 0.20 is UNDECIDED", out)
+
+    def test_the_fit_reads_cell_medians(self):
+        rc, out, err = self.run_main("grid", *self.law_files(0.12, outlier=True))
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.fitted(out), (0.12, 0.12, 0.12))
+
+    def test_the_table_at_the_measured_f_is_printed(self):
+        rc, out, err = self.run_main("grid", *self.law_files(0.05))
+        self.assertEqual(rc, 0, err)
+        self.assertIn("the table of picks at the measured f 0.050 against f 0.20: differs at 5 sizes "
+                      "(40t/33c:J64->J16, 48t/41c:J64->J16, 208t/201c:J128->J80, 224t/217c:J128->J80, "
+                      "448t/441c:J96->J64)", out)
+        self.assertIn("the table of picks at the interval's high edge 0.050", out)
+
+    def noisy_cells(self, widths=None, f=0.2, seed=3):
+        rng = random.Random(seed)
+        cells, blocks = [], []
+        for v in range(2):
+            for j in widths or g.WIDTHS:
+                run = 1 + rng.uniform(-0.01, 0.01)
+                for n in g.SIZES:
+                    t = (42 + 53 * -(-(n - 7) // j) * (f + (1 - f) * j / 128)) * run
+                    cells.append((n, *g.law_terms(n - 7, j), t * (1 + rng.uniform(-0.01, 0.01))))
+                    blocks.append((j, v))
+        return cells, blocks, [1.0] * len(cells)
+
+    def test_the_interval_is_the_central_95_percent_of_1000_draws(self):
+        self.assertEqual((g.FIT_LEVEL, g.BOOT_N), (0.95, 1000))
+        r = g.fit_f(*self.noisy_cells())
+        self.assertEqual(r["draws"] + r["bad"], 1000)
+        self.assertEqual(r["blocks"], 16)  # the bootstrap unit is the width visit, not the cell
+        self.assertTrue(r["dmin"] < r["lo"] < r["f"] < r["hi"] < r["dmax"], r)
+
+    def test_undetermined_draws_are_dropped(self):
+        # two widths, one visit each: a draw of one width alone determines nothing; it must not count as f 0
+        cells, blocks, rel = self.noisy_cells(widths=[16, 128], f=0.3)
+        cells = [(n, x1, x2, 42 + 53 * (x1 * 0.3 + x2)) for (n, x1, x2, _), bl in zip(cells, blocks)]
+        keep = [i for i, bl in enumerate(blocks) if bl[1] == 0]
+        r = g.fit_f([cells[i] for i in keep], [blocks[i] for i in keep], [rel[i] for i in keep])
+        self.assertGreater(r["bad"], 100)
+        self.assertAlmostEqual(r["lo"], 0.3, places=9)
+        self.assertAlmostEqual(r["hi"], 0.3, places=9)
+
+    def test_grid_refuses_widths_with_different_visits(self):
+        files = self.law_files(0.2, visits=2)
+        files = [p for p in files if not p.endswith("grid_J80_v1.jsonl")]
+        rc, _, err = self.run_main("grid", *files)
+        self.assertEqual(rc, 1)
+        self.assertIn("different number of visits", err)
+
+    def test_grid_refuses_a_visit_without_a_size(self):
+        files = self.law_files(0.2, visits=2)
+        path = Path(next(p for p in files if p.endswith("grid_J80_v1.jsonl")))
+        path.write_text("".join(s + "\n" for s in path.read_text().splitlines() if '"n": 96,' not in s))
+        rc, _, err = self.run_main("grid", *files)
+        self.assertEqual(rc, 1)
+        self.assertIn("incomplete visit", err)
+
     # --- the A/B reader's verdict path on the law (old = fewest tiles, new = the table at 0.20) ----------
     # Picks written out by hand (not with g.pick) for c = N - 7 at the mix sizes and the judged ones:
     # old: 2 tiles of 128 at 129..256 columns; new at f 0.20: 80 at 135..153, 96 at 169..185, 128 at 201..249.
     NEW_AT_020 = {142: 80, 144: 80, 160: 80, 176: 96, 192: 96, 208: 128, 224: 128, 240: 128, 256: 128}
 
-    def law_ab_files(self, f=0.20, C=42.0, L=53.0, k=7, same=False, outliers=()):
+    def law_ab_files(self, f=0.20, C=42.0, L=53.0, k=7, same=False, outliers=(), grows=0.0):
         """Three rounds of old / new on the law at f; `same`: the new arm runs the old widths; `outliers`:
         (arm, visit, N) cells that get one request at 5x (the median is unchanged, the mean is not)."""
         def t(n, j):
-            return C + L * -(-(n - k) // j) * (f + (1 - f) * j / 128)
+            return C + grows * n + L * -(-(n - k) // j) * (f + (1 - f) * j / 128)
 
         files = []
         for v in range(3):
@@ -614,9 +757,18 @@ class Readers(Base):
         self.assertIn("measured change outside the predicted range: 5 of 9 sizes that have a prediction", out)
         self.assertIn("mix [144, 160, 176, 192, 208, 224, 240, 256]: old 148.00 new 134.75 ms -9.0 %  "
                       "(per visit -9.0 .. -9.0 %, 3 visits)", out)
-        self.assertIn("one): -8.2 .. -5.5 %", out)
+        self.assertIn("is): -8.2 .. -5.5 %", out)
         self.assertIn("R4: not met (measured -9.0 % against -10.2 .. -3.5 %)", out)
         self.assertEqual(out.count("OUTSIDE"), 5)
+
+    def test_ab_weights_the_predicted_mix_like_the_measured_one(self):
+        # the old times grow with N (148 + N ms at the mix sizes): the measured mix change is a change of
+        # means, so the predicted range is weighted by the old times: lo = (-19 (292 + 308) - 13 (324 + 340)
+        # - 0.5 (356 + 372 + 388 + 404)) / 2784 = -7.47, hi = (-14 x 600 - 9 x 664 + 0.5 x 1520) / 2784 = -4.89
+        # (unweighted: -8.25 .. -5.5)
+        rc, out, err = self.run_main("ab", *self.law_ab_files(grows=1.0))
+        self.assertEqual(rc, 0, err)
+        self.assertIn("is): -7.5 .. -4.9 %", out)
 
     def test_ab_with_no_change_meets_r4(self):
         rc, out, err = self.run_main("ab", *self.law_ab_files(same=True))
