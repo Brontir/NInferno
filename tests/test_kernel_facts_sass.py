@@ -323,6 +323,182 @@ class LoopFinder(unittest.TestCase):
         chosen, _ = sc.critical_path(body_of(lines), list(range(len(lines))), (measured,))
         self.assertEqual((chosen["cp_iadd"], chosen["cp_imad"]), (2, 0))
 
+    def test_reads_and_writes(self):
+        rw = sc.reads_and_writes
+        # An MMA names its fragments by their first register: m16n8k16 of bf16 reads four of A,
+        # two of B and the accumulator it writes; an f16 accumulator is two registers; the s8
+        # and tf32 shapes hold as many per lane, m16n8k8 of f16 half of them.
+        self.assertEqual(rw("", "HMMA.16816.F32.BF16", "R36, R24.reuse, R16, R36"),
+                         ({"R24", "R25", "R26", "R27", "R16", "R17", "R36", "R37", "R38", "R39"},
+                          {"R36", "R37", "R38", "R39"}))
+        self.assertEqual(rw("", "HMMA.16816.F16", "R36, R24, R16, RZ"),
+                         ({"R24", "R25", "R26", "R27", "R16", "R17"}, {"R36", "R37"}))
+        self.assertEqual([sc.mma_fragments(o) for o in (
+            "HMMA.16816.F32", "HMMA.1688.F32", "HMMA.1688.F32.TF32", "HMMA.1684.F32.TF32",
+            "IMMA.16832.S8.S8", "IMMA.8816.S8.S8", "IMMA.16864.S4.S4", "HMMA.884.F32.F32.STEP0",
+            "DMMA.884", "QMMA.16832.F32.E4M3.E4M3", "HMMA.99.F32")],
+            [(4, 2), (2, 1), (4, 2), (2, 1), (4, 2), (1, 1), (4, 2), (2, 2), (2, 2), (4, 2),
+             (1, 1)])
+        # A compare writes its leading predicates and reads the one it combines with; PLOP3's
+        # third and fourth predicates are sources; FCHK writes one predicate and no register.
+        self.assertEqual(rw("", "ISETP.GT.AND", "P1, PT, R5.reuse, 0x7, !P0"),
+                         ({"R5", "P0"}, {"P1"}))
+        self.assertEqual(rw("", "UISETP.NE.U32.AND", "UP0, UPT, UR4, URZ, UPT"),
+                         ({"UR4"}, {"UP0"}))
+        self.assertEqual(rw("", "ISETP.NE.U64.AND", "P0, PT, R4, RZ, PT"),
+                         ({"R4", "R5"}, {"P0"}))
+        self.assertEqual(rw("", "PLOP3.LUT", "P0, PT, P2, P3, PT, 0x2f, 0xf2"),
+                         ({"P2", "P3"}, {"P0"}))
+        self.assertEqual(rw("", "FCHK", "P0, R4, R5"), ({"R4", "R5"}, {"P0"}))
+        self.assertEqual(rw("", "HSETP2.GT.AND", "P0, P1, R4, R5, PT"),
+                         ({"R4", "R5"}, {"P0", "P1"}))
+        # The predicates around a register destination are written (LOP3's zero test, the
+        # carries out); the trailing ones are read (the carries in, a selector).
+        self.assertEqual(rw("", "LOP3.LUT", "P0, RZ, R4, UR5, RZ, 0xc0, !PT"),
+                         ({"R4", "UR5"}, {"P0"}))
+        self.assertEqual(rw("", "IADD3", "R4, P0, P1, R1, 0x10, -R2"),
+                         ({"R1", "R2"}, {"R4", "P0", "P1"}))
+        self.assertEqual(rw("", "IADD3.X", "R5, R6, R7, RZ, P0, P1"),
+                         ({"R6", "R7", "P0", "P1"}, {"R5"}))
+        self.assertEqual(rw("", "LEA", "R4, P0, R1.reuse, R2, 0x2"), ({"R1", "R2"}, {"R4", "P0"}))
+        self.assertEqual(rw("", "LEA.HI.X", "R5, R1, R3, RZ, 0x2, P0"),
+                         ({"R1", "R3", "P0"}, {"R5"}))
+        self.assertEqual(rw("", "SEL", "R4, RZ, 0x1, !P2"), ({"P2"}, {"R4"}))
+        self.assertEqual(rw("", "SEL.64", "R4, R6, RZ, P2"), ({"R6", "R7", "P2"}, {"R4", "R5"}))
+        self.assertEqual(rw("", "SHFL.IDX", "PT, R4, R5, R6, R7"), ({"R5", "R6", "R7"}, {"R4"}))
+        self.assertEqual(rw("", "P2R", "R4, PR, R5, 0x7f"),
+                         ({"R5"} | set(sc.PREDICATE_REGISTERS), {"R4"}))
+        self.assertEqual(rw("", "R2P", "PR, R4, 0x7f"), ({"R4"}, set(sc.PREDICATE_REGISTERS)))
+        # The mask names the predicates: 0x20 is P5 alone, a register mask may be any of them.
+        self.assertEqual(rw("", "P2R", "R0, PR, RZ, 0x20"), ({"P5"}, {"R0"}))
+        self.assertEqual(rw("", "R2P", "PR, R4, 0x3"), ({"R4"}, {"P0", "P1"}))
+        self.assertEqual(rw("", "R2P", "PR, R4, R6"), ({"R4", "R6"}, set(sc.PREDICATE_REGISTERS)))
+        # The 64-bit read of a special register writes a pair, the 32-bit one a register.
+        self.assertEqual(rw("", "CS2R", "R112, SRZ"), (set(), {"R112", "R113"}))
+        self.assertEqual(rw("", "CS2R.32", "R112, SR_CLOCKLO"), (set(), {"R112"}))
+        # A branch reads its condition, as an operand or as its guard.
+        self.assertEqual(rw("", "BRA", "!P1, 0x100"), ({"P1"}, set()))
+        self.assertEqual(rw("", "BRA.U", "UP0, 0x100"), ({"UP0"}, set()))
+        self.assertEqual(rw("!P1", "BRA", "0x100"), ({"P1"}, set()))
+        # 64-bit operands are pairs: an address register written .64, the operands of a 64-bit
+        # add, the addend of a wide multiply, a store's data as wide as the access; SHF names
+        # both halves itself.
+        self.assertEqual(rw("", "LDG.E.128", "R8, desc[UR8][R2.64+0x100]"),
+                         ({"UR8", "R2", "R3"}, {"R8", "R9", "R10", "R11"}))
+        self.assertEqual(rw("", "LDGSTS.E.BYPASS.128", "[R1+0x10], desc[UR8][R2.64], P0"),
+                         ({"R1", "UR8", "R2", "R3", "P0"}, set()))
+        self.assertEqual(rw("", "IADD.64", "R4, R6, UR8"),
+                         ({"R6", "R7", "UR8", "UR9"}, {"R4", "R5"}))
+        self.assertEqual(rw("", "IMAD.WIDE.U32", "R4, R6, UR8, R10"),
+                         ({"R6", "UR8", "R10", "R11"}, {"R4", "R5"}))
+        self.assertEqual(rw("", "STG.E.128", "desc[UR8][R2.64], R8"),
+                         ({"UR8", "R2", "R3", "R8", "R9", "R10", "R11"}, set()))
+        self.assertEqual(rw("", "STL.64", "[R1+0x8], R6"), ({"R1", "R6", "R7"}, set()))
+        self.assertEqual(rw("", "SHF.L.U64.HI", "R4, R5, 0x2, R6"), ({"R5", "R6"}, {"R4"}))
+        self.assertEqual(rw("", "F2F.F32.F64", "R4, R6"), ({"R6", "R7"}, {"R4"}))
+        self.assertEqual(rw("", "F2F.F64.F32", "R4, R6"), ({"R6"}, {"R4", "R5"}))
+        self.assertEqual(rw("", "DADD", "R4, R6, R8"), ({"R6", "R7", "R8", "R9"}, {"R4", "R5"}))
+        # Under a guard the instruction also reads the guard; under !PT it is a no-op.
+        self.assertEqual(rw("!P0", "IADD.64", "R4, R4, R6"),
+                         ({"P0", "R4", "R5", "R6", "R7"}, {"R4", "R5"}))
+        self.assertEqual(rw("P3", "MOV", "R2, R5"), ({"P3", "R5"}, {"R2"}))
+        self.assertEqual(rw("!PT", "LDS", "RZ, [RZ]"), (set(), set()))
+        self.assertEqual(rw("!UPT", "UIADD3", "URZ, UPT, UPT, URZ, URZ, URZ"), (set(), set()))
+
+    def test_dependence_graph(self):
+        def preds(lines):
+            return sc.dependence_graph(body_of(lines), list(range(len(lines))))[1]
+
+        # The parser keeps the guard's name; the instruction's own predicates stay operands.
+        body = body_of([(0x000, "@!P0 IADD3 R2, R3, 0x1, RZ ;"), (0x010, "@PT NOP ;"),
+                        (0x020, "@!PT LDS RZ, [RZ] ;"), (0x030, "MOV R1, R2 ;")])
+        self.assertEqual([guard for _, guard, _, _ in body], ["!P0", "", "!PT", ""])
+        # A producer of any register of a fragment is a dependence of the MMA: R25 of the A
+        # fragment R24..R27, R17 of the B fragment R16..R17, R39 of the accumulator; R18 is
+        # outside the B fragment.
+        self.assertEqual(preds([
+            (0x000, "PRMT R25, R4, 0x5410, R5 ;"),
+            (0x010, "LOP3.LUT R17, R4, 0xf, RZ, 0xc0, !PT ;"),
+            (0x020, "FFMA R39, R1, R2, R3 ;"), (0x030, "IMAD R18, R0, R0, RZ ;"),
+            (0x040, "HMMA.16816.F32.BF16 R36, R24, R16, R36 ;")])[4], [0, 1, 2])
+        # A compare feeds the instruction it guards and the branch on it. A guarded write
+        # replaces the value on some lanes only: the reader of R2 depends on the MOV and on the
+        # IMAD before it, side by side (the MOV does not wait for the IMAD's R2); an unguarded
+        # write ends that, and two guarded loads into one register are not a chain.
+        self.assertEqual(preds([
+            (0x000, "IMAD R2, R0, R0, RZ ;"), (0x010, "ISETP.GE.AND P0, PT, R1, R11, PT ;"),
+            (0x020, "@P0 MOV R2, R5 ;"), (0x030, "IADD3 R6, R2, 0x1, RZ ;"),
+            (0x040, "BRA !P0, 0x000 ;"), (0x050, "@!P0 BRA 0x000 ;"),
+            (0x060, "MOV R2, R7 ;"), (0x070, "IADD3 R8, R2, 0x1, RZ ;")]),
+            [[], [], [1], [0, 2], [1], [1], [], [6]])
+        self.assertEqual(preds([
+            (0x000, "@P0 LDG.E R4, desc[UR8][R2.64] ;"),
+            (0x010, "@P1 LDG.E R4, desc[UR8][R6.64] ;"),
+            (0x020, "IMAD R5, R4, R4, RZ ;")]), [[], [], [0, 1]])
+        # A zeroed pair ends the reach of what its registers held: the B fragment R112..R113
+        # of the MMA comes from the guarded load and the zeroes it may leave, not from the MMA
+        # that wrote R112..R115 before them.
+        self.assertEqual(preds([
+            (0x000, "HMMA.16816.F32.BF16 R112, R68, R120, RZ ;"), (0x010, "CS2R R112, SRZ ;"),
+            (0x020, "CS2R R114, SRZ ;"), (0x030, "@P4 LD.E.128 R112, desc[UR8][R42.64] ;"),
+            (0x040, "HMMA.16816.F32.BF16 R56, R52, R112, RZ ;")])[4], [1, 3])
+        # Under the writer's own guard a reader sees that writer alone (the lanes are the
+        # same); under the opposite guard none of it; once the predicate is written again the
+        # guards are no longer the same lanes.
+        lanes = [(0x000, "FFMA R4, R1, R2, R3 ;"), (0x010, "@!P3 IADD3 R4, R5, 0x1, RZ ;"),
+                 (0x020, "@!P3 IMAD R6, R4, R4, RZ ;"), (0x030, "@P3 IMAD R7, R4, R4, RZ ;"),
+                 (0x040, "@P1 IMAD R8, R4, R4, RZ ;"),
+                 (0x050, "ISETP.GE.AND P3, PT, R9, R11, PT ;"),
+                 (0x060, "@!P3 IMAD R10, R4, R4, RZ ;")]
+        self.assertEqual(preds(lanes), [[], [], [1], [0], [0, 1], [], [0, 1, 5]])
+        # A guard saved in a register and read back is the guard it was: the load under the
+        # restored P5 takes its address from the two moves under the first P5 and not from the
+        # MMA they replaced. Read back from a register that holds anything else, it is not.
+        saved = [(0x000, "HMMA.16816.F32.BF16 R80, R112, R82, R120 ;"),
+                 (0x010, "ISETP.GE.AND P5, PT, R68, R9, PT ;"), (0x020, "P2R R78, PR, RZ, 0x20 ;"),
+                 (0x030, "@!P5 MOV R80, R2 ;"), (0x040, "@!P5 MOV R81, R3 ;"),
+                 (0x050, "ISETP.GE.AND P5, PT, R4, R5, PT ;"),
+                 (0x060, "ISETP.NE.AND P5, PT, R78, RZ, PT ;"),
+                 (0x070, "@!P5 LD.E.128 R100, desc[UR6][R80.64] ;")]
+        self.assertEqual(preds(saved)[7], [3, 4, 6])
+        saved[2] = (0x020, "P2R R78, PR, RZ, 0x60 ;")  # two predicates: not P5's value alone
+        self.assertEqual(preds(saved)[7], [0, 3, 4, 6])
+        saved[2] = (0x020, "P2R R78, PR, RZ, 0x20 ;")
+        saved[5] = (0x050, "IADD3 R78, R78, 0x1, RZ ;")
+        self.assertEqual(preds(saved)[7], [0, 3, 4, 6])
+        # The same through one bit of a word: cleared, set under the guard, read back. Under
+        # the other polarity the reader sees none of the guarded write; a bit set under @!P1
+        # holds the negation.
+        def word(set_guard, write_guard, read_guard, clear="0xfffffffe"):
+            return preds([
+                (0x000, "FFMA R84, R1, R2, R84 ;"), (0x010, "ISETP.GE.AND P1, PT, R0, R13, PT ;"),
+                (0x020, f"LOP3.LUT R25, R25, {clear}, RZ, 0xc0, !PT ;"),
+                (0x030, f"{set_guard} LOP3.LUT R25, R25, 0x1, RZ, 0xfc, !PT ;"),
+                (0x040, f"{write_guard} MOV R84, R7 ;"),
+                (0x050, "ISETP.GE.AND P1, PT, R4, R5, PT ;"),
+                (0x060, "LOP3.LUT P1, RZ, R25, 0x1, RZ, 0xc0, !PT ;"),
+                (0x070, f"{read_guard} IADD3 R9, R84, 0x8, RZ ;")])[7]
+
+        self.assertEqual(word("@P1", "@!P1", "@!P1"), [4, 6])
+        self.assertEqual(word("@P1", "@P1", "@!P1"), [0, 6])
+        self.assertEqual(word("@!P1", "@!P1", "@P1"), [4, 6])
+        self.assertEqual(word("@!P1", "@!P1", "@!P1"), [0, 6])
+        # A bit not known clear before it is set holds more than the guard.
+        self.assertEqual(word("@P1", "@!P1", "@!P1", clear="0xfffffffd"), [0, 4, 6])
+        # The carry of a wide add links its low and high halves, as LEA / LEA.HI.X do.
+        self.assertEqual(preds([
+            (0x000, "IADD3 R4, P0, P1, R1, R2, RZ ;"), (0x010, "IADD3.X R5, R6, R7, RZ, P0, P1 ;"),
+            (0x020, "LEA R8, P2, R4, R2, 0x2 ;"), (0x030, "LEA.HI.X R9, R4, R3, RZ, 0x2, P2 ;")]),
+            [[], [0], [0], [0, 2]])
+        # The high half of a 64-bit address is a dependence of the load.
+        self.assertEqual(preds([
+            (0x000, "IADD3.X R3, R6, R7, RZ, P0, P1 ;"), (0x010, "LDG.E R8, desc[UR8][R2.64] ;")]),
+            [[], [0]])
+        # The fixture's first step (0x160 .. 0x1b0): both weight MMAs take R24 from the LOP3 and
+        # R25 from the PRMT after it, and R26 from the FFMA; the min-term MMA none of them.
+        step = [l for l in KERNEL if 0x160 <= l[0] <= 0x1b0]
+        self.assertEqual(preds(step), [[], [0], [1], [], [0, 1, 2], [0, 1, 2]])
+
     def test_irreducible_flow(self):
         # Two blocks that enter each other's middles (no header dominates the other): no natural
         # loop, so no K loop; nothing crashes.

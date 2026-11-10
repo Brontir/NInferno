@@ -91,9 +91,11 @@ COUNT_FIELDS = ("mma", "mma_ones", "ldg", "ldg_bytes", "ld", "ld_bytes", "ldgsts
                 "ldgsts_bytes", "lds", "lds_bytes", "sts", "sts_bytes", "local", "local_bytes",
                 "shfl", "int", "fp", "uniform", "other", "total")
 # The critical path of one iteration (#613 PR-7b): the instructions on the longest chain of the
-# body's register dataflow (a read depends on the latest earlier writer of the register within
-# the iteration; the loads of the next step, consumed an iteration later, carry no edge), as
-# counts per latency class along it. Which chain is the longest depends on the clocks of each
+# body's dataflow through registers and predicates (a read depends on the earlier writers of the
+# value within the iteration that may reach it: dependence_graph. Every register of an MMA
+# fragment or a 64-bit pair counts, as do a guard, a compare's predicate and a carry; the loads
+# of the next step, consumed an iteration later, carry no edge), as counts per latency class
+# along it. Which chain is the longest depends on the clocks of each
 # class, so the path is chosen with the latencies its price uses: the measured ISA facts of the
 # snapshot's architecture (chain_weights of its row in src/core/data/isa_facts.json, the L1 load
 # at one resident warp), and with nominal ones (CP_NOMINAL) only where that row lacks a fact; the
@@ -123,9 +125,11 @@ COLUMNS = ("loops", "k_iter", "mma", "mma_ones", "mma_shape") + COUNT_FIELDS[2:]
 
 
 def iter_functions(lines, wanted=None):
-    """(mangled name, [(offset, guarded, opcode, operands)]) for each Function block of
+    """(mangled name, [(offset, guard, opcode, operands)]) for each Function block of
     `cuobjdump -sass` text (an iterable of lines), as the text is read; `wanted(name)` selects
-    the functions parsed, the others are skipped line by line."""
+    the functions parsed, the others are skipped line by line. The guard is the predicate an
+    instruction runs under as written, without its `@` (`P0`, `!UP1`); "" for none or PT, so it
+    reads as a flag too."""
     name, body = None, None
     for line in lines:
         if "Function" in line:
@@ -140,8 +144,8 @@ def iter_functions(lines, wanted=None):
             continue
         m = INSTRUCTION.search(line)
         if m:
-            guard = (m.group(2) or "").strip()
-            body.append((int(m.group(1), 16), guard not in ("", "@PT"), m.group(3),
+            guard = (m.group(2) or "").strip().lstrip("@")
+            body.append((int(m.group(1), 16), "" if guard == "PT" else guard, m.group(3),
                          m.group(4).strip()))
     if body is not None:
         yield name, body
@@ -386,11 +390,24 @@ def operand_tokens(operands):
     return out
 
 
+def writes_predicates_only(base):
+    """Whether a base opcode writes predicates and no register: the compares (ISETP, FSETP,
+    DSETP, HSETP2), FCHK and the predicate logic op PLOP3, with their uniform forms (UISETP,
+    UPLOP3)."""
+    core = base[1:] if base.startswith("U") else base
+    return core.endswith(("SETP", "SETP2")) or core in ("PLOP3", "FCHK")
+
+
+def writes_no_register(base):
+    return (base in NO_REGISTER_WRITE or base.startswith(NO_REGISTER_WRITE_PREFIXES)
+            or writes_predicates_only(base))
+
+
 def destination(opcode, tokens):
     """The register an instruction writes (after any predicate it also writes: `SHFL.IDX PT, R4`,
     `LOP3.LUT P0, R6`), or None."""
     base = base_opcode(opcode)
-    if base in NO_REGISTER_WRITE or base.startswith(NO_REGISTER_WRITE_PREFIXES):
+    if writes_no_register(base):
         return None
     for t in tokens:
         if PREDICATE.match(t):
@@ -418,6 +435,8 @@ def written_registers(opcode, operands):
         width = 2
     elif base in FP64_WRITERS or (base in ("F2F", "I2F") and opcode.split(".")[1:2] == ["F64"]):
         width = 2
+    elif base == "CS2R" and ".32" not in opcode:
+        width = 2  # the 64-bit special-register read: `CS2R R112, SRZ` zeroes R112 and R113
     else:
         width = 1
     m = REGISTER.match(dest)
@@ -653,7 +672,133 @@ def cp_class(opcode):
     return "cp_other"
 
 
-READ_REGISTER = re.compile(r"\bU?R\d+\b")
+# A register inside an operand, with the suffixes it is written with (`R2.64` in an address).
+READ_REGISTER = re.compile(r"\b(U?R)(\d+)((?:\.\w+)*)")
+# The bits of one element of an MMA's A and B operands, by opcode; a type suffix overrides it.
+MMA_ELEMENT_BITS = {"HMMA": 16, "IMMA": 8, "QMMA": 8, "OMMA": 4, "DMMA": 64, "BMMA": 1}
+MMA_TYPE_BITS = {"TF32": 32, "S4": 4, "U4": 4}
+WIDE_SUFFIXES = {"64": 2, "U64": 2, "S64": 2, "128": 4}
+PREDICATE_REGISTERS = tuple(f"P{n}" for n in range(7))  # P7 is PT
+
+
+def mma_fragments(opcode):
+    """(A, B): the registers one lane holds of an MMA's A and B operands, which the instruction
+    names by their first register only. A is m x k elements and B n x k over the 32 lanes of a
+    warp (m16n8k16 of f16 or bf16: 4 and 2; m16n8k32 of s8: 4 and 2; m16n8k8 of tf32: 4 and 2);
+    Volta's m8n8k4 keeps every element on four lanes, 2 and 2. (1, 1), the named registers
+    alone, for a shape not in the table."""
+    shape = mma_shape(opcode)
+    if shape is None:
+        return 1, 1
+    parts = opcode.split(".")
+    if parts[0] == "HMMA" and shape == (8, 8, 4):
+        return 2, 2
+    bits = MMA_ELEMENT_BITS[parts[0]]
+    for part in parts[1:]:
+        bits = MMA_TYPE_BITS.get(part, bits)
+    m, n, k = shape
+    return max(1, -(-m * k * bits // 1024)), max(1, -(-n * k * bits // 1024))
+
+
+def immediate(field):
+    """The value of a hexadecimal immediate operand (`0x20`), or None of anything else."""
+    try:
+        return int(field, 16) if field.startswith("0x") else None
+    except ValueError:
+        return None
+
+
+def masked_predicates(mask):
+    """The predicates the whole predicate register PR stands for in a P2R or an R2P: those whose
+    bit its last operand, the mask, holds (`P2R R0, PR, RZ, 0x20` reads P5 alone); all seven
+    where the mask is not an immediate."""
+    bits = immediate(mask)
+    if bits is None:
+        return PREDICATE_REGISTERS
+    return tuple(p for n, p in enumerate(PREDICATE_REGISTERS) if bits >> n & 1)
+
+
+def source_width(opcode, position, count, accumulator):
+    """The registers the register operand at `position` of `count` operands stands for when it
+    is read: an MMA's fragments (mma_fragments; the accumulator operand as wide as the
+    destination, `accumulator`), the pairs and quads of a 64- or 128-bit instruction (a store's
+    data, IADD.64, SEL.64, an ISETP on U64; the addend of an IMAD.WIDE; the operands of the
+    FP64 ops; the source of a convert from a 64-bit type), else the one named. SHF names both
+    halves of its 64-bit operand itself."""
+    base = base_opcode(opcode)
+    parts = opcode.split(".")[1:]
+    if base in MMA_OPCODES:
+        a, b = mma_fragments(opcode)
+        return {1: a, 2: b, 3: accumulator}.get(position, 1)
+    if base in ("SHF", "SHL", "SHR"):
+        return 1
+    if base in CP_OPCODES["cp_cvt"] or base in CP_OPCODES["cp_f2f"]:
+        return 2 if parts[1:2] in (["F64"], ["S64"], ["U64"]) else 1
+    if base in FP64_WRITERS or base == "DSETP":
+        return 2
+    if "WIDE" in parts:
+        return 2 if position == count - 1 else 1
+    return max([WIDE_SUFFIXES[p] for p in parts if p in WIDE_SUFFIXES], default=1)
+
+
+def reads_and_writes(guard, opcode, operands):
+    """(reads, writes): the registers and predicates one instruction reads and writes, by name
+    (R4, UR8, P0, UP1; never RZ, URZ, PT or UPT, the constants).
+
+    Registers: the destination (written_registers) is written; every other register is read,
+    inside an address too, as many as it stands for (source_width; `R2.64` in an address is R2
+    and R3). An accumulator is read as its own operand.
+
+    Predicates: a compare, FCHK or PLOP3 writes its leading predicates (two at most: PLOP3's
+    other three are its sources); an instruction with a register destination writes the
+    predicates before it (`LOP3.LUT P0, R6, ...`) and those right after it (the carries out of
+    `IADD3 R4, P0, P1, ...`, `LEA R4, P0, ...`); any other predicate operand is read (the carry
+    into `LEA.HI.X ..., P0`, SEL's selector, a branch's condition, the last operand of a
+    compare). P2R reads and R2P writes the predicates of its mask (masked_predicates).
+
+    A guard is read. Guarded by !PT the instruction does nothing."""
+    if guard in ("!PT", "!UPT"):
+        return set(), set()
+    base = base_opcode(opcode)
+    fields = [f.strip() for f in operands.split(",") if f.strip()]
+    tokens = operand_tokens(operands)
+    reads, writes = set(), written_registers(opcode, operands)
+    lead = 0
+    while lead < len(tokens) and PREDICATE.match(tokens[lead]):
+        lead += 1
+    if writes_predicates_only(base):
+        written_at = set(range(min(lead, 2)))
+    elif (not writes_no_register(base) and lead < len(tokens)
+          and OPERAND_REGISTER.match(tokens[lead])):
+        written_at = set(range(lead))
+        j = lead + 1
+        while j < len(tokens) and PREDICATE.match(tokens[j]):
+            written_at.add(j)
+            j += 1
+    else:
+        written_at = set()
+    has_destination = destination(opcode, tokens) is not None
+    accumulator = len(writes)
+    for j, (field, token) in enumerate(zip(fields, tokens)):
+        if PREDICATE.match(token):
+            name = token.lstrip("!")
+            if name not in ("PT", "UPT"):
+                (writes if j in written_at else reads).add(name)
+            continue
+        if token == "PR":
+            (writes if base == "R2P" else reads).update(masked_predicates(fields[-1]))
+            continue
+        if j == lead and has_destination:
+            continue
+        width = 1
+        if OPERAND_REGISTER.match(token):
+            width = source_width(opcode, j - lead, len(tokens) - lead, accumulator)
+        for prefix, number, suffixes in READ_REGISTER.findall(field):
+            n = max(width, 2 if ".64" in suffixes else 1)
+            reads.update(prefix + str(int(number) + k) for k in range(n))
+    if guard and guard.lstrip("!") not in ("PT", "UPT"):
+        reads.add(guard.lstrip("!"))
+    return reads, writes
 
 
 def chain_weights(isa, warps=1):
@@ -682,29 +827,125 @@ def chain_clocks(counts, weights):
     return sum(counts[name] * weights[name] for name in CP_FIELDS)
 
 
+def single_predicate(field):
+    """The predicate a one-bit immediate mask names (0x20: P5), or None."""
+    bits = immediate(field)
+    if bits is None or bits & (bits - 1) or not 0 < bits < 1 << len(PREDICATE_REGISTERS):
+        return None
+    return PREDICATE_REGISTERS[bits.bit_length() - 1]
+
+
+class PredicateValues:
+    """Which value each predicate holds while a body is walked in order, so that a guard the
+    compiler saved and restored is known as the guard it was. A value is (identity, inverted):
+    the predicate with the positions of the writers that may have made it, or the value it is
+    a copy of, and whether it is that value's negation.
+
+    The compiler keeps a predicate past its register in two ways. `P2R Rd, PR, RZ, 0x20` puts
+    P5 alone into Rd, and `ISETP.NE.AND Pn, PT, Rd, RZ, PT` reads it back. Or one bit of a
+    word: `LOP3.LUT R, R, ~bit, RZ, 0xc0` clears it, `@P LOP3.LUT R, R, bit, RZ, 0xfc` sets it
+    where P holds (under @!P it keeps the negation), and `LOP3.LUT Pn, RZ, R, bit, RZ, 0xc0`
+    reads it back. Any other write of the register or of the predicate ends what was known."""
+
+    def __init__(self):
+        self.copies = {}  # predicate: the value it was restored as
+        self.held = {}    # register: {bit, or None for the whole register: value}
+        self.zero = {}    # register: the bits known clear
+
+    def value(self, predicate, writers):
+        return self.copies.get(predicate) or (
+            (predicate, tuple(w[0] for w in writers.get(predicate, ()))), False)
+
+    def guard(self, guard, writers):
+        """(identity, polarity) of a guard, (None, None) of none."""
+        if not guard:
+            return None, None
+        identity, inverted = self.value(guard.lstrip("!"), writers)
+        return identity, guard.startswith("!") != inverted
+
+    def step(self, guard, opcode, tokens, written, writers):
+        """Take one instruction in: `written` its reads_and_writes writes, `writers` the
+        reaching writers before it."""
+        base = base_opcode(opcode)
+        restored = held = None
+        target = tokens[0] if tokens else ""
+        if base == "P2R" and not guard and tokens[1:3] == ["PR", "RZ"] and len(tokens) == 4:
+            saved = single_predicate(tokens[3])
+            if saved:
+                held = {None: self.value(saved, writers)}
+                self.zero.pop(target, None)
+        elif (opcode in ("ISETP.NE.AND", "ISETP.NE.U32.AND") and not guard
+              and tokens[1:2] == ["PT"] and tokens[3:] == ["RZ", "PT"]):
+            restored = self.held.get(tokens[2], {}).get(None)
+        elif opcode == "LOP3.LUT" and len(tokens) == 7 and not guard and tokens[1:] == [
+                "RZ", tokens[2], tokens[3], "RZ", "0xc0", "!PT"] and PREDICATE.match(target):
+            restored = self.held.get(tokens[2], {}).get(immediate(tokens[3]))
+        elif (opcode == "LOP3.LUT" and len(tokens) == 6 and tokens[1] == target
+              and tokens[3:] == ["RZ", "0xc0" if not guard else "0xfc", "!PT"]
+              and immediate(tokens[2]) is not None):
+            bits = immediate(tokens[2])
+            known = self.held.get(target, {})
+            clear = self.zero.get(target, 0)
+            if not guard:  # R &= bits
+                held = {b: v for b, v in known.items() if b is not None and b & bits}
+                self.zero[target] = clear | (~bits & 0xffffffff)
+            else:  # R |= bits where the guard holds
+                held = {b: v for b, v in known.items() if b is not None and not b & bits}
+                if bits & (bits - 1) == 0 and clear & bits:
+                    held[bits] = self.guard(guard, writers)
+                self.zero[target] = clear & ~bits
+        for name in written:
+            if name in self.copies:
+                del self.copies[name]
+            if held is None:
+                self.held.pop(name, None)
+                self.zero.pop(name, None)
+        if held is not None:
+            self.held[target] = held
+        if restored and target in written:
+            self.copies[target] = restored
+
+
 def dependence_graph(body, order):
     """(classes, preds) of the instructions `order` (body indices, in iteration order): the
     latency class of each and the positions in `order` it depends on, ascending. Instruction i
-    depends on the latest earlier instruction that wrote a register it reads (RZ / URZ aside; the
-    destination is not a read, an accumulator is read as its own operand); a dependence on a
-    register no earlier instruction wrote is a value from the previous iteration or the prologue
-    and carries no edge."""
+    depends on the earlier instructions whose value of a register or a predicate it reads
+    (reads_and_writes: every register of a fragment or a pair, the guard, the carries) may
+    reach it: the latest writer, and where that one is guarded (it writes only the lanes its
+    guard holds on, the others keep the value) the writers before it back to the latest
+    unguarded one. The guarded writer itself does not wait for the value it replaces. A reader
+    under the same guard as a writer (the same value of the predicate: not written in between,
+    or saved and restored, PredicateValues) reads that writer's value on all its lanes and
+    nothing older; under the opposite guard it reads none of it. Where the two guards cannot be
+    told to be one value the older writers stay, so the chain is never shorter than the true
+    one. A dependence on a value no earlier instruction wrote is one from the previous
+    iteration or the prologue and carries no edge."""
     classes, preds = [], []
-    last_writer = {}
+    writers = {}  # name: [(position, the guard's identity or None, its polarity)]
+    values = PredicateValues()
+
     for i in order:
-        _, _, opcode, operands = body[i]
-        tokens = operand_tokens(operands)
-        written = written_registers(opcode, operands)
-        dest = destination(opcode, tokens)
-        sources = list(tokens)
-        if dest is not None:
-            sources.remove(dest)
-        reads = {r for t in sources for r in READ_REGISTER.findall(t) if r not in ("RZ", "URZ")}
+        _, guard, opcode, operands = body[i]
+        reads, written = reads_and_writes(guard, opcode, operands)
+        if guard in ("UPT", "PT"):
+            guard = ""
+        identity, polarity = values.guard(guard, writers)
         k = len(classes)
+        deps = set()
+        for r in reads:
+            for position, other, other_polarity in reversed(writers.get(r, ())):
+                same_value = identity is not None and other == identity
+                if same_value and other_polarity != polarity:
+                    continue
+                deps.add(position)
+                if other is None or same_value:
+                    break
         classes.append(cp_class(opcode))
-        preds.append(sorted({last_writer[r] for r in reads if r in last_writer}))
+        preds.append(sorted(deps))
+        values.step(guard, opcode, operand_tokens(operands), written, writers)
         for r in written:
-            last_writer[r] = k
+            entry = (k, identity, polarity)
+            writers[r] = writers.get(r, []) + [entry] if guard else [entry]
     return classes, preds
 
 
