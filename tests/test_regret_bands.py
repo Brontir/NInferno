@@ -384,6 +384,41 @@ class Csv(unittest.TestCase):
         rows, skipped = bands.rows_from_csv([p2], sel2, "b")
         self.assertEqual([(r["selected"], r["best"]) for r in rows], [("r8.w4r1", "r8.w4r1")])
 
+    def test_prefill_profile_pairs_are_counted_once_over_passes(self):
+        # Every pass writes the prefill loop's rows again: a (case, route) is one excluded pair.
+        text = (ROUTES + "q4k,a16,store,64,64,40,rmma.a,20,30\n"
+                "q4k,a16,store,64,64,40,rmma.b,10,40\n"
+                "q4k,a16,store,64,64,1024,rmma.a,200,300\n"
+                "q4k,a16,store,64,64,1024,rmma.b,100,400\n")
+        passes = [self.write(f"p{i}.csv", text) for i in (1, 2, 3)]
+        sel = self.write("s.csv", SELECTED + "q4k,a16,store,64,64,40,rmma.a,rmma.a\n")
+        excluded = []
+        rows, skipped = bands.rows_from_csv(passes, sel, "b", excluded=excluded)
+        self.assertEqual((len(rows), skipped), (1, []))
+        self.assertEqual(excluded, [("q4k.a16.store.n64.k64.T1024", "rmma.a"),
+                                    ("q4k.a16.store.n64.k64.T1024", "rmma.b")])
+        out = self.root / "o.json"
+        self.assertEqual(bands.main(["--routes"] + [str(p) for p in passes]
+                                    + ["--selected", str(sel), "--board", "b", "--qualified", "q",
+                                       "--json", str(out)]), 0)
+        self.assertEqual(json.loads(out.read_text())["prefill_profile_rows_excluded"], 2)
+
+    def test_speed_widths_are_per_problem(self):
+        # n65 has rows at T=41, which the selection lists for n64 only: no selection proves the
+        # n65 rows are the speed loop's, so it is a skip in either pick, never a scored case.
+        p1 = self.write("p1.csv", ROUTES + "".join(
+            f"q4k,a16,store,{n},64,41,{r},{us},{m}\n"
+            for n in (64, 65) for r, us, m in (("rmma.a", 20, 30), ("rmma.b", 10, 40))))
+        sel = self.write("s.csv", SELECTED + "q4k,a16,store,64,64,41,rmma.a,rmma.a\n")
+        for pick in ("selected", "model"):
+            excluded = []
+            rows, skipped = bands.rows_from_csv([p1], sel, "b", pick=pick, excluded=excluded)
+            self.assertEqual([r["id"] for r in rows], ["q4k.a16.store.n64.k64.T41"], pick)
+            self.assertEqual([(r["id"], r["selected"], r["reason"]) for r in skipped],
+                             [("q4k.a16.store.n65.k64.T41", None,
+                               "no selection recorded for this case")], pick)
+            self.assertEqual(excluded, [], pick)
+
     def test_speed_loop_widths_of_each_family(self):
         # route_tune_tool.cpp: R8 to kR8MaxTokens (4), w4a4 / staged / nvfp4t / tiled from 17.
         got = {(route, t): bands.speed_loop_times(route, t, None)

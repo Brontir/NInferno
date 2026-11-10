@@ -233,9 +233,11 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected", excluded=N
 
     The selection CSV is needed in both modes: route_tune writes one selection per problem and
     width of its speed loop and none in its prefill loop, so its widths are the speed profile's.
-    A routes row at another width, or of a route the speed loop does not time at its width
-    (`speed_loop_times`), is a prefill-profile timing: it is not a case or a candidate, and its
-    (case id, route) is appended to `excluded` when a list is given.
+    The speed widths are per problem: a case is a (problem, T) the selection lists. A routes row
+    at a width no problem's selection lists, or of a route the speed loop does not time at its
+    width (`speed_loop_times`), is a prefill-profile timing: it is not a case or a candidate, and
+    its (case id, route) is appended to `excluded` when a list is given. A row at a width the
+    selection lists only for other problems is a case without its selection: skipped in both picks.
     """
     if pick not in ("selected", "model"):
         raise ValueError("pick must be selected or model")
@@ -249,6 +251,7 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected", excluded=N
     written = {}  # (pass, key) -> speed-loop routes in the order the pass wrote them
     digits = {}  # pass -> most significant digits of any model_us it wrote
     excluded_pairs = set()  # (key, route) of prefill-profile rows, over all passes
+    unselected = set()  # keys at a selected width of another problem, without their own selection
     for number, path in enumerate(route_paths):
         columns = collect.KEY + ("route", "median_us") + (("model_us",) if pick == "model" else ())
         seen = set()
@@ -262,7 +265,13 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected", excluded=N
                 digits[number] = max(digits.get(number, 0),
                                      significant_digits(row.get("model_us") or ""))
             t = int(at[0][5])
-            if not (t in widths and speed_loop_times(at[1], t, selected.get(at[0]))):
+            if at[0] not in selected and t in widths:
+                # Another problem's selection lists this width, this problem's none: a selection
+                # cut short or of another run. Nothing proves the rows are the speed loop's, so
+                # the case is no candidate set in either pick; it is a skip, not left out unseen.
+                unselected.add(at[0])
+                continue
+            if not (at[0] in selected and speed_loop_times(at[1], t, selected[at[0]])):
                 if excluded is not None and (at[0], at[1]) not in excluded_pairs:
                     excluded.append((collect.case_id(at[0]), at[1]))
                 excluded_pairs.add((at[0], at[1]))
@@ -283,6 +292,9 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected", excluded=N
     for key, route in timed:
         routes.setdefault(key, []).append(route)
     rows, skipped = [], []
+    for key in sorted(unselected, key=lambda k: (k[:5], int(k[5]))):
+        skipped.append(skip_row(collect.case_id(key), board, key[0], int(key[5]), None,
+                                "no selection recorded for this case"))
     if pick == "selected":
         # A selection the sweep has no row for at all (a pass cut short) is skipped, not dropped.
         for key in sorted(set(selected) - set(routes), key=lambda k: (k[:5], int(k[5]))):

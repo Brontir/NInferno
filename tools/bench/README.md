@@ -171,8 +171,9 @@ widths (up to T 512 by default), so the widest band is batched decode and wide v
 
 `--routes-out` also holds the prefill profile's rows (its widths from chunk/2 and its bands from
 32), with no profile column. route_tune writes one selection per problem and width of its speed
-loop and none in its prefill loop, so only the widths the `--selected` file lists are cases, and
-at those widths a row of a route the speed loop does not time there (R8 above 4 tokens; w4a4,
+loop and none in its prefill loop, so only the (problem, width) pairs the `--selected` file lists
+are cases (the widths are read per problem), and there a row of a route the speed loop does not
+time at that width (R8 above 4 tokens; w4a4,
 staged, NVFP4 tiled and tiled below 17) is left out unless it is the executed selection. The
 JSON report counts the (case, route) pairs left out as `prefill_profile_rows_excluded`.
 
@@ -184,11 +185,13 @@ scored cases would read lower than the truth. Every group and band carries `skip
 cell reads `regret (n / skipped)`, and the report lists each skipped case with its T, board, format,
 family of the pick and reason under `skipped_cases`. A case is skipped, never scored as zero regret, when its pick was not timed, when a pass did not time one of
 its candidates, when no selection is recorded for it (at a width the selection lists for another
-problem), when the pick is of another compute class than the case's key, when fewer than two
+problem; in either pick), when the pick is of another compute class than the case's key, when fewer than two
 candidates of its class were timed, or (`--pick model`, T >= 17 only) when the case is NVFP4 (the
 cost model does not rank NVFP4; route_tune writes its `model_us` as a diagnostic), when it is an
 int8 q4 / q5 / q6 case with K a multiple of 512 (the model also prices the I8 tiles there, which
-route_tune does not sweep), when the model prices none of the candidates, or when it prices the
+route_tune does not sweep; route_tune writes no such case today, since it refuses a8 for every
+format but fp8 and sweeps a8 beside a16 only for ggml formats, so the skip guards hand-made or
+archived rows), when the model prices none of the candidates, or when it prices the
 best candidates of two route families equally. When every case is skipped the report is still
 written, listing them, and the exit status is 2. A tie within one family takes the route first in the family's schedule order, as the
 other speed-loop widths of the same problem show it (`cost_route` keeps the first offered on an
