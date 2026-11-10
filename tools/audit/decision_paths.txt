@@ -1,0 +1,34 @@
+# Files whose change can move a selector golden (tests/ops/linear/selector_golden): the route
+# selector, its cost model, the route tables, the device facts and the choice sources.
+# Used by tools/audit/golden_gate.py (CI: a change here with no golden change needs the
+# `goldens-equal` label). One glob per line; `*` stays in one path segment, `**` crosses
+# directories. A pattern that matches no file today is allowed (a planned location).
+src/ops/generic/generic_select_internal.h
+src/ops/generic/generic_cost.cpp
+src/ops/generic/route_cost_constants.h
+src/ops/generic/route_query.*
+src/ops/generic/route_table.h
+src/ops/generic/route_tune_tool.*
+src/ops/generic/selector_facts.*
+src/ops/generic/generic_gemm.cpp
+src/ops/generic/generic_gemm.h
+src/ops/generic/generic_gemm_internal.h
+src/ops/generic/generic_ggml.cpp
+src/ops/generic/generic_ggml_internal.h
+src/ops/generic/generic_schedules.h
+src/ops/generic/generic_tune.cpp
+src/ops/generic/generic_coverage.cpp
+src/ops/generic/generic_workspace.cpp
+src/ops/generic/r8_decode_table.h
+src/ops/generic/format_traits.h
+src/ops/generic/*route_authorities*
+src/ops/generic/*kernel_roofline*
+src/ops/route_table.cpp
+include/ninferno/ops/route_table.h
+include/ninferno/ops/prefill_routes.h
+routes/**
+src/core/data/gpu_facts.json
+src/core/device_class.*
+src/core/generation.*
+src/product/choice/**
+src/ops/generic/data/kernel_facts/**

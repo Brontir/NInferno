@@ -2,6 +2,8 @@ name: lint
 
 on:
   pull_request:
+    # labeled/unlabeled: adding `goldens-equal` re-runs the golden gate
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches: [master]
 
@@ -49,3 +51,19 @@ jobs:
             1) echo "Run: git clang-format \$(git merge-base HEAD origin/$BASE_REF)"; exit 1 ;;
             *) echo "git clang-format failed (exit $rc)"; exit "$rc" ;;
           esac
+
+  # #620 step 9: the decision path changed, no golden did -> the author must claim `goldens-equal`.
+  golden-gate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Decision-path diff needs a golden change or the goldens-equal label
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: python3 tools/audit/golden_gate.py --base-ref "$BASE_REF" --event "$GITHUB_EVENT_PATH"
