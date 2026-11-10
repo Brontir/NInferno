@@ -20,10 +20,10 @@
 
 namespace ninferno::tools {
 
-// Exit 0 printed; 2 on a usage error, an unknown board or format, or a --route this build or
-// board cannot launch (a register-MMA schedule it does not compile, a staged schedule whose shared
-// stages do not fit the build's or the board's block: no price is printed for such a schedule);
-// 1 on any other error.
+// Exit 0 printed; 2 on a usage error, an unknown board or format, or a --route the selector does
+// not admit for the call on this build and board (route_query.h route_admitted_query, its own
+// route_admits: no price is printed for a route it does not admit) or does not price (an 8-tile
+// register-MMA schedule where the BF16 MMA is emulated); 1 on any other error.
 int price_main(int argc, char** argv);
 
 // What `--format` takes: every name the usage text prints (the route table's qtype_name, case and

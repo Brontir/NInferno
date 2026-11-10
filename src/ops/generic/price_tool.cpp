@@ -391,14 +391,27 @@ int run(const Options& o) {
                     "chain", "total", "selector", "");
     }
     const auto wants = [&](Route r) { return !one || *o.only == r; };
-    // A schedule the selector refuses for its resources on this build or board gets no price: the
-    // figures would read as a route it could take. --route of one is an error.
-    const auto not_launchable = [](Route r) {
+    // A route the selector does not admit for this call (route_admits: the family's whole rule on
+    // this build and board, for this format and shape) gets no price: the figures would read as a
+    // route it could take. --route of one is an error.
+    const auto admitted = [&](Route r) {
+        return generic::route_admitted_query(d, r, qtype, o.policy, o.epilogue, o.n, o.k);
+    };
+    const auto refuse = [](Route r, const char* why) {
         const std::string family(generic::family_name(r.family));
-        std::fprintf(stderr, "price: %s:%d is not launchable on this build or board\n",
-                     family.c_str(), static_cast<int>(r.schedule));
+        std::fprintf(stderr, "price: %s:%d %s\n", family.c_str(), static_cast<int>(r.schedule),
+                     why);
         return 2;
     };
+    const auto not_admitted_line = [](Route r) {
+        const std::string family(generic::family_name(r.family));
+        std::printf("%s:%-*d not admitted on this build or board for this format\n", family.c_str(),
+                    r.family == Family::RegisterMma ? 5
+                    : r.family == Family::TiledMma  ? 4
+                                                    : 3,
+                    static_cast<int>(r.schedule));
+    };
+    constexpr const char* kNotAdmitted = "not admitted on this build or board for this format";
     if (one) { // a schedule past the family's count names no route
         const Family f  = o.only->family;
         const int count = f == Family::RegisterMma ? generic::rmma_schedule_count()
@@ -414,9 +427,16 @@ int run(const Options& o) {
         const Route r{Family::RegisterMma, static_cast<std::uint8_t>(i)};
         if (!wants(r)) continue;
         const auto s = generic::rmma_schedule_info(i);
-        if (!generic::rmma_schedule_launchable(i) || (emulated && s.n_tiles == 8)) {
-            if (one) return not_launchable(r);
-            std::printf("rmma:%-5d not launchable on this build or board\n", i);
+        if (!admitted(r)) {
+            if (one) return refuse(r, kNotAdmitted);
+            not_admitted_line(r);
+            continue;
+        }
+        // A pricing rule of price_routes (generic_cost.cpp), not admission: where the BF16 MMA is
+        // emulated it prices no 8-tile schedule.
+        if (emulated && s.n_tiles == 8) {
+            if (one) return refuse(r, "is not priced where the BF16 MMA is emulated");
+            std::printf("rmma:%-5d not priced where the BF16 MMA is emulated\n", i);
             continue;
         }
         const auto tile = *generic::route_tile(r, o.epilogue, o.t);
@@ -489,6 +509,11 @@ int run(const Options& o) {
     for (int i = 0; i < generic::tiled_schedule_count(); ++i) {
         const Route r{Family::TiledMma, static_cast<std::uint8_t>(i)};
         if (!wants(r)) continue;
+        if (!admitted(r)) {
+            if (one) return refuse(r, kNotAdmitted);
+            not_admitted_line(r);
+            continue;
+        }
         const auto s    = generic::tiled_schedule_info(i);
         const auto tile = *generic::route_tile(r, o.epilogue, o.t);
         kr::PipelinedKernel kernel;
@@ -504,16 +529,9 @@ int run(const Options& o) {
     for (int i = 0; i < generic::staged_schedule_count(); ++i) {
         const Route r{Family::StagedMma, static_cast<std::uint8_t>(i)};
         if (!wants(r)) continue;
-        // staged_refusal's resource rule: the shared stages fit this build's block (staged_fits)
-        // and the board's opt-in block (staged_device_fits, read from the substituted board).
-        bool launchable = generic::staged_fits(i);
-        if (launchable) {
-            const ScopedDeviceClass scoped(d);
-            launchable = generic::staged_device_fits(i);
-        }
-        if (!launchable) {
-            if (one) return not_launchable(r);
-            std::printf("staged:%-3d not launchable on this build or board\n", i);
+        if (!admitted(r)) {
+            if (one) return refuse(r, kNotAdmitted);
+            not_admitted_line(r);
             continue;
         }
         const auto s    = generic::staged_schedule_info(i);
