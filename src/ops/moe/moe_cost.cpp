@@ -46,6 +46,26 @@ const Weight& bank_of(const MoeWeights& weights, Stage stage) {
     return stage == Stage::Down ? weights.down : weights.gate_up;
 }
 
+// The ops per second of the BF16 MMA (the register MMA, Volta's HMMA: a stage or the router), 0
+// with the reason in `note` where the law has no fact for it, nullopt where the rate is zero.
+std::optional<double> bf16_mma_rate(const MoeBoardFacts& board, std::string& note) {
+    if (!board.generation_known) {
+        note = "the generation has no rate row of its own (a lent row)";
+        return 0.0;
+    }
+    if (!board.bf16_native) {
+        note = "no native BF16 MMA: the generation's rate is a fitted aggregate";
+        return 0.0;
+    }
+    const double rate = board.bf16_ops_per_clock_sm * board.sms * board.clock_hz;
+    if (rate <= 0) return std::nullopt;
+    return rate;
+}
+
+double optional_bytes(const Tensor& t) {
+    return t.data != nullptr ? static_cast<double>(t.bytes()) : 0.0;
+}
+
 } // namespace
 
 std::optional<MoeBoardFacts> moe_board_facts(const DeviceClass& device) {
@@ -57,6 +77,7 @@ std::optional<MoeBoardFacts> moe_board_facts(const DeviceClass& device) {
     out.clock_hz              = device.facts.reference_clock_hz();
     out.bf16_ops_per_clock_sm = row.bf16;
     out.s8_ops_per_clock_sm   = row.s8;
+    out.fp32_fma_per_clock_sm = row.fp32_fma;
     out.bf16_native           = device.features.mma_bf16_native;
     out.generation_known      = generation_known(device.major, device.minor);
     return out;
@@ -138,11 +159,14 @@ std::optional<MoeStagePrice> price_moe_stage(const MoeStageShape& shape, MoeStag
                 act_rows * (x_cols * kBf16BytesPerValue + shape.cols * kBf16BytesPerValue);
         }
     }
-    out.bytes = shape.bank_bytes * touched / shape.experts + act_rows * act_read +
-                assignments * shape.out_rows * kBf16BytesPerValue + out.quantize_bytes +
-                out.widen_bytes;
+    out.bytes = (shape.bank_bytes + shape.bias_bytes) * touched / shape.experts +
+                act_rows * act_read + assignments * shape.out_rows * kBf16BytesPerValue +
+                out.quantize_bytes + out.widen_bytes;
     out.dram_seconds = out.bytes / board.dram_bytes_per_s;
-    const double ops = 2.0 * assignments * shape.rows * shape.cols;
+    // The K the kind's MMAs walk: the W4A8 kernel runs k_tiles = act.ld / 128 tiles of 128 columns
+    // (moe_w4a8.cuh, moe_w4a8_kernel: its K loops), the zero tail of the last tile included (K =
+    // 704 issues 768 columns: code_cols); the other kinds walk the bank's K (code_cols too).
+    const double ops = 2.0 * assignments * shape.rows * code_cols;
     double rate      = 0.0; // ops per second the kind's units reach
     switch (kind) {
     case MoeStageKernel::R8:
@@ -164,20 +188,13 @@ std::optional<MoeStagePrice> price_moe_stage(const MoeStageShape& shape, MoeStag
         if (rate <= 0) return std::nullopt; // no int8 tensor cores on this generation
         break;
     case MoeStageKernel::RegisterMma:
-    case MoeStageKernel::VoltaHmma:
-        if (!board.generation_known) {
-            out.compute_priced = false;
-            out.compute_note   = "the generation has no rate row of its own (a lent row)";
-            break;
-        }
-        if (!board.bf16_native) {
-            out.compute_priced = false;
-            out.compute_note   = "no native BF16 MMA: the generation's rate is a fitted aggregate";
-            break;
-        }
-        rate = board.bf16_ops_per_clock_sm * board.sms * board.clock_hz;
-        if (rate <= 0) return std::nullopt;
+    case MoeStageKernel::VoltaHmma: {
+        const auto bf16 = bf16_mma_rate(board, out.compute_note);
+        if (!bf16) return std::nullopt;
+        rate               = *bf16;
+        out.compute_priced = rate > 0;
         break;
+    }
     }
     out.compute_seconds = rate > 0 ? ops / rate : 0.0;
     out.seconds         = std::max(out.dram_seconds, out.compute_seconds);
@@ -209,6 +226,10 @@ std::optional<MoeStageShape> moe_stage_shape(const MoeWeights& weights, const Mo
     s.bank_bytes =
         static_cast<double>(bank.payload_bytes) *
         (stored_k > static_cast<double>(bank.k) ? static_cast<double>(bank.k) / stored_k : 1.0);
+    // The bank's optional bias ([E x rows], FP32 or BF16): every kind adds bias[row] to its output
+    // rows through moe_bias (moe_gemm.cuh, the register MMA's epilogue; moe_r8.cuh; moe_w4a8.cuh;
+    // moe_volta_hmma.cu), so a call reads the biases of the rows of the experts it touches.
+    s.bias_bytes = optional_bytes(stage == Stage::Down ? weights.down_bias : weights.gate_up_bias);
     // A gate and an up row give one output (SwiGLU); a non-gated expert's one row gives one.
     const std::int32_t sets = config.activation == MoeActivation::Relu2 ? 1 : 2;
     s.out_rows              = stage == Stage::GateUp ? s.rows / sets : s.rows;
@@ -368,37 +389,85 @@ std::vector<MoeCandidate> moe_candidates(const MoeWeights& weights, const MoeCon
 std::optional<MoeLayerPrice> moe_layer_price(const MoeWeights& weights, const MoeConfig& config,
                                              const MoePlan& plan, MoeEpilogue epilogue,
                                              std::int32_t tokens, const MoeBoardFacts& board) {
+    if (tokens <= 0 || board.dram_bytes_per_s <= 0) return std::nullopt;
     const MoeStageRoutes routes = stage_routes(weights, plan);
+    // The router's CTAs quantize x for an R8 gate/up on this call (the production rule), and the
+    // gate/up then reads those codes.
+    const bool router_quantizes = moe_router_quantizes_x(weights, config, plan, tokens);
     MoeLayerPrice out;
+    // One kernel's DRAM and compute seconds into the layer's: max(DRAM, compute) where the compute
+    // is priced, the DRAM figure alone (and the flag with the first reason) where it is not.
+    const auto add = [&](double dram_seconds, double compute_seconds, bool compute_priced,
+                         const std::string& note) {
+        out.seconds += compute_priced ? std::max(dram_seconds, compute_seconds) : dram_seconds;
+        out.dram_seconds += dram_seconds;
+        out.compute_binds = out.compute_binds || (compute_priced && compute_seconds > dram_seconds);
+        if (!compute_priced && out.compute_priced) {
+            out.compute_priced = false;
+            out.compute_note   = note;
+        }
+    };
     std::int32_t hidden = 0;
     for (const Stage stage : {Stage::GateUp, Stage::Down}) {
-        const auto shape = moe_stage_shape(weights, config, stage);
+        auto shape = moe_stage_shape(weights, config, stage);
         if (!shape) return std::nullopt;
+        if (stage == Stage::GateUp) shape->router_quantizes_x = router_quantizes;
         const auto price = price_moe_stage(
             *shape, (stage == Stage::Down ? routes.down : routes.gate_up).kernel, tokens, board);
         if (!price) return std::nullopt;
-        out.seconds += price->seconds;
-        out.dram_seconds += price->dram_seconds;
-        out.compute_binds = out.compute_binds ||
-                            (price->compute_priced && price->compute_seconds > price->dram_seconds);
-        if (!price->compute_priced && out.compute_priced) {
-            out.compute_priced = false;
-            out.compute_note   = price->compute_note;
-        }
+        add(price->dram_seconds, price->compute_seconds, price->compute_priced,
+            price->compute_note);
         if (stage == Stage::Down) hidden = shape->rows;
     }
-    // The router: its weights, the activation and the logits, once.
-    double extra_bytes = static_cast<double>(weights.router.payload_bytes) +
-                         static_cast<double>(tokens) * weights.router.k * kBf16BytesPerValue +
-                         static_cast<double>(tokens) * weights.router.n * kFp32BytesPerValue;
-    // The separate combine where the down stage does not fuse it (an R8 down stage's last CTAs
-    // combine in its epilogue unless the layer has a shared expert or the row grid exceeds the
-    // ticket array: the production predicate): reads the T x k slot rows of BF16 and writes T rows.
-    if (routes.down.kernel != MoeStageKernel::R8 ||
-        !moe_r8_down_fuses_combine(weights, config, plan.down_r8)) {
-        extra_bytes +=
-            (static_cast<double>(tokens) * config.top_k + tokens) * hidden * kBf16BytesPerValue;
+    // The router kernel (run, step 1; moe_router_kernel): its weights, the T rows of x, its bias
+    // (args.bias, added to each logit), the FP32 logits it writes; where it quantizes x for an R8
+    // gate/up its CTAs also write the codes, scales and sums of each row's plane at K rounded up to
+    // 128 (quantize_x_task over T x xq_ld / 32 blocks, 40 bytes a block, the blocks past K
+    // zero).
+    const double t       = tokens;
+    const double experts = static_cast<double>(weights.router.n);
+    const double width   = static_cast<double>(weights.router.k);
+    double router_bytes  = static_cast<double>(weights.router.payload_bytes) +
+                          t * width * kBf16BytesPerValue + optional_bytes(weights.router_bias) +
+                          t * experts * kFp32BytesPerValue;
+    if (router_quantizes) {
+        router_bytes += t * (moe_w4a8_ld(static_cast<std::int32_t>(width)) / kQuantizeBlock) *
+                        kQuantizedBlockBytes;
     }
+    // Its compute: 2 x T x E x H on the unit the kernel uses. The register MMA and Volta's HMMA run
+    // the BF16 MMA (bf16_mma_rate, the stages' rule); the SIMT router (T <= kRouterSimtMaxTokens)
+    // one FP32 fmaf per weight and token (moe_router_simt.cu), two operations an FMA at the
+    // generation's FP32 FMA issue rate (GenerationRow::fp32_fma; its BF16 unpacking and the
+    // reduction are not counted, so the term stays a lower bound).
+    std::string router_note;
+    double router_rate = 0.0;
+    if (moe_router_kernel(weights, config, plan, tokens) == MoeRouterKernel::Simt) {
+        if (!board.generation_known) {
+            router_note = "the generation has no rate row of its own (a lent row)";
+        } else {
+            router_rate = 2.0 * board.fp32_fma_per_clock_sm * board.sms * board.clock_hz;
+            if (router_rate <= 0) router_note = "no FP32 FMA rate for the generation";
+        }
+    } else {
+        const auto rate = bf16_mma_rate(board, router_note);
+        if (!rate) return std::nullopt;
+        router_rate = *rate;
+    }
+    const double router_ops = 2.0 * t * experts * width;
+    add(router_bytes / board.dram_bytes_per_s, router_rate > 0 ? router_ops / router_rate : 0.0,
+        router_rate > 0, "the router: " + router_note);
+    // The selection (select / select_plan, or the SIMT router's last CTA) reads the logits back,
+    // and the optional selection bias and expert scale ([E] FP32 each).
+    double extra_bytes = t * experts * kFp32BytesPerValue + optional_bytes(weights.selection_bias) +
+                         optional_bytes(weights.expert_scale);
+    // The combine: reads the T x k slot rows of BF16 and writes T rows. The separate combine_kernel
+    // and the R8 down stage's fused tail (moe_r8.cuh fused_combine_tail, where the down stage fuses
+    // it: moe_r8_down_fuses_combine) move the same bytes: the tail reads each token's k slot rows
+    // of y (__ldcg) and writes its out row. The y rows were written by the down stage just before;
+    // the law has no L2 term for a tensor written and read back (the gate/up's intermediate read by
+    // the down stage is priced the same way), so both are counted as DRAM bytes, the fused tail's
+    // as the separate kernel's.
+    extra_bytes += (t * config.top_k + t) * hidden * kBf16BytesPerValue;
     // An AddResidual call (out += MoE(x), out holding the residual on entry) reads the T x H BF16
     // destination before the combine writes it, whichever combine runs: the separate one
     // (moe_route.cu combine_kernel, `residual = *(out + h)` under CombineArgs::add_residual) and
@@ -417,12 +486,14 @@ std::optional<double> moe_layer_dram_floor_seconds(const MoeWeights& weights,
                                                    const MoeBoardFacts& board) {
     if (tokens <= 0 || board.dram_bytes_per_s <= 0) return std::nullopt;
     double bytes = static_cast<double>(weights.router.payload_bytes) +
+                   optional_bytes(weights.router_bias) +
                    static_cast<double>(tokens) * weights.router.k * kBf16BytesPerValue;
     for (const Stage stage : {Stage::GateUp, Stage::Down}) {
         const auto shape = moe_stage_shape(weights, config, stage);
         if (!shape) return std::nullopt;
-        // At least top-k experts' weights are read, whichever experts the T tokens pick.
-        bytes += shape->bank_bytes * shape->top_k / shape->experts;
+        // At least top-k experts' weights (and biases) are read, whichever experts the T tokens
+        // pick.
+        bytes += (shape->bank_bytes + shape->bias_bytes) * shape->top_k / shape->experts;
     }
     return bytes / board.dram_bytes_per_s;
 }

@@ -23,6 +23,8 @@
 //     the kernel then reads whole (both priced). A gate and
 //     up stage reads the T rows of x once (the k assignments of a token share its row), a down
 //     stage the T x k rows of the activation; and writes the stage's output rows once;
+//   - the bank's optional bias (`bias_bytes`, gate_up_bias / down_bias), of the rows of the
+//     touched experts, as their weights;
 //   - the pass that widens x before a gate/up stage, on every call: the zero-padded BF16 copy of a
 //     padded x (the bank's K above the router's width) on the register MMA and R8, and Volta's
 //     f16 conversion of x, padded or not; each reads the T rows at the router's width and writes
@@ -34,9 +36,11 @@
 //     exceed a measured time (moe_layer_dram_floor_seconds is the bound that holds for any
 //     routing). The tuner flushes the L2 before a sample where the device has room for it
 //     (moe_tune.cpp, tune_timer.h), so the L2 does not lower a measured time below it there;
-// and computes 2 x assignments x rows x cols operations on the tensor cores the kind uses (the
+// and computes 2 x assignments x rows x K operations on the tensor cores the kind uses (the
 // generation's `bf16` rate for the register MMA and Volta's HMMA, `s8` for the W4A8 tier; both
-// ops per clock per SM, core/generation.h) at the SM count and the reference clock.
+// ops per clock per SM, core/generation.h) at the SM count and the reference clock. K is the one
+// the kind's MMAs walk: the bank's K, and on the W4A8 tier the plane's K rounded up to 128 (its
+// last tile's zero tail is multiplied too).
 // seconds = max(DRAM seconds, compute seconds): under uniform routing the bytes and the unit rates
 // bound the time from below at T = 1, and a measured time is expected to be at least this there
 // (the replica verifies that at T = 1 and against the strict bound at every T,
@@ -55,12 +59,11 @@
 //     HMMA (m8n8k4) like the emulated register MMA. The facts of those two generations need their
 //     own rate rows (#668 measures Volta's) before the law can price them.
 // Also absent from every price: launch and fixed overheads, the kernel's DRAM efficiency below
-// the peak bandwidth, tile and wave effects (fitted quantities elsewhere, route_cost_constants.h),
-// the R8 gate/up's code write by the router's CTAs, the shared expert, and the slot reads and the
-// output write of the combine fused into an R8 down stage (a separate combine is priced by
-// moe_layer_price, and so is the residual read of an AddResidual call, fused or not). A candidate
-// list never ranks a kind against another by a price that has no compute term (status Unpriced),
-// and two kinds of equal price are Tied, not one dominated.
+// the peak bandwidth, tile and wave effects (the MMAs a tile issues past the call's rows and
+// columns; fitted quantities elsewhere, route_cost_constants.h), the shared expert, and the
+// routing metadata (the T x k ids, weights and slots, the job lists: a few ints a slot). A
+// candidate list never ranks a kind against another by a price that has no compute term (status
+// Unpriced), and two kinds of equal price are Tied, not one dominated.
 
 #include "core/device_class.h"
 #include "core/weight.h"
@@ -82,6 +85,7 @@ struct MoeBoardFacts {
     double clock_hz              = 0;
     double bf16_ops_per_clock_sm = 0; // dense MMA rate: the register MMA, Volta's HMMA
     double s8_ops_per_clock_sm   = 0; // the int8 tier; 0 where the generation has none (Volta)
+    double fp32_fma_per_clock_sm = 0; // FP32 FMAs: the SIMT router (GenerationRow::fp32_fma)
     // The generation's BF16 MMA is native (sm_80 on): only then is `bf16_ops_per_clock_sm` a fact
     // of the chip and not a fitted aggregate of an emulated path.
     bool bf16_native = true;
@@ -113,7 +117,12 @@ struct MoeStageShape {
     std::int32_t x_cols = 0;
     // The router's CTAs quantize x for an R8 gate/up (the bank's K is the router's: x is not
     // padded); only then an R8 gate/up reads int8 codes, else it reads BF16 x and quantizes itself.
+    // moe_stage_shape sets it from the geometry; moe_layer_price from the call's production rule
+    // (moe_router_quantizes_x: also no W4A8 stage and T <= kR8Tokens).
     bool router_quantizes_x = false;
+    // The bank's optional bias tensor, all experts (0 without one): a call reads its touched
+    // experts' share.
+    double bias_bytes = 0;
 };
 
 struct MoeStagePrice {
@@ -141,10 +150,10 @@ struct MoeStagePrice {
 
 // A lower bound of the DRAM seconds of a whole layer's call of `tokens`, true for any routing:
 // the weights of at least top-k experts of each bank (the fewest any T tokens of top-k routing
-// touch; k at T = 1 and at T > 1 when every token picks the same k), the router's weights and x
-// read once. Nothing written is counted (a write into a clean L2 may not reach DRAM), nor any
-// expert past k, nor the activations in between. `moe_layer_price` is the expectation under uniform
-// routing; this is what no routing can go below.
+// touch; k at T = 1 and at T > 1 when every token picks the same k) and their biases, the
+// router's weights and bias and x read once. Nothing written is counted (a write into a clean L2
+// may not reach DRAM), nor any expert past k, nor the activations in between. `moe_layer_price` is
+// the expectation under uniform routing; this is what no routing can go below.
 [[nodiscard]] std::optional<double> moe_layer_dram_floor_seconds(const MoeWeights& weights,
                                                                  const MoeConfig& config,
                                                                  std::int32_t tokens,
@@ -199,20 +208,22 @@ rank_against_selected(const std::optional<MoeStagePrice>& price,
                                                        const MoeConfig& config, std::int32_t tokens,
                                                        bool prefill, Stage stage);
 
-// The layer's price on a plan: its two grouped stages (each stage's kernel from stage_routes), the
-// router's bytes (its weights, the activation, the logits) and, where the down stage does not fuse
-// the combine (an R8 down stage's last CTAs do, unless the layer has a shared expert or the row
-// grid exceeds the ticket array: moe_r8_down_fuses_combine), the separate combine (reads T x k x H
-// BF16, writes T x H), and on `epilogue` AddResidual the read of the T x H BF16 destination, which
-// the combine that writes it reads first (the separate combine and the R8 down stage's fused tail
-// alike; a Store call has no such read). A stage without its compute term stands at its DRAM
-// floor: `compute_priced` false says the number is a floor in that case, not a full price.
+// The layer's price on a plan: its two grouped stages (each stage's kernel from stage_routes); the
+// router kernel (moe_router_kernel), priced as a stage is: its bytes (its weights, x, its bias,
+// the FP32 logits, and the codes of x where its CTAs quantize it for an R8 gate/up) against its
+// 2 x T x E x H operations on the BF16 MMA, or on the FP32 FMAs for the SIMT router; the
+// selection's reads (the logits, the optional selection bias and expert scale); the combine
+// (reads T x k x H BF16, writes T x H: the separate kernel and an R8 down stage's fused tail move
+// the same bytes); and on `epilogue` AddResidual the read of the T x H BF16 destination, which
+// the combine that writes it reads first (a Store call has no such read). A kernel without its
+// compute term stands at its DRAM floor: `compute_priced` false says the number is a floor in
+// that case, not a full price.
 struct MoeLayerPrice {
-    double seconds      = 0;     // stages' max(DRAM, compute) + router + combine + residual
-    double dram_seconds = 0;     // the same with every stage at its DRAM time
-    bool compute_priced = true;  // every stage has its compute term
-    bool compute_binds  = false; // some stage's compute time exceeds its DRAM time
-    std::string compute_note;    // the first unpriced stage's reason
+    double seconds      = 0;     // stages' and router's max(DRAM, compute) + the other bytes
+    double dram_seconds = 0;     // the same with every kernel at its DRAM time
+    bool compute_priced = true;  // every stage and the router have their compute term
+    bool compute_binds  = false; // some kernel's compute time exceeds its DRAM time
+    std::string compute_note;    // the first unpriced kernel's reason
 };
 
 // nullopt where a stage has no price.

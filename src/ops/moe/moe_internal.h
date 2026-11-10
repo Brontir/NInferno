@@ -491,6 +491,15 @@ struct MoePlanQuery {
 // Validates the layer (throws as the Op does).
 [[nodiscard]] bool moe_r8_down_fuses_combine(const MoeWeights& weights, const MoeConfig& config,
                                              int down_r8);
+// The kernel that computes a call's router logits: the production rule run takes (moe.cpp
+// router_kernel). Validates the layer (throws as the Op does).
+enum class MoeRouterKernel { Simt, VoltaHmma, RegisterMma };
+[[nodiscard]] MoeRouterKernel moe_router_kernel(const MoeWeights& weights, const MoeConfig& config,
+                                                const MoePlan& plan, std::int32_t tokens);
+// Whether the router's CTAs quantize x for an R8 gate/up on this call (GemmArgs::xq): the
+// production rule. Validates the layer (throws as the Op does).
+[[nodiscard]] bool moe_router_quantizes_x(const MoeWeights& weights, const MoeConfig& config,
+                                          const MoePlan& plan, std::int32_t tokens);
 // Whether two plain MXFP4 banks take the block-scaled MMA with MXFP8 activations (route name
 // "w4a8.mx8") where the plan runs the W4A8 tier.
 [[nodiscard]] bool moe_mx8_banks(const MoeWeights& weights);

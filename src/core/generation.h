@@ -13,6 +13,10 @@
 //         parts 2048; where the BF16 MMA is emulated (Turing's f16 k8 pairs, Volta's FP32 FMAs,
 //         DeviceFeatures::mma_bf16_native false) the fitted aggregate 1536.
 //   s8    the int8 MMA, 0 where the card has none (Volta, whose build composes it from dp4a).
+//   fp32_fma  not a tensor rate: the FP32 fused multiply-adds an SM issues per clock (the CUDA C++
+//         Programming Guide's arithmetic instruction throughput table, "32-bit floating-point
+//         add, multiply, multiply-add"): 64 on Volta, Turing and GA100, 128 on GA10x, Ada, Hopper
+//         and the Blackwell generations. A rate (lent as bf16 and s8 are).
 // fp32acc_full_rate: FP32-accumulate HMMA at the tensor core's full rate (sm_80, sm_90,
 // sm_100/103), where int8 activations gain less than their quantization pass costs; the GeForce,
 // workstation and inference parts (sm_75, sm_86, sm_89, sm_110, sm_120/121) run it at half rate,
@@ -22,7 +26,8 @@
 //   w4a8_eff_scale  the W4A8 tiles' fraction of the consumer fit's efficiency (A100 0.46)
 //   a16_cost_scale  the A16 model's factor against the A8 one (1.11; A100 1.64: with
 //                   the busy-SM fill it moves 0.89 -> 1.11, which also prices the dequant of the
-//                   K-quant and codebook formats the A16 side pays: 5070 Ti ISTA T 17..32 1.20 -> 1.04)
+//                   K-quant and codebook formats the A16 side pays: 5070 Ti ISTA T 17..32 1.20
+//                   -> 1.04)
 //   mmq_candidate   ggml's matrix kernel is a cost-model candidate (not on the full-rate row,
 //                   where its microbenchmark win and the 24K prefill A/B, -15 %, disagree)
 //   attention_chain the Gemma 4 chained prefill attention tile runs near the plain tile's speed in
@@ -54,8 +59,8 @@
 // the device's capability, which is not in this table, its fields are of four kinds, and only the
 // rates are lent:
 //   capability   what the device can execute: not in this table (DeviceFeatures, the query)
-//   rate         bf16, s8: the analytic tensor rate a cost model ranks routes with (lent: an
-//                assumed rate, the ranking said to rest on it)
+//   rate         bf16, s8 (the analytic tensor rate a cost model ranks routes with), fp32_fma
+//                (lent: an assumed rate, the ranking said to rest on it)
 //   kind         fp32acc_full_rate: which measured kind of tensor core the generation is; a lent
 //                row has none (fp32acc_full_rate_of: nullopt), and what rests on the kind (int8
 //                prefill pays, i8 replaces the q4a8 kernels, board distances) is not carried
@@ -78,6 +83,7 @@ struct GenerationRow {
     const char* name = "";
     double bf16  = 0;
     double s8    = 0;
+    double fp32_fma        = 0; // FP32 fused multiply-adds an SM issues per clock (see above)
     bool fp32acc_full_rate = false;
     double w4a8_eff_scale  = 1.0;
     double a16_cost_scale  = 1.0;
@@ -88,16 +94,16 @@ struct GenerationRow {
 };
 
 inline constexpr GenerationRow kGenerations[] = {
-    //  major minor     name       bf16    s8      full   w4a8  a16   mmq    chain
-    {7, 0, 4, "volta", 1536.0, 0.0, false, 1.0, 1.11, true},
-    {7, 5, 9, "turing", 1536.0, 2048.0, false, 1.0, 1.11, true},
-    {8, 0, 0, "ga100", 2048.0, 4096.0, true, 0.46, 1.64, false},
-    {8, 1, 8, "ga10x", 512.0, 2048.0, false, 1.0, 1.11, true, false, true, 0.20},
-    {8, 9, 9, "ada", 512.0, 2048.0, false, 1.0, 1.11, true, false, true, 0.20},
-    {9, 0, 9, "hopper", 2048.0, 4096.0, true, 0.46, 1.64, false},
-    {10, 0, 9, "gb100", 2048.0, 4096.0, true, 0.46, 1.64, false},
-    {11, 0, 9, "thor", 512.0, 2048.0, false, 1.0, 1.11, true},
-    {12, 0, 9, "gb20x", 512.0, 2048.0, false, 1.0, 1.11, true, true, true, 0.10},
+    //  major minor     name       bf16    s8     fp32   full   w4a8  a16   mmq    chain
+    {7, 0, 4, "volta", 1536.0, 0.0, 64.0, false, 1.0, 1.11, true},
+    {7, 5, 9, "turing", 1536.0, 2048.0, 64.0, false, 1.0, 1.11, true},
+    {8, 0, 0, "ga100", 2048.0, 4096.0, 64.0, true, 0.46, 1.64, false},
+    {8, 1, 8, "ga10x", 512.0, 2048.0, 128.0, false, 1.0, 1.11, true, false, true, 0.20},
+    {8, 9, 9, "ada", 512.0, 2048.0, 128.0, false, 1.0, 1.11, true, false, true, 0.20},
+    {9, 0, 9, "hopper", 2048.0, 4096.0, 128.0, true, 0.46, 1.64, false},
+    {10, 0, 9, "gb100", 2048.0, 4096.0, 128.0, true, 0.46, 1.64, false},
+    {11, 0, 9, "thor", 512.0, 2048.0, 128.0, false, 1.0, 1.11, true},
+    {12, 0, 9, "gb20x", 512.0, 2048.0, 128.0, false, 1.0, 1.11, true, true, true, 0.10},
 };
 
 // Whether the table has a row of its own for compute capability major.minor (generation_row lends

@@ -15,6 +15,7 @@
 #include "core/format_facts.h"
 #include "core/ggml_frag.h"
 #include "core/machine_facts.h"
+#include "core/moe_w4a8_blocks.h"
 #include "spec/pairs.h"
 
 #include <cuda_runtime.h>
@@ -492,15 +493,17 @@ std::string format_of_ggml(std::uint32_t type) {
 // The routed banks' prefill GEMM (runtime::ExpertPrefill), as ops/moe w4a8_bank_refusal decides it,
 // bank by bank (#311: a stage takes the grouped W4A8 where its own bank admits it): the grouped
 // W4A8 reads a bank of a format with int8 codes (convert::kept_block_policy AllowA8, the formats
-// generic::w4a8_supports names) and K a multiple of 32, in fragment order only the formats
-// ggml_frag_w4a8 names, and prefills it on int8 activations, unless another bank of its layer is
-// A16-only (the layer's expert policy is then A16); any other bank runs the 16-bit register MMA;
-// a layer of MXFP4 banks is its own route. The trunk takes the route of the most of its banks'
-// bytes. The banks' 16-bit and float tensors (biases) do not decide.
+// generic::w4a8_supports names) whose K and activation are whole 32-value blocks
+// (moe_w4a8_whole_blocks, the op's own rule: `x_width` is the router's width for a gate/up bank,
+// which a zero-padded bank's K exceeds, and the bank's K for a down bank), in fragment order only
+// the formats ggml_frag_w4a8 names, and prefills it on int8 activations, unless another bank of
+// its layer is A16-only (the layer's expert policy is then A16); any other bank runs the 16-bit
+// register MMA; a layer of MXFP4 banks is its own route. The trunk takes the route of the most of
+// its banks' bytes. The banks' 16-bit and float tensors (biases) do not decide.
 class ExpertRoutes {
 public:
     void add(const std::string& layer, const std::string& format, const std::string& layout,
-             std::uint64_t k, std::uint64_t bytes) {
+             std::uint64_t k, std::uint64_t x_width, std::uint64_t bytes) {
         if (format == "bf16" || format == "fp32" || format == "fp16" || format == "int32") { return; }
         Layer& l = layers_[layer];
         l.bytes += bytes;
@@ -514,7 +517,9 @@ public:
             l.mxfp4 = l.mxfp4 && q == QType::MXFP4;
             const bool a8 = convert::kept_block_policy(q) == artifact::ActivationPolicy::AllowA8;
             l.a8          = l.a8 && a8;
-            if (k % 32 == 0 && a8 && (!frag || ggml_frag_w4a8(q))) {
+            if (moe_w4a8_whole_blocks(static_cast<std::int64_t>(k),
+                                      static_cast<std::int64_t>(x_width)) &&
+                a8 && (!frag || ggml_frag_w4a8(q))) {
                 l.int8_bytes += bytes;
             }
         } catch (const std::exception&) { l.known = false; }
@@ -1035,7 +1040,10 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
         if (block && t.name.find("_exps.") != std::string::npos) {
             (mtp ? mtp_routed : routed) += t.bytes;
             if (!mtp && !t.ne.empty()) {
-                expert_routes.add(std::to_string(*block), format_of_ggml(t.type), "", t.ne[0], t.bytes);
+                // A gate or up bank reads x at the hidden width; a down bank its own K.
+                const bool down = t.name.find("ffn_down_exps.") != std::string::npos;
+                expert_routes.add(std::to_string(*block), format_of_ggml(t.type), "", t.ne[0],
+                                  down ? t.ne[0] : g.hidden, t.bytes);
             }
             // The banks' weights only: a bank's per-expert scale (Gemma 4's ffn_down_exps.scale,
             // FP32) is not one of them.
@@ -1225,6 +1233,16 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     // The routed expert objects as the runtime counts them (model_instance.cpp).
     const auto routed = artifact::routed_expert_object_layers(dir);
     ExpertRoutes expert_routes;
+    // The width of the activation each routed bank reads (ExpertRoutes::add): the hidden size for a
+    // gate/up bank ("experts/<i>/gate_up", "/gate", "/up"), the bank's own K for a down bank.
+    const std::uint64_t hidden = geometry_of_config(text->second.config).hidden;
+    std::vector<std::uint8_t> reads_x(dir.objects.size(), 0);
+    for (const auto& [name, binding] : dir.bindings) {
+        if (!artifact::routed_expert_layer(name) || name.ends_with("/down")) { continue; }
+        for (const auto& piece : binding.parts) {
+            if (piece.object.index < reads_x.size()) { reads_x[piece.object.index] = 1; }
+        }
+    }
     // The input table's objects that the output head does not share (an untied table: a decode
     // step gathers one row of it).
     std::vector<std::uint8_t> table(dir.objects.size(), 0); // bit 0: input table, bit 1: head
@@ -1291,7 +1309,9 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
         if (routed[i]) {
             routed_bytes += tensor->bytes;
             if (!tensor->shape.empty()) {
-                expert_routes.add(*routed[i], tensor->format, tensor->layout, tensor->shape.back(), tensor->bytes);
+                const std::uint64_t k = tensor->shape.back();
+                expert_routes.add(*routed[i], tensor->format, tensor->layout, k,
+                                  reads_x[i] ? hidden : k, tensor->bytes);
             }
         }
         if (alone && m[Drafter]) {

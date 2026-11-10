@@ -154,7 +154,7 @@ void law_checks() {
               moe::expected_experts_touched(8, 8, 0) == 0.0,
           "no experts or no tokens: none");
 
-    const moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0};
+    const moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0, 128.0};
     moe::MoeStageShape s;
     s.bank_bytes         = 1e9;
     s.experts            = 100;
@@ -192,8 +192,11 @@ void law_checks() {
     // 2 x 4096 x 10 assignments x 1000 rows x 1000 cols over 64 x 100 x 2e9 ops/s.
     check(wide && close(wide->compute_seconds, 2.0 * 4096 * 10 * 1000 * 1000 / (64.0 * 100 * 2e9)),
           "compute seconds = 2 x assignments x rows x cols / (rate x SMs x clock)");
-    check(wide && w4 && close(wide->compute_seconds / w4->compute_seconds, 2048.0 / 64.0),
-          "the int8 tier's compute time is the rate ratio, no other factor");
+    // The int8 tier's MMAs walk the plane's K rounded up to 128 (1000 -> 1024, the zero tail of the
+    // last tile multiplied too); the register MMA the bank's 1000.
+    check(wide && w4 &&
+              close(wide->compute_seconds / w4->compute_seconds, 2048.0 / 64.0 * 1000.0 / 1024.0),
+          "the int8 tier's compute time is the rate ratio times the K each walks, no other factor");
     // A down stage reads its T x k activation rows (10 x as many as a gate/up's x).
     moe::MoeStageShape down = s;
     down.stage              = moe::Stage::Down;
@@ -303,6 +306,11 @@ void law_checks() {
               close(w4_gemma->bytes,
                     1e8 + 10 * (704 * 2.0 + 24 * 40.0) + 10 * 768 * 36.0 / 32.0 + out_bytes),
           "a K = 704 W4A8 down stage quantizes and reads a plane of 768 values per assignment");
+    // ... and its MMAs run k_tiles = 768 / 128 = 6 tiles (moe_w4a8.cuh): 2 x 10 assignments x 1000
+    // rows x 768, not x 704, at the int8 rate.
+    check(w4_gemma &&
+              close(w4_gemma->compute_seconds, 2.0 * 10 * 1000 * 768 / (2048.0 * 100 * 2e9)),
+          "a K = 704 W4A8 stage's operations walk the 768-wide plane");
     // Past T = 1 a gate/up stage still reads each token's row of x once (not once in all, not once
     // per assignment): T rows; a down stage one row per assignment.
     const auto two_gate_up = moe::price_moe_stage(s, moe::MoeStageKernel::RegisterMma, 2, board);
@@ -402,7 +410,7 @@ void shape_checks() {
     // router's width and written at the bank's K, 2 bytes a value: (2688 + 2816) x 2 = 11008 and
     // (2880 + 3072) x 2 = 11904 bytes. The register MMA and R8 pay it (the padded BF16 copy), and
     // so does Volta's HMMA (its f16 pass), W4A8 does not (its quantize pass reads x instead).
-    const moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0};
+    const moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0, 128.0};
 
     struct Padded {
         QType q;
@@ -453,10 +461,11 @@ double logical_bytes(const Weight& w) {
            static_cast<double>(std::max<std::int64_t>(w.padded_shape[1], w.k));
 }
 
-// The bytes by hand of one layer call: `gate_up_int8` the gate/up reads the codes of the router's
-// CTAs (R8), `combine` the separate combine is run (the down stage is not R8).
+// The bytes by hand of one layer call: `gate_up_int8` the router's CTAs quantize x (40 bytes a
+// 32-value block of the plane at K rounded up to 128) and the R8 gate/up reads those codes. The
+// combine (the separate kernel or the R8 down stage's fused tail: the same bytes) always counts.
 double layer_bytes_by_hand(const ops::MoeWeights& w, std::int32_t experts, std::int32_t top_k,
-                           std::int32_t tokens, bool relu2, bool gate_up_int8, bool combine) {
+                           std::int32_t tokens, bool relu2, bool gate_up_int8) {
     const double t            = tokens;
     const double touched      = moe::expected_experts_touched(experts, top_k, tokens);
     const double gate_up_rows = static_cast<double>(w.gate_up.n) / experts;
@@ -471,15 +480,20 @@ double layer_bytes_by_hand(const ops::MoeWeights& w, std::int32_t experts, std::
                    t * top_k * hidden_rows * 2 // down: experts, activation rows, outputs
                    + static_cast<double>(w.router.payload_bytes) +
                    t * static_cast<double>(w.router.k) * 2 +
-                   t * static_cast<double>(w.router.n) * 4; // router: weights, x, FP32 logits
-    if (combine) bytes += (t * top_k + t) * hidden_rows * 2;
+                   t * static_cast<double>(w.router.n) * 4    // router: weights, x, FP32 logits
+                   + t * static_cast<double>(w.router.n) * 4; // the selection reads the logits
+    if (gate_up_int8) {
+        const double ld = std::ceil(static_cast<double>(w.router.k) / 128) * 128;
+        bytes += t * ld / 32 * 40; // the router's CTAs write codes, scales and sums
+    }
+    bytes += (t * top_k + t) * hidden_rows * 2; // the combine
     return bytes;
 }
 
 void layer_checks() {
     const DeviceClass scoped_class = generic::board_device_class(board_named("rtx4090"));
     const ScopedDeviceClass scoped(scoped_class);
-    const moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0};
+    const moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0, 128.0};
     moe::MoeBoardFacts tiny_rate    = board; // a unit rate so low that compute binds
     tiny_rate.bf16_ops_per_clock_sm = 0.001;
     moe::MoeBoardFacts lent         = board;
@@ -505,8 +519,7 @@ void layer_checks() {
                   "a register MMA layer is fully priced, bandwidth-bound while narrow, T = " +
                       std::to_string(tokens) + tag);
             if (!price) continue;
-            const double expected =
-                layer_bytes_by_hand(w, experts, top_k, tokens, relu2, false, true);
+            const double expected = layer_bytes_by_hand(w, experts, top_k, tokens, relu2, false);
             check(matches(price->dram_seconds * board.dram_bytes_per_s, expected),
                   "the layer's bytes by hand, T = " + std::to_string(tokens) + tag + ": " +
                       std::to_string(price->dram_seconds * board.dram_bytes_per_s) + " vs " +
@@ -532,8 +545,9 @@ void layer_checks() {
                   matches(lent_price->seconds, lent_price->dram_seconds),
               "a layer on a lent generation row is unpriced, at its DRAM figure" + tag);
 
-        // R8 on both stages: no compute term (flag false, note), the gate/up reads codes, the down
-        // stage the BF16 intermediate, and no separate combine (the R8 down CTAs combine).
+        // R8 on both stages: no compute term (flag false, note), the router's CTAs write the codes
+        // the gate/up reads, the down stage reads the BF16 intermediate, and its CTAs combine in
+        // their tail (the same bytes as the separate combine).
         moe::MoePlan r8;
         r8.gate_up_r8 = r8.down_r8 = 0;
         const auto r8_price =
@@ -542,8 +556,8 @@ void layer_checks() {
                   !r8_price->compute_binds && matches(r8_price->seconds, r8_price->dram_seconds),
               "an R8 layer is unpriced: its DRAM figure alone, with a note" + tag);
         check(r8_price && matches(r8_price->dram_seconds * board.dram_bytes_per_s,
-                                  layer_bytes_by_hand(w, experts, top_k, 2, relu2, true, false)),
-              "an R8 layer's bytes by hand: codes for the gate/up, no separate combine" + tag);
+                                  layer_bytes_by_hand(w, experts, top_k, 2, relu2, true)),
+              "an R8 layer's bytes by hand: codes for the gate/up, the fused combine" + tag);
 
         // Mixed: R8 gate/up and a register MMA down stage (10 of the 75 replayed rows): the combine
         // is separate, the layer is unpriced because of its R8 stage.
@@ -553,28 +567,31 @@ void layer_checks() {
             moe::moe_layer_price(w, layer->config, mixed, ops::MoeEpilogue::Store, 4, board);
         check(mixed_price && !mixed_price->compute_priced && !mixed_price->compute_note.empty() &&
                   matches(mixed_price->dram_seconds * board.dram_bytes_per_s,
-                          layer_bytes_by_hand(w, experts, top_k, 4, relu2, true, true)),
+                          layer_bytes_by_hand(w, experts, top_k, 4, relu2, true)),
               "a mixed layer (R8 gate/up, register MMA down) carries the combine, unpriced" + tag);
         // The other way: a register MMA gate/up and an R8 down stage. Each stage takes its own
-        // kernel: the R8 down stage leaves the layer unpriced and its CTAs fuse the combine.
+        // kernel: the R8 down stage leaves the layer unpriced and its CTAs fuse the combine, whose
+        // bytes count as the separate one's.
         moe::MoePlan r8_down;
         r8_down.down_r8 = 0;
         const auto down_price =
             moe::moe_layer_price(w, layer->config, r8_down, ops::MoeEpilogue::Store, 4, board);
         check(down_price && !down_price->compute_priced && !down_price->compute_note.empty() &&
                   matches(down_price->dram_seconds * board.dram_bytes_per_s,
-                          layer_bytes_by_hand(w, experts, top_k, 4, relu2, false, false)),
-              "a mixed layer (register MMA gate/up, R8 down) is unpriced and has no combine" + tag);
+                          layer_bytes_by_hand(w, experts, top_k, 4, relu2, false)),
+              "a mixed layer (register MMA gate/up, R8 down) is unpriced, its combine fused" + tag);
     }
 }
 
 // The R8 down stage fuses the combine only while its row grid fits the ticket array (and the layer
-// has no shared expert); past that the separate combine runs and is priced. A hidden size of 2^20
-// has a grid of rows (hidden / rows per CTA) well past 1024 tickets.
+// has no shared expert); past that the separate combine runs. Either way the combine reads the
+// T x k slot rows and writes T rows (fused_combine_tail moves the separate kernel's bytes), so the
+// price is the same bytes by hand at both. A hidden size of 2^20 has a grid of rows (hidden / rows
+// per CTA) well past 1024 tickets.
 void combine_fusion_checks() {
     const DeviceClass scoped_class = generic::board_device_class(board_named("rtx4090"));
     const ScopedDeviceClass scoped(scoped_class);
-    const moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0};
+    const moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0, 128.0};
     moe::MoePlan r8;
     r8.gate_up_r8 = r8.down_r8 = 0;
     const std::int32_t experts = 8, top_k = 2;
@@ -588,12 +605,12 @@ void combine_fusion_checks() {
                   std::to_string(hidden));
         const auto price = moe::moe_layer_price(layer->weights, layer->config, r8,
                                                 ops::MoeEpilogue::Store, 2, board);
-        check(price && std::abs(price->dram_seconds * board.dram_bytes_per_s -
-                                layer_bytes_by_hand(layer->weights, experts, top_k, 2, false, true,
-                                                    !fuses)) <=
-                           1e-9 * price->dram_seconds * board.dram_bytes_per_s,
-              "the separate combine is priced exactly where the R8 down stage does not fuse it, "
-              "hidden " +
+        check(price &&
+                  std::abs(price->dram_seconds * board.dram_bytes_per_s -
+                           layer_bytes_by_hand(layer->weights, experts, top_k, 2, false, true)) <=
+                      1e-9 * price->dram_seconds * board.dram_bytes_per_s,
+              std::string("the combine's bytes are counted ") +
+                  (fuses ? "in the fused tail" : "in the separate kernel") + ", hidden " +
                   std::to_string(hidden));
     }
 }
@@ -605,7 +622,7 @@ void combine_fusion_checks() {
 void epilogue_checks() {
     const DeviceClass scoped_class = generic::board_device_class(board_named("rtx4090"));
     const ScopedDeviceClass scoped(scoped_class);
-    const moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0};
+    const moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0, 128.0};
     moe::MoePlan r8;
     r8.gate_up_r8 = r8.down_r8 = 0;
     const std::int32_t experts = 8, top_k = 2;
@@ -654,6 +671,108 @@ void epilogue_checks() {
     }
 }
 
+// The optional biases, read where the kernels read them (moe_bias: every kind adds bias[row] to its
+// output rows; the router adds router_bias to each logit; the selection reads selection_bias and
+// expert_scale): the touched experts' share of gate_up_bias and down_bias, the router's and the
+// selection's vectors whole. The strict bound takes k experts' biases and the router's.
+void bias_checks() {
+    const DeviceClass scoped_class = generic::board_device_class(board_named("rtx4090"));
+    const ScopedDeviceClass scoped(scoped_class);
+    const moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0, 128.0};
+    const std::int32_t experts = 8, top_k = 2, hidden = 2048, inter = 704;
+    const auto layer =
+        build(QType::Q8_G32_FP16, QType::Q8_G32_FP16, experts, top_k, hidden, inter, false);
+    ops::MoeWeights biased    = layer->weights;
+    void* const fake          = reinterpret_cast<void*>(std::uintptr_t{1} << 33);
+    biased.gate_up_bias       = Tensor(fake, DType::BF16, {experts * 2 * inter});
+    biased.down_bias          = Tensor(fake, DType::FP32, {experts * hidden});
+    biased.router_bias        = Tensor(fake, DType::BF16, {experts});
+    biased.selection_bias     = Tensor(fake, DType::FP32, {experts});
+    biased.expert_scale       = Tensor(fake, DType::FP32, {experts});
+    const double expert_bias  = experts * 2.0 * inter * 2 + experts * 1.0 * hidden * 4;
+    const double whole_vector = experts * 2.0 + experts * 4.0 + experts * 4.0;
+    for (const std::int32_t tokens : {1, 2, 32}) {
+        const std::string tag = ", T = " + std::to_string(tokens);
+        const auto plain      = moe::moe_layer_price(layer->weights, layer->config, moe::MoePlan{},
+                                                     ops::MoeEpilogue::Store, tokens, board);
+        const auto with       = moe::moe_layer_price(biased, layer->config, moe::MoePlan{},
+                                                     ops::MoeEpilogue::Store, tokens, board);
+        check(plain && with, "both layers are priced" + tag);
+        if (!plain || !with) continue;
+        const double want =
+            expert_bias * moe::expected_experts_touched(experts, top_k, tokens) / experts +
+            whole_vector;
+        const double got = (with->dram_seconds - plain->dram_seconds) * board.dram_bytes_per_s;
+        check(std::abs(got - want) <= 1e-9 * with->dram_seconds * board.dram_bytes_per_s,
+              "the biases add the touched experts' share and the router's vectors" + tag + ": " +
+                  std::to_string(got) + " vs " + std::to_string(want));
+        const auto floor_plain =
+            moe::moe_layer_dram_floor_seconds(layer->weights, layer->config, tokens, board);
+        const auto floor_with =
+            moe::moe_layer_dram_floor_seconds(biased, layer->config, tokens, board);
+        const double floor_want = expert_bias * top_k / experts + experts * 2.0;
+        check(floor_plain && floor_with &&
+                  std::abs((*floor_with - *floor_plain) * board.dram_bytes_per_s - floor_want) <=
+                      1e-9 * *floor_with * board.dram_bytes_per_s,
+              "the strict bound adds k experts' biases and the router's" + tag);
+    }
+}
+
+// The router kernel priced as a stage is: max(its bytes, its 2 x T x E x H operations on the unit
+// moe_router_kernel names). The SIMT router (T <= 8 here: a BF16 router, plan schedule 0) at the
+// FP32 FMA rate, two operations an FMA; the register MMA router (T = 32) at the BF16 MMA rate.
+// Boards slow enough that the router's compute binds show the term exactly.
+void router_compute_checks() {
+    const DeviceClass scoped_class = generic::board_device_class(board_named("rtx4090"));
+    const ScopedDeviceClass scoped(scoped_class);
+    const moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0, 128.0};
+    const std::int32_t experts = 8, top_k = 2, hidden = 2048, inter = 704;
+    const auto layer =
+        build(QType::Q8_G32_FP16, QType::Q8_G32_FP16, experts, top_k, hidden, inter, false);
+    const ops::MoeWeights& w = layer->weights;
+    const moe::MoePlan plan{};
+    for (const std::int32_t tokens : {2, 32}) {
+        const bool simt       = tokens <= 8;
+        const std::string tag = simt ? " (SIMT router, T = 2)" : " (register MMA router, T = 32)";
+        check(moe::moe_router_kernel(w, layer->config, plan, tokens) ==
+                  (simt ? moe::MoeRouterKernel::Simt : moe::MoeRouterKernel::RegisterMma),
+              "the router's kernel is the production rule's" + tag);
+        moe::MoeBoardFacts slow = board;
+        if (simt) {
+            slow.fp32_fma_per_clock_sm = 1e-6;
+        } else {
+            slow.bf16_ops_per_clock_sm = 1e-6;
+        }
+        const auto price =
+            moe::moe_layer_price(w, layer->config, plan, ops::MoeEpilogue::Store, tokens, slow);
+        check(price && price->compute_priced && price->compute_binds,
+              "a router whose compute binds is priced and says so" + tag);
+        if (!price) continue;
+        const double t = tokens;
+        const double router_bytes =
+            static_cast<double>(w.router.payload_bytes) + t * hidden * 2 + t * experts * 4;
+        const double rate = simt ? 2.0 * slow.fp32_fma_per_clock_sm * slow.sms * slow.clock_hz
+                                 : slow.bf16_ops_per_clock_sm * slow.sms * slow.clock_hz;
+        const double router_seconds =
+            std::max(router_bytes / slow.dram_bytes_per_s, 2.0 * t * experts * hidden / rate);
+        double stages = 0;
+        for (const moe::Stage stage : {moe::Stage::GateUp, moe::Stage::Down}) {
+            const auto shape = moe::moe_stage_shape(w, layer->config, stage);
+            const auto p =
+                shape ? moe::price_moe_stage(*shape, moe::MoeStageKernel::RegisterMma, tokens, slow)
+                      : std::nullopt;
+            check(p.has_value(), "the stage is priced" + tag);
+            if (p) stages += p->seconds;
+        }
+        const double rest =
+            (t * experts * 4 + (t * top_k + t) * hidden * 2) / slow.dram_bytes_per_s;
+        const double want = stages + router_seconds + rest;
+        check(std::abs(price->seconds - want) <= 1e-9 * want,
+              "the layer's seconds carry max(router DRAM, router compute)" + tag + ": " +
+                  std::to_string(price->seconds) + " vs " + std::to_string(want));
+    }
+}
+
 // The strict bound by hand. A call of T tokens each picking top-k distinct experts touches at
 // least k experts of each bank (all tokens may pick the same k), so it reads at least k of E
 // experts' weights of the gate/up and of the down bank, the router's weights, and the T rows of x
@@ -663,7 +782,7 @@ void epilogue_checks() {
 void strict_floor_checks() {
     const DeviceClass scoped_class = generic::board_device_class(board_named("rtx4090"));
     const ScopedDeviceClass scoped(scoped_class);
-    const moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0};
+    const moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0, 128.0};
     const std::int32_t experts = 8, top_k = 2, hidden = 2048, inter = 704;
     const auto layer =
         build(QType::Q8_G32_FP16, QType::Q8_G32_FP16, experts, top_k, hidden, inter, false);
@@ -878,7 +997,7 @@ void w4a8_admission_checks() {
 void w4a8_partial_block_checks() {
     const DeviceClass d = generic::board_device_class(board_named("rtx4090"));
     const ScopedDeviceClass scoped(d);
-    const moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0};
+    const moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0, 128.0};
     for (const std::int32_t hidden : {1000, 2688}) {
         const bool whole = hidden % 32 == 0;
         const auto layer = build(QType::Q8_G32_FP16, QType::Q8_G32_FP16, 8, 2, hidden, 256, false);
@@ -1015,9 +1134,22 @@ void replica(const std::filesystem::path& routes_dir) {
                 continue;
             }
             const moe::MoeRouteKey key = moe::route_key(layer->weights, layer->config);
+            // The load-time tuner times the model's own layer: gpt-oss (the one MXFP4 layer of
+            // hidden 2880 in the tables) carries a router bias and both expert biases, BF16 as
+            // the converter writes them (convert/dense.cpp: builder.vector and builder.custom
+            // store BF16). The bench's sweep builds its layers without biases.
+            const bool gpt_oss    = *q == QType::MXFP4 && hidden == 2880;
+            ops::MoeWeights tuned = layer->weights;
+            if (gpt_oss) {
+                void* const fake   = reinterpret_cast<void*>(std::uintptr_t{1} << 33);
+                tuned.router_bias  = Tensor(fake, DType::BF16, {experts});
+                tuned.gate_up_bias = Tensor(fake, DType::BF16, {experts * 2 * inter});
+                tuned.down_bias    = Tensor(fake, DType::BF16, {experts * hidden});
+            }
             for (const auto& [field, prefill] :
                  {std::pair{"evidence_us", true}, std::pair{"evidence_decode_us", false}}) {
                 if (!e.contains(field)) continue;
+                const ops::MoeWeights& weights = prefill ? layer->weights : tuned;
                 for (const Json& row : e.at(field)) {
                     const std::int32_t t   = row.at(0);
                     const double chosen_us = row.at(2).get<double>();
@@ -1031,14 +1163,14 @@ void replica(const std::filesystem::path& routes_dir) {
                         continue;
                     }
                     // Both sweeps time Store calls (bench/ops/moe_bench.cu, moe_tune.cpp).
-                    const auto price = moe::moe_layer_price(layer->weights, layer->config, *plan,
+                    const auto price = moe::moe_layer_price(weights, layer->config, *plan,
                                                             ops::MoeEpilogue::Store, t, *facts);
                     if (!price) {
                         ++skipped["no price"];
                         continue;
                     }
                     const auto strict =
-                        moe::moe_layer_dram_floor_seconds(layer->weights, layer->config, t, *facts);
+                        moe::moe_layer_dram_floor_seconds(weights, layer->config, t, *facts);
                     if (!strict) {
                         ++skipped["no strict bound"];
                         continue;
@@ -1168,6 +1300,8 @@ int main() {
         strict_floor_checks();
         combine_fusion_checks();
         epilogue_checks();
+        bias_checks();
+        router_compute_checks();
         format_min_binding_checks();
         candidate_checks();
         w4a8_admission_checks();
