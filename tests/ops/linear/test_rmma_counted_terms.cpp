@@ -38,18 +38,31 @@ constexpr Schedule kSchedules[] = {
 
 // The decoders with a min term (MinTermOf in generic_gemm.cuh: rmma_has_min_term) and some
 // without, as the snapshots spell them.
-constexpr const char* kMinTermDecoders[] = {"GgmlQ45KQuadDecoder<4>", "GgmlQ45KQuadDecoder<5>",
-                                            "GgmlQ2KDecoder", "Ggml32Decoder<1>",
-                                            "Ggml32Decoder<3>"};
-constexpr const char* kPlainDecoders[] = {"Bf16Decoder",      "GgmlQ6KDecoder",   "GgmlQ3KDecoder",
-                                          "Ggml32Decoder<0>", "GgmlIq4XsDecoder", "Q8Decoder"};
+struct Decoder {
+    const char* name;
+    bool min_term;
+};
+
+constexpr Decoder kDecoders[] = {{"GgmlQ45KQuadDecoder<4>", true},
+                                 {"GgmlQ45KQuadDecoder<5>", true},
+                                 {"GgmlQ2KDecoder", true},
+                                 {"Ggml32Decoder<1>", true},
+                                 {"Ggml32Decoder<3>", true},
+                                 {"Bf16Decoder", false},
+                                 {"GgmlQ6KDecoder", false},
+                                 {"GgmlQ3KDecoder", false},
+                                 {"Ggml32Decoder<0>", false},
+                                 {"GgmlIq4XsDecoder", false},
+                                 {"Q8Decoder", false}};
 
 void ones_share_on_the_snapshots() {
     int checked = 0, with_ones = 0;
     for (const auto arch : kf::snapshot_archs()) {
         const std::string name = "sm_" + std::string(arch);
-        for (const bool min_term : {true, false}) {
-            for (const char* decoder : min_term ? kMinTermDecoders : kPlainDecoders) {
+        for (const Decoder& d : kDecoders) {
+            const char* decoder = d.name;
+            const bool min_term = d.min_term;
+            {
                 for (const Schedule& s : kSchedules) {
                     for (int epilogue = 0; epilogue < 3; ++epilogue) {
                         for (const bool latency : {false, true}) {
