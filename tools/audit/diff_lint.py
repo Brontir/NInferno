@@ -184,13 +184,13 @@ def parse_diff(text):
         if row.startswith("diff "):
             cur = old_path = None
         elif row.startswith("+++ "):
-            if row.endswith("/dev/null"):
+            if row[4:] == "/dev/null":  # the whole field: a file may be named dev/null
                 cur = None
             else:
                 path = diff_path(row[4:], "b/")
                 cur = files.setdefault(path, {"added": [], "removed": [], "old": old_path or path})
         elif row.startswith("--- "):
-            old_path = None if row.endswith("/dev/null") else diff_path(row[4:], "a/")
+            old_path = None if row[4:] == "/dev/null" else diff_path(row[4:], "a/")
         elif HUNK.match(row):
             m = HUNK.match(row)
             old, new = int(m.group(1)), int(m.group(3))
@@ -212,9 +212,9 @@ def parse_deleted(text):
         elif row.startswith("diff "):
             path = pending = None
         elif row.startswith("--- "):
-            pending = None if row.endswith("/dev/null") else diff_path(row[4:], "a/")
+            pending = None if row[4:] == "/dev/null" else diff_path(row[4:], "a/")
         elif row.startswith("+++ "):
-            path = pending if row.endswith("/dev/null") else None
+            path = pending if row[4:] == "/dev/null" else None
         elif HUNK.match(row):
             m = HUNK.match(row)
             old, left = int(m.group(1)), 1 if m.group(2) is None else int(m.group(2))
@@ -617,6 +617,8 @@ def cond_literal(rest):
     rest = re.sub(r"[ \t]*(?://.*|/\*.*)$", "", rest).strip()
     while rest.startswith("(") and rest.endswith(")"):
         rest = rest[1:-1].strip()
+    if rest in ("false", "true"):  # C++ keywords, valid in #if
+        return int(rest == "true")
     m = COND_LITERAL.fullmatch(rest)
     if not m:
         return None

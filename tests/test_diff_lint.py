@@ -378,7 +378,7 @@ class TreeNames(unittest.TestCase):
 
 
 class Main(unittest.TestCase):
-    CALLER ="void f(DrafterOption o) { o.measured_at(3); }\n"
+    CALLER = "void f(DrafterOption o) { o.measured_at(3); }\n"
     LONGTEXT = "\n".join(["void a() {"] + LONG + ["}", "", "void b() {"] + LONG + ["}"]) + "\n"
 
     def test_clean_diff_exits_0_silently(self):
@@ -575,6 +575,17 @@ class WholeOldFileMask(unittest.TestCase):
         d = "diff --git a/o.cpp b/n.cpp\n--- a/o.cpp\n+++ b/n.cpp\n@@ -1 +1,0 @@\n-int x;\n"
         self.assertEqual(dl.parse_diff(d)["n.cpp"]["old"], "o.cpp")
 
+    def test_a_file_named_dev_null_is_no_deletion_sentinel(self):
+        for name in ("dev/null", "src/dev/null"):
+            with self.subTest(name=name):
+                d = f"diff --git a/{name} b/{name}\n--- a/{name}\n+++ b/{name}\n@@ -1,0 +2 @@\n+int x;\n"
+                self.assertEqual(list(dl.parse_diff(d)), [name])
+                new = f"diff --git a/{name} b/{name}\nnew file mode 100644\n--- /dev/null\n+++ b/{name}\n@@ -0,0 +1 @@\n+int x;\n"
+                self.assertEqual(list(dl.parse_diff(new)), [name])
+                gone = f"diff --git a/{name} b/{name}\ndeleted file mode 100644\n--- a/{name}\n+++ /dev/null\n@@ -1 +0,0 @@\n-int y;\n"
+                self.assertEqual(dl.parse_deleted(gone), {name: [(1, "int y;")]})
+                self.assertEqual(dl.parse_deleted(d), {})
+
 
 class ParseDiffCounts(unittest.TestCase):
     def test_rows_that_look_like_file_headers_are_content(self):
@@ -724,6 +735,19 @@ class MaskAndLiteralFixes(unittest.TestCase):
         # a group that is not `#if 0` is code
         self.assertEqual(lits("t.cpp", "#if 1\nconst char* s = \"oops\n;\n#endif\n"), [2])
         self.assertEqual(lits("t.cpp", "#if 0 || X\nconst char* s = \"oops\n;\n#endif\n"), [2])
+
+    def test_if_false_and_true_are_the_literals_zero_and_one(self):
+        # C++ keywords are valid in #if: `#if false` is a dead group like `#if 0`
+        for cond in ("false", "(false)", "( false ) // old", "/* c */ false", "((false)) /* c */"):
+            with self.subTest(cond=cond):
+                self.assertEqual(lits("t.cpp", f"#if {cond}\ndon't\n#endif\nint i;\n"), [])
+                self.assertEqual(lits("t.cpp", f"#if {cond}\nit's\n#else\nconst char* s = \"oops\n;\n#endif\n"), [4])
+        self.assertEqual(lits("t.cpp", "#if true\nconst char* s = \"oops\n;\n#endif\n"), [2])
+        self.assertEqual(lits("t.cpp", "#if true\nint a;\n#else\ndon't\n#endif\n"), [])
+        self.assertEqual(lits("t.cpp", "#if X\nint a;\n#elif false\nit's\n#endif\nint i;\n"), [])
+        self.assertEqual(lits("t.cpp", "#if 0\nit's\n#elif false\nstill off'\n#else\nconst char* s = \"oops\n;\n#endif\n"), [6])
+        # an identifier that only starts like the keyword is no literal
+        self.assertEqual(lits("t.cpp", "#if falsey\nconst char* s = \"oops\n;\n#endif\n"), [2])
 
     def test_inc_files_are_checked(self):
         self.assertEqual(lits("rows.inc", 'const char* s = "oops\n;\n'), [1])
