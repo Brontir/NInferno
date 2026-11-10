@@ -1425,6 +1425,7 @@ void test_rows_at_choice() {
 // (The summation class is a function of the activation mode and the route set, not an output of
 // the choice or the dry run: it has no field to compare here.)
 int b1_fits_without_choice = 0, b1_choices = 0, b1_by_worth = 0, b1_chunk_by_speed = 0;
+int b1_drafter_axis = 0, b1_drafter_chosen = 0;
 
 std::string b1_signature(const pr::PlanSourceFacts& facts, const pr::DryRunInputs& inputs,
                          bool count = false) {
@@ -1450,6 +1451,12 @@ std::string b1_signature(const pr::PlanSourceFacts& facts, const pr::DryRunInput
             ++b1_choices;
             b1_by_worth += served->choice.by_worth ? 1 : 0;
             b1_chunk_by_speed += served->choice.chunk_by_speed ? 1 : 0;
+            const auto& chosen = served->choice.scored[*served->choice.chosen].candidate;
+            b1_drafter_chosen += chosen.drafter != 0 ? 1 : 0;
+        }
+        if (inputs.subject != nullptr &&
+            !pr::drafter_axis(*inputs.subject, inputs.ask).options.empty()) {
+            ++b1_drafter_axis;
         }
     }
     if (served && served->choice.chosen) {
@@ -1472,9 +1479,14 @@ void test_exact_reads_no_continuous_fact() {
         double vram;
     };
 
+    // The experts a family's shape carries: the choice sees an MoE only through the shape (experts,
+    // routed expert weights), and its chunk is the fastest of the MoE widths only then.
     struct Family {
         const char* name;
         rt::PlanModelFacts (*make)(std::uint64_t);
+        int experts           = 0;
+        int experts_per_token = 0;
+        double routed_params  = 0;
     };
 
     int compared = 0;
@@ -1489,51 +1501,79 @@ void test_exact_reads_no_continuous_fact() {
         check(stock.sm_clock_khz > 0 && stock.dram_gbps > 0 && stock.l2_bytes > 0,
               std::string(board.name) + ": the key carries the continuous facts to move");
         for (const Family& family :
-             {Family{"qwen27b", qwen27b}, Family{"moe35b", moe35b}, Family{"gemma31b", gemma31b},
-              Family{"gptoss20b", gptoss20b}, Family{"nemotron30b", nemotron30b}}) {
+             {Family{"qwen27b", qwen27b}, Family{"moe35b", moe35b, 256, 8, 32e9},
+              Family{"gemma31b", gemma31b}, Family{"gptoss20b", gptoss20b, 32, 4, 19e9},
+              Family{"nemotron30b", nemotron30b, 128, 6, 28e9}}) {
             pr::PlanSourceFacts facts;
-            facts.model = family.make(9 * kGiB);
-            for (const std::uint32_t context : {8192U, 65536U}) {
-                for (const std::uint32_t streams : {1U, 4U}) {
-                    const pr::LaunchAsk launch{.max_context     = context,
-                                               .max_concurrency = streams,
-                                               .spec            = "none",
-                                               .activations     = "exact"};
-                    const pr::LaunchPlanOptions o = pr::launch_options(launch);
-                    pr::DryRunInputs inputs;
-                    inputs.device           = device;
-                    inputs.gpu              = stock;
-                    inputs.options          = o.options;
-                    inputs.ask              = o.ask;
-                    inputs.pins.activations = launch.activations_pinned();
-                    const std::string base  = b1_signature(facts, inputs, true);
+            facts.model                      = family.make(9 * kGiB);
+            facts.shape.experts              = family.experts;
+            facts.shape.experts_per_token    = family.experts_per_token;
+            facts.shape.routed_expert_params = family.routed_params;
+            // The Qwen 27B also runs with its drafters on offer (an automatic speculation over a
+            // subject that carries them): the drafter is an axis of the choice only then, and a
+            // fact that leaked into it would move the drafter column of the signature.
+            const bool with_drafters = std::string(family.name) == "qwen27b";
+            std::optional<pr::SpeculationSubject> subject;
+            if (with_drafters) {
+                pr::PlanSourceFacts target     = facts;
+                target.shape.hidden_size       = 5120;
+                target.shape.num_hidden_layers = 64;
+                target.shape.vocab_size        = 248320;
+                target.shape.builtin_mtp       = true;
+                target.shape.active_params     = 27e9;
+                subject = pr::planned_subject(pr::PlannedTarget{.repo  = "unsloth/Qwen3.8-27B-GGUF",
+                                                                .facts = target,
+                                                                .gguf  = true,
+                                                                .with_drafters = true},
+                                              stock);
+            }
+            for (const bool drafted : {false, true}) {
+                if (drafted && !with_drafters) { continue; }
+                for (const std::uint32_t context : {8192U, 65536U}) {
+                    for (const std::uint32_t streams : {1U, 4U}) {
+                        pr::LaunchAsk launch{.max_context     = context,
+                                             .max_concurrency = streams,
+                                             .spec            = "none",
+                                             .activations     = "exact"};
+                        if (drafted) { launch.spec = "auto"; }
+                        const pr::LaunchPlanOptions o = pr::launch_options(launch);
+                        pr::DryRunInputs inputs;
+                        inputs.device           = device;
+                        inputs.gpu              = stock;
+                        inputs.options          = o.options;
+                        inputs.ask              = o.ask;
+                        inputs.pins.activations = launch.activations_pinned();
+                        if (drafted) { inputs.subject = &*subject; }
+                        const std::string base = b1_signature(facts, inputs, true);
 
-                    struct Move {
-                        const char* what;
-                        double clock, bandwidth, l2;
-                    };
+                        struct Move {
+                            const char* what;
+                            double clock, bandwidth, l2;
+                        };
 
-                    // The all-x2 and all-x0.5 moves keep every ratio of the facts, so a price that
-                    // reads only ratios would pass them by construction; the single-fact moves
-                    // and the unknown ones do not.
-                    for (const Move& m :
-                         {Move{"all x2", 2, 2, 2}, Move{"all x0.5", .5, .5, .5},
-                          Move{"clock x2", 2, 1, 1}, Move{"bandwidth x2", 1, 2, 1},
-                          Move{"l2 x2", 1, 1, 2}, Move{"clock x0.5", .5, 1, 1},
-                          Move{"bandwidth x0.5", 1, .5, 1}, Move{"l2 x0.5", 1, 1, .5},
-                          Move{"clock unknown", 0, 1, 1}, Move{"bandwidth unknown", 1, 0, 1},
-                          Move{"l2 unknown", 1, 1, 0}, Move{"all unknown", 0, 0, 0}}) {
-                        pr::DryRunInputs moved = inputs;
-                        moved.gpu.sm_clock_khz = static_cast<int>(stock.sm_clock_khz * m.clock);
-                        moved.gpu.dram_gbps    = stock.dram_gbps * m.bandwidth;
-                        moved.gpu.l2_bytes     = stock.l2_bytes * m.l2;
-                        ++compared;
-                        const std::string got = b1_signature(facts, moved);
-                        check(got == base,
-                              std::string("B1 under exact moves with the continuous facts (") +
-                                  board.name + " " + family.name + " ctx " +
-                                  std::to_string(context) + " x" + std::to_string(streams) + ", " +
-                                  m.what + "): '" + base + "' -> '" + got + "'");
+                        // The all-x2 and all-x0.5 moves keep every ratio of the facts, so a price
+                        // that reads only ratios would pass them by construction; the single-fact
+                        // moves and the unknown ones do not.
+                        for (const Move& m :
+                             {Move{"all x2", 2, 2, 2}, Move{"all x0.5", .5, .5, .5},
+                              Move{"clock x2", 2, 1, 1}, Move{"bandwidth x2", 1, 2, 1},
+                              Move{"l2 x2", 1, 1, 2}, Move{"clock x0.5", .5, 1, 1},
+                              Move{"bandwidth x0.5", 1, .5, 1}, Move{"l2 x0.5", 1, 1, .5},
+                              Move{"clock unknown", 0, 1, 1}, Move{"bandwidth unknown", 1, 0, 1},
+                              Move{"l2 unknown", 1, 1, 0}, Move{"all unknown", 0, 0, 0}}) {
+                            pr::DryRunInputs moved = inputs;
+                            moved.gpu.sm_clock_khz = static_cast<int>(stock.sm_clock_khz * m.clock);
+                            moved.gpu.dram_gbps    = stock.dram_gbps * m.bandwidth;
+                            moved.gpu.l2_bytes     = stock.l2_bytes * m.l2;
+                            ++compared;
+                            const std::string got = b1_signature(facts, moved);
+                            check(got == base,
+                                  std::string("B1 under exact moves with the continuous facts (") +
+                                      board.name + " " + family.name + " ctx " +
+                                      std::to_string(context) + " x" + std::to_string(streams) +
+                                      (drafted ? " drafters on offer" : "") + ", " + m.what +
+                                      "): '" + base + "' -> '" + got + "'");
+                        }
                     }
                 }
             }
@@ -1541,9 +1581,15 @@ void test_exact_reads_no_continuous_fact() {
     }
     check(b1_choices > 0 && b1_by_worth > 0,
           "B1 under exact: the baselines include choices decided by worth");
+    // The two decisions the properties claim are only claimed where a baseline reaches them: a
+    // drafter axis with options (spec automatic, a subject that carries drafters) and an MoE's
+    // chunk picked by speed on the generation's reference card (an MoE shape on Ada).
+    check(b1_drafter_axis > 0, "B1 under exact: some baselines offer the choice a drafter axis");
+    check(b1_chunk_by_speed > 0, "B1 under exact: some baselines pick an MoE's chunk by speed");
     std::cout << "B1 under exact: " << compared << " perturbed plans compared against "
               << b1_choices << " choices (" << b1_by_worth << " by worth, " << b1_chunk_by_speed
-              << " chunk by speed)\n";
+              << " chunk by speed, " << b1_drafter_axis << " with a drafter axis, "
+              << b1_drafter_chosen << " drafting)\n";
 }
 
 // One price for a quantization whichever facts carry it (product::quant_option_of): a hub row's
