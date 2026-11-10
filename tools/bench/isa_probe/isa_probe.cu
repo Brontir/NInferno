@@ -24,13 +24,13 @@
 #include <cstdlib>
 #include <vector>
 
-#define CHECK(x)                                                                              \
-    do {                                                                                      \
-        cudaError_t e_ = (x);                                                                 \
-        if (e_ != cudaSuccess) {                                                              \
-            std::fprintf(stderr, "%s:%d %s\n", __FILE__, __LINE__, cudaGetErrorString(e_));   \
-            std::exit(2);                                                                     \
-        }                                                                                     \
+#define CHECK(x)                                                                                   \
+    do {                                                                                           \
+        cudaError_t e_ = (x);                                                                      \
+        if (e_ != cudaSuccess) {                                                                   \
+            std::fprintf(stderr, "%s:%d %s\n", __FILE__, __LINE__, cudaGetErrorString(e_));        \
+            std::exit(2);                                                                          \
+        }                                                                                          \
     } while (0)
 
 namespace {
@@ -50,6 +50,7 @@ struct Span {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
 #    define ISA_PROBE_SHAPE "hmma_16816_f32_bf16"
 #    define ISA_PROBE_FLOPS 4096
+
 __device__ __forceinline__ void mma_once(float (&c)[4], unsigned a0, unsigned a1, unsigned a2,
                                          unsigned a3, unsigned b0, unsigned b1) {
     asm volatile("mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {%0,%1,%2,%3}, "
@@ -60,6 +61,7 @@ __device__ __forceinline__ void mma_once(float (&c)[4], unsigned a0, unsigned a1
 #elif defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 750
 #    define ISA_PROBE_SHAPE "hmma_1688_f32_f16"
 #    define ISA_PROBE_FLOPS 2048
+
 __device__ __forceinline__ void mma_once(float (&c)[4], unsigned a0, unsigned a1, unsigned,
                                          unsigned, unsigned b0, unsigned) {
     asm volatile("mma.sync.aligned.m16n8k8.row.col.f32.f16.f16.f32 {%0,%1,%2,%3}, "
@@ -70,6 +72,7 @@ __device__ __forceinline__ void mma_once(float (&c)[4], unsigned a0, unsigned a1
 #else
 #    define ISA_PROBE_SHAPE "hmma_884_f32_f16"
 #    define ISA_PROBE_FLOPS 512
+
 __device__ __forceinline__ void mma_once(float (&c)[4], unsigned a0, unsigned a1, unsigned,
                                          unsigned, unsigned b0, unsigned b1) {
     // m8n8k4 keeps 8 accumulators; the probe chains the first four and parks the rest.
@@ -94,14 +97,14 @@ __global__ void mma_throughput(Span* spans, float* sink, unsigned a, unsigned b)
     }
     __syncthreads();
     const long long t1 = clock64();
-    float s = 0.f;
+    float s            = 0.f;
     for (int u = 0; u < kUnroll; ++u) s += acc[u][0] + acc[u][1] + acc[u][2] + acc[u][3];
     if (threadIdx.x == 0) spans[blockIdx.x] = {t0, t1};
     if (s == 12345.f) sink[0] = s; // keeps the chain alive, never true
 }
 
 __global__ void mma_latency(Span* spans, float* sink, unsigned a, unsigned b) {
-    float acc[4] = {0.f, 0.f, 0.f, 0.f};
+    float acc[4]       = {0.f, 0.f, 0.f, 0.f};
     const long long t0 = clock64();
     for (int i = 0; i < kLatencyLinks; ++i) mma_once(acc, a, a, a, a, b, b);
     const long long t1 = clock64();
@@ -121,7 +124,7 @@ __global__ void fp32_throughput(Span* spans, float* sink, float m, float c) {
     }
     __syncthreads();
     const long long t1 = clock64();
-    float s = 0.f;
+    float s            = 0.f;
     for (int u = 0; u < kUnroll; ++u) s += x[u];
     if (threadIdx.x == 0) spans[blockIdx.x] = {t0, t1};
     if (s == 12345.f) sink[0] = s;
@@ -138,7 +141,7 @@ __global__ void int32_throughput(Span* spans, float* sink, unsigned m, unsigned 
     }
     __syncthreads();
     const long long t1 = clock64();
-    unsigned s = 0;
+    unsigned s         = 0;
     for (int u = 0; u < kUnroll; ++u) s += x[u];
     if (threadIdx.x == 0) spans[blockIdx.x] = {t0, t1};
     if (s == 12345u) sink[0] = 1.f;
@@ -166,11 +169,11 @@ __global__ void chase_shared(Span* spans, unsigned* sink) {
     for (int i = threadIdx.x; i < 4096; i += blockDim.x) s[i] = (i + 33u) & 4095u;
     __syncthreads();
     if (threadIdx.x != 0) return;
-    unsigned idx = 0;
+    unsigned idx       = 0;
     const long long t0 = clock64();
     for (int i = 0; i < kLatencyLinks; ++i) idx = s[idx];
     const long long t1 = clock64();
-    spans[blockIdx.x] = {t0, t1};
+    spans[blockIdx.x]  = {t0, t1};
     if (idx == 0xffffffffu) sink[0] = idx;
 }
 
@@ -188,9 +191,9 @@ double median_span(const std::vector<Span>& spans) {
 }
 
 struct Probe {
-    int sms = 0;
-    Span* spans = nullptr;
-    float* fsink = nullptr;
+    int sms         = 0;
+    Span* spans     = nullptr;
+    float* fsink    = nullptr;
     unsigned* usink = nullptr;
     std::vector<Span> host;
 
@@ -231,7 +234,8 @@ int main() {
     std::printf("l2_bytes %zu\n", static_cast<size_t>(p.l2CacheSize));
     std::printf("driver %d\n", driver);
     std::printf("runtime %d\n", runtime);
-    std::printf("nvcc %d.%d.%d\n", __CUDACC_VER_MAJOR__, __CUDACC_VER_MINOR__, __CUDACC_VER_BUILD__);
+    std::printf("nvcc %d.%d.%d\n", __CUDACC_VER_MAJOR__, __CUDACC_VER_MINOR__,
+                __CUDACC_VER_BUILD__);
 
     Probe pr;
     pr.sms = p.multiProcessorCount;
@@ -263,8 +267,10 @@ int main() {
         const char* name;
         size_t bytes;
         unsigned stride; // elements
-    } levels[] = {{"l1", 8u << 10, 33u}, {"l2", 1u << 20, 1057u},
+    } levels[] = {{"l1", 8u << 10, 33u},
+                  {"l2", 1u << 20, 1057u},
                   {"dram", 512u << 20, (64u << 10) / 4 + 32u}};
+
     unsigned* buf = nullptr;
     CHECK(cudaMalloc(&buf, 512u << 20));
     for (const Level& lv : levels) {
