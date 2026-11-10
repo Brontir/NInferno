@@ -11,6 +11,7 @@
 #include "ninferno/ops/prefill_routes.h"
 #include "ops/generic/route_authorities.h"
 #include "ops/generic/route_query.h"
+#include "ops/generic/route_table.h"
 #include "ops/generic/selector_facts.h"
 
 #include <algorithm>
@@ -130,7 +131,7 @@ int main() {
                                         std::to_string(s.parent_rows) + ' ') != std::string::npos &&
                                key.starts_with(std::string(generic::qtype_name(s.problem.qtype)) +
                                                ' ') &&
-                               key.find(std::string(' ') + policy_name(s.problem.policy) + ' ') !=
+                               key.find(std::string(" ") + policy_name(s.problem.policy) + ' ') !=
                                    std::string::npos;
                     });
                 if (it == list.end()) {
