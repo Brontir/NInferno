@@ -10,13 +10,18 @@
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/kernel_facts.h"
 #include "ops/generic/route_query.h"
+#include "ops/generic/route_table.h"
 #include "ops/generic/selector_facts.h"
+#include "ops/quantized_weight.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace ninferno::ops::detail::generic {
@@ -159,6 +164,64 @@ void boards_read_facts() {
     }
 }
 
+void build_kernels_find_facts() {
+    // Every register-MMA kernel this build launches finds its row in the build's own snapshot,
+    // as the engine spells the key (decoder_name, rmma_kernel_key): a schedule the weight holds is
+    // described, one it refuses is not, on a board of the build's architecture, no GPU asked. The
+    // binary's kernel set is kernel_facts.py check's; this is the other side of the key.
+    const std::string own(kf::build_arch());
+    if (!kf::snapshot_header(own)) {
+        std::cout << "build kernels: no snapshot for sm_" << own
+                  << "; skipped
+                     ";
+            return;
+    }
+    namespace qw        = ninferno::test::quantized_weight;
+    void* const payload = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
+    int boards = 0, described = 0;
+    for (const auto& board : generic::kFactsBoards) {
+        if (kf::release_arch(board.major, board.minor) != own) continue;
+        ++boards;
+        const ninferno::DeviceClass device = generic::board_device_class(board);
+        const ninferno::ScopedDeviceClass scoped(device);
+        for (int v = 0; v < 256; ++v) {
+            const auto qtype = static_cast<ninferno::QType>(v);
+            for (const auto [n, k] : {std::pair{4096, 4096}, std::pair{1024, 12288}}) {
+                std::optional<qw::PackedWeight> host;
+                try {
+                    qw::PatternedWeightOptions options;
+                    if (qtype == ninferno::QType::NVFP4)
+                        options.weight_scale_divisor = options.input_scale_divisor = 1.0F;
+                    host = qw::make_patterned_weight(qtype, n, k, 7U, options);
+                } catch (const std::exception&) { continue; } // no fixture for the value
+                const ninferno::Weight w = host->device_weight(payload);
+                if (!generic::supports(w)) continue;
+                for (int i = 0; i < generic::rmma_schedule_count(); ++i) {
+                    const auto why  = generic::rmma_refusal(i, w);
+                    const bool held = why != generic::ScheduleRefusal::NotCompiled &&
+                                      why != generic::ScheduleRefusal::CodecTile &&
+                                      why != generic::ScheduleRefusal::Format &&
+                                      why != generic::ScheduleRefusal::Extent;
+                    for (const std::int32_t t : {1, 4, 8}) {
+                        const auto r = generic::rmma_resources(i, w, generic::Epilogue::Store, t);
+                        // Without tensor mma.sync Volta's HMMA and GEMV kernels take held calls.
+                        if (r.has_value() != held && (r || device.features.mma_tensor)) {
+                            fail(std::string(board.name) + " " + generic::qtype_name(qtype) +
+                                 " schedule " + std::to_string(i) + " T=" + std::to_string(t) +
+                                 ": described " + (r ? "yes" : "no") + ", refusal " +
+                                 std::string(generic::schedule_refusal_name(why)));
+                        }
+                        described += r.has_value() ? 1 : 0;
+                    }
+                }
+            }
+        }
+    }
+    std::cout << "build kernels: " << described << " calls described on " << boards
+              << " boards of sm_" << own << '
+';
+}
+
 void occupancy_from_facts() {
     // The pure occupancy on the synthetic boards: the documented cases of the register-MMA price
     // (a 16-row, 32-token K-quant tile at 229 registers keeps two 128-thread CTAs per SM on
@@ -182,6 +245,7 @@ int main() {
         canonical_names();
         occupancy_from_facts();
         boards_read_facts();
+        build_kernels_find_facts();
     } catch (const std::exception& error) { fail(error.what()); }
     if (failures != 0) {
         std::cerr << "kernel facts: " << failures << " failures\n";
