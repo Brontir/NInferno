@@ -49,6 +49,18 @@ std::string read_file(std::string_view relative) {
     return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
 }
 
+// The text without its line comments (a `//` to the end of its line): a tag named in a comment is
+// not a tag.
+std::string code_of(const std::string& text) {
+    std::string out;
+    std::istringstream lines(text);
+    for (std::string line; std::getline(lines, line);) {
+        out += line.substr(0, line.find("//"));
+        out += '\n';
+    }
+    return out;
+}
+
 // How a file's definitions are read.
 enum class Mode {
     TaggedScalars, // `inline constexpr Scalar|Constant<N> kName{...};`, with their Provenance
@@ -251,14 +263,15 @@ int main() {
         if (spec.mode == Mode::TaggedScalars) {
             // Every tag in the file belongs to a definition read above: a Fitted constant written
             // in a form the definition pattern misses still fails.
-            std::size_t tags = 0;
-            for (std::size_t at = text.find("Provenance::Fitted"); at != std::string::npos;
-                 at             = text.find("Provenance::Fitted", at + 1)) {
+            const std::string code = code_of(text);
+            std::size_t tags       = 0;
+            for (std::size_t at = code.find("Provenance::Fitted"); at != std::string::npos;
+                 at             = code.find("Provenance::Fitted", at + 1)) {
                 ++tags;
             }
             std::size_t tagged = 0;
             for (const auto& [name, def] : defined) {
-                if (def.text.find("Provenance::Fitted") != std::string::npos) ++tagged;
+                if (code_of(def.text).find("Provenance::Fitted") != std::string::npos) ++tagged;
             }
             if (tags != tagged) {
                 fail(std::string(spec.file) + ": " + std::to_string(tags) +
@@ -269,7 +282,8 @@ int main() {
         for (const auto& [name, def] : defined) {
             if (spec.mode == Mode::TaggedScalars) {
                 // Only the Fitted-tagged definitions are covered; the others carry no record.
-                const bool fitted = def.text.find("Provenance::Fitted") != std::string::npos;
+                const bool fitted =
+                    code_of(def.text).find("Provenance::Fitted") != std::string::npos;
                 if (fitted && recorded.count(name) == 0) fail(name + ": Fitted without a record");
                 if (!fitted && recorded.count(name) != 0) fail(name + ": a record but not Fitted");
                 continue;
@@ -355,8 +369,8 @@ int main() {
         }
         ++scanned;
         const std::string relative = entry.path().lexically_relative(root).generic_string();
-        const std::string text     = read_file(relative);
-        if (text.find("Provenance::Fitted") != std::string::npos && !tagged_files.count(relative)) {
+        const std::string code     = code_of(read_file(relative));
+        if (code.find("Provenance::Fitted") != std::string::npos && !tagged_files.count(relative)) {
             fail(relative + ": tags a constant Provenance::Fitted but is not covered by this test "
                             "(add it to specs() with Mode::TaggedScalars and give its constants "
                             "records)");
