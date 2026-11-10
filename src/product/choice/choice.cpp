@@ -1717,8 +1717,9 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         // The old number is the reference card's generation's own error: Own on a known
         // generation, a number carried onto the board where the rows are lent.
         out.resolution_basis = gates.typed_resolution ? typed.basis
-                               : generation_known(card.major, card.minor) ? ResolutionBasis::Own
-                                                                          : ResolutionBasis::Transferred;
+                               : generation_known(card.major, card.minor)
+                                   ? ResolutionBasis::Own
+                                   : ResolutionBasis::Transferred;
     }
     out.chunk_by_speed = ref && ref->chunk_decides && model.moe() && !pins.chunk;
     // The enumeration order breaks exact ties (better()): one canonical order of each axis's

@@ -2395,7 +2395,8 @@ void transferred_resolution(const json& fixture) {
               ch::kUnmeasuredCarryDecodeError == ch::largest_transferred_decode_error(),
           "the unmeasured carry is the largest measured transfer");
     // The basis by board: Ada and Blackwell state their own rows' error; the other known
-    // generations their carried row; a compute capability with no generation row the unmeasured carry.
+    // generations their carried row; a compute capability with no generation row the unmeasured
+    // carry.
     for (const auto& [name, basis] : std::vector<std::pair<const char*, ch::ResolutionBasis>>{
              {"RTX 4090", ch::ResolutionBasis::Own},
              {"RTX 5090", ch::ResolutionBasis::Own},

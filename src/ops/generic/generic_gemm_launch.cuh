@@ -122,12 +122,14 @@ bool rmma_wide_pays(const GemmArgs& args) {
     using Wide        = typename WideOf<Decoder>::type;
     const void* plain = reinterpret_cast<const void*>(&rmma_kernel<Decoder, Schedule, E>);
     const void* wide  = reinterpret_cast<const void*>(&rmma_kernel<Wide, Schedule, E>);
+
     struct Board {
         double bytes;
         int cc;
         std::size_t wide_local;
         std::size_t plain_local;
     };
+
     static PerDevice<Board> board;
     const Board& b = board.get([&](int) {
         const auto& d    = device_class();
