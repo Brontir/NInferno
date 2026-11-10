@@ -191,6 +191,28 @@ __global__ void int32_throughput(Span* spans, float* sink, unsigned m, unsigned 
 // are lines no warp has touched. `Cg` loads bypass the L1 (ld.global.cg: cached in L2 only), so an
 // L2 or DRAM figure cannot be an L1 hit; the L1 level uses the default path. Each warp records its
 // own span; the host takes the median over warps and SMs.
+// A bijection of the `bits`-bit indices (bits even): a four-round balanced Feistel network whose
+// round function is a multiplicative hash, so the images of neighbouring indices sit anywhere in
+// the sub-buffer. Seeded per sub-buffer (cycle_seed).
+__device__ __forceinline__ unsigned feistel(unsigned x, unsigned bits, unsigned seed) {
+    const unsigned half = bits / 2, mask = (1u << half) - 1u;
+    unsigned lo = x & mask, hi = x >> half;
+    for (unsigned r = 0; r < 4; ++r) {
+        unsigned f = (hi ^ (seed + r * 0x9E3779B9u)) * 0x85EBCA6Bu;
+        f ^= f >> 13;
+        f *= 0xC2B2AE35u;
+        f ^= f >> 16;
+        const unsigned nlo = hi, nhi = (lo ^ f) & mask;
+        lo = nlo;
+        hi = nhi;
+    }
+    return (hi << half) | lo;
+}
+
+__device__ __forceinline__ unsigned cycle_seed(unsigned sub) {
+    return 0x1234567u + 0x9E3779B9u * sub;
+}
+
 template <bool Cg>
 __device__ __forceinline__ unsigned load_link(const unsigned* p) {
     unsigned v;
@@ -205,15 +227,23 @@ __device__ __forceinline__ unsigned load_link(const unsigned* p) {
 }
 
 template <bool Cg>
-__global__ void chase(const unsigned* __restrict__ buf, unsigned m, Span* spans, unsigned* sink) {
+// `per_sm`: every (CTA, warp) pair owns its sub-buffer (CTA x 8 + warp); otherwise the 8
+// sub-buffers are shared by the CTAs and CTA b enters warp w's cycle at the index b x m /
+// gridDim.x (through the same bijection), a segment of its own as long as m / gridDim.x exceeds
+// 2 x links: no two CTAs then read a line in common, so a link's first touch is the CTA's own.
+__global__ void chase(const unsigned* __restrict__ buf, unsigned bits, bool per_sm, int links,
+                      Span* spans, unsigned* sink) {
     const int warp = threadIdx.x / 32;
     if (threadIdx.x % 32 != 0) return;
-    const unsigned* mine = buf + static_cast<size_t>(warp) * m;
-    unsigned idx         = 0;
-    for (int i = 0; i < kLatencyLinks; ++i) idx = load_link<Cg>(mine + idx);
+    const unsigned m     = 1u << bits;
+    const unsigned sub   = per_sm ? blockIdx.x * 8 + warp : warp;
+    const unsigned* mine = buf + static_cast<size_t>(sub) * m;
+    unsigned idx =
+        per_sm ? 0u : feistel((blockIdx.x * (m / gridDim.x)) & (m - 1u), bits, cycle_seed(sub));
+    for (int i = 0; i < links; ++i) idx = load_link<Cg>(mine + idx);
     const long long n0 = globaltimer_ns();
     const long long t0 = clock64();
-    for (int i = 0; i < kLatencyLinks; ++i) idx = load_link<Cg>(mine + idx);
+    for (int i = 0; i < links; ++i) idx = load_link<Cg>(mine + idx);
     const long long t1           = clock64();
     const long long n1           = globaltimer_ns();
     spans[blockIdx.x * 8 + warp] = {t0, t1, smid(), n0, n1};
@@ -233,38 +263,20 @@ __global__ void chase_shared(Span* spans, unsigned* sink) {
     if (idx == 0xffffffffu) sink[0] = idx;
 }
 
-// A bijection of the `bits`-bit indices (bits even): a four-round balanced Feistel network whose
-// round function is a multiplicative hash, so the images of neighbouring indices sit anywhere in
-// the sub-buffer. Seeded per sub-buffer.
-__device__ __forceinline__ unsigned feistel(unsigned x, unsigned bits, unsigned seed) {
-    const unsigned half = bits / 2, mask = (1u << half) - 1u;
-    unsigned lo = x & mask, hi = x >> half;
-    for (unsigned r = 0; r < 4; ++r) {
-        unsigned f = (hi ^ (seed + r * 0x9E3779B9u)) * 0x85EBCA6Bu;
-        f ^= f >> 13;
-        f *= 0xC2B2AE35u;
-        f ^= f >> 16;
-        const unsigned nlo = hi, nhi = (lo ^ f) & mask;
-        lo = nlo;
-        hi = nhi;
-    }
-    return (hi << half) | lo;
-}
-
-// Eight sub-buffers of 2^bits elements, each one cycle through all its elements: x -> a_w x + c_w
-// mod 2^bits with a_w = 1 mod 4 and c_w odd is a full-period LCG step (Hull-Dobell), i.e. a single
-// cycle; the cycle is then conjugated by the Feistel bijection (buf[P(x)] = P(next(x))), so its
-// successive links are far apart in the address space for every warp (an LCG's own low bits
-// cycle with short periods, which could put consecutive links in one DRAM row). The multipliers
-// and seeds differ per sub-buffer, so no two cycles share their order.
-__global__ void fill_cycle(unsigned* buf, unsigned bits) {
+// `count` sub-buffers of 2^bits elements, each one cycle through all its elements: x -> a_w x +
+// c_w mod 2^bits with a_w = 1 mod 4 and c_w odd is a full-period LCG step (Hull-Dobell), i.e. a
+// single cycle; the cycle is then conjugated by the Feistel bijection (buf[P(x)] = P(next(x))),
+// so its successive links are far apart in the address space for every warp (an LCG's own low
+// bits cycle with short periods, which could put consecutive links in one DRAM row). The
+// multipliers and seeds differ per sub-buffer, so no two cycles share their order.
+__global__ void fill_cycle(unsigned* buf, unsigned bits, unsigned count) {
     const unsigned m = 1u << bits;
     const size_t i   = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (i >= static_cast<size_t>(m) * 8) return;
+    if (i >= static_cast<size_t>(m) * count) return;
     const unsigned w = static_cast<unsigned>(i / m), x = static_cast<unsigned>(i % m);
     const unsigned a    = 1664525u + 4u * 1000003u * w; // 1 mod 4 for every w
     const unsigned c    = 1013904223u + 2u * 7919u * w; // odd for every w
-    const unsigned seed = 0x1234567u + 0x9E3779B9u * w;
+    const unsigned seed = cycle_seed(w);
     buf[static_cast<size_t>(w) * m + feistel(x, bits, seed)] =
         feistel((a * x + c) & (m - 1u), bits, seed);
 }
@@ -340,7 +352,7 @@ int main() {
     CHECK(cudaDriverGetVersion(&driver));
     CHECK(cudaRuntimeGetVersion(&runtime));
     const int cc = p.major * 10 + p.minor;
-    std::printf("probe isa_probe 5\n");
+    std::printf("probe isa_probe 6\n");
     std::printf("card %s\n", p.name);
     std::printf("cc %d\n", cc);
     std::printf("sms %d\n", p.multiProcessorCount);
@@ -399,23 +411,32 @@ int main() {
     check(i32 >= 0.97 * 2.0, "INT32 cycles per warp instruction under the lane floor");
 
     // Memory latencies: per chasing warp a sub-buffer holding one pseudo-random cycle (fill_cycle).
-    // L1: 4 KB a warp (32 KB at 8 warps, inside every L1), default loads. L2: 128 KB a warp (1 MB
-    // at 8 warps, inside every L2), loads that bypass the L1. DRAM: 128 MB a warp (1 GB at 8
-    // warps; a warp's cycle alone outstrips the largest L2), loads that bypass the L1, the timed
-    // links on lines no warp has touched. Loaded: 1, 2, 4, 8 warps per SM, each on its own chain.
-    // Sub-buffer sizes are 2^bits elements a warp, bits even for the Feistel halves. dram_tlbwarm:
-    // 16 MB a warp (8 pages of 2 MB: inside the SM's TLB after the warm-up, the lines still
-    // untouched), dram: 256 MB a warp (128 pages a warp, 1024 at 8 warps: past the TLB too), so
-    // the two tell the DRAM latency from the TLB miss on top of it.
+    // L1: 4 KB a warp (32 KB at 8 warps, inside every L1), L1-cached loads. L2: 64 KB a warp
+    // (512 KB at 8 warps, inside every L2), loads that bypass the L1. DRAM: loads that bypass the
+    // L1, the timed links on lines no warp has touched. Loaded: 1, 2, 4, 8 warps per SM.
+    // Sub-buffer sizes are 2^bits elements, bits even for the Feistel halves. No two chasing
+    // warps of the chip read a line in common on the DRAM levels, so every timed link there is a
+    // first touch whatever the L2 holds: dram_tlbwarm gives every (SM, warp) pair its own 1 MB
+    // sub-buffer (half a 2 MB page, at most 4 pages an SM at 8 warps: inside the TLB after the
+    // warm-up) and times 256 links (3 % of its lines, so the warm-up's lines are seldom met
+    // again); dram shares 8 sub-buffers of 256 MB (128 pages a warp, past the TLB) with every SM
+    // on its own segment of the cycle. The L1 and L2 levels share their chains: a line another
+    // SM pulled into the L2 is what an L2 hit is.
     struct Level {
         const char* name;
         unsigned bits;
         bool cg;
-    } levels[] = {
-        {"l1", 10, false}, {"l2", 14, true}, {"dram_tlbwarm", 22, true}, {"dram", 26, true}};
+        bool per_sm;
+        int links;
+    } levels[] = {{"l1", 10, false, false, kLatencyLinks},
+                  {"l2", 14, true, false, kLatencyLinks},
+                  {"dram_tlbwarm", 18, true, true, 256},
+                  {"dram", 26, true, false, kLatencyLinks}};
 
     unsigned* buf = nullptr;
-    CHECK(cudaMalloc(&buf, (size_t{1} << 26) * 8 * sizeof(unsigned)));
+    const size_t elements =
+        std::max(size_t{8} << 26, static_cast<size_t>(pr.sms) * 8 * (size_t{1} << 18));
+    CHECK(cudaMalloc(&buf, elements * sizeof(unsigned)));
     std::map<std::string, double> lat;
     std::vector<double> mhz; // the SM clock seen by each L2 / DRAM chase
 
@@ -424,7 +445,7 @@ int main() {
         double clk, ns, mhz; // per link in SM clocks and wall ns; the SM clock the chase ran at
     };
 
-    const auto chase_clocks = [&](int warps) {
+    const auto chase_clocks = [&](int warps, int links) {
         std::vector<double> clk, ns;
         for (const Span& s : pr.collect(pr.sms * 8)) {
             const int entry = static_cast<int>(&s - pr.host.data());
@@ -433,20 +454,23 @@ int main() {
             ns.push_back(static_cast<double>(s.ns_end - s.ns_begin));
         }
         const double c = median(clk), n = median(ns);
-        return Chase{c / kLatencyLinks, n / kLatencyLinks, n > 0 ? c / n * 1e3 : 0.0};
+        return Chase{c / links, n / links, n > 0 ? c / n * 1e3 : 0.0};
     };
     for (const Level& lv : levels) {
-        const unsigned m   = 1u << lv.bits;
-        const size_t total = static_cast<size_t>(m) * 8;
-        fill_cycle<<<static_cast<unsigned>((total + 255) / 256), 256>>>(buf, lv.bits);
+        const unsigned m     = 1u << lv.bits;
+        const unsigned count = lv.per_sm ? pr.sms * 8 : 8;
+        const size_t total   = static_cast<size_t>(m) * count;
+        fill_cycle<<<static_cast<unsigned>((total + 255) / 256), 256>>>(buf, lv.bits, count);
         CHECK(cudaDeviceSynchronize());
         for (int warps : {1, 2, 4, 8}) {
             if (lv.cg) {
-                chase<true><<<pr.sms, 32 * warps>>>(buf, m, pr.spans, pr.usink);
+                chase<true>
+                    <<<pr.sms, 32 * warps>>>(buf, lv.bits, lv.per_sm, lv.links, pr.spans, pr.usink);
             } else {
-                chase<false><<<pr.sms, 32 * warps>>>(buf, m, pr.spans, pr.usink);
+                chase<false>
+                    <<<pr.sms, 32 * warps>>>(buf, lv.bits, lv.per_sm, lv.links, pr.spans, pr.usink);
             }
-            const Chase c = chase_clocks(warps);
+            const Chase c = chase_clocks(warps, lv.links);
             char name[64];
             std::snprintf(name, sizeof name, "%s_latency_w%d", lv.name, warps);
             fact(name, c.clk, "clk");
