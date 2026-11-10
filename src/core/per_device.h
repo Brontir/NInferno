@@ -9,9 +9,9 @@
 #include "core/device_class.h"
 
 #ifndef NINFERNO_HOST_ONLY
-#include "core/device.h"
+#    include "core/device.h"
 
-#include <cuda_runtime.h>
+#    include <cuda_runtime.h>
 #endif
 
 #include <array>
@@ -31,6 +31,7 @@ inline constexpr int kMaxDevices = 64;
 inline int current_device_ordinal() {
     throw std::runtime_error("per device: this build has no CUDA runtime");
 }
+
 inline int substitute_device_ordinal() { return -1; }
 #else
 // The calling thread's current CUDA device.
@@ -42,6 +43,7 @@ inline int current_device_ordinal() {
     }
     return device;
 }
+
 // The ordinal a substitute's cache entry is kept under; -1 without a current CUDA device.
 inline int substitute_device_ordinal() {
     int device = -1;
@@ -65,7 +67,7 @@ public:
     template <class Make>
     const T& get(Make&& make) {
         if (const std::string* substitute = substituted_device_class_key()) {
-            const int device = substitute_device_ordinal();
+            const int device      = substitute_device_ordinal();
             const std::string key = std::to_string(device) + '|' + *substitute;
             std::lock_guard lock(substituted_mutex_);
             auto it = substituted_.find(key);
