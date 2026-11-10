@@ -16,6 +16,8 @@ concurrency:
 
 jobs:
   check:
+    # a label change re-runs only the golden gate
+    if: github.event.action != 'labeled' && github.event.action != 'unlabeled'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

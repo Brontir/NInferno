@@ -1,4 +1,5 @@
 import io
+import re
 import json
 import sys
 import tempfile
@@ -63,7 +64,52 @@ class PathMatching(unittest.TestCase):
                 self.assertTrue((ROOT / text).exists(), text)
 
 
+# Files in the selector's include closure that do not decide (types, I/O, containers).
+NOT_DECIDING = {
+    "include/ninferno/ops/linear.h", "include/ninferno/ops/moe.h", "include/ninferno/option_enums.h",
+    "src/core/arena.h", "src/core/cache_file.h", "src/core/cuda_error.h", "src/core/device.h",
+    "src/core/dtype.h", "src/core/file_io.h", "src/core/layout.h", "src/core/per_device.h",
+    "src/core/sha256.h", "src/core/sys.h", "src/core/tensor.h", "src/core/tune_timer.h",
+    "src/core/units.h", "src/core/weight.h", "src/core/weight_view.h", "src/ops/moe/moe_internal.h",
+}
+SEEDS = ["src/ops/generic/generic_gemm.cpp", "src/ops/generic/generic_cost.cpp",
+         "src/ops/generic/generic_workspace.cpp", "src/ops/generic/generic_coverage.cpp",
+         "src/ops/generic/generic_ggml.cpp", "src/ops/generic/generic_tune.cpp",
+         "src/ops/generic/route_query.cpp", "src/ops/generic/selector_facts.cpp",
+         "src/ops/route_table.cpp", "src/ops/generic/route_authorities.cpp",
+         "src/ops/generic/kernel_roofline.h"]
+INCLUDE = re.compile(r'^\s*#\s*include\s*"([^"]+)"', re.M)
+
+
+def include_closure():
+    seen, todo = set(), [s for s in SEEDS if (ROOT / s).exists()]
+    while todo:
+        f = todo.pop()
+        if f in seen:
+            continue
+        seen.add(f)
+        text = (ROOT / f).read_text(encoding="utf-8", errors="replace")
+        for name in INCLUDE.findall(text):
+            for base in (Path(f).parent, Path("src"), Path("include")):
+                cand = (base / name).as_posix()
+                if (ROOT / cand).exists():
+                    todo.append(cand)
+                    break
+    return seen
+
+
+class Closure(unittest.TestCase):
+    def test_every_included_file_is_listed_or_named_not_deciding(self):
+        closure = include_closure()
+        self.assertGreater(len(closure), 20)
+        missing = sorted(f for f in closure if f not in NOT_DECIDING and not gg.decision_files([f], PATHS))
+        self.assertEqual(missing, [], "add to tools/audit/decision_paths.txt, or to NOT_DECIDING if it decides nothing")
+
+
 class Labels(unittest.TestCase):
+    def test_rename_listing_uses_nul_separated_paths(self):
+        self.assertEqual(gg.decision_files(["routes/a b.json"], PATHS), ["routes/a b.json"])
+
     def test_labels(self):
         self.assertEqual(gg.labels_of(event("a", "goldens-equal")), {"a", "goldens-equal"})
         self.assertEqual(gg.labels_of({}), set())

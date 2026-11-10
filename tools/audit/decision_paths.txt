@@ -32,3 +32,20 @@ src/core/device_class.*
 src/core/generation.*
 src/product/choice/**
 src/ops/generic/data/kernel_facts/**
+# headers the selector sources compile in (checked by tests/test_golden_gate.py: every file in
+# their include closure is listed here or named there as not deciding)
+src/core/mmq_columns.h
+src/core/measured_boards.h
+src/core/board_registry.h
+src/core/device_identity.h
+src/core/machine_facts.h
+src/ops/common/arch_limits.h
+src/ops/common/native_nvfp4.h
+src/ops/common/route_compute.h
+src/ops/common/route_probe.h
+src/ops/common/shape_routes.*
+src/ops/route_pins.*
+src/ops/generic/ggml_mmq/ggml_mmq.h
+src/ops/linear/nvfp4/nvfp4_a4_plan.h
+src/ops/linear/nvfp4/nvfp4_geometry.h
+src/ops/linear/nvfp4/nvfp4_layout.h

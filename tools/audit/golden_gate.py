@@ -76,7 +76,8 @@ def decide(touched, golden_rc, labels):
     return 1, (
         "the decision path changed but no selector golden did.\n"
         "If the change is meant to move decisions, regenerate the goldens (test_selector_golden --update).\n"
-        f"If it is a refactor that leaves every decision as it was, add the label `{LABEL}` to the PR."
+        f"If it is a refactor that leaves every decision as it was, add the label `{LABEL}` to the PR;\n"
+        "the label event starts a new run. Re-running the old run replays the old payload and keeps failing: add the label, do not re-run."
     )
 
 
@@ -96,7 +97,7 @@ def main(argv=None, run_diff=None, changed_files=None):
         patterns = load_patterns(Path(args.paths).read_text(encoding="utf-8"))
         rng = f"origin/{args.base_ref}...HEAD"
         if changed_files is None:
-            changed = git(["diff", "--name-only", rng], args.repo).split()
+            changed = [f for f in git(["diff", "--name-only", "--no-renames", "-z", rng], args.repo).split("\0") if f]
         else:
             changed = changed_files
         touched = decision_files(changed, patterns)
