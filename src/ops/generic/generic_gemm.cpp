@@ -756,8 +756,6 @@ bool tiled_speed_pays(std::int32_t n, std::int32_t tokens) {
            speed_waves(n, tokens, 128, 128) >= kSpeedFill;
 }
 
-namespace {} // namespace
-
 // The invariant profile's register MMA (prefill_routes.h): the decode split of K for every T, so
 // a token's bytes are the same at every width (the order depends on WarpsK alone,
 // generic_gemm.cuh). Eight tokens per CTA through T = 8, where decode batches live; 32 above, so
