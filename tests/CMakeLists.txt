@@ -82,6 +82,13 @@ add_test(NAME ninferno_regret_collect_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_regret_collect.py)
 ninferno_label_tests(ninferno_regret_collect_test LABELS host)
 
+# tools/kernel_facts/sass_counts.py and the loop columns of kernel_facts.py (#613): the K loop
+# found from a small SASS text's control flow, its counts, the snapshot round trip and the check's
+# verdicts. No GPU, no CUDA toolkit.
+add_test(NAME ninferno_kernel_facts_sass_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_kernel_facts_sass.py)
+ninferno_label_tests(ninferno_kernel_facts_sass_test LABELS host)
+
 # tools/bench/mmq_transfer_audit.py: same-generation MMQ transfer by workload regime (#373), no GPU.
 add_test(NAME ninferno_mmq_transfer_audit_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_mmq_transfer_audit.py)
