@@ -70,9 +70,8 @@ void check_golden() {
     long prices = 0, bad = 0;
     for (const GoldenCall& c : kGoldenCalls) {
         const DeviceClass d = g::board_device_class(g::kFactsBoards[c.board]);
-        const auto priced   = g::priced_routes_query(d, kGoldenFormats[c.format],
-                                                     LinearPolicy::A16Only, c.epilogue, c.n, c.k,
-                                                     c.tokens);
+        const auto priced   = g::priced_routes_query(
+            d, kGoldenFormats[c.format], LinearPolicy::A16Only, c.epilogue, c.n, c.k, c.tokens);
         if (priced.size() != c.count) {
             if (++bad <= 10) {
                 std::fprintf(stderr, "FAIL %s format %d %dx%d T=%d: %zu routes, golden %zu\n",
@@ -85,10 +84,10 @@ void check_golden() {
             const GoldenRoute& want = kGoldenRoutes[c.first + static_cast<long>(i)];
             const auto& got         = priced[i];
             ++prices;
-            const bool same = static_cast<int>(got.route.family) == want.family &&
-                              static_cast<int>(got.route.schedule) == want.schedule &&
-                              std::fabs(got.seconds - want.seconds) <=
-                                  kGoldenTolerance * want.seconds;
+            const bool same =
+                static_cast<int>(got.route.family) == want.family &&
+                static_cast<int>(got.route.schedule) == want.schedule &&
+                std::fabs(got.seconds - want.seconds) <= kGoldenTolerance * want.seconds;
             if (!same && ++bad <= 10) {
                 std::fprintf(stderr,
                              "FAIL %s format %d %dx%d T=%d route %d:%d: golden %.17g now %.17g\n",
@@ -104,7 +103,7 @@ void check_golden() {
 
 // ---- Check 2: the selector's wiring ----
 
-constexpr QType kFormats[]           = {QType::GGML_Q4_K,   QType::GGML_Q6_K,   QType::GGML_IQ3_S,
+constexpr QType kFormats[]             = {QType::GGML_Q4_K,   QType::GGML_Q6_K,   QType::GGML_IQ3_S,
                                           QType::Q4_G64_FP16, QType::Q8_G32_FP16, QType::BF16,
                                           QType::GGML_Q4_0,   QType::GGML_IQ4_XS, QType::MXFP4};
 constexpr Shape kWiringShapes[]        = {{1024, 4096}, {4096, 4096}, {17408, 5120}, {5120, 17408}};
