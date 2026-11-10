@@ -1,15 +1,18 @@
 // The literal rules of the generic path (ops/generic/route_rules.h), held to the sources they
 // describe. Every descriptor has a unique name, a recorded boards / cards / tolerance field
 // ("unknown" or "none recorded" where the record is silent, never empty) and an empty kernel hash
-// (none is recorded), and a basis (Structural, Measured, PlacedBetweenMeasured, Fitted or Unknown:
-// the field has no default, so a descriptor without one does not compile; a Fitted or
-// PlacedBetweenMeasured one names its boards or says none are recorded; the count per class is
-// printed). Its literal stands in its file, outside comments and outside the contents of string and
-// character literals, exactly `occurrences` times, whole (a number is not the prefix of a longer
-// one, a name not the tail of a longer one), whatever the whitespace between its tokens (a space
-// between two identifier characters stays one space) and a trailing comma before a `}`. A literal
-// that defines a constant is complete (it ends in `;`, an array carries all
-// its elements), defines the descriptor's name, is that name's only definition in the file, and
+// (none is recorded), and a basis (Structural, Measured, PlacedBetweenMeasured, Fitted,
+// ScaledFromOneBoard or Unknown: the field has no default, so a descriptor without one does not
+// compile; a Measured one names a board id; a Fitted, PlacedBetweenMeasured or ScaledFromOneBoard
+// one names its boards or says none are recorded; a Structural constant that is a bare number in
+// the code is held by a static_assert or listed in structural_roots; the count per class is
+// printed; whether a class is the right one is not checked). Its literal stands in its file,
+// outside comments and outside the contents of string and character literals, exactly `occurrences`
+// times, whole (a number is not the prefix of a longer one, a name not the tail of a longer one),
+// whatever the whitespace between its tokens (a space between two identifier characters stays one
+// space) and a trailing comma before a `}`; a literal that opens with `if(` is not found behind an
+// `else`. A literal that defines a constant is complete (it ends in `;`, an array carries all its
+// elements), defines the descriptor's name, is that name's only definition in the file, and
 // evaluates (as C++ does, integers staying integers) to `value`, or to the number each element of
 // an array says; a literal that is a condition has `value` 0 or a number written in it.
 //
@@ -17,9 +20,9 @@
 // Max, Tokens, Fill, Distance, Values, Bytes, Gbps, Margin, Slack, Columns, Rows, Limit, Measured,
 // Threshold), a `const`, `constexpr`, `static` or `inline` variable or array (an initialiser by
 // `=`, braces or parentheses, a later declarator of the same declaration included) or a `#define`,
-// in any .h, .hpp, .cpp, .cc, .inc, .inl, .cu or .cuh under src/ops/generic (subdirectories
-// included; route_cost_constants.h has its own registry and test) and in ops/route_pins.h and
-// ops/route_table.cpp, is keyed by file and name. A described one
+// in any .h, .hpp, .hh, .cpp, .cc, .cxx, .inc, .inl, .ipp, .tpp, .cu or .cuh under src/ops/generic
+// (subdirectories included; route_cost_constants.h has its own registry and test), directly in
+// src/ops, and in src/core/measured_boards.h, is keyed by file and name. A described one
 // is defined once in its file; any other is an entry of kNotRules with its reason and the number of
 // definitions the file holds, so a second definition of a listed name, or of a described one, is a
 // failure. Known limits: a name without kX camel case or without one of those words
@@ -74,11 +77,29 @@ bool ident_char(char c) { return std::isalnum(static_cast<unsigned char>(c)) != 
 
 bool hex_char(char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; }
 
+// The token of identifier characters (and digit separators) that ends just before `i`: what a `'`
+// at `i` follows. A digit separator stands in a number, so that token starts with a digit; a
+// character literal's prefix (u8, u, U, L) starts with a letter.
+std::string token_before(const std::string& t, std::size_t i) {
+    std::size_t s = i;
+    while (s > 0 && (ident_char(t[s - 1]) || t[s - 1] == '\'')) --s;
+    return t.substr(s, i - s);
+}
+
+// The run of identifier characters that ends just before `i` (a raw string's prefix).
+std::string ident_before(const std::string& t, std::size_t i) {
+    std::size_t s = i;
+    while (s > 0 && ident_char(t[s - 1])) --s;
+    return t.substr(s, i - s);
+}
+
 // The text without comments and without the contents of string and character literals, in one pass
 // as the compiler reads it: a `//` or `/*` inside a literal is literal text, not a comment; a digit
-// separator (1'000) is not a character literal. A comment becomes one space (the newlines of a line
-// comment stay); a string, character or raw-string literal keeps its quotes and loses what is
-// between them, so a constant or a threshold quoted in a string is not code.
+// separator (1'000) inside a number is not a character literal (u8'a' is); an `R` before a quote
+// opens a raw string only as the whole prefix (R, u8R, uR, UR, LR), not as the end of a name. A
+// comment becomes one space (the newlines of a line comment stay); a string, character or
+// raw-string literal keeps its quotes and loses what is between them, so a constant or a threshold
+// quoted in a string is not code.
 std::string without_comments(const std::string& t) {
     std::string out;
     out.reserve(t.size());
@@ -98,7 +119,9 @@ std::string without_comments(const std::string& t) {
             out.push_back(' ');
             continue;
         }
-        if (c == '"' && i > 0 && t[i - 1] == 'R') { // R"delim( ... )delim"
+        const std::string raw_prefix = c == '"' && i > 0 ? ident_before(t, i) : std::string();
+        if (c == '"' && (raw_prefix == "R" || raw_prefix == "u8R" || raw_prefix == "uR" ||
+                         raw_prefix == "UR" || raw_prefix == "LR")) { // R"delim( ... )delim"
             const std::size_t open = t.find('(', i + 1);
             if (open != std::string::npos && open - i <= 17) {
                 const std::string close = ")" + t.substr(i + 1, open - i - 1) + "\"";
@@ -109,8 +132,10 @@ std::string without_comments(const std::string& t) {
                 continue;
             }
         }
-        if (c == '"' ||
-            (c == '\'' && !(i > 0 && hex_char(t[i - 1]) && i + 1 < n && hex_char(t[i + 1])))) {
+        const bool separator = c == '\'' && i > 0 && hex_char(t[i - 1]) && i + 1 < n &&
+                               hex_char(t[i + 1]) &&
+                               std::isdigit(static_cast<unsigned char>(token_before(t, i)[0])) != 0;
+        if (c == '"' || (c == '\'' && !separator)) {
             ++i;
             while (i < n && t[i] != c && t[i] != '\n') i += (t[i] == '\\' && i + 1 < n) ? 2 : 1;
             if (i < n && t[i] == c) ++i;
@@ -152,15 +177,19 @@ std::string trimmed(const std::string& s) {
 }
 
 // How many times `needle` stands in `haystack` as a whole: not inside a longer identifier or
-// number (before it or after it), so `p.k >= 8192` is not found in `p.k >= 81920`.
+// number (before it or after it), so `p.k >= 8192` is not found in `p.k >= 81920`; and a needle
+// that opens with `if(` is not found chained behind an `else`, where it would no longer run on its
+// own (an `else if (...)` in front of a described condition is a change of the rule).
 std::size_t count_of(const std::string& haystack, const std::string& needle) {
     if (needle.empty()) return 0;
-    const bool head = ident_char(needle.front());
-    const bool tail = ident_char(needle.back());
-    std::size_t n   = 0;
+    const bool head     = ident_char(needle.front());
+    const bool tail     = ident_char(needle.back());
+    const bool opens_if = needle.compare(0, 3, "if(") == 0;
+    std::size_t n       = 0;
     for (auto at = haystack.find(needle); at != std::string::npos;
          at      = haystack.find(needle, at + 1)) {
         if (head && at > 0 && ident_char(haystack[at - 1])) continue;
+        if (opens_if && at >= 5 && haystack.compare(at - 5, 5, "else ") == 0) continue;
         const std::size_t after = at + needle.size();
         if (tail && after < haystack.size() &&
             (ident_char(haystack[after]) || haystack[after] == '\'' ||
@@ -835,9 +864,35 @@ const std::vector<NotRule>& not_rules() {
         {"selector_facts.cpp", "kExactMinor", 2, "a build switch (an 'a' / 'f' target's minor)"},
         {"selector_facts.cpp", "kMinor", 1, "the build architecture's minor (a build switch)"},
         {"selector_facts.cpp", "kTokens", 1, "a kernel's tile tokens (a tile shape, counted)"},
+        {"../weight_input.cpp", "kGemma4GateUpRows", 1,
+         "a model's expert-plane rows (a layout fact of Gemma 4, not a selection threshold)"},
 
     };
     return v;
+}
+
+// Structural constants that are a bare number in the code and held by no static_assert, each with
+// the reason the class is Structural: the test requires every other Structural constant to be
+// defined from another constant or named in a static_assert of the scanned sources, so a number
+// that only a comment calls structural does not pass as one.
+const std::map<std::string_view, std::string_view>& structural_roots() {
+    static const std::map<std::string_view, std::string_view> m = {
+        {"kDecodePinMaxTokens",
+         "the one definition of the widest speculative verify (a design width): "
+         "kPrefillPinMinTokens is defined from it and held to 17 by a static_assert in "
+         "route_pins.h"},
+        {"kVoltaTileMaxTokens",
+         "twice the tiled kernel's 128-token block: from 256 tokens two token blocks already "
+         "decode the weight twice (generic_gemm.cpp)"},
+        {"kVoltaHmmaMinTokens",
+         "a byte-consistency contract: a one-token call must run the kernel a wider call runs "
+         "(test_moe)"},
+        {"kSlotWarps", "the register file in warps of 128 registers a thread: 65536 / (32 * 128)"},
+        {"kVecWarps", "the vector kernel's CTA size in warps, a count of the kernel"},
+        {"kVecBoundedBlocks",
+         "resident CTAs the 72-register instance holds on a 64K-register SM: 65536 / (128 * 72)"},
+    };
+    return m;
 }
 
 bool matches_bounding(const std::string& name) {
@@ -918,6 +973,15 @@ void text_self_test(const std::function<void(const std::string&)>& fail) {
     same(R"t(char c = '\''; int kMaxC = 7;)t", R"t(char c = ''; int kMaxC = 7;)t");
     same(R"t(auto r = R"x(// "k = 1;" )x"; int kMaxD = 8;)t", R"t(auto r = R""; int kMaxD = 8;)t");
     same("int v = 1'000; // c", "int v = 1'000;");
+    same("int v = 0xAB'CD'EF; // c", "int v = 0xAB'CD'EF;");
+    same("auto c = u8'a'; int kMaxE = 9; // c", "auto c = u8''; int kMaxE = 9;");
+    same("auto c = L'1'; int kMaxF = 9;", "auto c = L''; int kMaxF = 9;");
+    same(R"t(NINFERNO_ERR"(x"; int kMaxG = 1;)t", R"t(NINFERNO_ERR""; int kMaxG = 1;)t");
+    same(R"t(auto r = u8R"x(")" )x"; int kMaxH = 2;)t", R"t(auto r = u8R""; int kMaxH = 2;)t");
+    if (count_of(squeezed("a; else if (x) y;"), squeezed("if (x) y;")) != 0)
+        fail("text: an `else if` in front of a described condition must not match it");
+    if (count_of(squeezed("a; if (x) y;"), squeezed("if (x) y;")) != 1)
+        fail("text: a described condition on its own must match");
     same("a  =\n  1 ;", "a=1;");
     same("{ {1, 2},\n }", "{{1,2}}");
     if (squeezed("int  x") != "int x")
@@ -947,6 +1011,8 @@ int main(int argc, char** argv) {
     std::array<std::size_t, rr::kAllBases.size()> by_basis{};
     std::set<std::string> names;
     std::set<std::pair<std::string, std::string>> described; // (file, name) of the named constants
+    // Structural constants whose definition is a bare number: held by a static_assert, or listed.
+    std::vector<std::pair<std::string, std::string>> structural_bare;
     for (const auto& rule : rr::kRouteRules) {
         const std::string name(rule.name);
         const std::string file_name(rule.file);
@@ -969,11 +1035,19 @@ int main(int argc, char** argv) {
         if (rule.tolerance.find("FITTED") != std::string_view::npos) {
             fail(name + ": FITTED in the tolerance prose; the basis field says it");
         }
-        if (rule.basis == rr::Basis::Fitted || rule.basis == rr::Basis::PlacedBetweenMeasured) {
-            static const std::regex board_id("[a-z]{2}[0-9]{3}:[0-9]+sm");
-            const std::string boards(rule.boards);
-            if (!std::regex_search(boards, board_id) &&
-                boards.find("unknown") == std::string::npos &&
+        // A Measured entry names the board it was measured on (a class id such as gb202:170sm);
+        // a Fitted, PlacedBetweenMeasured or ScaledFromOneBoard one names its boards or says none
+        // are recorded. Whether the class is the right one stays a reading of the source.
+        static const std::regex board_id("[a-z]{2}[0-9]{3}:[0-9]+sm");
+        const std::string boards(rule.boards);
+        const bool names_board = std::regex_search(boards, board_id);
+        if (rule.basis == rr::Basis::Measured && !names_board) {
+            fail(name + ": Measured names no board (a class id such as gb202:170sm): a timing "
+                        "on no named board is Unknown");
+        }
+        if (rule.basis == rr::Basis::Fitted || rule.basis == rr::Basis::PlacedBetweenMeasured ||
+            rule.basis == rr::Basis::ScaledFromOneBoard) {
+            if (!names_board && boards.find("unknown") == std::string::npos &&
                 boards.find("none recorded") == std::string::npos &&
                 boards.find("see k") == std::string::npos) {
                 fail(name + ": " + std::string(rr::basis_name(rule.basis)) +
@@ -1040,6 +1114,12 @@ int main(int argc, char** argv) {
                          std::to_string(rule.value));
                 }
             }
+            if (rule.basis == rr::Basis::Structural && !def.array) {
+                static const std::regex names_constant(R"(\bk[A-Z]\w*)");
+                if (!std::regex_search(def.rhs, names_constant)) {
+                    structural_bare.emplace_back(file_name, name);
+                }
+            }
             if (constant_name(name)) described.insert({file_name, name});
         } else {
             // A condition: `value` is 0 (no single cutoff) or a number written in the literal.
@@ -1064,18 +1144,24 @@ int main(int argc, char** argv) {
     std::size_t scanned = 0;
     // Everything under src/ops/generic, and the two files beside it that hold constants the
     // descriptors point at (the pins' band edge and the route table's first prefill width).
-    std::vector<std::string> scan_files = {"../route_pins.h", "../route_table.cpp"};
+    std::vector<std::string> scan_files = {"../../core/measured_boards.h"};
+    const auto scanned_extension        = [](const std::filesystem::path& ext) {
+        return ext == ".h" || ext == ".hpp" || ext == ".hh" || ext == ".cpp" || ext == ".cc" ||
+               ext == ".cxx" || ext == ".inc" || ext == ".inl" || ext == ".ipp" || ext == ".tpp" ||
+               ext == ".cu" || ext == ".cuh";
+    };
     for (const auto& item : std::filesystem::recursive_directory_iterator(generic_dir())) {
-        const auto ext = item.path().extension();
-        if (!item.is_regular_file() ||
-            (ext != ".h" && ext != ".hpp" && ext != ".cpp" && ext != ".cc" && ext != ".inc" &&
-             ext != ".inl" && ext != ".cu" && ext != ".cuh")) {
-            continue;
-        }
+        if (!item.is_regular_file() || !scanned_extension(item.path().extension())) continue;
         const std::string file =
             std::filesystem::relative(item.path(), generic_dir()).generic_string();
         if (file == "route_rules.h" || file == "route_cost_constants.h") continue;
         scan_files.push_back(file);
+    }
+    // The files directly in src/ops beside the generic directory (route pins, the route table, the
+    // prefill routes, a new selector header put there).
+    for (const auto& item : std::filesystem::directory_iterator(generic_dir() / "..")) {
+        if (!item.is_regular_file() || !scanned_extension(item.path().extension())) continue;
+        scan_files.push_back("../" + item.path().filename().generic_string());
     }
     for (const std::string& file : scan_files) {
         const Source& s = source_of(file);
@@ -1089,6 +1175,29 @@ int main(int argc, char** argv) {
         }
     }
     if (scanned < 20 || seen.size() < 30) fail("the constant scan found too little");
+    // A Structural constant defined by a bare number: a static_assert of the scanned sources names
+    // it, or it is listed with its reason; and a listed one is still such a constant.
+    std::set<std::string> bare_names;
+    for (const auto& [file, name] : structural_bare) {
+        bare_names.insert(name);
+        const std::regex assertion("static_assert\\s*\\([^;]*\\b" + name + "\\b");
+        bool held = structural_roots().count(name) != 0;
+        for (const std::string& f : scan_files) {
+            if (held) break;
+            held = std::regex_search(source_of(f).raw, assertion);
+        }
+        if (!held) {
+            fail(name + ": Structural, but defined by a bare number and held by no static_assert "
+                        "in the scanned sources (define it from another constant, add one, or "
+                        "list it in structural_roots with its reason; otherwise it is Unknown)");
+        }
+    }
+    for (const auto& [name, reason] : structural_roots()) {
+        if (bare_names.count(std::string(name)) == 0) {
+            fail(std::string(name) + " is in structural_roots but is not a Structural constant "
+                                     "defined by a bare number");
+        }
+    }
     std::map<std::pair<std::string, std::string>, const NotRule*> listed;
     for (const NotRule& n : not_rules()) {
         const auto key = std::make_pair(std::string(n.file), std::string(n.name));

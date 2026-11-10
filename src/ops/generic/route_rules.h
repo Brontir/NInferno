@@ -1,16 +1,22 @@
 #pragma once
 
 // The literal rules of the generic path's route selection (generic_gemm.h, generic_gemm.cpp): the
-// thresholds a rule compares a call's shape, width or card against, each a number someone measured
-// on some boards and wrote into the code (#614, PR-F4). This header declares what each rule IS
-// (its literal) and what it rests on (the boards and cards it was measured on, the margin the
-// record gives, where it is written); it changes no behaviour. The code keeps its own literals:
-// test_route_rules reads the sources and holds every descriptor to them (a named constant's value,
-// a rule's literal text inside the file), and every constant whose name says it bounds something
-// (a scan by file and name, see the test, of src/ops/generic and two files beside it) to a
-// descriptor or a listed non-rule, so a described rule cannot change or move without its record
-// and such a named constant cannot appear without one. The scan is a text scan with known gaps:
-// docs/maintainer/route-rules.md lists them.
+// thresholds a rule compares a call's shape, width or card against, each with what the source says
+// it rests on: a timing on named boards, a point placed between timings, a fit, a structural fact,
+// or nothing recorded (#614, PR-F4). This header declares what each rule IS (its literal) and what
+// the record says it rests on (a basis class, the boards and cards, the margin the record gives,
+// where it is written); it changes no behaviour. The code keeps its own literals. What
+// test_route_rules enforces, and no more: a descriptor's literal stands in its source file (a
+// named constant's value matches, a rule's literal text is found, whole, outside comments and
+// strings, as many times as the descriptor says); every constant of the scanned files whose name
+// says it bounds something (a scan by file and name, see the test) has a descriptor or is a listed
+// non-rule; every descriptor has a basis class and non-empty boards, cards and tolerance; a
+// Measured one names a board id (chip:Nsm), a Fitted, PlacedBetweenMeasured or ScaledFromOneBoard
+// one names a board id or says none is recorded, and a Structural constant is defined from another
+// constant, held by a static_assert or listed in the test with its reason. It does not check that
+// a class is the right one (that is read from the source comments by a person, and can be wrong),
+// that a described constant is used the way the descriptor says, or that a rule did not move (see
+// docs/maintainer/route-rules.md, which lists the guard's known gaps).
 //
 // What the list covers: the named constants that bound a route, the threshold comparisons of
 // rules_r8, w4a8_ws_wins, heuristic_rmma, heuristic_w4a8, heuristic_w4a4, staged_speed_route,
@@ -20,10 +26,9 @@
 //
 // Fields:
 //   name       the rule as the code names it (`symbol` or a short name for a literal inside one);
-//   basis      what the number rests on, one of Basis below (the test checks every descriptor has
-//              one and prints the count per class); the class is read from the source comments,
-//              docs/maintainer/decisions.md and deterministic-decisions.md, and is Unknown where
-//              they do not say;
+//   basis      what the number rests on, one of Basis below; the class is read from the source
+//              comments, docs/maintainer/decisions.md and deterministic-decisions.md, and is
+//              Unknown where they do not say;
 //   file       the source file that holds the literal, under src/ops/generic/ (or a path from it
 //              for a file beside them);
 //   literal    the text of the literal as written: a constant's WHOLE definition (to its `;`, an
@@ -32,7 +37,7 @@
 //              or of a condition with ONE numeric cutoff that is written in the literal; 0 for an
 //              array, a condition with several cutoffs and a condition that compares against a
 //              card's own quantity (all cutoffs are then in the literal);
-//   boards     the device class ids it was measured on (DeviceClass::id: chip:Nsm, one format
+//   boards     the device class ids the source names for it (DeviceClass::id: chip:Nsm, one format
 //              throughout), "unknown" where the comments and the record name none;
 //   cards      the same as the products' names;
 //   tolerance  the measured margin the record gives ("none recorded" where it gives none): what the
@@ -41,9 +46,8 @@
 //              The repository records one sha256 over all device sources per kernel-facts file
 //              (kernel_facts.h Facts::source, tools/kernel_facts), not per kernel, and no rule
 //              records which tree it was timed on; a rule re-measured later should fill this.
-// Where the record is silent a field says "unknown": nothing here is a guess. The source of a
-// number is the comment at its use (quoted in the tolerance where it states a margin), DECISIONS.md
-// and docs/maintainer.
+// Where the record is silent a field says "unknown". The source of a number is the comment at its
+// use (quoted in the tolerance where it states a margin), DECISIONS.md and docs/maintainer.
 
 #include <array>
 #include <cstddef>
@@ -62,14 +66,24 @@ namespace ninferno::ops::detail::generic::route_rules {
 //                          between them: the line itself has no measurement;
 //   Fitted                 chosen to make a rule match timings of several boards (a fit, scored on
 //                          a held-out board where the comment says so), not derived from a fact;
+//   ScaledFromOneBoard     one board's measured margin carried to other boards by a stated model
+//                          (a rate, a ratio): no second board was measured;
 //   Unknown                the record does not say what it rests on (the rule's action may be
 //                          measured; this edge is not).
-// A constant fitted or placed between boards names those boards, or says none are recorded.
-enum class Basis : std::uint8_t { Structural, Measured, PlacedBetweenMeasured, Fitted, Unknown };
+// A constant fitted, placed between boards or scaled names those boards, or says none are
+// recorded; a Measured one names its boards.
+enum class Basis : std::uint8_t {
+    Structural,
+    Measured,
+    PlacedBetweenMeasured,
+    Fitted,
+    ScaledFromOneBoard,
+    Unknown
+};
 
-inline constexpr std::array<Basis, 5> kAllBases = {Basis::Structural, Basis::Measured,
-                                                   Basis::PlacedBetweenMeasured, Basis::Fitted,
-                                                   Basis::Unknown};
+inline constexpr std::array<Basis, 6> kAllBases = {
+    Basis::Structural, Basis::Measured,           Basis::PlacedBetweenMeasured,
+    Basis::Fitted,     Basis::ScaledFromOneBoard, Basis::Unknown};
 
 constexpr std::string_view basis_name(Basis basis) {
     switch (basis) {
@@ -81,6 +95,8 @@ constexpr std::string_view basis_name(Basis basis) {
         return "PlacedBetweenMeasured";
     case Basis::Fitted:
         return "Fitted";
+    case Basis::ScaledFromOneBoard:
+        return "ScaledFromOneBoard";
     case Basis::Unknown:
         return "Unknown";
     }
@@ -143,25 +159,30 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "r8_prequantized (route demotion, generic_gemm.cpp) and in generic_workspace.cpp "
      "(route_workspace_bytes, the interval plan): a change of the edge is a change in four places",
      ""},
-    {"kMmqMinTokens", Basis::Structural, "generic_gemm.h",
+    {"kMmqMinTokens", Basis::Unknown, "generic_gemm.h",
      "inline constexpr std::int32_t kMmqMinTokens = 5;", 5,
      "unknown (decisions.md 58 names the families: Ampere, Ada, Blackwell and Turing)",
      "unknown (the same families)",
      "generic_gemm.h's comment: five tokens, past the four R8 verifies for every format but Q8 "
-     "(kR8MaxTokens); docs/maintainer/decisions.md 58: the vector kernel through T = 4 on the "
-     "native-MMA boards and the register MMA from 5, Turing's codebook formats at T = 5..8 to the "
-     "matrix kernel; no margin of its own recorded",
+     "(kR8MaxTokens); a bare 5 in the code, not defined from kR8MaxTokens or held to it by a "
+     "static_assert, and no timing names the edge itself; docs/maintainer/decisions.md 58 is about "
+     "the vector kernel through T = 4 and the register MMA from 5 on the native-MMA boards, and "
+     "Turing's codebook formats at T = 5..8 on the matrix kernel",
      ""},
-    {"kMmqMaxTokens", Basis::Structural, "generic_ggml_internal.h",
+    {"kMmqMaxTokens", Basis::Measured, "generic_ggml_internal.h",
      "inline constexpr std::int32_t kMmqMaxTokens = 16;", 16, "gb202:170sm, ad103:80sm, gb203:84sm",
      "RTX 5090, RTX 4080 SUPER, RTX 5080",
-     "no fixed rule holds across chips and formats (the dense tuner times it): against the "
-     "heuristic's tile, serve C4: 5090 ISTA IQ3_S +10 % at 16 tokens; Muse Q4_K_M -7..14 %, 4080 "
-     "SUPER ISTA -12 % at 8; 5080 IQ3_S even; below the band it loses to R8 (5090 C1 -11 %)",
+     "the comment is timings, and says no fixed rule holds across chips and formats (the dense "
+     "tuner times it): against the heuristic's tile, serve C4: 5090 ISTA IQ3_S +10 % at 16 "
+     "tokens; Muse Q4_K_M -7..14 %, 4080 SUPER ISTA -12 % at 8; 5080 IQ3_S even; below the band it "
+     "loses to R8 (5090 C1 -11 %); the band ends where the W4A8 tiles' 17 tokens begin",
      ""},
     {"kGgmlMmqMaxTokens", Basis::Structural, "generic_gemm.h",
      "inline constexpr std::int32_t kGgmlMmqMaxTokens = 16;", 16, "see kMmqMaxTokens",
-     "see kMmqMaxTokens", "see kMmqMaxTokens (the same 5..16-token band)", ""},
+     "see kMmqMaxTokens",
+     "held equal to kMmqMaxTokens by a static_assert in generic_ggml.cpp; its timings are "
+     "kMmqMaxTokens' (the same 5..16-token band)",
+     ""},
     {"kGgmlVecMaxTokens", Basis::Structural, "generic_gemm.h",
      "inline constexpr std::int32_t kGgmlVecMaxTokens = 8;", 8, kUnknown, kUnknown,
      "ggml_mmq::kVecMaxColumns, the kernel's own width; no margin recorded", ""},
@@ -175,14 +196,22 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "(Turing, RTX 2080 Ti) every matrix-kernel format takes it from 9 tokens, the codebook "
      "formats below that too (mmq_verify_rule)",
      ""},
+    {"mmq_verify_rule: single-sequence rounds", Basis::Measured, "generic_gemm.cpp",
+     "ops::round_lanes() != 1 && mmq_verify_format(w.qtype);", 1, "gb203:70sm", "RTX 5070 Ti",
+     "the measured band is 9..16 tokens of several sequences (a C4 verify): one sequence keeps its "
+     "register MMA at every width (ops::round_lanes() == 1): a C1 MTP round of 5..8 tokens and a "
+     "C1 copy round of 16 lost on mmq (RTX 5070 Ti C1 117.0 -> 115.2 tok/s, all of it in the copy "
+     "rounds), while the C4 verify gains (233.5 -> 249.3)",
+     ""},
     // The prefill band's edge: ONE definition (ops/route_pins.h), the widest speculative verify
     // plus one; the others below are defined from it, because their comments call the same width.
     {"kDecodePinMaxTokens", Basis::Structural, "../route_pins.h",
      "inline constexpr std::int32_t kDecodePinMaxTokens = 16;", 16, kUnknown, kUnknown,
      "the widest speculative verify (route_pins.h's words): the decode pin's band, 1..16 tokens "
      "(decode and speculative verify); structural, no margin recorded. kDenseTuneMaxTokens, "
-     "kPdlPrefetchMaxTokens and kMmqMaxTokens are 16 too and are NOT defined from it: their "
-     "comments name their own measurements",
+     "kPdlPrefetchMaxTokens and kMmqMaxTokens are 16 too and are NOT defined from it: "
+     "kMmqMaxTokens' comment names its own timings, the comments of the other two name none "
+     "(generic_gemm.h: 'decode and speculative verify')",
      ""},
     {"kPrefillPinMinTokens", Basis::Structural, "../route_pins.h",
      "inline constexpr std::int32_t kPrefillPinMinTokens = kDecodePinMaxTokens + 1;", 17, kUnknown,
@@ -227,6 +256,15 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "values, C = 4: RTX 4090 +15.7 %, RTX 3090 +26 %) and loses on a small one (Gemma 4 26B QAT, "
      "at most 12M: -0.7 %, -2.7 %, its MTP verify -1.1 %); nothing between 12M and 44M measured",
      ""},
+    {"r8_verify_widest: four tokens", Basis::Measured, "generic_gemm.cpp",
+     "return qtype == QType::Q8_G32_FP16 ? kR8VerifyTokens : 4;", 4, "gb202:170sm, gb203:84sm",
+     "RTX 5090, RTX 5080",
+     "the verify form takes four tokens for every R8 format but Q8 (kR8VerifyTokens for Q8): past "
+     "four tokens the other formats' R8 lost (Q4_K 1.48-1.89, IQ3_XXS 1.49-1.80, IQ4_XS 1.19-1.53 "
+     "of the register MMA's 1.07-1.62, the bench on the RTX 5090); at T = 8 the median is 1.35 "
+     "(RTX 5080), so no format other than Q8 takes it; a bare 4 in the code, not defined from "
+     "kR8MaxTokens",
+     ""},
     {"kRmmaQ6kFourWarpBytes", Basis::PlacedBetweenMeasured, "generic_gemm.cpp",
      "inline constexpr double kRmmaQ6kFourWarpBytes = 4.0;", 4.0,
      "ad102:128sm, ad104:60sm, ad106:34sm, gb203:70sm",
@@ -254,6 +292,18 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "Ti between +14 % (Q3_K) and -3 % (Q4_K add 4096x12288 w1x4, 40.7 -> 41.7 us), so the "
      "threshold lies above that board (generic_gemm_launch.cuh)",
      ""},
+    {"rmma_latency_board: Volta floor", Basis::Measured, "generic_gemm_launch.cuh",
+     "if (d.major * 10 + d.minor < 75) return false;", 75, "gv100:80sm", "V100 (GV100)",
+     "Volta's register MMA is emulated on FMA (no m16n8k16): its kernel is compute-bound, and the "
+     "latency variant only cost there (GV100, T 5..8: 0-5 % slower, never picked)",
+     ""},
+    {"rmma_latency_board: Turing SwiGLU needs the ring", Basis::Measured, "generic_gemm_launch.cuh",
+     "return !(swiglu && d.major < 8 && !kRmmaAheadForm<Decoder, Schedule, E>);", 8, "tu102:68sm",
+     "RTX 2080 Ti",
+     "without cp.async (sm_75) SwiGLU's variant is the activation ring's form, or none: on the RTX "
+     "2080 Ti the variant with neither left Q4_K SwiGLU 7-8 % slower, with the ring w1x4 took "
+     "168.9 -> 122.3 us at T = 8",
+     ""},
     {"kRmmaWideBytes", Basis::PlacedBetweenMeasured, "generic_gemm_internal.h",
      "inline constexpr double kRmmaWideBytes = 5.5;", 5.5, "ad102:128sm, gb203:70sm, ga106:28sm",
      "RTX 4090, RTX 5070 Ti, RTX 3060",
@@ -275,12 +325,23 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "constexpr std::int32_t kVoltaTileMaxTokens = 256;", 256, "gv100:80sm",
      "V100 (the rule, for boards under the copy's bandwidth bound, is not measured on them)",
      "none recorded: two token blocks already decode the weight twice from 256", ""},
-    {"kVoltaCopyMinDramGbps", Basis::Measured, "generic_gemm.cpp",
+    {"kVoltaCopyMinDramGbps", Basis::ScaledFromOneBoard, "generic_gemm.cpp",
      "constexpr double kVoltaCopyMinDramGbps = 870.0 / 1.13;", 870.0 / 1.13, "gv100:80sm",
      "V100 (870 GB/s); the Titan V (653) is under the bound, not measured",
      "the copy's narrowest margin is 1.13 (24576 x 4096 below 129 tokens) at 870 GB/s; the bound "
-     "scales that margin by the DRAM rate (the copy's time is its bytes over the rate, the tile's "
-     "its waves on the SMs): one board measured, no other",
+     "scales that one board's margin by the DRAM rate (the copy's time is its bytes over the "
+     "rate, the tile's its waves on the SMs): one board measured, no other, and the model is the "
+     "comment's, not a timing",
+     ""},
+    // The two comparisons of volta_copy_pays, the use of kVoltaTileMaxTokens and of the bound
+    // above.
+    {"volta_copy_pays: the two comparisons", Basis::ScaledFromOneBoard, "generic_gemm.cpp",
+     "return tokens >= kVoltaTileMaxTokens || fast_dram.get([](int) { try { return "
+     "device_class().dram_gbps() >= kVoltaCopyMinDramGbps; }",
+     0, "gv100:80sm", "V100 (870 GB/s)",
+     "a tiled format's call takes the decoded copy from kVoltaTileMaxTokens tokens, and below that "
+     "only on a board whose DRAM rate is at least kVoltaCopyMinDramGbps; the comparisons are held "
+     "here, the two constants have their own descriptors",
      ""},
     {"kVoltaHmmaMinTokens", Basis::Structural, "generic_gemm_internal.h",
      "inline constexpr std::int32_t kVoltaHmmaMinTokens = 1;", 1, "gv100:80sm", "V100",
@@ -294,7 +355,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "C8 aggregate 37.3 tok/s against C4 86.3",
      ""},
     // --- The vector kernel's verify widths ---
-    {"kVecRuleMaxTokens", Basis::Measured, "generic_gemm.cpp",
+    {"kVecRuleMaxTokens", Basis::PlacedBetweenMeasured, "generic_gemm.cpp",
      "constexpr std::int32_t kVecRuleMaxTokens = 4;", 4,
      "tu102:68sm, ga100:108sm, ga102:82sm, gb202:170sm, ad102:128sm, gv100:80sm",
      "RTX 2080 Ti, A100, RTX 3090, RTX 5090, RTX 4090, V100",
@@ -304,12 +365,29 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "(9B Q4_K_M C1 88 -> 79 tok/s), won C4 by 10 %; Volta takes every width it reads instead "
      "(V100, see kVoltaHmmaMaxTokens); docs/maintainer/decisions.md 58: the band rule (vector "
      "kernel at T <= 4, register MMA from 5) is the one measured on Ampere, Ada and Blackwell, "
-     "held against a price-based pick (RTX 4070 Ti, Q6_K 3840x15360, T = 5)",
+     "held against a price-based pick (RTX 4070 Ti, Q6_K 3840x15360, T = 5). The comment's "
+     "timings are at T = 2..4 and at T = 8; none is at 5..7, so the line at 4 is placed between "
+     "them (decisions.md 58 has one T = 5 call, the 4070 Ti's Q6_K down projection, on which the "
+     "vector kernel was ahead of the rule's register MMA)",
      ""},
-    // The rule's lower edge, from two tokens; the record names no board or margin for it.
-    {"vec_rule lower edge", Basis::Unknown, "generic_gemm.cpp",
+    // The rule's lower edge, from two tokens: T = 1 keeps R8 and the dense tuner.
+    {"vec_rule lower edge", Basis::Measured, "generic_gemm.cpp",
      "return tokens >= 2 && tokens <= vec_rule_max_tokens() && vec_call(w, policy, tokens);", 2,
-     kUnknown, kUnknown, kNotRecorded, ""},
+     "tu102:68sm", "RTX 2080 Ti",
+     "decode (T = 1) keeps R8 and the dense tuner: on the RTX 2080 Ti the vector kernel lost "
+     "decode by 10 % (9B Q4_K_M C1 88 -> 79 tok/s) and won C4 by 10 %",
+     ""},
+    // The widest call the vector kernel reads: eight columns, sixteen tokens (two passes) where the
+    // BF16 MMA is emulated.
+    {"vec_max_tokens: two passes without tensor MMA", Basis::Measured, "generic_gemm.cpp",
+     "return f.mma_tensor && !f.mma_slow ? ggml_mmq::kVecMaxColumns : 2 * "
+     "ggml_mmq::kVecMaxColumns;",
+     2, "gv100:80sm", "V100",
+     "without tensor mma.sync (Volta) a call of 9..16 tokens runs the vector kernel eight columns "
+     "at a time: V100, Gemma 4 31B Q4_K_XL MTP, draft window 10: the emulated register-MMA tiles "
+     "1.0..2.6 ms a call, 67 % of the run; the timing is at one draft window (about ten tokens), "
+     "so the sixteen-token edge itself (two passes of kVecMaxColumns) is not placed by it",
+     ""},
     // --- The widths where the speed profile's heuristic choices change (generic_gemm.h) ---
     {"kRmmaMidMinTokens", Basis::Fitted, "generic_gemm.h",
      "inline constexpr std::int32_t kRmmaMidMinTokens = 33;", 33, kSpeedFitBoards, kSpeedFitCards,
@@ -318,14 +396,24 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      ""},
     {"kStreamMaxTokens", Basis::Unknown, "generic_gemm.h",
      "inline constexpr std::int32_t kStreamMaxTokens = 512;", 512, kUnknown, kUnknown,
-     "none recorded", ""},
-    {"kTiledSpeedMinTokens", Basis::Measured, "generic_gemm.h",
+     "the widest call of the register MMA's stream regime where the BF16 MMA is emulated (Turing, "
+     "Volta; generic_gemm.h: 'through 512 where the BF16 MMA is emulated'); no timing or board is "
+     "recorded for the 512 itself",
+     ""},
+    {"kTiledSpeedMinTokens", Basis::Unknown, "generic_gemm.h",
      "inline constexpr std::int32_t kTiledSpeedMinTokens = 33;", 33,
-     "every board measured, not listed (Q4_K n = 1024 at T 64..128)", "unknown",
-     "the tiled kernel 5..7x the register MMA's at Q4_K n = 1024, T 64..128, on every board", ""},
+     "unknown (the evidence below names no board)", "unknown",
+     "from 33 tokens, the same width as kRmmaMidMinTokens; the only timing in the record is at "
+     "T 64..128 (Q4_K n = 1024: the tiled kernel 5..7x the register MMA's, on every board, below "
+     "the kSpeedFill grid), nothing at 33",
+     ""},
     {"kStagedSpeedMinTokens", Basis::Unknown, "generic_gemm.h",
      "inline constexpr std::int32_t kStagedSpeedMinTokens = 256;", 256, kUnknown, kUnknown,
-     "none recorded", ""},
+     "the staged MMA's fallback from 256 tokens, the last resort of the speed route "
+     "(generic_gemm.h); generic_gemm.cpp scores the old gate (from 256 tokens, the first tile) at "
+     "1.33..1.64 of the best on seven boards, against 1.116 for the rule that replaced it "
+     "(staged_speed_route); no timing places the 256",
+     ""},
     {"kSpeedFill", Basis::Fitted, "generic_gemm.h", "inline constexpr double kSpeedFill = 1.5;",
      1.5, kSpeedFitBoards, kSpeedFitCards,
      "1.0..2.0 cost under 0.5 % (the header's comment); the same board-held-out fit as "
@@ -377,37 +465,46 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "ggml's vector kernel's width (after ninfer-all's ggml_vec.cu); feeds vec_rule_max_tokens "
      "without tensor mma.sync; no margin recorded",
      ""},
-    {"heuristic_rmma: prefill column", Basis::Measured, "generic_gemm.cpp",
+    {"heuristic_rmma: prefill column", Basis::PlacedBetweenMeasured, "generic_gemm.cpp",
      "const bool narrow_band = tokens <= 32 || (tokens <= 64 && ctas < 2 * sm_count());", 0,
      "ad103:80sm, gb202:170sm, gb206:36sm", "RTX 4080 SUPER, RTX 5090, RTX 5060 Ti",
      "time of m1.n8 over the best: T = 17 and 32 1.48-3.21 on every problem (4080 SUPER); T = 64 "
-     "1.20-1.58 below 160 CTAs, 1.00 at 272; 5090 Q6_K output head m1.n4 best at T = 17 (1.22) "
-     "and 32 (1.54); 5060 Ti 1.60-2.14 at T = 17 and 32; in the product 4080 SUPER Qwen3.8-27B "
-     "IQ3 246.6 -> 252.9 tok/s",
+     "1.20-1.58 below 160 CTAs, 1.00 at 272, so the two-CTAs-per-SM line (160 on the 80 SMs) lies "
+     "between measured grids; 5090 Q6_K output head m1.n4 best at T = 17 (1.22) and 32 (1.54); "
+     "5060 Ti 1.60-2.14 at T = 17 and 32; in the product 4080 SUPER Qwen3.8-27B IQ3 246.6 -> "
+     "252.9 tok/s",
      ""},
-    {"heuristic_rmma: narrow through 16", Basis::Structural, "generic_gemm.cpp",
+    {"heuristic_rmma: narrow through 16", Basis::Measured, "generic_gemm.cpp",
      "if (tokens <= 16 || (split != 8 && tokens < kRmmaMidMinTokens)) return narrow();", 16,
-     kUnknown, kUnknown,
-     "the verify widths keep the decode splits; none recorded beyond kRmmaMidMinTokens' fit", ""},
+     "gb202:170sm", "RTX 5090",
+     "the comment's own words: what ninferno_route_tune measured across the recorded problems "
+     "(Qwen3.5 0.8B in four formats on an RTX 5090): at T <= 16 one 16-row M tile per CTA with K "
+     "split across the warps, and from 17 tokens outside the prefill profile the speed rule; the "
+     "second clause's 33 is kRmmaMidMinTokens (Fitted); no margin recorded; the 16 is also the "
+     "widest speculative verify, not a separate constant",
+     ""},
     {"heuristic_rmma: K split edges", Basis::Measured, "generic_gemm.cpp",
      "const int split = k >= 1024 ? 8 : k >= 512 ? 4 : 1;", 0, "gb202:170sm", "RTX 5090",
      "K split across as many warps as keep at least 128 K values each (1024 / 8, 512 / 4): what "
      "ninferno_route_tune measured across the recorded problems (Qwen3.5 0.8B in four formats); "
      "no margin recorded. invariant_rmma repeats the K edges (below)",
      ""},
-    {"invariant_rmma: K split edges", Basis::Unknown, "generic_gemm.cpp",
+    {"invariant_rmma: K split edges", Basis::Measured, "generic_gemm.cpp",
      "if (k >= 1024) return rmma_index(1, 8, 1, n_tiles); if (k >= 512) return rmma_index(1, 4, "
      "1, n_tiles);",
-     0, kUnknown, kUnknown,
-     "the decode split of K for every T (the invariant profile): the same edges as "
-     "heuristic_rmma's K split, written again as literals; no record of its own",
+     0, "gb202:170sm", "RTX 5090",
+     "the decode split of K for every T (the invariant profile's comment): the same edges as "
+     "heuristic_rmma's K split, written again as literals, so the record is that descriptor's "
+     "(ninferno_route_tune on the RTX 5090); no record of its own",
      ""},
     {"heuristic_rmma: nine to sixteen tokens", Basis::Measured, "generic_gemm.cpp",
      "} else if (tokens <= 16) {", 16, "gb203:84sm", "RTX 5080",
      "9..16 tokens (verify of an 8- or 16-token draft), RTX 5080, Q8/Q4_0/IQ4_XS/Q4_K/Q5_K/Q6_K/"
      "IQ3_XXS at 27B/31B/35B shapes: four K-split warps with two tiles 1.00-1.12 of the best of "
      "seven schedules against 1.24-1.58 for w1x8 n1 (geomean per format; at T = 24 Q8 1.35 "
-     "against 1.68)",
+     "against 1.68); the margin is held at 9..16, and the comment quotes a point at T = 24 "
+     "beyond the edge in the same comparison, so no timing places the 16 itself (it is the widest "
+     "speculative verify)",
      ""},
     {"one_wave_split: quarter of the SMs", Basis::Unknown, "generic_gemm.cpp",
      "return 4 * ctas <= sms ? rmma_index(1, 8, 1, 1, 8) : rmma_index(1, 8, 1, 1, 2);", 0,
@@ -433,14 +530,16 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      ""},
     // The rest of the speed rule's ladder (heuristic_rmma, from 17 tokens outside the prefill
     // profile): its comment fits the rule as a whole, so the waves and token-tile edges are
-    // Fitted with kSpeedFill, the Q4_K tile has its own measured margin.
-    {"heuristic_rmma: Q4_K tall tile", Basis::Measured, "generic_gemm.cpp",
+    // Fitted with kSpeedFill; the Q4_K tile's margin below is measured, its edges are not.
+    {"heuristic_rmma: Q4_K tall tile", Basis::Fitted, "generic_gemm.cpp",
      "if (!emulated && tokens >= kRmmaMidMinTokens && tall_tile_format(problem.qtype) && "
      "waves(128, 32) >= kSpeedFill) {",
      0, kSpeedFitBoards, kSpeedFitCards,
      "Q4_K: 128 rows by 32 tokens, half the activation loads per MMA of the 64x64 tile, 10..20 % "
-     "faster on every board where its tiles fill the SMs (the 64x64 tile spills where the 128x32 "
-     "tile spills less, ptxas sm_86..sm_120); the fill is kSpeedFill's",
+     "faster on all seven boards from 97 tokens (the 64x64 tile spills where the 128x32 tile "
+     "spills less, ptxas sm_86..sm_120); the rule applies from kRmmaMidMinTokens (33) where the "
+     "grid fills kSpeedFill waves, so 33..96 tokens carry no timing of their own; both edges are "
+     "Fitted constants",
      ""},
     {"heuristic_rmma: token tile ladder", Basis::Fitted, "generic_gemm.cpp",
      "if (tokens > kStreamMaxTokens || (!emulated && tokens >= kRmmaMidMinTokens && waves(64, 8 * "
@@ -469,12 +568,17 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      ""},
     // The one-wave edge of the K split, at both of its sites; the decode block's other edges
     // (tokens <= 8, ctas <= 2 * sms, ctas > 2 * sms) stay in the doc's list of omissions.
-    {"heuristic_rmma: one wave at decode widths", Basis::Unknown, "generic_gemm.cpp",
+    {"heuristic_rmma: one wave at decode widths", Basis::PlacedBetweenMeasured, "generic_gemm.cpp",
      "const std::int64_t sms = sm_count(); if (ctas <= sms) return one_wave_split(ctas, sms); if "
      "(ctas > 2 * sms && light_ggml_step(problem.qtype) &&",
-     0, kUnknown, kUnknown,
-     "T <= 8: a call of at most one CTA per SM takes one_wave_split (its own descriptor); the "
-     "record names no board or margin for the one-wave edge at these widths",
+     0, "gb202:170sm, ad102:128sm", "RTX 5090, RTX 4090",
+     "T <= 8: a call of at most one CTA per SM takes one_wave_split (its own descriptor). RTX 5090 "
+     "(170 SMs), T = 1..4: the CTA pair gains at 128..168 CTAs (2048..2688 rows: Q8 2048x4096 "
+     "23.7 -> 17.6 us, 2688x4096 25.5 -> 17.6) and 'from 176 CTAs (2816 rows) the pair only "
+     "ties'; RTX 4090 (128 SMs, sixteen K warps in one CTA): Q8 1280x4096 26.3 -> 16.2 us, "
+     "2048x4096 26.6 -> 20.5, and 'from 160 CTAs it loses' (Q4_K 2816x4096 17.4 -> 21.5): the "
+     "one-wave line (170 and 128 CTAs) sits at or above the last measured win and below the first "
+     "measured loss on both boards",
      ""},
     {"heuristic_rmma: one wave at verify widths", Basis::Measured, "generic_gemm.cpp",
      "const std::int64_t sms = sm_count(); if (ctas <= sms) return one_wave_split(ctas, sms); "
@@ -527,7 +631,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
     {"heuristic_w4a8: 33..64", Basis::Unknown, "generic_gemm.cpp",
      "if (tokens <= 64) return k64x64;", 64, kUnknown, kUnknown,
      "none recorded for the 64-token edge itself", ""},
-    {"heuristic_w4a8: wide tile grid", Basis::Unknown, "generic_gemm.cpp",
+    {"heuristic_w4a8: wide tile grid", Basis::PlacedBetweenMeasured, "generic_gemm.cpp",
      "if (2 * wide_ctas < sm_count()) return k64x64;", 0, "ad103:80sm, gb202:170sm, gb206:36sm",
      "RTX 4080 SUPER, RTX 5090, RTX 5060 Ti",
      "from 65 tokens a 128-token tile pays while its grid still gives half the SMs a CTA; the "
@@ -535,8 +639,10 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "against 128x64 below that grid: 4080 SUPER at 1024 rows (16 CTAs at T = 128, 32 at 256) "
      "1.33-1.37 for Q4_K, Q5_K and IQ4_XS; 5090 at 5120 rows and T = 128 (80 CTAs) 1.15-1.36, at "
      "1024 rows and T = 128..512 (16..64 CTAs) 1.14-1.35 for Q4_K and Q5_K, 1.07 for Q6_K; 5060 "
-     "Ti at 1024 rows and T = 128 1.19-1.50; the evidence quoted is for grids below the line, "
-     "the line (half the SMs) is not separately measured",
+     "Ti at 1024 rows and T = 128 1.19-1.50; above the line the 5090 takes 128x64 from 6144 rows "
+     "(96+ CTAs on 170 SMs, T 65..127: Q4_K 1.05-1.09, Q5_K 1.07-1.17, Q6_K 1.17-1.20) while "
+     "5120 rows (80 CTAs) stay on 64x64; the line (half the SMs) is not separately measured, it "
+     "lies between those grids",
      ""},
     {"heuristic_w4a4: widest tile that fills the SMs", Basis::Unknown, "generic_gemm.cpp",
      "if (grid(128, 128) >= sms) return 3; if (grid(64, 128) >= sms) return 2; if (grid(32, 128) "
@@ -546,12 +652,12 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "narrow ones; the comment records no board or margin for the ladder (for the prefill band "
      "it records the tuner's winner on every recorded NVFP4 problem but one, within noise)",
      ""},
-    {"invariant_rmma: token tiles", Basis::Structural, "generic_gemm.cpp",
+    {"invariant_rmma: token tiles", Basis::Unknown, "generic_gemm.cpp",
      "const int n_tiles = tokens <= 8 ? 1 : 4;", 8, kUnknown, kUnknown,
      "eight tokens per CTA through T = 8, where decode batches live; 32 above, so a prefill chunk "
      "reads each weight a quarter as often (a design choice; no margin recorded)",
      ""},
-    {"invariant_rmma: narrow K tiles", Basis::Structural, "generic_gemm.cpp",
+    {"invariant_rmma: narrow K tiles", Basis::Unknown, "generic_gemm.cpp",
      "return tokens <= 8 ? rmma_index(4, 1, 1, 1) : rmma_index(4, 1, 1, 8);", 8, kUnknown, kUnknown,
      "the same eight-token edge as invariant_rmma's token tiles, for K under 512: one 8-token "
      "tile through T = 8, eight tiles above (a design choice; no margin recorded)",
@@ -566,10 +672,11 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "Q6_K 1.17-1.20 from 6144 rows; 5060 Ti IQ2_S, IQ2_XS, IQ3_S, IQ3_XXS 1.08-1.29 at every row "
      "count; Q4_0 and the rest keep 64x64",
      ""},
-    {"rmma_wide_rule: capability floor", Basis::Unknown, "generic_gemm.cpp",
+    {"rmma_wide_rule: capability floor", Basis::Structural, "generic_gemm.cpp",
      "compute_capability >= 75 && occupancy &&", 75, kUnknown, kUnknown,
-     "the wide-load Q6_K variant is taken from compute capability 7.5 (sm_75) up; the record "
-     "names no board or margin for the floor (the bytes bound is kRmmaWideBytes)",
+     "the wide-load Q6_K variant is taken from compute capability 7.5 (sm_75) up: 'not before "
+     "sm_75 (Volta's register MMA is FMA-emulated, compute-bound)' (generic_gemm_internal.h); no "
+     "timing of its own (the bytes bound is kRmmaWideBytes)",
      ""},
     {"r8_prequantized: lower edge", Basis::Structural, "generic_gemm.cpp",
      "route.family == Family::R8Mma && call.tokens >= 2 && call.tokens <= kR8VerifyTokens &&", 2,
@@ -584,9 +691,14 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "waves; the bound itself has no margin recorded",
      ""},
     // --- Rules by a function's shape ---
-    {"tiled_speed_pays: tile", Basis::Measured, "generic_gemm.cpp",
-     "speed_waves(n, tokens, 128, 128) >= kSpeedFill", 0, "every board measured, not listed",
-     "unknown", "Q4_K n = 1024 at T 64..128: the tiled kernel 5..7x on every board below the fill",
+    {"tiled_speed_pays: tile", Basis::Fitted, "generic_gemm.cpp",
+     "speed_waves(n, tokens, 128, 128) >= kSpeedFill", 0,
+     "unknown (the comment says every board without naming them; kSpeedFill's own fit is "
+     "kSpeedFitBoards)",
+     "unknown",
+     "the edge is kSpeedFill (Fitted); the one timing in the record is below the fill: Q4_K n = "
+     "1024 at T 64..128, the tiled kernel 5..7x the register MMA's on every board; no timing "
+     "places the fill for this tile",
      ""},
     {"staged_speed_route: wave thresholds", Basis::Fitted, "generic_gemm.cpp",
      "for (const Pick p : {Pick{256, 128, 2, 2.0}, Pick{128, 64, 2, 1.0}, Pick{64, 64, 3, 0.5}}) {",
@@ -617,11 +729,23 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "one board, no weight size between the two sets is recorded, so the half-L2 line itself has "
      "no measurement behind it",
      ""},
-    {"kR8CarryDistance", Basis::PlacedBetweenMeasured, "generic_gemm.cpp",
-     "constexpr double kR8CarryDistance = 0.5;", 0.5, "ad102:128sm, ad103:80sm, ga102:82sm",
-     "RTX 4090, RTX 4080 SUPER, RTX 3090",
-     "the 4090's 80 entries on the 4080 SUPER (distance 1.2; 3 sweeps) won 41, lost 30 (to -22 %), "
-     "+0.1 % in the mean; a 4090 D or a 3090 Ti (0.17, 0.14) take their tables",
+    {"kR8CarryDistance", Basis::Unknown, "generic_gemm.cpp",
+     "constexpr double kR8CarryDistance = 0.5;", 0.5, "ad102:128sm, ad103:80sm",
+     "RTX 4090, RTX 4080 SUPER",
+     "the one measured distance is the 4090's 80 entries on the 4080 SUPER (distance 1.2; 3 "
+     "sweeps): won 41, lost 30 (to -22 %), +0.1 % in the mean; the comment names a 4090 D and a "
+     "3090 Ti (0.17, 0.14) as boards that take their tables, as a consequence of the bound, with "
+     "no timing; nothing places the 0.5",
+     ""},
+    {"kCarryDistance", Basis::Unknown, "../../core/measured_boards.h",
+     "inline constexpr double kCarryDistance = 1.0;", 1.0, "ad102:128sm, ad103:80sm",
+     "RTX 4090, RTX 4080 SUPER",
+     "how far a measured choice carries (the default bound of nearest_known_measured; "
+     "spread_smem's boards use it, and moe.cpp's): the "
+     "comment lists variants (0.17, 0.14) and near neighbours (an A40 0.43 from the A10, an RTX "
+     "5070 Ti 0.57 from the 5080) as examples and names one measured point beyond the bound, the "
+     "4090's R8 decode entries on the 4080 SUPER (1.2: won 41, lost 30, to -22 %); nothing "
+     "measured places the 1.0",
      ""},
     {"kSpreadMeasured", Basis::Measured, "generic_gemm.cpp",
      "constexpr SpreadMeasured kSpreadMeasured[] = {{measured::kRtx5090, true}, "
@@ -642,14 +766,24 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "tokens; measured at T = 1 only, SwiGLU loses (two CTAs per SM already: 116 registers); no "
      "record for the eight-token edge itself",
      ""},
-    {"spread_smem: two CTAs per SM", Basis::Structural, "generic_gemm.cpp",
+    {"spread_smem: two CTAs per SM", Basis::Unknown, "generic_gemm.cpp",
      "if (ctas > 2 * static_cast<std::int64_t>(device.sms) || pad > kStaticSharedBytesPerBlock)", 0,
      "gb202:170sm", "RTX 5090",
      "a call of at most two CTAs per SM: at 416 CTAs and more spreading loses (6656x4096 NVFP4 "
-     "9.4 -> 12.6 us on the RTX 5090); the two-per-SM line is the eight-warp CTA's residency "
-     "(three to an SM) less one, not a measured edge",
+     "9.4 -> 12.6 us on the RTX 5090, 2.4 CTAs per SM); the two-per-SM line is the eight-warp "
+     "CTA's residency (three to an SM) less one, a choice of the pad (a third of the shared "
+     "memory), not a measured edge",
      ""},
     // --- w4a8_ws_wins and its neighbour ---
+    {"w4a8_ws_extra: sm_89 and sm_120 only", Basis::Measured, "generic_gemm.cpp",
+     "return gb20x_cc(d.major, d.minor) || ada_cc(d.major, d.minor);", 0, "gb206:36sm, ad106:34sm",
+     "RTX 5060 Ti, RTX 4060 Ti",
+     "IQ4_XS, IQ2_XS, IQ2_XXS and IQ3_S take the producer-warp tile where a measured choice names "
+     "it, on sm_89 and sm_120 only: product, 24K prefill, A B B A, greedy byte-identical: RTX "
+     "5060 Ti 981 -> 1011 t/s (IQ4_XS, IQ2_XS, IQ2_XXS), RTX 4060 Ti 900 -> 901 with those and 926 "
+     "with IQ3_S on its shared-table codec; the comment also names sm_89 / sm_120 for IQ3_S "
+     "(W4a8Iq3SPaired); other architectures keep the classic tiles, not measured",
+     ""},
     {"w4a8_ws_wins: ampere", Basis::Measured, "generic_gemm.cpp", "if (ampere) return true;", 0,
      "ga102:82sm", "RTX 3090",
      "no format lost; one 16K prompt, D WS WS D: Muse 30B Q4_K_M 1278 / 1273 -> 1398 / 1399 t/s, "
@@ -657,40 +791,46 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "RTX 3090 only, taken for sm_80 and sm_86 alike",
      ""},
     {"w4a8_ws_wins: iq3xxs and iq2s", Basis::Measured, "generic_gemm.cpp",
-     "case QType::GGML_IQ2_S: return blackwell || ada;", 0, "gb203:84sm, gb202:170sm, ad102:128sm",
-     "RTX 5080, RTX 5090, RTX 4090",
+     "if (ampere) return true; switch (p.qtype) { case QType::GGML_IQ3_XXS: case "
+     "QType::GGML_IQ2_S: return blackwell || ada;",
+     0, "gb203:84sm, gb202:170sm, ad102:128sm", "RTX 5080, RTX 5090, RTX 4090",
      "W4A8 micro-bench, T = 200 and 1024, the producer-warp tile's time against the best classic "
      "tile: RTX 5080 and RTX 5090 IQ3_XXS 0.79-0.93, IQ2_S 0.86-0.95; RTX 4090 IQ3_XXS 0.78-0.94, "
      "IQ2_S 0.89-0.93; in the product on the RTX 5080: Muse 30B (IQ3_XXS, Q6_K and Q4_K layers) "
      "prefill 2103 -> 2431 t/s, Gemma 4 31B UD-IQ3_XXS (IQ3_XXS, IQ2_S) 1696 -> 1912 t/s; only the "
      "measured architectures take it",
      ""},
-    {"w4a8_ws_wins: q4_0 on ada", Basis::PlacedBetweenMeasured, "generic_gemm.cpp",
-     "return ada && p.n >= 5376 && p.k >= 5376;", 5376, "ad102:128sm", "RTX 4090",
-     "the smallest measured win; nothing between 2816 and 5376 measured, nor any sm_89 card with "
+    {"w4a8_ws_wins: q4_0 on ada", Basis::Measured, "generic_gemm.cpp",
+     "case QType::GGML_Q4_K: return blackwell; case QType::GGML_Q4_0: return ada && p.n >= 5376 && "
+     "p.k >= 5376;",
+     5376, "ad102:128sm", "RTX 4090",
+     "the smallest measured win (every problem of Gemma 4 31B QAT is 5376 or more each way); the "
+     "26B QAT's 2816 loses; nothing between 2816 and 5376 measured, nor any sm_89 card with "
      "less L2 than the 4090's 72 MB (Gemma 4 31B QAT prefill 1914 -> 2149 t/s; the 26B QAT keeps "
      "64x64: 0.357 -> 0.383 s a prompt)",
      ""},
     {"w4a8_ws_wins: q6k blackwell only", Basis::Measured, "generic_gemm.cpp",
-     "case QType::GGML_Q6_K: return blackwell;", 0, "gb203:84sm, gb202:170sm, ad102:128sm",
-     "RTX 5080, RTX 5090, RTX 4090",
+     "return blackwell || ada; case QType::GGML_Q6_K: return blackwell;", 0,
+     "gb203:84sm, gb202:170sm, ad102:128sm", "RTX 5080, RTX 5090, RTX 4090",
      "W4A8 micro-bench, T = 200 and 1024, the producer-warp tile against the best classic tile: "
      "Q6_K 0.90-0.98 on the RTX 5080 and RTX 5090; Q6_K on sm_89 lost 2.2 % once the tiles run "
      "token-major (RTX 4090, Muse 30B Q4_K_M, 16K prompt: 2935 -> 2997 t/s without the tile; the "
      "micro-bench there has Q6_K Store 0.95-0.96 and SwiGLU 1.10)",
      ""},
     {"w4a8_ws_wins: q4k blackwell only", Basis::Measured, "generic_gemm.cpp",
-     "case QType::GGML_Q4_K: return blackwell;", 0, "gb203:84sm, gb202:170sm, ad102:128sm",
-     "RTX 5080, RTX 5090, RTX 4090",
+     "case QType::GGML_Q6_K: return blackwell; case QType::GGML_Q4_K: return blackwell;", 0,
+     "gb203:84sm, gb202:170sm, ad102:128sm", "RTX 5080, RTX 5090, RTX 4090",
      "W4A8 micro-bench, T = 200 and 1024, the producer-warp tile against the best classic tile: "
      "Q4_K 0.88-0.95 on the RTX 5080 and RTX 5090; on the RTX 4090 Q4_K lost (1.06-1.13) and "
      "takes the wide tile instead (w4a8_wide_q4k)",
      ""},
-    {"w4a8_wide_q4k: grid bound", Basis::Measured, "generic_gemm.cpp",
+    {"w4a8_wide_q4k: grid bound", Basis::PlacedBetweenMeasured, "generic_gemm.cpp",
      "4 * ctas >= 3 * static_cast<std::int64_t>(d.sms)", 0, "ad102:128sm", "RTX 4090",
      "a grid of three quarters of the SMs or more (4 * ctas >= 3 * SMs); Muse 30B Q4_K_M "
      "micro-bench against the classic 128x64 at T = 1024 / 512 / 200: 0.86-0.98 where the grid "
-     "fills three quarters of the SMs, 1.65-1.71 under it (64 CTAs)",
+     "fills three quarters of the SMs, 1.65-1.71 under it (64 CTAs); the points are 64 CTAs "
+     "(4096x6656 at T = 200: 1.65) and 104 (6656x19968 at T = 200: 0.87) on 128 SMs, so the line "
+     "at 96 lies between them",
      ""},
     // --- rules_r8's thresholds ---
     {"rules_r8: verify branch from two tokens", Basis::Structural, "generic_gemm.cpp",
@@ -701,16 +841,23 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      ""},
     {"rules_r8: iq2 two rows", Basis::Unknown, "generic_gemm.cpp",
      "iq2 && (tokens >= 4 || p.n >= 34816) ? r8_index(4, 2) : r8_index(4, 1);", 0, kUnknown,
-     kUnknown, "within 3 % of the best schedule elsewhere (27B/31B/35B verify shapes)", ""},
+     kUnknown,
+     "the comment says 'within 3 % of the best schedule elsewhere' on the 27B/31B/35B verify "
+     "shapes and names no board; the same shapes are the ones generic_gemm.h's verify comment "
+     "measured on the RTX 5080 (gb203:84sm), which this comment does not repeat",
+     ""},
     {"rules_r8: turing eight warps", Basis::Measured, "generic_gemm.cpp",
-     "if (decode_heavy && p.k >= 5120) return r8_index(8, 2);", 5120, "tu102:68sm", "RTX 2080 Ti",
+     "if (!device_class().features.mma_bf16_native) { const bool decode_heavy = "
+     "format_traits(p.qtype).decode_heavy; if (decode_heavy && p.k >= 5120) return r8_index(8, 2);",
+     5120, "tu102:68sm", "RTX 2080 Ti",
      "ninferno_r8_schedule_bench on the IQ3 16 GB artifacts' 63 problems: the picks +6.25 % above "
      "the best schedules in sum (IQ3_XXS 17408x5120 110.2 -> 84.5 us, IQ3_S 131.3 -> 114.2, Q3_K "
      "112.9 -> 89.0)",
      ""},
     {"rules_r8: turing q6k two rows", Basis::Measured, "generic_gemm.cpp",
-     "p.epilogue != Epilogue::SwiGlu && (p.n >= 8192 || p.k >= 4096)) return r8_index(4, 2);", 0,
-     "tu102:68sm", "RTX 2080 Ti",
+     "return r8_index(4, 1); if (p.qtype == QType::GGML_Q6_K && p.epilogue != Epilogue::SwiGlu && "
+     "(p.n >= 8192 || p.k >= 4096)) return r8_index(4, 2);",
+     0, "tu102:68sm", "RTX 2080 Ti",
      "N >= 8192 or K >= 4096: the 248320x2048 lm_head 807 -> 723 us, 2816x8192 w8r2 42.3 -> w4r2 "
      "40.3",
      ""},
@@ -722,51 +869,77 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "kernels between launches)",
      ""},
     {"rules_r8: q3k four warps", Basis::Measured, "generic_gemm.cpp",
-     "if (p.qtype == QType::GGML_Q3_K && p.k >= 8192) return r8_index(4, 1);", 8192,
-     "gb206:36sm, ad103:80sm", "RTX 5060 Ti, RTX 4080 SUPER, RTX 4070 Ti SUPER",
+     "return r8_index(4, 2); } if (p.qtype == QType::GGML_Q3_K && p.k >= 8192) return "
+     "r8_index(4, 1);",
+     8192, "gb206:36sm, ad103:80sm", "RTX 5060 Ti, RTX 4080 SUPER, RTX 4070 Ti SUPER",
      "Qwen3.8's 5120x17408 add is 7-10 % faster so (113.2 -> 103.0, 64.8 -> 60.3, 73.0 -> 66.3 "
      "us); the RTX 4070 Ti SUPER's class id is not named in the comment",
      ""},
     {"rules_r8: wide K", Basis::Measured, "generic_gemm.cpp",
-     "if (p.k >= 8192 || (iq2 && p.n >= 12288)) return r8_index(8, 2);", 0, "gb203:84sm",
-     "RTX 5080",
+     "if (p.qtype == QType::GGML_Q3_K && p.k >= 8192) return r8_index(4, 1); if (p.k >= 8192 || "
+     "(iq2 && p.n >= 12288)) return r8_index(8, 2);",
+     0, "gb203:84sm", "RTX 5080",
      "K >= 8192, or N >= 12288 for IQ2: Qwen3.5-4B/9B shapes: IQ3_XXS 4096x12288 32.1 -> 27.9 us, "
      "IQ2_S 12288x4096 28.3 -> 24.9 us; the ggml blocks and K-quants follow the K rule within 2 % "
      "of their best schedule",
      ""},
-    {"rules_r8: blackwell branch gate", Basis::Unknown, "generic_gemm.cpp",
-     "if (p.epilogue != Epilogue::SwiGlu && p.k >= 5120 && "
-     "consumer_blackwell_major(device_class().major)) {",
-     5120, "gb206:36sm, gb203:84sm, gb202:170sm (the boards of the rules inside it)",
-     "RTX 5060 Ti, RTX 5080, RTX 5090",
+    {"rules_r8: blackwell branch gate", Basis::PlacedBetweenMeasured, "generic_gemm.cpp",
+     "if (p.k >= 8192 || (iq2 && p.n >= 12288)) return r8_index(8, 2); if (p.epilogue != "
+     "Epilogue::SwiGlu && p.k >= 5120 && consumer_blackwell_major(device_class().major)) {",
+     5120, "gb203:84sm, gb206:36sm, gb202:170sm", "RTX 5080, RTX 5060 Ti, RTX 5090",
      "the gate of the four Blackwell rules below: every shape their comments cite has 5120 or "
-     "5376 as its K (10240x5120, 17408x5120, 16384x5120, 8192x5376, 43008x5376); no measurement "
-     "places the K = 5120 edge itself, and none below it on Blackwell is recorded",
+     "5376 as its K (10240x5120, 17408x5120, 16384x5120, 8192x5376, 43008x5376); on the RTX 5080 "
+     "(T = 1, store epilogue) 'at K <= 4096, w4r1 is ahead at every N' and the gains start at "
+     "K = 5120..6656 (5120x6144 gains 1 %), so the edge is placed between 4096 and 5120 and no "
+     "timing sits between them; the RTX 5060 Ti's problems are at K = 5120",
      ""},
     {"rules_r8: blackwell iq2 from N 5120", Basis::Measured, "generic_gemm.cpp",
-     "if (iq2 && p.n >= 5120) return r8_index(8, 2);", 5120, "gb206:36sm, gb203:84sm, gb202:170sm",
-     "RTX 5060 Ti, RTX 5080, RTX 5090",
+     "consumer_blackwell_major(device_class().major)) { if (iq2 && p.n >= 5120) return "
+     "r8_index(8, 2);",
+     5120, "gb206:36sm, gb203:84sm, gb202:170sm", "RTX 5060 Ti, RTX 5080, RTX 5090",
      "IQ2_S 10240x5120 w4r2 29.9 -> w8r2 20.1 us (still gains at 170 SMs: the 5090); IQ2_XXS "
      "10240x5120 43.5 -> 40.0, IQ2_XS "
      "17408x5120 83.6 -> 79.4 (5060 Ti)",
      ""},
     {"rules_r8: blackwell sm count", Basis::PlacedBetweenMeasured, "generic_gemm.cpp",
-     "if (device_class().sms <= 96) {", 96, "gb203:84sm, gb202:170sm", "RTX 5080, RTX 5090",
+     "if (iq2 && p.n >= 5120) return r8_index(8, 2); if (device_class().sms <= 96) {", 96,
+     "gb203:84sm, gb202:170sm", "RTX 5080, RTX 5090",
      "an SM-count rule whose edge lies between the measured boards (84 and 170 SMs; no board "
      "between; docs/maintainer/deterministic-decisions.md lists it among the rules resting on few "
      "boards): 10240x5120 IQ3_S w4r1 18.4 us against w8r2 20.3 at 170, IQ3_XXS 16.0 against 18.0",
      ""},
     {"rules_r8: blackwell iq3s", Basis::Measured, "generic_gemm.cpp",
-     "if (p.qtype == QType::GGML_IQ3_S && p.n >= 5120) return r8_index(8, 2);", 5120,
-     "gb203:84sm, gb206:36sm", "RTX 5080, RTX 5060 Ti",
+     "if (device_class().sms <= 96) { if (p.qtype == QType::GGML_IQ3_S && p.n >= 5120) return "
+     "r8_index(8, 2);",
+     5120, "gb203:84sm, gb206:36sm", "RTX 5080, RTX 5060 Ti",
      "IQ3_S 8192x5376 28.5 -> 27.5 us (5080); 16384x5120 w4r1 100.6 -> 94.5 (5060 Ti)", ""},
     {"rules_r8: blackwell iq3xxs", Basis::Measured, "generic_gemm.cpp",
-     "if (p.qtype == QType::GGML_IQ3_XXS && p.n >= 5120) return r8_index(4, 2);", 5120,
-     "gb203:84sm, gb206:36sm", "RTX 5080, RTX 5060 Ti",
+     "if (p.qtype == QType::GGML_IQ3_S && p.n >= 5120) return r8_index(8, 2); if (p.qtype == "
+     "QType::GGML_IQ3_XXS && p.n >= 5120) return r8_index(4, 2); } }",
+     5120, "gb203:84sm, gb206:36sm", "RTX 5080, RTX 5060 Ti",
      "IQ3_XXS 43008x5376 112.9 -> 106.6 us (5080); 16384x5120 92.8 -> 82.5 (5060 Ti)", ""},
     {"rules_r8: iq2 two rows from N 4096", Basis::Measured, "generic_gemm.cpp",
-     "if (iq2 && p.n >= 4096) return r8_index(4, 2);", 4096, "gb203:84sm", "RTX 5080",
-     "IQ2_XS 9216x2560 14.1 -> 12.8 us", ""},
+     "return r8_index(4, 2); } } if (iq2 && p.n >= 4096) return r8_index(4, 2); return "
+     "r8_index(4, 1); }",
+     4096, "gb203:84sm", "RTX 5080", "IQ2_XS 9216x2560 14.1 -> 12.8 us", ""},
+    // --- ggml's vector kernel's launch (ggml_mmq/ggml_vec.cu) ---
+    {"kVecWarps", Basis::Structural, "ggml_mmq/ggml_vec.cu", "constexpr int kVecWarps = 4;", 4,
+     kUnknown, kUnknown,
+     "the vector kernel's warps a CTA: 128 threads, the CTA size the resident-CTA count of "
+     "kVecBoundedBlocks is counted for; a count of the kernel, no margin",
+     ""},
+    {"kVecBoundedBlocks", Basis::Structural, "ggml_mmq/ggml_vec.cu",
+     "constexpr int kVecBoundedBlocks = 7;", 7, "tu102:68sm, ad102:128sm",
+     "RTX 2080 Ti, RTX 4090 (for the timings; the comment also names an 82-SM card, not by "
+     "product)",
+     "the bounded twin of the runtime-K plain instance of 4 columns holds 7 resident CTAs per SM "
+     "(__launch_bounds__' minimum): the registers of the 3-column instance, 72 against the 85 the "
+     "unbounded one takes, which is 5 CTAs of 128 threads on a 64K-register SM instead of 7. The "
+     "launch takes the twin only where that saves a round of row groups (a counted saving), "
+     "'deliberately conservative': the twin is 11..22 % faster on a 2080 Ti even where it is not "
+     "taken, and 9 % slower on a 4090 at 1024 groups with 2 rounds either way; the 7 is a "
+     "register count, the other numbers are timings that do not place it",
+     ""},
 });
 
 } // namespace ninferno::ops::detail::generic::route_rules
