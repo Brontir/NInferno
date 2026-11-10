@@ -165,6 +165,10 @@ std::vector<Route> catalogue() {
     return routes;
 }
 
+std::string label(Route r) {
+    return std::string(catalogue_family_name(r.family)) + "#" + std::to_string(r.schedule);
+}
+
 // The names of the catalogue's routes are distinct and parse back to the route (a schedule moved
 // to another family or renumbered keeps its name pointing at the same tile).
 void check_names(const std::vector<Route>& routes, const std::string& board) {
@@ -177,10 +181,6 @@ void check_names(const std::vector<Route>& routes, const std::string& board) {
         if (!back || !(*back == r))
             fail(board + " " + label(r) + ": '" + name + "' does not parse back");
     }
-}
-
-std::string label(Route r) {
-    return std::string(catalogue_family_name(r.family)) + "#" + std::to_string(r.schedule);
 }
 
 // ---- the fields of a route, on their own
