@@ -388,6 +388,21 @@ struct MoeRouteEntry {
     MoeRouteKey key;
     std::vector<MoeRouteBand> bands;
     std::optional<MoePlan> prefill;
+    // Provenance of the entry: the table class that lent it to the table it sits in (empty: the
+    // table's own) and that table's distance (table_distance) when it was lent.
+    std::string lender;
+    double lender_distance = 0;
+};
+
+// Where the route-table entry of a layer key comes from (table_origin): the active table's class
+// and its distance from this device, own (keyed by a class of the device's chain), and, for an
+// entry lent by another table (fill_from), that table's class and distance.
+struct MoeTableOrigin {
+    std::string table_class;
+    double table_distance = 0;
+    bool own              = false;
+    std::string lender;
+    double lender_distance = 0;
 };
 // The load-time tuner (moe_tune.cpp): decode widths it covers, its plan for the layer at T
 // (nullopt: not tuned, or the default stays), and select_plan without it (the route table, else
@@ -397,6 +412,69 @@ inline constexpr std::int32_t kTuneMaxTokens = 16;
                                                 std::int32_t tokens);
 [[nodiscard]] MoePlan untuned_plan(const MoeWeights& weights, const MoeConfig& config,
                                    std::int32_t tokens, bool prefill);
+
+// Which authority of select_plan's cascade answered (#616): the plan's reason, for the plan
+// goldens (tests/ops/test_moe_plan_golden.cpp) and the manifest.
+enum class MoeAuthority {
+    Invariant,       // the invariant profile's fixed streaming K split
+    Tuner,           // the load-time tuner's plan
+    TableAsMeasured, // a route-table band, as measured
+    TableW4a8,       // a route-table band, the grouped W4A8 on top of its schedules
+    TableClassA8,    // a route-table band of register-MMA stages, the class's A8 gate/up on top
+    TableR8Refused,  // a route-table band whose R8 stages this layer does not admit
+    VoltaHmma,       // T >= 17 on a build without mma.sync
+    PrefillW4a8,     // a prefill call of T >= 17 on the grouped W4A8
+    PrefillSchedule, // a prefill call of T >= 17 on the one register-MMA prefill schedule
+    SpeedW4a8,       // a wide call outside the prefill profile on the grouped W4A8
+    SpeedSchedule,   // T >= 64 outside the prefill band, the grouped W4A8 refused: plan_for's wide
+                     // one
+    DecodeR8,        // decode width, the class's default A8 route
+    DecodeStreaming, // decode width, the streaming register-MMA schedule
+};
+[[nodiscard]] const char* authority_name(MoeAuthority authority);
+
+// What an answer rests on, in the kinds and names of generic::Evidence (route_authorities.h,
+// #614): Pin (a maintainer's choice), Measured (timed on this board), Ranker (the cost model, or a
+// rule: a derivation from facts or a literal), Carried (a measurement of a board within
+// kCarryDistance), Transferred (a farther board's), Borrowed (an entry lent by another table).
+// Local to moe until #614 lands; then this becomes that type.
+struct Evidence {
+    enum class Kind : std::uint8_t { Pin, Measured, Ranker, Carried, Transferred, Borrowed };
+    enum class Ranker : std::uint8_t { None, Cost, Rule };
+    Kind kind     = Kind::Ranker;
+    Ranker ranker = Ranker::Rule; // Kind::Ranker: which ranker; None otherwise
+    std::string_view source;      // the authority's name (authority_order())
+    std::string donor;            // the board or table class a Carried answer was measured on
+    double distance = 0;          // board_distance to the donor (0: this board)
+
+    // An overlay on the answer's base: the route-table band that the class's A8 route changed
+    // names the A8 route's provenance here (kind, donor, distance), while the fields above stay
+    // the band's.
+    struct Overlay {
+        Kind kind = Kind::Ranker;
+        std::string donor;
+        double distance = 0;
+    };
+
+    std::optional<Overlay> overlay;
+};
+
+[[nodiscard]] const char* evidence_kind_name(Evidence::Kind kind);
+
+struct MoePlanQuery {
+    MoePlan plan;
+    MoeAuthority authority = MoeAuthority::DecodeStreaming;
+    Evidence evidence;
+};
+
+// The authorities select_plan asks, in the order it asks them; the first to answer decides.
+[[nodiscard]] std::vector<std::string_view> authority_order();
+// Where the class's A8 route comes from, as Evidence (the golden test compares answers against it).
+[[nodiscard]] Evidence class_a8_route_evidence();
+
+// select_plan with its reason; pure (no kernel runs, no device memory read).
+[[nodiscard]] MoePlanQuery moe_plan_query(const MoeWeights& weights, const MoeConfig& config,
+                                          std::int32_t tokens, bool prefill);
 [[nodiscard]] bool table_covers(const MoeWeights& weights, const MoeConfig& config,
                                 std::int32_t tokens);
 // Forgets every tuned plan (tests).
@@ -405,6 +483,8 @@ void clear_tuned_plans();
 [[nodiscard]] std::optional<MoePlan> table_plan(const MoeRouteKey& key, std::int32_t tokens,
                                                 bool prefill);
 [[nodiscard]] MoeRouteKey route_key(const MoeWeights& weights, const MoeConfig& config);
+// The provenance of the active table's entry for `key` (nullopt: none).
+[[nodiscard]] std::optional<MoeTableOrigin> table_origin(const MoeRouteKey& key);
 
 // One grouped-GEMM launch of `stage` on a compiled schedule over `grid`; `frag`: the weight is a
 // ggml_frag_v1 bank (core/ggml_frag.h), read by the format's fragment-order decoder.

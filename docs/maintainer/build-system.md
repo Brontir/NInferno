@@ -22,6 +22,7 @@ The default configuration is Release. Ninja links and archives share the single-
 | `NINFERNO_BUILD_APPS` | ON | the executables of `apps/` (CLI, server, page, converter, perplexity, dispatcher, family CLIs) |
 | `BUILD_TESTING` | OFF | C++ tests and registered Python interoperability tests |
 | `NINFERNO_BUILD_BENCHMARKS` | OFF | Op, model, Engine and context-cost benchmarks |
+| `NINFERNO_WARNINGS` | OFF | host C++ warnings (`-Wall -Wextra -Wunused` without `-Wmissing-field-initializers`, errors on `return-type` and `unused-function`) for the directories that opt in with `ninferno_directory_warnings()`: `src/product`, `src/runtime` and `src/spec` and what they contain; the other directories are follow-ups of issue #611. CUDA translation units (nvcc) and MSVC builds do not get these flags; never `third_party` |
 | `NINFERNO_UI_CHAT` | ON | download llama-ui's chat bundle for `ninferno-ui` (see below) |
 | `NINFERNO_VOLTA_CUTLASS` | ON | CUTLASS sm_70 GEMM for Volta prefill (`sm_70` trees; fetched) |
 | `NINFERNO_CUDA_EMBED_PTX` | OFF | embed each architecture's PTX beside its SASS (JIT on a later GPU) |
