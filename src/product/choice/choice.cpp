@@ -1799,17 +1799,17 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         std::string(kv_cache_storage_name(c.candidate.kv)) + ", activations " +
         activation_name(c.candidate.activations) +
         (out.by_worth
-             ? ": the best worth on the " + std::string(generation_of(card)) + " reference card (" +
+             ? (resolved ? ": the more accurate one inside the speed estimate's resolution (" +
+                               fixed(100 * out.resolution, 1) + " %) of the best worth"
+                         : std::string(": the best worth")) +
+                   " on the " + std::string(generation_of(card)) + " reference card (" +
                    fixed(c.decision_seconds, 2) + " s on " + request_mix_text(priced) +
                    " there, KLD " + fixed(c.accuracy.kld, 4) + ")"
              : ": the family's defaults (" + defaults_why + ")") +
         (out.chunk_by_speed ? "; chunk " + std::to_string(c.candidate.chunk) +
                                   ": the fastest prefill on the reference card"
                             : "") +
-        (model.drafters.empty() ? std::string() : "; speculation " + c.drafter) +
-        (resolved ? "; inside the speed estimate's resolution (" + fixed(100 * out.resolution, 1) +
-                        " %) of the best worth, the more accurate one"
-                  : "");
+        (model.drafters.empty() ? std::string() : "; speculation " + c.drafter);
     // The coupled storages' other values beside the chosen (to explain them; never chosen).
     std::vector<Candidate> variants;
     if (model.recurrent && !pins.state) {

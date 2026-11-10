@@ -935,16 +935,17 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                                    served->choice.anchor_worth});
             top = std::max(top, served_rows.back().anchor_worth);
         }
-        // Within the band of the best worth (each row's anchor worth: the speed allowance of a
-        // row's own choice is spent inside it, #301): the lower KLD, then the higher worth, then
-        // the rule's order.
+        // Within the band of the best worth served (the rows' anchors, #301): a row is eligible by
+        // the worth of the configuration it would serve, so a row whose choice already moved inside
+        // its own resolution cannot trail the top by more than one band in all. Then the lower KLD,
+        // then the higher worth, then the rule's order.
         std::optional<std::size_t> best;
         double best_worth           = 0;
         std::uint32_t best_context  = 0;
         choice::Scored best_scored;
         for (const Served& s : served_rows) {
-            if (s.anchor_worth < top - band) { continue; }
-            const double worth = s.anchor_worth;
+            if (s.scored.worth < top - band) { continue; }
+            const double worth = s.scored.worth;
             const double kld   = s.scored.accuracy.kld;
             const bool wins =
                 !best || kld < best_scored.accuracy.kld - choice::kWorthTie ||
