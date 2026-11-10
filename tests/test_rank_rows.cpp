@@ -53,11 +53,12 @@ std::optional<std::size_t> legacy_best(const std::vector<pr::RankedRow>& rows, d
     for (std::size_t i = 0; i < rows.size(); ++i) {
         const auto& s = rows[i];
         if (s.worth < top - band) { continue; }
-        const bool wins = !best || s.kld < best_kld - ninferno::choice::kWorthTie ||
-                          (std::abs(s.kld - best_kld) <= ninferno::choice::kWorthTie &&
-                           (s.worth > best_worth + ninferno::choice::kWorthTie ||
-                            (std::abs(s.worth - best_worth) <= ninferno::choice::kWorthTie &&
-                             rt::quant_ranks_above(s.candidate, rows[*best].candidate))));
+        const bool wins =
+            !best || s.kld < best_kld - ninferno::product::choice::kWorthTie ||
+            (std::abs(s.kld - best_kld) <= ninferno::product::choice::kWorthTie &&
+             (s.worth > best_worth + ninferno::product::choice::kWorthTie ||
+              (std::abs(s.worth - best_worth) <= ninferno::product::choice::kWorthTie &&
+               rt::quant_ranks_above(s.candidate, rows[*best].candidate))));
         if (wins) {
             best       = i;
             best_worth = s.worth;
