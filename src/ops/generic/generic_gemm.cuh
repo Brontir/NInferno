@@ -2223,9 +2223,9 @@ constexpr bool decoder_matches_geometry(std::string_view name) {
 }
 
 // Pins the row `name` to the decoder (constants equal) and records that the decoder has one.
-#define NINFERNO_DECODER_GEOMETRY_ROW(name, ...)\
-    static_assert(decoder_matches_geometry<__VA_ARGS__>(name));\
-    template <>\
+#define NINFERNO_DECODER_GEOMETRY_ROW(name, ...)                                                   \
+    static_assert(decoder_matches_geometry<__VA_ARGS__>(name));                                    \
+    template <>                                                                                    \
     struct HasGeometryRow<__VA_ARGS__> : std::true_type {};
 
 NINFERNO_DECODER_GEOMETRY_ROW("GgmlIq1MDecoder", GgmlIq1MDecoder)
@@ -3231,8 +3231,8 @@ __global__
 __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Latency>)) void
     rmma_kernel(
     GemmArgs a) {
-    // The shared-memory geometry (rmma_geometry.h) prices a decoder by its kDecoderGeometry row: one
-    // with a table, staging or a group tail and no row would be priced 0.
+    // The shared-memory geometry (rmma_geometry.h) prices a decoder by its kDecoderGeometry row:
+    // one with a table, staging or a group tail and no row would be priced 0.
     static_assert(HasGeometryRow<Decoder>::value ||
                       !(TableOf<Decoder>::value || StageActsOf<Decoder>::value ||
                         GroupTailOf<Decoder>::value),
