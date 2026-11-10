@@ -131,7 +131,7 @@ constexpr NamedAuthority kSelectAuthorities[] = {
 // An NVFP4 A16 call of 17 tokens or more: the scope of the half-L2 rule, and the calls the rest of
 // the automatic selection treats as the prefill profile's (nvfp4_promoted).
 bool nvfp4_a16_wide(const Ask& ask, const Problem& problem, const Weight& weight) {
-    return problem.qtype == QType::NVFP4 && ask.tokens >= 17 &&
+    return problem.qtype == QType::NVFP4 && ask.tokens >= kPrefillBandMinTokens &&
            !allows_w4a4(weight, problem.policy) && !allows_w4a8(weight, problem.policy);
 }
 
@@ -174,7 +174,7 @@ Ask nvfp4_promoted(const Ask& ask, const Problem& problem, const Weight& weight)
 // W4A8 heuristic (route tables hold A16 schedules only: compute_class keys these formats as a16
 // whatever the policy), an R8 call likewise, and ggml's kernels stand in for the heuristic only.
 bool a8_wide_call(const Ask& ask, const Problem& problem, const Weight& weight) {
-    return ask.tokens >= 17 && allows_w4a8(weight, problem.policy);
+    return ask.tokens >= kPrefillBandMinTokens && allows_w4a8(weight, problem.policy);
 }
 
 bool a8_call(const Ask& ask, const Problem& problem, const Weight& weight) {
@@ -191,11 +191,8 @@ std::optional<RouteAnswer> route_table_entry(const Ask& ask, const Problem& prob
     if (a8_call(ask, problem, weight)) return std::nullopt;
     const auto hit = table_route_answer(problem, ask.tokens, ask.prefill());
     if (!hit) return std::nullopt;
-    const bool prefill_band = ask.prefill_band();
     if (!route_admits(hit->route, weight, problem.policy) ||
-        (prefill_band && !route_is_token_invariant(hit->route)) ||
-        (prefill_band && supports(weight) && tiled_supports(codec_of(weight)) &&
-         hit->route.family != Family::TiledMma)) {
+        !profile_admits(hit->route, ask, &weight)) {
         return std::nullopt;
     }
     Evidence e;
@@ -241,7 +238,8 @@ std::optional<RouteAnswer> dense_tune_prefill_band(const Ask& ask, const Problem
     const auto band = tuned_prefill_route(problem, ask.tokens, heuristic);
     if (!band || !route_admits(*band, weight, problem.policy)) return std::nullopt;
     if ((band->family == Family::W4a8Mma && heuristic.family == Family::W4a8Mma) ||
-        (ask.prefill() && band->family != Family::W4a8Mma && same_summation(*band, heuristic))) {
+        (ask.prefill() && band->family != Family::W4a8Mma &&
+         profile_admits_as(*band, ask, heuristic))) {
         return measured_here(*band, "dense-tune-prefill-band");
     }
     return std::nullopt;
@@ -258,7 +256,8 @@ constexpr NamedAuthority kAutoAuthorities[] = {
 // A4 only where the policy allows it, and never at T <= 16, which is where decode and speculative
 // verify run.
 std::optional<RouteAnswer> w4a4_rule(const Ask& ask, const Problem& problem, const Weight& weight) {
-    if (ask.tokens < 17 || !allows_w4a4(weight, problem.policy)) return std::nullopt;
+    if (ask.tokens < kPrefillBandMinTokens || !allows_w4a4(weight, problem.policy))
+        return std::nullopt;
     const Route r{Family::W4a4Mma, static_cast<std::uint8_t>(
                                        heuristic_w4a4(problem.n, ask.tokens, ask.prefill_band()))};
     if (route_admits(r, weight, problem.policy)) return by_rule(r, "w4a4-rule");
@@ -283,7 +282,8 @@ std::optional<RouteAnswer> vec_kernel_rule(const Ask& ask, const Problem& proble
 // (cost_route, a8_candidates); the rules below where the device reports no clocks.
 std::optional<RouteAnswer> cost_model(const Ask& ask, const Problem& problem,
                                       const Weight& weight) {
-    if (ask.prefill_band() || ask.tokens < 17 || problem.qtype == QType::NVFP4) return std::nullopt;
+    if (ask.prefill_band() || ask.tokens < kPrefillBandMinTokens || problem.qtype == QType::NVFP4)
+        return std::nullopt;
     if (const auto r = cost_route(problem, weight, ask.tokens)) {
         return RouteAnswer{*r,
                            Evidence{Evidence::Kind::Ranker, Evidence::Ranker::Cost, "cost-model"}};
@@ -323,7 +323,8 @@ std::optional<RouteAnswer> r8_schedule(const Ask& ask, const Problem& problem,
 // distance).
 std::optional<RouteAnswer> mmq_prefill_gate(const Ask& ask, const Problem& problem,
                                             const Weight& weight) {
-    if (ask.tokens < 17 || !mmq_prefill_wins(problem, weight)) return std::nullopt;
+    if (ask.tokens < kPrefillBandMinTokens || !mmq_prefill_wins(problem, weight))
+        return std::nullopt;
     const measured::GateAnswer gate = mmq_prefill_device_gate();
     Evidence e;
     e.ranker   = Evidence::Ranker::None;
@@ -355,7 +356,7 @@ std::optional<RouteAnswer> mmq_prefill_gate(const Ask& ask, const Problem& probl
 
 // The I8 tile of a call from 17 tokens (i8_route: the cost rule over its tiles).
 std::optional<RouteAnswer> i8_rule(const Ask& ask, const Problem& problem, const Weight& weight) {
-    if (ask.tokens < 17) return std::nullopt;
+    if (ask.tokens < kPrefillBandMinTokens) return std::nullopt;
     if (const auto r = i8_route(problem, weight, ask.tokens)) return by_rule(*r, "i8-rule");
     return std::nullopt;
 }
@@ -363,7 +364,8 @@ std::optional<RouteAnswer> i8_rule(const Ask& ask, const Problem& problem, const
 // The W4A8 tile from 17 tokens where the policy allows it (w4a8_route: the W4A8 rules' tile, else
 // the first schedule that fits the build).
 std::optional<RouteAnswer> w4a8_rule(const Ask& ask, const Problem& problem, const Weight& weight) {
-    if (ask.tokens < 17 || !allows_w4a8(weight, problem.policy)) return std::nullopt;
+    if (ask.tokens < kPrefillBandMinTokens || !allows_w4a8(weight, problem.policy))
+        return std::nullopt;
     if (const auto r = w4a8_route(problem, weight, ask.tokens)) return by_rule(*r, "w4a8-rule");
     return std::nullopt;
 }
@@ -475,6 +477,17 @@ constexpr NamedAuthority kRuleAuthorities[] = {
 };
 
 } // namespace
+
+bool profile_admits(Route route, const Ask& ask, const Weight* weight) {
+    if (!ask.prefill_band()) return true;
+    if (!route_is_token_invariant(route)) return false;
+    return !(weight != nullptr && supports(*weight) && tiled_supports(codec_of(*weight)) &&
+             route.family != Family::TiledMma);
+}
+
+bool profile_admits_as(Route route, const Ask& ask, Route reference) {
+    return !ask.prefill() || same_summation(route, reference);
+}
 
 Ask resolve_ask(std::int32_t tokens, bool prefill) {
     return Ask{invariant_routes_active() ? Profile::Invariant

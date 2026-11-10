@@ -66,3 +66,6 @@ profiles/
 # Claude Code personal/local settings (may contain API tokens)
 .claude/settings.local.json
 Testing/
+
+# Site-specific list of test machines for tools/audit/affected_arches.py
+tools/audit/stands.local.json
