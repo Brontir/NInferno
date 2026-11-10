@@ -777,9 +777,6 @@ Json choice_json(const ServedChoice& served) {
             gain["depth_measured"] = in_force->measured;
         }
         if (!plain && streams > 1 && d.joint_priced_at(streams)) {
-            // The one-request gain at the depth this load drafts times R_1 / R_C, the round cost's
-            // price of the streams' rows verified together (spec/round_cost.h).
-            gain["joint_verify_scale"] = round_to(d.joint_scale_at(streams), 3);
             // The count the gain comes from, as speedup_at takes it: the price at exactly this
             // count (else the one-request gain, 0 here), held to the least price at a smaller one.
             double least            = d.base_gain_at(streams);
@@ -799,6 +796,11 @@ Json choice_json(const ServedChoice& served) {
                     held_from = j.streams;
                 }
             }
+            // The one-request gain at the depth this load drafts times R_1 / R_C, the round cost's
+            // price of the streams' rows verified together (spec/round_cost.h): only where a price
+            // supplies the gain, not where every earlier entry is an unmeasured bound's
+            // placeholder.
+            if (held_from != 0) gain["joint_verify_scale"] = round_to(d.joint_scale_at(streams), 3);
             if (held_from == 0) {
                 gain["note"] = "a ceiling: one request's gain at the depth this load drafts; the "
                                "verify of the streams' rows together is not priced";

@@ -161,6 +161,15 @@ void test_gain_note_names_where_the_price_is_held_from() {
               unmeasured["note"].get<std::string>().find("priced for the streams' rows") !=
                   std::string::npos,
           "an unmeasured smaller bound: the note names this count's own price");
+    // Only an unmeasured bound's placeholder below the streams, none at them: the gain is the
+    // ceiling, and no joint scale is claimed.
+    const auto only_placeholder =
+        note_at(3, {{.streams = 2, .scale = 0.9}},
+                {{.streams = 2, .speedup = 1.0, .depth = 1, .bounded = true, .measured = false}});
+    check(!only_placeholder.contains("joint_verify_scale") &&
+              !only_placeholder.contains("joint_priced_at_streams") &&
+              only_placeholder["note"].get<std::string>().find("a ceiling") != std::string::npos,
+          "only a placeholder below the streams: a ceiling, no joint_verify_scale");
 }
 
 } // namespace
