@@ -651,18 +651,22 @@ class Snapshot(unittest.TestCase):
     def test_replica_skips_a_board_without_facts(self):
         # The timeline law has no facts on an arch without an ISA row. Asked for that law alone,
         # the replica says so and goes on to the next board: it prices nothing, so it reads no
-        # sweep (the directory named here does not exist).
+        # sweep (the directory named here does not exist). Every swept board's architecture has
+        # a row today, so the table is read here as one that lacks sm_75's.
         import contextlib
         import io
         from unittest import mock
         repo = Path(__file__).resolve().parents[1]
         sys.path.insert(0, str(repo / "tools" / "bench"))
         import rmma_counted_replica as replica
-        self.assertFalse(replica.chip_of(str(repo), "GeForce RTX 2080 Ti")["isa"])
+        self.assertTrue(replica.chip_of(str(repo), "GeForce RTX 2080 Ti")["isa"])
+        isa_of = replica.isa_of
         argv = ["replica", "--repo", str(repo), "--law", "timeline",
                 "--sweep", "GeForce RTX 2080 Ti=" + os.path.join(str(repo), "no_such_sweep")]
         out = io.StringIO()
-        with mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(out):
+        with mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(out), \
+                mock.patch.object(replica, "isa_of",
+                                  lambda r, arch: None if arch == "75" else isa_of(r, arch)):
             replica.main()
         self.assertIn("no facts (sm_75 has no ISA row)", out.getvalue())
         self.assertIn("board skipped", out.getvalue())

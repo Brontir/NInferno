@@ -26,8 +26,8 @@ arch 120a
 nvcc 13.4.92
 flags -O3 -DNDEBUG rdc=OFF lineinfo=ON ptx=OFF
 source f28c70334f0b4693e62575ca1591e47a101a40ae421142d12cce2a9d36467464
-chain measured mma=34.542 ld=43.887 lds=33.997 shfl=31.003 imad=4 iadd=5 lop3=4 prmt=4 shf=4 hfma2=4 ffma=4 cvt=12 f2f=5 other=4
-chain_short 2 0.947
+chain measured mma=34.46 ld=38.01 lds=33.997 shfl=31.003 imad=4 iadd=5 lop3=4 prmt=4 shf=4 hfma2=4 ffma=4 cvt=12 f2f=5 other=4
+chain_short 0 0.000
 kernels 2378
 columns family decoder warps_m warps_k m_tiles n_tiles cluster epilogue latency add_sums registers stack local shared loops k_iter mma mma_ones mma_shape ldg ldg_bytes ld ld_bytes ldgsts ldgsts_bytes lds lds_bytes sts sts_bytes local local_bytes shfl int fp uniform other total cp_mma cp_ld cp_lds cp_shfl cp_imad cp_iadd cp_lop3 cp_prmt cp_shf cp_hfma2 cp_ffma cp_cvt cp_f2f cp_other
 rmma Bf16Decoder 1 4 1 1 1 0 0 0 52 0 0 1536 1 64 4 0 HMMA.16816.F32.BF16 4 2048 2 1024 0 0 0 0 0 0 0 0 0 70 0 11 25 116 4 1 0 0 4 1 0 0 0 0 0 0 0 0
@@ -2230,7 +2230,7 @@ rmma U4ZpQuadDecoder<32> 4 1 2 2 1 1 0 0 195 0 0 0 1 256 64 0 HMMA.16816.F32.BF1
 rmma U4ZpQuadDecoder<32> 4 1 2 2 1 2 0 0 255 0 0 0 1 256 128 0 HMMA.16816.F32.BF16 96 14336 16 8192 0 0 0 0 0 0 0 0 0 1396 576 9 172 2393 2 1 0 0 2 3 4 1 2 1 4 0 0 1
 rmma U4ZpQuadDecoder<32> 4 1 2 4 1 0 0 0 255 0 0 0 1 256 128 0 HMMA.16816.F32.BF16 48 7168 32 16384 0 0 0 0 0 0 0 0 0 750 416 1 135 1510 2 1 0 0 2 3 4 1 2 1 4 0 0 1
 rmma U4ZpQuadDecoder<32> 4 1 2 4 1 1 0 0 255 0 0 0 1 256 128 0 HMMA.16816.F32.BF16 48 7168 32 16384 0 0 0 0 0 0 0 0 0 750 416 1 135 1510 2 1 0 0 2 3 4 1 2 1 4 0 0 1
-rmma U4ZpQuadDecoder<32> 4 1 2 4 1 2 0 0 255 24 0 0 1 256 256 0 HMMA.16816.F32.BF16 96 14336 32 16384 0 0 0 0 0 0 7 1408 0 1699 839 53 237 3219 2 2 0 0 10 1 0 0 1 0 8 0 0 1
+rmma U4ZpQuadDecoder<32> 4 1 2 4 1 2 0 0 255 24 0 0 1 256 256 0 HMMA.16816.F32.BF16 96 14336 32 16384 0 0 0 0 0 0 7 1408 0 1699 839 53 237 3219 2 1 0 0 20 1 0 0 1 0 8 0 0 1
 rmma U4ZpQuadDecoder<32> 8 1 1 8 1 0 0 0 255 0 0 0 1 256 128 0 HMMA.16816.F32.BF16 24 3584 64 32768 0 0 0 0 0 0 0 0 0 459 336 0 172 1183 2 1 0 0 2 3 4 1 2 1 4 0 0 1
 rmma U4ZpQuadDecoder<32> 8 1 1 8 1 1 0 0 255 0 0 0 1 256 128 0 HMMA.16816.F32.BF16 24 3584 64 32768 0 0 0 0 0 0 0 0 0 459 336 0 172 1183 2 1 0 0 2 3 4 1 2 1 4 0 0 1
 rmma U4ZpQuadDecoder<32> 8 1 1 8 1 2 0 0 255 112 0 0 1 256 256 0 HMMA.16816.F32.BF16 48 7168 64 32768 0 0 0 0 0 0 56 8960 0 862 672 57 204 2219 2 2 0 0 0 3 2 1 1 1 4 0 0 0
