@@ -101,6 +101,7 @@ int main() {
     int failures        = 0;
     long compared       = 0;
     long described      = 0;
+    long latency        = 0;
     void* const payload = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
     for (const QType qtype : kFormats) {
         for (const Shape shape : kShapes) {
@@ -139,6 +140,7 @@ int main() {
                                 } catch (const std::exception& e) { launch_error = e.what(); }
                                 ++compared;
                                 if (host_side) ++described;
+                                if (host_side && host_side->latency_variant) ++latency;
                                 const bool equal = host_error.empty() == launch_error.empty() &&
                                                    host_side.has_value() == launched.has_value() &&
                                                    (!host_side || same(*host_side, *launched));
@@ -163,10 +165,11 @@ int main() {
             }
         }
     }
-    std::cout << compared << " calls compared, " << described << " described, " << failures
-              << " differ\n";
-    if (described == 0) {
-        std::cerr << "nothing was described: the test reads no facts\n";
+    std::cout << compared << " calls compared, " << described << " described (" << latency
+              << " the latency kernel), " << failures << " differ\n";
+    if (described == 0 || latency == 0) {
+        std::cerr << "too little was described: the test reads no facts or never meets a latency "
+                     "kernel\n";
         return 1;
     }
     return failures == 0 ? 0 : 1;
