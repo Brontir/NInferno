@@ -22,6 +22,7 @@ add_library(ninferno_core_host STATIC
   weight_view.cpp
   ggml_frag.cpp
   sha256.cpp
+  tensor.cpp
 )
 ninferno_internal_includes(ninferno_core_host)
 target_include_directories(ninferno_core_host PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
@@ -30,12 +31,14 @@ target_link_libraries(ninferno_core_host PRIVATE ninferno::json)
 
 # core/device_class_nodevice.cpp is current_device_class() of a build with no CUDA runtime: it always
 # throws. A host-only test adds it to its own sources (an object, so no archive order matters);
-# nothing beside ninferno_core links it, which defines the real one.
+# nothing beside ninferno_core links it, which defines the real one. core/per_device_nodevice.cpp is the
+# same for current_device_ordinal() and current_device_ordinal_or_none() (per_device.cpp).
 
 add_library(ninferno_core STATIC
   arena.cu
   device.cu
   device_class.cpp
+  per_device.cpp
   device_traits.cpp
   kernel_occupancy.cpp
   device_image_probe.cu
@@ -47,7 +50,6 @@ add_library(ninferno_core STATIC
   host_memory.cpp
   paged_kv_cache.cpp
   linear_attention_state.cpp
-  tensor.cpp
   decode_graph.cpp
   debug_poison.cpp
   debug_fault.cu
