@@ -83,6 +83,10 @@ add_test(NAME ninferno_kernel_facts_sass_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_kernel_facts_sass.py)
 set_tests_properties(ninferno_kernel_facts_sass_test PROPERTIES LABELS host)
 
+# routes/*.json: evidence_us / tuned_on provenance (#634), no GPU.
+add_test(NAME ninferno_route_table_evidence_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_route_table_evidence.py)
+set_tests_properties(ninferno_route_table_evidence_test PROPERTIES LABELS host)
 # tools/bench/mmq_transfer_audit.py: same-generation MMQ transfer by workload regime (#373), no GPU.
 add_test(NAME ninferno_mmq_transfer_audit_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_mmq_transfer_audit.py)

@@ -137,6 +137,13 @@ ninferno_add_test(ninferno_plan_dry_run_test NEEDS_SOURCE_DIR
   LIBRARIES ninferno_product_plan ninferno_serve ninferno_engine ninferno_core ninferno::json)
 target_include_directories(ninferno_plan_dry_run_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
+# The cross-row quantization ranking is a pure function: pinned cases, and equal to the loop
+# plan_quants ran inline before it was lifted out.
+ninferno_add_test(ninferno_rank_rows_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_rank_rows.cpp"
+  LIBRARIES ninferno_product_plan ninferno_engine ninferno_core)
+target_include_directories(ninferno_rank_rows_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
 # Every setup docs/performance/data/bench.jsonl measured through ninferno-serve fits the plan
 # without the weights on its named board (facts: tests/fixtures/plan/bench_models.json).
 ninferno_add_test(ninferno_plan_bench_fits_test
@@ -167,7 +174,9 @@ target_include_directories(ninferno_plan_bytes_test PRIVATE ${PROJECT_SOURCE_DIR
 # explains. CPU.
 ninferno_add_test(ninferno_choice_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_choice.cpp"
-  LIBRARIES ninferno_product_choice ninferno_core ninferno::json)
+  LIBRARIES ninferno_product_choice ninferno_core_host ninferno::json)
 target_include_directories(ninferno_choice_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+# Host-only: no CUDA runtime in its link closure (#620 step 11).
+cmake_language(DEFER CALL ninferno_assert_host_only ninferno_choice_test)
 target_compile_definitions(ninferno_choice_test PRIVATE
   NINFERNO_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
