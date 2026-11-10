@@ -30,7 +30,11 @@ ctest --test-dir build -R ninferno_sampling_test --output-on-failure
 Every test carries labels, and `tools/audit/ctest_labels.sh build` (the `ninferno_ctest_labels_test`
 test) fails on a test without one. A test added with `ninferno_add_test(<name> LABELS ...)` or
 `ninferno_add_op_test` (labeled `gpu` unless it says otherwise) gets them there; a test added with a
-bare `add_test()` calls `ninferno_label_tests(<name> LABELS ...)` next to it.
+bare `add_test()` calls `ninferno_label_tests(<name> LABELS ...)` next to it. With a multi-config
+generator pass the configuration: `tools/audit/ctest_labels.sh build Release` (or `CTEST_CONFIG`).
+Choose `host` only when no path of the test reaches a CUDA runtime call, a device allocation or a
+kernel launch; a test that runs under a substituted device class and never touches the device is
+`host`, one whose rows reach the device's properties is `gpu`.
 
 | Label | Meaning |
 |---|---|

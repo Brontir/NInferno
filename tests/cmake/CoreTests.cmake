@@ -56,7 +56,7 @@ ninferno_add_test(ninferno_board_registry_test LABELS host
   LIBRARIES ninferno_core)
 # The architecture table (core/arch_registry.h) against the per-architecture limits the build, the
 # MMQ tile widths and the synthetic device class held before it. No GPU.
-ninferno_add_test(ninferno_arch_registry_test
+ninferno_add_test(ninferno_arch_registry_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_arch_registry.cpp"
   LIBRARIES ninferno_core)
 # The MMQ prefill gate's decision atlas over that table (#373, core/gate_atlas.h); `--json` prints

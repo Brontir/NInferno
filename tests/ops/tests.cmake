@@ -221,7 +221,7 @@ set_tests_properties(ninferno_pdl_sass_audit_sabotage_test PROPERTIES SKIP_RETUR
 
 # The generic MoE op's plans on the substituted boards of the selector goldens (#616): host only,
 # against moe_plan_golden/<build set>/<board>.txt; --update rewrites them.
-ninferno_add_op_test(ninferno_moe_plan_golden_test
+ninferno_add_op_test(ninferno_moe_plan_golden_test LABELS host golden
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_moe_plan_golden.cpp"
   LIBRARIES ninferno_ops)
 target_compile_definitions(ninferno_moe_plan_golden_test PRIVATE

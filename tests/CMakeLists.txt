@@ -92,7 +92,8 @@ ninferno_label_tests(ninferno_kernel_facts_sass_test LABELS host)
 # routes/*.json: evidence_us / tuned_on provenance (#634), no GPU.
 add_test(NAME ninferno_route_table_evidence_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_route_table_evidence.py)
-set_tests_properties(ninferno_route_table_evidence_test PROPERTIES LABELS host)
+ninferno_label_tests(ninferno_route_table_evidence_test LABELS host)
+
 # tools/bench/mmq_transfer_audit.py: same-generation MMQ transfer by workload regime (#373), no GPU.
 add_test(NAME ninferno_mmq_transfer_audit_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_mmq_transfer_audit.py)
@@ -107,7 +108,7 @@ set_tests_properties(ninferno_file_modes_test PROPERTIES SKIP_RETURN_CODE 77)
 # Determinism, no GPU: decision code reads no clock, event timer or NVML (the monitor is
 # write-only; docs/maintainer/deterministic-decisions.md, principle 3). A POSIX shell check: on
 # native Windows `bash` may be WSL's, which cannot take the Windows source path, so it is
-# registered only on UNIX hosts (the Linux builds and CI run it).
+# registered only on UNIX hosts (the Linux builds run it; no CI workflow does).
 if(UNIX)
   add_test(NAME ninferno_decision_inputs_test
     COMMAND bash "${PROJECT_SOURCE_DIR}/tools/audit/decision_inputs.sh")
@@ -116,10 +117,11 @@ endif()
 
 # Every test carries a label (host, gpu, real, golden, slow). Reads the build's own test list; needs
 # python3, ctest and a POSIX shell, so it is registered on UNIX hosts only. It runs with a Linux
-# build's ctest; no CI workflow configures a build, so CI does not run it.
+# build's ctest; no CI workflow configures a build, so CI does not run it. The build type goes
+# along (a multi-config generator lists no test without ctest -C <config>).
 if(UNIX)
   add_test(NAME ninferno_ctest_labels_test
-    COMMAND bash "${PROJECT_SOURCE_DIR}/tools/audit/ctest_labels.sh" "${PROJECT_BINARY_DIR}")
+    COMMAND bash "${PROJECT_SOURCE_DIR}/tools/audit/ctest_labels.sh" "${PROJECT_BINARY_DIR}" "$<CONFIG>")
   set_tests_properties(ninferno_ctest_labels_test PROPERTIES
     ENVIRONMENT "CTEST=${CMAKE_CTEST_COMMAND};PYTHON=${Python3_EXECUTABLE}")
   ninferno_label_tests(ninferno_ctest_labels_test LABELS host)
