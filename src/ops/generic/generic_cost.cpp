@@ -23,8 +23,8 @@ namespace ninferno::ops::detail::generic {
 
 namespace {
 
-template <class Offer>
 // FUSION-SITE: activation_quantizer_launch
+template <class Offer>
 void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t tokens,
                    const DeviceClass& d, const Offer& offer) {
     // BF16 operands in the MMA itself (sm_80 on) imply tensor mma.sync (device_features_for).

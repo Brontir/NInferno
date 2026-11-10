@@ -22,10 +22,11 @@ MARKER = re.compile(r"^\s*// FUSION-SITE: ([a-z0-9_]+)$")
 PRICED = {"priced", "partial", "fact", "literal", "none"}
 PROMISES = {"Equal", "OwnOrder", "NotApplicable", "Unreviewed"}
 REQUIRED = ("id", "name", "layer", "fuses", "decided_in", "rule_today", "alternatives", "priced",
-            "byte_promise", "invariant_pin", "parity_test", "one_card_literal", "evidence")
+            "byte_promise", "invariant_pin", "parity_test", "oracle_test", "one_card_literal",
+            "evidence")
 # Any slash-separated path with a source or doc extension, in any directory (not only src/).
 PATH_IN_TEXT = re.compile(
-    r"(?<![\w/.-])((?:[\w+-]+/)+[\w+-]+\.(?:cpp|cc|cu|cuh|h|hpp|inl|md|json|py|cmake|sh))")
+    r"(?<![\w/.-])((?:[\w+-]+/)+[\w+-]+\.(?:cpp|cc|cu|cuh|h|hpp|inl|md|json|py|cmake|sh))\b")
 
 
 def load():
@@ -56,12 +57,23 @@ def markers():
     return found
 
 
-def starts_definition(lines, i):
-    """True when the statement that starts at the first code line after the marker reaches a `{`
-    before a `;`: a function definition, not a call or a declaration."""
+def signature_start(lines, i):
+    """Index of the first code line after the marker at i: blank lines, comments, other markers
+    and `template <...>` headers are skipped, so a marker may sit above a template."""
     j = i + 1
-    while j < len(lines) and (not lines[j].strip() or lines[j].strip().startswith("//")):
-        j += 1
+    while j < len(lines):
+        t = lines[j].strip()
+        if not t or t.startswith("//") or t.startswith("/*") or t.startswith("*") or (
+                t.startswith("template") and t.endswith(">")):
+            j += 1
+            continue
+        break
+    return j
+
+
+def starts_definition(lines, j):
+    """True when the statement that starts at line j reaches a `{` before a `;`: a function
+    definition, not a call or a declaration."""
     for k in range(j, min(j + 12, len(lines))):
         text = re.sub(r"//.*", "", lines[k])
         brace, semi = text.find("{"), text.find(";")
@@ -72,14 +84,10 @@ def starts_definition(lines, i):
     return False
 
 
-def next_code_line(lines, i):
-    """The first line after i that is neither blank, another marker nor a comment."""
-    for j in range(i + 1, len(lines)):
-        s = lines[j].strip()
-        if not s or s.startswith("//") or s.startswith("/*") or s.startswith("*"):
-            continue
-        return s
-    return ""
+def is_definition_of(lines, j, name):
+    """The statement at line j defines `name`: its head (to the first `{` or `;`) names the function
+    followed by `(` and it ends in `{`."""
+    return bool(re.search(r"\b" + re.escape(name) + r"\s*\(", lines[j])) and starts_definition(lines, j)
 
 
 class FusionSites(unittest.TestCase):
@@ -127,10 +135,12 @@ class FusionSites(unittest.TestCase):
             if site is None:
                 continue  # reported by the test above
             self.assertEqual(file, site["decided_in"]["file"], f"{site_id}: marker is in another file")
-            signature = next_code_line(lines, i)
+            j = signature_start(lines, i)
             name = site["decided_in"]["function"]
-            self.assertRegex(signature, r"\b" + re.escape(name) + r"\s*\(",
-                             f"{site_id}: the line after the marker is not the signature of {name}")
+            self.assertTrue(j < len(lines) and re.search(r"\b" + re.escape(name) + r"\s*\(", lines[j]),
+                            f"{site_id}: the code line after the marker is not the signature of {name}")
+            self.assertTrue(starts_definition(lines, j),
+                            f"{site_id}: the marker is above a call or a declaration, not a definition")
 
     def test_cited_files_exist(self):
         for s in self.sites:
@@ -142,9 +152,9 @@ class FusionSites(unittest.TestCase):
     def test_invariant_pin_and_parity_test(self):
         for s in self.sites:
             self.assertTrue(isinstance(s["invariant_pin"], str) and s["invariant_pin"], s["id"])
-            if s["parity_test"] is not None:
-                self.assertTrue((ROOT / s["parity_test"]).is_file(),
-                                f"{s['id']}: parity_test {s['parity_test']} does not exist")
+            for key in ("parity_test", "oracle_test"):
+                if s[key] is not None:
+                    self.assertTrue((ROOT / s[key]).is_file(), f"{s['id']}: {key} {s[key]} does not exist")
 
     def test_pending_prs_name_known_sites_and_are_not_landed(self):
         for p in self.reg["pending"]:

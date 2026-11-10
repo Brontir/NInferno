@@ -262,6 +262,8 @@ bool DensePass::project_side_by_side(DeviceArena& work_, const Tensor& x,
                                      device_.stream);
 }
 
+// FUSION-SITE: dense_mlp_gate_up
+// FUSION-SITE: dense_mlp_down
 bool DensePass::dense_mlp(DeviceArena& work_, const Layer& layer, const Tensor& mlp_input,
                           Tensor& branch, std::int32_t t, Activations activations, bool add,
                           bool release) const {
