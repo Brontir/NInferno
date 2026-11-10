@@ -332,11 +332,22 @@ def initialiser(code, start, bracket):
     return []
 
 
+def type_name(names):
+    """The spellings of the Board type: the bare name (`Board`, `::ninferno::Board`) only where
+    nothing qualifies it (`chess::Board` is another type), a discovered alias also through any
+    namespace (`facts::GPUBoard`, `::a::b::GPUBoard`: the alias was declared as Board)."""
+    bare = r"(?<![\w.:])(?:::\s*)?(?:ninferno\s*::\s*)?Board\b"
+    aliases = sorted(set(names) - {"Board"})
+    if not aliases:
+        return bare
+    alt = "|".join(map(re.escape, aliases))
+    return r"(?:%s|(?<![\w.])(?:::\s*)?(?:\w+\s*::\s*)*(?:%s)\b)" % (bare, alt)
+
+
 def typed_pattern(names):
-    alt = "|".join(map(re.escape, sorted(names)))
-    ty = r"(?:::\s*)?(?:ninferno\s*::\s*)?(?:%s)\b" % alt
+    ty = type_name(names)
     tail = r"(?:\w+\s*)?(?:\[[^\]]*\]\s*)?=?\s*([{(])"
-    plain = r"(?<![\w.:])" + ty + r"(?!\s*::)\s*(?:const\b\s*)?[&*]*\s*(?:const\b\s*)?" + tail
+    plain = ty + r"(?!\s*::)\s*(?:const\b\s*)?[&*]*\s*(?:const\b\s*)?" + tail
     templ = r"<\s*" + ty + r"\s*(?:,[^<>;{}]*)?>\s*(?:const\b\s*)?[&*]*\s*" + tail
     return re.compile(plain + "|" + templ)
 
@@ -346,16 +357,16 @@ def returns(names):
     that opens the body: `Board f(...) [const] [&|&&] [noexcept(...)] [override] {` (the name may
     be qualified, `Device::board`; a
     parameter may have a braced default, `Board b = {}`) and a trailing return `-> Board {`."""
-    alt = "|".join(map(re.escape, sorted(names)))
-    ty = r"(?:::\s*)?(?:ninferno\s*::\s*)?(?:%s)\b" % alt
+    ty = type_name(names)
     # After the parameters: cv and virt-specifiers, `noexcept(...)`, `throw(...)`, a ref-qualifier
     # (`&`, `&&`) and an attribute (`[[...]]`), in any order.
     paren = r"\s*\((?:[^()]|\([^()]*\))*\)"
     quals = (r"(?:(?:(?:const|volatile|override|final|mutable|constexpr)\b|noexcept\b(?:%s)?|"
              r"throw%s|&&?|\[\[[^\]]*\]\])\s*)*" % (paren, paren))
-    head = (r"(?<![\w.:])" + ty + r"(?!\s*::)\s*(?:const\b\s*)?[&*]*\s*(?:\w+\s*::\s*)*\w+\s*"
+    head = (ty + r"(?!\s*::)\s*(?:const\b\s*)?[&*]*\s*(?:\w+\s*::\s*)*\w+\s*"
             r"\((?:[^;{}]|\{[^;{}]*\})*\)\s*" + quals + r"\{")
-    trailing = r"->\s*(?:const\b\s*)?" + ty + r"(?!\s*::)\s*[&*]*\s*\{"
+    trailing = (r"->\s*(?:const\b\s*)?" + ty + r"(?!\s*::)\s*(?:const\b\s*)?[&*]*\s*"
+                r"(?:const\b\s*)?\{")
     return re.compile(head + "|" + trailing)
 
 
@@ -448,6 +459,15 @@ def violations(text):
     return sorted(found.items())
 
 
+def is_cpp(path):
+    """True for a C++ source or header, and for a template of one (`embedded_gpu_facts.h.in`: the
+    suffix before a trailing `.in` counts)."""
+    name = path.name.lower()
+    if name.endswith(".in"):
+        name = name[:-3]
+    return Path(name).suffix in SUFFIXES
+
+
 def files(root):
     """C++ sources to scan: the tracked files outside the third-party prefixes, whatever the
     directory (apps/, bench/ and include/ too); without a git checkout, a walk of the same."""
@@ -464,7 +484,7 @@ def files(root):
     if paths is None:
         paths = [p for p in root.rglob("*") if not SKIP_DIRS & set(p.relative_to(root).parts)]
     return sorted(p for p in paths
-                  if p.suffix in SUFFIXES and p.is_file()
+                  if is_cpp(p) and p.is_file()
                   and not p.relative_to(root).as_posix().startswith(THIRD_PARTY))
 
 

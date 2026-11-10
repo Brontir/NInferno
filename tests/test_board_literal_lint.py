@@ -85,6 +85,19 @@ FLAGGED = {
     "return_attribute_before": "[[nodiscard]] static constexpr inline Board f()"
                                " { return {kM, 0, 1, 2, kB}; }",
     "return_trailing_ref_qualified": "auto Foo::board() const & -> Board { return {kM, 0, 1, 2, kB}; }",
+    # A trailing return type with a postfix const, a pointer or a reference.
+    "return_trailing_postfix_const": "auto f() -> Board const { return {kM, 0, 1, 2, kB}; }",
+    "return_trailing_prefix_const": "auto f() -> const Board { return {kM, 0, 1, 2, kB}; }",
+    "return_trailing_const_ref": "auto f() const -> Board const& { return {kM, 0, 1, 2, kB}; }",
+    # An alias reached through a namespace, however deep.
+    "alias_through_namespace": "namespace facts { using GPUBoard = ninferno::Board; }\n"
+                               "facts::GPUBoard b{kMajor, 0, kSms, kL2, kBw};",
+    "alias_through_nested_namespace": "using GB = Board; a::b::GB b{kMajor, 0, kSms, kL2, kBw};",
+    "alias_through_global_namespace": "using GB = Board; ::a::GB b(kMajor, 0, kSms, kL2, kBw);",
+    "alias_template_argument": "using GB = Board; std::vector<a::GB> v = {{kMajor, 0, 1, 2, 3}};",
+    "alias_return_qualified": "using GB = Board; a::GB f() { return {kM, 0, 1, 2, kB}; }",
+    "alias_return_trailing_qualified": "using GB = Board; auto f() -> a::GB"
+                                      " { return {kM, 0, 1, 2, kB}; }",
     "return_through_alias": "using B = Board; B f(int x) { if (x) return {kM, 0, 1, 2, 3};"
                             " return {}; }",
     # A template argument with a call in it.
@@ -150,6 +163,9 @@ CLEAN = {
     "alias_of_another_type": "using B = chess::Board; B b{kMajor, 0, 1, 2, 3};",
     "list_of_qualified_boards": "std::vector<Board> v = {measured::kA, measured::kB,"
                                 " measured::kC};",
+    "return_trailing_other_const": "auto f() -> int const { return {kM, 0, 1, 2, kB}; }",
+    "alias_of_another_type_qualified": "using GB = chess::Board; a::GB b{kMajor, 0, 1, 2, 3};",
+    "member_alias_access": "using GB = Board; x.GB{kMajor, 0, 1, 2, 3};",
     "return_other_ref_qualified": "int Foo::bar() const & { return {kM, 0, 1, 2, kB}; }",
     "return_other_rvalue": "Foo Foo::bar() && { return {kM, 0, 1, 2, kB}; }",
     "return_other_noexcept_expression": "int f() noexcept(noexcept(g())) { return {kM, 0, 1, 2, kB}; }",
@@ -229,6 +245,18 @@ class Scan(unittest.TestCase):
             self.assertEqual(bad, {"src/a.cpp", "tests/b.cpp", "tools/c.cu", "apps/cli/d.cpp",
                                    "bench/ops/e.cpp", "include/f.h", "examples/g.hpp",
                                    "src/core/h.inc"})
+
+    def test_cpp_templates_are_scanned_by_their_compound_suffix(self):
+        lit = "Board b{8, 6, 82, 6, 936};\n"
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            tree(root, {
+                "src/a.h.in": lit, "src/b.hpp.in": lit, "src/c.cpp.in": lit, "src/d.cu.in": lit,
+                "src/e.cuh.in": lit, "src/f.H.IN": lit, "src/g.in": lit, "src/h.txt.in": lit,
+                "src/i.json.in": lit})
+            bad = {r for r, _, _ in lint.scan(root, allow={})}
+            self.assertEqual(bad, {"src/a.h.in", "src/b.hpp.in", "src/c.cpp.in", "src/d.cu.in",
+                                   "src/e.cuh.in", "src/f.H.IN"})
 
     def test_only_the_third_party_prefixes_are_skipped(self):
         lit = "Board b{8, 6, 82, 6, 936};\n"
