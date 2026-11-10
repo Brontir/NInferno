@@ -129,6 +129,20 @@ class Csv(unittest.TestCase):
         rows, skipped = result
         return len(rows), len(skipped)
 
+    def selection_of(self, paths, name="model_sel.csv"):
+        """A selection CSV listing every key of the passes, the key's first route as executed."""
+        keys = {}
+        for path in paths:
+            for line in path.read_text(encoding="utf-8").splitlines()[1:]:
+                fields = line.split(",")
+                keys.setdefault(",".join(fields[:6]), fields[6])
+        return self.write(name, SELECTED + "".join(f"{k},{r},{r}\n" for k, r in keys.items()))
+
+    def model(self, paths, excluded=None):
+        """The model pick of the passes, every key of which is a speed-loop width."""
+        return bands.rows_from_csv(paths, self.selection_of(paths), "b", pick="model",
+                                   excluded=excluded)
+
     def test_legacy_csv_without_run_columns(self):
         p1 = self.write("p1.csv", ROUTES + "q4k,a16,store,64,64,4,rmma.a,20,30\n"
                         "q4k,a16,store,64,64,4,rmma.b,10,40\n"
@@ -145,7 +159,11 @@ class Csv(unittest.TestCase):
         self.assertAlmostEqual(row["selected_ms"], 0.021)
         self.assertAlmostEqual(row["best_ms"], 0.011)
         # The model ranks only from 17 tokens: a T=4 case is not scored by it.
-        self.assertEqual(self.counts(bands.rows_from_csv([p1, p2], None, "boardX", pick="model")), (0, 1))
+        self.assertEqual(self.counts(bands.rows_from_csv([p1, p2], sel, "boardX", pick="model")),
+                         (0, 1))
+        # Either pick needs the selection: its widths are the speed profile's.
+        with self.assertRaises(ValueError):
+            bands.rows_from_csv([p1, p2], None, "boardX", pick="model")
 
     def test_median_over_three_passes_not_mean(self):
         # a: 20, 22, 100 -> median 22 (mean 47.3); b: 10, 12, 14 -> median 12.
@@ -163,7 +181,7 @@ class Csv(unittest.TestCase):
         lines = "".join(f"q4k,a16,store,64,64,{t},{r},{us},{m}\n"
                         for t in (16, 17) for r, us, m in (("rmma.a", 20, 30), ("rmma.b", 10, 40)))
         p1 = self.write("p1.csv", ROUTES + lines)
-        rows, skipped = bands.rows_from_csv([p1], None, "b", pick="model")
+        rows, skipped = self.model([p1])
         self.assertEqual([r["t"] for r in rows], [17])
         self.assertEqual([(r["t"], r["reason"]) for r in skipped],
                          [(16, "the model ranks only from T 17")])
@@ -172,7 +190,7 @@ class Csv(unittest.TestCase):
         p1 = self.write("p1.csv", ROUTES + "q4k,a16,store,64,64,40,rmma.a,20,30\n"
                         "q4k,a16,store,64,64,40,rmma.b,10,40\n"
                         "q4k,a16,store,64,64,40,rmma.c,8,\n")
-        rows, skipped = bands.rows_from_csv([p1], None, "b", pick="model")
+        rows, skipped = self.model([p1])
         self.assertEqual((skipped, rows[0]["selected"], rows[0]["best"]), ([], "rmma.a", "rmma.c"))
 
     def test_a_route_one_pass_missed_skips_the_case(self):
@@ -193,7 +211,7 @@ class Csv(unittest.TestCase):
     def test_bad_timings_and_duplicate_selections_are_refused(self):
         zero = self.write("z.csv", ROUTES + "q4k,a16,store,64,64,4,rmma.a,0,30\n")
         with self.assertRaises(ValueError):
-            bands.rows_from_csv([zero], None, "b", pick="model")
+            self.model([zero])
         p1 = self.write("p1.csv", ROUTES + "q4k,a16,store,64,64,4,rmma.a,20,30\n")
         twice = self.write("s.csv", SELECTED + "q4k,a16,store,64,64,4,rmma.a,rmma.a\n"
                            "q4k,a16,store,64,64,4,rmma.a,rmma.a\n")
@@ -205,30 +223,34 @@ class Csv(unittest.TestCase):
         p1 = self.write("p1.csv", ROUTES + "q4k,a16,store,64,64,40,rmma.a,20,30\n"
                         "q4k,a16,store,64,64,40,ggml_mmq.x64,10,40\n")
         sel = self.write("s.csv", SELECTED + "q4k,a16,store,64,64,40,rmma.a,rmma.a\n")
-        for pick, selected in (("selected", sel), ("model", None)):
-            rows, skipped = bands.rows_from_csv([p1], selected, "b", pick=pick)
+        for pick in ("selected", "model"):
+            rows, skipped = bands.rows_from_csv([p1], sel, "b", pick=pick)
             self.assertEqual(rows, [])
             self.assertEqual([r["reason"] for r in skipped],
                              ["fewer than two candidates of the case's compute class"])
 
-    def tied_pick(self, tied_rows, other_rows, fmt="q4k,a16", long=True):
-        """The model pick of the T=40 key whose tied rows are written as given, beside other keys."""
+    def tied_pick(self, tied_rows, other_rows, fmt="q4k,a16", long=True,
+                  longest="1.2345678901234567"):
+        """The model pick of the T=40 key whose tied rows are written as given, beside other keys.
+
+        With `long`, a row of another problem carries the price `longest` (by default with the
+        17 significant digits route_tune writes now).
+        """
         def keyed(t, rows):
             return "".join(f"{fmt},store,64,64,{t},{route},{us},{price}\n"
                            for route, us, price in rows)
-        # A row of another problem whose price has the digits route_tune writes now (17).
-        long_price = "q4k,a16,store,65,64,50,rmma.z,10,1.2345678901234567\n"
+        long_price = f"q4k,a16,store,65,64,50,rmma.z,10,{longest}\n"
         p1 = self.write("p1.csv", ROUTES + keyed(40, tied_rows) + "".join(
             keyed(t, rows) for t, rows in other_rows) + (long_price if long else ""))
-        rows, skipped = bands.rows_from_csv([p1], None, "b", pick="model")
+        rows, skipped = self.model([p1])
         at40 = [r for r in rows if r["t"] == 40]
         return (at40[0]["selected"], None) if at40 else (
             None, [r["reason"] for r in skipped if r["t"] == 40])
 
     def test_a_same_family_tie_takes_the_route_the_problem_offers_first(self):
         # Production keeps the first route offered on an equal price. The offer order is the one
-        # the other widths of the problem write (schedule index), not the order of the tied key,
-        # which route_tune writes with the prefill route first at the band widths.
+        # the other speed-loop widths of the problem write (schedule index), whatever the order of
+        # the tied key's own rows.
         a, b, c = ("rmma.a", 20, 30), ("rmma.b", 10, 30), ("rmma.c", 15, 40)
         other = [(48, [a, b, c]), (64, [a, b, c])]
         for tied, first in (([a, b, c], "rmma.a"), ([b, a, c], "rmma.a"), ([c, b, a], "rmma.a")):
@@ -256,7 +278,7 @@ class Csv(unittest.TestCase):
                         "q4k,a16,store,64,128,48,rmma.a,20,30\n"
                         "q4k,a16,store,64,128,48,rmma.b,10,30\n"
                         "q4k,a16,store,65,64,50,rmma.z,10,1.2345678901234567\n")
-        rows, skipped = bands.rows_from_csv([p1], None, "b", pick="model")
+        rows, skipped = self.model([p1])
         self.assertEqual([r["reason"] for r in skipped if r["t"] == 40], out_of_order)
 
     def test_a_tie_in_a_six_digit_model_us_is_a_skip(self):
@@ -271,6 +293,87 @@ class Csv(unittest.TestCase):
         self.assertEqual([bands.significant_digits(t) for t in ("30", "0.012300", "1.5e+06",
                                                                  "12.345678", "-4.2")],
                          [1, 3, 2, 8, 2])
+
+    def test_six_significant_digits_skip_and_seven_resolve(self):
+        # The edge itself (LEGACY_MODEL_DIGITS = 6): a file whose longest model_us has exactly six
+        # significant digits is a legacy file, seven is not. A `<` in place of `<=` fails here.
+        a, b, c = ("rmma.a", 20, 30), ("rmma.b", 10, 30), ("rmma.c", 15, 40)
+        other = [(48, [a, b, c])]
+        legacy = (None, ["model_us has six significant digits: an equal price may be a rounding"])
+        for longest, expect in (("1.23456", legacy), ("123456", legacy), ("0.00123456", legacy),
+                                ("1.234567", ("rmma.a", None)), ("1234567", ("rmma.a", None))):
+            self.assertEqual(self.tied_pick([b, a, c], other, longest=longest), expect, longest)
+
+    def test_a_tie_reads_its_offer_order_from_speed_widths_only(self):
+        # The prefill loop writes the prefill route first (rmma.b here) at its widths, which the
+        # selection does not list: they are no vote, so the speed width 48 settles the tie.
+        a, b = ("rmma.a", 20, 30), ("rmma.b", 10, 30)
+
+        def keyed(t, rows):
+            return "".join(f"q4k,a16,store,64,64,{t},{r},{us},{m}\n" for r, us, m in rows)
+        p1 = self.write("p1.csv", ROUTES + keyed(40, [a, b]) + keyed(48, [a, b])
+                        + keyed(2048, [b, a]) + keyed(4096, [b, a])
+                        + "q4k,a16,store,65,64,50,rmma.z,10,1.2345678901234567\n")
+        sel = self.write("s.csv", SELECTED + "".join(
+            f"q4k,a16,store,{n},64,{t},rmma.a,rmma.a\n" for n, t in ((64, 40), (64, 48), (65, 50))))
+        rows, _ = bands.rows_from_csv([p1], sel, "b", pick="model")
+        self.assertEqual({r["t"]: r["selected"] for r in rows if r["id"].startswith("q4k.a16.store.n64")},
+                         {40: "rmma.a", 48: "rmma.a"})
+
+    def test_nvfp4_is_not_scored_by_the_model(self):
+        # route_authorities.cpp cost_model declines NVFP4; route_tune writes its model_us anyway.
+        text = "".join(f"{fmt},a16,store,64,64,40,{r},{us},{m}\n" for fmt in ("nvfp4", "q4k")
+                       for r, us, m in (("rmma.a", 20, 30), ("rmma.b", 10, 40)))
+        p1 = self.write("p1.csv", ROUTES + text)
+        rows, skipped = self.model([p1])
+        self.assertEqual([r["format"] for r in rows], ["q4k"])
+        self.assertEqual([(r["format"], r["reason"]) for r in skipped],
+                         [("nvfp4", "the model does not rank NVFP4 routes")])
+        # The recorded selection of an NVFP4 case is still scored.
+        rows, skipped = bands.rows_from_csv([p1], self.selection_of([p1]), "b")
+        self.assertEqual((len(rows), skipped), (2, []))
+
+    def test_prefill_profile_rows_are_neither_cases_nor_candidates(self):
+        # route_tune's prefill loop writes after its speed loop, into the same CSV with no profile
+        # column: a width the selection does not list (1024) and, at a listed width, a route the
+        # speed loop does not time there (R8 above 4 tokens) are prefill-profile rows.
+        p1 = self.write("p1.csv", ROUTES + "q4k,a8,store,64,64,40,w4a8.a,20,30\n"
+                        "q4k,a8,store,64,64,40,w4a8.b,10,40\n"
+                        "q4k,a8,store,64,64,40,r8.w4r1,5,1\n"
+                        "q4k,a8,store,64,64,1024,w4a8.a,200,300\n"
+                        "q4k,a8,store,64,64,1024,w4a8.b,100,400\n")
+        sel = self.write("s.csv", SELECTED + "q4k,a8,store,64,64,40,w4a8.a,w4a8.a\n")
+        for pick in ("selected", "model"):
+            excluded = []
+            rows, skipped = bands.rows_from_csv([p1], sel, "b", pick=pick, excluded=excluded)
+            self.assertEqual(skipped, [], pick)
+            self.assertEqual([(r["t"], r["selected"], r["best"]) for r in rows],
+                             [(40, "w4a8.a", "w4a8.b")], pick)
+            self.assertEqual(sorted(excluded), [("q4k.a8.store.n64.k64.T1024", "w4a8.a"),
+                                                ("q4k.a8.store.n64.k64.T1024", "w4a8.b"),
+                                                ("q4k.a8.store.n64.k64.T40", "r8.w4r1")], pick)
+        out = self.root / "o.json"
+        self.assertEqual(bands.main(["--routes", str(p1), "--selected", str(sel), "--board", "b",
+                                     "--qualified", "q", "--json", str(out)]), 0)
+        self.assertEqual(json.loads(out.read_text())["prefill_profile_rows_excluded"], 3)
+        # The executed selection is a speed-loop row at any width (R8 runs verify widths).
+        p2 = self.write("p2.csv", ROUTES + "q4k,a8,store,64,64,8,r8.w4r1,5,\n"
+                        "q4k,a8,store,64,64,8,w4a8.a,20,\n")
+        sel2 = self.write("s2.csv", SELECTED + "q4k,a8,store,64,64,8,r8.w4r1,r8.w4r1\n")
+        rows, skipped = bands.rows_from_csv([p2], sel2, "b")
+        self.assertEqual([(r["selected"], r["best"]) for r in rows], [("r8.w4r1", "r8.w4r1")])
+
+    def test_speed_loop_widths_of_each_family(self):
+        # route_tune_tool.cpp: R8 to kR8MaxTokens (4), w4a4 / staged / nvfp4t / tiled from 17.
+        got = {(route, t): bands.speed_loop_times(route, t, None)
+               for route in ("r8.w4r1", "tiled.64x64", "staged.64x32.w4x1.s2", "nvfp4t.c1.64x64",
+                             "w4a4.64x64", "rmma.m1.n1.w1x8", "ggml_mmq")
+               for t in (4, 5, 16, 17)}
+        self.assertEqual({k for k, v in got.items() if not v},
+                         {("r8.w4r1", 5), ("r8.w4r1", 16), ("r8.w4r1", 17)}
+                         | {(r, t) for r in ("tiled.64x64", "staged.64x32.w4x1.s2",
+                                             "nvfp4t.c1.64x64", "w4a4.64x64") for t in (4, 5, 16)})
+        self.assertTrue(bands.speed_loop_times("tiled.64x64", 16, "tiled.64x64"))
 
     def test_w4a8ws_is_one_family_with_w4a8(self):
         # route_name spells the producer-warp W4A8 schedule w4a8ws; it is offered after the
@@ -289,14 +392,14 @@ class Csv(unittest.TestCase):
         c = "q4k,a16,store,64,64,40,rmma.c,15,40\n"
         for text in (a + b + c, b + a + c, c + b + a):
             p1 = self.write("p1.csv", ROUTES + text)
-            rows, skipped = bands.rows_from_csv([p1], None, "b", pick="model")
+            rows, skipped = self.model([p1])
             self.assertEqual((rows, [r["reason"] for r in skipped]),
                              ([], ["the model prices the best candidates of two families equally"]))
         # A tie above the lowest price does not matter.
         p1 = self.write("p1.csv", ROUTES + "q4k,a16,store,64,64,40,rmma.a,20,30\n"
                         "q4k,a16,store,64,64,40,rmma.b,10,40\n"
                         "q4k,a16,store,64,64,40,rmma.c,15,40\n")
-        rows, skipped = bands.rows_from_csv([p1], None, "b", pick="model")
+        rows, skipped = self.model([p1])
         self.assertEqual((skipped, rows[0]["selected"]), ([], "rmma.a"))
 
     def test_untimed_selection_is_skipped(self):
@@ -410,8 +513,8 @@ class Cli(unittest.TestCase):
     def tearDown(self):
         self.dir.cleanup()
 
-    def doc(self, name, revision, build):
-        d = document([case("q4k.a16.T40", "b1", "rmma.a", {"rmma.a": 2.0, "rmma.b": 1.0})])
+    def doc(self, name, revision, build, board="b1"):
+        d = document([case("q4k.a16.T40", board, "rmma.a", {"rmma.a": 2.0, "rmma.b": 1.0})])
         d["selector_revision"], d["build_id"] = revision, build
         path = self.root / name
         path.write_text(json.dumps(d), encoding="utf-8")
@@ -446,14 +549,45 @@ class Cli(unittest.TestCase):
         self.assertIn("--doc and --routes cannot be merged", err)
         self.assertFalse(out.exists())
 
-    def test_pick_model_refuses_selected_and_doc(self):
+    def test_pick_model_refuses_doc_and_needs_selected(self):
         a = self.doc("a.json", "r1", "b1")
         p1, sel = self.csv_pair()
-        code, err = self.run_main(["--pick", "model", "--routes", str(p1), "--selected", str(sel),
-                                   "--board", "x", "--qualified", "q"])
-        self.assertEqual((code, "cannot be combined with --selected" in err), (2, True))
         code, err = self.run_main(["--pick", "model", "--doc", str(a)])
         self.assertEqual((code, "cannot be combined with --doc" in err), (2, True))
+        code, err = self.run_main(["--pick", "model", "--routes", str(p1), "--board", "x",
+                                   "--qualified", "q"])
+        self.assertEqual((code, "one --selected per --routes group" in err), (2, True))
+
+    def selection(self, keys):
+        sel = self.root / "s.csv"
+        sel.write_text(SELECTED + "".join(f"q4k,a16,store,64,64,{t},rmma.a,rmma.a\n"
+                                          for t in keys), encoding="utf-8")
+        return sel
+
+    def test_a_case_two_inputs_hold_is_refused(self):
+        # Merged twice, a case would count and weigh twice in its band.
+        a = self.doc("a.json", "r1", "b1")
+        code, err = self.run_main(["--doc", str(a), "--doc", str(a)])
+        self.assertEqual(code, 2)
+        self.assertIn("both hold case q4k.a16.T40 of board b1, model m", err)
+        # The same id on another board, or of another model, is another case.
+        for field, value in (("board", "b2"), ("model", "m2")):
+            other = json.loads(a.read_text())
+            other["cases"][0][field] = value
+            b = self.root / f"{field}.json"
+            b.write_text(json.dumps(other), encoding="utf-8")
+            self.assertEqual(self.run_main(["--doc", str(a), "--doc", str(b)])[0], 0, field)
+        # Two --routes groups of one board holding one case, scored or skipped.
+        p1 = self.root / "p1.csv"
+        p1.write_text(ROUTES + "q4k,a16,store,64,64,40,rmma.a,20,30\n"
+                      "q4k,a16,store,64,64,40,rmma.b,10,40\n", encoding="utf-8")
+        sel = self.root / "s.csv"
+        sel.write_text(SELECTED + "q4k,a16,store,64,64,40,rmma.a,rmma.a\n", encoding="utf-8")
+        group = ["--routes", str(p1), "--selected", str(sel), "--qualified", "q"]
+        code, err = self.run_main(group + group[:4] + ["--board", "x", "--board", "x"])
+        self.assertEqual(code, 2)
+        self.assertIn("both hold case q4k.a16.store.n64.k64.T40 of board x:", err)
+        self.assertEqual(self.run_main(group + group[:4] + ["--board", "x", "--board", "y"])[0], 0)
 
     def test_too_many_selected_names_the_selected(self):
         p1, sel = self.csv_pair()
@@ -506,6 +640,7 @@ class Cli(unittest.TestCase):
                       "q4k,a16,store,64,64,41,rmma.b,10,\n", encoding="utf-8")
         out = self.root / "o.json"
         code, _ = self.run_main(["--routes", str(p1), "--pick", "model", "--board", "x",
+                                 "--selected", str(self.selection((40, 41))),
                                  "--qualified", "q", "--json", str(out)])
         self.assertEqual(code, 0)
         rep = json.loads(out.read_text())
@@ -518,6 +653,7 @@ class Cli(unittest.TestCase):
                       "q4k,a16,store,64,64,40,rmma.b,10,40\n"
                       "q4k,a16,store,64,64,41,rmma.a,20,30\n"
                       "q4k,a16,store,64,64,41,ggml_mmq.x64,10,30\n"
+                      "q4k,a16,store,65,64,41,rmma.a,20,30\n"
                       "q4k,a16,store,64,64,42,rmma.a,20,30\n", encoding="utf-8")
         sel = self.root / "s.csv"
         sel.write_text(SELECTED + "q4k,a16,store,64,64,40,rmma.a,rmma.a\n"
@@ -526,20 +662,25 @@ class Cli(unittest.TestCase):
         code, _ = self.run_main(["--routes", str(p1), "--selected", str(sel), "--board", "x",
                                  "--qualified", "q", "--json", str(out)])
         self.assertEqual(code, 0)
-        reasons = {r["t"]: r["reason"] for r in json.loads(out.read_text())["skipped_cases"]}
-        self.assertEqual(reasons, {41: "the pick is not of the case's compute class",
-                                   42: "no selection recorded for this case"})
+        rep = json.loads(out.read_text())
+        reasons = {r["id"]: r["reason"] for r in rep["skipped_cases"]}
+        # n65 at a width the selection lists for another problem: its selection is missing. T=42
+        # is a width the selection never lists, a prefill-profile row: not a case.
+        self.assertEqual(reasons, {
+            "q4k.a16.store.n64.k64.T41": "the pick is not of the case's compute class",
+            "q4k.a16.store.n65.k64.T41": "no selection recorded for this case"})
+        self.assertEqual(rep["prefill_profile_rows_excluded"], 1)
 
     def test_no_scored_case_is_refused(self):
         p1 = self.root / "p1.csv"
         p1.write_text(ROUTES + "q4k,a16,store,64,64,41,rmma.a,20,\n", encoding="utf-8")
         code, err = self.run_main(["--routes", str(p1), "--pick", "model", "--board", "x",
-                                   "--qualified", "q"])
+                                   "--selected", str(self.selection((41,))), "--qualified", "q"])
         self.assertEqual(code, 2)
         self.assertIn("no scored cases", err)
 
     def test_docs_of_equal_provenance_record_it(self):
-        a, b = self.doc("a.json", "r1", "b1"), self.doc("b.json", "r1", "b1")
+        a, b = self.doc("a.json", "r1", "b1"), self.doc("b.json", "r1", "b1", board="b2")
         out = self.root / "o.json"
         code, _ = self.run_main(["--doc", str(a), "--doc", str(b), "--json", str(out)])
         self.assertEqual(code, 0)
@@ -561,11 +702,14 @@ class Cli(unittest.TestCase):
         p1 = self.root / "p1.csv"
         p1.write_text(ROUTES + "q4k,a16,store,64,64,40,rmma.a,20,30\n"
                       "q4k,a16,store,64,64,40,rmma.b,10,40\n", encoding="utf-8")
-        code, err = self.run_main(["--routes", str(p1), "--pick", "model", "--board", "b"])
+        sel = str(self.selection((40,)))
+        code, err = self.run_main(["--routes", str(p1), "--pick", "model", "--board", "b",
+                                   "--selected", sel])
         self.assertEqual((code, "--qualified" in err), (2, True))
         out = self.root / "o.json"
         code, _ = self.run_main(["--routes", str(p1), "--pick", "model", "--board", "b",
-                                 "--qualified", "oracle tests", "--json", str(out)])
+                                 "--selected", sel, "--qualified", "oracle tests",
+                                 "--json", str(out)])
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(out.read_text())["legacy_qualification"], "oracle tests")
 

@@ -13,14 +13,19 @@ carry no provenance to report next to the documents'):
                       the existing sweep archive predates them. Without those columns nothing tells
                       two passes of different builds or boards apart: give passes of one run. route_tune checks no
                       results, so --qualified TEXT must state what qualified the candidates.
-                      --doc inputs of different selector_revision/build_id are refused.
+                      --doc inputs of different selector_revision/build_id are refused, and so is
+                      a case (board, model, id) that two inputs both hold.
   --band-weights J    a mean of the band regrets with these weights (band -> weight); a group that
                       has no case in a weighted band gets no mean
-  --pick model        with --routes only (not --selected, not --doc): score the pick of the model price (lowest model_us; T >= 17,
-                      where the model ranks) instead of the recorded production selection.
+  --pick model        with --routes only (not --doc): score the pick of the model price (lowest
+                      model_us; T >= 17, where the model ranks; not NVFP4, which it does not rank)
+                      instead of the recorded production selection. --selected is still needed.
 
-route_tune times the speed profile's selection at T <= 512: its widest band is batched decode and
-wide verify, not the prefill profile's 2048-token chunks, so this tool says nothing about prefill.
+--routes-out also holds the prefill profile's rows (its widths from chunk/2 and its bands from 32)
+with no profile column. The speed loop writes one selection per problem and width and the prefill
+loop none, so only the widths --selected lists are cases, and at those widths a route the speed
+loop does not time there is left out (`speed_loop_times`); the report counts the pairs it left out
+as prefill_profile_rows_excluded. This tool says nothing about prefill.
 """
 import argparse
 import json
@@ -44,6 +49,25 @@ BAND_NAMES = tuple(b[0] for b in BANDS)
 
 
 MODEL_MIN_T = 17  # the cost model ranks routes only from this many tokens
+
+# What route_tune's speed loop times at a width (route_tune_tool.cpp, the `for (const auto t :
+# points)` loop): every admitted route, except R8 above kR8MaxTokens (generic_gemm.h: 4) and the
+# w4a4, staged, NVFP4 tiled and tiled families below 17 tokens, plus the executed selection. Its
+# prefill loop runs after it and writes a (route, T) pair the speed loop did not; the routes CSV
+# has no profile column, so a row outside this is the prefill profile's, never a speed candidate.
+R8_MAX_TOKENS = 4
+WIDE_ONLY_FAMILIES = ("w4a4", "staged", "nvfp4t", "tiled")
+WIDE_FROM_T = 17
+
+
+def speed_loop_times(route, t, executed):
+    """Whether route_tune's speed loop writes `route` at width `t` (`executed`: the selection)."""
+    if route == executed:
+        return True
+    family = family_of(route)
+    if family == "r8":
+        return t <= R8_MAX_TOKENS
+    return not (family in WIDE_ONLY_FAMILIES and t < WIDE_FROM_T)
 
 
 def band_of(t):
@@ -127,15 +151,34 @@ def rows_from_document(document):
     for case in report["cases"]:
         src = by_id[case["id"]]
         if case["status"] != "complete":
-            skipped.append(skip_row(case["id"], case["board"], format_of(case), tokens_of(src),
-                                    case["selected"], f"document case {case['status']}"))
+            skipped.append(dict(skip_row(case["id"], case["board"], format_of(case), tokens_of(src),
+                                         case["selected"], f"document case {case['status']}"),
+                                model=src["model"]))
             continue
         medians = case["median_ms"]
         rows.append({
-            "id": case["id"], "board": case["board"], "format": format_of(case),
-            "t": tokens_of(src), "selected": case["selected"], "best": case["best_observed"],
-            "selected_ms": medians[case["selected"]], "best_ms": medians[case["best_observed"]]})
+            "id": case["id"], "board": case["board"], "model": src["model"],
+            "format": format_of(case), "t": tokens_of(src), "selected": case["selected"],
+            "best": case["best_observed"], "selected_ms": medians[case["selected"]],
+            "best_ms": medians[case["best_observed"]]})
     return rows, skipped
+
+
+def refuse_repeated_cases(inputs):
+    """Refuse a case that two inputs both hold: merged, it would count and weigh twice.
+
+    `inputs` is [(input name, rows + skip rows)]. A case is its (board, model, id); route CSV rows
+    have no model. A case scored in one input and skipped in another is a repeat too.
+    """
+    seen = {}
+    for name, cases in inputs:
+        for r in cases:
+            identity = (r["board"], r.get("model"), r["id"])
+            if identity in seen:
+                raise ValueError(f"{name} and {seen[identity]} both hold case {r['id']} of board "
+                                 f"{r['board']}" + (f", model {r['model']}" if r.get("model")
+                                                    else "") + ": a case is counted once")
+            seen[identity] = name
 
 
 def provenance_of(document):
@@ -160,13 +203,38 @@ def merged_provenance(named):
     return dict(first)
 
 
-def rows_from_csv(route_paths, selected_path, board, pick="selected"):
-    """Rows from legacy route_tune CSVs: per case, medians over passes of the routes of its class."""
+def read_selected(selected_path):
+    """The selection CSV: key -> the executed route, one row per key."""
+    selected = {}
+    for row in collect.read_rows(selected_path, collect.KEY + ("selected",)):
+        key = collect.key_of(row)
+        if key in selected:
+            raise ValueError(f"{selected_path}: {collect.case_id(key)} selected twice")
+        selected[key] = row["selected"].strip()
+    return selected
+
+
+def rows_from_csv(route_paths, selected_path, board, pick="selected", excluded=None):
+    """Rows from legacy route_tune CSVs: per case, medians over passes of the routes of its class.
+
+    The selection CSV is needed in both modes: route_tune writes one selection per problem and
+    width of its speed loop and none in its prefill loop, so its widths are the speed profile's.
+    A routes row at another width, or of a route the speed loop does not time at its width
+    (`speed_loop_times`), is a prefill-profile timing: it is not a case or a candidate, and its
+    (case id, route) is appended to `excluded` when a list is given.
+    """
     if pick not in ("selected", "model"):
         raise ValueError("pick must be selected or model")
+    if not selected_path:
+        raise ValueError("--selected is needed: its widths are the speed profile's (route_tune "
+                         "also writes prefill-profile rows into --routes-out, with no profile "
+                         "column)")
+    selected = read_selected(selected_path)
+    widths = {int(k[5]) for k in selected}
     timed, model = {}, {}  # (key, route) -> [us per pass]
-    written = {}  # (pass, key) -> routes in the order the pass wrote them
+    written = {}  # (pass, key) -> speed-loop routes in the order the pass wrote them
     digits = {}  # pass -> most significant digits of any model_us it wrote
+    excluded_pairs = set()  # (key, route) of prefill-profile rows, over all passes
     for number, path in enumerate(route_paths):
         columns = collect.KEY + ("route", "median_us") + (("model_us",) if pick == "model" else ())
         seen = set()
@@ -175,6 +243,16 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected"):
             if at in seen:
                 raise ValueError(f"{path}: {collect.case_id(at[0])} {at[1]} timed twice in one pass")
             seen.add(at)
+            if pick == "model":
+                # Of every row: the pass's writer printed all its prices with one precision.
+                digits[number] = max(digits.get(number, 0),
+                                     significant_digits(row.get("model_us") or ""))
+            t = int(at[0][5])
+            if not (t in widths and speed_loop_times(at[1], t, selected.get(at[0]))):
+                if excluded is not None and (at[0], at[1]) not in excluded_pairs:
+                    excluded.append((collect.case_id(at[0]), at[1]))
+                excluded_pairs.add((at[0], at[1]))
+                continue
             written.setdefault((number, at[0]), []).append(at[1])
             us = float(row["median_us"])
             if not (math.isfinite(us) and us > 0):
@@ -183,26 +261,15 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected"):
             if pick == "model":
                 # Empty where the model prices no route (route_tune leaves the cell blank).
                 text = (row.get("model_us") or "").strip()
-                digits[number] = max(digits.get(number, 0), significant_digits(text))
                 price = float(text) if text else None
                 model.setdefault(at, []).append(
                     price if price is not None and math.isfinite(price) and price > 0 else None)
     passes = len(route_paths)
-    selected = None
-    if pick == "selected":
-        if not selected_path:
-            raise ValueError("--selected is needed to score the recorded selection")
-        selected = {}
-        for row in collect.read_rows(selected_path, collect.KEY + ("selected",)):
-            key = collect.key_of(row)
-            if key in selected:
-                raise ValueError(f"{selected_path}: {collect.case_id(key)} selected twice")
-            selected[key] = row["selected"].strip()
     routes = {}
     for key, route in timed:
         routes.setdefault(key, []).append(route)
     rows, skipped = [], []
-    if selected is not None:
+    if pick == "selected":
         # A selection the sweep has no row for at all (a pass cut short) is skipped, not dropped.
         for key in sorted(set(selected) - set(routes), key=lambda k: (k[:5], int(k[5]))):
             skipped.append(skip_row(collect.case_id(key), board, key[0], int(key[5]), selected[key],
@@ -216,13 +283,18 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected"):
             skipped.append(skip_row(collect.case_id(key), board, key[0], int(key[5]), pick, reason))
 
         if any(len(timed[(key, r)]) != passes for r in eligible):
-            skip(selected.get(key) if selected is not None else None,
+            skip(selected.get(key) if pick == "selected" else None,
                  "a candidate was not timed in every pass")
             continue
         cands = {r: statistics.median(timed[(key, r)]) for r in eligible}
         if pick == "model":
             if int(key[5]) < MODEL_MIN_T:  # the model ranks only from 17 tokens
                 skip(None, "the model ranks only from T 17")
+                continue
+            if key[0] == "nvfp4":
+                # route_authorities.cpp cost_model declines NVFP4: route_tune writes model_us for
+                # it as a diagnostic, but no production pick follows that price.
+                skip(None, "the model does not rank NVFP4 routes")
                 continue
             priced = {r: statistics.median(model[(key, r)]) for r in cands
                       if all(x is not None for x in model[(key, r)])}
@@ -245,10 +317,9 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected"):
                 # the cheaper: no value of its model_us is as long as a 17-digit one.
                 skip(None, "model_us has six significant digits: an equal price may be a rounding")
                 continue
-            # Within one family the offer order is the schedule index, but the rows of one key are
-            # not always written in it: route_tune times the prefill route first at the band
-            # widths. So the order is read from the other widths of the same problem, where the
-            # pass wrote it by schedule index; a pair they do not settle is a skip.
+            # Within one family the offer order is the schedule index. The order is read from the
+            # other speed-loop widths of the same problem (`written` holds no prefill-profile row:
+            # the prefill loop writes the prefill route first); a pair they do not settle is a skip.
             votes = offer_order_votes(
                 [seq for (number, other), seq in written.items()
                  if other[:5] == key[:5] and other != key], offer_family(tied[0]))
@@ -415,16 +486,18 @@ def main(argv=None):
             raise ValueError("--doc and --routes cannot be merged: documents carry the selector "
                              "revision and build, legacy route CSVs carry none, so the report's "
                              "provenance would label rows of an unknown build; run them separately")
-        if args.pick == "model" and (args.doc or args.selected):
+        if args.pick == "model" and args.doc:
             raise ValueError("--pick model scores the model price's own pick from --routes; it "
-                             "cannot be combined with " + ("--doc" if args.doc else "--selected"))
-        rows, skipped, named = [], [], []
+                             "cannot be combined with --doc")
+        rows, skipped, named, inputs, excluded = [], [], [], [], []
         for doc in args.doc:
             loaded = json.loads(doc.read_bytes(), object_pairs_hook=regret.unique_object)
             r, s = rows_from_document(loaded)
             named.append((doc.name, provenance_of(loaded)))
+            inputs.append((str(doc), r + s))
             rows += r
             skipped += s
+        provenance = merged_provenance(named) if named else None
         if len(args.board) != len(args.routes):
             raise ValueError(f"one --board per --routes group ({len(args.board)} boards, "
                              f"{len(args.routes)} groups)")
@@ -434,22 +507,26 @@ def main(argv=None):
         if args.routes and not args.qualified.strip():
             raise ValueError("--routes needs --qualified: route_tune does not check results, so "
                              "state the correctness tests that qualified these candidates")
-        if args.routes and args.pick == "selected" and len(args.selected) != len(args.routes):
-            raise ValueError(f"--pick selected needs one --selected per --routes group "
+        if args.routes and len(args.selected) != len(args.routes):
+            raise ValueError(f"one --selected per --routes group, with either --pick: its widths "
+                             f"tell the speed profile's rows from the prefill profile's "
                              f"({len(args.selected)} selected, {len(args.routes)} groups)")
         for i, passes in enumerate(args.routes):
-            sel = args.selected[i] if i < len(args.selected) else None
-            r, s = rows_from_csv(passes, sel, args.board[i], args.pick)
+            r, s = rows_from_csv(passes, args.selected[i], args.board[i], args.pick, excluded)
+            inputs.append((f"--routes group {i + 1} ({args.board[i]})", r + s))
             rows += r
             skipped += s
+        refuse_repeated_cases(inputs)
         if not rows:
             raise ValueError(f"no scored cases ({len(skipped)} skipped)")
         weights = json.loads(args.band_weights) if args.band_weights else None
         rep = report(rows, skipped, weights)
-        if named:
-            rep["provenance"] = merged_provenance(named)
+        if provenance is not None:
+            rep["provenance"] = provenance
         if args.routes:
             rep["legacy_qualification"] = args.qualified.strip()
+            # Prefill-profile (case, route) pairs of the route CSVs, left out (rows_from_csv).
+            rep["prefill_profile_rows_excluded"] = len(excluded)
     except (OSError, UnicodeError, ValueError, KeyError, OverflowError) as error:
         print(f"regret_bands: {error}", file=sys.stderr)
         return 2

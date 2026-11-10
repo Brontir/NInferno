@@ -166,9 +166,15 @@ tiny one barely), for the bands decode (T 1-8), verify (9-16), narrow (17-32), w
 batch129 (129+), by board, format and route family (the part of the selected route's name before
 its first dot). `by_board` is the acceptance cell: the cross-board groups (`overall`, `by_format`,
 `by_family`) pool boards by absolute time, so the slowest board dominates them and can mask a
-regression on a faster one. route_tune times the speed profile's selection up to T 512, so the widest band is batched
-decode and wide verify, not the prefill profile's 2048-token chunks: this says nothing about
-prefill.
+regression on a faster one. This says nothing about prefill: the cases are the speed profile's
+widths (up to T 512 by default), so the widest band is batched decode and wide verify.
+
+`--routes-out` also holds the prefill profile's rows (its widths from chunk/2 and its bands from
+32), with no profile column. route_tune writes one selection per problem and width of its speed
+loop and none in its prefill loop, so only the widths the `--selected` file lists are cases, and
+at those widths a row of a route the speed loop does not time there (R8 above 4 tokens; w4a4,
+staged, NVFP4 tiled and tiled below 17) is left out unless it is the executed selection. The
+JSON report counts the (case, route) pairs left out as `prefill_profile_rows_excluded`.
 
 There is no default cross-band mean: no committed mix gives band weights the sweeps can carry.
 `--band-weights '{"decode":3,"verify":1}'` adds a `weighted` mean per group; a group with no case
@@ -177,14 +183,15 @@ skipped cases in a weighted band (its `weighted_incomplete` lists them), because
 scored cases would read lower than the truth. Every group and band carries `skipped`, the markdown
 cell reads `regret (n / skipped)`, and the report lists each skipped case with its T, board, format,
 family of the pick and reason under `skipped_cases`. A case is skipped, never scored as zero regret, when its pick was not timed, when a pass did not time one of
-its candidates, when no selection is recorded for it, when the pick is of another compute class
-than the case's key, when fewer than two candidates of its class were timed, or (`--pick model`,
-T >= 17 only) when the model prices none of them or prices the best candidates of two route families
-equally. A tie within one family takes the route first in the family's schedule order, as the sweep's
-other widths of the same problem show it (`cost_route` keeps the first offered on an equal price); a tie they
-do not settle is skipped. The order is a write-order majority, so a
-non-default run (custom `--points`, `--prefill-only 1`, or a chunk of 4096 or more) that wrote more widths prefill-first could settle a tie
-the wrong way; default archives are in offer order. A tie is also skipped when the file's `model_us` has no value of more
+its candidates, when no selection is recorded for it (at a width the selection lists for another
+problem), when the pick is of another compute class than the case's key, when fewer than two
+candidates of its class were timed, or (`--pick model`, T >= 17 only) when the case is NVFP4 (the
+cost model does not rank NVFP4; route_tune writes its `model_us` as a diagnostic), when the model
+prices none of the candidates, or when it prices the best candidates of two route families
+equally. A tie within one family takes the route first in the family's schedule order, as the
+other speed-loop widths of the same problem show it (`cost_route` keeps the first offered on an
+equal price; the speed loop writes a family's routes in schedule order); a tie they do not settle
+is skipped. A tie is also skipped when the file's `model_us` has no value of more
 than six significant digits (a pass from before `route_tune` printed 17): there an equal price may be two prices that differ in the seventh digit,
 where production takes the cheaper. `--pick model` ranks only within the
 case's compute class; production under AllowA8 also offers the a8 candidates.
@@ -192,7 +199,7 @@ case's compute class; production under AllowA8 also offers the a8 candidates.
 ```bash
 python3 tools/bench/regret_bands.py --doc selection.json --doc other_board.json --md bands.md --json bands.json
 python3 tools/bench/regret_bands.py --routes p1.csv p2.csv --selected sel_p1.csv --board rtx5090 --qualified "oracle tests X passed"
-python3 tools/bench/regret_bands.py --routes p1.csv p2.csv --pick model --board rtx5090 --qualified "oracle tests X passed"   # the model price's own pick, needs model_us
+python3 tools/bench/regret_bands.py --routes p1.csv p2.csv --selected sel_p1.csv --pick model --board rtx5090 --qualified "oracle tests X passed"   # the model price's own pick, needs model_us
 python3 -m unittest discover -s tests -p test_regret_bands.py
 ```
 
@@ -201,11 +208,14 @@ takes plain `route_tune` CSVs (medians over the passes given), because the exist
 the run/device columns `regret_collect.py` requires; the board is named by hand, and nothing then
 checks that the passes come from one build and board. route_tune does not check results, so
 `--routes` also needs `--qualified TEXT` naming the correctness tests that qualified its candidates
-(recorded as `legacy_qualification` in the JSON report), and `--pick selected` needs one
-`--selected` per `--routes` group. `--pick model` scores the model price's own pick from `--routes`
-and is refused with `--selected` or `--doc`. `--doc` and `--routes` cannot be mixed in one run (the
-documents carry a provenance the legacy CSVs lack). `--doc` inputs with different `selector_revision` or `build_id`
-are refused rather than merged; equal provenance is recorded as `provenance` in the report.
+(recorded as `legacy_qualification` in the JSON report), and either `--pick` needs one
+`--selected` per `--routes` group (its widths tell the speed profile's rows from the prefill
+profile's). `--pick model` scores the model price's own pick from `--routes` and is refused with
+`--doc`. `--doc` and `--routes` cannot be mixed in one run (the documents carry a provenance the
+legacy CSVs lack). `--doc` inputs with different `selector_revision` or `build_id` are refused
+rather than merged; equal provenance is recorded as `provenance` in the report. A case (board,
+model, id) that two inputs both hold, for example one document given twice, is refused: merged, it
+would count and weigh twice.
 
 ## Published performance numbers
 
