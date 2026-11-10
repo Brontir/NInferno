@@ -118,13 +118,14 @@ void test_gain_note_names_where_the_price_is_held_from() {
         [](std::uint32_t streams,
            std::vector<pr::choice::DrafterOption::JointScale> joint = {{.streams = 2,
                                                                         .scale   = 0.45}},
-           std::vector<pr::choice::DrafterOption::LoadGain> load    = {}) {
+           std::vector<pr::choice::DrafterOption::LoadGain> load = {}, bool measured = true) {
             pr::ServedChoice served;
             pr::choice::DrafterOption option;
-            option.label   = "mtp:3";
-            option.speedup = 2.0;
-            option.joint   = std::move(joint);
-            option.load    = std::move(load);
+            option.label    = "mtp:3";
+            option.speedup  = 2.0;
+            option.measured = measured;
+            option.joint    = std::move(joint);
+            option.load     = std::move(load);
             served.drafter_options.push_back(option);
             served.task.concurrency = streams;
             pr::choice::Scored scored;
@@ -170,6 +171,51 @@ void test_gain_note_names_where_the_price_is_held_from() {
               !only_placeholder.contains("joint_priced_at_streams") &&
               only_placeholder["note"].get<std::string>().find("a ceiling") != std::string::npos,
           "only a placeholder below the streams: a ceiling, no joint_verify_scale");
+    // A price at the placeholder bound's own count: the estimate counts none there (the drafter
+    // is not counted), and the JSON claims none, at 2 and at 3 streams (the 2 bound holds to 3).
+    const std::vector<pr::choice::DrafterOption::LoadGain> placeholder = {
+        {.streams = 2, .speedup = 1.0, .depth = 2, .bounded = true, .measured = false}};
+    for (const std::uint32_t streams : {2U, 3U}) {
+        const auto at = note_at(
+            streams, {{.streams = 2, .scale = 0.9}, {.streams = 3, .scale = 0.8}}, placeholder);
+        check(at["at_concurrency"] == 1.0 && !at.contains("joint_verify_scale") &&
+                  !at.contains("joint_priced_at_streams") &&
+                  at["note"].get<std::string>().find("a ceiling") != std::string::npos,
+              "a price at an unmeasured bound's own count: no price claimed at " +
+                  std::to_string(streams) + " streams");
+    }
+    // An option nobody measured is not priced: the gain stays the ceiling at its own counts.
+    for (const std::uint32_t streams : {2U, 3U}) {
+        const auto at = note_at(streams, {{.streams = 2, .scale = 0.45}}, {}, false);
+        check(at["at_concurrency"] == 2.0 && !at.contains("joint_verify_scale") &&
+                  at["note"].get<std::string>().find("a ceiling") != std::string::npos,
+              "an unmeasured option: no price claimed at " + std::to_string(streams) + " streams");
+    }
+    // The scale reported is the supplying count's own: bounds 2 (gain 1.5, depth 2) and 4 (gain
+    // 1.2, depth 1), priced at 2 only: at 4 streams the gain is held from 2's 0.5 (0.75), not the
+    // 0.625 that gain over the bound's own one-request gain would give.
+    const auto held_scale = note_at(4, {{.streams = 2, .scale = 0.5}},
+                                    {{.streams = 2, .speedup = 1.5, .depth = 2, .bounded = true},
+                                     {.streams = 4, .speedup = 1.2, .depth = 1, .bounded = true}});
+    check(held_scale["at_concurrency"] == 0.75 && held_scale["joint_verify_scale"] == 0.5 &&
+              held_scale["joint_priced_at_streams"] == 2,
+          "the scale of the count the gain is held from");
+    // A scale above 1 is clamped: it is no price, and the JSON does not say it is one.
+    const auto over = note_at(2, {{.streams = 2, .scale = 1.05}});
+    check(over["at_concurrency"] == 2.0 && !over.contains("joint_verify_scale") &&
+              over["note"].get<std::string>().find("a ceiling") != std::string::npos,
+          "a scale above 1 is not reported as a price");
+    // Priced at 2 (0.8) and at 3 (0.9): the gain at 3 is held from 2, and the note says this
+    // count is priced, higher, not that it is not priced.
+    const auto higher = note_at(3, {{.streams = 2, .scale = 0.8}, {.streams = 3, .scale = 0.9}});
+    check(higher["joint_priced_at_streams"] == 2 && higher["joint_verify_scale"] == 0.8 &&
+              higher["note"].get<std::string>().find("priced higher") != std::string::npos &&
+              higher["note"].get<std::string>().find("not priced") == std::string::npos,
+          "a count priced above the held price: the note says priced higher");
+    const auto unpriced_here = note_at(3);
+    check(unpriced_here["note"].get<std::string>().find("this count is not priced") !=
+              std::string::npos,
+          "a count with no price of its own: the note says not priced");
 }
 
 } // namespace

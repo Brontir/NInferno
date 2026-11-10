@@ -108,41 +108,47 @@ struct DrafterOption {
         return gain;
     }
 
-    // The gain at `streams` streams: base_gain_at scaled by the joint verify's price where it is
-    // priced (below 1 when the round at that load no longer pays: the choice then weighs plain
-    // decode), else base_gain_at; and never more than the least gain priced at a smaller count of
-    // streams (the gain does not climb back as the load grows, priced there or not; a count whose
-    // bound is unmeasured holds a placeholder and bounds nothing). Before any count is priced it
-    // is the one-request ceiling.
-    [[nodiscard]] double speedup_at(std::uint32_t streams) const noexcept {
-        if (plain_from_streams != 0 && streams >= plain_from_streams) { return 1; }
-        double gain  = base_gain_at(streams);
-        double least = gain;
+    // The count whose joint price supplies the gain at `streams` streams, with that entry's scale;
+    // `streams` 0: no price does, the gain is base_gain_at (a ceiling). The hold rule, once: the
+    // gain at a count is base_gain_at scaled by the joint verify's price at that count, and never
+    // more than the least gain priced at a smaller count (the gain does not climb back as the load
+    // grows, priced there or not). An entry whose bound is unmeasured holds a placeholder gain and
+    // supplies nothing (neither at its own count nor below), as `measured_at` does not count the
+    // drafter there; an entry that would raise the gain above base_gain_at is clamped away.
+    struct PriceSource {
+        std::uint32_t streams = 0;
+        double scale          = 1;
+        double gain           = 0; // the gain counted at the asked streams
+    };
+
+    [[nodiscard]] PriceSource price_source_at(std::uint32_t streams) const noexcept {
+        PriceSource out;
+        out.gain = base_gain_at(streams);
+        if (plain_from_streams != 0 && streams >= plain_from_streams) {
+            out.gain = 1;
+            return out;
+        }
+        if (!measured) { return out; } // a gain nobody measured is not priced
         for (const JointScale& j : joint) {
             if (j.streams > streams) { break; }
+            if (!bound_measured_at(j.streams)) { continue; }
             const double priced = base_gain_at(j.streams) * j.scale;
-            if (j.streams == streams) {
-                gain = priced;
-            } else if (bound_measured_at(j.streams)) {
-                // A bound with no measured gain holds a placeholder, which bounds nothing.
-                least = std::min(least, priced);
-            }
+            if (priced < out.gain) { out = {j.streams, j.scale, priced}; }
         }
-        return std::min(gain, least);
+        return out;
     }
 
-    // R_1 / R_C as counted at `streams` streams (1 where nothing is priced at or below it).
-    [[nodiscard]] double joint_scale_at(std::uint32_t streams) const noexcept {
-        const double base = base_gain_at(streams);
-        return base > 0 ? speedup_at(streams) / base : 1;
+    // The gain at `streams` streams (price_source_at): below 1 where the round at that load no
+    // longer pays, so the choice weighs plain decode. Before any count is priced it is the
+    // one-request ceiling.
+    [[nodiscard]] double speedup_at(std::uint32_t streams) const noexcept {
+        return price_source_at(streams).gain;
     }
 
-    // Whether the gain at `streams` streams rests on the joint verify's price (priced there or
-    // below), not on a one-request ceiling.
+    // Whether the gain at `streams` streams rests on a joint verify's price (priced there or held
+    // from a smaller count), not on a one-request ceiling.
     [[nodiscard]] bool joint_priced_at(std::uint32_t streams) const noexcept {
-        if (plain_from_streams != 0 && streams >= plain_from_streams) { return false; }
-        return std::any_of(joint.begin(), joint.end(),
-                           [&](const JointScale& j) { return j.streams <= streams; });
+        return price_source_at(streams).streams != 0;
     }
 
     // Whether the load table's bound in force at `streams` streams was measured at its depth

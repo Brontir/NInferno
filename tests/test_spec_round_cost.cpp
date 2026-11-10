@@ -918,6 +918,40 @@ int main() {
             }
         }
     }
+    // What the shipped registry's plans can price today (#303): the plan weighs the joint verify's
+    // price only at a count of streams the load table lets speculate. No measured pair of the
+    // registry carries a load table, and a profile without one speculates from no count above one
+    // request (plain from two streams), at home or not, so no plan of a registry target carries a
+    // joint price. The day a pair gets a load table this fails: the change is then seen and this
+    // is updated with the plans it now prices.
+    {
+        const auto& registry = sp::Registry::builtin();
+        std::size_t scanned  = 0;
+        std::set<std::string> targets;
+        for (const auto& p : registry.pairs()) {
+            expect(p.tune.load.empty(), "a registry pair carries no load table: " + p.target_repo);
+            targets.insert(p.target);
+        }
+        for (const std::string& target : targets) {
+            const auto group = registry.measured(target);
+            std::set<std::string> generations;
+            for (const auto* p : group) { generations.insert(p->generation); }
+            for (const std::string& generation : generations) {
+                const auto profile = sp::profile_for_target(group, generation);
+                ++scanned;
+                const bool plain_from_two = profile.load.size() == 1 &&
+                                            profile.load.front().lanes <= 2 &&
+                                            profile.load.front().depth == 0;
+                expect(plain_from_two || profile.disabled.has_value() ||
+                           !(profile.overall.config.enabled() ||
+                             profile.thinking.config.enabled() ||
+                             profile.non_thinking.config.enabled()),
+                       "a registry target's profile speculates for one request only: " + target +
+                           " on " + generation);
+            }
+        }
+        expect(scanned > 0, "the registry scan covered its targets");
+    }
     if (failures == 0) { std::cout << "round cost: all passed\n"; }
     return failures == 0 ? 0 : 1;
 }

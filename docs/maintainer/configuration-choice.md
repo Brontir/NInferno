@@ -177,8 +177,22 @@ multiplies the decode speed while its load table lets the asked streams speculat
 configuration's at the asked streams, the gain is the bounded depth's, one request measured
 (`DrafterOption::load`, `spec::measured_gain`; #303); a depth the profile did not measure (a
 published profile lists only its choice's) counts none, and at such a load the drafter is not
-weighed (`DrafterOption::measured_at`), as for a gain published without its speeds. Under load the gain is a ceiling: the verify of the streams' rows together costs more than
-one request's, and that is not priced yet (the plan's `chosen.drafter_gain` says so). It changes no output (greedy verification), so it has no
+weighed (`DrafterOption::measured_at`), as for a gain published without its speeds. Under load the verify of the streams' rows together costs more than one request's, and the
+round cost prices it where a profile carries the price (`Profile::joint_scale`, R_1 / R_C of the
+depth in force at C streams; `DrafterOption::joint`, `price_source_at`): the gain counted at C
+streams is the bound's one-request gain times that scale, held to the least gain priced at a
+smaller count (the gain never climbs back as the load grows), and an entry whose bound or whose
+option is unmeasured supplies nothing (the estimate does not count the drafter there, and the
+plan says the same). The plan's `chosen.drafter_gain` names the supplying count and its scale, or
+says the gain is a ceiling. Reach, stated plainly: a count is priced only where
+`streams x (depth + 1) <= spec::kPricedVerifyRows` (8), so depth 3 or less at 2 streams, depth 1 at
+3 or 4 streams, nothing from 5 streams; and none of the registry's measured pairs carries a load
+table, so a registry target's profile speculates for one request only and no `/api/plan` number
+changes for it today (`tests/test_spec_round_cost.cpp` pins this: the day a pair gets a load table
+the scan fails and the plans it prices are looked at). Known gaps: (1) the price is taken on the
+base record's board, which may not be the asking card; (2) nothing holds the price against a
+measured loaded gain (the round cost test compares the profile's scale with `spec::load_gain`, so
+it checks wiring only); (3) re-selection for another mode keeps no price. It changes no output (greedy verification), so it has no
 accuracy term: between plain decode and a drafter the worth weighs the drafter's speed against the
 context its memory takes. The drafter is weighed (`Choice::drafter_by_worth`) only where the worth
 decides and every drafter's gain is measured (`DrafterOption::measured`); a profile published

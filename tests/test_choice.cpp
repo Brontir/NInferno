@@ -1919,6 +1919,31 @@ void joint_price_scales_the_gain(const json& fixture) {
     check(!u.measured_at(2) && u.measured_at(4) && std::abs(u.speedup_at(4) - 1.28) < 1e-12,
           "an unmeasured bound's placeholder does not bound a measured gain: " +
               std::to_string(u.speedup_at(4)));
+    // Nor does the placeholder's own count count its price: the estimate multiplies by 1 there
+    // (measured_at is false), and speedup_at says the same.
+    check(u.speedup_at(2) == 1.0 && !u.joint_priced_at(2) && u.speedup_at(3) == 1.0 &&
+              !u.joint_priced_at(3),
+          "a price at an unmeasured bound's own count is not counted: " +
+              std::to_string(u.speedup_at(2)));
+    // An option nobody measured is not priced at all.
+    ch::DrafterOption nobody{"mtp:4", "mtp", 1.5, 0, "measured"};
+    nobody.measured = false;
+    nobody.joint    = {{.streams = 2, .scale = 0.45}};
+    check(nobody.speedup_at(2) == 1.5 && !nobody.joint_priced_at(2),
+          "an unmeasured option's gain is not priced");
+    // A price above 1 is clamped away: it supplies nothing.
+    ch::DrafterOption over{"mtp:4", "mtp", 2.0, 0, "measured"};
+    over.joint = {{.streams = 2, .scale = 1.05}};
+    check(over.speedup_at(2) == 2.0 && !over.joint_priced_at(2),
+          "a scale above 1 does not raise the gain nor count as a price");
+    // The count that supplies the gain, with its own scale (not R_1 / R_C of no count).
+    ch::DrafterOption held{"mtp:4", "mtp", 2.0, 0, "measured"};
+    held.load         = {{.streams = 2, .speedup = 1.5, .depth = 2, .bounded = true},
+                         {.streams = 4, .speedup = 1.2, .depth = 1, .bounded = true}};
+    held.joint        = {{.streams = 2, .scale = 0.5}};
+    const auto source = held.price_source_at(4);
+    check(source.streams == 2 && source.scale == 0.5 && std::abs(source.gain - 0.75) < 1e-12,
+          "the source of a held gain is the count and the scale it is held from");
     b.model.drafters        = {d};
     b.model.default_drafter = 1;
     ch::Candidate with{KvCacheStorage::Int8Group64, KvCacheStorage::BFloat16,
@@ -1978,6 +2003,24 @@ void joint_price_replays(const json& fixture) {
     const ch::Choice again = ch::replay_choice(nlohmann::ordered_json::parse(text));
     check(ch::choice_summary(again) == ch::choice_summary(record.choice),
           "a choice with joint scales replays to the same");
+    // A record whose joint scales are not ascending by streams, or not positive, is rejected on
+    // read (speedup_at reads them in order).
+    const auto reads = [&](const nlohmann::ordered_json& joint) {
+        nlohmann::ordered_json bad           = nlohmann::ordered_json::parse(text);
+        bad["model"]["drafters"][0]["joint"] = joint;
+        try {
+            (void)ch::replay_choice(bad);
+            return true;
+        } catch (const std::invalid_argument&) { return false; }
+    };
+    check(reads(nlohmann::ordered_json::array(
+              {{{"streams", 2}, {"scale", 0.5}}, {{"streams", 3}, {"scale", 0.6}}})),
+          "ascending joint scales are read");
+    check(!reads(nlohmann::ordered_json::array(
+              {{{"streams", 3}, {"scale", 0.5}}, {{"streams", 2}, {"scale", 0.6}}})),
+          "joint scales not ascending by streams are rejected");
+    check(!reads(nlohmann::ordered_json::array({{{"streams", 2}, {"scale", 0.0}}})),
+          "a joint scale that is not positive is rejected");
 }
 
 // The order a manifest lists its drafters in does not decide: two drafters of equal worth tie
