@@ -26,8 +26,7 @@ param(
     [string]$Version = "",
     [string]$Vcpkg = $env:VCPKG_ROOT,
     [string]$Cuda70 = "",
-    [int]$Jobs = 0,
-    [switch]$SkipFactsCheck
+    [int]$Jobs = 0
 )
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path "$PSScriptRoot\..\..\..").Path
@@ -54,9 +53,10 @@ if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
     foreach ($line in $vars) { if ($line -match '^([^=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2]) } }
 }
 
-# The release's nvcc is pinned to the patch level, as on Linux (tests/ops/linear/selector_golden/
-# facts_index.txt, #556): the register-MMA kernels' registers fix the selector's choices on RTX 30 / 50.
-$pinned = ((Get-Content "$Root\tests\ops\linear\selector_golden\facts_index.txt") | Select-String '^release ([0-9.]+)$').Matches[0].Groups[1].Value
+# The release's nvcc is pinned to the patch level, as on Linux (the kernel-facts snapshots,
+# src/ops/generic/data/kernel_facts/, #612): the register-MMA kernels' registers fix the selector's
+# choices on RTX 30 / 50, and the price reads the snapshot the pinned nvcc made.
+$pinned = ((Get-Content "$Root\src\ops\generic\data\kernel_facts\sm_120a.txt") | Select-String '^nvcc ([0-9.]+)$').Matches[0].Groups[1].Value
 $nvccVersion = (& nvcc --version | Select-String 'V([0-9]+\.[0-9]+\.[0-9]+)').Matches[0].Groups[1].Value
 if ([version]$nvccVersion -ne [version]$pinned) { throw "nvcc $nvccVersion, the release is pinned to $pinned (selector goldens, #556)" }
 
@@ -64,27 +64,21 @@ if ([version]$nvccVersion -ne [version]$pinned) { throw "nvcc $nvccVersion, the 
 $ErrorActionPreference = 'Continue'
 $installed = if ($env:VCPKG_INSTALLED_DIR) { $env:VCPKG_INSTALLED_DIR } else { "$Root\vcpkg_installed" }
 $parallel = if ($Jobs -gt 0) { @('--parallel', $Jobs) } else { @('--parallel') }
-# The facts of the kernels a tree compiled, from its own engine (`ninferno-serve selector-facts`, the
-# probe the selector goldens are keyed by), against the release entries of facts_index.txt (#556).
-# It needs a GPU that runs those kernels (exit 2 without one; -SkipFactsCheck then says it was not
-# checked); any other failure stops the release.
+# The kernels a tree compiled against their kernel-facts snapshot (#612): the linked engine read
+# with cuobjdump (tools/kernel_facts/kernel_facts.py check: no GPU), and, on a GPU of the
+# generation, the running kernels' attributes too (`ninferno-serve selector-facts`, the probe the
+# selector goldens are priced by; exit 2 without such a GPU: not run, the first check having
+# passed). Any other failure stops the release.
+function Test-KernelFacts([string]$arch, [string]$exe, [string]$nvccExe) {
+    $version = (& $nvccExe --version | Select-String 'V([0-9]+\.[0-9]+\.[0-9]+)').Matches[0].Groups[1].Value
+    & python -B "$Root\tools\kernel_facts\kernel_facts.py" check --binary $exe `
+        --expected "$Root\src\ops\generic\data\kernel_facts\sm_$arch.txt" --nvcc $version --cuda-bin (Split-Path $nvccExe)
+    if ($LASTEXITCODE -ne 0) { throw "the sm_$arch kernels differ from their snapshot (kernel-facts snapshots, #612)" }
+}
 function Test-SelectorFacts([string]$arch, [string]$exe) {
-    $set = if ($arch -eq '86') { 'base' } else { 'full' }
     $out = & $exe selector-facts
-    if ($LASTEXITCODE -eq 2) {
-        if ($SkipFactsCheck) { Write-Warning "the selector facts of sm_$arch were not checked (-SkipFactsCheck)"; return }
-        throw "ninferno-serve selector-facts found no GPU that runs the sm_$arch kernels on this machine"
-    }
-    if ($LASTEXITCODE -ne 0) { throw "ninferno-serve selector-facts failed for sm_$arch (exit $LASTEXITCODE)" }
-    $got = @{}
-    $out | ForEach-Object { $name, $digest = $_ -split ' '; $got[$name] = $digest }
-    $entries = @(Get-Content "$Root\tests\ops\linear\selector_golden\facts_index.txt" | Where-Object { $_ -match "^$set/\S+ \S+ \S+ $([regex]::Escape($pinned))$" })
-    if ($entries.Count -eq 0) { throw "facts_index.txt has no $set/ entries under nvcc $pinned to check sm_$arch against" }
-    foreach ($entry in $entries) {
-        $null = $entry -match "^$set/(\S+) (\S+) "
-        $board = $Matches[1]; $want = $Matches[2]
-        if ($got[$board] -ne $want) { throw "sm_$arch kernels give facts '$($got[$board])' for $board, the release entry is '$want' (selector goldens, #556)" }
-    }
+    if ($LASTEXITCODE -eq 2) { Write-Warning "ninferno-serve selector-facts found no GPU that runs the sm_$arch kernels on this machine; the live check was not run"; return }
+    if ($LASTEXITCODE -ne 0) { $out | Write-Host; throw "ninferno-serve selector-facts failed for sm_$arch (exit $LASTEXITCODE)" }
 }
 
 $engines = @()
@@ -126,6 +120,7 @@ foreach ($arch in $ArchList) {
             throw "share\ninferno\llama-ui\index.html missing: configure with network access (NINFERNO_UI_CHAT)"
         }
     }
+    Test-KernelFacts $arch "$build\apps\ninferno-serve.exe" $(if ($nvcc) { $nvcc } else { (Get-Command nvcc).Source })
     if ($arch -eq '86' -or $arch -eq '120a') { Test-SelectorFacts $arch "$build\apps\ninferno-serve.exe" }
     Copy-Item "$build\apps\ninferno-serve.exe" "$Stage\bin\ninferno-serve-sm$arch.exe"
     $engines += [ordered]@{ tag = $arch; arch = [int]($arch -replace '[^0-9]', ''); specific = [bool]($arch -match '[af]$'); ptx = $ptx }

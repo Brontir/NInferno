@@ -28,7 +28,8 @@
 
 namespace {
 
-// The kernel's column tile picks (core/mmq_columns.h): GA10x takes the least work of its widths,
+// The kernel's column tile picks (core/mmq_columns.h): GA10x, Ada and GB20x take the least work of
+// their widths,
 // every other card the fewest tiles of 16, 32, 64, 128. Never wider than the fixup plane's bound
 // (ggml_mmq fixup_bound: the column count rounded up to a power of two from 16, at most 128).
 namespace pins {
@@ -41,8 +42,10 @@ static_assert(pick(144, 8, 6, true) == 80 && pick(160, 8, 6, true) == 80 &&
 static_assert(pick(144, 12, 0, true) == 80 && pick(192, 12, 0, true) == 96 &&
               pick(224, 12, 0, true) == 80 && pick(256, 12, 0, true) == 128 &&
               pick(16, 12, 0, true) == 16);
-static_assert(pick(144, 8, 9, true) == 128 && pick(192, 8, 9, true) == 128 &&
-              pick(16, 8, 9, true) == 16 && pick(144, 7, 5, true) == 128);
+// Ada takes the least work too (f 0.20, as GA10x); Turing keeps the fewest tiles.
+static_assert(pick(144, 8, 9, true) == 80 && pick(192, 8, 9, true) == 96 &&
+              pick(224, 8, 9, true) == 128 && pick(16, 8, 9, true) == 16 &&
+              pick(144, 7, 5, true) == 128);
 // A format the grids did not run keeps the fewest tiles on every card
 // (mmq_columns::work_tiles_format).
 static_assert(pick(144, 8, 6, false) == 128 && pick(192, 12, 0, false) == 128 &&
@@ -616,19 +619,19 @@ void prefills_by_format(const json& fixture) {
         bool q41_transferred = false;
         const double q41_seconds = ch::prefill_linears_seconds(q41_model, ada, q41, 1024, &q41_transferred);
         const double q4k_seconds = ch::prefill_linears_seconds(q4k_model, ada, km, 1024);
-        // GA10x: a slice of 144 tokens takes two 80-column tiles (1.57 of a 128-column tile's
-        // steps), so it costs less than a slice of 256 (two 128-column tiles); Ada keeps the fewest
-        // tiles (its 144 and 256 are both two 128-column tiles, the cost of the tokens beyond
-        // aside).
+        // GA10x and Ada (#524, DECISIONS 74, f 0.20 on both): a slice of 144 tokens takes two
+        // 80-column tiles (1.57 of a 128-column tile's steps), so it costs less than a slice of 256
+        // (two 128-column tiles). Turing keeps the fewest tiles.
         const ch::CardFacts rtx3060 = card_of(fixture.at("cards").at("RTX 3060"));
         const double at_144         = ch::prefill_linears_seconds(q4k_model, rtx3060, km, 144);
         const double at_256         = ch::prefill_linears_seconds(q4k_model, rtx3060, km, 256);
         check(at_144 > 0 && at_144 < 0.9 * at_256,
               "GA10x: 144 tokens take narrower column tiles than 256 (two 80-column tiles against "
               "two 128)");
-        check(ch::prefill_linears_seconds(q4k_model, ada, km, 144) >
-                  0.85 * ch::prefill_linears_seconds(q4k_model, ada, km, 256),
-              "Ada: 144 tokens stay on two 128-column tiles");
+        const double ada_144 = ch::prefill_linears_seconds(q4k_model, ada, km, 144);
+        check(ada_144 > 0 && ada_144 < 0.9 * ch::prefill_linears_seconds(q4k_model, ada, km, 256),
+              "Ada: 144 tokens take narrower column tiles than 256 (two 80-column tiles against "
+              "two 128)");
         const ch::CardFacts turing = card_of(fixture.at("cards").at("RTX 2080 Ti"));
         check(q41_seconds > 0 && q41_transferred && std::abs(q41_seconds / q4k_seconds - 1) < 0.05 &&
                   ch::prefill_linears_seconds(q41_model, turing, q41, 1024) == 0,
@@ -1115,7 +1118,9 @@ void chooses_the_chunk(const json& fixture) {
         return room > 0 ? static_cast<std::uint32_t>(room / b.model.kv_bytes_per_token(c.kv)) : 0;
     };
     const ch::Choice ada = ch::choose(b.model, b.card, b.quants[0], ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), {}, task, own);
-    check(ada.chosen && chosen(ada).candidate.chunk == 2048 && ada.chunk_by_speed,
+    // A chunk has no accuracy term: the resolution rule never moves it (#301, DECISIONS 75).
+    check(ada.chosen && chosen(ada).candidate.chunk == 2048 && ada.chunk_by_speed &&
+              !ada.resolved_within_resolution,
           "Ada, an MoE: chunk 2048 for a 2048-token prompt");
     int chunks = 0;
     for (const ch::Alternative& a : ch::explain(ada)) {
@@ -1967,11 +1972,35 @@ void resolution_labels(const json& fixture) {
             check(c.by_worth ? c.resolution > 0 && c.resolution < 0.1 : true,
                   name + ": a resolution where the worth decides");
             const ch::Scored& best = chosen(c);
+            if (c.resolved_within_resolution) {
+                const auto alts = ch::explain(c);
+                const auto anchors =
+                    std::count_if(alts.begin(), alts.end(), [&](const ch::Alternative& a) {
+                        return a.scored == &c.scored[c.anchor];
+                    });
+                check(anchors == 1, name + ": the passed-over best worth is listed exactly once");
+            }
             for (const ch::Alternative& a : ch::explain(c)) {
-                if (a.scored == nullptr || (a.why_code != "within_resolution" && a.why_code != "lower_worth")) {
+                if (a.scored == nullptr ||
+                    (a.why_code != "within_resolution" && a.why_code != "lower_worth" &&
+                     a.why_code != "outside_resolution")) {
                     continue;
                 }
                 const double gap   = best.worth - a.scored->worth;
+                if (gap < -1e-9) {
+                    // Above the pick only under a pick the resolution rule moved: the best worth
+                    // and the others inside its band are within_resolution, the ones slower than
+                    // it by more than the resolution are outside_resolution; never lower_worth.
+                    const ch::Scored& anchor = c.scored[c.anchor];
+                    const bool inside        = a.scored == &anchor ||
+                                        std::log(a.scored->decision_seconds /
+                                                 anchor.decision_seconds) <= c.resolution + 1e-9;
+                    check(c.resolved_within_resolution &&
+                              a.why_code == (inside ? "within_resolution" : "outside_resolution"),
+                          name + " " + a.value + ": a higher worth is " +
+                              (inside ? "within_resolution" : "outside_resolution"));
+                    continue;
+                }
                 const double apart = std::abs(std::log(a.scored->decision_seconds / best.decision_seconds));
                 const bool inside  = gap > 1e-9 && gap <= std::min(c.resolution, apart) + 1e-9;
                 check(inside == (a.why_code == "within_resolution"),
@@ -2254,6 +2283,53 @@ void prices_r8_issue() {
     }
 }
 
+// The tie rule inside the resolution (#301, DECISIONS 75), on a constructed case. A is the best
+// worth (KLD 0.02, 1000 tokens). B: 1.5 % slower, KLD 0.01. C: as B but KLD 0.005 and slower by
+// 1.6 %. D: 5 % slower, KLD 0.001. E: as B, listed after it. F: as A in KLD and context, listed
+// before it. At a resolution of 2 % the lowest KLD inside it wins (C), not D (slower than the
+// resolution), and context decides nothing.
+void resolution_rule() {
+    const auto make = [](double seconds, double kld, std::uint32_t context) {
+        ch::Scored s;
+        s.decision_seconds = seconds;
+        s.accuracy.kld     = kld;
+        s.own_context      = context;
+        s.worth            = -std::log(seconds) - kld;
+        return s;
+    };
+    const std::vector<ch::Scored> scored{make(1.0, 0.02, 1000),   make(1.015, 0.01, 1000),
+                                         make(1.016, 0.005, 500), make(1.05, 0.001, 9000),
+                                         make(1.015, 0.01, 900),  make(1.0, 0.02, 1000)};
+    const std::vector<std::size_t> all{0, 1, 2, 3, 4, 5};
+    check(ch::resolve_within_resolution(scored, all, 0, 0.02) == 2,
+          "inside the resolution: the lowest KLD");
+    check(ch::resolve_within_resolution(scored, all, 0, 0) == 0, "no resolution: the best worth");
+    check(ch::resolve_within_resolution(scored, all, 0, 0.01) == 0,
+          "outside the resolution: the best worth");
+    check(ch::resolve_within_resolution(scored, all, 0, 0.06) == 3,
+          "a wider resolution reaches the 5 % one");
+    check(ch::resolve_within_resolution(scored, {0, 4, 1}, 0, 0.02) == 1,
+          "equal KLD: the lower index");
+    check(ch::resolve_within_resolution(scored, {4, 1}, 4, 0.02) == 4,
+          "equal KLD to the anchor: it stays");
+    // A lower index of equal KLD and equal context must not move the pick (#507: BF16 over INT8).
+    check(ch::resolve_within_resolution(scored, {5, 0}, 0, 0.02) == 0,
+          "equal KLD and context: the anchor stays");
+    // More context alone never moves it.
+    std::vector<ch::Scored> roomy = scored;
+    roomy[1].accuracy.kld         = 0.02;
+    roomy[1].own_context          = 90000;
+    check(ch::resolve_within_resolution(roomy, {0, 1}, 0, 0.02) == 0,
+          "more context is headroom, not a reason");
+    // A NaN KLD never wins.
+    roomy[1].accuracy.kld = std::nan("");
+    check(ch::resolve_within_resolution(roomy, {0, 1}, 0, 0.02) == 0, "NaN KLD: the anchor stays");
+    std::vector<ch::Scored> none = scored;
+    none[0].decision_seconds     = 0;
+    check(ch::resolve_within_resolution(none, all, 0, 0.02) == 0,
+          "no reference estimate: unchanged");
+}
+
 int main() {
     std::ifstream in(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/speed_measured.json");
     const json fixture = json::parse(in);
@@ -2295,6 +2371,7 @@ int main() {
     board_facts_do_not_decide(fixture);
     choices_replay(fixture);
     resolution_labels(fixture);
+    resolution_rule();
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;

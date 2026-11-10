@@ -96,6 +96,12 @@ ninferno_add_test(ninferno_sm_wave_rules_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_sm_wave_rules.cpp"
   LIBRARIES ninferno_core)
 
+# Whole-chain pricing and selection of a projection chain's fusion alternatives (#310,
+# ops/common/projection_chain.h): lowest seconds, then fewer launches, then canonical order. No GPU.
+ninferno_add_test(ninferno_projection_chain_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_projection_chain.cpp"
+  LIBRARIES ninferno_core)
+
 # Per-GPU-class route_as overrides of the shape-owned Linear tables: loader and lookup.
 ninferno_add_op_test(ninferno_shape_routes_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_shape_routes.cpp"
