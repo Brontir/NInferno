@@ -435,6 +435,8 @@ Weight native_weight(const WeightView& view, float input_divisor) {
     out.ndim             = 2;
     out.n = out.shape[0] = out.padded_shape[0] = dimension(view.shape[0]);
     out.k = out.shape[1] = out.padded_shape[1] = dimension(view.shape[1]);
+    // The payload is the parent's whole: its rows of K, the view's own for a complete weight.
+    out.payload_rows = static_cast<std::int64_t>(g.elements / view.shape[1]);
     if (g.layout == QuantLayout::Contiguous) {
         out.qdata = region.parent->data + mul(region.begin, word_bytes(g.format));
         return out;

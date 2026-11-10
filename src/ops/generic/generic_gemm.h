@@ -308,7 +308,8 @@ inline constexpr std::int32_t kMmqMinTokens = 5;
 // it does not (Turing: each operand rounded to f16 and two k8 MMAs per k16 make the A16 register
 // MMA the costlier path; RTX 2080 Ti).
 [[nodiscard]] bool r8_verify_takes(QType qtype);
-// r8_verify_takes for one matrix (Q4_0 takes R8 at the verify widths only on a large one).
+// r8_verify_takes for one matrix of n rows of K (Q4_0 takes R8 at the verify widths only on a large
+// one): the rows a call reads (call_weight_rows), never the fused parent's a slice is cut from.
 [[nodiscard]] bool r8_verify_takes_shape(QType qtype, std::int64_t n, std::int64_t k);
 // Whether R8 takes a call of kR8VerifyTokens tokens of this weight under A8: its format verifies a
 // whole eight-token block on R8 (Q8, r8_verify_widest) and the generic path reads the weight.
@@ -450,6 +451,12 @@ struct Problem {
     Epilogue epilogue;
 };
 
+// The weight rows a call reads: its output rows, under SwiGLU a gate and an up row each. A slice
+// of a fused parent reads these, not the parent's (#640, #704).
+[[nodiscard]] inline std::int64_t call_weight_rows(const Problem& problem) {
+    return (problem.epilogue == Epilogue::SwiGlu ? 2LL : 1LL) * problem.n;
+}
+
 // A distinct problem that reached the generic path on this thread since clear_seen_problems, with
 // its weight's stored rows and layout: what route_query needs to ask the call's route again (the
 // decision manifest's route lines, runtime/engine/decision_routes.h). In (format, policy,
@@ -517,11 +524,12 @@ struct FamilyCoverage {
 
 // Why a call of `tokens` tokens does not take R8 where its weight could (#307): the weight not
 // admitted to R8 (allows_r8), a decode call whose activation does not fit one CTA, a verify call
-// wider than the format's widest R8 verify, or a shape the verify kernel does not take. r8_call
-// decides by this.
+// wider than the format's widest R8 verify, or a shape the verify kernel does not take (the call's
+// own rows, call_weight_rows: a slice of a fused parent as a standalone weight of its shape, #704).
+// The policy is the problem's. r8_call decides by this.
 enum class R8CallRefusal { None, NotAdmitted, DecodeFit, VerifyWidth, VerifyShape };
 [[nodiscard]] std::string_view r8_call_refusal_name(R8CallRefusal why) noexcept;
-[[nodiscard]] R8CallRefusal r8_call_refusal(const Weight& weight, LinearPolicy policy,
+[[nodiscard]] R8CallRefusal r8_call_refusal(const Problem& problem, const Weight& weight,
                                             std::int32_t tokens);
 
 [[nodiscard]] FamilyCoverage rmma_coverage(const Problem& problem, const Weight& weight,
@@ -900,8 +908,8 @@ struct BuildManifest {
 // it by rule (r8_verify_takes): the dense tuner's candidate. R8 sums a token as at decode.
 [[nodiscard]] bool r8_verify_tunable(const Weight& w, LinearPolicy policy, std::int32_t tokens);
 // Whether the dense tuner may time R8 at T tokens: r8_verify_tunable, or a width where the format
-// has R8 but ggml's vector kernel takes it by rule.
-[[nodiscard]] bool r8_tunable(const Weight& w, LinearPolicy policy, std::int32_t tokens);
+// has R8 but ggml's vector kernel takes it by rule (the problem's policy and rows, as r8_call).
+[[nodiscard]] bool r8_tunable(const Problem& problem, const Weight& w, std::int32_t tokens);
 // Whether a call of `rows` rows and T tokens may take ggml's matrix kernel (the dense tuner's
 // candidate at verify widths 5..16).
 [[nodiscard]] bool ggml_mmq_call(const Weight& w, LinearPolicy policy, std::int32_t rows,

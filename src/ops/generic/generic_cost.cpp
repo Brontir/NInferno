@@ -1,7 +1,8 @@
 // The route cost model (refactor B1): price_routes prices every admitted route of a call of 17
 // tokens or more by the roofline of its tiles on the device's facts (the A16 tiles here, the A8
 // ones in a8_candidates), cost_route takes the cheapest. Its constants and their provenance:
-// route_cost_constants.h. A slice of a fused parent is priced by its own rows (bytes_per_weight).
+// route_cost_constants.h. A slice of a fused parent and a row view are priced by their own rows
+// (bytes_per_weight).
 #include "core/mmq_columns.h"
 #include "core/device_class.h"
 #include "core/generation.h"
@@ -23,8 +24,10 @@ namespace ninferno::ops::detail::generic {
 
 double bytes_per_weight(const Weight& weight, const Problem& problem) {
     const double sets = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
-    // The rows the payload holds: the weight's own, never fewer than the call reads.
-    const double stored = std::max(static_cast<double>(weight.n), sets * problem.n);
+    // The rows the payload holds (a row view's are its parent's), never fewer than the call reads.
+    const double held   = weight.payload_rows > 0 ? static_cast<double>(weight.payload_rows)
+                                                  : static_cast<double>(weight.n);
+    const double stored = std::max(held, static_cast<double>(call_weight_rows(problem)));
     return static_cast<double>(weight.payload_bytes) / (stored * problem.k) * sets;
 }
 

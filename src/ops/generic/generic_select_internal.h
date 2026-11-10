@@ -108,9 +108,9 @@ std::optional<R8TableHit> tuned_r8(const Problem& p);
 
 // The route selection's rules and fixed routes, which route_authorities.cpp asks in order
 // (generic_gemm.cpp holds the bodies and their measurements).
-// Whether a call of T tokens takes R8 (decode, T <= kR8DecodeTokens, and the activation fits;
-// r8_call_refusal, generic_gemm.h, names why not).
-bool r8_call(const Weight& w, LinearPolicy policy, std::int32_t tokens);
+// Whether a call of T tokens takes R8 (decode, T <= kR8DecodeTokens, and the activation fits; the
+// verify widths by the call's own rows; r8_call_refusal, generic_gemm.h, names why not).
+bool r8_call(const Problem& problem, const Weight& w, std::int32_t tokens);
 // The verify widths the vector kernel takes by rule: 2..4 tokens with tensor mma.sync, every
 // width it reads without.
 bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens);
@@ -192,13 +192,14 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
 std::optional<Route> cost_route(const Problem& problem, const Weight& weight, std::int32_t tokens);
 
 // The bytes a weight value of the call's matrix takes, as price_routes, a8_candidates and
-// route_traffic read them (#640): the payload over the weight's own stored rows (Weight::n), so a
-// slice of a fused parent (segmented_projection: the whole parent with the call's rows in
-// Problem::n) reads its share of the parent's bytes, not the parent's. Under SwiGLU each output
-// row reads its gate and its up row: the value holds both (x2). A weight of no more rows than the
-// call reads (a whole weight; a row view, whose payload_bytes is its parent's) keeps
-// payload_bytes / (n K), to the bit. The share is proportional to rows: exact where the layout
-// stores rows whole, within a 128-row scale tile for NVFP4 and the FP8 128x128 scales.
+// route_traffic read them (#640, #704): the payload over the rows it holds (Weight::payload_rows,
+// else Weight::n), never fewer than the call reads (call_weight_rows), so a call reads its rows'
+// share of the payload. One rule for a slice of a fused parent (segmented_projection: the whole
+// parent with the call's rows in Problem::n) and a row view (native_weight of part of a parent:
+// its own rows in n, its parent's payload and rows). Under SwiGLU each output row reads its gate
+// and its up row: the value holds both (x2). A whole weight keeps payload_bytes / (n K), to the
+// bit. The share is proportional to rows: exact where the layout stores rows whole, within a
+// 128-row scale tile for NVFP4 and the FP8 128x128 scales (neither has row views).
 double bytes_per_weight(const Weight& weight, const Problem& problem);
 
 // The weight-side admission of the A8 and A4 tiles and of R8 (generic_gemm.cpp; their refusals

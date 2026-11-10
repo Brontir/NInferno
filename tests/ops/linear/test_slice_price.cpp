@@ -8,6 +8,10 @@
 // described as a slice of its parent (route_query, describe_call with parent_rows) answers as
 // the own shape at every width, the widths and band the cost model does not price included.
 //
+// The same rule for a row view (#704; native_weight of part of a parent: its own rows in n, the
+// parent's payload) and for the R8 verify gate, which asks the call's own rows: a Q4_0 slice below
+// the gate's bound of a parent above it answers as its own shape at T = 2..4.
+//
 // Complementary to the whole-weight identity in test_route_traffic.cpp: this test compares a slice
 // with its own shape through the same bytes_per_weight, so a factor applied to both sides alike
 // (dropping the SwiGLU `* sets`, flooring the stored rows at 1 instead of at the call's rows)
@@ -22,7 +26,9 @@
 
 #include "core/device_class.h"
 #include "core/weight.h"
+#include "core/weight_view.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/generic_select_internal.h"
 #include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
 #include "ops/generic/selector_facts.h"
@@ -35,6 +41,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -98,6 +105,173 @@ constexpr std::int32_t kK = 4096, kOwnRows = 1024, kParentRows = 8192;
 constexpr QType kFormats[]             = {QType::Q8_G32_FP16, QType::GGML_Q4_K, QType::GGML_Q6_K,
                                           QType::Q4_G64_FP16, QType::FP8_E4M3FN_ROW_BF16};
 constexpr std::int32_t kPricedTokens[] = {17, 32, 64, 128, 512};
+
+// A matrix laid out as the converter stores it, its bytes never read (an aligned address stands
+// in), and a weight read through `view` of it: the whole matrix, or a row view of `rows` rows from
+// `begin` (native_weight of part of a parent: its own rows in n, the parent's payload). Filled in
+// place: the view and the weight point into the parent.
+struct Described {
+    WeightParent parent;
+    WeightView view;
+    Weight weight;
+
+    Described(QType qtype, std::uint64_t parent_rows, std::uint64_t begin, std::uint64_t rows) {
+        parent.data                  = reinterpret_cast<const std::byte*>(std::uintptr_t{1} << 32);
+        const std::uint64_t shape[2] = {parent_rows, static_cast<std::uint64_t>(kK)};
+        parent.geometry              = weight_geometry(qtype, default_weight_layout(qtype), shape);
+        view.shape                   = {rows, static_cast<std::uint64_t>(kK)};
+        view.parts                   = {WeightRegion{&parent, begin * kK, (begin + rows) * kK}};
+        weight                       = native_weight(view);
+    }
+
+    Described(const Described&)            = delete;
+    Described& operator=(const Described&) = delete;
+};
+
+// The formats whose layout has row views (the rows are intrinsic; FP8 and NVFP4 have none).
+constexpr QType kRowViewFormats[] = {
+    QType::BF16,      QType::Q8_G32_FP16, QType::Q4_G64_FP16, QType::U4_G128_ZP_FP16, QType::MXFP4,
+    QType::GGML_Q4_K, QType::GGML_Q6_K,   QType::GGML_Q4_0,   QType::GGML_IQ4_XS};
+
+int view_moved = 0;
+
+// A row view of kOwnRows rows from the middle of a kParentRows parent is priced and routed as a
+// standalone weight of its shape (#704): the same format, rows and K, its payload its own.
+void check_row_views() {
+    for (const QType qtype : kRowViewFormats) {
+        const std::string fmt(generic::qtype_name(qtype));
+        std::optional<Described> own, view;
+        try {
+            own.emplace(qtype, kOwnRows, 0, kOwnRows);
+            view.emplace(qtype, kParentRows, 3 * kOwnRows, kOwnRows);
+        } catch (const std::invalid_argument& error) {
+            std::cout << fmt << ": no row view (" << error.what() << ")\n";
+            continue;
+        }
+        if (!generic::supports(own->weight) || !generic::supports(view->weight)) {
+            std::cout << fmt << ": not read by the generic path\n";
+            continue;
+        }
+        check(view->weight.n == kOwnRows && view->weight.payload_bytes > own->weight.payload_bytes,
+              fmt + ": the view has its own rows and its parent's payload");
+        for (const generic::FactsBoard& board : generic::kFactsBoards) {
+            const ScopedDeviceClass scoped(generic::board_device_class(board));
+            for (const LinearPolicy policy : {LinearPolicy::A16Only, LinearPolicy::AllowA8}) {
+                for (const generic::Epilogue epilogue :
+                     {generic::Epilogue::Store, generic::Epilogue::SwiGlu}) {
+                    const bool swiglu       = epilogue == generic::Epilogue::SwiGlu;
+                    const std::int32_t rows = swiglu ? kOwnRows / 2 : kOwnRows;
+                    const generic::Problem p{qtype, policy, rows, kK, epilogue};
+                    const std::string call = std::string(board.name) + " " + fmt + " view p" +
+                                             std::to_string(static_cast<int>(policy)) + " " +
+                                             generic::epilogue_name(epilogue);
+                    check(near(generic::bytes_per_weight(own->weight, p),
+                               generic::bytes_per_weight(view->weight, p)),
+                          call + ": bytes per weight " +
+                              std::to_string(generic::bytes_per_weight(view->weight, p)) +
+                              ", its own shape's " +
+                              std::to_string(generic::bytes_per_weight(own->weight, p)));
+                    for (const std::int32_t t : kPricedTokens) {
+                        const std::string at = call + " T=" + std::to_string(t);
+                        for (const bool prefill : {false, true}) {
+                            const std::string o     = selected(p, own->weight, t, prefill);
+                            const std::string s     = selected(p, view->weight, t, prefill);
+                            const std::string where = at + (prefill ? " prefill" : " speed");
+                            if (!both_answer(o.starts_with("threw"), s.starts_with("threw"),
+                                             where)) {
+                                continue;
+                            }
+                            if (o != s) ++view_moved;
+                            check(o == s, where + ": the view takes " + s + ", its own shape " + o);
+                        }
+                        std::vector<generic::FamilyAlternative> fo, fs;
+                        const bool fo_threw = throws(
+                            [&] { fo = generic::family_alternatives(p, own->weight, t, false); });
+                        const bool fs_threw = throws(
+                            [&] { fs = generic::family_alternatives(p, view->weight, t, false); });
+                        if (!both_answer(fo_threw, fs_threw, at + " families")) continue;
+                        check(fo.size() == fs.size(), at + ": the same families");
+                        for (std::size_t i = 0; i < std::min(fo.size(), fs.size()); ++i) {
+                            check(fo[i].family == fs[i].family && fo[i].route == fs[i].route &&
+                                      near(fo[i].seconds, fs[i].seconds),
+                                  at + " family " + std::to_string(i) + ": the view's " +
+                                      text(fs[i].route) + " " +
+                                      std::to_string(fs[i].seconds.value_or(-1) * 1e6) +
+                                      " us, its own shape's " + text(fo[i].route) + " " +
+                                      std::to_string(fo[i].seconds.value_or(-1) * 1e6) + " us");
+                        }
+                        for (int i = 0; i < generic::rmma_schedule_count(); ++i) {
+                            const generic::Route r{generic::Family::RegisterMma,
+                                                   static_cast<std::uint8_t>(i)};
+                            const auto to = generic::route_traffic(r, own->weight, p, t);
+                            const auto ts = generic::route_traffic(r, view->weight, p, t);
+                            check(to.has_value() == ts.has_value() &&
+                                      (!to || near(to->weight_bytes, ts->weight_bytes)),
+                                  at + ": traffic of " + generic::route_name(r));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+int gate_differs = 0;
+
+// The R8 verify gate (Q4_0 takes R8 at T = 2..4 only on a matrix of kR8VerifyQ40MinValues values
+// or more, 24M) asks the call's own rows (#704): a slice answers as a standalone weight of its
+// shape, below the bound (2048 x 4096 = 8M of an 8192-row parent, 32M) and above it (8192 x 4096
+// of a 16384-row parent), in the selector, the coverage it reports and the pure query.
+void check_r8_verify_gate() {
+    constexpr QType qtype = QType::GGML_Q4_0;
+    for (const auto& [own_rows, parent_rows] :
+         {std::pair<std::int32_t, std::int32_t>{2048, 8192},
+          std::pair<std::int32_t, std::int32_t>{8192, 16384}}) {
+        const Described own(qtype, own_rows, 0, own_rows);
+        const Described parent(qtype, parent_rows, 0, parent_rows);
+        for (const generic::FactsBoard& board : generic::kFactsBoards) {
+            const DeviceClass d = generic::board_device_class(board);
+            const ScopedDeviceClass scoped(d);
+            for (const generic::Epilogue epilogue :
+                 {generic::Epilogue::Store, generic::Epilogue::SwiGlu}) {
+                const bool swiglu       = epilogue == generic::Epilogue::SwiGlu;
+                const std::int32_t rows = swiglu ? own_rows / 2 : own_rows;
+                const generic::Problem p{qtype, LinearPolicy::AllowA8, rows, kK, epilogue};
+                for (std::int32_t t = 2; t <= 4; ++t) {
+                    const std::string at =
+                        std::string(board.name) + " Q4_0 " + generic::epilogue_name(epilogue) +
+                        " " + std::to_string(rows) + "x" + std::to_string(kK) + " of " +
+                        std::to_string(parent_rows) + " T=" + std::to_string(t);
+                    const auto co = generic::r8_coverage(p, own.weight, t).call;
+                    const auto cs = generic::r8_coverage(p, parent.weight, t).call;
+                    if (co != cs) ++gate_differs;
+                    check(co == cs, at + ": the slice's R8 call " +
+                                        std::string(generic::r8_call_refusal_name(cs)) +
+                                        ", its own shape's " +
+                                        std::string(generic::r8_call_refusal_name(co)));
+                    const std::string o = selected(p, own.weight, t, false);
+                    const std::string s = selected(p, parent.weight, t, false);
+                    if (both_answer(o.starts_with("threw"), s.starts_with("threw"), at)) {
+                        check(o == s, at + ": the slice takes " + s + ", its own shape " + o);
+                    }
+                    std::optional<generic::Route> qo, qs;
+                    const bool qo_threw = throws([&] {
+                        qo = generic::route_query(d, qtype, LinearPolicy::AllowA8, epilogue, rows,
+                                                  kK, t, false, 0);
+                    });
+                    const bool qs_threw = throws([&] {
+                        qs = generic::route_query(d, qtype, LinearPolicy::AllowA8, epilogue, rows,
+                                                  kK, t, false, parent_rows);
+                    });
+                    if (both_answer(qo_threw, qs_threw, at + " query")) {
+                        check(qo == qs, at + ": query of the slice " + text(qs) +
+                                            ", of its own shape " + text(qo));
+                    }
+                }
+            }
+        }
+    }
+}
 
 } // namespace
 
@@ -234,9 +408,15 @@ int main() {
             }
         }
     }
+    check_row_views();
+    check_r8_verify_gate();
     const bool device = !cuda_unavailable();
     check(moved == 0, std::to_string(moved) +
                           " selections where the slice takes another route than its own shape");
+    std::cout << "row views: " << view_moved
+              << " selections where a view takes another route than its own shape; R8 verify "
+                 "gate: "
+              << gate_differs << " calls where a slice answers otherwise than its own shape\n";
     // With a device every pair answers; without one the MMQ-or-register-MMA pairs need it.
     if (device) {
         check(not_compared == 0, std::to_string(not_compared) + " pairs threw with a device");

@@ -92,6 +92,11 @@ struct Weight {
 
     // RowGroupZpOrdered: K int32 input-column indices (see the layout); null for every other.
     const void* k_order = nullptr;
+
+    // The rows of K values `payload_bytes` covers: a row view's (native_weight of part of a
+    // parent) are its parent's, the payload being the parent's whole; 0 for a weight whose
+    // payload is its own `n` rows. A call is priced by its rows' share of them (#704).
+    std::int64_t payload_rows = 0;
 };
 
 } // namespace ninferno
