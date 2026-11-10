@@ -134,7 +134,7 @@ if explicit:  # the caller names the targets: a ctest test or executable by name
         else: objs.append(t); out("SKIP", f"explicit target {t} is not a test: built only, nothing run")
 else:
     rng = f"origin/master...origin/{br}"
-    changed = sh("git", "-C", src, "diff", "--no-renames", "--name-only", rng).split()  # deleted and renamed-away included
+    changed = [c for c in sh("git", "-C", src, "diff", "--no-renames", "--name-only", "-z", rng).split("\0") if c]  # deleted and renamed-away included
     if not changed: out("NOOP", "no difference from master"); sys.exit(0)
     docs = lambda f: f.startswith(("docs/", ".github/")) or f.endswith(".md") or f in ("LICENSE", "NOTICE", ".gitignore", ".clang-format")
     if all(docs(c) for c in changed):
@@ -171,7 +171,10 @@ else:
     for f in others:   # data/script files: the python tests that name them, the objects that embed them
         via_test = via_embed = False
         for n, c in cmd_of.items():
-            if any(a == f or a.endswith("/" + f) for a in c): tests.add(n); via_test = True
+            if any(a == f or a.endswith("/" + f) for a in c):
+                tests.add(n); via_test = True
+                if "--build" in c or any(a.endswith((".o", ".a", ".so")) for a in c):
+                    out("SKIP", f"test {n} reads the build tree's objects, which hold whatever build_qc last built; not verified for this branch")
         rel, ab = os.path.relpath(os.path.join(src, f), bld), os.path.join(src, f)
         for l in ninja_lines:
             head, _, rest = l.partition(": ")
@@ -185,12 +188,18 @@ else:
                     elif o.endswith(hdrx): hdrs.append(o); via_embed = True
         if not (via_test or via_embed): out("SKIP", f"changed file {f} maps to no object and no test (data/script input); nothing checks it")
         elif not via_test: out("SKIP", f"data file {f}: the object that embeds it is compiled; tests that read it at run time are not mapped")
-    seen, queue, via = set(hdrs), list(hdrs), set()
-    while queue:
-        h = queue.pop()
-        for p in includers.get(os.path.basename(h), ()):
-            if p.endswith(srcx): via.add(p)
-            elif p not in seen: seen.add(p); queue.append(p)
+    via = set()
+    for h0 in hdrs:   # each changed header separately: one that reaches no source is reported
+        seen, queue, mine = {h0}, [h0], set()
+        while queue:
+            h = queue.pop()
+            names_h = {os.path.basename(h)}
+            if h.endswith(hdrx_in): names_h.add(os.path.basename(h)[:-3])
+            for p in set().union(*(includers.get(x, set()) for x in names_h)):
+                if p.endswith(srcx): mine.add(p)
+                elif p not in seen: seen.add(p); queue.append(p)
+        if not mine: out("SKIP", f"changed header {h0} is included by no compiled source; nothing checks it")
+        via |= mine
     via -= set(direct)
     cdirs = {os.path.dirname(c) for c in changed}
     prio = lambda p: (0 if os.path.dirname(p) in cdirs else 1 if p.startswith("tests/") else 2, p)
@@ -253,6 +262,7 @@ else:
                     cur += text[i + 1:k]; have = True; line += text.count("\n", i, k); i = k + 1
                 elif c == "[" and bracket(i) > 0:
                     j = bracket(i); cur += text[i:j]; have = True; line += text.count("\n", i, j); i = j
+                elif c == "\\": cur += text[i:i + 2]; have = True; line += text.count("\n", i, i + 2); i += 2   # an escape: \( \) \# are text
                 elif c == "(": depth += 1; i += 1
                 elif c == ")":
                     depth -= 1; i += 1
@@ -268,7 +278,6 @@ else:
         v = a[k]
         return (v, False) if re.fullmatch(r"[A-Za-z0-9_.+-]+", v) else (None, True)
     def pass_statement(st, side):  # True when the changed line in statement st is accounted for
-        if st is None: return True   # a comment or blank line
         if st[4] or not is_reg(st[2]): return False
         lit, var = reg_name(st)
         if st[2] == "set_tests_properties":
@@ -286,32 +295,50 @@ else:
             if tok in cmd_of: tests.add(tok)
             elif tok in exe_of: add_exe_tests(tok)
         return bool(toks)
-    at = lambda sts, ln: next((x for x in sts if x[0] <= ln <= x[1]), None)
+    # every statement a line sits in (two statements may share one line)
+    at = lambda sts, ln: [x for x in sts if x[0] <= ln <= x[1]]
     cm = sh("git", "-C", src, "diff", "--no-renames", "-U0", rng, "--", "*.cmake", "*CMakeLists.txt")
+    base = sh("git", "-C", src, "merge-base", "origin/master", f"origin/{br}").strip()   # a removed line's numbers are the merge-base's
     bad_lines, new_cache, old_cache = [], {}, {}
-    def sts_of(path, side):
+    def sts_of(path, side):   # (statements, source lines), or None when the file cannot be read
         cache = new_cache if side == "new" else old_cache
         if path not in cache:
             try:
-                text = open(os.path.join(src, path), errors="ignore").read() if side == "new" else sh("git", "-C", src, "show", f"origin/master:{path}")
-            except (OSError, subprocess.CalledProcessError): text = ""
-            cache[path] = parse_cmake(text)
+                text = open(os.path.join(src, path), errors="strict").read() if side == "new" else sh("git", "-C", src, "show", f"{base}:{path}")
+                cache[path] = (parse_cmake(text), text.split("\n"))
+            except (OSError, UnicodeDecodeError, subprocess.CalledProcessError): cache[path] = None
         return cache[path]
-    old_file = new_file = None; nln = oln = 0
+    def line_ok(path, side, ln):   # True when the changed line at ln is accounted for
+        parsed = sts_of(path, side)
+        if parsed is None: return False   # unreadable: not checked
+        sts, lines = parsed
+        here = at(sts, ln)
+        if not here:   # outside every statement: only a blank or comment line passes
+            t = lines[ln - 1].strip() if 0 < ln <= len(lines) else ""
+            return not t or t.startswith("#")
+        return all(pass_statement(st, side) for st in here)
+    old_file = new_file = None; nln = oln = 0; o_left = n_left = 0; unknown = False
     for l in cm.splitlines():
-        if l.startswith("--- "): old_file = l[6:] if l.startswith("--- a/") else None
-        elif l.startswith("+++ "): new_file = l[6:] if l.startswith("+++ b/") else None
+        if o_left == 0 and n_left == 0 and not l.startswith(("@@", "+", "-", " ")):
+            continue   # "diff --git", "index", mode lines between files
+        if o_left == 0 and n_left == 0 and l.startswith("--- "):
+            old_file = l[6:] if l.startswith("--- a/") else None
+            if old_file is None and l != "--- /dev/null": unknown = True
+        elif o_left == 0 and n_left == 0 and l.startswith("+++ "):
+            new_file = l[6:] if l.startswith("+++ b/") else None
+            if new_file is None and l != "+++ /dev/null": unknown = True
         elif l.startswith("@@"):
-            m = re.match(r"@@ -(\d+)(?:,\d+)? \+(\d+)", l); oln, nln = int(m.group(1)), int(m.group(2))
-        elif l.startswith("+") and new_file:
-            st = at(sts_of(new_file, "new"), nln)
-            if not l[1:].strip() or l[1:].lstrip().startswith("#"): st = None if st is None else st
-            if not pass_statement(st, "new"): bad_lines.append(f"{new_file}:{nln}")
-            nln += 1
-        elif l.startswith("-") and old_file:
-            st = at(sts_of(old_file, "old"), oln)
-            if not pass_statement(st, "old"): bad_lines.append(f"{old_file}:{oln}(removed)")
-            oln += 1
+            m = re.match(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))?", l)
+            oln, nln = int(m.group(1)), int(m.group(3))
+            o_left = int(m.group(2)) if m.group(2) is not None else 1
+            n_left = int(m.group(4)) if m.group(4) is not None else 1
+        elif l.startswith("+") and n_left > 0:
+            if new_file is None or not line_ok(new_file, "new", nln): bad_lines.append(f"{new_file}:{nln}")
+            nln += 1; n_left -= 1
+        elif l.startswith("-") and o_left > 0:
+            if old_file is None or not line_ok(old_file, "old", oln): bad_lines.append(f"{old_file}:{oln}(removed)")
+            oln += 1; o_left -= 1
+    if unknown: bad_lines.append("a diff header in a form this check does not read")
     if bad_lines:
         uniq = sorted(set(bad_lines))
         out("SKIP", f"cmake change not mapped to a checked test/target ({len(uniq)} place(s), e.g. {', '.join(uniq[:3])}); configuring succeeded, but the targets it affects are not built")
