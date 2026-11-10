@@ -88,23 +88,6 @@ void launch_codec(int schedule, Epilogue epilogue, const GemmArgs& args, cudaStr
 
 } // namespace
 
-bool tiled_supports(WeightCodec codec) {
-    switch (codec) {
-    case WeightCodec::U4Zp:
-    case WeightCodec::U4ZpG32:
-    case WeightCodec::U4ZpG64:
-    case WeightCodec::GgmlQ4K:
-    case WeightCodec::GgmlQ5K:
-    case WeightCodec::Q4:
-    case WeightCodec::Q5:
-    case WeightCodec::Q6:
-    case WeightCodec::Q3G128:
-    case WeightCodec::Q3G64:
-        return true;
-    default:
-        return false;
-    }
-}
 
 bool tiled_fits(int schedule, WeightCodec codec) {
     switch (codec) {

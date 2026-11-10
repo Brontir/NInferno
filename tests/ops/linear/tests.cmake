@@ -230,15 +230,15 @@ ninferno_add_op_test(ninferno_route_pin_selector_test
 
 # The same dump code as ninferno_selector_golden_test, built and linked with no CUDA runtime
 # (ninferno_ops_host): the committed goldens must read the same from a host-only selector (#620).
-# The stubs are the device seams (current_device_class, the device ordinal) and the dense tuner, which
-# never times anything on a host with no device.
+# The stubs are the device seams (current_device_class, the device ordinal) the dense tuner (which never
+# times anything on a host with no device) and the Volta CUTLASS route (compiled out).
 ninferno_add_test(ninferno_selector_golden_host_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_selector_golden.cpp"
   LIBRARIES ninferno_ops_host)
 target_sources(ninferno_selector_golden_host_test PRIVATE
   ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp
   ${PROJECT_SOURCE_DIR}/src/core/per_device_nodevice.cpp
-  ${PROJECT_SOURCE_DIR}/src/ops/generic/generic_tune_nodevice.cpp)
+  ${PROJECT_SOURCE_DIR}/src/ops/generic/generic_nodevice.cpp)
 target_compile_definitions(ninferno_selector_golden_host_test PRIVATE
   NINFERNO_HOST_ONLY
   NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden")

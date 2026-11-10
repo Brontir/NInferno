@@ -37,6 +37,8 @@ add_library(ninferno_ops_host STATIC
   "${CMAKE_CURRENT_LIST_DIR}/../route_pins.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/../route_table.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_ggml_host.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/ggml_mmq_host.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/../moe/moe_plan.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/selector_facts_host.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_facts_sink.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_resolve.cpp")

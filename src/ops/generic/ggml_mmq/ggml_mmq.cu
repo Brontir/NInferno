@@ -71,8 +71,9 @@ namespace {
 
 constexpr int kQuantizeThreads = 128;
 
-// ggml's activation slack: the kernel over-reads up to one widest column tile past the end.
-constexpr std::size_t kActivationSlack = 128 * sizeof(block_q8_1_mmq);
+// The sizes ggml_mmq_host.cpp computes with no ggml header (ggml_mmq.h), held equal to ggml's own.
+static_assert(kQ8MmqValues == QK8_1_MMQ);
+static_assert(kQ8MmqBlockBytes == sizeof(block_q8_1_mmq));
 
 // Token c of x (BF16, at x + c * ldx) -> ggml's q8_1 tiles in the scale/sum layout of the format.
 // A block's sum is its codes' (d * sum q), not the raw values' as in ggml's quantizer: the formats
@@ -154,23 +155,6 @@ __global__ void quantize_kernel(const __nv_bfloat16* __restrict__ x, int ldx,
 } // namespace
 } // namespace detail
 
-bool device_supported() {
-    // The device class the selection is for: a selector test's substitute (ScopedDeviceClass)
-    // decides as that card would, not as the GPU the test happens to run on.
-    try {
-        // TU116 / TU117 run its int8 mma.sync without tensor cores (mma_slow): the vector kernel
-        // takes their verify widths, as on Volta.
-        const auto& d = device_class();
-        return d.compute_capability() >= 75 && !d.features.mma_slow;
-    } catch (const std::exception&) {
-        return false;
-    }
-}
-
-std::size_t activation_bytes(int k, int columns) {
-    return std::size_t(columns) * (k / QK8_1_MMQ) * sizeof(block_q8_1_mmq) +
-           detail::kActivationSlack;
-}
 
 int activation_layout(Type type) {
     return static_cast<int>(mmq_get_q8_1_ds_layout(detail::to_ggml(type)));
@@ -243,13 +227,6 @@ void quantize_activation(Type type, const __nv_bfloat16* x, int ldx, int k, int 
         return CALL(GGML_TYPE_IQ2_S);                                                              \
     case Type::IQ1_S:                                                                              \
         return CALL(GGML_TYPE_IQ1_S);
-
-std::size_t fixup_bound(int columns) {
-    // A stream-k launch holds at most one 128-row tile of the call's column tile per SM.
-    int j = 16;
-    while (j < columns && j < 128) j *= 2;
-    return std::size_t(detail::device_facts().sm_count) * j * 128 * sizeof(float);
-}
 
 namespace {
 thread_local LaunchShape* t_describe = nullptr;

@@ -266,12 +266,6 @@ void launch_epilogue(Epilogue epilogue, const GemmArgs& args, cudaStream_t strea
 
 } // namespace
 
-bool volta_hmma_codec(WeightCodec codec) {
-    return codec == WeightCodec::GgmlQ4K || codec == WeightCodec::GgmlQ5K ||
-           codec == WeightCodec::GgmlQ6K || codec == WeightCodec::Q8;
-}
-
-int volta_hmma_k_multiple(WeightCodec codec) { return codec == WeightCodec::Q8 ? 64 : 256; }
 
 bool volta_hmma_takes(WeightCodec codec, const GemmArgs& args) {
     // A join (Call::join_previous) needs programmatic dependent launch, which sm_70 does not have;

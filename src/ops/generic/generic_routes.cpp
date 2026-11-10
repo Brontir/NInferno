@@ -285,4 +285,29 @@ I8ScheduleInfo i8_schedule_info(int index) {
     return kI8Schedules[index];
 }
 
+bool tiled_supports(WeightCodec codec) {
+    switch (codec) {
+    case WeightCodec::U4Zp:
+    case WeightCodec::U4ZpG32:
+    case WeightCodec::U4ZpG64:
+    case WeightCodec::GgmlQ4K:
+    case WeightCodec::GgmlQ5K:
+    case WeightCodec::Q4:
+    case WeightCodec::Q5:
+    case WeightCodec::Q6:
+    case WeightCodec::Q3G128:
+    case WeightCodec::Q3G64:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool volta_hmma_codec(WeightCodec codec) {
+    return codec == WeightCodec::GgmlQ4K || codec == WeightCodec::GgmlQ5K ||
+           codec == WeightCodec::GgmlQ6K || codec == WeightCodec::Q8;
+}
+
+int volta_hmma_k_multiple(WeightCodec codec) { return codec == WeightCodec::Q8 ? 64 : 256; }
+
 } // namespace ninferno::ops::detail::generic
