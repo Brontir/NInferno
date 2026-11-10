@@ -187,9 +187,9 @@ void check_known() {
          true,
          1,
          "invariant-profile"},
-        {"rtx4090", QType::BF16, {4096, 4096}, LinearPolicy::A16Only, 4, false, 2, "route-probe"},
-        {"rtx4090", QType::BF16, {4096, 4096}, LinearPolicy::A16Only, 4, false, 3, "route-pin"},
-        {"rtx4090", QType::BF16, {4096, 4096}, LinearPolicy::A16Only, 512, true, 4, "route-pin"},
+        {"rtx4090", QType::Q8_G32_FP16, {4096, 4096}, LinearPolicy::A16Only, 4, false, 2, "route-probe"},
+        {"rtx4090", QType::Q8_G32_FP16, {4096, 4096}, LinearPolicy::A16Only, 4, false, 3, "route-pin"},
+        {"rtx4090", QType::Q8_G32_FP16, {4096, 4096}, LinearPolicy::A16Only, 512, true, 4, "route-pin"},
         {"rtx4090",
          QType::GGML_Q4_K,
          {4096, 4096},
@@ -198,8 +198,8 @@ void check_known() {
          true,
          0,
          "mmq-prefill-gate"},
-        {"rtx4090", QType::BF16, {4096, 4096}, LinearPolicy::A16Only, 64, false, 0, "route-table"},
-        {"rtx4090", QType::BF16, {4096, 4096}, LinearPolicy::A16Only, 1, false, 0, "r8-rules"},
+        {"rtx4090", QType::Q8_G32_FP16, {4096, 4096}, LinearPolicy::A16Only, 64, false, 0, "route-table"},
+        {"rtx4090", QType::Q8_G32_FP16, {4096, 4096}, LinearPolicy::A16Only, 1, false, 0, "r8-rules"},
     };
     for (const KnownCase& c : cases) {
         const std::string got = known_source(c);
