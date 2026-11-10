@@ -4,7 +4,9 @@
 // prints them, the fitted ones first: the numbers the model still takes from route_tune timings
 // instead of deriving them. The header's own text is read too: every constant it defines must be
 // in the descriptor and every listed one defined, so a new one cannot bypass the checks by being
-// left out. No GPU.
+// left out. Every Fitted constant must also carry a complete Holdout (core/holdout.h): boards or
+// models left out of its fit with the metric and the error seen, or an explicit "none" with the
+// reason; an Unset one (forgotten) fails. The other provenances need none. No GPU.
 
 #include "ops/generic/route_cost_constants.h"
 
@@ -122,7 +124,24 @@ int main(int argc, char** argv) {
                          static_cast<int>(c.name.size()), c.name.data(), v);
             ++failures;
         }
-        fitted += c.from == rc::Provenance::Fitted;
+        if (c.from == rc::Provenance::Fitted) {
+            ++fitted;
+            if (c.holdout.kind == ninferno::HoldoutKind::Unset) {
+                std::fprintf(stderr,
+                             "%.*s: Fitted with no Holdout (forgotten, not declared none)
+                             ",
+                             static_cast<int>(c.name.size()),
+                             c.name.data());
+                ++failures;
+            } else if (!c.holdout.complete()) {
+                std::fprintf(stderr,
+                             "%.*s: its Holdout leaves a required field empty
+                             ",
+                             static_cast<int>(c.name.size()),
+                             c.name.data());
+                ++failures;
+            }
+        }
     }
     if (argc > 1 && std::string(argv[1]) == "--list") {
         for (auto want : {rc::Provenance::Fitted, rc::Provenance::Counted, rc::Provenance::Fact}) {

@@ -118,6 +118,12 @@ constexpr const char* kQ9 = "unsloth/Qwen3.5-9B-MTP-GGUF@9716a636ee4bddc3fed6782
 } // namespace
 
 int main() {
+    // Every fitted small-T eta carries a complete Holdout record (core/holdout.h): checked, or an
+    // explicit "none" with its reason; an Unset one was forgotten.
+    for (const auto& e : sp::kSmallTEta) {
+        expect(e.holdout.complete(), std::string("kSmallTEta row ") + std::string(e.generation) +
+                                         " has no complete Holdout record");
+    }
     // The facts read back as written; malformed facts are refused.
     {
         const auto& q9 = pair_of(kQ9, "ad104:60sm");

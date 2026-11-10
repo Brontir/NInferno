@@ -55,6 +55,8 @@ ninferno_add_test(ninferno_gate_atlas_test
 # (ops/generic/route_cost_constants.h); `--list` prints them. No GPU.
 ninferno_add_test(ninferno_route_cost_constants_test NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_route_cost_constants.cpp")
+# Also: every Fitted constant carries a Holdout record (core/holdout.h).
+set_tests_properties(ninferno_route_cost_constants_test PROPERTIES LABELS host)
 
 ninferno_add_test(ninferno_decode_graph_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_decode_graph.cpp"
   LIBRARIES ninferno_core)

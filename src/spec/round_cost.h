@@ -31,6 +31,7 @@
 // tiles: up to +60 %) are not estimated away from the lab card at all.
 
 #include "core/cost_constants.h"
+#include "core/holdout.h"
 #include "spec/moe_routed_share.h"
 #include "spec/config.h"
 #include "spec/proposal_rows.h"
@@ -141,10 +142,30 @@ struct SmallTEta {
     std::string_view generation;
     double eta;
     std::int32_t cards; // lab cards the row rests on (two or more)
+    Holdout holdout;    // required: test_spec_round_cost fails on an Unset one
 };
+
 inline constexpr SmallTEta kSmallTEta[] = {
-    {"ada", 0.148, 2},
-    {"gb20x", 0.165, 2},
+    {"ada", 0.148, 2,
+     Holdout::checked(
+         "registry spec-tune rounds of Qwen targets, k 4..7, RTX 4070 Ti and RTX 4090 together",
+         "each card's rounds predicted from the other card's eta alone (fit_eta.py item 3)",
+         "R measured / R facts",
+         "RTX 4070 Ti from the 4090 -3..+4 %, RTX 4090 from the 4070 Ti +1..+9 % (DECISIONS 53); "
+         "+0.1 % and +0.2 % on average, rms 3.7 % and 2.0 % (DECISIONS 56, for scale)",
+         "DECISIONS 53 and 56",
+         "gpt-oss rounds run +16..19 % over their facts (its runs drafted BF16)")},
+    {"gb20x", 0.165, 2,
+     Holdout::checked(
+         "registry spec-tune rounds of Qwen targets, k <= 7, RTX 5070 Ti and RTX 5090 together",
+         "each card's rounds predicted from the other card's eta alone (fit_eta.py item 3)",
+         "R measured / R facts",
+         "RTX 5070 Ti from the 5090 (0.184) +4.3 % on average, rms 8.4 %; RTX 5090 from the 5070 "
+         "Ti "
+         "(0.162) +1.4 %, rms 4.4 %",
+         "DECISIONS 56",
+         "the plan's pick on the other card's pairs equals the held-out card's measured best or is "
+         "within 1.5 % of it (gpt-oss 4 %)")},
 };
 
 // A kernel's launch time inside a graph replay (t0) and the DRAM rate a decode kernel's bytes reach
