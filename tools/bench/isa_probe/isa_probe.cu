@@ -1,8 +1,10 @@
 // isa_probe: the ISA facts of one card that the register-MMA price's per-warp timeline needs
 // (#613 PR-2): tensor pipe cycles per MMA at the SM and the dependent MMA latency, the INT32 and
 // FP32 pipes' cycles per warp instruction, and the dependent load latencies (L1 hit, L2 hit, DRAM,
-// shared memory) alone and under 2, 4 and 8 chasing warps per SM. Every number is in SM clocks
-// (clock64), so it does not depend on the clock the card ran at.
+// shared memory) alone and under 2, 4 and 8 chasing warps per SM. What happens inside the SM is in
+// SM clocks (clock64) and does not depend on the clock the card ran at; the L2 and DRAM latencies
+// are wall time beyond the SM, so they are reported in ns (%globaltimer) beside their clocks, with
+// the SM clock the chase ran at.
 //
 // Build (CUDA 13.x; sm_70 needs CUDA 12.8's nvcc):
 //   nvcc -O3 -std=c++17 -arch=sm_<arch> -o isa_probe tools/bench/isa_probe/isa_probe.cu
@@ -16,22 +18,29 @@
 // instructions; every CTA records its SM (%smid) and its clock64 span, and per SM the span of all
 // its CTAs over the instructions those CTAs issued is the SM's cycles per instruction (the
 // hardware does not spread the CTAs evenly, so the CTA count per SM is read, not assumed); the
-// median over SMs is reported, with the per-partition figure 4x that. Latency: one warp's lane 0
-// follows a dependent chain (acc = mma(acc) / idx = buf[idx]); cycles per link include the chain's
-// own address arithmetic (2-3 clocks, the same for every level). Loaded latency: W warps per SM
-// each chase a pseudo-random cycle through a sub-buffer of their own (no two warps share a line
-// or an order; the L2 and DRAM loads bypass the L1), each warp timing its own links. A latency
-// launch asks for one CTA per SM; a CTA that shared its SM with another (read from %smid) is
-// left out, so every latency is at the stated warp count (probe 13).
+// median over SMs is reported, with the per-partition figure 4x that; the same loop with one CTA
+// of 4, 8 and 16 warps per SM gives the tensor figure at fewer warps (probe 14). Latency: one
+// warp's lane 0 follows a dependent chain (acc = mma(acc) / p = *p / idx = s[idx]); a link of a
+// load chain is the load alone: a global node holds the address of the next (probe 14; the rows
+// of earlier probes carry the index-to-address ops of their chain in every l1 / l2 / DRAM link),
+// and the shared chain's index is the load's own scaled operand. Loaded latency: W warps per SM
+// each chase a pseudo-random cycle of their own (the L2 and DRAM loads bypass the L1), each warp
+// timing its own links; on the DRAM levels a link is a 128-byte line of its own (four 32-byte
+// sectors) that no other link of the chip shares, whoever chases it (probe 14). A latency launch
+// asks for one CTA per SM; a CTA that shared its SM with another (read from %smid) is left out,
+// so every latency is at the stated warp count (probe 13), and so is a chase whose SM did not
+// hold exactly one clock holder (probe 14).
 
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
 #include <string>
+#include <thread>
 #include <vector>
 
 #define CHECK(x)                                                                                   \
@@ -42,6 +51,8 @@
             std::exit(2);                                                                          \
         }                                                                                          \
     } while (0)
+// After every kernel launch: one the driver refused is an error of the run, not a number.
+#define LAUNCHED() CHECK(cudaGetLastError())
 
 namespace {
 
@@ -50,6 +61,9 @@ constexpr int kCtasPerSm    = 4;
 constexpr int kThroughputN  = 4096; // iterations of the throughput loops
 constexpr int kUnroll       = 8;    // independent streams per thread
 constexpr int kLatencyLinks = 4096; // links of a dependent chain
+// Links of a DRAM chase, warm-up and timed alike on both DRAM levels: about 150 us of wall time
+// a chase, against a %globaltimer that steps by about 1 us.
+constexpr int kDramLinks = 512;
 
 struct Span {
     long long begin, end; // clock64: SM clocks
@@ -170,14 +184,28 @@ __global__ void mma_latency(Span* spans, float* sink, unsigned a, unsigned b) {
 // section synchronises the device as a whole (that would wait on this kernel): the chases and
 // their copies run and are waited for on the legacy stream alone, which a non-blocking stream
 // does not join.
-__global__ void spinner(const volatile int* stop, long long deadline_ns, float* sink) {
+// The holder's words in mapped host memory: the host's stop flag, a flag a holder raises when it
+// leaves on its deadline (the chases after that ran without it: the run is refused), and from
+// kHolderSms on the SM every holder CTA runs on (-1 until it started), so a chase counts only
+// where exactly one holder sat beside it.
+constexpr int kHolderStop = 0, kHolderExpired = 1, kHolderSms = 2;
+// The holder's deadline: several times the latency section's few seconds.
+constexpr long long kHolderSeconds = 60;
+
+__global__ void spinner(volatile int* words, long long deadline_ns, float* sink) {
     float x                  = threadIdx.x * 1e-3f;
     const long long deadline = globaltimer_ns() + deadline_ns;
+    if (threadIdx.x == 0) words[kHolderSms + blockIdx.x] = smid();
     while (true) {
 #pragma unroll
         for (int i = 0; i < 1024; ++i) x = fmaf(x, 0.999f, 0.001f);
         __threadfence_system();
-        if (*stop != 0 || globaltimer_ns() > deadline) break;
+        if (words[kHolderStop] != 0) break;
+        if (globaltimer_ns() > deadline) {
+            if (threadIdx.x == 0) words[kHolderExpired] = 1;
+            __threadfence_system();
+            break;
+        }
     }
     if (x == 12345.f) sink[0] = x;
 }
@@ -221,8 +249,10 @@ __global__ void int32_throughput(Span* spans, float* sink, unsigned m, unsigned 
 // One warp per SM runs a chain of kLatencyLinks dependent ops of one kind (each written in PTX
 // so ptxas keeps the op: IMAD, IADD3, LOP3, PRMT, SHF, HFMA2, FFMA, SHFL, and the conversion pairs
 // I2F+F2I and F2F f32->f16->f32, reported per op); cycles per link are the op's issue-to-use
-// latency. Each is held against the published range of the Volta..Blackwell SM (ALU 2-16 clk,
-// SHFL 10-60) by the self-check.
+// latency. lat_iadd is the add ptxas makes of a dependent doubling, not IADD3 alone: in the sm_89
+// SASS the chain alternates IADD3 and IMAD.IADD, so the figure is the mean of the two forms. Each
+// is held against the published range of the Volta..Blackwell SM (ALU 2-16 clk, SHFL 10-60) by
+// the self-check.
 enum class Op { IMAD, IADD, LOP3, PRMT, SHF, HFMA2, FFMA, SHFL, CVT_I2F_F2I, CVT_F32_F16 };
 
 template <Op op>
@@ -250,7 +280,8 @@ __device__ __forceinline__ void dep_step(unsigned& x, unsigned k, unsigned m) {
     } else if constexpr (op == Op::SHFL) {
         // The source lane is the chained value itself (the 0x1f clamp takes it modulo 32): a
         // constant lane let ptxas fold the whole chain away (probe 11 read 0 clk). From x = lane
-        // + 1 every lane reads its right neighbour, a rotation that never settles.
+        // + 1 the lanes' values settle within five links (the hop doubles each link, 32 hops are
+        // none); the dependence of every SHFL on the one before stays, which is what is timed.
         asm volatile("shfl.sync.idx.b32 %0, %0, %0, 0x1f, 0xffffffff;" : "+r"(x));
     } else if constexpr (op == Op::CVT_I2F_F2I) {
         float f;
@@ -277,15 +308,18 @@ __global__ void dep_latency(Span* spans, unsigned* sink, unsigned k, unsigned m)
 }
 
 // ---- Memory latencies ----
-// Every chasing warp owns a sub-buffer of `m` elements (a power of two) holding one cycle through
-// all of them in pseudo-random order (a full-period LCG, fill_cycle: the line of the next link is
-// unrelated to this one's), so no two warps' chains share a line and no warp's path is another's
-// shifted. One CTA per SM; lane 0 of each of its `warps` warps chases its own chain, the other
-// lanes idle. The first `kLatencyLinks` links warm the level (the lines of a resident level, the
-// TLB of the DRAM one); the timed links continue the cycle from there, so on the DRAM level they
-// are lines no warp has touched. `Cg` loads bypass the L1 (ld.global.cg: cached in L2 only), so an
-// L2 or DRAM figure cannot be an L1 hit; the L1 level uses the default path. Each warp records its
-// own span; the host takes the median over warps and SMs.
+// A cycle is `m` nodes (a power of two) visited in pseudo-random order (fill_cycle: the node of
+// the next link is unrelated to this one's); a node is one 8-byte word holding the address of the
+// next node, so a link is the load and nothing else (probe 14; until then a node held an index,
+// and its add to the base was three dependent ops in the SASS: IADD3, IMAD.X, LEA.HI.X). Nodes
+// are `stride` words apart, so with a stride of 16 words every node is a 128-byte line of its
+// own (four 32-byte sectors) and two links never read the same line. One CTA per SM; lane 0 of
+// each of its `warps` warps chases its own chain, the other lanes idle. The first `links` links
+// warm the level (the lines of a resident level, the pages of the TLB-warm one); the timed links
+// continue the cycle from there, so on the DRAM levels they are lines nothing has read. `Cg`
+// loads bypass the L1 (ld.global.cg: cached in L2 only), so an L2 or DRAM figure cannot be an L1
+// hit; the L1 level uses the L1-cached path. Each warp records its own span; the host takes the
+// median over warps and SMs.
 // A bijection of the `bits`-bit indices (bits even): a four-round balanced Feistel network whose
 // round function is a multiplicative hash, so the images of neighbouring indices sit anywhere in
 // the sub-buffer. Seeded per sub-buffer (cycle_seed).
@@ -308,45 +342,62 @@ __device__ __forceinline__ unsigned cycle_seed(unsigned sub) {
     return 0x1234567u + 0x9E3779B9u * sub;
 }
 
+using Node = unsigned long long; // a node: the address of the next one
+
 template <bool Cg>
-__device__ __forceinline__ unsigned load_link(const unsigned* p) {
-    unsigned v;
+__device__ __forceinline__ const Node* load_link(const Node* p) {
+    Node v;
     if constexpr (Cg) {
-        asm volatile("ld.global.cg.u32 %0, [%1];" : "=r"(v) : "l"(p));
+        asm volatile("ld.global.cg.u64 %0, [%1];" : "=l"(v) : "l"(p));
     } else {
         // The L1-cached path spelled out: a plain `*p` on a const __restrict__ pointer may take
         // the read-only (texture) path, whose hit is longer than the L1's.
-        asm volatile("ld.global.ca.u32 %0, [%1];" : "=r"(v) : "l"(p));
+        asm volatile("ld.global.ca.u64 %0, [%1];" : "=l"(v) : "l"(p));
     }
-    return v;
+    return reinterpret_cast<const Node*>(v);
 }
 
+// Whose links a chasing warp walks.
+enum class Own {
+    // l1, l2: 8 cycles, one per warp index, shared by the CTAs; CTA b starts at position b x m /
+    // grid. The cycles are shorter than the chase, so the lines are met again: a line another
+    // warp or SM pulled into the level is what a hit of it is.
+    Shared,
+    // dram_tlbwarm: every (CTA, warp) pair has a cycle of its own in a range of its own, small
+    // enough for the warm-up to have walked its pages.
+    Buffer,
+    // dram: one cycle over the whole buffer for the chip, every (CTA, warp) pair on a segment of
+    // positions of its own, its lines anywhere in the buffer.
+    Segment,
+};
+
+// The cycle runs through the positions x = 0, 1, 2, ... (fill_cycle), so segments are plain index
+// ranges, and the `run`-th chase of a level (one per warp count) begins 2 x links further on
+// than the one before: on the DRAM levels, where a pair's range holds its four chases (the host
+// checks it), no chase reads a line an earlier link of any chase read.
 template <bool Cg>
-// `per_sm`: every (CTA, warp) pair owns its sub-buffer (CTA x 8 + warp); otherwise the 8
-// sub-buffers are shared by the CTAs and CTA b walks warp w's cycle from position b x m /
-// gridDim.x, a segment of its own as long as m / gridDim.x exceeds 8 x links (four runs of 2 x
-// links): no two CTAs then read a line in common, so a link's first touch is the CTA's own.
-__global__ void chase(const unsigned* __restrict__ buf, unsigned bits, bool per_sm, int links,
+__global__ void chase(const Node* buf, unsigned bits, unsigned stride, Own own, int links,
                       unsigned run, Span* spans, unsigned* sink) {
     const int warp = threadIdx.x / 32;
     if (threadIdx.x % 32 != 0) return;
     const unsigned m     = 1u << bits;
-    const unsigned sub   = per_sm ? blockIdx.x * 8 + warp : warp;
-    const unsigned* mine = buf + static_cast<size_t>(sub) * m;
-    // The cycle runs through the positions x = 0, 1, 2, ... (fill_cycle), so segments are plain
-    // index ranges: this CTA's segment of a shared sub-buffer begins at b x m / grid, and the
-    // `run`-th chase of the level (one per warp count) begins 2 x links further on than the
-    // previous one, so no chase walks the lines an earlier chase pulled into the L2.
-    const unsigned x0 = (per_sm ? 0u : blockIdx.x * (m / gridDim.x)) + run * 2u * links;
-    unsigned idx      = feistel(x0 & (m - 1u), bits, cycle_seed(sub));
-    for (int i = 0; i < links; ++i) idx = load_link<Cg>(mine + idx);
+    const unsigned pair  = blockIdx.x * 8 + warp;
+    const unsigned sub   = own == Own::Shared ? warp : own == Own::Buffer ? pair : 0u;
+    const Node* mine     = buf + static_cast<size_t>(sub) * m * stride;
+    const unsigned first = own == Own::Shared    ? blockIdx.x * (m / gridDim.x)
+                           : own == Own::Segment ? pair * (m / (gridDim.x * 8u))
+                                                 : 0u;
+    const unsigned x0    = first + run * 2u * links;
+    const Node* p =
+        mine + static_cast<size_t>(feistel(x0 & (m - 1u), bits, cycle_seed(sub))) * stride;
+    for (int i = 0; i < links; ++i) p = load_link<Cg>(p);
     const long long n0 = globaltimer_ns();
     const long long t0 = clock64();
-    for (int i = 0; i < links; ++i) idx = load_link<Cg>(mine + idx);
+    for (int i = 0; i < links; ++i) p = load_link<Cg>(p);
     const long long t1           = clock64();
     const long long n1           = globaltimer_ns();
     spans[blockIdx.x * 8 + warp] = {t0, t1, smid(), n0, n1};
-    if (idx == 0xffffffffu) sink[0] = idx;
+    if (p == nullptr) sink[0] = 1u; // keeps the chain alive, never true
 }
 
 __global__ void chase_shared(Span* spans, unsigned* sink) {
@@ -362,22 +413,32 @@ __global__ void chase_shared(Span* spans, unsigned* sink) {
     if (idx == 0xffffffffu) sink[0] = idx;
 }
 
-// `count` sub-buffers of 2^bits elements, each one cycle through all its elements in a
-// pseudo-random order: the successor cycle conjugated by the Feistel bijection, seeded per
-// sub-buffer so no two cycles share their order. (An LCG cycle was tried first: its own low bits
-// repeat with short periods and its orbit order is not an index order, so segments of it could
-// neither be kept apart from a DRAM row nor from one another.)
-__global__ void fill_cycle(unsigned* buf, unsigned bits, unsigned count) {
+// `count` cycles of 2^bits nodes, `stride` words a node, each cycle through all its nodes in
+// a pseudo-random order: the successor cycle conjugated by the Feistel bijection, seeded per
+// cycle so no two share their order. (An LCG cycle was tried first: its own low bits repeat with
+// short periods and its orbit order is not an index order, so segments of it could neither be
+// kept apart from a DRAM row nor from one another.)
+__global__ void fill_cycle(Node* buf, unsigned bits, unsigned stride, unsigned count) {
     const unsigned m = 1u << bits;
     const size_t i   = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= static_cast<size_t>(m) * count) return;
     const unsigned w = static_cast<unsigned>(i / m), x = static_cast<unsigned>(i % m);
     const unsigned seed = cycle_seed(w);
-    // The successor cycle x -> x + 1 mod m, conjugated by the bijection: buf[P(x)] = P(x + 1).
-    // Position k of the cycle is P(k), so a segment of the cycle is a plain range of k, and the
-    // addresses of successive links are unrelated.
-    buf[static_cast<size_t>(w) * m + feistel(x, bits, seed)] =
-        feistel((x + 1u) & (m - 1u), bits, seed);
+    Node* mine          = buf + static_cast<size_t>(w) * m * stride;
+    // The successor cycle x -> x + 1 mod m, conjugated by the bijection: node P(x) holds the
+    // address of node P(x + 1). Position k of the cycle is P(k), so a segment of the cycle is a
+    // plain range of k, and the addresses of successive links are unrelated.
+    mine[static_cast<size_t>(feistel(x, bits, seed)) * stride] = reinterpret_cast<Node>(
+        mine + static_cast<size_t>(feistel((x + 1u) & (m - 1u), bits, seed)) * stride);
+}
+
+// One word written per 32-byte sector of a scratch range twice the L2's size, after a DRAM
+// level's cycles are filled: the nodes the fill wrote last leave the L2, so a timed first read is
+// not the fill's residue. (That the L2 gives the older lines up is the cache's ordinary
+// behaviour, not a fact read here: isa_probe_ncu.sh counts the L2 hits of a DRAM chase.)
+__global__ void evict(Node* scratch, size_t sectors) {
+    const size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i < sectors) scratch[i * 4] = i;
 }
 
 double median(std::vector<double> d) {
@@ -385,12 +446,21 @@ double median(std::vector<double> d) {
     return d[d.size() / 2];
 }
 
+std::vector<std::string> g_failures;
+
+void fact(const char* name, double value, const char* unit) {
+    std::printf("fact %s %.3f %s\n", name, value, unit);
+}
+
+void check(bool ok, const std::string& what) {
+    if (!ok) g_failures.push_back(what);
+}
+
 struct Probe {
-    int sms          = 0;
-    Span* spans      = nullptr;
-    float* fsink     = nullptr;
-    unsigned* usink  = nullptr;
-    double ctas_seen = 0; // the median CTA count per SM the last throughput kernel saw
+    int sms         = 0;
+    Span* spans     = nullptr;
+    float* fsink    = nullptr;
+    unsigned* usink = nullptr;
     std::vector<Span> host;
 
     std::vector<Span>& collect(int ctas) {
@@ -403,59 +473,75 @@ struct Probe {
         return host;
     }
 
-    // Cycles per instruction per SM of a throughput kernel: per SM, the span of all its CTAs over
-    // the instructions they issued; the median over SMs.
+    // Cycles per instruction per SM of a throughput kernel launched as `ctas_per_sm` CTAs of
+    // `warps` warps an SM: per SM, the span of all its CTAs over the instructions they issued;
+    // the median over SMs. The hardware does not spread the CTAs evenly, so the count per SM is
+    // read, not assumed. `saturated`: every SM counts whatever it held (more or fewer CTAs of a
+    // loop that fills every partition issue at the same rate); otherwise only the SMs that held
+    // exactly the CTAs asked for, all at once (their spans overlap), so the figure is at the
+    // stated warp count, and fewer than half of them fails the self-check. What the SMs held is
+    // a note of the run: a property of the launch, not a fact of the card.
     template <typename Kernel, typename... Args>
-    double per_sm(Kernel kernel, Args... args) {
-        const int ctas = sms * kCtasPerSm;
-        kernel<<<ctas, 32 * kWarpsPerCta>>>(spans, fsink, args...); // warm
-        kernel<<<ctas, 32 * kWarpsPerCta>>>(spans, fsink, args...);
+    double per_sm(const char* what, bool saturated, int ctas_per_sm, int warps, Kernel kernel,
+                  Args... args) {
+        const int ctas = sms * ctas_per_sm;
+        kernel<<<ctas, 32 * warps>>>(spans, fsink, args...); // warm
+        LAUNCHED();
+        kernel<<<ctas, 32 * warps>>>(spans, fsink, args...);
+        LAUNCHED();
         std::map<int, std::vector<Span>> by_sm;
         for (const Span& s : collect(ctas)) by_sm[s.sm].push_back(s);
-        std::vector<double> cycles, counts;
+        std::vector<double> cycles, every;
         for (const auto& [sm, list] : by_sm) {
-            long long lo = list[0].begin, hi = list[0].end;
+            long long lo = list[0].begin, hi = list[0].end; // the span of them all
+            long long last_begin = list[0].begin, first_end = list[0].end;
             for (const Span& s : list) {
-                lo = std::min(lo, s.begin);
-                hi = std::max(hi, s.end);
+                lo         = std::min(lo, s.begin);
+                hi         = std::max(hi, s.end);
+                last_begin = std::max(last_begin, s.begin);
+                first_end  = std::min(first_end, s.end);
             }
-            const double work =
-                static_cast<double>(kThroughputN) * kUnroll * kWarpsPerCta * list.size();
-            cycles.push_back(static_cast<double>(hi - lo) / work);
-            counts.push_back(static_cast<double>(list.size()));
+            const double work = static_cast<double>(kThroughputN) * kUnroll * warps * list.size();
+            every.push_back(static_cast<double>(hi - lo) / work);
+            if (static_cast<int>(list.size()) == ctas_per_sm && last_begin < first_end)
+                cycles.push_back(every.back());
         }
-        ctas_seen = median(counts);
-        return median(cycles);
+        std::printf("note %s: %d of %d SMs ran %d CTA(s) of %d warps at once%s\n", what,
+                    static_cast<int>(cycles.size()), sms, ctas_per_sm, warps,
+                    saturated ? "; every SM counts" : ", the others are left out");
+        if (saturated) return median(every);
+        check(2 * static_cast<int>(cycles.size()) >= sms,
+              std::string(what) + ": fewer than half the SMs ran the CTAs asked for at once");
+        // With none the check above has failed the run; the median still needs spans.
+        return median(cycles.empty() ? every : cycles);
     }
 };
-
-std::vector<std::string> g_failures;
-
-void fact(const char* name, double value, const char* unit) {
-    std::printf("fact %s %.3f %s\n", name, value, unit);
-}
-
-void check(bool ok, const std::string& what) {
-    if (!ok) g_failures.push_back(what);
-}
 
 // The CTAs of a latency launch (one CTA per SM asked for; `per_cta` span entries each, the first
 // always written) that had their SM to themselves. The hardware does not spread CTAs evenly: two
 // on one SM run beside twice the stated warps, so their spans are left out of the latency and
-// the count is noted. Fewer than half the CTAs alone fails the self-check.
-std::vector<char> alone(const std::vector<Span>& spans, int per_cta, const std::string& what) {
+// the count is noted. Fewer than half the CTAs alone fails the self-check. `holders`, for the
+// launches that run beside the clock holder: the holder CTAs on every SM; a CTA whose SM holds
+// none or two of them ran at another clock or beside another load, and is left out as well.
+std::vector<char> alone(const std::vector<Span>& spans, int per_cta, const std::string& what,
+                        const std::map<int, int>* holders = nullptr) {
     const int ctas = static_cast<int>(spans.size()) / per_cta;
     std::map<int, int> on_sm;
     for (int c = 0; c < ctas; ++c) ++on_sm[spans[c * per_cta].sm];
     std::vector<char> keep(ctas);
     int kept = 0;
     for (int c = 0; c < ctas; ++c) {
-        keep[c] = on_sm[spans[c * per_cta].sm] == 1;
+        const int sm = spans[c * per_cta].sm;
+        keep[c]      = on_sm[sm] == 1;
+        if (holders != nullptr) {
+            const auto h = holders->find(sm);
+            keep[c]      = keep[c] && h != holders->end() && h->second == 1;
+        }
         kept += keep[c];
     }
     if (kept < ctas)
-        std::printf("note %s: %d of %d CTAs had an SM to themselves, the others are left out\n",
-                    what.c_str(), kept, ctas);
+        std::printf("note %s: %d of %d CTAs had an SM to themselves%s, the others are left out\n",
+                    what.c_str(), kept, ctas, holders != nullptr ? " and one clock holder" : "");
     check(2 * kept >= ctas, what + ": fewer than half the CTAs had an SM to themselves");
     // With none alone the check above has failed the run; the median still needs spans.
     if (kept == 0) std::fill(keep.begin(), keep.end(), char{1});
@@ -480,7 +566,7 @@ int main() {
     CHECK(cudaDriverGetVersion(&driver));
     CHECK(cudaRuntimeGetVersion(&runtime));
     const int cc = p.major * 10 + p.minor;
-    std::printf("probe isa_probe 13\n");
+    std::printf("probe isa_probe 14\n");
     std::printf("card %s\n", p.name);
     std::printf("cc %d\n", cc);
     std::printf("sms %d\n", p.multiProcessorCount);
@@ -502,6 +588,7 @@ int main() {
     int code      = -1;
     CHECK(cudaMalloc(&code_dev, sizeof(int)));
     shape_code<<<1, 1>>>(code_dev);
+    LAUNCHED();
     CHECK(cudaDeviceSynchronize());
     CHECK(cudaMemcpy(&code, code_dev, sizeof(int), cudaMemcpyDeviceToHost));
     check(code >= 0 && code < 3, "shape code not read from the device");
@@ -513,8 +600,8 @@ int main() {
 
     // Tensor pipe: cycles per MMA at the SM (every partition busy) and the dependent latency.
     const unsigned ones = (code == 2) ? 0x3f803f80u /* bf16 1.0 */ : 0x3c003c00u /* f16 1.0 */;
-    const double mma_sm = pr.per_sm(mma_throughput, ones, ones);
-    fact("resident_ctas_per_sm", pr.ctas_seen, "count");
+    const double mma_sm =
+        pr.per_sm("mma_cycles_per_sm", true, kCtasPerSm, kWarpsPerCta, mma_throughput, ones, ones);
     fact("mma_cycles_per_sm", mma_sm, "clk");
     fact("mma_cycles_per_partition", mma_sm * 4.0, "clk");
     const double tensor_rate = shape.flops / mma_sm;
@@ -522,8 +609,18 @@ int main() {
     // No SM the probe knows issues a dense MMA above 2048 flop a clock (the GA100 / GH100 class)
     // or below one m8n8k4 in 32 clocks.
     check(tensor_rate <= 2048.0 && tensor_rate >= 16.0, "tensor rate out of range");
+    // The same loop at 4, 8 and 16 warps an SM, one CTA each (1, 2 and 4 warps a scheduler where
+    // the SM deals a CTA's warps round its four, which is not read here): whether the SM's rate
+    // above needs every warp, or one warp's independent MMAs already fill a partition's pipe.
+    for (int warps : {4, 8, 16}) {
+        char name[64];
+        std::snprintf(name, sizeof name, "mma_cycles_per_sm_w%d", warps);
+        fact(name, pr.per_sm(name, false, 1, warps, mma_throughput, ones, ones), "clk");
+    }
     mma_latency<<<pr.sms, 32>>>(pr.spans, pr.fsink, ones, ones);
+    LAUNCHED();
     mma_latency<<<pr.sms, 32>>>(pr.spans, pr.fsink, ones, ones);
+    LAUNCHED();
     const double mma_lat =
         latency_span(pr.collect(pr.sms), "mma_dependent_latency") / kLatencyLinks;
     fact("mma_dependent_latency", mma_lat, "clk");
@@ -531,8 +628,12 @@ int main() {
 
     // INT32 / FP32 pipes: cycles per warp instruction per partition. The floors are the lane
     // counts: 32 FP32 lanes a partition from Ampere (1 clock), 16 before (2); 16 INT32 lanes (2).
-    const double fp32 = pr.per_sm(fp32_throughput, 0.999f, 0.001f) * 4.0;
-    const double i32  = pr.per_sm(int32_throughput, 3u, 1u) * 4.0;
+    const double fp32 = pr.per_sm("fp32_cycles_per_warp_instruction", true, kCtasPerSm,
+                                  kWarpsPerCta, fp32_throughput, 0.999f, 0.001f) *
+                        4.0;
+    const double i32 = pr.per_sm("int32_cycles_per_warp_instruction", true, kCtasPerSm,
+                                 kWarpsPerCta, int32_throughput, 3u, 1u) *
+                       4.0;
     fact("fp32_cycles_per_warp_instruction", fp32, "clk");
     fact("int32_cycles_per_warp_instruction", i32, "clk");
     const double fp32_floor = cc >= 80 ? 1.0 : 2.0;
@@ -543,7 +644,9 @@ int main() {
     // two ops a link and are reported per op.
     const auto dep = [&](auto launch, const char* name, double ops_per_link, double lo, double hi) {
         launch();
+        LAUNCHED();
         launch();
+        LAUNCHED();
         const double clk_per_op =
             latency_span(pr.collect(pr.sms), name) / kLatencyLinks / ops_per_link;
         fact(name, clk_per_op, "clk");
@@ -565,60 +668,94 @@ int main() {
     ISA_PROBE_DEP(CVT_F32_F16, "lat_cvt_f32_f16", 2.0, 2.0, 32.0);
 #undef ISA_PROBE_DEP
 
-    // Memory latencies: per chasing warp a sub-buffer holding one pseudo-random cycle (fill_cycle).
-    // L1: 4 KB a warp (32 KB at 8 warps, inside every L1), L1-cached loads. L2: 64 KB a warp
-    // (512 KB at 8 warps, inside every L2), loads that bypass the L1. DRAM: loads that bypass the
-    // L1, the timed links on lines no warp has touched. Loaded: 1, 2, 4, 8 warps per SM.
-    // Sub-buffer sizes are 2^bits elements, bits even for the Feistel halves. No two chasing
-    // warps of the chip read a line in common on the DRAM levels, so every timed link there is a
-    // first touch whatever the L2 holds: dram_tlbwarm gives every (SM, warp) pair its own 1 MB
-    // sub-buffer (half a 2 MB page, at most 4 pages an SM at 8 warps: inside the TLB after the
-    // warm-up) and times 256 links (3 % of its lines, so the warm-up's lines are seldom met
-    // again); dram shares 8 sub-buffers of 256 MB (128 pages a warp, past the TLB) with every SM
-    // on its own segment of the cycle. The L1 and L2 levels share their chains: a line another
-    // SM pulled into the L2 is what an L2 hit is.
+    // Memory latencies: W = 1, 2, 4, 8 chasing warps per SM, every warp on a pseudo-random cycle
+    // (fill_cycle). The cycle sizes are 2^bits nodes of 8 bytes, bits even for the Feistel halves.
+    // L1: 2 KB a warp (16 KB at 8 warps, inside every L1), L1-cached loads. L2: 32 KB a warp
+    // (256 KB at 8 warps, inside every L2), loads that bypass the L1; its warm-up links walk the
+    // whole cycle. These two share their 8 cycles between the SMs: a line another SM pulled into
+    // the L2 is what an L2 hit is.
+    // DRAM: loads that bypass the L1, a node a 128-byte line of its own, the timed links on lines
+    // nothing has read: no two links of the chip are on one line, and the lines the fill wrote
+    // last are pushed out of the L2 before the chases (evict). dram_tlbwarm gives every (SM,
+    // warp) pair its own 512 KB range (a quarter of a 2 MB page, at most 8 pages an SM at 8
+    // warps), whose pages the warm-up links have walked; dram runs every pair on its own segment
+    // of one cycle over the whole 2 GiB buffer (1024 pages of 2 MB, a link on any of them). That
+    // the first level's page walks are cached and the second's are not is the levels' intent,
+    // not a reading: the probe does not see the TLB, only that dram is not the shorter of the two
+    // (checked below). Both time kDramLinks links after as many warm-up links, and a pair's four
+    // chases (one per warp count) never meet a line again.
     struct Level {
         const char* name;
         unsigned bits;
+        unsigned stride; // 8-byte words from a node to the next
         bool cg;
-        bool per_sm;
+        Own own;
         int links;
-    } levels[] = {{"l1", 10, false, false, kLatencyLinks},
-                  {"l2", 14, true, false, kLatencyLinks},
-                  {"dram_tlbwarm", 18, true, true, 256},
-                  {"dram", 26, true, false, kLatencyLinks}};
+    } levels[] = {{"l1", 8, 1, false, Own::Shared, kLatencyLinks},
+                  {"l2", 12, 1, true, Own::Shared, kLatencyLinks},
+                  {"dram_tlbwarm", 12, 16, true, Own::Buffer, kDramLinks},
+                  {"dram", 24, 16, true, Own::Segment, kDramLinks}};
 
-    unsigned* buf = nullptr;
-    const size_t elements =
-        std::max(size_t{8} << 26, static_cast<size_t>(pr.sms) * 8 * (size_t{1} << 18));
-    CHECK(cudaMalloc(&buf, elements * sizeof(unsigned)));
+    const auto cycles_of = [&](const Level& lv) {
+        return lv.own == Own::Shared ? 8u : lv.own == Own::Buffer ? pr.sms * 8u : 1u;
+    };
+
+    Node* buf           = nullptr;
+    size_t words_of_buf = 0;
+    for (const Level& lv : levels)
+        words_of_buf = std::max(words_of_buf, (size_t{1} << lv.bits) * lv.stride * cycles_of(lv));
+    CHECK(cudaMalloc(&buf, words_of_buf * sizeof(Node)));
+    // The scratch range evict writes: twice the L2, one word per 32-byte sector.
+    Node* scratch              = nullptr;
+    const size_t evict_sectors = 2 * static_cast<size_t>(p.l2CacheSize) / 32;
+    CHECK(cudaMalloc(&scratch, evict_sectors * 32));
     std::map<std::string, double> lat;
     std::vector<double> mhz; // the SM clock seen by each L2 / DRAM chase
-    // The clock holder: one warp of FFMA per SM on a second stream for the whole latency section,
-    // stopped through a mapped host flag.
-    volatile int* stop_host = nullptr;
-    int* stop_dev           = nullptr;
-    CHECK(cudaHostAlloc(reinterpret_cast<void**>(const_cast<int**>(&stop_host)), sizeof(int),
-                        cudaHostAllocMapped));
-    *stop_host = 0;
-    CHECK(cudaHostGetDevicePointer(reinterpret_cast<void**>(&stop_dev), const_cast<int*>(stop_host),
-                                   0));
+    // The clock holder: one warp of FFMA per SM asked for on a second stream for the whole
+    // latency section, stopped through mapped host words; every holder CTA writes the SM it
+    // landed on, so the chases know which SMs ran beside exactly one.
+    volatile int* words = nullptr;
+    int* words_dev      = nullptr;
+    CHECK(cudaHostAlloc(reinterpret_cast<void**>(const_cast<int**>(&words)),
+                        (kHolderSms + pr.sms) * sizeof(int), cudaHostAllocMapped));
+    words[kHolderStop]    = 0;
+    words[kHolderExpired] = 0;
+    for (int i = 0; i < pr.sms; ++i) words[kHolderSms + i] = -1;
+    CHECK(
+        cudaHostGetDevicePointer(reinterpret_cast<void**>(&words_dev), const_cast<int*>(words), 0));
     cudaStream_t side = nullptr;
     CHECK(cudaStreamCreateWithFlags(&side, cudaStreamNonBlocking));
-    spinner<<<pr.sms, 32, 0, side>>>(stop_dev, 30'000'000'000LL, pr.fsink);
-    CHECK(cudaGetLastError());
+    spinner<<<pr.sms, 32, 0, side>>>(words_dev, kHolderSeconds * 1000000000LL, pr.fsink);
+    LAUNCHED();
+    // Wait (5 s at most) until every holder CTA has named its SM.
+    std::map<int, int> holders;
+    {
+        const auto started = [&] {
+            for (int i = 0; i < pr.sms; ++i)
+                if (words[kHolderSms + i] < 0) return false;
+            return true;
+        };
+        const auto t0 = std::chrono::steady_clock::now();
+        while (!started() && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(5))
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        check(started(), "the clock holder did not start on every CTA within 5 s");
+        for (int i = 0; i < pr.sms; ++i) {
+            const int sm = words[kHolderSms + i];
+            if (sm >= 0) ++holders[sm];
+        }
+    }
 
     // The spans of the chasing warps: entry CTA x 8 + warp, the first `warps` of every CTA.
     struct Chase {
         double clk, ns, mhz; // per link in SM clocks and wall ns; the SM clock the chase ran at
     };
 
-    // Only the CTAs alone on their SM count: on a shared SM a warp chases beside twice the
-    // stated warps, which is another level's latency.
+    // Only the CTAs alone on their SM, beside one clock holder, count: on a shared SM a warp
+    // chases beside twice the stated warps, which is another level's latency.
     const auto chase_clocks = [&](int warps, int links, const std::string& what) {
         std::vector<double> clk, ns;
         const std::vector<Span>& spans = pr.collect(pr.sms * 8);
-        const std::vector<char> keep   = alone(spans, 8, what);
+        const std::vector<char> keep   = alone(spans, 8, what, &holders);
         for (size_t entry = 0; entry < spans.size(); ++entry) {
             if (!keep[entry / 8] || static_cast<int>(entry % 8) >= warps) continue;
             const Span& s = spans[entry];
@@ -630,19 +767,35 @@ int main() {
     };
     for (const Level& lv : levels) {
         const unsigned m     = 1u << lv.bits;
-        const unsigned count = lv.per_sm ? pr.sms * 8 : 8;
+        const unsigned count = cycles_of(lv);
         const size_t total   = static_cast<size_t>(m) * count;
-        fill_cycle<<<static_cast<unsigned>((total + 255) / 256), 256>>>(buf, lv.bits, count);
+        // A pair's range of the cycle holds its four chases, warm-up and timed links each.
+        const unsigned range = lv.own == Own::Buffer    ? m
+                               : lv.own == Own::Segment ? m / (pr.sms * 8u)
+                                                        : 0u;
+        if (lv.own != Own::Shared)
+            check(range >= 4u * 2u * lv.links,
+                  std::string(lv.name) +
+                      ": a warp's range of the cycle is shorter than its chases");
+        fill_cycle<<<static_cast<unsigned>((total + 255) / 256), 256>>>(buf, lv.bits, lv.stride,
+                                                                        count);
+        LAUNCHED();
+        if (lv.own != Own::Shared) {
+            evict<<<static_cast<unsigned>((evict_sectors + 255) / 256), 256>>>(scratch,
+                                                                               evict_sectors);
+            LAUNCHED();
+        }
         CHECK(cudaStreamSynchronize(nullptr));
         unsigned run = 0;
         for (int warps : {1, 2, 4, 8}) {
             if (lv.cg) {
-                chase<true><<<pr.sms, 32 * warps>>>(buf, lv.bits, lv.per_sm, lv.links, run,
+                chase<true><<<pr.sms, 32 * warps>>>(buf, lv.bits, lv.stride, lv.own, lv.links, run,
                                                     pr.spans, pr.usink);
             } else {
-                chase<false><<<pr.sms, 32 * warps>>>(buf, lv.bits, lv.per_sm, lv.links, run,
+                chase<false><<<pr.sms, 32 * warps>>>(buf, lv.bits, lv.stride, lv.own, lv.links, run,
                                                      pr.spans, pr.usink);
             }
+            LAUNCHED();
             ++run;
             char name[64];
             std::snprintf(name, sizeof name, "%s_latency_w%d", lv.name, warps);
@@ -660,9 +813,11 @@ int main() {
             }
         }
     }
-    *stop_host = 1;
+    words[kHolderStop] = 1;
     CHECK(cudaStreamSynchronize(side));
     CHECK(cudaStreamDestroy(side));
+    // A holder that left at its deadline left the later chases without their clock.
+    check(words[kHolderExpired] == 0, "the clock holder's deadline passed before the chases ended");
     fact("sm_clock_mhz_chase", median(mhz), "mhz");
     // Each chase's ns come from its own window (clock64 against globaltimer within it), so a clock
     // that moved between chases leaves the ns right and only the clk figures of those levels at
@@ -676,13 +831,17 @@ int main() {
                         lo, hi);
     }
     chase_shared<<<pr.sms, 128>>>(pr.spans, pr.usink);
+    LAUNCHED();
     chase_shared<<<pr.sms, 128>>>(pr.spans, pr.usink);
+    LAUNCHED();
     fact("shared_latency", latency_span(pr.collect(pr.sms), "shared_latency") / kLatencyLinks,
          "clk");
     // The levels must separate: an L2 hit is further than an L1 hit, DRAM further than the L2 at
-    // every warp count (chains that alias into L2-resident lines would read as the L2), and more
-    // chasing warps never make a warp's latency shorter (in SM clocks for the L1, in wall ns for
-    // the L2 and DRAM).
+    // every warp count (chains that alias into L2-resident lines would read as the L2), the DRAM
+    // level whose pages are anywhere is not shorter than the one whose pages are walked (3 % for
+    // the timer's step; shorter would mean its links met lines the L2 held), and more chasing
+    // warps never make a warp's latency shorter (in SM clocks for the L1, in wall ns for the L2
+    // and DRAM).
     check(lat["l2_latency_w1"] > 2.0 * lat["l1_latency_w1"], "L2 latency not above 2x L1");
     for (int w : {1, 2, 4, 8}) {
         const std::string ws = "_latency_w" + std::to_string(w);
@@ -690,6 +849,8 @@ int main() {
         for (const char* lv : {"dram_tlbwarm", "dram"})
             check(lat[lv + ns] > 1.2 * lat["l2" + ns],
                   std::string(lv) + " latency not above 1.2x L2 at w" + std::to_string(w));
+        check(lat["dram" + ns] >= 0.97 * lat["dram_tlbwarm" + ns],
+              "dram latency under the TLB-warm level's at w" + std::to_string(w));
         check(lat["l1" + ws] >= 0.95 * lat["l1_latency_w1"],
               "l1 latency falls under the lone warp's at w" + std::to_string(w));
         for (const char* lv : {"l2", "dram_tlbwarm", "dram"})

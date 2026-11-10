@@ -1,4 +1,4 @@
-probe isa_probe 9
+probe isa_probe 13
 card Quadro GV100
 cc 70
 sms 80
@@ -6,43 +6,53 @@ l2_bytes 6291456
 driver 13000
 runtime 12080
 nvcc 12.8.93
-shape hmma_884_f32_f16 512
+shape hmma_884_f32_f16 2048
 fact resident_ctas_per_sm 4.000 count
 fact mma_cycles_per_sm 2.014 clk
 fact mma_cycles_per_partition 8.057 clk
-fact tensor_flops_per_sm_clock 254.186 flop
-fact mma_dependent_latency 26.196 clk
-fact fp32_cycles_per_warp_instruction 2.014 clk
+fact tensor_flops_per_sm_clock 1016.787 flop
+fact mma_dependent_latency 26.398 clk
+fact fp32_cycles_per_warp_instruction 2.011 clk
 fact int32_cycles_per_warp_instruction 2.004 clk
+fact lat_imad 4.054 clk
+fact lat_iadd 5.047 clk
+fact lat_lop3 4.054 clk
+fact lat_prmt 4.054 clk
+fact lat_shf 4.054 clk
+fact lat_hfma2 6.080 clk
+fact lat_ffma 4.054 clk
+fact lat_shfl 22.002 clk
+fact lat_cvt_i2f_f2i 15.001 clk
+fact lat_cvt_f32_f16 11.524 clk
 fact l1_latency_w1 44.054 clk
 fact l1_latency_w2 44.033 clk
 fact l1_latency_w4 44.033 clk
 fact l1_latency_w8 45.027 clk
-fact l2_latency_w1 218.481 clk
+fact l2_latency_w1 218.497 clk
 fact l2_latency_ns_w1 151.000 ns
-fact l2_latency_w2 218.871 clk
+fact l2_latency_w2 218.843 clk
 fact l2_latency_ns_w2 151.250 ns
-fact l2_latency_w4 220.246 clk
-fact l2_latency_ns_w4 152.250 ns
-fact l2_latency_w8 221.805 clk
+fact l2_latency_w4 220.251 clk
+fact l2_latency_ns_w4 152.000 ns
+fact l2_latency_w8 221.823 clk
 fact l2_latency_ns_w8 153.250 ns
-fact dram_tlbwarm_latency_w1 486.242 clk
+fact dram_tlbwarm_latency_w1 488.297 clk
 fact dram_tlbwarm_latency_ns_w1 336.000 ns
-fact dram_tlbwarm_latency_w2 488.055 clk
+fact dram_tlbwarm_latency_w2 486.633 clk
 fact dram_tlbwarm_latency_ns_w2 336.000 ns
-fact dram_tlbwarm_latency_w4 510.211 clk
+fact dram_tlbwarm_latency_w4 510.359 clk
 fact dram_tlbwarm_latency_ns_w4 352.000 ns
-fact dram_tlbwarm_latency_w8 546.039 clk
-fact dram_tlbwarm_latency_ns_w8 376.000 ns
-fact dram_latency_w1 480.243 clk
-fact dram_latency_ns_w1 331.750 ns
-fact dram_latency_w2 497.332 clk
-fact dram_latency_ns_w2 343.750 ns
-fact dram_latency_w4 520.515 clk
-fact dram_latency_ns_w4 359.500 ns
-fact dram_latency_w8 556.105 clk
+fact dram_tlbwarm_latency_w8 547.688 clk
+fact dram_tlbwarm_latency_ns_w8 380.000 ns
+fact dram_latency_w1 479.739 clk
+fact dram_latency_ns_w1 331.500 ns
+fact dram_latency_w2 497.163 clk
+fact dram_latency_ns_w2 343.250 ns
+fact dram_latency_w4 521.061 clk
+fact dram_latency_ns_w4 360.000 ns
+fact dram_latency_w8 556.203 clk
 fact dram_latency_ns_w8 384.250 ns
-fact sm_clock_mhz_chase 1447.341 mhz
+fact sm_clock_mhz_chase 1447.503 mhz
 fact shared_latency 26.999 clk
 selfcheck ok
 end

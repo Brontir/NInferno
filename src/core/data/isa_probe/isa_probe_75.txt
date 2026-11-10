@@ -1,0 +1,58 @@
+probe isa_probe 12
+card NVIDIA GeForce RTX 2080 Ti
+cc 75
+sms 68
+l2_bytes 5767168
+driver 13040
+runtime 13040
+nvcc 13.4.92
+shape hmma_1688_f32_f16 2048
+fact resident_ctas_per_sm 4.000 count
+fact mma_cycles_per_sm 4.005 clk
+fact mma_cycles_per_partition 16.020 clk
+fact tensor_flops_per_sm_clock 511.350 flop
+fact mma_dependent_latency 16.995 clk
+fact fp32_cycles_per_warp_instruction 2.038 clk
+fact int32_cycles_per_warp_instruction 2.020 clk
+fact lat_imad 4.047 clk
+fact lat_iadd 5.043 clk
+fact lat_lop3 4.047 clk
+fact lat_prmt 4.055 clk
+fact lat_shf 4.047 clk
+fact lat_hfma2 6.064 clk
+fact lat_ffma 4.047 clk
+fact lat_shfl 25.001 clk
+fact lat_cvt_i2f_f2i 15.009 clk
+fact lat_cvt_f32_f16 11.562 clk
+fact l1_latency_w1 48.052 clk
+fact l1_latency_w2 48.032 clk
+fact l1_latency_w4 48.032 clk
+fact l1_latency_w8 49.032 clk
+fact l2_latency_w1 233.771 clk
+fact l2_latency_ns_w1 117.992 ns
+fact l2_latency_w2 233.158 clk
+fact l2_latency_ns_w2 117.891 ns
+fact l2_latency_w4 232.970 clk
+fact l2_latency_ns_w4 117.664 ns
+fact l2_latency_w8 232.854 clk
+fact l2_latency_ns_w8 117.602 ns
+fact dram_tlbwarm_latency_w1 493.598 clk
+fact dram_tlbwarm_latency_ns_w1 248.500 ns
+fact dram_tlbwarm_latency_w2 496.020 clk
+fact dram_tlbwarm_latency_ns_w2 250.000 ns
+fact dram_tlbwarm_latency_w4 511.738 clk
+fact dram_tlbwarm_latency_ns_w4 257.625 ns
+fact dram_tlbwarm_latency_w8 577.582 clk
+fact dram_tlbwarm_latency_ns_w8 292.375 ns
+fact dram_latency_w1 491.130 clk
+fact dram_latency_ns_w1 248.000 ns
+fact dram_latency_w2 500.920 clk
+fact dram_latency_ns_w2 253.008 ns
+fact dram_latency_w4 520.478 clk
+fact dram_latency_ns_w4 263.008 ns
+fact dram_latency_w8 584.375 clk
+fact dram_latency_ns_w8 295.117 ns
+fact sm_clock_mhz_chase 1980.147 mhz
+fact shared_latency 21.999 clk
+selfcheck ok
+end
