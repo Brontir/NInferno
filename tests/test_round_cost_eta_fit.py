@@ -3,7 +3,9 @@
     python3 tests/test_round_cost_eta_fit.py
 
 The constants are fitted: fit_eta.py reads the shipped registry's pairs and prints one eta per
-generation, and the header's rows and comment must be what it prints today. A registry refresh that
+generation, and the header's rows and comment must be what its fit() returns, at 3 decimals. A card
+is counted as a chip and its SM count; the tool's printout counts board names, which for one chip
+under two names (#692) gives a larger number. A registry refresh that
 moves the fit fails here until the rows are re-read from the tool (and their hold-out re-checked).
 No GPU.
 """
@@ -27,7 +29,13 @@ COMMENT = re.compile(r"^//   (\w+)\s+([0-9.]+)\s+RTX", re.M)
 def header_rows() -> dict[str, tuple[float, int]]:
     start = HEADER.index("inline constexpr SmallTEta kSmallTEta[]")
     end = HEADER.index("};", start)
-    return {g: (float(eta), int(cards)) for g, eta, cards in ROW.findall(HEADER[start:end])}
+    table = HEADER[start:end]
+    rows = ROW.findall(table)
+    # Every entry of the table must parse: a row of another shape would otherwise drop out unseen.
+    entries = len(re.findall(r'\{"', table))
+    if entries != len(rows):
+        raise AssertionError(f"kSmallTEta has {entries} entries, {len(rows)} of them in the shape this test reads")
+    return {g: (float(eta), int(cards)) for g, eta, cards in rows}
 
 
 def fitted_rows() -> dict[str, tuple[float, int]]:
