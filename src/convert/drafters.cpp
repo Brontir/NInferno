@@ -18,6 +18,7 @@
 #include "convert/gguf_model.h"
 #include "convert/gguf_resources.h"
 #include "convert/safetensors.h"
+#include "spec/dspine.h"
 #include "spec/fingerprint.h"
 #include "spec/json_fields.h"
 #include "spec/manifest.h"
@@ -51,6 +52,8 @@ void log_line(const std::function<void(const std::string&)>& log, const std::str
     if (log) { log(line); }
 }
 
+constexpr const char* kDspineNotRun =
+    "a DSpine drafter (code bridge, docs/maintainer/dspine.md) is not run by the engine yet";
 constexpr const char* kUnvalidated =
     "the dense engine drafts for the models it was validated on (a registry entry for the dense "
     "engine whose geometry the target has); --drafter-artifact runs a drafter anyway";
@@ -184,6 +187,9 @@ bool gguf_head_config(const PlannedDrafter& d, const AttachOptions& options, Jso
     try {
         config = Json::parse(map_gguf_model(*parsed, lookup, read, head.path).config.dump());
     } catch (const std::exception& error) {
+        // A refusal by name (a DSpine file) stands: the whole file would only be fetched to be
+        // refused again.
+        if (std::string(error.what()).find("DSpine") != std::string::npos) { throw; }
         log_line(options.log, "  " + file + ": the metadata alone does not map (" + error.what() +
                                   "); reading the whole file");
         return false;
@@ -654,6 +660,19 @@ void check_drafter(const DrafterTarget& target, const Json& config,
     } else if (kind && !d.supported) {
         fail("the " + (target.engine.empty() ? std::string("target's") : target.engine) +
              " engine runs no " + *kind + " drafter");
+    }
+    if (kind && *kind == "dflash" && spec::is_dspine_config(config)) {
+        // The code bridge makes a DSpine draft no DFlash draft (its layers write a predicted token
+        // code into the next row, its last write is redone per candidate): read as one it would
+        // draft garbage. The config is checked here; the engine does not run it yet.
+        d.supported = false;
+        try {
+            const auto dspine = spec::parse_dspine_config(config);
+            checks.push_back("ok DSpine code bridge (code " + std::to_string(dspine.code_size) +
+                             ", rank " + std::to_string(dspine.rank) + ", top-" +
+                             std::to_string(dspine.head_topk) + " refinement)");
+        } catch (const std::exception& error) { fail(error.what()); }
+        fail(kDspineNotRun);
     }
     const auto& scope = text_scope(config);
     const auto vocab  = spec::json_unsigned(config, "vocab_size")

@@ -1156,6 +1156,12 @@ struct PromptSummary {
     // (generation_service) adds each as a logit_bias of -100 that replaces the request's own entry
     // for it; an embedder of the Engine applies them the same way.
     std::vector<TokenId> banned_tokens;
+    // A structural tag (OutputConstraintKind::StructuralTag, compiled for the request's own
+    // special-token visibility; its header tokens are structural, so it reads them either way) the
+    // serve layer compiles as the request's header steer when it carries no constraint of its own:
+    // tool_choice none on a format whose call is a message of its own (harmony), where a header
+    // constraint is the only way to keep the model from writing it. Empty: none.
+    std::string refusal_tag;
 
     // The request thinks: its prompt starts the reasoning (Qwen), or leaves the model to open it
     // (Gemma 4 with thinking on, gpt-oss). It selects the thinking sampler preset and speculation.
