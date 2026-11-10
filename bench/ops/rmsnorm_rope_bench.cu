@@ -1,7 +1,14 @@
 // Public-Op benchmark for the variable-width DFlash2 pair, context-K and text RMSNorm+RoPE
 // profiles. The text profile carries both routes: the three calls the model issues today, and the
-// fused Op that replaces them.
+// fused Op that replaces them. `--crossover` times both routes in CUDA graphs of many repetitions
+// (so a launch costs its graph-node cost, as in the decode and prefill graphs), prints a CSV, the
+// width where the fused route stops winning, and the per-token excess the launch-amortisation law
+// of rmsnorm_rope_text_fused_max_tokens implies (#617 G).
 #include "ninferno/ops/rmsnorm_rope.h"
+
+#include "core/cost_constants.h"
+#include "core/device_class.h"
+#include "core/generation.h"
 
 #include "ninferno/ops/rmsnorm.h"
 #include "ninferno/ops/rope.h"
@@ -11,12 +18,14 @@
 #include <cuda_profiler_api.h>
 #include <cuda_runtime.h>
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 using namespace ninferno;
@@ -47,6 +56,9 @@ struct Options {
     int repeat   = 200;
     bool profile = false;
     Route route  = Route::Fused;
+    bool crossover = false;
+    std::vector<std::pair<int, int>> geometries{{32, 2}, {16, 4}};
+    int graph_reps = 32;
 };
 
 [[noreturn]] void usage(const char* message) {
@@ -55,7 +67,9 @@ struct Options {
                  "usage: ninferno_rmsnorm_rope_bench --form pair|single|text "
                  "[--route split|fused] "
                  "[--widths W,...] [--batches B,...] [--tokens T,...] [--execution eager|graph] "
-                 "[--warmup N] [--repeat N] [--profile]\n",
+                 "[--warmup N] [--repeat N] [--profile]\n"
+                 "       ninferno_rmsnorm_rope_bench --crossover [--geometries Q+K,...] "
+                 "[--tokens T,...] [--graph-reps N] [--warmup N] [--repeat N]\n",
                  message);
     std::exit(2);
 }
@@ -129,6 +143,27 @@ Options parse_options(int argc, char** argv) {
             options.warmup = parse_i32(next("--warmup requires a value"), 0, 10000, "--warmup");
         } else if (argument == "--repeat") {
             options.repeat = parse_i32(next("--repeat requires a value"), 1, 10000, "--repeat");
+        } else if (argument == "--crossover") {
+            options.crossover = true;
+            options.form      = Form::Text;
+        } else if (argument == "--graph-reps") {
+            options.graph_reps =
+                parse_i32(next("--graph-reps requires a value"), 1, 256, "--graph-reps");
+        } else if (argument == "--geometries") {
+            options.geometries.clear();
+            std::string_view remaining(next("--geometries requires a value"));
+            while (!remaining.empty()) {
+                const std::size_t comma     = remaining.find(',');
+                const std::string_view item = remaining.substr(0, comma);
+                const std::size_t plus      = item.find('+');
+                if (plus == std::string_view::npos) { usage("--geometries expects Q+K,..."); }
+                options.geometries.emplace_back(
+                    parse_i32(item.substr(0, plus), 1, 64, "--geometries"),
+                    parse_i32(item.substr(plus + 1), 1, 64, "--geometries"));
+                if (comma == std::string_view::npos) { break; }
+                remaining.remove_prefix(comma + 1);
+            }
+            if (options.geometries.empty()) { usage("--geometries"); }
         } else if (argument == "--profile") {
             options.profile = true;
         } else {
@@ -310,6 +345,131 @@ void run_text(const Options& options, int query_heads, int key_heads, int tokens
                 options.execution == Execution::Graph ? 32 : 1);
 }
 
+// One route of the text profile, `reps` repetitions to a graph: the median per repetition in
+// microseconds, so a launch costs its graph-node cost and not a graph launch's.
+double text_route_us(const Options& options, Route route, int query_heads, int key_heads,
+                     int tokens, cudaStream_t stream) {
+    const auto positions_host = host_positions(tokens);
+    DeviceBuffer positions(positions_host.size() * sizeof(std::int32_t));
+    positions.copy_from_host(positions_host.data(), positions.bytes);
+    const std::size_t q_elements = static_cast<std::size_t>(kTextHeadDim) * query_heads * tokens;
+    const std::size_t k_elements = static_cast<std::size_t>(kTextHeadDim) * key_heads * tokens;
+    DeviceBuffer q               = bench::make_bf16(q_elements, 111U);
+    DeviceBuffer k               = bench::make_bf16(k_elements, 113U);
+    DeviceBuffer qn              = bench::make_bf16(q_elements, 115U);
+    DeviceBuffer kn              = bench::make_bf16(k_elements, 117U);
+    DeviceBuffer q_weight        = bench::make_bf16(kTextHeadDim, 119U, .8F, 1.2F);
+    DeviceBuffer k_weight        = bench::make_bf16(kTextHeadDim, 121U, .8F, 1.2F);
+    Tensor t_positions(positions.p, DType::I32, {tokens});
+    Tensor t_q(q.p, DType::BF16, {kTextHeadDim, query_heads, tokens});
+    Tensor t_k(k.p, DType::BF16, {kTextHeadDim, key_heads, tokens});
+    Tensor t_qn(qn.p, DType::BF16, {kTextHeadDim, query_heads, tokens});
+    Tensor t_kn(kn.p, DType::BF16, {kTextHeadDim, key_heads, tokens});
+    Tensor t_q_weight(q_weight.p, DType::BF16, {kTextHeadDim});
+    Tensor t_k_weight(k_weight.p, DType::BF16, {kTextHeadDim});
+    int device = 0;
+    CUDA_CHECK(cudaGetDevice(&device));
+    int sms = 0;
+    CUDA_CHECK(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, device));
+    const auto one = [&](cudaStream_t s) {
+        if (route == Route::Fused) {
+            ops::rmsnorm_rope(t_positions, t_q_weight, t_k_weight, t_q, t_k, t_qn, t_kn, s);
+            return;
+        }
+        ops::rmsnorm(t_q, t_q_weight, kTextEps, true, t_qn, s);
+        ops::rmsnorm(t_k, t_k_weight, kTextEps, true, t_kn, s);
+        ops::rope(t_positions, kTextRotaryDim, kTextRopeBase, t_qn, t_kn,
+                  DeviceExecutionView{s, sms});
+    };
+    bench::TimedGraph graph;
+    graph.capture(stream, [&](cudaStream_t s) {
+        for (int rep = 0; rep < options.graph_reps; ++rep) one(s);
+    });
+    const auto timing = bench::measure_graph_prepared([](cudaStream_t) {}, graph, stream,
+                                                      options.warmup, options.repeat);
+    return timing.median_us / options.graph_reps;
+}
+
+// Both routes over the widths; the crossover is where fused - split turns positive (log-T
+// interpolation between the two widths). The law (T* = 2 L BW / (excess B), B the geometry's bytes
+// a token, rmsnorm_rope_text_fused_max_tokens) gives the implied excess from the measured T*, with
+// L the generation's launch node where it has one and the measured saving at the narrowest width
+// (two launches saved there, the slope's share small) otherwise; and a direct estimate from the
+// widest points' slope difference.
+void run_crossover(const Options& options, cudaStream_t stream) {
+    const DeviceClass& device = device_class();
+    const double bw           = machine_facts_of(device).dram_gbps() * 1.0e9;
+    const std::string generation(generation_known(device.major, device.minor)
+                                     ? generation_row(device.major, device.minor).name
+                                     : "");
+    const double node_l = launch_node_seconds(generation);
+    std::printf("# device=%s generation=%s dram_gbps=%.1f launch_node_us=%s graph_reps=%d\n",
+                device.name.c_str(), generation.c_str(), bw / 1.0e9,
+                node_l > 0.0 ? std::to_string(node_l * 1.0e6).c_str() : "none", options.graph_reps);
+    std::printf("geometry,T,fused_us,split_us,fused_minus_split_us\n");
+    for (const auto& [qh, kh] : options.geometries) {
+        std::vector<int> ts;
+        std::vector<double> diff;
+        std::vector<double> fused_us;
+        std::vector<double> split_us;
+        try {
+            for (const int tokens : options.tokens) {
+                const double f = text_route_us(options, Route::Fused, qh, kh, tokens, stream);
+                const double s = text_route_us(options, Route::Split, qh, kh, tokens, stream);
+                std::printf("%d+%d,%d,%.3f,%.3f,%.3f\n", qh, kh, tokens, f, s, f - s);
+                ts.push_back(tokens);
+                diff.push_back(f - s);
+                fused_us.push_back(f);
+                split_us.push_back(s);
+            }
+        } catch (const std::exception& error) {
+            std::printf("# %d+%d: not measurable: %s\n", qh, kh, error.what());
+            continue;
+        }
+        double crossover = -1.0; // -1: the fused route wins at every width measured
+        for (std::size_t i = 1; i < ts.size(); ++i) {
+            if (diff[i - 1] <= 0.0 && diff[i] > 0.0) {
+                const double t0 = std::log(static_cast<double>(ts[i - 1]));
+                const double t1 = std::log(static_cast<double>(ts[i]));
+                const double w  = -diff[i - 1] / (diff[i] - diff[i - 1]);
+                crossover       = std::exp(t0 + w * (t1 - t0));
+                break;
+            }
+        }
+        if (diff.front() > 0.0) { crossover = 0.0; } // fused already loses at the narrowest
+        const double bytes_token = (qh + kh) * 256.0 * 2.0 * 2.0;
+        const double saved_us    = -diff.front();
+        const double l_measured  = saved_us * 1.0e-6 / 2.0;
+        std::printf("# %d+%d: crossover_T=%s measured_saving_at_T%d_us=%.3f "
+                    "launch_estimate_us=%.3f\n",
+                    qh, kh,
+                    crossover > 0.0    ? std::to_string(crossover).c_str()
+                    : crossover == 0.0 ? "<narrowest"
+                                       : ">widest",
+                    ts.front(), saved_us, l_measured * 1.0e6);
+        if (crossover > 0.0) {
+            for (const auto& [label, l] : {std::pair<const char*, double>{"measured_L", l_measured},
+                                           std::pair<const char*, double>{"table_L", node_l}}) {
+                if (!(l > 0.0)) { continue; }
+                std::printf(
+                    "# %d+%d: implied_excess_%s=%.4f  (excess = 2 L BW / (T* B), L=%.3f us)\n", qh,
+                    kh, label, 2.0 * l * bw / (crossover * bytes_token), l * 1.0e6);
+            }
+        }
+        // Direct: the slope difference of the two widest points, as a fraction of the fused
+        // pass's DRAM time per token.
+        if (ts.size() >= 2) {
+            const std::size_t n  = ts.size();
+            const double slope_f = (fused_us[n - 1] - fused_us[n - 2]) / (ts[n - 1] - ts[n - 2]);
+            const double slope_s = (split_us[n - 1] - split_us[n - 2]) / (ts[n - 1] - ts[n - 2]);
+            const double dram_us_per_token = bytes_token / bw * 1.0e6;
+            std::printf("# %d+%d: slope_fused=%.5f us/token slope_split=%.5f us/token "
+                        "excess_direct=%.4f\n",
+                        qh, kh, slope_f, slope_s, (slope_f - slope_s) / dram_us_per_token);
+        }
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -322,6 +482,14 @@ int main(int argc, char** argv) {
         Options options     = parse_options(argc, argv);
         cudaStream_t stream = nullptr;
         CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+        if (options.crossover) {
+            if (options.tokens == Options{}.tokens) {
+                options.tokens = {32, 64, 128, 256, 512, 1024, 2048};
+            }
+            run_crossover(options, stream);
+            CUDA_CHECK(cudaStreamDestroy(stream));
+            return 0;
+        }
         if (options.form == Form::Pair) {
             for (int width : options.widths)
                 for (int batch : options.batches) run_pair(options, width, batch, stream);
