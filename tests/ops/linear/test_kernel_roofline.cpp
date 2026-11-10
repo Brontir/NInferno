@@ -56,8 +56,11 @@ bool priceable(const DeviceClass& d) {
 // price_routes before the roofline was extracted. Nothing of the old formula is copied here: an
 // extraction error shows as a price that moved. Prices are compared exactly: %.17g round-trips a
 // double, and the price is IEEE arithmetic with floor, ceil, min and max only (no library
-// function whose last bit could differ between hosts) and the x86-64 build fuses no
-// multiply-add, so the same terms in the same order give the same bits.
+// function whose last bit could differ between hosts), and no multiply-add is fused: the files
+// that compute it (generic_cost.cpp, price_tool.cpp) are compiled with -ffp-contract=off
+// (src/ops/generic/sources.cmake), as this test is (ninferno_op_oracle_options). So the same
+// terms in the same order give the same bits in every build set, and the merge of the two
+// builds' tables (merge_kernel_roofline_golden.py) demands the same bits too.
 
 struct GoldenCall {
     int board, format;

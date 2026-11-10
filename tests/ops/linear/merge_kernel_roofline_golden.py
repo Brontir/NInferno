@@ -4,8 +4,9 @@
 The routes a build offers differ by build set (cluster K-split register-MMA schedules need the
 full sm_120a build; the deep staged schedules need the 163 KiB block of an sm_80 build). The
 golden is the union: for every call, every (family, schedule) any input has. A route that both
-inputs price must agree to a relative 1e-12, or the merge fails: that is the check that the two
-build sets' pre-refactor prices are one function of (call, route, device facts).
+inputs price must agree bit for bit (the same %.17g string, which round-trips a double), or the
+merge fails: that is the check that the two build sets' pre-refactor prices are one function of
+(call, route, device facts), and the test compares the merged table exactly in either build.
 
 usage: merge_kernel_roofline_golden.py A.inc B.inc OUT.inc
 (A and B are the raw generator outputs, made at the same pre-refactor commit; the header of A
@@ -67,8 +68,7 @@ def main():
         for route, sec in tb.get(key, {}).items():
             if route in row:
                 common += 1
-                a, b = float(row[route]), float(sec)
-                if abs(a - b) > 1e-12 * abs(a):
+                if row[route] != sec:
                     differ += 1
                     print(f"DIFFER {key} route {route}: {row[route]} vs {sec}", file=sys.stderr)
             else:
@@ -93,7 +93,7 @@ def main():
         out.write(
             "// Union of two builds' routes (merge_kernel_roofline_golden.py): the full sm_120a build\n"
             "// (cluster schedules) and the sm_80 build (163 KiB: staged schedules 10-12); %d routes\n"
-            "// priced by both agreed to 1e-12.\n" % common
+            "// priced by both agreed bit for bit.\n" % common
         )
         out.write(ba + "\n")
         for line in ha[2:]:

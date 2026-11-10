@@ -2,7 +2,7 @@
 // code before #613 PR-4 (kernel_roofline.h), commit 636f871bfe0887ac3d658c32f563d363c4580dfc.
 // Union of two builds' routes (merge_kernel_roofline_golden.py): the full sm_120a build
 // (cluster schedules) and the sm_80 build (163 KiB: staged schedules 10-12); 28560 routes
-// priced by both agreed to 1e-12.
+// priced by both agreed bit for bit.
 constexpr const char* kGoldenBoards[] = {
     "rtx5090",  "rtx5080",   "rtx5070ti",  "rtx5060ti",
     "rtx4090",  "rtx4060ti", "l4",         "rtx3090",
