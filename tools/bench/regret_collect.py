@@ -16,8 +16,9 @@ A --selected CSV may also carry `authority` and `evidence` columns (the route au
 answered and the kind of evidence it rests on, #614 route authorities); each case then records
 them, and selection_regret.py groups regret by board x regime x authority. Without the columns
 (written before route_tune named them) both read "unknown": the collector still works on old data.
---pci-id adds the board's compute capability, SMs, DRAM rate and boost clock from gpu_facts.json to
-the document, from which selection_regret.py computes the card's ridge for its regimes.
+--pci-id adds the board's compute capability, SMs, DRAM rate, boost clock and `mma_slow` (no tensor
+cores) from gpu_facts.json to the document, from which selection_regret.py computes the card's
+ridge for its regimes.
 
 Each row names its run, board and timing protocol (#518): a pass's --selected-out and --routes-out
 must come from one run, every file from one board, and a case's passes from one protocol ("copies":
@@ -142,14 +143,16 @@ def read_selections(paths, authorities=None):
 
 def board_facts(gpu_facts, pci_id):
     """The row of core/data/gpu_facts.json for a PCI device id (hex string), as the numbers the
-    ridge needs: compute capability, SMs, DRAM GB/s (bus bits x Gbps / 8) and boost clock."""
+    ridge needs: compute capability, SMs, DRAM GB/s (bus bits x Gbps / 8), boost clock, and
+    whether the board lacks tensor cores (`mma_slow`: the generation's tensor rate is not its)."""
     wanted = int(str(pci_id), 16)
     data = json.loads(Path(gpu_facts).read_text(encoding="utf-8"))
     for row in data["gpus"]:
         if int(row["id"], 16) == wanted:
             return {"name": row["name"], "cc": int(row["cc"]), "sms": int(row["sms"]),
                     "dram_gbps": row["bus_bits"] * row["gbps"] / 8.0,
-                    "boost_mhz": row["boost_mhz"]}
+                    "boost_mhz": row["boost_mhz"],
+                    "mma_slow": bool(row.get("mma_slow", False))}
     raise ValueError(f"{gpu_facts}: no row for PCI id {pci_id}")
 
 

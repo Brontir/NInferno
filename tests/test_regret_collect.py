@@ -234,6 +234,10 @@ class Collect(unittest.TestCase):
         facts = collect.board_facts(root / "src/core/data/gpu_facts.json", "0x2B85")
         self.assertEqual((facts["cc"], facts["sms"], facts["boost_mhz"]), (120, 170, 2407))
         self.assertAlmostEqual(facts["dram_gbps"], 512 * 28.0 / 8)
+        self.assertIs(facts["mma_slow"], False)
+        # A GTX 1660 Ti has no tensor cores: the fact travels with the board.
+        self.assertIs(collect.board_facts(root / "src/core/data/gpu_facts.json", "0x2182")["mma_slow"],
+                      True)
         with self.assertRaises(ValueError):
             collect.board_facts(root / "src/core/data/gpu_facts.json", "0xFFFF")
         doc = self.run_collect(["q8,a16,store,64,64,1,rmma.a,10\n"],
