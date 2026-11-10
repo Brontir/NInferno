@@ -1,3 +1,4 @@
+#include "core/arch_registry.h"
 #include "core/device.h"
 #include "core/generation.h"
 #include "core/measured_boards.h"
@@ -53,6 +54,43 @@ int check_context(const ninferno::DeviceContext& ctx, const char* label) {
 int expect(bool ok, const std::string& what) {
     if (!ok) { std::cerr << "device class: " << what << '\n'; }
     return ok ? 0 : 1;
+}
+
+// The synthetic class of this board's architecture (the archs table of gpu_facts.json) equals what
+// the driver reports for the SM limits (#662): threads and blocks per SM, shared memory per block
+// (opt-in) and per SM, registers per SM, the shared memory the driver reserves per block. A
+// mismatch names the table row to correct.
+int check_synthetic_class(const ninferno::DeviceContext& ctx) {
+    int failures   = 0;
+    const auto& t  = ctx.device_class();
+    const auto get = [&](cudaDeviceAttr attr) {
+        int value = 0;
+        CUDA_CHECK(cudaDeviceGetAttribute(&value, attr, ctx.device));
+        return value;
+    };
+    const ninferno::DeviceClass s = ninferno::synthetic_device_class(
+        t.pci_device_id, t.major, t.minor, t.sms, t.l2_bytes, t.global_bytes);
+    const std::string at = "sm" + std::to_string(t.major * 10 + t.minor) + " synthetic: ";
+    failures += expect(s.max_threads_per_sm == t.max_threads_per_sm,
+                       at + "threads per SM " + std::to_string(s.max_threads_per_sm) +
+                           ", device " + std::to_string(t.max_threads_per_sm));
+    failures += expect(s.max_blocks_per_sm == t.max_blocks_per_sm,
+                       at + "blocks per SM " + std::to_string(s.max_blocks_per_sm) + ", device " +
+                           std::to_string(t.max_blocks_per_sm));
+    failures += expect(s.smem_per_block_optin == t.smem_per_block_optin,
+                       at + "shared per block (opt-in) " + std::to_string(s.smem_per_block_optin) +
+                           ", device " + std::to_string(t.smem_per_block_optin));
+    failures += expect(s.smem_per_sm == t.smem_per_sm,
+                       at + "shared per SM " + std::to_string(s.smem_per_sm) + ", device " +
+                           std::to_string(t.smem_per_sm));
+    failures += expect(s.registers_per_sm == t.registers_per_sm,
+                       at + "registers per SM " + std::to_string(s.registers_per_sm) +
+                           ", device " + std::to_string(t.registers_per_sm));
+    const int reserved = get(cudaDevAttrReservedSharedMemoryPerBlock);
+    failures += expect(static_cast<int>(ninferno::arch_registry::shared_reserved_per_block(
+                           t.major * 10 + t.minor)) == reserved,
+                       at + "reserved shared per block, device " + std::to_string(reserved));
+    return failures;
 }
 
 int check_device_class(const ninferno::DeviceContext& ctx) {
@@ -533,6 +571,7 @@ int main(int argc, char** argv) {
     }
     failures += check_context(ctx, "ctx");
     failures += check_device_class(ctx);
+    failures += check_synthetic_class(ctx);
     failures += check_feature_table();
     int* device_value = nullptr;
     int* host_value   = nullptr;

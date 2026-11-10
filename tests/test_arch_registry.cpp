@@ -146,6 +146,21 @@ void every_covered_capability_keeps_its_value() {
     }
 }
 
+// The CUDA programming guide's limits per compute capability (Compute Capabilities: Table 33,
+// resident threads and blocks per SM; Table 34, shared memory per SM and per block, opt-in). Where
+// the corrections of #662 differ from what the engine carried before: 7.0 and 7.2 (2048 threads,
+// 96 KiB; the current guide no longer lists 7.0, earlier editions give these), 8.7 (16 blocks),
+// 12.x (24 blocks). 7.2 and 12.1 are the same rows as 7.0 and 12.0 in the guide's columns.
+struct GuideRow {
+    int cc, threads, blocks, sm_kib, block_kib;
+};
+constexpr GuideRow kGuide[] = {
+    {70, 2048, 32, 96, 96},  {72, 2048, 32, 96, 96},  {75, 1024, 16, 64, 64},
+    {80, 2048, 32, 164, 163}, {86, 1536, 16, 100, 99}, {87, 1536, 16, 164, 163},
+    {89, 1536, 24, 100, 99},  {90, 2048, 32, 228, 227}, {120, 1536, 24, 100, 99},
+    {121, 1536, 24, 100, 99},
+};
+
 void the_synthetic_class_matches_the_guide() {
     // Every cc 0..129, listed or not.
     for (int cc = 0; cc < 130; ++cc) {
@@ -155,15 +170,17 @@ void the_synthetic_class_matches_the_guide() {
         const DeviceClass d =
             synthetic_device_class(0, major, minor, 40, std::size_t{8} << 20, std::size_t{8} << 30);
         legacy::Synthetic old = legacy::synthetic(major, minor);
-        // The legacy synthetic class (kept verbatim above) differs from the table in the places
-        // the CUDA programming guide corrects (#662): Volta and Xavier (7.0, 7.2: 96 KiB of shared
-        // memory, 2048 threads, where the legacy class gave the unlisted row's 99/100 KiB, 1536),
-        // Orin (8.7: 16 blocks) and 12.x (24 blocks).
-        const bool volta        = cc == 70 || cc == 72;
-        const std::size_t block = volta ? std::size_t{96 * 1024} : old.block;
-        const std::size_t sm    = volta ? std::size_t{96 * 1024} : old.sm;
-        const int threads       = volta ? 2048 : old.threads;
-        const int blocks        = cc == 87 ? 16 : (cc == 120 || cc == 121) ? 24 : old.blocks;
+        // The capabilities of the CUDA programming guide's table (kGuide) must equal it; the
+        // others (unlisted ones, sm_90..119 beyond 9.0) keep what the legacy class (verbatim above)
+        // gave.
+        const GuideRow* g = nullptr;
+        for (const GuideRow& row : kGuide) {
+            if (row.cc == cc) g = &row;
+        }
+        const std::size_t block = g ? std::size_t{g->block_kib} * 1024 : old.block;
+        const std::size_t sm    = g ? std::size_t{g->sm_kib} * 1024 : old.sm;
+        const int threads       = g ? g->threads : old.threads;
+        const int blocks        = g ? g->blocks : old.blocks;
         expect(d.smem_per_block_optin == block, at + "shared per block");
         expect(d.smem_per_sm == sm, at + "shared per SM");
         expect(d.max_threads_per_sm == threads, at + "threads per SM");
