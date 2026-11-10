@@ -35,10 +35,11 @@ const char* provenance_name(rc::Provenance p) {
 }
 
 // The header's text: the constants it declares (any `const` or `constexpr` declaration of a name
-// kX, whatever its type is spelled as, over any spacing or line breaks; the descriptor itself
-// aside) and the ones its descriptor lists (`listed(kX, ...)` inside kRouteCostConstants), as two
-// sets of names. Each declared constant must be listed and each listed one declared: a missing
-// entry is named, not hidden behind a count. The header names every constant kX for this.
+// kX, whatever its type is spelled as, over any spacing or line breaks; the descriptor itself and
+// a `bool` law switch such as kRmmaCountedLaw aside: a switch is not a number with a kind) and the
+// ones its descriptor lists (`listed(kX, ...)` inside kRouteCostConstants), as two sets of names.
+// Each declared constant must be listed and each listed one declared: a missing entry is named,
+// not hidden behind a count. The header names every constant kX for this.
 struct HeaderNames {
     std::set<std::string> defined, listed;
     bool read = false;
@@ -57,7 +58,8 @@ HeaderNames header_names() {
     // Comments may name constants too; drop them first (block comments, then line comments).
     text = std::regex_replace(text, std::regex(R"(/\*[\s\S]*?\*/)"), "");
     text = std::regex_replace(text, std::regex(R"(//[^\n]*)"), "");
-    const std::regex definition(R"(\b(?:constexpr|const)\b[^;{}=()]*?\b(k[A-Z]\w*)\s*[{(=\[])");
+    const std::regex definition(
+        R"(\b(?:constexpr|const)\b(?![^;{}=()]*\bbool\b)[^;{}=()]*?\b(k[A-Z]\w*)\s*[{(=\[])");
     for (std::sregex_iterator it(text.begin(), text.end(), definition), end; it != end; ++it) {
         if ((*it)[1] != "kRouteCostConstants") out.defined.insert((*it)[1].str());
     }
