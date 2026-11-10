@@ -156,6 +156,39 @@ class IsaFacts(unittest.TestCase):
             self.assertEqual(os.listdir(inputs), [])
             self.assertFalse(os.path.exists(args.table))
 
+    def test_merge_restores_when_the_table_cannot_be_built(self):
+        # A valid run next to inputs the table cannot be built from (here the same architecture
+        # under another file name, then a malformed neighbour) merges nothing: an older run of
+        # the architecture keeps its text, a new destination is not left behind, and the table
+        # is not written.
+        older = SAMPLE.replace("fact shared_latency 29.5 clk\n", "fact shared_latency 30.5 clk\n")
+        for neighbour, text, said in (("isa_probe_ada.txt", SAMPLE, "already given"),
+                                      ("isa_probe_86.txt", "garbage line\n", "isa_probe_86.txt")):
+            for before in (older, None):
+                with tempfile.TemporaryDirectory() as d:
+                    run = os.path.join(d, "run.txt")
+                    inputs = os.path.join(d, "inputs")
+                    os.mkdir(inputs)
+                    dest = os.path.join(inputs, "isa_probe_89.txt")
+                    for path, body in ((run, SAMPLE), (os.path.join(inputs, neighbour), text),
+                                       (dest, before)):
+                        if body is not None:
+                            with open(path, "w", newline="\n") as f:
+                                f.write(body)
+                    args = argparse.Namespace(input=run, inputs=inputs,
+                                              table=os.path.join(d, "t.json"))
+                    err = io.StringIO()
+                    with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(ip.cmd_merge(args), 1)
+                    self.assertIn(said, err.getvalue())
+                    self.assertIn("nothing merged", err.getvalue())
+                    self.assertFalse(os.path.exists(args.table))
+                    if before is None:
+                        self.assertEqual(os.listdir(inputs), [neighbour])
+                    else:
+                        with open(dest) as f:
+                            self.assertEqual(f.read(), older)
+
     def test_rows_come_from_the_checked_in_probe(self):
         # A row is evidence for the probe that produced it. When the probe changes what it times
         # (which CTAs count, what a link is, which lines a chase reads), the rows of the earlier

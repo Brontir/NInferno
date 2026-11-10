@@ -269,7 +269,9 @@ def cmd_regenerate(a):
 def cmd_merge(a):
     """One file in, one regenerate: the run's output is copied into the inputs directory under its
     architecture's name (replacing an older run of the same architecture) and the table is
-    regenerated from all of them."""
+    regenerated from all of them. A merge the table cannot be built from (another input is
+    malformed, or gives the same architecture under another name) changes nothing: the
+    destination is put back as it was."""
     # Read whole before the destination opens: the input may be the destination itself.
     with open(a.input) as f:
         text = f.read()
@@ -280,8 +282,22 @@ def cmd_merge(a):
         return 1
     key = arch_key(int(head["cc"]), head["shape"])
     dest = os.path.join(a.inputs, f"isa_probe_{key}.txt")
+    before = None
+    if os.path.exists(dest):
+        with open(dest, "rb") as f:
+            before = f.read()
     with open(dest, "w", newline="\n") as out:
         out.write(text)
+    try:
+        build_table(a.inputs)
+    except ValueError as e:
+        if before is None:
+            os.remove(dest)
+        else:
+            with open(dest, "wb") as out:
+                out.write(before)
+        print(f"isa_probe: {e}; nothing merged ({dest} is as it was)", file=sys.stderr)
+        return 1
     print(f"isa_probe: {a.input} -> {dest}")
     return cmd_regenerate(a)
 
