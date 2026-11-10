@@ -44,6 +44,15 @@ decision_patterns=(
   src/ops/generic/generic_schedule_tables.h
   src/ops/generic/generic_select.cpp
   src/ops/generic/generic_select_detail.h
+  src/ops/generic/generic_cost.cpp
+  src/ops/generic/generic_gates.cpp
+  src/ops/generic/generic_resolve.cpp
+  src/ops/generic/generic_rmma_decoders.h
+  src/ops/generic/generic_rmma_describe.cpp
+  src/ops/generic/generic_shared_bytes.h
+  src/ops/generic/generic_workspace.cpp
+  src/ops/generic/ggml_mmq_host.cpp
+  src/ops/moe/moe_plan.cpp
   src/ops/generic/generic_variant_rules.h
   src/ops/generic/generic_ggml.cpp
   src/ops/generic/generic_ggml_internal.h

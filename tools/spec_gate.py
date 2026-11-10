@@ -84,6 +84,15 @@ DECISION_FILES = (
     "src/ops/generic/generic_select.cpp",                    # the selector moved out of generic_gemm.cpp
     "src/ops/generic/generic_routes.cpp",                    # the route names and variant rules
     "src/ops/generic/generic_select_detail.h",               # helpers the selector shares
+    "src/ops/generic/generic_cost.cpp",                      # the cost model's prices
+    "src/ops/generic/generic_gates.cpp",                     # the spread and PDL gates of a board
+    "src/ops/generic/generic_resolve.cpp",                   # what a call executes after resolution
+    "src/ops/generic/generic_rmma_decoders.h",               # the decoders' traits the variants read
+    "src/ops/generic/generic_rmma_describe.cpp",             # the register-MMA kernel a call would take
+    "src/ops/generic/generic_shared_bytes.h",                # the tiled and staged layouts' shared bytes
+    "src/ops/generic/generic_workspace.cpp",                 # the workspace a route needs
+    "src/ops/generic/ggml_mmq_host.cpp",                     # ggml's admission and activation sizes
+    "src/ops/moe/moe_plan.cpp",                              # the MoE plan names and schedules
     "src/ops/generic/generic_schedule_tables.h",             # the schedule tables
     "src/ops/generic/generic_i8_schedules.h",                # the I8 tiles
     "src/ops/generic/generic_variant_rules.h",               # the variant rules
