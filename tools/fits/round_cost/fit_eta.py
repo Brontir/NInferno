@@ -32,6 +32,11 @@ REG = json.loads((ROOT / "src/spec/data/drafter_registry.json").read_text(encodi
 BOARDS = {g["id"].upper(): g for g in json.loads((ROOT / "src/core/data/gpu_facts.json").read_text(encoding="utf-8"))["gpus"]}
 GEN = {70: "volta", 75: "turing", 86: "ga10x", 89: "ada", 120: "gb20x"}
 SHARE = 0.30
+# A --hard directory named by one of these ids is held out as the board it shares its rates with
+# (the registry pairs' lab_board, by name in the hold-out below): the two ids give the same
+# R(facts), but the name-based hold-out would keep the other id's registry rows in the eta fit and
+# so fit another eta.
+HARD_ALIASES = {"0X2504": "0X2503", "0X1E07": "0X1E04"}
 HARD_TAGS = {"q9b_q4km": "unsloth/Qwen3.5-9B-MTP-GGUF@9716a636ee4bddc3fed678220b7a33dd2a4160ae Q4_K_M",
              "g12_q4km": "unsloth/gemma-4-12b-it-GGUF@fc034cfff751157913579611efad8462ac1be606 Q4_K_M",
              "oss20": "ggml-org/gpt-oss-20b-GGUF@15dcfc7e7c608c6161507211ed43c5b590801b4b MXFP4",
@@ -261,6 +266,7 @@ def main():
             stand, tag = Path(d).parts[-2:]
             key = HARD_TAGS.get(tag)
             pci = ids.get(stand, stand).upper()
+            pci = HARD_ALIASES.get(pci, pci)
             if key not in pairs or pci not in BOARDS or not os.path.exists(os.path.join(d, "plain.json")):
                 continue
             b = board(pci)
