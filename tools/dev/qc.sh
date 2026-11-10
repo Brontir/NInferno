@@ -173,8 +173,6 @@ else:
         for n, c in cmd_of.items():
             if any(a == f or a.endswith("/" + f) for a in c):
                 tests.add(n); via_test = True
-                if "--build" in c or any(a.endswith((".o", ".a", ".so")) for a in c):
-                    out("SKIP", f"test {n} reads the build tree's objects, which hold whatever build_qc last built; not verified for this branch")
         rel, ab = os.path.relpath(os.path.join(src, f), bld), os.path.join(src, f)
         for l in ninja_lines:
             head, _, rest = l.partition(": ")
@@ -291,27 +289,35 @@ else:
             out("SKIP", f"cmake registers '{lit}' but ctest lists no test or executable of that name; not checked")
             return False
         toks = {t for a in st[3] for t in re.findall(r"[A-Za-z0-9_.+-]+", a)} & names   # a variable-built name
-        for tok in toks:
-            if tok in cmd_of: tests.add(tok)
-            elif tok in exe_of: add_exe_tests(tok)
+        for tok in toks:   # an executable runs every test built from it (a name like moe_random${share})
+            if tok in exe_of: add_exe_tests(tok)
+            elif tok in cmd_of: tests.add(tok)
         return bool(toks)
     # every statement a line sits in (two statements may share one line)
     at = lambda sts, ln: [x for x in sts if x[0] <= ln <= x[1]]
-    cm = sh("git", "-C", src, "diff", "--no-renames", "-U0", rng, "--", "*.cmake", "*CMakeLists.txt")
+    cm = sh("git", "-C", src, "diff", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-color", "-U0", rng, "--", "*.cmake", "*CMakeLists.txt")
     base = sh("git", "-C", src, "merge-base", "origin/master", f"origin/{br}").strip()   # a removed line's numbers are the merge-base's
     bad_lines, new_cache, old_cache = [], {}, {}
     def sts_of(path, side):   # (statements, source lines), or None when the file cannot be read
         cache = new_cache if side == "new" else old_cache
         if path not in cache:
             try:
-                text = open(os.path.join(src, path), errors="strict").read() if side == "new" else sh("git", "-C", src, "show", f"{base}:{path}")
-                cache[path] = (parse_cmake(text), text.split("\n"))
+                text = open(os.path.join(src, path), encoding="utf-8", errors="strict").read() if side == "new" else sh("git", "-C", src, "show", f"{base}:{path}")
+                sts, lines = parse_cmake(text), text.split("\n")
+                # the bodies of function/macro/foreach blocks: a change there reaches every caller
+                bodies, stack = [], []
+                for st in sts:
+                    if st[2] in ("function", "macro", "foreach"): stack.append(st[0])
+                    elif st[2] in ("endfunction", "endmacro", "endforeach") and stack: bodies.append((stack.pop(), st[1]))
+                bodies += [(b, len(lines)) for b in stack]   # an unclosed block runs to the end
+                cache[path] = (sts, lines, bodies)
             except (OSError, UnicodeDecodeError, subprocess.CalledProcessError): cache[path] = None
         return cache[path]
     def line_ok(path, side, ln):   # True when the changed line at ln is accounted for
         parsed = sts_of(path, side)
         if parsed is None: return False   # unreadable: not checked
-        sts, lines = parsed
+        sts, lines, bodies = parsed
+        if any(b <= ln <= e for b, e in bodies): return False   # inside a function/macro/foreach body
         here = at(sts, ln)
         if not here:   # outside every statement: only a blank or comment line passes
             t = lines[ln - 1].strip() if 0 < ln <= len(lines) else ""
@@ -339,10 +345,17 @@ else:
             if old_file is None or not line_ok(old_file, "old", oln): bad_lines.append(f"{old_file}:{oln}(removed)")
             oln += 1; o_left -= 1
     if unknown: bad_lines.append("a diff header in a form this check does not read")
+    seen_cm = {l[6:] for l in cm.splitlines() if l.startswith(("--- a/", "+++ b/"))}
+    for c in changed:   # every changed cmake file must show up in the diff this check read
+        if cmakefile(c) and c not in seen_cm: bad_lines.append(f"{c}(not in the cmake diff)")
     if bad_lines:
         uniq = sorted(set(bad_lines))
         out("SKIP", f"cmake change not mapped to a checked test/target ({len(uniq)} place(s), e.g. {', '.join(uniq[:3])}); configuring succeeded, but the targets it affects are not built")
 # guard every test's executables (and the test objects/targets) against a large stale library build
+for n in sorted(tests):   # a test that reads the build tree's objects runs over whatever build_qc last built
+    c = cmd_of.get(n, [])
+    if "--build" in c or any(a.endswith((".o", ".a", ".so")) for a in c):
+        out("SKIP", f"test {n} reads the build tree's objects, which hold whatever build_qc last built; not verified for this branch")
 ok_tests = {}
 for n in sorted(tests):
     es = [exe_of[e] for e in exes_of_test.get(n, [])]
