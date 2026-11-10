@@ -37,13 +37,17 @@ static_assert(arch_registry::find(7, 0).smem_per_sm == 96 * 1024);
 static_assert(arch_registry::find(7, 0).max_threads_per_sm == 2048);
 static_assert(arch_registry::find(7, 0).max_blocks_per_sm == 32);
 static_assert(arch_registry::find(12, 0).max_blocks_per_sm == 24);
-// The rows from the CUDA programming guide's table, no card read: Orin, Thor; the rest of
+// The rows from the published figures, no card read (the CUDA programming guide's table and the
+// toolkit's cuda::arch_traits and occupancy calculator): Orin, sm_107, Thor; the rest of
 // sm_90..sm_119 keeps 2048 threads and 32 blocks.
 static_assert(arch_registry::find(8, 7).max_blocks_per_sm == 16);
-static_assert(arch_registry::find(11, 0).max_blocks_per_sm == 16);
-static_assert(arch_registry::find(11, 0).max_threads_per_sm == 1024);
+static_assert(arch_registry::find(10, 7).max_blocks_per_sm == 16);
+static_assert(arch_registry::find(10, 7).max_threads_per_sm == 1024);
+static_assert(arch_registry::find(11, 0).max_blocks_per_sm == 24);
+static_assert(arch_registry::find(11, 0).max_threads_per_sm == 1536);
 static_assert(arch_registry::find(11, 0).smem_per_block_optin == 227 * 1024);
 static_assert(arch_registry::find(10, 3).max_threads_per_sm == 2048);
+static_assert(arch_registry::find(10, 8).max_blocks_per_sm == 32);
 static_assert(arch_registry::find(11, 1).max_blocks_per_sm == 32);
 static_assert(arch_registry::find(9, 0).smem_per_block_optin == 227 * 1024);
 static_assert(arch_registry::find(9, 0).smem_per_sm == 228 * 1024);
@@ -183,12 +187,17 @@ void the_synthetic_class_keeps_its_value() {
             old.threads = 2048;
         }
         if (cc == 120) old.blocks = 24;
-        // And to the CUDA programming guide's compute capability table, no card read (#648): Orin
-        // (cc 8.7) holds 16 blocks a SM, Thor (cc 11.0) 16 blocks and 1024 threads.
+        // And to the published figures, no card read (#648: the CUDA programming guide's table,
+        // the toolkit's cuda::arch_traits and occupancy calculator): Orin (cc 8.7) holds 16 blocks
+        // a SM, cc 10.7 16 blocks and 1024 threads, Thor (cc 11.0) 24 blocks and 1536 threads.
         if (cc == 87) old.blocks = 16;
-        if (cc == 110) {
+        if (cc == 107) {
             old.blocks  = 16;
             old.threads = 1024;
+        }
+        if (cc == 110) {
+            old.blocks  = 24;
+            old.threads = 1536;
         }
         expect(d.smem_per_block_optin == old.block, at + "shared per block");
         expect(d.smem_per_sm == old.sm, at + "shared per SM");
