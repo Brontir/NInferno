@@ -646,9 +646,16 @@ def cxx_open_lines(text):
     # The whole comment is one space to the preprocessor, so where it closes, the rest of its last
     # line is the start of that line: `/* note` + `*/ #if 0` is a directive.
     block_blank = False
+    half = False  # the previous line ended in `/` + backslash: a `/` or `*` here completes a comment opener
     for num, line in enumerate(text.split("\n"), 1):
         line = line.rstrip("\r")
         i, n, quote, carry = 0, len(line), carry, None
+        if half:
+            half = False
+            if line.startswith("/"):   # `/\` newline `/` is `//` once the lines are spliced
+                spliced = True
+            elif line.startswith("*"):  # ... and `/\` newline `*` is `/*`
+                line, block, block_blank = "  " + line[2:], True, False
         if block and block_blank and quote is None and raw is None and not spliced:
             j = line.find("*/")
             if j >= 0:  # blanked in place, so every column keeps its meaning
@@ -731,6 +738,8 @@ def cxx_open_lines(text):
             elif line.startswith("/*", i):
                 block_blank = re.sub(r"/\*.*?\*/", " ", line[:i]).strip() == ""
                 block, i = True, i + 2
+            elif c == "/" and i == n - 2 and line[i + 1] == "\\":
+                half, i = True, n
             elif c == '"':
                 m = RAW_PREFIX.search(line[:i])
                 d = re.match(r"[^\s()\\]{0,16}\(", line[i + 1:]) if m else None

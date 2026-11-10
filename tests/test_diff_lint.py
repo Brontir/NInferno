@@ -736,6 +736,16 @@ class MaskAndLiteralFixes(unittest.TestCase):
         self.assertEqual(lits("t.cpp", "#if 1\nconst char* s = \"oops\n;\n#endif\n"), [2])
         self.assertEqual(lits("t.cpp", "#if 0 || X\nconst char* s = \"oops\n;\n#endif\n"), [2])
 
+    def test_a_comment_opener_split_by_a_line_continuation_is_a_comment(self):
+        # translation phase 2 joins `/\` + newline + `/` into `//` before comments are recognised
+        self.assertEqual(lits("t.cpp", "int a; /\\\n/ don't close this\nint b;\n"), [])
+        self.assertEqual(lits("t.cpp", "int a; /\\\n/ it's \\\nstill it's\nint c;\n"), [])
+        self.assertEqual(lits("t.cpp", "int a; /\\\n* it's */ int x;\nint y;\n"), [])
+        # the comment ends with its line: code after it is checked again
+        self.assertEqual(lits("t.cpp", "int a; /\\\n/ it's\nconst char* s = \"oops\n;\n"), [3])
+        # a lone `/` before a continuation that is no opener is code
+        self.assertEqual(lits("t.cpp", "int a = b /\\\n c; const char* s = \"oops\n;\n"), [2])
+
     def test_if_false_and_true_are_the_literals_zero_and_one(self):
         # C++ keywords are valid in #if: `#if false` is a dead group like `#if 0`
         for cond in ("false", "(false)", "( false ) // old", "/* c */ false", "((false)) /* c */"):
