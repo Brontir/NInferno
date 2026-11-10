@@ -261,6 +261,17 @@ class Classify(unittest.TestCase):
         self.assertTrue(res["all"])
         self.assertIn("before or after", res["reasons"][paths[0]])
 
+    def test_any_sm_token_outside_the_lab_set_answers_all(self):
+        # a host-allowlisted source named for an arch the five stands do not cover
+        for name in ("sm_121_impl.cpp", "sm_130_impl.cpp", "sm121.cpp", "sm_100a_io.cpp", "sm_90a.cpp",
+                     "sm_1200_x.cpp", "x_sm_103.cpp"):
+            with self.subTest(name=name):
+                self.assertTrue(self.run_diff(["src/chat/" + name])["all"])
+        # the lab arches and look-alikes are not caught by it
+        for name in ("sm_86.cpp", "sm_120a.cpp", "sm_70_x.cpp", "data100.json", "xsm_130.cpp", "sm_7.cpp"):
+            with self.subTest(name=name):
+                self.assertIsNone(re.search(aa.OTHER_ARCH_NAME, name))
+
     def test_other_arch_and_unknown_paths_answer_all(self):
         self.assertTrue(self.run_diff(["src/ops/hopper_fp8.cu"])["all"])
         self.assertTrue(self.run_diff(["src/ops/unmapped.cpp"])["all"])
