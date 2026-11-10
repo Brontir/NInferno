@@ -38,6 +38,7 @@ void require_tensor(const Tensor& tensor, DType dtype, std::int32_t d0, std::int
 // The fused kernels' formats; any other projection takes the decomposed route.
 // FUSION-SITE: dgc_prepare
 bool fused_prepare(QType format) { return format == QType::BF16; }
+
 // FUSION-SITE: dgc_add
 bool fused_add(QType format) { return format == QType::Q8_G32_FP16; }
 
