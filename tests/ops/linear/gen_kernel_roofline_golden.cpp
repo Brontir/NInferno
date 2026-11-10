@@ -20,6 +20,7 @@
 #include "core/device_class.h"
 #include "ninferno/ops/linear.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/kernel_facts.h"
 #include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
 #include "ops/generic/selector_facts.h"
@@ -97,12 +98,15 @@ int main(int argc, char** argv) {
     }
     std::FILE* f = std::fopen(argv[1], "w");
     if (!f) return 2;
+    // The build set this output was made in (CMAKE_CUDA_ARCHITECTURES): which routes it holds
+    // depends on it.
+    const std::string arch(g::kernel_facts::build_arch());
     std::string boards;
     for (const auto& board : g::kFactsBoards) { boards += std::string("\"") + board.name + "\", "; }
     std::fprintf(
         f,
         "// Golden prices of the selector's register-MMA, tiled and staged routes from the\n"
-        "// code before #613 PR-4 (kernel_roofline.h), commit %s, full sm_120a build.\n"
+        "// code before #613 PR-4 (kernel_roofline.h), commit %s, sm_%s build.\n"
         "constexpr const char* kGoldenBoards[] = {%s};\n"
         "// Regenerate with tests/ops/linear/gen_kernel_roofline_golden.cpp (see its header);\n"
         "// do not edit by hand.\n"
@@ -111,8 +115,8 @@ int main(int argc, char** argv) {
         "// kGoldenRoutes: family, schedule, seconds (%%.17g).\n"
         "constexpr GoldenCall kGoldenCalls[] = {\n%s};\n"
         "constexpr GoldenRoute kGoldenRoutes[] = {\n%s};\n",
-        argv[2], boards.c_str(), calls.c_str(), routes.c_str());
+        argv[2], arch.c_str(), boards.c_str(), calls.c_str(), routes.c_str());
     std::fclose(f);
-    std::printf("calls %ld routes %ld\n", ncalls, nroutes);
+    std::printf("calls %ld routes %ld, sm_%s build\n", ncalls, nroutes, arch.c_str());
     return 0;
 }

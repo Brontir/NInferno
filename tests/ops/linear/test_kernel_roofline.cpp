@@ -1,7 +1,7 @@
 // The kernel roofline (#613 PR-4, ops/generic/kernel_roofline.h) against the formula it replaced,
 // host only. Two checks:
-//  1. The selector's priced routes equal, to a relative 1e-12, the fixed golden table computed
-//     from the code before the extraction (kernel_roofline_golden.inc): the golden boards, two
+//  1. The selector's priced routes equal, exactly, the fixed golden table computed from the code
+//     before the extraction (kernel_roofline_golden.inc): the golden boards, two
 //     formats, four shapes, five widths, plain and SwiGLU epilogues, every register-MMA, tiled and
 //     staged route offered. Routes are matched by (family, schedule); a route a build gates in or
 //     out (cluster schedules, shared memory) is checked against its gate, so one file serves every
@@ -22,7 +22,6 @@
 #include "ops/generic/selector_facts.h"
 
 #include <algorithm>
-#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -55,7 +54,10 @@ bool priceable(const DeviceClass& d) {
 // kernel_roofline_golden.inc holds, for a set of calls (board, format, shape, width, epilogue),
 // every route the selector offered with the time it priced, printed (%.17g) by the selector's
 // price_routes before the roofline was extracted. Nothing of the old formula is copied here: an
-// extraction error shows as a price that moved.
+// extraction error shows as a price that moved. Prices are compared exactly: %.17g round-trips a
+// double, and the price is IEEE arithmetic with floor, ceil, min and max only (no library
+// function whose last bit could differ between hosts) and the x86-64 build fuses no
+// multiply-add, so the same terms in the same order give the same bits.
 
 struct GoldenCall {
     int board, format;
@@ -73,8 +75,6 @@ struct GoldenRoute {
 constexpr QType kGoldenFormats[] = {QType::GGML_Q4_K, QType::BF16};
 
 #include "kernel_roofline_golden.inc"
-
-constexpr double kGoldenTolerance = 1e-12;
 
 constexpr bool is_golden_family(g::Family f) {
     return f == g::Family::RegisterMma || f == g::Family::TiledMma || f == g::Family::StagedMma;
@@ -155,7 +155,7 @@ void check_golden() {
             seen[at]                = true;
             const GoldenRoute& want = kGoldenRoutes[c.first + static_cast<long>(at)];
             ++prices;
-            if (!(std::fabs(got.seconds - want.seconds) <= kGoldenTolerance * want.seconds)) {
+            if (got.seconds != want.seconds) {
                 fail("price moved", family, schedule, want.seconds, got.seconds);
             }
         }

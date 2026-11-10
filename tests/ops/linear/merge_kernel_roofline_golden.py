@@ -9,7 +9,7 @@ build sets' pre-refactor prices are one function of (call, route, device facts).
 
 usage: merge_kernel_roofline_golden.py A.inc B.inc OUT.inc
 (A and B are the raw generator outputs, made at the same pre-refactor commit; the header of A
-is kept, with a line naming the merge.)
+is kept without its build label, with a line naming the merge.)
 """
 import re
 import sys
@@ -86,8 +86,10 @@ def main():
             f"{{{b},{fmt},{n},{k},{t},g::Epilogue::{epi},{first},{len(row)}}},"
         )
     with open(sys.argv[3], "w", encoding="utf-8", newline="\n") as out:
+        # A's first two lines name the commit and A's own build; the union is of both builds,
+        # named on the next lines, so A's build label is dropped.
         for line in ha[:2]:
-            out.write(line + "\n")
+            out.write(re.sub(r", sm_\w+ build\.$", ".", line) + "\n")
         out.write(
             "// Union of two builds' routes (merge_kernel_roofline_golden.py): the full sm_120a build\n"
             "// (cluster schedules) and the sm_80 build (163 KiB: staged schedules 10-12); %d routes\n"
