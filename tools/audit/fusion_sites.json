@@ -136,7 +136,7 @@
                 "one_card_literal": false,
                 "evidence": [
                     "#617 analysis, section 1 and Q5 item 1",
-                    "tests/ops/linear/test_segmented_swiglu.cpp per-token memcmp"
+                    "tests/ops/linear/test_segmented_swiglu.cpp runs segmented_swiglu on the device against the FP64 oracle at 1-8, 9/12/16 and 520 tokens, whichever route the build picks; it asserts that the vec gated pair ran (at least one width per format pair), the per-token memcmp of the pair at two widths, and the oracle on every call. It does not assert that the MMQ pair ran: where the tuner rejects the pair at 9/12/16 tokens (a count is printed, not checked) or the prefill slices do not qualify, those widths run the two-projection fallback and still pass, so the MMQ pair is oracle-checked only on a GPU whose tuner takes it"
                 ],
                 "invariant_pin": "unreviewed",
                 "parity_test": null,
