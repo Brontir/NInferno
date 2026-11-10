@@ -320,9 +320,12 @@ def main():
         chip = chip_of(a.repo, name)
         laws = list(a.law)
         if "timeline" in laws and not chip["isa"]:
+            laws = [l for l in laws if l != "timeline"]
             print(f"\n== {name}: timeline law: no facts (sm_{chip['arch']} has no ISA row); "
-                  "the other laws follow")
-            laws.remove("timeline")
+                  + ("the other laws follow" if laws
+                     else "no other law was asked for, board skipped"))
+            if not laws:
+                continue
         snap = load_snapshot(a.repo, chip["arch"])
         rows = [r for r in load_rows(directory) if r["T"] >= a.tmin]
         status = collections.Counter()

@@ -648,6 +648,25 @@ class Snapshot(unittest.TestCase):
             found += 1
         self.assertGreater(found, 0)
 
+    def test_replica_skips_a_board_without_facts(self):
+        # The timeline law has no facts on an arch without an ISA row. Asked for that law alone,
+        # the replica says so and goes on to the next board: it prices nothing, so it reads no
+        # sweep (the directory named here does not exist).
+        import contextlib
+        import io
+        from unittest import mock
+        repo = Path(__file__).resolve().parents[1]
+        sys.path.insert(0, str(repo / "tools" / "bench"))
+        import rmma_counted_replica as replica
+        self.assertFalse(replica.chip_of(str(repo), "GeForce RTX 2080 Ti")["isa"])
+        argv = ["replica", "--repo", str(repo), "--law", "timeline",
+                "--sweep", "GeForce RTX 2080 Ti=" + os.path.join(str(repo), "no_such_sweep")]
+        out = io.StringIO()
+        with mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(out):
+            replica.main()
+        self.assertIn("no facts (sm_75 has no ISA row)", out.getvalue())
+        self.assertIn("board skipped", out.getvalue())
+
     def test_schema_one_parses_without_loops(self):
         text = ("arch 89\nnvcc 13.4.92\nkernels 1\ncolumns " +
                 " ".join(kernel_facts.COLUMNS.split()[:14]) +
