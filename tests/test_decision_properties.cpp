@@ -13,12 +13,18 @@
 //       the table row's name, sources and note, and (each on its own) its TDP, nominal VRAM, PCIe
 //       generation and segment, and the memory size the driver reports, move no route. Every
 //       variant also takes a slot of its own in the per-class caches (see `rebuilt`). Boards of the
-//       table that differ in their PCI id alone (SKU twins) choose alike.
+//       table that differ in their PCI id alone (SKU twins) choose alike. The subject is what
+//       route_query answers over the grid below: the gates select_route asks (the W4A8 workspace
+//       gate on 5 rows, the R8 route table on 22). Not reached: the cached int8-prefill gate
+//       (generic_gemm.cpp, asked by q8_prefill_a8 under the prefill scope, not by select_route) and
+//       the route the W4A8 path executes (w4a8_executed_route). Every variant moves global_bytes
+//       (the cache slot), so a gate that read it would fail under several variant names at once.
 //   P6  clock invariance over every row: the clocks the driver reports (a factory overclock, a
 //       vendor's lower boost, none at all) move no route of a board the table knows
 //       (test_selector_golden.cpp run_clock_invariance does this for the golden boards only).
 //       A row whose facts read the driver on purpose (a laptop without a published boost floor:
 //       MachineFacts::driver_read) is counted and left out.
+//       The decision only: a clock that leaks into a price and flips no route stays invisible here.
 //
 // P8 (B1 under `exact` reads no continuous fact) is in test_plan_dry_run.cpp, where the plan
 // fixtures are.
@@ -67,47 +73,76 @@ using generic::Epilogue;
 struct Known {
     const char* property;
     const char* key;
-    const char* cause;
-    // The most the waiver covers, as a share of the cases this property checked for the route's
-    // family (not an absolute count: adding board rows to the table must not trip it). A recorded
-    // baseline, not a derived bound: the share this test measured when the waiver was written,
-    // rounded up to the next tenth of a percent.
+    const char*
+        cause; // which charge of the price law explains the group (the three charges, below)
+    // The share of the cases this property checked for the route's family that the waiver covers,
+    // as a window [min_share, max_share]. A share, not an absolute count, so that a table with
+    // more rows does not trip it by size alone; but it is a RECORDED baseline, not a derived bound:
+    // the share this test measured on the table of the day, max_share rounded up and min_share
+    // rounded down to a tenth of a percent (a hundredth for the 0.09 % group). A change of the
+    // board table moves the share (a row like an existing one moves it by up to a few tenths), and
+    // the window must then be re-recorded; the lower bound makes an improvement of the law do the
+    // same instead of passing silently.
+    double min_share;
     double max_share;
-    // The worst price ratio it covers. 0: the SM ratio of the row's own grid step, the largest
-    // ceil(1.25 sms) / sms of the rows checked (a derived bound: the class is defined by it).
-    // Otherwise a recorded baseline of the worst ratio measured, rounded up to the next 0.01.
+    // The worst price ratio the group covers, as a recorded window [min_ratio, max_ratio] (the
+    // worst measured, rounded down / up to 0.01). 0 in both: no ratio check. The "within" groups
+    // have none: their membership is by each row's own SM ratio (the test below), so no larger
+    // ratio can occur in them.
+    double min_ratio;
     double max_ratio;
 };
 
-// The price of a route on a board with more SMs is higher by up to 1.5x for the families below
-// (found by this test, roadmap #620 step 6). Cause, one for all four: price_routes
-// (ops/generic/generic_cost.cpp, `cost` lambda and the I8 / staged / W4A8 tile loops) charges the
-// busiest SM `q` CTAs of bytes at bw / sms, with q = ceil(CTAs / sms): bw / sms is that SM's share
-// only when every SM pulls at once, so a grid whose last wave leaves SMs idle (50 -> 62 SMs for
-// 100 CTAs: q stays 2, q x sms goes 100 -> 124) is overcharged when SMs are added. The DRAM floor
-// n k bpw / bw does not move with the SMs. The warp-fill term moves with it too: the warps resident
-// on the busy SM, min(q, occ) x threads / 32, divide the whole time (clamped below by
-// kMinWarpFill), so a q that drops with more SMs lowers the fill and raises the time. Bandwidth
-// x1.25 fails nowhere.
+// The price of a route on a board with more SMs is higher, by up to x1.52, for the families below
+// (found by this test, roadmap #620 step 6; the defect of the law is issue #690). price_routes
+// (ops/generic/generic_cost.cpp) charges for idle SMs in three places:
+//   (a) the memory term charges the busiest SM q = ceil(CTAs / sms) CTAs of bytes at bw / sms
+//       (`cost` lambda and the A8 loops): bw / sms is that SM's share only when every SM pulls at
+//       once, so q x sms CTA slots are billed and a grid whose last wave leaves SMs idle is
+//       overcharged when SMs are added (50 -> 63 SMs for 100 CTAs: q stays 2, q x sms goes 100 ->
+//       126); the DRAM floor n k bpw / bw never binds;
+//   (b) the A8 loops (W4A8, I8) keep the fleet-wide fill min(1, CTAs / sms) in the warp fill, which
+//       falls when SMs are added;
+//   (c) the bus-bound memory time is divided by the busy SM's warp fill (the register-MMA and
+//       pipelined paths), so a fill that drops with more SMs raises it.
+// Which charge explains which group below comes from experiments on a scratch copy of the law
+// (each charge removed alone and together; made by the review of this PR, not run by this test):
+// with all three removed 0.83 % of the SM-scale cases still fail (register MMA only, worst x1.336)
+// against 33.5 % today, and the cause of that residual is not known.
 //
 // Each failing case is sorted by what can explain it. "within the SM ratio": the price rose by no
 // more than sms' / sms, the most q x sms (the bytes charged to the busiest SM) can grow. "beyond
-// the SM ratio": the warp-fill term (or a chain term) adds to it. A waived group may not grow past
-// max_share of the family's cases nor past max_ratio, so a change that makes the price rise with
-// the SMs in more cases or by more (a bw / sqrt(sms) share, say) fails; a group that stops failing
-// is an XPASS that fails the test, so the list is pruned as the model is fixed. The tolerance is
-// 1e-9: the price is deterministic. (The test cannot see a route's CTA count, so it cannot tell a
-// rise a wave count explains from one it does not, case by case.)
-constexpr const char* kWaveCause =
-    "price_routes charges the busiest SM q = ceil(CTAs/sms) CTAs of bytes at bw/sms and divides "
-    "by a warp fill that depends on q (wave quantization of the memory term)";
+// the SM ratio": the warp-fill term adds to it. A waived group may not grow past max_share of the
+// family's cases nor past max_ratio, nor fall below min_share / min_ratio; a group that stops
+// failing is an XPASS that fails the test. So a change that makes the price rise with the SMs in
+// more cases or by more (a bw / sqrt(sms) share, say) fails, and so does a fix of the law (or a
+// change of the board table) that moves a share: the window is then re-recorded. Bandwidth x1.25
+// fails nowhere. The tolerance is 1e-9: the price is deterministic. (The test cannot see a route's
+// CTA count, so it cannot tell a rise a wave count explains from one it does not, case by case,
+// and the shares cannot be replaced by a predicate.)
 constexpr Known kKnown[] = {
-    {"P1 sms x1.25", "rmma within the SM ratio", kWaveCause, 0.351, 0},
-    {"P1 sms x1.25", "rmma beyond the SM ratio", kWaveCause, 0.001, 1.45},
-    {"P1 sms x1.25", "staged within the SM ratio", kWaveCause, 0.436, 0},
-    {"P1 sms x1.25", "w4a8 within the SM ratio", kWaveCause, 0.239, 0},
-    {"P1 sms x1.25", "w4a8 beyond the SM ratio", kWaveCause, 0.025, 1.53},
-    {"P1 sms x1.25", "i8 within the SM ratio", kWaveCause, 0.391, 0},
+    {"P1 sms x1.25", "rmma within the SM ratio",
+     "charge (a): removed alone the group falls from 35.0 % to 2.6 % of the family's cases, with "
+     "all "
+     "three removed to 0.99 % (issue #690)",
+     0.350, 0.351, 0, 0},
+    {"P1 sms x1.25", "rmma beyond the SM ratio",
+     "charge (c) on top of (a): removing (c) alone leaves 545 of the 675 cases, worst x1.336 "
+     "(issue #690)",
+     0.0008, 0.001, 1.42, 1.43},
+    {"P1 sms x1.25", "staged within the SM ratio",
+     "charge (a): removed alone the group disappears (issue #690)", 0.435, 0.436, 0, 0},
+    {"P1 sms x1.25", "w4a8 within the SM ratio",
+     "charges (a) and (b): removing (b) alone leaves 14.0 % of the family's cases, all three none "
+     "(issue #690)",
+     0.238, 0.239, 0, 0},
+    {"P1 sms x1.25", "w4a8 beyond the SM ratio",
+     "charges (a) and (b) together: removing either alone makes the group disappear (issue #690)",
+     0.024, 0.025, 1.52, 1.53},
+    {"P1 sms x1.25", "i8 within the SM ratio",
+     "charge (b): removed alone the group falls from 39.1 % to 0.72 % of the family's cases "
+     "(issue #690)",
+     0.390, 0.391, 0, 0},
 };
 
 // ---- Findings ----------------------------------------------------------------------------------
@@ -284,7 +319,6 @@ std::string family_name(int family) {
 // The cases P1 checked on the SM scale, per route family: the denominator of a waiver's share.
 std::map<std::string, int> sms_cases_by_family;
 int sms_cases_priced = 0, routes_skipped_unpriced = 0;
-double largest_sm_ratio = 1.0; // the largest ceil(1.25 sms) / sms among the rows priced
 
 using Prices = std::map<std::pair<int, int>, double>; // (family, schedule) -> seconds
 
@@ -323,7 +357,6 @@ void property_price_monotone(const std::vector<Row>& rows) {
         }
         const DeviceClass more_sms = with_sms(base);
         const DeviceClass more_bw  = with_bandwidth(base);
-        largest_sm_ratio = std::max(largest_sm_ratio, more_sms.sms / static_cast<double>(base.sms));
         for (const QType q : kFormats) {
             for (const Shape s : kShapes) {
                 for (const LinearPolicy policy : policies_of(q)) {
@@ -407,7 +440,8 @@ void property_price_monotone(const std::vector<Row>& rows) {
 // field (mma_slow, the facts) follows from the edited inputs, none is edited on a built class.
 //
 // Every variant also takes a slot of its own in anything the selector caches per device class
-// (the per-class gates of generic_gemm.cpp are computed once per class key, and the key does not
+// (the per-class gates select_route asks, in generic_gemm.cpp, are computed once per class key, and
+// the key does not
 // hold a name, an ordinal, a PCI address, a UUID or the table row): `slot` changes the reported
 // memory size, the one key field this test pins as neutral (the "reported memory size" variant),
 // by a different amount for each variant. Without it a read of a label made inside a cached gate
@@ -592,14 +626,24 @@ int main() {
                 const int family_cases   = sms_cases_by_family[family];
                 const double share =
                     family_cases > 0 ? g.count / static_cast<double>(family_cases) : 1.0;
-                const double ratio_ceiling =
-                    known->max_ratio > 0 ? known->max_ratio : largest_sm_ratio;
+                const bool ratio_checked = known->max_ratio > 0;
                 std::cout << "    share of the family's " << family_cases
-                          << " SM-scale cases: " << 100.0 * share << " % (waiver at most "
-                          << 100.0 * known->max_share << " %), ratio ceiling x" << ratio_ceiling
-                          << '\n';
-                if (share > known->max_share || g.worst > ratio_ceiling * (1.0 + kResolution)) {
+                          << " SM-scale cases: " << 100.0 * share << " % (recorded window "
+                          << 100.0 * known->min_share << " .. " << 100.0 * known->max_share
+                          << " %)";
+                if (ratio_checked) {
+                    std::cout << ", worst ratio window x" << known->min_ratio << " .. x"
+                              << known->max_ratio;
+                }
+                std::cout << '\n';
+                if (share > known->max_share ||
+                    (ratio_checked && g.worst > known->max_ratio * (1.0 + kResolution))) {
                     std::cout << "    WAIVER EXCEEDED\n";
+                    ++unexpected;
+                } else if (share < known->min_share ||
+                           (ratio_checked && g.worst < known->min_ratio)) {
+                    std::cout << "    WAIVER BELOW ITS RECORDED WINDOW: the group shrank (the law "
+                                 "improved or the table changed): re-record kKnown\n";
                     ++unexpected;
                 }
             } else {

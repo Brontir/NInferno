@@ -1426,7 +1426,9 @@ void test_rows_at_choice() {
 // under every move; the winner alone would not show a price that follows the board's clock or
 // bandwidth (every candidate's price scales alike and the winner stays inside the tie band).
 // Over every plan fixture of this file on five generations, at two contexts and one and four
-// streams. Known limits, stated so the counts below are read right: only a card that has a
+// streams. Known limits, stated so the counts below are read right: the resolution step
+// (resolve_within_resolution) is not exercised by these baselines (test_resolution_step covers it);
+// only a card that has a
 // reference card (the RTX 4090) has a decision price at all, so only its baselines can move; no L2
 // reader is reached by these fixtures today (the matrix-kernel gate that reads it asks about a
 // dense K-quant layer format, which the fixtures do not carry), so the L2 moves are a guard for a
@@ -1626,6 +1628,48 @@ void test_exact_reads_no_continuous_fact() {
               << " drafting, " << b1_with_reference << " priced on a reference card, "
               << b1_several_candidates << " with more than one eligible candidate; "
               << b1_fits_without_choice << " plans fit with no choice)\n";
+}
+
+// The resolution step of the choice (resolve_within_resolution, choice.h) on crafted candidates.
+// The B1 baselines above never reach it: of their 23 with a resolution none picks a candidate
+// inside the band, and the board's seconds and the decision's never disagree about it. Here they
+// do. The band is a decision (principle 2): it must be read from the seconds priced on the
+// reference card (decision_seconds), never from the board's own (seconds, an estimate to show). A
+// step that compared the board's seconds fails the first and the third check below (checked with
+// that mutation in a scratch build).
+void test_resolution_step() {
+    namespace ch         = pr::choice;
+    const auto candidate = [](double kld, double seconds, double decision_seconds) {
+        ch::Scored s;
+        s.accuracy.kld     = kld;
+        s.seconds          = seconds;
+        s.decision_seconds = decision_seconds;
+        return s;
+    };
+    constexpr double kBand = 0.05; // the resolution, in worth units (ln of a time ratio)
+    // [0] the anchor; [1] more accurate, inside the band by the decision, far outside by the board;
+    // [2] more accurate still, outside the band by the decision, inside by the board.
+    const std::vector<ch::Scored> scored = {
+        candidate(0.10, 1.0, 1.0),
+        candidate(0.05, std::exp(0.50), std::exp(0.01)),
+        candidate(0.01, std::exp(0.01), std::exp(0.50)),
+    };
+    check(
+        ch::resolve_within_resolution(scored, {0, 1}, 0, kBand) == 1,
+        "resolution step: a candidate inside the band by the decision's seconds wins although the "
+        "board's seconds put it outside");
+    check(ch::resolve_within_resolution(scored, {0, 2}, 0, kBand) == 0,
+          "resolution step: a candidate outside the band by the decision's seconds loses although "
+          "the board's seconds put it inside");
+    check(ch::resolve_within_resolution(scored, {0, 1, 2}, 0, kBand) == 1,
+          "resolution step: among the candidates inside the band the winner is the most accurate, "
+          "and the outside one never is");
+    check(ch::resolve_within_resolution(scored, {0, 1, 2}, 0, 0.0) == 0,
+          "resolution step: a resolution of 0 returns the anchor");
+    std::vector<ch::Scored> unpriced = scored;
+    unpriced[1].decision_seconds     = 0;
+    check(ch::resolve_within_resolution(unpriced, {0, 1}, 0, kBand) == 0,
+          "resolution step: a candidate without a decision price is not eligible");
 }
 
 // One price for a quantization whichever facts carry it (product::quant_option_of): a hub row's
@@ -1991,6 +2035,7 @@ int main() {
     test_properties();
     test_rows_at_choice();
     test_exact_reads_no_continuous_fact();
+    test_resolution_step();
     test_quant_option_one_rule();
     test_row_tensor_tables();
     test_cached_quants();
