@@ -359,7 +359,11 @@ void check_evidence(const generic::RouteAnswer& a, const std::set<std::string_vi
         }
         break;
     case K::Transferred:
-        if (e.distance <= 0) fail(where + ": transferred at " + std::to_string(e.distance));
+        // At distance 0 too: a quantity the driver did not report drops out of the distance, so
+        // the MMQ gate's answer for such a board is a transfer even at 0 (mmq_prefill_gate).
+        if (e.donor.empty() || e.distance < 0) {
+            fail(where + ": transferred from '" + e.donor + "' at " + std::to_string(e.distance));
+        }
         break;
     case K::Borrowed:
         if (e.donor.empty()) fail(where + ": borrowed from nobody");
