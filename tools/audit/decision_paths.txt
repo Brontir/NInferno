@@ -100,6 +100,14 @@ CMakeLists.txt
 # the golden producer, what it builds weights with, and its target (source, support library and
 # NINFERNO_SELECTOR_GOLDEN_DIR are set in tests.cmake)
 tests/ops/linear/tests.cmake
+# what every test target is built with: ninferno_add_test / ninferno_add_op_test (sources,
+# compile definitions, libraries, oracle compile options), ninferno_link_ops (which ops
+# implementation the test links: archive or shared library, with ops_shared_anchor.cpp), and the
+# files that include them and wire the golden's directory into the build
+tests/cmake/NInfernoTests.cmake
+tests/cmake/ops_shared_anchor.cpp
+tests/CMakeLists.txt
+tests/ops/tests.cmake
 tests/ops/linear/test_selector_golden.cpp
 tests/ops/quantized_weight.h
 # the implementation behind include/ninferno/ops/prefill_routes.h

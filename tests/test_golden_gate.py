@@ -338,6 +338,16 @@ class Completeness(unittest.TestCase):
                   "src/core/mmq_columns.h", "src/core/measured_boards.h"):
             self.assertTrue(gg.decision_files([f], PATHS), f)
 
+    def test_the_shared_test_target_helpers_and_the_files_wiring_the_golden_in_are_decision_paths(self):
+        # ninferno_add_test / ninferno_link_ops shape every test target, the golden producer
+        # included; the parent files include them and add the golden's directory to the build
+        for f in ("tests/cmake/NInfernoTests.cmake", "tests/cmake/ops_shared_anchor.cpp",
+                  "tests/CMakeLists.txt", "tests/ops/tests.cmake"):
+            self.assertTrue(gg.decision_files([f], PATHS), f)
+            self.assertTrue((ROOT / f).exists(), f)
+        # the other test lists under tests/cmake declare unrelated targets
+        self.assertFalse(gg.decision_files(["tests/cmake/CoreTests.cmake"], PATHS))
+
     def test_workflow_reruns_on_label_events_and_on_edit_of_the_description_or_base(self):
         text = (ROOT / ".github/workflows/golden-gate.yml").read_text(encoding="utf-8")
         types = re.search(r"types:\s*\[([^\]]*)\]", text).group(1)
