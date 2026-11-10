@@ -1017,6 +1017,25 @@ class Classify(unittest.TestCase):
         res = self.run_diff(["src/ops/volta_a.cu"], files)
         self.assertEqual(res["arches"], ["sm_70"])
 
+    def test_the_else_branch_of_an_arch_guard_is_guarded_too(self):
+        # `if(arch 120) x.cpp else() launch.cpp endif()`: launch.cpp is built on every other arch only
+        for tail in ("else()\n launch.cpp\nendif()\n",
+                     'elseif(NINFERNO_BUILD_ARCH STREQUAL "89")\n launch.cpp\nendif()\n',
+                     "elseif(WIN32)\n launch.cpp\nendif()\n"):
+            with self.subTest(tail=tail):
+                files = {"src/chat/shared.h": "#pragma once\n",
+                         "src/ops/launch.cpp": '#include "../chat/shared.h"\n', "src/ops/x.cpp": "",
+                         "src/ops/sources.cmake":
+                             'if(NINFERNO_BUILD_ARCH STREQUAL "120")\n x.cpp\n' + tail}
+                res = self.run_diff(["src/chat/shared.h"], files)
+                self.assertTrue(res["all"])
+                self.assertIn("src/ops/launch.cpp", res["reasons"]["src/chat/shared.h"])
+        # a chain that never names the arch stays unguarded: its else branch builds everywhere
+        files = {"src/chat/shared.h": "#pragma once\n", "src/ops/launch.cpp": '#include "../chat/shared.h"\n',
+                 "src/ops/sources.cmake": "if(WIN32)\n x.cpp\nelse()\n launch.cpp\nendif()\n"}
+        res = self.run_diff(["src/chat/shared.h"], files)
+        self.assertTrue(res["host"] and not res["all"])
+
     def test_a_host_header_of_a_unit_under_an_unnarrowable_guard_is_all(self):
         # OR / range / NOT guards cannot be narrowed to an arch, but the unit is still not built everywhere
         for cond in ('NINFERNO_BUILD_ARCH STREQUAL "70" OR NINFERNO_BUILD_ARCH STREQUAL "75"',

@@ -352,9 +352,14 @@ class Repo:
                     if m:
                         kw = m.group(1).lower()
                         if kw == "if":
-                            stack.append(m.group(2))
+                            stack.append([m.group(2), "ARCH" in m.group(2)])
                         elif kw in ("elseif", "else") and stack:
-                            stack[-1] = m.group(2) if kw == "elseif" else ""
+                            # an else / elseif branch is where an earlier arch condition did not
+                            # hold: if any condition of the chain names the arch, the branch is
+                            # arch-dependent too, and its guard cannot be narrowed (UNKNOWN)
+                            cond = m.group(2) if kw == "elseif" else ""
+                            stack[-1][1] = stack[-1][1] or "ARCH" in cond
+                            stack[-1][0] = "NOT ARCH_CHAIN" if stack[-1][1] else cond
                         elif kw == "endif" and stack:
                             stack.pop()
                         continue
@@ -363,7 +368,7 @@ class Repo:
                     cmd = re.match(r"\s*(\w+)\s*\(", stmt)
                     if cmd and NOT_SOURCE_COMMAND.match(cmd.group(1)):
                         continue
-                    guards = [guard_arches(g) for g in stack]
+                    guards = [guard_arches(g) for g, _ in stack]
                     if opaque or any(g is None for g in guards):
                         arches = UNKNOWN_GUARD     # guarded by something this cannot narrow
                     else:
