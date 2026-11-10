@@ -1,4 +1,5 @@
 import io
+import os
 import re
 import subprocess
 import json
@@ -588,11 +589,23 @@ class EndToEnd(unittest.TestCase):
         for name, tool in [("syntax error", "def broken(:\n"),
                            ("sys.exit with a message", "import sys\nsys.exit('boom')\n"),
                            ("empty file", ""),
-                           ("uncaught exception", "raise RuntimeError('boom')\n")]:
+                           ("uncaught exception", "raise RuntimeError('boom')\n"),
+                           ("exit 0 with other output", "print('hello')\n")]:
             rc, out, err = self.gate({"routes/a.json": '{"x": 1}\n'}, tool=tool)
             self.assertEqual(rc, 2, f"{name}: {out}{err}")
         rc, _, _ = self.gate({"routes/a.json": '{"x": 1}\n'}, labels=["goldens-equal"], tool="def broken(:\n")
         self.assertEqual(rc, 2)  # the label does not help
+        rc, _, _ = self.gate({"routes/a.json": '{"x": 1}\n'}, labels=["goldens-equal"], tool="print('hello')\n")
+        self.assertEqual(rc, 2)  # nor does it make other output read as "goldens equal"
+
+    def test_a_hung_diff_tool_is_exit_2(self):
+        os.environ["NINFERNO_GOLDEN_DIFF_TIMEOUT"] = "2"
+        try:
+            rc, out, err = self.gate({"routes/a.json": '{"x": 1}\n'}, tool="import time\ntime.sleep(30)\n")
+        finally:
+            del os.environ["NINFERNO_GOLDEN_DIFF_TIMEOUT"]
+        self.assertEqual(rc, 2, out + err)
+        self.assertIn("longer than 2 s", err)
 
     def test_a_missing_diff_tool_is_exit_2(self):
         rc, out, err = self.gate({"routes/a.json": '{"x": 1}\n'}, tool=MISSING)

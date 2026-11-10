@@ -19,6 +19,7 @@ Exit: 0 pass, 1 gate failed, 2 the tools themselves failed.
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -35,6 +36,11 @@ GATE_FILES = ("tools/audit/decision_paths.txt", "tools/audit/golden_gate.py", "t
               "tests/test_golden_diff.py", "tests/test_golden_gate.py", ".github/workflows/golden-gate.yml")
 # the line golden_diff prints whenever it exits 1 on purpose (--fail-on-change)
 TOTAL_LINE = re.compile(r"^total: \d+ decisions changed", re.M)
+# the line it prints when it exits 0 with --fail-on-change: nothing changed
+NO_CHANGE_LINE = re.compile(r"^no golden changes$", re.M)
+# golden_diff reads two trees of text files; a run that takes longer than this is hung, not slow
+# (chosen, not measured: a whole golden set diffs in seconds)
+DIFF_TIMEOUT_S = float(os.environ.get("NINFERNO_GOLDEN_DIFF_TIMEOUT", "600"))
 
 
 def glob_to_regex(pattern):
@@ -149,10 +155,14 @@ def main(argv=None, run_diff=None, changed_files=None, base_list=None):
         if touched:
             print("decision-path files changed:\n  " + "\n  ".join(touched))
             if run_diff is None:
-                proc = subprocess.run(
-                    [sys.executable, str(GOLDEN_DIFF), "--repo", args.repo, "--range", rng,
-                     "--fail-on-change"],
-                    capture_output=True, text=True)
+                try:
+                    proc = subprocess.run(
+                        [sys.executable, str(GOLDEN_DIFF), "--repo", args.repo, "--range", rng,
+                         "--fail-on-change"],
+                        capture_output=True, text=True, timeout=DIFF_TIMEOUT_S)
+                except subprocess.TimeoutExpired:
+                    print(f"golden_gate: golden_diff ran longer than {DIFF_TIMEOUT_S:g} s", file=sys.stderr)
+                    return 2
                 golden_rc, out = proc.returncode, proc.stdout + proc.stderr
             else:
                 golden_rc, out = run_diff(rng)
@@ -161,9 +171,9 @@ def main(argv=None, run_diff=None, changed_files=None, base_list=None):
             # traceback, a syntax error, sys.exit("message")) also exits 1 and prints no such line.
             if golden_rc == 1 and not TOTAL_LINE.search(out):
                 golden_rc = 2
-            # and exit 0 with nothing printed is not "goldens equal" either: golden_diff always says
-            # at least "no golden changes"
-            if golden_rc == 0 and not out.strip():
+            # and exit 0 is "goldens equal" only with the line golden_diff prints for it: an exit 0
+            # with nothing or something else printed compared nothing we can trust
+            if golden_rc == 0 and not NO_CHANGE_LINE.search(out):
                 golden_rc = 2
             if golden_rc not in (0, 1):
                 print("golden_gate: golden_diff failed", file=sys.stderr)
