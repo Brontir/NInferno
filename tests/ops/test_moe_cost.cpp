@@ -229,23 +229,57 @@ void law_checks() {
     check(r8_down && close(r8_down->bytes, 1e8 + 10 * 1000 * 2.0 + out_bytes),
           "an R8 down stage reads the BF16 intermediate, not int8 codes");
     // A padded gate/up (the router's width 800 under a bank K of 1000): x is not quantized by the
-    // router, an R8 stage reads BF16 x of 800 values; the W4A8 quantize pass walks 800 values
-    // (25 blocks) and the kernel reads the codes over the bank's K.
+    // router. On R8 and the register MMA the widening pass first copies x into a zero-padded BF16
+    // row (reads 800 values, writes 1000: (800 + 1000) x 2 bytes a token), and the stage reads that
+    // copy at the bank's K of 1000 values; the W4A8 quantize pass walks 800 values (25 blocks) and
+    // the kernel reads the codes over the bank's K, with no widening pass.
     moe::MoeStageShape padded = s;
     padded.x_cols             = 800;
     padded.router_quantizes_x = false;
+    const double widen_padded = (800 + 1000) * 2.0;
     const auto r8_padded      = moe::price_moe_stage(padded, moe::MoeStageKernel::R8, 1, board);
-    check(r8_padded && close(r8_padded->bytes, 1e8 + 1000 * 2.0 + out_bytes),
-          "an R8 gate/up of a padded x reads BF16 x over the bank's K (the zero tail included)");
+    check(r8_padded && close(r8_padded->widen_bytes, widen_padded) &&
+              close(r8_padded->bytes, 1e8 + widen_padded + 1000 * 2.0 + out_bytes),
+          "an R8 gate/up of a padded x pays the widening pass and reads BF16 x over the bank's K "
+          "(the zero tail included)");
     const auto rmma_padded =
         moe::price_moe_stage(padded, moe::MoeStageKernel::RegisterMma, 1, board);
-    check(rmma_padded && close(rmma_padded->bytes, 1e8 + 1000 * 2.0 + out_bytes),
-          "the register MMA reads the padded copy of x over the bank's K, not the router's width");
+    check(rmma_padded && close(rmma_padded->widen_bytes, widen_padded) &&
+              close(rmma_padded->bytes, 1e8 + widen_padded + 1000 * 2.0 + out_bytes),
+          "the register MMA pays the widening pass and reads the padded copy of x over the bank's "
+          "K, not the router's width");
     const auto w4_padded = moe::price_moe_stage(padded, moe::MoeStageKernel::W4a8, 1, board);
     check(w4_padded && close(w4_padded->quantize_bytes, 800 * 2.0 + 32 * 40.0) &&
+              w4_padded->widen_bytes == 0.0 &&
               close(w4_padded->bytes, 1e8 + 800 * 2.0 + 32 * 40.0 + 1024 * 36.0 / 32.0 + out_bytes),
           "the W4A8 quantize pass reads the router's width, writes and the kernel reads the plane "
-          "of the bank K rounded up to 128");
+          "of the bank K rounded up to 128; no widening pass");
+    // The widening pass runs per token (T rows), only on a gate/up stage, and not for an unpadded
+    // x on the register MMA or R8 (`decode`, `r8_gate_up` above have no such term).
+    const auto rmma_padded3 =
+        moe::price_moe_stage(padded, moe::MoeStageKernel::RegisterMma, 3, board);
+    check(rmma_padded3 && close(rmma_padded3->widen_bytes, 3 * widen_padded),
+          "the widening pass reads and writes each of the T rows of x");
+    check(decode && decode->widen_bytes == 0.0 && r8_gate_up && r8_gate_up->widen_bytes == 0.0,
+          "an unpadded x on the register MMA or R8 is not widened");
+    moe::MoeStageShape padded_down = padded;
+    padded_down.stage              = moe::Stage::Down;
+    for (const moe::MoeStageKernel kind :
+         {moe::MoeStageKernel::RegisterMma, moe::MoeStageKernel::R8,
+          moe::MoeStageKernel::VoltaHmma}) {
+        const auto p = moe::price_moe_stage(padded_down, kind, 1, board);
+        check(p && p->widen_bytes == 0.0, "a down stage has no widening pass");
+    }
+    // Volta's HMMA converts x to f16 rows of the bank's K on every call, padded or not: reads the
+    // router's width in BF16 and writes the bank's K in f16 (2 bytes), a row per token.
+    const auto volta       = moe::price_moe_stage(s, moe::MoeStageKernel::VoltaHmma, 1, board);
+    const auto volta_pad   = moe::price_moe_stage(padded, moe::MoeStageKernel::VoltaHmma, 2, board);
+    const double volta_one = (1000 + 1000) * 2.0;
+    check(volta && close(volta->widen_bytes, volta_one) &&
+              close(volta->bytes, 1e8 + volta_one + 1000 * 2.0 + out_bytes),
+          "Volta's f16 pass on an unpadded x: reads 1000 BF16 values, writes 1000 f16 values");
+    check(volta_pad && close(volta_pad->widen_bytes, 2 * widen_padded),
+          "Volta's f16 pass on a padded x: reads 800, writes 1000 values a token, T = 2");
     // The MXFP8 quantizer writes 32 code bytes and a 4-byte scale a block (36), no sum
     // (launch_moe_mx8_quantize), also for a qtype with a min; the block-scaled MMA reads the same
     // 36 bytes a block.
@@ -312,8 +346,9 @@ void law_checks() {
     using Status     = moe::MoeCandidate::Status;
     const auto cheap = moe::price_moe_stage(s, moe::MoeStageKernel::RegisterMma, 4096, board);
     const auto same  = moe::price_moe_stage(s, moe::MoeStageKernel::VoltaHmma, 4096, board);
-    check(cheap && same && moe::rank_against_selected(same, cheap, why) == Status::Tied &&
-              !why.empty(),
+    // (Compute binds both at T = 4096: Volta's f16 pass adds DRAM bytes only, below the compute.)
+    check(cheap && same && same->bytes > cheap->bytes &&
+              moe::rank_against_selected(same, cheap, why) == Status::Tied && !why.empty(),
           "two kinds of equal price are a tie, not one dominated");
     check(cheap && w4 && moe::rank_against_selected(w4, cheap, why) == Status::PricedBelow &&
               moe::rank_against_selected(cheap, w4, why) == Status::Dominated,
@@ -360,6 +395,52 @@ void shape_checks() {
     check(gate_up &&
               gate_up->bank_bytes == static_cast<double>(layer->weights.gate_up.payload_bytes),
           "a bank stored at its logical K is priced at its stored bytes");
+
+    // The widening pass on the two padded layers of the replayed tables: Nemotron's hidden 2688
+    // under a gate/up K of 2816 (relu^2), gpt-oss's 2880 under 3072. A token's row is read at the
+    // router's width and written at the bank's K, 2 bytes a value: (2688 + 2816) x 2 = 11008 and
+    // (2880 + 3072) x 2 = 11904 bytes. The register MMA and R8 pay it (the padded BF16 copy), and
+    // so does Volta's HMMA (its f16 pass), W4A8 does not (its quantize pass reads x instead).
+    const moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0};
+
+    struct Padded {
+        QType q;
+        std::int32_t experts, top_k, hidden, inter, k;
+        bool relu2;
+        double per_token;
+    };
+
+    for (const Padded& p : {Padded{QType::GGML_IQ3_XXS, 128, 6, 2688, 2048, 2816, true, 11008.0},
+                            Padded{QType::MXFP4, 32, 4, 2880, 2880, 3072, false, 11904.0}}) {
+        const auto padded_layer = build(p.q, p.q, p.experts, p.top_k, p.hidden, p.inter, p.relu2);
+        const auto up =
+            moe::moe_stage_shape(padded_layer->weights, padded_layer->config, moe::Stage::GateUp);
+        const std::string tag = " (hidden " + std::to_string(p.hidden) + ")";
+        check(up && up->x_cols == p.hidden && up->cols == p.k && !up->router_quantizes_x,
+              "the padded gate/up's x is the router's width under the bank's K" + tag);
+        if (!up) continue;
+        for (const std::int32_t tokens : {1, 4}) {
+            for (const moe::MoeStageKernel kind :
+                 {moe::MoeStageKernel::RegisterMma, moe::MoeStageKernel::R8,
+                  moe::MoeStageKernel::VoltaHmma, moe::MoeStageKernel::W4a8}) {
+                const auto price  = moe::price_moe_stage(*up, kind, tokens, board);
+                const double want = kind == moe::MoeStageKernel::W4a8 ? 0.0 : tokens * p.per_token;
+                check(price && std::abs(price->widen_bytes - want) <= 1e-9 * std::max(1.0, want),
+                      std::string("the widening pass of ") + moe::moe_kernel_name(kind) + tag +
+                          ", T = " + std::to_string(tokens) + ": " +
+                          std::to_string(price ? price->widen_bytes : -1.0) + " vs " +
+                          std::to_string(want));
+            }
+        }
+        const auto down_shape =
+            moe::moe_stage_shape(padded_layer->weights, padded_layer->config, moe::Stage::Down);
+        const auto down_price =
+            down_shape
+                ? moe::price_moe_stage(*down_shape, moe::MoeStageKernel::RegisterMma, 4, board)
+                : std::nullopt;
+        check(down_price && down_price->widen_bytes == 0.0,
+              "the down stage of a padded layer is not widened" + tag);
+    }
 }
 
 // The layer price by hand, at several T, on the default plan (both stages on the register MMA), on
@@ -840,6 +921,29 @@ void replica(const std::filesystem::path& routes_dir) {
                     }
                     rows.push_back({price->seconds, chosen_us * 1e-6, price->compute_priced,
                                     price->compute_binds, t, *strict});
+                    // A padded x: the row's ratio with the widening pass and without it (the
+                    // gate/up stage at max(DRAM less the pass, compute)), printed for the reader.
+                    if (layer->weights.gate_up.k != layer->weights.router.k) {
+                        const auto up =
+                            moe::moe_stage_shape(layer->weights, layer->config, moe::Stage::GateUp);
+                        const moe::MoeStageKernel up_kind =
+                            moe::stage_routes(layer->weights, *plan).gate_up.kernel;
+                        const auto up_price =
+                            up ? moe::price_moe_stage(*up, up_kind, t, *facts) : std::nullopt;
+                        if (up_price) {
+                            const double dram_without =
+                                up_price->dram_seconds -
+                                up_price->widen_bytes / facts->dram_bytes_per_s;
+                            const double without =
+                                price->seconds - up_price->seconds +
+                                std::max(dram_without, up_price->compute_seconds);
+                            std::printf("%-10s padded x %s %s T %d (%s): predicted / measured "
+                                        "%.4f, without the widening pass %.4f (%.0f bytes)\n",
+                                        source.board, format.c_str(), moe::moe_kernel_name(up_kind),
+                                        t, field, price->seconds / (chosen_us * 1e-6),
+                                        without / (chosen_us * 1e-6), up_price->widen_bytes);
+                        }
+                    }
                 }
             }
         }

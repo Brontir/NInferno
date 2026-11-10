@@ -23,6 +23,7 @@ constexpr double kQuantizedBlockBytes               = 40.0;
 constexpr double kMx8QuantizedBlockBytes = 36.0;
 constexpr std::int32_t kQuantizeBlock    = 32;
 constexpr double kBf16BytesPerValue      = 2.0;
+constexpr double kF16BytesPerValue       = 2.0;
 constexpr double kFp32BytesPerValue      = 4.0;
 
 // Whether the stage reads int8 codes on `kind`: the W4A8 tier (its quantize pass wrote them) and an
@@ -87,8 +88,8 @@ std::optional<MoeStagePrice> price_moe_stage(const MoeStageShape& shape, MoeStag
                                  : static_cast<double>(shape.cols);
     // A BF16 stage reads the row at the bank's K, the zero tail of a padded gate/up included: the
     // padded copy (moe.cpp, "A zero-padded bank reads x widened with zeros") has ldx = g.input and
-    // the kernels walk a.w.k; Volta's f16 rows are g.input wide too (launch_volta_x_f16). Only the
-    // pre-pass that widens x (read x_cols, write the bank's K) is not priced.
+    // the kernels walk a.w.k; Volta's f16 rows are g.input wide too (launch_volta_x_f16). The
+    // pre-pass that widens x is priced apart (widen_bytes, below).
     const double act_read = int8 ? code_cols * int8_read_bytes_per_value(shape)
                                  : static_cast<double>(shape.cols) * kBf16BytesPerValue;
     // A gate and up stage reads the T rows of x, which a token's k assignments share; a down stage
@@ -105,8 +106,30 @@ std::optional<MoeStagePrice> price_moe_stage(const MoeStageShape& shape, MoeStag
         const double block_bytes = shape.mx8 ? kMx8QuantizedBlockBytes : kQuantizedBlockBytes;
         out.quantize_bytes       = act_rows * (x_cols * kBf16BytesPerValue + blocks * block_bytes);
     }
+    // The pass that widens x before a gate/up stage, run on every call (nothing caches it): it
+    // reads the T rows of x at the router's width and writes them at the bank's K.
+    //   - A padded x on the register MMA or R8: moe.cpp:1740-1749 (`g.input != g.hidden` and the
+    //     stage neither W4A8 nor Volta's) builds the [T][g.input] BF16 copy in ws.padded_x, a
+    //     cudaMemcpy2DAsync of the g.hidden live values and a cudaMemset2DAsync of the zero tail;
+    //     the kernel then reads that copy (act_read).
+    //   - Volta's HMMA, padded or not: moe.cpp:1773 launch_volta_x_f16(x, g.hidden, t, g.hidden,
+    //     g.input, ...) converts the g.hidden BF16 values of each row to an f16 row of g.input
+    //     (moe_volta_hmma.cu volta_x_f16_kernel, the tail written as zeros).
+    // The W4A8 stage reads x through its quantize pass instead (quantize_bytes).
+    const bool padded_x = x_cols < static_cast<double>(shape.cols);
+    if (shape.stage == Stage::GateUp) {
+        if (kind == MoeStageKernel::VoltaHmma) {
+            out.widen_bytes =
+                act_rows * (x_cols * kBf16BytesPerValue + shape.cols * kF16BytesPerValue);
+        } else if (padded_x &&
+                   (kind == MoeStageKernel::RegisterMma || kind == MoeStageKernel::R8)) {
+            out.widen_bytes =
+                act_rows * (x_cols * kBf16BytesPerValue + shape.cols * kBf16BytesPerValue);
+        }
+    }
     out.bytes = shape.bank_bytes * touched / shape.experts + act_rows * act_read +
-                assignments * shape.out_rows * kBf16BytesPerValue + out.quantize_bytes;
+                assignments * shape.out_rows * kBf16BytesPerValue + out.quantize_bytes +
+                out.widen_bytes;
     out.dram_seconds = out.bytes / board.dram_bytes_per_s;
     const double ops = 2.0 * assignments * shape.rows * shape.cols;
     double rate      = 0.0; // ops per second the kind's units reach

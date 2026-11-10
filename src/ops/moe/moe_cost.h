@@ -22,8 +22,13 @@
 //     codes, scales and sums (40 bytes a 32-value block) of a plane at K rounded up to 128, which
 //     the kernel then reads whole (both priced). A gate and
 //     up stage reads the T rows of x once (the k assignments of a token share its row), a down
-//     stage the T x k rows of the activation; and writes the stage's output rows once. These are
-//     the expected DRAM bytes of a call that reads each byte once from DRAM, under uniform routing:
+//     stage the T x k rows of the activation; and writes the stage's output rows once;
+//   - the pass that widens x before a gate/up stage, on every call: the zero-padded BF16 copy of a
+//     padded x (the bank's K above the router's width) on the register MMA and R8, and Volta's
+//     f16 conversion of x, padded or not; each reads the T rows at the router's width and writes
+//     them at the bank's K (`widen_bytes`; the W4A8 stage's analogue is its quantize pass).
+//     These are the expected DRAM bytes of a call that reads each byte once from DRAM, under
+//     uniform routing:
 //     a lower bound of the call at T = 1 only (k experts are read whatever the router picks). At T
 //     > 1 a skewed router touches fewer experts than the uniform expectation, so the figure can
 //     exceed a measured time (moe_layer_dram_floor_seconds is the bound that holds for any
@@ -51,11 +56,10 @@
 //     own rate rows (#668 measures Volta's) before the law can price them.
 // Also absent from every price: launch and fixed overheads, the kernel's DRAM efficiency below
 // the peak bandwidth, tile and wave effects (fitted quantities elsewhere, route_cost_constants.h),
-// the R8 gate/up's code write by the router's CTAs, Volta's x conversion pass, the zero-padded x
-// copy of a padded gate/up (moe.cpp), the shared expert, and the combine fused into an R8 down
-// stage (a separate one is priced by moe_layer_price). A candidate list never ranks a kind against
-// another by a price that has no compute term (status Unpriced), and two kinds of equal price are
-// Tied, not one dominated.
+// the R8 gate/up's code write by the router's CTAs, the shared expert, and the combine fused into
+// an R8 down stage (a separate one is priced by moe_layer_price). A candidate list never ranks a
+// kind against another by a price that has no compute term (status Unpriced), and two kinds of
+// equal price are Tied, not one dominated.
 
 #include "core/device_class.h"
 #include "core/weight.h"
@@ -115,6 +119,10 @@ struct MoeStagePrice {
     double bytes = 0;
     double quantize_bytes =
         0; // of `bytes`: the W4A8 stage's quantize pass (read BF16, write codes)
+    // Of `bytes`: the pass that widens x before a gate/up stage (read the router's width, write the
+    // bank's K, 2 bytes a value both ways): the padded BF16 copy on the register MMA and R8 where
+    // x is padded, Volta's f16 rows always; 0 on a down stage and on W4A8.
+    double widen_bytes     = 0;
     double dram_seconds    = 0;
     double compute_seconds = 0;
     double seconds         = 0; // max of the two
