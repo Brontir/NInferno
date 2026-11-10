@@ -45,7 +45,7 @@ export CCACHE_DIR=${CCACHE_DIR:-$HOME/.ccache} CCACHE_BASEDIR=$W CCACHE_NOHASHDI
 LOW="nice -n 19 ionice -c3"
 T0=$(date +%s); export QC_T0=$T0; tick() { echo "  [$(( $(date +%s) - T0 ))s] $*"; }
 TAG=$(echo "$BR" | tr / _)
-PLAN=$(mktemp); trap 'rm -f "$PLAN" "$PLAN.py"' EXIT
+PLAN=$(mktemp); trap 'rm -f "$PLAN" "$PLAN.py" "$B/qc_dry.ninja"' EXIT
 PARTIAL=()   # everything the run did not verify
 
 # 0. disk
@@ -55,6 +55,9 @@ FREE=$(df -BG --output=avail "$ROOT" | tail -1 | tr -dc 0-9)
 # 1. fetch + checkout (the build dir lives outside the worktree, so a clean is safe)
 [ -d "$W" ] || git -C "$REPO" worktree add -q --detach "$W" origin/master
 [ "$(realpath "$(git -C "$W" rev-parse --show-toplevel)")" = "$(realpath "$W")" ] || { echo "$W is not its own git worktree root; refusing checkout -f / clean"; exit 3; }
+# a standalone clone at $W is also a worktree root: it must be a worktree of $REPO (same common git dir)
+gcd() { ( cd "$1" && realpath "$(git rev-parse --git-common-dir)" ); }
+[ "$(gcd "$W")" = "$(gcd "$REPO")" ] || { echo "$W is not a worktree of $REPO (other git dir); refusing checkout -f / clean"; exit 3; }
 git -C "$W" fetch -q origin master "+refs/heads/$BR:refs/remotes/origin/$BR" || { echo "fetch of $BR failed"; exit 3; }
 git -C "$W" checkout -q -f --detach "origin/$BR"
 git -C "$W" clean -fdxq
@@ -76,7 +79,7 @@ HOMEDIR=$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "$B/CMakeCache.txt")
 
 # 3. plan. Lines: TEST<TAB>ctest name<TAB>exe targets (comma) | OBJ<TAB>target | SKIP<TAB>text | NOOP<TAB>text
 cat > "$PLAN.py" <<'PY'
-import sys, os, re, json, subprocess, collections
+import sys, os, re, json, subprocess, collections, shutil
 src, bld, br = sys.argv[1:4]; explicit = sys.argv[4:]
 MAXOBJ = int(os.environ.get("QC_MAX_OBJ", "60")); MAXCU = int(os.environ.get("QC_MAX_CU", "40"))
 MAXU = int(os.environ.get("QC_MAX_UNITS", "150"))
@@ -127,15 +130,34 @@ for line in sh("ninja", "-C", bld, "-t", "deps").splitlines():
 def mt(p):
     try: return os.stat(os.path.join(bld, p)).st_mtime
     except OSError: return None
-def stale_units(target):  # compile commands in the target's closure whose object is missing or older than a dependency
+def stale_units(target):  # compile steps ninja would run for target (dry run): missing, newer dependency, or changed command line
+    # A dry run on build.ninja itself stops at the always-dirty glob re-check ("Re-running CMake") and plans
+    # nothing, so it reads a copy of the manifest that no rule regenerates (the regeneration already ran above).
     cu = cx = 0
-    for cmd in sh("ninja", "-C", bld, "-t", "commands", target).splitlines():
-        m = re.search(r" -o (\S+\.o)", cmd)
-        if not m or " -c " not in cmd: continue
-        o = m.group(1); t = mt(o)
-        if t is None or any((mt(d) or 0) > t for d in deps.get(o, ())):
-            if "nvcc" in cmd: cu += 1
-            else: cx += 1
+    env = dict(os.environ, NINJA_STATUS="[%f/%t] ")
+    dry = os.path.join(bld, "qc_dry.ninja")
+    if not getattr(stale_units, "copied", False):
+        shutil.copyfile(os.path.join(bld, "build.ninja"), dry); stale_units.copied = True
+    r = subprocess.run(["ninja", "-C", bld, "-f", "qc_dry.ninja", "-n", target], capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
+    # a C++ unit whose dyndep file does not exist yet cannot be planned in a dry run: ninja stops there, and the
+    # units before it show as "Scanning ... for CXX dependencies" steps, which count as C++ units to build
+    if r.returncode != 0 and not re.search(r"loading '[^']*\.dd'", r.stdout + r.stderr):
+        raise subprocess.CalledProcessError(r.returncode, "ninja -n " + target, r.stdout, r.stderr)
+    for line in r.stdout.splitlines():
+        m = re.match(r"^\[\d+/\d+\] (?:Building (\w+) object |Scanning .* for (\w+) dependencies)", line)
+        if not m: continue
+        if (m.group(1) or m.group(2)) == "CUDA": cu += 1
+        else: cx += 1
+    if r.returncode != 0:   # the dry run stopped early: the count above is a lower bound, so take the larger of it and
+        fu = fx = 0         # the units whose object is missing or older than a recorded dependency
+        for cmd in sh("ninja", "-C", bld, "-t", "commands", target).splitlines():
+            m = re.search(r" -o (\S+\.o)", cmd)
+            if not m or " -c " not in cmd: continue
+            o = m.group(1); t = mt(o)
+            if t is None or any((mt(d) or 0) > t for d in deps.get(o, ())):
+                if "nvcc" in cmd: fu += 1
+                else: fx += 1
+        cu, cx = max(cu, fu), max(cx, fx)
     return cu, cx
 objs, tests = [], set()
 def add_exe_tests(e):  # the ctest tests that run executable e; none is reported
@@ -145,7 +167,9 @@ def add_exe_tests(e):  # the ctest tests that run executable e; none is reported
 if explicit:  # the caller names the targets: a ctest test or executable by name, anything else as ninja target
     for t in explicit:
         if t in cmd_of: tests.add(t)
-        elif t in exe_of: add_exe_tests(t)
+        elif t in exe_of:
+            if tests_of_exe.get(t): tests.update(tests_of_exe[t])
+            else: objs.append(exe_of[t]); out("SKIP", f"executable {t} has no ctest test: built and linked only, nothing run")
         else: objs.append(t); out("SKIP", f"explicit target {t} is not a test: built only, nothing run")
 else:
     rng = f"origin/master...origin/{br}"
@@ -241,8 +265,13 @@ else:
     REG = {"ninferno_add_test", "add_test", "add_executable", "set_tests_properties"}
     is_reg = lambda cmd: cmd in REG or re.search(r"add_\w*test", cmd) is not None
     IDENT = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(")
-    def parse_cmake(text):  # statements as (first line, last line, command, args, unclosed); strings, [[..]] and comments skipped
-        res, n, i, line = [], len(text), 0, 1
+    def parse_cmake(text):  # (statements as (first line, last line, command, args, unclosed); lines holding only a comment); strings, [[..]] and comments skipped
+        res, n, i, line, cl = [], len(text), 0, 1, set()
+        def mark_comment(i, j, line):  # lines holding nothing but this comment: it starts its line, no code after its end
+            if text[text.rfind("\n", 0, i) + 1:i].strip(): return
+            le = text.find("\n", j); le = n if le < 0 else le
+            last = line + text.count("\n", i, j)
+            for k in range(line, last + (1 if not text[j:le].strip() else 0)): cl.add(k)
         def bracket(i):  # end index of a bracket argument/comment starting at i, or -1
             m = re.match(r"\[(=*)\[", text[i:i + 40])
             if not m: return -1
@@ -254,7 +283,7 @@ else:
             if c == "#":
                 j = bracket(i + 1)
                 if j < 0: j = text.find("\n", i); j = n if j < 0 else j
-                line += text.count("\n", i, j); i = j; continue
+                mark_comment(i, j, line); line += text.count("\n", i, j); i = j; continue
             m = IDENT.match(text, i)
             if not m: i += 1; continue
             start, cmd, i = line, m.group(1).lower(), m.end()
@@ -268,7 +297,7 @@ else:
                 elif c == "#":
                     j = bracket(i + 1)
                     if j < 0: j = text.find("\n", i); j = n if j < 0 else j
-                    line += text.count("\n", i, j); i = j
+                    mark_comment(i, j, line); line += text.count("\n", i, j); i = j
                 elif c == '"':
                     k = i + 1
                     while k < n and text[k] != '"': k += 2 if text[k] == "\\" else 1
@@ -282,7 +311,7 @@ else:
                     if depth == 0 and have: args.append(cur); cur, have = "", False
                 else: cur += c; have = True; i += 1
             res.append((start, line, cmd, args, depth > 0 or line - start > 300))
-        return res
+        return res, cl
     def reg_name(st):  # (literal registered name or None, is a variable-built name)
         cmd, a = st[2], st[3]
         if cmd == "set_tests_properties": return None, True
@@ -321,21 +350,22 @@ else:
         if path not in cache:
             try:
                 text = open(os.path.join(src, path), encoding="utf-8", errors="strict").read() if side == "new" else sh("git", "-C", src, "show", f"{base}:{path}")
-                sts, lines = parse_cmake(text), text.split("\n")
+                (sts, cl), lines = parse_cmake(text), text.split("\n")
                 # the bodies of function/macro/foreach blocks: a change there reaches every caller
                 bodies, stack = [], []
                 for st in sts:
                     if st[2] in ("function", "macro", "foreach"): stack.append(st[0])
                     elif st[2] in ("endfunction", "endmacro", "endforeach") and stack: bodies.append((stack.pop(), st[1]))
                 bodies += [(b, len(lines)) for b in stack]   # an unclosed block runs to the end
-                cache[path] = (sts, lines, bodies)
+                cache[path] = (sts, lines, bodies, cl)
             except (OSError, UnicodeDecodeError, subprocess.CalledProcessError): cache[path] = None
         return cache[path]
     def line_ok(path, side, ln):   # True when the changed line at ln is accounted for
         parsed = sts_of(path, side)
         if parsed is None: return False   # unreadable: not checked
-        sts, lines, bodies = parsed
+        sts, lines, bodies, cl = parsed
         if any(b <= ln <= e for b, e in bodies): return False   # inside a function/macro/foreach body
+        if ln in cl: return True   # a comment-only line, also inside a multi-line statement
         here = at(sts, ln)
         if not here:   # outside every statement: only a blank or comment line passes
             t = lines[ln - 1].strip() if 0 < ln <= len(lines) else ""
@@ -370,10 +400,11 @@ else:
         uniq = sorted(set(bad_lines))
         out("SKIP", f"cmake change not mapped to a checked test/target ({len(uniq)} place(s), e.g. {', '.join(uniq[:3])}); configuring succeeded, but the targets it affects are not built")
 # guard every test's executables (and the test objects/targets) against a large stale library build
-for n in sorted(tests):   # a test that reads the build tree's objects runs over whatever build_qc last built
+for n in sorted(tests):   # a test that reads the build tree's objects runs over whatever build_qc last built: not run
     c = cmd_of.get(n, [])
     if any(a.startswith("--build") for a in c) or any(a.endswith((".o", ".a", ".so")) for a in c):
-        out("SKIP", f"test {n} reads the build tree's objects, which hold whatever build_qc last built; not verified for this branch")
+        out("SKIP", f"test {n} reads the build tree's objects, which hold whatever build_qc last built; not run, not verified for this branch")
+        tests.discard(n)
 ok_tests = {}
 for n in sorted(tests):
     es = [exe_of[e] for e in exes_of_test.get(n, [])]
@@ -400,8 +431,7 @@ if not explicit:   # objects that no linked test executable contains were compil
 for n, es in sorted(ok_tests.items()): out("TEST", n, ",".join(es))
 for o in sorted(set(keepobj)): out("OBJ", o)
 if not ok_tests and not keepobj:
-    if explicit: note("empty plan for the targets given"); sys.exit(1)
-    if not nskip: note("empty plan for a diff that touches the build"); sys.exit(1)
+    if not nskip: note("empty plan for the targets given" if explicit else "empty plan for a diff that touches the build"); sys.exit(1)
     note("everything the diff touches was skipped (see NOT VERIFIED)")
 PY
 ARGS=("$@")
