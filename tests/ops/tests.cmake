@@ -219,6 +219,14 @@ add_test(NAME ninferno_pdl_sass_audit_sabotage_test
 ninferno_label_tests(ninferno_pdl_sass_audit_sabotage_test LABELS host)
 set_tests_properties(ninferno_pdl_sass_audit_sabotage_test PROPERTIES SKIP_RETURN_CODE 77)
 
+# The generic MoE op's plans on the substituted boards of the selector goldens (#616): host only,
+# against moe_plan_golden/<build set>/<board>.txt; --update rewrites them.
+ninferno_add_op_test(ninferno_moe_plan_golden_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_moe_plan_golden.cpp"
+  LIBRARIES ninferno_ops)
+target_compile_definitions(ninferno_moe_plan_golden_test PRIVATE
+  NINFERNO_MOE_PLAN_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/moe_plan_golden")
+
 # The Qwen3.5 and Gemma 4 warp top-8 selections against FP64: negative logits, exact ties at
 # rank 8, equal logits, tiny weights, renormalisation.
 ninferno_add_op_test(ninferno_moe_routing_test
