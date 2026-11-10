@@ -171,9 +171,8 @@ void build_kernels_find_facts() {
     // binary's kernel set is kernel_facts.py check's; this is the other side of the key.
     const std::string own(kf::build_arch());
     if (!kf::snapshot_header(own)) {
-        std::cout << "build kernels: no snapshot for sm_" << own
-                  << "; skipped\n";
-            return;
+        std::cout << "build kernels: no snapshot for sm_" << own << "; skipped\n";
+        return;
     }
     namespace qw        = ninferno::test::quantized_weight;
     void* const payload = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
