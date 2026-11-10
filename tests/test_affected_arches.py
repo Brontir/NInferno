@@ -778,7 +778,7 @@ class Classify(unittest.TestCase):
                      "#include <cuda_runtime.h>\nint f() { int v; "
                      "cudaDeviceGetAttribute(&v, cudaDevAttrComputeCapabilityMajor, 0); return v; }\n",
                      "int f() { cudaGetDeviceProperties(0, 0); }\n", "DeviceFeatures x;\n",
-                     "// gpu_facts\n", "int kernel_facts();\n"):
+                     "// gpu_facts\n", "int kernel_facts();\n", "#include <cuda_runtime.h>\n"):
             with self.subTest(text=text):
                 res = self.run_diff(["src/chat/chat.cpp"], {"src/chat/chat.cpp": text})
                 self.assertTrue(res["all"])
@@ -838,6 +838,13 @@ class Classify(unittest.TestCase):
             with self.subTest(path=path):
                 res = self.run_diff([path])
                 self.assertTrue(res["host"] and not res["all"])
+
+    def test_guarded_translation_unit_that_a_cu_includes_is_all(self):
+        files = {"src/ops/sources.cmake": 'if(NINFERNO_BUILD_ARCH STREQUAL "70")\n volta_k.cpp\nendif()\n',
+                 "src/ops/volta_k.cpp": "", "src/ops/k.cu": '#include "volta_k.cpp"\n'}
+        res = self.run_diff(["src/ops/volta_k.cpp"], files)
+        self.assertTrue(res["all"])
+        self.assertIn("included by a .cu", res["reasons"]["src/ops/volta_k.cpp"])
 
     def test_nested_tracked_build_directory_takes_part_in_the_working_tree(self):  # M7g
         guarded = 'if(NINFERNO_BUILD_ARCH STREQUAL "70")\n volta_a.cu\nendif()\n'
