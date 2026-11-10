@@ -73,6 +73,15 @@ def cuda_tool(name, cuda_bin):
     fail(f"{name} not found (pass --cuda-bin <cuda>/bin)")
 
 
+RESERVED_SHARED_PER_CTA = 1024
+
+
+def sm_major(arch):
+    """The major compute capability of "sm_90", "sm_120a", "sm_86"."""
+    digits = re.match(r"sm_(\d+)", arch).group(1)
+    return int(digits[:-1])
+
+
 def resource_usage(binary, cuda_bin, dump=None):
     """[(arch, mangled name, (REG, STACK, LOCAL, SHARED))] over every fatbin image of the binary
     (or of a saved `cuobjdump --dump-resource-usage` output, `dump`)."""
@@ -100,6 +109,13 @@ def resource_usage(binary, cuda_bin, dump=None):
         m = re.match(r"\s*REG:(\d+) STACK:(\d+) SHARED:(\d+) LOCAL:(\d+)", line)
         if m and function is not None:
             reg, stack, shared, local = (int(v) for v in m.groups())
+            # From sm_90 on, cuobjdump's SHARED counts the 1 KiB the driver reserves per CTA
+            # (sm_90: on every kernel; sm_100 and sm_120: on a kernel with static shared memory).
+            # The runtime's static size (cudaFuncAttributes::sharedSizeBytes) leaves it out, and the
+            # occupancy rule adds it itself (reserved_shared_bytes_per_cta), so the snapshot keeps
+            # the runtime's figure. Checked on sm_120a: 714 of 1152 launched kernels, each +1024.
+            if arch is not None and sm_major(arch) >= 9:
+                shared = max(0, shared - RESERVED_SHARED_PER_CTA)
             facts.append((arch, function, (reg, stack, local, shared)))
             function = None
     return facts
