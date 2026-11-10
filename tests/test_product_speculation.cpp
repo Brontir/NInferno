@@ -258,10 +258,14 @@ int main() {
                           "the profile's choice carries its table's basis");
         if (served) {
             using ninferno::product::FallbackStep;
+            // The shallower draft steps down from the fit fallback where there is one (mtp:1 has
+            // nothing shallower), so it is asked of the profile without it (from mtp:3).
+            auto without_fallback = subject;
+            without_fallback.resolved->profile.fit_fallback.reset();
             for (const FallbackStep wanted : {FallbackStep::FitFallback, FallbackStep::Shallower}) {
                 std::string basis = "unserved";
                 const auto taken  = ninferno::product::fit_fallbacks(
-                    subject, *served, false,
+                    wanted == FallbackStep::Shallower ? without_fallback : subject, *served, false,
                     [&](const ninferno::product::ServedSpeculation& candidate, FallbackStep at) {
                         if (at != wanted) { return false; }
                         basis = candidate.load_basis;
