@@ -629,10 +629,11 @@ int main() {
         const std::string gemma =
             "unsloth/gemma-4-12b-it-GGUF@fc034cfff751157913579611efad8462ac1be606 Q4_K_M";
         for (const std::string target : {std::string(kQ9), gemma}) {
-            for (const auto& [name, rtx] : {std::pair<const char*, sp::GpuKey>{
-                                                "RTX 4060 Ti", card("ad106:34sm", "ad106", "sm89", 89, 34, 2535, 288)},
-                                            std::pair<const char*, sp::GpuKey>{
-                                                "RTX 4090", card("ad102:128sm", "ad102", "sm89", 89, 128, 2520, 1008)}}) {
+            for (const auto& [name, rtx] :
+                 {std::pair<const char*, sp::GpuKey>{
+                      "RTX 4060 Ti", card("ad106:34sm", "ad106", "sm89", 89, 34, 2535, 288)},
+                  std::pair<const char*, sp::GpuKey>{
+                      "RTX 4090", card("ad102:128sm", "ad102", "sm89", 89, 128, 2520, 1008)}}) {
                 sp::Profile p =
                     sp::profile_for_target({&pair_of(target, "ad104:60sm")}, "sm89", {}, &rtx);
                 expect(p.load_basis == "facts" && !p.load.empty() && p.load.back().depth == 0 &&
@@ -658,9 +659,9 @@ int main() {
                             sp::SpecConfig at = c->config;
                             at.k              = d;
                             const auto scale  = p.joint_scale.find(at.label());
-                            const auto gain =
-                                d == c->config.k ? std::optional<double>(c->speedup())
-                                                 : sp::measured_gain(p, at, c == &p.thinking);
+                            const auto gain   = d == c->config.k
+                                                    ? std::optional<double>(c->speedup())
+                                                    : sp::measured_gain(p, at, c == &p.thinking);
                             if (scale == p.joint_scale.end() || !scale->second.contains(streams) ||
                                 !gain) {
                                 continue;
