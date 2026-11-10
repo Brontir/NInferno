@@ -108,6 +108,12 @@ inline float bf16_to_f32(std::uint16_t h) {
     return bits_float(static_cast<std::uint32_t>(h) << 16);
 }
 
+// A plane of a payload at `offset`; null when there is no payload (descriptor-only), where pointer
+// arithmetic on the empty vector's data() would be undefined.
+inline std::uint8_t* plane(std::vector<std::uint8_t>& payload, std::uint64_t offset) {
+    return payload.empty() ? nullptr : payload.data() + offset;
+}
+
 inline void store_u16_le(std::vector<std::uint8_t>& payload, std::size_t off, std::uint16_t v) {
     payload[off]     = static_cast<std::uint8_t>(v & 0xffu);
     payload[off + 1] = static_cast<std::uint8_t>(v >> 8);
@@ -364,7 +370,7 @@ struct PatternedWeightOptions {
     // reaches 2^9). 0..127, so no word reaches 255 (NaN) or wraps.
     int mxfp4_exponent_shift = 0;
     // Shape, layout, plane offsets and payload_bytes as a full build, but no payload: nothing is
-    // allocated or filled, payload.data() and the plane pointers are null until device_weight()
+    // allocated or filled, the plane pointers are null (never base + offset) until device_weight()
     // places the weight at an address. For tests that read descriptors only.
     bool descriptor_only = false;
 };
@@ -426,7 +432,7 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
         packed.weight.high_plane_bytes = 0;
         packed.weight.qdata            = packed.payload.data();
         packed.weight.qhigh            = nullptr;
-        packed.weight.scales           = packed.payload.data() + packed.scale_plane_offset;
+        packed.weight.scales           = detail::plane(packed.payload, packed.scale_plane_offset);
         packed.weight.group_size       = static_cast<std::uint32_t>(k);
         packed.weight.group            = k;
         packed.weight.ndim             = 2;
@@ -497,7 +503,7 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
         packed.weight.payload_bytes = packed.payload_size;
         packed.weight.qdata         = packed.payload.data();
         packed.weight.qhigh         = nullptr;
-        packed.weight.scales        = packed.payload.data() + packed.scale_plane_offset;
+        packed.weight.scales        = detail::plane(packed.payload, packed.scale_plane_offset);
         packed.weight.group_size    = static_cast<std::uint32_t>(block ? 128 : k);
         packed.weight.group         = block ? 128 : k;
         packed.weight.ndim          = 2;
@@ -555,10 +561,10 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
             packed.weight.layout      = QuantLayout::GgmlPlanes;
             packed.weight.scale_dtype = DType::FP16;
             packed.weight.high_plane_bytes = packed.high_plane_bytes;
-            packed.weight.qhigh  = packed.high_plane_bytes == 0
-                                       ? nullptr
-                                       : packed.payload.data() + packed.high_plane_offset;
-            packed.weight.scales = packed.payload.data() + packed.scale_plane_offset;
+            packed.weight.qhigh            = packed.high_plane_bytes == 0
+                                                 ? nullptr
+                                                 : detail::plane(packed.payload, packed.high_plane_offset);
+            packed.weight.scales = detail::plane(packed.payload, packed.scale_plane_offset);
         } else {
             const std::uint64_t block_bytes = qtype == QType::GGML_Q4_K ? 144 : 176;
             packed.code_plane_bytes         = static_cast<std::uint64_t>(n) * blocks * block_bytes;
@@ -648,8 +654,8 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
         packed.weight.payload_bytes    = packed.payload_size;
         packed.weight.high_plane_bytes = packed.high_plane_bytes;
         packed.weight.qdata            = packed.payload.data();
-        packed.weight.qhigh            = packed.payload.data() + packed.high_plane_offset;
-        packed.weight.scales           = packed.payload.data() + packed.scale_plane_offset;
+        packed.weight.qhigh            = detail::plane(packed.payload, packed.high_plane_offset);
+        packed.weight.scales           = detail::plane(packed.payload, packed.scale_plane_offset);
         packed.weight.group_size       = static_cast<std::uint32_t>(group);
         packed.weight.group            = group;
         packed.weight.ndim             = 2;
@@ -707,7 +713,7 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
         packed.weight.payload          = packed.payload.data();
         packed.weight.payload_bytes    = packed.payload_size;
         packed.weight.qdata            = packed.payload.data();
-        packed.weight.scales           = packed.payload.data() + packed.scale_plane_offset;
+        packed.weight.scales           = detail::plane(packed.payload, packed.scale_plane_offset);
         packed.weight.group_size       = 32;
         packed.weight.group            = 32;
         packed.weight.ndim             = 2;
@@ -805,7 +811,7 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
         packed.weight.high_plane_bytes     = 0;
         packed.weight.qdata                = packed.payload.data();
         packed.weight.qhigh                = nullptr;
-        packed.weight.scales               = packed.payload.data() + packed.scale_plane_offset;
+        packed.weight.scales = detail::plane(packed.payload, packed.scale_plane_offset);
         packed.weight.group_size           = 16;
         packed.weight.group                = 16;
         packed.weight.ndim                 = 2;
@@ -821,7 +827,7 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
         packed.weight.k                    = k;
         packed.weight.weight_scale_divisor = options.weight_scale_divisor;
         packed.weight.input_scale_divisor  = options.input_scale_divisor;
-        packed.weight.weight_divisors      = packed.payload.data() + packed.weight_divisor_offset;
+        packed.weight.weight_divisors = detail::plane(packed.payload, packed.weight_divisor_offset);
         packed.weight.weight_divisor_rows  = n;
         return packed;
     }
@@ -962,9 +968,10 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
     packed.weight.payload_bytes    = packed.payload_size;
     packed.weight.high_plane_bytes = packed.high_plane_bytes;
     packed.weight.qdata            = packed.payload.data();
-    packed.weight.qhigh =
-        packed.high_plane_bytes == 0 ? nullptr : packed.payload.data() + packed.high_plane_offset;
-    packed.weight.scales          = packed.payload.data() + packed.scale_plane_offset;
+    packed.weight.qhigh            = packed.high_plane_bytes == 0
+                                         ? nullptr
+                                         : detail::plane(packed.payload, packed.high_plane_offset);
+    packed.weight.scales           = detail::plane(packed.payload, packed.scale_plane_offset);
     packed.weight.group_size      = static_cast<std::uint32_t>(spec.group_size);
     packed.weight.group           = spec.group_size;
     packed.weight.ndim            = 2;
