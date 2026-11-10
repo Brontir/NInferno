@@ -172,8 +172,7 @@ void build_kernels_find_facts() {
     const std::string own(kf::build_arch());
     if (!kf::snapshot_header(own)) {
         std::cout << "build kernels: no snapshot for sm_" << own
-                  << "; skipped
-                     ";
+                  << "; skipped\n";
             return;
     }
     namespace qw        = ninferno::test::quantized_weight;
@@ -218,8 +217,7 @@ void build_kernels_find_facts() {
         }
     }
     std::cout << "build kernels: " << described << " calls described on " << boards
-              << " boards of sm_" << own << '
-';
+              << " boards of sm_" << own << '\n';
 }
 
 void occupancy_from_facts() {
