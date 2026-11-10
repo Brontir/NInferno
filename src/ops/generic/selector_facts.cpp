@@ -11,11 +11,8 @@
 
 #include <cstdio>
 #include <exception>
-#include <iomanip>
-#include <set>
-#include <sstream>
 #include <stdexcept>
-#include <tuple>
+#include <string>
 #include <vector>
 
 namespace ninferno::ops::detail::generic {
@@ -32,39 +29,7 @@ DeviceClass board_device_class(const FactsBoard& b, double sm_scale, double memo
 
 bool board_prices_from_facts(const FactsBoard& b) { return rmma_terms_measured(b.major, b.minor); }
 
-std::set<RmmaFactKey> rmma_fact_keys(const std::vector<RmmaFactRead>& reads) {
-    std::set<RmmaFactKey> keys;
-    for (const auto& r : reads) {
-        keys.emplace(static_cast<int>(r.qtype), r.schedule, static_cast<int>(r.epilogue),
-                     r.facts.registers, r.facts.local_bytes, r.facts.threads,
-                     r.facts.latency_variant);
-    }
-    return keys;
-}
-
-// FNV-1a over the distinct facts, in sorted order: what the prices took, not a sample of the
-// kernels.
-std::string facts_digest(const std::set<RmmaFactKey>& keys) {
-    std::uint64_t h = 1469598103934665603ULL;
-    const auto mix  = [&h](std::uint64_t v) {
-        for (int i = 0; i < 8; ++i) {
-            h ^= (v >> (8 * i)) & 0xFFU;
-            h *= 1099511628211ULL;
-        }
-    };
-    for (const auto& [q, s, e, regs, local, threads, latency] : keys) {
-        for (const std::uint64_t v :
-             {std::uint64_t(q), std::uint64_t(s), std::uint64_t(e), std::uint64_t(regs),
-              std::uint64_t(local), std::uint64_t(threads), std::uint64_t(latency)}) {
-            mix(v);
-        }
-    }
-    std::ostringstream out;
-    out << std::hex << std::setfill('0') << std::setw(16) << h;
-    return out.str().substr(0, 12);
-}
-
-std::set<RmmaFactKey> selector_facts_probe(const FactsBoard& board) {
+std::size_t selector_facts_probe(const FactsBoard& board) {
     // Every format the register-MMA terms are kept for (has_subblock_scales), a new one included.
     std::vector<QType> formats;
     for (int v = 0; v < 256; ++v) {
@@ -99,13 +64,24 @@ std::set<RmmaFactKey> selector_facts_probe(const FactsBoard& board) {
     }
     if (reads.empty()) {
         throw std::runtime_error(std::string(board.name) +
-                                 ": the price read no compiled kernel facts");
+                                 ": the price read no kernel facts (no snapshot for sm_" +
+                                 kernel_facts::release_arch(board.major, board.minor) + ")");
     }
-    return rmma_fact_keys(reads);
+    return reads.size();
 }
 
-std::string selector_facts_digest(const FactsBoard& board) {
-    return facts_digest(selector_facts_probe(board));
+LiveCheckResult selector_facts_live_check(const FactsBoard& board) {
+    kernel_facts::LiveCheckSink reads;
+    {
+        const kernel_facts::ScopedLiveCheck live(reads);
+        (void)selector_facts_probe(board);
+    }
+    LiveCheckResult result;
+    result.checked = reads.size();
+    for (const auto& r : reads) {
+        if (!r.agrees()) result.mismatches.push_back(r);
+    }
+    return result;
 }
 
 } // namespace ninferno::ops::detail::generic
@@ -154,12 +130,31 @@ int selector_facts_main(int, char**) {
         if (cudaSetDevice(chosen) != cudaSuccess) {
             throw std::runtime_error("cannot select GPU " + std::to_string(chosen));
         }
+        int failed = 0;
         for (const auto& board : generic::kFactsBoards) {
             if (!generic::board_prices_from_facts(board) || board.major != kMajor ||
                 board.minor != kMinor) {
                 continue;
             }
-            std::printf("%s %s\n", board.name, generic::selector_facts_digest(board).c_str());
+            const auto result = generic::selector_facts_live_check(board);
+            if (result.mismatches.empty()) {
+                std::printf("%s ok %zu kernels\n", board.name, result.checked);
+                continue;
+            }
+            ++failed;
+            std::printf("%s MISMATCH %zu of %zu kernels\n", board.name, result.mismatches.size(),
+                        result.checked);
+            for (const auto& r : result.mismatches) {
+                std::printf("  %s\n", generic::kernel_facts::describe(r).c_str());
+            }
+        }
+        if (failed != 0) {
+            std::fprintf(stderr,
+                         "selector-facts: this build's sm_%s kernels differ from the committed "
+                         "snapshot (src/ops/generic/data/kernel_facts/): a kernel, flag or "
+                         "compiler change; regenerate it (tools/kernel_facts/kernel_facts.py)\n",
+                         std::string(generic::kernel_facts::build_arch()).c_str());
+            return 1;
         }
         return 0;
     } catch (const std::exception& error) {
