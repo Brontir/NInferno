@@ -154,7 +154,8 @@ void occupancy_from_facts() {
     // (a 16-row, 32-token K-quant tile at 229 registers keeps two 128-thread CTAs per SM on
     // sm_120, not the twelve the thread limit allows; generic_cost.cpp), and a kernel that does
     // not fit.
-    const DeviceClass sm120 = generic::board_device_class(generic::kFactsBoards[0]); // rtx5090
+    const ninferno::DeviceClass sm120 =
+        generic::board_device_class(generic::kFactsBoards[0]); // rtx5090
     expect(ninferno::resident_ctas_per_sm(sm120, {229, 0, 128, 0}) == 2, "229 registers x 128");
     expect(ninferno::resident_ctas_per_sm(sm120, {32, 0, 128, 0}) == 12, "32 registers x 128");
     expect(ninferno::resident_ctas_per_sm(sm120, {128, 0, 128, 64 * 1024}) == 0,
