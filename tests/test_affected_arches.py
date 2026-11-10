@@ -773,6 +773,25 @@ class Classify(unittest.TestCase):
         res = self.run_diff(["src/chat/chat.cpp"], files)
         self.assertTrue(res["host"] and not res["all"])
 
+    def test_a_host_header_of_an_arch_guarded_cpp_is_all(self):
+        # A Volta-only .cpp includes a host header: a host stand does not build that unit.
+        guarded = 'if(NINFERNO_BUILD_ARCH STREQUAL "70")\n src/ops/volta_launch.cpp\nendif()\n'
+        files = {"src/chat/shared.h": "#pragma once\nint shared();\n",
+                 "src/ops/volta_launch.cpp": '#include "../chat/shared.h"\nint v() { return 1; }\n',
+                 "src/ops/sources.cmake": guarded}
+        res = self.run_diff(["src/chat/shared.h"], files)
+        self.assertTrue(res["all"])
+        self.assertIn("src/ops/volta_launch.cpp", res["reasons"]["src/chat/shared.h"])
+        # a guarded host .cpp itself is all too
+        files["src/chat/volta_chat.cpp"] = "int c() { return 1; }\n"
+        files["src/ops/sources.cmake"] = guarded + 'if(NINFERNO_BUILD_ARCH STREQUAL "89")\n src/chat/volta_chat.cpp\nendif()\n'
+        res = self.run_diff(["src/chat/volta_chat.cpp"], files)
+        self.assertTrue(res["all"])
+        # the same includer listed without a guard leaves the header host
+        files["src/ops/sources.cmake"] = "set(S src/ops/volta_launch.cpp)\n"
+        res = self.run_diff(["src/chat/shared.h"], files)
+        self.assertTrue(res["host"] and not res["all"])
+
     def test_host_cpp_gaining_a_device_facts_read_is_all(self):  # N4, N16
         for text in ('#include "../core/device_class.h"\nint f() { return device_class(); }\n',
                      "#include <cuda_runtime.h>\nint f() { int v; "

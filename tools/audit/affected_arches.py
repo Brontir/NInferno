@@ -6,7 +6,8 @@ build files, golden files, any file that uses an arch macro (NINFERNO_BUILD_ARCH
 __CUDA_ARCH__), any device source, any file a .cu file includes (transitively, whatever its
 extension), Python tools, test fixtures and anything no rule matches. Only a short list of host
 product directories (chat, connect, media, text, structured, convert, docs, ...) answers "host": any
-one machine, since no device is read. A source listed in CMake only under one arch's guard answers
+one machine, since no device is read; a host file that a C++ unit built only under an arch guard is,
+or includes, answers "all". A source listed in CMake only under one arch's guard answers
 that arch. A diff is judged on both sides (merge base and head, read from git, not from the
 checkout), so removing an arch macro still answers "all". The answer always names the full ctest:
 label filters are not suggested (the labels of the suite are not read here). With --ninja the dirty
@@ -127,6 +128,7 @@ SOURCE_EXT = (".cu", ".cuh", ".h", ".hpp", ".cpp", ".cc", ".inl")
 # Translation units: only these can be built on one arch's tree alone. A header listed under a guard
 # is still read by every unguarded file that includes it.
 TU_EXT = (".cu", ".cpp", ".cc")
+HOST_TU_EXT = (".cpp", ".cc")  # a C++ translation unit; .cu ones are device sources anyway
 # A host file that names the device-facts API reads the card (or the arch it was built for) at run
 # time, whatever its includes say: it answers "all". Checked on the changed file itself.
 DEVICE_API = re.compile(
@@ -353,6 +355,21 @@ class Repo:
         union = set().union(*entries)
         return next(iter(union)) if len(union) == 1 else "all"
 
+    def arch_guarded(self, path):
+        """True when every cmake listing of the source is under an arch guard: some trees do not
+        build it."""
+        entries = self.cmake_listing().get(PurePosixPath(path).name)
+        return bool(entries) and all(e is not None for e in entries)
+
+    def guarded_host_includer(self, path):
+        """The first C++ translation unit that is `path` or includes it and is built only under an
+        arch guard, else None: a host stand may not build that unit at all."""
+        for f in sorted(self.files):
+            if f.endswith(HOST_TU_EXT) and self.arch_guarded(f) and (
+                    f == path or path in self.include_closure(f)):
+                return f
+        return None
+
     def include_closure(self, path):
         """Every file `path` includes, transitively (not `path` itself unless it includes itself)."""
         memo = self.__dict__.setdefault("_closure", {})
@@ -438,6 +455,10 @@ def host_reads_device(p, repo, read, base):
         hit = side.arch_user_in_closure(p)
         if hit:
             return f"includes {hit}, which uses an arch macro or a computed include"
+        unit = side.guarded_host_includer(p)
+        if unit:
+            return (f"{unit} is built only under an arch guard"
+                    + ("" if unit == p else " and includes it"))
     return None
 
 
