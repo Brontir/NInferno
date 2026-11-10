@@ -4,6 +4,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <climits>
 #include <cmath>
 #include <stdexcept>
 #include <unordered_set>
@@ -64,8 +65,21 @@ const std::vector<Field>& fields() {
     return all;
 }
 
+// An integer field: a JSON integer in int range, never a fraction or a string that get<int>()
+// would truncate or convert.
+int integer_of(const Json& j, const char* what) {
+    const Json& v = j.at(what);
+    if (!v.is_number_integer()) {
+        throw std::runtime_error(std::string(what) + " is not an integer");
+    }
+    const long long x = v.get<long long>();
+    if (x < INT_MIN || x > INT_MAX)
+        throw std::runtime_error(std::string(what) + " is out of range");
+    return static_cast<int>(x);
+}
+
 int positive_int(const Json& j, const char* what) {
-    const int v = j.at(what).get<int>();
+    const int v = integer_of(j, what);
     if (v <= 0) throw std::runtime_error(std::string(what) + " is not positive");
     return v;
 }
@@ -117,7 +131,7 @@ IsaRow parse_row(const std::string& key, const Json& j) {
 
 std::vector<IsaRow> parse_isa_facts(std::string_view json_text) {
     const Json root = Json::parse(json_text);
-    if (root.at("schema").get<int>() != 1) throw std::runtime_error("isa facts: schema is not 1");
+    if (integer_of(root, "schema") != 1) throw std::runtime_error("isa facts: schema is not 1");
     std::vector<IsaRow> rows;
     std::unordered_set<int> seen;
     for (const auto& [key, j] : root.at("arches").items()) {

@@ -254,6 +254,20 @@ void parse_rules(const Json& file) {
         refused(t, "a schema other than 1");
     }
     {
+        Json t      = table_of(base);
+        t["schema"] = 1.5;
+        refused(t, "a schema that is a fraction (1.5)");
+        t["schema"] = "1";
+        refused(t, "a schema that is a string (\"1\")");
+    }
+    {
+        Json row   = base;
+        row["sms"] = 84.5;
+        refused(table_of(row), "a fractional sms");
+        row["sms"] = "84";
+        refused(table_of(row), "a string sms");
+    }
+    {
         Json row = base;
         row.erase("card");
         refused(table_of(row), "a row without its card");
