@@ -18,8 +18,9 @@ the PCI-ID table (src/core/data/gpu_facts.json). Prints:
      device id such as 0x2782, or a name --hard-ids maps to one), the speedup
      E / R(facts) on each card with that card left out of its generation's eta fit, against the
      measured speedup (E counted as tokens - 1 - accepted - plain steps rounds).
-A card is its chip and SM count ("ad104:60sm"), the facts that decide the cost: boards with other ids
-or names but the same chip and SM count are one card, and where a run was measured does not name it.
+A card is its chip and SM count ("ad104:60sm"): boards with other ids or names but the same chip and
+SM count are grouped as one card, and where a run was measured does not name it. Each row still uses
+its own board's memory rate, bus width and boost clock.
 A generation with one card has no hold-out; --hard prints a note on stderr for each directory it skips.
 """
 import argparse
@@ -46,9 +47,9 @@ HARD_TAGS = {"q9b_q4km": "unsloth/Qwen3.5-9B-MTP-GGUF@9716a636ee4bddc3fed678220b
 def board(pci):
     r = BOARDS[pci.upper()]
     s8 = 512 if r["cc"] == 70 else 2048  # core/generation.h s8; Volta dp4a's 512
-    # A card's identity is its chip and SM count, the facts that decide the cost (the registry's own
-    # tune key), never a name, a PCI id (boards with different ids can share every fact) or where
-    # it was measured: two measurements of one chip are one card.
+    # Boards are grouped by chip and SM count (the registry's own tune key), never by a name, a PCI
+    # id or where a run was measured: two measurements of one chip are one card. The grouping only
+    # decides what is held out; bw and peak below are this board's own rates.
     return dict(name=r["name"], card=f'{r["chip"]}:{r["sms"]}sm', gen=GEN[r["cc"]],
                 bw=r["bus_bits"] / 8 * r["gbps"] * 1e9, peak=s8 * r["sms"] * r["boost_mhz"] * 1e6)
 
@@ -259,12 +260,14 @@ def main():
         print(f"| {card} | {fam} | {ks} | {len(e)} | {100 * sum(e) / len(e):+.1f} % | {100 * (sum(x * x for x in e) / len(e)) ** .5:.1f} % |")
     cross(rows)
     if args.hard:
-        print("\n| held-out card | model | config | E | measured x | predicted x | error |\n|---|---|---|---|---|---|---|")
+        print("\n| held-out card (board) | model | config | E | measured x | predicted x | error |\n|---|---|---|---|---|---|---|")
         pairs = {p["target_repo"]: p for p in REG["pairs"] if "round_facts" in p}
         # A directory names its board by PCI id, or through --hard-ids; the board's facts give the
         # card (chip and SM count), held out of the eta fit with every registry row of that card,
         # whichever id the row or the directory carries.
         ids = json.loads(Path(args.hard_ids).read_text(encoding="utf-8")) if args.hard_ids else {}
+        if not isinstance(ids, dict):
+            ap.error("--hard-ids must hold a JSON object {directory name: PCI device id}")
 
         def skip(d, why):
             print(f"fit_eta --hard: skipped {d}: {why}", file=sys.stderr)
@@ -276,12 +279,16 @@ def main():
             if not isinstance(pci, str):
                 skip(d, f"--hard-ids maps {board_dir!r} to {pci!r}, not a PCI device id string")
                 continue
+            named = pci
             pci = pci.upper()
             if key not in pairs:
                 skip(d, f"tag {tag!r} is not one of the known tags {sorted(HARD_TAGS)}")
                 continue
             if pci not in BOARDS:
-                skip(d, f"{board_dir!r} is not a PCI device id of src/core/data/gpu_facts.json (name it so, or map it with --hard-ids)")
+                skip(d, f"{named!r} is not a PCI device id of src/core/data/gpu_facts.json (name the directory so, or map it with --hard-ids)")
+                continue
+            if BOARDS[pci]["cc"] not in GEN:
+                skip(d, f"compute capability {BOARDS[pci]['cc']} of {named!r} has no generation row in GEN")
                 continue
             if not os.path.exists(os.path.join(d, "plain.json")):
                 skip(d, "no plain.json")
@@ -306,7 +313,7 @@ def main():
                     continue
                 E = (acc + rounds) / rounds
                 S = run["summary"]["tok_s"] / plain["tok_s"]
-                print(f"| {b['card']} | {tag} | {c} | {E:.2f} | {S:.2f} | {E / rp:.2f} | {100 * (E / rp / S - 1):+.0f} % |")
+                print(f"| {b['card']} {b['name']} | {tag} | {c} | {E:.2f} | {S:.2f} | {E / rp:.2f} | {100 * (E / rp / S - 1):+.0f} % |")
 
 
 if __name__ == "__main__":
