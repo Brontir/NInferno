@@ -109,6 +109,6 @@ if(UNIX)
   add_test(NAME ninferno_ctest_labels_test
     COMMAND bash "${PROJECT_SOURCE_DIR}/tools/audit/ctest_labels.sh" "${PROJECT_BINARY_DIR}")
   set_tests_properties(ninferno_ctest_labels_test PROPERTIES
-    ENVIRONMENT "CTEST=${CMAKE_CTEST_COMMAND}")
+    ENVIRONMENT "CTEST=${CMAKE_CTEST_COMMAND};PYTHON=${Python3_EXECUTABLE}")
   ninferno_label_tests(ninferno_ctest_labels_test LABELS host)
 endif()

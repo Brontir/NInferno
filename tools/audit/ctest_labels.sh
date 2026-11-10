@@ -4,13 +4,14 @@
 # says nothing about what it needs. A test added with a bare add_test() and no
 # ninferno_label_tests() fails here, so `ctest -L host` stays the set that runs with no GPU.
 #
-#   ctest_labels.sh [build dir]     (default: the current directory; CTEST overrides ctest)
+#   ctest_labels.sh [build dir]     (default: the current directory; CTEST overrides ctest, PYTHON python3)
 set -u
 BUILD=${1:-.}
 CTEST_BIN=${CTEST:-ctest}
 [ -f "$BUILD/CTestTestfile.cmake" ] || { echo "ctest_labels: $BUILD is not a configured build dir" >&2; exit 2; }
-command -v python3 >/dev/null 2>&1 || { echo "ctest_labels: python3 not found" >&2; exit 2; }
-(cd "$BUILD" && "$CTEST_BIN" --show-only=json-v1) | python3 -I -c '
+PY=${PYTHON:-python3}
+command -v "$PY" >/dev/null 2>&1 || { echo "ctest_labels: $PY not found" >&2; exit 2; }
+(cd "$BUILD" && "$CTEST_BIN" --show-only=json-v1) | "$PY" -I -c '
 import json, sys
 known = {"host", "gpu", "real", "golden", "slow"}
 needs = {"host", "gpu", "real"}
