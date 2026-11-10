@@ -258,7 +258,8 @@ class Skipped(unittest.TestCase):
         listed = bands.report(rows, skipped)["skipped_cases"]
         self.assertEqual(len(listed), 8)
         self.assertEqual(listed[0], {"id": "q4k.a16.store.n3.k1.T20", "board": "b1",
-                                     "format": "q4k", "t": 20, "family": "tiled",
+                                     "format": "q4k", "t": 20, "selected": "tiled.z",
+                                     "family": "tiled",
                                      "reason": "the pick was not timed among the candidates"})
 
     def test_weighted_is_none_when_a_weighted_band_has_skips(self):
@@ -380,6 +381,62 @@ class Cli(unittest.TestCase):
         self.assertEqual(rep["overall"]["wide"]["skipped"], 1)
         self.assertIsNone(rep["overall"]["weighted"])
         self.assertEqual(rep["skipped_cases"][0]["id"], "q4k.a16.store.n64.k64.T41")
+        self.assertEqual(rep["skipped_cases"][0]["selected"], "rmma.z")
+
+    def test_document_skips_reach_the_json_report(self):
+        bad = case("q4k.a16.store.n1.k1.T3", "b9", "rmma.a", {"rmma.a": 1, "rmma.b": 1})
+        bad["candidates"].append({"id": "rmma.c", "status": "unmeasured", "reason": "timeout"})
+        ok = case("q4k.a16.store.n1.k1.T4", "b9", "rmma.a", {"rmma.a": 2, "rmma.b": 1})
+        path = self.root / "d.json"
+        path.write_text(json.dumps(document([bad, ok])), encoding="utf-8")
+        out = self.root / "o.json"
+        code, _ = self.run_main(["--doc", str(path), "--json", str(out),
+                                 "--band-weights", '{"decode": 1}'])
+        self.assertEqual(code, 0)
+        rep = json.loads(out.read_text())
+        self.assertEqual((rep["cases"], rep["cases_skipped"]), (1, 1))
+        self.assertEqual(rep["overall"]["decode"]["skipped"], 1)
+        self.assertIsNone(rep["overall"]["weighted"])
+
+    def test_model_pricing_nothing_is_a_skip_row(self):
+        p1 = self.root / "p1.csv"
+        p1.write_text(ROUTES + "q4k,a16,store,64,64,40,rmma.a,20,30\n"
+                      "q4k,a16,store,64,64,40,rmma.b,10,40\n"
+                      "q4k,a16,store,64,64,41,rmma.a,20,\n"
+                      "q4k,a16,store,64,64,41,rmma.b,10,\n", encoding="utf-8")
+        out = self.root / "o.json"
+        code, _ = self.run_main(["--routes", str(p1), "--pick", "model", "--board", "x",
+                                 "--qualified", "q", "--json", str(out)])
+        self.assertEqual(code, 0)
+        rep = json.loads(out.read_text())
+        self.assertEqual(rep["cases_skipped"], 1)
+        self.assertEqual(rep["skipped_cases"][0]["reason"], "the model prices none of the candidates")
+
+    def test_skip_reasons_name_a_missing_selection_and_another_compute_class(self):
+        p1 = self.root / "p1.csv"
+        p1.write_text(ROUTES + "q4k,a16,store,64,64,40,rmma.a,20,30\n"
+                      "q4k,a16,store,64,64,40,rmma.b,10,40\n"
+                      "q4k,a16,store,64,64,41,rmma.a,20,30\n"
+                      "q4k,a16,store,64,64,41,ggml_mmq.x64,10,30\n"
+                      "q4k,a16,store,64,64,42,rmma.a,20,30\n", encoding="utf-8")
+        sel = self.root / "s.csv"
+        sel.write_text(SELECTED + "q4k,a16,store,64,64,40,rmma.a,rmma.a\n"
+                       "q4k,a16,store,64,64,41,rmma.a,ggml_mmq.x64\n", encoding="utf-8")
+        out = self.root / "o.json"
+        code, _ = self.run_main(["--routes", str(p1), "--selected", str(sel), "--board", "x",
+                                 "--qualified", "q", "--json", str(out)])
+        self.assertEqual(code, 0)
+        reasons = {r["t"]: r["reason"] for r in json.loads(out.read_text())["skipped_cases"]}
+        self.assertEqual(reasons, {41: "the pick is not of the case's compute class",
+                                   42: "no selection recorded for this case"})
+
+    def test_no_scored_case_is_refused(self):
+        p1 = self.root / "p1.csv"
+        p1.write_text(ROUTES + "q4k,a16,store,64,64,41,rmma.a,20,\n", encoding="utf-8")
+        code, err = self.run_main(["--routes", str(p1), "--pick", "model", "--board", "x",
+                                   "--qualified", "q"])
+        self.assertEqual(code, 2)
+        self.assertIn("no scored cases", err)
 
     def test_docs_of_equal_provenance_record_it(self):
         a, b = self.doc("a.json", "r1", "b1"), self.doc("b.json", "r1", "b1")

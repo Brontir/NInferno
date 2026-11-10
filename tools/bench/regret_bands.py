@@ -188,8 +188,14 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected"):
             chosen = min(priced, key=lambda r: (priced[r], r))
         else:
             chosen = selected.get(key)
+        if chosen is None:
+            skip(None, "no selection recorded for this case")
+            continue
         if chosen not in cands:
-            skip(chosen, "the pick was not timed among the candidates")
+            # Timed, but of another compute class than the case's key (an a8 route under an a16
+            # key) is left out of the candidates above; say so rather than "not timed".
+            skip(chosen, "the pick is not of the case's compute class" if chosen in routes[key]
+                 else "the pick was not timed among the candidates")
             continue
         best = min(cands, key=lambda r: (cands[r], r))
         rows.append({"id": collect.case_id(key), "board": board, "format": key[0],
@@ -246,7 +252,8 @@ def report(rows, skipped=(), band_weights=None):
     out = {"schema": "ninferno-regret-bands/1", "bands": {n: [lo, hi] for n, lo, hi in BANDS},
            "metric": "sum(selected time) / sum(best observed time) - 1 per group and band",
            "cases": len(rows), "cases_skipped": len(skipped), "overall": by_band(rows, skipped),
-           "skipped_cases": [{k: r[k] for k in ("id", "board", "format", "t", "family", "reason")}
+           "skipped_cases": [{k: r[k] for k in ("id", "board", "format", "t", "selected", "family",
+                                                 "reason")}
                              for r in skipped]}
     for dim in ("board", "format", "family"):
         out["by_" + dim] = {
