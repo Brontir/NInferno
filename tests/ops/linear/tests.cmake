@@ -109,6 +109,14 @@ ninferno_add_op_test(ninferno_route_description_test
 
 set_tests_properties(ninferno_route_description_test PROPERTIES SKIP_RETURN_CODE 77)
 
+# The same on a substituted GV100: a tiled call of a CUTLASS-only format without room for the
+# decoded copy runs scalar and the description says so (#653).
+ninferno_add_op_test(ninferno_route_description_volta_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_description_volta.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
+set_tests_properties(ninferno_route_description_volta_test PROPERTIES SKIP_RETURN_CODE 77)
+
 # Route selection on the GPU classes this machine lacks (substituted DeviceClass, one process
 # per board): every choice admitted, no feature the board lacks, its own route table.
 ninferno_add_op_test(ninferno_route_classes_test

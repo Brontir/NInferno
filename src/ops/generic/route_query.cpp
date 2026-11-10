@@ -96,30 +96,39 @@ resolved_route_query(const DeviceClass& device, QType qtype, LinearPolicy policy
 namespace {
 
 RouteDescription describe_resolved(const DescribedWeight& described, const Problem& problem,
-                                   const ResolvedRoute& resolved, std::int32_t tokens,
+                                   const ResolvedRoute& resolved_in, std::int32_t tokens,
                                    std::optional<std::size_t> workspace_free, bool with_kernel) {
     const Weight& w = described.weight;
-    const Route ran = resolved.executed;
-    RouteDescription out;
-    out.resolved        = resolved;
-    out.workspace_bytes = executed_workspace_bytes(ran, resolved.r8_prequantized, problem.k,
-                                                   problem.n, problem.epilogue, tokens);
+    ResolvedRoute resolved = resolved_in;
     // Volta's prefill band runs a tiled call as CUTLASS over a decoded FP16 copy of the weight
-    // rows (run_route, launch_volta_cutlass) when the call has workspace that holds a chunk: the
-    // chunk that fits is the workspace it takes. Without room the tiled figure stands (a format
-    // with no tile of its own then runs scalar).
-    if (ran.family == Family::TiledMma && volta_cutlass_compiled() && workspace_free) {
+    // rows (run_route, launch_volta_cutlass) when the call has workspace that holds a chunk
+    // (volta_cutlass_call_runs): the chunk that fits is the workspace it takes. A CUTLASS-only
+    // format (no tile of its own) without that room runs the scalar kernel and notes a demotion
+    // (volta_tiled_runs_scalar, the rule run_route asks): described as the scalar route.
+    std::optional<std::size_t> chunk_workspace;
+    if (resolved.executed.family == Family::TiledMma) {
         try {
-            if (volta_cutlass_runs(volta_cutlass_only(codec_of(w)), tokens)) {
-                const std::size_t chunk = volta_cutlass_chunk_bytes(
-                    problem.n, problem.k, tokens, problem.epilogue == Epilogue::SwiGlu,
-                    *workspace_free);
-                if (chunk != 0) out.workspace_bytes = chunk;
+            const WeightCodec codec = codec_of(w);
+            const bool swiglu       = problem.epilogue == Epilogue::SwiGlu;
+            if (volta_tiled_runs_scalar(codec, problem.n, problem.k, tokens, swiglu,
+                                        workspace_free)) {
+                resolved.executed = Route{Family::Scalar, 0};
+                resolved.reason   = Demotion::VoltaCopy;
+            } else if (volta_cutlass_call_runs(codec, problem.n, problem.k, tokens, swiglu,
+                                               workspace_free)) {
+                chunk_workspace = volta_cutlass_chunk_bytes(problem.n, problem.k, tokens, swiglu,
+                                                            *workspace_free);
             }
         } catch (const std::exception&) {
             // a format without a codec has no CUTLASS copy: the tiled figure stands
         }
     }
+    const Route ran = resolved.executed;
+    RouteDescription out;
+    out.resolved        = resolved;
+    out.workspace_bytes = executed_workspace_bytes(ran, resolved.r8_prequantized, problem.k,
+                                                   problem.n, problem.epilogue, tokens);
+    if (chunk_workspace) out.workspace_bytes = *chunk_workspace;
     out.tile = route_tile(ran, problem.epilogue, tokens);
     // The call's own rows of the weight: a slice of a fused parent reads its share of the payload
     // (route_traffic takes the payload over the call's n rows as bytes per weight). The share is
