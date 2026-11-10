@@ -97,6 +97,13 @@ ninferno_add_op_test(ninferno_launch_overlap_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_launch_overlap.cpp"
   LIBRARIES ninferno_linear_test_support)
 
+# Scratch read lifetimes of generic launches (#309): which launch reads or writes which workspace
+# region until when, and that no launch starting under its predecessor takes a region it still
+# uses (host only).
+ninferno_add_op_test(ninferno_scratch_lifetime_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_scratch_lifetime.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
 # A route's tile and logical traffic (#298): the schedules' declared geometry (host only).
 ninferno_add_op_test(ninferno_route_traffic_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_traffic.cpp"
