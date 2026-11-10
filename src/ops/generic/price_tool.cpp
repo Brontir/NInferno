@@ -200,10 +200,6 @@ Options parse(int argc, char** argv) {
 
 double us(double seconds) { return seconds * 1e6; }
 
-const char* family_name(Family f) {
-    return f == Family::RegisterMma ? "rmma" : f == Family::TiledMma ? "tiled" : "staged";
-}
-
 // The selector's time of a route among the priced ones, if it offered it.
 std::optional<double> selector_time(const std::vector<generic::PricedRouteQuery>& priced, Route r) {
     for (const auto& p : priced) {
@@ -367,16 +363,17 @@ int run(const Options& o) {
         const auto sel              = selector_time(priced, r);
         const std::string tile_text = std::to_string(static_cast<int>(kernel.rows)) + "x" +
                                       std::to_string(static_cast<int>(kernel.cols));
+        const std::string family(generic::family_name(r.family));
         if (one) {
-            std::printf("%s:%d tile %s, %.0f threads, %.0f stages of %.0fx%.0f\n",
-                        family_name(r.family), r.schedule, tile_text.c_str(), kernel.threads,
-                        kernel.stages, kernel.stage_rows, kernel.stage_cols);
+            std::printf("%s:%d tile %s, %.0f threads, %.0f stages of %.0fx%.0f\n", family.c_str(),
+                        r.schedule, tile_text.c_str(), kernel.threads, kernel.stages,
+                        kernel.stage_rows, kernel.stage_cols);
             print_pipelined(t, a16, sel);
             return;
         }
         const double scaled = t.total * a16;
         std::printf("%s:%-*d %-9s %6.0f %5.0f %4.0f %6.0f %5.3f | %9.2f %9.2f %9s %9.2f | %9.2f ",
-                    family_name(r.family), r.family == Family::TiledMma ? 4 : 3, r.schedule,
+                    family.c_str(), r.family == Family::TiledMma ? 4 : 3, r.schedule,
                     tile_text.c_str(), t.grid.ctas, t.grid.waves, t.grid.occupancy, t.grid.rounds,
                     t.grid.fill, us(t.mem), us(t.mma), "", us(t.chain), us(scaled));
         if (sel) {
