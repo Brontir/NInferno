@@ -510,12 +510,17 @@ def without_comments(text):
 def include_names(text):
     """The names of the `#include "..."` and `#include <...>` lines of a source: those of the raw
     text and those of the text without comments (a `/*` inside a string literal would hide an
-    include from the second alone), so stripping comments only adds edges."""
-    text = spliced(text)
-    names = [(q == '"', n) for q, n in INCLUDE.findall(text)]
-    seen = set(names)
-    return names + [(q == '"', n) for q, n in INCLUDE.findall(without_comments(text))
-                    if (q == '"', n) not in seen]
+    include from the second alone), so stripping comments only adds edges. The spliced text and
+    the unspliced one are both read (MSVC does not splice backslash + blanks + newline, GCC
+    does), so splicing only adds edges too."""
+    names, seen = [], set()
+    for text in (spliced(raw := text), raw):
+        for scan in (text, without_comments(text)):
+            for q, n in INCLUDE.findall(scan):
+                if (q == '"', n) not in seen:
+                    seen.add((q == '"', n))
+                    names.append((q == '"', n))
+    return names
 
 
 def spliced(text):

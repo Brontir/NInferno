@@ -824,6 +824,10 @@ class Classify(unittest.TestCase):
         self.assertTrue(aa.uses_arch("#include \\\nARCH_HEADER\n"))
         # CRLF line ends (compared on the text, as the tree writer may translate them)
         self.assertEqual(aa.include_names('#include \\\r\n"x.h"\r\n'), [(True, "x.h")])
+        # MSVC does not splice backslash + blanks + newline, GCC does: the raw scan counts too
+        self.assertIn((True, "a.h"), aa.include_names('int x; \\  \n#include "a.h"\n'))
+        files = {"src/chat/a.h": "#pragma once\n", "src/ops/kb.cu": 'int x; \\  \n#include "../chat/a.h"\n'}
+        self.assertTrue(self.run_diff(["src/chat/a.h"], files)["all"])
 
     def test_a_quoted_include_found_next_to_the_includer_is_the_only_edge(self):
         # third_party/jinja/parser.h `#include "utils.h"` means the utils.h beside it, not every
@@ -942,6 +946,22 @@ class Classify(unittest.TestCase):
         # a real comment after a closed string is still cut
         stmts = aa.cmake_statements('set(A "x") # if(Y)\nset(B 1)\n')
         self.assertEqual([s.strip() for s in stmts], ['set(A "x")', "set(B 1)"])
+
+    def test_cmake_quote_escape_and_bracket_level_are_honoured(self):
+        # `\"` does not end a quoted argument: the `#` and `(` after it are still string text
+        stmts = aa.cmake_statements('set(A "x\\"y) # (")\nset(B 1)\n')
+        self.assertEqual([s.strip() for s in stmts], ['set(A "x\\"y) # (")', "set(B 1)"])
+        # a bracket argument of level 1 ends at `]=]`, not at the first `]]`
+        stmts = aa.cmake_statements("set(A [=[ ]] ( ]=])\nset(B 1)\n")
+        self.assertEqual([s.strip() for s in stmts], ["set(A [=[ ]] ( ]=])", "set(B 1)"])
+        # the shape of tests/cmake/CoreTests.cmake: escaped quotes inside CONTENT, then a guard
+        cmake = ('file(GENERATE OUTPUT "${_source}" CONTENT "#include \\"ninferno/${_header}\\"\\n")\n'
+                 'if(NINFERNO_BUILD_ARCH STREQUAL "70")\n add_library(v volta_only.cu)\nendif()\n')
+        stmts = aa.cmake_statements(cmake)
+        self.assertEqual(len(stmts), 4)
+        res = self.run_diff(["src/ops/volta_only.cu"],
+                            {"src/ops/sources.cmake": cmake, "src/ops/volta_only.cu": ""})
+        self.assertEqual(res["arches"], ["sm_70"])
 
     def test_guarded_header_is_not_a_translation_unit(self):  # N2, N2b
         guarded = 'if(NINFERNO_BUILD_ARCH STREQUAL "70")\n  volta_tiles.h\nendif()\n'
