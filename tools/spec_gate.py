@@ -86,6 +86,7 @@ DECISION_FILES = (
     "src/ops/generic/generic_select_internal.h",             # the W4A8 tiles' grid order
     "src/ops/common/small_t_bands.h",                        # small-T bands by board
     "src/core/measured_boards.h",                            # measured choices carried by distance
+    "src/core/data/gpu_facts.json",                          # the boards those choices are keyed by
     "routes",                                                # per-class route tables
 )
 

@@ -1700,3 +1700,26 @@ differently), as they already did between a prefill chunk of 128 and 1024: on na
 Q6_K (the Q4_0 and IQ decodes give other fixed shares: they keep the fewest tiles until their grids); the RTX 5070 Ti and 5060 Ti prefill Q4_K / Q6_K
 on the W4A8 tiles, not this kernel, which steps the same way (RTX 5060 Ti 104 -> 107 ms from 144 to
 256 tokens): its 64 x 64 against 128 x 64 tile steps need their own grid.
+
+## 75. Inside the speed estimate's resolution the more accurate candidate wins (#301, 09.11, rule; not yet run on the stands)
+
+**Decision.** `choose()` finds the best worth (the anchor). A candidate whose request time on the
+reference card is longer by no more than `Choice::resolution` (the generation's decode rms, `ln` of
+the time ratio) is indistinguishable from it in speed, so the speed term does not rank them; the
+accuracy term does. The order is the one of the cross-quantization band (DECISIONS 60): a candidate
+wins only if its modelled KLD is lower than the anchor's by more than `kWorthTie`; the lowest KLD
+first, then the lowest canonical index; otherwise the anchor stays (`resolve_within_resolution`).
+Context beyond what was asked is headroom (DECISIONS 73) and does not count, so an equal-KLD
+sibling (a narrower chunk, plain against a drafter, BF16 against INT8 at 8K) never moves the pick.
+A NaN KLD never wins. Without a reference card the resolution is 0 and nothing changes.
+
+`Choice::resolved_within_resolution`, `anchor` and `anchor_worth` record the move; the `why` line
+says it, and `explain` lists the anchor as `within_resolution` with a positive `worth_delta`. The
+cross-quantization band (plan_quants.cpp) sorts and bounds the rows by `anchor_worth` (the band's
+top is the best anchor) and admits and ties them by the worth of the configuration each serves, so a
+moved row trails the top by at most one band in all. Candidates that can
+move: a KV codec or activation mode of the same worth class with a strictly lower KLD that is less
+than the resolution slower; the chunk and the drafter carry no KLD term and never move.
+
+Regret against recorded measurements: `tools/bench/selection_regret.py` and `regret_collect.py`
+(held-out observed regret). Left: run them over the stands' route sweeps for the moved picks.
