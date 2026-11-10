@@ -168,6 +168,25 @@ int main() {
         }
     }
 
+    // A slice of a fused parent (#298): the traffic is of the call's rows, not the parent's, so a
+    // call reading n of 2n stored rows describes what the same call on its own n-row weight does.
+    for (const QType qtype : {QType::Q8_G32_FP16, QType::GGML_Q4_K}) {
+        const generic::Route route{generic::Family::RegisterMma, 0};
+        const auto own = generic::describe_route(device, route, qtype, LinearPolicy::A16Only,
+                                                 generic::Epilogue::Store, n, k, 64, std::nullopt);
+        const auto slice =
+            generic::describe_route(device, route, qtype, LinearPolicy::A16Only,
+                                    generic::Epilogue::Store, n, k, 64, std::nullopt, 2 * n);
+        const std::string at = std::string("slice ") + std::string(generic::qtype_name(qtype));
+        check(own && slice && own->traffic && slice->traffic &&
+                  near(own->traffic->weight_bytes, slice->traffic->weight_bytes) &&
+                  near(own->traffic->activation_bytes, slice->traffic->activation_bytes),
+              at + ": traffic of a slice is the call's rows'");
+        check(own && slice && own->cost_seconds.has_value() == slice->cost_seconds.has_value() &&
+                  (!own->cost_seconds || near(*own->cost_seconds, *slice->cost_seconds)),
+              at + ": price of a slice is the call's rows'");
+    }
+
     // R8 at verify widths takes workspace only in its pre-quantized form: without any workspace
     // (not pre-quantized) the description reports none; with it, the planes it reads.
     for (const QType qtype : {QType::GGML_Q4_K, QType::GGML_Q6_K, QType::Q8_G32_FP16}) {

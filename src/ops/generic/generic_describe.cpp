@@ -75,24 +75,29 @@ std::optional<KernelResources> rmma_resources(int schedule, const Weight& w, Epi
 }
 
 std::optional<R8Resources> r8_resources(int schedule, const Weight& w, Epilogue epilogue,
-                                        std::int32_t tokens) {
+                                        std::int32_t tokens, std::int32_t rows_asked,
+                                        std::optional<bool> prequantized) {
     const Route route{Family::R8Mma, static_cast<std::uint8_t>(schedule)};
     if (schedule < 0 || schedule >= r8_schedule_count() || tokens < 1 ||
         tokens > kR8VerifyTokens || !supports(w) || !route_admits(route, w, LinearPolicy::AllowA8)) {
         return std::nullopt;
     }
-    const std::int32_t rows = epilogue == Epilogue::SwiGlu ? w.n / 2 : w.n;
-    // The call as the engine passes it, with the workspace its pre-quantized form needs.
-    const ResolvedRoute resolved =
-        resolve_route(route, w,
-                      CallLayout{.x_aligned16    = true,
-                                 .ldx            = w.k,
-                                 .tokens         = tokens,
-                                 .rows           = rows,
-                                 .segments       = 1,
-                                 .epilogue       = epilogue,
-                                 .workspace_free = route_workspace_bytes(route, w.k, tokens)});
+    const std::int32_t rows =
+        rows_asked > 0 ? rows_asked : (epilogue == Epilogue::SwiGlu ? w.n / 2 : w.n);
+    // The call as the engine passes it, with the workspace its pre-quantized form needs (none
+    // where the in-kernel variant is asked for).
+    std::optional<std::size_t> free = route_workspace_bytes(route, w.k, tokens);
+    if (prequantized && !*prequantized) free = std::nullopt;
+    const ResolvedRoute resolved = resolve_route(route, w,
+                                                 CallLayout{.x_aligned16    = true,
+                                                            .ldx            = w.k,
+                                                            .tokens         = tokens,
+                                                            .rows           = rows,
+                                                            .segments       = 1,
+                                                            .epilogue       = epilogue,
+                                                            .workspace_free = free});
     if (!(resolved.executed == route)) return std::nullopt;
+    if (prequantized && *prequantized != resolved.r8_prequantized) return std::nullopt;
     GemmArgs args = weight_args(w);
     args.rows     = rows;
     args.tokens   = tokens;
@@ -168,11 +173,14 @@ std::optional<KernelResources> ggml_resources(Route route, const Weight& w, Epil
 } // namespace
 
 std::optional<KernelResources> route_resources(Route route, const Weight& w, Epilogue epilogue,
-                                               std::int32_t tokens) {
+                                               std::int32_t tokens, std::int32_t rows_asked,
+                                               std::optional<bool> r8_prequantized) {
     switch (route.family) {
-    case Family::RegisterMma: return rmma_resources(route.schedule, w, epilogue, tokens);
+    case Family::RegisterMma:
+        return rmma_resources(route.schedule, w, epilogue, tokens, rows_asked);
     case Family::R8Mma: {
-        const auto r8 = r8_resources(route.schedule, w, epilogue, tokens);
+        const auto r8 =
+            r8_resources(route.schedule, w, epilogue, tokens, rows_asked, r8_prequantized);
         return r8 ? std::optional<KernelResources>(r8->kernel) : std::nullopt;
     }
     case Family::TiledMma:
@@ -191,7 +199,8 @@ std::optional<KernelResources> route_resources(Route route, const Weight& w, Epi
     if (tokens < 1 || !supports(w) || !route_admits(route, w, policy)) {
         return std::nullopt;
     }
-    const std::int32_t rows = epilogue == Epilogue::SwiGlu ? w.n / 2 : w.n;
+    const std::int32_t rows =
+        rows_asked > 0 ? rows_asked : (epilogue == Epilogue::SwiGlu ? w.n / 2 : w.n);
     const std::size_t workspace =
         executed_workspace_bytes(route, false, w.k, rows, epilogue, tokens);
     const ResolvedRoute resolved =

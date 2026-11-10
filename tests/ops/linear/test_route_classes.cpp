@@ -762,6 +762,30 @@ int run_resources(bool detail) {
                 if (!r) continue;
                 ++r8_described;
                 r8_pre += r->prequantized ? 1 : 0;
+                // The call's own rows (#298): a slice of half the rows launches half the CTAs.
+                if (const auto half =
+                        generic::r8_resources(i, w, generic::Epilogue::Store, t, shape.n / 2)) {
+                    const unsigned ctas_half = static_cast<unsigned>(
+                        (shape.n / 2 + info.warps * info.rows - 1) / (info.warps * info.rows));
+                    if (half->kernel.grid_x != ctas_half) {
+                        fail(at + ": slice of " + std::to_string(shape.n / 2) + " rows: grid " +
+                             std::to_string(half->kernel.grid_x) + ", expected " +
+                             std::to_string(ctas_half));
+                    }
+                }
+                // The variant asked for is the one described, never the other (#298).
+                if (const auto in_kernel =
+                        generic::r8_resources(i, w, generic::Epilogue::Store, t, 0, false)) {
+                    if (in_kernel->prequantized)
+                        fail(at + ": in-kernel variant described pre-quantized");
+                }
+                if (const auto pre =
+                        generic::r8_resources(i, w, generic::Epilogue::Store, t, 0, true)) {
+                    if (!pre->prequantized)
+                        fail(at + ": pre-quantized variant described in-kernel");
+                } else if (r->prequantized) {
+                    fail(at + ": pre-quantized variant asked for, not described");
+                }
                 const auto& k = r->kernel;
                 const unsigned ctas = static_cast<unsigned>(
                     (shape.n + info.warps * info.rows - 1) / (info.warps * info.rows));
