@@ -32,6 +32,7 @@ ROOT = Path(__file__).resolve().parents[2]
 # Q4_K: 4.5 bits a value. The ridge is shown for this one representative format.
 BYTES_PER_VALUE = 4.5 / 8
 DECODE_MAX, VERIFY_MAX = 4, 16
+PREFILL_MIN = 17  # route_table.cpp kPrefillMinTokens
 T_GRID = list(range(1, 17)) + [17, 20, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024,
                                2048, 4096]
 MMQ = "ggml_mmq"
@@ -131,6 +132,14 @@ def load_cards(routes_dir, gen_rows, facts):
 
 
 def route_at(entry, t):
+    """The route the table gives at t under the profile that serves t: prefill calls (t >= 17)
+    run the prefill profile, which reads prefill_bands and then prefill; decode and verify calls
+    read bands (route_table.cpp table_route)."""
+    if t >= PREFILL_MIN:
+        for lo, hi, route in entry.get("prefill_bands", []):
+            if lo <= t <= hi:
+                return route
+        return entry.get("prefill")
     for lo, hi, route in entry.get("bands", []):
         if lo <= t <= hi:
             return route

@@ -10,10 +10,17 @@ import mmq_transfer_audit as audit
 def card(generation, ridge, bands, cc=89, sms=60, dram=500.0, l2=48.0):
     return {"name": "x", "generation": generation, "ridge_t": ridge,
             "board": {"cc": cc, "sms": sms, "dram_gbps": dram, "l2_mib": l2},
-            "entries": {("q4k", "a16", "store", 1, 1): {"bands": bands}}}
+            "entries": {("q4k", "a16", "store", 1, 1): {"bands": bands, "prefill_bands": bands}}}
 
 
 class TableAudit(unittest.TestCase):
+    def test_prefill_widths_read_the_prefill_fields(self):
+        entry = {"bands": [[1, 99999, "ggml_mmq"]], "prefill_bands": [[17, 64, "rmma"]],
+                 "prefill": "staged"}
+        self.assertEqual(audit.route_at(entry, 16), "ggml_mmq")
+        self.assertEqual(audit.route_at(entry, 17), "rmma")
+        self.assertEqual(audit.route_at(entry, 65), "staged")
+
     def test_regimes_and_disagreement(self):
         a = card("g", 100, [[1, 4, "vec"], [5, 40, "ggml_mmq"], [41, 99999, "rmma"]])
         b = card("g", 300, [[1, 4, "vec"], [5, 16, "rmma"], [17, 99999, "ggml_mmq"]])

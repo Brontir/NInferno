@@ -23,21 +23,25 @@ A table keeps only the winning route per band, so the time of the route the othe
 in the repository. The audit counts, over the shared problems (format, n, k, epilogue; 10-186 per
 pair) and a grid of widths, how often "ggml_mmq or not" disagrees.
 
+Calls of 17 tokens or more run the prefill profile, so for those widths the audit reads the entry's
+`prefill_bands` and then `prefill`, as `table_route` does; narrower widths read `bands`.
+
 | regime | points | MMQ-or-not disagreements | points on MMQ (A+B) |
 |---|---|---|---|
 | decode T <= 4 | 3814 | 0 | 0 |
 | verify T 5..16 | 11733 | 802 (6.8 %) | 1766 |
-| prefill, memory-bound on both | 6948 | 254 (3.7 %) | 666 |
-| prefill, straddling | 524 | 0 | 0 |
-| prefill, compute-bound on both | 7287 | 0 | 0 |
+| prefill, memory-bound on both | 7226 | 0 | 0 |
+| prefill, straddling | 543 | 0 | 0 |
+| prefill, compute-bound on both | 7591 | 0 | 0 |
 
-- No table picks MMQ at T <= 4 or at T above the ridge: every MMQ band in the tables lies in T 5..23, so
-  every disagreement sits in the verify and the memory-bound-prefill bands.
-- There the pair's disagreement rate follows the board distance, not the generation: Ada 4.6-10.6 %
-  (distance 0.8-4.3), GA10x 3060/3090 10.0 % (3.64), GB20x 5090/5070 Ti 1.6 % (2.78), 5080/5070 Ti
-  0 % (0.57), 5090/5080 0 % (2.21), but 5090/5060 Ti 20.5 % and 5070 Ti/5060 Ti 23.9 %: the 5060 Ti
-  table never picks MMQ in the pairs' shared problems (MMQ points 0 on that side), the 5090 and the
-  70-SM card do. The same split the gate has (36 SMs false, 170 true).
+- No table picks MMQ in decode or in any prefill band: at the widths each profile serves, every MMQ
+  pick lies in T 5..16, so every disagreement sits at verify widths. The prefill MMQ choice is the gate's
+  (`mmq_prefill_wins`), not a table entry; layer 2 covers it.
+- At verify widths the pair's disagreement rate follows the board distance, not the generation: Ada
+  5.2-9.4 % (distance 0.8-4.3), GA10x 3060/3090 11.6 % (3.64), GB20x 5090/5070 Ti 2.3 % (2.78),
+  5080/5070 Ti 0 % (0.57), 5090/5080 0 % (2.21), but 5090/5060 Ti 24.1 % and 5070 Ti/5060 Ti 30.4 %: the
+  5060 Ti table never picks MMQ in the pairs' shared problems (MMQ points 0 on that side), the 5090 and
+  the 70-SM card do. The same split the gate has (36 SMs false, 170 true).
 - The exact route disagrees far more (roughly half of the points or more), which is expected between
   different SM counts and is not an MMQ question.
 
@@ -68,7 +72,7 @@ size of the loss when the donor is the wrong side.
   `evidence_us` holds default against chosen time of one card. Needs `regret_collect.py` rows
   (`ninferno-selection-regret/1`) from both cards of a pair, same build and protocol.
 - Paired mmq/w4a8 timings are all prefill at 9K-24K tokens: nothing for the memory-bound prefill
-  window (T 24 .. ~170: no table band has MMQ there, so it is also not measured against it) or for verify widths, where layer 1 shows the disagreements are.
+  window (T 17 .. ~170: no prefill table band has MMQ there, so it is also not measured against it) or for verify widths, where layer 1 shows the disagreements are.
 - GA10x has one timed card (3060): the 3060/3090 pair has no regret at all (no 3090 timings; the
   3090 is not a gate row). Ada has no L4 or 4080 timings; GB20x has no card between 70 and 170 SMs
   (the 5080 table has no MMQ entries in common with a measured prefill) and no 5060 Ti timings.
