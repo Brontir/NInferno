@@ -99,6 +99,16 @@ for line in sh("ninja", "-C", bld, "-t", "targets", "all").splitlines():
 cmd_of = {}
 for t in json.loads(sh("ctest", "--test-dir", bld, "--show-only=json-v1")).get("tests", []):
     cmd_of[t["name"]] = [str(a) for a in t.get("command", [])]
+# ctest leaves the command out for a test whose executable is not built yet (a test the branch
+# adds): the generated CTestTestfile.cmake still names it
+ADD_TEST = re.compile(r'^add_test\(\[=\[(.+?)\]=\] "([^"]+)"(.*)\)\s*$', re.M)
+for root, _, fs in os.walk(bld):
+    if "CTestTestfile.cmake" not in fs: continue
+    try: txt = open(os.path.join(root, "CTestTestfile.cmake"), encoding="utf-8", errors="replace").read()
+    except OSError: continue
+    for name, exe, rest in ADD_TEST.findall(txt):
+        if name in cmd_of and not any(os.path.basename(a) == os.path.basename(exe) for a in cmd_of[name]):
+            cmd_of[name] = [exe] + re.findall(r'"([^"]*)"', rest)
 exes_of_test = {n: sorted({os.path.basename(a) for a in c if os.path.basename(a) in exe_of}) for n, c in cmd_of.items()}
 tests_of_exe = collections.defaultdict(list)
 for n, es in exes_of_test.items():
