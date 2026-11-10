@@ -1944,8 +1944,9 @@ std::vector<Alternative> explain(const Choice& choice) {
                               fixed(chosen.accuracy.kld, 4) + " against " +
                               fixed(s.accuracy.kld, 4) + ")";
             } else if (s.worth > chosen.worth + kWorthTie) {
-                // Not the anchor, yet above the moved pick: the rule did not pass this one over.
-                alt.why_code = "lower_worth";
+                // Not the anchor, yet above the moved pick: it lies inside the anchor's band too
+                // (between the two), and the chosen is the more accurate one there.
+                alt.why_code = "within_resolution";
                 alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) +
                               " above the chosen, which is more accurate inside the speed "
                               "estimate's resolution";
@@ -1982,6 +1983,36 @@ std::vector<Alternative> explain(const Choice& choice) {
                 alt.why_code = "lower_worth";
                 alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) + " against the chosen";
             }
+            out.push_back(std::move(alt));
+        }
+    }
+    // The best worth the resolution rule passed over is always listed, also where it differs from
+    // the chosen on more than one main axis (same_but then never admits it): under the first
+    // main axis it differs on.
+    if (choice.resolved_within_resolution) {
+        const Scored& anchor = choice.scored[choice.anchor];
+        const bool listed    = std::any_of(out.begin(), out.end(),
+                                           [&](const Alternative& a) { return a.scored == &anchor; });
+        if (!listed && &anchor != &chosen) {
+            const Candidate& x = anchor.candidate;
+            const Axis axis    = x.kv != c.kv                     ? Axis::Kv
+                                 : x.activations != c.activations ? Axis::Activations
+                                 : x.drafter != c.drafter         ? Axis::Drafter
+                                 : x.chunk != c.chunk             ? Axis::Chunk
+                                 : x.state != c.state             ? Axis::State
+                                                                  : Axis::Ring;
+            Alternative alt;
+            alt.axis     = axis;
+            alt.scored   = &anchor;
+            alt.value    = value_of(anchor, axis);
+            alt.why_code = "within_resolution";
+            alt.why_not  = "worth " + fixed(anchor.worth - chosen.worth, 3) +
+                          " above the chosen, inside the speed estimate's resolution (" +
+                          fixed(100 * choice.resolution, 1) +
+                          " % decode rms): the chosen is the more accurate (KLD " +
+                          fixed(chosen.accuracy.kld, 4) + " against " +
+                          fixed(anchor.accuracy.kld, 4) +
+                          "); it differs on more axes than this one";
             out.push_back(std::move(alt));
         }
     }
