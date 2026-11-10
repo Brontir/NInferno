@@ -36,6 +36,7 @@ python3 tools/bench/run_ninferno_bench_matrix.py --preset core             # run
 | `regret_collect.py` | The lab collector for `selection_regret.py`: `ninferno_route_tune --selected-out` (the route the production path runs per problem and width) and one `--routes-out` sweep per pass into its input ([below](#offline-selection-regret)). |
 | `mmq_transfer_audit.py` | Offline audit of how the MMQ choice transfers between same-generation cards (#373): route-table agreement and gate-label regret by workload regime, from `routes/*.json` and `data/mmq_paired_prefill.json`; no GPU ([report](../../docs/maintainer/mmq-transfer-audit.md)). |
 | `quality_rows.py` | Perplexity and KL divergence of each `--activations` mode against `exact` on the fixed corpus, appended as `docs/performance/` rows. |
+| `run_521_gateup.sh` | Run `route-tune` twice on the gated gate/up shapes of #521 at T = 2-4 and print, per shape and T, the gated vector-kernel launch against 2 x a single launch (an estimate) and the best register-MMA schedule, with the paired per-pass difference and a verdict floored at the timer's raw tick (1.024 us; two passes are two samples, not a confidence range); `--summarize A.csv B.csv` re-reads two routes files without a GPU; aborts when an expected cell is missing ([DECISIONS 76](../../docs/maintainer/decisions.md)). |
 
 ## Offline selection regret
 
@@ -136,7 +137,9 @@ authority that answered, e.g. `route-table`, `cost-model`, `r8-table`) and `evid
 `t`. A file without the columns reads `unknown` for both, so the tools work on older data.
 `regret_collect.py --pci-id 0x2B85` adds the board's compute capability, SMs, DRAM rate, boost
 clock and `mma_slow` from `core/data/gpu_facts.json` (the rows' device must be that board's
-class: its chip, or its architecture where the class has no chip, and its SMs);
+class: its chip, or its architecture where the class has no chip, and its SMs; rows that record
+the `pci_device_id` route_tune now writes must carry that id, which tells two SKUs of one class
+apart, and without `--pci-id` the facts are read by the recorded id);
 `selection_regret.py` reports `by_board_regime_authority`: per board x regime x authority the
 usual summary and the evidence kinds. Regimes by T: decode T<=4, verify 5..16, and from 17 below
 or above the card's ridge

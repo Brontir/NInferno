@@ -869,6 +869,9 @@ PreparedRequest GenerationService::prepare_impl(const GenerationRequest& request
             steer.kind       = ninferno::OutputConstraintKind::StructuralTag;
             steer.definition = prompt.summary().refusal_tag;
             steer.param      = "tool_choice";
+            // The tag spells the header the output begins with (#578): the matcher reads it
+            // instead of dropping it, so a recipient is refused at its first token.
+            steer.reads_answer_header = true;
             try {
                 request_options.constraint.compiled = compile_output_constraint(
                     steer, prompt.summary().starts_in_reasoning,
@@ -1030,6 +1033,7 @@ GenerationService::compile_output_constraint(const OutputConstraintRequest& cons
     spec.answer_schema          = constraint.answer_schema;
     spec.follows_reasoning      = follows_reasoning;
     spec.special_tokens_visible = special_tokens_visible;
+    spec.reads_answer_header    = constraint.reads_answer_header;
     try {
         return engine_->compile_output_constraint(spec);
     } catch (const ninferno::OutputConstraintError& exception) {

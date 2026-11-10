@@ -109,6 +109,12 @@ ninferno_add_op_test(ninferno_route_traffic_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_traffic.cpp"
   LIBRARIES ninferno_linear_test_support)
 
+# A slice of a fused weight is priced, described and routed as a standalone weight of its own
+# shape on every golden board (#640, host only).
+ninferno_add_op_test(ninferno_slice_price_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_slice_price.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
 # A route's description (#298): the fields agree with the functions the launch and selector ask.
 ninferno_add_op_test(ninferno_route_description_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_description.cpp"
@@ -213,6 +219,13 @@ target_compile_definitions(ninferno_kernel_facts_live_test PRIVATE
 ninferno_add_op_test(ninferno_route_authorities_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_authorities.cpp"
   LIBRARIES ninferno_linear_test_support)
+
+# The route catalogue (#614): for every (family, schedule) the summation order, token invariance,
+# activation class and workspace need agree, profile_admits says what they say, and every
+# routes/*.json passes the filter. No GPU.
+ninferno_add_op_test(ninferno_route_catalogue_test NEEDS_SOURCE_DIR
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_catalogue.cpp"
+  LIBRARIES ninferno_linear_test_support ninferno::json)
 
 # The generic path's dense tuner: tuned at the first eager call, within the activation class, R8
 # decode bytes kept, the cache file read back, nothing timed inside a graph capture.

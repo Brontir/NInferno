@@ -10,8 +10,10 @@
 #include "core/device_class.h"
 #include "core/format_facts.h"
 #include "ops/common/shape_routes.h"
+#include "ops/generic/route_authorities.h"
 #include "ops/generic/route_table.h"
 #include "ops/moe/moe_internal.h"
+#include "ops/route_pins.h"
 
 #include <nlohmann/json.hpp>
 
@@ -53,7 +55,13 @@ using detail::generic::RouteEntry;
 using Json = nlohmann::json;
 
 // The first call width the prefill route profile makes token-invariant.
-constexpr std::int32_t kPrefillMinTokens = 17;
+constexpr std::int32_t kPrefillMinTokens = kPrefillPinMinTokens;
+
+// The Ask of a table's prefill-profile entry at `tokens` (a prefill route's or band's first
+// width): the profile filter (generic::profile_admits) judges a table as it judges a call.
+detail::generic::Ask prefill_ask(std::int32_t tokens) {
+    return detail::generic::Ask{detail::generic::Profile::Prefill, tokens, 1};
+}
 
 std::uint64_t key_of(QType q, RouteCompute c, Epilogue e, std::int32_t n, std::int32_t k) {
     return (static_cast<std::uint64_t>(q) << 56) | (static_cast<std::uint64_t>(c) << 52) |
@@ -160,7 +168,7 @@ void parse_entry(const Json& e, const std::string& path, Table& table) {
             // Chunk invariance: under the prefill profile every call of 17 tokens or more takes
             // this route, so it must sum K in the one order every T shares.
             const Route r = require_route(e.at("prefill"), where);
-            if (!detail::generic::route_is_token_invariant(r)) {
+            if (!detail::generic::profile_admits(r, prefill_ask(kPrefillMinTokens))) {
                 refuse("a prefill route that is not token-invariant (it would make a prefill "
                        "token's bytes depend on its call's width)", where);
             }
@@ -179,7 +187,8 @@ void parse_entry(const Json& e, const std::string& path, Table& table) {
                 if (b.t_min < kPrefillMinTokens) {
                     refuse("a prefill band below T = " + std::to_string(kPrefillMinTokens), where);
                 }
-                if (!detail::generic::same_summation(b.route, *entry.prefill)) {
+                if (!detail::generic::profile_admits_as(b.route, prefill_ask(b.t_min),
+                                                        *entry.prefill)) {
                     refuse("a prefill band whose route sums in another order than the prefill "
                            "route (a prefill token's bytes would depend on its call's width)",
                            where);
@@ -432,10 +441,12 @@ void fill_from(Table& table, const std::vector<std::shared_ptr<Table>>& lenders)
         }
         added += lent;
         for (auto& [key, entry] : other->moe) {
-            if (table.moe.emplace(key, std::move(entry)).second) {
-                ++lent;
-                ++layers;
-            }
+            if (table.moe.count(key) != 0) continue;
+            entry.lender          = other->status.gpu_class;
+            entry.lender_distance = table_distance(*other);
+            table.moe.emplace(key, std::move(entry));
+            ++lent;
+            ++layers;
         }
         if (lent == 0) continue;
         from += (from.empty() ? "" : ", ") + other->status.gpu_class + " " + std::to_string(lent);
@@ -775,6 +786,27 @@ std::optional<MoePlan> table_plan(const MoeRouteKey& key, std::int32_t tokens, b
         if (tokens >= band.t_min && tokens <= band.t_max) return band.plan;
     }
     return std::nullopt;
+}
+
+std::optional<MoeTableOrigin> table_origin(const MoeRouteKey& key) {
+    const auto table = active_table(here());
+    if (!table) return std::nullopt;
+    const auto it = table->moe.find(moe_key_of(key));
+    if (it == table->moe.end()) return std::nullopt;
+    MoeTableOrigin o;
+    o.table_class     = table->status.gpu_class;
+    o.table_distance  = table_distance(*table);
+    o.lender          = it->second.lender;
+    o.lender_distance = it->second.lender_distance;
+    try {
+        const auto chain = device_class().class_chain();
+        // Own: keyed by one of this device's classes and measured on this very board (distance 0):
+        // a sibling board reading the same file (a gb203 card on the RTX 5080's table) carries it.
+        o.own = (o.table_class == route_gpu_class() ||
+                 std::find(chain.begin(), chain.end(), o.table_class) != chain.end()) &&
+                o.table_distance == 0;
+    } catch (const std::exception&) {}
+    return o;
 }
 
 } // namespace moe

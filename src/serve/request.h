@@ -220,6 +220,9 @@ struct OutputConstraintRequest {
     bool parallel_tool_calls = true;
     // ToolCalls only: response_format beside optional tools; a text answer must match it.
     std::string answer_schema;
+    // OutputConstraintSpec::reads_answer_header. Never parsed from a request: only the server's
+    // tool_choice none steer (PromptSummary::refusal_tag) sets it.
+    bool reads_answer_header = false;
 };
 
 // Maximum tool-name length accepted at every protocol boundary and enforced on

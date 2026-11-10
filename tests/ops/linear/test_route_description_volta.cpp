@@ -111,6 +111,10 @@ int main() {
                 generic::volta_cutlass_call_runs(generic::codec_of(w), n, k, tokens, false, room);
             // A stub build (no sm_70 kernel) has no chunk: full is 0 and full - 1 would wrap.
             if (full != 0) {
+                // A chunk exists only in a build with the sm_70 kernel, and there the class is
+                // Volta at this token count: the gate must say yes with 1 GiB free, or the checks
+                // at the boundary below would hold vacuously.
+                check(cutlass, name + ": with room the CUTLASS call runs");
                 for (const std::size_t avail : {full, full - 1, full / 2, std::size_t{1}}) {
                     const auto d    = ask(avail);
                     const bool runs = generic::volta_cutlass_call_runs(generic::codec_of(w), n, k,
@@ -120,8 +124,12 @@ int main() {
                     check(d.has_value() && (d->resolved.executed == tiled) == runs &&
                               (!runs || d->workspace_bytes == chunk) && (!runs || chunk <= avail),
                           name + ": description and gate agree at free " + std::to_string(avail));
-                    if (cutlass && avail == full) check(runs, name + ": the full chunk runs");
-                    if (cutlass && avail == full - 1)
+                    // At exact fit the whole chunk runs: an off-by-one that refuses exact fit
+                    // would halve the chunk and still run.
+                    if (avail == full)
+                        check(runs && chunk == full && d.has_value() && d->workspace_bytes == full,
+                              name + ": the full chunk runs at exact fit");
+                    if (avail == full - 1)
                         check(chunk < full, name + ": one byte short halves the chunk or refuses");
                     if (avail == 1) check(!runs, name + ": one byte of workspace cannot run");
                 }

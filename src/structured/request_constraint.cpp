@@ -74,7 +74,8 @@ RequestConstraint::RequestConstraint(std::shared_ptr<const CompiledConstraint> c
     : compiled_(compiled), matcher_(std::move(compiled)),
       view_(vocabulary_view(matcher_.compiled())) {
     const std::string& close = view_.vocabulary->reasoning_close;
-    headers_                 = strips_headers && !view_.vocabulary->content_open.empty();
+    reads_header_            = reads_answer_header(*compiled_);
+    headers_ = strips_headers && !reads_header_ && !view_.vocabulary->content_open.empty();
     const bool headers       = headers_;
     gate_.close              = ReasoningGate(close, true);
     if (close.empty()) {
@@ -383,18 +384,28 @@ bool RequestConstraint::advance(ConstraintGate& gate, TokenId token, Track& trac
         }
         const std::string_view marker = view_.vocabulary->reasoning_open;
         const std::size_t on = gate.open_alive ? on_marker(marker, gate.open_matched, bytes) : 0;
+        const bool opens              = on != 0 && gate.open_matched + on == marker.size();
         const bool header    = gate.header_alive && on_header(gate.header_held, bytes);
         bool grammar         = false;
-        if (gate.grammar_alive && !matcher.terminated() && matcher.accept_token(token)) {
-            grammar = true;
-            ++track.steps;
+        if (gate.grammar_alive && !matcher.terminated()) {
+            // A grammar that spells the open marker itself takes only the marker's bytes of the
+            // token that completes it: the bytes past them are the reasoning's.
+            const bool accepted = opens && reads_header_ && on < bytes.size()
+                                      ? matcher.accept_bytes(bytes.substr(0, on))
+                                      : matcher.accept_token(token);
+            if (accepted) {
+                grammar = true;
+                ++track.steps;
+            }
         }
-        if (on != 0 && gate.open_matched + on == marker.size()) {
-            // The model opened its reasoning: the grammar waits for its terminator.
+        if (opens) {
+            // The model opened its reasoning: the grammar waits for its terminator. It restarts
+            // after it, unless it read the marker itself (reads_answer_header): it then goes on
+            // from the marker, so its rule for what may follow a reasoning section holds.
             gate.mode        = ConstraintGate::Mode::Reasoning;
             gate.close       = ReasoningGate(view_.vocabulary->reasoning_close, false);
             gate.self_opened = true;
-            reopen(track);
+            if (!(reads_header_ && grammar)) { reopen(track); }
             const std::string_view rest = bytes.substr(on);
             if (!rest.empty()) {
                 const std::size_t tail = gate.close.feed(rest);
