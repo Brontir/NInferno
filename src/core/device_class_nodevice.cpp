@@ -12,8 +12,4 @@ const DeviceClass& current_device_class() {
     throw std::runtime_error("device class: this build has no CUDA runtime");
 }
 
-// The substitution is foreign to a device that cannot be read (the CUDA build's answer where
-// cudaGetDevice fails): with no device, every substituted class is.
-bool substituted_foreign_class() noexcept { return substituted_device_class_key() != nullptr; }
-
 } // namespace ninferno

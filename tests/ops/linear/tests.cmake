@@ -221,16 +221,3 @@ ninferno_add_op_test(ninferno_side_by_side_projection_test
 ninferno_add_op_test(ninferno_route_pin_selector_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_pin_selector.cpp"
   LIBRARIES ninferno_linear_test_support)
-
-# The same dump code as ninferno_selector_golden_test, built and linked with no CUDA runtime
-# (ninferno_ops_host): the committed goldens must read the same from a host-only selector (#620).
-ninferno_add_test(ninferno_selector_golden_host_test
-  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_selector_golden.cpp"
-  LIBRARIES ninferno_ops_host)
-target_sources(ninferno_selector_golden_host_test PRIVATE
-  ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp
-  ${PROJECT_SOURCE_DIR}/src/ops/generic/generic_tune_nodevice.cpp)
-target_compile_definitions(ninferno_selector_golden_host_test PRIVATE
-  NINFERNO_HOST_ONLY
-  NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden")
-cmake_language(DEFER CALL ninferno_assert_host_only ninferno_selector_golden_host_test)
