@@ -1657,6 +1657,9 @@ int test_refusal_structural_tag() {
              "\nthat works",
              "today is sunny",
              "to be sure",
+             "t",
+             "to",
+             " to",
          }) {
         failures += check(admits(ok), "refusal tag admits: " + std::string(ok));
     }
@@ -1679,6 +1682,13 @@ int test_refusal_structural_tag() {
              "<|channel|>final<|message|>b<|start|>assistant<|channel|>commentary",
          }) {
         failures += check(!admits(bad), "refusal tag refuses: " + std::string(bad));
+    }
+    // An answer that is only a prefix of "to=" may stop there.
+    for (const std::string_view whole : {"t", "to", " to", "Hello there"}) {
+        ninferno::structured::ConstraintMatcher matcher(compiled);
+        const bool accepted = matcher.accept_bytes(whole);
+        failures += check(accepted && matcher.completed(),
+                          "refusal tag may stop after: " + std::string(whole));
     }
     return failures;
 }
