@@ -49,3 +49,27 @@ src/ops/generic/ggml_mmq/ggml_mmq.h
 src/ops/linear/nvfp4/nvfp4_a4_plan.h
 src/ops/linear/nvfp4/nvfp4_geometry.h
 src/ops/linear/nvfp4/nvfp4_layout.h
+# types, layouts and constants the selector reads: format tables (weight.h), workspace layout
+# (layout.*), cost constants, kernel-side tile and block facts, policy enums
+src/core/weight.h
+src/core/format_facts.*
+src/core/layout.*
+src/core/dtype.*
+src/core/cost_constants.h
+src/core/machine_facts.cpp
+src/core/ggml_frag.*
+src/core/pdl.cuh
+src/core/arch_family.cuh
+src/ops/generic/random_weight.h
+src/ops/generic/ggml_mmq/ggml_mmq.cu
+src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh
+src/ops/moe/moe_internal.h
+include/ninferno/ops/linear.h
+include/ninferno/ops/moe.h
+include/ninferno/option_enums.h
+include/ninferno/types.h
+# generated inputs: the board rows and the embedded facts table are built from these
+cmake/BoardRegistry.cmake
+cmake/EmbedText.cmake
+src/core/CMakeLists.txt
+src/core/embedded_gpu_facts.h.in

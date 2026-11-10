@@ -1,5 +1,6 @@
 import io
 import re
+import subprocess
 import json
 import sys
 import tempfile
@@ -64,50 +65,112 @@ class PathMatching(unittest.TestCase):
                 self.assertTrue((ROOT / text).exists(), text)
 
 
-# Files in the selector's include closure that do not decide (types, I/O, containers).
+# Files in the include closure that decide nothing: memory, I/O, hashing, timing, containers.
 NOT_DECIDING = {
-    "include/ninferno/ops/linear.h", "include/ninferno/ops/moe.h", "include/ninferno/option_enums.h",
-    "src/core/arena.h", "src/core/cache_file.h", "src/core/cuda_error.h", "src/core/device.h",
-    "src/core/dtype.h", "src/core/file_io.h", "src/core/layout.h", "src/core/per_device.h",
-    "src/core/sha256.h", "src/core/sys.h", "src/core/tensor.h", "src/core/tune_timer.h",
-    "src/core/units.h", "src/core/weight.h", "src/core/weight_view.h", "src/ops/moe/moe_internal.h",
+    "src/core/arena.cu", "src/core/arena.h", "src/core/cache_file.h", "src/core/checked.h",
+    "src/core/cuda_error.h", "src/core/device.cu", "src/core/device.h", "src/core/file_io.h",
+    "src/core/hex.h", "src/core/per_device.h", "src/core/sha256.cpp", "src/core/sha256.h",
+    "src/core/sys.cpp", "src/core/sys.h", "src/core/tensor.cpp", "src/core/tensor.h",
+    "src/core/tune_timer.cu", "src/core/tune_timer.h", "src/core/units.h",
+    "src/core/weight_view.cpp", "src/core/weight_view.h",
+    # device code reached through the listed ggml_mmq.cu / generic_gemm.cpp: it computes, the
+    # selector reads none of its constants
+    "src/ops/common/e2m1.cuh", "src/ops/common/fp8_e4m3.cuh", "src/ops/common/memory.cuh",
+    "src/ops/common/mma.cuh", "src/ops/generic/generic_gemm.cuh", "src/ops/generic/ggml_iq_tables.cuh",
+    "src/ops/linear/fp8/fp8_a16_codec.cuh",
 }
-SEEDS = ["src/ops/generic/generic_gemm.cpp", "src/ops/generic/generic_cost.cpp",
-         "src/ops/generic/generic_workspace.cpp", "src/ops/generic/generic_coverage.cpp",
-         "src/ops/generic/generic_ggml.cpp", "src/ops/generic/generic_tune.cpp",
-         "src/ops/generic/route_query.cpp", "src/ops/generic/selector_facts.cpp",
-         "src/ops/route_table.cpp", "src/ops/generic/route_authorities.cpp",
-         "src/ops/generic/kernel_roofline.h"]
-INCLUDE = re.compile(r'^\s*#\s*include\s*"([^"]+)"', re.M)
+# Includes that resolve to no tracked file: generated at build time (name -> the generator input,
+# which must be listed) or third-party code.
+GENERATED = {
+    "core/board_registry_rows.inc": "cmake/BoardRegistry.cmake",
+    "core/embedded_gpu_facts.h": "src/core/embedded_gpu_facts.h.in",
+}
+THIRD_PARTY = ("ggml-cuda/", "nlohmann/")
+INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]', re.M)
+SOURCE_EXT = (".h", ".hpp", ".cuh", ".cpp", ".cu", ".cc")
 
 
-def include_closure():
-    seen, todo = set(), [s for s in SEEDS if (ROOT / s).exists()]
+def tracked():
+    out = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True).stdout
+    return [f for f in out.splitlines() if f]
+
+
+def include_closure(files):
+    """Files reachable from every listed file: its #includes and the .cpp/.cu beside each header."""
+    known = set(files)
+    seen, todo, unresolved = set(), gg.decision_files(files, PATHS), set()
     while todo:
         f = todo.pop()
         if f in seen:
             continue
         seen.add(f)
-        text = (ROOT / f).read_text(encoding="utf-8", errors="replace")
-        for name in INCLUDE.findall(text):
-            for base in (Path(f).parent, Path("src"), Path("include")):
-                cand = (base / name).as_posix()
-                if (ROOT / cand).exists():
+        if not f.endswith(SOURCE_EXT):
+            continue
+        stem = Path(f).with_suffix("").as_posix()
+        todo += [stem + e for e in SOURCE_EXT if stem + e in known]
+        for name in INCLUDE.findall((ROOT / f).read_text(encoding="utf-8", errors="replace")):
+            for base in (Path(f).parent.as_posix(), "src", "include", ""):
+                cand = (Path(base) / name).as_posix()
+                if cand in known:
                     todo.append(cand)
                     break
-    return seen
+            else:
+                unresolved.add(name)
+    return seen, unresolved
 
 
 class Closure(unittest.TestCase):
-    def test_every_included_file_is_listed_or_named_not_deciding(self):
-        closure = include_closure()
-        self.assertGreater(len(closure), 20)
+    def test_every_reached_file_is_listed_or_named_not_deciding(self):
+        closure, _ = include_closure(tracked())
+        self.assertGreater(len(closure), 50)
         missing = sorted(f for f in closure if f not in NOT_DECIDING and not gg.decision_files([f], PATHS))
         self.assertEqual(missing, [], "add to tools/audit/decision_paths.txt, or to NOT_DECIDING if it decides nothing")
 
+    def test_not_deciding_files_exist_and_are_unlisted(self):
+        files = set(tracked())
+        for f in NOT_DECIDING:
+            self.assertIn(f, files)
+            self.assertFalse(gg.decision_files([f], PATHS), f)
+
+    def test_unresolved_includes_are_generated_listed_or_third_party(self):
+        _, unresolved = include_closure(tracked())
+        for name in sorted(unresolved):
+            if name in GENERATED:
+                self.assertTrue(gg.decision_files([GENERATED[name]], PATHS), GENERATED[name])
+        for name, gen in GENERATED.items():
+            self.assertTrue((ROOT / gen).exists(), gen)
+        # a quoted project include nothing resolves would be a hole in the walk
+        quoted = set()
+        for f in include_closure(tracked())[0]:
+            if f.endswith(SOURCE_EXT):
+                text = (ROOT / f).read_text(encoding="utf-8", errors="replace")
+                quoted |= set(re.findall(r'^\s*#\s*include\s*"([^"]+)"', text, re.M))
+        for name in sorted(quoted & unresolved):
+            self.assertTrue(name in GENERATED or name.startswith(THIRD_PARTY), f"unresolved include {name}")
+
 
 class Labels(unittest.TestCase):
-    def test_rename_listing_uses_nul_separated_paths(self):
+    def test_changed_files_use_nul_separated_no_rename_listing(self):
+        calls = []
+
+        def fake_git(args, cwd):
+            calls.append(args)
+            return "a b.json\0old.h\0"
+
+        orig = gg.git
+        gg.git = fake_git
+        try:
+            out = io.StringIO()
+            with redirect_stdout(out):
+                rc = gg.main(["--base-ref", "master", "--paths", str(gg.PATHS_FILE)],
+                             run_diff=lambda rng: (0, "no golden changes"))
+        finally:
+            gg.git = orig
+        self.assertIn("-z", calls[0])
+        self.assertIn("--no-renames", calls[0])
+        self.assertEqual(rc, 0)  # neither "a b.json" nor "old.h" is on the list
+
+    def test_path_with_space_still_matches(self):
         self.assertEqual(gg.decision_files(["routes/a b.json"], PATHS), ["routes/a b.json"])
 
     def test_labels(self):
