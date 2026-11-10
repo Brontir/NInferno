@@ -1052,6 +1052,37 @@ int main() {
                "a fit fallback that loses at every bound: plain (" +
                    sp::load_label(sp::facts_load(p)) + ")");
     }
+    // A choice entered twice is counted once: a fit fallback equal to the overall choice (the
+    // same configuration over the same sections) does not weigh twice in the leximin order. The
+    // overall mtp:2 gains A1 at depth 1 and 1.3 at 2; the thinking mtp:2 gains 1.9 at 1 and A1 at
+    // 2 (a tie on the least gain, exact: x 0.5). Once each, depth 1 wins on the next gain (1.9
+    // against 1.3); with the overall counted twice, depth 2 would (1.3 against A1).
+    {
+        sp::Profile p;
+        p.overall.config      = sp::SpecConfig::parse("mtp:2");
+        p.overall.tok_s       = 2.6;
+        p.overall.plain_tok_s = 1.0;
+        sp::SpecConfig one    = p.overall.config;
+        one.k                 = 1;
+        for (const char* family : {"math", "code", "prose", "thinking"}) {
+            const bool thinking = std::string(family) == "thinking";
+            p.measurements.push_back({.family = family, .tokens = 100, .seconds = 1.0});
+            p.measurements.push_back(
+                {.config = one, .family = family, .tokens = 100, .seconds = thinking ? 0.5 : 0.8});
+        }
+        p.joint_scale[one.label()]              = {{2, 0.95}};
+        p.joint_scale[p.overall.config.label()] = {{2, 0.5}};
+        const double a1                         = *sp::measured_gain(p, one, std::nullopt) * 0.95;
+        p.thinking                              = p.overall;
+        p.thinking.tok_s                        = a1 / 0.5;
+        expect(sp::load_label(sp::facts_load(p)) == "2:1,3:0",
+               "overall and thinking once each: depth 1 (" + sp::load_label(sp::facts_load(p)) +
+                   ")");
+        p.fit_fallback = p.overall;
+        expect(sp::load_label(sp::facts_load(p)) == "2:1,3:0",
+               "a fit fallback equal to the overall choice counts once: depth 1 (" +
+                   sp::load_label(sp::facts_load(p)) + ")");
+    }
     // A table is clipped to its running minimum: a depth that rises again is not written.
     expect(sp::load_label(sp::clipped_load({3, 3, 2, 0})) == "2:3,4:2,5:0", "falls are recorded");
     expect(sp::load_label(sp::clipped_load({2, 2, 3, 2})) == "2:2", "a rise is clipped, no 4:2");

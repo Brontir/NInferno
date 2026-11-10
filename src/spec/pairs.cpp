@@ -895,7 +895,13 @@ std::vector<LoadBound> facts_load(const Profile& p) {
           std::pair<const Choice*, std::optional<bool>>{&runs.non_thinking, false},
           std::pair<const Choice*, std::optional<bool>>{p.fit_fallback ? &*p.fit_fallback : nullptr,
                                                         std::nullopt}}) {
-        if (c != nullptr && c->config.enabled()) { choices.emplace_back(c, thinking); }
+        if (c == nullptr || !c->config.enabled()) { continue; }
+        // A configuration entered twice over the same sections (the fit fallback equal to the
+        // overall choice) is one choice: twice, its gain would count twice in the leximin order.
+        const bool seen = std::any_of(choices.begin(), choices.end(), [&](const auto& other) {
+            return other.first->config.label() == c->config.label() && other.second == thinking;
+        });
+        if (!seen) { choices.emplace_back(c, thinking); }
     }
     // A choice's gain at C streams under a bound of `bound`: it runs min(bound, its own depth), at
     // that depth's one-request gain times R_1 / R_C there; nullopt where either is unknown.
