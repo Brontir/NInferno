@@ -175,11 +175,8 @@ std::string known_source(const KnownCase& c) {
     if (c.profile == 3) ops::set_route_pins({PrefillRoute::Auto, DecodeRoute::A16, MoePath::Auto});
     if (c.profile == 4) ops::set_route_pins({PrefillRoute::A16, DecodeRoute::Auto, MoePath::Auto});
     try {
-        return std::string(
-            generic::select_answer(problem, w, c.tokens, c.prefill).evidence.source);
-    } catch (const std::exception& error) {
-        return std::string("threw ") + error.what();
-    }
+        return std::string(generic::select_answer(problem, w, c.tokens, c.prefill).evidence.source);
+    } catch (const std::exception& error) { return std::string("threw ") + error.what(); }
 }
 
 void check_known() {
