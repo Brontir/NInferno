@@ -287,7 +287,16 @@ void check_known() {
 
 // Authorities and kinds the grids above never reach, with why. Anything else unreached fails: a
 // new authority, or a restatement that moved the last call off one, must say so here.
-const std::map<std::string_view, std::string_view> kUnreached      = {};
+const std::map<std::string_view, std::string_view> kUnreached = {
+    {"dense-tune", "routes timed on a device are not a substituted board's "
+                   "(tuned_dense_route: substituted_foreign_class) and no tune runs here"},
+    {"dense-tune-prefill-band", "the same tuner's bands, the same refusal for a substituted board"},
+    {"staged-rule", "no format of the grid is left to the staged MMA: the tiled and register "
+                    "routes answer first (observed on the facts boards, not derived)"},
+    {"staged-fallback", "the same: a supported weight of the grid never reaches it"},
+    {"scalar-fallback", "the safety net: answers only when every authority before it abstains "
+                        "for a supported weight, which no format of the grid does"},
+};
 const std::map<std::string_view, std::string_view> kUnreachedKinds = {};
 
 void check_coverage(const std::set<std::string_view>& names) {
