@@ -97,6 +97,9 @@ src/ops/generic/sources.cmake
 src/ops/generic/embedded_kernel_facts.h.in
 src/ops/generic/ggml_mmq/sources.cmake
 CMakeLists.txt
+# sets NINFERNO_DEFAULT_ROUTE_DIR on route_table.cpp: the golden test reads its routes through
+# route_table_dir(), which returns that define when no routes directory sits beside the executable
+src/ops/basic_sources.cmake
 # the golden producer, what it builds weights with, and its target (source, support library and
 # NINFERNO_SELECTOR_GOLDEN_DIR are set in tests.cmake)
 tests/ops/linear/tests.cmake

@@ -337,7 +337,6 @@ EXCLUDED = [
     ("src/models/**", "model programs: not linked into the golden test"),
     ("src/ops/**/sources.cmake", "source lists of the per-op libraries: they run a route"),
     ("src/ops/CMakeLists.txt", "target wiring of ninferno_ops (the selector's own lists are listed)"),
-    ("src/ops/basic_sources.cmake", "source list of the elementwise ops"),
     ("src/chat/**", "chat conventions: not linked into the golden test"),
     ("src/spec/**", "speculation data: not linked into the golden test"),
     ("src/ui/**", "web UI: not linked into the golden test"),
@@ -412,6 +411,16 @@ class Completeness(unittest.TestCase):
                   "src/ops/generic/data/kernel_facts/sm_120a.txt", "CMakeLists.txt",
                   "src/core/mmq_columns.h", "src/core/measured_boards.h"):
             self.assertTrue(gg.decision_files([f], PATHS), f)
+
+    def test_the_default_route_dir_define_is_a_decision_path(self):
+        # the selector's tuning reads its routes through route_table_dir(), which falls back to the define
+        self.assertTrue(gg.decision_files(["src/ops/basic_sources.cmake"], PATHS))
+        self.assertIn("NINFERNO_DEFAULT_ROUTE_DIR", (ROOT / "src/ops/basic_sources.cmake").read_text(encoding="utf-8"))
+        self.assertIn("NINFERNO_DEFAULT_ROUTE_DIR", (ROOT / "src/ops/route_table.cpp").read_text(encoding="utf-8"))
+        self.assertIn("route_table_dir()",
+                      (ROOT / "src/ops/generic/generic_tune.cpp").read_text(encoding="utf-8"))
+        # the other source-list files stay excluded: they only say which files are compiled
+        self.assertFalse(gg.decision_files(["src/ops/CMakeLists.txt"], PATHS))
 
     def test_the_shared_test_target_helpers_are_decision_paths(self):
         # ninferno_add_test / ninferno_link_ops shape every test target, the golden producer included
