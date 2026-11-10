@@ -66,9 +66,21 @@ struct Known {
     const char* cause;
 };
 
-// None is known until the stands have run the test; entries are added with their cause.
+// The price of a route on a board with more SMs is higher by up to 1.5x for the families below
+// (found by this test, roadmap #620 step 6). Cause, one for all four: price_routes
+// (ops/generic/generic_cost.cpp, `cost` lambda and the I8 / staged / W4A8 tile loops) charges the
+// busiest SM `q` CTAs of bytes at bw / sms, with q = ceil(CTAs / sms): bw / sms is that SM's share
+// only when every SM pulls at once, so a grid whose last wave leaves SMs idle (50 -> 62 SMs for
+// 100 CTAs: q stays 2, q x sms goes 100 -> 124) is overcharged when SMs are added. The DRAM floor
+// n k bpw / bw does not move with the SMs. Bandwidth x1.25 fails nowhere.
+constexpr const char* kWaveCause =
+    "price_routes charges the busiest SM q = ceil(CTAs/sms) CTAs of bytes at bw/sms (wave "
+    "quantization of the memory term)";
 constexpr Known kKnown[] = {
-    {"", "", ""},
+    {"P1 sms x1.25", "RegisterMma", kWaveCause},
+    {"P1 sms x1.25", "StagedMma", kWaveCause},
+    {"P1 sms x1.25", "W4a8Mma", kWaveCause},
+    {"P1 sms x1.25", "I8Mma", kWaveCause},
 };
 
 // ---- Findings ----------------------------------------------------------------------------------
@@ -226,6 +238,13 @@ void describe(DescribedWeight& out, QType qtype, Epilogue epilogue, std::int32_t
     out.weight     = native_weight(out.view, nvfp4 ? 1.0F : 0.0F);
 }
 
+const char* family_name(int family) {
+    constexpr const char* kNames[] = {"RegisterMma", "Scalar",    "W4a4Mma",       "TiledMma",
+                                      "W4a8Mma",     "StagedMma", "Nvfp4TiledMma", "R8Mma",
+                                      "GgmlMmq",     "GgmlVec",   "I8Mma"};
+    return family >= 0 && family < static_cast<int>(std::size(kNames)) ? kNames[family] : "family?";
+}
+
 using Prices = std::map<std::pair<int, int>, double>; // (family, schedule) -> seconds
 
 // The time of every route the cost model prices for the call on `d`; false where the board has no
@@ -296,8 +315,8 @@ void property_price_monotone(const std::vector<Row>& rows) {
                                     std::ostringstream text;
                                     text << where << ": " << seconds << " s -> " << it->second
                                          << " s";
-                                    note(property, "family " + std::to_string(route.first),
-                                         row.name, text.str(), it->second / seconds);
+                                    note(property, family_name(route.first), row.name, text.str(),
+                                         it->second / seconds);
                                 }
                             }
                         }
@@ -453,15 +472,19 @@ int main() {
 
         int unexpected = 0;
         for (const auto& [id, g] : groups) {
-            const bool known =
-                std::any_of(std::begin(kKnown), std::end(kKnown), [&](const Known& k) {
-                    return id.first == k.property && id.second == k.key;
-                });
+            const Known* known = nullptr;
+            for (const Known& k : kKnown) {
+                if (id.first == k.property && id.second == k.key) { known = &k; }
+            }
             std::cout << (known ? "XFAIL " : "FAIL  ") << id.first << " [" << id.second
                       << "]: " << g.count << " case(s) on " << g.rows.size() << " row(s)";
             if (g.worst > 0) { std::cout << ", worst x" << g.worst; }
             std::cout << "\n    e.g. " << g.example << '\n';
-            if (!known) { ++unexpected; }
+            if (known) {
+                std::cout << "    cause: " << known->cause << '\n';
+            } else {
+                ++unexpected;
+            }
         }
         for (const Known& k : kKnown) {
             if (k.property[0] == '\0') { continue; }
