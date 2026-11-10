@@ -381,11 +381,23 @@ def unaccounted(files):
                   and not any(rx.match(f) for _, rx, _ in EXCLUDED_RX))
 
 
-DECISION_TARGETS = {"ninferno_ops", "ninferno_core", "ninferno_ggml_mmq"}  # the libraries the golden links
-# Commands that set a define; the others (set_target_properties, set_property) count when they name it.
+# The libraries the golden links: ninferno_ops and ninferno_core, ninferno_ggml_mmq, plus what they link
+# (ninferno_core PUBLIC-links ninferno_core_host, src/core/CMakeLists.txt; ninferno_ops PRIVATE-links
+# ninferno_nvfp4_non_rdc, src/ops/CMakeLists.txt). Third-party targets are out of scope.
+DECISION_TARGETS = {"ninferno_ops", "ninferno_core", "ninferno_core_host", "ninferno_ggml_mmq",
+                    "ninferno_nvfp4_non_rdc"}
+# Commands that set a define on a named target or source; set_target_properties / set_property /
+# target_compile_options count only when they carry a define.
 DEFINE_COMMANDS = {"target_compile_definitions", "set_source_files_properties", "set_target_properties",
-                   "set_property"}
-# CMake files that set a define on a decision source or target and are not listed, each with its reason.
+                   "set_property", "target_compile_options"}
+# Directory-scope commands: they reach every target of the directory (and below), named or not.
+DIRECTORY_DEFINE_COMMANDS = {"add_compile_definitions", "add_definitions"}
+VALUE_KEYWORDS = {"PRIVATE", "PUBLIC", "INTERFACE", "PROPERTIES", "PROPERTY", "APPEND", "BEFORE", "TARGET_DIRECTORY"}
+HAS_D_FLAG = re.compile(r"(?<![\w.])[-/]D[A-Za-z_]")  # -DNAME or /DNAME in an option or flags string
+PATH_PREFIXES = re.compile(r"\$\{(?:CMAKE_CURRENT_LIST_DIR|PROJECT_SOURCE_DIR|CMAKE_CURRENT_SOURCE_DIR|"
+                           r"CMAKE_SOURCE_DIR)\}/")
+# CMake files that set a define on a decision source or target, or at directory scope, and are not
+# listed, each with its reason.
 DEFINE_INJECTORS_ALLOWED = {
     "src/ops/softmax_attention/sources.cmake":
         "NINFERNO_VOLTA_SPLITD / FLASH_NAMESPACE on the Volta split-D attention kernel (ninferno_ops): "
@@ -393,13 +405,22 @@ DEFINE_INJECTORS_ALLOWED = {
     "src/runtime/CMakeLists.txt":
         "version, PTX and architecture strings on the decision fingerprint (runtime layer, not linked "
         "into the golden test)",
+    "apps/CMakeLists.txt":
+        "the version string on the program executables, set in a foreach over their names (a variable "
+        "target the scan cannot resolve): executables, not decision libraries",
+    "cmake/Windows.cmake":
+        "MSVC platform macros only (NOMINMAX, WIN32_LEAN_AND_MEAN, _CRT_SECURE_NO_WARNINGS, "
+        "_USE_MATH_DEFINES, a CCCL warning switch): no value reaches a selector decision",
 }
 
 
 def define_injectors(files, patterns, read=None):
     """{CMake file: why} for every tracked, unlisted .cmake / CMakeLists.txt that sets a compile
-    definition on a listed decision source or on a golden library target (ninferno_ops, ninferno_core,
-    ninferno_ggml_mmq). Source names are resolved against the file's directory and the repository root."""
+    definition (a) at directory scope (add_compile_definitions, add_definitions, -D in
+    add_compile_options or CMAKE_*_FLAGS, set_property(DIRECTORY ...), set_directory_properties), which
+    reaches the decision targets of its directory without naming them, or (b) on a listed decision
+    source, a golden library target (DECISION_TARGETS) or a `${...}` target (unknown, so counted).
+    Source names are resolved against the file's directory and the repository root."""
     read = read or (lambda f: (ROOT / f).read_text(encoding="utf-8", errors="replace"))
     listed = {f for f in files if any(rx.match(f) for _, rx in patterns)}
     out = {}
@@ -409,19 +430,38 @@ def define_injectors(files, patterns, read=None):
             continue
         base = Path(cm).parent.as_posix()
         for command, args, _ in cmake_commands(read(cm)):
-            if command not in DEFINE_COMMANDS:
-                continue
-            if command in ("set_target_properties", "set_property") and "COMPILE_DEFINITIONS" not in args:
-                continue
-            for tok in re.split(r'[\s;"()]+', args):
-                tok = tok.replace("${CMAKE_CURRENT_LIST_DIR}/", "").replace("${PROJECT_SOURCE_DIR}/", "")
-                if not tok:
+            has_d = bool(HAS_D_FLAG.search(args))
+            has_defs = "COMPILE_DEFINITIONS" in args
+            words = args.split()
+            first = words[0] if words else ""
+            if command in DIRECTORY_DEFINE_COMMANDS:
+                out.setdefault(cm, f"{command} at directory scope")
+            elif command == "add_compile_options" and has_d:
+                out.setdefault(cm, "add_compile_options carries a -D at directory scope")
+            elif command in ("set", "string") and has_d and re.search(r"CMAKE_\w*FLAGS", args):
+                out.setdefault(cm, f"{command} adds a -D to CMAKE_*_FLAGS (directory scope)")
+            elif command == "set_directory_properties" and (has_defs or has_d):
+                out.setdefault(cm, "set_directory_properties sets a define at directory scope")
+            elif command == "set_property" and first == "DIRECTORY" and (has_defs or has_d):
+                out.setdefault(cm, "set_property(DIRECTORY ...) sets a define at directory scope")
+            elif command in DEFINE_COMMANDS:
+                if command == "target_compile_options" and not has_d:
                     continue
-                if tok in DECISION_TARGETS:
-                    out.setdefault(cm, f"{command} names target {tok}")
-                elif any(os.path.normpath(os.path.join(d, tok)).replace("\\", "/") in listed
-                         for d in (base, ".")):
-                    out.setdefault(cm, f"{command} names the decision source {tok}")
+                if command in ("set_target_properties", "set_property") and not (has_defs or has_d):
+                    continue
+                in_head = True  # the target / source names, before the keyword that opens the values
+                for tok in re.split(r'[\s;"()]+', args):
+                    tok = PATH_PREFIXES.sub("", tok)
+                    if not tok:
+                        continue
+                    in_head = in_head and tok not in VALUE_KEYWORDS
+                    if tok in DECISION_TARGETS:
+                        out.setdefault(cm, f"{command} names target {tok}")
+                    elif in_head and tok.startswith("${") and tok.endswith("}"):
+                        out.setdefault(cm, f"{command} names a target or source by variable {tok}")
+                    elif any(os.path.normpath(os.path.join(d, tok)).replace("\\", "/") in listed
+                             for d in (base, ".")):
+                        out.setdefault(cm, f"{command} names the decision source {tok}")
     return out
 
 
@@ -481,7 +521,43 @@ class Completeness(unittest.TestCase):
         self.assertIn("src/ops/basic_sources.cmake", found)
         self.assertNotIn("src/ops/basic_sources.cmake", define_injectors(tracked(), PATHS))
 
-    def test_the_define_injector_scan_sees_each_way_to_inject_a_define(self):
+    def test_the_define_injector_scan_sees_directory_scope_and_closure_targets(self):
+        files = {
+            "a/x.cmake": 'add_compile_definitions(NOMINMAX)\n',
+            "b/CMakeLists.txt": 'add_definitions(-DX=1)\n',
+            "c/x.cmake": 'add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-DX=1>")\n',
+            "d/x.cmake": 'string(APPEND CMAKE_CXX_FLAGS " -DX=1")\n',
+            "e/x.cmake": 'set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -DX=1")\n',
+            "f/x.cmake": 'set_property(DIRECTORY PROPERTY COMPILE_DEFINITIONS X=1)\n',
+            "g/x.cmake": 'set_directory_properties(PROPERTIES COMPILE_DEFINITIONS X=1)\n',
+            "h/x.cmake": 'target_compile_definitions(ninferno_core_host PRIVATE X=1)\n',
+            "i/x.cmake": 'target_compile_definitions(ninferno_nvfp4_non_rdc PRIVATE X=1)\n',
+            "j/x.cmake": 'target_compile_options(ninferno_ops PRIVATE -DX=1)\n',
+            "k/x.cmake": 'foreach(t a b)\n  target_compile_definitions(${t} PRIVATE X=1)\nendforeach()\n',
+            "l/x.cmake": 'set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/r.cpp" PROPERTIES '
+                         'COMPILE_DEFINITIONS X=1)\n',
+            "m/x.cmake": 'set_source_files_properties("${CMAKE_SOURCE_DIR}/m/r.cpp" PROPERTIES '
+                         'COMPILE_DEFINITIONS X=1)\n',
+            # not injections
+            "n/x.cmake": 'add_compile_options(/utf-8 -O2)\n',
+            "o/x.cmake": 'target_compile_options(ninferno_ops PRIVATE -O2)\n',
+            "p/x.cmake": 'target_compile_definitions(my_exe PRIVATE V="${PROJECT_SOURCE_DIR}")\n',
+            "q/x.cmake": 'set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2")\n',
+        }
+        pats = [("l/r.cpp", gg.glob_to_regex("l/r.cpp")), ("m/r.cpp", gg.glob_to_regex("m/r.cpp"))]
+        found = define_injectors(list(files) + ["l/r.cpp", "m/r.cpp"], pats, read=files.__getitem__)
+        expect = [f for f in files if f[0] in "abcdefghijklm"]
+        self.assertEqual(sorted(found), sorted(expect))
+
+    def test_the_decision_targets_cover_the_link_closure_of_the_golden_libraries(self):
+        def text(f):
+            return (ROOT / f).read_text(encoding="utf-8")
+        self.assertRegex(text("src/core/CMakeLists.txt"),
+                         r"target_link_libraries\(ninferno_core PUBLIC ninferno_core_host")
+        self.assertIn("ninferno_nvfp4_non_rdc", text("src/ops/CMakeLists.txt"))
+        self.assertLessEqual({"ninferno_core_host", "ninferno_nvfp4_non_rdc"}, DECISION_TARGETS)
+
+    def test_the_define_injector_scan_sees_target_and_source_defines(self):
         files = {
             "a/CMakeLists.txt": 'target_compile_definitions(ninferno_ops PRIVATE X=1)\n',
             "b/x.cmake": 'set_source_files_properties("${CMAKE_CURRENT_LIST_DIR}/route_table.cpp" PROPERTIES\n'
