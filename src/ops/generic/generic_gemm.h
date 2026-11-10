@@ -14,7 +14,14 @@
 #include "ninferno/ops/linear.h"
 #include "ninferno/option_enums.h"
 
-#include <cuda_runtime.h>
+#ifdef NINFERNO_HOST_ONLY
+// The host part of the selector (ninferno_ops_host) names a stream in the launch declarations and
+// nothing more: the handle type, spelled as the CUDA runtime does, without the runtime (#620).
+struct CUstream_st;
+using cudaStream_t = CUstream_st*;
+#else
+#    include <cuda_runtime.h>
+#endif
 
 #include <cstddef>
 #include <cstdint>

@@ -10,7 +10,8 @@ endfunction()
 # the library links no device code of its own.
 if(NINFERNO_SHARED_OP_TESTS)
   add_library(ninferno_ops_shared SHARED "${CMAKE_CURRENT_LIST_DIR}/ops_shared_anchor.cpp")
-  set(ninferno_whole $<TARGET_FILE:ninferno_ops> $<TARGET_FILE:ninferno_core>)
+  set(ninferno_whole $<TARGET_FILE:ninferno_ops> $<TARGET_FILE:ninferno_ops_host> $<TARGET_FILE:ninferno_core>
+      $<TARGET_FILE:ninferno_core_host>)
   if(TARGET ninferno_nvfp4_non_rdc)
     list(APPEND ninferno_whole $<TARGET_FILE:ninferno_nvfp4_non_rdc>)
   endif()

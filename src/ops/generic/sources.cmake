@@ -23,9 +23,20 @@ configure_file("${CMAKE_CURRENT_LIST_DIR}/embedded_kernel_facts.h.in"
   "${CMAKE_CURRENT_BINARY_DIR}/generated/ops/generic/embedded_kernel_facts.h" @ONLY)
 target_include_directories(ninferno_ops PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
+# The host part of the selector, with no CUDA runtime (#620 step 11): the kernel-facts snapshots'
+# reader and the route names, schedule accessors and format admission that read no device. ninferno_ops
+# links it PUBLIC; the shared-ops test library takes it whole (tests/cmake/NInfernoTests.cmake).
+add_library(ninferno_ops_host STATIC
+  "${CMAKE_CURRENT_LIST_DIR}/kernel_facts.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_routes.cpp")
+ninferno_internal_includes(ninferno_ops_host)
+target_include_directories(ninferno_ops_host PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_compile_definitions(ninferno_ops_host PRIVATE NINFERNO_HOST_ONLY)
+target_link_libraries(ninferno_ops_host PUBLIC ninferno_core_host)
+target_link_libraries(ninferno_ops PUBLIC ninferno_ops_host)
+
 ninferno_target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/generic_gemm.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/kernel_facts.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_coverage.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_workspace.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_cost.cpp"

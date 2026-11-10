@@ -173,3 +173,12 @@ set_tests_properties(ninferno_tool_grammar_budget_test PROPERTIES SKIP_RETURN_CO
 # YaRN rotary frequencies (core/yarn.h, the converter and --rope-yarn-factor), no GPU.
 ninferno_add_test(ninferno_yarn_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_yarn.cpp"
   LIBRARIES ninferno_core)
+
+# The host part of the generic selector (ops/generic/generic_routes.cpp, kernel_facts.cpp): route
+# names, the register-MMA variant rules, the kernel-facts snapshots; no CUDA runtime, no GPU
+# (#620 step 11).
+ninferno_add_test(ninferno_generic_routes_host_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_generic_routes_host.cpp"
+  LIBRARIES ninferno_ops_host)
+target_compile_definitions(ninferno_generic_routes_host_test PRIVATE NINFERNO_HOST_ONLY)
+cmake_language(DEFER CALL ninferno_assert_host_only ninferno_generic_routes_host_test)
