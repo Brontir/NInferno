@@ -1,0 +1,311 @@
+# rtx5070ti base
+qwen3.6-35b-a3b q4k/q6k E256 k8 H2048 F512 p0 speed T=1..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b q4k/q6k E256 k8 H2048 F512 p0 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b q4k/q6k E256 k8 H2048 F512 p0 prefill T=1..16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b q4k/q6k E256 k8 H2048 F512 p0 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 prefill-schedule gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b q4k/q6k E256 k8 H2048 F512 p0 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b q4k/q6k E256 k8 H2048 F512 p0 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b q4k/q6k E256 k8 H2048 F512 p1 speed T=1..8 r8.w4r1|rmma.m1.n1.w1x4 jobs=8 decode-r8
+qwen3.6-35b-a3b q4k/q6k E256 k8 H2048 F512 p1 speed T=16..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+qwen3.6-35b-a3b q4k/q6k E256 k8 H2048 F512 p1 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 speed-w4a8
+qwen3.6-35b-a3b q4k/q6k E256 k8 H2048 F512 p1 prefill T=1..8 r8.w4r1|rmma.m1.n1.w1x4 jobs=8 decode-r8
+qwen3.6-35b-a3b q4k/q6k E256 k8 H2048 F512 p1 prefill T=16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+qwen3.6-35b-a3b q4k/q6k E256 k8 H2048 F512 p1 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 prefill-w4a8
+qwen3.6-35b-a3b q4k/q6k E256 k8 H2048 F512 p1 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant
+qwen3.6-35b-a3b q4k/q6k E256 k8 H2048 F512 p1 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant
+qwen3.6-35b-a3b q3k/q4k E256 k8 H2048 F512 p0 speed T=1..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b q3k/q4k E256 k8 H2048 F512 p0 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b q3k/q4k E256 k8 H2048 F512 p0 prefill T=1..16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b q3k/q4k E256 k8 H2048 F512 p0 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 prefill-schedule gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b q3k/q4k E256 k8 H2048 F512 p0 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b q3k/q4k E256 k8 H2048 F512 p0 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b q3k/q4k E256 k8 H2048 F512 p1 speed T=1..8 r8.w4r1|rmma.m1.n1.w1x4 jobs=8 decode-r8
+qwen3.6-35b-a3b q3k/q4k E256 k8 H2048 F512 p1 speed T=16..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+qwen3.6-35b-a3b q3k/q4k E256 k8 H2048 F512 p1 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 speed-w4a8
+qwen3.6-35b-a3b q3k/q4k E256 k8 H2048 F512 p1 prefill T=1..8 r8.w4r1|rmma.m1.n1.w1x4 jobs=8 decode-r8
+qwen3.6-35b-a3b q3k/q4k E256 k8 H2048 F512 p1 prefill T=16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+qwen3.6-35b-a3b q3k/q4k E256 k8 H2048 F512 p1 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 prefill-w4a8
+qwen3.6-35b-a3b q3k/q4k E256 k8 H2048 F512 p1 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant
+qwen3.6-35b-a3b q3k/q4k E256 k8 H2048 F512 p1 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p0 speed T=1 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 table-r8-refused gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p0 speed T=2..4 rmma.m1.n1.w1x8|rmma.m1.n1.w4x1 jobs=8 table-r8-refused gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p0 speed T=5..16 rmma.m1.n1.w1x8|rmma.m1.n1.w4x1 jobs=8 table+class-a8 gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p0 speed T=17..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p0 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p0 prefill T=1 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 table-r8-refused gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p0 prefill T=2..4 rmma.m1.n1.w1x8|rmma.m1.n1.w4x1 jobs=8 table-r8-refused gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p0 prefill T=5..16 rmma.m1.n1.w1x8|rmma.m1.n1.w4x1 jobs=8 table+class-a8 gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p0 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 prefill-schedule gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p0 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p0 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p1 speed T=1 r8.w4r1|r8.w8r1 jobs=8 table
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p1 speed T=2 r8.w2r1|rmma.m1.n1.w4x1 jobs=8 table
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p1 speed T=3 r8.w4r1|rmma.m1.n1.w4x1 jobs=8 table
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p1 speed T=4 r8.w2r1|rmma.m1.n1.w4x1 jobs=8 table
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p1 speed T=5..7 r8.w2r1|rmma.m1.n1.w4x1 jobs=8 table+class-a8
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p1 speed T=8 r8.w4r1|rmma.m1.n1.w4x1 jobs=8 table+class-a8
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p1 speed T=16 rmma.m1.n1.w1x8|rmma.m1.n1.w4x1 jobs=8 table+class-a8
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p1 speed T=17..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p1 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 speed-w4a8
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p1 prefill T=1 r8.w4r1|r8.w8r1 jobs=8 table
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p1 prefill T=2 r8.w2r1|rmma.m1.n1.w4x1 jobs=8 table
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p1 prefill T=3 r8.w4r1|rmma.m1.n1.w4x1 jobs=8 table
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p1 prefill T=4 r8.w2r1|rmma.m1.n1.w4x1 jobs=8 table
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p1 prefill T=5..7 r8.w2r1|rmma.m1.n1.w4x1 jobs=8 table+class-a8
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p1 prefill T=8 r8.w4r1|rmma.m1.n1.w4x1 jobs=8 table+class-a8
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p1 prefill T=16 rmma.m1.n1.w1x8|rmma.m1.n1.w4x1 jobs=8 table+class-a8
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p1 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 prefill-w4a8
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p1 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant
+qwen3.6-35b-a3b iq2s/iq4xs E256 k8 H2048 F512 p1 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p0 speed T=1 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 table-r8-refused gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p0 speed T=2..4 rmma.m1.n1.w1x8|rmma.m1.n1.w4x1 jobs=8 table-r8-refused gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p0 speed T=5..16 rmma.m1.n1.w1x8|rmma.m1.n1.w4x1 jobs=8 table+class-a8 gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p0 speed T=17..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p0 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p0 prefill T=1 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 table-r8-refused gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p0 prefill T=2..4 rmma.m1.n1.w1x8|rmma.m1.n1.w4x1 jobs=8 table-r8-refused gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p0 prefill T=5..16 rmma.m1.n1.w1x8|rmma.m1.n1.w4x1 jobs=8 table+class-a8 gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p0 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 prefill-schedule gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p0 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p0 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p1 speed T=1 r8.w4r1|r8.w4r1 jobs=8 table
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p1 speed T=2 r8.w2r1|rmma.m1.n1.w4x1 jobs=8 table
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p1 speed T=3 r8.w4r1|rmma.m1.n1.w4x1 jobs=8 table
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p1 speed T=4 r8.w2r1|rmma.m1.n1.w4x1 jobs=8 table
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p1 speed T=5..7 r8.w2r1|rmma.m1.n1.w4x1 jobs=8 table+class-a8
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p1 speed T=8 r8.w4r1|rmma.m1.n1.w4x1 jobs=8 table+class-a8
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p1 speed T=16 rmma.m1.n1.w1x8|rmma.m1.n1.w4x1 jobs=8 table+class-a8
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p1 speed T=17..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p1 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 speed-w4a8
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p1 prefill T=1 r8.w4r1|r8.w4r1 jobs=8 table
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p1 prefill T=2 r8.w2r1|rmma.m1.n1.w4x1 jobs=8 table
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p1 prefill T=3 r8.w4r1|rmma.m1.n1.w4x1 jobs=8 table
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p1 prefill T=4 r8.w2r1|rmma.m1.n1.w4x1 jobs=8 table
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p1 prefill T=5..7 r8.w2r1|rmma.m1.n1.w4x1 jobs=8 table+class-a8
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p1 prefill T=8 r8.w4r1|rmma.m1.n1.w4x1 jobs=8 table+class-a8
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p1 prefill T=16 rmma.m1.n1.w1x8|rmma.m1.n1.w4x1 jobs=8 table+class-a8
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p1 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 prefill-w4a8
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p1 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant
+qwen3.6-35b-a3b iq2s/iq3xxs E256 k8 H2048 F512 p1 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant
+qwen3.6-35b-a3b iq3xxs/iq4xs E256 k8 H2048 F512 p0 speed T=1..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq3xxs/iq4xs E256 k8 H2048 F512 p0 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq3xxs/iq4xs E256 k8 H2048 F512 p0 prefill T=1..16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq3xxs/iq4xs E256 k8 H2048 F512 p0 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 prefill-schedule gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq3xxs/iq4xs E256 k8 H2048 F512 p0 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq3xxs/iq4xs E256 k8 H2048 F512 p0 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b iq3xxs/iq4xs E256 k8 H2048 F512 p1 speed T=1..8 r8.w4r1|rmma.m1.n1.w1x4 jobs=8 decode-r8
+qwen3.6-35b-a3b iq3xxs/iq4xs E256 k8 H2048 F512 p1 speed T=16..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+qwen3.6-35b-a3b iq3xxs/iq4xs E256 k8 H2048 F512 p1 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 speed-w4a8
+qwen3.6-35b-a3b iq3xxs/iq4xs E256 k8 H2048 F512 p1 prefill T=1..8 r8.w4r1|rmma.m1.n1.w1x4 jobs=8 decode-r8
+qwen3.6-35b-a3b iq3xxs/iq4xs E256 k8 H2048 F512 p1 prefill T=16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+qwen3.6-35b-a3b iq3xxs/iq4xs E256 k8 H2048 F512 p1 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 prefill-w4a8
+qwen3.6-35b-a3b iq3xxs/iq4xs E256 k8 H2048 F512 p1 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant
+qwen3.6-35b-a3b iq3xxs/iq4xs E256 k8 H2048 F512 p1 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant
+qwen3.6-35b-a3b u4zp/u4zp E256 k8 H2048 F512 p0 speed T=1..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b u4zp/u4zp E256 k8 H2048 F512 p0 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b u4zp/u4zp E256 k8 H2048 F512 p0 prefill T=1..16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b u4zp/u4zp E256 k8 H2048 F512 p0 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 prefill-schedule gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b u4zp/u4zp E256 k8 H2048 F512 p0 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b u4zp/u4zp E256 k8 H2048 F512 p0 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b u4zp/u4zp E256 k8 H2048 F512 p1 speed T=1..8 r8.w4r1|rmma.m1.n1.w1x4 jobs=8 decode-r8
+qwen3.6-35b-a3b u4zp/u4zp E256 k8 H2048 F512 p1 speed T=16..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+qwen3.6-35b-a3b u4zp/u4zp E256 k8 H2048 F512 p1 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 speed-w4a8
+qwen3.6-35b-a3b u4zp/u4zp E256 k8 H2048 F512 p1 prefill T=1..8 r8.w4r1|rmma.m1.n1.w1x4 jobs=8 decode-r8
+qwen3.6-35b-a3b u4zp/u4zp E256 k8 H2048 F512 p1 prefill T=16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+qwen3.6-35b-a3b u4zp/u4zp E256 k8 H2048 F512 p1 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 prefill-w4a8
+qwen3.6-35b-a3b u4zp/u4zp E256 k8 H2048 F512 p1 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant
+qwen3.6-35b-a3b u4zp/u4zp E256 k8 H2048 F512 p1 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant
+qwen3.6-35b-a3b nvfp4/nvfp4 E256 k8 H2048 F512 p0 speed T=1..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b nvfp4/nvfp4 E256 k8 H2048 F512 p0 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b nvfp4/nvfp4 E256 k8 H2048 F512 p0 prefill T=1..16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b nvfp4/nvfp4 E256 k8 H2048 F512 p0 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 prefill-schedule gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b nvfp4/nvfp4 E256 k8 H2048 F512 p0 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b nvfp4/nvfp4 E256 k8 H2048 F512 p0 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant gate_up.w4a8=policy down.w4a8=policy
+qwen3.6-35b-a3b nvfp4/nvfp4 E256 k8 H2048 F512 p1 speed T=1..4 r8.w4r1|rmma.m1.n1.w1x4 jobs=8 decode-r8
+qwen3.6-35b-a3b nvfp4/nvfp4 E256 k8 H2048 F512 p1 speed T=5..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+qwen3.6-35b-a3b nvfp4/nvfp4 E256 k8 H2048 F512 p1 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 speed-w4a8
+qwen3.6-35b-a3b nvfp4/nvfp4 E256 k8 H2048 F512 p1 prefill T=1..4 r8.w4r1|rmma.m1.n1.w1x4 jobs=8 decode-r8
+qwen3.6-35b-a3b nvfp4/nvfp4 E256 k8 H2048 F512 p1 prefill T=5..16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+qwen3.6-35b-a3b nvfp4/nvfp4 E256 k8 H2048 F512 p1 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 prefill-w4a8
+qwen3.6-35b-a3b nvfp4/nvfp4 E256 k8 H2048 F512 p1 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant
+qwen3.6-35b-a3b nvfp4/nvfp4 E256 k8 H2048 F512 p1 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant
+qwen3.6-35b-a3b nvfp4/nvfp4 E256 k8 H2048 F512 p2 speed T=1..4 r8.w4r1|rmma.m1.n1.w1x4 jobs=8 decode-r8
+qwen3.6-35b-a3b nvfp4/nvfp4 E256 k8 H2048 F512 p2 speed T=5..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+qwen3.6-35b-a3b nvfp4/nvfp4 E256 k8 H2048 F512 p2 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 speed-w4a8
+qwen3.6-35b-a3b nvfp4/nvfp4 E256 k8 H2048 F512 p2 prefill T=1..4 r8.w4r1|rmma.m1.n1.w1x4 jobs=8 decode-r8
+qwen3.6-35b-a3b nvfp4/nvfp4 E256 k8 H2048 F512 p2 prefill T=5..16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+qwen3.6-35b-a3b nvfp4/nvfp4 E256 k8 H2048 F512 p2 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 prefill-w4a8
+qwen3.6-35b-a3b nvfp4/nvfp4 E256 k8 H2048 F512 p2 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant
+qwen3.6-35b-a3b nvfp4/nvfp4 E256 k8 H2048 F512 p2 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant
+gemma-4-26b-a4b iq4nl/iq4nl E128 k8 H2816 F704 p0 speed T=1..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq4nl/iq4nl E128 k8 H2816 F704 p0 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq4nl/iq4nl E128 k8 H2816 F704 p0 prefill T=1..16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq4nl/iq4nl E128 k8 H2816 F704 p0 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 prefill-schedule gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq4nl/iq4nl E128 k8 H2816 F704 p0 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq4nl/iq4nl E128 k8 H2816 F704 p0 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq4nl/iq4nl E128 k8 H2816 F704 p1 speed T=1..8 r8.w4r1|rmma.m1.n1.w1x4 jobs=8 decode-r8
+gemma-4-26b-a4b iq4nl/iq4nl E128 k8 H2816 F704 p1 speed T=16..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+gemma-4-26b-a4b iq4nl/iq4nl E128 k8 H2816 F704 p1 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 speed-w4a8
+gemma-4-26b-a4b iq4nl/iq4nl E128 k8 H2816 F704 p1 prefill T=1..8 r8.w4r1|rmma.m1.n1.w1x4 jobs=8 decode-r8
+gemma-4-26b-a4b iq4nl/iq4nl E128 k8 H2816 F704 p1 prefill T=16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+gemma-4-26b-a4b iq4nl/iq4nl E128 k8 H2816 F704 p1 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 prefill-w4a8
+gemma-4-26b-a4b iq4nl/iq4nl E128 k8 H2816 F704 p1 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant
+gemma-4-26b-a4b iq4nl/iq4nl E128 k8 H2816 F704 p1 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant
+gemma-4-26b-a4b iq3s/q8 E128 k8 H2816 F704 p0 speed T=1..4 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 table-r8-refused gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq3s/q8 E128 k8 H2816 F704 p0 speed T=5..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq3s/q8 E128 k8 H2816 F704 p0 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq3s/q8 E128 k8 H2816 F704 p0 prefill T=1..4 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 table-r8-refused gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq3s/q8 E128 k8 H2816 F704 p0 prefill T=5..16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq3s/q8 E128 k8 H2816 F704 p0 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 prefill-schedule gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq3s/q8 E128 k8 H2816 F704 p0 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq3s/q8 E128 k8 H2816 F704 p0 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq3s/q8 E128 k8 H2816 F704 p1 speed T=1 r8.w4r1|r8.w8r1 jobs=8 table
+gemma-4-26b-a4b iq3s/q8 E128 k8 H2816 F704 p1 speed T=2 r8.w2r1|r8.w4r1 jobs=8 table
+gemma-4-26b-a4b iq3s/q8 E128 k8 H2816 F704 p1 speed T=3 r8.w2r1|r8.w2r1 jobs=8 table
+gemma-4-26b-a4b iq3s/q8 E128 k8 H2816 F704 p1 speed T=4 r8.w2r1|r8.w4r1 jobs=8 table
+gemma-4-26b-a4b iq3s/q8 E128 k8 H2816 F704 p1 speed T=5..8 r8.w4r1|rmma.m1.n1.w1x4 jobs=8 decode-r8
+gemma-4-26b-a4b iq3s/q8 E128 k8 H2816 F704 p1 speed T=16..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+gemma-4-26b-a4b iq3s/q8 E128 k8 H2816 F704 p1 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 speed-w4a8
+gemma-4-26b-a4b iq3s/q8 E128 k8 H2816 F704 p1 prefill T=1 r8.w4r1|r8.w8r1 jobs=8 table
+gemma-4-26b-a4b iq3s/q8 E128 k8 H2816 F704 p1 prefill T=2 r8.w2r1|r8.w4r1 jobs=8 table
+gemma-4-26b-a4b iq3s/q8 E128 k8 H2816 F704 p1 prefill T=3 r8.w2r1|r8.w2r1 jobs=8 table
+gemma-4-26b-a4b iq3s/q8 E128 k8 H2816 F704 p1 prefill T=4 r8.w2r1|r8.w4r1 jobs=8 table
+gemma-4-26b-a4b iq3s/q8 E128 k8 H2816 F704 p1 prefill T=5..8 r8.w4r1|rmma.m1.n1.w1x4 jobs=8 decode-r8
+gemma-4-26b-a4b iq3s/q8 E128 k8 H2816 F704 p1 prefill T=16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+gemma-4-26b-a4b iq3s/q8 E128 k8 H2816 F704 p1 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 prefill-w4a8
+gemma-4-26b-a4b iq3s/q8 E128 k8 H2816 F704 p1 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant
+gemma-4-26b-a4b iq3s/q8 E128 k8 H2816 F704 p1 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p0 speed T=1..4 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 table-r8-refused gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p0 speed T=5 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p0 speed T=6..8 rmma.m1.n1.w1x8|rmma.m1.n1.w2x2 jobs=8 table+class-a8 gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p0 speed T=16 rmma.m1.n1.w1x8|rmma.m1.n1.w4x1 jobs=8 table+class-a8 gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p0 speed T=17..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p0 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p0 prefill T=1..4 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 table-r8-refused gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p0 prefill T=5 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p0 prefill T=6..8 rmma.m1.n1.w1x8|rmma.m1.n1.w2x2 jobs=8 table+class-a8 gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p0 prefill T=16 rmma.m1.n1.w1x8|rmma.m1.n1.w4x1 jobs=8 table+class-a8 gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p0 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 prefill-schedule gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p0 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p0 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p1 speed T=1 r8.w4r1|r8.w4r1 jobs=8 table
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p1 speed T=2 r8.w2r1|r8.w4r1 jobs=8 table
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p1 speed T=3 r8.w2r1|r8.w4r2 jobs=8 table
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p1 speed T=4 r8.w2r1|r8.w4r1 jobs=8 table
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p1 speed T=5 r8.w2r1|rmma.m1.n1.w1x4 jobs=8 decode-r8
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p1 speed T=6..7 r8.w2r1|rmma.m1.n1.w2x2 jobs=8 table+class-a8
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p1 speed T=8 r8.w4r1|rmma.m1.n1.w2x2 jobs=8 table+class-a8
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p1 speed T=16 rmma.m1.n1.w1x8|rmma.m1.n1.w4x1 jobs=8 table+class-a8
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p1 speed T=17..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p1 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 speed-w4a8
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p1 prefill T=1 r8.w4r1|r8.w4r1 jobs=8 table
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p1 prefill T=2 r8.w2r1|r8.w4r1 jobs=8 table
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p1 prefill T=3 r8.w2r1|r8.w4r2 jobs=8 table
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p1 prefill T=4 r8.w2r1|r8.w4r1 jobs=8 table
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p1 prefill T=5 r8.w2r1|rmma.m1.n1.w1x4 jobs=8 decode-r8
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p1 prefill T=6..7 r8.w2r1|rmma.m1.n1.w2x2 jobs=8 table+class-a8
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p1 prefill T=8 r8.w4r1|rmma.m1.n1.w2x2 jobs=8 table+class-a8
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p1 prefill T=16 rmma.m1.n1.w1x8|rmma.m1.n1.w4x1 jobs=8 table+class-a8
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p1 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 prefill-w4a8
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p1 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant
+gemma-4-26b-a4b iq2s/iq4nl E128 k8 H2816 F704 p1 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant
+gemma-4-26b-a4b q40/q40 E128 k8 H2816 F704 p0 speed T=1..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b q40/q40 E128 k8 H2816 F704 p0 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b q40/q40 E128 k8 H2816 F704 p0 prefill T=1..16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b q40/q40 E128 k8 H2816 F704 p0 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 prefill-schedule gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b q40/q40 E128 k8 H2816 F704 p0 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b q40/q40 E128 k8 H2816 F704 p0 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b q40/q40 E128 k8 H2816 F704 p1 speed T=1..8 r8.w4r1|rmma.m1.n1.w1x4 jobs=8 decode-r8
+gemma-4-26b-a4b q40/q40 E128 k8 H2816 F704 p1 speed T=16..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+gemma-4-26b-a4b q40/q40 E128 k8 H2816 F704 p1 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 speed-w4a8
+gemma-4-26b-a4b q40/q40 E128 k8 H2816 F704 p1 prefill T=1..8 r8.w4r1|rmma.m1.n1.w1x4 jobs=8 decode-r8
+gemma-4-26b-a4b q40/q40 E128 k8 H2816 F704 p1 prefill T=16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+gemma-4-26b-a4b q40/q40 E128 k8 H2816 F704 p1 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 prefill-w4a8
+gemma-4-26b-a4b q40/q40 E128 k8 H2816 F704 p1 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant
+gemma-4-26b-a4b q40/q40 E128 k8 H2816 F704 p1 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant
+gemma-4-26b-a4b nvfp4/nvfp4 E128 k8 H2816 F704 p0 speed T=1..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b nvfp4/nvfp4 E128 k8 H2816 F704 p0 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b nvfp4/nvfp4 E128 k8 H2816 F704 p0 prefill T=1..16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b nvfp4/nvfp4 E128 k8 H2816 F704 p0 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 prefill-schedule gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b nvfp4/nvfp4 E128 k8 H2816 F704 p0 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b nvfp4/nvfp4 E128 k8 H2816 F704 p0 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant gate_up.w4a8=policy down.w4a8=policy
+gemma-4-26b-a4b nvfp4/nvfp4 E128 k8 H2816 F704 p1 speed T=1..4 r8.w4r1|rmma.m1.n1.w1x4 jobs=8 decode-r8
+gemma-4-26b-a4b nvfp4/nvfp4 E128 k8 H2816 F704 p1 speed T=5..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+gemma-4-26b-a4b nvfp4/nvfp4 E128 k8 H2816 F704 p1 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 speed-w4a8
+gemma-4-26b-a4b nvfp4/nvfp4 E128 k8 H2816 F704 p1 prefill T=1..4 r8.w4r1|rmma.m1.n1.w1x4 jobs=8 decode-r8
+gemma-4-26b-a4b nvfp4/nvfp4 E128 k8 H2816 F704 p1 prefill T=5..16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+gemma-4-26b-a4b nvfp4/nvfp4 E128 k8 H2816 F704 p1 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 prefill-w4a8
+gemma-4-26b-a4b nvfp4/nvfp4 E128 k8 H2816 F704 p1 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant
+gemma-4-26b-a4b nvfp4/nvfp4 E128 k8 H2816 F704 p1 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant
+gemma-4-26b-a4b nvfp4/nvfp4 E128 k8 H2816 F704 p2 speed T=1..4 r8.w4r1|rmma.m1.n1.w1x4 jobs=8 decode-r8
+gemma-4-26b-a4b nvfp4/nvfp4 E128 k8 H2816 F704 p2 speed T=5..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+gemma-4-26b-a4b nvfp4/nvfp4 E128 k8 H2816 F704 p2 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 speed-w4a8
+gemma-4-26b-a4b nvfp4/nvfp4 E128 k8 H2816 F704 p2 prefill T=1..4 r8.w4r1|rmma.m1.n1.w1x4 jobs=8 decode-r8
+gemma-4-26b-a4b nvfp4/nvfp4 E128 k8 H2816 F704 p2 prefill T=5..16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 decode-streaming
+gemma-4-26b-a4b nvfp4/nvfp4 E128 k8 H2816 F704 p2 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 prefill-w4a8
+gemma-4-26b-a4b nvfp4/nvfp4 E128 k8 H2816 F704 p2 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x4 jobs=8 invariant
+gemma-4-26b-a4b nvfp4/nvfp4 E128 k8 H2816 F704 p2 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x4 jobs=32 invariant
+gpt-oss-20b mxfp4/mxfp4 E32 k4 H2880 F2880 p0 speed T=1..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+gpt-oss-20b mxfp4/mxfp4 E32 k4 H2880 F2880 p0 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+gpt-oss-20b mxfp4/mxfp4 E32 k4 H2880 F2880 p0 prefill T=1..16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+gpt-oss-20b mxfp4/mxfp4 E32 k4 H2880 F2880 p0 prefill T=17..2048 rmma.m1.n4.w4x1|rmma.m1.n4.w4x1 jobs=32 table+class-a8 gate_up.w4a8=policy down.w4a8=policy
+gpt-oss-20b mxfp4/mxfp4 E32 k4 H2880 F2880 p0 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 invariant gate_up.w4a8=policy down.w4a8=policy
+gpt-oss-20b mxfp4/mxfp4 E32 k4 H2880 F2880 p0 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x8 jobs=32 invariant gate_up.w4a8=policy down.w4a8=policy
+gpt-oss-20b mxfp4/mxfp4 E32 k4 H2880 F2880 p1 speed T=1..4 r8.w4r1|rmma.m1.n1.w1x8 jobs=8 decode-r8
+gpt-oss-20b mxfp4/mxfp4 E32 k4 H2880 F2880 p1 speed T=5..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 decode-streaming
+gpt-oss-20b mxfp4/mxfp4 E32 k4 H2880 F2880 p1 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 speed-w4a8
+gpt-oss-20b mxfp4/mxfp4 E32 k4 H2880 F2880 p1 prefill T=1..4 r8.w4r1|rmma.m1.n1.w1x8 jobs=8 decode-r8
+gpt-oss-20b mxfp4/mxfp4 E32 k4 H2880 F2880 p1 prefill T=5..16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 decode-streaming
+gpt-oss-20b mxfp4/mxfp4 E32 k4 H2880 F2880 p1 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 prefill-w4a8
+gpt-oss-20b mxfp4/mxfp4 E32 k4 H2880 F2880 p1 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 invariant
+gpt-oss-20b mxfp4/mxfp4 E32 k4 H2880 F2880 p1 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x8 jobs=32 invariant
+gpt-oss-20b q40/q40 E32 k4 H2880 F2880 p0 speed T=1..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+gpt-oss-20b q40/q40 E32 k4 H2880 F2880 p0 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+gpt-oss-20b q40/q40 E32 k4 H2880 F2880 p0 prefill T=1..16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+gpt-oss-20b q40/q40 E32 k4 H2880 F2880 p0 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 prefill-schedule gate_up.w4a8=policy down.w4a8=policy
+gpt-oss-20b q40/q40 E32 k4 H2880 F2880 p0 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 invariant gate_up.w4a8=policy down.w4a8=policy
+gpt-oss-20b q40/q40 E32 k4 H2880 F2880 p0 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x8 jobs=32 invariant gate_up.w4a8=policy down.w4a8=policy
+gpt-oss-20b q40/q40 E32 k4 H2880 F2880 p1 speed T=1..8 r8.w4r1|rmma.m1.n1.w1x8 jobs=8 decode-r8
+gpt-oss-20b q40/q40 E32 k4 H2880 F2880 p1 speed T=16..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 decode-streaming
+gpt-oss-20b q40/q40 E32 k4 H2880 F2880 p1 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 speed-w4a8
+gpt-oss-20b q40/q40 E32 k4 H2880 F2880 p1 prefill T=1..8 r8.w4r1|rmma.m1.n1.w1x8 jobs=8 decode-r8
+gpt-oss-20b q40/q40 E32 k4 H2880 F2880 p1 prefill T=16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 decode-streaming
+gpt-oss-20b q40/q40 E32 k4 H2880 F2880 p1 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 prefill-w4a8
+gpt-oss-20b q40/q40 E32 k4 H2880 F2880 p1 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 invariant
+gpt-oss-20b q40/q40 E32 k4 H2880 F2880 p1 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x8 jobs=32 invariant
+nemotron-3.5-30b-a3b nvfp4/nvfp4 E128 k6 H2688 F1856 relu2 p0 speed T=1..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+nemotron-3.5-30b-a3b nvfp4/nvfp4 E128 k6 H2688 F1856 relu2 p0 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+nemotron-3.5-30b-a3b nvfp4/nvfp4 E128 k6 H2688 F1856 relu2 p0 prefill T=1..16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+nemotron-3.5-30b-a3b nvfp4/nvfp4 E128 k6 H2688 F1856 relu2 p0 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 prefill-schedule gate_up.w4a8=policy down.w4a8=policy
+nemotron-3.5-30b-a3b nvfp4/nvfp4 E128 k6 H2688 F1856 relu2 p0 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 invariant gate_up.w4a8=policy down.w4a8=policy
+nemotron-3.5-30b-a3b nvfp4/nvfp4 E128 k6 H2688 F1856 relu2 p0 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x8 jobs=32 invariant gate_up.w4a8=policy down.w4a8=policy
+nemotron-3.5-30b-a3b nvfp4/nvfp4 E128 k6 H2688 F1856 relu2 p1 speed T=1..4 r8.w4r1|rmma.m1.n1.w1x8 jobs=8 decode-r8
+nemotron-3.5-30b-a3b nvfp4/nvfp4 E128 k6 H2688 F1856 relu2 p1 speed T=5..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 decode-streaming
+nemotron-3.5-30b-a3b nvfp4/nvfp4 E128 k6 H2688 F1856 relu2 p1 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 speed-w4a8
+nemotron-3.5-30b-a3b nvfp4/nvfp4 E128 k6 H2688 F1856 relu2 p1 prefill T=1..4 r8.w4r1|rmma.m1.n1.w1x8 jobs=8 decode-r8
+nemotron-3.5-30b-a3b nvfp4/nvfp4 E128 k6 H2688 F1856 relu2 p1 prefill T=5..16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 decode-streaming
+nemotron-3.5-30b-a3b nvfp4/nvfp4 E128 k6 H2688 F1856 relu2 p1 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 prefill-w4a8
+nemotron-3.5-30b-a3b nvfp4/nvfp4 E128 k6 H2688 F1856 relu2 p1 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 invariant
+nemotron-3.5-30b-a3b nvfp4/nvfp4 E128 k6 H2688 F1856 relu2 p1 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x8 jobs=32 invariant
+nemotron-3.5-30b-a3b nvfp4/nvfp4 E128 k6 H2688 F1856 relu2 p2 speed T=1..4 r8.w4r1|rmma.m1.n1.w1x8 jobs=8 decode-r8
+nemotron-3.5-30b-a3b nvfp4/nvfp4 E128 k6 H2688 F1856 relu2 p2 speed T=5..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 decode-streaming
+nemotron-3.5-30b-a3b nvfp4/nvfp4 E128 k6 H2688 F1856 relu2 p2 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 speed-w4a8
+nemotron-3.5-30b-a3b nvfp4/nvfp4 E128 k6 H2688 F1856 relu2 p2 prefill T=1..4 r8.w4r1|rmma.m1.n1.w1x8 jobs=8 decode-r8
+nemotron-3.5-30b-a3b nvfp4/nvfp4 E128 k6 H2688 F1856 relu2 p2 prefill T=5..16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 decode-streaming
+nemotron-3.5-30b-a3b nvfp4/nvfp4 E128 k6 H2688 F1856 relu2 p2 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 prefill-w4a8
+nemotron-3.5-30b-a3b nvfp4/nvfp4 E128 k6 H2688 F1856 relu2 p2 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 invariant
+nemotron-3.5-30b-a3b nvfp4/nvfp4 E128 k6 H2688 F1856 relu2 p2 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x8 jobs=32 invariant
+nemotron-3.5-30b-a3b q51/q50 E128 k6 H2688 F1856 relu2 p0 speed T=1..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+nemotron-3.5-30b-a3b q51/q50 E128 k6 H2688 F1856 relu2 p0 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+nemotron-3.5-30b-a3b q51/q50 E128 k6 H2688 F1856 relu2 p0 prefill T=1..16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 decode-streaming gate_up.w4a8=policy down.w4a8=policy
+nemotron-3.5-30b-a3b q51/q50 E128 k6 H2688 F1856 relu2 p0 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1 jobs=64 prefill-schedule gate_up.w4a8=policy down.w4a8=policy
+nemotron-3.5-30b-a3b q51/q50 E128 k6 H2688 F1856 relu2 p0 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 invariant gate_up.w4a8=policy down.w4a8=policy
+nemotron-3.5-30b-a3b q51/q50 E128 k6 H2688 F1856 relu2 p0 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x8 jobs=32 invariant gate_up.w4a8=policy down.w4a8=policy
+nemotron-3.5-30b-a3b q51/q50 E128 k6 H2688 F1856 relu2 p1 speed T=1..8 r8.w4r1|rmma.m1.n1.w1x8 jobs=8 decode-r8
+nemotron-3.5-30b-a3b q51/q50 E128 k6 H2688 F1856 relu2 p1 speed T=16..32 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 decode-streaming
+nemotron-3.5-30b-a3b q51/q50 E128 k6 H2688 F1856 relu2 p1 speed T=64..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 speed-w4a8
+nemotron-3.5-30b-a3b q51/q50 E128 k6 H2688 F1856 relu2 p1 prefill T=1..8 r8.w4r1|rmma.m1.n1.w1x8 jobs=8 decode-r8
+nemotron-3.5-30b-a3b q51/q50 E128 k6 H2688 F1856 relu2 p1 prefill T=16 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 decode-streaming
+nemotron-3.5-30b-a3b q51/q50 E128 k6 H2688 F1856 relu2 p1 prefill T=17..2048 rmma.m1.n8.w4x1|rmma.m1.n8.w4x1|w4a8 jobs=64 prefill-w4a8
+nemotron-3.5-30b-a3b q51/q50 E128 k6 H2688 F1856 relu2 p1 invariant T=1..8 rmma.m1.n1.w1x8|rmma.m1.n1.w1x8 jobs=8 invariant
+nemotron-3.5-30b-a3b q51/q50 E128 k6 H2688 F1856 relu2 p1 invariant T=16..2048 rmma.m1.n4.w1x8|rmma.m1.n4.w1x8 jobs=32 invariant
