@@ -158,13 +158,20 @@ __global__ void mma_latency(Span* spans, float* sink, unsigned a, unsigned b) {
 
 // A warp of FFMAs on every SM beside the chasing warp, so the card's clock does not sink to its
 // idle step during the latency chases (a lone warp waiting on memory does not lift it); it stops
-// when the host raises the mapped flag. One warp of FFMA on one partition contends with the chase
-// for at most an issue slot a link.
-__global__ void spinner(const volatile int* stop, float* sink) {
-    float x = threadIdx.x * 1e-3f;
-    while (*stop == 0) {
+// when the host raises the mapped flag (read volatile, system scope, every 1024 FFMAs) and in any
+// case `deadline_ns` after it started, so it can never hold a card. One warp of FFMA on one
+// partition contends with the chase for at most an issue slot a link. Nothing in the latency
+// section synchronises the device as a whole (that would wait on this kernel): the chases and
+// their copies run and are waited for on the legacy stream alone, which a non-blocking stream
+// does not join.
+__global__ void spinner(const volatile int* stop, long long deadline_ns, float* sink) {
+    float x                  = threadIdx.x * 1e-3f;
+    const long long deadline = globaltimer_ns() + deadline_ns;
+    while (true) {
 #pragma unroll
         for (int i = 0; i < 1024; ++i) x = fmaf(x, 0.999f, 0.001f);
+        __threadfence_system();
+        if (*stop != 0 || globaltimer_ns() > deadline) break;
     }
     if (x == 12345.f) sink[0] = x;
 }
@@ -328,9 +335,12 @@ struct Probe {
     std::vector<Span> host;
 
     std::vector<Span>& collect(int ctas) {
-        CHECK(cudaDeviceSynchronize());
+        // The legacy stream alone: a device-wide wait would hang on the clock holder.
+        CHECK(cudaStreamSynchronize(nullptr));
         host.resize(ctas);
-        CHECK(cudaMemcpy(host.data(), spans, ctas * sizeof(Span), cudaMemcpyDeviceToHost));
+        CHECK(cudaMemcpyAsync(host.data(), spans, ctas * sizeof(Span), cudaMemcpyDeviceToHost,
+                              nullptr));
+        CHECK(cudaStreamSynchronize(nullptr));
         return host;
     }
 
@@ -379,7 +389,7 @@ int main() {
     CHECK(cudaDriverGetVersion(&driver));
     CHECK(cudaRuntimeGetVersion(&runtime));
     const int cc = p.major * 10 + p.minor;
-    std::printf("probe isa_probe 8\n");
+    std::printf("probe isa_probe 9\n");
     std::printf("card %s\n", p.name);
     std::printf("cc %d\n", cc);
     std::printf("sms %d\n", p.multiProcessorCount);
@@ -477,7 +487,7 @@ int main() {
                                    0));
     cudaStream_t side = nullptr;
     CHECK(cudaStreamCreateWithFlags(&side, cudaStreamNonBlocking));
-    spinner<<<pr.sms, 32, 0, side>>>(stop_dev, pr.fsink);
+    spinner<<<pr.sms, 32, 0, side>>>(stop_dev, 30'000'000'000LL, pr.fsink);
     CHECK(cudaGetLastError());
 
     // The spans of the chasing warps: entry CTA x 8 + warp, the first `warps` of every CTA.
@@ -501,7 +511,7 @@ int main() {
         const unsigned count = lv.per_sm ? pr.sms * 8 : 8;
         const size_t total   = static_cast<size_t>(m) * count;
         fill_cycle<<<static_cast<unsigned>((total + 255) / 256), 256>>>(buf, lv.bits, count);
-        CHECK(cudaDeviceSynchronize());
+        CHECK(cudaStreamSynchronize(nullptr));
         unsigned run = 0;
         for (int warps : {1, 2, 4, 8}) {
             if (lv.cg) {
