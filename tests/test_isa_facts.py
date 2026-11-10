@@ -5,10 +5,14 @@ Measured with its source file, every fact present with a positive value in its u
 tool named, the levels in order), the table equals its regeneration from the inputs, a probe output
 round-trips into a row, and odd or incomplete outputs are refused. No GPU, no CUDA toolkit."""
 
+import argparse
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import re
+import tempfile
 import unittest
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -109,6 +113,21 @@ class IsaFacts(unittest.TestCase):
             ip.parse_run(SAMPLE + "garbage line\n")
         with self.assertRaises(ValueError):
             ip.parse_run(SAMPLE.replace("fact mma_cycles_per_sm 8.012 clk", "fact mma_cycles_per_sm"))
+
+    def test_merge_in_place(self):
+        # Merging the file that already sits in the inputs directory under its architecture's
+        # name keeps its text (the destination is not opened before the input is read).
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "isa_probe_89.txt")
+            with open(path, "w", newline="\n") as f:
+                f.write(SAMPLE)
+            args = argparse.Namespace(input=path, inputs=d, table=os.path.join(d, "table.json"))
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(ip.cmd_merge(args), 0)
+            with open(path) as f:
+                self.assertEqual(f.read(), SAMPLE)
+            with open(args.table) as f:
+                self.assertEqual(list(json.load(f)["arches"]), ["89"])
 
     def test_table_is_its_regeneration(self):
         # The committed table is exactly what the committed probe outputs give: a new architecture

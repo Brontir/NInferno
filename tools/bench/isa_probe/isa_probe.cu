@@ -19,7 +19,9 @@
 // follows a dependent chain (acc = mma(acc) / idx = buf[idx]); cycles per link include the chain's
 // own address arithmetic (2-3 clocks, the same for every level). Loaded latency: W warps per SM
 // each chase a pseudo-random cycle through a sub-buffer of their own (no two warps share a line
-// or an order; the L2 and DRAM loads bypass the L1), each warp timing its own links.
+// or an order; the L2 and DRAM loads bypass the L1), each warp timing its own links. A latency
+// launch asks for one CTA per SM; a CTA that shared its SM with another (read from %smid) is
+// left out, so every latency is at the stated warp count (probe 13).
 
 #include <cuda_runtime.h>
 
@@ -382,12 +384,6 @@ double median(std::vector<double> d) {
     return d[d.size() / 2];
 }
 
-double median_span(const std::vector<Span>& spans) {
-    std::vector<double> d;
-    for (const Span& s : spans) d.push_back(static_cast<double>(s.end - s.begin));
-    return median(d);
-}
-
 struct Probe {
     int sms          = 0;
     Span* spans      = nullptr;
@@ -442,6 +438,38 @@ void check(bool ok, const std::string& what) {
     if (!ok) g_failures.push_back(what);
 }
 
+// The CTAs of a latency launch (one CTA per SM asked for; `per_cta` span entries each, the first
+// always written) that had their SM to themselves. The hardware does not spread CTAs evenly: two
+// on one SM run beside twice the stated warps, so their spans are left out of the latency and
+// the count is noted. Fewer than half the CTAs alone fails the self-check.
+std::vector<char> alone(const std::vector<Span>& spans, int per_cta, const std::string& what) {
+    const int ctas = static_cast<int>(spans.size()) / per_cta;
+    std::map<int, int> on_sm;
+    for (int c = 0; c < ctas; ++c) ++on_sm[spans[c * per_cta].sm];
+    std::vector<char> keep(ctas);
+    int kept = 0;
+    for (int c = 0; c < ctas; ++c) {
+        keep[c] = on_sm[spans[c * per_cta].sm] == 1;
+        kept += keep[c];
+    }
+    if (kept < ctas)
+        std::printf("note %s: %d of %d CTAs had an SM to themselves, the others are left out\n",
+                    what.c_str(), kept, ctas);
+    check(2 * kept >= ctas, what + ": fewer than half the CTAs had an SM to themselves");
+    // With none alone the check above has failed the run; the median still needs spans.
+    if (kept == 0) std::fill(keep.begin(), keep.end(), char{1});
+    return keep;
+}
+
+// The median span of a one-warp latency launch over the CTAs alone on their SM.
+double latency_span(const std::vector<Span>& spans, const std::string& what) {
+    const std::vector<char> keep = alone(spans, 1, what);
+    std::vector<double> d;
+    for (size_t c = 0; c < spans.size(); ++c)
+        if (keep[c]) d.push_back(static_cast<double>(spans[c].end - spans[c].begin));
+    return median(d);
+}
+
 } // namespace
 
 int main() {
@@ -451,7 +479,7 @@ int main() {
     CHECK(cudaDriverGetVersion(&driver));
     CHECK(cudaRuntimeGetVersion(&runtime));
     const int cc = p.major * 10 + p.minor;
-    std::printf("probe isa_probe 12\n");
+    std::printf("probe isa_probe 13\n");
     std::printf("card %s\n", p.name);
     std::printf("cc %d\n", cc);
     std::printf("sms %d\n", p.multiProcessorCount);
@@ -495,7 +523,8 @@ int main() {
     check(tensor_rate <= 2048.0 && tensor_rate >= 16.0, "tensor rate out of range");
     mma_latency<<<pr.sms, 32>>>(pr.spans, pr.fsink, ones, ones);
     mma_latency<<<pr.sms, 32>>>(pr.spans, pr.fsink, ones, ones);
-    const double mma_lat = median_span(pr.collect(pr.sms)) / kLatencyLinks;
+    const double mma_lat =
+        latency_span(pr.collect(pr.sms), "mma_dependent_latency") / kLatencyLinks;
     fact("mma_dependent_latency", mma_lat, "clk");
     check(mma_lat >= mma_sm * 4.0 * 0.5, "dependent MMA latency under half the issue interval");
 
@@ -514,7 +543,8 @@ int main() {
     const auto dep = [&](auto launch, const char* name, double ops_per_link, double lo, double hi) {
         launch();
         launch();
-        const double clk_per_op = median_span(pr.collect(pr.sms)) / kLatencyLinks / ops_per_link;
+        const double clk_per_op =
+            latency_span(pr.collect(pr.sms), name) / kLatencyLinks / ops_per_link;
         fact(name, clk_per_op, "clk");
         check(clk_per_op >= lo && clk_per_op <= hi,
               std::string(name) + " outside its published range");
@@ -582,11 +612,15 @@ int main() {
         double clk, ns, mhz; // per link in SM clocks and wall ns; the SM clock the chase ran at
     };
 
-    const auto chase_clocks = [&](int warps, int links) {
+    // Only the CTAs alone on their SM count: on a shared SM a warp chases beside twice the
+    // stated warps, which is another level's latency.
+    const auto chase_clocks = [&](int warps, int links, const std::string& what) {
         std::vector<double> clk, ns;
-        for (const Span& s : pr.collect(pr.sms * 8)) {
-            const int entry = static_cast<int>(&s - pr.host.data());
-            if (entry % 8 >= warps) continue;
+        const std::vector<Span>& spans = pr.collect(pr.sms * 8);
+        const std::vector<char> keep   = alone(spans, 8, what);
+        for (size_t entry = 0; entry < spans.size(); ++entry) {
+            if (!keep[entry / 8] || static_cast<int>(entry % 8) >= warps) continue;
+            const Span& s = spans[entry];
             clk.push_back(static_cast<double>(s.end - s.begin));
             ns.push_back(static_cast<double>(s.ns_end - s.ns_begin));
         }
@@ -609,9 +643,9 @@ int main() {
                                                      pr.spans, pr.usink);
             }
             ++run;
-            const Chase c = chase_clocks(warps, lv.links);
             char name[64];
             std::snprintf(name, sizeof name, "%s_latency_w%d", lv.name, warps);
+            const Chase c = chase_clocks(warps, lv.links, name);
             fact(name, c.clk, "clk");
             lat[name] = c.clk;
             if (lv.cg) {
@@ -642,7 +676,8 @@ int main() {
     }
     chase_shared<<<pr.sms, 128>>>(pr.spans, pr.usink);
     chase_shared<<<pr.sms, 128>>>(pr.spans, pr.usink);
-    fact("shared_latency", median_span(pr.collect(pr.sms)) / kLatencyLinks, "clk");
+    fact("shared_latency", latency_span(pr.collect(pr.sms), "shared_latency") / kLatencyLinks,
+         "clk");
     // The levels must separate: an L2 hit is further than an L1 hit, DRAM further than the L2 at
     // every warp count (chains that alias into L2-resident lines would read as the L2), and more
     // chasing warps never make a warp's latency shorter (in SM clocks for the L1, in wall ns for
