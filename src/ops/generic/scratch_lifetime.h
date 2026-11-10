@@ -109,6 +109,9 @@ struct ScratchViolation {
         if (before.last == ScratchLast::AtTrigger) return std::nullopt;
         return ScratchHazard::WriteAfterRead;
     }
+    // A predecessor's write is a hazard whatever its last touch: writes made before the trigger
+    // are visible to the dependent only after its griddepcontrol.wait (the PDL memory model), so
+    // a read or write before that wait races them even where the write is AtTrigger.
     return now.access == ScratchAccess::Read ? ScratchHazard::ReadAfterWrite
                                              : ScratchHazard::WriteAfterWrite;
 }
@@ -164,7 +167,10 @@ launch_lifetime(std::string_view name, const LaunchOverlap& overlap, bool pdl,
         (overlap.release != OverlapRefusal::NoPdl && overlap.prefetch != OverlapRefusal::NoPdl) ||
         !pdl);
     out.starts_early = pdl && (overlap.joins() || overlap.prefetches());
-    out.releases     = overlap.releases();
+    // A prefetching register MMA triggers its dependents right after its own wait whether or not
+    // the release was asked (generic_gemm.cuh, the prefetch path's pdl::trigger_dependents), so
+    // the launch after it may start while it still runs: it releases.
+    out.releases = overlap.releases() || (pdl && overlap.prefetches());
     if (prepared && rule) {
         out.add({*prepared, ScratchAccess::Read, ScratchFirst::AfterWait, ScratchLast::AtExit});
     }

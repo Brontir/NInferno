@@ -122,6 +122,9 @@ int main() {
         check(!g::use_hazard(read_exit, write_late).has_value(),
               "a write after the wait is ordered behind completion");
         check(!g::use_hazard(read_exit, read_early).has_value(), "two reads never conflict");
+        const g::ScratchUse write_trigger{kA, A::Write, F::AfterWait, L::AtTrigger};
+        check(g::use_hazard(write_trigger, read_early) == H::ReadAfterWrite,
+              "a write done by the trigger is still not visible before the dependent's wait");
         check(g::use_hazard(write_late, read_early) == H::ReadAfterWrite,
               "release is not completion: the output is not there yet");
         check(g::use_hazard(write_late, write_early) == H::WriteAfterWrite, "two writers conflict");
@@ -152,6 +155,7 @@ int main() {
         const auto prefetch = g::launch_lifetime(
             "decode_prefetch", g::launch_overlap(mma, g::Epilogue::Store, 1, false, false, true),
             true, std::nullopt, std::nullopt);
+        check(prefetch.releases, "a prefetching register MMA releases (it triggers after its wait)");
         check(prefetch.starts_early &&
                   !g::first_scratch_violation({projection, prefetch}).has_value(),
               "pre-quantized R8 then a decode prefetch launch: clean");
