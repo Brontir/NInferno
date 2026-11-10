@@ -2,12 +2,13 @@
 # The shared test tree's link modes, read off the built binaries (NINFERNO_SHARED_OP_TESTS,
 # docs/maintainer/build-system.md). <build>/ninferno_link_modes.txt, written at configure, names
 # every test executable, app and bench with its mode; this checks each built binary against it:
-# - shared (a test on the shared library): needs libninferno_ops_shared.so and the shared CUDA
-#   runtime, and defines no CUDA runtime entry point and no function of a member archive (a second
-#   copy of their state);
+# - shared (a test on the shared library): defines no CUDA runtime entry point (a static runtime
+#   beside the library's shared one) and no function of a member archive (a second copy of their
+#   state); printed "shared-unused" when it calls nothing of the library, so the linker dropped it;
 # - static (a test that keeps the product's link) and product (an app or bench): needs neither the
 #   library nor the shared runtime, and takes no CUDA runtime entry point from a shared library;
-# - library (ninferno_ops_shared): defines the member archives' functions.
+# - library (ninferno_ops_shared): defines the member archives' functions and needs the shared
+#   CUDA runtime.
 # Every ELF executable under <build>/tests must be listed. Prints each binary's mode.
 # Usage: link_mode.sh <build directory>
 set -u
@@ -47,8 +48,10 @@ while read -r mode name path; do
   needed=$(needs "$path")
   case "$mode" in
     shared)
-      grep -qx 'libninferno_ops_shared.so' <<< "$needed" || bad "$name" "does not need libninferno_ops_shared.so"
-      grep -q '^libcudart\.so' <<< "$needed" || bad "$name" "does not need the shared CUDA runtime"
+      # The linker keeps the library (and the shared runtime, which comes with it) only where the
+      # executable calls into it (--as-needed): a test whose closure reaches a member it never
+      # calls lists neither, and holds no member code at all. What must never be here is a copy.
+      grep -qx 'libninferno_ops_shared.so' <<< "$needed" || mode="shared-unused"
       defines_cuda_malloc "$path" && bad "$name" "defines cudaMalloc: a static CUDA runtime beside the shared one"
       hits=$(anchor_hits "$path")
       [ -z "$hits" ] || bad "$name" "defines member functions beside the shared library: $(tr '\n' ' ' <<< "$hits")"
@@ -60,6 +63,8 @@ while read -r mode name path; do
       ;;
     library)
       [ "$(anchor_hits "$path" | wc -l)" -ge 3 ] || bad "$name" "lacks a member archive's functions"
+      grep -q '^libcudart\.so' <<< "$needed" || bad "$name" "does not need the shared CUDA runtime"
+      defines_cuda_malloc "$path" && bad "$name" "defines cudaMalloc: a static CUDA runtime"
       ;;
     *)
       bad "$name" "unknown mode $mode"
