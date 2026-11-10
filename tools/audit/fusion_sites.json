@@ -709,7 +709,7 @@
                     "#617 analysis (GDN row)",
                     "src/ops/gdn_input_proj/fp8/fp8_gdn_conv_plan.cpp"
                 ],
-                "oracle_test": "tests/ops/test_gdn_input_proj.cpp"
+                "oracle_test": "tests/ops/test_gdn_input_proj_conv_snapshot.cpp"
             },
             {
                 "id": "gdn_conv_q8",
@@ -743,7 +743,7 @@
                     "#617 analysis (GDN row)",
                     "src/ops/gdn_input_proj/q8/q8_gdn_input_plan.cpp"
                 ],
-                "oracle_test": "tests/ops/test_gdn_input_proj.cpp"
+                "oracle_test": "tests/ops/test_gdn_input_proj_conv_snapshot.cpp"
             },
             {
                 "id": "gdn_conv_nvfp4",
@@ -777,7 +777,7 @@
                     "#617 analysis (GDN row)",
                     "src/ops/gdn_input_proj/nvfp4/nvfp4_gdn_snapshot_plan.cpp"
                 ],
-                "oracle_test": "tests/ops/test_gdn_input_proj.cpp"
+                "oracle_test": "tests/ops/test_gdn_input_proj_conv_snapshot.cpp"
             },
             {
                 "id": "gdn_conv_q4_q5",
@@ -810,7 +810,7 @@
                     "#617 analysis (GDN row)",
                     "src/ops/gdn_input_proj/q4_q5/q4_q5_gdn_input_plan.cpp"
                 ],
-                "oracle_test": "tests/ops/test_gdn_input_proj.cpp"
+                "oracle_test": "tests/ops/test_gdn_input_proj_conv_snapshot.cpp"
             },
             {
                 "id": "attn_input_proj",
@@ -843,7 +843,7 @@
                     "src/models/qwen3_5/execution/mtp.cpp",
                     "src/models/qwen3_5/execution/draft.cpp"
                 ],
-                "oracle_test": "tests/ops/test_attn_input_proj.cpp"
+                "oracle_test": null
             },
             {
                 "id": "sparse_moe_fused",

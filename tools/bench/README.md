@@ -35,6 +35,7 @@ python3 tools/bench/run_ninferno_bench_matrix.py --preset core             # run
 | `regret_collect.py` | The lab collector for `selection_regret.py`: `ninferno_route_tune --selected-out` (the route the production path runs per problem and width) and one `--routes-out` sweep per pass into its input ([below](#offline-selection-regret)). |
 | `mmq_transfer_audit.py` | Offline audit of how the MMQ choice transfers between same-generation cards (#373): route-table agreement and gate-label regret by workload regime, from `routes/*.json` and `data/mmq_paired_prefill.json`; no GPU ([report](../../docs/maintainer/mmq-transfer-audit.md)). |
 | `quality_rows.py` | Perplexity and KL divergence of each `--activations` mode against `exact` on the fixed corpus, appended as `docs/performance/` rows. |
+| `run_521_gateup.sh` | Run `route-tune` twice on the gated gate/up shapes of #521 at T = 2-4 and print, per shape and T, the gated vector-kernel launch against 2 x a single launch (an estimate) and the best register-MMA schedule, with the paired per-pass difference and a verdict floored at the timer's raw tick (1.024 us; two passes are two samples, not a confidence range); `--summarize A.csv B.csv` re-reads two routes files without a GPU; aborts when an expected cell is missing ([DECISIONS 76](../../docs/maintainer/decisions.md)). |
 
 ## Offline selection regret
 
@@ -128,6 +129,20 @@ consecutive calls over `calls` weight copies at a decode width under `--rotate 1
 one call after the L2 flush, or `warm`, one call where the timer had no flush buffer; `samples`). A pass's two files must come from one run, all passes from
 one board, and a case's passes from one protocol, or the collector refuses them; each case's
 `workload` states its protocol. Files written before these columns are refused, and so is one run given as two passes.
+
+Regret by authority and regime (#614): a `--selected-out` CSV may also carry `authority` (the route
+authority that answered, e.g. `route-table`, `cost-model`, `r8-table`) and `evidence` (`pin`,
+`measured`, `ranker`, `carried`, `transferred`, `borrowed`); each case records them with its width
+`t`. A file without the columns reads `unknown` for both, so the tools work on older data.
+`regret_collect.py --pci-id 0x2B85` adds the board's compute capability, SMs, DRAM rate, boost
+clock and `mma_slow` from `core/data/gpu_facts.json` (the rows' device must be that board's
+class: its chip, or its architecture where the class has no chip, and its SMs);
+`selection_regret.py` reports `by_board_regime_authority`: per board x regime x authority the
+usual summary and the evidence kinds. Regimes by T: decode T<=4, verify 5..16, and from 17 below
+or above the card's ridge
+T* = s8 x SMs x boost clock x 4.5/8 / (2 x DRAM bytes/s), as the MMQ transfer audit computes it
+(`s8` from `core/generation.h`; `--generation-header`); without board facts, and on a board without
+tensor cores (`mma_slow`), `T>=17 ridge unknown`.
 
 route_tune selects with its problems' policy (an `a16` problem is `A16Only`, the exact mode's
 linears, not the default `AllowA8` path of a published model's projections) and the speed route
