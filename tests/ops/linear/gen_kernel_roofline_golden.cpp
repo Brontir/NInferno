@@ -1,15 +1,18 @@
-// Generator of kernel_roofline_golden.inc (test_kernel_roofline.cpp). Not part of the build: it is
-// run once against the code BEFORE the roofline extraction (#613 PR-4), so the table holds the old
-// formula's outputs and nothing derived from the new code.
+// Generator of kernel_roofline_golden.inc (test_kernel_roofline.cpp). A build-only executable
+// (ninferno_gen_kernel_roofline_golden, not in ctest, so it keeps compiling). The table is made
+// once from the code BEFORE the roofline extraction (#613 PR-4), so it holds the old formula's
+// outputs and nothing derived from the new code; running this program on the PR's code only
+// shows that the new code still equals the table.
 //
-// To regenerate: check out the pre-refactor commit named in the .inc header, add the two files
+// To regenerate: check out the pre-refactor commit named in the .inc header, copy in the two files
 // that expose the selector's price as a query (src/ops/generic/route_query.h and route_query.cpp
-// from the PR branch: priced_routes_query, a pure addition that does not touch the formula),
-// register this file as a test in tests/ops/linear/tests.cmake, build it in the base build
-// (NINFERNO_WITHOUT_NVFP4, 99 KiB of shared memory per block: the routes it prices are then the
-// set the test's gating rules assume) and run it with the output path and the commit hash:
-//   ninferno_gen_kernel_roofline_golden_test kernel_roofline_golden.inc <commit>
-// The grid below must match kGoldenFormats in test_kernel_roofline.cpp.
+// from the PR branch: priced_routes_query, a pure addition that does not touch the formula) and
+// this file with its tests.cmake registration, build it in a full sm_120a build (NVFP4 on, so every
+// register-MMA schedule including the cluster K splits launches; 99 KiB of shared memory per
+// block), run it with the output path and the commit hash:
+//   ninferno_gen_kernel_roofline_golden kernel_roofline_golden.inc <commit>
+// and run clang-format on the output (the pre-push hook does: the committed file is the formatted
+// one). The grid below must match kGoldenFormats in test_kernel_roofline.cpp.
 #include "core/device_class.h"
 #include "ninferno/ops/linear.h"
 #include "ops/generic/generic_gemm.h"
@@ -90,10 +93,13 @@ int main(int argc, char** argv) {
     }
     std::FILE* f = std::fopen(argv[1], "w");
     if (!f) return 2;
+    std::string boards;
+    for (const auto& board : g::kFactsBoards) { boards += std::string("\"") + board.name + "\", "; }
     std::fprintf(
         f,
         "// Golden prices of the selector's register-MMA, tiled and staged routes from the\n"
-        "// code before #613 PR-4 (kernel_roofline.h), commit %s, base build.\n"
+        "// code before #613 PR-4 (kernel_roofline.h), commit %s, full sm_120a build.\n"
+        "constexpr const char* kGoldenBoards[] = {%s};\n"
         "// Regenerate with tests/ops/linear/gen_kernel_roofline_golden.cpp (see its header);\n"
         "// do not edit by hand.\n"
         "// kGoldenCalls: board (index into kFactsBoards), format (index into\n"
@@ -101,7 +107,7 @@ int main(int argc, char** argv) {
         "// kGoldenRoutes: family, schedule, seconds (%%.17g).\n"
         "constexpr GoldenCall kGoldenCalls[] = {\n%s};\n"
         "constexpr GoldenRoute kGoldenRoutes[] = {\n%s};\n",
-        argv[2], calls.c_str(), routes.c_str());
+        argv[2], boards.c_str(), calls.c_str(), routes.c_str());
     std::fclose(f);
     std::printf("calls %ld routes %ld\n", ncalls, nroutes);
     return 0;

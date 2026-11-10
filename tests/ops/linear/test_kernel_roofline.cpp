@@ -13,7 +13,6 @@
 #include "core/generation.h"
 #include "core/weight.h"
 #include "ninferno/ops/linear.h"
-#include "ops/common/arch_limits.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/kernel_roofline.h"
 #include "ops/generic/route_cost_constants.h"
@@ -25,6 +24,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <iterator>
 #include <exception>
 #include <optional>
 #include <string>
@@ -78,24 +79,24 @@ constexpr bool is_golden_family(g::Family f) {
     return f == g::Family::RegisterMma || f == g::Family::TiledMma || f == g::Family::StagedMma;
 }
 
-// The table was made in the base build (no NVFP4, 99 KiB of shared memory per block). Which routes
-// a build offers differs by build set, so routes are matched by (family, schedule), never by
+// The table was made in the full build for the sm_120a family (NVFP4, so every register-MMA
+// schedule including the cluster K splits launches; 99 KiB of shared memory per block). Which
+// routes a build offers differs by build set, so routes are matched by (family, schedule), never by
 // position: the prices of the routes both sides offer must agree, and a route on one side only
 // must be one this build gates out or in:
-//  - missing now: a register-MMA schedule the build cannot launch, or a staged schedule whose
-//    shared stages do not fit this build's block (sm75: 64 KiB);
-//  - extra now: a register-MMA cluster schedule (the full build, rmma_schedule_launchable) or a
-//    staged schedule that fits only because this build's block is past 99 KiB (sm80: 163 KiB).
+//  - missing now: a register-MMA schedule the build cannot launch (a base or sm70/sm75 build has
+//    no cluster schedules), or a staged schedule whose shared stages do not fit this build's block
+//    (sm75: 64 KiB);
+//  - extra now: only a staged schedule the 99 KiB build gated out and this build's larger block
+//    holds (sm80: 163 KiB). Never a register-MMA route: the table holds every one.
 // A route that is a tiled one, or that is gated nowhere, is a failure.
 bool gate_explains(bool extra, g::Route r) {
     constexpr std::size_t kBaseShared = 99 * 1024;
     switch (r.family) {
     case g::Family::RegisterMma:
-        return extra ? g::rmma_schedule_info(r.schedule).cluster > 1
-                     : !g::rmma_schedule_launchable(r.schedule);
+        return !extra && !g::rmma_schedule_launchable(r.schedule);
     case g::Family::StagedMma:
-        return extra ? g::staged_fits(r.schedule) &&
-                           ninferno::ops::kMaxSharedBytesPerBlock > kBaseShared
+        return extra ? g::staged_fits(r.schedule) && g::staged_shared_bytes(r.schedule) > kBaseShared
                      : !g::staged_fits(r.schedule);
     default:
         return false;
@@ -103,6 +104,25 @@ bool gate_explains(bool extra, g::Route r) {
 }
 
 void check_golden() {
+    // The rows name their board by an index into kFactsBoards: a reordered or grown list would price
+    // another board against the table.
+    constexpr std::size_t kBoards = sizeof(kGoldenBoards) / sizeof(kGoldenBoards[0]);
+    if (std::size(g::kFactsBoards) != kBoards) {
+        std::fprintf(stderr, "FAIL: kFactsBoards has %zu boards, the golden was made over %zu\n",
+                     std::size(g::kFactsBoards), kBoards);
+        ++failures;
+        return;
+    }
+    for (std::size_t i = 0; i < kBoards; ++i) {
+        if (std::strcmp(g::kFactsBoards[i].name, kGoldenBoards[i]) != 0) {
+            std::fprintf(stderr,
+                         "FAIL: kFactsBoards[%zu] is %s, the golden's board %zu is %s "
+                         "(the list moved: regenerate the golden)\n",
+                         i, g::kFactsBoards[i].name, i, kGoldenBoards[i]);
+            ++failures;
+            return;
+        }
+    }
     long prices = 0, gated_out = 0, gated_in = 0, bad = 0;
     for (const GoldenCall& c : kGoldenCalls) {
         const DeviceClass d = g::board_device_class(g::kFactsBoards[c.board]);
