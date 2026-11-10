@@ -1,4 +1,4 @@
-probe isa_probe 9
+probe isa_probe 12
 card NVIDIA GeForce RTX 5090
 cc 120
 sms 170
@@ -10,39 +10,49 @@ shape hmma_16816_f32_bf16 4096
 fact resident_ctas_per_sm 4.000 count
 fact mma_cycles_per_sm 8.003 clk
 fact mma_cycles_per_partition 32.010 clk
-fact tensor_flops_per_sm_clock 511.840 flop
+fact tensor_flops_per_sm_clock 511.838 flop
 fact mma_dependent_latency 34.542 clk
 fact fp32_cycles_per_warp_instruction 1.027 clk
 fact int32_cycles_per_warp_instruction 2.010 clk
+fact lat_imad 4.000 clk
+fact lat_iadd 5.000 clk
+fact lat_lop3 4.000 clk
+fact lat_prmt 4.000 clk
+fact lat_shf 4.000 clk
+fact lat_hfma2 4.000 clk
+fact lat_ffma 4.000 clk
+fact lat_shfl 31.003 clk
+fact lat_cvt_i2f_f2i 12.000 clk
+fact lat_cvt_f32_f16 5.000 clk
 fact l1_latency_w1 43.887 clk
 fact l1_latency_w2 43.887 clk
 fact l1_latency_w4 43.887 clk
-fact l1_latency_w8 45.918 clk
-fact l2_latency_w1 360.966 clk
-fact l2_latency_ns_w1 124.758 ns
-fact l2_latency_w2 359.177 clk
-fact l2_latency_ns_w2 124.156 ns
-fact l2_latency_w4 359.165 clk
-fact l2_latency_ns_w4 124.156 ns
-fact l2_latency_w8 357.471 clk
-fact l2_latency_ns_w8 123.609 ns
-fact dram_tlbwarm_latency_w1 868.434 clk
+fact l1_latency_w8 45.947 clk
+fact l2_latency_w1 356.632 clk
+fact l2_latency_ns_w1 123.883 ns
+fact l2_latency_w2 358.311 clk
+fact l2_latency_ns_w2 124.562 ns
+fact l2_latency_w4 356.710 clk
+fact l2_latency_ns_w4 123.961 ns
+fact l2_latency_w8 356.594 clk
+fact l2_latency_ns_w8 123.898 ns
+fact dram_tlbwarm_latency_w1 863.773 clk
 fact dram_tlbwarm_latency_ns_w1 300.000 ns
-fact dram_tlbwarm_latency_w2 840.512 clk
-fact dram_tlbwarm_latency_ns_w2 290.625 ns
-fact dram_tlbwarm_latency_w4 872.113 clk
+fact dram_tlbwarm_latency_w2 835.027 clk
+fact dram_tlbwarm_latency_ns_w2 290.000 ns
+fact dram_tlbwarm_latency_w4 867.562 clk
 fact dram_tlbwarm_latency_ns_w4 301.375 ns
-fact dram_tlbwarm_latency_w8 913.434 clk
-fact dram_tlbwarm_latency_ns_w8 315.625 ns
-fact dram_latency_w1 826.442 clk
-fact dram_latency_ns_w1 285.625 ns
-fact dram_latency_w2 827.719 clk
-fact dram_latency_ns_w2 286.031 ns
-fact dram_latency_w4 826.607 clk
-fact dram_latency_ns_w4 285.742 ns
-fact dram_latency_w8 840.642 clk
-fact dram_latency_ns_w8 290.594 ns
-fact sm_clock_mhz_chase 2893.336 mhz
+fact dram_tlbwarm_latency_w8 911.367 clk
+fact dram_tlbwarm_latency_ns_w8 316.750 ns
+fact dram_latency_w1 822.252 clk
+fact dram_latency_ns_w1 285.727 ns
+fact dram_latency_w2 823.183 clk
+fact dram_latency_ns_w2 286.227 ns
+fact dram_latency_w4 823.190 clk
+fact dram_latency_ns_w4 285.977 ns
+fact dram_latency_w8 836.648 clk
+fact dram_latency_ns_w8 290.945 ns
+fact sm_clock_mhz_chase 2878.111 mhz
 fact shared_latency 33.997 clk
 selfcheck ok
 end
