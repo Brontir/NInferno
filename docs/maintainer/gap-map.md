@@ -54,12 +54,17 @@ Attribution rules, each a trap found while writing the tool:
   MoE models and a KV or ring dtype missing from the fixture get no law.
 - Whole-model prefill is 2 x `active_params` x prompt tokens. `active_params` already leaves out an
   untied input table and includes the output head, which a `max_tokens 1` prefill runs for the
-  last token only; the head's size is not in the fixture, so the law is slightly high and the gap a
-  lower bound, tied or untied. It is priced at the int8 rate where the generation has one; attention
-  and norms are not in the law, so those gaps are upper bounds on the linears' own.
+  last token only. The head is about 13 % (Qwen3.5-9B) to 15 % (4B) of `active_params` and is kept,
+  which makes the law high; attention and norms are not in the law, which makes it low. Two opposite
+  biases: neither a lower nor an upper bound on the linears' own gap strictly holds. It is priced at
+  the int8 rate where the generation has one.
 - A time under its law (gap below 1) is an attribution or byte-count bug, never a result: those rows
-  are listed in their own section and left out of every statistic. Rows whose weight bytes fit the
-  board's L2 are counted in the JSON (`l2_resident`); their DRAM law bounds a warm call from above.
+  are listed in their own section and left out of every statistic.
+- A DRAM-bound row whose weight bytes fit the board's L2 (`l2_resident` in the JSON) is not bound
+  by the DRAM law: a warm call need not touch DRAM. Those rows are counted in the `in L2` column
+  and their own section, and left out of the medians, the top lists and the below-law check.
+  Tensor-bound rows are unaffected.
+- Fixture cards ("RTX 3060") take the `gpu_facts` name ("GeForce RTX 3060"), so a board has one name.
 - Rows whose law time is under `--min-law-us` (default 5) are counted and not ranked: a call that
   short is a launch, not a law (the event timer ticks at 1.024 us).
 
@@ -74,12 +79,15 @@ law (launch cost, a missing term) is where a prediction has to come first (K4 ru
 
 Route-table evidence exists for two boards: RTX 3090 and RTX 5080 (the 5070 Ti's copy is the 5080's).
 
-- **Linears, RTX 3090**: median gap 1.7 at T1, 1.9 at T2-4, 2.0 at T5-8, 2.2 at T9-16, all DRAM
-  bound. Worst: Q5_0 2688x3712 flat at 29.7 us over T11-15 (gap 4.0, a call-cost shape, not a
-  bandwidth one); Q4_K / IQ4_XS 17408x5120 SwiGLU about 2.1-2.2 at T9-16.
-- **Linears, RTX 5080**: 1.3-1.4 at T2-8, 3.0 at T17-64, 1.8 at T65-256, tensor-bound from about
-  T40. Worst: the shape-owned Q5 1024x5120 at T96-128 (53-61 us against 8.9-11.9 us, gap 4.5-6.0),
-  and Q4 4096x5120 at T40-48 (72-74 us, gap 4.1-4.8).
+- **Linears, RTX 3090**: median gap 1.7 at T1, 1.8 at T2-4, 2.0 at T5-8, 2.2 at T9-16, all DRAM
+  bound (40 of 520 scored rows fit the 6 MB L2 and are counted apart). Worst: Q5_0 2688x3712 flat
+  at 29.7 us over T11-15 (gap 4.0, a call-cost shape, not a bandwidth one); Q4_K / IQ4_XS
+  17408x5120 SwiGLU about 2.1-2.2 at T9-16.
+- **Linears, RTX 5080**: 47 of 207 scored rows are DRAM-bound with weights that fit the 64 MB L2;
+  they are counted apart, so the T2-16 medians (1.2) rest on a handful of rows and mean little.
+  The tensor-bound rows carry the finding: 3.0 at T17-64 (median), 1.8 at T65-256, 1.4 at T257+.
+  Worst: the shape-owned Q5 1024x5120 at T96-128 (53-61 us against 8.9-11.9 us, gap 4.5-6.0) and
+  Q4 4096x5120 at T40-48 (72-74 us, gap 4.1-4.8).
 - **Whole decode step** (T = streams, short context): median 1.10 (4060 Ti) to 1.35 (2080 Ti);
   Quadro GV100 2.0, worst 3.2 at 8 streams, taken on a hot board. At one stream the DRAM share is
   0.92 (4060 Ti), 0.89 (4070 Ti), 0.88 (3060), 0.87 (5070 Ti), 0.84 (4090), 0.81 (2080 Ti), 0.77

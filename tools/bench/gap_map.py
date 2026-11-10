@@ -264,7 +264,20 @@ def card_board(c: dict) -> dict:
             "cc": c["major"] * 10 + c["minor"]}
 
 
-def rows_from_decode(doc: dict, gens: list[dict]) -> list[dict]:
+def facts_name(card: str, c: dict, facts: dict | None) -> str:
+    """The gpu_facts name of a fixture card ("RTX 3060" -> "GeForce RTX 3060"): same compute
+    capability and SM count, bandwidth within 2 %, the fixture's name inside the facts name (the
+    shortest such name). The fixture's own name where nothing matches."""
+    if not facts:
+        return card
+    cc, bw = c["major"] * 10 + c["minor"], c["dram_bytes_per_s"] / 1e9
+    names = [g["name"] for g in facts["gpus"]
+             if g["cc"] == cc and g["sms"] == c["sms"] and card in g["name"]
+             and abs(g["gbps"] * g["bus_bits"] / 8.0 - bw) / bw <= 0.02]
+    return min(names, key=len) if names else card
+
+
+def rows_from_decode(doc: dict, gens: list[dict], facts: dict | None = None) -> list[dict]:
     """One decode step. Bytes as tools/fits/speed_model/fit_decode.py counts them: the file's
     weights less the input table and the speculation layers (these runs are --spec none), plus per
     stream the KV (full attention), the sliding-window ring (min(context, window) tokens) and the
@@ -272,6 +285,7 @@ def rows_from_decode(doc: dict, gens: list[dict]) -> list[dict]:
     rows = []
     for r in doc["rows"]:
         m, c = doc["models"][r["model"]], doc["cards"][r["card"]]
+        card = facts_name(r["card"], c, facts)
         q = m["quants"].get(r["quant"])
         streams, ctx = r["concurrency"], r["context"]
         step_us = 1e6 / r["decode"]  # per-stream rate: one step serves every stream
@@ -279,7 +293,7 @@ def rows_from_decode(doc: dict, gens: list[dict]) -> list[dict]:
         base = dict(kind="decode", model=r["model"], quant=r["quant"])
 
         def nolaw(why):
-            return dict(make_row("decode_measured", r["card"], r["quant"], label, streams, step_us,
+            return dict(make_row("decode_measured", card, r["quant"], label, streams, step_us,
                                  {"law": None, "why": why}), **base)
 
         if q is None or m["experts"]:
@@ -299,21 +313,23 @@ def rows_from_decode(doc: dict, gens: list[dict]) -> list[dict]:
         weights = q["weight_bytes"] - q["input_table_bytes"] - q.get("speculation_bytes", 0)
         nbytes = weights + streams * per_stream
         dram_us = nbytes / c["dram_bytes_per_s"] * 1e6
-        rows.append(dict(make_row("decode_measured", r["card"], r["quant"], label, streams, step_us,
+        rows.append(dict(make_row("decode_measured", card, r["quant"], label, streams, step_us,
                                   finish(dram_us, None, nbytes, "decode step is bytes-bound")), **base))
     return rows
 
 
-def rows_from_prefill(doc: dict, gens: list[dict]) -> list[dict]:
+def rows_from_prefill(doc: dict, gens: list[dict], facts: dict | None = None) -> list[dict]:
     """One whole prefill. Flops: 2 x active_params x prompt tokens. active_params already leaves
     out an untied input table (choice.h ModelFacts) and includes the output head, which a prefill
-    of max_tokens 1 runs for the last token only; the head's size is not in the fixture, so the
-    flops (and the law) are slightly high and the gap a lower bound, for tied and untied alike.
+    of max_tokens 1 runs for the last token only; the head is about 13-15 % of
+    active_params (Qwen3.5-9B, 4B) and is kept, which makes the law high. Attention is not counted,
+    which makes it low. Two opposite biases: neither a lower nor an upper bound strictly holds.
     Priced at the int8 rate where the generation has one; no law where that rate is missing or
     fitted. Attention and norms are not counted."""
     rows = []
     for r in doc["rows"]:
         m, c = doc["models"][r["model"]], doc["cards"][r["card"]]
+        card = facts_name(r["card"], c, facts)
         board = card_board(c)
         gen = generation_of(gens, board["cc"])
         us = r["prompt"] / r["prefill"] * 1e6
@@ -322,7 +338,7 @@ def rows_from_prefill(doc: dict, gens: list[dict]) -> list[dict]:
         q = m["quants"].get(r["quant"])
 
         def nolaw(why):
-            return dict(make_row("prefill_measured", r["card"], r["quant"], label, r["prompt"], us,
+            return dict(make_row("prefill_measured", card, r["quant"], label, r["prompt"], us,
                                  {"law": None, "why": why}), **base)
 
         if q is None or m["experts"]:
@@ -339,12 +355,17 @@ def rows_from_prefill(doc: dict, gens: list[dict]) -> list[dict]:
         flops = 2.0 * m["active_params"] * r["prompt"]
         law = finish(dram_us, flops / rate * 1e6, nbytes, why)
         law["note"] = f"tensor law at the {mode} rate; attention and norms not counted"
-        rows.append(dict(make_row("prefill_measured", r["card"], r["quant"], label, r["prompt"], us, law),
+        rows.append(dict(make_row("prefill_measured", card, r["quant"], label, r["prompt"], us, law),
                          **base))
     return rows
 
 
 # --------------------------------------------------------------------------- aggregation
+
+def in_l2(r: dict) -> bool:
+    """Weights fit the L2 and DRAM would bind: the DRAM law is not a bound on this row."""
+    return bool(r.get("l2_resident")) and r["binds"] == "dram"
+
 
 def aggregate(rows: list[dict], min_law_us: float) -> list[dict]:
     """Per card x format x T band (decode/prefill whole-model rows by card x quant x kind)."""
@@ -355,13 +376,15 @@ def aggregate(rows: list[dict], min_law_us: float) -> list[dict]:
     out = []
     for (card, kind, fmt, band), g in sorted(groups.items()):
         # A time under its law is a bug in the attribution or the byte count, never a result.
-        below = [r for r in g if r["gap"] is not None and r["gap"] < 1.0]
-        scored = [r for r in g if r["gap"] is not None and r["gap"] >= 1.0 and r["law_us"] >= min_law_us]
-        small = [r for r in g if r["gap"] is not None and r["gap"] >= 1.0 and r["law_us"] < min_law_us]
+        l2 = [r for r in g if r["gap"] is not None and in_l2(r)]
+        g_ = [r for r in g if r["gap"] is None or not in_l2(r)]
+        below = [r for r in g_ if r["gap"] is not None and r["gap"] < 1.0]
+        scored = [r for r in g_ if r["gap"] is not None and r["gap"] >= 1.0 and r["law_us"] >= min_law_us]
+        small = [r for r in g_ if r["gap"] is not None and r["gap"] >= 1.0 and r["law_us"] < min_law_us]
         nolaw = [r for r in g if r["gap"] is None]
         entry = {"card": card, "kind": kind, "format": fmt, "band": band or "-",
                  "rows": len(g), "scored": len(scored), "below_floor": len(small),
-                 "below_law": len(below), "l2_resident": sum(1 for r in scored if r.get("l2_resident")),
+                 "below_law": len(below), "in_l2": len(l2),
                  "no_law": len(nolaw)}
         if scored:
             gaps = [r["gap"] for r in scored]
@@ -377,7 +400,8 @@ def aggregate(rows: list[dict], min_law_us: float) -> list[dict]:
 
 def below_law(rows: list[dict]) -> list[dict]:
     """Rows measured faster than their law: an attribution or byte-count bug to chase."""
-    return sorted((r for r in rows if r["gap"] is not None and r["gap"] < 1.0), key=lambda r: r["gap"])
+    return sorted((r for r in rows if r["gap"] is not None and r["gap"] < 1.0 and not in_l2(r)),
+                  key=lambda r: r["gap"])
 
 
 def top_gaps(rows: list[dict], n: int, min_law_us: float) -> dict[str, list[dict]]:
@@ -385,7 +409,7 @@ def top_gaps(rows: list[dict], n: int, min_law_us: float) -> dict[str, list[dict
     out = {}
     for kind in ("linear", "decode", "prefill"):
         scored = [r for r in rows if r["kind"] == kind and r["gap"] is not None
-                  and r["gap"] >= 1.0 and r["law_us"] >= min_law_us]
+                  and not in_l2(r) and r["gap"] >= 1.0 and r["law_us"] >= min_law_us]
         out[kind] = sorted(scored, key=lambda r: -r["gap"])[:n]
     return out
 
@@ -413,18 +437,18 @@ def render_markdown(rep: dict) -> str:
                      f"{fmt_us(r['measured_us'])} | {fmt_us(r['law_us'])} | {r['binds']} | {r['gap']:.2f} |")
         L.append("")
     L += ["## Per card, format and T band", "",
-          "| card | kind | format | band | rows | scored | no law | median gap | worst gap | binds |",
-          "|---|---|---|---|---:|---:|---:|---:|---:|---|"]
+          "| card | kind | format | band | rows | scored | in L2 | no law | median gap | worst gap | binds |",
+          "|---|---|---|---|---:|---:|---:|---:|---:|---:|---|"]
     for a in rep["groups"]:
         if a["scored"]:
             L.append(f"| {a['card']} | {a['kind']} | {a['format']} | {a['band']} | {a['rows']} | {a['scored']} | "
-                     f"{a['no_law']} | {a['median_gap']:.2f} | {a['worst_gap']:.2f} | {a['binds']} |")
+                     f"{a['in_l2']} | {a['no_law']} | {a['median_gap']:.2f} | {a['worst_gap']:.2f} | {a['binds']} |")
         else:
             why = a.get("no_law_why", f"{a['below_floor']} rows under the floor").removeprefix("no law: ")
-            L.append(f"| {a['card']} | {a['kind']} | {a['format']} | {a['band']} | {a['rows']} | 0 | {a['no_law']} | "
+            L.append(f"| {a['card']} | {a['kind']} | {a['format']} | {a['band']} | {a['rows']} | 0 | {a['in_l2']} | {a['no_law']} | "
                      f"- | - | no law: {why} |" if a["no_law"] else
-                     f"| {a['card']} | {a['kind']} | {a['format']} | {a['band']} | {a['rows']} | 0 | 0 | - | - | "
-                     f"under floor |")
+                     f"| {a['card']} | {a['kind']} | {a['format']} | {a['band']} | {a['rows']} | 0 | {a['in_l2']} | 0 | - | - | "
+                     f"{'in L2 / under floor' if a['in_l2'] else 'under floor'} |")
     L += ["", "## Below law (attribution or count bug)", ""]
     if not rep["below_law"]:
         L.append("None.")
@@ -434,9 +458,12 @@ def render_markdown(rep: dict) -> str:
         for r in rep["below_law"][:50]:
             L.append(f"| {r['card']} | {r['source']} | {r['format']} | {r['shape']} | {r['t']} | "
                      f"{fmt_us(r['measured_us'])} | {fmt_us(r['law_us'])} | {r['gap']:.2f} |")
-    n_l2 = sum(1 for r in rep["rows"] if r.get("l2_resident") and r["gap"] is not None and r["gap"] >= 1.0)
-    L += ["", f"{n_l2} scored rows have weight bytes that fit the board's L2 (`l2_resident` in the JSON): "
-          "their DRAM law is an upper bound on the bytes a warm call moves.", "", "## No law", ""]
+    n_l2 = sum(1 for r in rep["rows"] if r["gap"] is not None and in_l2(r))
+    L += ["", "## Weights fit in L2: DRAM law not binding", "",
+          f"{n_l2} DRAM-bound rows have weight bytes that fit the board's L2 (`l2_resident` in the "
+          "JSON). A warm call need not touch DRAM, so the DRAM law does not bound them; they are left "
+          "out of the medians, the top lists and the below-law check, and counted in the `in L2` "
+          "column. Tensor-bound rows are not affected.", "", "## No law", ""]
     for why, cnt in rep["no_law"]:
         L.append(f"- {cnt} rows: {why.removeprefix('no law: ')}")
     L.append("")
@@ -456,9 +483,9 @@ def build_report(repo: Path, min_law_us: float, top: int) -> dict:
                                       bits, seen)
     fx = repo / "tests/fixtures/choice"
     if (fx / "decode_measured.json").exists():
-        rows += rows_from_decode(json.loads((fx / "decode_measured.json").read_text(encoding="utf-8")), gens)
+        rows += rows_from_decode(json.loads((fx / "decode_measured.json").read_text(encoding="utf-8")), gens, facts)
     if (fx / "prefill_measured.json").exists():
-        rows += rows_from_prefill(json.loads((fx / "prefill_measured.json").read_text(encoding="utf-8")), gens)
+        rows += rows_from_prefill(json.loads((fx / "prefill_measured.json").read_text(encoding="utf-8")), gens, facts)
     no_law = Counter(r["why"] for r in rows if r["gap"] is None).most_common()
     return {"schema": SCHEMA, "min_law_us": min_law_us, "rows": rows,
             "groups": aggregate(rows, min_law_us), "top": top_gaps(rows, top, min_law_us),

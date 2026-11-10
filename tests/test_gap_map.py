@@ -163,6 +163,30 @@ class Rows(unittest.TestCase):
         self.assertEqual((g["scored"], g["below_law"]), (1, 1))
         self.assertEqual(len(gm.top_gaps(rows, 5, 5.0)["linear"]), 1)
 
+    def test_l2_resident_dram_rows_leave_the_statistics(self):
+        mk = lambda gap, binds, l2: dict(card="C", kind="linear", format="q4k", band="T1", gap=gap,
+                                         law_us=50.0, measured_us=50.0 * gap, binds=binds,
+                                         l2_resident=l2, why=None)
+        rows = [mk(0.5, "dram", True), mk(3.0, "dram", True), mk(2.0, "dram", False),
+                mk(4.0, "tensor", True)]
+        (g,) = gm.aggregate(rows, 5.0)
+        self.assertEqual((g["scored"], g["in_l2"], g["below_law"]), (2, 2, 0))
+        self.assertEqual([r["gap"] for r in gm.top_gaps(rows, 5, 5.0)["linear"]], [4.0, 2.0])
+        self.assertEqual(gm.below_law(rows), [])
+
+    def test_fixture_cards_take_the_facts_name(self):
+        facts = {"gpus": [dict(FACTS["gpus"][0], name="GeForce Test 9", sms=10, cc=89),
+                          dict(FACTS["gpus"][0], name="GeForce Test 9 Lite", sms=10, cc=89)]}
+        c = {"major": 8, "minor": 9, "sms": 10, "dram_bytes_per_s": 512e9}
+        self.assertEqual(gm.facts_name("Test 9", c, facts), "GeForce Test 9")
+        self.assertEqual(gm.facts_name("Other", c, facts), "Other")
+        self.assertEqual(gm.facts_name("Test 9", c, None), "Test 9")
+
+    def test_decode_counts_recurrent_state_twice(self):
+        doc = self.decode_doc(recurrent=True, state_bytes={"f16": 700})
+        r = gm.rows_from_decode(doc, self.gens)[0]
+        self.assertAlmostEqual(r["bytes"], 8_000_000 + 2 * (1000 * 100 + 2 * 700))
+
     def test_fitted_rates_give_no_tensor_law(self):
         gens = gm.load_generations(HEADER + '    {7, 5, 9, "turing", 1536.0, 2048.0, false, 1.0, 1.11, true},')
         volta, turing = gm.generation_of(gens, 70), gm.generation_of(gens, 75)
