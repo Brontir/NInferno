@@ -142,15 +142,22 @@ projection_step_seconds(std::optional<double> route_seconds, double output_bytes
         priced[i] = price(alternatives[i]);
         if (!priced[i]) { continue; }
         totals[i] = priced[i]->seconds + priced[i]->launches * launch_seconds;
+        if (!std::isfinite(totals[i])) {
+            priced[i].reset(); // the launch term overflowed
+            continue;
+        }
         if (!anchor || totals[i] < totals[*anchor]) { anchor = i; }
     }
     if (!anchor) { return std::nullopt; }
-    // Pass 2: among the alternatives within the resolution of the anchor (the anchor included),
-    // the fewest launches, the earliest on equal launches. Not order dependent.
-    std::optional<std::size_t> best;
+    // Pass 2, #600's rule: the anchor stays unless an alternative within the resolution of it
+    // runs strictly fewer launches; among those, the fewest, the earliest on equal launches. Not
+    // order dependent.
+    std::size_t best = *anchor;
     for (std::size_t i = 0; i < alternatives.size(); ++i) {
         if (!priced[i] || !within_resolution(totals[i], totals[*anchor], resolution)) { continue; }
-        if (!best || priced[i]->launches < priced[*best]->launches) { best = i; }
+        const int launches = priced[i]->launches;
+        const int held     = priced[best]->launches;
+        if (launches < held || (launches == held && best != *anchor && i < best)) { best = i; }
     }
     return best;
 }

@@ -135,6 +135,12 @@ int main() {
         p.fused_launches = 2;
         expect(chosen(chain::pair_alternatives(p), 0.02) == "fused",
                "inside the resolution, equal launches: canonical order (fused is first)");
+        // #600's rule: a dearer earlier alternative with as many launches does not displace the
+        // anchor (the cheapest); only strictly fewer launches inside the band do.
+        expect(chain::select(
+                   {Alternative{"dear", {Step{1.01, 1}}}, Alternative{"cheap", {Step{1.00, 1}}}},
+                   0.02) == std::optional<std::size_t>{1},
+               "equal launches inside the band: the anchor stays");
         // The band is in ln units: its edge is a tie, a hair beyond it is not.
         p.fused_launches = 1;
         p.fused          = 0.5 * std::exp(0.05);
