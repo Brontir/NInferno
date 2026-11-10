@@ -113,6 +113,13 @@ ninferno_add_op_test(ninferno_format_traits_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_format_traits.cpp"
   LIBRARIES ninferno_linear_test_support)
 
+# The kernel roofline (#613 PR-4): price_routes' register-MMA and pipelined prices equal the formula
+# they replaced bit for bit (the golden boards, every schedule, shapes, widths, compiled facts), and
+# the selector's priced routes are the roofline's terms (host only).
+ninferno_add_op_test(ninferno_kernel_roofline_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_kernel_roofline.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
 # ops::linear's candidates per call (#306): the owned Q8 kernel's launch and the generic route,
 # one selected as dispatch_linear runs.
 # The activation each generic route prepares and which preparations serve one another (#308).

@@ -1,6 +1,7 @@
 #include "ops/generic/route_query.h"
 
 #include "core/weight_view.h"
+#include "ops/generic/generic_select_internal.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -78,6 +79,29 @@ resolved_route_query(const DeviceClass& device, QType qtype, LinearPolicy policy
                                     .segments       = segments,
                                     .epilogue       = epilogue,
                                     .workspace_free = workspace_free});
+}
+
+std::vector<PricedRouteQuery> priced_routes_query(const DeviceClass& device, QType qtype,
+                                                  LinearPolicy policy, Epilogue epilogue,
+                                                  std::int32_t n, std::int32_t k,
+                                                  std::int32_t tokens) {
+    std::vector<PricedRouteQuery> out;
+    if (n <= 0 || k <= 0 || tokens <= 0) return out;
+    const ScopedDeviceClass scoped(device);
+    DescribedWeight described;
+    describe_weight(described, qtype, epilogue, n, k, 0);
+    if (!supports(described.weight)) return out;
+    const Problem problem{qtype, policy, n, k, epilogue};
+    price_routes(problem, described.weight, tokens,
+                 [&](Route r, double seconds) { out.push_back({r, seconds}); });
+    return out;
+}
+
+std::uint64_t described_weight_bytes(QType qtype, Epilogue epilogue, std::int32_t n, std::int32_t k,
+                                     std::int32_t parent_rows) {
+    DescribedWeight described;
+    describe_weight(described, qtype, epilogue, n, k, parent_rows);
+    return described.weight.payload_bytes;
 }
 
 } // namespace ninferno::ops::detail::generic

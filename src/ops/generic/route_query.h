@@ -22,6 +22,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 namespace ninferno::ops::detail::generic {
 
@@ -54,5 +55,25 @@ resolved_route_query(const DeviceClass& device, QType qtype, LinearPolicy policy
                      std::optional<std::size_t> workspace_free, bool prefill = false,
                      std::int32_t parent_rows = 0, bool x_aligned16 = true, int ldx = 0,
                      int segments = 1);
+
+// The selector's cost model as a pure query (price_routes, generic_cost.cpp): every route it
+// offers for such a call on `device`, with its time in seconds (the A16 scale applied), in the
+// order it offers them. Empty where the facts have no roofline, the generic path does not read
+// such a weight, or the width is not priced. What the CPU replica (`ninferno-serve price`) and the
+// kernel-roofline test compare the roofline's terms against.
+struct PricedRouteQuery {
+    Route route;
+    double seconds = 0;
+};
+
+[[nodiscard]] std::vector<PricedRouteQuery>
+priced_routes_query(const DeviceClass& device, QType qtype, LinearPolicy policy, Epilogue epilogue,
+                    std::int32_t n, std::int32_t k, std::int32_t tokens);
+
+// The payload bytes of the weight such a call is described with (the converter's layout of the
+// stored matrix: 2 n rows under SwiGLU, `parent_rows` where the call reads a slice): the bytes per
+// value the cost model prices by are these over n x k.
+[[nodiscard]] std::uint64_t described_weight_bytes(QType qtype, Epilogue epilogue, std::int32_t n,
+                                                   std::int32_t k, std::int32_t parent_rows = 0);
 
 } // namespace ninferno::ops::detail::generic

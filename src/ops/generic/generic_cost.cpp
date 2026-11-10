@@ -1,7 +1,7 @@
 // The route cost model (refactor B1): price_routes prices every admitted route of a call of 17
-// tokens or more by the roofline of its tiles on the device's facts (the A16 tiles here, the A8
-// ones in a8_candidates), cost_route takes the cheapest. Its constants and their provenance:
-// route_cost_constants.h.
+// tokens or more by the roofline of its tiles on the device's facts (the A16 tiles through
+// kernel_roofline.h, the A8 ones in a8_candidates), cost_route takes the cheapest. Its constants
+// and their provenance: route_cost_constants.h.
 #include "core/mmq_columns.h"
 #include "core/device_class.h"
 #include "core/generation.h"
@@ -12,6 +12,7 @@
 #include "ops/generic/generic_schedules.h"
 #include "ops/generic/generic_select_internal.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
+#include "ops/generic/kernel_roofline.h"
 #include "ops/generic/route_cost_constants.h"
 
 #include <algorithm>
@@ -178,28 +179,25 @@ std::optional<RmmaKept> rmma_kept(int schedule, const Weight& weight, Epilogue e
 } // namespace
 
 // The speed-profile route of a call of 17 tokens or more from a cost model of every tile the
-// build holds for the weight (register MMA, tiled, staged): a tile's time on the busiest SM is its
-// weight bytes over that SM's share of the DRAM bandwidth (or the whole matrix over the whole
-// bandwidth, whichever is longer) and its MMA work over the SM's tensor rate; the register MMA
-// runs them in series, the pipelined tiles (staged, tiled) overlap them at 0.9 / 0.8 of the
-// tensor rate; either is slowed in proportion when the SM holds fewer than 16 (register MMA) or 4
-// (pipelined) warps, and pays its warps' dependent chain of K steps per residency and the sum of
-// its split K (over a CTA's warps or a cluster). The device numbers come from its query (SMs,
-// threads, CTAs and shared memory per SM) and its facts (reference clock, bus width x memory clock:
-// DeviceClass::facts); the tensor rate per SM and clock from the
-// generation row (core/generation.h: 512 on the consumer and pro boards, 2048 on the full-rate HBM
-// parts, 1536 where the BF16 MMA is emulated, which also takes no pipelined tile and no 8-tile
-// token strip).
+// build holds for the weight (register MMA, tiled, staged): the kernel roofline
+// (kernel_roofline.h: a tile's bytes and MMA work on the busiest SM, its warp fill, its chain of
+// K steps, its split-K reduction), the register MMA in series, the pipelined tiles (staged,
+// tiled) overlapped at 0.9 / 0.8 of the tensor rate. The device numbers come from its query (SMs,
+// threads, CTAs and shared memory per SM) and its facts (reference clock, bus width x memory
+// clock: DeviceClass::facts); the tensor rate per SM and clock from the generation row
+// (core/generation.h: 512 on the consumer and pro boards, 2048 on the full-rate HBM parts, 1536
+// where the BF16 MMA is emulated, which also takes no pipelined tile and no 8-tile token strip).
 // ninferno_route_tune's timings of seven boards (each tile in the engine, L2 flushed; BF16, Q4
 // and Q8, T >= 17), the constants refit with the board held out: 1.095 of the best (geomean;
 // RTX 4090 1.083, RTX 5090 1.068) against 1.110 for the F-lite rule (heuristic_rmma) and 1.137
 // without the chain and reduction terms; the optimum of every constant is flat (the register-MMA
 // step's and the pipeline stage's cycles, route_cost_constants.h, at 0.5..1.5x and 0.5..2x of
-// their fit cost under 0.2 %). nullopt where the facts have no roofline.
+// their fit cost under 0.2 %).
 // price_routes hands `take` every admitted route it prices with its time (the A16 scale applied);
 // false where the facts have no roofline (nothing priced).
 bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tokens,
                   const PricedRoute& take) {
+    namespace kr = kernel_roofline;
     DeviceClass d;
     try {
         d = device_class();
@@ -211,109 +209,26 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         problem.k <= 0 || weight.payload_bytes == 0) {
         return false;
     }
-    const GenerationRow& g = generation_row(d.major, d.minor);
-    const bool emulated  = !d.features.mma_bf16_native;
-    const double clk     = d.facts.reference_clock_hz();
-    const double bw      = d.facts.dram_bytes_per_s();
-    const double sms     = d.sms;
-    const double peak_sm = g.bf16 * clk;
-    const double bw_sm   = bw / sms;
-    // What one SM reads from the L2 a second.
-    const double l2_sm = (gb20x_cc(d.major, d.minor) ? route_cost::kL2BytesPerSmClockGb20x
-                                                     : route_cost::kL2BytesPerSmClockGa10x)
-                             .value() *
-                         clk;
+    const bool emulated       = !d.features.mma_bf16_native;
+    const kr::ChipFacts chip  = kr::chip_facts_of(d);
+    const kr::Calibration cal = kr::calibration_of(d.major, d.minor);
     const double n = problem.n, k = problem.k;
-    const double bpw     = static_cast<double>(weight.payload_bytes) / (n * k);
-    const double max_thr = std::max(d.max_threads_per_sm, 1);
-    const double max_cta = std::max(d.max_blocks_per_sm, 1);
-    const double smem_sm = static_cast<double>(d.smem_per_sm);
-    const auto cdiv      = [](double a, double b) { return std::ceil(a / b); };
     // SwiGLU: the weight has 2 n rows (gate and up), every output row multiplies both; `bpw` is the
     // payload over the n output rows, so the bytes of a CTA stay rows x K x bpw.
-    const double sets = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
-    // The register-MMA terms below are verified for the decoders with per-sub-block scales (the
-    // K-quants and the codebook i-quants, has_subblock_scales) on the generations where two or
-    // more lab cards confirm them (rmma_terms_measured: sm_86 and consumer Blackwell sm_120). Every
-    // other part keeps its old price: Turing and Volta (emulated BF16 MMA) got worse with the
-    // terms (Quadro GV100 geomean 1.108 -> 1.155, worst 1.57 -> 1.80), and Ada (the 4060 Ti got
-    // worse, #501) and the parts with a single card wait. OPEN: the plain decoders (BF16, Q8_0,
-    // Q4_0 .. IQ4_NL, TQ1_0 / TQ2_0, the group-scaled, FP8 and FP4 formats) want their own
-    // measurement.
+    const kr::Call call{n, k, static_cast<double>(tokens),
+                        problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0,
+                        static_cast<double>(weight.payload_bytes) / (n * k)};
+    // The register-MMA heavy-decoder terms (the L2 bytes, the real occupancy from the kernel's
+    // registers, the spill bytes, the 8-warp fill) are verified for the decoders with
+    // per-sub-block scales (the K-quants and the codebook i-quants, has_subblock_scales) on the
+    // generations where two or more lab cards confirm them (rmma_terms_measured: sm_86 and
+    // consumer Blackwell sm_120). Every other part keeps its old price: Turing and Volta (emulated
+    // BF16 MMA) got worse with the terms (Quadro GV100 geomean 1.108 -> 1.155, worst 1.57 ->
+    // 1.80), and Ada (the 4060 Ti got worse, #501) and the parts with a single card wait. OPEN:
+    // the plain decoders (BF16, Q8_0, Q4_0 .. IQ4_NL, TQ1_0 / TQ2_0, the group-scaled, FP8 and FP4
+    // formats) want their own measurement.
     const bool heavy_decoder =
         has_subblock_scales(problem.qtype) && rmma_terms_measured(d.major, d.minor);
-    const double regs_sm = d.registers_per_sm;
-    // The CTAs of `threads` threads one SM holds: its thread and CTA limits, and for these decoders
-    // the registers per thread of the compiled kernel (allocated per warp in units of
-    // kRegAllocPerWarp). A 16-row, 32-token tile of a K-quant keeps 229 registers: two 128-thread
-    // CTAs, not the twelve the thread limit allows.
-    const auto rmma_occupancy = [&](double threads, const std::optional<RmmaKept>& kept) {
-        const double limit = std::min(std::floor(max_thr / threads), max_cta);
-        if (!kept) return limit;
-        const double unit    = route_cost::kRegAllocPerWarp.value();
-        const double per_cta = std::ceil(kept->registers * 32.0 / unit) * unit * (threads / 32.0);
-        return std::max(1.0, std::min(limit, std::floor(regs_sm / per_cta)));
-    };
-    // Time of `ctas` CTAs of `rows` output rows x `cols` (K over `cluster` CTAs) of `threads`
-    // threads, at most `occ` resident per SM; `local_bytes` is the spill per thread of the kernel.
-    const auto cost = [&](double rows, double cols, double threads, double cluster, double occ,
-                          double warps_k, bool pipelined, double eff, double local_bytes = 0.0) {
-        const double tiles = cdiv(tokens, cols);
-        const double gx    = cdiv(n, rows);
-        const double ctas  = gx * tiles * cluster;
-        const double kc    = k / cluster;
-        const double q     = std::ceil(ctas / sms);
-        // The warps resident on a busy SM: SMs left idle by a small grid do not slow the busiest
-        // one, whose bytes are already in `mem` (the fleet-wide fill charged calls of fewer CTAs
-        // than SMs up to 20x).
-        const double warps = std::min(q, std::max(occ, 1.0)) * threads / 32;
-        const double mem   = std::max(q * rows * kc * bpw / bw_sm, n * k * bpw / bw);
-        const double mma   = q * 2.0 * rows * sets * cols * kc / peak_sm;
-        // The CTAs the busiest SM runs one residency after another each pay their warps'
-        // dependent chain: the exposed load latency of a K step (register MMA: 16 K per warp, 150
-        // cycles) or of a pipeline stage (64 K, 500 cycles: the barrier and the cp.async wait).
-        const double rounds = std::ceil(q / std::max(occ, 1.0));
-        if (pipelined) {
-            const double chain = rounds * std::ceil(kc / route_cost::kPipelinedStageK.value()) *
-                                 route_cost::kPipelinedStageCycles.value() / clk;
-            return std::max(mem, mma / eff) /
-                       std::clamp(warps / route_cost::kPipelinedSaturatingWarps.value(),
-                                  route_cost::kMinWarpFill.value(), 1.0) +
-                   chain;
-        }
-        // The register MMA's bytes (heavy decoders). The matrix crosses the DRAM bus once whatever
-        // its token tiles (the CTAs of a weight row block after the first read it from the L2);
-        // every CTA pulls its weights and its token tile of x through its SM's L2 port. The grid
-        // runs the row blocks first (blockIdx.x) and the token tiles after (blockIdx.y), so the
-        // `occ` x `sms` CTAs resident together span ceil(occ x sms / gx) token tiles (at most
-        // min(tiles, occ) on one SM); the CTAs of one tile on an SM read it at the same K, so a
-        // residency round fetches each of its tiles once for all of them. A spilled register
-        // goes through the L1 twice a K step. These terms add (a max of the DRAM and the L2 time
-        // did worse on the 5090 and 4090: an empirical choice, not a derived overlap).
-        const double dram = n * k * bpw / bw;
-        const double l2_w = q * kc * rows * bpw / l2_sm;
-        const double per_round =
-            std::min({tiles, std::max(occ, 1.0), q, std::max(1.0, std::ceil(occ * sms / gx))});
-        const double l2_x  = rounds * per_round * kc * (tokens / tiles) * 2.0 / l2_sm;
-        const double spill = q * threads * local_bytes * route_cost::kSpillAccessesPerStep.value() *
-                             std::ceil(kc / (route_cost::kRmmaHeavyStepK.value() * warps_k)) /
-                             (route_cost::kL1BytesPerSmClock.value() * clk);
-        // The plain decoders keep their old price: the DRAM share of every CTA's bytes.
-        const double bytes      = heavy_decoder ? dram + l2_w + l2_x + spill : mem;
-        const double fill_warps = heavy_decoder ? route_cost::kRmmaHeavySaturatingWarps.value()
-                                                : route_cost::kRmmaSaturatingWarps.value();
-        // K split over a cluster (30 cycles per FP32 element) and over the CTA's K warps (2.75
-        // cycles per element and extra warp, through shared memory).
-        const double reduce = q * (cluster - 1) * rows * sets * cols *
-                                  route_cost::kClusterReduceCycles.value() / clk +
-                              rounds * (warps_k - 1.0) * rows * sets * cols *
-                                  route_cost::kWarpReduceCycles.value() / clk;
-        const double chain = rounds * std::ceil(kc / (route_cost::kRmmaStepK.value() * warps_k)) *
-                             route_cost::kRmmaStepCycles.value() / clk;
-        return (bytes + mma + reduce) /
-                   std::clamp(warps / fill_warps, route_cost::kMinWarpFill.value(), 1.0) +
-               chain;
-    };
     // The A16 model reads 11 % slow against the A8 one (fitted with it, 0.81..0.89 with any board
     // held out); on the minor-0 row (A100) it reads 39 % fast (one board); a constant factor leaves
     // the order of the A16 tiles as it was. 1 on a lent row, where no A8 candidate is offered
@@ -334,39 +249,52 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         // substituted board without clusters is refused by route_admits (route_requires).
         if (!rmma_schedule_launchable(i)) continue;
         if (emulated && s.n_tiles == 8) continue;
-        const double threads = 32.0 * s.warps_m * s.warps_k;
-        const auto kept  = heavy_decoder ? rmma_kept(i, weight, problem.epilogue, tokens, problem.n)
-                                         : std::optional<RmmaKept>{};
-        const double occ = rmma_occupancy(threads, kept);
+        const auto kept = heavy_decoder ? rmma_kept(i, weight, problem.epilogue, tokens, problem.n)
+                                        : std::optional<RmmaKept>{};
         const Route r{Family::RegisterMma, static_cast<std::uint8_t>(i)};
         const auto tile = *route_tile(r, problem.epilogue, tokens);
-        offer(r, cost(tile.out_rows, tile.tokens, threads, tile.k_split, occ, s.warps_k, false, 1,
-                      kept ? kept->local_bytes : 0.0));
+        kr::RegisterMmaKernel kernel;
+        kernel.rows    = tile.out_rows;
+        kernel.cols    = tile.tokens;
+        kernel.cluster = tile.k_split;
+        kernel.threads = 32.0 * s.warps_m * s.warps_k;
+        kernel.warps_k = s.warps_k;
+        kernel.heavy   = heavy_decoder;
+        if (kept) {
+            kernel.registers   = kept->registers;
+            kernel.local_bytes = kept->local_bytes;
+        }
+        offer(r, kr::price_register_mma(chip, cal, call, kernel).total);
     }
     a8_candidates(problem, weight, tokens, d, offer);
     if (emulated) return true;
-    const auto pipelined_occ = [&](double threads, double stages, double rows, double cols) {
-        const double tile =
-            std::min(stages * (rows + cols) * route_cost::kPipelinedStageBytesPerRow.value(),
-                     route_cost::kMaxTileSharedBytes.value());
-        return std::min({std::floor(max_thr / threads), max_cta, std::floor(smem_sm / tile)});
-    };
     for (int i = 0; i < tiled_schedule_count(); ++i) {
         const auto s = tiled_schedule_info(i);
         const Route r{Family::TiledMma, static_cast<std::uint8_t>(i)};
         const auto tile = *route_tile(r, problem.epilogue, tokens);
-        offer(r,
-              cost(tile.out_rows, tile.tokens, 256, 1, pipelined_occ(256, 3, s.block_n, s.block_m),
-                   1.0, true, route_cost::kTiledTensorFraction.value()));
+        kr::PipelinedKernel kernel;
+        kernel.rows            = tile.out_rows;
+        kernel.cols            = tile.tokens;
+        kernel.threads         = 256;
+        kernel.stages          = 3;
+        kernel.stage_rows      = s.block_n;
+        kernel.stage_cols      = s.block_m;
+        kernel.tensor_fraction = route_cost::kTiledTensorFraction.value();
+        offer(r, kr::price_pipelined(chip, cal, call, kernel).total);
     }
     for (int i = 0; i < staged_schedule_count(); ++i) {
-        const auto s         = staged_schedule_info(i);
-        const double threads = 32.0 * s.warps_m * s.warps_n;
+        const auto s = staged_schedule_info(i);
         const Route r{Family::StagedMma, static_cast<std::uint8_t>(i)};
         const auto tile = *route_tile(r, problem.epilogue, tokens);
-        offer(r, cost(tile.out_rows, tile.tokens, threads, 1,
-                      pipelined_occ(threads, s.stages, s.rows, s.tokens), 1.0, true,
-                      route_cost::kStagedTensorFraction.value()));
+        kr::PipelinedKernel kernel;
+        kernel.rows            = tile.out_rows;
+        kernel.cols            = tile.tokens;
+        kernel.threads         = 32.0 * s.warps_m * s.warps_n;
+        kernel.stages          = s.stages;
+        kernel.stage_rows      = s.rows;
+        kernel.stage_cols      = s.tokens;
+        kernel.tensor_fraction = route_cost::kStagedTensorFraction.value();
+        offer(r, kr::price_pipelined(chip, cal, call, kernel).total);
     }
     return true;
 }

@@ -1,6 +1,7 @@
 #include "core/removed_environment.h"
 #include "core/device_class.h"
 #include "ops/generic/build_manifest.h"
+#include "ops/generic/price_tool.h"
 #include "ops/generic/route_tune_tool.h"
 #include "ops/generic/selector_facts.h"
 #include "../cli/spec_tune.h"
@@ -177,6 +178,11 @@ int main(int argc, char** argv) {
     // (tools/release/package.sh, #556).
     if (argc >= 2 && std::string_view(argv[1]) == "selector-facts") {
         return ninferno::tools::selector_facts_main(argc - 1, argv + 1);
+    }
+    // The cost model's CPU replica (#613): the kernel roofline's terms for a board of the facts
+    // table, no GPU.
+    if (argc >= 2 && std::string_view(argv[1]) == "price") {
+        return ninferno::tools::price_main(argc - 1, argv + 1);
     }
     if (argc >= 2 && (std::string_view(argv[1]) == "spec-tune" ||
                       std::string_view(argv[1]) == "spec-reselect")) {
