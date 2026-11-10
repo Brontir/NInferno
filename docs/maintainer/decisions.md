@@ -1726,7 +1726,6 @@ Regret against recorded measurements: `tools/bench/selection_regret.py` and `reg
 
 ## 76. The vector kernel's T = 4 loss on Ampere: an instruction count orders the cards but does not reproduce the size; the gated pairs stay on the band (#521, 09.11, analysis; gated pair not measured)
 
-
 **Decision.** No route change and no rule. #560's bounded twin took the part of the loss that has a
 counted saving; by elimination the rest is expected in the gated gate/up launches, but that is not
 measured: the issue's data has no gated-shape row. A rule would move calls nobody timed, and the
@@ -1737,8 +1736,9 @@ the candidate rule is not supported as stated. The measurement that is missing i
 **Where the numbers come from.** The measured numbers of this entry (the gains and losses, the 47 %,
 the end-to-end +1.6 % and +2.8 %, the per-T slopes) and the SASS count "105 + 37 T" are the ones
 recorded in the text of issue #521. They are not committed as rows: no route-tune table, fixture or
-log holding them is in the repository, and the SASS count has no tool output here either. The kit
-above is how they are reproduced. The ratios and rho below are computed from
+log holding them is in the repository, and the SASS count has no tool output here either. They have
+no reproduction path in the repository; the kit above measures only the missing gated-pair timings
+(two shapes, T = 2..4). The ratios and rho below are computed from
 `src/core/data/gpu_facts.json`: ratio = SMs x boost GHz / (gbps x bus bits / 8) and rho = 37 / (1152
 x 4 x ratio). Reading of the constants, which reproduces the table's rho: 1152 is the bytes of one
 2048-weight Q4_K slice (2048 x 4.5 bits / 8) and 4 the warp instructions an SM issues per clock
@@ -1772,9 +1772,9 @@ applies the sm_86 / sm_89 instruction count to an sm_120 card, which was not cou
 The per-T slope: the measured slope is 1.41 times the count on the 3090 (2.7 us measured / 1.92 us
 counted) and 1.33 or 1.21 times on the 4090 (1.1 or 1.0 us measured / 0.83 us counted), with rho
 from the registry ratios above (an earlier version said "1.4-1.6 times on both"; that came from
-older, wrong ratios). So the model under-predicts the slope by 41 % on the 3090 and by 21 or 33 % on
+older, wrong ratios). So the model under-predicts the slope by 41 % on the 3090 and by 33 or 21 % on
 the 4090. An account made after the measurements, and untested: counting the 16 T dp4a as double (53
-per T instead of 37) gives 2.74 us on the 3090 (measured 2.7) and 1.18 us on the 4090 (measured 1.1
+per T instead of 37) gives 2.75 us on the 3090 (measured 2.7) and 1.18 us on the 4090 (measured 1.1
 or 1.0). It is not used in rho, and it should be checked on a card not yet looked at before anyone
 relies on it. These are mismatches: the model is wrong there until a term explains them; nothing
 here smooths them.
@@ -1804,12 +1804,25 @@ over 8 files:
 | shape (n x k) | T = 2 | T = 3 | T = 4 |
 |---|---|---|---|
 | 12288 x 4096 | -4.7..-5.7 % | -3.9..-4.2 % | -0.9..-1.8 % (gated wins throughout) |
-| 15360 x 3840 | +0.5..+0.9 % | +2.9..+3.4 % | +4.4..+6.2 % (gated loses from T = 2) |
+| 15360 x 3840 | +0.5..+0.9 % (about one tick) | +2.9..+3.4 % | +4.4..+6.2 % (gated loses from T = 3) |
 
-(gated / register MMA - 1; the tuner's r8 schedule is faster than both at T = 2 on both shapes.) A
-single per-card ratio with a cut at T <= 3 fits neither shape in the same way: the sign depends on
-the shape. The candidate needs a shape term, and no rule is adopted here; the kit prints the shapes
-side by side on a known build and its criterion is a verdict pattern per shape, not a threshold.
+(gated / register MMA - 1; the tuner's r8 schedule is faster than both at T = 2 on both shapes.)
+
+What these files can carry. The tuner's event timer ticks at 1.024 us (source:
+`src/ops/generic/route_tune_tool.cpp`, comment at the sample loop) and a decode-width median is
+divided by the number of weight copies (3 on these shapes' swiglu rows), so one median moves in
+steps of 0.34 us, and a gated-minus-register-MMA difference of about one tick (1.024 us) or less is
+not a result. In microseconds the differences over the 8 files are: 12288 x 4096 -8.9 .. -10.6
+(T = 2), -7.2 .. -7.9 (T = 3), -1.7 .. -3.4 (T = 4); 15360 x 3840 +1.0 .. +1.8 (T = 2), +6.1 ..
++7.2 (T = 3), +9.2 .. +13.0 (T = 4). So the T = 2 sign of 15360 x 3840 is not supported: three of
+the eight files differ by exactly one tick and a fourth by 1.045 us. The T = 4 cell of 12288 x 4096
+(1.7 us at the least) is under two ticks, so its sign is weakly supported. What stands: at T = 3 and
+T = 4 the two shapes have opposite signs, by 1.7 us or more in every file. The table's earlier
+note, "gated loses from T = 2", is withdrawn: on 15360 x 3840 gated loses from T = 3, and at
+T = 2 the difference is at the timer's resolution. These files are 8 runs, not paired passes, and
+their build and provenance were not verified. A single per-card ratio with a cut at T <= 3 fits
+neither shape in the same way: the sign depends on the shape. The candidate needs a shape term, and
+no rule is adopted here; the kit prints the shapes side by side on a known build and its criterion is a verdict pattern per shape, not a threshold.
 Nothing is fitted to these files.
 
 What the candidate would move, over all 113 rows of the registry (`gpu_facts.json`): at 0.17 it is
@@ -1832,4 +1845,7 @@ launch (`ggml_vec_gated_pair`; StoreF32 then GateProduct is the mixed-format pat
 two-launch alternative has no production sequence to time. The kit prints 2 x a single launch as an
 estimate of it: expected high by about one activation quantisation, and it omits the FP32 plane
 write and read of the real two-launch form. Its verdicts name which alternative carries a result
-(`alt(rmma)` is measured, `alt(twin)` rests on the estimate).
+(`alt(rmma)` is measured, `alt(twin)` rests on the estimate). The kit's verdict floor is the timer's
+raw tick, 1.024 us (a fact of the tuner's source, used as the bound on one median step). Two passes
+are two samples, not a confidence range: a cell within a few microseconds of zero (12288 x 4096 at
+T = 4, 15360 x 3840 at T = 2 on the old files) needs more passes before it is read as a verdict.
