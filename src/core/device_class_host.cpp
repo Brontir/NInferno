@@ -1,4 +1,5 @@
 #include "core/device_class.h"
+#include "core/arch_registry.h"
 #include "core/generation.h"
 #include <algorithm>
 #include <array>
@@ -432,6 +433,42 @@ std::vector<std::string> DeviceClass::similar_chips() const {
 
 std::vector<std::string> DeviceClass::similarity_chain() const {
     return gpu_similarity_chain(chip, sms, major, minor, features.mma_slow);
+}
+
+DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int minor, int sms,
+                                   std::size_t l2_bytes, std::size_t global_bytes) {
+    DeviceClass d;
+    d.major         = major;
+    d.minor         = minor;
+    d.sms           = sms;
+    d.l2_bytes      = l2_bytes;
+    d.global_bytes  = global_bytes;
+    d.name          = "synthetic " + gpu_arch_id(major, minor);
+    d.pci_device_id = pci_device_id;
+    d.chip          = gpu_chip(pci_device_id, major, minor, sms);
+    d.chip_from_pci = gpu_chip_by_pci(pci_device_id, major, minor);
+    d.features      = device_features_for(major, minor);
+    // board_mma_slow as the query sets it (the table's row, else the chip's); `facts` itself stays
+    // empty until a test asks for it.
+    d.features.mma_slow = board_mma_slow(machine_facts_of(d), major, minor, d.chip);
+    // The architecture's limits: the archs table of gpu_facts.json (core/arch_registry.h).
+    const arch_registry::ArchRow& arch = arch_registry::find(major, minor);
+    d.smem_per_block_optin             = arch.smem_per_block_optin;
+    d.smem_per_sm                      = arch.smem_per_sm;
+    d.max_threads_per_sm               = arch.max_threads_per_sm;
+    d.max_blocks_per_sm                = arch.max_blocks_per_sm;
+    d.registers_per_sm                 = arch.registers_per_sm;
+    if (major == 7 && minor < 5) {
+        // The synthetic Volta class has always carried the unlisted row's shared memory and
+        // threads, not the architecture's (96 KiB, 2048): kept here so the selector goldens
+        // stay byte-equal in the step that moved the tables; the step that corrects it
+        // regenerates them (tests/test_arch_registry.cpp pins both).
+        d.smem_per_block_optin = arch_registry::kRows[0].smem_per_block_optin;
+        d.smem_per_sm          = arch_registry::kRows[0].smem_per_sm;
+        d.max_threads_per_sm   = arch_registry::kRows[0].max_threads_per_sm;
+    }
+    d.persisting_l2_max_bytes = l2_bytes * 3 / 4;
+    return d;
 }
 
 } // namespace ninferno

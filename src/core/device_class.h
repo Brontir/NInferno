@@ -344,8 +344,9 @@ measured_boards_known(std::span<const Measured, Extent> measured) noexcept {
 // A class built from a board's facts alone, as the query would build it (no CUDA call): the chip
 // from the PCI id or the SM count, the architecture's features, and the per-block and per-SM
 // limits of the architecture. Its driver clocks are 0 and its `facts` empty (FactSource::None):
-// a test that wants the table's facts sets `facts = machine_facts_of(d)`. For host tests of the heuristics and route tables that read a
-// class, on GPUs this machine lacks.
+// a test that wants the table's facts sets `facts = machine_facts_of(d)`. For host tests of the
+// heuristics and route tables that read a class, on GPUs this machine lacks, and for a named board
+// (product::gpu_key_of). Host only (device_class_host.cpp, in ninferno_core_host).
 [[nodiscard]] DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int minor,
                                                  int sms, std::size_t l2_bytes,
                                                  std::size_t global_bytes);

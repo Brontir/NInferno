@@ -43,6 +43,10 @@
 #include <string_view>
 #include <vector>
 
+namespace ninferno {
+struct DeviceClass; // core/device_class.h
+} // namespace ninferno
+
 namespace ninferno::product::choice {
 
 // ---- Facts.
@@ -55,6 +59,13 @@ struct CardFacts {
     double l2_bytes = 0;        // the L2 cache (0: unknown)
     bool fp4 = false;           // FP4 tensor cores (NVFP4 weights run W4A4)
 };
+
+// The card facts of a device class whose `facts` (machine_facts: the reference clock, which on a
+// laptop is the bottom of its published boost range, the memory rate, the L2) and `features` are
+// filled, as the device query and product::gpu_key_of's synthetic class fill them. gpu_key_of
+// takes its rates from here and product::choice_card_of reads them back, so this is what the plan
+// prices; a host test of a gpu_facts.json board builds the class and calls it.
+[[nodiscard]] CardFacts card_facts_of(const DeviceClass& device);
 
 // One way to decode beside plain decode: a drafter the model carries at the configuration chosen
 // for it, and its gain.

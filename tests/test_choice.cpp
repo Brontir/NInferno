@@ -9,6 +9,8 @@
 // CPU.
 
 #include "product/choice/choice.h"
+#include "core/device_class.h"
+#include "core/machine_facts.h"
 #include "core/mmq_columns.h"
 #include "product/choice/choice_replay.h"
 
@@ -22,6 +24,7 @@
 #include <random>
 #include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #ifndef NINFERNO_SOURCE_DIR
@@ -2348,29 +2351,39 @@ void resolution_rule() {
 }
 
 // #618 step 8: properties of the choice over every board of src/core/data/gpu_facts.json. Host
-// only, no behaviour change. A property that fails is a finding: it is
-// printed as "FINDING" with the offending case and listed in the PR; any finding fails the test.
+// only, no behaviour change. A property that fails is a finding: it is printed as "FINDING" with
+// the offending case; any finding fails the test. What is not an invariant of the rules (a
+// snapshot of today's picks) is printed as "NOTE" and fails nothing.
 struct PropertyBoard {
     std::string name;
+    std::string published; // the row's facts without its name and PCI id
+    int boost_min_mhz = 0; // a laptop row's bottom of the published boost range (0: none)
     ch::CardFacts card;
 };
 
+// Every board as the plan prices it: product::gpu_key_of's synthetic class of the row's PCI id,
+// compute capability and SMs with the table's facts, through choice::card_facts_of, the function
+// gpu_key_of takes its rates from (a laptop at the bottom of its published boost range, NVFP4 from
+// the architecture's features).
 std::vector<PropertyBoard> gpu_fact_boards() {
     std::ifstream in(std::string(NINFERNO_SOURCE_DIR) + "/src/core/data/gpu_facts.json");
     const json facts = json::parse(in);
     std::vector<PropertyBoard> out;
     for (const json& g : facts.at("gpus")) {
         PropertyBoard b;
-        b.name          = g.at("name").get<std::string>();
-        const int cc    = g.at("cc").get<int>();
-        b.card.major    = cc / 10;
-        b.card.minor    = cc % 10;
-        b.card.sms      = g.at("sms").get<int>();
-        b.card.clock_hz = g.at("boost_mhz").get<double>() * 1e6;
-        b.card.dram_bytes_per_s =
-            g.at("bus_bits").get<double>() / 8 * g.at("gbps").get<double>() * 1e9;
-        b.card.l2_bytes = g.value("l2_mib", 0.0) * 1048576;
-        b.card.fp4      = cc >= 120;
+        b.name        = g.at("name").get<std::string>();
+        const int cc  = g.at("cc").get<int>();
+        const int sms = g.at("sms").get<int>();
+        const auto id =
+            static_cast<std::uint32_t>(std::stoul(g.at("id").get<std::string>(), nullptr, 16));
+        ninferno::DeviceClass d = ninferno::synthetic_device_class(id, cc / 10, cc % 10, sms, 0, 0);
+        d.facts                 = ninferno::machine_facts_of(d);
+        b.card                  = ch::card_facts_of(d);
+        b.boost_min_mhz         = g.value("boost_min_mhz", 0);
+        b.published             = std::to_string(cc) + "/" + std::to_string(sms) + "/" +
+                      g.at("form").get<std::string>() + "/" + g.at("boost_mhz").dump() + "/" +
+                      g.value("boost_min_mhz", json(0)).dump() + "/" + g.at("bus_bits").dump() +
+                      "/" + g.at("gbps").dump() + "/" + g.value("l2_mib", json(0)).dump();
         out.push_back(std::move(b));
     }
     return out;
@@ -2395,6 +2408,16 @@ void finding(std::vector<std::string>& findings, const std::string& text) {
 void choice_properties(const json& fixture) {
     const std::vector<PropertyBoard> boards = gpu_fact_boards();
     check(boards.size() >= 100, "gpu_facts.json lists the boards");
+    // The boards are priced as the plan prices them: a laptop row at the bottom of its published
+    // boost range (machine_facts), not at its top.
+    int laptops = 0;
+    for (const PropertyBoard& pb : boards) {
+        if (pb.boost_min_mhz == 0) { continue; }
+        ++laptops;
+        check(pb.card.clock_hz == pb.boost_min_mhz * 1e6,
+              "a laptop board is priced at its boost_min_mhz: " + pb.name);
+    }
+    check(laptops > 0, "gpu_facts.json has laptop rows with a published boost range");
     std::vector<std::string> findings;
     const json& m35     = fixture.at("models").at("Qwen3.6-35B-A3B");
     const auto bench_on = [&](const ch::CardFacts& card, bool moe) {
@@ -2418,17 +2441,18 @@ void choice_properties(const json& fixture) {
     ch::Task task;
     task.contexts = {32768};
 
-    // (a) Determinism and equal facts. choose() takes CardFacts, which carry neither a name nor a
-    // PCI id, so (a1) boards of gpu_facts.json with equal facts under different names pick the same
-    // by construction of the call: it is folded into determinism here (the same facts, the same
-    // pick). Where a name or PCI id could leak into a decision is the device class / GpuInfo path
-    // (choice_card_of in product/plan), which needs the plan's inputs and is not reached by this
-    // host test. (a2) Boards of one generation pick the same candidate today: a snapshot of the
-    // current rules, not an invariant (choose() reads spec rates legitimately, e.g. a DRAM rate
-    // under kVoltaCopyMinDramBps); a finding there is a decision to read, not necessarily a bug.
-    // (a3) The same call twice gives the same pick (no hidden mutable state).
-    std::map<std::string, std::pair<std::string, std::string>> by_facts, by_generation;
-    int equal_fact_pairs = 0, repeats = 0;
+    // (a) Determinism and equal facts. (a1) Rows of gpu_facts.json that publish the same facts
+    // under another name or PCI id (an RTX 5090 D, a laptop board's second id) are priced alike
+    // and pick alike: the production derivation reads the PCI id to find the row (machine_facts),
+    // so a name or id leaking into the card facts would show here. (a2) Boards of one generation
+    // picking different candidates is printed, not asserted: choose() reads each board's own SMs,
+    // clock and DRAM rate (e.g. a DRAM rate under kVoltaCopyMinDramBps), so it is a snapshot of
+    // today's rules, not an invariant; boards whose facts are equal are (a1). (a3) The same call
+    // twice gives the same pick (no hidden mutable state).
+    std::map<std::string, std::tuple<std::string, std::string, std::string>> by_row;
+    std::map<std::string, std::pair<std::string, std::string>> by_generation;
+    std::set<std::string> generation_noted;
+    int equal_fact_rows = 0, repeats = 0, generation_notes = 0;
     for (const PropertyBoard& pb : boards) {
         for (const bool moe : {false, true}) {
             const Bench b             = bench_on(pb.card, moe);
@@ -2442,36 +2466,43 @@ void choice_properties(const json& fixture) {
                 finding(findings, "(a3) the same call twice picks differently: " + pb.name +
                                       (moe ? " MoE" : " dense"));
             }
-            const std::string facts = key_of(pb.card) + (moe ? " MoE" : " dense");
-            auto [fit, fresh]       = by_facts.try_emplace(facts, pick, pb.name);
-            if (!fresh) {
-                ++equal_fact_pairs;
-                if (fit->second.first != pick) {
+            const std::string kind = moe ? " MoE" : " dense";
+            auto [row, fresh_row] =
+                by_row.try_emplace(pb.published + kind, key_of(pb.card), pick, pb.name);
+            if (!fresh_row) {
+                const auto& [card, row_pick, row_name] = row->second;
+                ++equal_fact_rows;
+                if (card != key_of(pb.card)) {
+                    finding(findings, "(a1) equal published facts, other card facts: " + pb.name +
+                                          " " + key_of(pb.card) + ", " + row_name + " " + card);
+                } else if (row_pick != pick) {
                     finding(findings, "(a1) equal facts, different pick: " + pb.name + " picks " +
-                                          pick + ", " + fit->second.second + " picks " +
-                                          fit->second.first);
+                                          pick + ", " + row_name + " picks " + row_pick);
                 }
             }
-            const std::string key =
-                std::string(ch::generation_of(pb.card)) + (moe ? " MoE" : " dense");
-            auto [git, gfresh] = by_generation.try_emplace(key, pick, pb.name);
-            if (!gfresh && git->second.first != pick) {
-                finding(findings, "(a2) generation " + key + ": " + pb.name + " picks " + pick +
-                                      ", " + git->second.second + " picks " + git->second.first);
+            const std::string key = std::string(ch::generation_of(pb.card)) + kind;
+            auto [git, gfresh]    = by_generation.try_emplace(key, pick, pb.name);
+            if (!gfresh && git->second.first != pick && generation_noted.insert(key).second) {
+                ++generation_notes;
+                std::cout << "  NOTE (a2) generation " << key << ": " << pb.name << " picks "
+                          << pick << ", " << git->second.second << " picks " << git->second.first
+                          << '\n';
             }
         }
     }
 
     // (b) Monotonicity, one board of each generation, read from choose()'s output. More weight on
     // accuracy (lambda) never raises the chosen KLD (only where the worth decides: a board whose
-    // generation has a deciding reference card); a longer asked context never raises the chosen KV
-    // bytes a token (this holds because a KV codec's KLD term does not depend on the context and
-    // the request time rises with the bytes read; a codec whose dequantisation costs more time than
-    // its bytes save could legitimately go wider at a longer context, and would be a finding to
-    // read) nor the most streams that hold it; more free memory never lowers the stage
-    // (the context the choice settles on, Auto's steps).
+    // generation has a deciding reference card); a longer asked context never raises the most
+    // streams that hold it (the memory law: a candidate's room per stream does not depend on the
+    // asked context, so what holds a longer one holds a shorter one); more free memory never
+    // lowers the stage (the context the choice settles on, Auto's steps). The streams run to
+    // kMaximumConcurrency, the product's limit. The KV bytes a token the choice settles on as the
+    // context grows are printed, not asserted: a codec whose dequantisation costs more time than
+    // its bytes save can legitimately go wider at a longer context, so the cost law holds no
+    // monotone order there.
     std::set<std::string> seen;
-    int lambda_boards = 0, boards_checked = 0;
+    int lambda_boards = 0, boards_checked = 0, kv_notes = 0;
     for (const PropertyBoard& pb : boards) {
         const std::string gen(ch::generation_of(pb.card));
         if (!seen.insert(gen).second) { continue; }
@@ -2500,7 +2531,8 @@ void choice_properties(const json& fixture) {
         double last_kv   = INFINITY;
         for (const std::uint32_t context : {4096U, 8192U, 16384U, 32768U, 65536U, 131072U}) {
             int most = 0;
-            for (const int streams : {1, 2, 4, 8, 16}) {
+            for (int streams = 1; streams <= static_cast<int>(ninferno::kMaximumConcurrency);
+                 ++streams) {
                 ch::Task t        = task;
                 t.contexts        = {context};
                 t.concurrency     = static_cast<std::uint32_t>(streams);
@@ -2527,10 +2559,10 @@ void choice_properties(const json& fixture) {
             if (c.chosen) {
                 const double kv = b.model.kv_bytes_per_token(chosen(c).candidate.kv);
                 if (kv > last_kv + 1e-9) {
-                    finding(findings, "(b) " + gen + " (" + pb.name + "): context " +
-                                          std::to_string(context) +
-                                          " raises the chosen KV bytes a token " +
-                                          std::to_string(last_kv) + " -> " + std::to_string(kv));
+                    ++kv_notes;
+                    std::cout << "  NOTE (b) " << gen << " (" << pb.name << "): context " << context
+                              << " settles on wider KV, " << last_kv << " -> " << kv
+                              << " bytes a token\n";
                 }
                 last_kv = kv;
             }
@@ -2601,10 +2633,12 @@ void choice_properties(const json& fixture) {
     // the chosen listing row, the start's `planning.inputs`); a CPU test needs an artifact and a
     // device, so it is not part of this host test (listed in the PR).
     std::cout << "choice properties: " << boards.size() << " boards, " << repeats
-              << " repeated calls, " << equal_fact_pairs << " equal-facts pairs, " << boards_checked
+              << " repeated calls, " << equal_fact_rows
+              << " rows sharing another row's published facts (dense and MoE), " << boards_checked
               << " generations swept (lambda on " << lambda_boards << " where the worth decides), "
-              << permuted << " permutations, " << findings.size() << " findings\n";
-    check(equal_fact_pairs > 0, "gpu_facts.json has boards with equal facts to compare");
+              << permuted << " permutations, " << findings.size() << " findings, "
+              << generation_notes << " generation notes, " << kv_notes << " KV notes\n";
+    check(equal_fact_rows > 0, "gpu_facts.json has rows with equal published facts to compare");
     check(lambda_boards > 0, "the lambda sweep covers a board where the worth decides");
     check(findings.empty(), "no property finding (the FINDING lines above)");
 }
