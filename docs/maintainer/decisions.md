@@ -1705,8 +1705,9 @@ on the W4A8 tiles, not this kernel, which steps the same way (RTX 5060 Ti 104 ->
 
 **Decision.** `choose()` finds the best worth (the anchor). A candidate whose request time on the
 reference card is longer by no more than `Choice::resolution` (the generation's decode rms, `ln` of
-the time ratio; since #618 typed by `Choice::resolution_basis`: own, or the measured Ada carry for
-a generation without its own error, see `resolution_of`) is indistinguishable from it in speed, so the speed term does not rank them; the
+the time ratio; since #618 typed by `Choice::resolution_basis`: own, the measured carry for a
+generation without its own error, or unmeasured (the largest carry) where neither exists, see
+`resolution_of`) is indistinguishable from it in speed, so the speed term does not rank them; the
 accuracy term does. The order is the one of the cross-quantization band (DECISIONS 60): a candidate
 wins only if its modelled KLD is lower than the anchor's by more than `kWorthTie`; the lowest KLD
 first, then the lowest canonical index; otherwise the anchor stays (`resolve_within_resolution`).
