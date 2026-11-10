@@ -2516,16 +2516,48 @@ public:
     // excludes close the headers a later message could address (a commentary channel, a space
     // after a channel name or after the role, <|constrain|>). The prose of the final message and
     // the analysis stay free (" to" and "commentary" are words).
+    //
+    // What parse() reads as a call (#665): a message (from the output's start or a
+    // "<|start|>assistant") whose header, up to its first <|message|>, holds " to=" and a
+    // commentary or analysis channel. The free text therefore never carries "<|channel|>analysis"
+    // or "<|channel|>commentary" (a recipient written before or after them, with any suffix on the
+    // name, would make a call: "x to=python<|channel|>analysis<|message|>"), nor
+    // "<|start|>assistant" (a header the grammar did not write); the only later messages are the
+    // two exact headers
+    // "<|start|>assistant<|channel|>analysis|final<|message|>", which have no recipient. A
+    // recipient in prose ("set x to=3"), or before a final channel the parser does not read as a
+    // call
+    // ("then <|channel|>final<|message|>"), stays free.
     [[nodiscard]] std::string refusal_structural_tag() const override {
         const auto text = [] {
             return OrderedJson{
                 {"type", "any_text"},
-                {"excludes",
-                 OrderedJson::array(
-                     {"<|channel|>commentary", "<|channel|>analysis ", "<|channel|>analysis\n",
-                      "<|channel|>analysis\t", "<|channel|>final ", "<|channel|>final\n",
-                      "<|channel|>final\t", "<|start|>assistant ", "<|start|>assistant\n",
-                      "<|start|>assistant\t", "<|constrain|>"})}};
+                {"excludes", OrderedJson::array({"<|channel|>commentary", "<|channel|>analysis",
+                                                 "<|channel|>final ", "<|channel|>final\n",
+                                                 "<|channel|>final\t", "<|start|>assistant",
+                                                 "<|constrain|>"})}};
+        };
+        // The messages after the first: each opens with an exact header.
+        const auto later_messages = [&text] {
+            return OrderedJson{
+                {"type", "star"},
+                {"content",
+                 OrderedJson{
+                     {"type", "sequence"},
+                     {"elements",
+                      OrderedJson::array(
+                          {OrderedJson{
+                               {"type", "or"},
+                               {"elements",
+                                OrderedJson::array(
+                                    {OrderedJson{{"type", "const_string"},
+                                                 {"value", std::string(kOpen) +
+                                                               "<|channel|>analysis" +
+                                                               std::string(kMessage)}},
+                                     OrderedJson{{"type", "const_string"},
+                                                 {"value", std::string(kOpen) + "<|channel|>final" +
+                                                               std::string(kMessage)}}})}},
+                           text()})}}}};
         };
         const auto sequence = [](std::initializer_list<OrderedJson> elements) {
             return OrderedJson{{"type", "sequence"}, {"elements", OrderedJson(elements)}};
@@ -2537,12 +2569,12 @@ public:
             {literal("<|channel|>"),
              OrderedJson{{"type", "or"},
                          {"elements", OrderedJson::array({literal("analysis"), literal("final")})}},
-             literal(kMessage), text()});
+             literal(kMessage), text(), later_messages()});
         const OrderedJson plain =
             sequence({OrderedJson{{"type", "regex"},
                                   {"pattern",
                                    "[ \\t\\r\\n]*([^ \\t\\r\\n<t]|t[^o<]|to[^=<]|(t|to)?<[^|<])"}},
-                      text()});
+                      text(), later_messages()});
         // An answer that is empty, only whitespace, or that whitespace and then only a prefix
         // `plain` needs one more byte to tell from "to=" or a structural token ("t", "to", "<",
         // "t<", "to<"), here whole, with nothing after it.
