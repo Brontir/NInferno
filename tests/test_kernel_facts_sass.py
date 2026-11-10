@@ -540,26 +540,33 @@ class Check(unittest.TestCase):
             out.append(l)
         return "\n".join(out) + "\n"
 
-    def test_older_schemas(self):
-        # A schema 2 snapshot (the loop without the schedule) checks against a build on its own
-        # columns; schema 3's critical path is read and dropped; a changed count still fails.
+    def test_older_schemas_are_rejected(self):
+        # Schema 2 (the loop without the schedule) and schema 3 (plus the critical path) are no
+        # longer read: `check` fails on them instead of comparing without the schedule.
         text = self.expected_text()
-        self.assertEqual(self.run_check(self.older_schema(text)), 0)
-        self.assertEqual(self.run_check(self.older_schema(text, kernel_facts.CHAIN_COLUMNS)), 0)
-        _, rows = kernel_facts.parse_snapshot(self.older_schema(text, kernel_facts.CHAIN_COLUMNS))
-        self.assertFalse(rows[Snapshot.KEY][4].scheduled)
+        chain = ("cp_mma", "cp_ld", "cp_lds", "cp_shfl", "cp_imad", "cp_iadd", "cp_lop3",
+                 "cp_prmt", "cp_shf", "cp_hfma2", "cp_ffma", "cp_cvt", "cp_f2f", "cp_other")
+        for old in (self.older_schema(text), self.older_schema(text, chain)):
+            with self.assertRaises(SystemExit):
+                kernel_facts.parse_snapshot(old)
+            with self.assertRaises(SystemExit):
+                self.run_check(old)
+        self.assertEqual(self.run_check(text), 0)
 
-        def bump(rows):
-            rows[Snapshot.KEY][4].ldg += 1
+    def test_render_refuses_rows_without_a_schedule(self):
+        rows = {k: (*v[:4], v[4].without_schedule()) for k, v in self.rows_of().items()}
+        with self.assertRaises(SystemExit):
+            kernel_facts.render("89", rows, "13.4.92", "-O3", "abc")
 
-        self.assertEqual(self.run_check(self.older_schema(self.expected_text(bump))), 1)
+    def rows_of(self):
+        return kernel_facts.extract_rows(None, None, "89", str(self.root / "usage.txt"),
+                                         str(self.root / "sass.txt"))
 
+    def test_schedule_is_compared(self):
         def later(rows):
             rows[Snapshot.KEY][4].stall_sum += 1
 
-        # Under schema 4 the schedule is compared too.
         self.assertEqual(self.run_check(self.expected_text(later)), 1)
-        self.assertEqual(self.run_check(self.older_schema(self.expected_text(later))), 0)
 
     def test_impossible_schedule_fails(self):
         # The revert check: a snapshot whose stall sum is below its instruction count (or whose

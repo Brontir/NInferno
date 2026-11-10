@@ -56,17 +56,11 @@ KEY_COLUMNS = ("decoder", "warps_m", "warps_k", "m_tiles", "n_tiles", "cluster",
                "latency", "add_sums")
 ROW_HEAD = ("family",) + KEY_COLUMNS + RESOURCE_COLUMNS
 COLUMNS = " ".join(ROW_HEAD + sass_counts.COLUMNS)
-# The critical-path columns of schema 3 (#679, never committed on master): a file that has them
-# is read without them.
-CHAIN_COLUMNS = ("cp_mma", "cp_ld", "cp_lds", "cp_shfl", "cp_imad", "cp_iadd", "cp_lop3",
-                 "cp_prmt", "cp_shf", "cp_hfma2", "cp_ffma", "cp_cvt", "cp_f2f", "cp_other")
-# The columns line of every schema `check` reads, and the loop fields its rows carry: schema 1
-# the resources alone, 2 the K loop's counts, 3 those and the critical path (dropped), 4 the
-# counts and the static schedule.
+# The columns line of every snapshot `check` reads, and the loop fields its rows carry: schema 1
+# the resources alone (`extract --no-sass`), 4 the counts and the static schedule. Older formats
+# (the counts without a schedule, the critical-path columns) are not read: regenerate the file.
 SCHEMA_COLUMNS = {
     1: (ROW_HEAD, 0),
-    2: (ROW_HEAD + sass_counts.LOOP_COLUMNS, len(sass_counts.LOOP_COLUMNS)),
-    3: (ROW_HEAD + sass_counts.LOOP_COLUMNS + CHAIN_COLUMNS, len(sass_counts.LOOP_COLUMNS)),
     4: (ROW_HEAD + sass_counts.COLUMNS, len(sass_counts.COLUMNS)),
 }
 EPILOGUE_SWIGLU = 2  # Epilogue::SwiGlu (generic_gemm.h): two row sets per warp
@@ -400,17 +394,15 @@ def row_line(key, value):
 
 
 def render(arch, rows, nvcc, flags, source):
-    """The snapshot's text: schema 4 where every row carries its loop and schedule; the loop
-    without the schedule (schema 2) where a row has no control codes; the resources alone where
-    there is no loop."""
+    """The snapshot's text: schema 4 where every row carries its loop and schedule; the resources
+    alone where there is no loop. A row with a loop but no schedule is an error."""
     loops = [v[4] for v in rows.values() if v[4] is not None]
     if not loops:
         columns = SCHEMA_COLUMNS[1][0]
     elif all(c.scheduled for c in loops):
         columns = SCHEMA_COLUMNS[4][0]
     else:
-        columns = SCHEMA_COLUMNS[2][0]
-        rows = {k: (*v[:4], v[4] and v[4].without_schedule()) for k, v in rows.items()}
+        fail("a row has no control codes: only schema 4 (loop and schedule) is written")
     lines = [
         f"# NInferno kernel facts, schema {SCHEMA}: what ptxas made of the register-MMA kernels of",
         f"# the sm_{arch} build, read off the linked binary with cuobjdump. Per kernel: the registers",
@@ -445,8 +437,8 @@ def render(arch, rows, nvcc, flags, source):
 
 def parse_snapshot(text):
     """(header, {key: (registers, stack, local, shared, LoopCounts or None)}) of a snapshot of
-    any schema SCHEMA_COLUMNS knows: a schema 1 file (resources only) parses with None for the
-    loop, a schema 2 or 3 one without the schedule (and schema 3's critical path dropped). A
+    schema 4, or a schema 1 file (resources only), which parses with None for the loop. Any other
+    columns line fails: regenerate the file. A
     schedule no kernel can have (LoopCounts.schedule_problems) fails."""
     header, rows = {}, {}
     lines = [l for l in text.splitlines() if l and not l.startswith("#")]
@@ -536,9 +528,6 @@ def cmd_check(args):
                        args.sass_batch)
     if not with_sass:
         expected = {k: (*v[:4], None) for k, v in expected.items()}
-    elif not all(v[4].scheduled for v in expected.values() if v[4] is not None):
-        # A schema 2 or 3 snapshot: the build's loops are compared without the schedule.
-        got = {k: (*v[:4], v[4] and v[4].without_schedule()) for k, v in got.items()}
     missing = sorted(k for k in expected if k not in got)
     extra = sorted(k for k in got if k not in expected)
     if other_nvcc and not (missing or extra):
