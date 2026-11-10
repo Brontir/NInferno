@@ -97,6 +97,7 @@ RoutePinLedger route_pin_ledger() noexcept {
             g_moe_fused_ready.load(std::memory_order_relaxed)};
 }
 
+// FUSION-SITE: sparse_moe_fused
 bool moe_takes_fused(bool fused_ready, const std::string& why_not) {
     note_moe_choice(fused_ready);
     switch (route_pins().moe) {

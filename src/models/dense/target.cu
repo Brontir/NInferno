@@ -355,6 +355,7 @@ void Target::draft_embedding(const Tensor& ids, Tensor& out) {
     ops::embedding(ids, model_.weights().token_embedding, out, device_.stream);
 }
 
+// FUSION-SITE: dense_out_residual_norm
 Tensor DensePass::forward(DeviceArena& work_, const Tensor& ids, const Tensor& pos, KvBindings kv,
                           std::int32_t session_context, ops::Gemma4AttentionEnvelope envelope,
                           Activations activations, const FeatureTap* tap) const {

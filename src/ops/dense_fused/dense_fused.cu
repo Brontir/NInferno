@@ -629,7 +629,6 @@ void dense_qkv_prepare(const DenseQkvPrepare& a, cudaStream_t stream) {
     CUDA_CHECK(cudaGetLastError());
 }
 
-// FUSION-SITE: residual_norm
 void residual_norm(const ResidualNorm& a, cudaStream_t stream) {
     constexpr const char* op  = "residual_norm";
     const std::int32_t width  = a.x.ne[0];

@@ -243,7 +243,6 @@ segmented_swiglu_pair_workspace_capacity_bytes(const SegmentedProjectionWeights&
     return bytes;
 }
 
-// FUSION-SITE: mmq_gated_pair
 bool segmented_swiglu_pair(const Tensor& x, const SegmentedProjectionWeights& weights, bool gelu,
                            Tensor& out, WorkspaceArena& workspace, cudaStream_t stream) {
     const std::int32_t half = weights.rows() / 2;
@@ -406,6 +405,7 @@ generic::GdnControlRows control_bank_rows(const SegmentedProjectionWeights& w, s
 
 } // namespace
 
+// FUSION-SITE: segmented_gdn_control
 void segmented_gdn_norm_gating_proj(const Tensor& x, const Tensor& norm_weight, float eps,
                                     const SegmentedProjectionWeights& weights, const Tensor& A_log,
                                     const Tensor& dt_bias, WorkspaceArena& workspace, Tensor& h,

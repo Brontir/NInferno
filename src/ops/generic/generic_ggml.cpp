@@ -84,6 +84,7 @@ std::int32_t ggml_mmq_slice_tokens(QType qtype) {
     return ggml_mmq_format(qtype) ? kMmqPrefillSlice : kMmqMaxTokens;
 }
 
+// FUSION-SITE: mmq_gated_pair
 bool ggml_mmq_gated_pair(const Tensor& x, const PairHalf& gate, const PairHalf& up,
                          std::int32_t rows, bool gelu, Tensor& out, WorkspaceArena& workspace,
                          cudaStream_t stream) {

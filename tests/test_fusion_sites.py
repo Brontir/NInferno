@@ -17,18 +17,23 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REGISTRY = ROOT / "tools" / "audit" / "fusion_sites.json"
 SOURCE_DIRS = ("src", "include")
-SUFFIXES = {".cpp", ".cu", ".h", ".cuh", ".hpp"}
+SUFFIXES = {".cpp", ".cc", ".cu", ".h", ".cuh", ".hpp", ".inl"}
 MARKER = re.compile(r"^\s*//\s*FUSION-SITE:\s*([a-z0-9_]+)\s*$")
 PRICED = {"priced", "partial", "fact", "literal", "none"}
 PROMISES = {"Equal", "OwnOrder", "NotApplicable", "Unreviewed"}
 REQUIRED = ("id", "name", "layer", "fuses", "decided_in", "rule_today", "alternatives", "priced",
-            "byte_promise", "one_card_literal", "evidence")
-PATH_IN_TEXT = re.compile(r"\b((?:src|include|tests|docs|tools)/[\w./+-]+\.\w+)")
+            "byte_promise", "invariant_pin", "parity_test", "one_card_literal", "evidence")
+# Any slash-separated path with a source or doc extension, in any directory (not only src/).
+PATH_IN_TEXT = re.compile(
+    r"(?<![\w/.-])((?:[\w+-]+/)+[\w+-]+\.(?:cpp|cc|cu|cuh|h|hpp|inl|md|json|py|cmake|sh))")
 
 
 def load():
     with REGISTRY.open(encoding="utf-8") as f:
         return json.load(f)
+
+
+BAD = []  # lines that mention FUSION-SITE but are not a well-formed marker
 
 
 def markers():
@@ -43,10 +48,28 @@ def markers():
                 continue
             lines = text.splitlines()
             for i, line in enumerate(lines):
+                if "FUSION-SITE" in line and not MARKER.match(line):
+                    BAD.append(f"{path.relative_to(ROOT).as_posix()}:{i + 1}: {line.strip()}")
                 m = MARKER.match(line)
                 if m:
                     found.append((m.group(1), path.relative_to(ROOT).as_posix(), i, lines))
     return found
+
+
+def starts_definition(lines, i):
+    """True when the statement that starts at the first code line after the marker reaches a `{`
+    before a `;`: a function definition, not a call or a declaration."""
+    j = i + 1
+    while j < len(lines) and (not lines[j].strip() or lines[j].strip().startswith("//")):
+        j += 1
+    for k in range(j, min(j + 12, len(lines))):
+        text = re.sub(r"//.*", "", lines[k])
+        brace, semi = text.find("{"), text.find(";")
+        if brace >= 0 and (semi < 0 or brace < semi):
+            return True
+        if semi >= 0:
+            return False
+    return False
 
 
 def next_code_line(lines, i):
@@ -83,6 +106,10 @@ class FusionSites(unittest.TestCase):
                 self.assertTrue(any("5090" in e or "3090" in e or "card" in e for e in
                                     [s["priced"]["by"]] + s["evidence"]), s["id"])
 
+    def test_no_malformed_marker(self):
+        markers()
+        self.assertEqual(BAD, [], "a FUSION-SITE line that is not `// FUSION-SITE: <id>`")
+
     def test_every_marker_has_an_entry_and_every_entry_a_marker(self):
         in_code = {}
         for site_id, file, _, _ in markers():
@@ -112,6 +139,13 @@ class FusionSites(unittest.TestCase):
                 for rel in PATH_IN_TEXT.findall(text):
                     self.assertTrue((ROOT / rel).exists(), f"{s['id']}: {rel} does not exist")
 
+    def test_invariant_pin_and_parity_test(self):
+        for s in self.sites:
+            self.assertTrue(isinstance(s["invariant_pin"], str) and s["invariant_pin"], s["id"])
+            if s["parity_test"] is not None:
+                self.assertTrue((ROOT / s["parity_test"]).is_file(),
+                                f"{s['id']}: parity_test {s['parity_test']} does not exist")
+
     def test_pending_prs_name_known_sites_and_are_not_landed(self):
         for p in self.reg["pending"]:
             self.assertIsInstance(p["pr"], int)
@@ -120,7 +154,8 @@ class FusionSites(unittest.TestCase):
             landed = ROOT / p["file"]
             self.assertFalse(
                 landed.exists(),
-                f"PR {p['pr']} landed ({p['file']} exists): move its sites to priced.by in the registry")
+                f"PR {p['pr']} landed ({p['file']} exists): move its entry from pending to priced.by of the "
+                "sites it prices (this failure is intended)")
 
 
 if __name__ == "__main__":

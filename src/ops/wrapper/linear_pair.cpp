@@ -155,7 +155,6 @@ std::optional<ChainPrice> separate_chain(std::int32_t n, std::int32_t k, std::in
 // on its width in this pair (SIMT up to 85 columns, MMA tiles beyond) and in linear() (the shape's
 // table), so the choice adds a width boundary at 5 columns, not a new kind of width dependence;
 // output exactness is unchanged (the invariant profile keeps the fused kernel: unpriced).
-// FUSION-SITE: q8_pair
 bool chain_prefers_fused(std::int32_t n, std::int32_t k, std::int32_t tokens) {
     const auto fused    = fused_chain(n, k, tokens);
     const auto separate = separate_chain(n, k, tokens);
@@ -163,6 +162,7 @@ bool chain_prefers_fused(std::int32_t n, std::int32_t k, std::int32_t tokens) {
     return fused->requested_bytes <= separate->requested_bytes;
 }
 
+// FUSION-SITE: q8_pair
 bool fused_pair(const Weight& first_weight, const Weight& second_weight, std::int32_t tokens) {
     return fused_domain(first_weight, second_weight) &&
            chain_prefers_fused(first_weight.n, first_weight.k, tokens);

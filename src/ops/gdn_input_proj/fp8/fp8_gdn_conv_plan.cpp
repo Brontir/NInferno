@@ -44,6 +44,7 @@ void require_policy(LinearPolicy policy, const char* operation) {
     }
 }
 
+// FUSION-SITE: gdn_conv_fp8
 Fp8GdnConvPlan b1_a16_plan(std::int32_t width) {
     const bool fused = width <= 3;
     return {fused ? Fp8GdnConvScheduleId::FusedA16 : Fp8GdnConvScheduleId::MaterializedA16};

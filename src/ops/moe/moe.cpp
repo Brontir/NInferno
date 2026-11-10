@@ -450,6 +450,7 @@ struct Workspace {
 
 // The router's CTAs quantize x for an R8 gate/up (GemmArgs::xq) where x is the bank's input as
 // it is (no zero-padded copy).
+// FUSION-SITE: moe_router_quantize_x
 bool router_quantizes_x(const Geometry& g, const MoePlan& p, std::int32_t tokens) {
     return p.gate_up_r8 >= 0 && !p.w4a8() && g.input == g.hidden && tokens <= kR8Tokens;
 }
@@ -1227,6 +1228,8 @@ CombineArgs combine_args(const Workspace& ws, const Geometry& g, const MoeConfig
 
 // The launch sequence.
 // FUSION-SITE: moe_select_plan
+// FUSION-SITE: moe_router_select_plan
+// FUSION-SITE: moe_combine_fused
 void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue epilogue,
          Tensor& out, WorkspaceArena& workspace, cudaStream_t stream, const MoePlan& p,
          const Tensor* router_input = nullptr) {

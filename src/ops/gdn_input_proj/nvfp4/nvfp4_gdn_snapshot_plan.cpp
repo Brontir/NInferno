@@ -30,6 +30,7 @@ Nvfp4GdnProjectedWorkspace allocate_workspace(Allocator& allocator, LinearPolicy
 
 } // namespace
 
+// FUSION-SITE: gdn_conv_nvfp4
 Nvfp4GdnConvPlan nvfp4_gdn_conv_resolve_plan(LinearPolicy policy, std::int32_t tokens,
                                              std::int32_t batch_size) {
     if (tokens <= 0 || batch_size <= 0 || batch_size > 8) {
