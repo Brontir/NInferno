@@ -432,12 +432,15 @@ struct Evidence {
     std::string donor;            // the board or table class a Carried answer was measured on
     double distance = 0;          // board_distance to the donor (0: this board)
 };
+
 [[nodiscard]] const char* evidence_kind_name(Evidence::Kind kind);
+
 struct MoePlanQuery {
     MoePlan plan;
     MoeAuthority authority = MoeAuthority::DecodeStreaming;
     Evidence evidence;
 };
+
 // The authorities select_plan asks, in the order it asks them; the first to answer decides.
 [[nodiscard]] std::vector<std::string_view> authority_order();
 
