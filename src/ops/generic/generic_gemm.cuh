@@ -2327,19 +2327,22 @@ __device__ __forceinline__ int act_at(int c, int quad) {
 // Ahead (rmma_kernel's act_ring): they were loaded into registers with the step's weights, MMA c's
 // B fragment at ahead[2c], ahead[2c + 1] (load_act group by group: the same values).
 // Plane (a min-term decoder: rmma_kernel's RmmaSums::Plane): the group sums were summed once per
-// call by the pre-pass (rmma_group_sums_kernel) and loaded for this step: plane[(2n + e) S + g] is
-// group g's sum of the lane's token 2 quad + e of tile n (S = kSplits), read instead of the MMA
-// with ones, in one order whatever the tile.
+// call by the pre-pass (rmma_group_sums_kernel) and are read instead of the MMA with ones, in one
+// order whatever the tile. Plane 1: loaded for the step, plane[(2n + e) S + g] is group g's sum of
+// the lane's token 2 quad + e of tile n (S = kSplits). Plane 2: loaded group by group, group g's
+// from plane_rows[2n + e][g] (the step's part of that token's plane row; null: a token past the
+// call's, sum zero), so the wide tiles hold two of them a token tile instead of the step's 2 S.
 template <class Decoder, int NT, int J, int Sets, int MT, bool Staged = false, bool Ahead = false,
-          bool Plane = false>
+          int Plane = 0>
 __device__ __forceinline__ void
 mma_step(float (&acc)[Sets][MT][NT][4], const typename Decoder::Run (&runs)[Sets][MT][2],
          const __nv_bfloat16* const (&col)[NT], int step_k0, int quad, int k,
          const uint2* stage = nullptr, const unsigned* ahead = nullptr, bool add_sums = false,
-         const float* plane = nullptr) {
+         const float* plane = nullptr, const float* const* plane_rows = nullptr) {
     static_assert(!Staged || (SpreadOf<Decoder> && NT == 1), "staged: one tile, spread");
     static_assert(!Ahead || (SpreadOf<Decoder> && NT == 1 && !Staged), "ahead: one tile, spread");
-    static_assert(!Plane || MinTermOf<Decoder>::value, "a group-sums plane: a min-term decoder");
+    static_assert(Plane == 0 || MinTermOf<Decoder>::value,
+                  "a group-sums plane: a min-term decoder");
     if constexpr (SpreadOf<Decoder>) {
         constexpr int S = SplitsOf<Decoder>::value;
         constexpr int G = J / S; // MMAs per scale group
@@ -2416,7 +2419,7 @@ mma_step(float (&acc)[Sets][MT][NT][4], const typename Decoder::Run (&runs)[Sets
                 const bool add =
                     NINFERNO_FMA_MMA || (!F16Of<Decoder>::value && NT >= 4 && add_sums);
                 float sums[NT][4];
-                if constexpr (MinTermOf<Decoder>::value && Plane) {
+                if constexpr (MinTermOf<Decoder>::value && Plane == 1) {
                     // From the call's plane (Plane): no MMA and no add here, one order for every
                     // tile and width.
                     (void)add;
@@ -2424,6 +2427,15 @@ mma_step(float (&acc)[Sets][MT][NT][4], const typename Decoder::Run (&runs)[Sets
                     for (int n = 0; n < NT; ++n) {
                         sums[n][0] = sums[n][2] = plane[(2 * n) * S + g];
                         sums[n][1] = sums[n][3] = plane[(2 * n + 1) * S + g];
+                    }
+                } else if constexpr (MinTermOf<Decoder>::value && Plane == 2) {
+                    (void)add;
+#pragma unroll
+                    for (int n = 0; n < NT; ++n) {
+                        const float* r0 = plane_rows[2 * n];
+                        const float* r1 = plane_rows[2 * n + 1];
+                        sums[n][0] = sums[n][2] = r0 != nullptr ? load_vec<float>(r0 + g) : 0.0F;
+                        sums[n][1] = sums[n][3] = r1 != nullptr ? load_vec<float>(r1 + g) : 0.0F;
                     }
                 } else if constexpr (MinTermOf<Decoder>::value) {
                     if (add) {
@@ -3331,6 +3343,14 @@ __launch_bounds__(Schedule::kThreads,
     static_assert(Sums != RmmaSums::Adds || kRmmaAddVariant<Decoder, Schedule>);
     constexpr int kSumGroups  = SplitsOf<Decoder>::value;
     constexpr bool kPlaneRing = kPlane && (kAhead || kStaged);
+    // A warp of eight or more accumulator tiles (row sets x m16 x n8: the n8 tiles, m2.n4, SwiGLU
+    // from m1.n4) keeps 128 or more registers of accumulators and is held at 255 by its CTAs a SM:
+    // the step's 2 NT S sums spilled there (sm_120a against the MMA with ones: Q4_K m1.n8 SwiGLU
+    // 120 -> 136 stack bytes, Q2_K 48 -> 392, Q4_1 m1.n8 SwiGLU 0 -> 152), so such a warp loads
+    // each group's two sums a token tile when the group computes (mma_step's Plane 2): more loads,
+    // fewer registers.
+    constexpr bool kPlaneGroups = kPlane && !kPlaneRing && kSets * MT * NT >= 8;
+    constexpr int kPlaneForm    = !kPlane ? 0 : kPlaneGroups ? 2 : 1;
     float plane_ring[kPlaneRing ? 2 : 1][kPlaneRing ? 2 * NT * kSumGroups : 1];
     __shared__ uint2 act_stage[kStaged ? 2 : 1][kStaged ? Schedule::kWarpsM * WK : 1]
                               [kStaged ? J : 1][32];
@@ -3441,16 +3461,31 @@ __launch_bounds__(Schedule::kThreads,
             }
         }
 #endif
-        // The plane's sums of the step (kPlane): from their ring, or loaded here first.
-        float plane_step[kPlane && !kPlaneRing ? 2 * NT * kSumGroups : 1];
+        // The plane's sums of the step (kPlane): from their ring, loaded here first, or (the wide
+        // warps, kPlaneGroups) the step's part of each token's plane row, read group by group.
+        float plane_step[kPlane && !kPlaneRing && !kPlaneGroups ? 2 * NT * kSumGroups : 1];
+        const float* plane_rows[kPlaneGroups ? 2 * NT : 1];
         const float* plane = nullptr;
         if constexpr (kPlaneRing) {
             plane = plane_ring[slot];
+        } else if constexpr (kPlaneGroups) {
+#pragma unroll
+            for (int n = 0; n < NT; ++n)
+#pragma unroll
+                for (int e = 0; e < 2; ++e) {
+                    const int token = token0 + n * 8 + 2 * quad + e;
+                    plane_rows[2 * n + e] =
+                        token < a.tokens
+                            ? a.group_sums + static_cast<std::int64_t>(token) * a.group_sums_ld +
+                                  static_cast<std::int64_t>(step) * kSumGroups
+                            : nullptr;
+                }
         } else if constexpr (kPlane) {
             load_group_sums<kSumGroups, NT>(plane_step, a, token0, quad, step);
             plane = plane_step;
         }
         (void)plane_step;
+        (void)plane_rows;
         const __nv_bfloat16* col[NT];
 #pragma unroll
         for (int n = 0; n < NT; ++n) {
@@ -3464,18 +3499,18 @@ __launch_bounds__(Schedule::kThreads,
             } else {
                 cp_wait<0>();
             }
-            mma_step<Decoder, NT, J, kSets, MT, true, false, kPlane>(
+            mma_step<Decoder, NT, J, kSets, MT, true, false, kPlaneForm>(
                 acc, runs, col, step * KStep, quad, a.k, &act_stage[slot][warp][0][lane], nullptr,
                 false, plane);
         } else if constexpr (kAhead) {
             (void)ahead;
-            mma_step<Decoder, NT, J, kSets, MT, false, true, kPlane>(
+            mma_step<Decoder, NT, J, kSets, MT, false, true, kPlaneForm>(
                 acc, runs, col, step * KStep, quad, a.k, nullptr, act_ring[slot][0], false, plane);
         } else {
             (void)ahead;
-            mma_step<Decoder, NT, J, kSets, MT, false, false, kPlane>(
+            mma_step<Decoder, NT, J, kSets, MT, false, false, kPlaneForm>(
                 acc, runs, col, step * KStep, quad, a.k, nullptr, nullptr, Sums == RmmaSums::Adds,
-                plane);
+                plane, plane_rows);
         }
     };
 

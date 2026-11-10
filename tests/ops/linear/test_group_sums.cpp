@@ -14,6 +14,7 @@
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/kernel_facts.h"
+#include "ops/generic/selector_facts.h"
 
 #include <cuda_runtime.h>
 
@@ -320,7 +321,18 @@ int gpu_checks() {
 } // namespace
 
 int main() {
-    host_rules();
+    // The rules on substituted boards (no GPU asked): Blackwell, Ampere, Turing and Volta.
+    int boards = 0;
+    for (const generic::FactsBoard& b : generic::kFactsBoards) {
+        const std::string name = b.name;
+        if (name != "rtx5090" && name != "rtx3090" && name != "rtx2080ti" && name != "v100") {
+            continue;
+        }
+        const ScopedDeviceClass scoped(generic::board_device_class(b));
+        host_rules();
+        ++boards;
+    }
+    check(boards == 4, "the four boards of the host rules are in the facts table");
     int count      = 0;
     const bool gpu = cudaGetDeviceCount(&count) == cudaSuccess && count > 0;
     if (gpu) failures += gpu_checks();
