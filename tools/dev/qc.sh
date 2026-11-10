@@ -456,14 +456,16 @@ if [ ${#EXPECT[@]} -gt 0 ]; then
       if (l ~ /cudaerrornodevice|no cuda-capable device/) nodev[n] = 1
       if (l ~ /fail:|assertion|assert|expect_|check failed/) asrt[n] = 1
       next }
+    /Could not find executable|Unable to find executable/ { nf = 1 }   # ctest: the test cannot start, no binary
     /Test +#[0-9]+: / { line = $0; match(line, /#[0-9]+/); n = substr(line, RSTART + 1, RLENGTH - 1)
       name = line; sub(/^.*Test +#[0-9]+: /, "", name); sub(/ \.\.\..*/, "", name)
       if (line ~ /\*\*\*Skipped/) print "SKIP " name
       else if (line ~ /\*\*\*Failed/) print ((nodev[n] && !asrt[n]) ? "GPU " : "FAIL ") name
-      else if (line ~ /\*\*\*Not Run/ && line !~ /Disabled/) print "UNBUILT " name   # its executable was never built here
+      else if (line ~ /\*\*\*Not Run/ && line !~ /Disabled/ && nf) print "UNBUILT " name   # its executable was never built here
       else if (line ~ /\*\*\*(Exception|Timeout|Not Run)|Subprocess aborted/) print ((line ~ /Disabled/) ? "SKIP " : "FAIL ") name
       else if (line ~ /Passed/) { if (flag[n]) print "PSKIP " name }
-      else print "FAIL " name }' "$CLOG")
+      else print "FAIL " name
+      nf = 0 }' "$CLOG")
   NFAIL=$(grep -c '^FAIL ' <<< "$CLASS" || true)
   GPUN=$(sed -n 's/^GPU //p' <<< "$CLASS" | tr '\n' ' '); SKIPN=$(sed -n 's/^SKIP //p' <<< "$CLASS" | tr '\n' ' ')
   PSKIPN=$(sed -n 's/^PSKIP //p' <<< "$CLASS" | tr '\n' ' ')
@@ -479,7 +481,7 @@ if [ ${#EXPECT[@]} -gt 0 ]; then
     sed -n 's/^FAIL /  FAILED TEST: /p' <<< "$CLASS"
     echo "  failing output (log $CLOG):"
     { grep -E "^[0-9]+: " "$CLOG" | grep -iE "error|fail|assert|expect|what\(\)|abort" | sed -E "s#$W/##g" | cut -c1-200 | head -12; } || true
-  elif [ "$CRC" -ne 0 ] && [ -z "$GPUN" ] && [ -z "$SKIPN" ]; then
+  elif [ "$CRC" -ne 0 ] && [ -z "$GPUN" ] && [ -z "$SKIPN" ] && [ -z "$UNBUILTN" ]; then
     [ $RES -ne 0 ] || RES=2
     echo "  ctest exited $CRC without a classified failure (log $CLOG)"; tail -5 "$CLOG"
   fi
