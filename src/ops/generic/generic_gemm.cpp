@@ -4116,11 +4116,14 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
         // The prefill band on Volta (kVoltaCutlassMinTokens): a CUTLASS-only format has no tile of
         // its own (V100, gpt-oss BF16 attention at T = 79 ran scalar, 7.3 ms a call, 360 -> 140
         // tok/s), and a tiled one's grid seldom fills the SMs' waves (volta_copy_pays).
-        const auto cutlass_free = workspace_free(workspace);
-        if (volta_cutlass_call_runs(codec, call.rows, w.k, args.tokens,
-                                    call.epilogue == Epilogue::SwiGlu, cutlass_free) &&
-            launch_volta_cutlass(codec, call.epilogue, args, *workspace, *cutlass_free, stream)) {
-            return;
+        {
+            const auto cutlass_free = workspace_free(workspace);
+            if (volta_cutlass_call_runs(codec, call.rows, w.k, args.tokens,
+                                        call.epilogue == Epilogue::SwiGlu, cutlass_free) &&
+                launch_volta_cutlass(codec, call.epilogue, args, *workspace, *cutlass_free,
+                                     stream)) {
+                return;
+            }
         }
         // A call the decoded copy does not fit runs scalar: a demotion (other bytes and speed);
         // volta_tiled_runs_scalar says it for a description.
