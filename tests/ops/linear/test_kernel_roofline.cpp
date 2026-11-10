@@ -426,8 +426,12 @@ void check_price_admitted() {
     };
     using F = g::Family;
     pin(*ada, QType::GGML_Q4_K, 4096, {F::StagedMma, 0}, false, "staged reads BF16 only");
-    pin(*ada, QType::GGML_Q4_K, 4096, {F::RegisterMma, 19}, false,
-        "no 1x16 register-MMA tile for Q4_K");
+    // rmma:11 holds 2x8 MMA tiles per warp: no decoder of 32-value runs (Q4_K) is compiled for 16
+    // tiles (rmma_tile_compiled). rmma:19 is 1x1 tiles split over 16 warps in K: compiled.
+    pin(*ada, QType::GGML_Q4_K, 4096, {F::RegisterMma, 11}, false,
+        "no 2x8-tile register-MMA decoder for Q4_K");
+    pin(*ada, QType::GGML_Q4_K, 4096, {F::RegisterMma, 19}, true,
+        "1x1 tiles over 16 K warps, compiled for Q4_K");
     pin(*ada, QType::BF16, 4096, {F::RegisterMma, 16}, false,
         "cluster schedule, no clusters on Ada");
     pin(*hopper, QType::BF16, 4096, {F::RegisterMma, 16}, g::rmma_schedule_launchable(16),
