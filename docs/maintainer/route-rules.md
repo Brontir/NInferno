@@ -39,10 +39,11 @@ entries name a single card (count them from `--list`), and for example `kR8MaxTo
 narrow-through-16 rule (RTX 5090) and `w4a8_ws_wins: ampere` (RTX 3090, taken for sm_80 and sm_86)
 decide on every card. The class says what the timing was, not how far the rule reaches; the
 `boards` field is where to look. A step that holds fitted or placed constants out of a derivation
-reads this field, not the prose; `--list` prints it and the test prints the count per class. Where a descriptor only says where a
-value comes from (the engine's round width at the call, the Ask's lane count handed on), it is
-`Structural` with unknown boards and its tolerance names the entry that holds the timing; several
-descriptors then share one record, and none of them is a second measurement.
+reads this field, not the prose; `--list` prints it and the test prints the count per class.
+Where a descriptor only says where a value comes from (the engine's round width at the call, the
+Ask's lane count handed on), it is `Structural` with unknown boards and its tolerance names the
+entry that holds the timing; several descriptors then share one record, and none of them is a
+second measurement.
 
 It is a record, not a mechanism. The code keeps its own literals and nothing reads the descriptor
 at run time. `ninferno_route_rules_test` (`--list` prints the table) holds the two to each other:
