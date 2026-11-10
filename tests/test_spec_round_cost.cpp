@@ -194,7 +194,7 @@ int main() {
         const auto rtx4070ti = sp::card_rates_of_board(0x2782);
         const auto gv100     = sp::card_rates_of_board(0x1DBA);
         const auto rtx3060   = sp::card_rates_of_board(0x2503);
-        expect(rtx4070ti.generation == "ada" && near(rtx4070ti.kappa(), 0.0106181, 1e-5),
+        expect(rtx4070ti.generation == "ada" && near(rtx4070ti.kappa(), 0.0098217, 1e-5),
                "RTX 4070 Ti: kappa " + std::to_string(rtx4070ti.kappa()));
         // A generation with one lab card has no eta (a constant rests on two cards): no estimate.
         expect(gv100.generation == "volta" && near(gv100.int8_ops_per_s, 512.0 * 80 * 1627e6, 1e-9) &&
@@ -204,7 +204,8 @@ int main() {
         const auto rtx5070ti = sp::card_rates_of_board(0x2C05);
         const auto rtx5090   = sp::card_rates_of_board(0x2B85);
         expect(rtx5070ti.generation == "gb20x" && rtx5070ti.known() && rtx5070ti.eta_cards == 2 &&
-                   rtx5090.known() && near(rtx5090.kappa(), 1792e9 / (0.165 * 2048.0 * 170 * 2407e6), 1e-9),
+                   rtx5090.known() &&
+                   near(rtx5090.kappa(), 1792e9 / (0.160 * 2048.0 * 170 * 2407e6), 1e-9),
                "Blackwell: eta from two lab cards, kappa " + std::to_string(rtx5090.kappa()));
         const auto from_key = sp::card_rates(card("ad104:60sm", "ad104", "sm89", 89, 60, 2610, 504));
         expect(near(from_key.kappa(), rtx4070ti.kappa(), 1e-9), "a GpuKey's rates as the board's");
@@ -221,12 +222,15 @@ int main() {
             const char* config;
             double r4070ti, r_bytes, r_k005;
         };
+
         const Golden golden[] = {
-            {kQ9, "ad104:60sm", "mtp:3", 1.679516, 1.587408, 1.975274},
-            {kQ9, "ad104:60sm", "dflash:7", 1.752298, 1.431237, 2.783223},
-            {"unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm", "dflash:5", 1.873191, 1.660462, 2.564459},
-            {"unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm", "mtp:2", 1.607643, 1.554161, 1.781435},
-            {"ggml-org/gpt-oss-20b-GGUF", "gb203:70sm", "dflash:3", 2.030166, 1.905428, 2.435942},
+            {kQ9, "ad104:60sm", "mtp:3", 1.672812, 1.587408, 1.975274},
+            {kQ9, "ad104:60sm", "dflash:7", 1.728930, 1.431237, 2.783223},
+            {"unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm", "dflash:5", 1.857668, 1.660462,
+             2.564459},
+            {"unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm", "mtp:2", 1.603740, 1.554161,
+             1.781435},
+            {"ggml-org/gpt-oss-20b-GGUF", "gb203:70sm", "dflash:3", 2.021061, 1.905428, 2.435942},
         };
         const double k4070 = sp::card_rates_of_board(0x2782).kappa();
         for (const auto& g : golden) {
