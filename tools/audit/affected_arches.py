@@ -319,7 +319,12 @@ class Repo:
             listing = {}
             for cm in self.cmake_files():
                 stack = []
-                for stmt in cmake_statements(self.read(cm)):
+                text = self.read(cm) or ""
+                # `#[` opens a bracket comment only in some places (not inside a line comment or a
+                # quoted argument); a file holding one is not parsed for guards at all, so a
+                # misread bracket can only widen: every listing in it is unguarded.
+                opaque = "#[" in text
+                for stmt in cmake_statements(text):
                     m = re.match(r"\s*(if|elseif|else|endif)\s*\((.*)\)\s*$", stmt, re.I | re.S)
                     if m:
                         kw = m.group(1).lower()
@@ -331,7 +336,7 @@ class Repo:
                             stack.pop()
                         continue
                     guards = [guard_arches(g) for g in stack]
-                    arches = None if any(g is None for g in guards) else set().union(*guards)
+                    arches = None if opaque or any(g is None for g in guards) else set().union(*guards)
                     for f in re.findall(r"[\w./${}-]+\.(?:cuh|cu|cpp|h)\b", stmt):
                         listing.setdefault(PurePosixPath(f).name, []).append(arches or None)
             self._listing = listing

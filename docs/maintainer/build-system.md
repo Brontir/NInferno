@@ -226,7 +226,8 @@ The tool reads names, includes and CMake guards, not behaviour. It does not see:
   name (a wrapper with another name), and a data file under `docs/`, `.github/` or `tests/` that a
   device source or test reads;
 - a CMake guard written in a form `guard_arches` does not parse (it then answers "all", which is
-  safe), or hidden from the parser in another way than a `#[[ ]]` bracket comment;
+  safe), or hidden from the parser in another way than a bracket comment (a CMake file that holds
+  `#[` anywhere is not parsed for guards: every listing in it answers "all");
 - a header that only a guarded translation unit includes (it answers "all", which is wider than
   needed, never narrower).
 

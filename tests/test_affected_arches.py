@@ -803,11 +803,21 @@ class Classify(unittest.TestCase):
                 res = self.run_diff(["src/ops/volta_k.cu"],
                                     {"src/ops/sources.cmake": cmake, "src/ops/volta_k.cu": ""})
                 self.assertEqual(res["arches"], ALL)
-        # a real guard after a comment still narrows
+        # A file holding `#[` is not parsed for guards: even a real guard after a bracket comment
+        # answers all (only wider), and a `#[[` inside a line comment or a quoted argument paired
+        # with a later `]]` cannot delete an `endif()` and narrow the next listing.
         cmake = '#[[ note ]]\nif(NINFERNO_BUILD_ARCH STREQUAL "70")\n volta_k.cu\nendif()\n'
         res = self.run_diff(["src/ops/volta_k.cu"],
                             {"src/ops/sources.cmake": cmake, "src/ops/volta_k.cu": ""})
-        self.assertEqual(res["arches"], ["sm_70"])
+        self.assertEqual(res["arches"], ALL)
+        for tail in ('set(X "]]")\n', "# ]]\n"):
+            with self.subTest(tail=tail):
+                cmake = ('if(NINFERNO_BUILD_ARCH STREQUAL "70")\n volta_g.cu # closes below #[[\n'
+                         "endif()\n" + tail + "target_sources(ops PRIVATE volta_j.cu)\n")
+                res = self.run_diff(["src/ops/volta_j.cu"],
+                                    {"src/ops/sources.cmake": cmake, "src/ops/volta_j.cu": "",
+                                     "src/ops/volta_g.cu": ""})
+                self.assertEqual(res["arches"], ALL)
 
     def test_guarded_header_is_not_a_translation_unit(self):  # N2, N2b
         guarded = 'if(NINFERNO_BUILD_ARCH STREQUAL "70")\n  volta_tiles.h\nendif()\n'
