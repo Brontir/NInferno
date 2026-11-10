@@ -57,6 +57,7 @@
 #include "ops/generic/generic_ggml_internal.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
 #include "ops/generic/random_weight.h"
+#include "ops/generic/route_authorities.h"
 #include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
 #include "ops/generic/route_tune_tool.h"
@@ -166,6 +167,14 @@ int route_tune_main(int argc, char** argv) {
         // device.id(), their UUIDs differ.
         const std::string device_id =
             device.id() + (uuid_known(device.identity) ? " " + uuid_text(device.identity) : "");
+        // The SKU, which the class does not name: an RTX 4070 Ti and an RTX 4500 Ada are both
+        // ad104:60sm with other DRAM rates and clocks (#684). Empty when the driver gave no id.
+        const std::string pci_id = [&] {
+            if (device.pci_device_id == 0) return std::string{};
+            char hex[11];
+            std::snprintf(hex, sizeof(hex), "0x%04x", static_cast<unsigned>(device.pci_device_id));
+            return std::string{hex};
+        }();
         // --describe runs no sweep and writes no rows: opening an output would truncate it.
         if (opt.count("--describe") && opt["--describe"] == "1" &&
             (opt.count("--routes-out") || opt.count("--selected-out"))) {
@@ -178,7 +187,7 @@ int route_tune_main(int argc, char** argv) {
             if (!routes_csv) throw std::runtime_error("cannot open " + opt["--routes-out"]);
             routes_csv << "format,compute,epilogue,n,k,T,route,median_us,model_us,registers,"
                           "local_bytes,weight_bytes,activation_bytes,output_bytes,run,device,"
-                          "protocol,calls,samples\n";
+                          "protocol,calls,samples,pci_device_id\n";
         }
         // The route the production path runs at each band point (#301): select_route's choice
         // with the tables this device loads, resolved for the contiguous call and this workspace,
@@ -187,7 +196,8 @@ int route_tune_main(int argc, char** argv) {
         if (opt.count("--selected-out")) {
             selected_csv.open(opt["--selected-out"]);
             if (!selected_csv) throw std::runtime_error("cannot open " + opt["--selected-out"]);
-            selected_csv << "format,compute,epilogue,n,k,T,asked,selected,select_ns,run,device\n";
+            selected_csv << "format,compute,epilogue,n,k,T,asked,selected,select_ns,run,device,pci_"
+                            "device_id\n";
         }
         const int select_reps = opt.count("--select-reps") ? std::stoi(opt["--select-reps"]) : 0;
         const bool a8_candidates = opt.count("--a8-candidates") && opt["--a8-candidates"] == "1";
@@ -462,7 +472,7 @@ int route_tune_main(int argc, char** argv) {
                                    : timer.flushes() ? "flushed"
                                                      : "warm")
                                << ',' << (rotated ? 1 + spare.size() : std::size_t{1}) << ','
-                               << samples << '\n';
+                               << samples << ',' << pci_id << '\n';
                 }
                 return us; // microseconds
             };
@@ -554,7 +564,7 @@ int route_tune_main(int argc, char** argv) {
                                  << generic::epilogue_name(p.epilogue) << ',' << p.n << ',' << p.k
                                  << ',' << t << ',' << generic::route_name(asked) << ','
                                  << generic::route_name(ran) << ',' << select_ns << ',' << run_id
-                                 << ',' << device_id << '\n';
+                                 << ',' << device_id << ',' << pci_id << '\n';
                 }
                 std::printf("%s %s %s n=%d k=%d T=%d best=%s %.2f us\n",
                             generic::qtype_name(p.qtype), generic::compute_class_name(p.compute),
@@ -573,9 +583,10 @@ int route_tune_main(int argc, char** argv) {
             // The prefill candidates and bands are timed as the prefill profile runs them (a
             // register-MMA tile there keeps the MMA with ones for its min-term sums).
             const ops::ScopedPrefillRoutes prefill_profile(true);
+            const generic::Ask prefill_ask = generic::ask_below_profiles(17, true);
             double best_total = 1e30;
             for (const auto r : routes) {
-                if (!generic::route_is_token_invariant(r) || !tabled(r)) continue;
+                if (!generic::profile_admits(r, prefill_ask) || !tabled(r)) continue;
                 double total = 0;
                 for (const auto t : prefill_points) total += time_route(r, t);
                 std::printf("  prefill candidate %s %.2f us\n", generic::route_name(r).c_str(), total);
@@ -596,15 +607,18 @@ int route_tune_main(int argc, char** argv) {
                 // prefill route answers.
                 std::vector<std::pair<std::int32_t, generic::Route>> width_winners;
                 for (const auto t : band_points) {
-                    // The routes are timed in `routes` order with the prefill route in its place:
-                    // a pass writes the rows of one family in the order the cost model offers
-                    // them (cost_route keeps the first offered on an equal price), which a reader
-                    // of the CSV takes to break a model tie.
+                    const generic::Ask band_ask = generic::ask_below_profiles(t, true);
+                    // The routes the profile filter admits are timed in `routes` order with the
+                    // prefill route in its place: a pass writes the rows of one family in the
+                    // order the cost model offers them (cost_route keeps the first offered on an
+                    // equal price), which a reader of the CSV takes to break a model tie. The pick
+                    // below reads these timings back and times nothing new.
                     double base = 0;
                     for (const auto r : routes) {
                         if (r == *entry.prefill) {
                             base = time_route(r, t);
-                        } else if (tabled(r) && generic::same_summation(r, *entry.prefill)) {
+                        } else if (tabled(r) &&
+                                   generic::profile_admits_as(r, band_ask, *entry.prefill)) {
                             time_route(r, t);
                         }
                     }
@@ -612,7 +626,7 @@ int route_tune_main(int argc, char** argv) {
                     generic::Route pick = *entry.prefill;
                     for (const auto r : routes) {
                         if (r == *entry.prefill || !tabled(r) ||
-                            !generic::same_summation(r, *entry.prefill)) {
+                            !generic::profile_admits_as(r, band_ask, *entry.prefill)) {
                             continue;
                         }
                         const double us = time_route(r, t);
