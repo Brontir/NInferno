@@ -124,6 +124,12 @@ def load_snapshot(repo, arch):
     for line in lines:
         if line.startswith("columns "):
             cols = line.split()[1:]
+            # The line names two fields `local`: the kernel's local memory in bytes (a resource,
+            # after `stack`) and the K loop's local-memory instructions (after `sts_bytes`). As
+            # dictionary keys the resource is `local_mem`, the loop's count keeps `local`.
+            cols[cols.index("local")] = "local_mem"
+            if len(set(cols)) != len(cols):
+                raise ValueError(f"{path}: a column is named twice")
         elif line.startswith("rmma "):
             d = dict(zip(cols, line.split()))
             key = (d["decoder"], int(d["warps_m"]), int(d["warps_k"]), int(d["m_tiles"]),
@@ -146,7 +152,7 @@ def find_instance(snap, fmt, sched, epilogue, registers, local_bytes):
         return None, "noinst"
     order = lambda i: (i["latency"], i["add_sums"], i["decoder"] != DECODERS[fmt][0])
     exact = sorted((i for i in cands if i["registers"] == registers and
-                    i["stack"] + i["local"] == local_bytes), key=order)
+                    i["stack"] + i["local_mem"] == local_bytes), key=order)
     if exact:
         return exact[0], "ok" if len(exact) == 1 else "ambiguous"
     return sorted(cands, key=order)[0], "fallback"
@@ -168,7 +174,7 @@ def price(chip, call, inst, sched, law):
         occ = max(1.0, min(limit, math.floor(chip["regs_sm"] / per_cta)))
     else:
         occ = limit
-    local_bytes = (inst["stack"] + inst["local"]) if (heavy and inst) else 0.0
+    local_bytes = (inst["stack"] + inst["local_mem"]) if (heavy and inst) else 0.0
     tiles = math.ceil(tokens / cols)
     gx = math.ceil(n / rows)
     kc = k / cluster
