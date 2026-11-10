@@ -1118,7 +1118,9 @@ void chooses_the_chunk(const json& fixture) {
         return room > 0 ? static_cast<std::uint32_t>(room / b.model.kv_bytes_per_token(c.kv)) : 0;
     };
     const ch::Choice ada = ch::choose(b.model, b.card, b.quants[0], ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), {}, task, own);
-    check(ada.chosen && chosen(ada).candidate.chunk == 2048 && ada.chunk_by_speed,
+    // A chunk has no accuracy term: the resolution rule never moves it (#301, DECISIONS 75).
+    check(ada.chosen && chosen(ada).candidate.chunk == 2048 && ada.chunk_by_speed &&
+              !ada.resolved_within_resolution,
           "Ada, an MoE: chunk 2048 for a 2048-token prompt");
     int chunks = 0;
     for (const ch::Alternative& a : ch::explain(ada)) {
@@ -1970,11 +1972,35 @@ void resolution_labels(const json& fixture) {
             check(c.by_worth ? c.resolution > 0 && c.resolution < 0.1 : true,
                   name + ": a resolution where the worth decides");
             const ch::Scored& best = chosen(c);
+            if (c.resolved_within_resolution) {
+                const auto alts = ch::explain(c);
+                const auto anchors =
+                    std::count_if(alts.begin(), alts.end(), [&](const ch::Alternative& a) {
+                        return a.scored == &c.scored[c.anchor];
+                    });
+                check(anchors == 1, name + ": the passed-over best worth is listed exactly once");
+            }
             for (const ch::Alternative& a : ch::explain(c)) {
-                if (a.scored == nullptr || (a.why_code != "within_resolution" && a.why_code != "lower_worth")) {
+                if (a.scored == nullptr ||
+                    (a.why_code != "within_resolution" && a.why_code != "lower_worth" &&
+                     a.why_code != "outside_resolution")) {
                     continue;
                 }
                 const double gap   = best.worth - a.scored->worth;
+                if (gap < -1e-9) {
+                    // Above the pick only under a pick the resolution rule moved: the best worth
+                    // and the others inside its band are within_resolution, the ones slower than
+                    // it by more than the resolution are outside_resolution; never lower_worth.
+                    const ch::Scored& anchor = c.scored[c.anchor];
+                    const bool inside        = a.scored == &anchor ||
+                                        std::log(a.scored->decision_seconds /
+                                                 anchor.decision_seconds) <= c.resolution + 1e-9;
+                    check(c.resolved_within_resolution &&
+                              a.why_code == (inside ? "within_resolution" : "outside_resolution"),
+                          name + " " + a.value + ": a higher worth is " +
+                              (inside ? "within_resolution" : "outside_resolution"));
+                    continue;
+                }
                 const double apart = std::abs(std::log(a.scored->decision_seconds / best.decision_seconds));
                 const bool inside  = gap > 1e-9 && gap <= std::min(c.resolution, apart) + 1e-9;
                 check(inside == (a.why_code == "within_resolution"),
@@ -2257,6 +2283,53 @@ void prices_r8_issue() {
     }
 }
 
+// The tie rule inside the resolution (#301, DECISIONS 75), on a constructed case. A is the best
+// worth (KLD 0.02, 1000 tokens). B: 1.5 % slower, KLD 0.01. C: as B but KLD 0.005 and slower by
+// 1.6 %. D: 5 % slower, KLD 0.001. E: as B, listed after it. F: as A in KLD and context, listed
+// before it. At a resolution of 2 % the lowest KLD inside it wins (C), not D (slower than the
+// resolution), and context decides nothing.
+void resolution_rule() {
+    const auto make = [](double seconds, double kld, std::uint32_t context) {
+        ch::Scored s;
+        s.decision_seconds = seconds;
+        s.accuracy.kld     = kld;
+        s.own_context      = context;
+        s.worth            = -std::log(seconds) - kld;
+        return s;
+    };
+    const std::vector<ch::Scored> scored{make(1.0, 0.02, 1000),   make(1.015, 0.01, 1000),
+                                         make(1.016, 0.005, 500), make(1.05, 0.001, 9000),
+                                         make(1.015, 0.01, 900),  make(1.0, 0.02, 1000)};
+    const std::vector<std::size_t> all{0, 1, 2, 3, 4, 5};
+    check(ch::resolve_within_resolution(scored, all, 0, 0.02) == 2,
+          "inside the resolution: the lowest KLD");
+    check(ch::resolve_within_resolution(scored, all, 0, 0) == 0, "no resolution: the best worth");
+    check(ch::resolve_within_resolution(scored, all, 0, 0.01) == 0,
+          "outside the resolution: the best worth");
+    check(ch::resolve_within_resolution(scored, all, 0, 0.06) == 3,
+          "a wider resolution reaches the 5 % one");
+    check(ch::resolve_within_resolution(scored, {0, 4, 1}, 0, 0.02) == 1,
+          "equal KLD: the lower index");
+    check(ch::resolve_within_resolution(scored, {4, 1}, 4, 0.02) == 4,
+          "equal KLD to the anchor: it stays");
+    // A lower index of equal KLD and equal context must not move the pick (#507: BF16 over INT8).
+    check(ch::resolve_within_resolution(scored, {5, 0}, 0, 0.02) == 0,
+          "equal KLD and context: the anchor stays");
+    // More context alone never moves it.
+    std::vector<ch::Scored> roomy = scored;
+    roomy[1].accuracy.kld         = 0.02;
+    roomy[1].own_context          = 90000;
+    check(ch::resolve_within_resolution(roomy, {0, 1}, 0, 0.02) == 0,
+          "more context is headroom, not a reason");
+    // A NaN KLD never wins.
+    roomy[1].accuracy.kld = std::nan("");
+    check(ch::resolve_within_resolution(roomy, {0, 1}, 0, 0.02) == 0, "NaN KLD: the anchor stays");
+    std::vector<ch::Scored> none = scored;
+    none[0].decision_seconds     = 0;
+    check(ch::resolve_within_resolution(none, all, 0, 0.02) == 0,
+          "no reference estimate: unchanged");
+}
+
 int main() {
     std::ifstream in(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/speed_measured.json");
     const json fixture = json::parse(in);
@@ -2298,6 +2371,7 @@ int main() {
     board_facts_do_not_decide(fixture);
     choices_replay(fixture);
     resolution_labels(fixture);
+    resolution_rule();
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;

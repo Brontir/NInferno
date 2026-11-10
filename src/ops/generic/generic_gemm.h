@@ -643,10 +643,11 @@ struct FamilyAlternative {
 [[nodiscard]] std::optional<double> route_cost_seconds(const Problem& problem, const Weight& weight,
                                                        Route route, std::int32_t tokens);
 
-// The compiled resources of the kernel a launch runs (#298), as the driver reports them for this
-// binary on this device (cudaFuncGetAttributes): exact facts of the build, not predictions; a
-// compiler change moves them, so they are read, never stored in the source. The launch geometry is
-// the call's: its grid, threads and dynamic shared memory.
+// The compiled resources of the kernel a launch runs (#298). The register-MMA kernels' come from
+// the committed kernel-facts snapshot of the SASS the device runs (ops/generic/kernel_facts.h,
+// #612: what ptxas made of the release's kernels, so the price is the same on every machine); the
+// other families' are read from the driver for this binary on this device (cudaFuncGetAttributes).
+// The launch geometry is the call's: its grid, threads and dynamic shared memory.
 struct KernelResources {
     int registers               = 0; // per thread
     std::size_t local_bytes     = 0; // per thread: register spills and stack arrays

@@ -2231,6 +2231,12 @@ void map_dflash2(Mapper& m) {
 // read by map_dflash2.
 void map_dflash(Mapper& m) {
     const std::string arch = m.arch();
+    // A DSpine file (llama.cpp's dspine branch) is a DFlash file plus the code bridge; read as
+    // plain DFlash the bridge tensors would be dropped and the drafts would be wrong.
+    if (m.find("dspine_codebook.weight")) {
+        throw std::runtime_error(arch + ": a DSpine drafter (dspine_* code bridge tensors) is not "
+                                        "mapped yet (docs/maintainer/dspine.md)");
+    }
     for (const char* key :
          {"conv_kernel_size", "conv_group_size", "selector_rank", "selector_top_k"}) {
         if (m.meta(key)) {

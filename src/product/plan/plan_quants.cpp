@@ -907,7 +907,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                                                  inputs_for(inputs, row.listing), pins,
                                                  row.listing.quant, OwnContext::Unbounded);
             if (bound && bound->choice.chosen) {
-                bounds.emplace_back(bound->choice.scored[*bound->choice.chosen].worth, i);
+                bounds.emplace_back(bound->choice.anchor_worth, i);
             }
         }
         std::stable_sort(bounds.begin(), bounds.end(),
@@ -916,6 +916,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             std::size_t index;
             std::uint32_t context;
             choice::Scored scored;
+            double anchor_worth; // the best worth the row's choice settled around (one allowance)
         };
         std::vector<Served> served_rows;
         double top = -INFINITY; // the best worth served
@@ -929,11 +930,15 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                 served->choice.context < out.pick->target_context) {
                 continue;
             }
-            served_rows.push_back({i, served->choice.context, served->choice.scored[*served->choice.chosen]});
-            top = std::max(top, served_rows.back().scored.worth);
+            served_rows.push_back({i, served->choice.context,
+                                   served->choice.scored[*served->choice.chosen],
+                                   served->choice.anchor_worth});
+            top = std::max(top, served_rows.back().anchor_worth);
         }
-        // Within the band of the best worth: the lower KLD, then the higher worth, then the rule's
-        // order.
+        // Within the band of the best worth served (the rows' anchors, #301): a row is eligible by
+        // the worth of the configuration it would serve, so a row whose choice already moved inside
+        // its own resolution cannot trail the top by more than one band in all. Then the lower KLD,
+        // then the higher worth, then the rule's order.
         std::optional<std::size_t> best;
         double best_worth           = 0;
         std::uint32_t best_context  = 0;
