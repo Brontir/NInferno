@@ -2347,15 +2347,16 @@ std::vector<PropertyBoard> gpu_fact_boards() {
     std::vector<PropertyBoard> out;
     for (const json& g : facts.at("gpus")) {
         PropertyBoard b;
-        b.name               = g.at("name").get<std::string>();
-        const int cc         = g.at("cc").get<int>();
-        b.card.major         = cc / 10;
-        b.card.minor         = cc % 10;
-        b.card.sms           = g.at("sms").get<int>();
-        b.card.clock_hz      = g.at("boost_mhz").get<double>() * 1e6;
-        b.card.dram_bytes_per_s = g.at("bus_bits").get<double>() / 8 * g.at("gbps").get<double>() * 1e9;
-        b.card.l2_bytes      = g.at("l2_mib").get<double>() * 1048576;
-        b.card.fp4           = cc >= 120;
+        b.name          = g.at("name").get<std::string>();
+        const int cc    = g.at("cc").get<int>();
+        b.card.major    = cc / 10;
+        b.card.minor    = cc % 10;
+        b.card.sms      = g.at("sms").get<int>();
+        b.card.clock_hz = g.at("boost_mhz").get<double>() * 1e6;
+        b.card.dram_bytes_per_s =
+            g.at("bus_bits").get<double>() / 8 * g.at("gbps").get<double>() * 1e9;
+        b.card.l2_bytes = g.at("l2_mib").get<double>() * 1048576;
+        b.card.fp4      = cc >= 120;
         out.push_back(std::move(b));
     }
     return out;
@@ -2363,11 +2364,13 @@ std::vector<PropertyBoard> gpu_fact_boards() {
 
 std::string pick_of(const ch::Choice& c) {
     if (!c.chosen) { return "none"; }
-    const ch::Scored& s = chosen(c);
+    const ch::Scored& s    = chosen(c);
     const ch::Candidate& k = s.candidate;
-    return std::string(kv_cache_storage_name(k.kv)) + "/act" + std::to_string(static_cast<int>(k.activations)) +
-           "/chunk" + std::to_string(k.chunk) + "/drafter" + std::to_string(k.drafter) + "/state" +
-           std::to_string(static_cast<int>(k.state)) + "/ring" + std::to_string(static_cast<int>(k.ring));
+    return std::string(kv_cache_storage_name(k.kv)) + "/act" +
+           std::to_string(static_cast<int>(k.activations)) + "/chunk" + std::to_string(k.chunk) +
+           "/drafter" + std::to_string(k.drafter) + "/state" +
+           std::to_string(static_cast<int>(k.state)) + "/ring" +
+           std::to_string(static_cast<int>(k.ring));
 }
 
 void finding(std::vector<std::string>& findings, const std::string& text) {
@@ -2379,12 +2382,14 @@ void choice_properties(const json& fixture) {
     const std::vector<PropertyBoard> boards = gpu_fact_boards();
     check(boards.size() >= 100, "gpu_facts.json lists the boards");
     std::vector<std::string> findings;
-    const json& m35 = fixture.at("models").at("Qwen3.6-35B-A3B");
+    const json& m35     = fixture.at("models").at("Qwen3.6-35B-A3B");
     const auto bench_on = [&](const ch::CardFacts& card, bool moe) {
         Bench b = nine_b(fixture, "RTX 4090");
         if (moe) {
-            b = Bench{model_of(m35), card, {quant_of("UD-IQ3_XXS", m35.at("quants").at("UD-IQ3_XXS"))}};
-            b.model.drafters        = {{"dflash:7", "dflash", 2.5, 2, "measured"}, {"mtp:4", "mtp", 1.9, 2, "measured"}};
+            b = Bench{
+                model_of(m35), card, {quant_of("UD-IQ3_XXS", m35.at("quants").at("UD-IQ3_XXS"))}};
+            b.model.drafters        = {{"dflash:7", "dflash", 2.5, 2, "measured"},
+                                       {"mtp:4", "mtp", 1.9, 2, "measured"}};
             b.model.default_drafter = 2;
         }
         b.card = card;
@@ -2393,28 +2398,34 @@ void choice_properties(const json& fixture) {
     ch::Task task;
     task.contexts = {32768};
 
-    // (a) Generation invariance. The choice reads the board's CardFacts alone: a board with the same
-    // facts (a copy of a row, another name and PCI id) picks the same; boards of one generation that
-    // has no reference card, or one that decides on a reference, pick the same whatever their rates.
-    std::map<std::string, std::pair<std::string, std::string>> by_generation; // generation -> pick, first board
+    // (a) Generation invariance. The choice reads the board's CardFacts alone: a board with the
+    // same facts (a copy of a row, another name and PCI id) picks the same; boards of one
+    // generation that has no reference card, or one that decides on a reference, pick the same
+    // whatever their rates.
+    std::map<std::string, std::pair<std::string, std::string>>
+        by_generation; // generation -> pick, first board
     int determinism_cases = 0;
     for (const PropertyBoard& pb : boards) {
         for (const bool moe : {false, true}) {
-            const Bench b = bench_on(pb.card, moe);
+            const Bench b             = bench_on(pb.card, moe);
             const ch::Allowed allowed = ch::allowed_axes(b.model, KvCacheStorage::Int8Group64);
-            const ch::Choice first  = ch::choose(b.model, b.card, b.quants[0], allowed, {}, task, oracle(b, 20e9));
+            const ch::Choice first =
+                ch::choose(b.model, b.card, b.quants[0], allowed, {}, task, oracle(b, 20e9));
             const Bench copy        = bench_on(pb.card, moe); // the same facts under another name
-            const ch::Choice second = ch::choose(copy.model, copy.card, copy.quants[0], allowed, {}, task, oracle(copy, 20e9));
+            const ch::Choice second = ch::choose(copy.model, copy.card, copy.quants[0], allowed, {},
+                                                 task, oracle(copy, 20e9));
             ++determinism_cases;
             if (pick_of(first) != pick_of(second)) {
-                finding(findings, "(a) same facts, different pick: " + pb.name + (moe ? " MoE" : " dense"));
+                finding(findings,
+                        "(a) same facts, different pick: " + pb.name + (moe ? " MoE" : " dense"));
             }
-            const std::string key = std::string(ch::generation_of(pb.card)) + (moe ? " MoE" : " dense");
+            const std::string key =
+                std::string(ch::generation_of(pb.card)) + (moe ? " MoE" : " dense");
             const std::string pick = pick_of(first);
-            auto [it, fresh] = by_generation.try_emplace(key, pick, pb.name);
+            auto [it, fresh]       = by_generation.try_emplace(key, pick, pb.name);
             if (!fresh && it->second.first != pick) {
-                finding(findings, "(a) generation " + key + ": " + pb.name + " picks " + pick + ", " +
-                                      it->second.second + " picks " + it->second.first);
+                finding(findings, "(a) generation " + key + ": " + pb.name + " picks " + pick +
+                                      ", " + it->second.second + " picks " + it->second.first);
             }
         }
     }
@@ -2426,18 +2437,20 @@ void choice_properties(const json& fixture) {
     for (const PropertyBoard& pb : boards) {
         const std::string gen(ch::generation_of(pb.card));
         if (!seen.insert(gen).second) { continue; }
-        const Bench b = bench_on(pb.card, false);
+        const Bench b             = bench_on(pb.card, false);
         const ch::Allowed allowed = ch::allowed_axes(b.model, KvCacheStorage::Int8Group64);
-        double last_kld = INFINITY;
+        double last_kld           = INFINITY;
         for (const double lambda : {0.0, 5.0, 25.0, 100.0, 400.0}) {
-            ch::Task t       = task;
+            ch::Task t        = task;
             t.accuracy_weight = lambda;
-            const ch::Choice c = ch::choose(b.model, b.card, b.quants[0], allowed, {}, t, oracle(b, 20e9));
+            const ch::Choice c =
+                ch::choose(b.model, b.card, b.quants[0], allowed, {}, t, oracle(b, 20e9));
             if (!c.chosen) { continue; }
             const double kld = chosen(c).accuracy.kld;
             if (kld > last_kld + 1e-12) {
-                finding(findings, "(b) " + gen + " (" + pb.name + "): lambda " + std::to_string(lambda) +
-                                      " raises the chosen KLD " + std::to_string(last_kld) + " -> " + std::to_string(kld));
+                finding(findings, "(b) " + gen + " (" + pb.name + "): lambda " +
+                                      std::to_string(lambda) + " raises the chosen KLD " +
+                                      std::to_string(last_kld) + " -> " + std::to_string(kld));
             }
             last_kld = kld;
         }
@@ -2445,18 +2458,23 @@ void choice_properties(const json& fixture) {
         for (const std::uint32_t context : {4096U, 8192U, 16384U, 32768U, 65536U, 131072U}) {
             int most = 0;
             for (int streams = 1; streams <= 16; ++streams) {
-                ch::Task t    = task;
-                t.contexts    = {context};
-                t.concurrency = static_cast<std::uint32_t>(streams);
+                ch::Task t        = task;
+                t.contexts        = {context};
+                t.concurrency     = static_cast<std::uint32_t>(streams);
                 const auto shared = [&](const ch::Candidate& cand) -> std::uint32_t {
                     const double room = 20e9 - b.quants[0].weight_bytes;
-                    return room <= 0 ? 0 : static_cast<std::uint32_t>(room / streams / b.model.kv_bytes_per_token(cand.kv));
+                    return room <= 0 ? 0
+                                     : static_cast<std::uint32_t>(
+                                           room / streams / b.model.kv_bytes_per_token(cand.kv));
                 };
-                if (ch::choose(b.model, b.card, b.quants[0], allowed, {}, t, shared).chosen) { most = streams; }
+                if (ch::choose(b.model, b.card, b.quants[0], allowed, {}, t, shared).chosen) {
+                    most = streams;
+                }
             }
             if (most > last_streams) {
-                finding(findings, "(b) " + gen + " (" + pb.name + "): context " + std::to_string(context) +
-                                      " holds " + std::to_string(most) + " streams, a shorter one " + std::to_string(last_streams));
+                finding(findings, "(b) " + gen + " (" + pb.name + "): context " +
+                                      std::to_string(context) + " holds " + std::to_string(most) +
+                                      " streams, a shorter one " + std::to_string(last_streams));
             }
             last_streams = most;
         }
@@ -2466,12 +2484,13 @@ void choice_properties(const json& fixture) {
     // change the pick (three fixed shuffles of each).
     int permuted = 0;
     for (std::size_t i = 0; i < boards.size(); i += 4) {
-        const PropertyBoard& pb = boards[i];
-        const Bench b           = bench_on(pb.card, true);
+        const PropertyBoard& pb   = boards[i];
+        const Bench b             = bench_on(pb.card, true);
         const ch::Allowed allowed = ch::allowed_axes(b.model, KvCacheStorage::Int8Group64);
-        const std::string base  = pick_of(ch::choose(b.model, b.card, b.quants[0], allowed, {}, task, oracle(b, 20e9)));
+        const std::string base =
+            pick_of(ch::choose(b.model, b.card, b.quants[0], allowed, {}, task, oracle(b, 20e9)));
         for (unsigned seed = 1; seed <= 3; ++seed) {
-            Bench shuffled = b;
+            Bench shuffled    = b;
             ch::Allowed order = allowed;
             std::mt19937 rng(seed * 7919U + static_cast<unsigned>(i));
             std::shuffle(order.kv.begin(), order.kv.end(), rng);
@@ -2479,35 +2498,41 @@ void choice_properties(const json& fixture) {
             std::shuffle(shuffled.model.drafters.begin(), shuffled.model.drafters.end(), rng);
             // default_drafter indexes the listing: follow the drafter it names.
             for (std::size_t d = 0; d < shuffled.model.drafters.size(); ++d) {
-                if (shuffled.model.drafters[d].label == b.model.drafters[b.model.default_drafter - 1].label) {
+                if (shuffled.model.drafters[d].label ==
+                    b.model.drafters[b.model.default_drafter - 1].label) {
                     shuffled.model.default_drafter = d + 1;
                 }
             }
             ++permuted;
-            const std::string again = pick_of(ch::choose(shuffled.model, shuffled.card, shuffled.quants[0], order, {}, task, oracle(shuffled, 20e9)));
+            const std::string again =
+                pick_of(ch::choose(shuffled.model, shuffled.card, shuffled.quants[0], order, {},
+                                   task, oracle(shuffled, 20e9)));
             // A pick names drafters by index: compare their labels.
             const auto labelled = [&](const Bench& x, const std::string& p) {
                 const auto at = p.find("/drafter");
-                const std::size_t index = at == std::string::npos ? 0 : std::stoul(p.substr(at + 8));
+                const std::size_t index =
+                    at == std::string::npos ? 0 : std::stoul(p.substr(at + 8));
                 return index == 0 ? std::string("plain") : x.model.drafters[index - 1].label;
             };
             const auto strip = [](std::string p) {
-                const auto at = p.find("/drafter");
+                const auto at  = p.find("/drafter");
                 const auto end = p.find('/', at + 1);
                 return p.substr(0, at) + (end == std::string::npos ? "" : p.substr(end));
             };
             if (strip(base) != strip(again) || labelled(b, base) != labelled(shuffled, again)) {
-                finding(findings, "(c) " + pb.name + " seed " + std::to_string(seed) + ": " + base + " against " + again);
+                finding(findings, "(c) " + pb.name + " seed " + std::to_string(seed) + ": " + base +
+                                      " against " + again);
             }
         }
     }
 
     // (d) The plan's choice line equals what the start picks: both reach product::choose_at_weights
-    // (serve/plan_offline.cpp:597 and :879) but from different inputs (the plan's `inputs_for` of the
-    // chosen listing row, the start's `planning.inputs`); a CPU test needs an artifact and a device,
-    // so it is not part of this host test (listed in the PR).
-    std::cout << "choice properties: " << boards.size() << " boards, " << determinism_cases << " determinism cases, "
-              << permuted << " permutations, " << findings.size() << " findings\n";
+    // (serve/plan_offline.cpp:597 and :879) but from different inputs (the plan's `inputs_for` of
+    // the chosen listing row, the start's `planning.inputs`); a CPU test needs an artifact and a
+    // device, so it is not part of this host test (listed in the PR).
+    std::cout << "choice properties: " << boards.size() << " boards, " << determinism_cases
+              << " determinism cases, " << permuted << " permutations, " << findings.size()
+              << " findings\n";
 }
 
 int main() {
