@@ -12,7 +12,7 @@ nvcc 13.4.92
 flags -O3 -DNDEBUG rdc=ON lineinfo=OFF ptx=OFF
 source c71f8f1bae31b987e4f389fe9827e9fd713ec8c2b696a6d7bd1c1322a143fb54
 kernels 2378
-columns family decoder warps_m warps_k m_tiles n_tiles cluster epilogue latency add_sums registers stack local shared
+columns family decoder warps_m warps_k m_tiles n_tiles cluster epilogue latency sums registers stack local shared
 rmma Bf16Decoder 1 4 1 1 1 0 0 0 50 0 0 1536
 rmma Bf16Decoder 1 4 1 1 1 1 0 0 50 0 0 1536
 rmma Bf16Decoder 1 4 1 1 1 2 0 0 75 0 0 3072

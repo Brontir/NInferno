@@ -19,7 +19,7 @@ nvcc 13.4.92
 flags -O3 -DNDEBUG rdc=OFF lineinfo=ON ptx=OFF
 source f28c70334f0b4693e62575ca1591e47a101a40ae421142d12cce2a9d36467464
 kernels 2378
-columns family decoder warps_m warps_k m_tiles n_tiles cluster epilogue latency add_sums registers stack local shared loops k_iter mma mma_ones mma_shape ldg ldg_bytes ld ld_bytes ldgsts ldgsts_bytes lds lds_bytes sts sts_bytes local local_bytes shfl int fp uniform other total
+columns family decoder warps_m warps_k m_tiles n_tiles cluster epilogue latency sums registers stack local shared loops k_iter mma mma_ones mma_shape ldg ldg_bytes ld ld_bytes ldgsts ldgsts_bytes lds lds_bytes sts sts_bytes local local_bytes shfl int fp uniform other total
 rmma Bf16Decoder 1 4 1 1 1 0 0 0 52 0 0 1536 1 64 4 0 HMMA.16816.F32.BF16 4 2048 2 1024 0 0 0 0 0 0 0 0 0 70 0 11 25 116
 rmma Bf16Decoder 1 4 1 1 1 1 0 0 52 0 0 1536 1 64 4 0 HMMA.16816.F32.BF16 4 2048 2 1024 0 0 0 0 0 0 0 0 0 70 0 11 25 116
 rmma Bf16Decoder 1 4 1 1 1 2 0 0 72 0 0 3072 1 64 8 0 HMMA.16816.F32.BF16 8 4096 2 1024 0 0 0 0 0 0 0 0 0 108 0 9 32 167

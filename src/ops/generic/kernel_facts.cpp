@@ -25,7 +25,7 @@ struct Snapshot {
 // The columns of a schema 2 snapshot (tools/kernel_facts/kernel_facts.py COLUMNS), the order
 // parse() reads the loop's counts in.
 constexpr std::string_view kColumns =
-    "family decoder warps_m warps_k m_tiles n_tiles cluster epilogue latency add_sums registers "
+    "family decoder warps_m warps_k m_tiles n_tiles cluster epilogue latency sums registers "
     "stack local shared loops k_iter mma mma_ones mma_shape ldg ldg_bytes ld ld_bytes ldgsts "
     "ldgsts_bytes lds lds_bytes sts sts_bytes local local_bytes shfl int fp uniform other total";
 // The length of the resources-only (schema 1) columns line: kColumns up to "shared".
@@ -35,7 +35,7 @@ constexpr std::size_t kResourceColumnsLength = kColumns.find(" loops ");
 std::string row_key(const RmmaKernelKey& k) {
     std::string s = k.decoder;
     for (const int v : {k.warps_m, k.warps_k, k.m_tiles, k.n_tiles, k.cluster, k.epilogue,
-                        k.latency ? 1 : 0, k.add_sums ? 1 : 0}) {
+                        k.latency ? 1 : 0, k.sums}) {
         s += ' ';
         s += std::to_string(v);
     }
@@ -43,7 +43,7 @@ std::string row_key(const RmmaKernelKey& k) {
 }
 
 // A snapshot's text (tools/kernel_facts/kernel_facts.py: header lines `name value`, rows
-// `rmma <decoder> <5 schedule ints> <epilogue> <latency> <add_sums> <registers> <stack> <local>
+// `rmma <decoder> <5 schedule ints> <epilogue> <latency> <sums> <registers> <stack> <local>
 // <shared>`). A malformed line is a build error of the data, not a runtime condition: it throws.
 Snapshot parse(std::string_view text) {
     Snapshot s;
@@ -60,11 +60,11 @@ Snapshot parse(std::string_view text) {
                 throw std::runtime_error("kernel facts: a row before the columns line: " + line);
             }
             RmmaKernelKey k;
-            int latency = 0, add_sums = 0;
+            int latency = 0;
             KernelFacts f;
             fields >> k.decoder >> k.warps_m >> k.warps_k >> k.m_tiles >> k.n_tiles >> k.cluster >>
-                k.epilogue >> latency >> add_sums >> f.registers >> f.stack_bytes >>
-                f.local_bytes >> f.static_shared_bytes;
+                k.epilogue >> latency >> k.sums >> f.registers >> f.stack_bytes >> f.local_bytes >>
+                f.static_shared_bytes;
             if (!fields) throw std::runtime_error("kernel facts: malformed row: " + line);
             // Schema 2: the K loop's counts follow (tools/kernel_facts/sass_counts.py COLUMNS),
             // on every row of a file whose columns line names them and on none of another's.
@@ -80,8 +80,7 @@ Snapshot parse(std::string_view text) {
             if (fields >> std::ws; !fields.eof()) {
                 throw std::runtime_error("kernel facts: fields past the columns': " + line);
             }
-            k.latency  = latency != 0;
-            k.add_sums = add_sums != 0;
+            k.latency = latency != 0;
             s.rows.emplace(row_key(k), f);
         } else {
             std::string rest;

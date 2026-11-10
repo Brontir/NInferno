@@ -2326,14 +2326,20 @@ __device__ __forceinline__ int act_at(int c, int quad) {
 // into shared memory, chunk c (MMA c of the step, 8 bytes) of this lane at stage[32 * c].
 // Ahead (rmma_kernel's act_ring): they were loaded into registers with the step's weights, MMA c's
 // B fragment at ahead[2c], ahead[2c + 1] (load_act group by group: the same values).
-template <class Decoder, int NT, int J, int Sets, int MT, bool Staged = false, bool Ahead = false>
-__device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
-                                         const typename Decoder::Run (&runs)[Sets][MT][2],
-                                         const __nv_bfloat16* const (&col)[NT], int step_k0,
-                                         int quad, int k, const uint2* stage = nullptr,
-                                         const unsigned* ahead = nullptr, bool add_sums = false) {
+// Plane (a min-term decoder: rmma_kernel's RmmaSums::Plane): the group sums were summed once per
+// call by the pre-pass (rmma_group_sums_kernel) and loaded for this step: plane[(2n + e) S + g] is
+// group g's sum of the lane's token 2 quad + e of tile n (S = kSplits), read instead of the MMA
+// with ones, in one order whatever the tile.
+template <class Decoder, int NT, int J, int Sets, int MT, bool Staged = false, bool Ahead = false,
+          bool Plane = false>
+__device__ __forceinline__ void
+mma_step(float (&acc)[Sets][MT][NT][4], const typename Decoder::Run (&runs)[Sets][MT][2],
+         const __nv_bfloat16* const (&col)[NT], int step_k0, int quad, int k,
+         const uint2* stage = nullptr, const unsigned* ahead = nullptr, bool add_sums = false,
+         const float* plane = nullptr) {
     static_assert(!Staged || (SpreadOf<Decoder> && NT == 1), "staged: one tile, spread");
     static_assert(!Ahead || (SpreadOf<Decoder> && NT == 1 && !Staged), "ahead: one tile, spread");
+    static_assert(!Plane || MinTermOf<Decoder>::value, "a group-sums plane: a min-term decoder");
     if constexpr (SpreadOf<Decoder>) {
         constexpr int S = SplitsOf<Decoder>::value;
         constexpr int G = J / S; // MMAs per scale group
@@ -2410,7 +2416,16 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                 const bool add =
                     NINFERNO_FMA_MMA || (!F16Of<Decoder>::value && NT >= 4 && add_sums);
                 float sums[NT][4];
-                if constexpr (MinTermOf<Decoder>::value) {
+                if constexpr (MinTermOf<Decoder>::value && Plane) {
+                    // From the call's plane (Plane): no MMA and no add here, one order for every
+                    // tile and width.
+                    (void)add;
+#pragma unroll
+                    for (int n = 0; n < NT; ++n) {
+                        sums[n][0] = sums[n][2] = plane[(2 * n) * S + g];
+                        sums[n][1] = sums[n][3] = plane[(2 * n + 1) * S + g];
+                    }
+                } else if constexpr (MinTermOf<Decoder>::value) {
                     if (add) {
 #pragma unroll
                         for (int n = 0; n < NT; ++n) {
@@ -3103,12 +3118,13 @@ __device__ __forceinline__ typename Decoder::Run load_run(const GemmArgs& a, int
 // it, generic_gemm_launch.cuh): load_raw() and unpack() when the step computes (UnpackOf), under
 // SwiGLU the activations staged ahead with cp.async, and where kRmmaAhead holds the activations
 // loaded a step ahead into registers (act_ring; for one row set of Q3_K / Q6_K, which have no
-// load_raw, that ring is the whole variant). AddSums (kRmmaAddVariant: a min-term decoder of
-// four or more token tiles; the launch takes it where GemmArgs::add_sums asks):
-// the group sums by FP32 adds (mma_step). A kernel instance, not a branch on the flag: with the
-// branch inside, the kernel the prefill profile runs (the MMA with ones) compiled unlike master's,
-// and its prefill candidates moved by x0.77-1.21 (RTX 3060; the best route of Q2_K 4096x4096
-// +6 %). Every other instantiation is the plain kernel.
+// load_raw, that ring is the whole variant). Sums (RmmaSums, a min-term decoder's group sums):
+// Adds (kRmmaAddVariant: four or more token tiles; the launch takes it where GemmArgs::add_sums
+// asks) sums them by FP32 adds (mma_step); Plane (kRmmaPlaneVariant; where GemmArgs::group_sums
+// is given) reads them from the call's pre-summed plane. Kernel instances, not a branch on the
+// flag: with the branch inside, the kernel the prefill profile runs (the MMA with ones) compiled
+// unlike master's, and its prefill candidates moved by x0.77-1.21 (RTX 3060; the best route of
+// Q2_K 4096x4096 +6 %). Every other instantiation is the plain kernel.
 // The latency kernel's activation ring (rmma_kernel's act_ring): each K step's activations loaded
 // into registers with the step's weights, one step ahead, instead of inside the step. Inside the
 // step a spread decoder loads them group by group, each group's MMAs waiting on its own load, so
@@ -3168,11 +3184,57 @@ inline constexpr int kRmmaMinBlocks =
 template <class Decoder, class Schedule>
 inline constexpr bool kRmmaAddVariant = MinTermOf<Decoder>::value && Schedule::kNTiles >= 4;
 
-template <class Decoder, class Schedule, Epilogue E, bool Latency = false, bool AddSums = false>
+// Where a min-term decoder's group sums come from (rmma_kernel's last template argument, its
+// kernel-facts key column `sums`): the MMA with ones (OnesMma, the plain kernel), FP32 adds of the
+// loaded activations (Adds: kRmmaAddVariant, GemmArgs::add_sums) or the call's pre-summed plane
+// (Plane: kRmmaPlaneVariant, GemmArgs::group_sums; #619). The values are the key's.
+enum class RmmaSums : int { OnesMma = 0, Adds = 1, Plane = 2 };
+
+// The decoders with a plane instance: every min-term decoder, in every schedule, epilogue and
+// latency form, on the builds with tensor-core MMA (Volta's build adds its sums: no plane, and
+// NINFERNO_BUILD_ARCH says so on the host pass too). Host-side too: the launch asks it.
+template <class Decoder>
+inline constexpr bool kRmmaPlaneVariant =
+#if defined(NINFERNO_BUILD_ARCH) && NINFERNO_BUILD_ARCH < 75
+    false;
+#else
+    MinTermOf<Decoder>::value;
+#endif
+
+// The plane's values of one K step, read by the lane for the accumulator columns it holds
+// (tokens 2 quad and 2 quad + 1 of each token tile): dst[(2n + e) S + g] is group g of the step
+// for token token0 + 8n + 2 quad + e, zero for a token past the call's. A step's S groups are one
+// or two 16-byte loads per token (S = 4 or 8; the plane's rows hold whole steps,
+// rmma_group_sums_ld).
+template <int S, int NT>
+__device__ __forceinline__ void load_group_sums(float* dst, const GemmArgs& a, int token0, int quad,
+                                                int step) {
+    static_assert(S % 4 == 0, "a step's groups in 16-byte loads");
+#pragma unroll
+    for (int n = 0; n < NT; ++n)
+#pragma unroll
+        for (int e = 0; e < 2; ++e) {
+            const int token  = token0 + n * 8 + 2 * quad + e;
+            const bool live  = token < a.tokens;
+            const float* src = a.group_sums + static_cast<std::int64_t>(token) * a.group_sums_ld +
+                               static_cast<std::int64_t>(step) * S;
+#pragma unroll
+            for (int v = 0; v < S / 4; ++v) {
+                float4 w = make_float4(0.0F, 0.0F, 0.0F, 0.0F);
+                if (live) w = load_vec<float4>(src + 4 * v);
+                dst[(2 * n + e) * S + 4 * v + 0] = w.x;
+                dst[(2 * n + e) * S + 4 * v + 1] = w.y;
+                dst[(2 * n + e) * S + 4 * v + 2] = w.z;
+                dst[(2 * n + e) * S + 4 * v + 3] = w.w;
+            }
+        }
+}
+
+template <class Decoder, class Schedule, Epilogue E, bool Latency = false,
+          RmmaSums Sums = RmmaSums::OnesMma>
 __global__
-__launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Latency>)) void
-    rmma_kernel(
-    GemmArgs a) {
+__launch_bounds__(Schedule::kThreads,
+                  (kRmmaMinBlocks<Decoder, Schedule, E, Latency>)) void rmma_kernel(GemmArgs a) {
     constexpr int R        = Decoder::kRun;
     constexpr int KStep    = 4 * R;
     constexpr int J        = R / 4; // MMAs per K step
@@ -3259,6 +3321,17 @@ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Late
     constexpr bool kAhead = kRmmaAhead<Decoder, Schedule, E, Latency>;
     static_assert(!(kAhead && kStaged));
     unsigned act_ring[kAhead ? 2 : 1][1][kAhead ? 2 * J : 1];
+    // The group-sums plane (RmmaSums::Plane): a step's sums of the lane's tokens, 2 NT S floats.
+    // Where the step's activations are already in registers or shared memory when it computes
+    // (the activation ring, the staged copy) they ride a ring of their own, loaded with the next
+    // step's (stage_act); elsewhere the step loads them first, before its activations, so they
+    // wait on nothing the activations do not (and hold no ring's registers in the wide tiles).
+    constexpr bool kPlane = Sums == RmmaSums::Plane;
+    static_assert(!kPlane || kRmmaPlaneVariant<Decoder>, "a plane instance of a min-term decoder");
+    static_assert(Sums != RmmaSums::Adds || kRmmaAddVariant<Decoder, Schedule>);
+    constexpr int kSumGroups  = SplitsOf<Decoder>::value;
+    constexpr bool kPlaneRing = kPlane && (kAhead || kStaged);
+    float plane_ring[kPlaneRing ? 2 : 1][kPlaneRing ? 2 * NT * kSumGroups : 1];
     __shared__ uint2 act_stage[kStaged ? 2 : 1][kStaged ? Schedule::kWarpsM * WK : 1]
                               [kStaged ? J : 1][32];
     const auto stage_act = [&](auto slot_tag, int step) {
@@ -3292,6 +3365,10 @@ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Late
 #pragma unroll
                 for (int i = 0; i < 2 * G; ++i) act_ring[slot][0][2 * G * g + i] = part[0][i];
             }
+        }
+        if constexpr (kPlaneRing) {
+            constexpr int slot = decltype(slot_tag)::value;
+            load_group_sums<kSumGroups, NT>(plane_ring[slot], a, token0, quad, step);
         }
     };
 
@@ -3364,6 +3441,16 @@ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Late
             }
         }
 #endif
+        // The plane's sums of the step (kPlane): from their ring, or loaded here first.
+        float plane_step[kPlane && !kPlaneRing ? 2 * NT * kSumGroups : 1];
+        const float* plane = nullptr;
+        if constexpr (kPlaneRing) {
+            plane = plane_ring[slot];
+        } else if constexpr (kPlane) {
+            load_group_sums<kSumGroups, NT>(plane_step, a, token0, quad, step);
+            plane = plane_step;
+        }
+        (void)plane_step;
         const __nv_bfloat16* col[NT];
 #pragma unroll
         for (int n = 0; n < NT; ++n) {
@@ -3377,16 +3464,18 @@ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Late
             } else {
                 cp_wait<0>();
             }
-            mma_step<Decoder, NT, J, kSets, MT, true>(acc, runs, col, step * KStep, quad, a.k,
-                                                      &act_stage[slot][warp][0][lane]);
+            mma_step<Decoder, NT, J, kSets, MT, true, false, kPlane>(
+                acc, runs, col, step * KStep, quad, a.k, &act_stage[slot][warp][0][lane], nullptr,
+                false, plane);
         } else if constexpr (kAhead) {
             (void)ahead;
-            mma_step<Decoder, NT, J, kSets, MT, false, true>(acc, runs, col, step * KStep, quad,
-                                                             a.k, nullptr, act_ring[slot][0]);
+            mma_step<Decoder, NT, J, kSets, MT, false, true, kPlane>(
+                acc, runs, col, step * KStep, quad, a.k, nullptr, act_ring[slot][0], false, plane);
         } else {
             (void)ahead;
-            mma_step<Decoder, NT, J, kSets, MT>(acc, runs, col, step * KStep, quad, a.k, nullptr,
-                                                nullptr, AddSums);
+            mma_step<Decoder, NT, J, kSets, MT, false, false, kPlane>(
+                acc, runs, col, step * KStep, quad, a.k, nullptr, nullptr, Sums == RmmaSums::Adds,
+                plane);
         }
     };
 

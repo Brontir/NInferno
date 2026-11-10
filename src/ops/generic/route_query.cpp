@@ -129,6 +129,10 @@ RouteDescription describe_resolved(const DescribedWeight& described, const Probl
     out.workspace_bytes = executed_workspace_bytes(ran, resolved.r8_prequantized, problem.k,
                                                    problem.n, problem.epilogue, tokens);
     if (chunk_workspace) out.workspace_bytes = *chunk_workspace;
+    // The register MMA's group-sums plane, where the call reads it (#619).
+    if (resolved.group_sums) {
+        out.workspace_bytes = rmma_group_sums_bytes(codec_of(w), problem.k, tokens);
+    }
     out.tile = route_tile(ran, problem.epilogue, tokens);
     // The call's own rows of the weight: a slice of a fused parent reads its share of the payload
     // (route_traffic takes the payload over the call's n rows as bytes per weight). The share is

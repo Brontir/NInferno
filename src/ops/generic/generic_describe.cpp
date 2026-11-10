@@ -59,6 +59,15 @@ std::optional<KernelResources> rmma_resources(int schedule, const Weight& w, Epi
     args.ldx      = w.k;
     args.lane_local = invariant_routes_active() ? 0 : 1;
     args.add_sums   = rmma_add_sums() ? 1 : 0;
+    // The instance the engine's call runs: it has the workspace for the group-sums plane
+    // (workspace_capacity_bytes), so a call that takes it (rmma_group_sums) reads it. Never read:
+    // the described launch takes only its presence.
+    static const float plane_stand_in = 0.0F;
+    if (rmma_group_sums(codec, tokens)) {
+        args.group_sums        = &plane_stand_in;
+        args.group_sums_values = rmma_group_sums_values(codec);
+        args.group_sums_ld     = rmma_group_sums_ld(w.k, args.group_sums_values);
+    }
     args.spread_smem =
         spread_smem(Route{Family::RegisterMma, static_cast<std::uint8_t>(schedule)}, codec, epilogue, args);
     // Without tensor mma.sync run_route hands such calls to Volta's own HMMA and GEMV kernels

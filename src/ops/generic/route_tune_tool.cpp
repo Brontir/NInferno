@@ -463,8 +463,9 @@ int route_tune_main(int argc, char** argv) {
             };
             // One measurement per (route, T, profile): the band sweep, the prefill total and the
             // prefill bands share them where they run the same kernel. The prefill profile's are
-            // its own: there a min-term register-MMA tile of four or more token tiles keeps the MMA
-            // with ones, outside it adds (rmma_add_sums).
+            // its own: there a min-term register-MMA tile reads the group-sums plane at every width
+            // (rmma_group_sums), outside it from kPrefillBandMinTokens, and below that a tile of
+            // four or more token tiles adds (rmma_add_sums).
             std::map<std::tuple<int, std::int32_t, bool>, double> timed;
             const auto time_route = [&](generic::Route r, std::int32_t t) {
                 const std::tuple<int, std::int32_t, bool> key{

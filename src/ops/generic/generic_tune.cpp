@@ -359,10 +359,12 @@ Tuned time_problem(const Problem& problem, const Call& model_call, cudaStream_t 
     // ggml's matrix kernel: its activation, FP32 plane (SwiGLU: gate and up rows) and fixup.
     const int plane_rows =
         model_call.epilogue == Epilogue::SwiGlu ? 2 * model_call.rows : model_call.rows;
+    // A min-term register-MMA call in the prefill profile reads the group-sums plane (#619).
     DeviceArena workspace(
         std::max<std::size_t>({route_workspace_bytes(Route{Family::W4a8Mma, 0}, k, kR8VerifyTokens),
                                ggml_mmq_workspace_bytes(k, plane_rows, t_max) + 256,
-                               ggml_vec_workspace_bytes(k, t_max) + 256, 256}));
+                               ggml_vec_workspace_bytes(k, t_max) + 256,
+                               rmma_group_sums_bytes(codec_of(weight), k, t_max), 256}));
     Bench bench{};
     bench.workspace            = &workspace;
     bench.call.weight          = &weight;
@@ -385,7 +387,8 @@ Tuned time_problem(const Problem& problem, const Call& model_call, cudaStream_t 
     entry = Json{{"routes", Json::object()}, {"us", Json::object()}};
     // The decode widths are timed as the speed profile runs them, whatever profile the eager call
     // that tunes them is in (a min-term register-MMA tile of four or more token tiles adds its
-    // group sums there, rmma_add_sums); the prefill bands below scope their own.
+    // group sums there, rmma_add_sums, and no call reads the group-sums plane below
+    // kPrefillBandMinTokens, rmma_group_sums); the prefill bands below scope their own.
     const ScopedPrefillRoutes speed_profile(false);
     for (std::int32_t t = 1; t <= t_max; ++t) {
         const auto name  = std::to_string(t);
@@ -517,8 +520,10 @@ void time_prefill_bands(const Problem& problem, const Call& model_call, cudaStre
     try {
         x.emplace(static_cast<std::size_t>(k) * t_max * 2);
         out.emplace(static_cast<std::size_t>(model_call.rows) * t_max * 2);
+        // The register MMA of a min-term format reads the group-sums plane there (#619).
         workspace.emplace(std::max<std::size_t>(
-            w4a8 ? route_workspace_bytes(Route{Family::W4a8Mma, 0}, k, t_max) : 0, 256));
+            {w4a8 ? route_workspace_bytes(Route{Family::W4a8Mma, 0}, k, t_max) : 0,
+             rmma_group_sums_bytes(codec_of(weight), k, t_max), 256}));
     } catch (const std::exception&) {
         (void)cudaGetLastError();
         tuned.prefill_base       = {};

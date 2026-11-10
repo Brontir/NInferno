@@ -11,8 +11,9 @@
 // ninferno_kernel_facts_live_test).
 //
 // A kernel is keyed as its symbol spells it: the decoder type, the schedule's template arguments
-// (NINFERNO_GENERIC_RMMA_SCHEDULES), the epilogue, its latency and add-sums variants. The launch
-// builds the key from the template arguments it instantiates (rmma_kernel_key), the tool from the
+// (NINFERNO_GENERIC_RMMA_SCHEDULES), the epilogue, its latency variant and where its min-term
+// sums come from (the `sums` column: the MMA with ones, FP32 adds, the plane). The launch builds
+// the key from the template arguments it instantiates (rmma_kernel_key), the tool from the
 // demangled symbol, in one canonical spelling (decoder_name): nothing is retyped.
 
 #include <cstddef>
@@ -28,7 +29,9 @@ struct RmmaKernelKey {
     int warps_m = 0, warps_k = 0, m_tiles = 0, n_tiles = 0, cluster = 1;
     int epilogue  = 0; // Epilogue as an integer
     bool latency  = false;
-    bool add_sums = false;
+    // Where a min-term kernel's group sums come from (rmma_kernel's RmmaSums): 0 the MMA with
+    // ones (every other decoder's kernels too), 1 FP32 adds, 2 the call's pre-summed plane.
+    int sums = 0;
 };
 
 // The instructions of the kernel's K loop, counted once per loop iteration off the SASS

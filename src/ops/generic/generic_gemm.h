@@ -131,8 +131,18 @@ struct GemmArgs {
     // (generic_gemm.cuh mma_step), a sum in another order than a narrower tile's (same_summation).
     // run_route sets it outside the invariant and prefill profiles, whose calls keep one order at
     // every T; narrower tiles ignore it, and Volta's build always adds. Host side only: the launch
-    // takes the kernel instance that adds (rmma_kernel's AddSums), the kernel reads none.
+    // takes the kernel instance that adds (rmma_kernel's RmmaSums::Adds), the kernel reads none.
     int add_sums = 0;
+    // Register MMA of a min-term format (Q4_K, Q5_K, Q2_K, Q4_1, Q5_1; #619): token t's activation
+    // sum over each scale group of group_sums_values values (32; Q2_K 16) at group_sums + t *
+    // group_sums_ld, one FP32 per group in one fixed order (rmma_group_sums_kernel, the call's
+    // pre-pass, in its workspace). Given, the launch takes the kernel instance that reads it
+    // (rmma_kernel's RmmaSums::Plane) in place of the MMA with ones and of the adds (run_route:
+    // rmma_group_sums). Null: the plane is not read. Appended last: the offsets before it are
+    // tools/pdl_prewait_loads.txt's, and the plane is read after the PDL wait.
+    const float* group_sums = nullptr;
+    int group_sums_ld       = 0;
+    int group_sums_values   = 0;
 };
 
 // An activation quantized to int8 per 32 values (the W4A8 quantizer's output): what the W4A8
@@ -897,6 +907,23 @@ struct BuildManifest {
 [[nodiscard]] std::size_t executed_workspace_bytes(Route route, bool r8_prequantized,
                                                    std::int32_t k, std::int32_t rows,
                                                    Epilogue epilogue, std::int32_t tokens);
+
+// The pre-summed activation group plane of a min-term format's register MMA (#619,
+// GemmArgs::group_sums). rmma_group_sums_values: the values of the format's scale group (32 for
+// Q4_K, Q5_K, Q4_1, Q5_1; 16 for Q2_K), 0 for a format without a min term. rmma_group_sums_ld:
+// the floats of a token's row, K's groups rounded up to whole 128-value K steps (the kernel loads
+// a step's groups as 16-byte words; the pre-pass writes the groups past K as zero).
+// rmma_group_sums_bytes: the plane's workspace for `tokens` tokens (256-aligned, as run_route
+// allocates it; 0 for a format without a min term). rmma_group_sums: whether a call of `tokens`
+// takes the plane, given the workspace: a min-term format on tensor-core MMA, outside the
+// invariant profile (whose bytes are the MMA with ones at every width), at every width in the
+// prefill profile (one order for all its routes and widths) and from kPrefillBandMinTokens in the
+// speed profile (below, a pre-pass launch per call costs more than the MMA with ones it saves).
+[[nodiscard]] int rmma_group_sums_values(WeightCodec codec) noexcept;
+[[nodiscard]] std::int32_t rmma_group_sums_ld(std::int32_t k, int values) noexcept;
+[[nodiscard]] std::size_t rmma_group_sums_bytes(WeightCodec codec, std::int32_t k,
+                                                std::int32_t tokens);
+[[nodiscard]] bool rmma_group_sums(WeightCodec codec, std::int32_t tokens);
 // Family::GgmlMmq's workspace for a call of `plane_rows` weight rows (SwiGlu: gate and up) and T
 // tokens: the q8_1 activation, the FP32 plane and the stream-k fixup bound.
 // Whether ggml's matrix kernel (Family::GgmlMmq) reads the format.
@@ -1131,6 +1158,8 @@ enum class Demotion : std::uint8_t {
     GgmlWorkspace, // ggml's kernels: no workspace, or less free than their planes take
     Workspace,     // W4A4, W4A8 or I8 given less workspace than their activation planes take
     VoltaCopy,     // Volta: a CUTLASS-only format's tiled call with no room for a decoded chunk
+    GroupSums,     // a min-term register-MMA call without room for its group-sums plane: the same
+                   // route with the MMA with ones (other bytes; ResolvedRoute::group_sums)
 };
 [[nodiscard]] std::string_view demotion_name(Demotion demotion) noexcept;
 
@@ -1144,7 +1173,10 @@ struct ResolvedRoute {
     Route executed;
     bool r8_prequantized = false;
     bool ggml_fallback   = false; // a ggml route the call could not take (ggml_mmq_fallback_count)
-    Demotion reason      = Demotion::None;
+    // A min-term register-MMA call that reads the pre-summed group plane (rmma_group_sums) from
+    // its workspace; one that would but has no room for it runs the MMA with ones (GroupSums).
+    bool group_sums = false;
+    Demotion reason = Demotion::None;
 };
 [[nodiscard]] ResolvedRoute resolve_route(Route asked, const Weight& weight, const CallLayout& call);
 
@@ -1182,7 +1214,17 @@ struct PreparedRule {
 // stream order, nor releases: the next call's quantizer could take the workspace it still reads),
 // no programmatic dependent launch on the device, a call wider than the prefetch's tokens, or a
 // joined call.
-enum class OverlapRefusal { None, NotAsked, Family, Epilogue, PrequantizedR8, NoPdl, Wide, Joined };
+enum class OverlapRefusal {
+    None,
+    NotAsked,
+    Family,
+    Epilogue,
+    PrequantizedR8,
+    NoPdl,
+    Wide,
+    Joined,
+    GroupSums, // a register-MMA call that reads the group-sums plane (ResolvedRoute::group_sums)
+};
 [[nodiscard]] std::string_view overlap_refusal_name(OverlapRefusal why) noexcept;
 struct LaunchOverlap {
     OverlapRefusal join     = OverlapRefusal::NotAsked;

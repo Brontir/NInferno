@@ -692,14 +692,22 @@ bool rmma_compiled(QType qtype, int schedule, std::int32_t k = 0) {
 // Every T >= 17 column must be byte-identical across routes admitted to the prefill profile and
 // across call sizes and starts. Op::Add adds into a residual that every call starts from (the
 // window's columns of one residual).
+// `windows` (offset, tokens) replace the default ones and `wide` the reference call's width: the
+// prefill profile's min-term register MMA reads the group-sums plane at every width (#619), so its
+// calls below 17 tokens join the wide call's bytes, and outside the profiles each width band keeps
+// its own order (the plane from 17 tokens, below it the MMA with ones or the adds).
+using Windows = std::vector<std::pair<std::int32_t, std::int32_t>>;
+
 int check_invariance(const Format& f, Op op, std::int32_t out_rows, std::int32_t k,
                      ops::LinearPolicy policy, std::uint32_t seed,
-                     const std::vector<generic::Route>* only = nullptr, bool in_prefill = true) {
+                     const std::vector<generic::Route>* only = nullptr, bool in_prefill = true,
+                     const Windows* windows_in = nullptr, std::int32_t wide_in = 300) {
     // The prefill profile's promise, so its summation order (no FP32 min-term sums in the wide
-    // register-MMA tiles: rmma_add_sums); `in_prefill` false checks one route's own invariance
-    // outside it, where those tiles add.
+    // register-MMA tiles: rmma_add_sums; the group-sums plane at every width: rmma_group_sums);
+    // `in_prefill` false checks one route's own invariance outside it, where those tiles add
+    // below 17 tokens and read the plane from there.
     const ops::ScopedPrefillRoutes prefill(in_prefill);
-    const std::int32_t wide  = 300;
+    const std::int32_t wide   = wide_in;
     const std::int32_t rows_n = gated(op) ? 2 * out_rows : out_rows;
     const HostWeight host    = make_weight(f.qtype, rows_n, k, seed);
     DeviceWeight device      = upload_weight(host);
@@ -708,10 +716,12 @@ int check_invariance(const Format& f, Op op, std::int32_t out_rows, std::int32_t
     x.copy_from_host(activation.data(), x.bytes);
     const auto residual = make_linear_activation(out_rows, wide, seed + 5U, ActivationCompute::A16);
     DeviceArena workspace(std::max<std::size_t>(
-        std::max(generic::route_workspace_bytes(generic::Route{generic::Family::W4a4Mma, 0}, k, wide),
-                 std::max(generic::route_workspace_bytes(generic::Route{generic::Family::W4a8Mma, 0}, k, wide),
-                          generic::route_workspace_bytes(generic::Route{generic::Family::I8Mma, 0}, k, wide))),
-        256));
+        {generic::route_workspace_bytes(generic::Route{generic::Family::W4a4Mma, 0}, k, wide),
+         generic::route_workspace_bytes(generic::Route{generic::Family::W4a8Mma, 0}, k, wide),
+         generic::route_workspace_bytes(generic::Route{generic::Family::I8Mma, 0}, k, wide),
+         generic::rmma_group_sums_bytes(generic::codec_of(device.weight), k, wide),
+         std::size_t{256}}));
+    const std::uint64_t demotions = generic::route_demotion_count();
     const bool a4 = f.qtype == QType::NVFP4 && policy == ops::LinearPolicy::AllowA4;
     const bool a8 = generic::w4a8_supports(f.qtype) && policy == ops::LinearPolicy::AllowA8;
 
@@ -784,8 +794,10 @@ int check_invariance(const Format& f, Op op, std::int32_t out_rows, std::int32_t
     std::vector<std::uint16_t> reference;
     run(routes.front(), 0, wide, reference);
     int failures = 0;
-    const std::pair<std::int32_t, std::int32_t> windows[] = {
-        {0, 17}, {0, 31}, {0, 33}, {0, 64}, {0, 65}, {0, 129}, {5, 17}, {100, 200}, {283, 17}, {1, 299}};
+    const Windows windows = windows_in != nullptr
+                                ? *windows_in
+                                : Windows{{0, 17},  {0, 31}, {0, 33},    {0, 64},   {0, 65},
+                                          {0, 129}, {5, 17}, {100, 200}, {283, 17}, {1, 299}};
     for (const auto route : routes) {
         for (const auto [offset, t] : windows) {
             std::vector<std::uint16_t> bits;
@@ -803,15 +815,125 @@ int check_invariance(const Format& f, Op op, std::int32_t out_rows, std::int32_t
             }
         }
     }
+    // Every call had the workspace of its group-sums plane: none ran the MMA with ones instead.
+    if (generic::route_demotion_count() != demotions) {
+        std::cerr << f.name << " " << op_name(op) << " invariance: a call was demoted\n";
+        ++failures;
+    }
     if (failures == 0) {
         std::cout << f.name << " " << op_name(op)
                   << (a4   ? " A4"
                       : a8 ? " A8"
                            : "")
                   << " [" << rows_n << "," << k << "]: " << routes.size() << " routes x "
-                  << std::size(windows) << " windows byte-identical\n";
+                  << windows.size() << " windows byte-identical"
+                  << (in_prefill ? "" : " (speed profile)") << "\n";
     }
     return failures;
+}
+
+// The group-sums plane's kernel instance (#619) of a min-term format's `route` against the same
+// route without the plane (run_route given no workspace: the MMA with ones, or the adds where the
+// speed profile takes them, said as a demotion), both against the FP64 oracle of the sampled rows:
+// the plane's largest error is not above the other's by more than one BF16 unit in the last place
+// of the largest output (the two differ in the rounding of the sums only), every output is
+// written, and the call with the plane's workspace is not demoted.
+int check_plane_sums(const Format& f, Op op, std::int32_t out_rows, std::int32_t k, std::int32_t t,
+                     generic::Route route, std::uint32_t seed) {
+    const ops::ScopedPrefillRoutes speed(false);
+    const std::int32_t rows_n = gated(op) ? 2 * out_rows : out_rows;
+    const HostWeight host     = make_weight(f.qtype, rows_n, k, seed);
+    DeviceWeight device       = upload_weight(host);
+    const auto activation     = make_linear_activation(k, t, seed + 3U, ActivationCompute::A16);
+    DeviceBuffer x(activation.size() * 2);
+    x.copy_from_host(activation.data(), x.bytes);
+    std::vector<std::uint16_t> residual(static_cast<std::size_t>(out_rows) * t);
+    {
+        std::mt19937 rng(seed + 11U);
+        std::uniform_real_distribution<float> u(-0.5F, 0.5F);
+        for (auto& v : residual) v = f32_to_bf16(u(rng));
+    }
+    const std::string label = std::string(f.name) + " " + op_name(op) + " [" +
+                              std::to_string(rows_n) + "," + std::to_string(k) +
+                              "] T=" + std::to_string(t) + " " + generic::route_name(route);
+    const auto run = [&](bool plane, std::vector<std::uint16_t>& bits) {
+        DeviceBuffer out(residual.size() * 2);
+        if (op == Op::Add) {
+            out.copy_from_host(residual.data(), out.bytes);
+        } else {
+            cuda_check(cudaMemset(out.p, 0xff, out.bytes), "poison");
+        }
+        DeviceArena workspace(std::max<std::size_t>(
+            generic::rmma_group_sums_bytes(generic::codec_of(device.weight), k, t), 256));
+        Tensor tx(x.p, DType::BF16, {k, t});
+        Tensor tout(out.p, DType::BF16, {out_rows, t});
+        generic::Call call;
+        call.x                        = &tx;
+        call.weight                   = &device.weight;
+        call.rows                     = out_rows;
+        call.up_offset                = gated(op) ? out_rows : 0;
+        call.epilogue                 = gated(op)       ? generic::Epilogue::SwiGlu
+                                        : op == Op::Add ? generic::Epilogue::AddResidual
+                                                        : generic::Epilogue::Store;
+        call.out[0]                   = &tout;
+        call.segment_rows[0]          = out_rows;
+        const std::uint64_t demotions = generic::route_demotion_count();
+        generic::run_route(route, call, plane ? &workspace : nullptr, nullptr);
+        cuda_check(cudaDeviceSynchronize(), "run");
+        bits                        = download_bf16(out.p, residual.size());
+        const std::uint64_t demoted = generic::route_demotion_count() - demotions;
+        if (demoted != (plane ? 0U : 1U)) {
+            std::cerr << label
+                      << (plane ? ": the plane's call was demoted\n"
+                                : ": the call without workspace was not demoted\n");
+            return false;
+        }
+        return true;
+    };
+    std::vector<std::uint16_t> with_plane, without;
+    if (!run(true, with_plane) || !run(false, without)) return 1;
+    const auto rows                       = pick_rows(out_rows, 40);
+    std::vector<std::int32_t> source_rows = rows;
+    if (gated(op))
+        for (auto r : rows) source_rows.push_back(r + out_rows);
+    const auto w = weight_rows(host, source_rows);
+    std::vector<float> xa(activation.size());
+    for (std::size_t i = 0; i < activation.size(); ++i) xa[i] = bf16_to_f32(activation[i]);
+    std::vector<double> dots(source_rows.size() * static_cast<std::size_t>(t));
+    cpu_linear_gemm_fp64(w.data(), xa.data(), dots.data(),
+                         static_cast<std::int32_t>(source_rows.size()), k, t);
+    double err_plane = 0.0, err_ones = 0.0, largest = 0.0;
+    const std::size_t n_sel = source_rows.size();
+    for (std::int32_t token = 0; token < t; ++token) {
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            double value = dots[static_cast<std::size_t>(token) * n_sel + i];
+            if (op == Op::Add) {
+                value +=
+                    bf16_to_f32(residual[static_cast<std::size_t>(token) * out_rows + rows[i]]);
+            }
+            if (gated(op)) {
+                const double up = dots[static_cast<std::size_t>(token) * n_sel + rows.size() + i];
+                value           = value / (1.0 + std::exp(-value)) * up;
+            }
+            const std::size_t at = static_cast<std::size_t>(token) * out_rows + rows[i];
+            if (with_plane[at] == 0xffffU || without[at] == 0xffffU) {
+                std::cerr << label << ": output retains poison\n";
+                return 1;
+            }
+            err_plane = std::max(err_plane, std::fabs(bf16_to_f32(with_plane[at]) - value));
+            err_ones  = std::max(err_ones, std::fabs(bf16_to_f32(without[at]) - value));
+            largest   = std::max(largest, std::fabs(value));
+        }
+    }
+    // One BF16 unit in the last place at the largest output: 2^(e - 7) for 2^e <= |v| < 2^(e+1).
+    const double ulp = largest > 0.0 ? std::ldexp(1.0, std::ilogb(largest) - 7) : 0.0;
+    if (!(err_plane <= err_ones + ulp)) {
+        std::cerr << label << ": the plane's largest error " << err_plane
+                  << " exceeds the MMA with ones' " << err_ones << " by more than one BF16 ulp ("
+                  << ulp << ")\n";
+        return 1;
+    }
+    return 0;
 }
 
 // Volta's tensor-core verify route (volta_hmma_route, generic_volta_hmma.cu): the dispatch takes it
@@ -2327,24 +2449,62 @@ int main() {
         failures += check_invariance(f, Op::Linear, n, k, ops::LinearPolicy::A16Only, 41U);
         failures += check_invariance(f, Op::SwiGlu, n, k, ops::LinearPolicy::A16Only, 43U);
     }
-    // Outside the profiles a min-term tile of four or more token tiles adds its group sums
-    // (rmma_add_sums): each such route still gives a token the same bytes at every call size and
-    // start, as route_is_token_invariant claims.
+    // The min-term formats' register MMA reads the group-sums plane (#619): in the prefill profile
+    // at every width, so a call below 17 tokens (a prefill's last chunk) gives a token the wide
+    // call's bytes on every admitted route; outside the profiles from 17 tokens, where each route
+    // still gives a token the same bytes at every call size and start (the plane), and below 17
+    // in a band of its own (the MMA with ones, or the adds in a tile of four or more token tiles,
+    // rmma_add_sums), as route_is_token_invariant claims for the profiles it is asked about.
+    const auto min_term = [](const Format& f) {
+        return f.qtype == QType::GGML_Q4_K || f.qtype == QType::GGML_Q5_K ||
+               f.qtype == QType::GGML_Q2_K || f.qtype == QType::GGML_Q4_1 ||
+               f.qtype == QType::GGML_Q5_1;
+    };
     for (const Format& f : kFormats) {
-        const bool min_term = f.qtype == QType::GGML_Q4_K || f.qtype == QType::GGML_Q5_K ||
-                              f.qtype == QType::GGML_Q2_K || f.qtype == QType::GGML_Q4_1 ||
-                              f.qtype == QType::GGML_Q5_1;
-        if (!on_build(f) || !min_term) continue;
+        if (!on_build(f) || !min_term(f)) continue;
         const std::int32_t k = awkward_k(f);
+        // Every register-MMA route the prefill profile admits (Q4_K and Q5_K's own prefill check
+        // above takes their tiled routes).
+        std::vector<generic::Route> rmma_routes;
         for (int i = 0; i < generic::rmma_schedule_count(); ++i) {
             const generic::Route r{generic::Family::RegisterMma, static_cast<std::uint8_t>(i)};
-            if (generic::rmma_schedule_info(i).n_tiles < 4 || !rmma_compiled(f.qtype, i, k) ||
-                !generic::route_is_token_invariant(r)) {
-                continue;
+            if (rmma_compiled(f.qtype, i, k) && generic::route_is_token_invariant(r)) {
+                rmma_routes.push_back(r);
             }
+        }
+        const Windows narrow{{0, 5}, {7, 12}, {290, 1}, {0, 17}, {100, 200}, {1, 299}};
+        failures += check_invariance(f, Op::Linear, 136, k, ops::LinearPolicy::A16Only, 79U,
+                                     &rmma_routes, true, &narrow);
+        failures += check_invariance(f, Op::SwiGlu, 136, k, ops::LinearPolicy::A16Only, 81U,
+                                     &rmma_routes, true, &narrow);
+        const Windows decode{{0, 1}, {3, 5}, {0, 8}, {8, 8}, {2, 13}};
+        for (const generic::Route r : rmma_routes) {
             const std::vector<generic::Route> one{r};
             failures += check_invariance(f, Op::Linear, 136, k, ops::LinearPolicy::A16Only, 71U,
                                          &one, false);
+            failures += check_invariance(f, Op::Linear, 136, k, ops::LinearPolicy::A16Only, 73U,
+                                         &one, false, &decode, 16);
+        }
+    }
+    // The plane's instance against the MMA with ones (or the adds) of the same route, for every
+    // min-term format, compiled schedule and epilogue (check_plane_sums).
+    for (const Format& f : kFormats) {
+        if (!on_build(f) || !min_term(f)) continue;
+        // A K of whole 128-value steps and, for the 32-value block formats, one whose last step
+        // stops inside (kGroupTail): the plane's rows hold whole steps, the groups past K zero.
+        std::vector<std::int32_t> ks{awkward_k(f)};
+        if (ggml_block32(f.qtype)) ks.push_back(1120);
+        for (const std::int32_t k : ks) {
+            for (int i = 0; i < generic::rmma_schedule_count(); ++i) {
+                if (!rmma_compiled(f.qtype, i, k)) continue;
+                const generic::Route r{generic::Family::RegisterMma, static_cast<std::uint8_t>(i)};
+                for (const Op op : {Op::Linear, Op::Add, Op::SwiGlu}) {
+                    for (const std::int32_t t : {17, 24, 32, 64}) {
+                        if (op != Op::Linear && (t == 17 || t == 32)) continue;
+                        failures += check_plane_sums(f, op, 136, k, t, r, 91U + i);
+                    }
+                }
+            }
         }
     }
     // BF16 at a K the staged schedules admit: they join the register-MMA routes' bytes.
