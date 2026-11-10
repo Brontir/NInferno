@@ -32,7 +32,7 @@ set -Eeuo pipefail
 trap 'rc=$?; echo "qc.sh: internal error (exit $rc) at line $LINENO" >&2; exit 3' ERR
 BR=${1:-}; [ -n "$BR" ] || { echo "usage: qc.sh BRANCH [TARGET...]" >&2; exit 3; }
 shift
-ROOT=${QC_ROOT:-/root/claude}; ARCH=${QC_ARCH:-89}; JOBS=${QC_JOBS:-4}
+ROOT=$(realpath "${QC_ROOT:-/root/claude}"); ARCH=${QC_ARCH:-89}; JOBS=${QC_JOBS:-4}
 W=$ROOT/wt_qc; B=$ROOT/build_qc_$ARCH; L=$ROOT/logs; mkdir -p "$L"
 exec 9>"$ROOT/qc.lock"; flock -n 9 || { echo "qc.sh: another qc.sh run is active, waiting"; flock 9; }
 set +u; . "$ROOT/lab.sh"; cuda_env; set -u
@@ -49,7 +49,7 @@ FREE=$(df -BG --output=avail "$ROOT" | tail -1 | tr -dc 0-9)
 
 # 1. fetch + checkout (the build dir lives outside the worktree, so a clean is safe)
 [ -d "$W" ] || git -C "$ROOT/wt_tst" worktree add -q --detach "$W" origin/master
-[ "$(git -C "$W" rev-parse --show-toplevel)" = "$W" ] || { echo "$W is not its own git worktree root; refusing checkout -f / clean"; exit 3; }
+[ "$(realpath "$(git -C "$W" rev-parse --show-toplevel)")" = "$(realpath "$W")" ] || { echo "$W is not its own git worktree root; refusing checkout -f / clean"; exit 3; }
 git -C "$W" fetch -q origin master "+refs/heads/$BR:refs/remotes/origin/$BR" || { echo "fetch of $BR failed"; exit 3; }
 git -C "$W" checkout -q -f --detach "origin/$BR"
 git -C "$W" clean -fdxq
@@ -66,7 +66,7 @@ if [ ! -f "$B/build.ninja" ]; then
   tick configured
 fi
 HOMEDIR=$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "$B/CMakeCache.txt")
-[ "$HOMEDIR" = "$W" ] || { echo "$B was configured for '$HOMEDIR', not $W; remove it (rm -rf $B) and rerun"; exit 3; }
+[ "$(realpath "$HOMEDIR")" = "$(realpath "$W")" ] || { echo "$B was configured for '$HOMEDIR', not $W; remove it (rm -rf $B) and rerun"; exit 3; }
 ( cd "$B" && $LOW ninja build.ninja > "$L/qc_regen.log" 2>&1 9>&- ) || { tail -15 "$L/qc_regen.log"; echo "CMAKE REGENERATE FAILED (cmake error on this branch)"; exit 1; }
 
 # 3. plan. Lines: TEST<TAB>ctest name<TAB>exe targets (comma) | OBJ<TAB>target | SKIP<TAB>text | NOOP<TAB>text
@@ -131,7 +131,7 @@ if explicit:  # the caller names the targets: a ctest test or executable by name
     for t in explicit:
         if t in cmd_of: tests.add(t)
         elif t in exe_of: add_exe_tests(t)
-        else: objs.append(t)
+        else: objs.append(t); out("SKIP", f"explicit target {t} is not a test: built only, nothing run")
 else:
     rng = f"origin/master...origin/{br}"
     changed = sh("git", "-C", src, "diff", "--no-renames", "--name-only", rng).split()  # deleted and renamed-away included
@@ -143,17 +143,21 @@ else:
     for d in ("src", "include", "tests", "apps", "bench", "third_party"):
         for root, _, fs in os.walk(os.path.join(src, d)):
             for fn in fs:
-                if not fn.endswith(srcx + hdrx): continue
+                if not fn.endswith(srcx + hdrx + tuple(h + ".in" for h in hdrx)): continue
                 p = os.path.join(root, fn)
                 try: txt = open(p, errors="ignore").read()
                 except OSError: continue
                 for inc in re.findall(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]', txt, re.M):
                     includers[os.path.basename(inc)].add(os.path.relpath(p, src))
     direct = [c for c in changed if c.endswith(srcx) and os.path.exists(os.path.join(src, c))]
-    hdrs = [c for c in changed if c.endswith(hdrx)]
+    for c in changed:
+        if c.endswith(srcx) and not os.path.exists(os.path.join(src, c)):
+            out("SKIP", f"deleted source {c}: the targets that used it are not relinked, so a missing symbol would go unseen")
+    hdrx_in = tuple(h + ".in" for h in hdrx)
+    hdrs = [c for c in changed if c.endswith(hdrx)] + [c[:-3] for c in changed if c.endswith(hdrx_in)]
     extra_objs = []
     cmakefile = lambda f: f.endswith(".cmake") or os.path.basename(f) == "CMakeLists.txt"
-    others = [c for c in changed if not c.endswith(srcx + hdrx) and not docs(c) and not cmakefile(c)]
+    others = [c for c in changed if not c.endswith(srcx + hdrx + hdrx_in) and not docs(c) and not cmakefile(c)]
     ninja_lines = [l for l in open(os.path.join(bld, "build.ninja"), errors="ignore") if l.startswith("build ")] if others else []
     T0E = float(os.environ.get("QC_T0", "0"))
     def regenerated_headers_objs():  # objects including a header the regeneration just rewrote (configure-time embedding)
@@ -208,19 +212,59 @@ else:
         if o.startswith("tests/") or "/tests/" in o:
             ow = owner(o)
             if ow in exe_of: add_exe_tests(ow)
-    # tests the diff adds: any identifier on an added cmake line that is a ctest test or an executable
+    # cmake changes: every changed line must sit in a test/executable registration that resolves to a ctest
+    # test or an executable (or be a comment); anything else (apps, libraries, options) is NOT VERIFIED
+    names = set(cmd_of) | set(exe_of)
+    REG = {"ninferno_add_test", "add_test", "add_executable", "set_tests_properties"}
+    def stmts(path):
+        try: lines = open(path, errors="ignore").read().splitlines()
+        except OSError: return []
+        res, depth, start, cmd, text = [], 0, 0, "", ""
+        for k, l in enumerate(lines, 1):
+            code = l.split("#", 1)[0]
+            if depth == 0:
+                m = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(", code)
+                if not m: continue
+                start, cmd, text = k, m.group(1).lower(), ""
+            text += code + "\n"; depth += code.count("(") - code.count(")")
+            if depth <= 0: res.append((start, k, cmd, text)); depth = 0
+        return res
     cm = sh("git", "-C", src, "diff", "--no-renames", "-U0", rng, "--", "*.cmake", "*CMakeLists.txt")
-    ntests0 = len(tests)
+    bad_lines, st_cache = [], {}
+    cur_file, hunk, ln = None, None, 0
+    def close_hunk():
+        if hunk and hunk["removed"] and not (hunk["added"] and hunk["ok"]):
+            bad_lines.append(f"{cur_file}: {hunk['removed']} removed line(s)")
     for l in cm.splitlines():
-        if not l.startswith("+") or l.startswith("+++"): continue
-        for tok in set(re.findall(r"[A-Za-z0-9_.+-]+", l)):
-            if tok in cmd_of: tests.add(tok)
-            elif tok in exe_of: add_exe_tests(tok)
-        m = re.search(r"(?:ninferno_add_test|add_executable|add_test)\(\s*(?:NAME\s+)?([A-Za-z0-9_]+)", l)
-        if m and m.group(1) not in cmd_of and m.group(1) not in exe_of:
-            out("SKIP", f"cmake adds '{m.group(1)}' but ctest does not list a test or executable of that name; not checked")
-    if cm.strip() and len(tests) == ntests0 and not direct and not hdrs:
-        out("SKIP", "cmake files changed; configuring succeeded, but no target or test is mapped to the change")
+        if l.startswith("+++ "):
+            close_hunk(); hunk = None
+            cur_file = l[6:] if l.startswith("+++ b/") else None
+            if cur_file and cur_file not in st_cache: st_cache[cur_file] = stmts(os.path.join(src, cur_file))
+        elif l.startswith("--- "): continue
+        elif l.startswith("@@"):
+            close_hunk()
+            m = re.match(r"@@ -\S+ \+(\d+)", l); ln = int(m.group(1)); hunk = {"added": 0, "removed": 0, "ok": True}
+        elif l.startswith("+") and hunk is not None:
+            hunk["added"] += 1
+            body = l[1:]; st = next((x for x in st_cache.get(cur_file, []) if x[0] <= ln <= x[1]), None)
+            if st is None:
+                if body.strip() and not body.strip().startswith("#"): hunk["ok"] = False; bad_lines.append(f"{cur_file}:{ln}")
+            else:
+                hit = set(re.findall(r"[A-Za-z0-9_.+-]+", st[3])) & names
+                if (st[2] in REG or re.search(r"add_\w*test", st[2])) and hit:
+                    for tok in hit:
+                        if tok in cmd_of: tests.add(tok)
+                        elif tok in exe_of: add_exe_tests(tok)
+                else:
+                    hunk["ok"] = False; bad_lines.append(f"{cur_file}:{ln}")
+                    m = re.search(r"(?:ninferno_add_test|add_executable|add_test)\(\s*(?:NAME\s+)?([A-Za-z0-9_]+)", st[3])
+                    if m and (st[2] in REG or re.search(r"add_\w*test", st[2])): out("SKIP", f"cmake adds '{m.group(1)}' but ctest lists no test or executable of that name; not checked")
+            ln += 1
+        elif l.startswith("-") and hunk is not None: hunk["removed"] += 1
+    close_hunk()
+    if bad_lines:
+        uniq = sorted(set(bad_lines))
+        out("SKIP", f"cmake change not mapped to a checked test/target ({len(uniq)} place(s), e.g. {', '.join(uniq[:3])}); configuring succeeded, but the targets it affects are not built")
 # guard every test's executables (and the test objects/targets) against a large stale library build
 ok_tests = {}
 for n in sorted(tests):
@@ -323,7 +367,7 @@ if [ ${#EXPECT[@]} -gt 0 ]; then
       name = line; sub(/^.*Test +#[0-9]+: /, "", name); sub(/ \.\.\..*/, "", name)
       if (line ~ /\*\*\*Skipped/) print "SKIP " name
       else if (line ~ /\*\*\*Failed/) print ((nodev[n] && !asrt[n]) ? "GPU " : "FAIL ") name
-      else if (line ~ /\*\*\*(Exception|Timeout|Not Run)|Subprocess aborted/) print "FAIL " name
+      else if (line ~ /\*\*\*(Exception|Timeout|Not Run)|Subprocess aborted/) print ((line ~ /Disabled/) ? "SKIP " : "FAIL ") name
       else if (line ~ /Passed/) { if (flag[n]) print "PSKIP " name }
       else print "FAIL " name }' "$CLOG")
   NFAIL=$(grep -c '^FAIL ' <<< "$CLASS" || true)
