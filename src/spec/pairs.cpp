@@ -866,7 +866,9 @@ std::vector<LoadBound> clipped_load(const std::vector<std::int32_t>& depths) {
 // overtakes the weight bytes at a row count that grows with SMs x clock x int8 rate over DRAM
 // rate, which is what the price carries. A choice's gain at a shallower depth is over its own
 // sections, as its own gain at its depth is: every section for the overall default (nullopt), the
-// thinking or the other sections for the thinking and non-thinking ones.
+// thinking or the other sections for the thinking and non-thinking ones. That gain is over the mix
+// of those sections, without select's rule that a default loses to plain decode on none of them:
+// the bound governs throughput over the mix, so a depth may pass here while one section loses.
 std::vector<LoadBound> facts_load(const Profile& p) {
     std::vector<std::pair<const Choice*, std::optional<bool>>> choices;
     for (const auto& [c, thinking] :
