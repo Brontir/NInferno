@@ -31,8 +31,9 @@
 //
 // Selection, as #600 picks within the resolution: pass 1 takes the anchor, the lowest total
 // seconds (steps plus launches x launch_seconds) among the priced alternatives, the earliest on
-// equal totals. Pass 2 takes, among the alternatives whose ln(total / anchor) is within
-// `resolution`, the fewest launches, then the earliest in the caller's canonical order. The
+// equal totals. Pass 2 keeps the anchor unless an alternative whose ln(total / anchor) is within
+// `resolution` runs strictly fewer launches; among those, the fewest, then the earliest in the
+// caller's canonical order. An alternative whose total is not finite is unpriced. The
 // resolution is the speed estimate's (#301, DECISIONS 75), which the caller reads where it prices
 // (product::choice::Choice::resolution: the reference card's generation's measured decode error,
 // worth_band(card), in ln time units; this device-free header does not include it). The pick lies
@@ -157,7 +158,7 @@ projection_step_seconds(std::optional<double> route_seconds, double output_bytes
         if (!priced[i] || !within_resolution(totals[i], totals[*anchor], resolution)) { continue; }
         const int launches = priced[i]->launches;
         const int held     = priced[best]->launches;
-        if (launches < held || (launches == held && best != *anchor && i < best)) { best = i; }
+        if (launches < held) { best = i; } // ascending: the earliest of the fewest
     }
     return best;
 }

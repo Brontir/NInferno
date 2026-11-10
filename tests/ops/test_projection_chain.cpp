@@ -141,6 +141,9 @@ int main() {
                    {Alternative{"dear", {Step{1.01, 1}}}, Alternative{"cheap", {Step{1.00, 1}}}},
                    0.02) == std::optional<std::size_t>{1},
                "equal launches inside the band: the anchor stays");
+        expect(!chain::select({Alternative{"x", {Step{1.0, 2}}}}, 0.0,
+                              std::numeric_limits<double>::max()),
+               "a launch term that overflows leaves the alternative unpriced");
         // The band is in ln units: its edge is a tie, a hair beyond it is not.
         p.fused_launches = 1;
         p.fused          = 0.5 * std::exp(0.05);
