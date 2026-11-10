@@ -109,6 +109,13 @@ ninferno_add_op_test(ninferno_route_traffic_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_traffic.cpp"
   LIBRARIES ninferno_linear_test_support)
 
+# A route's description (#298): the fields agree with the functions the launch and selector ask.
+ninferno_add_op_test(ninferno_route_description_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_description.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
+set_tests_properties(ninferno_route_description_test PROPERTIES SKIP_RETURN_CODE 77)
+
 # Route selection on the GPU classes this machine lacks (substituted DeviceClass, one process
 # per board): every choice admitted, no feature the board lacks, its own route table.
 ninferno_add_op_test(ninferno_route_classes_test
