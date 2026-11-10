@@ -26,7 +26,7 @@
 #         needs a GPU, printed a skip marker, or has no test
 # Exit 0 with "nothing to compile" only when every changed file is documentation (docs/, *.md, .github/).
 # Env: QC_ROOT (work dir, default: current directory) QC_REPO (an existing checkout of the repo, default $QC_ROOT/wt_tst)
-#      QC_ENV_SH (optional script defining cuda_env, default $QC_ROOT/lab.sh if present) QC_ARCH (89) QC_JOBS (4)
+#      QC_ENV_SH (optional script to source before building; it must define a function qc_env, which is then called, e.g. to put nvcc on PATH; default: none) QC_ARCH (89) QC_JOBS (4)
 #      QC_MAX_OBJ (60) QC_MAX_CU (40)
 #      QC_MAX_UNITS (150, CUDA+C++ per target) QC_TEST_TIMEOUT (300 s per test)
 #      QC_MAX_GB (40, abort when the build dir is larger) QC_MIN_FREE_GB (15) QC_NO_TESTS=1 (build only)
@@ -37,9 +37,9 @@ shift
 ROOT=$(realpath "${QC_ROOT:-$PWD}"); REPO=${QC_REPO:-$ROOT/wt_tst}; ARCH=${QC_ARCH:-89}; JOBS=${QC_JOBS:-4}
 W=$ROOT/wt_qc; B=$ROOT/build_qc_$ARCH; L=$ROOT/logs; mkdir -p "$L"
 exec 9>"$ROOT/qc.lock"; flock -n 9 || { echo "qc.sh: another qc.sh run is active, waiting"; flock 9; }
-ENV_SH=${QC_ENV_SH:-$ROOT/lab.sh}
+ENV_SH=${QC_ENV_SH:-}
 [ -z "${QC_ENV_SH:-}" ] || [ -f "$QC_ENV_SH" ] || { echo "QC_ENV_SH=$QC_ENV_SH: no such file"; exit 3; }
-set +u; if [ -f "$ENV_SH" ]; then . "$ENV_SH"; ! type cuda_env > /dev/null 2>&1 || cuda_env; fi; set -u
+set +u; if [ -n "$ENV_SH" ]; then . "$ENV_SH"; ! type qc_env > /dev/null 2>&1 || qc_env; fi; set -u
 [ -d "$REPO" ] || { echo "no git checkout at $REPO (set QC_REPO, or run from the directory holding wt_tst)"; exit 3; }
 export CCACHE_DIR=${CCACHE_DIR:-$HOME/.ccache} CCACHE_BASEDIR=$W CCACHE_NOHASHDIR=1
 LOW="nice -n 19 ionice -c3"
