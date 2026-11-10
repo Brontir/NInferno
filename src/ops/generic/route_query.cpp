@@ -1,6 +1,8 @@
 #include "ops/generic/route_query.h"
 
 #include "core/weight_view.h"
+#include "ops/generic/generic_gemm_internal.h"
+#include "ops/generic/generic_select_internal.h"
 
 #include <algorithm>
 #include <charconv>
@@ -102,7 +104,19 @@ RouteDescription describe_resolved(const DescribedWeight& described, const Probl
     out.resolved        = resolved;
     out.workspace_bytes = executed_workspace_bytes(ran, resolved.r8_prequantized, problem.k,
                                                    problem.n, problem.epilogue, tokens);
-    out.tile            = route_tile(ran, problem.epilogue, tokens);
+    // Volta's prefill band runs a tiled call as CUTLASS over a decoded FP16 copy of the weight
+    // rows (run_route, launch_volta_cutlass): the copy's first chunk is the workspace it takes.
+    if (ran.family == Family::TiledMma && volta_cutlass_compiled()) {
+        try {
+            if (volta_cutlass_runs(volta_cutlass_only(codec_of(w)), tokens)) {
+                out.workspace_bytes = volta_cutlass_workspace_bytes(
+                    problem.n, problem.k, tokens, problem.epilogue == Epilogue::SwiGlu);
+            }
+        } catch (const std::exception&) {
+            // a format without a codec has no CUTLASS copy: the tiled figure stands
+        }
+    }
+    out.tile = route_tile(ran, problem.epilogue, tokens);
     // The call's own rows of the weight: a slice of a fused parent reads its share of the payload
     // (route_traffic takes the payload over the call's n rows as bytes per weight). The share is
     // proportional to rows: close, not exact, where scales are swizzled or padded to row tiles.
