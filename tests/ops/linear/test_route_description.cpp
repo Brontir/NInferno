@@ -5,6 +5,7 @@
 // workspace with route_workspace_bytes, the tile with route_tile, the traffic with route_traffic on
 // an independently built weight (the patterned fixture, not the query's described one). A pinned
 // call pins the rendered line.
+#include "ops/op_tester.h"
 #include "ops/quantized_weight.h"
 
 #include "core/device_class.h"
@@ -43,6 +44,13 @@ bool near(double a, double b) { return std::fabs(a - b) <= 1e-9 * std::max(1.0, 
 } // namespace
 
 int main() {
+    // The selector and the cost model read the host GPU's compiled facts (rmma_resources) at wide
+    // calls: with no usable device the test skips, as the other linear tests do.
+    if (ninferno::test::cuda_unavailable()) {
+        std::cout << "SKIP: no usable CUDA device
+                     ";
+            return 77;
+    }
     const DeviceClass device =
         synthetic_device_class(0x2684, 8, 9, 128, 72 * kMiB, 24 * 1024 * kMiB);
     // Never read: an aligned address stands in for the payload.
