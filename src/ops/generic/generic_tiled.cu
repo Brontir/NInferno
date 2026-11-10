@@ -7,6 +7,7 @@
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/common/arch_limits.h"
 #include "ops/generic/generic_schedules.h"
+#include "ops/generic/generic_shared_bytes.h"
 
 #include <stdexcept>
 
@@ -43,18 +44,30 @@ void launch_schedule(const GemmArgs& args, cudaStream_t stream) {
     }
 }
 
+// generic_shared_bytes.h's table of this build's tiled layouts (tiled_fits reads it with no CUDA
+// header), held equal to the layouts' own sizes.
 template <class C>
-bool codec_fits(int schedule) {
-    switch (schedule) {
-#define NINFERNO_GENERIC_FITS(I, BM, BN, WM, WN, ST)                                               \
-    case I:                                                                                        \
-        return tiled_schedule_fits<TiledSchedule<BM, BN, WM, WN, ST>, C>();
-        NINFERNO_GENERIC_TILED_SCHEDULES(NINFERNO_GENERIC_FITS)
-#undef NINFERNO_GENERIC_FITS
-    default:
-        return false;
-    }
+constexpr bool tiled_table_holds(int codec_index) {
+    bool holds = true;
+#define NINFERNO_GENERIC_HOLDS(I, BM, BN, WM, WN, ST)                                              \
+    holds = holds && tiled_shared_bytes<TiledSchedule<BM, BN, WM, WN, ST>, C>() ==                 \
+                         tiled_shared_table(codec_index, I);
+    NINFERNO_GENERIC_TILED_SCHEDULES(NINFERNO_GENERIC_HOLDS)
+#undef NINFERNO_GENERIC_HOLDS
+    return holds;
 }
+
+static_assert(tiled_table_holds<U4ZpTile>(tiled_codec_index(WeightCodec::U4Zp)));
+static_assert(tiled_table_holds<U4ZpG32Tile>(tiled_codec_index(WeightCodec::U4ZpG32)));
+static_assert(tiled_table_holds<U4ZpG64Tile>(tiled_codec_index(WeightCodec::U4ZpG64)));
+static_assert(tiled_table_holds<GgmlQ45KTile<4>>(tiled_codec_index(WeightCodec::GgmlQ4K)));
+static_assert(tiled_table_holds<GgmlQ45KTile<5>>(tiled_codec_index(WeightCodec::GgmlQ5K)));
+static_assert(tiled_table_holds<GroupwiseG64Tile<4>>(tiled_codec_index(WeightCodec::Q4)));
+static_assert(tiled_table_holds<GroupwiseG64Tile<5>>(tiled_codec_index(WeightCodec::Q5)));
+static_assert(tiled_table_holds<GroupwiseG64Tile<6>>(tiled_codec_index(WeightCodec::Q6)));
+static_assert(tiled_table_holds<GroupwiseQ3Tile<128>>(tiled_codec_index(WeightCodec::Q3G128)));
+static_assert(tiled_table_holds<GroupwiseQ3Tile<64>>(tiled_codec_index(WeightCodec::Q3G64)));
+static_assert(tiled_table_holds<Q8Tile>(tiled_codec_index(WeightCodec::Q8)));
 
 template <class C, Epilogue E>
 void launch_epilogue(int schedule, const GemmArgs& args, cudaStream_t stream) {
@@ -88,35 +101,6 @@ void launch_codec(int schedule, Epilogue epilogue, const GemmArgs& args, cudaStr
 
 } // namespace
 
-
-bool tiled_fits(int schedule, WeightCodec codec) {
-    switch (codec) {
-    case WeightCodec::U4Zp:
-        return codec_fits<U4ZpTile>(schedule);
-    case WeightCodec::U4ZpG32:
-        return codec_fits<U4ZpG32Tile>(schedule);
-    case WeightCodec::U4ZpG64:
-        return codec_fits<U4ZpG64Tile>(schedule);
-    case WeightCodec::GgmlQ4K:
-        return codec_fits<GgmlQ45KTile<4>>(schedule);
-    case WeightCodec::GgmlQ5K:
-        return codec_fits<GgmlQ45KTile<5>>(schedule);
-    case WeightCodec::Q4:
-        return codec_fits<GroupwiseG64Tile<4>>(schedule);
-    case WeightCodec::Q5:
-        return codec_fits<GroupwiseG64Tile<5>>(schedule);
-    case WeightCodec::Q6:
-        return codec_fits<GroupwiseG64Tile<6>>(schedule);
-    case WeightCodec::Q3G128:
-        return codec_fits<GroupwiseQ3Tile<128>>(schedule);
-    case WeightCodec::Q3G64:
-        return codec_fits<GroupwiseQ3Tile<64>>(schedule);
-    case WeightCodec::Q8:
-        return codec_fits<Q8Tile>(schedule);
-    default:
-        return false;
-    }
-}
 
 void launch_tiled(int schedule, WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
                   cudaStream_t stream) {

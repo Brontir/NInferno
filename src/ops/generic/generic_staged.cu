@@ -6,6 +6,7 @@
 #include "ops/common/arch_limits.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_schedules.h"
+#include "ops/generic/generic_shared_bytes.h"
 
 #include <stdexcept>
 
@@ -17,6 +18,14 @@ namespace {
 // holds 128 KiB; 10-12 (144-160 KiB) exist only where one block holds them (GA100 and Orin).
 // NINFERNO_GENERIC_STAGED_SCHEDULES: ops/generic/generic_schedules.h (one list for the
 // instantiations here and the host table in generic_gemm.cpp).
+
+// generic_shared_bytes.h's table of the staged layouts (staged_fits reads it with no CUDA header),
+// held equal to the layouts' own sizes.
+#define NINFERNO_GENERIC_HOLDS(I, R, T, WM, WN, ST)                                                \
+    static_assert(kStagedSharedBytes[I] ==                                                         \
+                  static_cast<int>(sizeof(StagedShared<StagedSchedule<R, T, WM, WN, ST>, ST>)));
+NINFERNO_GENERIC_STAGED_SCHEDULES(NINFERNO_GENERIC_HOLDS)
+#undef NINFERNO_GENERIC_HOLDS
 
 template <class S, Epilogue E>
 void launch_schedule(const GemmArgs& args, cudaStream_t stream) {
@@ -60,17 +69,6 @@ void launch_epilogue(int schedule, const GemmArgs& args, cudaStream_t stream) {
 
 } // namespace
 
-bool staged_fits(int schedule) {
-    switch (schedule) {
-#define NINFERNO_GENERIC_FITS(I, R, T, WM, WN, ST)                                                 \
-    case I:                                                                                        \
-        return sizeof(StagedShared<StagedSchedule<R, T, WM, WN, ST>, ST>) <= kMaxSharedBytesPerBlock;
-        NINFERNO_GENERIC_STAGED_SCHEDULES(NINFERNO_GENERIC_FITS)
-#undef NINFERNO_GENERIC_FITS
-    default:
-        return false;
-    }
-}
 
 void launch_staged(int schedule, Epilogue epilogue, const GemmArgs& args, cudaStream_t stream) {
     switch (epilogue) {

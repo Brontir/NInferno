@@ -4,6 +4,7 @@
 // CUDA runtime.
 
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/generic_shared_bytes.h"
 #include "ops/common/arch_limits.h"
 #include "ops/common/native_nvfp4.h"
 #include "ops/generic/format_traits.h"
@@ -309,5 +310,19 @@ bool volta_hmma_codec(WeightCodec codec) {
 }
 
 int volta_hmma_k_multiple(WeightCodec codec) { return codec == WeightCodec::Q8 ? 64 : 256; }
+
+bool tiled_fits(int schedule, WeightCodec codec) {
+    const int c = tiled_codec_index(codec);
+    if (c < 0 || schedule < 0 || schedule >= static_cast<int>(kTiledSharedBytes[0].size())) {
+        return false;
+    }
+    return static_cast<std::size_t>(tiled_shared_table(c, schedule)) <= kMaxSharedBytesPerBlock;
+}
+
+bool staged_fits(int schedule) {
+    if (schedule < 0 || schedule >= static_cast<int>(kStagedSharedBytes.size())) { return false; }
+    return static_cast<std::size_t>(kStagedSharedBytes[static_cast<std::size_t>(schedule)]) <=
+           kMaxSharedBytesPerBlock;
+}
 
 } // namespace ninferno::ops::detail::generic
