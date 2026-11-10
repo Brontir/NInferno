@@ -5,7 +5,6 @@
 
 #include <cctype>
 #include <charconv>
-#include <exception>
 #include <memory>
 #include <mutex>
 #include <sstream>

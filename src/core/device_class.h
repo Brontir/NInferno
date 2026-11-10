@@ -307,9 +307,8 @@ measured_boards_known(std::span<const Measured, Extent> measured) noexcept {
                                                        std::string_view arch);
 
 // The class of the device this thread runs on, probed once: what device_class() returns where no
-// class is substituted (ScopedDeviceClass). Throws where CUDA cannot report the device; a host-only
-// build (device_class_nodevice.cpp) always throws. Defined in ninferno_core (device_class.cpp) or
-// the host-only stub, never in ninferno_core_host.
+// class is substituted (ScopedDeviceClass). Throws where CUDA cannot report the device. Defined in
+// ninferno_core (device_class.cpp), never in ninferno_core_host.
 [[nodiscard]] const DeviceClass& current_device_class();
 
 // The substitute this thread's device_class() answers (ScopedDeviceClass), or null.
@@ -319,8 +318,7 @@ measured_boards_known(std::span<const Measured, Extent> measured) noexcept {
 // class. Throws std::runtime_error when CUDA cannot report the device. Inline, so that the
 // reference to current_device_class() sits in the object that calls device_class():
 // ninferno_core_host keeps no reference into ninferno_core, and nor does any other host archive:
-// the object that calls it (ninferno_ops: kernel_facts_device.cpp) links ninferno_core, or, in a
-// host-only test that wants it, the stub.
+// the object that calls it (ninferno_ops: kernel_facts_device.cpp) links ninferno_core.
 [[nodiscard]] inline const DeviceClass& device_class() {
     if (const DeviceClass* substitute = substituted_device_class()) { return *substitute; }
     return current_device_class();
