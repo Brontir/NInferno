@@ -50,6 +50,10 @@ ninferno_add_test(ninferno_machine_facts_test
 ninferno_add_test(ninferno_board_registry_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_board_registry.cpp"
   LIBRARIES ninferno_core)
+# The format facts table (core/format_facts.h) against the switches and spelling tables it
+# replaced, for every QType value. No GPU.
+ninferno_add_test(ninferno_format_facts_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_format_facts.cpp")
 # The MMQ prefill gate's decision atlas over that table (#373, core/gate_atlas.h); `--json` prints
 # it. No GPU.
 ninferno_add_test(ninferno_gate_atlas_test

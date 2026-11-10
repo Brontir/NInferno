@@ -5,6 +5,7 @@
 #include "ops/common/native_nvfp4.h"
 
 #include "core/device_class.h"
+#include "core/format_facts.h"
 #include "core/generation.h"
 #include "core/measured_boards.h"
 #include "core/tensor.h"
@@ -1263,48 +1264,7 @@ int k_multiple(WeightCodec codec) {
 
 int i8_bits(QType q) { return q == QType::Q5_G64_FP16 ? 5 : q == QType::Q6_G64_FP16 ? 6 : 4; }
 
-std::optional<ggml_mmq::Type> mmq_type(const Weight& w) {
-    switch (w.qtype) {
-    case QType::GGML_Q4_K:
-        return ggml_mmq::Type::Q4_K;
-    case QType::GGML_Q5_K:
-        return ggml_mmq::Type::Q5_K;
-    case QType::GGML_Q6_K:
-        return ggml_mmq::Type::Q6_K;
-    case QType::GGML_IQ4_XS:
-        return ggml_mmq::Type::IQ4_XS;
-    case QType::GGML_IQ3_XXS:
-        return ggml_mmq::Type::IQ3_XXS;
-    case QType::GGML_IQ3_S:
-        return ggml_mmq::Type::IQ3_S;
-    case QType::GGML_Q4_0:
-        return ggml_mmq::Type::Q4_0;
-    case QType::GGML_Q4_1:
-        return ggml_mmq::Type::Q4_1;
-    case QType::GGML_Q5_0:
-        return ggml_mmq::Type::Q5_0;
-    case QType::GGML_Q5_1:
-        return ggml_mmq::Type::Q5_1;
-    case QType::GGML_IQ4_NL:
-        return ggml_mmq::Type::IQ4_NL;
-    case QType::GGML_Q2_K:
-        return ggml_mmq::Type::Q2_K;
-    case QType::GGML_Q3_K:
-        return ggml_mmq::Type::Q3_K;
-    case QType::GGML_IQ2_XXS:
-        return ggml_mmq::Type::IQ2_XXS;
-    case QType::GGML_IQ2_XS:
-        return ggml_mmq::Type::IQ2_XS;
-    case QType::GGML_IQ2_S:
-        return ggml_mmq::Type::IQ2_S;
-    case QType::GGML_IQ1_S:
-        return ggml_mmq::Type::IQ1_S;
-    case QType::GGML_IQ1_M:
-        return ggml_mmq::Type::IQ1_M;
-    default:
-        return std::nullopt;
-    }
-}
+std::optional<ggml_mmq::Type> mmq_type(const Weight& w) { return format_facts(w.qtype).mmq; }
 
 bool mmq_admits(const Weight& w, LinearPolicy policy) {
     const auto type = mmq_type(w);
@@ -1705,84 +1665,8 @@ std::optional<Route> parse_route(std::string_view name) {
 }
 
 WeightCodec codec_of(const Weight& weight) {
-    switch (weight.qtype) {
-    case QType::BF16:
-        return WeightCodec::Bf16;
-    case QType::FP8_E4M3FN_ROW_BF16:
-        return WeightCodec::Fp8;
-    case QType::NVFP4:
-        return WeightCodec::Nvfp4;
-    case QType::Q4_G64_FP16:
-        return WeightCodec::Q4;
-    case QType::Q5_G64_FP16:
-        return WeightCodec::Q5;
-    case QType::Q6_G64_FP16:
-        return WeightCodec::Q6;
-    case QType::Q8_G32_FP16:
-        return WeightCodec::Q8;
-    case QType::MXFP4:
-        return WeightCodec::Mxfp4;
-    case QType::FP8_E4M3FN_ROW_F32:
-        return WeightCodec::Fp8RowF32;
-    case QType::FP8_E4M3FN_B128_F32:
-        return WeightCodec::Fp8B128;
-    case QType::U4_G128_ZP_FP16:
-        return WeightCodec::U4Zp;
-    case QType::U4_G32_ZP_FP16:
-        return WeightCodec::U4ZpG32;
-    case QType::U4_G64_ZP_FP16:
-        return WeightCodec::U4ZpG64;
-    case QType::Q3_G128_FP16:
-        return WeightCodec::Q3G128;
-    case QType::Q3_G64_FP16:
-        return WeightCodec::Q3G64;
-    case QType::GGML_Q4_K:
-        return WeightCodec::GgmlQ4K;
-    case QType::GGML_Q5_K:
-        return WeightCodec::GgmlQ5K;
-    case QType::GGML_Q6_K:
-        return WeightCodec::GgmlQ6K;
-    case QType::GGML_Q3_K:
-        return WeightCodec::GgmlQ3K;
-    case QType::GGML_Q2_K:
-        return WeightCodec::GgmlQ2K;
-    case QType::GGML_IQ4_XS:
-        return WeightCodec::GgmlIq4Xs;
-    case QType::GGML_IQ3_XXS:
-        return WeightCodec::GgmlIq3Xxs;
-    case QType::GGML_IQ3_S:
-        return WeightCodec::GgmlIq3S;
-    case QType::GGML_Q4_0:
-        return WeightCodec::GgmlQ40;
-    case QType::GGML_Q4_1:
-        return WeightCodec::GgmlQ41;
-    case QType::GGML_Q5_0:
-        return WeightCodec::GgmlQ50;
-    case QType::GGML_Q5_1:
-        return WeightCodec::GgmlQ51;
-    case QType::GGML_IQ4_NL:
-        return WeightCodec::GgmlIq4Nl;
-    case QType::GGML_IQ2_XXS:
-        return WeightCodec::GgmlIq2Xxs;
-    case QType::GGML_IQ2_XS:
-        return WeightCodec::GgmlIq2Xs;
-    case QType::GGML_IQ2_S:
-        return WeightCodec::GgmlIq2S;
-    case QType::GGML_IQ1_S:
-        return WeightCodec::GgmlIq1S;
-    case QType::GGML_IQ1_M:
-        return WeightCodec::GgmlIq1M;
-    case QType::GGML_TQ1_0:
-        return WeightCodec::GgmlTq10;
-    case QType::GGML_TQ2_0:
-        return WeightCodec::GgmlTq20;
-    case QType::GGML_Q1_0:
-        return WeightCodec::GgmlQ10;
-    case QType::GGML_Q2_0:
-        return WeightCodec::GgmlQ20;
-    default:
-        throw std::invalid_argument("generic linear: unsupported weight format");
-    }
+    if (const auto codec = format_facts(weight.qtype).codec) return *codec;
+    throw std::invalid_argument("generic linear: unsupported weight format");
 }
 
 void refuse_frag(const Weight& w, const char* op) {

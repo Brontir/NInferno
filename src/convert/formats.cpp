@@ -1,5 +1,6 @@
 #include "convert/formats.h"
 #include "core/ascii.h"
+#include "core/format_facts.h"
 
 #include "convert/numerics.h"
 #include "convert/tensor_view.h"
@@ -1068,43 +1069,7 @@ MatrixFormat encoded_matrix_format(QType format) noexcept {
 }
 
 ActivationPolicy kept_block_policy(QType format) noexcept {
-    switch (format) {
-    case QType::GGML_Q4_0:
-    case QType::GGML_Q4_1:
-    case QType::GGML_Q5_0:
-    case QType::GGML_Q5_1:
-    case QType::GGML_IQ4_NL:
-    case QType::GGML_IQ4_XS:
-    case QType::GGML_Q4_K:
-    case QType::GGML_Q5_K:
-    case QType::GGML_Q6_K:
-    case QType::GGML_Q3_K:
-    case QType::GGML_Q2_K:
-    case QType::U4_G128_ZP_FP16:
-    // u4 G32 / G64 read on the same int8 codec as G128 (W4a8U4ZpG): the same policy.
-    case QType::U4_G32_ZP_FP16:
-    case QType::U4_G64_ZP_FP16:
-    case QType::Q4_G64_FP16:
-    case QType::Q5_G64_FP16:
-    case QType::Q6_G64_FP16:
-    case QType::Q3_G128_FP16:
-    case QType::Q3_G64_FP16:
-    case QType::Q8_G32_FP16:
-    case QType::GGML_IQ3_XXS:
-    case QType::GGML_IQ3_S:
-    case QType::GGML_IQ2_XXS:
-    case QType::GGML_IQ2_XS:
-    case QType::GGML_IQ2_S:
-    // IQ1_S / IQ1_M: grid -1, 0, 1 plus a delta of +-1/8 is 8g +- 1 in int8, exactly.
-    case QType::GGML_IQ1_S:
-    case QType::GGML_IQ1_M:
-    // MXFP4 (gpt-oss experts): E2M1 codes widen to int8 exactly, the UE8M0 block scale to a float;
-    // the generic and MoE W4A8 take it (MXFP4 codec, test_moe gpt-oss-like W4A8 cases).
-    case QType::MXFP4:
-        return ActivationPolicy::AllowA8;
-    default:
-        return ActivationPolicy::A16Only;
-    }
+    return format_facts(format).int8_input ? ActivationPolicy::AllowA8 : ActivationPolicy::A16Only;
 }
 
 ActivationPolicy kept_policy(const KeptEncoding& site) noexcept {

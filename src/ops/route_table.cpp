@@ -8,6 +8,7 @@
 #include "core/sys.h"
 
 #include "core/device_class.h"
+#include "core/format_facts.h"
 #include "ops/common/shape_routes.h"
 #include "ops/generic/route_table.h"
 #include "ops/moe/moe_internal.h"
@@ -830,84 +831,9 @@ const char* epilogue_name(Epilogue e) {
 }
 
 const char* qtype_name(QType q) {
-    switch (q) {
-    case QType::BF16:
-        return "bf16";
-    case QType::FP8_E4M3FN_ROW_BF16:
-        return "fp8";
-    case QType::NVFP4:
-        return "nvfp4";
-    case QType::Q4_G64_FP16:
-        return "q4";
-    case QType::Q5_G64_FP16:
-        return "q5";
-    case QType::Q6_G64_FP16:
-        return "q6";
-    case QType::Q8_G32_FP16:
-        return "q8";
-    case QType::MXFP4:
-        return "mxfp4";
-    case QType::FP8_E4M3FN_ROW_F32:
-        return "fp8r32";
-    case QType::FP8_E4M3FN_B128_F32:
-        return "fp8b128";
-    case QType::U4_G128_ZP_FP16:
-        return "u4zp";
-    case QType::U4_G32_ZP_FP16:
-        return "u4zp32";
-    case QType::U4_G64_ZP_FP16:
-        return "u4zp64";
-    case QType::Q3_G128_FP16:
-        return "q3g128";
-    case QType::Q3_G64_FP16:
-        return "q3g64";
-    case QType::GGML_Q4_K:
-        return "q4k";
-    case QType::GGML_Q5_K:
-        return "q5k";
-    case QType::GGML_Q6_K:
-        return "q6k";
-    case QType::GGML_Q3_K:
-        return "q3k";
-    case QType::GGML_Q2_K:
-        return "q2k";
-    case QType::GGML_IQ4_XS:
-        return "iq4xs";
-    case QType::GGML_IQ3_XXS:
-        return "iq3xxs";
-    case QType::GGML_IQ3_S:
-        return "iq3s";
-    case QType::GGML_Q4_0:
-        return "q40";
-    case QType::GGML_Q4_1:
-        return "q41";
-    case QType::GGML_Q5_0:
-        return "q50";
-    case QType::GGML_Q5_1:
-        return "q51";
-    case QType::GGML_IQ4_NL:
-        return "iq4nl";
-    case QType::GGML_IQ2_XXS:
-        return "iq2xxs";
-    case QType::GGML_IQ2_XS:
-        return "iq2xs";
-    case QType::GGML_IQ2_S:
-        return "iq2s";
-    case QType::GGML_IQ1_S:
-        return "iq1s";
-    case QType::GGML_IQ1_M:
-        return "iq1m";
-    case QType::GGML_TQ1_0:
-        return "tq10";
-    case QType::GGML_TQ2_0:
-        return "tq20";
-    case QType::GGML_Q1_0:
-        return "q10";
-    case QType::GGML_Q2_0:
-        return "q20";
-    default:
-        return "unknown";
-    }
+    // The rows' spellings are string literals, so the view's data is NUL-terminated.
+    const std::string_view route = format_facts(q).route;
+    return route.empty() ? "unknown" : route.data();
 }
 
 std::string format_label(QType q) {
