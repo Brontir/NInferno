@@ -12,8 +12,9 @@
 # below). The tuner also writes its prefill band widths (T = 32 and up) whatever --points says; the
 # summary reads only the shapes of the shapes file at the points asked for and ignores every other
 # row. With several cards, name the one to measure (CUDA_DEVICE_ORDER=PCI_BUS_ID
-# CUDA_VISIBLE_DEVICES=<i>); the out-dir name carries the first card nvidia-smi lists, plus
-# "_plusN" for N more.
+# CUDA_VISIBLE_DEVICES=<i>); the out-dir name carries the card that variable selects (queried
+# with nvidia-smi -i, an index or a UUID; indices follow the PCI bus order only under
+# CUDA_DEVICE_ORDER=PCI_BUS_ID), else the first card nvidia-smi lists, plus "_plusN" for N more.
 #
 # Slots (candidate rule and its ratio table: docs/maintainer/decisions.md, entry 76):
 #   gated = ggml_vec on the swiglu row (one launch over both halves, one activation quantisation).
@@ -71,7 +72,11 @@
 # prediction, the model is wrong there and the mismatch is recorded, not fitted. Controls: a 4090 or
 # a 5060 Ti (gated expected to be the least there at T <= 4).
 #
-# Abort rules (exit 1, message on stderr, no table): a routes file empty or without a header, a
+# Abort rules (exit 1, message on stderr, no table): the same file, or a copy of one run, given for
+# both passes (every row of a pass carries the run id the tuner wrote, so each file must hold one
+# run id and the two files different ones; a file written by an older build has no run column and
+# gets only the same-file check, so a copy of it under another name goes unseen there), a
+# routes file empty or without a header, a
 # header lacking one of the columns read by name, a cell (shape x T x slot) of the expected set
 # absent in a pass, an empty or zero median_us on a row, or more than one ggml_vec row in a cell.
 # ggml_vec is not a tuner candidate; its row exists only where production picks it (--selected-out),
@@ -120,12 +125,19 @@ summarize() {
       file1 = FILENAME
       split("", col)
       for (i = 1; i <= NF; i++) col[$i] = i
+      hasrun[pass] = ("run" in col)
       for (i = 1; i <= 7; i++) if (!(need[i] in col)) {
         fail("header of " FILENAME " has no column " need[i]); hdrbad[pass] = 1
       }
       next
     }
     pass > 2 || hdrbad[pass] { next }
+    hasrun[pass] {
+      rid = $col["run"]
+      if (rid == "") norun[pass]++
+      else if (!((pass SUBSEP rid) in runseen)) { runseen[pass SUBSEP rid] = 1; runs[pass]++
+                                                  runid[pass] = rid }
+    }
     {
       t = $col["T"]
       if (!(t in wantT)) { skipped++; next }
@@ -149,6 +161,14 @@ summarize() {
     END {
       if (pass != 2) fail("expected two routes files, each with a header line, got " pass \
                           " (an empty file has no header)")
+      if (pass == 2 && hasrun[1] != hasrun[2])
+        fail("only one of the two files has a run column: the passes come from different builds")
+      for (p = 1; p <= 2; p++) if (hasrun[p]) {
+        if (norun[p]) fail("pass " p ": " norun[p] " row(s) with an empty run id")
+        if (runs[p] > 1) fail("pass " p " holds " runs[p] " run ids: concatenated files, not one run")
+      }
+      if (pass == 2 && hasrun[1] && hasrun[2] && runs[1] == 1 && runs[2] == 1 && runid[1] == runid[2])
+        fail("both passes carry the run id " runid[1] ": one measurement given twice")
       if (empty) fail(empty " row(s) with an empty, zero or non-numeric median_us (treated as missing)")
       expect = 0; seen = 0
       if (pass == 2 && ns > 0)
@@ -218,7 +238,24 @@ fi
 
 BIN=${1:-ninferno-serve}
 GPU=gpu
-if names=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null); then
+# The cards route-tune measures: the ones CUDA_VISIBLE_DEVICES selects (nvidia-smi takes an index or
+# a UUID), else every card.
+card_names() {
+  if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then
+    local id one
+    local -a ids
+    IFS=, read -r -a ids <<< "$CUDA_VISIBLE_DEVICES"
+    for id in "${ids[@]}"; do
+      one=$(nvidia-smi --query-gpu=name --format=csv,noheader -i "$id" 2>/dev/null | head -n 1) ||
+        return 1
+      [ -n "$one" ] || return 1
+      echo "$one"
+    done
+  else
+    nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null
+  fi
+}
+if names=$(card_names); then
   first=$(printf '%s\n' "$names" | head -n 1 | tr -c 'A-Za-z0-9\n' '_' | tr -s '_' |
           sed 's/^_//; s/_$//')
   [ -n "$first" ] && GPU=$first
