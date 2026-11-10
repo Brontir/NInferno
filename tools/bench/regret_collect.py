@@ -145,6 +145,10 @@ def read_selections(paths, authorities=None):
     return selected
 
 
+class UnknownBoard(ValueError):
+    """The registry has no row for the PCI id (a SKU the engine runs by its class)."""
+
+
 def board_facts(gpu_facts, pci_id):
     """The row of core/data/gpu_facts.json for a PCI device id (hex string), as the numbers the
     ridge needs: compute capability, SMs, DRAM GB/s (bus bits x Gbps / 8), boost clock, and
@@ -161,7 +165,7 @@ def board_facts(gpu_facts, pci_id):
                     "cc": int(row["cc"]),
                     "sms": int(row["sms"]), "dram_gbps": row["bus_bits"] * row["gbps"] / 8.0,
                     "boost_mhz": row["boost_mhz"], "mma_slow": slow}
-    raise ValueError(f"{gpu_facts}: no row for PCI id {pci_id}")
+    raise UnknownBoard(f"{gpu_facts}: no row for PCI id {pci_id}")
 
 
 def recorded_pci_id(path, rows):
@@ -237,7 +241,7 @@ def collect(selected_csvs, pass_csvs, board, model, revision, build_id, holdout,
             # still collects: only the ridge, which needs its row, is left out.
             try:
                 facts = board_facts(gpu_facts, f"0x{recorded:04x}")
-            except ValueError:
+            except UnknownBoard:  # a malformed row is still an error
                 facts = None
     for key, seen in protocols.items():
         if len(seen) > 1:

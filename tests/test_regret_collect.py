@@ -282,9 +282,9 @@ class Collect(unittest.TestCase):
         return collect.collect([sel], [routes], "held-board", "held-model", "rev", "build",
                                "both", [], [], "tests", collect.board_facts(facts_json, pci_id))
 
-    def collect_recorded(self, sel_pci, route_pci, pci_id=None):
+    def collect_recorded(self, sel_pci, route_pci, pci_id=None, facts_json=None):
         """One case of an ad104:60sm board whose rows record a PCI id (#684)."""
-        facts_json = Path(__file__).resolve().parents[1] / "src/core/data/gpu_facts.json"
+        facts_json = facts_json or Path(__file__).resolve().parents[1] / "src/core/data/gpu_facts.json"
         device = "ad104:60sm GPU-0a1b2c3d"
         sel = self.write("s.csv", SELECTED_HEAD.rstrip("\n") + ",pci_device_id\n"
                          + f"q8,a16,store,64,64,1,rmma.a,rmma.a,r1,{device},{sel_pci}\n")
@@ -313,6 +313,13 @@ class Collect(unittest.TestCase):
         doc = self.collect_recorded("0x2fff", "0x2fff")
         self.assertEqual(doc["pci_device_id"], "0x2fff")
         self.assertNotIn("board_facts", doc)
+
+    def test_a_malformed_registry_row_is_still_an_error(self):
+        row = {"id": "0x2782", "name": "GeForce RTX 4070 Ti", "chip": "ad104", "cc": 89, "sms": 60,
+               "bus_bits": 192, "gbps": 21, "boost_mhz": 2610, "mma_slow": "no"}
+        bad = self.write("facts.json", json.dumps({"gpus": [row]}))
+        with self.assertRaisesRegex(ValueError, "mma_slow is not true or false"):
+            self.collect_recorded("0x2782", "0x2782", facts_json=bad)
 
     def test_an_empty_or_absent_pci_id_keeps_the_class_check(self):
         doc = self.collect_recorded("", "")
