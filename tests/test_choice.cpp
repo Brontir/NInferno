@@ -2175,6 +2175,37 @@ void choices_replay(const json& fixture) {
         (void)ch::replay_choice(other);
     } catch (const std::invalid_argument&) { refused = true; }
     check(refused, "a record of another schema is refused");
+    // A record of the schema before typed_resolution (/1) is refused, naming the version it
+    // carries; no default stands in for the gate it lacks.
+    auto old_record      = record.inputs;
+    old_record["schema"] = "ninferno-choice-replay/1";
+    old_record["gates"].erase("typed_resolution");
+    std::string old_message;
+    try {
+        (void)ch::replay_choice(old_record);
+    } catch (const std::invalid_argument& e) { old_message = e.what(); }
+    check(old_message.find("replay/1") != std::string::npos &&
+              old_message.find("replay/2") != std::string::npos,
+          "a schema-1 record is refused with both versions named");
+    auto no_gate = record.inputs;
+    no_gate["gates"].erase("typed_resolution");
+    bool gate_refused = false;
+    try {
+        (void)ch::replay_choice(no_gate);
+    } catch (const std::invalid_argument&) { gate_refused = true; }
+    check(gate_refused, "a current-schema record without typed_resolution is refused");
+    // The gate round-trips at both values, and the replay answers what was recorded.
+    for (const bool typed : {false, true}) {
+        ch::Gates gates{true, true};
+        gates.typed_resolution     = typed;
+        const ch::ChoiceRecord rec = ch::record_choice(b.model, b.card, b.quants[0], allowed, {},
+                                                       {}, oracle(b, 40e9), gates);
+        const auto back            = nlohmann::ordered_json::parse(rec.inputs.dump());
+        check(back.at("gates").at("typed_resolution").get<bool>() == typed,
+              "typed_resolution is written to the record");
+        check(ch::choice_summary(ch::replay_choice(back)) == ch::choice_summary(rec.choice),
+              "a record with typed_resolution replays to the choice it recorded");
+    }
     // Malformed, not wrapped or thrown past the contract: a negative own context, a schema that
     // is no string.
     for (const auto& corrupt : {[&] {

@@ -407,7 +407,7 @@ Gates gates_of(const json& j) {
     Gates g;
     g.accuracy  = optional_of<bool>(j.at("accuracy"));
     read(g.moe_chunk, j.at("moe_chunk"));
-    if (j.contains("typed_resolution")) { read(g.typed_resolution, j.at("typed_resolution")); }
+    read(g.typed_resolution, j.at("typed_resolution"));
     return g;
 }
 
@@ -440,8 +440,15 @@ Choice replay_choice(const json& inputs) {
     const auto schema = inputs.is_object() ? inputs.find("schema") : inputs.end();
     if (!inputs.is_object() || schema == inputs.end() || !schema->is_string() ||
         schema->get<std::string>() != kChoiceReplaySchema) {
+        const std::string found =
+            inputs.is_object() && schema != inputs.end() && schema->is_string()
+                ? schema->get<std::string>()
+                : "none";
         throw std::invalid_argument("a choice replay record of schema " +
-                                    std::string(kChoiceReplaySchema) + " was expected");
+                                    std::string(kChoiceReplaySchema) + " was expected, got " +
+                                    found +
+                                    ": records of an older schema are not replayed, "
+                                    "record the choice again");
     }
     try {
         const ModelFacts model = model_of(inputs.at("model"));
