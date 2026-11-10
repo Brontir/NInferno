@@ -185,6 +185,10 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "(vector kernel at T <= 4, register MMA from 5) is the one measured on Ampere, Ada and "
      "Blackwell, held against a price-based pick (RTX 4070 Ti, Q6_K 3840x15360, T = 5)",
      ""},
+    // The rule's lower edge, from two tokens; the record names no board or margin for it.
+    {"vec_rule lower edge", "generic_gemm.cpp",
+     "return tokens >= 2 && tokens <= vec_rule_max_tokens() && vec_call(w, policy, tokens);", 2,
+     kUnknown, kUnknown, kNotRecorded, ""},
     // --- The widths where the speed profile's heuristic choices change (generic_gemm.h) ---
     {"kRmmaMidMinTokens", "generic_gemm.h",
      "inline constexpr std::int32_t kRmmaMidMinTokens     = 33;", 33,

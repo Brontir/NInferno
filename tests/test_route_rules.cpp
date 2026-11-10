@@ -207,6 +207,8 @@ const std::map<std::string, std::string>& not_rules() {
         {"kMaxSegments", "the segmented projection's slot count (an array size)"},
         {"kMaxScratchUses", "scratch lifetime bookkeeping"},
         {"kExactMinor", "a build switch (an \"a\" / \"f\" target's minor)"},
+        {"kMinor", "the build architecture's minor (a build switch)"},
+        {"kBlockValues", "a codec's values per block (a layout fact)"},
         {"kActivationSlack", "ggml_mmq's arena sizing"},
         {"kGgmlArenaSlack", "the ggml arena's sizing"},
         {"kBlockBytes", "a codec's block size (a layout fact)"},
@@ -319,6 +321,8 @@ int main(int argc, char** argv) {
     static const std::regex definition_of(
         R"(\b(?:constexpr|const)\b[^=;(){}]*?\b(k[A-Z]\w*)\s*(?:=|\{))");
     static const std::regex define_of(R"(#\s*define\s+(k[A-Z]\w*))");
+    static const std::regex declaration(R"(\b(?:constexpr|const)\b[^;(){}]*;)");
+    static const std::regex declarator(R"(\b(k[A-Z]\w*)\s*=)");
     std::size_t scanned = 0;
     std::set<std::string> found_names;
     for (const auto& item : std::filesystem::recursive_directory_iterator(generic_dir())) {
@@ -331,17 +335,30 @@ int main(int argc, char** argv) {
         if (file == "route_rules.h" || file == "route_cost_constants.h") continue;
         const std::string text = without_comments(read_file(item.path()));
         ++scanned;
+        const auto note = [&](const std::string& name) {
+            if (!std::regex_search(name, bounding)) return;
+            found_names.insert(name);
+            if (names.count(name) == 0 && not_rules().count(name) == 0) {
+                fail(name + " (" + file +
+                     ") is a bounding constant of the selection code without a descriptor "
+                     "in kRouteRules (or an entry of kNotRules)");
+            }
+        };
         for (const std::regex* pattern : {&definition_of, &define_of}) {
             for (std::sregex_iterator it(text.begin(), text.end(), *pattern), stop; it != stop;
                  ++it) {
-                const std::string name = (*it)[1].str();
-                if (!std::regex_search(name, bounding)) continue;
-                found_names.insert(name);
-                if (names.count(name) == 0 && not_rules().count(name) == 0) {
-                    fail(name + " (" + file +
-                         ") is a bounding constant of the selection code without a descriptor "
-                         "in kRouteRules (or an entry of kNotRules)");
-                }
+                note((*it)[1].str());
+            }
+        }
+        // The declarators after the first of one declaration (`constexpr int kA = 1, kB = 2;`):
+        // the pattern above names only the first. A declaration with a parenthesis or a brace in
+        // it is left to that pattern.
+        for (std::sregex_iterator decl(text.begin(), text.end(), declaration), stop; decl != stop;
+             ++decl) {
+            const std::string statement = (*decl)[0].str();
+            for (std::sregex_iterator it(statement.begin(), statement.end(), declarator);
+                 it != stop; ++it) {
+                note((*it)[1].str());
             }
         }
     }
