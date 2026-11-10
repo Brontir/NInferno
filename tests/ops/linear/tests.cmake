@@ -175,6 +175,14 @@ ninferno_add_op_test(ninferno_kernel_facts_lookup_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_kernel_facts.cpp"
   LIBRARIES ninferno_linear_test_support)
 
+# The register MMA's counted terms (ops/generic/rmma_counted_terms.h, #613 PR-7a) on the
+# committed snapshots: the min-term MMAs' share equals (sets x m_tiles + 1) / (sets x m_tiles)
+# on every min-term kernel that does not add the sums, zero on every other; the iterations cover
+# the K range; the terms on a constructed loop. No GPU.
+ninferno_add_op_test(ninferno_rmma_counted_terms_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_rmma_counted_terms.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
 ninferno_add_op_test(ninferno_kernel_facts_live_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_kernel_facts_live.cpp"
   LIBRARIES ninferno_linear_test_support)

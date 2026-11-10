@@ -59,6 +59,7 @@ inline void describe_kernel(KernelResources& out, const kernel_facts::KernelFact
     out.grid_y                = grid.y;
     out.grid_z                = grid.z;
     out.latency_variant       = latency;
+    out.loop                  = f.loop;
 }
 
 // The register-MMA launch of `codec` (one of the launch_rmma_* below): run_route's, and

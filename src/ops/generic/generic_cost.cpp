@@ -12,11 +12,13 @@
 #include "ops/generic/generic_schedules.h"
 #include "ops/generic/generic_select_internal.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
+#include "ops/generic/rmma_counted_terms.h"
 #include "ops/generic/route_cost_constants.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <optional>
 
 namespace ninferno::ops::detail::generic {
@@ -163,6 +165,7 @@ namespace {
 struct RmmaKept {
     int registers;
     double local_bytes;
+    std::optional<kernel_facts::LoopCounts> loop; // the K loop's counts (#613), where known
 };
 
 std::optional<RmmaKept> rmma_kept(int schedule, const Weight& weight, Epilogue epilogue,
@@ -173,7 +176,20 @@ std::optional<RmmaKept> rmma_kept(int schedule, const Weight& weight, Epilogue e
     } catch (const std::exception&) {}
     if (!r) return std::nullopt;
     note_rmma_fact_read(RmmaFactRead{weight.qtype, schedule, epilogue, *r}); // never throws
-    return RmmaKept{r->registers, static_cast<double>(r->local_bytes)};
+    return RmmaKept{r->registers, static_cast<double>(r->local_bytes), r->loop};
+}
+
+// The counted register-MMA terms (rmma_counted_terms.h, #613 PR-7a) in place of the fitted spill
+// and the weight-only tensor term, where the environment asks (NINFERNO_RMMA_COUNTED_TERMS=1).
+// Off, the price is golden-equal to the fitted one; the switch exists for the A/B that decides
+// whether the counted law ships as the default (the replica over the lab sweeps moves 3-50 % of
+// the picks per board, mostly to faster measured routes, not all).
+bool rmma_counted_terms_enabled() {
+    static const bool enabled = [] {
+        const char* v = std::getenv("NINFERNO_RMMA_COUNTED_TERMS");
+        return v != nullptr && *v != '\0' && *v != '0';
+    }();
+    return enabled;
 }
 
 } // namespace
@@ -256,9 +272,12 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         return std::max(1.0, std::min(limit, std::floor(regs_sm / per_cta)));
     };
     // Time of `ctas` CTAs of `rows` output rows x `cols` (K over `cluster` CTAs) of `threads`
-    // threads, at most `occ` resident per SM; `local_bytes` is the spill per thread of the kernel.
-    const auto cost = [&](double rows, double cols, double threads, double cluster, double occ,
-                          double warps_k, bool pipelined, double eff, double local_bytes = 0.0) {
+    // threads, at most `occ` resident per SM; `local_bytes` is the spill per thread of the kernel;
+    // `loop` the kernel's counted K loop (rmma_counted_terms.h), read under the switch.
+    const bool counted = rmma_counted_terms_enabled();
+    const auto cost    = [&](double rows, double cols, double threads, double cluster, double occ,
+                          double warps_k, bool pipelined, double eff, double local_bytes = 0.0,
+                          const kernel_facts::LoopCounts* loop = nullptr) {
         const double tiles = cdiv(tokens, cols);
         const double gx    = cdiv(n, rows);
         const double ctas  = gx * tiles * cluster;
@@ -269,7 +288,7 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         // than SMs up to 20x).
         const double warps = std::min(q, std::max(occ, 1.0)) * threads / 32;
         const double mem   = std::max(q * rows * kc * bpw / bw_sm, n * k * bpw / bw);
-        const double mma   = q * 2.0 * rows * sets * cols * kc / peak_sm;
+        double mma         = q * 2.0 * rows * sets * cols * kc / peak_sm;
         // The CTAs the busiest SM runs one residency after another each pay their warps'
         // dependent chain: the exposed load latency of a K step (register MMA: 16 K per warp, 150
         // cycles) or of a pipeline stage (64 K, 500 cycles: the barrier and the cp.async wait).
@@ -296,9 +315,18 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         const double per_round =
             std::min({tiles, std::max(occ, 1.0), q, std::max(1.0, std::ceil(occ * sms / gx))});
         const double l2_x  = rounds * per_round * kc * (tokens / tiles) * 2.0 / l2_sm;
-        const double spill = q * threads * local_bytes * route_cost::kSpillAccessesPerStep.value() *
-                             std::ceil(kc / (route_cost::kRmmaHeavyStepK.value() * warps_k)) /
-                             (route_cost::kL1BytesPerSmClock.value() * clk);
+        double spill       = q * threads * local_bytes * route_cost::kSpillAccessesPerStep.value() *
+                       std::ceil(kc / (route_cost::kRmmaHeavyStepK.value() * warps_k)) /
+                       (route_cost::kL1BytesPerSmClock.value() * clk);
+        // Under the switch, the loop's own counts: every MMA of an iteration (the min-term ones
+        // included) over the tensor rate, its LDL / STL bytes over the L1 rate.
+        if (counted && loop != nullptr && rmma_counted::usable(*loop)) {
+            const auto t =
+                rmma_counted::terms(*loop, q, threads / 32.0, kc, warps_k, peak_sm,
+                                       route_cost::kL1BytesPerSmClock.value() * clk, clk, d.major);
+            mma   = t.mma;
+            spill = t.spill;
+        }
         // The plain decoders keep their old price: the DRAM share of every CTA's bytes.
         const double bytes      = heavy_decoder ? dram + l2_w + l2_x + spill : mem;
         const double fill_warps = heavy_decoder ? route_cost::kRmmaHeavySaturatingWarps.value()
@@ -342,7 +370,7 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         const Route r{Family::RegisterMma, static_cast<std::uint8_t>(i)};
         const auto tile = *route_tile(r, problem.epilogue, tokens);
         offer(r, cost(tile.out_rows, tile.tokens, threads, tile.k_split, occ, s.warps_k, false, 1,
-                      kept ? kept->local_bytes : 0.0));
+                      kept ? kept->local_bytes : 0.0, kept && kept->loop ? &*kept->loop : nullptr));
     }
     a8_candidates(problem, weight, tokens, d, offer);
     if (emulated) return true;

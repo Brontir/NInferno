@@ -13,6 +13,7 @@
 #include "core/weight.h"
 #include "ninferno/ops/linear.h"
 #include "ninferno/option_enums.h"
+#include "ops/generic/kernel_facts.h"
 
 #include <cuda_runtime.h>
 
@@ -696,6 +697,9 @@ struct KernelResources {
     // The register-MMA kernel variant the launch took: its latency form (rmma_latency_pays), or
     // neither form (the wide decoder or the plain kernel, told apart by the registers).
     bool latency_variant = false;
+    // The register-MMA kernel's K loop counted off its SASS (kernel_facts::LoopCounts, #613): the
+    // snapshot's, where it carries them; nullopt for the other families and a schema 1 snapshot.
+    std::optional<kernel_facts::LoopCounts> loop;
 };
 
 // The compiled facts the cost model read for one register-MMA schedule of one format (#556): what
