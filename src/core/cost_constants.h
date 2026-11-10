@@ -3,7 +3,8 @@
 // Chip facts both speed models read: the configuration choice's step model
 // (product/choice/choice_constants.h) and the speculation round cost (spec/round_cost.h). One
 // definition each, so the two models cannot drift apart. Fitted calibrations do not live here (the
-// MoE routed share: spec/moe_routed_share.h).
+// MoE routed share: spec/moe_routed_share.h), except the launch node below, whose provenance the
+// route cost registry records.
 
 #include <string_view>
 
@@ -16,9 +17,10 @@ namespace ninferno {
 inline constexpr double kDp4aOpsPerSmClock = 512;
 
 // The cost of a kernel launch node inside graph replay: the one place a launch is priced (#617
-// step B). Readers: the speculation round cost (spec/round_cost.h kLaunchTime) and, through its
-// `launch_seconds` argument, the chain pricing (ops/common/projection_chain.h). Other launch-like
-// numbers are different facts and keep their own names, all pinned in tests/test_launch_node.cpp:
+// step B). Readers: the speculation round cost (spec/round_cost.cpp, launch_node_seconds) and,
+// through its `launch_seconds` argument, the chain pricing (ops/common/projection_chain.h). Other
+// launch-like numbers are different facts and keep their own names, all pinned in
+// tests/test_launch_node.cpp:
 //   - route_cost::kQuantLaunchSeconds (1.7e-6, Fitted): the A8 activation quantizer kernel, its
 //     launch plus its scale and sum planes, inside the route model; not a bare node.
 //   - choice kKernelCost: a kernel's residual beyond its bytes (ramp and epilogue included), not a
@@ -29,8 +31,8 @@ inline constexpr double kDp4aOpsPerSmClock = 512;
 // Provenance (Fact / Counted / Fitted) is recorded in the route cost model's registry:
 // route_cost::kLaunchNodeAda (ops/generic/route_cost_constants.h, listed there). The row is the
 // per-launch t0 fitted from the Ada census, three cards (RTX 4060 Ti, 4070 Ti, 4090), without
-// PDL. Not yet carried: a pdl axis, the compiled-kernel hash, a card count in the row, and a
-// holdout record (PR #635's Holdout is not on master).
+// PDL. Not yet carried: a pdl axis, the compiled-kernel hash and a holdout record (PR #635's
+// Holdout is not on master).
 struct LaunchNode {
     std::string_view generation;
     double seconds;

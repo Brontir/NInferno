@@ -185,7 +185,7 @@ struct CardRates {
     std::string generation;      // core/generation.h's row name
     double eta              = 0; // kSmallTEta's, 0 when the generation has none
     std::int32_t eta_cards  = 0;
-    double launch_seconds   = 0; // kLaunchTime's, 0 when the generation has none
+    double launch_seconds   = 0; // launch_node_seconds's, 0 when the generation has none
     double eta_dram         = 0;
 
     // A kernel launch's time as the bytes it would read in it (round cost's unit); 0 when unknown.
