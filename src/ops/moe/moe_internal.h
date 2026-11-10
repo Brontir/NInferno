@@ -469,6 +469,8 @@ struct MoePlanQuery {
 
 // The authorities select_plan asks, in the order it asks them; the first to answer decides.
 [[nodiscard]] std::vector<std::string_view> authority_order();
+// Where the class's A8 route comes from, as Evidence (the golden test compares answers against it).
+[[nodiscard]] Evidence class_a8_route_evidence();
 
 // select_plan with its reason; pure (no kernel runs, no device memory read).
 [[nodiscard]] MoePlanQuery moe_plan_query(const MoeWeights& weights, const MoeConfig& config,

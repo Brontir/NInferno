@@ -821,8 +821,11 @@ std::optional<MoeTableOrigin> table_origin(const MoeRouteKey& key) {
     o.lender_distance = it->second.lender_distance;
     try {
         const auto chain = device_class().class_chain();
-        o.own            = o.table_class == route_gpu_class() ||
-                std::find(chain.begin(), chain.end(), o.table_class) != chain.end();
+        // Own: keyed by one of this device's classes and measured on this very board (distance 0):
+        // a sibling board reading the same file (a gb203 card on the RTX 5080's table) carries it.
+        o.own = (o.table_class == route_gpu_class() ||
+                 std::find(chain.begin(), chain.end(), o.table_class) != chain.end()) &&
+                o.table_distance == 0;
     } catch (const std::exception&) {}
     return o;
 }

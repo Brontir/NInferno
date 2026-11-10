@@ -1240,13 +1240,14 @@ Evidence table_evidence(const MoeRouteKey& key) {
     if (!origin->lender.empty()) {
         e.kind     = Evidence::Kind::Borrowed;
         e.donor    = origin->lender;
-        e.distance = std::isfinite(origin->lender_distance) ? origin->lender_distance : 0;
+        e.distance = origin->lender_distance;
     } else if (origin->own) {
         e.kind = Evidence::Kind::Measured;
     } else {
-        e.kind     = Evidence::Kind::Carried;
-        e.donor    = origin->table_class;
-        e.distance = std::isfinite(origin->table_distance) ? origin->table_distance : 0;
+        e.kind  = Evidence::Kind::Carried;
+        e.donor = origin->table_class;
+        e.distance =
+            origin->table_distance; // infinity (another architecture's table) stays infinite
     }
     return e;
 }
@@ -1389,6 +1390,10 @@ MoePlanQuery walk(const MoeWeights& weights, const MoeConfig& config, std::int32
 }
 
 } // namespace
+
+// The provenance of the class's A8 route (what DecodeR8 answers and a table band's A8 overlay
+// carry).
+Evidence class_a8_route_evidence() { return a8_route_evidence(); }
 
 std::vector<std::string_view> authority_order() {
     std::vector<std::string_view> names;

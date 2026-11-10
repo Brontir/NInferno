@@ -168,40 +168,55 @@ std::string_view source_of(moe::MoeAuthority a) {
     return "?";
 }
 
-// Whether an answer's evidence is what its authority gives: the source names the authority; a
-// table's is measured here (no donor), carried (the donor is the table's class) or borrowed (the
-// donor is the table class that lent the entry); the plan of the class's A8 route over a table
-// band also names that route's provenance (overlay): a measured board, measured at distance 0,
-// else carried, or the fallback literal; the tuner's is measured; the decode R8 route's is the
-// same board or the fallback literal; every other rule is a ranker's, no donor.
-bool a8_provenance_fits(moe::Evidence::Kind kind, const std::string& donor, double distance) {
-    using K                = moe::Evidence::Kind;
-    const bool board_donor = donor == "rtx4090" || donor == "rtx5090" || donor == "rtx5080";
-    if (kind == K::Ranker) return donor == "fallback-a8-route";
-    return board_donor && kind == (distance == 0 ? K::Measured : K::Carried);
+// Whether an answer's evidence is what its authority gives, compared with the sources themselves
+// (not the shape alone): the source names the authority; a table answer's kind, donor and distance
+// are what the table entry's origin says (table_origin: Borrowed from the lender that lent it,
+// else Measured only on the board the table was measured on, else Carried from the table's class
+// at its distance); a table band the class's A8 route changed also carries that route's provenance
+// (overlay), equal to class_a8_route_evidence(); the decode R8 route's evidence is that same one;
+// the tuner's is measured; every other rule is a ranker's, no donor.
+bool same_provenance(moe::Evidence::Kind kind, const std::string& donor, double distance,
+                     const moe::Evidence& want) {
+    return kind == want.kind && donor == want.donor && distance == want.distance;
 }
 
-bool evidence_fits(const moe::MoePlanQuery& q) {
+bool table_evidence_fits(const moe::MoePlanQuery& q, const ops::MoeWeights& weights,
+                         const ops::MoeConfig& config) {
+    using K           = moe::Evidence::Kind;
+    const auto& e     = q.evidence;
+    const auto origin = moe::table_origin(moe::route_key(weights, config));
+    if (!origin) return false;
+    if (!origin->lender.empty()) {
+        return e.kind == K::Borrowed && e.donor == origin->lender &&
+               e.distance == origin->lender_distance;
+    }
+    if (origin->own) return e.kind == K::Measured && e.donor.empty() && e.distance == 0;
+    return e.kind == K::Carried && e.donor == origin->table_class &&
+           e.distance == origin->table_distance;
+}
+
+bool evidence_fits(const moe::MoePlanQuery& q, const ops::MoeWeights& weights,
+                   const ops::MoeConfig& config) {
     using K       = moe::Evidence::Kind;
     const auto& e = q.evidence;
     if (e.source != source_of(q.authority)) return false;
     const bool overlaid = q.authority == moe::MoeAuthority::TableClassA8;
     if (e.overlay.has_value() != overlaid) return false;
+    const moe::Evidence a8 = moe::class_a8_route_evidence();
     switch (q.authority) {
     case moe::MoeAuthority::Tuner:
         return e.kind == K::Measured && e.donor.empty();
     case moe::MoeAuthority::TableClassA8:
-        if (!a8_provenance_fits(e.overlay->kind, e.overlay->donor, e.overlay->distance)) {
+        if (!same_provenance(e.overlay->kind, e.overlay->donor, e.overlay->distance, a8)) {
             return false;
         }
-        [[fallthrough]];
+        return table_evidence_fits(q, weights, config);
     case moe::MoeAuthority::TableAsMeasured:
     case moe::MoeAuthority::TableW4a8:
     case moe::MoeAuthority::TableR8Refused:
-        return (e.kind == K::Measured && e.donor.empty()) ||
-               ((e.kind == K::Carried || e.kind == K::Borrowed) && !e.donor.empty());
+        return table_evidence_fits(q, weights, config);
     case moe::MoeAuthority::DecodeR8:
-        return a8_provenance_fits(e.kind, e.donor, e.distance);
+        return same_provenance(e.kind, e.donor, e.distance, a8);
     default:
         return e.kind == K::Ranker && e.donor.empty();
     }
@@ -216,7 +231,7 @@ std::string describe(const ops::MoeWeights& weights, const ops::MoeConfig& confi
     const moe::MoePlanQuery q = moe::moe_plan_query(weights, config, t, prefill);
     // The evidence names the authority that answered; a table's or the tuner's is measured or
     // carried, a rule's a ranker's (the decode R8 route carries a board's when one is near).
-    if (!evidence_fits(q)) { ++g_evidence_mismatches; }
+    if (!evidence_fits(q, weights, config)) { ++g_evidence_mismatches; }
     const moe::MoeStageRoutes stages = moe::stage_routes(weights, q.plan);
     std::ostringstream out;
     out << moe::plan_name(q.plan) << " jobs=" << q.plan.job_columns << " "
