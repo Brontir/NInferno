@@ -16,11 +16,14 @@
 #include "ninferno/ops/prefill_routes.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/route_authorities.h"
+#include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
 #include "ops/common/route_probe.h"
 #include "ops/generic/selector_facts.h"
 #include "ops/route_pins.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -39,6 +42,12 @@ namespace generic = ninferno::ops::detail::generic;
 using ops::LinearPolicy;
 
 int g_failed = 0;
+
+// What the grids reached, for the coverage check at the end (#614 A3): every authority name and
+// every kind of evidence must have answered somewhere, or be listed with why it cannot.
+std::set<std::string> g_reached_sources;
+std::set<std::string> g_reached_kinds;
+int g_described = 0, g_describe_threw = 0;
 
 void fail(const std::string& what) {
     ++g_failed;
@@ -72,6 +81,16 @@ std::set<std::string_view> listed_sources() {
     return names;
 }
 
+// The tuner's --selected-out header: its old columns in their old order, then the two new ones, so
+// a reader of the older files by position still finds every column it knew.
+void check_selected_header() {
+    const std::string header = generic::kSelectedCsvHeader;
+    const std::string old    = "format,compute,epilogue,n,k,T,asked,selected,select_ns,run,device";
+    if (!header.starts_with(old + ",")) fail("--selected-out header lost an old column: " + header);
+    if (!header.ends_with(",authority,evidence")) fail("--selected-out header: " + header);
+    if (header != old + ",authority,evidence") fail("--selected-out header has more: " + header);
+}
+
 int check_lists() {
     std::set<std::string_view> seen;
     for (const auto list : {generic::select_authorities(), generic::auto_authorities(),
@@ -93,11 +112,61 @@ int check_lists() {
     return g_failed;
 }
 
+bool same_evidence(const generic::Evidence& a, const generic::Evidence& b) {
+    return a.kind == b.kind && a.ranker == b.ranker && a.source == b.source && a.donor == b.donor &&
+           a.distance == b.distance;
+}
+
+// The evidence the other readers print is the selection's own: route_answer_query (the decision
+// manifest's route_evidence section) gives select_answer's answer, and describe_call's description
+// carries its evidence (describe_text prints it, so does the route tuner's CSV through
+// evidence_columns). `described`: also describe a call (the cost model prices it, which can need a
+// device: a throw there is counted, not failed).
+void check_readers(const DeviceClass& device, const generic::Problem& problem, std::int32_t t,
+                   bool prefill, const generic::RouteAnswer& a, const std::string& where,
+                   bool described) {
+    const auto q = generic::route_answer_query(device, problem.qtype, problem.policy,
+                                               problem.epilogue, problem.n, problem.k, t, prefill);
+    if (!q) {
+        fail(where + ": route_answer_query gives none");
+    } else if (!(q->route == a.route) || !same_evidence(q->evidence, a.evidence)) {
+        fail(where + ": route_answer_query disagrees with select_answer (" +
+             generic::evidence_text(q->evidence) + " vs " + generic::evidence_text(a.evidence) +
+             ")");
+    }
+    // The tuner's two last columns: "<authority>,<kind>", no other comma in them.
+    const std::string columns = generic::evidence_columns(a.evidence);
+    if (columns !=
+            std::string(a.evidence.source) + ',' + generic::evidence_kind_name(a.evidence.kind) ||
+        std::count(columns.begin(), columns.end(), ',') != 1) {
+        fail(where + ": evidence_columns '" + columns + "'");
+    }
+    if (!described) return;
+    try {
+        const auto d =
+            generic::describe_call(device, problem.qtype, problem.policy, problem.epilogue,
+                                   problem.n, problem.k, t, std::size_t{1} << 30, prefill);
+        ++g_described;
+        if (!d || !d->evidence) {
+            fail(where + ": describe_call carries no evidence");
+            return;
+        }
+        if (!same_evidence(*d->evidence, a.evidence)) {
+            fail(where + ": the description's evidence is not the selection's");
+        }
+        const std::string text = generic::describe_text(*d);
+        const std::string tail = " " + generic::evidence_text(a.evidence);
+        if (!text.ends_with(tail)) fail(where + ": describe_text does not end with " + tail);
+    } catch (const std::exception&) { ++g_describe_threw; }
+}
+
 void check_evidence(const generic::RouteAnswer& a, const std::set<std::string_view>& names,
                     const std::string& where, bool invariant) {
     using K                    = generic::Evidence::Kind;
     using R                    = generic::Evidence::Ranker;
     const generic::Evidence& e = a.evidence;
+    g_reached_sources.insert(std::string(e.source));
+    g_reached_kinds.insert(generic::evidence_kind_name(e.kind));
     if (names.count(e.source) == 0)
         fail(where + ": unlisted source '" + std::string(e.source) + "'");
     if (invariant && e.source != "invariant-profile") {
@@ -175,7 +244,11 @@ std::string known_source(const KnownCase& c) {
     if (c.profile == 3) ops::set_route_pins({PrefillRoute::Auto, DecodeRoute::A16, MoePath::Auto});
     if (c.profile == 4) ops::set_route_pins({PrefillRoute::A16, DecodeRoute::Auto, MoePath::Auto});
     try {
-        return std::string(generic::select_answer(problem, w, c.tokens, c.prefill).evidence.source);
+        const generic::Evidence e =
+            generic::select_answer(problem, w, c.tokens, c.prefill).evidence;
+        g_reached_sources.insert(std::string(e.source));
+        g_reached_kinds.insert(generic::evidence_kind_name(e.kind));
+        return std::string(e.source);
     } catch (const std::exception& error) { return std::string("threw ") + error.what(); }
 }
 
@@ -212,8 +285,38 @@ void check_known() {
     }
 }
 
+// Authorities and kinds the grids above never reach, with why. Anything else unreached fails: a
+// new authority, or a restatement that moved the last call off one, must say so here.
+const std::map<std::string_view, std::string_view> kUnreached      = {};
+const std::map<std::string_view, std::string_view> kUnreachedKinds = {};
+
+void check_coverage(const std::set<std::string_view>& names) {
+    std::string missing;
+    for (const std::string_view n : names) {
+        if (g_reached_sources.count(std::string(n)) == 0 && kUnreached.count(n) == 0) {
+            missing += " " + std::string(n);
+        }
+    }
+    std::string missing_kinds;
+    using K = generic::Evidence::Kind;
+    for (const K k : {K::Pin, K::Measured, K::Ranker, K::Carried, K::Transferred, K::Borrowed}) {
+        const std::string name = generic::evidence_kind_name(k);
+        if (g_reached_kinds.count(name) == 0 && kUnreachedKinds.count(name) == 0) {
+            missing_kinds += " " + name;
+        }
+    }
+    std::cout << "unreached authorities:" << (missing.empty() ? " none" : missing) << '\n'
+              << "unreached evidence kinds:" << (missing_kinds.empty() ? " none" : missing_kinds)
+              << '\n'
+              << "descriptions compared: " << g_described << " (threw " << g_describe_threw
+              << ")\n";
+    if (!missing.empty()) fail("authorities never reached:" + missing);
+    if (!missing_kinds.empty()) fail("evidence kinds never reached:" + missing_kinds);
+}
+
 int run_board(const generic::FactsBoard& b, const std::set<std::string_view>& names) {
-    const ScopedDeviceClass scoped(generic::board_device_class(b));
+    const DeviceClass board = generic::board_device_class(b);
+    const ScopedDeviceClass scoped(board);
     std::map<std::string_view, int> tally;
     void* const payload = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
     for (const QType qtype : kFormats) {
@@ -253,6 +356,10 @@ int run_board(const generic::FactsBoard& b, const std::set<std::string_view>& na
                                     generic::select_answer(problem, w, t, prefill);
                                 check_evidence(a, names, where, profile == 2);
                                 ++tally[a.evidence.source];
+                                check_readers(
+                                    board, problem, t, prefill, a, where,
+                                    shape.n == 4096 && epilogue == generic::Epilogue::Store &&
+                                        (t == 1 || t == 4 || t == 17 || t == 64 || t == 512));
                             } catch (const std::exception& error) {
                                 fail(where + ": threw " + error.what());
                             }
@@ -274,8 +381,10 @@ int main() {
     try {
         const auto names = listed_sources();
         check_lists();
+        check_selected_header();
         check_known();
         for (const generic::FactsBoard& b : generic::kFactsBoards) run_board(b, names);
+        check_coverage(names);
     } catch (const std::exception& error) {
         std::cerr << "route authorities: " << error.what() << '\n';
         return 1;

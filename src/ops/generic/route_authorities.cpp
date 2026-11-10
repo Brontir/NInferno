@@ -9,6 +9,7 @@
 #include "ops/generic/route_table.h"
 #include "ops/route_pins.h"
 
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -531,6 +532,23 @@ Route auto_route(const Problem& problem, const Weight& weight, std::int32_t toke
 Route heuristic_route(const Problem& problem, const Weight& weight, std::int32_t tokens,
                       bool prefill) {
     return heuristic_answer(ask_below_profiles(tokens, prefill), problem, weight).route;
+}
+
+std::string evidence_text(const Evidence& e) {
+    std::string out =
+        "authority=" + std::string(e.source) + " evidence=" + evidence_kind_name(e.kind);
+    if (!e.donor.empty()) {
+        // Locale-independent: std::to_chars, three decimals.
+        char digits[64];
+        const auto end =
+            std::to_chars(digits, digits + sizeof(digits), e.distance, std::chars_format::fixed, 3);
+        out += " donor=" + e.donor + " d=" + std::string(digits, end.ptr);
+    }
+    return out;
+}
+
+std::string evidence_columns(const Evidence& e) {
+    return std::string(e.source) + ',' + evidence_kind_name(e.kind);
 }
 
 } // namespace ninferno::ops::detail::generic

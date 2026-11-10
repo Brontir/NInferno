@@ -40,18 +40,25 @@ std::string key_of(const generic::SeenProblem& s, bool invariant) {
            std::string(artifact::layout_name(s.layout)) + ' ' + profile_name(invariant);
 }
 
-std::string name_or_none(const std::optional<generic::Route>& r) {
-    return r ? generic::route_name(*r) : std::string("none");
-}
+// What a line names at one width: the route alone (the routes section) or the route and the
+// evidence of its answer (the route_evidence section).
+enum class Say { Route, Evidence };
 
 std::string line_of(const DeviceClass& device, const generic::SeenProblem& s,
-                    std::int32_t prefill_chunk, bool invariant) {
+                    std::int32_t prefill_chunk, bool invariant, Say say) {
     // The start's route profile (an exact start runs the invariant routes, ScopedInvariantRoutes).
     const ops::ScopedInvariantRoutes profile(invariant);
     const generic::Problem& p = s.problem;
-    const auto ask = [&](std::int32_t tokens, bool prefill) {
-        return name_or_none(generic::route_query(device, p.qtype, p.policy, p.epilogue, p.n, p.k,
-                                                 tokens, prefill, s.parent_rows, s.layout));
+    const auto ask            = [&](std::int32_t tokens, bool prefill) {
+        // One query for both sections: the route is the answer's, so the two sections cannot name
+        // different routes for a width.
+        const auto answer =
+            generic::route_answer_query(device, p.qtype, p.policy, p.epilogue, p.n, p.k, tokens,
+                                                   prefill, s.parent_rows, s.layout);
+        if (!answer) return std::string("none");
+        return say == Say::Route ? generic::route_name(answer->route)
+                                            : generic::route_name(answer->route) + ' ' +
+                                       generic::evidence_text(answer->evidence);
     };
     // The decode and verify widths as runs of one route, for a call of `lanes` sequences
     // (ScopedRoundLanes: 0 decides by width alone, as prefill and capacity queries do).
@@ -136,22 +143,19 @@ std::int32_t chunk_of(const std::string& key, const std::string& value) {
     return chunk;
 }
 
-} // namespace
-
-DecisionSection routes_of(const DeviceClass& device,
-                          std::span<const generic::SeenProblem> problems,
-                          std::int32_t prefill_chunk, bool invariant) {
+DecisionSection lines_of(const DeviceClass& device, std::span<const generic::SeenProblem> problems,
+                         std::int32_t prefill_chunk, bool invariant, Say say) {
     DecisionSection out;
     out[kDecisionRouteCount] =
         std::to_string(problems.size()) +
         (problems.empty() ? " (no generic call before the fingerprint: the warm-up did not run)" : "");
     for (const auto& s : problems) {
-        out[key_of(s, invariant)] = line_of(device, s, prefill_chunk, invariant);
+        out[key_of(s, invariant)] = line_of(device, s, prefill_chunk, invariant, say);
     }
     return out;
 }
 
-DecisionSection replay_routes(const DeviceClass& device, const DecisionSection& recorded) {
+DecisionSection replay_lines(const DeviceClass& device, const DecisionSection& recorded, Say say) {
     DecisionSection out;
     for (const auto& [key, value] : recorded) {
         if (key == kDecisionRouteCount) {
@@ -161,9 +165,30 @@ DecisionSection replay_routes(const DeviceClass& device, const DecisionSection& 
         bool invariant               = false;
         const generic::SeenProblem s = parse_key(key, invariant);
         if (key_of(s, invariant) != key) malformed(key, "not in its canonical form");
-        out[key] = line_of(device, s, chunk_of(key, value), invariant);
+        out[key] = line_of(device, s, chunk_of(key, value), invariant, say);
     }
     return out;
+}
+
+} // namespace
+
+DecisionSection routes_of(const DeviceClass& device, std::span<const generic::SeenProblem> problems,
+                          std::int32_t prefill_chunk, bool invariant) {
+    return lines_of(device, problems, prefill_chunk, invariant, Say::Route);
+}
+
+DecisionSection route_evidence_of(const DeviceClass& device,
+                                  std::span<const generic::SeenProblem> problems,
+                                  std::int32_t prefill_chunk, bool invariant) {
+    return lines_of(device, problems, prefill_chunk, invariant, Say::Evidence);
+}
+
+DecisionSection replay_routes(const DeviceClass& device, const DecisionSection& recorded) {
+    return replay_lines(device, recorded, Say::Route);
+}
+
+DecisionSection replay_route_evidence(const DeviceClass& device, const DecisionSection& recorded) {
+    return replay_lines(device, recorded, Say::Evidence);
 }
 
 } // namespace ninferno::runtime

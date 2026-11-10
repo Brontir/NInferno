@@ -73,6 +73,13 @@ ninferno_add_op_test(ninferno_decision_routes_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_decision_routes.cpp"
   LIBRARIES ninferno_engine ninferno_runtime_support ninferno_ops ninferno_core)
 
+# The decision manifest's route_evidence section (#614, A3): the lines of the routes section with
+# the authority and evidence of each answer, from the same selection, in no hash. CPU, substituted
+# boards.
+ninferno_add_test(ninferno_decision_route_evidence_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_decision_route_evidence.cpp"
+  LIBRARIES ninferno_engine ninferno_runtime_support ninferno_ops ninferno_core)
+
 ninferno_add_test(ninferno_process_options_lease_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_process_options_lease.cpp"
   LIBRARIES ninferno_runtime_support)

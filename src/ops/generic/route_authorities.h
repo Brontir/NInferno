@@ -116,6 +116,14 @@ struct RouteAnswer {
     Evidence evidence;
 };
 
+// The evidence as the places a person or a tool reads a decision print it (#614, A3): "authority=
+// <source> evidence=<kind>", and for an answer that names a donor " donor=<board or class>
+// d=<distance>" (three decimals, locale independent). One function for the description line
+// (describe_text), the decision manifest's route_evidence section and the route tuner's CSV.
+[[nodiscard]] std::string evidence_text(const Evidence& evidence);
+// The two columns the route tuner's --selected-out ends its rows with: "<source>,<kind>".
+[[nodiscard]] std::string evidence_columns(const Evidence& evidence);
+
 // An authority: the first of a list to answer decides the call. nullopt: it abstains (its scope
 // does not hold the call, or nothing it names is admitted).
 using Authority = std::optional<RouteAnswer> (*)(const Ask&, const Problem&, const Weight&);

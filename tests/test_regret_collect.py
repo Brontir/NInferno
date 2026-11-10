@@ -214,6 +214,28 @@ class Collect(unittest.TestCase):
         self.assertEqual((case["authority"], case["evidence"], case["t"]),
                          ("route-table", "measured", 1))
 
+    def test_the_tuners_header_ends_with_the_two_columns_and_reads(self):
+        """The header route_tune writes (kSelectedCsvHeader, route_query.h, #614 A3): the old
+        columns in their old order, then authority,evidence; a row of it reaches the cases."""
+        text = (Path(__file__).resolve().parents[1] / "src" / "ops" / "generic"
+                / "route_query.h").read_text(encoding="utf-8")
+        start = text.index("kSelectedCsvHeader")
+        header = text[text.index('"', start):text.index(";", start)].strip().strip('"')
+        columns = header.split(",")
+        self.assertEqual(columns[:-2], ("format,compute,epilogue,n,k,T,asked,selected,select_ns,"
+                                        "run,device").split(","))
+        self.assertEqual(columns[-2:], ["authority", "evidence"])
+        for needed in collect.SELECTED_COLUMNS:
+            self.assertIn(needed, columns)
+        sweep = "q8,a16,store,64,64,1,rmma.a,10\nq8,a16,store,64,64,1,rmma.b,12\n"
+        sel = self.write("sel.csv", header + "\n"
+                         + "q8,a16,store,64,64,1,rmma.a,rmma.a,0,r1,ga106:28sm,route-table,carried\n")
+        routes = [self.write("p1.csv", HEAD + stamp(sweep, "r1", True))]
+        doc = collect.collect([sel], routes, "held-board", "held-model", "rev", "build", "both",
+                              [], [], "tests")
+        (case,) = doc["cases"]
+        self.assertEqual((case["authority"], case["evidence"]), ("route-table", "carried"))
+
     def test_old_selected_files_read_unknown(self):
         doc = self.collect_with_authority([], ["", ""])
         (case,) = doc["cases"]

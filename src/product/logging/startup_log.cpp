@@ -337,7 +337,8 @@ void StartupLogRenderer::engine_ready(const LoadSummary& load) {
         }
         impl_->logger->debug("fingerprint taint | {}", taint.empty() ? "none" : taint);
         // The route lines and the observed sizes (manifest only) after the hashed inputs.
-        const std::string all = load.decision_canonical + load.decision_routes + load.decision_observed;
+        const std::string all = load.decision_canonical + load.decision_routes +
+                                load.decision_route_evidence + load.decision_observed;
         std::string_view canonical = all;
         while (!canonical.empty()) {
             const std::size_t end = canonical.find('\n');

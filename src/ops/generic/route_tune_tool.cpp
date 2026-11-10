@@ -32,7 +32,9 @@
 // outside the prefill profile, applied here at every T) and a register-MMA kernel's registers and
 // local memory (spills or stack arrays) beside the timing.
 // --selected-out writes, per problem and band point, the route the production path runs there
-// (select_route resolved for the call), which is timed too: tools/bench/regret_collect.py.
+// (select_route resolved for the call), which is timed too: tools/bench/regret_collect.py. Its rows
+// end with authority,evidence: the authority that answered and the kind of evidence it rests on
+// (route_authorities.h, #614).
 // --select-reps N adds select_ns, the host time of one select_route of that call (the mean of N,
 // after a first one that fills the selection's caches): an eager call selects its route on the
 // host, so the selection is a share of a host-bound decode step.
@@ -187,7 +189,7 @@ int route_tune_main(int argc, char** argv) {
         if (opt.count("--selected-out")) {
             selected_csv.open(opt["--selected-out"]);
             if (!selected_csv) throw std::runtime_error("cannot open " + opt["--selected-out"]);
-            selected_csv << "format,compute,epilogue,n,k,T,asked,selected,select_ns,run,device\n";
+            selected_csv << generic::kSelectedCsvHeader << '\n';
         }
         const int select_reps = opt.count("--select-reps") ? std::stoi(opt["--select-reps"]) : 0;
         const bool a8_candidates = opt.count("--a8-candidates") && opt["--a8-candidates"] == "1";
@@ -518,8 +520,11 @@ int route_tune_main(int argc, char** argv) {
                 winners.push_back({t, best_route});
                 if (selected_csv) {
                     const generic::Problem gp{p.qtype, policy, p.n, p.k, p.epilogue};
-                    const generic::Route asked =
-                        generic::select_route(gp, w.weight, t, ops::prefill_routes_active());
+                    // The one selection: its route is timed, its authority and evidence are the
+                    // row's last columns.
+                    const generic::RouteAnswer answer =
+                        generic::select_answer(gp, w.weight, t, ops::prefill_routes_active());
+                    const generic::Route asked = answer.route;
                     double select_ns = 0;
                     if (select_reps > 0) {
                         int sink      = 0;
@@ -548,7 +553,8 @@ int route_tune_main(int argc, char** argv) {
                                  << generic::epilogue_name(p.epilogue) << ',' << p.n << ',' << p.k
                                  << ',' << t << ',' << generic::route_name(asked) << ','
                                  << generic::route_name(ran) << ',' << select_ns << ',' << run_id
-                                 << ',' << device_id << '\n';
+                                 << ',' << device_id << ','
+                                 << generic::evidence_columns(answer.evidence) << '\n';
                 }
                 std::printf("%s %s %s n=%d k=%d T=%d best=%s %.2f us\n",
                             generic::qtype_name(p.qtype), generic::compute_class_name(p.compute),

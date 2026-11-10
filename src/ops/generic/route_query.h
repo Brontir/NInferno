@@ -19,6 +19,7 @@
 #include "core/device_class.h"
 #include "core/weight.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/route_authorities.h"
 
 #include <cstdint>
 #include <optional>
@@ -42,6 +43,14 @@ namespace ninferno::ops::detail::generic {
                                                std::int32_t n, std::int32_t k, std::int32_t tokens,
                                                bool prefill = false, std::int32_t parent_rows = 0,
                                                std::optional<QuantLayout> layout = std::nullopt);
+
+// route_query's answer with the evidence it rests on (#614, A3): the route and the authority that
+// answered, from the one selection (select_answer) route_query returns the route of. nullopt where
+// route_query gives none.
+[[nodiscard]] std::optional<RouteAnswer>
+route_answer_query(const DeviceClass& device, QType qtype, LinearPolicy policy, Epilogue epilogue,
+                   std::int32_t n, std::int32_t k, std::int32_t tokens, bool prefill = false,
+                   std::int32_t parent_rows = 0, std::optional<QuantLayout> layout = std::nullopt);
 
 // The route such a call selects and the one it runs on (#298): route_query's choice as run() hands
 // it on (workspace_free_route: no workspace, no quantized family that needs one), resolved as
@@ -78,6 +87,11 @@ struct RouteDescription {
     // slice of a fused parent this is not the selector's number: select_route prices the parent.
     std::optional<double> cost_seconds;
     std::optional<KernelResources> kernel;
+    // The selector's answer the call took: its authority and evidence, from the same select_answer
+    // that gave `resolved.asked` (describe_call). Empty for describe_route, whose route is the
+    // caller's, not a selection. The call can still leave the selected route afterwards
+    // (workspace_free_route, resolve_route: `resolved.reason`); the evidence is of the selection.
+    std::optional<Evidence> evidence;
 };
 
 // The description of a call that runs `asked` (an explicit route, as the tuner and the pin tests
@@ -102,7 +116,15 @@ describe_call(const DeviceClass& device, QType qtype, LinearPolicy policy, Epilo
 // One line of key=value fields: "asked=<route> runs=<route> [demoted=<why>] [r8_prequantized]
 // workspace=<bytes> [tile=<rows>x<tokens>[ ksplit=<n>]] [weight_bytes=<b> activation_bytes=<b>
 // output_bytes=<b>] [prepared=<rep>] [cost_us=<t>] [regs=<r> local=<b> smem=<static>+<dynamic>
-// threads=<t> grid=<x>x<y>x<z>]".
+// threads=<t> grid=<x>x<y>x<z>] [authority=<name> evidence=<kind> [donor=<board> d=<distance>]]".
+// The last group (evidence_text) is present where `evidence` is: a described call, not an explicit
+// route; the fields before it are unchanged.
 [[nodiscard]] std::string describe_text(const RouteDescription& description);
+
+// The header of the route tuner's --selected-out CSV: the columns of every version before, then
+// "authority,evidence" at the end (evidence_columns), which tools/bench/regret_collect.py
+// reads by name.
+inline constexpr const char* kSelectedCsvHeader =
+    "format,compute,epilogue,n,k,T,asked,selected,select_ns,run,device,authority,evidence";
 
 } // namespace ninferno::ops::detail::generic
