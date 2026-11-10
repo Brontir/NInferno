@@ -47,32 +47,28 @@ constexpr bool grid_passes_wave(std::int32_t tokens, int sms, int row_tiles, int
     return token_tiles * row_tiles > static_cast<std::int64_t>(sms) * ctas_per_sm;
 }
 
-// CTAs of `threads` threads one SM holds at once, from the device's two per-SM limits (the thread
-// count and the CTA slots; DeviceClass::max_threads_per_sm, max_blocks_per_sm). Registers and
-// shared memory are the compiled kernel's: a kernel that takes either to a lower count has its own
-// occupancy figure (kernel_resident_ctas_per_sm), and this answers the upper bound.
-constexpr int resident_ctas_per_sm(int max_blocks, int max_threads, int threads) {
-    if (max_blocks <= 0 || max_threads <= 0 || threads <= 0) return 0;
-    return std::min(max_blocks, max_threads / threads);
-}
-
-// The widest call (tokens) whose grid of `ctas_per_token` CTAs a token stays within `waves` waves
-// of `ctas_per_sm` resident CTAs an SM, rounded down to a power of two (the measured widths are
-// doublings, so a finer bound claims a resolution no measurement has). 0 where an input is
-// unknown or not even one token fits: the caller then keeps its own default. The fused text
-// qk-norm + RoPE (rmsnorm_rope): its grid is tokens x ceil((Q + K heads) / 3) CTAs of three warps,
-// and past a couple of waves the three separate kernels, each free to pick its own shape, are
-// ahead; on the RTX 5090's 170 SMs the widest geometry (12 CTAs a token, 16 resident an SM, two
-// waves) gives 453 tokens, so 256: the bound the kernel's measurement set.
-constexpr std::int32_t grid_wave_bound_tokens(int sms, int ctas_per_sm, int ctas_per_token,
-                                              int waves) {
-    if (sms <= 0 || ctas_per_sm <= 0 || ctas_per_token <= 0 || waves <= 0) return 0;
-    const std::int64_t fit = static_cast<std::int64_t>(waves) * sms * ctas_per_sm / ctas_per_token;
-    std::int32_t bound     = 0;
-    for (std::int64_t p = 1; p <= fit && p <= (std::int64_t{1} << 30); p *= 2) {
-        bound = static_cast<std::int32_t>(p);
+// The width (tokens) up to which fusing launches pays: a fusion that replaces `saved_launches`
+// launches by one kernel whose per-token time is `excess` (a fraction of the fused pass's bytes at
+// the DRAM rate) worse than the separate kernels' wins while the launches it saves outweigh the
+// slope it loses,
+//
+//     saved_launches x launch_seconds  >=  T x excess x bytes_per_token / dram_bytes_per_s
+//     T*  =  saved_launches x launch_seconds x dram_bytes_per_s / (excess x bytes_per_token)
+//
+// (the launch measured in bytes the board could have moved, over the bytes the extra slope costs a
+// token). Floor of T*, no rounding to a measured grid. 0 where an input is unknown or `excess` is
+// not calibrated: the caller then keeps its own default. Used by the fused text qk-norm + RoPE
+// (rmsnorm_rope): three kernels become one, two launches saved.
+constexpr std::int32_t launch_amortized_tokens(int saved_launches, double launch_seconds,
+                                               double dram_bytes_per_s, double bytes_per_token,
+                                               double excess) {
+    if (saved_launches <= 0 || !(launch_seconds > 0.0) || !(dram_bytes_per_s > 0.0) ||
+        !(bytes_per_token > 0.0) || !(excess > 0.0)) {
+        return 0;
     }
-    return bound;
+    const double tokens =
+        saved_launches * launch_seconds * dram_bytes_per_s / (excess * bytes_per_token);
+    return tokens >= 1.0e9 ? 1000000000 : static_cast<std::int32_t>(tokens);
 }
 
 } // namespace ninferno::ops::detail::sm_rules

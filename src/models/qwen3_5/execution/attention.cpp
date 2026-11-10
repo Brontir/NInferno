@@ -32,21 +32,16 @@ void require_rope_axes(const Tensor& positions, const RopeConfig& config) {
 // because the two geometries cross at different widths. The Op itself is valid at any width; this
 // is a dispatch choice, and both branches are the same arithmetic bit for bit.
 //
-// The bound is a wave rule (ops::rmsnorm_rope_text_fused_max_tokens: the fused grid within two
-// waves of resident blocks, a power of two), which gives 256 on the RTX 5090's 170 SMs and fewer
-// tokens on boards with fewer SMs. 256 stays the answer where the device's facts are unknown.
+// The bound is ops::rmsnorm_rope_text_fused_max_tokens: the launches the fusion saves against the
+// slope it loses, per geometry. Its one fitted constant is not calibrated yet, so every board and
+// geometry keeps the 256 measured on the RTX 5090, and so does a call with no device to read.
 constexpr std::int32_t kFusedTextQkNormRopeDefaultMaximumTokens = 256;
 
-std::int32_t fused_text_qk_norm_rope_maximum_tokens() {
+std::int32_t fused_text_qk_norm_rope_maximum_tokens(std::int32_t query_heads,
+                                                    std::int32_t key_heads) {
     try {
-        const auto& device = device_class();
-        const auto bound   = ops::rmsnorm_rope_text_fused_max_tokens(
-            device.sms, device.max_blocks_per_sm, device.max_threads_per_sm);
-        if (bound > 0) { return bound; }
-    } catch (const std::exception&) {
-        // no device to read
-    }
-    return kFusedTextQkNormRopeDefaultMaximumTokens;
+        return ops::rmsnorm_rope_text_fused_max_tokens(device_class(), query_heads, key_heads);
+    } catch (const std::exception&) { return kFusedTextQkNormRopeDefaultMaximumTokens; }
 }
 
 // The fused kernel fixes the RMSNorm epsilon (1e-6) and the RoPE frequencies (theta 1e7) in its
@@ -58,7 +53,8 @@ bool fused_text_qk_norm_rope(const Tensor& positions, const RopeConfig& rope,
                              const AttentionConfig& attention, float rms_norm_eps,
                              std::int32_t tokens) {
     return !rope.yarn() && positions.ne[1] == 1 &&
-           tokens <= fused_text_qk_norm_rope_maximum_tokens() &&
+           tokens <= fused_text_qk_norm_rope_maximum_tokens(attention.num_attention_heads,
+                                                            attention.num_key_value_heads) &&
            rope.rope_theta == kFusedTextRopeTheta && rms_norm_eps == kFusedTextRmsEpsilon &&
            attention.head_dim == 256 && rope.rotary_dim == 64 &&
            ops::rmsnorm_rope_text_heads(attention.num_attention_heads,

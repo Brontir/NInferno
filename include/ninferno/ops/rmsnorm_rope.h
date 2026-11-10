@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/device_class.h"
 #include "core/tensor.h"
 
 #include <cuda_runtime.h>
@@ -71,12 +72,18 @@ void rmsnorm_rope(const Tensor& positions, const Tensor& q_norm_weight, const Te
 // layers (0.8B/2B 8,2; 4B/9B 16,4; 27B 24,4; 35B 16,2; 122B/397B 32,2).
 [[nodiscard]] bool rmsnorm_rope_text_heads(std::int32_t query_heads, std::int32_t key_heads);
 
-// The widest text-form call (tokens) a dispatch should still fuse on a device with these per-SM
-// facts (DeviceClass::sms, max_blocks_per_sm, max_threads_per_sm): the fused grid of the widest
-// instantiated geometry within two waves of resident blocks, a power of two (the wave rule,
-// ops/common/sm_wave_rules.h grid_wave_bound_tokens). 0 where a fact is unknown. Above it the
-// three separate kernels are ahead. Both forms are the same arithmetic bit for bit.
-[[nodiscard]] std::int32_t rmsnorm_rope_text_fused_max_tokens(int sms, int max_blocks_per_sm,
-                                                              int max_threads_per_sm);
+// The widest text-form call (tokens) a dispatch should still fuse for one geometry on `device`:
+// the launches the fusion saves (three kernels become one: two) against the per-token slope it
+// loses to the three separate kernels, which each choose their own shape (the launch-amortisation
+// law, ops/common/sm_wave_rules.h launch_amortized_tokens). The launch is the generation's graph
+// node (core/cost_constants.h launch_node_seconds), the bytes a token's heads read and write at
+// the board's DRAM rate. One constant is not a fact: the fused kernel's per-token excess over the
+// separate ones, Fitted, not yet calibrated (the cross-generation A/B of #617 G sets it). Until it
+// is, and wherever the generation has no launch node, the answer is 256, the width measured on the
+// RTX 5090 (the fused form won through it and lost at 1024). Both forms are the same arithmetic
+// bit for bit.
+[[nodiscard]] std::int32_t rmsnorm_rope_text_fused_max_tokens(const DeviceClass& device,
+                                                              std::int32_t query_heads,
+                                                              std::int32_t key_heads);
 
 } // namespace ninferno::ops
