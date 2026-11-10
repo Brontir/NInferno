@@ -8,7 +8,7 @@ facts table (src/core/data/isa_facts.json), one row per architecture, provenance
     isa_probe.py show       [--table ...]
 
 `run` compiles tools/bench/isa_probe/isa_probe.cu for sm_<arch> into a temporary directory, runs it
-(about a minute, the GPU otherwise idle) and saves its output; `merge` copies that output into the
+(10 to 20 s, the GPU otherwise idle) and saves its output; `merge` copies that output into the
 committed inputs directory as isa_probe_<arch>.txt (replacing an older run of the same
 architecture) and regenerates the table from every file there; `regenerate` alone rebuilds the
 table from the inputs. Adding an architecture is one file plus a regenerate. A row records its
@@ -18,7 +18,9 @@ row. No fact is reasoned here: the table holds what the card said.
 
 import argparse
 import json
+import math
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -30,8 +32,10 @@ DEFAULT_INPUTS = os.path.join(ROOT, "src", "core", "data", "isa_probe")
 SCHEMA = 1
 # Every fact a run reports, in SM clocks unless the unit says otherwise (test_isa_facts pins it).
 FACTS = (
-    "resident_ctas_per_sm",
     "mma_cycles_per_sm", "mma_cycles_per_partition", "tensor_flops_per_sm_clock",
+    # The same tensor loop with one CTA of 4, 8, 16 warps on the SM (1, 2, 4 warps a scheduler
+    # when the SM spreads them evenly, which the probe does not see).
+    "mma_cycles_per_sm_w4", "mma_cycles_per_sm_w8", "mma_cycles_per_sm_w16",
     "mma_dependent_latency", "fp32_cycles_per_warp_instruction",
     "int32_cycles_per_warp_instruction", "l1_latency_w1", "l1_latency_w2", "l1_latency_w4",
     "l1_latency_w8", "l2_latency_w1", "l2_latency_w2", "l2_latency_w4", "l2_latency_w8",
@@ -40,8 +44,8 @@ FACTS = (
     # the chases ran at (so a clock that moved shows as such, not as a latency change).
     "l2_latency_ns_w1", "l2_latency_ns_w2", "l2_latency_ns_w4", "l2_latency_ns_w8",
     "dram_latency_ns_w1", "dram_latency_ns_w2", "dram_latency_ns_w4", "dram_latency_ns_w8",
-    # DRAM with the TLB warm (16 MB a warp: the lines untouched, the pages mapped), against the
-    # `dram` figures whose 256 MB a warp miss the TLB too.
+    # DRAM with every warp in a 512 KB range of its own (the lines untouched, the pages walked by
+    # the warm-up links), against the `dram` figures whose links fall anywhere in 2 GiB.
     "dram_tlbwarm_latency_w1", "dram_tlbwarm_latency_w2", "dram_tlbwarm_latency_w4",
     "dram_tlbwarm_latency_w8", "dram_tlbwarm_latency_ns_w1", "dram_tlbwarm_latency_ns_w2",
     "dram_tlbwarm_latency_ns_w4", "dram_tlbwarm_latency_ns_w8",
@@ -50,23 +54,77 @@ FACTS = (
     # conversion pairs per op.
     "lat_imad", "lat_iadd", "lat_lop3", "lat_prmt", "lat_shf", "lat_hfma2", "lat_ffma", "lat_shfl",
     "lat_cvt_i2f_f2i", "lat_cvt_f32_f16",
+    # The SM clock under the tensor loop, once it has settled (clock64 over %globaltimer).
+    "sm_clock_mhz_mma",
 )
-# Facts a row may lack: those a later probe added (the dependent ALU latencies, probe 11), so the
-# rows measured by earlier probes stay valid until their card is probed again.
-OPTIONAL_FACTS = frozenset(f for f in FACTS if f.startswith("lat_"))
-UNITS = {"tensor_flops_per_sm_clock": "flop", "resident_ctas_per_sm": "count",
-         "sm_clock_mhz_chase": "mhz"}
+_WARPS = (1, 2, 4, 8)
+# The DRAM chase with all 32 lanes of every warp on chains of their own: 32 x W lines in flight an
+# SM, the warp's link as long as its slowest line.
+FACTS += tuple(f"dram_lanes_latency{u}_w{w}" for u in ("", "_ns") for w in _WARPS)
+# The same chase on half the SMs: as many lines in flight on each of those SMs, half as many on
+# the chip, so the pair says whether a link waits on its SM's lines or on the chip's.
+FACTS += tuple(f"dram_lanes_half_latency{u}_w{w}" for u in ("", "_ns") for w in _WARPS)
+# Every level again beside one warp of FFMAs on each SM (`_held`): the card may clock an SM whose
+# only warp waits on memory differently from a working one, and these are the chases at the
+# working clock (sm_clock_mhz_chase_held against sm_clock_mhz_chase).
+_BEYOND_L1 = ("l2", "dram_tlbwarm", "dram", "dram_lanes", "dram_lanes_half")
+FACTS += tuple(f"{lv}_held_latency_w{w}" for lv in ("l1",) + _BEYOND_L1 for w in _WARPS)
+FACTS += tuple(f"{lv}_held_latency_ns_w{w}" for lv in _BEYOND_L1 for w in _WARPS)
+FACTS += ("sm_clock_mhz_chase_held",)
+
+
+def first_probe(name):
+    """The probe version that first printed a fact (0: every version a row may come from). A run
+    of probe N carries every fact of the versions up to N and none of a later one, so a row of an
+    earlier probe still parses and a run that lost a fact of its own version does not. An earlier
+    row is stale all the same: test_isa_facts fails while a row's probe is not the checked-in
+    one."""
+    if name.startswith("dram_lanes_half"):
+        return 16
+    if "_held" in name or name.startswith("dram_lanes") or name == "sm_clock_mhz_mma":
+        return 15
+    if name.startswith("mma_cycles_per_sm_w"):
+        return 14
+    if name.startswith("lat_"):
+        return 11
+    return 0
+
+
+# Facts earlier probes printed that are no facts of the card: read past, never in a row.
+# resident_ctas_per_sm (probes up to 13) was the launch's own CTA count per SM.
+LEGACY_FACTS = frozenset({"resident_ctas_per_sm"})
+UNITS = {"tensor_flops_per_sm_clock": "flop"}
 
 
 def unit_of(name):
-    """The unit a fact is reported in: SM clocks unless listed, wall ns for the `_ns_` facts."""
+    """The unit a fact is reported in: SM clocks unless listed, wall ns for the `_ns_` facts, MHz
+    for the SM clocks."""
+    if name.startswith("sm_clock_mhz"):
+        return "mhz"
     return UNITS.get(name, "ns" if "_ns_" in name else "clk")
+
+
 HEADER = ("probe", "card", "cc", "sms", "l2_bytes", "driver", "runtime", "nvcc", "shape")
+# Header fields that are positive integers.
+HEADER_COUNTS = ("cc", "sms", "l2_bytes", "driver", "runtime")
+PROBE_VALUE = re.compile(r"isa_probe (\d+)")
+PROBE_LINE = re.compile(r'printf\("probe (isa_probe \d+)\\n"\)')
+
+
+def checked_in_probe():
+    """The `probe` header value the checked-in isa_probe.cu prints (`isa_probe <version>`)."""
+    with open(os.path.join(HERE, "isa_probe.cu")) as f:
+        m = PROBE_LINE.search(f.read())
+    if not m:
+        raise ValueError("isa_probe.cu prints no probe version")
+    return m.group(1)
 
 
 def parse_run(text):
-    """The header fields and the facts of one isa_probe output; ValueError when a line is odd or a
-    fact is missing."""
+    """The header fields and the facts of one isa_probe output; ValueError when a line is odd, a
+    fact of the run's probe version is missing, a fact is unknown, of a later version, given
+    twice, not a positive finite number or in another unit than its own, or a header field is
+    missing or no count."""
     head, facts, ended, failures, checked = {}, {}, False, [], False
     for line in text.splitlines():
         parts = line.split()
@@ -75,7 +133,22 @@ def parse_run(text):
         if parts[0] == "fact":
             if len(parts) != 4:
                 raise ValueError(f"odd fact line: {line!r}")
-            facts[parts[1]] = {"value": float(parts[2]), "unit": parts[3]}
+            name = parts[1]
+            if name in LEGACY_FACTS:
+                continue
+            if name not in FACTS:
+                raise ValueError(f"unknown fact: {line!r}")
+            if name in facts:
+                raise ValueError(f"fact given twice: {name}")
+            try:
+                value = float(parts[2])
+            except ValueError:
+                raise ValueError(f"odd fact line: {line!r}") from None
+            if not (math.isfinite(value) and value > 0.0):
+                raise ValueError(f"{name} is not a positive finite number: {line!r}")
+            if parts[3] != unit_of(name):
+                raise ValueError(f"{name} is in {unit_of(name)}, not {parts[3]}: {line!r}")
+            facts[name] = {"value": value, "unit": parts[3]}
         elif parts[0] == "end":
             ended = True
         elif parts[0] == "selfcheck":
@@ -86,17 +159,33 @@ def parse_run(text):
             # Information the probe adds (the SM clock's range over the chases): kept, not a fact.
             head.setdefault("notes", []).append(" ".join(parts[1:]))
         elif parts[0] in HEADER:
+            if parts[0] in head:
+                raise ValueError(f"{parts[0]} line given twice")
             head[parts[0]] = " ".join(parts[1:])
         else:
             raise ValueError(f"unknown line: {line!r}")
-    missing = [f for f in FACTS if f not in facts and f not in OPTIONAL_FACTS]
+    # The version decides which facts the run owes; a run without its probe line owes them all.
+    version = PROBE_VALUE.fullmatch(head.get("probe", ""))
+    owed = int(version.group(1)) if version else max(first_probe(f) for f in FACTS)
+    missing = [f for f in FACTS if f not in facts and first_probe(f) <= owed]
     if missing or not ended or not checked:
         raise ValueError(f"incomplete run: missing {missing}, ended={ended}, selfcheck={checked}")
     if failures:
         raise ValueError("the probe's self-check failed: " + "; ".join(failures))
-    for k in ("card", "cc", "nvcc", "probe", "shape"):
-        if k not in head:
+    for k in HEADER:
+        if not head.get(k):
             raise ValueError(f"no {k} line")
+    if not version:
+        raise ValueError(f"odd probe line: {head['probe']!r}")
+    early = [f for f in facts if first_probe(f) > owed]
+    if early:
+        raise ValueError(f"facts of a later probe than {head['probe']}: {early}")
+    for k in HEADER_COUNTS:
+        if not (head[k].isdigit() and int(head[k]) > 0):
+            raise ValueError(f"{k} is no positive count: {head[k]!r}")
+    shape = head["shape"].split()
+    if len(shape) != 2 or not shape[1].isdigit():
+        raise ValueError(f"odd shape line: {head['shape']!r}")
     return head, facts
 
 
@@ -120,12 +209,12 @@ def row_of(head, facts, source):
         "source": source,
         "card": head["card"],
         "cc": int(head["cc"]),
-        "sms": int(head.get("sms", 0)),
-        "l2_bytes": int(head.get("l2_bytes", 0)),
+        "sms": int(head["sms"]),
+        "l2_bytes": int(head["l2_bytes"]),
         "mma_shape": shape,
         "mma_flops": flops,
-        "tool": {"probe": head["probe"], "nvcc": head["nvcc"], "driver": head.get("driver", ""),
-                 "runtime": head.get("runtime", "")},
+        "tool": {"probe": head["probe"], "nvcc": head["nvcc"], "driver": head["driver"],
+                 "runtime": head["runtime"]},
         "notes": head.get("notes", []),
         "facts": {name: facts[name] for name in FACTS if name in facts},
     }
@@ -135,12 +224,21 @@ NOTE = ("ISA facts per architecture, regenerated by `tools/bench/isa_probe/isa_p
         "regenerate` from the committed probe outputs in src/core/data/isa_probe/ (one "
         "isa_probe_<arch>.txt per architecture, written by `isa_probe.py run` on one card of it; "
         "never edited by hand). In SM clocks unless the unit says otherwise: tensor pipe cycles "
-        "per MMA at the SM and per partition, the dependent MMA latency, INT32 / FP32 cycles per "
-        "warp instruction, dependent L1 / L2 / DRAM load latencies alone and under 2, 4, 8 chasing "
-        "warps per SM (the L2 and DRAM ones in wall ns too, with the SM clock of the chase; DRAM "
-        "with the TLB warm and past it), shared-memory latency. Every row names its source file, "
-        "the card, the probe version, nvcc, driver and runtime; provenance is Measured for all. "
-        "tests/test_isa_facts.py pins the schema and that the table equals its regeneration.")
+        "per MMA at the SM and per partition (and with one CTA of 4, 8, 16 warps on the SM), the "
+        "dependent MMA latency, INT32 / FP32 cycles per warp instruction, the dependent latencies "
+        "of the decode chains' ALU ops, dependent L1 / L2 / DRAM load latencies alone and under 2, "
+        "4, 8 chasing warps per SM (the L2 and DRAM ones in wall ns too, with the SM clock of the "
+        "chase; DRAM in a small range per warp, over the whole buffer, and with all 32 lanes of a "
+        "warp chasing, on every SM and on half of them), shared-memory latency. The load "
+        "latencies are given twice: on a chip that "
+        "runs nothing else, and beside one warp of FFMAs on every SM (`_held`), where the SM "
+        "clock is the working one (sm_clock_mhz_chase_held; sm_clock_mhz_mma under the tensor "
+        "loop). "
+        "Every row names its source file, the card, the probe version, nvcc, driver and runtime; "
+        "provenance is Measured for all. A row is what its own probe version measured: up to probe "
+        "13 a link of the L1 / L2 / DRAM chains carried the chain's index-to-address ops beside "
+        "the load. tests/test_isa_facts.py pins the schema, that the table equals its "
+        "regeneration, and that every row comes from the checked-in probe.")
 
 
 def build_table(inputs_dir):
@@ -219,15 +317,35 @@ def cmd_regenerate(a):
 def cmd_merge(a):
     """One file in, one regenerate: the run's output is copied into the inputs directory under its
     architecture's name (replacing an older run of the same architecture) and the table is
-    regenerated from all of them."""
+    regenerated from all of them. A merge the table cannot be built from (another input is
+    malformed, or gives the same architecture under another name) changes nothing: the
+    destination is put back as it was."""
     # Read whole before the destination opens: the input may be the destination itself.
     with open(a.input) as f:
         text = f.read()
-    head, facts = parse_run(text)
+    try:
+        head, _ = parse_run(text)
+    except ValueError as e:
+        print(f"isa_probe: {a.input}: {e}; nothing merged", file=sys.stderr)
+        return 1
     key = arch_key(int(head["cc"]), head["shape"])
     dest = os.path.join(a.inputs, f"isa_probe_{key}.txt")
+    before = None
+    if os.path.exists(dest):
+        with open(dest, "rb") as f:
+            before = f.read()
     with open(dest, "w", newline="\n") as out:
         out.write(text)
+    try:
+        build_table(a.inputs)
+    except ValueError as e:
+        if before is None:
+            os.remove(dest)
+        else:
+            with open(dest, "wb") as out:
+                out.write(before)
+        print(f"isa_probe: {e}; nothing merged ({dest} is as it was)", file=sys.stderr)
+        return 1
     print(f"isa_probe: {a.input} -> {dest}")
     return cmd_regenerate(a)
 
