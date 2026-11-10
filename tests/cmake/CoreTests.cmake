@@ -63,6 +63,13 @@ ninferno_add_test(ninferno_route_cost_constants_test NEEDS_SOURCE_DIR
 # Also: every Fitted constant carries a Holdout record (core/holdout.h).
 set_tests_properties(ninferno_route_cost_constants_test PROPERTIES LABELS host)
 
+# The holdout records of the other fitted constants (core/fitted_holdouts.h): the choice's speed
+# model, the generation row's scales, the speculation launch time and routed share, the SM-wave
+# rule. An Unset record, an unrecorded constant of choice_constants.h or a wrong count fails. No GPU.
+ninferno_add_test(ninferno_fitted_holdouts_test NEEDS_SOURCE_DIR
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_fitted_holdouts.cpp")
+set_tests_properties(ninferno_fitted_holdouts_test PROPERTIES LABELS host)
+
 ninferno_add_test(ninferno_decode_graph_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_decode_graph.cpp"
   LIBRARIES ninferno_core)
 
