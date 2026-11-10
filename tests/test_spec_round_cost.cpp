@@ -328,6 +328,25 @@ int main() {
         // without them the scale is the round cost's own ratio.
         auto lab = pair_of(kQ9, "ad104:60sm");
         for (auto& m : lab.tune.measurements) { m.graph_kernels = m.graph_rounds = 0; }
+        // A measured configuration no choice names and too slow to be one (the shallowest MTP row,
+        // which the round cost prices, with the other draft head, at ten times its decode time):
+        // a reselection can still name it, so it is priced too.
+        {
+            const sp::Measurement* shallowest = nullptr;
+            for (const auto& m : lab.tune.measurements) {
+                if (m.config.mode == sp::Mode::Mtp &&
+                    (!shallowest || m.config.k < shallowest->config.k)) {
+                    shallowest = &m;
+                }
+            }
+            expect(shallowest != nullptr, "the pair measured MTP");
+            if (shallowest) {
+                sp::Measurement slow      = *shallowest;
+                slow.config.proposal_head = !slow.config.proposal_head;
+                slow.seconds *= 10;
+                lab.tune.measurements.push_back(slow);
+            }
+        }
         auto second         = lab; // the same measurement on a second Ada card
         second.tune.key.gpu = "ad102:128sm";
         const auto home     = sp::profile_for_target({&lab, &second}, "sm89");
@@ -367,6 +386,27 @@ int main() {
             }
         }
         expect(compared > 0, "the joint scale was compared with load_gain");
+        // Not only the choices: every measured configuration is priced (a reselection, the plan's
+        // per-mode drafter axis or an engine that runs only the served choices, picks among them).
+        std::set<std::string> by_choice; // what pricing the choices' depths alone would cover
+        for (const sp::Choice* c : {&home.overall, &home.thinking, &home.non_thinking}) {
+            for (std::int32_t k = 1; c->config.enabled() && k <= c->config.k; ++k) {
+                sp::SpecConfig at = c->config;
+                at.k              = k;
+                by_choice.insert(at.label());
+            }
+        }
+        int unchosen = 0;
+        for (const auto& m : home.measurements) {
+            if (!m.config.enabled()) { continue; }
+            if (!by_choice.contains(m.config.label()) && direct_at(m.config, 2)) { ++unchosen; }
+            const auto found = home.joint_scale.find(m.config.label());
+            expect((found != home.joint_scale.end() && found->second.contains(2)) ==
+                       direct_at(m.config, 2).has_value(),
+                   "a measured configuration is priced where the round cost prices it: " +
+                       m.config.label());
+        }
+        expect(unchosen > 0, "the pair has a measured configuration that no choice names");
         // One card of the generation is no home (the portable choice): the joint verify is
         // priced only for a profile at home.
         expect(sp::profile_for_target({&lab}, "sm89").joint_scale.empty(),

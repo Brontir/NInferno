@@ -249,24 +249,36 @@ void price_by_facts(Profile& p, const RoundCostEstimate& estimate) {
 
 std::map<std::string, std::vector<RoundLaunches>> round_launches(const Profile& tune);
 
-// The price of the requests' joint verify (#303), for a profile at home: for each choice's
-// configuration and every depth up to it, R_1 / R_C at C = 2..kPricedVerifyRows streams where the
+// The price of the requests' joint verify (#303), for a profile at home: for every configuration a
+// choice can name and every depth up to it, R_1 / R_C at C = 2..kPricedVerifyRows streams where the
 // round cost prices it (load_gain at a gain of 1), on the lab board's rates and the lab artifact's
 // draft head (the one the load table was measured on). Nothing without the pair's facts or the
-// board's rates. The load table's depths are among these: a bound runs that depth. `pair` is the
-// record the profile was selected on, or the asking card's own record (generation_median).
+// board's rates. The configurations are the three choices, the served and portable ones, the fit
+// fallback and every measured one: a later reselection (the plan's per-mode drafter axis, an
+// engine that runs only the served choices) picks among these, and a choice the table does not
+// price keeps the one-request gain as a ceiling at concurrency. The load table's depths are among
+// these: a bound runs that depth. `pair` is the record the profile was selected on, or the asking
+// card's own record (generation_median).
 void price_joint(Profile& p, const MeasuredPair& pair) {
     p.joint_scale.clear();
     if (!pair.round_facts) { return; }
     const CardRates lab = card_rates_of_board(pair.lab_board);
     if (!lab.known()) { return; }
     std::vector<SpecConfig> configs;
-    for (const Choice* c : {&p.overall, &p.thinking, &p.non_thinking}) {
-        if (c->config.enabled()) { configs.push_back(c->config); }
+    std::set<std::string> seen;
+    const auto add = [&](const SpecConfig& config) {
+        if (config.enabled() && seen.insert(config.label()).second) { configs.push_back(config); }
+    };
+    for (const Choice* c : {&p.overall, &p.thinking, &p.non_thinking}) { add(c->config); }
+    for (const auto* served : {&p.served, &p.portable}) {
+        if (!*served) { continue; }
+        for (const Choice* c :
+             {&(*served)->overall, &(*served)->thinking, &(*served)->non_thinking}) {
+            add(c->config);
+        }
     }
-    if (p.fit_fallback && p.fit_fallback->config.enabled()) {
-        configs.push_back(p.fit_fallback->config);
-    }
+    if (p.fit_fallback) { add(p.fit_fallback->config); }
+    for (const Measurement& m : p.measurements) { add(m.config); }
     const auto launches = round_launches(pair.tune);
     for (SpecConfig config : configs) {
         const ProposalRows rows = config.proposal_head ? pair.tune.proposal_rows : ProposalRows{};
