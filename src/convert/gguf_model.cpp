@@ -138,8 +138,7 @@ public:
         // K-quant, i-quant and ternary superblocks (256 values along K) and the blocks of Q4_0,
         // Q4_1, Q5_0, Q5_1, IQ4_NL (32 values), Q1_0 (128) and Q2_0 (64) are the engine's ggml_*
         // words unchanged.
-        std::optional<QType> kept = ninferno::ggml_format(type);
-        if (kept && !ninferno::is_ggml_block(*kept)) kept.reset();
+        const std::optional<QType> kept = ninferno::kept_ggml_block(type);
         if (kept) {
             const auto values = ggml_block_values(*kept);
             if (same && s_.transform == Transform::None && s_.cols % values == 0 &&

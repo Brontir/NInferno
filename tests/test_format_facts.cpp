@@ -606,13 +606,9 @@ int main() {
     // The route spellings: the new loop over the rows (route_table.cpp parse_qtype) against the old
     // chain, for every spelling in the table and for junk; a format with no route spelling (FP32,
     // INT32) and the artifact spellings that are not route spellings must not parse.
-    const auto parse_qtype_new = [](const std::string& str) -> std::optional<QType> {
-        if (str.empty()) return std::nullopt;
-        for (const auto& row : ninferno::kFormatFacts) {
-            if (row.route == str) return row.q;
-        }
-        return std::nullopt;
-    };
+    // route_table.cpp's parse_qtype is find_route; the test calls the shipped lookup.
+    const auto parse_qtype_new = [](const std::string& str) { return ninferno::find_route(str); };
+    static_assert(!ninferno::find_route("").has_value());
     for (const auto& row : ninferno::kFormatFacts) {
         if (row.route.empty()) {
             agree(parse_qtype_new(std::string(row.name)),
@@ -636,9 +632,8 @@ int main() {
     // gguf_model.cpp kept-block mapping: the old 22-case switch against the table lookup
     // (ggml_format filtered by is_ggml_block), over ids past the last.
     for (std::uint32_t id = 0; id < 64; ++id) {
-        std::optional<QType> kept = ninferno::ggml_format(id);
-        if (kept && !ninferno::is_ggml_block(*kept)) kept.reset();
-        agree(legacy::kept_block(id), kept, "kept block", static_cast<int>(id));
+        agree(legacy::kept_block(id), ninferno::kept_ggml_block(id), "kept block",
+              static_cast<int>(id));
     }
 
     if (failures != 0) {

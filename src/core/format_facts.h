@@ -531,9 +531,24 @@ constexpr std::optional<QType> ggml_format(std::uint32_t ggml_type) noexcept {
     return std::nullopt;
 }
 
+// The format a route-table spelling names; a format without one (FP32, INT32) never parses.
+constexpr std::optional<QType> find_route(std::string_view spelling) noexcept {
+    if (spelling.empty()) return std::nullopt;
+    for (const FormatFacts& f : kFormatFacts) {
+        if (f.route == spelling) return f.q;
+    }
+    return std::nullopt;
+}
+
 // ggml's block formats the engine runs as published: the K-quants, the i-quants, the 32-value
 // formats, the ternary TQ1_0 / TQ2_0 and Q1_0 / Q2_0.
 constexpr bool is_ggml_block(QType q) noexcept { return format_facts(q).block_values != 0; }
+
+// The block format the converter keeps a GGUF type as, word for word.
+constexpr std::optional<QType> kept_ggml_block(std::uint32_t ggml_type) noexcept {
+    const std::optional<QType> q = ggml_format(ggml_type);
+    return q && is_ggml_block(*q) ? q : std::nullopt;
+}
 
 // Values along K per block of a ggml block format (256 for GgmlBlocks' Q4_K / Q5_K).
 constexpr std::uint32_t ggml_block_values(QType q) noexcept { return format_facts(q).block_values; }

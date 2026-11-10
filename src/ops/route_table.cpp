@@ -87,13 +87,7 @@ struct Table {
 
 // The format a route spelling names (core/format_facts.h); a format without a route spelling
 // (FP32, INT32) never parses, whatever the string.
-std::optional<QType> parse_qtype(const std::string& s) {
-    if (s.empty()) return std::nullopt;
-    for (const FormatFacts& f : kFormatFacts) {
-        if (f.route == s) return f.q;
-    }
-    return std::nullopt;
-}
+std::optional<QType> parse_qtype(const std::string& s) { return find_route(s); }
 
 std::optional<RouteCompute> parse_compute(const std::string& s) {
     if (s == "a16") return RouteCompute::A16;
