@@ -97,6 +97,13 @@ ninferno_add_op_test(ninferno_launch_overlap_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_launch_overlap.cpp"
   LIBRARIES ninferno_linear_test_support)
 
+# Scratch read lifetimes of generic launches (#309): which launch reads or writes which workspace
+# region until when, and that no launch starting under its predecessor takes a region it still
+# uses (host only).
+ninferno_add_op_test(ninferno_scratch_lifetime_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_scratch_lifetime.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
 # A route's tile and logical traffic (#298): the schedules' declared geometry (host only).
 ninferno_add_op_test(ninferno_route_traffic_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_traffic.cpp"
@@ -137,7 +144,60 @@ ninferno_add_op_test(ninferno_selector_golden_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_selector_golden.cpp"
   LIBRARIES ninferno_linear_test_support)
 target_compile_definitions(ninferno_selector_golden_test PRIVATE
-  NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden"
+  NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden")
+
+# The kernel-facts snapshots the register-MMA price reads (ops/generic/kernel_facts.h, #612).
+# Three checks, from the data inwards:
+# - ninferno_kernel_facts_test: this build's register-MMA kernels, read off the linked binary with
+#   cuobjdump (tools/kernel_facts/kernel_facts.py), equal the committed snapshot of its
+#   architecture; no GPU. Skips (77) where this nvcc is not the snapshot's (ptxas then allocates
+#   other registers by construction; the price reads the snapshot either way). A mismatch names
+#   the kernels and the command that regenerates the file.
+# - ninferno_kernel_facts_lookup_test: every snapshot parses, the release engine of each lab
+#   capability is found, and every facts-priced golden board's price reads facts; no GPU.
+# - ninferno_kernel_facts_live_test: on a GPU that runs this build's SASS, the running kernels'
+#   attributes and the driver's occupancy equal the snapshot and the pure occupancy.
+get_filename_component(ninferno_cuda_bin "${CMAKE_CUDA_COMPILER}" DIRECTORY)
+if(NINFERNO_SHARED_OP_TESTS)
+  set(ninferno_kernel_facts_binary $<TARGET_FILE:ninferno_ops_shared>)
+else()
+  set(ninferno_kernel_facts_binary $<TARGET_FILE:ninferno_selector_golden_test>)
+endif()
+set(ninferno_kernel_facts_snapshot
+  "${PROJECT_SOURCE_DIR}/src/ops/generic/data/kernel_facts/sm_${NINFERNO_BUILD_ARCH_LABEL}.txt")
+string(TOUPPER "${CMAKE_BUILD_TYPE}" ninferno_build_type_upper)
+if(NINFERNO_WITH_NVFP4)
+  set(ninferno_kernel_facts_rdc OFF)
+else()
+  set(ninferno_kernel_facts_rdc ON)
+endif()
+string(STRIP
+  "${CMAKE_CUDA_FLAGS} ${CMAKE_CUDA_FLAGS_${ninferno_build_type_upper}} rdc=${ninferno_kernel_facts_rdc} lineinfo=${NINFERNO_CUDA_LINEINFO} ptx=${NINFERNO_CUDA_EMBED_PTX}"
+  ninferno_kernel_facts_flags)
+add_test(NAME ninferno_kernel_facts_test
+  COMMAND ${Python3_EXECUTABLE} -B ${PROJECT_SOURCE_DIR}/tools/kernel_facts/kernel_facts.py check
+    --binary ${ninferno_kernel_facts_binary} --expected ${ninferno_kernel_facts_snapshot}
+    --nvcc ${CMAKE_CUDA_COMPILER_VERSION} --cuda-bin ${ninferno_cuda_bin})
+set_tests_properties(ninferno_kernel_facts_test PROPERTIES SKIP_RETURN_CODE 77)
+# `ninja ninferno_kernel_facts_update`: the snapshot of this build's architecture rewritten from
+# its binary into the source tree (then regenerate the selector goldens that move with it).
+add_custom_target(ninferno_kernel_facts_update
+  COMMAND ${Python3_EXECUTABLE} -B ${PROJECT_SOURCE_DIR}/tools/kernel_facts/kernel_facts.py extract
+    --binary ${ninferno_kernel_facts_binary} --arch ${NINFERNO_BUILD_ARCH_LABEL}
+    --nvcc ${CMAKE_CUDA_COMPILER_VERSION} --cuda-bin ${ninferno_cuda_bin}
+    --flags "${ninferno_kernel_facts_flags}" --source-root ${PROJECT_SOURCE_DIR}
+    -o ${ninferno_kernel_facts_snapshot}
+  DEPENDS ninferno_selector_golden_test
+  VERBATIM)
+
+ninferno_add_op_test(ninferno_kernel_facts_lookup_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_kernel_facts.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
+ninferno_add_op_test(ninferno_kernel_facts_live_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_kernel_facts_live.cpp"
+  LIBRARIES ninferno_linear_test_support)
+target_compile_definitions(ninferno_kernel_facts_live_test PRIVATE
   NINFERNO_NVCC_VERSION="${CMAKE_CUDA_COMPILER_VERSION}")
 
 # The generic path's dense tuner: tuned at the first eager call, within the activation class, R8

@@ -150,16 +150,17 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
 
 namespace {
 
-// What the compiled register-MMA kernel of a schedule keeps per thread, from the build itself
-// (rmma_resources: the launch described for this call's rows and tokens, never run): its registers
-// decide how many CTAs one SM's register file holds, its local memory is the spill. It rests on
-// the build's kernels and on the host device's: the answer is the running GPU's. Nothing is cached
-// here, and the selector keeps no memo of its own (select_route runs on every launch, and at 17
-// tokens or more outside the prefill profile prices every schedule): what is cached is the kernel
-// attribute read, once per kernel instance and device (launch_rmma_kernel, bounded by the template
-// instances), so a priced call is a describe-mode dispatch, not a driver query per schedule. A
-// process without a device, or a schedule the build does not hold for the weight, has none and is
-// priced by threads alone.
+// What the compiled register-MMA kernel of a schedule keeps per thread, from the committed
+// kernel-facts snapshot of the SASS the device runs (rmma_resources: the launch described for
+// this call's rows and tokens, never run; ops/generic/kernel_facts.h, #612): its registers decide
+// how many CTAs one SM's register file holds, its stack bytes are the spill. The answer is the
+// release engine's, the same on every machine whatever its nvcc or driver (#556). Nothing is
+// cached here, and the selector keeps no memo of its own (select_route runs on every launch, and
+// at 17 tokens or more outside the prefill profile prices every schedule): what is cached is the
+// snapshot read, once per kernel instance and device (launch_rmma_kernel, bounded by the template
+// instances), so a priced call is a describe-mode dispatch, not a table search per schedule. A
+// device that runs PTX the driver compiled, a schedule the build does not hold for the weight, or
+// an instance the snapshot lacks has none and is priced by threads alone.
 struct RmmaKept {
     int registers;
     double local_bytes;
