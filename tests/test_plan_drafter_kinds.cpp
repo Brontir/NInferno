@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -32,6 +33,14 @@ void check(bool ok, const std::string& what) {
 
 bool drafts_with(const spec::Profile& profile, spec::Mode mode) {
     return spec::drafting_modes(profile).contains(mode);
+}
+
+// The drafter axis's MTP option; nullopt when it offers none.
+std::optional<pr::choice::DrafterOption> mtp_option_of(const pr::DrafterAxis& axis) {
+    for (const auto& o : axis.options) {
+        if (o.label.rfind("mtp:", 0) == 0) { return o; }
+    }
+    return std::nullopt;
 }
 
 void test_every_kind_carried() {
@@ -101,6 +110,53 @@ void test_every_kind_carried() {
                 "the scale of each streams count is its depth in force's: 1 at two, k from three");
         }
     }
+    // A default the Engine cannot run: here it runs MTP one draft shallower than the pair's
+    // choice, so the profile's served choice replaces it (Profile::served). The option is what
+    // runs: its gain, its load bound's depth and gain and its joint price are the served
+    // configuration's, never the rejected default's; a served choice published without its
+    // speeds is not measured (and not priced), whatever the rejected default measured.
+    {
+        pr::SpeculationSubject restricted     = subject;
+        spec::Profile& profile                = restricted.resolved->profile;
+        const spec::SpecConfig rejected       = spec::pick(profile, true).config;
+        restricted.support.mtp_depth          = rejected.k - 1;
+        const pr::SpeculationSubject mtp_only = pr::subject_of_mode(restricted, spec::Mode::Mtp);
+        const spec::Choice served =
+            spec::pick(pr::served_choices(mtp_only.resolved->profile), true);
+        check(served.config.mode == spec::Mode::Mtp && served.config.k >= 1 &&
+                  served.config.k < rejected.k && served.tok_s > 0 && served.plain_tok_s > 0,
+              "the Engine's MTP window below the pair's choice serves a measured shallower one (" +
+                  served.config.label() + " for " + rejected.label() + ")");
+        profile.load = {spec::LoadBound{.lanes = 2, .depth = rejected.k}};
+        profile.joint_scale.clear();
+        profile.joint_scale[rejected.label()]      = {{2, 0.3}};
+        profile.joint_scale[served.config.label()] = {{2, 0.6}};
+        const auto option = mtp_option_of(pr::drafter_axis(restricted, pr::SpeculationAsk{}));
+        check(option && option->label == served.config.label(),
+              "the option names the served configuration");
+        if (option) {
+            check(option->measured && option->speedup == std::max(1.0, served.speedup()),
+                  "the option's gain is the served configuration's (" +
+                      std::to_string(option->speedup) + " for " + std::to_string(served.speedup()) +
+                      ")");
+            check(option->load.size() == 1 && option->load[0].streams == 2 &&
+                      option->load[0].depth == static_cast<std::uint32_t>(served.config.k) &&
+                      !option->load[0].bounded && option->load[0].speedup == option->speedup,
+                  "a bound at the rejected default's depth runs the served depth, at its gain");
+            check(option->joint.size() == 1 && option->joint[0].streams == 2 &&
+                      option->joint[0].scale == 0.6,
+                  "the joint price is the served configuration's, not the rejected default's");
+        }
+        // Published without measurements: the served choice carries no speeds.
+        spec::Choice unmeasured = served;
+        unmeasured.tok_s = unmeasured.plain_tok_s = 0;
+        profile.measurements.clear();
+        profile.served       = spec::ServedChoices{unmeasured, unmeasured, unmeasured};
+        const auto published = mtp_option_of(pr::drafter_axis(restricted, pr::SpeculationAsk{}));
+        check(published && published->label == served.config.label() && !published->measured &&
+                  published->speedup == 1.0 && published->joint.empty(),
+              "a served choice without speeds: not measured, not priced, no borrowed gain");
+    }
     const pr::SpeculationSubject chosen = pr::subject_of_mode(subject, spec::Mode::DFlash2);
     check(chosen.resolved && drafts_with(chosen.resolved->profile, spec::Mode::DFlash2) &&
               chosen.resolved->source.find("sibling") == std::string::npos,
@@ -118,13 +174,14 @@ void test_gain_note_names_where_the_price_is_held_from() {
         [](std::uint32_t streams,
            std::vector<pr::choice::DrafterOption::JointScale> joint = {{.streams = 2,
                                                                         .scale   = 0.45}},
-           std::vector<pr::choice::DrafterOption::LoadGain> load    = {}) {
+           std::vector<pr::choice::DrafterOption::LoadGain> load = {}, bool measured = true) {
             pr::ServedChoice served;
             pr::choice::DrafterOption option;
-            option.label   = "mtp:3";
-            option.speedup = 2.0;
-            option.joint   = std::move(joint);
-            option.load    = std::move(load);
+            option.label    = "mtp:3";
+            option.speedup  = 2.0;
+            option.measured = measured;
+            option.joint    = std::move(joint);
+            option.load     = std::move(load);
             served.drafter_options.push_back(option);
             served.task.concurrency = streams;
             pr::choice::Scored scored;
@@ -140,14 +197,14 @@ void test_gain_note_names_where_the_price_is_held_from() {
                   std::string::npos,
           "priced at exactly the streams: the priced note");
     const auto held = note_at(3);
-    check(held["joint_verify_scale"] == 0.45 && held["joint_priced_at_streams"] == 2 &&
+    check(held["joint_verify_scale"] == 0.45 && held.value("joint_priced_at_streams", 0) == 2 &&
               held["note"].get<std::string>().find("held from the price at 2 streams") !=
                   std::string::npos,
           "priced only at fewer streams: the note says it is held from that count");
     // Priced at 2 (0.5) and at 4 (0.9): the gain at 4 is held to 2's lower price, and the note
     // names 2, not the priced count 4.
     const auto least = note_at(4, {{.streams = 2, .scale = 0.5}, {.streams = 4, .scale = 0.9}});
-    check(least["joint_priced_at_streams"] == 2 &&
+    check(least.value("joint_priced_at_streams", 0) == 2 &&
               least["note"].get<std::string>().find("held from the price at 2 streams") !=
                   std::string::npos,
           "a count priced above a smaller count's price: the note names the smaller count");
@@ -170,6 +227,60 @@ void test_gain_note_names_where_the_price_is_held_from() {
               !only_placeholder.contains("joint_priced_at_streams") &&
               only_placeholder["note"].get<std::string>().find("a ceiling") != std::string::npos,
           "only a placeholder below the streams: a ceiling, no joint_verify_scale");
+    // A price at the placeholder bound's own count: the estimate counts none there (the drafter
+    // is not counted), and the JSON claims none, at 2 and at 3 streams (the 2 bound holds to 3).
+    const std::vector<pr::choice::DrafterOption::LoadGain> placeholder = {
+        {.streams = 2, .speedup = 1.0, .depth = 2, .bounded = true, .measured = false}};
+    for (const std::uint32_t streams : {2U, 3U}) {
+        const auto at = note_at(
+            streams, {{.streams = 2, .scale = 0.9}, {.streams = 3, .scale = 0.8}}, placeholder);
+        check(at["at_concurrency"] == 1.0 && !at.contains("joint_verify_scale") &&
+                  !at.contains("joint_priced_at_streams") &&
+                  at["note"].get<std::string>().find("a ceiling") != std::string::npos,
+              "a price at an unmeasured bound's own count: no price claimed at " +
+                  std::to_string(streams) + " streams");
+    }
+    // An option nobody measured is not priced: the gain stays the ceiling at its own counts.
+    for (const std::uint32_t streams : {2U, 3U}) {
+        const auto at = note_at(streams, {{.streams = 2, .scale = 0.45}}, {}, false);
+        check(at["at_concurrency"] == 2.0 && !at.contains("joint_verify_scale") &&
+                  at["note"].get<std::string>().find("a ceiling") != std::string::npos,
+              "an unmeasured option: no price claimed at " + std::to_string(streams) + " streams");
+    }
+    // The scale reported is the supplying count's own: bounds 2 (gain 1.5, depth 2) and 4 (gain
+    // 1.2, depth 1), priced at 2 only: at 4 streams the gain is held from 2's 0.5 (0.75), not the
+    // 0.625 that gain over the bound's own one-request gain would give.
+    const auto held_scale = note_at(4, {{.streams = 2, .scale = 0.5}},
+                                    {{.streams = 2, .speedup = 1.5, .depth = 2, .bounded = true},
+                                     {.streams = 4, .speedup = 1.2, .depth = 1, .bounded = true}});
+    check(held_scale["at_concurrency"] == 0.75 && held_scale["joint_verify_scale"] == 0.5 &&
+              held_scale.value("joint_priced_at_streams", 0) == 2,
+          "the scale of the count the gain is held from");
+    // A scale above 1 is clamped: it is no price, and the JSON does not say it is one.
+    const auto over = note_at(2, {{.streams = 2, .scale = 1.05}});
+    check(over["at_concurrency"] == 2.0 && !over.contains("joint_verify_scale") &&
+              over["note"].get<std::string>().find("a ceiling") != std::string::npos,
+          "a scale above 1 is not reported as a price");
+    // Priced at 2 (0.8) and at 3 (0.9): the gain at 3 is held from 2, and the note says this
+    // count is priced, no lower, not that it is not priced. A tie (0.8 at both) is held from 2
+    // alike: "no lower" is true of both, "higher" would be false of the tie.
+    for (const double at_three : {0.9, 0.8}) {
+        const auto held =
+            note_at(3, {{.streams = 2, .scale = 0.8}, {.streams = 3, .scale = at_three}});
+        check(held.value("joint_priced_at_streams", 0) == 2 && held["joint_verify_scale"] == 0.8 &&
+                  held["note"].get<std::string>().find("held from the price at 2 streams") !=
+                      std::string::npos &&
+                  held["note"].get<std::string>().find("priced no lower") != std::string::npos &&
+                  held["note"].get<std::string>().find("not priced") == std::string::npos,
+              at_three > 0.8
+                  ? "a count priced above the held price: the note says priced no lower"
+                  : "a count priced equal to the held price: held from the smaller count, "
+                    "priced no lower");
+    }
+    const auto unpriced_here = note_at(3);
+    check(unpriced_here["note"].get<std::string>().find("this count is not priced") !=
+              std::string::npos,
+          "a count with no price of its own: the note says not priced");
 }
 
 } // namespace

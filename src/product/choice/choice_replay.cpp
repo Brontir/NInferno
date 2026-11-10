@@ -276,6 +276,17 @@ ModelFacts model_of(const json& j) {
                 DrafterOption::JointScale scale;
                 read(scale.streams, j.at("streams"));
                 read(scale.scale, j.at("scale"));
+                // Rejected, not sorted: price_source_at reads the table in ascending order of
+                // streams (a stored record is written ascending), and a scale is a positive ratio.
+                // A joint verify is of two streams or more: one request's verify is the base the
+                // scale is taken against, so an entry below two streams is not a price.
+                if (!(scale.scale > 0) || scale.streams < 2 ||
+                    (!o.joint.empty() && o.joint.back().streams >= scale.streams)) {
+                    throw std::invalid_argument(
+                        "a joint verify scale must be positive, of two streams or more, streams "
+                        "ascending: " +
+                        j.dump());
+                }
                 o.joint.push_back(scale);
             }
         }

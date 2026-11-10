@@ -249,11 +249,16 @@ void price_by_facts(Profile& p, const RoundCostEstimate& estimate) {
 
 std::map<std::string, std::vector<RoundLaunches>> round_launches(const Profile& tune);
 
-// The price of the requests' joint verify (#303), on `lab` rates for a profile at home: for each
-// choice's configuration and every depth up to it, R_1 / R_C at C = 2..kPricedVerifyRows streams
-// where the round cost prices it (load_gain at a gain of 1), on the lab board's rates and the lab
-// artifact's draft head (the one the load table was measured on). Nothing without the pair's facts
-// or the board's rates. The load table's depths are among these: a bound runs that depth.
+// The price of the requests' joint verify (#303), on `lab` rates for a profile at home: for every
+// configuration a choice can name and every depth up to it, R_1 / R_C at C = 2..kPricedVerifyRows
+// streams where the round cost prices it (load_gain at a gain of 1), on the lab board's rates and
+// the lab artifact's draft head (the one the load table was measured on). Nothing without the
+// pair's facts or the board's rates. The configurations are the three choices, the served and
+// portable ones, the fit fallback and every measured one: a later reselection (the plan's per-mode
+// drafter axis, an engine that runs only the served choices) picks among these, and a choice the
+// table does not price keeps the one-request gain as a ceiling at concurrency. The load table's
+// depths are among these: a bound runs that depth. `pair` is the record the profile was selected
+// on, or the asking card's own record (generation_median).
 //
 // On another card (`head_rows` the artifact's proposal head there, as round_cost_estimate takes
 // it) the same function at that card's rates: the table the load bound is derived from
@@ -271,12 +276,20 @@ void price_joint(Profile& p, const MeasuredPair& pair, const CardRates& lab,
     p.joint_scale.clear();
     if (!pair.round_facts || !lab.known()) { return; }
     std::vector<SpecConfig> configs;
-    for (const Choice* c : {&p.overall, &p.thinking, &p.non_thinking}) {
-        if (c->config.enabled()) { configs.push_back(c->config); }
+    std::set<std::string> seen;
+    const auto add = [&](const SpecConfig& config) {
+        if (config.enabled() && seen.insert(config.label()).second) { configs.push_back(config); }
+    };
+    for (const Choice* c : {&p.overall, &p.thinking, &p.non_thinking}) { add(c->config); }
+    for (const auto* served : {&p.served, &p.portable}) {
+        if (!*served) { continue; }
+        for (const Choice* c :
+             {&(*served)->overall, &(*served)->thinking, &(*served)->non_thinking}) {
+            add(c->config);
+        }
     }
-    if (p.fit_fallback && p.fit_fallback->config.enabled()) {
-        configs.push_back(p.fit_fallback->config);
-    }
+    if (p.fit_fallback) { add(p.fit_fallback->config); }
+    for (const Measurement& m : p.measurements) { add(m.config); }
     const auto launches = round_launches(pair.tune);
     for (SpecConfig config : configs) {
         const ProposalRows rows    = head_rows != nullptr   ? *head_rows
@@ -287,8 +300,10 @@ void price_joint(Profile& p, const MeasuredPair& pair, const CardRates& lab,
             config.k = k;
             // The kernels a round's graphs launch are one round's whatever the streams (a joint
             // verify is wider, not longer in launches), so both R_1 and R_C carry the same launch
-            // term, priced as round_cost_estimate prices them (each section's counts, averaged;
-            // none for a depth the lab did not count).
+            // term, priced as round_cost_estimate prices them: a configuration's round is its
+            // sections' rounds averaged, each with its own counts (none for a depth the lab did
+            // not count), so the scale is the averaged R_1 over the averaged R_C, not the
+            // sections' ratios averaged.
             const auto counted = launches.find(config.label());
             const std::vector<RoundLaunches> sections =
                 counted != launches.end() && lab.launch_bytes() > 0
@@ -296,18 +311,23 @@ void price_joint(Profile& p, const MeasuredPair& pair, const CardRates& lab,
                     : std::vector<RoundLaunches>{RoundLaunches{}};
             auto& by_streams = p.joint_scale[config.label()];
             for (std::int32_t streams = 2; streams <= kPricedVerifyRows; ++streams) {
-                double sum  = 0;
-                bool priced = true;
+                double one   = 0;
+                double joint = 0;
+                bool priced  = true;
                 for (const RoundLaunches& section : sections) {
-                    const auto ratio = load_gain(*pair.round_facts, config, lab.kappa(), 1.0,
-                                                 streams, rows, lab.launch_bytes(), section);
-                    if (!ratio) {
+                    // load_gain holds the bounds of a priced joint round (the verify's rows, the
+                    // drafter's pass); where it prices one, both rounds below are priced.
+                    if (!load_gain(*pair.round_facts, config, lab.kappa(), 1.0, streams, rows,
+                                   lab.launch_bytes(), section)) {
                         priced = false;
                         break;
                     }
-                    sum += *ratio;
+                    one += *round_cost(*pair.round_facts, config, lab.kappa(), rows,
+                                       lab.launch_bytes(), section, 1);
+                    joint += *round_cost(*pair.round_facts, config, lab.kappa(), rows,
+                                         lab.launch_bytes(), section, streams);
                 }
-                if (priced) { by_streams[streams] = sum / static_cast<double>(sections.size()); }
+                if (priced) { by_streams[streams] = one / joint; }
             }
             if (by_streams.empty()) { p.joint_scale.erase(config.label()); }
         }
@@ -788,7 +808,8 @@ std::optional<Profile> priced_by_facts_for(const std::vector<const MeasuredPair*
 // This generation's lab cards (two or more): their median round cost per configuration, on the
 // record that measured the most configurations (the card's own among equals; tokens a round are the
 // pair's on any card). Two or more that choose alike keep every measured depth and their load
-// bounds when equal, as long as the median keeps their choice.
+// bounds when equal, as long as the median keeps their choice; the joint verify is then priced on
+// `own_pair`'s board (the asking card's own record) where there is one, else on that record's.
 Profile generation_median(const std::vector<const MeasuredPair*>& home,
                           const MeasuredPair* own_pair, std::string_view generation,
                           const SelectOptions& options, std::string* note) {
@@ -826,6 +847,14 @@ Profile generation_median(const std::vector<const MeasuredPair*>& home,
             if (!loads || out.load.empty()) {
                 out.load       = {LoadBound{.lanes = 2, .depth = 0}};
                 out.load_basis = "literal";
+            }
+            // The joint verify is priced on the asking card's own record where it has one (its
+            // board's rates, its facts and launch counts), not on the base record's board: the
+            // base is the record that measured the most configurations, which may be another
+            // card's. An own record that cannot price (no facts, no rates for its board) prices
+            // nothing: the gain stays a ceiling there, not another board's price.
+            if (own_pair != nullptr && own_pair != &base) {
+                price_joint(out, *own_pair, card_rates_of_board(own_pair->lab_board));
             }
             return out;
         }
