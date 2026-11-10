@@ -343,11 +343,16 @@ def typed_pattern(names):
 
 def returns(names):
     """Matches the head of a function whose body is searched for braced returns, and gives the `{`
-    that opens the body: `Board f(...) [const] {` (the name may be qualified, `Device::board`; a
+    that opens the body: `Board f(...) [const] [&|&&] [noexcept(...)] [override] {` (the name may
+    be qualified, `Device::board`; a
     parameter may have a braced default, `Board b = {}`) and a trailing return `-> Board {`."""
     alt = "|".join(map(re.escape, sorted(names)))
     ty = r"(?:::\s*)?(?:ninferno\s*::\s*)?(?:%s)\b" % alt
-    quals = r"(?:(?:const|noexcept|override|final|mutable|constexpr)\b\s*)*"
+    # After the parameters: cv and virt-specifiers, `noexcept(...)`, `throw(...)`, a ref-qualifier
+    # (`&`, `&&`) and an attribute (`[[...]]`), in any order.
+    paren = r"\s*\((?:[^()]|\([^()]*\))*\)"
+    quals = (r"(?:(?:(?:const|volatile|override|final|mutable|constexpr)\b|noexcept\b(?:%s)?|"
+             r"throw%s|&&?|\[\[[^\]]*\]\])\s*)*" % (paren, paren))
     head = (r"(?<![\w.:])" + ty + r"(?!\s*::)\s*(?:const\b\s*)?[&*]*\s*(?:\w+\s*::\s*)*\w+\s*"
             r"\((?:[^;{}]|\{[^;{}]*\})*\)\s*" + quals + r"\{")
     trailing = r"->\s*(?:const\b\s*)?" + ty + r"(?!\s*::)\s*[&*]*\s*\{"

@@ -74,6 +74,17 @@ FLAGGED = {
     "return_named_fields": "Board f() { return {kMajor, 0, 170, 96, kBw}; }",
     "return_const_ref_qualified": "const Board& g(int a) const noexcept"
                                   " { return {8, 6, kS, 6, 9}; }",
+    # Ref-qualifiers, noexcept(...), attributes and specifiers after the parameters.
+    "return_ref_qualified_lvalue": "Board Foo::board() const & { return {kMajor, 0, kSms, kL2, kBw}; }",
+    "return_ref_qualified_rvalue": "Board Foo::board() && { return {kMajor, 0, kSms, kL2, kBw}; }",
+    "return_ref_qualified_tight": "Board Foo::board() const&& { return {kMajor, 0, kSms, kL2, kBw}; }",
+    "return_noexcept_expression": "Board f() noexcept(noexcept(g())) { return {kM, 0, 1, 2, kB}; }",
+    "return_noexcept_ref_override": "Board Foo::board() const & noexcept(true) override final"
+                                    " { return {kM, 0, 1, 2, kB}; }",
+    "return_attribute_after": "Board f() [[deprecated]] { return {kM, 0, 1, 2, kB}; }",
+    "return_attribute_before": "[[nodiscard]] static constexpr inline Board f()"
+                               " { return {kM, 0, 1, 2, kB}; }",
+    "return_trailing_ref_qualified": "auto Foo::board() const & -> Board { return {kM, 0, 1, 2, kB}; }",
     "return_through_alias": "using B = Board; B f(int x) { if (x) return {kM, 0, 1, 2, 3};"
                             " return {}; }",
     # A template argument with a call in it.
@@ -139,6 +150,11 @@ CLEAN = {
     "alias_of_another_type": "using B = chess::Board; B b{kMajor, 0, 1, 2, 3};",
     "list_of_qualified_boards": "std::vector<Board> v = {measured::kA, measured::kB,"
                                 " measured::kC};",
+    "return_other_ref_qualified": "int Foo::bar() const & { return {kM, 0, 1, 2, kB}; }",
+    "return_other_rvalue": "Foo Foo::bar() && { return {kM, 0, 1, 2, kB}; }",
+    "return_other_noexcept_expression": "int f() noexcept(noexcept(g())) { return {kM, 0, 1, 2, kB}; }",
+    "return_other_attribute": "[[nodiscard]] static constexpr int f() { return {kM, 0, 1, 2, kB}; }",
+    "return_other_trailing": "auto Foo::bar() const & -> int { return {kM, 0, 1, 2, kB}; }",
     "return_in_nested_lambda": "Board f() { auto g = []() -> std::pair<int, int>"
                                " { return {1, 2}; }; return measured::kX; }",
     "return_in_lambda_without_type": "Board f() { auto g = [&] { return {kA, kB}; }; return x; }",
