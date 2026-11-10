@@ -324,9 +324,7 @@ bool qx_prefill_a8_pays() {
         // A generation without a row of its own has no measured kind: A16 (#300).
         const auto full_rate = fp32acc_full_rate_of(d.major, d.minor);
         return d.features.mma_tensor && !d.features.mma_slow && full_rate && !*full_rate;
-    } catch (const std::exception&) {
-        return false;
-    }
+    } catch (const std::exception&) { return false; }
 }
 
 bool qx_format(QType qtype) { return format_traits(qtype).qx_g64; }
