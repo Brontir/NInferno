@@ -339,17 +339,21 @@ class Repo:
                         continue
                     guards = [guard_arches(g) for g in stack]
                     arches = None if opaque or any(g is None for g in guards) else set().union(*guards)
-                    for f in re.findall(r"[\w./${}-]+\.(?:cuh|cu|cpp|h)\b", stmt):
+                    for f in re.findall(r"[\w./${}-]+\.(?:cuh|cu|cpp|cc|hpp|h)\b", stmt):
                         listing.setdefault(PurePosixPath(f).name, []).append(arches or None)
             self._listing = listing
         return self._listing
 
     def built_on(self, path):
         """The one arch whose tree alone builds a listed source; "all" if unguarded or on several
-        trees; None if no cmake file lists it (a header)."""
-        entries = self.cmake_listing().get(PurePosixPath(path).name)
+        trees; None if no cmake file lists it (a header). Listings are keyed by file name, so when
+        another file of the tree has the same name the listing may be that file's: "all"."""
+        name = PurePosixPath(path).name
+        entries = self.cmake_listing().get(name)
         if not entries:
             return None
+        if sum(1 for f in self.files if PurePosixPath(f).name == name) > 1:
+            return "all"
         if any(e is None for e in entries):
             return "all"
         union = set().union(*entries)

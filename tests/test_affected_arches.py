@@ -791,6 +791,25 @@ class Classify(unittest.TestCase):
         files["src/ops/sources.cmake"] = "set(S src/ops/volta_launch.cpp)\n"
         res = self.run_diff(["src/chat/shared.h"], files)
         self.assertTrue(res["host"] and not res["all"])
+        # a .cc unit is a translation unit too
+        cc = {"src/chat/shared.h": "#pragma once\n",
+              "src/ops/volta_launch.cc": '#include "../chat/shared.h"\n',
+              "src/ops/sources.cmake": 'if(NINFERNO_BUILD_ARCH STREQUAL "70")\n src/ops/volta_launch.cc\nendif()\n'}
+        self.assertTrue(self.run_diff(["src/chat/shared.h"], cc)["all"])
+
+    def test_a_guard_on_a_same_named_file_does_not_narrow_another(self):
+        # Listings are keyed by file name: an unlisted src/a/volta_impl.cpp is not the guarded
+        # src/b/volta_impl.cpp, so it is not narrowed to sm_70.
+        files = {"src/a/volta_impl.cpp": "int a() { return 1; }\n",
+                 "src/b/volta_impl.cpp": "int b() { return 1; }\n",
+                 "src/ops/sources.cmake": 'if(NINFERNO_BUILD_ARCH STREQUAL "70")\n src/b/volta_impl.cpp\nendif()\n'}
+        res = self.run_diff(["src/a/volta_impl.cpp"], files)
+        self.assertTrue(res["all"])
+        # with one file of that name the guard narrows it
+        files = {"src/b/volta_only.cpp": "int b() { return 1; }\n",
+                 "src/ops/sources.cmake": 'if(NINFERNO_BUILD_ARCH STREQUAL "70")\n src/b/volta_only.cpp\nendif()\n'}
+        res = self.run_diff(["src/b/volta_only.cpp"], files)
+        self.assertEqual(res["arches"], ["sm_70"])
 
     def test_host_cpp_gaining_a_device_facts_read_is_all(self):  # N4, N16
         for text in ('#include "../core/device_class.h"\nint f() { return device_class(); }\n',
