@@ -62,7 +62,7 @@ class Compare(unittest.TestCase):
                 ("l2_mib", lambda q: q.update(l2_bytes=64 * MIB)),
                 ("bus_bits", lambda q: q.update(memory_bus_bits=320)),
                 ("memory_clock_khz", lambda q: q.update(memory_clock_khz=10_600_000)),  # +0.95 %
-                ("boost_clock_khz", lambda q: q.update(sm_clock_khz=2_700_000)),
+                ("boost_clock_khz", lambda q: q.update(sm_clock_khz=2_400_000)),
                 ("vram_gib", lambda q: q.update(global_bytes=12 * 1024 * MIB)),
                 ("cc", lambda q: q.update(minor=6))):
             d = device_4090()
@@ -109,6 +109,34 @@ class Compare(unittest.TestCase):
         s = statuses(d)
         self.assertEqual(s[("arch", "feature_pdl")], "info")
         self.assertEqual(s[("arch", "persisting_l2_max_bytes")], "info")
+
+    def test_factory_boost_is_information(self):
+        # A partner board's VBIOS boost (+5.8 %, a 2080 Ti read 1635 against 1545) is not a
+        # failure; under the reference or over +10 % is.
+        for khz, want in ((2_520_000 * 1.058, "info"), (2_520_000 * 1.014, "match"),
+                          (2_520_000 * 0.98, "mismatch"), (2_520_000 * 1.12, "mismatch")):
+            d = device_4090()
+            d["queried"]["sm_clock_khz"] = int(khz)
+            self.assertEqual(statuses(d)[("table", "boost_clock_khz")], want, khz)
+
+    def test_ecc_memory_is_not_a_failure(self):
+        # GDDR ECC keeps 1/16: 24 GiB reads about 22.3 GiB (0.928).
+        d = device_4090()
+        d["queried"]["global_bytes"] = int(24 * 1024 * MIB * 0.928)
+        self.assertEqual(statuses(d)[("table", "vram_gib")], "match")
+        d["queried"]["global_bytes"] = int(24 * 1024 * MIB * 0.91)
+        self.assertEqual(statuses(d)[("table", "vram_gib")], "mismatch")
+
+    def test_engine_off_the_row_is_not_compared(self):
+        # A laptop (bottom of its boost range) or a memory variant (the driver's bus and clock):
+        # the engine reads source Extrapolated and its values differ from the row on purpose.
+        d = device_4090()
+        d["engine_table_facts"].update(source=2, reference_clock_khz=1_455_000,
+                                       memory_bus_bits=192, memory_clock_khz=9_000_000)
+        s = statuses(d)
+        self.assertEqual(s[("table", "engine_source")], "info")
+        self.assertNotIn(("table", "engine_reference_clock_khz"), s)
+        self.assertNotIn("mismatch", [v for k, v in s.items() if k[1].startswith("engine_")])
 
     def test_engine_table_reading_against_the_json(self):
         d = device_4090()

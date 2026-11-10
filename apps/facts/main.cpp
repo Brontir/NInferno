@@ -85,6 +85,10 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "ninferno-facts-probe: no usable CUDA device\n");
             return 3;
         }
+        if (only >= count) {
+            std::fprintf(stderr, "ninferno-facts-probe: no device %d (%d visible)\n", only, count);
+            return 2;
+        }
         Json devices = Json::array();
         for (int device = 0; device < count; ++device) {
             if (only >= 0 && device != only) { continue; }

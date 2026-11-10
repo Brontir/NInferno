@@ -17,14 +17,18 @@ info (a difference that is not a failure: a feature the build lacks, the persist
 MIB = 1024 * 1024
 GIB = 1024 * MIB
 
-# Relative tolerances. The memory clock is the issue's +-0.5 %; the boost clock is the published
-# reference value the driver reports as the peak SM clock of a stock board, so a factory
-# overclock reads as a mismatch worth seeing; the L2 and memory size are what a driver reports
-# against a marketed figure.
+# Relative tolerances. The memory clock is the issue's +-0.5 %. The boost clock is the VBIOS's
+# peak SM clock: a stock board reads the published reference within 1.5 %, a partner board's
+# factory boost reads 2 to 6 % above it (information, not a failure), and a clock under the
+# reference or more than 10 % over it is a wrong row. The L2 and memory size are what a driver
+# reports against a marketed figure; GDDR ECC on (an A6000, an L40, an A10) keeps 1/16 of the
+# memory, so the driver's total is down to about 0.928 of the marketed size.
 L2_TOLERANCE = 0.01
 MEMORY_CLOCK_TOLERANCE = 0.005
 BOOST_TOLERANCE = 0.015
-VRAM_LOW, VRAM_HIGH = 0.93, 1.003
+BOOST_FACTORY_HIGH = 0.10
+VRAM_LOW, VRAM_HIGH = 0.92, 1.003
+VERIFIED_SOURCE = 1  # FactSource::Verified: the engine reads the row as it is
 
 
 def result(source, field, expected, actual, status, note=""):
@@ -79,17 +83,28 @@ def compare_device(device, row):
         want_boost = row["boost_mhz"] * 1000
         if unavailable(boost):
             out.append(result("table", "boost_clock_khz", want_boost, boost, "unavailable"))
+        elif close(want_boost, boost, BOOST_TOLERANCE):
+            out.append(result("table", "boost_clock_khz", want_boost, boost, "match"))
+        elif want_boost < boost <= want_boost * (1 + BOOST_FACTORY_HIGH):
+            out.append(result("table", "boost_clock_khz", want_boost, boost, "info",
+                              "a factory boost above the reference clock"))
         else:
-            out.append(result("table", "boost_clock_khz", want_boost, boost,
-                              "match" if close(want_boost, boost, BOOST_TOLERANCE) else "mismatch",
-                              "the driver's peak SM clock of this board"))
+            out.append(result("table", "boost_clock_khz", want_boost, boost, "mismatch",
+                              "the driver's peak SM clock is under the reference or far over it"))
         vram = row["vram_gib"] * GIB
         ratio = q["global_bytes"] / vram if vram else 0
         out.append(result("table", "vram_gib", row["vram_gib"], round(q["global_bytes"] / GIB, 3),
                           "match" if VRAM_LOW <= ratio <= VRAM_HIGH else "mismatch",
                           "marketed capacity against the driver's total"))
         engine = device.get("engine_table_facts")
-        if engine is not None and engine.get("sku"):
+        if engine is not None and engine.get("sku") and engine.get("source") != VERIFIED_SOURCE:
+            # A laptop is priced at the bottom of its boost range, a variant on another memory
+            # at the driver's bus and clock, a slice at its share: the engine departs from the
+            # row on purpose, so its reading is not compared with the JSON.
+            out.append(result("table", "engine_source", VERIFIED_SOURCE, engine.get("source"),
+                              "info", "the engine prices this device off the row (a laptop, a "
+                              "memory variant or a slice), not the row as it is"))
+        elif engine is not None and engine.get("sku"):
             for field, want in (("reference_clock_khz", want_boost), ("memory_bus_bits", row["bus_bits"]),
                                 ("memory_clock_khz", want_khz)):
                 got = engine[field]
