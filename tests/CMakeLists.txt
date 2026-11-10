@@ -75,6 +75,12 @@ add_test(NAME ninferno_fusion_sites_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_fusion_sites.py)
 set_tests_properties(ninferno_fusion_sites_test PROPERTIES LABELS host)
 
+# The fusion sites' generated manifest table is current, every registry site has a row, and
+# tools/bench/site_regret.py validates the regret document against the registry (#617 step H), no GPU.
+add_test(NAME ninferno_fusion_site_manifest_py_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_fusion_site_manifest.py)
+set_tests_properties(ninferno_fusion_site_manifest_py_test PROPERTIES LABELS host)
+
 # tools/bench/selection_regret.py: the offline selection regret's statuses, holdouts and exit codes
 # (#301), no GPU.
 add_test(NAME ninferno_selection_regret_test

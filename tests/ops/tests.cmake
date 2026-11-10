@@ -96,6 +96,12 @@ ninferno_add_test(ninferno_sm_wave_rules_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_sm_wave_rules.cpp"
   LIBRARIES ninferno_core)
 
+# The fusion sites' manifest lines: a line for every registry site, the evaluated sites' branches
+# (#617 step H). No GPU.
+ninferno_add_op_test(ninferno_fusion_site_manifest_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_fusion_site_manifest.cpp"
+  LIBRARIES ninferno_ops)
+
 # Whole-chain pricing and selection of a projection chain's fusion alternatives (#310,
 # ops/common/projection_chain.h): lowest seconds, then fewer launches, then canonical order. No GPU.
 ninferno_add_test(ninferno_projection_chain_test
