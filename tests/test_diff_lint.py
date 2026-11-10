@@ -763,6 +763,17 @@ class MaskAndLiteralFixes(unittest.TestCase):
         self.assertEqual(lits("t.cpp", "const char* s = \"ab\\\ncd\";\nint i;\n"), [])
         self.assertEqual(lits("t.cpp", "const char* s = \"ab\\\ncd;\nint i;\n"), [2])
 
+    def test_a_finding_of_a_joined_line_belongs_to_any_added_line_of_its_span(self):
+        # the added first line is broken, the continuation line below it is unchanged context
+        text = 'const char* s = "broken\\\ntail;\nint i;\n'
+        self.assertEqual(lits("t.cpp", text, [1]), [1])
+        self.assertEqual(lits("t.cpp", text, [2]), [2])
+        self.assertEqual(lits("t.cpp", text, [1, 2]), [2])
+        self.assertEqual(lits("t.cpp", text, [3]), [])
+        self.assertEqual(lits("t.py", 'x = "broken\\\ntail\ny = 1\n', [1]), [1])
+        # an allow marker on any line of the span silences it
+        self.assertEqual(lits("t.cpp", 'const char* s = "broken\\\ntail; // diff-lint: allow\n', [1]), [])
+
     def test_true_and_false_are_literals_in_cpp_only(self):
         # C before C23 reads `true` as an undefined name (0): a .c file gets no answer, not a wrong one
         self.assertEqual(lits("t.cpp", "#if true\nint a;\n#else\ndon't\n#endif\n"), [])

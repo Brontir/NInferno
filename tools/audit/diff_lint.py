@@ -822,10 +822,20 @@ def bad_literals(path, content, only=None):
     else:
         return []
     src = content.split("\n")
-    return [(path, n, "bad-literal",
-             "the line ends inside an unterminated string or char literal (a real newline where `\\n` "
-             "was meant?)") for n in lines
-            if (only is None or n in only) and ALLOW not in src[n - 1]]
+    out = []
+    for last in lines:
+        # the finding belongs to its whole logical line: the physical lines joined by backslashes
+        first = last
+        while first > 1 and src[first - 2].rstrip("\r").endswith("\\"):
+            first -= 1
+        span = range(first, last + 1)
+        mine = [n for n in span if only is None or n in only]
+        if mine and not any(ALLOW in src[n - 1] for n in span):
+            # reported at the last line of the span, or at the first added one when that is unchanged
+            out.append((path, last if last in mine else mine[0], "bad-literal",
+                        "the line ends inside an unterminated string or char literal (a real newline where "
+                        "`\\n` was meant?)"))
+    return out
 
 
 # ---------------------------------------------------------------- driver
