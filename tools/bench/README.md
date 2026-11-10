@@ -152,6 +152,13 @@ and `ranker_vs_selected` (its median time over the selected route's, minus one).
 `evidence_us` with a gain above the resolution; the existing gaps are listed in
 `tests/route_evidence_gaps.json`, which may only shrink.
 
+The prune tool keeps an entry whose key another table of the routes directory holds (the board
+would borrow that table's override, not the ranker's pick: `fill_from`) or, unless
+`--allow-borrowers`, that a table lacking it may borrow; it keeps prefill overrides until
+prefill-profile cases cover them, `claim` entries, entries with `r8_bands` outside the measured
+segments, and wide ranges when the report carries no ridge. The report's board must be the table's
+board (a full `chip:Nsm` id against the table's `gpu.board.sms`), and `--class` a full class id.
+
 route_tune selects with its problems' policy (an `a16` problem is `A16Only`, the exact mode's
 linears, not the default `AllowA8` path of a published model's projections) and the speed route
 profile (`prefill_routes` inactive, so `T >= 17` is a batched decode call, not a prefill chunk);
