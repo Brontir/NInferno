@@ -163,6 +163,9 @@ const std::vector<Spec>& specs() {
              "kDecodePredictionError",
              "kReferenceCards",
              "kWorthTie",
+             // names of an enum's values, no number
+             "route_name",
+             "axis_name",
          }},
         // the rates are whitepaper facts except the emulated BF16 aggregate (recorded)
         {fit::kGeneration, Mode::RowFields, {"s8"}},
