@@ -11,7 +11,10 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -271,43 +274,23 @@ void grid() {
         }
     }
 
-    // Driver readings and the whole kHz the engine stores for them, worked out by hand in exact
-    // arithmetic (k = floor(16 log2 x + 1/2), then 2^(k/16) rounded half up): real boards' clocks,
-    // and the integers either side of six midpoints. tests/test_facts_vs_driver.py reads this
-    // table and checks the audit's port against the same numbers.
-    struct GridPoint {
-        int driver_khz;
-        int stored_khz;
-    };
-
-    constexpr GridPoint kGridPoints[] = {
-        {1, 1},
-        {2, 2},
-        {100000, 101070},
-        {1500000, 1482910},
-        {2475000, 2493948},
-        {9000000, 9147842},
-        {9001000, 9147842},
-        {10001000, 9975792},
-        {10501000, 10417458},
-        {14001000, 14107901},
-        {21001000, 20834917},
-        {450525, 440872},
-        {450526, 460391},
-        {2548558, 2493948},
-        {2548559, 2604365},
-        {9762031, 9552851},
-        {9762032, 9975792},
-        {10194233, 9975792},
-        {10194234, 10417458},
-        {34289178, 33554432},
-        {34289179, 35040014},
-        {2101467501, 2056437387},
-    };
-    for (const GridPoint& g : kGridPoints) {
-        expect(std::llround(snap_to_fact_grid(g.driver_khz)) == g.stored_khz,
-               "grid point of " + std::to_string(g.driver_khz) + " kHz");
+    // The hand-worked grid points shared with the audit's port (tests/test_facts_vs_driver.py):
+    // tests/fixtures/facts/grid_points.txt, one "driver_khz stored_khz" pair a line.
+    std::ifstream points(std::filesystem::path(NINFERNO_SOURCE_DIR) /
+                         "tests/fixtures/facts/grid_points.txt");
+    expect(points.good(), "the grid points fixture is readable");
+    int read_points = 0;
+    for (std::string line; std::getline(points, line);) {
+        if (line.empty() || line[0] == '#') { continue; }
+        std::istringstream fields(line);
+        long long driver_khz = 0, stored_khz = 0;
+        expect(static_cast<bool>(fields >> driver_khz >> stored_khz),
+               "a grid point parses: " + line);
+        expect(std::llround(snap_to_fact_grid(static_cast<double>(driver_khz))) == stored_khz,
+               "grid point of " + std::to_string(driver_khz) + " kHz");
+        ++read_points;
     }
+    expect(read_points >= 20, "the fixture holds the grid points");
     double last = 0;
     for (double x = 1000; x < 4e6; x *= 1.003) {
         const double s = snap_to_fact_grid(x);

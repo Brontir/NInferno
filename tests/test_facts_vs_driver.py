@@ -1032,16 +1032,17 @@ class EngineRule(unittest.TestCase):
         self.assertIn("if (row->boost_min_mhz > 0) {", text)
 
     def test_the_grid_is_the_engines(self):
-        # engine_snapped_khz is a port of the engine's grid. Both are checked against one table of
-        # hand-worked points: the engine's test (tests/test_machine_facts.cpp, kGridPoints) checks
-        # snap_to_fact_grid against it, this test checks the port. A grid changed in the engine
-        # fails the engine's test until the table changes, and then the port fails here.
-        source = (ROOT / "tests" / "test_machine_facts.cpp").read_text(encoding="utf-8")
-        table = re.search(r"kGridPoints\[\] = \{(.*?)\n    \};", source, re.S)
-        self.assertIsNotNone(table)
-        points = [(int(a), int(b)) for a, b in re.findall(r"\{(\d+), (\d+)\}", table.group(1))]
-        entries = len(re.findall(r"\{", table.group(1)))
-        self.assertEqual(len(points), entries, "an entry of kGridPoints did not parse")
+        # engine_snapped_khz is a port of the engine's grid. Both are checked against one fixture
+        # of hand-worked points (tests/fixtures/facts/grid_points.txt): the engine's test
+        # (tests/test_machine_facts.cpp) checks snap_to_fact_grid against it, this test checks the
+        # port. A grid changed in the engine fails the engine's test until the fixture changes, and
+        # then the port fails here.
+        text = (ROOT / "tests" / "fixtures" / "facts" / "grid_points.txt").read_text(encoding="utf-8")
+        points = []
+        for line in text.splitlines():
+            if line and not line.startswith("#"):
+                driver_khz, stored_khz = line.split()
+                points.append((int(driver_khz), int(stored_khz)))
         self.assertGreaterEqual(len(points), 20)
         for driver_khz, stored_khz in points:
             self.assertEqual(facts_compare.engine_snapped_khz(driver_khz), stored_khz, driver_khz)
