@@ -2422,6 +2422,13 @@ void transferred_resolution(const json& fixture) {
     check(carried.basis == ch::ResolutionBasis::WorstCase &&
               carried.rms == ch::kCarriedForwardWorstCaseDecodeError,
           "a compute capability with no generation row: the worst case");
+}
+
+// What typing the resolution by the estimate's basis changes (#618 step 3, a behaviour change made
+// visible): for every fixture card and bench, the old (the reference generation's one number,
+// Gates::typed_resolution closed) and the new resolution, the candidates each chooses, and whether
+// the choice moves. No fixture choice moves (asserted); the table is the record.
+void resolution_by_basis(const json& fixture) {
     // No reference, no estimate: the basis is None, not Own.
     const Bench none = nine_b(fixture, "RTX 3060");
     const ch::Choice undecided =
@@ -2430,13 +2437,6 @@ void transferred_resolution(const json& fixture) {
                    oracle(none, 20e9));
     check(undecided.resolution_basis == ch::ResolutionBasis::None && undecided.resolution == 0,
           "a board with no reference card: basis none");
-}
-
-// What typing the resolution by the estimate's basis changes (#618 step 3, a behaviour change made
-// visible): for every fixture card and bench, the old (the reference generation's one number,
-// Gates::typed_resolution closed) and the new resolution, the candidates each chooses, and whether
-// the choice moves. No fixture choice moves (asserted); the table is the record.
-void resolution_by_basis(const json& fixture) {
     int total = 0, moved = 0, typed = 0;
     std::vector<std::pair<std::string, Bench>> benches;
     for (const auto& [name, unused] : fixture.at("cards").items()) {
