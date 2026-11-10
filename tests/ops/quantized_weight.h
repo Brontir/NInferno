@@ -561,9 +561,10 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
             packed.weight.layout      = QuantLayout::GgmlPlanes;
             packed.weight.scale_dtype = DType::FP16;
             packed.weight.high_plane_bytes = packed.high_plane_bytes;
-            packed.weight.qhigh            = packed.high_plane_bytes == 0
-                                                 ? nullptr
-                                                 : detail::plane(packed.payload, packed.high_plane_offset);
+            packed.weight.qhigh            = nullptr;
+            if (packed.high_plane_bytes != 0) {
+                packed.weight.qhigh = detail::plane(packed.payload, packed.high_plane_offset);
+            }
             packed.weight.scales = detail::plane(packed.payload, packed.scale_plane_offset);
         } else {
             const std::uint64_t block_bytes = qtype == QType::GGML_Q4_K ? 144 : 176;
