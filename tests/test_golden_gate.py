@@ -381,6 +381,50 @@ def unaccounted(files):
                   and not any(rx.match(f) for _, rx, _ in EXCLUDED_RX))
 
 
+DECISION_TARGETS = {"ninferno_ops", "ninferno_core", "ninferno_ggml_mmq"}  # the libraries the golden links
+# Commands that set a define; the others (set_target_properties, set_property) count when they name it.
+DEFINE_COMMANDS = {"target_compile_definitions", "set_source_files_properties", "set_target_properties",
+                   "set_property"}
+# CMake files that set a define on a decision source or target and are not listed, each with its reason.
+DEFINE_INJECTORS_ALLOWED = {
+    "src/ops/softmax_attention/sources.cmake":
+        "NINFERNO_VOLTA_SPLITD / FLASH_NAMESPACE on the Volta split-D attention kernel (ninferno_ops): "
+        "a kernel the route selector does not read",
+    "src/runtime/CMakeLists.txt":
+        "version, PTX and architecture strings on the decision fingerprint (runtime layer, not linked "
+        "into the golden test)",
+}
+
+
+def define_injectors(files, patterns, read=None):
+    """{CMake file: why} for every tracked, unlisted .cmake / CMakeLists.txt that sets a compile
+    definition on a listed decision source or on a golden library target (ninferno_ops, ninferno_core,
+    ninferno_ggml_mmq). Source names are resolved against the file's directory and the repository root."""
+    read = read or (lambda f: (ROOT / f).read_text(encoding="utf-8", errors="replace"))
+    listed = {f for f in files if any(rx.match(f) for _, rx in patterns)}
+    out = {}
+    for cm in files:
+        name = Path(cm).name
+        if not (name.endswith(".cmake") or name == "CMakeLists.txt") or "third_party/" in cm or cm in listed:
+            continue
+        base = Path(cm).parent.as_posix()
+        for command, args, _ in cmake_commands(read(cm)):
+            if command not in DEFINE_COMMANDS:
+                continue
+            if command in ("set_target_properties", "set_property") and "COMPILE_DEFINITIONS" not in args:
+                continue
+            for tok in re.split(r'[\s;"()]+', args):
+                tok = tok.replace("${CMAKE_CURRENT_LIST_DIR}/", "").replace("${PROJECT_SOURCE_DIR}/", "")
+                if not tok:
+                    continue
+                if tok in DECISION_TARGETS:
+                    out.setdefault(cm, f"{command} names target {tok}")
+                elif any(os.path.normpath(os.path.join(d, tok)).replace("\\", "/") in listed
+                         for d in (base, ".")):
+                    out.setdefault(cm, f"{command} names the decision source {tok}")
+    return out
+
+
 class Completeness(unittest.TestCase):
     def test_every_decision_candidate_is_listed_or_excluded_with_a_reason(self):
         missing = unaccounted(tracked())
@@ -421,6 +465,37 @@ class Completeness(unittest.TestCase):
                       (ROOT / "src/ops/generic/generic_tune.cpp").read_text(encoding="utf-8"))
         # the other source-list files stay excluded: they only say which files are compiled
         self.assertFalse(gg.decision_files(["src/ops/CMakeLists.txt"], PATHS))
+
+    def test_no_unlisted_cmake_file_injects_a_define_into_decision_code(self):
+        found = define_injectors(tracked(), PATHS)
+        self.assertEqual(sorted(set(DEFINE_INJECTORS_ALLOWED) - set(found)), [], "stale allow-list entry")
+        stray = {f: why for f, why in found.items() if f not in DEFINE_INJECTORS_ALLOWED}
+        self.assertEqual(stray, {}, "these CMake files set a compile definition on a decision source or on "
+                         "ninferno_ops / ninferno_core / ninferno_ggml_mmq and are neither in "
+                         "tools/audit/decision_paths.txt nor in DEFINE_INJECTORS_ALLOWED (with a reason)")
+
+    def test_the_define_injector_scan_catches_basic_sources_cmake_when_unlisted(self):
+        without = [p for p in PATHS if p[0] != "src/ops/basic_sources.cmake"]
+        self.assertEqual(len(without), len(PATHS) - 1)
+        found = define_injectors(tracked(), without)
+        self.assertIn("src/ops/basic_sources.cmake", found)
+        self.assertNotIn("src/ops/basic_sources.cmake", define_injectors(tracked(), PATHS))
+
+    def test_the_define_injector_scan_sees_each_way_to_inject_a_define(self):
+        files = {
+            "a/CMakeLists.txt": 'target_compile_definitions(ninferno_ops PRIVATE X=1)\n',
+            "b/x.cmake": 'set_source_files_properties("${CMAKE_CURRENT_LIST_DIR}/route_table.cpp" PROPERTIES\n'
+                         '  COMPILE_DEFINITIONS "X=1")\n',
+            "c/x.cmake": 'set_target_properties(ninferno_core PROPERTIES COMPILE_DEFINITIONS X=1)\n',
+            "d/x.cmake": 'set_source_files_properties(other.cpp TARGET_DIRECTORY ninferno_ggml_mmq PROPERTIES\n'
+                         '  COMPILE_DEFINITIONS X=1)\n',
+            "e/x.cmake": '# target_compile_definitions(ninferno_ops PRIVATE X=1)\n',
+            "f/x.cmake": 'target_compile_definitions(unrelated_test PRIVATE X=1)\n',
+            "g/x.cmake": 'target_compile_options(ninferno_ops PRIVATE -O2)\n',
+        }
+        pats = [("b/route_table.cpp", gg.glob_to_regex("b/route_table.cpp"))]
+        found = define_injectors(list(files) + ["b/route_table.cpp"], pats, read=files.__getitem__)
+        self.assertEqual(sorted(found), ["a/CMakeLists.txt", "b/x.cmake", "c/x.cmake", "d/x.cmake"])
 
     def test_the_shared_test_target_helpers_are_decision_paths(self):
         # ninferno_add_test / ninferno_link_ops shape every test target, the golden producer included
