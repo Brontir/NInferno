@@ -97,7 +97,9 @@ src/ops/generic/sources.cmake
 src/ops/generic/embedded_kernel_facts.h.in
 src/ops/generic/ggml_mmq/sources.cmake
 CMakeLists.txt
-# the golden producer and what it builds weights with
+# the golden producer, what it builds weights with, and its target (source, support library and
+# NINFERNO_SELECTOR_GOLDEN_DIR are set in tests.cmake)
+tests/ops/linear/tests.cmake
 tests/ops/linear/test_selector_golden.cpp
 tests/ops/quantized_weight.h
 # the implementation behind include/ninferno/ops/prefill_routes.h

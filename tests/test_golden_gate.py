@@ -45,7 +45,8 @@ class PathMatching(unittest.TestCase):
     def test_decision_files(self):
         for f in ["src/ops/generic/generic_cost.cpp", "src/ops/generic/selector_facts.h", "routes/gb202.json",
                   "routes/tuner/dense_tune.json", "src/core/data/gpu_facts.json",
-                  "src/ops/generic/data/kernel_facts/a/b.json", "src/ops/generic/my_route_authorities.cpp"]:
+                  "src/ops/generic/data/kernel_facts/a/b.json", "src/ops/generic/my_route_authorities.cpp",
+                  "tests/ops/linear/tests.cmake"]:
             self.assertTrue(self.match(f), f)
 
     def test_other_files(self):
