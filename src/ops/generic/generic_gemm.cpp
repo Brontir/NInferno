@@ -2953,13 +2953,7 @@ std::optional<Route> volta_fixed_route(const Problem& problem, const Weight& wei
     return volta_hmma_route(problem, weight, tokens);
 }
 
-    return auto_route(problem, weight, tokens, prefill);
-}
-
 namespace {
-
-    return heuristic;
-}
 
 // The route pinned family `f` gives a call of 17 tokens or more, nullopt where it cannot compute
 // it (the family's codec, K, alignment, policy or device).
