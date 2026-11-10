@@ -92,6 +92,7 @@ int main(int argc, char** argv) {
         "kMaxScratchUses", // scratch lifetime bookkeeping
         "kBytes",          // a local buffer size of the tuner's L2 flush
         "kExactMinor",     // a build switch (an "a" / "f" target's minor)
+        "kPrefillBandTokens", // the dense tuner's measured grid of prefill widths, not a comparison
     };
     static const std::regex threshold(
         R"(constexpr [^=;(){}]*\b(k\w*(?:Min|Max|Tokens|Fill|Distance|Values|Bytes|Gbps)\w*)\s*=)");
