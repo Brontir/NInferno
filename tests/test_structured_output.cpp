@@ -878,6 +878,64 @@ void answer_header_contract() {
           "raw output: no header, the grammar from the terminator");
 }
 
+// A grammar that spells the answer header and the reasoning open marker itself
+// (OutputConstraintSpec::reads_answer_header, the tool_choice none steer of #578): its own cache
+// entry; the request reads the header instead of dropping it, and goes on after a reasoning
+// section from the marker it read instead of restarting. Without the flag the same grammar keeps
+// today's gate: the header is dropped, the grammar restarts after the reasoning.
+void reads_answer_header_contract() {
+    constexpr TokenId kStart = 265, kAssistant = 266, kTo = 267, kUser = 268, kSelf = 269,
+                      kMessage = 270, kEom = 271;
+    GrammarVocabulary muse       = vocabulary();
+    muse.token_bytes[kStart]     = "<|start|>";
+    muse.token_bytes[kAssistant] = "assistant";
+    muse.token_bytes[kTo]        = " to";
+    muse.token_bytes[kUser]      = "=user";
+    muse.token_bytes[kSelf]      = "=self";
+    muse.token_bytes[kMessage]   = "<|message|>";
+    muse.token_bytes[kEom]       = "<|eom|>";
+    muse.reasoning_open          = " to=self<|message|>";
+    muse.reasoning_close         = "<|eom|>";
+    muse.content_open            = {"<|start|>assistant to=user<|message|>", " to=user<|message|>"};
+    const ConstraintCompiler compiler(muse);
+    // After the reasoning only the long header, at the start only the short one.
+    OutputConstraintSpec spec;
+    spec.kind                = OutputConstraintKind::Choice;
+    spec.choices             = {" to=self<|message|><|start|>assistant to=user<|message|>yes",
+                                " to=user<|message|>yes"};
+    const auto plain         = compiler.compile(spec);
+    spec.reads_answer_header = true;
+    const auto reading       = compiler.compile(spec);
+    check(reading != plain && reads_answer_header(*reading) && !reads_answer_header(*plain),
+          "reads_answer_header is part of the compiled constraint and of its cache key");
+    check(compiler.compile(spec) == reading, "a reads_answer_header spec is cached");
+
+    const std::vector<TokenId> reasoning    = {kTo, kSelf, kMessage, 'x', kEom};
+    const std::vector<TokenId> after_header = {kStart,   kAssistant, kTo, kUser,
+                                               kMessage, 'y',        'e', 's'};
+    const std::vector<TokenId> short_header = {kTo, kUser, kMessage, 'y', 'e', 's'};
+    const auto runs = [](const std::shared_ptr<const CompiledConstraint>& compiled,
+                         std::initializer_list<std::vector<TokenId>> parts) {
+        RequestConstraint request(compiled, false, true);
+        for (const auto& part : parts) { request.commit(part); }
+        return !request.violated() && request.stats().complete;
+    };
+    check(runs(reading, {reasoning, after_header}),
+          "reading the header: the grammar goes on after the reasoning from the marker it read");
+    check(runs(reading, {short_header}), "reading the header: the header at the start is read");
+    check(!runs(plain, {reasoning, after_header}) && !runs(plain, {short_header}),
+          "without the flag the header is dropped and the grammar restarts after the reasoning");
+    // The rows: after the reasoning's terminator the grammar's header continues (the long one
+    // only), never the short header nor the grammar's start.
+    RequestConstraint request(reading, false, true);
+    request.commit(reasoning);
+    const std::size_t words = request.mask_words();
+    std::vector<std::uint32_t> row(words);
+    request.fill_round({}, row.data(), words);
+    check(allowed(row.data(), kStart) && !allowed(row.data(), kTo) && !allowed(row.data(), 'y'),
+          "reading the header: after the terminator only the header the grammar spells");
+}
+
 void violation_contract(const ConstraintCompiler& compiler) {
     OutputConstraintSpec spec;
     spec.kind = OutputConstraintKind::JsonObject;
@@ -1462,6 +1520,7 @@ int main() {
     reasoning_gate_contract(compiler);
     self_opened_reasoning_contract();
     answer_header_contract();
+    reads_answer_header_contract();
     violation_contract(compiler);
     mask_row_class_contract(compiler);
     visible_special_contract(compiler);

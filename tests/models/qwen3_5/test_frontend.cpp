@@ -11,6 +11,8 @@
 #include "models/qwen3_5/frontend/prompt_layout.h"
 #include "models/qwen3_5/frontend/test_access.h"
 #include "models/qwen3_5/frontend/tokenizer.h"
+#include "structured/constraint.h"
+#include "structured/request_constraint.h"
 #include "text/unicode.h"
 #include "support/files.h"
 #include "core/sha256.h"
@@ -2510,6 +2512,154 @@ int test_none_gemma_channel_head_token() {
     return failures;
 }
 
+// A gpt-oss (harmony) frontend: the markers at gpt-oss-20b's own ids, all special tokens as in
+// its tokenizer, <|return|> and <|call|> its eos. The template names every harmony marker (the
+// conventions are read from them); the part that runs renders the turns and the generation prompt
+// "<|start|>assistant". With a thinking switch, enable_thinking false adds a system message
+// (gpt-oss's own template has no switch).
+Frontend harmony_frontend(bool thinking_switch = false) {
+    const std::string harmony_template =
+        std::string(thinking_switch
+                        ? "{%- if enable_thinking is defined and not enable_thinking -%}"
+                          "<|start|>system<|message|>no reasoning<|end|>{%- endif -%}"
+                        : "") +
+        "{%- for m in messages -%}<|start|>{{ m.role }}<|message|>{{ m.content }}<|end|>"
+        "{%- endfor -%}"
+        "{%- if false -%}<|start|>assistant<|channel|>analysis<|message|>t<|end|>"
+        "<|start|>assistant<|channel|>final<|message|>a<|end|><|start|>assistant<|channel|>"
+        "commentary to=functions.f <|constrain|>json<|message|>{}<|call|>{%- endif -%}"
+        "{%- if add_generation_prompt -%}<|start|>assistant{%- endif -%}";
+    FrontendResources source      = resources(harmony_template);
+    nlohmann::json tokenizer_json = nlohmann::json::parse(source.tokenizer_json);
+    nlohmann::json config         = nlohmann::json::parse(source.tokenizer_config_json);
+    const std::array<std::pair<int, const char*>, 7> specials{{{200002, "<|return|>"},
+                                                               {200003, "<|constrain|>"},
+                                                               {200005, "<|channel|>"},
+                                                               {200006, "<|start|>"},
+                                                               {200007, "<|end|>"},
+                                                               {200008, "<|message|>"},
+                                                               {200012, "<|call|>"}}};
+    for (const auto& [id, content] : specials) {
+        tokenizer_json["added_tokens"].push_back(added(id, content, true));
+        config["added_tokens_decoder"][std::to_string(id)] = decoder_added(content, true);
+    }
+    source.tokenizer_json         = tokenizer_json.dump();
+    source.tokenizer_config_json  = config.dump();
+    source.generation_config_json = R"({"eos_token_id":[200002,200012]})";
+    return make_frontend(source, false);
+}
+
+// tool_choice none on harmony (#578): the prompt carries the header steer (the harmony refusal
+// tag) where the model may open its analysis at the first token, never for a continuation nor on
+// another template; the request's constraint, built from this frontend's own grammar vocabulary,
+// reads recorded outputs as the Engine does; and the presentation shows the same content as
+// without the steer: the final text only, the analysis as reasoning, no markup.
+int test_none_harmony_header_steer() {
+    const Frontend frontend = harmony_frontend();
+    const std::string tag =
+        ninferno::chat::tool_call_syntax(ninferno::chat::ToolCallFormat::Harmony)
+            .refusal_structural_tag();
+    const auto steered              = frontend.prepare(none_input(std::nullopt));
+    int failures                    = check(!tag.empty() && steered.summary().refusal_tag == tag &&
+                                                steered.summary().reasoning_open_allowed &&
+                                                !steered.summary().starts_in_reasoning &&
+                                                FrontendFactory::inspect(steered).answer_only,
+                                            "tool_choice none on a harmony template did not carry the header steer");
+    ninferno::PromptInput automatic = none_input(std::nullopt);
+    automatic.options.tool_calls_enabled   = true;
+    automatic.options.tool_calls_discarded = false;
+    failures += check(frontend.prepare(std::move(automatic)).summary().refusal_tag.empty(),
+                      "tool_choice auto carried the header steer");
+    ninferno::PromptInput continued = none_input(std::nullopt);
+    ninferno::ChatMessage partial;
+    partial.role = ninferno::ChatRole::Assistant;
+    partial.parts.push_back(ninferno::MessagePart{
+        .kind = ninferno::MessagePartKind::Text, .text = "partial", .media = {}});
+    continued.messages.push_back(std::move(partial));
+    continued.options.continuation = ninferno::PromptContinuationMode::ContinueFinalAssistant;
+    failures += check(frontend.prepare(std::move(continued)).summary().refusal_tag.empty(),
+                      "a continuation carried the header steer");
+    const Frontend qwen = make_frontend(resources_with_opener(), false);
+    failures += check(qwen.prepare(none_input(true)).summary().refusal_tag.empty() &&
+                          qwen.prepare(none_input(false)).summary().refusal_tag.empty(),
+                      "tool_choice none on the Qwen template carried a header steer");
+    // A harmony template with a thinking switch, thinking declined: the gate would hold the
+    // grammar from the first token, which the tag (written for an analysis the gate steps over)
+    // does not fit, so the cut alone answers. Thinking on keeps the steer.
+    const Frontend switched = harmony_frontend(true);
+    const auto declined     = switched.prepare(none_input(false));
+    failures += check(FrontendFactory::inspect(declined).reasoning_declined,
+                      "the harmony fixture's thinking switch did not decline the reasoning");
+    failures += check(declined.summary().refusal_tag.empty() &&
+                          switched.prepare(none_input(true)).summary().refusal_tag == tag,
+                      "a declined reasoning carried the header steer (or thinking on lost it)");
+
+    // The recorded outputs: the channel form, and an analysis then the final message.
+    const auto tokens = [&](std::string_view text) {
+        std::vector<ninferno::TokenId> out;
+        for (const int id : frontend.tokenize_text(text)) { out.push_back(id); }
+        return out;
+    };
+    constexpr ninferno::TokenId kReturn         = 200002;
+    std::vector<ninferno::TokenId> channel_form = tokens("<|channel|>final<|message|>It is sunny.");
+    channel_form.push_back(kReturn);
+    std::vector<ninferno::TokenId> analysed =
+        tokens("<|channel|>analysis<|message|>The user wants weather; a tool would do it.<|end|>"
+               "<|start|>assistant<|channel|>final<|message|>No tool here.");
+    analysed.push_back(kReturn);
+    failures += check(channel_form.front() == 200005 &&
+                          std::count(analysed.begin(), analysed.end(), 200008) == 2,
+                      "the harmony fixture did not encode its markers as special tokens");
+    // Every id the outputs use: the harmony markers (to 200012) and the fixture's byte tokens.
+    constexpr std::uint32_t kDomain = 200013;
+    const auto in_domain            = [&](const std::vector<ninferno::TokenId>& output) {
+        return std::all_of(output.begin(), output.end(), [](ninferno::TokenId id) {
+            return id >= 0 && static_cast<std::uint32_t>(id) < kDomain;
+        });
+    };
+    failures += check(in_domain(channel_form) && in_domain(analysed),
+                      "the harmony fixture's tokens lie outside the grammar domain");
+    const ninferno::structured::ConstraintCompiler compiler(frontend.grammar_vocabulary(kDomain));
+    ninferno::OutputConstraintSpec spec;
+    spec.kind                = ninferno::OutputConstraintKind::StructuralTag;
+    spec.definition          = steered.summary().refusal_tag;
+    spec.reads_answer_header = true;
+    const auto compiled      = compiler.compile(spec);
+
+    struct Case {
+        const std::vector<ninferno::TokenId>* output;
+        std::string reasoning;
+        std::string content;
+    };
+
+    for (const Case& recorded :
+         {Case{&channel_form, "", "It is sunny."},
+          Case{&analysed, "The user wants weather; a tool would do it.", "No tool here."}}) {
+        ninferno::structured::RequestConstraint request(
+            compiled, steered.summary().starts_in_reasoning,
+            steered.summary().reasoning_open_allowed, true);
+        request.commit(*recorded.output);
+        failures += check(
+            !request.violated() && request.stats().complete,
+            ("the header steer refused a recorded harmony output: " + recorded.content).c_str());
+        auto session        = frontend.make_output_session(steered, {});
+        const auto decision = session.preview_model(
+            *recorded.output, static_cast<std::uint32_t>(recorded.output->size() + 1U),
+            ninferno::FinishReason::OutputLimit);
+        const auto output = session.commit_preview();
+        failures += check(
+            decision.finish_reason == ninferno::FinishReason::StopToken &&
+                channel_text(output, ninferno::OutputChannel::Content) == recorded.content &&
+                channel_text(output, ninferno::OutputChannel::Reasoning) == recorded.reasoning,
+            ("the presentation of a steered harmony output: " + recorded.content).c_str());
+    }
+    // A role-recipient call (the issue's `file` case) is refused at its first token.
+    ninferno::structured::RequestConstraint call(compiled, false, true, true);
+    call.commit(tokens(" to=functions.file"));
+    failures += check(call.violated(), "the header steer admitted a role recipient");
+    return failures;
+}
+
 // OpenAI's automatic boundary after the last message's last part is taken at the closed turn's end,
 // an execution frontier of the prompt: the capture adds no prefill split (DECISIONS 63).
 int test_last_part_boundary_at_turn_end() {
@@ -3931,6 +4081,7 @@ int main() {
     failures += test_none_drop_tools_keeps_the_contract();
     failures += test_steering_after_tool_result_keeps_the_prefix();
     failures += test_none_gemma_channel_head_token();
+    failures += test_none_harmony_header_steer();
     failures += test_explicit_leading_instruction_cache_boundary();
     failures += test_last_part_boundary_at_turn_end();
     failures += test_media_admission_uses_aggregate_resources(frontend);
