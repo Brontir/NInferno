@@ -328,9 +328,9 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         // warps a scheduler holds.
         if (counted && l1_latency && loop != nullptr && rmma_counted::usable(*loop)) {
             const auto t = rmma_counted::terms(*loop, q, threads / 32.0, kc, warps_k, peak_sm,
-                                               warps, *l1_latency, clk, d.major);
-            mma   = t.mma;
-            spill = t.spill;
+                                                  warps, *l1_latency, clk, d.major);
+            mma          = t.mma;
+            spill        = t.spill;
         }
         // The plain decoders keep their old price: the DRAM share of every CTA's bytes.
         const double bytes      = heavy_decoder ? dram + l2_w + l2_x + spill : mem;
