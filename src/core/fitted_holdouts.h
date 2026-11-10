@@ -4,7 +4,9 @@
 // (ops/generic/route_cost_constants.h), the choice's speed model (product/choice/
 // choice_constants.h), the generation row's fitted scales and measured preferences
 // (core/generation.h), the speculation round cost (spec/round_cost.h, spec/moe_routed_share.h)
-// and the one fitted SM-wave rule (ops/common/sm_wave_rules.h). A record per constant or per
+// and the one fitted SM-wave rule (ops/common/sm_wave_rules.h), the generic path's literal rules
+// tagged Basis::Fitted or ScaledFromOneBoard (ops/generic/route_rules.h) and a few kernels' own
+// fitted launch constants. A record per constant or per
 // table of one fit: the table's rows
 // are one fit over the same data, so one record says what it was fitted on and what, if anything,
 // was left out; the per-row card counts stay in the tables (`cards`).
@@ -40,6 +42,18 @@ inline constexpr std::string_view kRoundCost     = "src/spec/round_cost.h";
 inline constexpr std::string_view kCostConstants = "src/core/cost_constants.h";
 inline constexpr std::string_view kMoeShare      = "src/spec/moe_routed_share.h";
 inline constexpr std::string_view kWave          = "src/ops/common/sm_wave_rules.h";
+inline constexpr std::string_view kRouteRules    = "src/ops/generic/route_rules.h";
+// Kernels' own fitted launch constants (no tag in their files; the test checks each key is a
+// definition there, it does not audit the files' other definitions).
+inline constexpr std::string_view kInt8PromptLaunch =
+    "src/ops/softmax_attention/dense/causal_cache/int8/template_launch.cuh";
+inline constexpr std::string_view kRope    = "src/ops/launcher/rope.cu";
+inline constexpr std::string_view kRmsNorm = "src/ops/launcher/rmsnorm.cu";
+inline constexpr std::string_view kMoePrefill =
+    "src/ops/sparse_moe/prefill/sparse_moe_prefill_kernels.cu";
+inline constexpr std::string_view kGdnGating =
+    "src/ops/gdn_gating_proj/bf16/bf16_gdn_gating_proj_plan.cpp";
+inline constexpr std::string_view kRmsNormRope = "src/ops/rmsnorm_rope/launch.cu";
 
 // --- route_cost_constants.h: the A16 / A8 refits and the per-generation modelling constants ---
 // The A16 tiles: one leave-one-board-out refit of the model's constants.
@@ -484,6 +498,107 @@ inline constexpr FittedHoldout kWaveHoldouts[] = {
          "TMA from T = 641 on the 70 SMs, 28 % faster there, equal from 768; other boards are "
          "extrapolated until measured",
          "ops/common/sm_wave_rules.h comment; ninferno_sm_wave_rules_test")},
+};
+
+// --- route_rules.h: the rows tagged Basis::Fitted or Basis::ScaledFromOneBoard, keyed by the
+// row's name. The boards are the row's (kSpeedFitBoards: the speed profile's seven-board fit).
+// The speed rule's held-out score (one rule for every board, fitted on six boards and scored on the
+// seventh), which the rows of kRmmaMidMinTokens and kSpeedFill state.
+inline constexpr Holdout h_speed_rule = Holdout::checked(
+    "BF16 timings of the speed profile's seven boards (RTX 3090, RTX 4090, RTX 5090, RTX 2080 Ti, "
+    "A100, A10, L4)",
+    "each board in turn: the rule fitted on six boards and scored on the seventh",
+    "geomean time over the best route",
+    "1.116 of the best against 1.219 for the bands it replaced; a rule per board gained 1.1 % at "
+    "most",
+    "route_rules.h at kRmmaMidMinTokens; generic_gemm.h");
+// The other edges of the same rule: the comment fits the rule as a whole and breaks out no error
+// for them.
+inline constexpr Holdout h_speed_rule_edge = Holdout::none(
+    "inside the speed rule's seven-board fit (RTX 3090, RTX 4090, RTX 5090, RTX 2080 Ti, A100, "
+    "A10, "
+    "L4)",
+    "the record scores the rule as a whole (1.116 of the best, board held out: kRmmaMidMinTokens's "
+    "record) and does not break out this edge: no held-out error of its own",
+    "route_rules.h at the row");
+inline constexpr Holdout h_volta_copy_bound = Holdout::none(
+    "the V100 (870 GB/s): the decoded copy's narrowest margin, 1.13 (24576 x 4096 below 129 "
+    "tokens), scaled to other boards by the DRAM rate (the comment's model, not a timing)",
+    "one board measured, no other: the Titan V (653 GB/s) is under the bound without a measurement",
+    "route_rules.h at kVoltaCopyMinDramGbps; generic_gemm.cpp",
+    "the same bound as choice_constants.h kVoltaCopyMinDramBps (the estimate's copy)");
+
+inline constexpr FittedHoldout kRouteRuleHoldouts[] = {
+    {kRouteRules, "kVoltaCopyMinDramGbps", h_volta_copy_bound},
+    {kRouteRules, "volta_copy_pays: the two comparisons", h_volta_copy_bound},
+    {kRouteRules, "kRmmaMidMinTokens", h_speed_rule},
+    {kRouteRules, "kSpeedFill",
+     Holdout::checked(
+         "BF16 timings of the speed profile's seven boards (RTX 3090, RTX 4090, RTX 5090, RTX 2080 "
+         "Ti, A100, A10, L4)",
+         "each board in turn: the rule fitted on six boards and scored on the seventh",
+         "geomean time over the best route",
+         "the rule's 1.116 of the best (kRmmaMidMinTokens's fit); 1.0..2.0 cost under 0.5 %",
+         "route_rules.h at kSpeedFill; generic_gemm.h")},
+    {kRouteRules, "heuristic_rmma: speed rule token tiles", h_speed_rule_edge},
+    {kRouteRules, "heuristic_rmma: sixteen warps from 72 K steps", h_speed_rule_edge},
+    {kRouteRules, "heuristic_rmma: Q4_K tall tile", h_speed_rule_edge},
+    {kRouteRules, "heuristic_rmma: token tile ladder", h_speed_rule_edge},
+    {kRouteRules, "heuristic_rmma: stream regime tiles", h_speed_rule_edge},
+    {kRouteRules, "tiled_speed_pays: tile",
+     Holdout::none(
+         "kSpeedFill's fit (the speed profile's seven boards); the one timing of the tile "
+         "is below the fill (Q4_K n = 1024 at T 64..128)",
+         "no timing places the fill for this tile; the boards are not named: none left "
+         "out",
+         "route_rules.h at tiled_speed_pays")},
+    {kRouteRules, "staged_speed_route: wave thresholds",
+     Holdout::none("BF16 timings on seven boards with the register-MMA rule (the comment does not "
+                   "name them): 1.116 of the best against 1.15..1.36 and 1.33..1.64 for the older "
+                   "gates",
+                   "the record does not say a board was held out for these thresholds",
+                   "route_rules.h at staged_speed_route")},
+};
+
+// --- Kernels' own launch constants, fitted on lab boards.
+inline constexpr FittedHoldout kKernelHoldouts[] = {
+    {kInt8PromptLaunch, "kHalfCostPercent",
+     Holdout::none(
+         "one RTX 5090 timing at 64K context: a four-warp CTA, or an eight-warp CTA of 64 "
+         "rows, sweeps in about 0.72 of a full eight-warp CTA's time",
+         "one card: none left out; every board takes the figure",
+         "template_launch.cuh at Int8PromptFastLayout",
+         "the same figure as choice_constants.h kAttentionHalfCta; "
+         "int8_prompt_fast_layout spells it a second time (72LL)")},
+    {kRope, "kLargeBlockMaxTokens",
+     Holdout::none("the RTX 5090 (its wave, 170 SMs x six CTAs: 1020) and the RTX 5080 (the "
+                   "256-thread block equal or faster through 1020 tokens)",
+                   "fitted on both boards: none left out; every board takes the bound",
+                   "rope.cu at kLargeBlockMaxTokens")},
+    {kRmsNorm, "kRmsPrefetchBlocks",
+     Holdout::none("grid-size sweeps of both gated shapes: the crossing between 176 and 192 blocks "
+                   "on the RTX 5090; the prefetch 1.5-4.8 % faster from 88 through 168 blocks on "
+                   "the RTX 5080",
+                   "fitted on both boards: none left out; every board takes the count",
+                   "rmsnorm.cu at kRmsPrefetchBlocks")},
+    {kMoePrefill, "kPrefillMaxBlocks",
+     Holdout::none("the RTX 5090 (32 CTAs an SM: 5440) and the RTX 5080 (32 an SM, 2688, 1.2-1.5 % "
+                   "slower on the Q4/Q5 routed prefill at T = 1024-4096, equal on NVFP4)",
+                   "fitted on both boards: none left out; every board takes the budget",
+                   "sparse_moe_prefill_kernels.cu at kPrefillMaxBlocks")},
+    {kGdnGating, "k27Routes",
+     Holdout::none("the RTX 5090: the band edges (token counts) hold the grid near 192 CTAs",
+                   "one board: none left out; every board takes the edges",
+                   "bf16_gdn_gating_proj_plan.cpp at k27Routes")},
+    {kGdnGating, "k35Routes",
+     Holdout::none("the RTX 5090: the same token-count edges hold the grid near 256 CTAs",
+                   "one board: none left out; every board takes the edges",
+                   "bf16_gdn_gating_proj_plan.cpp at k35Routes")},
+    {kRmsNormRope, "kTextHeadsPerBlock",
+     Holdout::none("one sm_120a board: the optimum at three heads a block, the plateau flat from "
+                   "two to nine",
+                   "one board: none left out; every board takes the value",
+                   "rmsnorm_rope/launch.cu at kTextHeadsPerBlock")},
 };
 
 } // namespace ninferno::fitted

@@ -10,12 +10,22 @@
 //     field of the row, and every field its own kind table names `fitted` or `preference` has a
 //     record), core/cost_constants.h, spec/round_cost.h, spec/moe_routed_share.h and
 //     ops/common/sm_wave_rules.h (every definition);
-//   - the Provenance::Fitted tag is found by a scan of the whole source tree: a file that uses it
-//     and is not covered here fails, so a tagged constant cannot sit outside the audit;
+//   - the tags are read from the compiled tables, not only from the text: every entry of
+//     route_cost::kRouteCostConstants whose `from` is Provenance::Fitted has a record whose
+//     definition carries its name, and every record there names a Fitted entry; every row of
+//     route_rules::kRouteRules whose basis is Basis::Fitted or Basis::ScaledFromOneBoard has a
+//     record keyed by its name, and every record there names such a row;
+//   - the Provenance::Fitted and Basis::Fitted / ScaledFromOneBoard tags are found by a scan of the
+//     whole source tree: a file that uses one and is not covered here fails, so a tagged constant
+//     cannot sit outside the audit;
+//   - a few kernels' own fitted launch constants, untagged, have records whose keys are definitions
+//     in their files (those files' other definitions are not audited);
 //   - the total is pinned, so adding or dropping a record is a decision.
 // No GPU.
 
 #include "core/fitted_holdouts.h"
+#include "ops/generic/route_cost_constants.h"
+#include "ops/generic/route_rules.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -34,7 +44,7 @@ namespace {
 
 namespace fit = ninferno::fitted;
 
-constexpr std::size_t kExpectedRecords = 66;
+constexpr std::size_t kExpectedRecords = 84;
 
 int failures = 0;
 
@@ -66,6 +76,7 @@ enum class Mode {
     TaggedScalars, // `inline constexpr Scalar|Constant<N> kName{...};`, with their Provenance
     Definitions,   // every `[inline] constexpr <type> name[ [ ( = {` at the left margin
     RowFields,     // every field of struct GenerationRow
+    RecordedOnly,  // `constexpr` definitions at any indent; only the recorded keys are checked
 };
 
 struct Definition {
@@ -94,7 +105,8 @@ std::map<std::string, Definition> definitions_of(const std::string& text, Mode m
     }
     const std::regex tagged(R"(inline constexpr\s+(?:Scalar|Constant<\d+>)\s+(k\w+)\{)");
     const std::regex any(
-        R"(^(?:\[\[nodiscard\]\]\s*)?(?:inline\s+)?constexpr\s+[\w:<>,\s]+?\s(\w+)\s*[\[\(=\{;])");
+        std::string(mode == Mode::RecordedOnly ? R"(^\s*)" : "^") +
+        R"((?:\[\[nodiscard\]\]\s*)?(?:inline\s+)?constexpr\s+[\w:<>,\s]+?\s(\w+)\s*[\[\(=\{;])");
     std::istringstream lines(text);
     std::vector<std::string> all;
     for (std::string line; std::getline(lines, line);) all.push_back(line);
@@ -194,6 +206,13 @@ const std::vector<Spec>& specs() {
         {fit::kRoundCost, Mode::Definitions, {"kPricedVerifyRows"}},      // a bound, not a fit
         {fit::kMoeShare, Mode::Definitions, {}},
         {fit::kWave, Mode::Definitions, {"fp8_split_tail"}}, // a rule over its parameters
+        // Kernels' own fitted launch constants: only the recorded keys are held to definitions.
+        {fit::kInt8PromptLaunch, Mode::RecordedOnly, {}},
+        {fit::kRope, Mode::RecordedOnly, {}},
+        {fit::kRmsNorm, Mode::RecordedOnly, {}},
+        {fit::kMoePrefill, Mode::RecordedOnly, {}},
+        {fit::kGdnGating, Mode::RecordedOnly, {}},
+        {fit::kRmsNormRope, Mode::RecordedOnly, {}},
     };
     return all;
 }
@@ -206,7 +225,77 @@ std::vector<const fit::FittedHoldout*> all_records() {
     for (const auto& r : fit::kSmallTEtaHoldouts) out.push_back(&r);
     for (const auto& r : fit::kSpecHoldouts) out.push_back(&r);
     for (const auto& r : fit::kWaveHoldouts) out.push_back(&r);
+    for (const auto& r : fit::kRouteRuleHoldouts) out.push_back(&r);
+    for (const auto& r : fit::kKernelHoldouts) out.push_back(&r);
     return out;
+}
+
+// The tags as the compiler reads them: the route cost model's Fitted constants
+// (route_cost::kRouteCostConstants) and the literal rules tagged Fitted or scaled from one board
+// (route_rules::kRouteRules). A tag the text patterns above miss (split over lines, a `using enum`)
+// is still a Fitted entry here.
+void check_compiled_tags(const std::vector<const fit::FittedHoldout*>& records,
+                         const std::map<std::string, Definition>& route_cost_definitions) {
+    namespace rc = ninferno::ops::detail::generic::route_cost;
+    namespace rr = ninferno::ops::detail::generic::route_rules;
+
+    // route_cost_constants.h: a record's definition carries the descriptor name of its constant.
+    std::set<std::string> fitted_names;
+    for (const rc::Listed& c : rc::kRouteCostConstants) {
+        if (c.from == rc::Provenance::Fitted) fitted_names.insert(std::string(c.name));
+    }
+    if (fitted_names.empty()) fail("kRouteCostConstants lists no Fitted constant");
+    std::map<std::string, int> covered;
+    for (const auto* r : records) {
+        if (r->file != fit::kRouteCost) continue;
+        const auto it = route_cost_definitions.find(std::string(r->constant));
+        if (it == route_cost_definitions.end()) continue; // reported by the text check
+        bool fitted = false;
+        for (const std::string& name : fitted_names) {
+            if (it->second.text.find('"' + name + '"') != std::string::npos) {
+                ++covered[name];
+                fitted = true;
+            }
+        }
+        if (!fitted) {
+            fail(std::string(r->constant) +
+                 ": recorded, but kRouteCostConstants lists it as not Provenance::Fitted");
+        }
+    }
+    for (const std::string& name : fitted_names) {
+        if (covered[name] == 0) {
+            fail(name + ": Provenance::Fitted in kRouteCostConstants, but no record's definition "
+                        "carries it");
+        } else if (covered[name] > 1) {
+            fail(name + ": recorded " + std::to_string(covered[name]) + " times");
+        }
+    }
+
+    // route_rules.h: a record is keyed by the row's name.
+    std::map<std::string, rr::Basis> rules;
+    for (const rr::RouteRule& rule : rr::kRouteRules) rules[std::string(rule.name)] = rule.basis;
+    const auto needs_record = [](rr::Basis b) {
+        return b == rr::Basis::Fitted || b == rr::Basis::ScaledFromOneBoard;
+    };
+    std::set<std::string> recorded_rules;
+    for (const auto* r : records) {
+        if (r->file != fit::kRouteRules) continue;
+        const std::string name(r->constant);
+        const auto it = rules.find(name);
+        if (it == rules.end()) {
+            fail(name + ": recorded, but no row of kRouteRules has that name");
+        } else if (!needs_record(it->second)) {
+            fail(name + ": recorded, but its row's basis is " +
+                 std::string(rr::basis_name(it->second)) + ", not Fitted or ScaledFromOneBoard");
+        }
+        recorded_rules.insert(name);
+    }
+    for (const auto& [name, basis] : rules) {
+        if (needs_record(basis) && !recorded_rules.count(name)) {
+            fail(name + ": a kRouteRules row tagged " + std::string(rr::basis_name(basis)) +
+                 " without a record");
+        }
+    }
 }
 
 } // namespace
@@ -232,6 +321,7 @@ int main() {
         }
     }
 
+    std::map<std::string, Definition> route_cost_definitions;
     for (const Spec& spec : specs()) {
         const std::string text = read_file(spec.file);
         if (text.empty()) {
@@ -240,6 +330,7 @@ int main() {
         }
         const auto defined = definitions_of(text, spec.mode);
         if (defined.empty()) fail(std::string(spec.file) + ": no definitions found");
+        if (spec.file == fit::kRouteCost) route_cost_definitions = defined;
 
         std::set<std::string> recorded;
         for (const auto* r : records) {
@@ -288,6 +379,8 @@ int main() {
                 if (!fitted && recorded.count(name) != 0) fail(name + ": a record but not Fitted");
                 continue;
             }
+            if (spec.mode == Mode::RecordedOnly)
+                continue; // the file's other definitions: not audited
             if (!recorded.count(name) && !spec.not_fitted.count(name)) {
                 fail(name + ": defined in " + std::string(spec.file) +
                      " but neither recorded in core/fitted_holdouts.h nor listed not fitted here");
@@ -351,9 +444,13 @@ int main() {
         }
     }
 
+    check_compiled_tags(records, route_cost_definitions);
+
     // The Provenance::Fitted tag, wherever it is used in the source tree: every file that tags a
     // constant Fitted is one this test reads with Mode::TaggedScalars, so its Fitted constants are
-    // held to their records above. A tag in any other file fails here.
+    // held to their records above. A tag in any other file fails here; so does a route_rules
+    // Basis::Fitted or Basis::ScaledFromOneBoard outside route_rules.h, whose rows are held to
+    // their records by check_compiled_tags.
     std::set<std::string> tagged_files;
     for (const Spec& spec : specs()) {
         if (spec.mode == Mode::TaggedScalars) tagged_files.insert(std::string(spec.file));
@@ -374,6 +471,12 @@ int main() {
             fail(relative + ": tags a constant Provenance::Fitted but is not covered by this test "
                             "(add it to specs() with Mode::TaggedScalars and give its constants "
                             "records)");
+        }
+        if ((code.find("Basis::Fitted") != std::string::npos ||
+             code.find("Basis::ScaledFromOneBoard") != std::string::npos) &&
+            relative != fit::kRouteRules) {
+            fail(relative + ": tags a rule Basis::Fitted or ScaledFromOneBoard outside "
+                            "route_rules.h, which this test does not read");
         }
     }
     if (scanned == 0) fail("no source file found under src/");
