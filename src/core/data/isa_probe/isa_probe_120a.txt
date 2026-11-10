@@ -1,0 +1,48 @@
+probe isa_probe 9
+card NVIDIA GeForce RTX 5090
+cc 120
+sms 170
+l2_bytes 100663296
+driver 13040
+runtime 13040
+nvcc 13.4.92
+shape hmma_16816_f32_bf16 4096
+fact resident_ctas_per_sm 4.000 count
+fact mma_cycles_per_sm 8.003 clk
+fact mma_cycles_per_partition 32.010 clk
+fact tensor_flops_per_sm_clock 511.840 flop
+fact mma_dependent_latency 34.542 clk
+fact fp32_cycles_per_warp_instruction 1.027 clk
+fact int32_cycles_per_warp_instruction 2.010 clk
+fact l1_latency_w1 43.887 clk
+fact l1_latency_w2 43.887 clk
+fact l1_latency_w4 43.887 clk
+fact l1_latency_w8 45.918 clk
+fact l2_latency_w1 360.966 clk
+fact l2_latency_ns_w1 124.758 ns
+fact l2_latency_w2 359.177 clk
+fact l2_latency_ns_w2 124.156 ns
+fact l2_latency_w4 359.165 clk
+fact l2_latency_ns_w4 124.156 ns
+fact l2_latency_w8 357.471 clk
+fact l2_latency_ns_w8 123.609 ns
+fact dram_tlbwarm_latency_w1 868.434 clk
+fact dram_tlbwarm_latency_ns_w1 300.000 ns
+fact dram_tlbwarm_latency_w2 840.512 clk
+fact dram_tlbwarm_latency_ns_w2 290.625 ns
+fact dram_tlbwarm_latency_w4 872.113 clk
+fact dram_tlbwarm_latency_ns_w4 301.375 ns
+fact dram_tlbwarm_latency_w8 913.434 clk
+fact dram_tlbwarm_latency_ns_w8 315.625 ns
+fact dram_latency_w1 826.442 clk
+fact dram_latency_ns_w1 285.625 ns
+fact dram_latency_w2 827.719 clk
+fact dram_latency_ns_w2 286.031 ns
+fact dram_latency_w4 826.607 clk
+fact dram_latency_ns_w4 285.742 ns
+fact dram_latency_w8 840.642 clk
+fact dram_latency_ns_w8 290.594 ns
+fact sm_clock_mhz_chase 2893.336 mhz
+fact shared_latency 33.997 clk
+selfcheck ok
+end
