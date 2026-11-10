@@ -461,6 +461,27 @@ class Compare(unittest.TestCase):
         d["queried"]["sms"] = 120  # more SMs than the row, a wrong row
         self.assertEqual(statuses(d)[("table", "sms")], "mismatch")
 
+    def test_a_laptop_or_a_slice_keeps_the_rows_memory_values_in_the_engine(self):
+        # The slice's narrower bus or lower clock copied into the stored facts is wrong: the
+        # engine prices the row's memory at the slice's share. Only a whole board's recorded
+        # variant is read from the driver.
+        d = device_a100()
+        d["mig_mode"] = 1
+        d["queried"].update(sms=42, l2_bytes=20 * MIB, global_bytes=40_000_000_000,
+                            memory_bus_bits=2560)
+        d["engine_table_facts"]["source"] = 2
+        no_mismatch(self, statuses(d))
+        d["engine_table_facts"]["memory_bus_bits"] = 2560
+        self.assertEqual(statuses(d)[("table", "engine_memory_bus_bits")], "mismatch")
+        d["engine_table_facts"].update(memory_bus_bits=5120, memory_clock_khz=1_000_000)
+        self.assertEqual(statuses(d)[("table", "engine_memory_clock_khz")], "mismatch")
+        d = device_laptop()
+        d["engine_table_facts"]["memory_bus_bits"] = 128
+        self.assertEqual(statuses(d)[("table", "engine_memory_bus_bits")], "mismatch")
+        d = device_laptop()
+        d["engine_table_facts"]["memory_clock_khz"] = 9_000_000
+        self.assertEqual(statuses(d)[("table", "engine_memory_clock_khz")], "mismatch")
+
     def test_mig_mode_decides_a_full_memory_slice(self):
         # A 7g profile of an A100: 98 SMs and the board's whole memory and L2. With MIG enabled
         # that is the slice (information); with MIG disabled it is a wrong row or a wrong count.

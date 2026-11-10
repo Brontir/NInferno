@@ -398,13 +398,22 @@ def compare_engine(device, row, table_results):
     else:
         same("engine_reference_clock_khz", alone["reference_clock_khz"],
              stored["reference_clock_khz"], stored_note)
-    q_bus = device["queried"]["memory_bus_bits"]
-    add("engine_memory_bus_bits", alone["memory_bus_bits"], stored["memory_bus_bits"],
-        "match" if stored["memory_bus_bits"] in (alone["memory_bus_bits"], q_bus) else "mismatch",
-        bound)
-    add("engine_memory_clock_khz", alone["memory_clock_khz"], stored["memory_clock_khz"],
-        "match" if 0 < stored["memory_clock_khz"] <= alone["memory_clock_khz"] else "mismatch",
-        "never faster than the row's, never unknown")
+    if laptop or by_field.get("sms") in ("info", "unavailable"):
+        # A laptop and a slice keep the row's memory values (a slice's share is priced apart,
+        # a laptop from its published range): the driver's narrower bus or lower clock is not read.
+        for field in ("memory_bus_bits", "memory_clock_khz"):
+            same(f"engine_{field}", alone[field], stored[field],
+                 "a laptop or a slice keeps the row's memory values")
+    else:
+        # A whole board of a recorded memory variant: the engine reads the driver's bus, and a
+        # clock never faster than the row's.
+        q_bus = device["queried"]["memory_bus_bits"]
+        add("engine_memory_bus_bits", alone["memory_bus_bits"], stored["memory_bus_bits"],
+            "match" if stored["memory_bus_bits"] in (alone["memory_bus_bits"], q_bus)
+            else "mismatch", bound)
+        add("engine_memory_clock_khz", alone["memory_clock_khz"], stored["memory_clock_khz"],
+            "match" if 0 < stored["memory_clock_khz"] <= alone["memory_clock_khz"]
+            else "mismatch", "never faster than the row's, never unknown")
     add("engine_source", EXTRAPOLATED_SOURCE, stored["source"],
         "match" if stored["source"] in (VERIFIED_SOURCE, EXTRAPOLATED_SOURCE) else "mismatch", bound)
     return out
