@@ -102,8 +102,9 @@ struct MoeStageShape {
     std::int32_t rows     = 0; // per expert
     std::int32_t out_rows = 0; // per assignment
     std::int32_t cols     = 0;
-    // The values of an activation row the kernel reads as BF16 (0: `cols`): the router's width for
-    // a gate/up, whose bank K is larger where x is padded.
+    // The live values of an activation row, as the router's x holds them (0: `cols`): the router's
+    // width for a gate/up, whose bank K is larger where x is padded. The W4A8 quantizer reads this
+    // many; every BF16 kernel reads the row at `cols` (the zero tail included).
     std::int32_t x_cols = 0;
     // The router's CTAs quantize x for an R8 gate/up (the bank's K is the router's: x is not
     // padded); only then an R8 gate/up reads int8 codes, else it reads BF16 x and quantizes itself.

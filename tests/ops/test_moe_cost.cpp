@@ -235,17 +235,31 @@ void law_checks() {
     padded.x_cols             = 800;
     padded.router_quantizes_x = false;
     const auto r8_padded      = moe::price_moe_stage(padded, moe::MoeStageKernel::R8, 1, board);
-    check(r8_padded && close(r8_padded->bytes, 1e8 + 800 * 2.0 + out_bytes),
-          "an R8 gate/up of a padded x reads BF16 x of the router's width");
+    check(r8_padded && close(r8_padded->bytes, 1e8 + 1000 * 2.0 + out_bytes),
+          "an R8 gate/up of a padded x reads BF16 x over the bank's K (the zero tail included)");
     const auto rmma_padded =
         moe::price_moe_stage(padded, moe::MoeStageKernel::RegisterMma, 1, board);
-    check(rmma_padded && close(rmma_padded->bytes, 1e8 + 800 * 2.0 + out_bytes),
-          "the register MMA reads BF16 x of the router's width");
+    check(rmma_padded && close(rmma_padded->bytes, 1e8 + 1000 * 2.0 + out_bytes),
+          "the register MMA reads the padded copy of x over the bank's K, not the router's width");
     const auto w4_padded = moe::price_moe_stage(padded, moe::MoeStageKernel::W4a8, 1, board);
     check(w4_padded && close(w4_padded->quantize_bytes, 800 * 2.0 + 32 * 40.0) &&
               close(w4_padded->bytes, 1e8 + 800 * 2.0 + 32 * 40.0 + 1024 * 36.0 / 32.0 + out_bytes),
           "the W4A8 quantize pass reads the router's width, writes and the kernel reads the plane "
           "of the bank K rounded up to 128");
+    // The MXFP8 quantizer writes 32 code bytes and a 4-byte scale a block (36), no sum
+    // (launch_moe_mx8_quantize), also for a qtype with a min; the block-scaled MMA reads the same
+    // 36 bytes a block.
+    moe::MoeStageShape mx_padded = padded;
+    mx_padded.mx8                = true;
+    moe::MoeStageShape mx_min    = mx_padded;
+    mx_min.qtype                 = QType::GGML_Q4_K;
+    const double mx_quantize     = 800 * 2.0 + 32 * 36.0;
+    for (const moe::MoeStageShape& m : {mx_padded, mx_min}) {
+        const auto mxp = moe::price_moe_stage(m, moe::MoeStageKernel::W4a8, 1, board);
+        check(mxp && close(mxp->quantize_bytes, mx_quantize) &&
+                  close(mxp->bytes, 1e8 + mx_quantize + 1024 * 36.0 / 32.0 + out_bytes),
+              "an MXFP8 stage writes 36-byte blocks (no sum) and reads 36 bytes a 32 values");
+    }
     // A down stage of K = 704 (Gemma 4 26B) runs on a plane of 768: 24 blocks, written and read.
     moe::MoeStageShape gemma = down;
     gemma.cols               = 704;

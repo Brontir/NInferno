@@ -19,9 +19,11 @@ namespace {
 constexpr double kInt8ActivationBytesPerValue       = 36.0 / 32.0;
 constexpr double kInt8SummedActivationBytesPerValue = 40.0 / 32.0;
 constexpr double kQuantizedBlockBytes               = 40.0;
-constexpr std::int32_t kQuantizeBlock               = 32;
-constexpr double kBf16BytesPerValue                 = 2.0;
-constexpr double kFp32BytesPerValue                 = 4.0;
+// The MXFP8 quantizer (launch_moe_mx8_quantize): 32 E4M3 codes and a 4-byte scale, no sum.
+constexpr double kMx8QuantizedBlockBytes = 36.0;
+constexpr std::int32_t kQuantizeBlock    = 32;
+constexpr double kBf16BytesPerValue      = 2.0;
+constexpr double kFp32BytesPerValue      = 4.0;
 
 // Whether the stage reads int8 codes on `kind`: the W4A8 tier (its quantize pass wrote them) and an
 // R8 gate/up whose x the router's CTAs quantized. An R8 down stage reads the BF16 intermediate (it
@@ -34,8 +36,9 @@ bool reads_int8(const MoeStageShape& shape, MoeStageKernel kind) {
 
 // The bytes a value of the int8 activation takes when read.
 double int8_read_bytes_per_value(const MoeStageShape& shape) {
-    return moe_format_has_min(shape.qtype) ? kInt8SummedActivationBytesPerValue
-                                           : kInt8ActivationBytesPerValue;
+    // The block-scaled MMA reads codes and scales only, whatever the qtype's min.
+    return moe_format_has_min(shape.qtype) && !shape.mx8 ? kInt8SummedActivationBytesPerValue
+                                                         : kInt8ActivationBytesPerValue;
 }
 
 const Weight& bank_of(const MoeWeights& weights, Stage stage) {
@@ -73,8 +76,8 @@ std::optional<MoeStagePrice> price_moe_stage(const MoeStageShape& shape, MoeStag
     const double assignments = static_cast<double>(tokens) * shape.top_k;
     const double touched     = expected_experts_touched(shape.experts, shape.top_k, tokens);
     const bool int8          = reads_int8(shape, kind);
-    // The values of a BF16 activation row (x has the router's width, which a padded gate/up's K
-    // exceeds); the codes the kernel reads are over the K it walks.
+    // The live values of x (the router's width, which a padded gate/up's K exceeds): what the W4A8
+    // quantizer reads; the kernels read their activation over the K they walk.
     const double x_cols = static_cast<double>(shape.x_cols > 0 ? shape.x_cols : shape.cols);
     // The W4A8 tier's activation planes are at K rounded up to 128 (moe_w4a8_ld, a zero tail): the
     // quantizer writes them whole and the kernel reads them whole. An R8 gate/up reads codes over
@@ -82,8 +85,12 @@ std::optional<MoeStagePrice> price_moe_stage(const MoeStageShape& shape, MoeStag
     const double code_cols = kind == MoeStageKernel::W4a8
                                  ? static_cast<double>(moe_w4a8_ld(shape.cols))
                                  : static_cast<double>(shape.cols);
-    const double act_read =
-        int8 ? code_cols * int8_read_bytes_per_value(shape) : x_cols * kBf16BytesPerValue;
+    // A BF16 stage reads the row at the bank's K, the zero tail of a padded gate/up included: the
+    // padded copy (moe.cpp, "A zero-padded bank reads x widened with zeros") has ldx = g.input and
+    // the kernels walk a.w.k; Volta's f16 rows are g.input wide too (launch_volta_x_f16). Only the
+    // pre-pass that widens x (read x_cols, write the bank's K) is not priced.
+    const double act_read = int8 ? code_cols * int8_read_bytes_per_value(shape)
+                                 : static_cast<double>(shape.cols) * kBf16BytesPerValue;
     // A gate and up stage reads the T rows of x, which a token's k assignments share; a down stage
     // reads the T x k rows of the activation.
     const double act_rows =
@@ -93,8 +100,10 @@ std::optional<MoeStagePrice> price_moe_stage(const MoeStageShape& shape, MoeStag
     // and sums of the whole plane (the kernel then reads the codes: act_read).
     if (kind == MoeStageKernel::W4a8) {
         const double blocks = code_cols / kQuantizeBlock;
-        out.quantize_bytes =
-            act_rows * (x_cols * kBf16BytesPerValue + blocks * kQuantizedBlockBytes);
+        // launch_moe_mx8_quantize writes 32 code bytes and one 4-byte scale a block, never the
+        // sum; launch_moe_w4a8_quantize writes the sum too.
+        const double block_bytes = shape.mx8 ? kMx8QuantizedBlockBytes : kQuantizedBlockBytes;
+        out.quantize_bytes       = act_rows * (x_cols * kBf16BytesPerValue + blocks * block_bytes);
     }
     out.bytes = shape.bank_bytes * touched / shape.experts + act_rows * act_read +
                 assignments * shape.out_rows * kBf16BytesPerValue + out.quantize_bytes;
