@@ -61,6 +61,11 @@ ninferno_add_test(ninferno_gate_atlas_test
 ninferno_add_test(ninferno_route_cost_constants_test NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_route_cost_constants.cpp")
 
+# The launch node cost and the launch-like numbers pinned at each use site (#617 B). No GPU.
+ninferno_add_test(ninferno_launch_node_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_launch_node.cpp"
+  LIBRARIES ninferno_spec)
+
 ninferno_add_test(ninferno_decode_graph_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_decode_graph.cpp"
   LIBRARIES ninferno_core)
 

@@ -39,7 +39,7 @@ struct LaunchConfig {
 // Whether the current device runs programmatic dependent launches (DeviceFeatures::pdl, sm_90+).
 // Below it the kernels' griddepcontrol compiles out, yet a launch that carries the programmatic
 // serialization attribute still costs: a captured node takes 1.3-1.5 us on an RTX 3090 against
-// 0.84-0.96 us without it, and on an RTX 4090 the norms launched with it alone took the decode of
+// 0.84-0.96 us without it (ninferno::launch_node_seconds is the node cost the models read), and on an RTX 4090 the norms launched with it alone took the decode of
 // Qwen 3.6 35B from 252 to 245 tok/s. So the attribute is set only where it overlaps anything, and
 // the launch is otherwise an ordinary stream-ordered one.
 [[nodiscard]] inline bool supported() { return device_class().features.pdl; }

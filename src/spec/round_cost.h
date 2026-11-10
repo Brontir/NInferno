@@ -166,8 +166,9 @@ struct LaunchTime {
     double seconds;
     double eta_dram;
 };
+
 inline constexpr LaunchTime kLaunchTime[] = {
-    {"ada", 1.5e-6, 0.946},
+    {"ada", launch_node_seconds("ada"), 0.946},
 };
 
 // The kernels a round's graphs launch and a plain step's (0: not counted, no launch term).

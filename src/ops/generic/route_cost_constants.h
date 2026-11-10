@@ -102,8 +102,9 @@ inline constexpr Scalar kMaxTileSharedBytes{
 inline constexpr Scalar kMinWarpFill{{0.05}, Provenance::Fitted, "min_warp_fill"};
 
 // --- A8 tiles (a8_candidates) ---
-// The activation quantizer: its launch, and its bytes per value (read BF16, write the code and
-// its share of the scale and sum planes).
+// The activation quantizer: its launch (a kernel with its scale and sum planes, not the bare graph
+// node of ninferno::launch_node_seconds, 1.5e-6 on Ada; the two stay separate facts, #617 B), and
+// its bytes per value (read BF16, write the code and its share of the scale and sum planes).
 inline constexpr Scalar kQuantLaunchSeconds{{1.7e-6}, Provenance::Fitted, "quant_launch_seconds"};
 inline constexpr Scalar kQuantBytesPerValue{{4.3}, Provenance::Fitted, "quant_bytes_per_value"};
 // W4A8 tiles: fraction of the int8 peak by kW4a8Schedules index (32x128, 64x128, 128x128,

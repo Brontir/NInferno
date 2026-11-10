@@ -18,16 +18,15 @@
 // the L2 when twice its bytes fit, the generic model's own rule (its weights stream through the
 // L2 beside it).
 //
-// Launches: a launch has a measured cost per generation, but this header holds none. Two
-// constants exist elsewhere, and they differ. kLaunchTime (src/spec/round_cost.h) is a true
-// per-launch t0 inside graph replay (1.5e-6 s, Ada only): that is the number to pass as
-// `launch_seconds`. kKernelCost (src/product/choice/choice_constants.h) is not a pure launch cost:
-// it is a kernel's residual beyond its bytes per generation, ramp and epilogue included; do not
-// pass it as a launch price. select() adds `launch_seconds` to every launch of a chain; 0 (the
-// default) prices no launch, and the launch count then only breaks a tie. Beware of counting a
-// launch twice: if the steps' seconds already include the launch (a route_cost_seconds that
-// carries a launch term, a kernel residual), a nonzero `launch_seconds` double-counts it. Roadmap
-// #617 step B unifies the constants; they are not moved here.
+// Launches: a launch node has one measured cost per generation, ninferno::launch_node_seconds
+// (core/cost_constants.h; 1.5e-6 s on Ada, a per-launch t0 inside graph replay): that is the number
+// to pass as `launch_seconds`, 0 for a generation without one. kKernelCost
+// (src/product/choice/choice_constants.h) is not a launch cost: it is a kernel's residual beyond
+// its bytes per generation, ramp and epilogue included; do not pass it. select() adds
+// `launch_seconds` to every launch of a chain; 0 (the default) prices no launch, and the launch
+// count then only breaks a tie. Beware of counting a launch twice: if the steps' seconds already
+// include the launch (a route_cost_seconds that carries a launch term, a kernel residual), a
+// nonzero `launch_seconds` double-counts it.
 //
 // Selection, as #600 picks within the resolution: pass 1 takes the anchor, the lowest total
 // seconds (steps plus launches x launch_seconds) among the priced alternatives, the earliest on
