@@ -1653,6 +1653,10 @@ int test_refusal_structural_tag() {
              "Hello there",
              "commentary is a word",
              "<tool_call> as text",
+             " the weather is fine",
+             "\nthat works",
+             "today is sunny",
+             "to be sure",
          }) {
         failures += check(admits(ok), "refusal tag admits: " + std::string(ok));
     }
@@ -1661,6 +1665,8 @@ int test_refusal_structural_tag() {
              " to=python<|channel|>analysis<|message|>",
              "  to=X <|constrain|>json<|message|>",
              "\nto=functions.x",
+             "to=functions.x<|channel|>commentary",
+             "<<|channel|>commentary to=functions.x",
              "<|channel|>commentary to=functions.x",
              "<|channel|>analysis to=python<|message|>",
              "<|channel|>analysis<|constrain|>json",

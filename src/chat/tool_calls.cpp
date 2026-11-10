@@ -2512,7 +2512,7 @@ public:
     // message (#578). The prompt ends at "<|start|>assistant", so the output begins with the
     // header: either "<|channel|>analysis|final<|message|>" exactly (a recipient, a
     // "commentary" channel or a <|constrain|> after the channel name has no place in it), or text
-    // that does not begin with a recipient (whitespace and "to", or "<|"). Past that, the
+    // that does not begin with a recipient (whitespace, then "to=", or "<|"). Past that, the
     // excludes close the headers a later message could address (a commentary channel, a space
     // after a channel name or after the role, <|constrain|>). The prose of the final message and
     // the analysis stay free (" to" and "commentary" are words).
@@ -2540,7 +2540,7 @@ public:
              literal(kMessage), text()});
         const OrderedJson plain =
             sequence({OrderedJson{{"type", "regex"},
-                                  {"pattern", "[^ \\t\\n<]|[ \\t\\n]+[^ \\t\\nt<]|<[^|]"}},
+                                  {"pattern", "([ \\t\\n]*)([^ \\t\\n<t]|t[^o]|to[^=])|<[^|<]"}},
                       text()});
         return OrderedJson{
             {"type", "structural_tag"},

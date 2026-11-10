@@ -871,8 +871,9 @@ PreparedRequest GenerationService::prepare_impl(const GenerationRequest& request
             steer.param      = "tool_choice";
             try {
                 request_options.constraint.compiled = compile_output_constraint(
-                    steer, false,
+                    steer, prompt.summary().starts_in_reasoning,
                     request_options.output.raw || request_options.output.preserve_special_tokens);
+                prepared.steer_constraint = request_options.constraint.compiled != nullptr;
             } catch (const ApiException& exception) {
                 // A plain none request never fails for its steer: the cut alone answers.
                 std::fprintf(stderr, "[serve] tool_choice none steer not applied: %s\n",
@@ -1112,7 +1113,13 @@ GenerationOutcome GenerationService::run(PreparedRequest& prepared, const Stream
         error.message += numerical_failure_context(load_summary());
         throw ApiException(std::move(error));
     }
-    if (result.constraint.violated) {
+    if (result.constraint.violated && prepared.steer_constraint) {
+        // The header steer is the server's, not the client's: the output stands, and a call the
+        // model wrote past it is cut as without the steer.
+        std::fprintf(stderr, "[serve] tool_choice none steer not enforced: %s
+                             ",
+                             result.constraint.violation.c_str());
+    } else if (result.constraint.violated) {
         // Never present unenforced output as conforming.
         ApiError error;
         error.status  = 500;

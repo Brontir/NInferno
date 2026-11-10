@@ -197,6 +197,9 @@ struct PreparedRequest {
     std::uint32_t plan_level         = 0;      // the plan ladder's rung (PlanSummary::rung)
     // tool_choice none with tools declared: calls the model writes anyway are not returned.
     bool discard_tool_calls = false;
+    // The request's constraint is the tool_choice none header steer, not one the client asked
+    // for: a violation of it returns the output (the cut still applies), never an error.
+    bool steer_constraint = false;
 };
 
 // Why --spec auto decodes plainly: `refused` (the choice's label) did not fit, the last refusal
