@@ -57,6 +57,7 @@
 #include "ops/generic/generic_ggml_internal.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
 #include "ops/generic/random_weight.h"
+#include "ops/generic/route_authorities.h"
 #include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
 #include "ops/generic/route_tune_tool.h"
@@ -568,9 +569,10 @@ int route_tune_main(int argc, char** argv) {
             // The prefill candidates and bands are timed as the prefill profile runs them (a
             // register-MMA tile there keeps the MMA with ones for its min-term sums).
             const ops::ScopedPrefillRoutes prefill_profile(true);
+            const generic::Ask prefill_ask = generic::ask_below_profiles(17, true);
             double best_total = 1e30;
             for (const auto r : routes) {
-                if (!generic::route_is_token_invariant(r) || !tabled(r)) continue;
+                if (!generic::profile_admits(r, prefill_ask) || !tabled(r)) continue;
                 double total = 0;
                 for (const auto t : prefill_points) total += time_route(r, t);
                 std::printf("  prefill candidate %s %.2f us\n", generic::route_name(r).c_str(), total);
@@ -591,12 +593,13 @@ int route_tune_main(int argc, char** argv) {
                 // prefill route answers.
                 std::vector<std::pair<std::int32_t, generic::Route>> width_winners;
                 for (const auto t : band_points) {
+                    const generic::Ask band_ask = generic::ask_below_profiles(t, true);
                     const double base   = time_route(*entry.prefill, t);
                     double best         = base;
                     generic::Route pick = *entry.prefill;
                     for (const auto r : routes) {
                         if (r == *entry.prefill || !tabled(r) ||
-                            !generic::same_summation(r, *entry.prefill)) {
+                            !generic::profile_admits_as(r, band_ask, *entry.prefill)) {
                             continue;
                         }
                         const double us = time_route(r, t);
