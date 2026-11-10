@@ -35,8 +35,9 @@ rests on (the rule's action may still be measured); a choice nobody timed is `Un
 the widest speculative verify (16 tokens) while the timings sit inside it, the tolerance says so. A
 `Measured` rule may rest on one board and still apply to every board: 19 of the 34 `Measured`
 entries name a single card (count them from `--list`), and for example `kR8MaxTokens` and
-`kR8DecodeTokens` (RTX 5080), the single-sequence rule of mmq verify (RTX 5070 Ti), the narrow-through-16 rule (RTX 5090) and
-`w4a8_ws_wins: ampere` (RTX 3090, taken for sm_80 and sm_86) decide on every card. The class says
+`kR8DecodeTokens` (RTX 5080), the single-sequence rule of mmq verify (RTX 5070 Ti), the
+narrow-through-16 rule (RTX 5090) and `w4a8_ws_wins: ampere` (RTX 3090, taken for sm_80 and sm_86)
+decide on every card. The class says
 what the timing was, not how far the rule reaches; the `boards` field is where to look. A step
 that holds fitted or placed constants out of a derivation reads this field, not the prose;
 `--list` prints it and the test prints the count per class. Where a descriptor only says where a
