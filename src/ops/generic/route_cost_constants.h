@@ -77,11 +77,9 @@ inline constexpr Scalar kL1BytesPerSmClock{{128.0}, Provenance::Fact, "l1_bytes_
 // counted K loop. One law a binary, no environment switch; a test flips it for its process through
 // rmma_counted_law_for_test (generic_gemm.h). It ships false until the A/B of the counted law.
 inline constexpr bool kRmmaCountedLaw = false;
-// The L1 hit latency a warp waits on a spilled register's reload (LDL): 32 clocks on Turing, 33 on
-// Ampere, 34 on Ada and Blackwell in the published microbenchmarks; the counted law divides it by
-// the warps a scheduler holds, which overlap each other's waits. A fact of the SM, not of our
-// sweeps.
-inline constexpr Scalar kL1HitLatencyCycles{{32.0}, Provenance::Fact, "l1_hit_latency_cycles"};
+// The L1 hit latency a warp waits on a spilled register's reload (LDL) under the counted law is no
+// constant of this file: it is the chip's measured ISA fact, per architecture
+// (kernel_facts::l1_hit_latency_cycles; one number for every chip was right on one of them).
 // The register file's allocation unit per warp (256 registers): a CUDA fact of every part the
 // model names.
 inline constexpr Scalar kRegAllocPerWarp{{256.0}, Provenance::Fact, "reg_alloc_per_warp"};
@@ -173,7 +171,6 @@ inline constexpr Listed kRouteCostConstants[] = {
     listed(kRmmaHeavyStepK, Kind::Count),
     listed(kSpillAccessesPerStep, Kind::Count),
     listed(kL1BytesPerSmClock, Kind::BytesPerClock),
-    listed(kL1HitLatencyCycles, Kind::Cycles),
     listed(kRegAllocPerWarp, Kind::Count),
     listed(kClusterReduceCycles, Kind::Cycles),
     listed(kWarpReduceCycles, Kind::Cycles),

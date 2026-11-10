@@ -271,6 +271,11 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         const double per_cta = std::ceil(kept->registers * 32.0 / unit) * unit * (threads / 32.0);
         return std::max(1.0, std::min(limit, std::floor(regs_sm / per_cta)));
     };
+    // The L1 hit latency a spilled register's reload waits under the counted law: the chip's
+    // measured ISA fact (kernel_facts::l1_hit_latency_cycles). A chip without one has no counted
+    // terms and keeps today's.
+    const std::optional<double> l1_latency =
+        rmma_counted_law() ? kernel_facts::l1_hit_latency_cycles(d.major, d.minor) : std::nullopt;
     // Time of `ctas` CTAs of `rows` output rows x `cols` (K over `cluster` CTAs) of `threads`
     // threads, at most `occ` resident per SM; `local_bytes` is the spill per thread of the kernel;
     // `loop` the kernel's counted K loop (rmma_counted_terms.h), read under the counted law.
@@ -321,10 +326,9 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         // Under the counted law, the loop's own counts: every MMA of an iteration (the min-term
         // ones included) over the tensor rate, its LDL / STL waits at the L1 latency shared by the
         // warps a scheduler holds.
-        if (counted && loop != nullptr && rmma_counted::usable(*loop)) {
-            const auto t =
-                rmma_counted::terms(*loop, q, threads / 32.0, kc, warps_k, peak_sm, warps,
-                                       route_cost::kL1HitLatencyCycles.value(), clk, d.major);
+        if (counted && l1_latency && loop != nullptr && rmma_counted::usable(*loop)) {
+            const auto t = rmma_counted::terms(*loop, q, threads / 32.0, kc, warps_k, peak_sm,
+                                               warps, *l1_latency, clk, d.major);
             mma   = t.mma;
             spill = t.spill;
         }

@@ -103,7 +103,20 @@ struct SnapshotHeader {
     std::string flags;  // the CUDA flags of that build
     std::string source; // sha256 of the device sources it was made from
     std::size_t kernels = 0;
+    // The `chain` line of a snapshot with critical paths: what chose them, "measured" (the
+    // architecture's row of the ISA facts table, src/core/data/isa_facts.json) or "nominal" (the
+    // table has no row for it), and the clocks of a load on the chain, which under "measured" is
+    // the row's L1 hit latency of a dependent load at one resident warp. Empty and 0 where the
+    // snapshot has no such line.
+    std::string chain_basis;
+    double chain_ld = 0.0;
 };
+
+// The L1 hit latency of a dependent load on a chip of this compute capability, in SM clocks: the
+// measured ISA fact its own architecture's snapshot was made with. nullopt where no snapshot of
+// exactly this capability is committed or its paths were chosen with nominal latencies: no facts,
+// never another architecture's number.
+[[nodiscard]] std::optional<double> l1_hit_latency_cycles(int major, int minor);
 
 // The build architecture labels with a committed snapshot, in file order.
 [[nodiscard]] std::vector<std::string_view> snapshot_archs();

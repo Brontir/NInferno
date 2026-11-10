@@ -109,7 +109,19 @@ Snapshot parse(std::string_view text) {
                 s.header.source = rest;
             else if (first == "kernels")
                 s.header.kernels = std::stoul(rest);
-            else if (first == "columns") {
+            else if (first == "chain") {
+                // `<basis> <class>=<clocks> ...` (kernel_facts.py chain_line): the basis and the
+                // load's clocks are read, the other classes are the tool's.
+                std::istringstream weights(rest);
+                weights >> s.header.chain_basis;
+                for (std::string w; weights >> w;) {
+                    if (w.rfind("ld=", 0) == 0) s.header.chain_ld = std::stod(w.substr(3));
+                }
+                if ((s.header.chain_basis != "measured" && s.header.chain_basis != "nominal") ||
+                    !(s.header.chain_ld > 0.0)) {
+                    throw std::runtime_error("kernel facts: unexpected chain line: " + rest);
+                }
+            } else if (first == "columns") {
                 // The columns are read by position: the file spells either list exactly.
                 if (rest == kColumns)
                     with_loops = 3;
@@ -181,6 +193,14 @@ std::optional<SnapshotHeader> snapshot_header(std::string_view arch) {
     const Snapshot* s = find(arch);
     if (s == nullptr) return std::nullopt;
     return s->header;
+}
+
+std::optional<double> l1_hit_latency_cycles(int major, int minor) {
+    for (const auto& s : snapshots()) {
+        if (label_parts(s->header.arch).first != major * 10 + minor) continue;
+        if (s->header.chain_basis == "measured") return s->header.chain_ld;
+    }
+    return std::nullopt;
 }
 
 std::optional<KernelFacts> rmma_facts(std::string_view arch, const RmmaKernelKey& key) {

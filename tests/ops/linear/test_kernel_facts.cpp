@@ -65,7 +65,20 @@ void snapshots_parse() {
         expect(header->kernels > 0, "sm_" + std::string(arch) + " holds no kernel");
         expect(!header->nvcc.empty() && header->nvcc != "unknown",
                "sm_" + std::string(arch) + " records no nvcc");
+        // The L1 hit latency of a chip is its own architecture's measured chain load, and no
+        // number at all where the snapshot was made with nominal latencies or without a path.
+        const int cc      = std::stoi(std::string(arch));
+        const auto l1     = kf::l1_hit_latency_cycles(cc / 10, cc % 10);
+        const bool common = std::string(arch) == std::to_string(cc); // not an "a" / "f" label
+        if (header->chain_basis == "measured") {
+            expect(l1 && *l1 == header->chain_ld && *l1 > 20.0 && *l1 < 60.0,
+                   "sm_" + std::string(arch) + ": the L1 latency is not its measured chain load");
+        } else if (common) {
+            expect(!l1, "sm_" + std::string(arch) + ": an L1 latency without a measured row");
+        }
     }
+    expect(!kf::l1_hit_latency_cycles(6, 1) && !kf::l1_hit_latency_cycles(8, 7),
+           "an L1 latency for a capability with no snapshot of its own");
     // A known kernel of every snapshot: the BF16 decoder on the four-warp K-split schedule, plain
     // store epilogue, compiled for every format and architecture.
     for (const auto arch : archs) {
