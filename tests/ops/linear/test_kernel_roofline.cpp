@@ -331,10 +331,71 @@ void check_price_formats() {
     if (bad > 0 || names.empty()) ++failures;
 }
 
+// ---- Check 4: the price tool prices only what this build and board can launch ----
+// `price --route F:N` exits 0 (a price printed) exactly where the selector's resource rules admit
+// the schedule: register-MMA where this build compiles it (rmma_schedule_launchable), staged where
+// its shared stages fit this build's block and the board's (staged_fits, staged_device_fits, as
+// staged_refusal does), else 2 with no price. 99 KiB boards (RTX 4090, RTX 5090) and a 227 KiB
+// one (H100 SXM) tell the board's limit from the build's.
+int price_exit(const char* board, const std::string& route) {
+    std::vector<std::string> args = {"price", "--board", board, "--format", "bf16",
+                                     "--n",   "4096",    "--k", "4096",     "--t",
+                                     "64",    "--route", route};
+    std::vector<char*> argv;
+    for (auto& a : args) argv.push_back(a.data());
+    std::fflush(stdout);
+    const int rc = ninferno::tools::price_main(static_cast<int>(argv.size()), argv.data());
+    std::fflush(stdout);
+    return rc;
+}
+
+void check_price_launchable() {
+    long bad = 0, priced = 0, refused = 0;
+    const auto expect = [&](const char* board, const std::string& route, bool launchable) {
+        const int rc   = price_exit(board, route);
+        const int want = launchable ? 0 : 2;
+        if (rc != want) {
+            std::fprintf(stderr, "FAIL: price --board %s --route %s exits %d, want %d\n", board,
+                         route.c_str(), rc, want);
+            ++bad;
+        }
+        ++(launchable ? priced : refused);
+    };
+    for (const char* name : {"rtx4090", "rtx5090", "h100-sxm"}) {
+        const g::FactsBoard* board = nullptr;
+        for (const auto& b : g::kFactsBoards) {
+            if (std::strcmp(b.name, name) == 0) board = &b;
+        }
+        if (board == nullptr) {
+            std::fprintf(stderr, "FAIL: no facts board %s\n", name);
+            ++bad;
+            continue;
+        }
+        char id[16];
+        std::snprintf(id, sizeof id, "0x%04X", static_cast<unsigned>(board->pci_device_id));
+        const DeviceClass d = g::board_device_class(*board);
+        for (int i = 0; i < g::staged_schedule_count(); ++i) {
+            bool launchable = g::staged_fits(i);
+            if (launchable) {
+                const ninferno::ScopedDeviceClass scoped(d);
+                launchable = g::staged_device_fits(i);
+            }
+            expect(id, "staged:" + std::to_string(i), launchable);
+        }
+    }
+    for (int i = 0; i < g::rmma_schedule_count(); ++i) {
+        expect("rtx4090", "rmma:" + std::to_string(i), g::rmma_schedule_launchable(i));
+    }
+    std::printf("price launchable: %ld routes priced, %ld refused, %ld differ\n", priced, refused,
+                bad);
+    if (bad > 0 || priced == 0) ++failures;
+}
+
 int main() {
     check_golden();
     check_wiring();
     check_price_formats();
+    check_price_launchable();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;
