@@ -303,7 +303,12 @@ void price_joint(Profile& p, const MeasuredPair& pair, const CardRates& lab,
             // term, priced as round_cost_estimate prices them: a configuration's round is its
             // sections' rounds averaged, each with its own counts (none for a depth the lab did
             // not count), so the scale is the averaged R_1 over the averaged R_C, not the
-            // sections' ratios averaged.
+            // sections' ratios averaged. The launches count where `lab` (the card both rounds are
+            // priced on) has a launch time, whatever the measuring card's: round_cost_estimate
+            // needs both cards' because it raises the bytes by the measuring card's measured
+            // excess, which holds the launches where that card has no launch time (counting them
+            // again would count them twice); this ratio is of two rounds priced on one card and
+            // carries no measured excess, so its launches are counted on that card or not at all.
             const auto counted = launches.find(config.label());
             const std::vector<RoundLaunches> sections =
                 counted != launches.end() && lab.launch_bytes() > 0
@@ -720,50 +725,6 @@ const MeasuredPair* own_lab_pair(const std::vector<const MeasuredPair*>& home, c
     return nullptr;
 }
 
-// The load bounds of a profile priced for another card, from the round cost on that card's rates
-// (Profile::joint_scale): at C streams each choice runs the depth d (of those it measured, up to
-// its own) with the greatest gain, its one-request gain at d times R_1(d) / R_C(d), and plain
-// decode where that is at most 1. A bound serves every choice, so the shallowest of them is
-// taken. Past kPricedVerifyRows (a joint verify of more rows than the rounds were measured at) or
-// where a depth is not priced it is not run; plain decode from the first stream count nothing is
-// priced for. Replaces stand_in_load's ceil(SMs / 10): the compute term of a joint verify
-// overtakes the weight bytes at a row count that grows with SMs x clock x int8 rate over DRAM
-// rate, which is what the price carries.
-std::vector<LoadBound> facts_load(const Profile& p) {
-    std::vector<std::pair<const Choice*, bool>> choices;
-    for (const auto& [c, thinking] : {std::pair{&p.overall, false}, std::pair{&p.thinking, true},
-                                      std::pair{&p.non_thinking, false}}) {
-        if (c->config.enabled()) { choices.emplace_back(c, thinking); }
-    }
-    std::vector<std::int32_t> depths; // from 2 streams on, up to the first plain
-    std::int32_t previous = std::numeric_limits<std::int32_t>::max();
-    for (std::int32_t streams = 2; streams <= kPricedVerifyRows + 1 && previous > 0; ++streams) {
-        std::int32_t depth = choices.empty() ? 0 : std::numeric_limits<std::int32_t>::max();
-        for (const auto& [c, thinking] : choices) {
-            std::int32_t best_depth = 0;
-            double best             = 1.0;
-            for (std::int32_t d = 1; d <= c->config.k; ++d) {
-                SpecConfig at     = c->config;
-                at.k              = d;
-                const auto priced = p.joint_scale.find(at.label());
-                if (priced == p.joint_scale.end()) { continue; }
-                const auto scale = priced->second.find(streams);
-                const auto gain  = d == c->config.k ? std::optional<double>(c->speedup())
-                                                    : measured_gain(p, at, thinking);
-                if (scale == priced->second.end() || !gain) { continue; }
-                if (*gain * scale->second > best) {
-                    best       = *gain * scale->second;
-                    best_depth = d;
-                }
-            }
-            depth = std::min(depth, best_depth);
-        }
-        depths.push_back(depth);
-        previous = std::min(previous, depth);
-    }
-    return clipped_load(depths);
-}
-
 // Another card's: its tokens a round (the pair's, on any card), its rounds priced for this card by
 // the facts. A pair with facts is taken over another card's measurement without them even of this
 // generation: R is computed for this card either way, and a raw measurement of another card is the
@@ -895,7 +856,53 @@ std::vector<LoadBound> clipped_load(const std::vector<std::int32_t>& depths) {
     return out;
 }
 
-
+// The load bounds of a profile priced for another card, from the round cost on that card's rates
+// (Profile::joint_scale): at C streams each choice runs the depth d (of those it measured, up to
+// its own) with the greatest gain, its one-request gain at d times R_1(d) / R_C(d), and plain
+// decode where that is at most 1. A bound serves every choice, so the shallowest of them is
+// taken. Past kPricedVerifyRows (a joint verify of more rows than the rounds were measured at) or
+// where a depth is not priced it is not run; plain decode from the first stream count nothing is
+// priced for. Replaces stand_in_load's ceil(SMs / 10): the compute term of a joint verify
+// overtakes the weight bytes at a row count that grows with SMs x clock x int8 rate over DRAM
+// rate, which is what the price carries. A choice's gain at a shallower depth is over its own
+// sections, as its own gain at its depth is: every section for the overall default (nullopt), the
+// thinking or the other sections for the thinking and non-thinking ones.
+std::vector<LoadBound> facts_load(const Profile& p) {
+    std::vector<std::pair<const Choice*, std::optional<bool>>> choices;
+    for (const auto& [c, thinking] :
+         {std::pair<const Choice*, std::optional<bool>>{&p.overall, std::nullopt},
+          std::pair<const Choice*, std::optional<bool>>{&p.thinking, true},
+          std::pair<const Choice*, std::optional<bool>>{&p.non_thinking, false}}) {
+        if (c->config.enabled()) { choices.emplace_back(c, thinking); }
+    }
+    std::vector<std::int32_t> depths; // from 2 streams on, up to the first plain
+    std::int32_t previous = std::numeric_limits<std::int32_t>::max();
+    for (std::int32_t streams = 2; streams <= kPricedVerifyRows + 1 && previous > 0; ++streams) {
+        std::int32_t depth = choices.empty() ? 0 : std::numeric_limits<std::int32_t>::max();
+        for (const auto& [c, thinking] : choices) {
+            std::int32_t best_depth = 0;
+            double best             = 1.0;
+            for (std::int32_t d = 1; d <= c->config.k; ++d) {
+                SpecConfig at     = c->config;
+                at.k              = d;
+                const auto priced = p.joint_scale.find(at.label());
+                if (priced == p.joint_scale.end()) { continue; }
+                const auto scale = priced->second.find(streams);
+                const auto gain  = d == c->config.k ? std::optional<double>(c->speedup())
+                                                    : measured_gain(p, at, thinking);
+                if (scale == priced->second.end() || !gain) { continue; }
+                if (*gain * scale->second > best) {
+                    best       = *gain * scale->second;
+                    best_depth = d;
+                }
+            }
+            depth = std::min(depth, best_depth);
+        }
+        depths.push_back(depth);
+        previous = std::min(previous, depth);
+    }
+    return clipped_load(depths);
+}
 
 // The steps in order: the card's own record (own_lab_pair), else another card's priced by the facts
 // (priced_by_facts_for), else this generation's lab cards (generation_median, or the one there is),

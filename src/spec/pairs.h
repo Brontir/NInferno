@@ -130,6 +130,13 @@ struct RoundCostEstimate {
 // 3, 3, 2, 0 give 2:3,4:2,5:0; 2, 2, 3, 2 give 2:2 alone (the rise is clipped, no 4:2 follows).
 [[nodiscard]] std::vector<LoadBound> clipped_load(const std::vector<std::int32_t>& depths);
 
+// The load table of a profile priced for another card, from its joint verify's price
+// (Profile::joint_scale) and its choices' gains: at C = 2, 3, ... streams each choice runs the
+// depth (up to its own) whose one-request gain times R_1 / R_C is greatest, plain decode where
+// none is above 1; the shallowest of the choices', clipped (clipped_load). An unpriced count runs
+// plain decode, so the table ends at plain decode by kPricedVerifyRows + 1 streams at the latest.
+[[nodiscard]] std::vector<LoadBound> facts_load(const Profile& profile);
+
 // The profile of a target from its pairs measured on the lab's cards (the same target and drafters),
 // the same whatever the order of `measured` (records ordered by GPU class id, then content):
 //   1. With `gpu`, a card other than the measuring one prices its rounds by the facts

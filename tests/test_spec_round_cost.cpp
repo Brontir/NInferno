@@ -20,6 +20,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -878,8 +879,77 @@ int main() {
                         previous = *ratio;
                     }
                 }
+                // The asking card's draft head (SelectOptions::proposal_rows, what its artifact
+                // serves): the joint verify is priced with those rows, for every configuration
+                // (a start drafts through the head whatever the label), not the lab artifact's.
+                sp::SelectOptions with_head;
+                with_head.proposal_rows =
+                    sp::ProposalRows{{{std::string(sp::mode_name(config.mode)), 4096}}};
+                const sp::Profile headed =
+                    sp::profile_for_target({&lab}, "sm89", with_head, &small);
+                const auto at_head =
+                    sp::load_gain(*lab.round_facts, config, sp::card_rates(small).kappa(), 1.0, 2,
+                                  *with_head.proposal_rows);
+                const auto found = headed.joint_scale.find(config.label());
+                expect(at_head && found != headed.joint_scale.end() && found->second.contains(2) &&
+                           std::abs(found->second.at(2) - *at_head) < 1e-9,
+                       "R_1 / R_2 of " + config.label() + " with the asking card's head rows");
+                const auto unheaded = by_card[0].joint_scale.find(config.label());
+                expect(found != headed.joint_scale.end() && found->second.contains(2) &&
+                           unheaded != by_card[0].joint_scale.end() &&
+                           std::abs(found->second.at(2) - unheaded->second.at(2)) > 1e-6,
+                       "the head rows change the joint verify's price");
             }
         }
+    }
+    // facts_load on its own (synthetic tables): at each count the depth whose gain times
+    // R_1 / R_C is above 1, plain decode where none is (a product of exactly 1 included), and the
+    // table ends at the first plain count.
+    {
+        sp::Profile p;
+        p.overall.config      = sp::SpecConfig::parse("mtp:1");
+        p.overall.tok_s       = 2.0; // a gain of 2 at its own depth
+        p.overall.plain_tok_s = 1.0;
+        const std::string one = p.overall.config.label();
+        p.joint_scale[one]    = {{2, 0.8}, {3, 0.5}, {4, 0.9}};
+        expect(sp::load_label(sp::facts_load(p)) == "2:1,3:0",
+               "2 x 0.5 = 1 at three streams: plain there, not depth 1 (" +
+                   sp::load_label(sp::facts_load(p)) + ")");
+        p.joint_scale[one][3] = 0.51;
+        expect(sp::load_label(sp::facts_load(p)) == "2:1,5:0",
+               "above 1 through four streams, unpriced at five: plain from five (" +
+                   sp::load_label(sp::facts_load(p)) + ")");
+        p.joint_scale.clear();
+        expect(sp::load_label(sp::facts_load(p)) == "2:0", "nothing priced: plain from two");
+    }
+    // The overall default's gain at a shallower depth is over every section, as its own gain is:
+    // mtp:1 doubles the speed of math, code and prose and runs the thinking section at a tenth,
+    // so over the mix it gains 0.2 / 0.195; at R_1 / R_2 = 0.6 the non-thinking sections' gain
+    // (2 x 0.6 = 1.2) would draft at two streams, the overall one (0.615) does not.
+    {
+        sp::Profile p;
+        p.overall.config       = sp::SpecConfig::parse("mtp:2");
+        p.overall.tok_s        = 2.0;
+        p.overall.plain_tok_s  = 1.0;
+        sp::SpecConfig shallow = p.overall.config;
+        shallow.k              = 1;
+        for (const char* family : {"math", "code", "prose", "thinking"}) {
+            const bool thinking = std::string(family) == "thinking";
+            p.measurements.push_back({.family = family, .tokens = 100, .seconds = 1.0});
+            p.measurements.push_back({.config  = shallow,
+                                      .family  = family,
+                                      .tokens  = 100,
+                                      .seconds = thinking ? 10.0 : 0.5});
+        }
+        p.joint_scale[shallow.label()] = {{2, 0.6}};
+        const auto overall             = sp::measured_gain(p, shallow, std::nullopt);
+        const auto non_thinking        = sp::measured_gain(p, shallow, false);
+        expect(overall && std::abs(*overall - 0.2 / 0.195) < 1e-9 && non_thinking &&
+                   std::abs(*non_thinking - 2.0) < 1e-9,
+               "the gain over every section and over the non-thinking ones");
+        expect(sp::load_label(sp::facts_load(p)) == "2:0",
+               "the overall default's shallower depth at its own sections' gain: plain (" +
+                   sp::load_label(sp::facts_load(p)) + ")");
     }
     // A table is clipped to its running minimum: a depth that rises again is not written.
     expect(sp::load_label(sp::clipped_load({3, 3, 2, 0})) == "2:3,4:2,5:0", "falls are recorded");

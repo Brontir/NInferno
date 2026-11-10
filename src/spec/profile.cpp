@@ -576,12 +576,13 @@ double per_request_gain(const Profile& profile, bool thinking_default) {
 }
 
 std::optional<double> measured_gain(const Profile& profile, const SpecConfig& config,
-                                    bool thinking) {
+                                    std::optional<bool> thinking) {
     if (!config.enabled()) { return std::nullopt; }
     const auto table = aggregate(profile.measurements);
     const std::vector<std::string> sections =
-        thinking ? std::vector<std::string>{"thinking"}
-                 : std::vector<std::string>{"math", "code", "prose"};
+        !thinking   ? std::vector<std::string>{"math", "code", "prose", "thinking"}
+        : *thinking ? std::vector<std::string>{"thinking"}
+                    : std::vector<std::string>{"math", "code", "prose"};
     // The sections plain decode measured, as select's groups take them; the configuration must
     // be measured on each.
     double plain = 0, at = 0;
