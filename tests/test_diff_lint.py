@@ -748,6 +748,21 @@ class MaskAndLiteralFixes(unittest.TestCase):
         # a comment that only looks like a directive opener is not one
         self.assertEqual(lits("t.cpp", "/* #if 0 */\nconst char* s = \"oops\n;\n"), [2])
 
+    def test_a_leading_dot_number_takes_a_digit_separator(self):
+        self.assertEqual(lits("t.cpp", "double x = .1'2;\nint a;\n"), [])
+        self.assertEqual(lits("t.cpp", "double x = f(.25'0, 1.5'0e1'0);\n"), [])
+        # a dot that starts no number is no number: the quote still opens a literal
+        self.assertEqual(lits("t.cpp", "auto c = s.a'\n;\n"), [1])
+
+    def test_a_has_include_header_name_opens_no_literal(self):
+        for cond in ("#if __has_include(<don't.h>)", "#elif __has_include_next( <it's.h> ) && X",
+                     "#if defined(A) || __has_include(<a'b.h>)"):
+            with self.subTest(cond=cond):
+                self.assertEqual(lits("t.cpp", f"#if X\n#endif\n{cond}\nint a;\n#endif\n"), [])
+        # a quoted name is still a literal, and the rest of the line is still code
+        self.assertEqual(lits("t.cpp", "#if __has_include(\"don't.h\nint a;\n#endif\n"), [1])
+        self.assertEqual(lits("t.cpp", "#if __has_include(<a.h>) && 'x\nint a;\n#endif\n"), [1])
+
     def test_an_angle_header_name_opens_no_literal(self):
         self.assertEqual(lits("t.cpp", "#include <don't.h>\nint a;\n"), [])
         self.assertEqual(lits("t.cpp", "#  include_next <it's/a.h> // ok\nint a;\n"), [])

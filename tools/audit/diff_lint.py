@@ -594,6 +594,8 @@ def removed_includes(tree, files, allow=frozenset(), base=None):
 # ---------------------------------------------------------------- rule: line ends inside a string literal
 
 DIRECTIVE_RX = re.compile(r"[ \t]*#[ \t]*(\w+)(.*)")
+# `__has_include(<name>)` / `__has_include_next(<name>)` in a condition: group 1 ends before `<`
+HAS_INCLUDE_ANGLE = re.compile(r"(__has_include(?:_next)?\s*\(\s*)<[^>]*>")
 
 
 COND_LITERAL = re.compile(
@@ -675,6 +677,11 @@ def cxx_open_lines(text):
                 # A header name <...> is one token: an apostrophe in it opens no literal.
                 close = masked.find(">", masked.find("<"))
                 i = close + 1 if close >= 0 else n
+            if kind in ("if", "elif"):
+                # `__has_include(<don't.h>)`: the header name is one token here too. Blanked in
+                # place, so every column keeps its meaning.
+                line = HAS_INCLUDE_ANGLE.sub(
+                    lambda m: m.group(1) + " " * (len(m.group(0)) - len(m.group(1))), line)
         if spliced:
             spliced, i = line.endswith("\\"), n
         while i < n:
@@ -715,7 +722,9 @@ def cxx_open_lines(text):
                     quote, i = '"', i + 1
             elif c == "'":
                 tok = re.search(r"[0-9A-Za-z_.]*$", line[:i]).group(0)
-                if tok[:1].isdigit():  # a C++14 digit separator: 1'000'000
+                # A C++14 digit separator inside a preprocessing number, which starts with a digit
+                # or with a dot and a digit: 1'000'000, .1'2
+                if re.match(r"\.?[0-9]", tok):
                     i += 1
                 else:
                     quote, i = "'", i + 1
