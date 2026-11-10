@@ -319,6 +319,7 @@ std::string family_name(int family) {
 // The cases P1 checked on the SM scale, per route family: the denominator of a waiver's share.
 std::map<std::string, int> sms_cases_by_family;
 int sms_cases_priced = 0, routes_skipped_unpriced = 0;
+int sms_cases_fell = 0, sms_cases_equal = 0; // the price fell / stayed (to 1e-9) with the SMs
 
 using Prices = std::map<std::pair<int, int>, double>; // (family, schedule) -> seconds
 
@@ -394,6 +395,11 @@ void property_price_monotone(const std::vector<Row>& rows) {
                                     if (prices == &sms) {
                                         ++sms_cases_priced;
                                         ++sms_cases_by_family[family_name(route.first)];
+                                        if (it->second < seconds * (1.0 - kResolution)) {
+                                            ++sms_cases_fell;
+                                        } else if (it->second <= seconds * (1.0 + kResolution)) {
+                                            ++sms_cases_equal;
+                                        }
                                     }
                                     if (it->second <= seconds * (1.0 + kResolution)) { continue; }
                                     std::string key = family_name(route.first);
@@ -427,6 +433,9 @@ void property_price_monotone(const std::vector<Row>& rows) {
     for (const auto& [family, n] : sms_cases_by_family) {
         std::cout << "    SM-scale cases of " << family << ": " << n << '\n';
     }
+    std::cout << "    SM-scale cases: price fell " << sms_cases_fell << ", unchanged "
+              << sms_cases_equal << ", rose " << sms_cases_priced - sms_cases_fell - sms_cases_equal
+              << " (the cases the waivers below cover)\n";
     if (sms_cases_priced == 0) {
         note("vacuous", "P1 priced no route", "(all rows)", "no route was priced on the SM scale");
     }
