@@ -38,7 +38,9 @@ ROOT=$(realpath "${QC_ROOT:-$PWD}"); REPO=${QC_REPO:-$ROOT/wt_tst}; ARCH=${QC_AR
 W=$ROOT/wt_qc; B=$ROOT/build_qc_$ARCH; L=$ROOT/logs; mkdir -p "$L"
 exec 9>"$ROOT/qc.lock"; flock -n 9 || { echo "qc.sh: another qc.sh run is active, waiting"; flock 9; }
 ENV_SH=${QC_ENV_SH:-$ROOT/lab.sh}
-set +u; if [ -f "$ENV_SH" ]; then . "$ENV_SH"; cuda_env; fi; set -u
+[ -z "${QC_ENV_SH:-}" ] || [ -f "$QC_ENV_SH" ] || { echo "QC_ENV_SH=$QC_ENV_SH: no such file"; exit 3; }
+set +u; if [ -f "$ENV_SH" ]; then . "$ENV_SH"; ! type cuda_env > /dev/null 2>&1 || cuda_env; fi; set -u
+[ -d "$REPO" ] || { echo "no git checkout at $REPO (set QC_REPO, or run from the directory holding wt_tst)"; exit 3; }
 export CCACHE_DIR=${CCACHE_DIR:-$HOME/.ccache} CCACHE_BASEDIR=$W CCACHE_NOHASHDIR=1
 LOW="nice -n 19 ionice -c3"
 T0=$(date +%s); export QC_T0=$T0; tick() { echo "  [$(( $(date +%s) - T0 ))s] $*"; }
@@ -61,7 +63,7 @@ tick fetched
 GB=$(du -s --block-size=1G "$B" 2>/dev/null | cut -f1 || true); GB=${GB:-0}
 [ "$GB" -le "${QC_MAX_GB:-40}" ] || { echo "build_qc is $GB GB (> ${QC_MAX_GB:-40}); rm -rf $B to restart"; exit 3; }
 
-# 2. configure once (same options as kt3.sh); later branch switches re-run cmake through ninja
+# 2. configure once (Release, tests on, ccache launchers); later branch switches re-run cmake through ninja
 if [ ! -f "$B/build.ninja" ]; then
   cmake -S "$W" -B "$B" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=$ARCH \
     -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache -DBUILD_TESTING=ON \
