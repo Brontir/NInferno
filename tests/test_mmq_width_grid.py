@@ -289,21 +289,26 @@ class Readers(Base):
 
     # --- the law itself, over the kit's own sizes (the reviewer's synthetic grids) -----------------------
     def law_files(self, f, sizes=None, C=42.0, L=53.0, k=7, noise=0.0, seed=1, grows=0.0, visits=1, drift=0.0,
-                  shape=None, outlier=False):
+                  shape=None, outlier=False, lin=0.0, offset=0.0):
         """T = C + grows x N + L x tiles x (f + (1 - f) J / 128) at every width (computed here, not with
         the module's functions), 4 requests a cell, each times (1 + uniform(-noise / 2, noise / 2)); one
         file per width visit, every visit's times scaled by its own (1 + uniform(-drift, drift)) (a server
-        run that drifted); `shape(n, j, work_ms)` replaces the law's work term (a misfit); `outlier`: the
-        last request of every third cell at 5x (a median does not see it, a mean does)."""
+        run that drifted), plus `lin` x (the run's place in the script's order, 16..128 then 128..16) / (the
+        number of runs - 1) (a linear drift in time), and an offset of uniform(-offset, offset) ms per run;
+        `shape(n, j, work_ms)` replaces the law's work term (a misfit); `outlier`: the last request of
+        every third cell at 5x (a median does not see it, a mean does)."""
         rng = random.Random(seed)
         files = []
+        nw = len(g.WIDTHS)
         for v in range(visits):
-            for j in g.WIDTHS:
-                run = 1 + rng.uniform(-drift, drift)
+            for p, j in enumerate(g.WIDTHS):
+                place = v * nw + (p if v % 2 == 0 else nw - 1 - p)
+                run = 1 + rng.uniform(-drift, drift) + (lin * place / (visits * nw - 1) if lin else 0.0)
+                off = rng.uniform(-offset, offset) if offset else 0.0
                 rows = []
                 for i, n in enumerate(sizes or g.SIZES):
                     w = L * -(-(n - k) // j) * (f + (1 - f) * j / 128)
-                    t = (C + grows * n + (shape(n, j, w) if shape else w)) * run
+                    t = (C + grows * n + (shape(n, j, w) if shape else w)) * run + off
                     ms = [t * (1 + rng.uniform(-noise / 2, noise / 2)) for _ in range(4)]
                     if outlier and i % 3 == 0:
                         ms[3] *= 5
@@ -614,6 +619,90 @@ class Readers(Base):
             self.assertIn("f 0.20 stands", out, seed)
             self.assertLessEqual(self.ratio(out)[1], g.LOF_MAX)
 
+    def test_a_larger_drift_between_server_runs_is_no_misfit_of_the_law(self):
+        # the third review: the law at exactly f 0.20 with a drift BETWEEN the server runs (each width visit
+        # is one server start) read "the work law does not describe this card" in most seeds, because the
+        # ratio divided a run's drift by the noise within a run. With one fitted offset per run it stands.
+        cases = (("per-run scale +-2 %", dict(drift=0.02)), ("linear +3 % over the 16 runs", dict(lin=0.03)),
+                 ("1 % request noise, per-run +-1 %", dict(noise=0.01, drift=0.01)))
+        for name, kw in cases:
+            for seed in range(4):
+                args = dict(noise=0.02, visits=2, seed=seed)
+                args.update(kw)
+                rc, out, err = self.run_main("grid", *self.law_files(0.20, **args))
+                self.assertEqual(rc, 0, err)
+                self.assertIn("f 0.20 stands", out, (name, seed))
+                self.assertNotIn("NO VERDICT", out, (name, seed))
+                self.assertLessEqual(self.ratio(out)[1], 2.5, (name, seed))  # 1.4-2.0 on these seeds
+                self.assertAlmostEqual(self.fitted(out)[0], 0.20, delta=0.01)
+                self.assertIn("run offsets D_r (FITTED nuisance terms, not facts about the card", out)
+
+    def test_a_per_run_offset_is_taken_out_exactly(self):
+        # the exact law plus one constant per server run (up to +-3 ms): the fitted offsets take it all, so
+        # f is the truth and nothing is left; the same cells without the offsets in the fit read a misfit
+        files = self.law_files(0.20, visits=2, offset=3.0, seed=4)
+        rc, out, err = self.run_main("grid", *files)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.fitted(out), (0.2, 0.2, 0.2))
+        self.assertIn("residual rms 0.00 % of the size's time, lack-of-fit ratio 0.00", out)
+        self.assertIn("f 0.20 stands", out)
+        data = g.load(files)
+        cells, blocks = [], []
+        for j in g.WIDTHS:
+            for n in g.SIZES:
+                for v, fi in zip(data.d[f"J{j}"][n], data.src[f"J{j}"][n]):
+                    cells.append((n, *g.law_terms(n - 7, j), v[0]))
+                    blocks.append((j, fi))
+        with_runs = g.fit_f(cells, blocks, [1.0] * len(cells))
+        bare = g.fit_f(cells, blocks, [1.0] * len(cells), per_run=False)
+        self.assertAlmostEqual(with_runs["f"], 0.2, places=9)
+        self.assertEqual(with_runs["rms"], 0.0)
+        self.assertGreater(bare["rms"], 1e-3)
+        self.assertGreater(abs(bare["f"] - 0.2), 1e-4)
+        # the offsets come back (around their median): they are the generator's per-run constants
+        self.assertEqual(len(with_runs["offsets"]), 16)
+
+    def test_the_degrees_of_freedom_follow_the_counts(self):
+        # cells - size constants - (runs - the one constant runs and sizes share) - a, b, from the counts
+        for kw, text in ((dict(visits=2), "degrees of freedom 298 = 336 cells - 21 size constants - 15 run offsets "
+                                          "(16 runs, 1 shared with the size constants) - 2 (a, b)"),
+                         (dict(visits=1), "degrees of freedom 138 = 168 cells - 21 size constants - 7 run offsets "
+                                          "(8 runs, 1 shared with the size constants) - 2 (a, b)"),
+                         (dict(visits=1, sizes=[n for n in g.SIZES if n >= 64], k=40),
+                          "degrees of freedom 117 = 144 cells - 18 size constants - 7 run offsets")):
+            rc, out, err = self.run_main("grid", *self.law_files(0.20, noise=0.02, **kw))
+            self.assertEqual(rc, 0, err)
+            self.assertIn(text, out)
+        cells, blocks, rel = self.noisy_cells()
+        r = g.fit_f(cells, blocks, rel)
+        self.assertEqual((r["cells"], r["sizes"], r["runs"], r["dof"]), (336, 21, 16, 336 - 21 - 15 - 2))
+        self.assertEqual(g.fit_f(cells, blocks, rel, per_run=False)["dof"], 336 - 21 - 2)
+        # runs that share no size with each other: every run offset is a size constant already
+        part = [(n, *g.law_terms(n - 7, j), 42 + 53 * -(-(n - 7) // j) * (0.2 + 0.8 * j / 128))
+                for n in (96, 128, 160, 192) for j in g.WIDTHS]
+        runs = ["A" if n < 150 else "B" for n in (96, 128, 160, 192) for j in g.WIDTHS]
+        self.assertEqual(g.fit_law(part, None, runs)[4], 4)  # 4 sizes + 2 runs - 2 components
+        self.assertEqual(g._components([96, 128, 160, 192], ["A", "A", "B", "B"]), 2)
+
+    def test_the_run_drift_is_printed_beside_the_ratio(self):
+        # visit 2 (the files *_v1) of every width 2 % slower than visit 1, J 16's 1 % faster instead
+        files = self.law_files(0.20, visits=2)
+        for p in files:
+            if "_v1." in p:
+                fac = 0.99 if "grid_J16_" in p else 1.02
+                rows = [json.loads(s) for s in Path(p).read_text().splitlines()]
+                for r in rows:
+                    r["ms"] = [x * fac for x in r["ms"]]
+                Path(p).write_text("".join(json.dumps(r) + "\n" for r in rows))
+        rc, out, err = self.run_main("grid", *files)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("run drift (observed, not fitted): per width the median over the sizes of visit 2 / visit 1: "
+                      "J16 0.990, J32 1.020, J48 1.020, J64 1.020, J80 1.020, J96 1.020, J112 1.020, J128 1.020; over the "
+                      "widths median 1.020, range 0.990..1.020", out)
+        # one visit: no drift to show
+        rc, out, err = self.run_main("grid", *self.law_files(0.20))
+        self.assertNotIn("run drift", out)
+
     def test_one_visit_per_width_warns(self):
         rc, out, err = self.run_main("grid", *self.law_files(0.20))
         self.assertEqual(rc, 0, err)
@@ -627,8 +716,8 @@ class Readers(Base):
         rms, lof = self.ratio(out)
         self.assertTrue(0.2 <= rms <= 0.8, rms)
         self.assertTrue(0.7 <= lof <= 1.4, lof)
-        # pinned for this seed: 336 cells, 313 degrees of freedom (21 size constants and a, b)
-        self.assertIn("residual rms 0.38 % of the size's time, lack-of-fit ratio 1.01", out)
+        # pinned for this seed: 336 cells, 298 degrees of freedom (21 size constants, 15 run offsets, a, b)
+        self.assertIn("residual rms 0.37 % of the size's time, lack-of-fit ratio 1.02", out)
         self.assertNotIn("does not fit", out.split("verdict on the criteria")[1])
 
     def test_a_law_that_does_not_hold_gives_no_measurement_of_f(self):
@@ -637,21 +726,43 @@ class Readers(Base):
         step = self.law_files(0.20, noise=0.02, visits=2, shape=lambda n, j, w: w * (1.3 if j >= 80 else 1.0))
         rc, out, err = self.run_main("grid", *step)
         self.assertEqual(rc, 0, err)
-        self.assertIn("R5: NO VERDICT on f  (the law does not fit this card (ratio", out)
+        text = ("the residual exceeds the request noise after the run drift is taken out: the work law does not "
+                "fit this card (see the visit ratios for the drift)")
+        self.assertIn("R5: NO VERDICT on f  (ratio 9.", out)
+        self.assertIn(text, out)
+        self.assertNotIn("wave quantisation", out)  # a ratio of 9 is no 68-SM wave effect
         self.assertIn("is not a measurement of f", out)
         self.assertIn("R2: MET", out)  # the table itself loses there: R2 still speaks about it
         self.assertGreater(self.ratio(out)[1], g.LOF_MAX)
         tail = self.law_files(0.20, noise=0.02, visits=2, shape=lambda n, j, w: w * (1 + 0.02 * (-(-(n - 7) // j) - 1)))
         rc, out, err = self.run_main("grid", *tail)
         self.assertEqual(rc, 0, err)
-        self.assertIn("the law does not fit this card", out)
-        self.assertIn("no verdict on f 0.20: the work law does not describe this card", out)
-        # a milder misfit: the tiles of N > 256 cost x1.25 (ratio about 6, above the a-priori 3)
-        self.assertEqual(g.LOF_MAX, 3.0)
+        self.assertIn("no verdict on f 0.20: " + text, out)
+        # a milder misfit: the tiles of N > 256 cost x1.25 (ratio about 5.5, above the a-priori 3)
+        self.assertEqual((g.LOF_MAX, g.LOF_WAVE), (3.0, 5.0))
         late = self.law_files(0.20, noise=0.02, visits=2, shape=lambda n, j, w: w * (1.25 if n > 256 else 1.0))
         rc, out, err = self.run_main("grid", *late)
         self.assertEqual(rc, 0, err)
-        self.assertIn("R5: NO VERDICT on f  (the law does not fit this card (ratio 6.08", out)
+        self.assertIn("R5: NO VERDICT on f  (ratio 5.50", out)
+
+    def test_a_misfit_still_reads_no_verdict_under_a_run_drift(self):
+        # the run offsets take a drift of the server runs, not a misfit of the law: under +-1 % per run the
+        # cost step at N > 256 (an L2 effect, ratio about 5.5) and the per-tile tail (about 11) still give no
+        # verdict on f, and a step of x1.18 (ratio 3-5) names the wave quantisation as a candidate too
+        shapes = (("L2 x1.25 at N > 256", lambda n, j, w: w * (1.25 if n > 256 else 1.0), 5.0, False),
+                  ("tail 2 % a tile", lambda n, j, w: w * (1 + 0.02 * (-(-(n - 7) // j) - 1)), 8.0, False),
+                  ("L2 x1.18 at N > 256", lambda n, j, w: w * (1.18 if n > 256 else 1.0), 3.0, True))
+        for name, shape, least, wave in shapes:
+            for seed in range(2):
+                rc, out, err = self.run_main("grid", *self.law_files(0.20, noise=0.02, visits=2, drift=0.01,
+                                                                     seed=seed, shape=shape))
+                self.assertEqual(rc, 0, err)
+                self.assertIn("R5: NO VERDICT on f", out, (name, seed))
+                self.assertGreater(self.ratio(out)[1], least, (name, seed))
+                self.assertEqual("wave quantisation of the stream-k launch" in out, wave, (name, seed))
+                if wave:
+                    self.assertLessEqual(self.ratio(out)[1], g.LOF_WAVE, (name, seed))
+                    self.assertIn("(68 on the RTX 2080 Ti)", out)
 
     def test_an_interval_across_an_edge_is_undecided(self):
         rc, out, err = self.run_main("grid", *self.law_files(0.15, noise=0.02, visits=2, seed=2))

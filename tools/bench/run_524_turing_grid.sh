@@ -19,8 +19,9 @@
 #      + b tiles J/128 over all cells (f = a / b, one constant per size, relative residuals), with a
 #      95 % bootstrap interval over the width visits (fixed seed), against the predicted RANGE
 #      0.15..0.25: the whole interval outside refutes, the whole interval inside stands, an interval
-#      across an edge is undecided. When the law does not fit (lack-of-fit ratio above 3: the residual
-#      against the cells' own request noise), R5 gives no verdict on f.
+#      across an edge is undecided. When the law does not fit (lack-of-fit ratio above 3: the residual,
+#      after one fitted offset per server run, against the cells' own request noise), R5 gives no verdict
+#      on f.
 #   R2 grid: more than 25 % of the sizes have a width picked at f 0.20 that is more than 2 % slower
 #      than the best of the six production widths (J 48 / J 112 are measured, their gains are shown
 #      apart: they win some sizes by padding whatever f is, and the table cannot pick them).

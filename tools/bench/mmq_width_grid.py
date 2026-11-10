@@ -63,7 +63,26 @@ one width, all its sizes together: a drift of that run moves all its cells at on
 the unit; BOOT_N draws, fixed seed BOOT_SEED: the output is deterministic). The lack-of-fit ratio is
 sqrt(residual variance of the cells about the fit / the variance of a cell median expected from its own
 requests); near 1 the law describes the card to the noise, above LOF_MAX it does not and the fit's f is
-no measurement of f. The regret per bucket (R1) stays as a report: the table of picks is the same for
+no measurement of f.
+RUN OFFSETS. The request noise is the noise WITHIN one server run, but every width visit is a server
+start of its own, and a card that boosts differently from one start to the next (1-2 % is ordinary)
+moves all the cells of a run together. Without a term for that, the drift between runs sits in the
+residual and raises the ratio as a misfit of the law would (the law at f 0.20 exactly read "no verdict"
+in 7 of 12 seeds at +-2 % per run). So the fit carries one free offset D_r per server run, in ms
+(T = C_N + D_r + the work law), identified through the size constants C_N that all runs share. They are
+FITTED NUISANCE TERMS, not facts about the card, and the output labels them so. An additive offset, not
+a scale, because the runs are nested in the widths (one width a run): a per-run scale x T would also
+take any change of the tile cost that is the same for every size of one width (an occupancy step, an f
+that depends on J) and hide exactly those misfits, while an offset in ms does not grow with the tiles.
+It takes a scale drift less than fully (a +-2 % scale leaves a ratio about 1.6, well below LOF_MAX). It
+does take a per-width launch constant (f then reads 0.199 against a true 0.20): that is right, a launch
+constant is not a share of the tile work, and f is the share. The degrees of freedom are counted from
+the cells: cells - size constants - (runs - the constant runs and sizes share) - 2 (a, b). The pure
+error of the replicate visits is not used as the denominator: it holds the run drift too, so it would
+over-count the noise and lose the power against misfits. Beside the ratio the output prints the drift
+it saw (OBSERVED, not fitted): per width the median over the sizes of visit 2 / visit 1, and the median
+and range over the widths, and the ratio without the run offsets for comparison.
+The regret per bucket (R1) stays as a report: the table of picks is the same for
 every f in (0.111, 0.200] and its neighbours differ at one to three sizes, so the regret cannot
 separate f 0.10 from 0.30.
 Nothing is tuned to the data: every predicted value is computed from the rule or taken from the
@@ -118,12 +137,18 @@ FIT_LEVEL = 0.95  # chosen a priori: the two-sided level of the bootstrap interv
 BOOT_N = 1000  # bootstrap draws over the width visits (a priori; enough for a 95 % percentile interval)
 BOOT_SEED = 524  # fixed: the same files print the same interval
 FIT_EPS = 1e-6  # float rounding only (an exact law gives an interval of zero width), not a margin
-# Lack of fit: above this ratio the law does not describe the card and R5 gives no verdict on f. Chosen
-# a priori, from synthetic grids at 2 % request noise (none of them a measurement): the pure law gives
-# about 1.0, a +-1 % drift of every width run 1.7-2.3, a per-width launch constant 1.8, 68-SM wave
-# quantisation 2.6, a cost step at N > 256 or an f that depends on J 5-6, an occupancy step or a per-tile
-# tail 14-16.
+# Lack of fit (after the run offsets, FIT): above this ratio the law does not describe the card and R5
+# gives no verdict on f. Chosen a priori, from synthetic grids at 2 % request noise and two visits (none
+# of them a measurement; the ratio without the run offsets in brackets): the pure law gives about 1.0
+# (1.0), a per-run scale of +-1 % 1.2 (1.9), of +-2 % 1.6 (3.3), a linear drift of 3 % over the 16 runs
+# 1.7 (3.1); a per-width launch constant is taken by the offsets (1.0, f 0.199); 68-SM wave
+# quantisation 2.4, an occupancy step x1.08 at J >= 80 2.8, a per-tile tail of 0.5 % a tile 3.0, an f
+# that depends on J (0.10..0.30) 3.3, a cost step x1.25 at N > 256 (L2) 5.5, an occupancy step x1.3 9,
+# a per-tile tail of 2 % a tile 11. At 1 % request noise a misfit's ratio about doubles (wave 4.7).
 LOF_MAX = 3.0
+# a priori, from the same grids: up to this ratio the no-verdict text also names the 68-SM wave
+# quantisation of the stream-k launch as a candidate cause (2.4 at 2 % request noise, 4.7 at 1 %)
+LOF_WAVE = 5.0
 MEDIAN_VAR = 1.5708  # pi / 2: the variance of a median of m requests ~ (pi / 2) s^2 / m (normal theory)
 # GA10x / Ada bracket (DECISIONS 74), by columns; the edges 168 / 200 are the midpoints between the
 # sample sizes 160|176 and 192|208 of the old rows, not fitted: (first col, last col, lo %, hi %)
@@ -132,7 +157,8 @@ CRITERIA = f"""REFUTATION CRITERIA for f = {ASSUMED_F:.2f} (fixed before the run
   R5 grid: f fitted to the work law over all cells (FIT), with its {int(FIT_LEVEL * 100)} % bootstrap interval over the width
      visits, against the predicted range {PRED_LO:.2f}..{PRED_HI:.2f}: the whole interval outside it REFUTES, the whole
      interval inside it stands, an interval across an edge is UNDECIDED. When the law does not fit (the
-     lack-of-fit ratio above {LOF_MAX:g}, or b <= 0), R5 gives no verdict on f: the fit's f is not a measurement.
+     lack-of-fit ratio above {LOF_MAX:g} after one fitted offset per server run, or b <= 0), R5 gives no verdict
+     on f: the fit's f is not a measurement.
   R2 grid: more than {int(R2_SHARE * 100)} % of the sizes have a material mismatch: the width picked at f {ASSUMED_F:.2f} is more
      than {TOL:g} % slower than the best of the six production widths (J 48 / J 112 are not pickable).
   R3 grid: the regret at f {ASSUMED_F:.2f} is not below the regret of the fewest tiles (the table gives no gain).
@@ -184,61 +210,134 @@ def law_terms(c: int, j: int) -> tuple[float, float]:
     return t * (1 - j / 128), t * j / 128
 
 
-def fit_law(cells: list[tuple[int, float, float, float]], weights: list[float] | None = None):
-    """Weighted least squares of y = C_N + a x1 + b x2 over cells (N, x1, x2, y), one free constant per
-    size N (within-size centring), cell i weighted by `weights[i]`. Returns (a, b, weighted residual sum
-    of squares, sum of the weights) or None when the sizes do not determine a and b (every size's widths
-    on one line: all one tile, or one width only)."""
-    groups: dict[int, list[tuple[float, float, float, float]]] = defaultdict(list)
-    for i, (n, x1, x2, y) in enumerate(cells):
-        w = 1.0 if weights is None else weights[i]
-        if w:
-            groups[n].append((w, x1, x2, y))
+def _centre(vecs: list[list[float]], w: list[float], key: list) -> dict:
+    """Subtract from every vector its w-weighted mean within each group of `key`, in place; returns the
+    means subtracted from the last vector (group -> mean)."""
+    tot: dict = defaultdict(float)
+    for wi, g in zip(w, key):
+        tot[g] += wi
+    last: dict = {}
+    for v in vecs:
+        m: dict = defaultdict(float)
+        for wi, g, x in zip(w, key, v):
+            m[g] += wi * x
+        for g in m:
+            m[g] /= tot[g]
+        for i, g in enumerate(key):
+            v[i] -= m[g]
+        last = m
+    return last
+
+
+def _components(sizes: list, runs: list) -> int:
+    """Connected components of the bipartite graph size - run (an edge per cell): the size constants and
+    the run offsets together have len(sizes) + len(runs) - components free parameters."""
+    parent: dict = {}
+
+    def root(x):
+        while parent.setdefault(x, x) != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for s, r in zip(sizes, runs):
+        parent[root(("s", s))] = root(("r", r))
+    return len({root(x) for x in list(parent)})
+
+
+def fit_law(cells: list[tuple[int, float, float, float]], weights: list[float] | None = None,
+            runs: list | None = None):
+    """Weighted least squares of y = C_N + D_r + a x1 + b x2 over cells (N, x1, x2, y), one free constant
+    C_N per size N and, when `runs` is given, one free offset D_r (ms) per server run (runs[i] = the run of
+    cell i; a FITTED nuisance term, see FIT), cell i weighted by `weights[i]` (a zero weight drops the
+    cell). The two sets of constants are taken out by alternating weighted centring (by size, then by
+    run, until nothing moves: one sweep is exact when the weights are a size factor times a run factor
+    and every run holds every size, as in `grid`). Returns (a, b, weighted residual sum of squares, sum of
+    the weights, the number of free constants, run -> D_r with weighted mean 0) or None when the cells do
+    not determine a and b (every size's widths on one line, or the run offsets take all of it)."""
+    keep = [i for i in range(len(cells)) if (1.0 if weights is None else weights[i])]
+    w = [1.0 if weights is None else weights[i] for i in keep]
+    size = [cells[i][0] for i in keep]
+    x1, x2, y = ([cells[i][c] for i in keep] for c in (1, 2, 3))
+    _centre([x1, x2, y], w, size)
+    # what the size constants leave of the regressors: a regressor the run offsets take (nearly) all of
+    # is not determined, whatever rounding leaves of it
+    q11, q22 = (sum(wi * e * e for wi, e in zip(w, v)) for v in (x1, x2))
+    offsets: dict = {}
+    nconst = len(set(size))
+    if runs is not None:
+        run = [runs[i] for i in keep]
+        nconst = len(set(size)) + len(set(run)) - _components(size, run)
+        scale = [1e-12 * (1 + max(map(abs, v), default=0.0)) for v in (x1, x2, y)]
+        dy: dict = defaultdict(float)  # the run means taken from y (with those from x1, x2 they give D_r)
+        d1: dict = defaultdict(float)
+        d2: dict = defaultdict(float)
+        for _ in range(200):
+            moved = 0.0
+            for k, acc in enumerate((d1, d2, dy)):
+                v = (x1, x2, y)[k]
+                m = _centre([v], w, run)
+                for r, x in m.items():
+                    acc[r] += x
+                moved = max(moved, max(map(abs, m.values())) / scale[k])
+                ms = _centre([v], w, size)
+                moved = max(moved, max(map(abs, ms.values())) / scale[k])
+            if moved <= 1.0:
+                break
     s11 = s12 = s22 = s1y = s2y = syy = 0.0
-    wsum = 0.0
-    for rows in groups.values():
-        wn = sum(r[0] for r in rows)
-        m1, m2, my = (sum(r[0] * r[i] for r in rows) / wn for i in (1, 2, 3))
-        for w, x1, x2, y in rows:
-            d1, d2, dy = x1 - m1, x2 - m2, y - my
-            s11, s12, s22 = s11 + w * d1 * d1, s12 + w * d1 * d2, s22 + w * d2 * d2
-            s1y, s2y, syy = s1y + w * d1 * dy, s2y + w * d2 * dy, syy + w * dy * dy
-            wsum += w
+    for wi, e1, e2, ey in zip(w, x1, x2, y):
+        s11, s12, s22 = s11 + wi * e1 * e1, s12 + wi * e1 * e2, s22 + wi * e2 * e2
+        s1y, s2y, syy = s1y + wi * e1 * ey, s2y + wi * e2 * ey, syy + wi * ey * ey
     det = s11 * s22 - s12 * s12
-    if s11 <= 0 or s22 <= 0 or det <= 1e-9 * s11 * s22:
+    if s11 <= 1e-9 * q11 or s22 <= 1e-9 * q22 or det <= 1e-9 * s11 * s22:
         return None
     a = (s1y * s22 - s2y * s12) / det
     b = (s2y * s11 - s1y * s12) / det
     rss = syy - a * s1y - b * s2y
+    if runs is not None:
+        offsets = {r: dy[r] - a * d1[r] - b * d2[r] for r in dy}
     # below rounding (an exact law): zero, so that an exact law reads as an exact fit
-    return a, b, (rss if rss > 1e-12 * syy else 0.0), wsum
+    return a, b, (rss if rss > 1e-12 * syy else 0.0), sum(w), nconst, offsets
+
+
+def lack_of_fit(rss: float, dof: int, rel: list[float], within: list[float] | None) -> float | None:
+    """sqrt(residual variance per degree of freedom / the mean relative variance of a cell median expected
+    from its own requests); None without request spread information or degrees of freedom."""
+    if within is None or dof <= 0:
+        return None
+    noise = statistics.mean(r * v for r, v in zip(rel, within))
+    resid = rss / dof
+    if noise > 0:
+        return (resid / noise) ** 0.5
+    return 0.0 if resid <= 1e-18 else float("inf")  # requests without any spread: only an exact law fits
 
 
 def fit_f(cells: list[tuple[int, float, float, float]], blocks: list, rel: list[float],
-          within: list[float] | None = None) -> dict:
+          within: list[float] | None = None, per_run: bool = True) -> dict:
     """f = a / b of the work law over `cells` (N, x1, x2, median ms), cell i weighted by rel[i]
     (1 / s_N^2: relative residuals), with a bootstrap interval over the blocks (blocks[i] = the width
     visit of cell i: BOOT_N draws of as many blocks with replacement, BOOT_SEED) and, from within[i] (the
-    variance of cell i's median expected from its requests, ms^2), the lack-of-fit ratio."""
-    full = fit_law(cells, rel)
+    variance of cell i's median expected from its requests, ms^2), the lack-of-fit ratio. The blocks are
+    the server runs: the fit carries one FITTED offset per block (fit_law `runs`, see FIT); `per_run`
+    False fits without them (printed beside, for comparison)."""
+    runs = blocks if per_run else None
+    full = fit_law(cells, rel, runs)
     if full is None:
         return {"ok": False, "why": "the sizes do not determine the law (every width one tile?)"}
-    a, b, rss, wsum = full
+    a, b, rss, wsum, nconst, offsets = full
     # b at rounding level is no growth with the width (times that do not depend on J at all)
     bmin = 1e-9 * statistics.median(abs(c[3]) for c in cells)
     if not b > bmin:
         return {"ok": False, "why": f"b = {b:.4g} ms is not positive: the time does not grow with the "
                                     "tile's width, the work law does not describe this card"}
-    dof = len(cells) - len({c[0] for c in cells}) - 2
+    # the counts behind the degrees of freedom: cells - (size constants + run offsets - the constants the
+    # two share, fit_law) - a, b
+    dof = len(cells) - nconst - 2
     # rel = 1 / s_N^2, so rss is a sum of squared relative residuals: rms is a share of the size's time
-    out = {"ok": True, "f": a / b, "a": a, "b": b, "rms": (rss / len(cells)) ** 0.5, "lof": None, "dof": dof}
-    if within is not None and dof > 0:
-        noise = statistics.mean(r * v for r, v in zip(rel, within))
-        resid = rss / dof
-        if noise > 0:
-            out["lof"] = (resid / noise) ** 0.5
-        else:  # requests without any spread: only an exact law fits
-            out["lof"] = 0.0 if resid <= 1e-18 else float("inf")
+    out = {"ok": True, "f": a / b, "a": a, "b": b, "rms": (rss / len(cells)) ** 0.5, "lof": None, "dof": dof,
+           "cells": len(cells), "sizes": len({c[0] for c in cells}), "runs": len(set(blocks)) if per_run else 0,
+           "nconst": nconst, "offsets": offsets}
+    out["lof"] = lack_of_fit(rss, dof, rel, within)
     ids = sorted(set(blocks), key=str)
     index = {x: i for i, x in enumerate(ids)}
     rng = random.Random(BOOT_SEED)
@@ -247,7 +346,7 @@ def fit_f(cells: list[tuple[int, float, float, float]], blocks: list, rel: list[
         count = [0] * len(ids)
         for _ in ids:
             count[rng.randrange(len(ids))] += 1
-        r = fit_law(cells, [count[index[bl]] * w for bl, w in zip(blocks, rel)])
+        r = fit_law(cells, [count[index[bl]] * w for bl, w in zip(blocks, rel)], runs)
         if r is None or not r[1] > bmin:
             bad += 1  # the draw does not determine f (one width only, say): dropped, not counted as a value
             continue
@@ -583,20 +682,44 @@ def grid(a: argparse.Namespace) -> None:
     scale = {n: statistics.median(y for m, _, _, y in fcells if m == n) for n in sizes}
     rel = [1 / scale[m] ** 2 for m, _, _, _ in fcells]
     one_request = all(len(v) < 2 for lab in labels for rows in d[lab].values() for v in rows)
-    fit = fit_f(fcells, blocks, rel, None if one_request else within)
-    print(f"\nFIT of the work law T = C_N + a tiles (1 - J/128) + b tiles J/128 over {len(fcells)} cells "
-          f"({len(sizes)} sizes x {len(WIDTHS)} widths x {visits} visits; one C_N per size; residuals relative "
-          "to the size's time):")
+    wvar = None if one_request else within
+    fit = fit_f(fcells, blocks, rel, wvar)
+    print(f"\nFIT of the work law T = C_N + D_r + a tiles (1 - J/128) + b tiles J/128 over {len(fcells)} cells "
+          f"({len(sizes)} sizes x {len(WIDTHS)} widths x {visits} visits; one C_N per size, one fitted offset D_r "
+          "per server run; residuals relative to the size's time):")
+    if visits > 1:
+        # OBSERVED, not fitted: what each width's later visit took against its first, size by size
+        drift = {j: [statistics.median(statistics.median(d[f"J{j}"][n][v]) / statistics.median(d[f"J{j}"][n][0])
+                                       for n in sizes) for v in range(1, visits)] for j in WIDTHS}
+        allr = [x for j in WIDTHS for x in drift[j]]
+        print("  run drift (observed, not fitted): per width the median over the sizes of "
+              + ", ".join(f"visit {v + 1} / visit 1" for v in range(1, visits)) + ": "
+              + ", ".join(f"J{j} " + "/".join(f"{x:.3f}" for x in drift[j]) for j in WIDTHS)
+              + f"; over the widths median {statistics.median(allr):.3f}, range {min(allr):.3f}..{max(allr):.3f}")
     if fit["ok"]:
         print(f"  measured f = a / b = {fit['f']:.3f}, {int(FIT_LEVEL * 100)} % bootstrap interval "
               f"[{fit['lo']:.3f}, {fit['hi']:.3f}] ({BOOT_N} draws over the {fit['blocks']} width visits, seed "
               f"{BOOT_SEED}{', %d undetermined draws dropped' % fit['bad'] if fit['bad'] else ''})   "
               f"predicted f {ASSUMED_F:.2f}, range {PRED_LO:.2f}..{PRED_HI:.2f}")
+        bare = fit_law(fcells, rel)  # the same fit without the run offsets, for comparison only
+        bare_lof = None if bare is None else lack_of_fit(bare[2], len(fcells) - bare[4] - 2, rel, wvar)
         lof = ("not computed (one request a cell)" if fit["lof"] is None else
-               f"{fit['lof']:.2f} (the residual against the cells' own request noise; above {LOF_MAX:g} the law does "
-               "not fit)")
+               f"{fit['lof']:.2f} (the residual after the run offsets against the cells' own request noise; above "
+               f"{LOF_MAX:g} the law does not fit)"
+               + ("" if bare_lof is None else f"; without the run offsets {bare_lof:.2f}"))
         print(f"  a = {fit['a']:.3f} ms, b = {fit['b']:.3f} ms (a 128-column tile's step over the linears), "
               f"residual rms {100 * fit['rms']:.2f} % of the size's time, lack-of-fit ratio {lof}")
+        free = fit["nconst"] - fit["sizes"]
+        print(f"  degrees of freedom {fit['dof']} = {fit['cells']} cells - {fit['sizes']} size constants - {free} run "
+              f"offsets ({fit['runs']} runs, {fit['runs'] - free} shared with the size constants) - 2 (a, b)")
+        off = sorted(fit["offsets"].values())
+        if off:
+            mid = statistics.median(off)
+            typical = statistics.median(c[3] for c in fcells)
+            print(f"  run offsets D_r (FITTED nuisance terms, not facts about the card; they absorb a drift of a "
+                  f"server run and any per-width constant): {off[0] - mid:+.3f} .. {off[-1] - mid:+.3f} ms around "
+                  f"the median run ({100 * (off[0] - mid) / typical:+.1f} .. {100 * (off[-1] - mid) / typical:+.1f} % "
+                  "of the median cell)")
         for what, fv in (("the measured f", fit["f"]), ("the interval's low edge", fit["lo"]),
                          ("the interval's high edge", fit["hi"])):
             tf = pick_table(cols, fv)
@@ -653,11 +776,18 @@ def grid(a: argparse.Namespace) -> None:
           f"noise (median range of one cell's requests) {noise:.1f} %")
     print("\nverdict on the criteria fixed before the run:")
     r2, r3 = material > R2_SHARE * len(sizes), r_a >= r_old
+    why5 = ""
     if not fit["ok"]:
         s5, t5 = "nofit", f"no f: {fit['why']}"
+        why5 = "the work law does not describe this card"
     elif fit["lof"] is not None and fit["lof"] > LOF_MAX:
-        s5, t5 = "nofit", (f"the law does not fit this card (ratio {fit['lof']:.2f} above {LOF_MAX:g}): the fit's f "
-                           f"{fit['f']:.3f} is not a measurement of f")
+        why5 = ("the residual exceeds the request noise after the run drift is taken out: the work law does not "
+                "fit this card (see the visit ratios for the drift)")
+        if fit["lof"] <= LOF_WAVE:
+            why5 += ("; at this ratio one candidate cause is the wave quantisation of the stream-k launch over the "
+                     "card's SMs (68 on the RTX 2080 Ti), which the law does not hold")
+        s5, t5 = "nofit", (f"ratio {fit['lof']:.2f} above {LOF_MAX:g}: {why5}; the fit's f {fit['f']:.3f} is not a "
+                           "measurement of f")
     else:
         lo, hi = fit["lo"], fit["hi"]
         if hi < PRED_LO - FIT_EPS or lo > PRED_HI + FIT_EPS:
@@ -686,7 +816,7 @@ def grid(a: argparse.Namespace) -> None:
         verdict = (f"f {ASSUMED_F:.2f} is UNDECIDED: the interval of the measured f crosses an edge of "
                    f"{PRED_LO:.2f}..{PRED_HI:.2f}; measure more visits before deciding")
     else:
-        verdict = (f"no verdict on f {ASSUMED_F:.2f}: the work law does not describe this card; R2 and R3 find no "
+        verdict = (f"no verdict on f {ASSUMED_F:.2f}: {why5}; R2 and R3 find no "
                    "fault with the table at f %.2f" % ASSUMED_F)
     print("  " + verdict)
 

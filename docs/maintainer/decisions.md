@@ -1715,9 +1715,10 @@ b x tiles x J / 128 with one constant per size, over all its cells gives f = a /
 interval over the width runs (every width is measured twice, 16..128 then 128..16, so a drift in time
 does not line up with J), printed beside the predicted range 0.15-0.25: an interval wholly outside it
 refutes 0.20, wholly inside it stands, across an edge it is undecided, and a lack-of-fit ratio (the
-residual against the cells' own request noise) above 3 means the law does not describe the card and
-gives no verdict on f. These criteria are fixed in the kit's header before the run
-(`tools/bench/mmq_width_grid.py`, `CRITERIA`). The regret per bucket of the table of picks is printed
+residual, after one fitted offset per server run that takes the drift between the runs, against the
+cells' own request noise) above 3 means the law does not describe the card and gives no verdict on f.
+These criteria are fixed in the kit's header before the run (`tools/bench/mmq_width_grid.py`,
+`CRITERIA`). The regret per bucket of the table of picks is printed
 as a report only: on the kit's own sizes it cannot tell 0.10 from 0.30, and the regret is taken
 against the six widths the table picks from (J 48 and J 112 are measured too, and shown apart: they
 win some sizes by padding whatever f is). Turing holds one block per SM at every width where
