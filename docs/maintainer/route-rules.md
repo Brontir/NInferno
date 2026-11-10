@@ -12,12 +12,18 @@ kernel-facts file, not one per kernel, and no rule records the tree it was timed
 
 It is a record, not a mechanism. The code keeps its own literals and nothing reads the descriptor
 at run time. `ninferno_route_rules_test` (`--list` prints the table) holds the two to each other:
-every literal text must be in its source file, a named constant's number must equal the source's,
-the boards, cards and tolerance fields are never empty (`unknown` and `none recorded` say that the
-record is silent, they are not guesses), and every threshold constant of `src/ops/generic` (named
-`Min`, `Max`, `Tokens`, `Fill`, `Distance`, `Values`, `Bytes` or `Gbps`) has a descriptor, apart
-from the few non-rules listed in the test (array sizes, scratch bookkeeping). A rule therefore cannot
-change, move or appear without its record changing in the same diff.
+every literal text must stand in its source file outside comments exactly as many times as the
+descriptor says, a named constant's number must equal the source's, the boards, cards and tolerance
+fields are never empty (`unknown` and `none recorded` say that the record is silent, they are not
+guesses), and every `const` or `constexpr` definition or `#define` under `src/ops/generic`
+(subdirectories and `.cu`/`.cuh` included) whose name says it bounds something (`Min`, `Max`,
+`Tokens`, `Fill`, `Distance`, `Values`, `Bytes`, `Gbps`, `Margin`, `Slack`, `Columns`, `Rows`,
+`Limit`) has a descriptor, or an entry of the test's list of non-rules with its reason (tile shapes,
+layout facts, sizes). That is the extent of the guard: an enumerator, a constant whose name has none
+of those words, and a threshold written as a bare literal in an expression are not found by the
+scan; the width of the prefill band, which stood as a bare `17` in sixteen comparisons, is now one
+named constant (`kPrefillBandMinTokens`) with a descriptor. A rule therefore cannot change, move
+or appear as a named constant without its record changing in the same diff.
 
 ## The rule that follows
 

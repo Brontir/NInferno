@@ -46,6 +46,10 @@ inline constexpr std::int32_t kW4a8WideMinTokens    = 128;
 // The widest call whose register-MMA launch prefetches under the previous kernel
 // (GemmArgs::pdl_prefetch): decode and speculative verify.
 inline constexpr std::int32_t kPdlPrefetchMaxTokens = 16;
+// The first width of the prefill band: one past the widest speculative verify (16 tokens), where a
+// call takes the prefill profile's one route per problem and the speed profile's batched-verify
+// rules end (select_route, heuristic_route, the Volta routes).
+inline constexpr std::int32_t kPrefillBandMinTokens = 17;
 
 enum class Epilogue : std::uint8_t {
     Store,       // out = W x (GemmArgs::relu2: relu(W x)^2, one rounding)
