@@ -1,4 +1,4 @@
-probe isa_probe 12
+probe isa_probe 16
 card NVIDIA GeForce RTX 4090
 cc 89
 sms 128
@@ -7,11 +7,21 @@ driver 13040
 runtime 13040
 nvcc 13.4.92
 shape hmma_16816_f32_bf16 4096
-fact resident_ctas_per_sm 4.000 count
+note mma_cycles_per_sm: 128 of 128 SMs ran 4 CTA(s) of 4 warps at once; every SM counts
 fact mma_cycles_per_sm 8.001 clk
 fact mma_cycles_per_partition 32.003 clk
-fact tensor_flops_per_sm_clock 511.946 flop
-fact mma_dependent_latency 32.894 clk
+fact tensor_flops_per_sm_clock 511.952 flop
+note mma_cycles_per_sm_w4: 128 of 128 SMs ran 1 CTA(s) of 4 warps at once, the others are left out
+fact mma_cycles_per_sm_w4 8.002 clk
+note mma_cycles_per_sm_w8: 128 of 128 SMs ran 1 CTA(s) of 8 warps at once, the others are left out
+fact mma_cycles_per_sm_w8 8.002 clk
+note mma_cycles_per_sm_w16: 128 of 128 SMs ran 1 CTA(s) of 16 warps at once, the others are left out
+fact mma_cycles_per_sm_w16 8.001 clk
+fact mma_dependent_latency 32.895 clk
+fact sm_clock_mhz_mma 2759.879 mhz
+note the SM clock under the MMA loop: 2536 MHz at the first of 637 launches, 2759..2761 over the last quarter
+note fp32_cycles_per_warp_instruction: 128 of 128 SMs ran 4 CTA(s) of 4 warps at once; every SM counts
+note int32_cycles_per_warp_instruction: 128 of 128 SMs ran 4 CTA(s) of 4 warps at once; every SM counts
 fact fp32_cycles_per_warp_instruction 1.055 clk
 fact int32_cycles_per_warp_instruction 2.021 clk
 fact lat_imad 4.033 clk
@@ -24,35 +34,100 @@ fact lat_ffma 4.033 clk
 fact lat_shfl 27.002 clk
 fact lat_cvt_i2f_f2i 11.500 clk
 fact lat_cvt_f32_f16 5.047 clk
-fact l1_latency_w1 47.983 clk
-fact l1_latency_w2 47.973 clk
-fact l1_latency_w4 47.973 clk
-fact l1_latency_w8 48.012 clk
-fact l2_latency_w1 275.837 clk
-fact l2_latency_ns_w1 99.500 ns
-fact l2_latency_w2 275.305 clk
-fact l2_latency_ns_w2 99.250 ns
-fact l2_latency_w4 274.799 clk
-fact l2_latency_ns_w4 99.000 ns
-fact l2_latency_w8 274.717 clk
-fact l2_latency_ns_w8 99.000 ns
-fact dram_tlbwarm_latency_w1 623.590 clk
-fact dram_tlbwarm_latency_ns_w1 224.000 ns
-fact dram_tlbwarm_latency_w2 626.566 clk
-fact dram_tlbwarm_latency_ns_w2 224.000 ns
-fact dram_tlbwarm_latency_w4 684.391 clk
-fact dram_tlbwarm_latency_ns_w4 248.000 ns
-fact dram_tlbwarm_latency_w8 785.828 clk
-fact dram_tlbwarm_latency_ns_w8 284.000 ns
-fact dram_latency_w1 626.384 clk
-fact dram_latency_ns_w1 225.750 ns
-fact dram_latency_w2 628.603 clk
-fact dram_latency_ns_w2 226.500 ns
-fact dram_latency_w4 649.834 clk
-fact dram_latency_ns_w4 234.250 ns
-fact dram_latency_w8 697.371 clk
-fact dram_latency_ns_w8 251.250 ns
-fact sm_clock_mhz_chase 2774.915 mhz
-fact shared_latency 24.132 clk
+fact l1_latency_w1 34.034 clk
+fact l1_latency_w2 34.034 clk
+fact l1_latency_w4 35.029 clk
+fact l1_latency_w8 35.034 clk
+fact l2_latency_w1 261.463 clk
+fact l2_latency_ns_w1 94.750 ns
+fact l2_latency_w2 261.537 clk
+fact l2_latency_ns_w2 94.750 ns
+fact l2_latency_w4 261.169 clk
+fact l2_latency_ns_w4 94.500 ns
+fact l2_latency_w8 260.887 clk
+fact l2_latency_ns_w8 94.500 ns
+fact dram_tlbwarm_latency_w1 648.781 clk
+fact dram_tlbwarm_latency_ns_w1 236.000 ns
+fact dram_tlbwarm_latency_w2 648.465 clk
+fact dram_tlbwarm_latency_ns_w2 236.000 ns
+fact dram_tlbwarm_latency_w4 680.047 clk
+fact dram_tlbwarm_latency_ns_w4 246.000 ns
+fact dram_tlbwarm_latency_w8 679.330 clk
+fact dram_tlbwarm_latency_ns_w8 246.000 ns
+fact dram_latency_w1 654.508 clk
+fact dram_latency_ns_w1 238.000 ns
+fact dram_latency_w2 657.357 clk
+fact dram_latency_ns_w2 238.000 ns
+fact dram_latency_w4 686.582 clk
+fact dram_latency_ns_w4 248.000 ns
+fact dram_latency_w8 687.775 clk
+fact dram_latency_ns_w8 250.000 ns
+fact dram_lanes_latency_w1 2368.258 clk
+fact dram_lanes_latency_ns_w1 860.000 ns
+fact dram_lanes_latency_w2 3360.668 clk
+fact dram_lanes_latency_ns_w2 1220.000 ns
+fact dram_lanes_latency_w4 5989.816 clk
+fact dram_lanes_latency_ns_w4 2172.000 ns
+fact dram_lanes_latency_w8 11345.562 clk
+fact dram_lanes_latency_ns_w8 4112.000 ns
+fact dram_lanes_half_latency_w1 1658.402 clk
+fact dram_lanes_half_latency_ns_w1 600.000 ns
+fact dram_lanes_half_latency_w2 2374.312 clk
+fact dram_lanes_half_latency_ns_w2 860.000 ns
+fact dram_lanes_half_latency_w4 3379.914 clk
+fact dram_lanes_half_latency_ns_w4 1224.000 ns
+fact dram_lanes_half_latency_w8 5969.141 clk
+fact dram_lanes_half_latency_ns_w8 2164.000 ns
+fact sm_clock_mhz_chase 2760.284 mhz
+fact l1_held_latency_w1 34.034 clk
+fact l1_held_latency_w2 34.034 clk
+fact l1_held_latency_w4 35.030 clk
+fact l1_held_latency_w8 35.081 clk
+fact l2_held_latency_w1 261.480 clk
+fact l2_held_latency_ns_w1 94.500 ns
+note l2_held_latency_w2: 112 of 128 CTAs had an SM to themselves and one FFMA warp, the others are left out
+fact l2_held_latency_w2 261.545 clk
+fact l2_held_latency_ns_w2 94.750 ns
+fact l2_held_latency_w4 261.192 clk
+fact l2_held_latency_ns_w4 94.500 ns
+fact l2_held_latency_w8 260.964 clk
+fact l2_held_latency_ns_w8 94.500 ns
+fact dram_tlbwarm_held_latency_w1 647.373 clk
+fact dram_tlbwarm_held_latency_ns_w1 234.000 ns
+note dram_tlbwarm_held_latency_w2: 68 of 128 CTAs had an SM to themselves and one FFMA warp, the others are left out
+fact dram_tlbwarm_held_latency_w2 648.447 clk
+fact dram_tlbwarm_held_latency_ns_w2 236.000 ns
+fact dram_tlbwarm_held_latency_w4 680.225 clk
+fact dram_tlbwarm_held_latency_ns_w4 246.000 ns
+fact dram_tlbwarm_held_latency_w8 679.203 clk
+fact dram_tlbwarm_held_latency_ns_w8 246.000 ns
+fact dram_held_latency_w1 655.631 clk
+fact dram_held_latency_ns_w1 238.000 ns
+note dram_held_latency_w2: 60 of 128 CTAs had an SM to themselves and one FFMA warp, the others are left out
+fact dram_held_latency_w2 657.857 clk
+fact dram_held_latency_ns_w2 238.000 ns
+fact dram_held_latency_w4 686.307 clk
+fact dram_held_latency_ns_w4 248.000 ns
+fact dram_held_latency_w8 688.238 clk
+fact dram_held_latency_ns_w8 250.000 ns
+fact dram_lanes_held_latency_w1 2368.941 clk
+fact dram_lanes_held_latency_ns_w1 860.000 ns
+note dram_lanes_held_latency_w2: 76 of 128 CTAs had an SM to themselves and one FFMA warp, the others are left out
+fact dram_lanes_held_latency_w2 3371.559 clk
+fact dram_lanes_held_latency_ns_w2 1224.000 ns
+fact dram_lanes_held_latency_w4 5952.457 clk
+fact dram_lanes_held_latency_ns_w4 2156.000 ns
+fact dram_lanes_held_latency_w8 11326.801 clk
+fact dram_lanes_held_latency_ns_w8 4104.000 ns
+fact dram_lanes_half_held_latency_w1 1659.719 clk
+fact dram_lanes_half_held_latency_ns_w1 600.000 ns
+fact dram_lanes_half_held_latency_w2 2369.219 clk
+fact dram_lanes_half_held_latency_ns_w2 860.000 ns
+fact dram_lanes_half_held_latency_w4 3383.691 clk
+fact dram_lanes_half_held_latency_ns_w4 1228.000 ns
+fact dram_lanes_half_held_latency_w8 5987.172 clk
+fact dram_lanes_half_held_latency_ns_w8 2168.000 ns
+fact sm_clock_mhz_chase_held 2760.988 mhz
+fact shared_latency 24.127 clk
 selfcheck ok
 end

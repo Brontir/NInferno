@@ -8,7 +8,7 @@ facts table (src/core/data/isa_facts.json), one row per architecture, provenance
     isa_probe.py show       [--table ...]
 
 `run` compiles tools/bench/isa_probe/isa_probe.cu for sm_<arch> into a temporary directory, runs it
-(about a minute, the GPU otherwise idle) and saves its output; `merge` copies that output into the
+(10 to 20 s, the GPU otherwise idle) and saves its output; `merge` copies that output into the
 committed inputs directory as isa_probe_<arch>.txt (replacing an older run of the same
 architecture) and regenerates the table from every file there; `regenerate` alone rebuilds the
 table from the inputs. Adding an architecture is one file plus a regenerate. A row records its
@@ -54,26 +54,60 @@ FACTS = (
     # conversion pairs per op.
     "lat_imad", "lat_iadd", "lat_lop3", "lat_prmt", "lat_shf", "lat_hfma2", "lat_ffma", "lat_shfl",
     "lat_cvt_i2f_f2i", "lat_cvt_f32_f16",
+    # The SM clock under the tensor loop, once it has settled (clock64 over %globaltimer).
+    "sm_clock_mhz_mma",
 )
-# Facts a row may lack: those a later probe added (the dependent ALU latencies, probe 11; the
-# tensor figure at 4, 8, 16 warps, probe 14), so a row of an earlier probe still parses. Such a row
-# is stale all the same: test_isa_facts fails while a row's probe is not the checked-in one.
-OPTIONAL_FACTS = frozenset(f for f in FACTS
-                           if f.startswith("lat_") or f.startswith("mma_cycles_per_sm_w"))
+_WARPS = (1, 2, 4, 8)
+# The DRAM chase with all 32 lanes of every warp on chains of their own: 32 x W lines in flight an
+# SM, the warp's link as long as its slowest line.
+FACTS += tuple(f"dram_lanes_latency{u}_w{w}" for u in ("", "_ns") for w in _WARPS)
+# The same chase on half the SMs: as many lines in flight on each of those SMs, half as many on
+# the chip, so the pair says whether a link waits on its SM's lines or on the chip's.
+FACTS += tuple(f"dram_lanes_half_latency{u}_w{w}" for u in ("", "_ns") for w in _WARPS)
+# Every level again beside one warp of FFMAs on each SM (`_held`): the card may clock an SM whose
+# only warp waits on memory differently from a working one, and these are the chases at the
+# working clock (sm_clock_mhz_chase_held against sm_clock_mhz_chase).
+_BEYOND_L1 = ("l2", "dram_tlbwarm", "dram", "dram_lanes", "dram_lanes_half")
+FACTS += tuple(f"{lv}_held_latency_w{w}" for lv in ("l1",) + _BEYOND_L1 for w in _WARPS)
+FACTS += tuple(f"{lv}_held_latency_ns_w{w}" for lv in _BEYOND_L1 for w in _WARPS)
+FACTS += ("sm_clock_mhz_chase_held",)
+
+
+def first_probe(name):
+    """The probe version that first printed a fact (0: every version a row may come from). A run
+    of probe N carries every fact of the versions up to N and none of a later one, so a row of an
+    earlier probe still parses and a run that lost a fact of its own version does not. An earlier
+    row is stale all the same: test_isa_facts fails while a row's probe is not the checked-in
+    one."""
+    if name.startswith("dram_lanes_half"):
+        return 16
+    if "_held" in name or name.startswith("dram_lanes") or name == "sm_clock_mhz_mma":
+        return 15
+    if name.startswith("mma_cycles_per_sm_w"):
+        return 14
+    if name.startswith("lat_"):
+        return 11
+    return 0
+
+
 # Facts earlier probes printed that are no facts of the card: read past, never in a row.
 # resident_ctas_per_sm (probes up to 13) was the launch's own CTA count per SM.
 LEGACY_FACTS = frozenset({"resident_ctas_per_sm"})
-UNITS = {"tensor_flops_per_sm_clock": "flop", "sm_clock_mhz_chase": "mhz"}
+UNITS = {"tensor_flops_per_sm_clock": "flop"}
 
 
 def unit_of(name):
-    """The unit a fact is reported in: SM clocks unless listed, wall ns for the `_ns_` facts."""
+    """The unit a fact is reported in: SM clocks unless listed, wall ns for the `_ns_` facts, MHz
+    for the SM clocks."""
+    if name.startswith("sm_clock_mhz"):
+        return "mhz"
     return UNITS.get(name, "ns" if "_ns_" in name else "clk")
 
 
 HEADER = ("probe", "card", "cc", "sms", "l2_bytes", "driver", "runtime", "nvcc", "shape")
 # Header fields that are positive integers.
 HEADER_COUNTS = ("cc", "sms", "l2_bytes", "driver", "runtime")
+PROBE_VALUE = re.compile(r"isa_probe (\d+)")
 PROBE_LINE = re.compile(r'printf\("probe (isa_probe \d+)\\n"\)')
 
 
@@ -88,8 +122,9 @@ def checked_in_probe():
 
 def parse_run(text):
     """The header fields and the facts of one isa_probe output; ValueError when a line is odd, a
-    fact is missing, unknown, given twice, not a positive finite number or in another unit than
-    its own, or a header field is missing or no count."""
+    fact of the run's probe version is missing, a fact is unknown, of a later version, given
+    twice, not a positive finite number or in another unit than its own, or a header field is
+    missing or no count."""
     head, facts, ended, failures, checked = {}, {}, False, [], False
     for line in text.splitlines():
         parts = line.split()
@@ -129,7 +164,10 @@ def parse_run(text):
             head[parts[0]] = " ".join(parts[1:])
         else:
             raise ValueError(f"unknown line: {line!r}")
-    missing = [f for f in FACTS if f not in facts and f not in OPTIONAL_FACTS]
+    # The version decides which facts the run owes; a run without its probe line owes them all.
+    version = PROBE_VALUE.fullmatch(head.get("probe", ""))
+    owed = int(version.group(1)) if version else max(first_probe(f) for f in FACTS)
+    missing = [f for f in FACTS if f not in facts and first_probe(f) <= owed]
     if missing or not ended or not checked:
         raise ValueError(f"incomplete run: missing {missing}, ended={ended}, selfcheck={checked}")
     if failures:
@@ -137,6 +175,11 @@ def parse_run(text):
     for k in HEADER:
         if not head.get(k):
             raise ValueError(f"no {k} line")
+    if not version:
+        raise ValueError(f"odd probe line: {head['probe']!r}")
+    early = [f for f in facts if first_probe(f) > owed]
+    if early:
+        raise ValueError(f"facts of a later probe than {head['probe']}: {early}")
     for k in HEADER_COUNTS:
         if not (head[k].isdigit() and int(head[k]) > 0):
             raise ValueError(f"{k} is no positive count: {head[k]!r}")
@@ -185,7 +228,12 @@ NOTE = ("ISA facts per architecture, regenerated by `tools/bench/isa_probe/isa_p
         "dependent MMA latency, INT32 / FP32 cycles per warp instruction, the dependent latencies "
         "of the decode chains' ALU ops, dependent L1 / L2 / DRAM load latencies alone and under 2, "
         "4, 8 chasing warps per SM (the L2 and DRAM ones in wall ns too, with the SM clock of the "
-        "chase; DRAM in a small range per warp and over the whole buffer), shared-memory latency. "
+        "chase; DRAM in a small range per warp, over the whole buffer, and with all 32 lanes of a "
+        "warp chasing, on every SM and on half of them), shared-memory latency. The load "
+        "latencies are given twice: on a chip that "
+        "runs nothing else, and beside one warp of FFMAs on every SM (`_held`), where the SM "
+        "clock is the working one (sm_clock_mhz_chase_held; sm_clock_mhz_mma under the tensor "
+        "loop). "
         "Every row names its source file, the card, the probe version, nvcc, driver and runtime; "
         "provenance is Measured for all. A row is what its own probe version measured: up to probe "
         "13 a link of the L1 / L2 / DRAM chains carried the chain's index-to-address ops beside "

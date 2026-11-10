@@ -55,13 +55,16 @@ fact mma_cycles_per_sm_w16 8.0 clk
 fact mma_dependent_latency 33.1 clk
 fact fp32_cycles_per_warp_instruction 1.004 clk
 fact int32_cycles_per_warp_instruction 2.01 clk
-""" + "".join(f"fact {lv}_latency_w{w} {v + 3 * w:.1f} clk\n"
-              for lv, v in (("l1", 34.0), ("l2", 260.0), ("dram", 560.0), ("dram_tlbwarm", 520.0))
-              for w in (1, 2, 4, 8)) + \
-    "".join(f"fact {lv}_latency_ns_w{w} {(v + 3 * w) / 2.52:.1f} ns\n"
-            for lv, v in (("l2", 260.0), ("dram", 560.0), ("dram_tlbwarm", 520.0))
-            for w in (1, 2, 4, 8)) + \
-    "fact sm_clock_mhz_chase 2520.0 mhz\nfact shared_latency 29.5 clk\n" + \
+""" + "".join(
+    # Every level on the chip alone (at 2520 MHz) and beside the FFMA kernel (`_held`, 1890 MHz).
+    f"fact {lv}{tag}_latency_w{w} {v + 3 * w:.1f} clk\n" +
+    (f"fact {lv}{tag}_latency_ns_w{w} {(v + 3 * w) * 1e3 / mhz:.1f} ns\n" if lv != "l1" else "")
+    for tag, mhz in (("", 2520.0), ("_held", 1890.0))
+    for lv, v in (("l1", 34.0), ("l2", 260.0), ("dram", 560.0), ("dram_tlbwarm", 520.0),
+                  ("dram_lanes", 590.0), ("dram_lanes_half", 575.0))
+    for w in (1, 2, 4, 8)) + \
+    "fact sm_clock_mhz_chase 2520.0 mhz\nfact sm_clock_mhz_chase_held 1890.0 mhz\n" + \
+    "fact sm_clock_mhz_mma 1900.0 mhz\nfact shared_latency 29.5 clk\n" + \
     "".join(f"fact lat_{op} {v:.1f} clk\n" for op, v in (
         ("imad", 4.5), ("iadd", 4.0), ("lop3", 4.2), ("prmt", 4.4), ("shf", 4.5), ("hfma2", 5.0),
         ("ffma", 4.1), ("shfl", 24.0), ("cvt_i2f_f2i", 6.0), ("cvt_f32_f16", 5.5))) + \
@@ -97,8 +100,11 @@ class IsaFacts(unittest.TestCase):
         self.assertEqual(ip.arch_key(75, "hmma_1688_f32_f16 2048"), "75")
         self.assertEqual([ip.unit_of(n) for n in ("l1_latency_w1", "dram_latency_ns_w2",
                                                   "sm_clock_mhz_chase", "mma_cycles_per_sm_w16",
-                                                  "tensor_flops_per_sm_clock")],
-                         ["clk", "ns", "mhz", "clk", "flop"])
+                                                  "tensor_flops_per_sm_clock",
+                                                  "dram_lanes_held_latency_ns_w8",
+                                                  "l1_held_latency_w4", "sm_clock_mhz_chase_held",
+                                                  "sm_clock_mhz_mma")],
+                         ["clk", "ns", "mhz", "clk", "flop", "ns", "clk", "mhz", "mhz"])
         # What probes up to 13 printed as resident_ctas_per_sm was the launch's own CTA count, no
         # fact of the card: read past, never in a row.
         head, facts = ip.parse_run(SAMPLE.replace(
@@ -220,6 +226,34 @@ class IsaFacts(unittest.TestCase):
         with self.assertRaises(ValueError):
             ip.parse_run(SAMPLE.replace("fact mma_cycles_per_sm 8.012 clk", "fact mma_cycles_per_sm"))
 
+    def test_a_run_owes_the_facts_of_its_probe_version(self):
+        # A run carries every fact its own probe version prints and none a later version added:
+        # an earlier probe's saved run still parses without the later facts, the checked-in
+        # probe's run does not, and a run that names no version owes them all.
+        now = ip.checked_in_probe()
+        newest = max(ip.first_probe(f) for f in ip.FACTS)
+        self.assertEqual(int(now.split()[1]), newest, "a fact names a probe that is not checked in")
+        held = "fact dram_held_latency_ns_w4 302.6 ns\n"
+        self.assertIn(held, SAMPLE)
+        with self.assertRaises(ValueError) as e:
+            ip.parse_run(SAMPLE.replace(held, ""))
+        self.assertIn("dram_held_latency_ns_w4", str(e.exception))
+        for version in sorted({ip.first_probe(f) for f in ip.FACTS} - {0}):
+            earlier = "".join(
+                line + "\n" for line in SAMPLE.splitlines()
+                if not (line.startswith("fact ") and ip.first_probe(line.split()[1]) >= version))
+            earlier = earlier.replace("probe " + now, f"probe isa_probe {version - 1}")
+            head, facts = ip.parse_run(earlier)
+            self.assertEqual(set(facts),
+                             {f for f in ip.FACTS if ip.first_probe(f) < version}, version)
+            # The same run with one fact of the next version is not that version's output.
+            with self.assertRaises(ValueError, msg=version) as e:
+                ip.parse_run(SAMPLE.replace("probe " + now, f"probe isa_probe {version - 1}"))
+            self.assertIn("later probe", str(e.exception))
+        for odd in ("probe isa_probe", "probe isa_probe fifteen", "probe other 15"):
+            with self.assertRaises(ValueError, msg=odd):
+                ip.parse_run(SAMPLE.replace("probe " + now, odd))
+
     def test_merge_in_place(self):
         # Merging the file that already sits in the inputs directory under its architecture's
         # name keeps its text (the destination is not opened before the input is read).
@@ -257,10 +291,11 @@ class IsaFacts(unittest.TestCase):
                 self.assertIn(field, row, f"{key} lacks {field}")
             for field in ("probe", "nvcc", "driver", "runtime"):
                 self.assertIn(field, row["tool"], f"{key} tool lacks {field}")
-            # Every fact of the table's list, except those a later probe added (the ALU
-            # latencies), which a row keeps lacking until its card is probed again.
-            self.assertTrue(set(ip.FACTS) - ip.OPTIONAL_FACTS <= set(row["facts"]), key)
-            self.assertTrue(set(row["facts"]) <= set(ip.FACTS), key)
+            # Every fact the row's own probe version prints (and the derived tensor rate), none
+            # of a later one: a row keeps lacking those until its card is probed again.
+            probe = int(row["tool"]["probe"].split()[1])
+            self.assertEqual(set(row["facts"]),
+                             {f for f in ip.FACTS if ip.first_probe(f) <= probe}, key)
             for field in ("sms", "l2_bytes"):
                 self.assertGreater(row[field], 0, f"{key} {field}")
             for field in ("driver", "runtime"):
@@ -295,11 +330,42 @@ class IsaFacts(unittest.TestCase):
             # A link anywhere in the buffer is never the shorter of the two DRAM levels (the
             # probe's own self-check from version 14 on, where no two links share a line; the rows
             # of earlier probes, whose links did, are named by the version test above instead).
-            if int(row["tool"]["probe"].split()[1]) >= 14:
+            if probe >= 14:
                 for w in (1, 2, 4, 8):
                     self.assertGreaterEqual(fa[f"dram_latency_ns_w{w}"]["value"],
                                             0.97 * fa[f"dram_tlbwarm_latency_ns_w{w}"]["value"],
                                             f"{key} dram under dram_tlbwarm at w{w}")
+            # From probe 15 on every level is measured again beside a working warp on each SM,
+            # and DRAM with 32 chasing lanes a warp: the same order holds there, a 32-lane warp
+            # waits at least as long as a one-lane warp at the same warp count, and the SM clock
+            # of the held chases is the tensor loop's settled clock within 10 % (both are an SM
+            # at work; the lone chases' clock may be anything).
+            # (The same chase on half the SMs, from probe 16 on, is held to the same two bounds;
+            # how it stands against the whole chip's is the fact it is there for.)
+            if probe >= 15:
+                for lv in ("dram_lanes",) + (("dram_lanes_half",) if probe >= 16 else ()):
+                    for tag in ("", "_held"):
+                        for w in (1, 2, 4, 8):
+                            lanes = fa[f"{lv}{tag}_latency_ns_w{w}"]["value"]
+                            self.assertGreaterEqual(
+                                lanes, 0.95 * fa[f"dram{tag}_latency_ns_w{w}"]["value"],
+                                f"{key} {lv}{tag} under dram at w{w}")
+                            self.assertGreaterEqual(
+                                lanes * 1.05, fa[f"{lv}{tag}_latency_ns_w1"]["value"],
+                                f"{key} {lv}{tag} w{w}")
+                self.assertLess(fa["l1_held_latency_w1"]["value"],
+                                fa["l2_held_latency_w1"]["value"], key)
+                for w in (1, 2, 4, 8):
+                    self.assertGreater(fa[f"dram_held_latency_ns_w{w}"]["value"],
+                                       1.2 * fa[f"l2_held_latency_ns_w{w}"]["value"],
+                                       f"{key} held dram at w{w}")
+                    self.assertGreaterEqual(
+                        fa[f"dram_held_latency_ns_w{w}"]["value"],
+                        0.97 * fa[f"dram_tlbwarm_held_latency_ns_w{w}"]["value"],
+                        f"{key} held dram under dram_tlbwarm at w{w}")
+                held, mma = fa["sm_clock_mhz_chase_held"]["value"], fa["sm_clock_mhz_mma"]["value"]
+                self.assertLess(abs(held - mma) / mma, 0.10,
+                                f"{key}: held chases at {held} MHz, the tensor loop at {mma}")
 
 
 if __name__ == "__main__":

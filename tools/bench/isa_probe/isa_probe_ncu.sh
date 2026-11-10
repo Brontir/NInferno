@@ -14,9 +14,12 @@
 # --launch-skip counts the launches of the kernels the name matches, in the probe's order (main()
 # of isa_probe.cu):
 #   mma_throughput: 0 warm, 1 timed (SMs x 4 CTAs of 4 warps), then the warm / timed pairs of the
-#                   one-CTA-per-SM runs at 4, 8 and 16 warps (2..7).
+#                   one-CTA-per-SM runs at 4, 8 and 16 warps (2..7); the launches that read the
+#                   settled SM clock follow (8 and up, as many as fit a second).
 #   chase:          four launches a level (1, 2, 4, 8 warps per SM), the levels in the order l1,
-#                   l2, dram_tlbwarm, dram: 0..3, 4..7, 8..11, 12..15 (chase_shared follows).
+#                   l2, dram_tlbwarm, dram, dram_lanes, dram_lanes_half: 0..3, 4..7, 8..11,
+#                   12..15, 16..19, 20..23; then the same 24 beside the FFMA kernel (24..47), and
+#                   chase_shared.
 # Under the profiler the probe's own timings and self-check are no measurement (the profiler
 # changes how the launches overlap): only ncu's counters are read here, and a non-zero exit is
 # printed, not acted on.
