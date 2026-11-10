@@ -10,7 +10,9 @@
 // the selector's per-device caches keep a substituted board's answers apart by its content, so the
 // two must agree. Each choice is also asked of the pure query (route_query.h); a difference is
 // written into the dump. A board the PCI-ID table knows is dumped again with its driver's clocks
-// moved, and must choose as at its datasheet clocks.
+// moved, and must choose as at its datasheet clocks. No GPU is needed: the register-MMA price
+// reads the committed kernel-facts snapshots (ops/generic/kernel_facts.h), so every board's file
+// is checked by every build set on any host.
 #include "ops/quantized_weight.h"
 
 #include "core/device_class.h"
@@ -21,12 +23,11 @@
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
+#include "ops/generic/kernel_facts.h"
 #include "ops/generic/selector_facts.h"
 
 #include <algorithm>
 #include <atomic>
-#include <cerrno>
-#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -40,14 +41,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
-#include <tuple>
 #include <vector>
-#ifdef _WIN32
-#    include <process.h>
-#else
-#    include <signal.h>
-#    include <unistd.h>
-#endif
 
 namespace {
 
@@ -141,160 +135,17 @@ constexpr const char* kBuildSet =
 #endif
 
 // A board whose register-MMA price rests on the compiled kernels' registers and spill
-// (rmma_terms_measured, generic_cost.cpp) is priced from what its build's compiler made of the
-// kernels: nvcc 12.8 and 13.x allocate other registers for the same source (up to a third apart
-// for one kernel, #556), the price turns them into resident CTAs per SM, and a tile choice can
-// move with no change of source or spec. The choices are deterministic for one binary; the
-// release's toolchain fixes them (tools/release/package.sh). Such a board's golden is therefore
-// keyed by the digest of the facts the price read while the board was dumped: the header line
-// "# facts <digest>"; selector_golden/facts_index.txt maps (board, digest) to the file holding the
-// choices and records the nvcc each was made with. A toolchain with other facts and no entry fails
-// and names its digest; --update rewrites the entry of its own nvcc.
-bool facts_keyed(const GoldenBoard& b) { return generic::board_prices_from_facts(b); }
-
-// facts_index.txt: which file holds the choices for which facts digest and nvcc (see the file).
-struct IndexEntry {
-    std::string board, digest, file, nvcc;
-};
-
-struct Index {
-    std::vector<std::string> kept; // comment lines and the release line, as they stand
-    std::string release;
-    std::vector<IndexEntry> entries;
-};
+// (rmma_terms_measured, generic_cost.cpp) reads them from the committed kernel-facts snapshot of
+// the release engine the board runs (ops/generic/kernel_facts.h, #612), never from the host GPU's
+// kernels: its golden is one file per board like every other's, reproducible on any build and any
+// host, a CPU included. The snapshot itself is checked against each build's kernels by
+// ninferno_kernel_facts_test; a kernel or toolchain change regenerates both, snapshot and goldens,
+// in one reviewable change.
 
 std::filesystem::path golden_dir() { return std::filesystem::path(NINFERNO_SELECTOR_GOLDEN_DIR); }
 
-std::string board_key(const GoldenBoard& b) { return std::string(kBuildSet) + "/" + b.name; }
-
-Index load_index() {
-    Index index;
-    std::ifstream in(golden_dir() / "facts_index.txt");
-    for (std::string line; std::getline(in, line);) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        if (line.empty() || line[0] == '#') {
-            index.kept.push_back(line);
-        } else if (line.rfind("release ", 0) == 0) {
-            index.kept.push_back(line);
-            index.release = line.substr(8);
-        } else {
-            IndexEntry e;
-            std::istringstream fields(line);
-            if (fields >> e.board >> e.digest >> e.file >> e.nvcc) index.entries.push_back(e);
-        }
-    }
-    return index;
-}
-
-void save_index(Index index) {
-    std::sort(index.entries.begin(), index.entries.end(), [](const auto& a, const auto& b) {
-        return std::tie(a.board, a.nvcc, a.digest) < std::tie(b.board, b.nvcc, b.digest);
-    });
-    std::ofstream out(golden_dir() / "facts_index.txt", std::ios::binary);
-    for (const auto& l : index.kept) out << l << "\n";
-    for (const auto& e : index.entries)
-        out << e.board << " " << e.digest << " " << e.file << " " << e.nvcc << "\n";
-}
-
-long own_pid() {
-#ifdef _WIN32
-    return static_cast<long>(_getpid());
-#else
-    return static_cast<long>(getpid());
-#endif
-}
-
-// Whether a process is certainly gone (POSIX; elsewhere a lock is never judged stale).
-bool process_gone(long pid) {
-#ifdef _WIN32
-    (void)pid;
-    return false;
-#else
-    return kill(static_cast<pid_t>(pid), 0) != 0 && errno == ESRCH;
-#endif
-}
-
-// --update of several boards at once (one process each) rewrites one index: a directory holding
-// its owner's pid is the lock. It is waited for 60 s; a lock whose owner no longer exists is
-// removed (renamed away first, so one waiter wins); the destructor removes only a lock this
-// process took. Without the lock the constructor throws.
-struct IndexLock {
-    std::filesystem::path dir   = golden_dir() / ".facts_index.lock";
-    std::filesystem::path owner = dir / "owner";
-    bool held                   = false;
-
-    IndexLock() {
-        const long me   = own_pid();
-        long last_owner = 0;
-        for (int i = 0; i < 600; ++i) {
-            if (std::filesystem::create_directory(dir)) {
-                std::ofstream(owner) << me << "\n";
-                held = true;
-                return;
-            }
-            long pid = 0;
-            std::ifstream(owner) >> pid;
-            last_owner = pid;
-            if (pid > 0 && process_gone(pid)) {
-                const auto grave = dir.string() + ".stale" + std::to_string(me);
-                std::error_code ec;
-                std::filesystem::rename(dir, grave, ec);
-                if (!ec) {
-                    long moved = 0;
-                    std::ifstream(std::filesystem::path(grave) / "owner") >> moved;
-                    if (moved == pid) {
-                        std::filesystem::remove_all(grave, ec);
-                    } else {
-                        std::filesystem::rename(grave, dir, ec); // a live lock: give it back
-                    }
-                }
-                continue;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-        throw std::runtime_error("cannot take " + dir.string() + " within 60 s (held by pid " +
-                                 std::to_string(last_owner) +
-                                 "); remove it if that process is gone");
-    }
-
-    // Whether the lock is still this process's (a stale-lock recovery elsewhere may have taken it).
-    [[nodiscard]] bool still_held() const {
-        long pid = 0;
-        std::ifstream(owner) >> pid;
-        return held && pid == own_pid();
-    }
-
-    ~IndexLock() {
-        if (!still_held()) return; // never remove another process's lock
-        std::error_code ignored;
-        std::filesystem::remove(owner, ignored);
-        std::filesystem::remove(dir, ignored);
-    }
-
-    IndexLock(const IndexLock&)            = delete;
-    IndexLock& operator=(const IndexLock&) = delete;
-};
-
-// A dump without its facts line: two toolkits whose kernels give the same choices share a file.
-std::string without_facts(const std::string& dump) {
-    std::istringstream in(dump);
-    std::string out;
-    for (std::string line; std::getline(in, line);) {
-        if (line.rfind("# facts ", 0) != 0) out += line + "\n";
-    }
-    return out;
-}
-
-std::string read_file(const std::filesystem::path& path) {
-    std::ifstream in(path, std::ios::binary);
-    std::stringstream text;
-    text << in.rdbuf();
-    return text.str();
-}
-
-std::filesystem::path golden_file(const GoldenBoard& b, const std::string& digest) {
-    return golden_dir() / kBuildSet /
-           (std::string(b.name) + (facts_keyed(b) ? "." + digest : std::string()) + ".txt");
+std::filesystem::path golden_file(const GoldenBoard& b) {
+    return golden_dir() / kBuildSet / (std::string(b.name) + ".txt");
 }
 
 // One board's choices, a line per (format, policy, epilogue, shape, profile) and run of widths
@@ -424,148 +275,38 @@ std::string dump_body(const GoldenBoard& b, double sm_scale, double memory_scale
     return out.str();
 }
 
-// The board's dump with its facts line (a facts-priced board). The digest is the shared probe's
-// (selector_facts.h), the one a release computes of its own engine, so the dump must read no fact
-// the probe does not: the probe runs first, then the board's first dump in this process is read
-// under a sink (a fact the selector's cache answers without reading was the probe's own), and
-// every fact it read must be the probe's. A repeat dump is answered from that cache.
+// A facts-priced board's dump must read kernel facts (the snapshot of its release engine): a
+// dump that read none would be priced by threads alone and silently differ from the release.
 std::string dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memory_scale = 1.0) {
-    if (!facts_keyed(b)) return dump_body(b, sm_scale, memory_scale);
-    static std::map<std::string, std::string> digests;
+    if (!generic::board_prices_from_facts(b)) return dump_body(b, sm_scale, memory_scale);
+    std::vector<generic::RmmaFactRead> reads;
     std::string body;
-    if (digests.find(b.name) == digests.end()) {
-        const auto probe = generic::selector_facts_probe(b); // throws where it reads none
-        std::vector<generic::RmmaFactRead> dumped;
-        {
-            const generic::ScopedRmmaFactsSink sink(dumped);
-            body = dump_body(b, sm_scale, memory_scale);
-        }
-        for (const auto& key : generic::rmma_fact_keys(dumped)) {
-            if (probe.count(key) == 0) {
-                throw std::runtime_error(std::string(b.name) +
-                                         ": the dump read a kernel fact the release probe does " +
-                                         "not (format " + std::to_string(std::get<0>(key)) +
-                                         ", schedule " + std::to_string(std::get<1>(key)) +
-                                         ", epilogue " + std::to_string(std::get<2>(key)) +
-                                         "): widen selector_facts_probe's shapes or widths");
-            }
-        }
-        digests[b.name] = generic::facts_digest(probe);
-    } else {
+    {
+        const generic::ScopedRmmaFactsSink sink(reads);
         body = dump_body(b, sm_scale, memory_scale);
     }
-    const auto first = body.find('\n') + 1;
-    return body.substr(0, first) + "# facts " + digests[b.name] + "\n" + body.substr(first);
-}
-
-// The digest line of a dump.
-std::string digest_of(const std::string& dump) {
-    constexpr std::string_view tag = "\n# facts ";
-    const auto at                  = dump.find(tag);
-    if (at == std::string::npos) return "";
-    const auto from = at + tag.size();
-    return dump.substr(from, dump.find('\n', from) - from);
-}
-
-// A board whose register-MMA price rests on the compiled kernels' registers and spill
-// (rmma_terms_measured, generic_cost.cpp) is priced with the BUILD's kernels (the SASS of
-// NINFERNO_BUILD_ARCH, which the host runs): another compute capability keeps other counts. Its
-// golden is therefore reproducible only on a build of the board's own compute capability; for any
-// other build it is skipped (neither written, compared nor run for clock invariance), and a set
-// holds the file only for the capabilities its builds are made for. On its own capability the
-// file is keyed by the digest of the kernels' facts (facts_digest: another nvcc compiles
-// other registers, #556). The decisions are the
-// selector's and route_query's own: nothing in the product changes for the test.
-bool host_kernels_differ(const GoldenBoard& b) {
-    if (!rmma_terms_measured(b.major, b.minor)) return false;
-    return b.major != NINFERNO_BUILD_ARCH / 10 || b.minor != NINFERNO_BUILD_ARCH % 10;
+    if (reads.empty()) {
+        throw std::runtime_error(std::string(b.name) +
+                                 ": the dump read no kernel facts (no snapshot for sm_" +
+                                 generic::kernel_facts::release_arch(b.major, b.minor) + ")");
+    }
+    return body;
 }
 
 int run_board(const GoldenBoard& b, bool update) {
-    if (host_kernels_differ(b)) {
-        std::cout << b.name << ": skipped, its register-MMA price needs a build for sm_" << b.major
-                  << b.minor << " kernels\n";
-        return 0;
-    }
-    const std::string now      = dump_board(b);
-    const std::string d        = digest_of(now);
-    std::filesystem::path path = golden_file(b, d);
+    const std::string now            = dump_board(b);
+    const std::filesystem::path path = golden_file(b);
     if (update) {
         // The directory may not exist yet in a fresh checkout; a write that fails is a failure.
         std::filesystem::create_directories(path.parent_path());
-        const auto write = [&](const std::filesystem::path& to) {
-            std::ofstream file(to, std::ios::binary);
-            file << now;
-            if (file.good()) return true;
-            std::cerr << b.name << ": cannot write " << to.string() << '\n';
-            return false;
-        };
-        if (!facts_keyed(b)) {
-            if (!write(path)) return 1;
-            std::cout << b.name << ": wrote " << path.string() << '\n';
-            return 0;
-        }
-        const IndexLock lock;
-        Index index = load_index();
-        // The choices another toolkit's file already holds are not stored twice.
-        std::string holder = d;
-        for (const auto& entry : index.entries) {
-            if (entry.board == board_key(b) && entry.digest != d &&
-                without_facts(read_file(golden_file(b, entry.file))) == without_facts(now)) {
-                holder = entry.file;
-                break;
-            }
-        }
-        if (holder == d && !write(path)) return 1;
-        std::erase_if(index.entries, [&](const IndexEntry& e) {
-            return e.board == board_key(b) && e.nvcc == NINFERNO_NVCC_VERSION;
-        });
-        index.entries.push_back({board_key(b), d, holder, NINFERNO_NVCC_VERSION});
-        if (!lock.still_held()) {
-            std::cerr << b.name << ": lost the index lock; facts_index.txt left unchanged\n";
+        std::ofstream file(path, std::ios::binary);
+        file << now;
+        if (!file.good()) {
+            std::cerr << b.name << ": cannot write " << path.string() << '\n';
             return 1;
         }
-        // The board's files no entry uses any more.
-        const std::string prefix = std::string(b.name) + ".";
-        for (const auto& item : std::filesystem::directory_iterator(path.parent_path())) {
-            const std::string name = item.path().filename().string();
-            if (name.rfind(prefix, 0) != 0 || item.path().extension() != ".txt") continue;
-            const std::string used = name.substr(prefix.size(), name.size() - prefix.size() - 4);
-            const bool kept =
-                std::any_of(index.entries.begin(), index.entries.end(), [&](const IndexEntry& e) {
-                    return e.board == board_key(b) && e.file == used;
-                });
-            if (!kept) std::filesystem::remove(item.path());
-        }
-        save_index(index);
-        std::cout << b.name << ": facts " << d << " for nvcc " << NINFERNO_NVCC_VERSION << ", "
-                  << (holder == d ? "wrote " : "same choices as ")
-                  << golden_file(b, holder).string() << '\n';
+        std::cout << b.name << ": wrote " << path.string() << '\n';
         return 0;
-    }
-    if (facts_keyed(b)) {
-        const Index index       = load_index();
-        const IndexEntry* found = nullptr;
-        for (const auto& entry : index.entries) {
-            if (entry.board == board_key(b) && entry.digest == d &&
-                (found == nullptr || entry.nvcc == NINFERNO_NVCC_VERSION)) {
-                found = &entry;
-            }
-        }
-        if (found == nullptr) {
-            std::cerr << b.name << ": no golden for the compiled kernels' facts " << d << " (nvcc "
-                      << NINFERNO_NVCC_VERSION
-                      << "); run with --update, another toolchain keeps an entry of its own\n";
-            return 1;
-        }
-        // The release's toolkit must give the facts the release entry names.
-        if (NINFERNO_NVCC_VERSION == index.release && found->nvcc != index.release) {
-            std::cerr << b.name << ": nvcc " << NINFERNO_NVCC_VERSION
-                      << " is the release's, but its facts " << d
-                      << " are not the release entry's; run with --update\n";
-            return 1;
-        }
-        path = golden_file(b, found->file);
     }
     std::ifstream in(path, std::ios::binary);
     if (!in) {
@@ -574,8 +315,8 @@ int run_board(const GoldenBoard& b, bool update) {
     }
     std::stringstream was_text;
     was_text << in.rdbuf();
-    const std::string was_cmp = facts_keyed(b) ? without_facts(was_text.str()) : was_text.str();
-    const std::string now_cmp = facts_keyed(b) ? without_facts(now) : now;
+    const std::string was_cmp  = was_text.str();
+    const std::string& now_cmp = now;
     if (was_cmp == now_cmp) {
         std::cout << b.name << ": choices as the golden file\n";
         return 0;
@@ -607,10 +348,9 @@ int run_board(const GoldenBoard& b, bool update) {
 // clock more than half a grid step (2.2 %) below the row's is another board under the id (a
 // slower memory) and is read on purpose; the variants stay inside that step.
 int run_clock_invariance(const GoldenBoard& b) {
-    if (b.pci_device_id == 0 || host_kernels_differ(b))
-        return 0; // unknown ids are priced from the driver's values
+    if (b.pci_device_id == 0) return 0; // unknown ids are priced from the driver's values
     const auto body = [](const std::string& dump) {
-        std::size_t at = 0; // past the header lines (the facts line is the first dump's only)
+        std::size_t at = 0; // past the header line
         while (at < dump.size() && dump[at] == '#') at = dump.find('\n', at) + 1;
         return dump.substr(at);
     };

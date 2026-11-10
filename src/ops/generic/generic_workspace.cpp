@@ -5,6 +5,7 @@
 // generic_select_internal.h.
 #include "core/layout.h"
 #include "ops/common/route_probe.h"
+#include "ops/generic/format_traits.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_ggml_internal.h"
 #include "ops/generic/generic_select_internal.h"
@@ -177,8 +178,7 @@ std::size_t workspace_capacity_bytes(const Problem& problem, const Weight* weigh
     mmq = std::max(mmq, volta);
     if (!a8 && !r8_verify) return with_gather(mmq);
     const std::size_t i8 =
-        (problem.qtype == QType::Q4_G64_FP16 || problem.qtype == QType::Q5_G64_FP16 ||
-         problem.qtype == QType::Q6_G64_FP16)
+        format_traits(problem.qtype).qx_g64
             ? route_workspace_bytes(Route{Family::I8Mma, 0}, problem.k, max_tokens)
             : 0;
     return with_gather(std::max(
