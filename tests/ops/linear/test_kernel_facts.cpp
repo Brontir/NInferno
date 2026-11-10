@@ -202,7 +202,9 @@ void build_kernels_find_facts() {
                                       why != generic::ScheduleRefusal::Extent;
                     for (const std::int32_t t : {1, 4, 8}) {
                         const auto r = generic::rmma_resources(i, w, generic::Epilogue::Store, t);
-                        // Without tensor mma.sync Volta's HMMA and GEMV kernels take held calls.
+                        // Without tensor mma.sync Volta's HMMA and GEMV kernels take held calls;
+                        // on Volta only a refused call described is checked (a held call with no
+                        // row is not told apart from one those kernels take).
                         if (r.has_value() != held && (r || device.features.mma_tensor)) {
                             fail(std::string(board.name) + " " + generic::qtype_name(qtype) +
                                  " schedule " + std::to_string(i) + " T=" + std::to_string(t) +
@@ -215,6 +217,8 @@ void build_kernels_find_facts() {
             }
         }
     }
+    // A snapshot with no board, or boards whose every fixture failed, would check nothing.
+    expect(boards > 0 && described > 0, "build kernels: nothing checked for sm_" + own);
     std::cout << "build kernels: " << described << " calls described on " << boards
               << " boards of sm_" << own << '\n';
 }
