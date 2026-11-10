@@ -264,7 +264,7 @@ class Classify(unittest.TestCase):
     def test_any_sm_token_outside_the_lab_set_answers_all(self):
         # a host-allowlisted source named for an arch the five stands do not cover
         for name in ("sm_121_impl.cpp", "sm_130_impl.cpp", "sm121.cpp", "sm_100a_io.cpp", "sm_90a.cpp",
-                     "sm_1200_x.cpp", "x_sm_103.cpp"):
+                     "sm_1200_x.cpp", "x_sm_103.cpp", "sm_120_impl.cpp", "sm_120f_impl.cpp", "sm120f.cpp"):
             with self.subTest(name=name):
                 self.assertTrue(self.run_diff(["src/chat/" + name])["all"])
         # the lab arches and look-alikes are not caught by it

@@ -95,7 +95,7 @@ ARCH_NAME_PATTERNS = [
 ]
 # Arches outside the five lab arches cannot be tested on one machine: run everything.
 # Any sm_<number> that is not one of the lab arches (sm_121, sm_130, sm_100a, sm_90a ...) is one.
-OTHER_ARCH_NAME = (r"(?<![a-z0-9])(?:sm_?(?!(?:70|75|86|89|120)(?![0-9]))[0-9]{2,}"
+OTHER_ARCH_NAME = (r"(?<![a-z0-9])(?:sm_?(?!(?:70|75|86|89|120a)(?![0-9a-z]))[0-9]{2,}"
                    r"|ga100|gh100|hopper|a100|h100)(?![0-9])")
 # Host-only: no read of the card's compute capability, generation, nvfp4 or mma_slow facts (checked
 # by grep). Not listed, so they answer "all": src/ui (catalog.cpp, app.cpp pick fp4 by cc), src/serve
