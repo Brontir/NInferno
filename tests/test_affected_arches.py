@@ -814,6 +814,22 @@ class Classify(unittest.TestCase):
         self.assertTrue(res["all"])
         self.assertIn("included by a .cu file", res["reasons"]["docs/generated.h"])
 
+    def test_an_angle_include_reaches_the_include_dir_file_too(self):
+        # `<chat/shared.h>` from src/ops/k.cu means src/chat/shared.h (src is an include dir),
+        # even when src/ops/chat/shared.h also exists.
+        files = {"src/chat/shared.h": "#pragma once\n", "src/ops/chat/shared.h": "#pragma once\n",
+                 "src/ops/k4.cu": "#include <chat/shared.h>\n"}
+        self.assertTrue(self.run_diff(["src/chat/shared.h"], files)["all"])
+
+    def test_a_name_in_a_message_is_no_source_listing(self):
+        # message() names the file but attaches nothing: the globbed unit is not narrowed.
+        files = {"src/ops/volta_glob.cpp": "int v() { return 1; }\n",
+                 "src/ops/sources.cmake": 'if(NINFERNO_BUILD_ARCH STREQUAL "70")\n message("volta_glob.cpp")\nendif()\n'}
+        self.assertTrue(self.run_diff(["src/ops/volta_glob.cpp"], files)["all"])
+        # the same file attached with target_sources under the guard is narrowed
+        files["src/ops/sources.cmake"] = 'if(NINFERNO_BUILD_ARCH STREQUAL "70")\n target_sources(x PRIVATE volta_glob.cpp)\nendif()\n'
+        self.assertEqual(self.run_diff(["src/ops/volta_glob.cpp"], files)["arches"], ["sm_70"])
+
     def test_a_guard_on_a_same_named_file_does_not_narrow_another(self):
         # Listings are keyed by file name: an unlisted src/a/volta_impl.cpp is not the guarded
         # src/b/volta_impl.cpp, so it is not narrowed to sm_70.

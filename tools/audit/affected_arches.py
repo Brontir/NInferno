@@ -129,6 +129,11 @@ SOURCE_EXT = (".cu", ".cuh", ".h", ".hpp", ".cpp", ".cc", ".inl")
 # is still read by every unguarded file that includes it.
 TU_EXT = (".cu", ".cpp", ".cc")
 HOST_TU_EXT = (".cpp", ".cc")  # a C++ translation unit; .cu ones are device sources anyway
+# CMake commands that name files without building them: a name there lists no source. Any other
+# statement (a source-list call, or the bare lines of a list) is read as a listing.
+NOT_SOURCE_COMMAND = re.compile(
+    r"(message|install|configure_file|string|option|file|add_test|set_tests_properties|set_property"
+    r"|get_filename_component|add_custom_command|add_custom_target)$", re.I)
 # A host file that names the device-facts API reads the card (or the arch it was built for) at run
 # time, whatever its includes say: it answers "all". Checked on the changed file itself.
 DEVICE_API = re.compile(
@@ -300,8 +305,8 @@ class Repo:
         return [n for n in self.all_files() if CMAKE_NAME.search(n)]
 
     def resolve(self, includer, name):
-        """Every tracked file an `#include "name"` in `includer` can mean (the includer's own
-        directory first, else every file whose path ends with the name)."""
+        """Every tracked file an `#include "name"` or `<name>` in `includer` can mean: the file in
+        the includer's own directory, and every file whose path ends with the name."""
         parts = []
         for part in (PurePosixPath(includer).parent / name).parts:
             if part == "..":
@@ -310,10 +315,13 @@ class Repo:
             elif part != ".":
                 parts.append(part)
         local = "/".join(parts)
-        if local in self.fileset:
-            return [local]
         tail = [q for q in PurePosixPath(name).parts if q not in ("..", ".")]
-        return self.by_suffix.get("/".join(tail), [])
+        # An angle include does not search the includer's directory first, and an include
+        # directory may hold a same-named file: every candidate is an edge (only widens).
+        found = list(self.by_suffix.get("/".join(tail), []))
+        if local in self.fileset and local not in found:
+            found.insert(0, local)
+        return found
 
     def cmake_listing(self):
         """basename -> one entry per listing: the set of arches of its guards, None if unguarded."""
@@ -336,6 +344,11 @@ class Repo:
                             stack[-1] = m.group(2) if kw == "elseif" else ""
                         elif kw == "endif" and stack:
                             stack.pop()
+                        continue
+                    # A name in message() or install() lists nothing (it could otherwise narrow a
+                    # globbed unit to one guard's arch).
+                    cmd = re.match(r"\s*(\w+)\s*\(", stmt)
+                    if cmd and NOT_SOURCE_COMMAND.match(cmd.group(1)):
                         continue
                     guards = [guard_arches(g) for g in stack]
                     arches = None if opaque or any(g is None for g in guards) else set().union(*guards)
