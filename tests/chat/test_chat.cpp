@@ -1665,6 +1665,7 @@ int test_refusal_structural_tag() {
              " to=python<|channel|>analysis<|message|>",
              "  to=X <|constrain|>json<|message|>",
              "\nto=functions.x",
+             "\rto=functions.x<|channel|>analysis<|message|>",
              "to=functions.x<|channel|>commentary",
              "<<|channel|>commentary to=functions.x",
              "<|channel|>commentary to=functions.x",
