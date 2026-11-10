@@ -330,10 +330,18 @@ def classify(opcode):
 
 OPERAND_REGISTER = re.compile(r"^[-~!|]*(U?R(?:Z|\d+))(?:\.\w+)*\|?$")
 PREDICATE = re.compile(r"^!?U?P(?:T|\d+)$")
-# Instructions that write no general register although a register may lead their operands.
-NO_REGISTER_WRITE = ("ST", "RED", "BRA", "ISETP", "FSETP", "HSETP2", "DSETP", "LDGSTS", "EXIT",
-                     "RET", "CALL", "BSSY", "BSYNC", "WARPSYNC", "BAR", "DEPBAR", "NOP", "PREEXIT",
-                     "ACQBULK", "KILL", "BRX", "JMX", "JMP", "PLOP3")
+# Instructions that write no general register although a register may lead their operands: whole
+# base opcodes (RED is a reduction to memory; REDUX, which writes a uniform register, is not one)
+# and the prefixes of the store, branch and barrier families.
+NO_REGISTER_WRITE = {"RED", "ISETP", "FSETP", "HSETP2", "DSETP", "LDGSTS", "EXIT", "RET", "CALL",
+                     "BSSY", "BSYNC", "WARPSYNC", "DEPBAR", "NOP", "PREEXIT", "ACQBULK", "KILL",
+                     "JMP", "PLOP3"}
+NO_REGISTER_WRITE_PREFIXES = ("ST", "BRA", "BRX", "JMX", "BAR")
+# Ops that write a 64-bit float pair whatever their suffix; F2F / I2F do when their result type
+# (the first suffix) is F64.
+FP64_WRITERS = {"DADD", "DFMA", "DMUL", "DMNMX"}
+# A register operand written plain (no -, ~ or | modifier, no suffix but .reuse): a copy source.
+PLAIN_REGISTER = re.compile(r"^U?R\d+(?:\.reuse)?$")
 
 
 def operand_tokens(operands):
@@ -353,7 +361,8 @@ def operand_tokens(operands):
 def destination(opcode, tokens):
     """The register an instruction writes (after any predicate it also writes: `SHFL.IDX PT, R4`,
     `LOP3.LUT P0, R6`), or None."""
-    if base_opcode(opcode).startswith(NO_REGISTER_WRITE):
+    base = base_opcode(opcode)
+    if base in NO_REGISTER_WRITE or base.startswith(NO_REGISTER_WRITE_PREFIXES):
         return None
     for t in tokens:
         if PREDICATE.match(t):
@@ -379,18 +388,22 @@ def written_registers(opcode, operands):
         width = 4
     elif ".64" in opcode or ".WIDE" in opcode or ".64" in raw:
         width = 2
+    elif base in FP64_WRITERS or (base in ("F2F", "I2F") and opcode.split(".")[1:2] == ["F64"]):
+        width = 2
     else:
         width = 1
     m = REGISTER.match(dest)
     return {m.group(1) + str(int(m.group(2)) + k) for k in range(width)}
 
 
-def ones_definition(guarded, opcode, tokens):
+def ones_definition(guarded, opcode, tokens, operands=""):
     """What an instruction makes of its destination as a 1.0-pair holder: ("const", Rd) for an
     unguarded move of the constant (MOV / UMOV / MOV32I Rd, imm; IMAD.MOV.U32 Rd, RZ, RZ, imm as
     Ampere and Ada spell it; HFMA2 Rd, -RZ, RZ, 1.875, 1.875: the two f16 halves, compared as
-    written), ("copy", Rd, Rs) for an unguarded register copy in those forms, else None. A guarded
-    definition is no definition here: written_registers clears it."""
+    written), ("copy", Rd, Rs) for an unguarded register copy in those forms whose source is
+    written plain (`-Rs`, `~Rs` or `|Rs|` make something else of the pair), else None. A guarded
+    definition is no definition here: written_registers clears it. `operands` is the raw operand
+    text the tokens came from; without it a copy is taken on the tokens alone."""
     if guarded or len(tokens) < 2:
         return None
     base = base_opcode(opcode)
@@ -398,7 +411,8 @@ def ones_definition(guarded, opcode, tokens):
     if move and all(t == "RZ" for t in tokens[1:-1]):
         if tokens[-1] in ONES:
             return ("const", tokens[0])
-        if REGISTER.match(tokens[-1]) and tokens[-1] not in ("RZ", "URZ"):
+        source = operands.split(",")[-1].strip() if operands else tokens[-1]
+        if PLAIN_REGISTER.match(source) and REGISTER.match(tokens[-1]):
             return ("copy", tokens[0], tokens[-1])
     if base == "HFMA2" and len(tokens) == 5 and tokens[1:3] == ["RZ", "RZ"] and \
             tuple(tokens[3:5]) in ONES_HALVES:
@@ -425,7 +439,7 @@ def ones_mma_indices(body, succ):
     at the entry, and the meet of two paths is ONES only where both are; a redefinition later in
     the loop body reaches the loop's top through the back edge."""
     tokens = [operand_tokens(operands) for _, _, _, operands in body]
-    defs = [ones_definition(g, op, t) for (_, g, op, _), t in zip(body, tokens)]
+    defs = [ones_definition(g, op, t, operands) for (_, g, op, operands), t in zip(body, tokens)]
     tracked = {d[1] for d in defs if d and d[0] == "const"}
     grown = True
     while grown:  # the copies of tracked registers, transitively
