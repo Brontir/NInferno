@@ -96,16 +96,17 @@ bool gate_explains(bool extra, g::Route r) {
     case g::Family::RegisterMma:
         return !extra && !g::rmma_schedule_launchable(r.schedule);
     case g::Family::StagedMma:
-        return extra ? g::staged_fits(r.schedule) && g::staged_shared_bytes(r.schedule) > kBaseShared
-                     : !g::staged_fits(r.schedule);
+        return extra
+                   ? g::staged_fits(r.schedule) && g::staged_shared_bytes(r.schedule) > kBaseShared
+                   : !g::staged_fits(r.schedule);
     default:
         return false;
     }
 }
 
 void check_golden() {
-    // The rows name their board by an index into kFactsBoards: a reordered or grown list would price
-    // another board against the table.
+    // The rows name their board by an index into kFactsBoards: a reordered or grown list would
+    // price another board against the table.
     constexpr std::size_t kBoards = sizeof(kGoldenBoards) / sizeof(kGoldenBoards[0]);
     if (std::size(g::kFactsBoards) != kBoards) {
         std::fprintf(stderr, "FAIL: kFactsBoards has %zu boards, the golden was made over %zu\n",
