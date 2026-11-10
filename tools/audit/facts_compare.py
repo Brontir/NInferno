@@ -150,8 +150,11 @@ def validate_probe(probe_output):
         for part in DEVICE_PARTS:
             if not isinstance(device.get(part), dict):
                 raise ValueError(f"invalid probe output: device {position} has no \"{part}\" object")
-        if "raw" in device and not isinstance(device["raw"], dict):
-            raise ValueError(f"invalid probe output: device {position}: \"raw\" is not an object")
+        # The probe always prints raw and the key (-1 when CUDA cannot answer).
+        if not isinstance(device.get("raw"), dict) or \
+                "reserved_shared_per_block" not in device["raw"]:
+            raise ValueError(f"invalid probe output: device {position} has no \"raw\" object "
+                             "with reserved_shared_per_block")
         if not isinstance(device["synthetic"].get("features"), dict) or \
                 not isinstance(device["queried"].get("features"), dict):
             raise ValueError(f"invalid probe output: device {position} has no \"features\" object")
@@ -269,6 +272,9 @@ def compare_device(device, row):
             # What machine_facts makes of the row and this driver: the row as it is, or a
             # laptop at the bottom of its boost range, a memory variant at the driver's bus and
             # clock, a slice (source Extrapolated, its share priced apart).
+            out.append(result("table", "engine_sku", row["name"], engine["sku"],
+                              "match" if engine["sku"] == row["name"] else "mismatch",
+                              "the table row the engine attached to this id"))
             out.append(result("table", "engine_source", expected["source"], engine["source"],
                               "match" if engine["source"] == expected["source"] else "mismatch",
                               "1 the row as it is, 2 a laptop, a memory variant or a slice"))
@@ -291,7 +297,7 @@ def compare_device(device, row):
         want, got = s[field], q[field]
         out.append(result("arch", field, want, got, "match" if want == got else "mismatch",
                           "synthetic_device_class against the queried class"))
-    raw = device.get("raw", {})
+    raw = device["raw"]
     reserved = raw.get("reserved_shared_per_block")
     if unavailable(reserved) and reserved != 0:
         out.append(result("arch", "reserved_shared_per_block", None, reserved, "unavailable"))

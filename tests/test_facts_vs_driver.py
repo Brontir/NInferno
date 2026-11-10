@@ -285,6 +285,10 @@ class Compare(unittest.TestCase):
         d = device_4090()
         d["engine_table_facts"]["sku"] = ""
         self.assertEqual(statuses(d)[("table", "engine_sku")], "mismatch")
+        d = device_4090()
+        self.assertEqual(statuses(d)[("table", "engine_sku")], "match")
+        d["engine_table_facts"]["sku"] = "GeForce RTX 4080"  # another row's identity
+        self.assertEqual(statuses(d)[("table", "engine_sku")], "mismatch")
 
 
 class Cli(unittest.TestCase):
@@ -322,7 +326,13 @@ class Cli(unittest.TestCase):
         del no_synthetic["synthetic"]
         no_persisting = device_4090()
         del no_persisting["queried"]["persisting_l2_max_bytes"]
+        no_raw = device_4090()
+        del no_raw["raw"]
+        no_reserved = device_4090()
+        del no_reserved["raw"]["reserved_shared_per_block"]
         for name, probe in (("empty list", {"devices": []}), ("no devices key", {}),
+                            ("no raw", {"devices": [no_raw]}),
+                            ("no reserved shared", {"devices": [no_reserved]}),
                             ("devices not a list", {"devices": {"0": device_4090()}}),
                             ("not an object", []), ("device not an object", {"devices": [1]}),
                             ("no engine facts", {"devices": [no_engine]}),
