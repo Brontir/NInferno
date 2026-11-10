@@ -325,8 +325,9 @@ struct RowBound {
 struct RankedRow {
     std::size_t index     = 0;
     std::uint32_t context = 0;
-    double worth          = 0;
+    double worth          = 0; // the served configuration's
     double kld            = 0;
+    double anchor_worth   = 0; // the best worth its choice settled around (#301): sets the top
     runtime::QuantCandidate candidate;
 };
 
@@ -348,8 +349,8 @@ struct RowRank {
 [[nodiscard]] std::vector<RowBound> order_bounds(std::vector<RowBound> bounds);
 // Whether a row with this bound can still land inside `band` of the best worth served so far.
 [[nodiscard]] bool bound_in_reach(double bound, double top, double band) noexcept;
-// Among the rows within `band` of the best worth: the lower KLD, then the higher worth, then the
-// rule's order.
+// Among the rows whose worth is within `band` of the best anchor worth: the lower KLD, then the
+// higher worth, then the rule's order.
 [[nodiscard]] RowRank rank_rows(const std::vector<RankedRow>& rows, double band);
 
 // A plan of a model at given inputs: plan_model, or at a configuration choice's drafter.

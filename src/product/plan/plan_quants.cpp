@@ -716,7 +716,7 @@ bool bound_in_reach(double bound, double top, double band) noexcept {
 RowRank rank_rows(const std::vector<RankedRow>& rows, double band) {
     RowRank out;
     out.top = -INFINITY;
-    for (const RankedRow& r : rows) { out.top = std::max(out.top, r.worth); }
+    for (const RankedRow& r : rows) { out.top = std::max(out.top, r.anchor_worth); }
     for (std::size_t i = 0; i < rows.size(); ++i) {
         const RankedRow& s = rows[i];
         if (s.worth < out.top - band) { continue; }
@@ -949,7 +949,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                                                  inputs_for(inputs, row.listing), pins,
                                                  row.listing.quant, OwnContext::Unbounded);
             if (bound && bound->choice.chosen) {
-                bounds.push_back({i, bound->choice.scored[*bound->choice.chosen].worth});
+                bounds.push_back({i, bound->choice.anchor_worth});
             }
         }
         bounds = order_bounds(std::move(bounds));
@@ -957,6 +957,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             std::size_t index;
             std::uint32_t context;
             choice::Scored scored;
+            double anchor_worth; // the best worth the row's choice settled around (one allowance)
         };
         std::vector<Served> served_rows;
         std::vector<RankedRow> ranked;
@@ -971,14 +972,16 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                 served->choice.context < out.pick->target_context) {
                 continue;
             }
-            served_rows.push_back({i, served->choice.context, served->choice.scored[*served->choice.chosen]});
-            const choice::Scored& sc = served_rows.back().scored;
-            ranked.push_back(
-                {i, served_rows.back().context, sc.worth, sc.accuracy.kld, out.rows[i].candidate});
-            top = std::max(top, sc.worth);
+            const choice::Scored& sc = served->choice.scored[*served->choice.chosen];
+            served_rows.push_back({i, served->choice.context, sc, served->choice.anchor_worth});
+            ranked.push_back({i, served->choice.context, sc.worth, sc.accuracy.kld,
+                              served->choice.anchor_worth, out.rows[i].candidate});
+            top = std::max(top, served->choice.anchor_worth);
         }
-        // Within the band of the best worth: the lower KLD, then the higher worth, then the rule's
-        // order (rank_rows).
+        // Within the band of the best worth served (the rows' anchors, #301): a row is eligible by
+        // the worth of the configuration it would serve, so a row whose choice already moved inside
+        // its own resolution cannot trail the top by more than one band in all. Then the lower KLD,
+        // then the higher worth, then the rule's order (rank_rows).
         const RowRank ranking = rank_rows(ranked, band);
         std::optional<std::size_t> best;
         std::uint32_t best_context = 0;

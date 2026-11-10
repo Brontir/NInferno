@@ -38,6 +38,9 @@ struct SupportFacts {
     // (Q*_K, Q8_0, IQ*, MXFP4, ...: not F32/F16/BF16), from its header's tensor infos.
     std::size_t gguf_nvfp4_matrices = 0;
     std::size_t gguf_block_matrices = 0;
+    // A DSpine drafter: its GGUF header holds the code bridge's tensors, its config.json the
+    // bridge key, or the hub tags it so. The engine does not run one yet.
+    bool dspine = false;
     // The base models the model card names (card_base_models): none when it names none or the
     // answer does not carry the card's data (a search's).
     std::vector<std::string> base_models;

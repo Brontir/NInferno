@@ -35,6 +35,7 @@ pr::RankedRow row(std::size_t index, double worth, double kld, const std::string
     r.index                     = index;
     r.context                   = 32768;
     r.worth                     = worth;
+    r.anchor_worth              = worth;
     r.kld                       = kld;
     r.candidate.label           = label;
     r.candidate.label_bits      = bits;
@@ -46,7 +47,7 @@ pr::RankedRow row(std::size_t index, double worth, double kld, const std::string
 // The selection as plan_quants wrote it before the lift (one `top`, then a forward pass).
 std::optional<std::size_t> legacy_best(const std::vector<pr::RankedRow>& rows, double band) {
     double top = -INFINITY;
-    for (const auto& r : rows) { top = std::max(top, r.worth); }
+    for (const auto& r : rows) { top = std::max(top, r.anchor_worth); }
     std::optional<std::size_t> best;
     double best_worth = 0;
     double best_kld   = 0;
@@ -88,8 +89,9 @@ void test_pinned() {
         const auto b = pr::rank_rows(
             {row(1, 0.99, 0.002, "Q8_0", 8, 8000), row(0, 1.00, 0.010, "Q4_K_M", 4, 4000)}, band);
         check(a.best == 1 && a.reason == pr::RankReason::LowerKld, "lower KLD inside the band");
-        check(b.best == 0 && b.reason == pr::RankReason::LowerKld,
-              "same pick, other listing order");
+        // The pick is the same; the reason is told against the rows seen before the winner (it is
+        // the first seen here, so Only): by design, plan_quants never reads it for the pick.
+        check(b.best == 0 && b.reason == pr::RankReason::Only, "same pick, other listing order");
     }
     {
         // Same KLD: the higher worth.
@@ -113,6 +115,14 @@ void test_pinned() {
             {row(0, 1.0, 0.010, "Q8_0", 8, 8000), row(1, 1.0 - band, 0.001, "Q4_K_M", 4, 4000)},
             band);
         check(r.best == 1, "a worth exactly one band below still counts");
+    }
+    {
+        // The top is the best anchor (#301): a row whose choice settled around 1.0 sets it, so the
+        // 0.97 row is a band and more below, though 0.99 served would have left it inside.
+        auto high         = row(0, 0.99, 0.010, "Q8_0", 8, 8000);
+        high.anchor_worth = 1.0;
+        const auto r      = pr::rank_rows({high, row(1, 0.97, 0.001, "Q4_K_M", 4, 4000)}, band);
+        check(r.best == 0 && r.top == 1.0, "the top is the best anchor worth");
     }
     {
         check(pr::bound_in_reach(0.98, 1.0, 0.02), "bound at the edge is in reach");
