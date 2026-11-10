@@ -2542,10 +2542,11 @@ public:
             {OrderedJson{{"type", "regex"},
                          {"pattern", "([ \\t\\r\\n]*)([^ \\t\\r\\n<t]|t[^o]|to[^=])|<[^|<]"}},
              text()});
-        // An answer that is only "t" or "to" (after whitespace): the prefixes `plain` needs one
-        // more byte to tell from "to=", here whole, with nothing after them, so "to=" stays out.
+        // An answer that is empty, only whitespace, or that whitespace and then only "t", "to" or
+        // "<": the prefixes `plain` needs one more byte to tell from "to=" or a structural token,
+        // here whole, with nothing after them, so "to=" stays out.
         const OrderedJson prefix_only =
-            OrderedJson{{"type", "regex"}, {"pattern", "[ \\t\\r\\n]*(t|to)"}};
+            OrderedJson{{"type", "regex"}, {"pattern", "[ \\t\\r\\n]*(t|to|<)?"}};
         return OrderedJson{
             {"type", "structural_tag"},
             {"format", OrderedJson{{"type", "or"},

@@ -1683,8 +1683,10 @@ int test_refusal_structural_tag() {
          }) {
         failures += check(!admits(bad), "refusal tag refuses: " + std::string(bad));
     }
-    // An answer that is only a prefix of "to=" may stop there.
-    for (const std::string_view whole : {"t", "to", " to", "Hello there"}) {
+    // An answer that is empty, only whitespace, or only a prefix of "to=" or of a structural token
+    // may stop there.
+    for (const std::string_view whole :
+         {"t", "to", " to", "Hello there", "", " ", "\n\t", "<", " <"}) {
         ninferno::structured::ConstraintMatcher matcher(compiled);
         const bool accepted = matcher.accept_bytes(whole);
         failures += check(accepted && matcher.completed(),
