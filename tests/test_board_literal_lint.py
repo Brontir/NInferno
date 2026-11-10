@@ -98,6 +98,28 @@ FLAGGED = {
     "alias_return_qualified": "using GB = Board; a::GB f() { return {kM, 0, 1, 2, kB}; }",
     "alias_return_trailing_qualified": "using GB = Board; auto f() -> a::GB"
                                       " { return {kM, 0, 1, 2, kB}; }",
+    # An alias defined through another alias, in any order, qualified or not.
+    "alias_chain": "using B = Board; using C = B; C b{kMajor, 0, kSms, kL2, kBw};",
+    "alias_chain_reversed": "using C = B; using B = Board; C b{kMajor, 0, kSms, kL2, kBw};",
+    "alias_chain_three": "using A = Board; using B = A; using C = const B; C b{kMajor, 0, kSms, 1, 2};",
+    "alias_chain_qualified": "using B = Board; namespace n { using C = ::x::B; }"
+                             " n::C b{kMajor, 0, kSms, kL2, kBw};",
+    "alias_chain_typedef": "typedef Board B; typedef B C; C b{kMajor, 0, kSms, kL2, kBw};",
+    "alias_chain_mixed": "using B = Board; typedef const B C; using D = C; D b{kMajor, 0, 1, 2, 3};",
+    "alias_chain_return": "using B = Board; using C = B; C f() { return {kM, 0, 1, 2, kB}; }",
+    # A requires-clause after the parameters (C++20), also with a trailing return.
+    "return_requires_name": "template <class T> Board f(T) requires C<T>"
+                            " { return {kMajor, 0, kSms, kL2, kBw}; }",
+    "return_requires_parens": "template <class T> Board f(T t) requires (sizeof(T) > 1 &&"
+                              " std::is_same_v<T, int>) { return {kM, 0, 1, 2, kB}; }",
+    "return_requires_after_qualifiers": "template <class T> Board f(T) const noexcept requires C<T>"
+                                        " { return {kM, 0, 1, 2, kB}; }",
+    "return_requires_trailing": "template <class T> auto f(T) -> Board requires C<T>"
+                                " { return {kM, 0, 1, 2, kB}; }",
+    "return_requires_leading": "template <class T> requires C<T> Board f(T)"
+                               " { return {kM, 0, 1, 2, kB}; }",
+    "return_requires_expression": "template <class T> Board f(T) requires requires(T t) { t.x(); }"
+                                  " { return {kM, 0, 1, 2, kB}; }",
     "return_through_alias": "using B = Board; B f(int x) { if (x) return {kM, 0, 1, 2, 3};"
                             " return {}; }",
     # A template argument with a call in it.
@@ -163,6 +185,12 @@ CLEAN = {
     "alias_of_another_type": "using B = chess::Board; B b{kMajor, 0, 1, 2, 3};",
     "list_of_qualified_boards": "std::vector<Board> v = {measured::kA, measured::kB,"
                                 " measured::kC};",
+    "alias_chain_of_another_type": "using B = chess::Board; using C = B; C b{kMajor, 0, 1, 2, 3};",
+    "alias_chain_unrelated": "using B = Board; using C = Other; C b{kMajor, 0, 1, 2, 3};",
+    "return_requires_other_type": "template <class T> int f(T) requires C<T>"
+                                  " { return {kM, 0, 1, 2, kB}; }",
+    "return_requires_other_trailing": "template <class T> auto f(T) -> int requires C<T>"
+                                      " { return {kM, 0, 1, 2, kB}; }",
     "return_trailing_other_const": "auto f() -> int const { return {kM, 0, 1, 2, kB}; }",
     "alias_of_another_type_qualified": "using GB = chess::Board; a::GB b{kMajor, 0, 1, 2, 3};",
     "member_alias_access": "using GB = Board; x.GB{kMajor, 0, 1, 2, 3};",
@@ -198,6 +226,18 @@ def pin(text):
 
 
 class Violations(unittest.TestCase):
+    def test_a_long_line_with_no_body_is_read_in_linear_time(self):
+        import time
+        heads = ["Board f(T) requires " + "(a < b) && " * 1000,
+                 "Board f(T) requires " + "C<T> && " * 1250 + ";",
+                 "Board f(T) const " + "& " * 5000,
+                 "Board f(T) requires (" * 500,
+                 "using B = Board; " + "using C = B; " * 800]
+        for code in heads:
+            start = time.monotonic()
+            lint.violations(code)
+            self.assertLess(time.monotonic() - start, 3.0, code[:40])
+
     def test_flags_every_spelling(self):
         for name, code in FLAGGED.items():
             with self.subTest(name):

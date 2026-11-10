@@ -141,10 +141,12 @@ NUM = r"[-+]?(?:0[xX][0-9a-fA-F']+|\d[\d']*(?:\.\d*)?(?:[eE][-+]?\d+)?|\.\d+)[fF
 TUPLE = re.compile(r"\{\s*(%s)\s*,\s*(%s)\s*,\s*(%s)\s*,\s*(%s)\s*,\s*(%s)\s*"
                    r"(?:,\s*(?:true|false)\s*)?,?\s*\}" % ((NUM,) * 5))
 DOT_BOARD = re.compile(r"\.board\s*=\s*\{")
-ALIAS = re.compile(r"\busing\s+(\w+)\s*=\s*(?:const\b\s*)?(?:::\s*)?"
-                   r"(?:ninferno\s*::\s*)?Board\b\s*(?:const\b\s*)?;"
-                   r"|\btypedef\s+(?:const\b\s*)?(?:::\s*)?"
-                   r"(?:ninferno\s*::\s*)?Board\b\s*(?:const\b\s*)?(\w+)\s*;")
+# An alias and what it names: `using A = [const] T;` and `typedef [const] T [const] A;`, T a plain
+# or qualified name. Whether T is Board, or an alias of it, is decided by alias_names().
+ALIAS = re.compile(r"\busing\s+(\w+)\s*=\s*(?:const\b\s*)?(?:::\s*)?((?:\w+\s*::\s*)*\w+)\s*"
+                   r"(?:const\b\s*)?;"
+                   r"|\btypedef\s+(?:const\b\s*)?(?:::\s*)?((?:\w+\s*::\s*)*\w+)\s*"
+                   r"(?:const\b\s*)?(\w+)\s*;")
 NUMTOK = re.compile(
     r"0[xX][0-9a-fA-F']+[uUlL]*|\d[\d']*(?:\.\d*)?(?:[eE][-+]?\d+)?[fFuUlL]*|\.\d+[fF]?")
 RAW = re.compile(r'R"([^()\\ ]{0,16})\(')
@@ -365,10 +367,53 @@ def returns(names):
     quals = (r"(?:(?:(?:const|volatile|override|final|mutable|constexpr)\b|noexcept\b(?:%s)?|"
              r"throw%s|&&|&(?!&)|\[\[[^\]]*\]\])\s*)*" % (paren, paren))
     head = (ty + r"(?!\s*::)\s*(?:const\b\s*)?[&*]*\s*(?:\w+\s*::\s*)*\w+\s*"
-            r"\((?:[^;{}]|\{[^;{}]*\})*\)\s*" + quals + r"\{")
+            r"\((?:(?!requires\b)[^;{}]|\{[^;{}]*\})*\)\s*" + quals + r"(?:\{|requires\b(?P<req1>))")
     trailing = (r"->\s*(?:const\b\s*)?" + ty + r"(?!\s*::)\s*(?:const\b\s*)?[&*]*\s*"
-                r"(?:const\b\s*)?\{")
+                r"(?:const\b\s*)?(?:\{|requires\b(?P<req2>))")
     return re.compile(head + "|" + trailing)
+
+
+def body_brace(code, m):
+    """The index of the `{` that opens the body of the function head matched by returns(). After a
+    requires-clause (C++20) the head ends at the word `requires`: the body is the first `{` at
+    depth 0 that is not the braces of a requires-expression (`requires { ... }` or
+    `requires(T t) { ... }`); None when a `;` or a `}` comes first. One pass, no backtracking."""
+    if m.group("req1") is None and m.group("req2") is None:
+        return m.end() - 1
+    depth, j = 0, m.end()
+    while j < len(code):
+        c = code[j]
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth < 0:
+                return None
+        elif depth == 0:
+            if c in ";}":
+                return None
+            if c == "{":
+                pre = code[:j].rstrip()
+                if pre.endswith(")"):
+                    k, d = len(pre) - 1, 0
+                    while k >= 0:
+                        d += (pre[k] == ")") - (pre[k] == "(")
+                        if d == 0:
+                            break
+                        k -= 1
+                    pre = pre[:k].rstrip() if k >= 0 else pre
+                # A `requires` after the clause's own one opens a requires-expression; the clause's
+                # own, followed by `(expr) {`, is the clause and that `{` is the body.
+                word = re.search(r"\brequires$", pre)
+                if word and word.start() >= m.end():
+                    end = close(code, j)
+                    if end is None:
+                        return None
+                    j = end
+                else:
+                    return j
+        j += 1
+    return None
 
 
 RETURN_BRACE = re.compile(r"\breturn\s*\{")
@@ -420,19 +465,41 @@ def normal(text):
     return re.sub(r"\s*([{}(),=])\s*", r"\1", re.sub(r"\s+", " ", text)).strip()
 
 
+def alias_names(code):
+    """{"Board"} and every alias of it declared in `code`, chains followed to a fixed point
+    (`using B = Board; using C = B;`, in any order): an alias of `Board` or `ninferno::Board`
+    spelled so, or of an alias found so, through any namespace."""
+    decls = []
+    for m in ALIAS.finditer(code):
+        alias, target = (m.group(1), m.group(2)) if m.group(1) else (m.group(4), m.group(3))
+        decls.append((alias, re.sub(r"\s+", "", target)))
+    names = {"Board"}
+    grew = True
+    while grew:
+        grew = False
+        for alias, target in decls:
+            if alias in names:
+                continue
+            if target in ("Board", "ninferno::Board") or target.split("::")[-1] in names - {"Board"}:
+                names.add(alias)
+                grew = True
+    return names
+
+
 def literals(text):
     """[(line, normalised literal, source line)] of the board literals in `text`, in file order.
     A literal nested in another counts once, as the outer one."""
     code = blank(text)
-    names = {"Board"}
-    for m in ALIAS.finditer(code):
-        names.add(m.group(1) or m.group(2))
+    names = alias_names(code)
     spans = []
     for m in typed_pattern(names).finditer(code):
         spans += initialiser(code, m.start(), m.end() - 1)
     for m in returns(names).finditer(code):
-        end = close(code, m.end() - 1)
-        for r in own_returns(code, m.end() - 1, end if end is not None else len(code)):
+        body = body_brace(code, m)
+        if body is None:
+            continue
+        end = close(code, body)
+        for r in own_returns(code, body, end if end is not None else len(code)):
             spans += initialiser(code, r.end() - 1, r.end() - 1)
     for m in DOT_BOARD.finditer(code):
         spans += initialiser(code, m.start(), m.end() - 1)
