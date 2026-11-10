@@ -75,7 +75,10 @@
 # Abort rules (exit 1, message on stderr, no table): the same file, or a copy of one run, given for
 # both passes (every row of a pass carries the run id the tuner wrote, so each file must hold one
 # run id and the two files different ones; a file written by an older build has no run column and
-# gets only the same-file check, so a copy of it under another name goes unseen there), a
+# gets only the same-file check, so a copy of it under another name goes unseen there; the same
+# for the protocol and samples columns: for every shape and T the two passes must have timed with
+# the same protocol/samples pairs, so a `route-tune --rotate 0` pass is not paired with a normal
+# one; the per-row `calls` is not compared), a
 # routes file empty or without a header, a
 # header lacking one of the columns read by name, a cell (shape x T x slot) of the expected set
 # absent in a pass, an empty or zero median_us on a row, or more than one ggml_vec row in a cell.
@@ -89,6 +92,11 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 SHAPES=${SHAPES:-$HERE/data/521_gateup.shapes}
 POINTS=${POINTS:-2,3,4}
 TICK=${TICK:-1.024}   # us; see Verdicts above (source fact, not read off measurements)
+# A zero, negative, non-numeric or infinite tick would remove the floor of the verdicts.
+if ! awk -v t="$TICK" 'BEGIN { exit !(t ~ /^[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?$/ && t + 0 > 0 && t + 0 < 1e300) }'; then
+  echo "aborted: TICK must be a positive finite number of microseconds, got '$TICK'" >&2
+  exit 2
+fi
 
 # Arguments: ROUTES_1 ROUTES_2 (the two passes). Columns are read by header name, not by position:
 # format, epilogue, n, k, T, route, median_us. Per pass and cell the fastest row of each
@@ -126,6 +134,7 @@ summarize() {
       split("", col)
       for (i = 1; i <= NF; i++) col[$i] = i
       hasrun[pass] = ("run" in col)
+      hasprot[pass] = (("protocol" in col) && ("samples" in col))
       for (i = 1; i <= 7; i++) if (!(need[i] in col)) {
         fail("header of " FILENAME " has no column " need[i]); hdrbad[pass] = 1
       }
@@ -152,6 +161,10 @@ summarize() {
       else { skipped++; next }
       v = $col["median_us"]
       if (v !~ /^[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?$/ || v + 0 <= 0) { empty++; next }
+      if (hasprot[pass]) {
+        ps = $col["protocol"] "/" $col["samples"]; cell = pass SUBSEP sk SUBSEP t
+        if (!((cell SUBSEP ps) in pseen)) { pseen[cell SUBSEP ps] = 1; plist[cell] = plist[cell] " " ps }
+      }
       id = pass SUBSEP sk SUBSEP t SUBSEP slot
       if (slot == "gated" || slot == "single") if (++cnt[id] > 1)
         fail("more than one ggml_vec row for " $col["n"] "x" $col["k"] " T=" t " pass " pass \
@@ -169,6 +182,20 @@ summarize() {
       }
       if (pass == 2 && hasrun[1] && hasrun[2] && runs[1] == 1 && runs[2] == 1 && runid[1] == runid[2])
         fail("both passes carry the run id " runid[1] ": one measurement given twice")
+      if (pass == 2 && hasprot[1] != hasprot[2])
+        fail("only one of the two files has the protocol and samples columns: the passes come "              "from different builds")
+      if (pass == 2 && hasprot[1] && hasprot[2])
+        for (i = 1; i <= ns; i++) for (j = 1; j <= np; j++) {
+          sk = order[i]
+          for (p = 1; p <= 2; p++) {
+            q = 3 - p; cell = p SUBSEP sk SUBSEP pt[j]
+            n = split(plist[cell], lst, " ")
+            for (m = 1; m <= n; m++) if (!((q SUBSEP sk SUBSEP pt[j] SUBSEP lst[m]) in pseen)) {
+              fail("pass " p " timed " label[i] " T=" pt[j] " as " lst[m] " (protocol/samples), "                    "pass " q " did not: the passes use different sampling (route-tune --rotate, "                    "--samples)")
+              protbad = 1
+            }
+          }
+        }
       if (empty) fail(empty " row(s) with an empty, zero or non-numeric median_us (treated as missing)")
       expect = 0; seen = 0
       if (pass == 2 && ns > 0)
