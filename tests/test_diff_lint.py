@@ -713,6 +713,18 @@ class MaskAndLiteralFixes(unittest.TestCase):
         self.assertEqual(lits("t.cpp", "#if 0\nit's\n#elif 0\nstill off'\n#else\nconst char* s = \"oops\n;\n#endif\n"), [6])
         self.assertEqual(lits("t.cpp", "#if 0\nit's\n#elif X\nconst char* s = \"oops\n;\n#endif\n"), [4])
 
+    def test_alternatives_after_a_taken_literal_branch_are_dead(self):
+        # `#elif 1` (or `#if 1`) takes its branch: the `#else` after it is not compiled.
+        self.assertEqual(lits("t.cpp", "#if 0\nit's\n#elif 1\nint a;\n#else\ndon't\n#endif\nint b;\n"), [])
+        self.assertEqual(lits("t.cpp", "#if 1\nint a;\n#else\ndon't\n#endif\nint b;\n"), [])
+        self.assertEqual(lits("t.cpp", "#if 1\nint a;\n#elif X\ndon't\n#endif\nint b;\n"), [])
+        # the taken branch itself, and code after the group, are still checked
+        self.assertEqual(lits("t.cpp", "#if 0\nx'\n#elif 1\nconst char* s = \"oops\n;\n#else\ny'\n#endif\n"), [4])
+        self.assertEqual(lits("t.cpp", "#if 1\n#else\ny'\n#endif\nconst char* s = \"oops\n;\n"), [5])
+        # a condition it cannot evaluate keeps every branch checked, nested groups included
+        self.assertEqual(lits("t.cpp", "#if X\nint a;\n#else\nconst char* s = \"oops\n;\n#endif\n"), [4])
+        self.assertEqual(lits("t.cpp", "#ifdef A\n#if 1\nint a;\n#else\nz'\n#endif\n#else\nconst char* s = \"oops\n;\n#endif\n"), [8])
+
 
 class QuotedPaths(unittest.TestCase):
     BROKEN = 'const char* s = "oops'

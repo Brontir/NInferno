@@ -595,6 +595,10 @@ def removed_includes(tree, files, allow=frozenset(), base=None):
 DIRECTIVE_RX = re.compile(r"[ \t]*#[ \t]*(\w+)(.*)")
 
 
+ZERO_COND = re.compile(r"0[ \t]*(?://.*|/\*.*)?")
+ONE_COND = re.compile(r"[1-9][0-9]*[ \t]*(?://.*|/\*.*)?")
+
+
 def cxx_open_lines(text):
     """1-based numbers of lines that end inside an ordinary string or char literal (C/C++).
 
@@ -603,6 +607,7 @@ def cxx_open_lines(text):
     continues the literal and is not reported. After a report the scan restarts in code on the next line."""
     bad, block, raw, carry = [], False, None, None  # raw: the closing `)delim"` while inside a raw string
     if0 = 0  # nesting depth inside a `#if 0` group
+    chains = []  # per open conditional group: whether a branch with a literal-true condition was taken
     spliced = False  # the previous line was a // comment ending in a backslash: this line is comment too
     for num, line in enumerate(text.split("\n"), 1):
         line = line.rstrip("\r")
@@ -610,18 +615,35 @@ def cxx_open_lines(text):
         if quote is None and raw is None and not block and not spliced:
             dm = DIRECTIVE_RX.match(line)
             kind, rest = (dm.group(1), dm.group(2).strip()) if dm else ("", "")
+            zero, one = bool(ZERO_COND.fullmatch(rest)), bool(ONE_COND.fullmatch(rest))
             if if0:  # the text of a `#if 0` group is not code: prose with an apostrophe is fine there
                 if kind in ("if", "ifdef", "ifndef"):
                     if0 += 1
                 elif kind == "endif":
                     if0 -= 1
-                elif if0 == 1 and (kind == "else" or (kind == "elif" and not re.fullmatch(
-                        r"0[ \t]*(?://.*|/\*.*)?", rest))):
-                    if0 = 0  # `#elif 0` keeps the group dead
+                    if if0 == 0 and chains:
+                        chains.pop()
+                elif if0 == 1 and (kind == "else" or (kind == "elif" and not zero)):
+                    if not (chains and chains[-1]):  # no branch of this group was taken yet
+                        if0 = 0  # `#elif 0` keeps the group dead
+                        if chains:
+                            chains[-1] = kind == "else" or one
                 continue
-            if kind == "if" and re.fullmatch(r"0[ \t]*(?://.*|/\*.*)?", rest):
+            if kind == "if" and zero:
+                chains.append(False)
                 if0 = 1
                 continue
+            if kind in ("if", "ifdef", "ifndef"):
+                chains.append(kind == "if" and one)
+            elif kind == "endif" and chains:
+                chains.pop()
+            elif kind in ("elif", "else") and chains:
+                # A branch whose condition is a literal true was taken: the alternatives after it are
+                # dead. After a condition this cannot evaluate the next branch stays code (checked).
+                if chains[-1] or (kind == "elif" and zero):
+                    if0 = 1
+                    continue
+                chains[-1] = kind == "else" or one
             if kind in ("error", "warning"):  # the text is a message
                 continue
         if spliced:
