@@ -119,6 +119,7 @@ bool allows_i8(const Weight& w, LinearPolicy policy) {
 
 namespace {
 
+// The classic W4A8 tile of a producer-warp tile's shape (the same bytes).
 Route w4a8_classic_twin(Route route) {
     const auto s = w4a8_schedule_info(route.schedule);
     for (int i = 0; i < w4a8_schedule_count(); ++i) {
@@ -130,6 +131,7 @@ Route w4a8_classic_twin(Route route) {
     throw std::logic_error("generic W4A8: a producer-warp tile without a classic twin");
 }
 
+// The producer-warp tile of a classic W4A8 tile's shape, or the route itself.
 Route w4a8_ws_twin(Route route) {
     const auto s = w4a8_schedule_info(route.schedule);
     for (int i = 0; i < w4a8_schedule_count(); ++i) {
@@ -158,6 +160,9 @@ std::size_t mmq_workspace_bytes(std::int32_t k, std::int32_t plane_rows, std::in
     return layout.peak_bytes(1);
 }
 
+// The W4A8 schedule run_route executes for `route`: a producer-warp tile the weight is not admitted
+// to runs the classic tile of its shape, and a w4a8_ws_extra format's classic tile its
+// producer-warp twin (the same bytes either way).
 Route w4a8_executed_route(Route route, const Weight& w) {
     if (route.family != Family::W4a8Mma) return route;
     const bool producers = w4a8_schedule_info(route.schedule).producers > 0;
@@ -166,6 +171,7 @@ Route w4a8_executed_route(Route route, const Weight& w) {
     return route;
 }
 
+// tiled_takes for a format named by its QType alone (workspace queries without a weight).
 bool volta_tiled_qtype(QType qtype) {
     Weight w{};
     w.qtype = qtype;
@@ -174,6 +180,8 @@ bool volta_tiled_qtype(QType qtype) {
     } catch (const std::exception&) { return false; }
 }
 
+// volta_tiled_qtype, or a CUTLASS-only format (volta_cutlass_only): whose wide calls take the
+// decoded copy.
 bool volta_cutlass_qtype(QType qtype) {
     if (volta_tiled_qtype(qtype)) return true;
     Weight w{};
@@ -183,6 +191,7 @@ bool volta_cutlass_qtype(QType qtype) {
     } catch (const std::exception&) { return false; }
 }
 
+// volta_cutlass_only for a format named by its QType alone.
 bool volta_cutlass_only_qtype(QType qtype) {
     Weight w{};
     w.qtype = qtype;
@@ -191,6 +200,27 @@ bool volta_cutlass_only_qtype(QType qtype) {
     } catch (const std::exception&) { return false; }
 }
 
+// The int8-activation tiles as candidates of cost_route, where the policy admits them: the W4A8
+// tiles (pipelined, at the generation's int8 tensor rate, GenerationRow::s8: 2048 per SM and
+// clock, 4096 on the full-rate datacenter rows ga100, hopper and gb100) and ggml's matrix kernel
+// (128-row tiles over the SMs, 512 tokens a slice), each with its activation quantizer (1.7 us
+// and 4.3 bytes of traffic per value) and a K chain per CTA (W4A8: 1390 cycles a 128-K step, the
+// producer-warp tile 1690; mmq: 4075 cycles per 862 K shared by the SMs). The int8 tile pays where
+// its grid fills the SMs and its rate outruns the BF16 MMA; a narrow weight (n <= 1024 rows below
+// 512 tokens) keeps the A16 split-K stream. A tile reaches a fraction of the int8 peak that depends
+// on its shape (its warp tile and what it keeps in registers): 0.31 / 0.28 / 0.24 for 32x128 /
+// 64x128 / 128x128, 0.47 for 128x64, 0.37 for 64x64, and 0.98 for the producer-warp 128x64, whose
+// producers hide the decode behind the multiplies; the minor-0 parts (A100) reach 0.46 of it.
+// SwiGLU: the weight has 2 n rows, a tile of block_n rows makes block_n / 2 outputs (gate and up
+// rows interleave), so a call takes twice the tiles and each multiplies block_n rows; `bpw` is the
+// payload over the n output rows, i.e. twice the bytes per weight. ggml's kernel takes its calls of
+// 17 tokens or more in 512-token slices on every device (ggml_mmq_slice_tokens, whose workspace the
+// planner reserves), so it is a candidate wherever the policy admits it; not yet on the minor-0
+// datacenter row, where its microbenchmark win (1.26..1.8x the W4A8 tile) and the 24K prefill
+// A/B (-15 %) disagree. ninferno_route_tune --a8 and --a8 --epilogue timings of the RTX 4090, 5090,
+// 4060 Ti, L4, A10 and A100 (six formats, n 48..28672, T 17..2048, quantizer in the sample; SwiGLU
+// and AddResidual on the A100), constants refit with the board held out: 1.06..1.09 of the best
+// route of either class on the consumer boards (the minor-0 row has one board: 1.13 in sample).
 std::optional<RouteTile> route_tile(Route route, Epilogue epilogue, std::int32_t tokens) {
     const int sets = epilogue == Epilogue::SwiGlu ? 2 : 1;
     switch (route.family) {

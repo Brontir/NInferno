@@ -250,3 +250,5 @@ target_compile_definitions(ninferno_selector_golden_host_test PRIVATE
   NINFERNO_HOST_ONLY
   NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden")
 cmake_language(DEFER CALL ninferno_assert_host_only ninferno_selector_golden_host_test)
+# It dumps every board twice over (once a process per board, then all in one): minutes of CPU.
+set_tests_properties(ninferno_selector_golden_host_test PROPERTIES TIMEOUT 1800)
