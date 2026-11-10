@@ -11,6 +11,7 @@
 #include "convert/safetensors.h"
 #include "core/ascii.h"
 #include "core/sys.h"
+#include "spec/dspine.h"
 #include "spec/registry.h"
 
 #include <algorithm>
@@ -169,6 +170,12 @@ Support model_support(const SupportFacts& facts) {
         return refuse("model", "packed U32 weights without a packing quantization method (MLX's "
                                "packing): the converter does not read them");
     }
+    // A DSpine draft carries DFlash's architecture name and (as a GGUF) its architecture, but
+    // not its arithmetic: the engine does not run it yet, whatever the lists below say.
+    if (facts.dspine || spec::is_dspine_config(facts.config)) {
+        return refuse("drafter", "a DSpine drafter (a DFlash draft with a code bridge, "
+                                 "docs/maintainer/dspine.md): the engine does not run it yet");
+    }
     // The architecture, by the converter's own lists.
     std::string role = "model";
     std::string unchecked;
@@ -264,6 +271,7 @@ SupportFacts search_support_facts(const Json& item) {
     out.base_models = card_base_models(item);
     for (const auto& tag : item.value("tags", Json::array())) {
         if (tag.is_string() && tag.get<std::string>() == "mlx") { out.library = "mlx"; }
+        if (tag.is_string() && tag.get<std::string>() == "dspine") { out.dspine = true; }
     }
     // A GGUF summary decides only without safetensors weights: the fetch takes those first
     // (choose_files), so a GGUF beside them is not what runs.
@@ -303,6 +311,7 @@ namespace {
 // The header's matrices by encoding (SupportFacts::gguf_nvfp4_matrices, gguf_block_matrices).
 void count_gguf_matrices(const GgufFile& file, SupportFacts& out) {
     for (const auto& tensor : file.tensors) {
+        if (tensor.name == "dspine_codebook.weight") { out.dspine = true; }
         if (tensor.ne.size() < 2) { continue; }
         if (tensor.type == ggml::NVFP4) {
             ++out.gguf_nvfp4_matrices;

@@ -55,6 +55,12 @@ ninferno_add_test(ninferno_spec_draft_head_test NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_spec_draft_head.cpp"
   LIBRARIES ninferno_spec)
 
+# DSpine (spec/dspine.h): the published config's refusals and tensor contract, the arithmetic's
+# invariants. No GPU.
+ninferno_add_test(ninferno_spec_dspine_test NEEDS_SOURCE_DIR
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_spec_dspine.cpp"
+  LIBRARIES ninferno_spec)
+
 # tools/spec/registry_add.py: the "*" fallback and the load table warnings, no GPU.
 add_test(NAME ninferno_registry_add_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_registry_add.py)
@@ -70,6 +76,12 @@ add_test(NAME ninferno_selection_regret_test
 # tools/bench/regret_collect.py: route sweeps and the production selection into its input, no GPU.
 add_test(NAME ninferno_regret_collect_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_regret_collect.py)
+# tools/kernel_facts/sass_counts.py and the loop columns of kernel_facts.py (#613): the K loop
+# found from a small SASS text's control flow, its counts, the snapshot round trip and the check's
+# verdicts. No GPU, no CUDA toolkit.
+add_test(NAME ninferno_kernel_facts_sass_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_kernel_facts_sass.py)
+set_tests_properties(ninferno_kernel_facts_sass_test PROPERTIES LABELS host)
 
 # tools/bench/mmq_transfer_audit.py: same-generation MMQ transfer by workload regime (#373), no GPU.
 add_test(NAME ninferno_mmq_transfer_audit_test
