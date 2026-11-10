@@ -1,0 +1,32 @@
+name: golden-gate
+
+# #620 step 9: a decision-path diff with no golden change needs the `goldens-equal` label.
+# Its own workflow, so a label event cancels only this gate and never the lint run of the same SHA.
+# Make `golden-gate` a required check in branch protection.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: golden-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  golden-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: The gate's own tests (path list against the selector's include closure)
+        run: python3 -B tests/test_golden_gate.py
+      - name: Decision-path diff needs a golden change or the goldens-equal label
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: python3 tools/audit/golden_gate.py --base-ref "$BASE_REF" --event "$GITHUB_EVENT_PATH"
