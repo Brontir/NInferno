@@ -83,11 +83,12 @@ generic::rmma_kernel<.*Epilogue\)[12], (false|true), \(.*RmmaSums\)[0-2]> 0,8,12
 # those loads above the wait; the whole-program 120a build issues them after it.
 generic::r8_kernel<.*Epilogue\)[0-2], false> 0,8,12,24,32,40,48,52,64,72,76,80,84,?
 # kPre (the verify-width call on a pre-quantized activation, W4a8Activation after GemmArgs:
-# codes 192, scales 200, and for the codecs with a min - K-quants, Q4_1, Q5_1 - sums 208) always
+# codes 208, scales 216, and for the codecs with a min - K-quants, Q4_1, Q5_1 - sums 224) always
 # launches in stream order (r8_launch_tokens), so every load reads memory complete before it
 # started; its waits return at once. It reads K (12), the weight planes above and
-# the activation planes. The activation offsets move with sizeof(GemmArgs) (192 since #445).
-generic::r8_kernel<.*Epilogue\)[0-2], true> 12,24,32,40,48,52,64,72,76,80,84,192,200,208,?
+# the activation planes. The activation offsets move with sizeof(GemmArgs) (192 since #445, 208
+# since #619's group-sums plane).
+generic::r8_kernel<.*Epilogue\)[0-2], true> 12,24,32,40,48,52,64,72,76,80,84,208,216,224,?
 
 # Decode A16 GEMVs (nvfp4_a16_gemv.cuh): launched as programmatic dependents where the device has
 # PDL, they fill their code ring - codes (8) and scales (16), this layer's weights - before the
