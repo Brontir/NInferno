@@ -130,33 +130,54 @@ for line in sh("ninja", "-C", bld, "-t", "deps").splitlines():
 def mt(p):
     try: return os.stat(os.path.join(bld, p)).st_mtime
     except OSError: return None
-def stale_units(target):  # compile steps ninja would run for target (dry run): missing, newer dependency, or changed command line
+dd_targets = {l.split(":")[0] for l in sh("ninja", "-C", bld, "-t", "targets", "all").splitlines() if l.split(":")[0].endswith("/CXX.dd")}
+obj_src = {}   # object path -> its source file (real path), to count one unit once
+for _o, _fs in obj_of.items():
+    for _f in _fs: obj_src[_f] = _o
+def stale_floor(target):  # compile commands of the closure whose object is missing or older than a recorded dependency
+    fu = fx = 0
+    for cmd in sh("ninja", "-C", bld, "-t", "commands", target).splitlines():
+        m = re.search(r" -o (\S+\.o)", cmd)
+        if not m or " -c " not in cmd: continue
+        o = m.group(1); t = mt(o)
+        if t is None or any((mt(d) or 0) > t for d in deps.get(o, ())):
+            if "nvcc" in cmd: fu += 1
+            else: fx += 1
+    return fu, fx
+def stale_units(target):  # compile units ninja would run for target (dry run): missing, newer dependency, or changed command line
     # A dry run on build.ninja itself stops at the always-dirty glob re-check ("Re-running CMake") and plans
     # nothing, so it reads a copy of the manifest that no rule regenerates (the regeneration already ran above).
-    cu = cx = 0
     env = dict(os.environ, NINJA_STATUS="[%f/%t] ")
     dry = os.path.join(bld, "qc_dry.ninja")
     if not getattr(stale_units, "copied", False):
         shutil.copyfile(os.path.join(bld, "build.ninja"), dry); stale_units.copied = True
-    r = subprocess.run(["ninja", "-C", bld, "-f", "qc_dry.ninja", "-n", target], capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
-    # a C++ unit whose dyndep file does not exist yet cannot be planned in a dry run: ninja stops there, and the
-    # units before it show as "Scanning ... for CXX dependencies" steps, which count as C++ units to build
-    if r.returncode != 0 and not re.search(r"loading '[^']*\.dd'", r.stdout + r.stderr):
+    # A dry run cannot see that a dyndep step (CXX.dd, restat) leaves its file unchanged, so after a CMake
+    # regeneration it plans every C++ object. Run the closure's dyndep steps for real first (scans only, cheap).
+    owners = sorted({m.group(1) for c in sh("ninja", "-C", bld, "-t", "commands", target).splitlines()
+                     for m in [re.search(r" -o (\S*CMakeFiles/[^/ ]+\.dir)/", c)] if m})
+    dds = [f"{ow}/CXX.dd" for ow in owners if f"{ow}/CXX.dd" in dd_targets]
+    if dds: subprocess.run(["nice", "-n", "19", "ionice", "-c3", "ninja", "-C", bld, "-k", "0"] + dds, capture_output=True, text=True, errors="replace")
+    def dry_run():
+        return subprocess.run(["ninja", "-C", bld, "-f", "qc_dry.ninja", "-n", target], capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
+    r = dry_run()
+    aborted = lambda p: p.returncode < 0 or p.returncode >= 128   # killed by a signal (python reports it negative) or exit >= 128
+    if aborted(r): r = dry_run()   # ninja itself aborted (a dyndep assertion seen in 1.13): one retry
+    txt = r.stdout + r.stderr
+    # Stopped early: a dyndep file is missing or does not list a source the branch added ("loading 'x.dd'",
+    # "not mentioned in its dyndep file"), or ninja aborted twice. Then the count is only a lower bound.
+    early = r.returncode != 0
+    if early and not aborted(r) and ".dd" not in txt:
         raise subprocess.CalledProcessError(r.returncode, "ninja -n " + target, r.stdout, r.stderr)
+    units = set()   # a stale C++ unit prints "Scanning X" and "Building CXX object X.o": count it once, by its source
     for line in r.stdout.splitlines():
-        m = re.match(r"^\[\d+/\d+\] (?:Building (\w+) object |Scanning .* for (\w+) dependencies)", line)
+        m = re.match(r"^\[\d+/\d+\] (?:Building (\w+) object (\S+)|Scanning (\S+) for (\w+) dependencies)", line)
         if not m: continue
-        if (m.group(1) or m.group(2)) == "CUDA": cu += 1
-        else: cx += 1
-    if r.returncode != 0:   # the dry run stopped early: the count above is a lower bound, so take the larger of it and
-        fu = fx = 0         # the units whose object is missing or older than a recorded dependency
-        for cmd in sh("ninja", "-C", bld, "-t", "commands", target).splitlines():
-            m = re.search(r" -o (\S+\.o)", cmd)
-            if not m or " -c " not in cmd: continue
-            o = m.group(1); t = mt(o)
-            if t is None or any((mt(d) or 0) > t for d in deps.get(o, ())):
-                if "nvcc" in cmd: fu += 1
-                else: fx += 1
+        if m.group(1): kind, key = m.group(1), obj_src.get(m.group(2), m.group(2))
+        else: kind, key = m.group(4), os.path.realpath(m.group(3))
+        units.add(("CUDA" if kind == "CUDA" else "CXX", key))
+    cu = sum(1 for k, _ in units if k == "CUDA"); cx = len(units) - cu
+    if early:   # the stopped-early count is "at least" this many: take the larger of it and the missing-or-newer count
+        fu, fx = stale_floor(target)
         cu, cx = max(cu, fu), max(cx, fx)
     return cu, cx
 objs, tests = [], set()
