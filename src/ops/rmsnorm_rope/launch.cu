@@ -20,10 +20,10 @@ void launch_fixed(const Tensor& positions, const Tensor* q_norm_weight, const Te
         static_cast<__nv_bfloat16*>(k.data));
 }
 
-// One warp per head, three heads per block. Measured optimum on sm_120a; the plateau is flat from
-// two to nine heads per block, and both ends are worse - one warp per block does not hide the load
-// latency, all eighteen heads in one block leaves four blocks for the whole card.
-constexpr int kTextHeadsPerBlock = 3;
+// One warp per head, three heads per block (kTextHeadsPerBlock, launch.h). Measured optimum on
+// sm_120a; the plateau is flat from two to nine heads per block, and both ends are worse - one warp
+// per block does not hide the load latency, all eighteen heads in one block leaves four blocks for
+// the whole card.
 
 template <int QHeads, int KHeads>
 void launch_text(const Tensor& positions, const Tensor& q_norm_weight, const Tensor& k_norm_weight,
@@ -41,6 +41,12 @@ void launch_text(const Tensor& positions, const Tensor& q_norm_weight, const Ten
 }
 
 } // namespace
+
+int text_kernel_resident_ctas() {
+    return kernel_resident_ctas_per_sm(
+        reinterpret_cast<const void*>(rmsnorm_rope_d256_text_kernel<32, 2, kTextHeadsPerBlock>),
+        kTextHeadsPerBlock * 32, 0);
+}
 
 void rmsnorm_rope_pair_launch(const Tensor& positions, const Tensor& q_norm_weight,
                               const Tensor& k_norm_weight, Tensor& q, Tensor& k,

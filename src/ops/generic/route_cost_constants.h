@@ -11,7 +11,11 @@
 // place (kRouteCostConstants, test_route_cost_constants) instead of hiding inside expressions.
 // The board-row scales (core/generation.h: w4a8_eff_scale, a16_cost_scale) are tagged there.
 
+#include "core/cost_constants.h"
+
 #include <array>
+#include <optional>
+#include <stdexcept>
 #include <span>
 #include <cstddef>
 #include <string_view>
@@ -102,8 +106,14 @@ inline constexpr Scalar kMaxTileSharedBytes{
 inline constexpr Scalar kMinWarpFill{{0.05}, Provenance::Fitted, "min_warp_fill"};
 
 // --- A8 tiles (a8_candidates) ---
-// The activation quantizer: its launch, and its bytes per value (read BF16, write the code and
-// its share of the scale and sum planes).
+// The activation quantizer: its launch (a kernel with its scale and sum planes, not the bare graph
+// node of ninferno::launch_node_seconds, 1.5e-6 on Ada; the two stay separate facts, #617 B), and
+// its bytes per value (read BF16, write the code and its share of the scale and sum planes).
+// The graph launch node (core/cost_constants.h launch_node_seconds, the one launch constant): Ada's
+// per-launch t0 from the census of three cards, read by the speculation round cost. Listed here
+// for its provenance.
+inline constexpr Scalar kLaunchNodeAda{
+    {launch_node_seconds("ada")}, Provenance::Fitted, "launch_node_seconds_ada"};
 inline constexpr Scalar kQuantLaunchSeconds{{1.7e-6}, Provenance::Fitted, "quant_launch_seconds"};
 inline constexpr Scalar kQuantBytesPerValue{{4.3}, Provenance::Fitted, "quant_bytes_per_value"};
 // W4A8 tiles: fraction of the int8 peak by kW4a8Schedules index (32x128, 64x128, 128x128,
@@ -174,6 +184,7 @@ inline constexpr Listed kRouteCostConstants[] = {
     listed(kPipelinedStageBytesPerRow, Kind::Bytes),
     listed(kMaxTileSharedBytes, Kind::Bytes),
     listed(kMinWarpFill, Kind::Fraction),
+    listed(kLaunchNodeAda, Kind::Seconds),
     listed(kQuantLaunchSeconds, Kind::Seconds),
     listed(kQuantBytesPerValue, Kind::Bytes),
     listed(kW4a8Efficiency, Kind::Fraction),
@@ -192,5 +203,31 @@ inline constexpr Listed kRouteCostConstants[] = {
     listed(kMmqChainCycles, Kind::Cycles),
     listed(kMmqSliceSeconds, Kind::Seconds),
 };
+
+// A Fitted constant whose calibration measurement is not taken yet: it has no value (a Constant
+// cannot hold "unknown"), and the code that reads it keeps its default while `value` is empty.
+// test_route_cost_constants checks every entry is Fitted and empty; a calibrated one moves into
+// kRouteCostConstants with its Holdout record.
+struct PendingFit {
+    std::string_view name;
+    Provenance from;
+    std::optional<double> value;
+};
+
+inline constexpr PendingFit kPendingFits[] = {
+    // The fused text qk-norm + RoPE's per-warp chain excess over the three separate kernels, in
+    // SM cycles (sm_wave_rules.h launch_amortized_tokens). Calibrated by the crossover bench
+    // (bench/ops/rmsnorm_rope_bench.cu --crossover, #617 G).
+    {"fused_text_excess_cycles", Provenance::Fitted, std::nullopt},
+};
+
+// The pending fit named `name` (a name not in kPendingFits is a bug: the lookup throws, which fails
+// a constant evaluation at compile time).
+constexpr const PendingFit& pending_fit(std::string_view name) {
+    for (const auto& fit : kPendingFits) {
+        if (fit.name == name) return fit;
+    }
+    throw std::logic_error("unknown pending fit");
+}
 
 } // namespace ninferno::ops::detail::generic::route_cost

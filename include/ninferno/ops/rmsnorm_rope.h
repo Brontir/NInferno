@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/device_class.h"
 #include "core/tensor.h"
 
 #include <cuda_runtime.h>
@@ -70,5 +71,20 @@ void rmsnorm_rope(const Tensor& positions, const Tensor& q_norm_weight, const Te
 // The (query, key) head counts the text form above is instantiated for: Qwen3.5's attention
 // layers (0.8B/2B 8,2; 4B/9B 16,4; 27B 24,4; 35B 16,2; 122B/397B 32,2).
 [[nodiscard]] bool rmsnorm_rope_text_heads(std::int32_t query_heads, std::int32_t key_heads);
+
+// The widest text-form call (tokens) a dispatch should still fuse for one geometry on `device`:
+// the launches the fusion saves (three kernels become one: two) against the per-token time it
+// loses to the three separate kernels, which each choose their own shape (the launch-amortisation
+// law, ops/common/sm_wave_rules.h launch_amortized_tokens: a per-warp latency chain over the
+// board's SMs, resident warps and clock). The launch is the generation's graph node
+// (core/cost_constants.h launch_node_seconds). One constant is not a fact: the fused kernel's chain
+// excess in SM cycles, Fitted and not calibrated (route_cost::kPendingFits). Until it is, and
+// wherever the generation has no launch node, the answer is 256, the width measured on the RTX 5090
+// (the fused form won through it and lost at 1024). A call wider than a graph is captured for pays
+// the eager launch, so the bound is understated there. Both forms are the same arithmetic bit for
+// bit.
+[[nodiscard]] std::int32_t rmsnorm_rope_text_fused_max_tokens(const DeviceClass& device,
+                                                              std::int32_t query_heads,
+                                                              std::int32_t key_heads);
 
 } // namespace ninferno::ops

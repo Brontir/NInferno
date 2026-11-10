@@ -59,7 +59,9 @@ HeaderNames header_names() {
     text = std::regex_replace(text, std::regex(R"(//[^\n]*)"), "");
     const std::regex definition(R"(\b(?:constexpr|const)\b[^;{}=()]*?\b(k[A-Z]\w*)\s*[{(=\[])");
     for (std::sregex_iterator it(text.begin(), text.end(), definition), end; it != end; ++it) {
-        if ((*it)[1] != "kRouteCostConstants") out.defined.insert((*it)[1].str());
+        if ((*it)[1] != "kRouteCostConstants" && (*it)[1] != "kPendingFits") {
+            out.defined.insert((*it)[1].str());
+        }
     }
     const std::string::size_type start = text.find("kRouteCostConstants[]");
     if (start == std::string::npos) {
@@ -102,6 +104,17 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "the header lists %zu names, kRouteCostConstants holds %zu\n",
                      header.listed.size(), std::size(rc::kRouteCostConstants));
         ++failures;
+    }
+    for (const auto& pending : rc::kPendingFits) {
+        if (pending.from != rc::Provenance::Fitted || pending.value.has_value() ||
+            pending.name.empty()) {
+            std::fprintf(
+                stderr,
+                "pending fit '%.*s' must be Fitted, named and empty (a calibrated one moves "
+                "into kRouteCostConstants with its Holdout)\n",
+                static_cast<int>(pending.name.size()), pending.name.data());
+            ++failures;
+        }
     }
     std::set<std::string_view> names;
     std::size_t fitted = 0;

@@ -1,5 +1,9 @@
 #include "ninferno/ops/rmsnorm_rope.h"
 
+#include "core/cost_constants.h"
+#include "core/generation.h"
+#include "ops/common/sm_wave_rules.h"
+#include "ops/generic/route_cost_constants.h"
 #include "ops/rmsnorm_rope/launch.h"
 
 #include <array>
@@ -7,6 +11,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace ninferno::ops {
 namespace {
@@ -99,10 +104,55 @@ void rmsnorm_rope(const Tensor& positions, const Tensor& norm_weight, Tensor& x,
     detail::rmsnorm_rope_single_launch(positions, norm_weight, x, tokens, stream);
 }
 
+namespace {
+
+// The (query, key) geometries of rmsnorm_rope_text_heads, as the launch dispatches them.
+constexpr std::array<std::array<std::int32_t, 2>, 5> kTextGeometries{
+    {{8, 2}, {16, 2}, {16, 4}, {24, 4}, {32, 2}}};
+
+// The width measured on the RTX 5090, where the law has no calibration yet (see the header).
+constexpr std::int32_t kFusedTextDefaultMaximumTokens = 256;
+
+} // namespace
+
+namespace detail {
+
+std::int32_t text_fused_max_tokens_with_excess(const DeviceClass& device, std::int32_t query_heads,
+                                               std::int32_t key_heads, double excess_cycles) {
+    if (!rmsnorm_rope_text_heads(query_heads, key_heads)) return 0;
+    const std::string_view generation = generation_known(device.major, device.minor)
+                                            ? generation_row(device.major, device.minor).name
+                                            : std::string_view{};
+    const double launch               = launch_node_seconds(generation);
+    if (!(launch > 0.0)) return 0;
+    const int warps_per_sm =
+        ninferno::ops::detail::sm_rules::resident_ctas_per_sm(
+            device.max_blocks_per_sm, device.max_threads_per_sm, kTextHeadsPerBlock * 32) *
+        kTextHeadsPerBlock;
+    return ninferno::ops::detail::sm_rules::launch_amortized_tokens(
+        2, launch, device.sms, warps_per_sm, machine_facts_of(device).reference_clock_khz * 1.0e3,
+        query_heads + key_heads, excess_cycles);
+}
+
+} // namespace detail
+
 bool rmsnorm_rope_text_heads(std::int32_t query_heads, std::int32_t key_heads) {
-    return (query_heads == 8 && key_heads == 2) || (query_heads == 16 && key_heads == 2) ||
-           (query_heads == 16 && key_heads == 4) || (query_heads == 24 && key_heads == 4) ||
-           (query_heads == 32 && key_heads == 2);
+    for (const auto& g : kTextGeometries) {
+        if (g[0] == query_heads && g[1] == key_heads) return true;
+    }
+    return false;
+}
+
+std::int32_t rmsnorm_rope_text_fused_max_tokens(const DeviceClass& device, std::int32_t query_heads,
+                                                std::int32_t key_heads) {
+    // Not calibrated: nothing to compute (this runs for every layer's call).
+    static constexpr const auto& fit =
+        detail::generic::route_cost::pending_fit("fused_text_excess_cycles"); // compile-time lookup
+    const auto& excess = fit.value;
+    if (!excess) return kFusedTextDefaultMaximumTokens;
+    const std::int32_t bound =
+        detail::text_fused_max_tokens_with_excess(device, query_heads, key_heads, *excess);
+    return bound > 0 ? bound : kFusedTextDefaultMaximumTokens;
 }
 
 void rmsnorm_rope(const Tensor& positions, const Tensor& q_norm_weight, const Tensor& k_norm_weight,

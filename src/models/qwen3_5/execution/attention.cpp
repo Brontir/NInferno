@@ -1,11 +1,13 @@
 #include "models/qwen3_5/execution/attention.h"
 
+#include "core/device_class.h"
 #include "ninferno/ops/attn_input_proj.h"
 #include "ninferno/ops/rmsnorm.h"
 #include "ninferno/ops/rmsnorm_rope.h"
 #include "ninferno/ops/rope.h"
 #include "ninferno/ops/segmented_projection.h"
 
+#include <exception>
 #include <stdexcept>
 
 namespace ninferno::models::qwen3_5::execution {
@@ -29,7 +31,18 @@ void require_rope_axes(const Tensor& positions, const RopeConfig& config) {
 // 256 tokens and loses by up to 22 % at 1024. The bound sits a doubling below the crossover
 // because the two geometries cross at different widths. The Op itself is valid at any width; this
 // is a dispatch choice, and both branches are the same arithmetic bit for bit.
-constexpr std::int32_t kFusedTextQkNormRopeMaximumTokens = 256;
+//
+// The bound is ops::rmsnorm_rope_text_fused_max_tokens: the launches the fusion saves against the
+// slope it loses, per geometry. Its one fitted constant is not calibrated yet, so every board and
+// geometry keeps the 256 measured on the RTX 5090, and so does a call with no device to read.
+constexpr std::int32_t kFusedTextQkNormRopeDefaultMaximumTokens = 256;
+
+std::int32_t fused_text_qk_norm_rope_maximum_tokens(std::int32_t query_heads,
+                                                    std::int32_t key_heads) {
+    try {
+        return ops::rmsnorm_rope_text_fused_max_tokens(device_class(), query_heads, key_heads);
+    } catch (const std::exception&) { return kFusedTextQkNormRopeDefaultMaximumTokens; }
+}
 
 // The fused kernel fixes the RMSNorm epsilon (1e-6) and the RoPE frequencies (theta 1e7) in its
 // formula; a checkpoint with other constants takes the three-call route at every width.
@@ -40,7 +53,9 @@ constexpr float kFusedTextRmsEpsilon = 1.0e-6F;
 bool fused_text_qk_norm_rope(const Tensor& positions, const RopeConfig& rope,
                              const AttentionConfig& attention, float rms_norm_eps,
                              std::int32_t tokens) {
-    return !rope.yarn() && positions.ne[1] == 1 && tokens <= kFusedTextQkNormRopeMaximumTokens &&
+    return !rope.yarn() && positions.ne[1] == 1 &&
+           tokens <= fused_text_qk_norm_rope_maximum_tokens(attention.num_attention_heads,
+                                                            attention.num_key_value_heads) &&
            rope.rope_theta == kFusedTextRopeTheta && rms_norm_eps == kFusedTextRmsEpsilon &&
            attention.head_dim == 256 && rope.rotary_dim == 64 &&
            ops::rmsnorm_rope_text_heads(attention.num_attention_heads,

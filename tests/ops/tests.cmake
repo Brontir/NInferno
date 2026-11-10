@@ -161,6 +161,11 @@ ninferno_add_op_test(ninferno_rmsnorm_rope_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_rmsnorm_rope.cpp"
   LIBRARIES ninferno_ops)
 
+# The fused text qk-norm + RoPE's width bound on substituted boards (#617 G). No GPU.
+ninferno_add_op_test(ninferno_rmsnorm_rope_bound_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_rmsnorm_rope_bound.cpp"
+  LIBRARIES ninferno_ops)
+
 ninferno_add_op_test(ninferno_context_kv_materialize_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_context_kv_materialize.cpp"
   LIBRARIES ninferno_ops)
