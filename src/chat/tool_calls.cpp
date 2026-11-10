@@ -2512,24 +2512,23 @@ public:
     // message (#578). The prompt ends at "<|start|>assistant", so the output begins with the
     // header: either "<|channel|>analysis|final<|message|>" exactly (a recipient, a
     // "commentary" channel or a <|constrain|> after the channel name has no place in it), or text
-    // that does not begin with a recipient (whitespace, then "to=", or "<|"). Past that, the
-    // excludes close the headers a later message could address (a commentary channel, a space
-    // after a channel name or after the role, <|constrain|>). The prose of the final message and
-    // the analysis stay free (" to" and "commentary" are words).
+    // that does not begin with a recipient (whitespace, then "to=", or "<|").
     //
-    // What parse() reads as a call (#665): a message (from the output's start or a
+    // What parse() reads as a call (#665): a message (from the output's start or from a
     // "<|start|>assistant") whose header, up to its first <|message|>, holds " to=" and a
-    // commentary or analysis channel. The free text therefore never carries "<|channel|>analysis"
-    // or "<|channel|>commentary" (a recipient written before or after them, with any suffix on the
-    // name, would make a call: "x to=python<|channel|>analysis<|message|>"), nor
-    // "<|start|>assistant" (a header the grammar did not write); the only later messages are the
-    // two exact headers
-    // "<|start|>assistant<|channel|>analysis|final<|message|>", which have no recipient. A
-    // recipient in prose ("set x to=3"), or before a final channel the parser does not read as a
-    // call
-    // ("then <|channel|>final<|message|>"), stays free.
+    // commentary or analysis channel. Past the first header the free text therefore never
+    // carries "<|channel|>commentary" or "<|channel|>analysis" (a recipient before or after
+    // them, or a suffix on the channel name, would make a call:
+    // "x to=python<|channel|>analysis<|message|>"), nor "<|start|>assistant" (a header the
+    // grammar did not write). The only later messages are the two exact headers
+    // "<|start|>assistant<|channel|>analysis|final<|message|>", which have no recipient. The
+    // prose stays free (" to", "to=3" and "commentary" are words), and so does a recipient
+    // before a final channel, which the parser does not read as a call
+    // ("then <|channel|>final<|message|>").
     [[nodiscard]] std::string refusal_structural_tag() const override {
         const auto text = [] {
+            // The final-channel and <|constrain|> excludes are defence in depth: the parser never
+            // reads a call from a final channel, but a recipient there is structure, not prose.
             return OrderedJson{
                 {"type", "any_text"},
                 {"excludes", OrderedJson::array({"<|channel|>commentary", "<|channel|>analysis",
