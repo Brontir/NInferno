@@ -9,6 +9,8 @@
 #include "core/cost_constants.h"
 #include "core/device_class.h"
 #include "core/generation.h"
+#include "ops/common/sm_wave_rules.h"
+#include "ops/rmsnorm_rope/launch.h"
 
 #include "ninferno/ops/rmsnorm.h"
 #include "ninferno/ops/rope.h"
@@ -386,17 +388,22 @@ double text_route_us(const Options& options, Route route, int query_heads, int k
     graph.capture(stream, [&](cudaStream_t s) {
         for (int rep = 0; rep < options.graph_reps; ++rep) one(s);
     });
-    const auto timing = bench::measure_graph_prepared([](cudaStream_t) {}, graph, stream,
-                                                      options.warmup, options.repeat);
-    return timing.median_us / options.graph_reps;
+    // The least of three medians: a noisy pass (clock ramp, a neighbour) only adds time.
+    double best = 0.0;
+    for (int pass = 0; pass < 3; ++pass) {
+        const auto timing = bench::measure_graph_prepared([](cudaStream_t) {}, graph, stream,
+                                                          options.warmup, options.repeat);
+        best              = pass == 0 ? timing.median_us : std::min(best, timing.median_us);
+    }
+    return best / options.graph_reps;
 }
 
 // Both routes over the widths; the crossover is where fused - split turns positive (log-T
 // interpolation between the two widths). Two readings of the per-token time the fused route loses
 // (sm_wave_rules.h launch_amortized_tokens; they predict the same on boards of one generation
 // whose DRAM rate per SM is alike, so run a pair that differs):
-//   latency:  T* = 2 L x SMs x warps_per_SM x clock / (excess_cycles x heads)   [the law in the
-//   code] DRAM:     T* = 2 L x DRAM_rate / (excess x bytes_per_token)                 [the
+//   latency:  T* = 2 L x SMs x warps_per_SM x clock / (excess_cycles x heads)  [the law in the
+//   code] DRAM:     T* = 2 L x DRAM_rate / (excess x bytes_per_token)                [the
 //   alternative]
 // Each is inverted from the measured T*, with L the generation's launch node where it has one
 // ("table_L") and the measured saving at the narrowest width (two launches saved there, the slope's
@@ -411,8 +418,17 @@ void run_crossover(const Options& options, cudaStream_t stream) {
                                      : "");
     const double node_l = launch_node_seconds(generation);
     const int sms       = device.sms;
-    const double warps_per_sm =
-        3.0 * std::min(device.max_blocks_per_sm, device.max_threads_per_sm / 96);
+    // The law's resident-warp count (the thread and slot limits; sm_wave_rules.h) against the
+    // compiled kernel's occupancy (registers and shared memory too): a mismatch is printed.
+    const int law_ctas = ops::detail::sm_rules::resident_ctas_per_sm(
+        device.max_blocks_per_sm, device.max_threads_per_sm, ops::detail::kTextHeadsPerBlock * 32);
+    const int kernel_ctas     = ops::detail::text_kernel_resident_ctas();
+    const double warps_per_sm = static_cast<double>(law_ctas) * ops::detail::kTextHeadsPerBlock;
+    if (law_ctas != kernel_ctas) {
+        std::printf("# WARNING: resident blocks an SM: law %d, cudaOccupancy %d (the law reads the "
+                    "device's thread and slot limits only)\n",
+                    law_ctas, kernel_ctas);
+    }
     const double clock_hz = machine_facts_of(device).reference_clock_khz * 1.0e3;
     std::printf("# device=%s generation=%s sms=%d warps_per_sm=%.0f clock_mhz=%.0f dram_gbps=%.1f "
                 "launch_node_us=%s graph_reps=%d\n",
@@ -452,10 +468,21 @@ void run_crossover(const Options& options, cudaStream_t stream) {
         if (diff.front() > 0.0) { crossover = 0.0; } // fused already loses at the narrowest
         const double bytes_token = (qh + kh) * 256.0 * 2.0 * 2.0;
         const double heads       = qh + kh;
-        const double saved_us    = -diff.front();
-        const double l_measured  = saved_us * 1.0e-6 / 2.0;
+        // The slope difference of the two widest points (seconds a token) and the launch from the
+        // narrowest: fused - split at T0 is -2 L + T0 x delta, so L = (-diff0 + T0 x delta) / 2.
+        double delta   = 0.0;
+        double slope_f = 0.0;
+        double slope_s = 0.0;
+        if (ts.size() >= 2) {
+            const std::size_t n = ts.size();
+            slope_f             = (fused_us[n - 1] - fused_us[n - 2]) / (ts[n - 1] - ts[n - 2]);
+            slope_s             = (split_us[n - 1] - split_us[n - 2]) / (ts[n - 1] - ts[n - 2]);
+            delta               = (slope_f - slope_s) * 1.0e-6;
+        }
+        const double saved_us   = -diff.front();
+        const double l_measured = (saved_us * 1.0e-6 + ts.front() * delta) / 2.0;
         std::printf("# %d+%d: crossover_T=%s measured_saving_at_T%d_us=%.3f "
-                    "launch_estimate_us=%.3f\n",
+                    "launch_estimate_us=%.3f (slope-corrected)\n",
                     qh, kh,
                     crossover > 0.0    ? std::to_string(crossover).c_str()
                     : crossover == 0.0 ? "<narrowest"
@@ -476,10 +503,6 @@ void run_crossover(const Options& options, cudaStream_t stream) {
         // Direct: the slope difference of the two widest points (seconds a token), in cycles of
         // the latency reading and as a fraction of the fused pass's DRAM time a token.
         if (ts.size() >= 2) {
-            const std::size_t n  = ts.size();
-            const double slope_f = (fused_us[n - 1] - fused_us[n - 2]) / (ts[n - 1] - ts[n - 2]);
-            const double slope_s = (split_us[n - 1] - split_us[n - 2]) / (ts[n - 1] - ts[n - 2]);
-            const double delta   = (slope_f - slope_s) * 1.0e-6; // seconds a token
             std::printf("# %d+%d: slope_fused=%.5f us/token slope_split=%.5f us/token "
                         "excess_direct_cycles=%.1f excess_direct_dram_fraction=%.4f\n",
                         qh, kh, slope_f, slope_s, delta * lat_scale, delta / (bytes_token / bw));

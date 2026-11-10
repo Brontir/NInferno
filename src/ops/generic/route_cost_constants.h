@@ -15,6 +15,7 @@
 
 #include <array>
 #include <optional>
+#include <stdexcept>
 #include <span>
 #include <cstddef>
 #include <string_view>
@@ -219,6 +220,14 @@ inline constexpr PendingFit kPendingFits[] = {
     // (bench/ops/rmsnorm_rope_bench.cu --crossover, #617 G).
     {"fused_text_excess_cycles", Provenance::Fitted, std::nullopt},
 };
-inline constexpr std::size_t pending_fused_text_excess_cycles = 0;
+
+// The pending fit named `name` (a name not in kPendingFits is a bug: the lookup throws, which fails
+// a constant evaluation at compile time).
+constexpr const PendingFit& pending_fit(std::string_view name) {
+    for (const auto& fit : kPendingFits) {
+        if (fit.name == name) return fit;
+    }
+    throw std::logic_error("unknown pending fit");
+}
 
 } // namespace ninferno::ops::detail::generic::route_cost

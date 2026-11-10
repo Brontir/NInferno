@@ -2,8 +2,8 @@
 // (rmsnorm_rope_text_fused_max_tokens, #617 G), on substituted boards: the production composition,
 // not a copy of its arithmetic. The Fitted chain excess is pending (route_cost::kPendingFits), so
 // every board and geometry answers 256 (the RTX 5090's measured width). The law's own composition
-// (launch node of the generation, DRAM rate of the board, bytes a geometry moves) is checked with
-// an explicit excess. No GPU.
+// (launch node of the generation, SMs, resident warps, clock, heads of the geometry) is checked
+// with an explicit excess. No GPU.
 #include "core/device_class.h"
 #include "core/units.h"
 #include "ninferno/ops/rmsnorm_rope.h"
