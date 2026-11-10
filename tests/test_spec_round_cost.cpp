@@ -629,7 +629,7 @@ int main() {
     // the product's tables: C x (k + 1) verify rows are priced up to kPricedVerifyRows (8), so a
     // depth-3 round is priced at 2 streams only; a DFlash choice's block (16 rows) is not priced at
     // 2 streams at all, which holds a profile with one at plain from 2. Gemma's 2:3,3:0 is that
-    // computed result: at 3 streams a depth-3 round is 12 rows (not priced, so plain), and the
+    // computed result: at 3 streams a depth-3 round is 12 rows (not priced, so plain), and no
     // other depth the lab measured is both priced there (C x (k + 1) <= 8) and gains over plain
     // decode; it is a computed result, not a measurement.
     {
