@@ -99,8 +99,8 @@ constexpr Synthetic synthetic(int major, int minor) {
             cc == 75                             ? 1024
             : cc == 80 || (cc >= 90 && cc < 120) ? 2048
                                                  : 1536,
-            cc == 75   ? 16
-            : cc == 86 ? 16
+            cc == 75                ? 16
+            : cc == 86              ? 16
             : cc == 89 || cc == 120 ? 24 // cc 12.0: the driver says 24 (#612 step 2); was 32
                                     : 32,
             64 * 1024};
