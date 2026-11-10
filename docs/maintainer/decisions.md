@@ -1846,6 +1846,8 @@ two-launch alternative has no production sequence to time. The kit prints 2 x a 
 estimate of it: expected high by about one activation quantisation, and it omits the FP32 plane
 write and read of the real two-launch form. Its verdicts name which alternative carries a result
 (`alt(rmma)` is measured, `alt(twin)` rests on the estimate). The kit's verdict floor is the timer's
-raw tick, 1.024 us (a fact of the tuner's source, used as the bound on one median step). Two passes
-are two samples, not a confidence range: a cell within a few microseconds of zero (12288 x 4096 at
-T = 4, 15360 x 3840 at T = 2 on the old files) needs more passes before it is read as a verdict.
+raw tick, 1.024 us (observed on the consumer boards and GV100 and recorded in a comment of the
+tuner's source; used as the bound on one median step, and a difference of exactly one tick gets no
+verdict). Two passes are two samples, not a confidence range: a cell within a few microseconds of
+zero (12288 x 4096 at T = 4, 15360 x 3840 at T = 2 on the old files) needs more passes before it is
+read as a verdict.

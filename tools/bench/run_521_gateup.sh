@@ -31,16 +31,20 @@
 # (other column): a row where "other" beats both is not an answer to "what takes its place".
 #
 # Verdicts. d = gated - min(twin2, rmma) per pass (microseconds; > 0: gated is slower).
-#   spread = max(|d1 - d2|, TICK). TICK = 1.024 us is the raw tick of the tuner's event timer, a fact
-#   of the source (src/ops/generic/route_tune_tool.cpp: "the timer's tick, 1.024 us on the consumer
-#   boards and GV100"). A decode-width sample is one event pair around `copies` calls and its median
-#   is divided by `copies`, so a median moves in steps of 1.024 / copies: copies = 3 on the swiglu
-#   rows of the kit's shapes on a card with L2 <= 72 MiB (step 0.341 us), 4 on a 5090 (0.256 us),
-#   5 on the store rows (the twin's 2 x single then moves in steps of 0.410 us). One raw tick is
-#   the largest step of any single median (copies >= 1), so it is a floor by construction, chosen
-#   as that bound; it is not an estimate of the noise. TICK can be overridden from the environment
-#   for a timer with another tick. A difference of one or two median steps in both passes is
-#   below the floor and gets no verdict.
+#   spread = max(|d1 - d2|, TICK). TICK = 1.024 us is the raw tick of the tuner's event timer as
+#   observed on the consumer boards and GV100 and recorded in the source comment at the sample loop
+#   (src/ops/generic/route_tune_tool.cpp: "the timer's tick, 1.024 us on the consumer boards and
+#   GV100"); the source holds no constant for it. A decode-width sample is one event pair around
+#   `copies` calls and its median is divided by `copies`, so a median moves in steps of at most
+#   1.024 / copies (some medians sit off that grid): copies = 3 on the swiglu rows of the kit's
+#   shapes on a card with L2 <= 72 MiB (step 0.341 us), 4 on a 5090 (0.256 us), 5 on the store rows
+#   at a 128 MiB span on a card with L2 <= 64 MiB (the twin's 2 x single then moves in steps of
+#   0.410 us; more copies on larger L2). One raw tick is the largest step of any single median
+#   (copies >= 1), so it is used as the floor, chosen as that bound; it is not an estimate of the
+#   noise. TICK can be overridden from the environment for a timer with another tick. A difference
+#   of one tick or less in both passes is not beyond the floor and gets no verdict: the comparison
+#   leaves a margin of 0.0005 us, half the last digit the route CSV prints for these medians, so
+#   that 209.579 - 208.555 (one tick plus a rounding error) is not read as more than one tick.
 #   Two passes are two samples of d, not a range with a confidence: |d1 - d2| of two samples is
 #   often small by chance. With d truly 0 and noise large against the floor, "both passes beyond
 #   their own difference" fires in about one cell in five. A verdict on a cell within a few
@@ -59,7 +63,7 @@
 # against the best rmma: 12288x4096 -4.7..-5.7 % (T = 2), -3.9..-4.2 % (3), -0.9..-1.8 % (4), gated
 # faster throughout; 15360x3840 +0.5..+0.9 % (2), +2.9..+3.4 % (3), +4.4..+6.2 % (4), gated slower.
 # (In microseconds those are gated minus rmma = -1.7 .. -11 for 12288x4096 and +1.0 .. +1.8 at T = 2
-# for 15360x3840, +6 at T = 3, +9 .. +13 at T = 4; against the 1.024 us floor above, the T = 2 sign
+# for 15360x3840, +6 .. +7 at T = 3, +9 .. +13 at T = 4; against the 1.024 us floor above, the T = 2 sign
 # of 15360x3840 is one to two ticks, so it is not a result.)
 # So the sign depends on the shape and a per-card cut does not fit both. This kit prints the shapes
 # side by side on a known build. If the verdict pattern differs between shapes on a card, the
@@ -176,13 +180,16 @@ summarize() {
         spread = absv(d[1] - d[2]); if (spread < tick) spread = tick
         lo = minv(d[1], d[2]); hi = (d[1] > d[2]) ? d[1] : d[2]
         verdict = "within spread"
-        if (lo > spread) {
+        # eps: half the last printed digit of a median, so one tick plus a rounding error is
+        # not read as beyond the floor (see the header).
+        eps = 0.0005
+        if (lo - spread > eps) {
           verdict = "alt(rmma)"
           if (tw[1] >= 0) {
             t1 = (tw[1] < rm[1]); t2 = (tw[2] < rm[2])
             verdict = (t1 && t2) ? "alt(twin)" : (!t1 && !t2) ? "alt(rmma)" : "alt"
           }
-        } else if (hi < 0 && -hi > spread) verdict = "gated*"
+        } else if (hi < 0 && -hi - spread > eps) verdict = "gated*"
         other = "-"
         for (p = 1; p <= 2; p++) if ((p SUBSEP k SUBSEP "other") in best) {
           o = best[p SUBSEP k SUBSEP "other"]
@@ -204,6 +211,7 @@ summarize() {
 
 if [ "${1:-}" = "--summarize" ]; then
   [ $# -eq 3 ] || { echo "usage: $0 --summarize routes_1.csv routes_2.csv" >&2; exit 2; }
+  if [ "$2" -ef "$3" ]; then echo "aborted: the same file given for both passes: $2" >&2; exit 1; fi
   summarize "$2" "$3"
   exit
 fi
