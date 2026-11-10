@@ -221,7 +221,7 @@ target_compile_definitions(ninferno_moe_plan_golden_test PRIVATE
 # measured per board). Host only; changes no route.
 ninferno_add_op_test(ninferno_moe_cost_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_moe_cost.cpp"
-  LIBRARIES ninferno_ops)
+  LIBRARIES ninferno_ops ninferno::json)
 target_compile_definitions(ninferno_moe_cost_test PRIVATE
   NINFERNO_ROUTES_DIR="${PROJECT_SOURCE_DIR}/routes")
 
