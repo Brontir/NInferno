@@ -103,7 +103,8 @@ bool take_published(const Json& profiles, const Json& published, const GpuKey& g
                                 "GPU, plain from " +
                                 std::to_string(capped.back().lanes) + " rows on this one's " +
                                 std::to_string(gpu.sms) + " multiprocessors");
-            p.load = capped;
+            p.load       = capped;
+            p.load_basis = "literal";
         }
     }
     return true;

@@ -207,6 +207,11 @@ struct Profile {
     // The bounds on its choices' depths under decode load (spec-tune --load), for every choice.
     // Empty: unbounded.
     std::vector<LoadBound> load;
+    // Where `load` comes from: "measured" (spec-tune --load, at home), "facts" (derived from the
+    // round cost on this card, profile_for_target), "literal" (stand_in_load's ceil(SMs / 10) on a
+    // published profile of another GPU, which has no facts to derive it from); "" where unsaid.
+    // Not written to a profile file.
+    std::string load_basis;
     // What the requests decoded together do to a round's price (#303), by configuration label and
     // number of streams: R_1(k) / R_C(k), the one-stream round's price over the joint verify's
     // (spec::load_gain at a gain of 1), for the depths 1..k of each choice, where the round cost

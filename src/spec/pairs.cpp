@@ -249,16 +249,19 @@ void price_by_facts(Profile& p, const RoundCostEstimate& estimate) {
 
 std::map<std::string, std::vector<RoundLaunches>> round_launches(const Profile& tune);
 
-// The price of the requests' joint verify (#303), for a profile at home: for each choice's
-// configuration and every depth up to it, R_1 / R_C at C = 2..kPricedVerifyRows streams where the
-// round cost prices it (load_gain at a gain of 1), on the lab board's rates and the lab artifact's
-// draft head (the one the load table was measured on). Nothing without the pair's facts or the
-// board's rates. The load table's depths are among these: a bound runs that depth.
-void price_joint(Profile& p, const MeasuredPair& pair) {
+// The price of the requests' joint verify (#303), on `lab` rates for a profile at home: for each
+// choice's configuration and every depth up to it, R_1 / R_C at C = 2..kPricedVerifyRows streams
+// where the round cost prices it (load_gain at a gain of 1), on the lab board's rates and the lab
+// artifact's draft head (the one the load table was measured on). Nothing without the pair's facts
+// or the board's rates. The load table's depths are among these: a bound runs that depth.
+//
+// On another card (`head_rows` the artifact's proposal head there, as round_cost_estimate takes
+// it) the same function at that card's rates: the table the load bound is derived from
+// (facts_load).
+void price_joint(Profile& p, const MeasuredPair& pair, const CardRates& lab,
+                 const ProposalRows* head_rows = nullptr) {
     p.joint_scale.clear();
-    if (!pair.round_facts) { return; }
-    const CardRates lab = card_rates_of_board(pair.lab_board);
-    if (!lab.known()) { return; }
+    if (!pair.round_facts || !lab.known()) { return; }
     std::vector<SpecConfig> configs;
     for (const Choice* c : {&p.overall, &p.thinking, &p.non_thinking}) {
         if (c->config.enabled()) { configs.push_back(c->config); }
@@ -268,7 +271,9 @@ void price_joint(Profile& p, const MeasuredPair& pair) {
     }
     const auto launches = round_launches(pair.tune);
     for (SpecConfig config : configs) {
-        const ProposalRows rows = config.proposal_head ? pair.tune.proposal_rows : ProposalRows{};
+        const ProposalRows rows    = head_rows != nullptr   ? *head_rows
+                                     : config.proposal_head ? pair.tune.proposal_rows
+                                                            : ProposalRows{};
         const std::int32_t deepest = config.k;
         for (std::int32_t k = 1; k <= deepest; ++k) {
             config.k = k;
@@ -344,7 +349,7 @@ Profile selected(const MeasuredPair& pair, bool home, const SelectOptions& optio
     SelectOptions select_options    = options;
     select_options.portable_within = 0;
     select(p, select_options);
-    if (home) { price_joint(p, pair); }
+    if (home) { price_joint(p, pair, card_rates_of_board(pair.lab_board)); }
     return p;
 }
 
@@ -683,6 +688,32 @@ const MeasuredPair* own_lab_pair(const std::vector<const MeasuredPair*>& home, c
     return nullptr;
 }
 
+// The streams from which a profile priced for another card decodes plainly: the first C at which
+// no choice's drafting beats plain decode, its one-request gain times R_1 / R_C
+// (Profile::joint_scale, priced on this card's rates) at most 1. Past kPricedVerifyRows (a joint
+// verify of more rows than the rounds were measured at) or where nothing is priced it is plain too,
+// so the bound never runs a depth the facts did not price. Never below 2; at 2 where no choice
+// drafts. Replaces stand_in_load's ceil(SMs / 10) literal, whose reason is this: the compute term
+// of a joint verify overtakes the weight bytes at a row count that grows with SMs x clock x int8
+// rate over DRAM rate.
+std::int32_t facts_load(const Profile& p) {
+    std::int32_t from = kPricedVerifyRows + 1;
+    bool any          = false;
+    for (const Choice* c : {&p.overall, &p.thinking, &p.non_thinking}) {
+        if (!c->config.enabled()) { continue; }
+        any                = true;
+        std::int32_t first = 2;
+        const auto priced  = p.joint_scale.find(c->config.label());
+        for (; first <= kPricedVerifyRows; ++first) {
+            if (priced == p.joint_scale.end()) { break; }
+            const auto scale = priced->second.find(first);
+            if (scale == priced->second.end() || c->speedup() * scale->second <= 1.0) { break; }
+        }
+        from = std::min(from, first);
+    }
+    return any ? std::max<std::int32_t>(2, from) : 2;
+}
+
 // Another card's: its tokens a round (the pair's, on any card), its rounds priced for this card by
 // the facts. A pair with facts is taken over another card's measurement without them even of this
 // generation: R is computed for this card either way, and a raw measurement of another card is the
@@ -710,8 +741,16 @@ std::optional<Profile> priced_by_facts_for(const std::vector<const MeasuredPair*
     const ProposalRows* rows = options.proposal_rows ? &*options.proposal_rows : nullptr;
     for (const auto* pair : order) {
         if (const auto estimate = round_cost_estimate(*pair, gpu, rows); estimate.known) {
-            if (note != nullptr) { *note = estimate.note; }
-            return selected(*pair, false, options, {}, &estimate);
+            Profile p = selected(*pair, false, options, {}, &estimate);
+            price_joint(p, *pair, here, rows);
+            const std::int32_t from = facts_load(p);
+            p.load                  = {LoadBound{.lanes = from, .depth = 0}};
+            p.load_basis            = "facts";
+            if (note != nullptr) {
+                *note = estimate.note + "; plain decode from " + std::to_string(from) +
+                        " streams (the joint verify's price, not a measured table)";
+            }
+            return p;
         }
     }
     return std::nullopt;

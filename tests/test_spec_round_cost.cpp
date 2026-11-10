@@ -620,6 +620,42 @@ int main() {
         expect(!both_note.empty() && both_note == near_note,
                "the nearest lab board's pair prices a card of its generation: " + both_note);
     }
+    // The load bound of a pair priced for another card is derived from the round cost, not from
+    // the card's multiprocessors: plain decode from the first stream count at which the
+    // choice's one-request gain times R_1 / R_C is at most 1 (or the rounds are not priced), on
+    // this card's rates.
+    {
+        for (const auto& [name, rtx] :
+             {std::pair<const char*, sp::GpuKey>{
+                  "RTX 4060 Ti", card("ad106:34sm", "ad106", "sm89", 89, 34, 2535, 288)},
+              std::pair<const char*, sp::GpuKey>{
+                  "RTX 4090", card("ad102:128sm", "ad102", "sm89", 89, 128, 2520, 1008)}}) {
+            sp::Profile p = sp::profile_for_target({&pair_of(kQ9, "ad104:60sm")}, "sm89", {}, &rtx);
+            expect(p.load_basis == "facts" && p.load.size() == 1 && p.load[0].depth == 0 &&
+                       p.load[0].lanes >= 2,
+                   std::string(name) +
+                       ": one plain-from bound, basis facts: " + sp::load_label(p.load));
+            const std::int32_t from = p.load.empty() ? 0 : p.load[0].lanes;
+            const sp::Choice& c     = p.overall;
+            const auto scale        = p.joint_scale.find(c.config.label());
+            const auto gain_at      = [&](std::int32_t streams) {
+                if (scale == p.joint_scale.end() || !scale->second.contains(streams)) {
+                    return 0.0;
+                }
+                return c.speedup() * scale->second.at(streams);
+            };
+            std::printf("%s %s: gain 1 = %.3f, C=2..8: ", name, c.config.label().c_str(),
+                        c.speedup());
+            for (std::int32_t streams = 2; streams <= sp::kPricedVerifyRows; ++streams) {
+                std::printf("%.3f ", gain_at(streams));
+            }
+            std::printf("-> plain from %d
+", from);
+            expect(from == 2 || gain_at(from - 1) > 1.0, std::string(name) + ": drafting still pays one stream below the bound");
+            expect(from > sp::kPricedVerifyRows || gain_at(from) <= 1.0 || gain_at(from) == 0.0,
+                   std::string(name) + ": the bound's own stream count does not pay");
+        }
+    }
     // The card that measured a pair takes its own measurement, its tune keyed by class id or chip.
     {
         const auto rtx4070ti = card("ad104:60sm", "ad104", "sm89", 89, 60, 2610, 504);
