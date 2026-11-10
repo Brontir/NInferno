@@ -20,7 +20,9 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #ifndef NINFERNO_SOURCE_DIR
@@ -2006,11 +2008,14 @@ void resolution_labels(const json& fixture) {
                 if (gap < -1e-9) {
                     // Above the pick only under a pick the resolution rule moved: the best worth
                     // and the others inside its band are within_resolution, the ones slower than
-                    // it by more than the resolution are outside_resolution; never lower_worth.
+                    // it by more than the resolution, or whose comparison with it rests on a band
+                    // that does not decide (#618: not resolvable), are outside_resolution; never
+                    // lower_worth.
                     const ch::Scored& anchor = c.scored[c.anchor];
                     const bool inside        = a.scored == &anchor ||
-                                        std::log(a.scored->decision_seconds /
-                                                 anchor.decision_seconds) <= c.resolution + 1e-9;
+                                        (a.scored->resolvable &&
+                                         std::log(a.scored->decision_seconds /
+                                                  anchor.decision_seconds) <= c.resolution + 1e-9);
                     check(c.resolved_within_resolution &&
                               a.why_code == (inside ? "within_resolution" : "outside_resolution"),
                           name + " " + a.value + ": a higher worth is " +
@@ -2395,6 +2400,7 @@ void transferred_resolution(const json& fixture) {
     }
     check(lender_major > 0, "the lender is a generation of the table");
     std::map<std::string, std::pair<double, int>> by_target;
+    std::map<std::string, std::set<std::string>> cards_of; // the lab cards behind each target
     for (const json& row : fixture.at("rows")) {
         if (row.value("long", false)) { continue; }
         const json& m           = fixture.at("models").at(row.at("model").get<std::string>());
@@ -2420,6 +2426,7 @@ void transferred_resolution(const json& fixture) {
         const double e    = std::log(s.decode_per_stream / row.at("decode").get<double>());
         auto& g           = by_target[gen];
         g.first += e * e, ++g.second;
+        cards_of[gen].insert(row.at("card").get<std::string>());
     }
     double worst = 0;
     for (const ch::TransferredError& t : ch::kTransferredDecodeError) {
@@ -2433,6 +2440,12 @@ void transferred_resolution(const json& fixture) {
         check(std::abs(rms - t.rms) < 0.0015,
               std::string(t.target) +
                   ": the stated transferred resolution is the carried rows' rms");
+        // Its label: the lab cards it rests on, by count and name (one each today: it never
+        // decides, Resolution::decides).
+        const std::set<std::string>& cards = cards_of[std::string(t.target)];
+        check(t.cards == static_cast<int>(cards.size()) && t.cards == 1 &&
+                  cards.count(std::string(t.card)) == 1,
+              std::string(t.target) + ": the carry's lab cards are labelled");
         worst = std::max(worst, rms);
     }
     check(by_target.size() == std::size(ch::kTransferredDecodeError),
@@ -2440,42 +2453,265 @@ void transferred_resolution(const json& fixture) {
     check(std::abs(worst - ch::kUnmeasuredCarryDecodeError) < 0.0015 &&
               ch::kUnmeasuredCarryDecodeError == ch::largest_transferred_decode_error(),
           "the unmeasured carry is the largest measured transfer");
-    // The basis by board: Ada and Blackwell state their own rows' error; the other known
-    // generations their carried row; a compute capability with no generation row the unmeasured
-    // carry.
-    for (const auto& [name, basis] : std::vector<std::pair<const char*, ch::ResolutionBasis>>{
-             {"RTX 4090", ch::ResolutionBasis::Own},
-             {"RTX 5090", ch::ResolutionBasis::Own},
-             {"RTX 3060", ch::ResolutionBasis::Transferred},
-             {"RTX 2080 Ti", ch::ResolutionBasis::Transferred},
-             {"Quadro GV100", ch::ResolutionBasis::Transferred}}) {
-        if (!fixture.at("cards").contains(name)) { continue; }
-        const ch::CardFacts card = card_of(fixture.at("cards").at(name));
-        const ch::Resolution r   = ch::resolution_of(card);
-        double want              = 0;
-        if (basis == ch::ResolutionBasis::Own) {
-            want = ch::worth_band(card);
-        } else {
-            for (const ch::TransferredError& t : ch::kTransferredDecodeError) {
-                if (t.target == ch::generation_of(card)) { want = t.rms; }
-            }
+    // The Own rows' labels: two or more lab cards each (they may decide), named.
+    for (const ch::PredictionError& e : ch::kDecodePredictionError) {
+        int named = 0;
+        for (const auto& [name, unused] : fixture.at("cards").items()) {
+            (void)unused;
+            const bool of_gen =
+                ch::generation_of(card_of(fixture.at("cards").at(name))) == e.generation;
+            named += of_gen && e.card_names.find(name) != std::string_view::npos;
         }
-        check(r.basis == basis && r.rms == want && want > 0,
-              std::string(name) + ": the resolution's basis");
+        check(e.cards >= 2 && named == e.cards,
+              std::string(e.generation) + ": the own error's lab cards are labelled");
+    }
+    // The basis by board and by the estimates compared (resolution_of, #618): Own estimates on Ada
+    // and Blackwell state their own rows' error and decide; on the other known generations their
+    // carried row (one card: never decides); a Transferred estimate on a generation with its own
+    // error has no measured carry: the assumed worst case; lent estimates the unmeasured carry.
+    const auto carry_of = [](std::string_view gen) {
+        for (const ch::TransferredError& t : ch::kTransferredDecodeError) {
+            if (t.target == gen) { return t.rms; }
+        }
+        return 0.0;
+    };
+    using B = ch::ResolutionBasis;
+    using S = ch::SpeedBasis;
+
+    struct Want {
+        const char* card;
+        S estimates;
+        B basis;
+        bool own_number; // the generation's own error, else its carry or the assumed worst case
+        bool decides;
+    };
+
+    for (const Want& w :
+         std::vector<Want>{{"RTX 4090", S::Own, B::Own, true, true},
+                           {"RTX 5090", S::Own, B::Own, true, true},
+                           {"RTX 4090", S::Transferred, B::Transferred, false, false},
+                           {"RTX 4090", S::LentGeneration, B::Unmeasured, false, false},
+                           {"RTX 3060", S::Own, B::Transferred, false, false},
+                           {"RTX 3060", S::Transferred, B::Transferred, false, false},
+                           {"RTX 2080 Ti", S::Own, B::Transferred, false, false},
+                           {"Quadro GV100", S::Transferred, B::Transferred, false, false}}) {
+        if (!fixture.at("cards").contains(w.card)) { continue; }
+        const ch::CardFacts card   = card_of(fixture.at("cards").at(w.card));
+        const ch::Resolution r     = ch::resolution_of(card, w.estimates);
+        const std::string_view gen = ch::generation_of(card);
+        const double want          = w.own_number               ? ch::worth_band(card)
+                                     : w.basis == B::Unmeasured ? ch::kUnmeasuredCarryDecodeError
+                                     : carry_of(gen) > 0        ? carry_of(gen)
+                                                                : ch::kUnmeasuredCarryDecodeError;
+        check(r.basis == w.basis && r.rms == want && want > 0 && r.decides == w.decides,
+              std::string(w.card) + " " + std::string(ch::speed_basis_name(w.estimates)) +
+                  ": the resolution's basis, width and whether it decides");
     }
     ch::CardFacts lent           = card_of(fixture.at("cards").at("RTX 5090"));
     lent.major                   = 13;
     lent.minor                   = 0;
-    const ch::Resolution carried = ch::resolution_of(lent);
-    check(carried.basis == ch::ResolutionBasis::Unmeasured &&
-              carried.rms == ch::kUnmeasuredCarryDecodeError,
-          "a compute capability with no generation row: the unmeasured carry");
+    const ch::Resolution carried = ch::resolution_of(lent, S::LentGeneration);
+    check(carried.basis == B::Unmeasured && carried.rms == ch::kUnmeasuredCarryDecodeError &&
+              !carried.decides,
+          "a compute capability with no generation row: the unmeasured carry, not deciding");
+    // A one-card or assumed band only widens: on every generation and every basis of the estimates
+    // compared, never narrower than the Own band they rest on or are carried from (the
+    // generation's own error, else the lender's), and only an Own band of two cards decides. A
+    // comparison rests on its widest estimate (mixed Own and Transferred: the Transferred band;
+    // mixed with a lent estimate: the unmeasured carry).
+    double lender_band = 0;
+    for (const ch::PredictionError& e : ch::kDecodePredictionError) {
+        if (e.generation == ch::kTransferGeneration) { lender_band = e.rms; }
+    }
+    check(lender_band > 0, "the lender states its own error");
+    const auto same = [](const ch::Resolution& a, const ch::Resolution& b) {
+        return a.basis == b.basis && a.rms == b.rms && a.decides == b.decides;
+    };
+    for (const ninferno::GenerationRow& row : ninferno::kGenerations) {
+        ch::CardFacts card = card_of(fixture.at("cards").at("RTX 4090"));
+        card.major = row.major, card.minor = row.minor_lo;
+        const double own           = ch::worth_band(card);
+        const ch::Resolution own_r = ch::resolution_of(card, S::Own);
+        for (const S s : {S::Own, S::Transferred, S::LentGeneration}) {
+            const ch::Resolution r = ch::resolution_of(card, s);
+            check(r.rms >= (own > 0 ? own : lender_band) && r.rms >= own_r.rms,
+                  std::string(row.name) + " " + std::string(ch::speed_basis_name(s)) +
+                      ": the band is never narrower than the Own band");
+            check(!r.decides || (s == S::Own && r.basis == B::Own),
+                  std::string(row.name) + ": only an Own band decides");
+        }
+        check(same(ch::resolution_of(card, ch::widest(S::Own, S::Transferred)),
+                   ch::resolution_of(card, S::Transferred)) &&
+                  same(ch::resolution_of(card, ch::widest(S::Transferred, S::LentGeneration)),
+                       ch::resolution_of(card, S::LentGeneration)),
+              std::string(row.name) + ": a mixed comparison takes its widest estimate's band");
+    }
+    for (const ch::TransferredError& t : ch::kTransferredDecodeError) {
+        check(t.cards < 2, std::string(t.target) + ": a one-card carry (it does not decide)");
+    }
+}
+
+// The resolution rule weighs a comparison at the band of the two estimates it compares (#618), not
+// at the board's generation's alone: the wider of their bases (resolution_of). Synthetic: an Own
+// best worth, a more accurate Transferred candidate 2 % slower and a less accurate Own one 1 %
+// slower. Ada's bands: Own 2.26 % deciding; Transferred and lent the assumed carry, not deciding.
+// The Transferred candidate is inside the Own band, so the old single number moved the pick to it;
+// typed, its comparison rests on a band that does not decide, and the rule takes the Own one
+// instead; with the Transferred best worth nothing moves. A Transferred band that decided (two
+// cards, none today) would take a candidate inside it and leave one outside it to the best worth.
+void resolution_by_pair() {
+    const auto make = [](double seconds, double kld, ch::SpeedBasis basis) {
+        ch::Scored s;
+        s.decision_seconds = seconds;
+        s.accuracy.kld     = kld;
+        s.own_context      = 1000;
+        s.decision_basis   = basis;
+        s.worth            = -std::log(seconds) - kld;
+        return s;
+    };
+    using S = ch::SpeedBasis;
+    const std::vector<ch::Scored> scored{make(1.0, 0.02, S::Own), make(1.02, 0.005, S::Transferred),
+                                         make(1.01, 0.01, S::Own), make(1.0, 0.02, S::Transferred)};
+    const ch::Resolution own{ch::ResolutionBasis::Own, 0.0226, true};
+    const ch::Resolution assumed{ch::ResolutionBasis::Transferred, ch::kUnmeasuredCarryDecodeError,
+                                 false};
+    const ch::Resolutions ada{
+        own, assumed, {ch::ResolutionBasis::Unmeasured, ch::kUnmeasuredCarryDecodeError, false}};
+    check(ch::resolve_within_resolution(scored, {0, 1, 2}, 0, 0.0226) == 1,
+          "one number: the Transferred candidate inside it wins");
+    check(ch::resolve_within_resolution(scored, {0, 1, 2}, 0, ada) == 2,
+          "typed: a Transferred comparison does not decide, the Own one inside its band wins");
+    check(ch::resolve_within_resolution(scored, {0, 1}, 0, ada) == 0,
+          "typed: only a Transferred candidate, the best worth stands");
+    check(ch::resolve_within_resolution(scored, {3, 1, 2}, 3, ada) == 3,
+          "typed: a Transferred best worth, nothing moves");
+    // A Transferred band that decided: the pair inside it resolves to the more accurate, outside
+    // it the best worth (the faster) stands.
+    const ch::Resolutions deciding{own, {ch::ResolutionBasis::Transferred, 0.0786, true}, assumed};
+    check(ch::resolve_within_resolution(scored, {0, 1}, 0, deciding) == 1,
+          "a deciding Transferred band: inside it, the more accurate");
+    const ch::Resolutions narrow{own, {ch::ResolutionBasis::Transferred, 0.015, true}, assumed};
+    check(ch::resolve_within_resolution(scored, {0, 1}, 0, narrow) == 0,
+          "a deciding Transferred band: outside it, the best worth");
+}
+
+// The resolution a decision uses is the one of the estimates it compares (#618), not the board's
+// generation's alone. On an Ada board (its own error, a reference card): Q4_K_M at 32K compares
+// Own estimates and Transferred ones (a candidate that reads a row of one Ada card: the exact
+// route's prefill, the BF16-KV prompt kernel); a quantization of WeightClass::Other (an IQ3 mix:
+// its routes not measured) makes every estimate Transferred. A comparison with a Transferred
+// estimate rests on the assumed carry (no carry onto those rows was measured), which never decides:
+// the resolution rule weighs only Own pairs at the Own band, and with a Transferred best worth it
+// moves nothing. The worth still ranks the candidates by their point estimates. The choice summary
+// (the plan's and the replay's fields) and the replay report the band.
+void resolution_of_compared(const json& fixture) {
+    using S = ch::SpeedBasis;
+    Bench b = nine_b(fixture, "RTX 4090");
+    // The fixture's IQ3_XXS row is Q4_K_M's tables at other bits (a K-quant class); an IQ3 mix
+    // of its own class (WeightClass::Other) as the last.
+    ch::QuantOption other = b.quants[2];
+    other.label           = "IQ3_XXS (Other)";
+    other.weights         = ch::WeightClass::Other;
+    b.quants.push_back(other);
+    const std::size_t iq3         = b.quants.size() - 1;
+    const ch::Allowed allowed     = ch::allowed_axes(b.model, KvCacheStorage::Int8Group64);
+    const ch::Resolution own_band = ch::resolution_of(b.card, S::Own);
+    const ch::Resolution carried  = ch::resolution_of(b.card, S::Transferred);
+    check(own_band.decides && own_band.rms == ch::worth_band(b.card) && !carried.decides &&
+              carried.rms > own_band.rms,
+          "Ada: the Own band decides, the Transferred one is wider and does not");
+    int own_pairs = 0, carried_pairs = 0, unmoved = 0;
+    for (const std::uint32_t context : {4096U, 32768U, 131072U}) {
+        ch::Task task;
+        task.contexts = {context};
+        for (std::size_t qi = 0; qi < b.quants.size(); ++qi) {
+            const ch::Choice c = ch::choose(b.model, b.card, b.quants[qi], allowed, {}, task,
+                                            oracle(b, 40e9, qi), ch::Gates{true, true});
+            if (!c.chosen) { continue; }
+            const ch::Scored& anchor = c.scored[c.anchor];
+            std::cout << "  resolution of the compared: " << b.quants[qi].label << ' ' << context
+                      << ": best worth " << ch::speed_basis_name(anchor.decision_basis) << ", band "
+                      << ch::resolution_basis_name(c.resolution_basis) << ' ' << c.resolution
+                      << (c.resolution_decides ? "" : " (not deciding)") << ", held";
+            for (const ch::Scored& s : c.scored) {
+                if (s.variant || !s.fits) { continue; }
+                std::cout << ' ' << kv_cache_storage_name(s.candidate.kv) << '/'
+                          << static_cast<int>(s.candidate.activations) << '='
+                          << ch::speed_basis_name(s.decision_basis);
+                // Resolvable exactly where both estimates are Own.
+                const bool pair_own = anchor.decision_basis == S::Own && s.decision_basis == S::Own;
+                check(s.resolvable == pair_own,
+                      b.quants[qi].label + ": a comparison decides only between Own estimates");
+                (pair_own ? own_pairs : carried_pairs) += 1;
+            }
+            std::cout << '\n';
+            // The band reported: the best worth's; the rule moved only to a resolvable candidate.
+            const ch::Resolution want = ch::resolution_of(b.card, anchor.decision_basis);
+            check(c.resolution_basis == want.basis && c.resolution == want.rms &&
+                      c.resolution_decides == want.decides && c.by_worth,
+                  b.quants[qi].label +
+                      ": the band of the best worth's estimate, the worth decides");
+            check(!c.resolved_within_resolution ||
+                      (chosen(c).resolvable && chosen(c).decision_basis == S::Own &&
+                       c.resolution_decides),
+                  b.quants[qi].label + ": the rule moves only between Own estimates");
+            if (!c.resolution_decides) {
+                unmoved += 1;
+                check(!c.resolved_within_resolution &&
+                          c.why.find("the resolution rule moved nothing") != std::string::npos,
+                      b.quants[qi].label + ": a Transferred best worth: nothing moves, and why");
+            }
+        }
+    }
+    check(own_pairs > 0 && carried_pairs > 0 && unmoved > 0,
+          "Ada: Own and Transferred comparisons both met, and Transferred best worths");
+    // An IQ3 mix: every estimate Transferred, the band not deciding.
+    ch::Task task;
+    task.contexts       = {32768};
+    const ch::Choice q3 = ch::choose(b.model, b.card, b.quants[iq3], allowed, {}, task,
+                                     oracle(b, 40e9, iq3), ch::Gates{true, true});
+    bool all_carried    = q3.chosen.has_value();
+    for (const ch::Scored& s : q3.scored) {
+        if (!s.variant && s.fits) {
+            all_carried = all_carried && s.decision_basis == S::Transferred;
+        }
+    }
+    check(all_carried && q3.resolution_basis == ch::ResolutionBasis::Transferred &&
+              q3.resolution == ch::kUnmeasuredCarryDecodeError && !q3.resolution_decides &&
+              !q3.resolved_within_resolution,
+          "Ada IQ3 (Other): every estimate Transferred, the assumed band, not deciding");
+    // The summary (the plan's and the replay's fields) reports the band and whether it decided,
+    // and the replay of the record answers it.
+    for (const std::size_t qi : {std::size_t{0}, iq3}) {
+        const ch::ChoiceRecord rec =
+            ch::record_choice(b.model, b.card, b.quants[qi], allowed, {}, task, oracle(b, 40e9, qi),
+                              ch::Gates{true, true});
+        const auto summary = ch::choice_summary(rec.choice);
+        check(summary.at("resolution_basis") ==
+                      std::string(ch::resolution_basis_name(rec.choice.resolution_basis)) &&
+                  summary.at("resolution_decides").get<bool>() == rec.choice.resolution_decides &&
+                  summary.at("scored").at(rec.choice.anchor).at("decision_basis") ==
+                      std::string(ch::speed_basis_name(
+                          rec.choice.scored[rec.choice.anchor].decision_basis)),
+              b.quants[qi].label + ": the summary reports the band and whether it decided");
+        if (qi == iq3) {
+            check(summary.at("resolution_basis") == "transferred" &&
+                      !summary.at("resolution_decides").get<bool>(),
+                  "IQ3 (Other): the summary says transferred, not deciding");
+        }
+        const auto back = nlohmann::ordered_json::parse(rec.inputs.dump());
+        check(ch::choice_summary(ch::replay_choice(back)) == summary,
+              b.quants[qi].label + ": the replay answers the recorded band");
+    }
 }
 
 // What typing the resolution by the estimate's basis changes (#618 step 3, a behaviour change made
 // visible): for every fixture card and bench, the old (the reference generation's one number,
 // Gates::typed_resolution closed) and the new resolution, the candidates each chooses, and whether
-// the choice moves. No fixture choice moves (asserted); the table is the record.
+// the choice moves. The worth and its best are unchanged; a choice moves only where the old single
+// number let the resolution rule cross a comparison with a Transferred or lent estimate (a
+// one-card or assumed error), and then to the best worth or to an Own candidate inside the Own
+// band (asserted); the table is the record.
 void resolution_by_basis(const json& fixture) {
     // No reference, no estimate: the basis is None, not Own.
     const Bench none = nine_b(fixture, "RTX 3060");
@@ -2485,7 +2721,7 @@ void resolution_by_basis(const json& fixture) {
                    oracle(none, 20e9));
     check(undecided.resolution_basis == ch::ResolutionBasis::None && undecided.resolution == 0,
           "a board with no reference card: basis none");
-    int total = 0, moved = 0, typed = 0;
+    int total = 0, moved = 0, typed = 0, declined = 0, moved_to_anchor = 0;
     std::vector<std::pair<std::string, Bench>> benches;
     for (const auto& [name, unused] : fixture.at("cards").items()) {
         (void)unused;
@@ -2529,26 +2765,45 @@ void resolution_by_basis(const json& fixture) {
                                oracle(b, 40e9, qi), ch::Gates{true, true});
                 if (!before.chosen || !after.chosen) { continue; }
                 const bool differs = describe(before) != describe(after);
-                const bool retyped = before.resolution != after.resolution;
+                const bool retyped = before.resolution != after.resolution ||
+                                     before.resolution_basis != after.resolution_basis;
                 ++total, moved += differs, typed += retyped;
+                declined += before.by_worth && !after.by_worth;
                 if (differs || retyped) {
                     std::cout << "  resolution by basis: " << label << ' ' << b.quants[qi].label
                               << ' ' << context << ": old " << before.resolution << ", new "
                               << after.resolution << " ("
-                              << ch::resolution_basis_name(after.resolution_basis) << "), "
+                              << ch::resolution_basis_name(after.resolution_basis)
+                              << (after.resolution_decides ? "" : ", not deciding") << "), "
                               << (differs ? "CHANGED " + describe(before) + " -> " + describe(after)
                                           : "choice unchanged: " + describe(after))
                               << '\n';
                 }
-                // Where every estimate is Own the typing is the old number.
-                if (!retyped) { check(!differs, label + ": all-Own estimates choose as before"); }
+                check(after.resolution_basis != ch::ResolutionBasis::Own ||
+                          after.resolution_decides,
+                      label + ": an Own band decides");
+                check(before.by_worth == after.by_worth && before.anchor == after.anchor,
+                      label + ": the worth and its best are as before (only the rule is typed)");
+                // A choice moves only where the old single number moved the pick across a
+                // comparison with a Transferred or lent estimate (#618): now the best worth stands
+                // against it, or the rule takes an Own candidate inside the Own band.
+                if (differs) {
+                    const ch::Scored& old_pick   = chosen(before);
+                    const ch::Scored& old_anchor = before.scored[before.anchor];
+                    check(before.resolved_within_resolution &&
+                              (old_pick.decision_basis != ch::SpeedBasis::Own ||
+                               old_anchor.decision_basis != ch::SpeedBasis::Own) &&
+                              (*after.chosen == after.anchor || chosen(after).resolvable),
+                          label + ": a moved choice: the old rule crossed a Transferred estimate");
+                    moved_to_anchor += *after.chosen == after.anchor;
+                }
             }
         }
     }
     std::cout << "resolution by basis: " << total << " choices, " << typed
-              << " with a retyped resolution, " << moved << " changed\n";
-    check(moved == 0, "typing the resolution by its basis moves no choice on the fixture boards");
-    check(typed > 0, "some resolutions are retyped");
+              << " with a retyped resolution, " << declined << " no longer by worth, " << moved
+              << " changed (" << moved_to_anchor << " of them back to the best worth)\n";
+    check(typed > 0 && declined == 0, "some resolutions are retyped, the worth decides as before");
 }
 
 int main() {
@@ -2595,6 +2850,8 @@ int main() {
     choices_replay(fixture);
     resolution_labels(fixture);
     resolution_rule();
+    resolution_by_pair();
+    resolution_of_compared(fixture);
     resolution_by_basis(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";

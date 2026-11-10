@@ -510,7 +510,7 @@ Scored score(const ModelFacts& model, const CardFacts& card, const std::optional
     s.accuracy    = accuracy_of(model, quant, c, card);
     s.seconds     = request_seconds(model, card, quant, c, task);
     if (ref) {
-        s.decision_seconds = request_seconds(model, ref->card, quant, c, task);
+        s.decision_seconds = request_seconds(model, ref->card, quant, c, task, &s.decision_basis);
         s.worth = -std::log(s.decision_seconds) - task.accuracy_weight * s.accuracy.kld;
     }
     return s;
@@ -1453,24 +1453,45 @@ double worth_band(const CardFacts& card) noexcept {
     return 0;
 }
 
-Resolution resolution_of(const CardFacts& board) noexcept {
-    if (generation_known(board.major, board.minor)) {
-        const std::string_view gen = generation_of(board);
+Resolution resolution_of(const CardFacts& board, SpeedBasis estimates) noexcept {
+    const auto own_row = [](std::string_view gen) -> const PredictionError* {
         for (const PredictionError& e : kDecodePredictionError) {
-            if (e.generation == gen) { return {ResolutionBasis::Own, e.rms}; }
+            if (e.generation == gen) { return &e; }
         }
-        for (const TransferredError& e : kTransferredDecodeError) {
-            if (e.target == gen) { return {ResolutionBasis::Transferred, e.rms}; }
+        return nullptr;
+    };
+    const bool known           = generation_known(board.major, board.minor);
+    const std::string_view gen = generation_of(board);
+    const PredictionError* own = known ? own_row(gen) : nullptr;
+    // The floor: the Own band of the rows the estimates rest on, or are carried from. A wider
+    // basis is never resolved more finely than that.
+    const PredictionError* lender = own_row(kTransferGeneration);
+    const double floor            = own ? own->rms : lender ? lender->rms : 0.0;
+    const Resolution assumed{ResolutionBasis::Unmeasured,
+                             std::max(kUnmeasuredCarryDecodeError, floor), false};
+    if (!known || estimates == SpeedBasis::LentGeneration) { return assumed; }
+    if (estimates == SpeedBasis::Own && own != nullptr) {
+        return {ResolutionBasis::Own, own->rms, own->cards >= 2};
+    }
+    if (own != nullptr) {
+        // A generation with its own error whose estimate is Transferred (a weight class without
+        // its rows, a row of one card): no carry onto those was measured, the assumed worst case.
+        return {ResolutionBasis::Transferred, assumed.rms, false};
+    }
+    for (const TransferredError& e : kTransferredDecodeError) {
+        if (e.target == gen) {
+            return {ResolutionBasis::Transferred, std::max(e.rms, floor), e.cards >= 2};
         }
     }
-    return {ResolutionBasis::Unmeasured, kUnmeasuredCarryDecodeError};
+    return assumed; // ga100, hopper, gb100, thor: no row of either kind
 }
 
 double single_request_seconds(const ModelFacts& model, const CardFacts& card,
                               const QuantOption& quant, const Candidate& candidate,
-                              const Task& task, std::uint32_t prompt) {
+                              const Task& task, std::uint32_t prompt, SpeedBasis* basis) {
     const double middle = prompt + task.answer / 2.0;
     const Speed speed   = speed_of(model, card, quant, candidate, task.concurrency, middle, prompt);
+    if (basis != nullptr) { *basis = widest(*basis, speed.basis); }
     if (speed.prefill <= 0 || speed.decode_per_stream <= 0) { return INFINITY; }
     // The prompt's linears run as whole chunks and a final partial one, each at its own rate (an
     // MoE's prefill depends on how full a chunk is); its attention runs over the whole prompt.
@@ -1488,15 +1509,19 @@ double single_request_seconds(const ModelFacts& model, const CardFacts& card,
     prefill_seconds += tail_calls_seconds(model, card, quant, candidate, prompt);
     if (whole > 0) { prefill_seconds += whole / linear_prefill(model, card, quant, route, chunk, transferred); }
     if (rest > 0) { prefill_seconds += rest / linear_prefill(model, card, quant, route, rest, transferred); }
+    if (basis != nullptr && transferred) { *basis = widest(*basis, SpeedBasis::Transferred); }
     return prefill_seconds + task.answer / speed.decode_per_stream;
 }
 
 double request_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
-                       const Candidate& candidate, const Task& task) {
-    const double shorter = single_request_seconds(model, card, quant, candidate, task, task.prompt);
+                       const Candidate& candidate, const Task& task, SpeedBasis* basis) {
+    if (basis != nullptr) { *basis = SpeedBasis::Own; }
+    const double shorter =
+        single_request_seconds(model, card, quant, candidate, task, task.prompt, basis);
     const std::uint32_t long_prompt = task.long_prompt();
     if (long_prompt == 0) { return shorter; }
-    const double longer = single_request_seconds(model, card, quant, candidate, task, long_prompt);
+    const double longer =
+        single_request_seconds(model, card, quant, candidate, task, long_prompt, basis);
     const double weight = kMixLongRequests / (kMixShortRequests + kMixLongRequests);
     return std::exp((1 - weight) * std::log(shorter) + weight * std::log(longer));
 }
@@ -1729,16 +1754,19 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     }
     const std::optional<Reference> ref = reference_of(card, gates);
     out.by_worth       = decides_switches(model, card, gates);
-    if (ref) {
-        const Resolution typed = resolution_of(card);
-        out.resolution         = gates.typed_resolution ? typed.rms : worth_band(ref->card);
-        // The old number is the reference card's generation's own error: Own on a known
-        // generation, a number carried onto the board where the rows are lent.
-        out.resolution_basis = gates.typed_resolution ? typed.basis
-                               : generation_known(card.major, card.minor)
-                                   ? ResolutionBasis::Own
-                                   : ResolutionBasis::Transferred;
-    }
+    // The resolution of a comparison the resolution rule weighs (#618): typed by the wider basis of
+    // its two estimates (resolution_of); with the gate closed, the reference card's generation's
+    // one number (worth_band), Own on a known generation, a number carried onto the board where
+    // the rows are lent, deciding whatever the estimates rest on.
+    const auto band_of = [&](SpeedBasis estimates) -> Resolution {
+        if (!ref) { return {}; }
+        if (gates.typed_resolution) { return resolution_of(card, estimates); }
+        return {generation_known(card.major, card.minor) ? ResolutionBasis::Own
+                                                         : ResolutionBasis::Transferred,
+                worth_band(ref->card), true};
+    };
+    const Resolutions bands = {band_of(SpeedBasis::Own), band_of(SpeedBasis::Transferred),
+                               band_of(SpeedBasis::LentGeneration)};
     out.chunk_basis                    = chunk_basis_of(model, card, gates);
     out.chunk_by_speed                 = out.chunk_basis == ChunkBasis::Own && !pins.chunk;
     // The enumeration order breaks exact ties (better()): one canonical order of each axis's
@@ -1816,6 +1844,11 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     // the answer, so a step below the largest asked (Auto's 16K, 8K) prices a shorter one, never a
     // prompt the stream cannot hold. The candidates were scored at the largest asked context; a
     // step whose long prompt differs scores them again.
+    // The resolution rule weighs a comparison with the best worth at the band of the wider basis of
+    // the two estimates (#618): one that does not decide (Resolution::decides: a one-card or
+    // assumed error) never moves the pick, whatever its width (AGENTS.md: a lab constant decides
+    // only on two cards). The choice reports the best worth's own band: the one every comparison
+    // the rule weighed rests on.
     std::optional<std::size_t> chosen;
     std::uint32_t settled = 0;
     bool resolved         = false;
@@ -1839,13 +1872,24 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         }
         if (chosen) {
             const std::size_t best = *chosen;
-            chosen   = resolve_within_resolution(out.scored, holding, best, out.resolution);
+            chosen                 = resolve_within_resolution(out.scored, holding, best, bands);
             resolved = *chosen != best;
             anchor   = best;
             settled  = context;
+            for (const std::size_t i : holding) {
+                out.scored[i].resolvable =
+                    resolution_for(bands, widest(out.scored[best].decision_basis,
+                                                 out.scored[i].decision_basis))
+                        .decides;
+            }
             break;
         }
     }
+    const Resolution& band =
+        resolution_for(bands, chosen ? out.scored[anchor].decision_basis : SpeedBasis::Own);
+    out.resolution         = band.rms;
+    out.resolution_basis   = band.basis;
+    out.resolution_decides = band.decides;
     if (!chosen) {
         out.why = "no candidate holds " + std::to_string(task.contexts.empty() ? 0 : task.contexts.back()) +
                   " tokens for each of " + std::to_string(task.concurrency) + " streams";
@@ -1898,7 +1942,14 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
                          : std::string(": the best worth")) +
                    " on the " + std::string(generation_of(card)) + " reference card (" +
                    fixed(c.decision_seconds, 2) + " s on " + request_mix_text(priced) +
-                   " there, KLD " + fixed(c.accuracy.kld, 4) + ")"
+                   " there, KLD " + fixed(c.accuracy.kld, 4) + ")" +
+                   (out.resolution_decides
+                        ? std::string()
+                        : "; its speed estimate is " +
+                              std::string(resolution_basis_name(out.resolution_basis)) +
+                              ": the resolution rule moved nothing (its band, " +
+                              fixed(100 * out.resolution, 1) +
+                              " %, rests on one lab card or is assumed)")
              : ": the family's defaults (" + defaults_why + ")") +
         (out.chunk_by_speed ? "; chunk " + std::to_string(c.candidate.chunk) +
                                   ": the fastest prefill on the reference card"
@@ -1938,17 +1989,26 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
 std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
                                       const std::vector<std::size_t>& eligible, std::size_t anchor,
                                       double resolution) noexcept {
+    const Resolution one{ResolutionBasis::Own, resolution, resolution > 0};
+    return resolve_within_resolution(scored, eligible, anchor, Resolutions{one, one, one});
+}
+
+std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
+                                      const std::vector<std::size_t>& eligible, std::size_t anchor,
+                                      const Resolutions& bands) noexcept {
     std::size_t pick = anchor;
-    if (!(resolution > 0)) { return pick; }
-    const Scored& a = scored[anchor];
+    const Scored& a  = scored[anchor];
     if (!(a.decision_seconds > 0)) { return pick; }
     for (const std::size_t i : eligible) {
         const Scored& s = scored[i];
-        // Strictly more accurate (a NaN KLD never is), and not slower than the resolution.
+        // Strictly more accurate (a NaN KLD never is), and not slower than the resolution of the
+        // two's comparison, which must decide: a one-card or assumed band never moves the pick.
         if (!(s.decision_seconds > 0) || !(s.accuracy.kld + kWorthTie < a.accuracy.kld)) {
             continue;
         }
-        if (std::log(s.decision_seconds / a.decision_seconds) > resolution + kWorthTie) {
+        const Resolution& band = resolution_for(bands, widest(a.decision_basis, s.decision_basis));
+        if (!band.decides || !(band.rms > 0) ||
+            std::log(s.decision_seconds / a.decision_seconds) > band.rms + kWorthTie) {
             continue;
         }
         const Scored& p = scored[pick];
@@ -2041,8 +2101,11 @@ std::vector<Alternative> explain(const Choice& choice) {
                 // Not the anchor, yet above the moved pick. Inside the band (no slower than the
                 // anchor by more than the resolution) the chosen is the most accurate; outside it,
                 // the rule does not weigh this one at all (resolve_within_resolution).
+                // A comparison whose band does not decide (a Transferred or lent estimate,
+                // #618) is not weighed either: outside_resolution.
                 const Scored& a   = choice.scored[choice.anchor];
-                const bool inside = s.decision_seconds > 0 && a.decision_seconds > 0 &&
+                const bool inside = s.resolvable && s.decision_seconds > 0 &&
+                                    a.decision_seconds > 0 &&
                                     std::log(s.decision_seconds / a.decision_seconds) <=
                                         choice.resolution + kWorthTie;
                 alt.why_code = inside ? "within_resolution" : "outside_resolution";
@@ -2050,10 +2113,15 @@ std::vector<Alternative> explain(const Choice& choice) {
                     "worth " + fixed(s.worth - chosen.worth, 3) + " above the chosen, " +
                     (inside ? std::string("which is the more accurate inside the speed "
                                           "estimate's resolution of the best worth")
-                            : "but slower than the best worth by more than the speed "
-                              "estimate's resolution (" +
-                                  fixed(100 * choice.resolution, 1) +
-                                  " %): the rule picks the most accurate inside that band");
+                     : !s.resolvable
+                         ? "but its speed estimate is " +
+                               std::string(speed_basis_name(s.decision_basis)) +
+                               ": the rule does not weigh it (its band rests on one lab card or "
+                               "is assumed)"
+                         : "but slower than the best worth by more than the speed "
+                           "estimate's resolution (" +
+                               fixed(100 * choice.resolution, 1) +
+                               " %): the rule picks the most accurate inside that band");
             } else if (std::abs(s.worth - chosen.worth) <= kWorthTie &&
                        s.own_context != chosen.own_context) {
                 alt.why_code = "tie_context";

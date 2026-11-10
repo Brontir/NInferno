@@ -483,6 +483,7 @@ json choice_summary(const Choice& c) {
                           {"worth", s.worth},
                           {"seconds", s.seconds},
                           {"decision_seconds", s.decision_seconds},
+                          {"decision_basis", std::string(speed_basis_name(s.decision_basis))},
                           {"kld", s.accuracy.kld},
                           {"variant", s.variant},
                           {"drafter", s.drafter}});
@@ -496,6 +497,7 @@ json choice_summary(const Choice& c) {
                 {"drafter_by_worth", c.drafter_by_worth},
                 {"resolution", c.resolution},
                 {"resolution_basis", std::string(resolution_basis_name(c.resolution_basis))},
+                {"resolution_decides", c.resolution_decides},
                 {"why", c.why}};
 }
 

@@ -293,14 +293,21 @@ inline constexpr MoeRoutedEta kMoeRoutedEta[] = {
 };
 
 // The model's measured error on a generation's dense decode estimate: the rms of ln(predicted /
-// measured) over decode_measured.json's rows of the generation's cards under the rows above (derived,
-// not tuned: ninferno_choice_test recomputes it). Two quantizations whose worths (-ln T - lambda KLD)
-// differ by less are a tie: the lower KLD wins (DECISIONS 60).
+// measured) over decode_measured.json's rows of the generation's cards under the rows above
+// (derived, not tuned: ninferno_choice_test recomputes it). Two quantizations whose worths (-ln T -
+// lambda KLD) differ by less are a tie: the lower KLD wins (DECISIONS 60). `cards`: the lab cards
+// whose rows it is the rms over; a decision's resolution decides only on two or more
+// (resolution_of), the rule every lab constant that decides follows (AGENTS.md).
 struct PredictionError {
     std::string_view generation;
     double rms;
+    int cards;
+    std::string_view card_names;
 };
-inline constexpr PredictionError kDecodePredictionError[] = {{"ada", 0.0226}, {"gb20x", 0.0170}};
+
+inline constexpr PredictionError kDecodePredictionError[] = {
+    {"ada", 0.0226, 3, "RTX 4060 Ti, RTX 4070 Ti, RTX 4090"},
+    {"gb20x", 0.0170, 2, "RTX 5070 Ti, RTX 5090"}};
 
 // The resolution of a decision on a generation with no kDecodePredictionError row (#618 step 3),
 // by the direction of the carry: lender kTransferGeneration, target the board's generation. Derived
@@ -309,13 +316,29 @@ inline constexpr PredictionError kDecodePredictionError[] = {{"ada", 0.0226}, {"
 // the board's own bytes rate, SMs and clock). Volta's row also carries Ada's route and ISA pricing
 // (no int8 MMA, HBM2), which is part of its error. ninferno_choice_test recomputes each row
 // (transferred_resolution); they are never pooled into one mean.
+//
+// The measurement: plain decode per stream, the server's timings, 1/2/4/8 streams decoding 256
+// tokens each from short prompts (--spec none --no-prefix-reuse), Qwen3.5-9B Q4_K_M and Q8_0 and
+// Gemma 4 12B Q4_K_M, master f68eca34 (2026-10-31; the Quadro GV100's points cool, DECISIONS 72):
+// 12 points of ONE lab card per target (`cards`, `card`). Its basis is that of a
+// route_rules.h Basis::ScaledFromOneBoard rule: one board's measured residual stands for its
+// generation's other boards, no second board was measured. So no row here decides: a one-card
+// resolution only widens the band (resolution_of takes it no narrower than the Own band its
+// estimates are carried from) and never moves a pick: a comparison that rests on it leaves the best
+// worth standing (Resolution::decides, resolve_within_resolution). Widening alone would not be
+// conservative: a wider band lets a slower, more accurate candidate displace the best worth. A row
+// decides once it rests on two cards of the target.
 struct TransferredError {
     std::string_view target;
     double rms;
+    int cards;
+    std::string_view card;
 };
 
 inline constexpr TransferredError kTransferredDecodeError[] = {
-    {"ga10x", 0.0786}, {"turing", 0.2151}, {"volta", 0.5447}};
+    {"ga10x", 0.0786, 1, "RTX 3060"},
+    {"turing", 0.2151, 1, "RTX 2080 Ti"},
+    {"volta", 0.5447, 1, "Quadro GV100"}};
 
 // The largest of the measured carries above.
 constexpr double largest_transferred_decode_error() noexcept {
@@ -329,7 +352,10 @@ constexpr double largest_transferred_decode_error() noexcept {
 // An assumed worst case: the largest measured carry (all of them Ada onto older generations). No
 // measured row bounds a carry onto a newer architecture or below Volta (Pascal); it is a label, not
 // a bound. A board whose compute capability has no generation row (rows lent forward) takes it, and
-// so do the known generations with no row of their own (ga100, hopper, gb100, thor).
+// so do the known generations with no row of their own (ga100, hopper, gb100, thor), and a
+// generation with its own error whose compared estimates are Transferred (a weight class or a row
+// measured on fewer than two of its cards: no carry onto those was measured). Basis: an assumption
+// over one-card rows; it never decides (resolution_of).
 inline constexpr double kUnmeasuredCarryDecodeError = largest_transferred_decode_error();
 
 // kDp4aOpsPerSmClock (a generation without an int8 MMA decodes its int8 route at it, choice.cpp

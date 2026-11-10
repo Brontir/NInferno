@@ -35,6 +35,7 @@
 #include "ninferno/types.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -216,14 +217,17 @@ struct QuantOption {
 // generation's measured decode error, kDecodePredictionError; 0 where none is measured).
 [[nodiscard]] double worth_band(const CardFacts& card) noexcept;
 
-// What a speed estimate's resolution rests on (#618). None: no reference, so no estimate decides.
-// Own: the board's generation has measured decode rows and states its error
-// (kDecodePredictionError). Transferred: it has none, but a measured carry of kTransferGeneration's
-// rows onto it states one (kTransferredDecodeError, by target). Unmeasured: a compute capability
-// with no generation row, or a known generation with neither (ga100, hopper, gb100, thor): an
-// assumed worst case, the largest measured carry (all of them Ada onto older generations; no
-// measured row bounds a carry onto a newer architecture or below Volta (Pascal)): a label, not a
-// bound (kUnmeasuredCarryDecodeError).
+// What a comparison's speed resolution rests on (#618): the basis of the estimates it compares (the
+// widest of them, SpeedBasis) on the board's generation. None: no reference, so no estimate
+// decides. Own: every compared estimate is Own and the generation states its measured decode error
+// (kDecodePredictionError). Transferred: an estimate is Transferred; the measured carry of
+// kTransferGeneration's rows onto the board's generation where one is stated
+// (kTransferredDecodeError, by target), else (a generation with its own error whose estimate
+// rests on a class or row not measured on two of its cards) the unmeasured carry. Unmeasured: the
+// estimates are lent (a compute capability with no generation row), or a known generation has
+// neither row (ga100, hopper, gb100, thor): an assumed worst case, the largest measured carry (all
+// of them Ada onto older generations; no measured row bounds a carry onto a newer architecture or
+// below Volta (Pascal)): a label, not a bound (kUnmeasuredCarryDecodeError).
 enum class ResolutionBasis : std::uint8_t { None, Own, Transferred, Unmeasured };
 
 [[nodiscard]] constexpr std::string_view resolution_basis_name(ResolutionBasis basis) noexcept {
@@ -236,10 +240,12 @@ enum class ResolutionBasis : std::uint8_t { None, Own, Transferred, Unmeasured }
 struct Resolution {
     ResolutionBasis basis = ResolutionBasis::None;
     double rms            = 0; // ln(predicted / measured), root mean square
+    // The band may decide: its row rests on two or more lab cards (an Own row today; no transfer
+    // row does). False: however wide or narrow the number, it never moves a pick: the resolution
+    // rule does not weigh a comparison that rests on it, the best worth stands against it
+    // (resolve_within_resolution).
+    bool decides = false;
 };
-
-// The resolution a decision on this board's generation uses.
-[[nodiscard]] Resolution resolution_of(const CardFacts& board) noexcept;
 
 // What the user asks: the context each stream holds of its own (the contexts in turn: a pinned
 // one, or Auto's targets runtime::quant_own_targets gives), the streams, the request shape. The
@@ -310,9 +316,30 @@ struct Candidate {
 // Transferred: a constant from another generation (kTransferGeneration) or one lab card of this
 // one; LentGeneration: the card's compute capability has no row of its own (core/generation.h
 // generation_known) and the nearest generation's rates, efficiencies and constants stand in.
+// In order of width: a comparison of several estimates rests on the widest of their bases.
 enum class SpeedBasis { Own, Transferred, LentGeneration };
 [[nodiscard]] constexpr std::string_view speed_basis_name(SpeedBasis basis) noexcept {
     return basis == SpeedBasis::Own ? "own" : basis == SpeedBasis::Transferred ? "transferred" : "lent_generation";
+}
+
+[[nodiscard]] constexpr SpeedBasis widest(SpeedBasis a, SpeedBasis b) noexcept {
+    return a < b ? b : a;
+}
+
+// The resolution of a comparison on `board` between estimates whose widest basis is `estimates`
+// (ResolutionBasis). Never narrower than the Own band the estimates rest on or are carried from
+// (the board's generation's kDecodePredictionError, else kTransferGeneration's): a one-card or
+// assumed row only widens it, and it never decides (Resolution::decides). The one function choose()
+// types the resolution rule's comparisons and Choice::resolution with; the plan JSON and the replay
+// report what it set.
+[[nodiscard]] Resolution resolution_of(const CardFacts& board, SpeedBasis estimates) noexcept;
+
+// The resolution of a comparison by the widest basis of its two estimates, indexed by SpeedBasis.
+using Resolutions = std::array<Resolution, 3>;
+
+[[nodiscard]] constexpr const Resolution& resolution_for(const Resolutions& bands,
+                                                         SpeedBasis basis) noexcept {
+    return bands[static_cast<std::size_t>(basis)];
 }
 
 struct Speed {
@@ -330,17 +357,21 @@ struct Speed {
 
 // One request of `prompt` tokens in and `answer` out on one stream of `concurrency`: the prompt at
 // the prefill rate, the answer at the decode rate at the middle of its window.
+// `basis`, where given, is widened to the basis of every rate the request reads (its decode,
+// prefill, attention and tail calls).
 [[nodiscard]] double single_request_seconds(const ModelFacts& model, const CardFacts& card,
                                             const QuantOption& quant, const Candidate& candidate,
-                                            const Task& task, std::uint32_t prompt);
+                                            const Task& task, std::uint32_t prompt,
+                                            SpeedBasis* basis = nullptr);
 
 // The task's request mix (DECISIONS 73): the geometric mean of the short request (task.prompt) and
 // the long one (task.long_prompt()) weighted by kMixShortRequests and kMixLongRequests, so that
 // ln of it is the weighted mean of the two requests' ln(T), the time the worth prices. The short
-// request alone where the task has no long one.
+// request alone where the task has no long one. `basis`, where given: the widest basis of both
+// requests' estimates.
 [[nodiscard]] double request_seconds(const ModelFacts& model, const CardFacts& card,
                                      const QuantOption& quant, const Candidate& candidate,
-                                     const Task& task);
+                                     const Task& task, SpeedBasis* basis = nullptr);
 
 // The mix in words, for a reason or a listing: "a 2048+512-token request" without a long one, else
 // "the request mix: 20 of 2048+512 tokens, 6 of 24576+512".
@@ -354,8 +385,10 @@ struct Gates {
     // quantization curve): nullopt, from their cards (accuracy_decides, kQuantKldCards).
     std::optional<bool> accuracy;
     bool moe_chunk = kMoeChunkTwoCards; // the MoE chunk shares
-    // The resolution typed by its basis (#618). False: the reference card's generation's one number
-    // (worth_band), the rule before #618; a test closes it to list what the typing changes.
+    // The resolution typed per comparison by the bases of its two estimates (#618, resolution_of),
+    // and a band that does not decide (Resolution::decides) moves no pick. False: the reference
+    // card's generation's one number (worth_band) for every comparison, whatever the estimates
+    // rest on, the rule before #618; a test closes it to list what the typing changes.
     bool typed_resolution = true;
 };
 
@@ -506,6 +539,11 @@ struct Scored {
     Accuracy accuracy;
     double seconds = 0;            // request_seconds on the board (an estimate to show)
     double decision_seconds = 0;   // request_seconds on the reference card (0: none)
+    SpeedBasis decision_basis = SpeedBasis::Own; // what decision_seconds rests on (request_seconds)
+    // The resolution rule weighed it against the best worth: their comparison's band decides
+    // (resolution_of over the wider of the two bases, Resolution::decides). False: not held, or a
+    // Transferred or lent estimate on either side (the best worth stands against it).
+    bool resolvable     = false;
     double worth = 0;              // -ln(decision_seconds) - lambda kld (0 without a reference)
     bool variant = false;          // a coupled storage's other value beside the chosen (not eligible)
     std::string drafter = "plain"; // its drafter's configuration (DrafterOption::label)
@@ -528,15 +566,21 @@ struct Choice {
     // drafter whose gain no measurement gives).
     bool drafter_by_worth = false;
     // The speed estimate's resolution wherever a reference exists (#301; the chunk axis needs it
-    // where the worth does not decide): the reference card's generation's measured decode error
-    // (worth_band), the speed term's uncertainty in worth (-ln seconds) units; 0 without one. An
+    // where the worth does not decide): the error of the best worth's estimate (resolution_of;
+    // with typed_resolution closed, the reference card's generation's measured decode error,
+    // worth_band), the speed term's uncertainty in worth (-ln seconds) units; 0 without one. An
     // alternative that loses by no more than the smaller of it and the two's speed difference is
     // indistinguishable (explain: within_resolution); the point estimate decides, unless a
     // candidate that far from the best worth is strictly more accurate
     // (resolved_within_resolution).
     double resolution = 0;
-    // What `resolution` rests on (resolution_of): the board's generation's own rows, or a transfer.
+    // What `resolution` rests on: resolution_of over the best worth's decision_basis, the band of
+    // every comparison the resolution rule weighed (a comparison with a wider estimate rests on a
+    // band that does not decide): the board's generation's own rows, a transfer, or an assumption.
     ResolutionBasis resolution_basis = ResolutionBasis::None;
+    // That band decides (Resolution::decides). False (a one-card or assumed row): the resolution
+    // rule moved nothing, the best worth stood.
+    bool resolution_decides = false;
     // The resolution moved the pick (#301, DECISIONS 75): among the candidates whose speed is
     // inside `resolution` of the best worth's (the anchor), the one of strictly lower modelled KLD
     // took it (resolve_within_resolution). False: the anchor stood. `anchor` indexes the best
@@ -580,9 +624,16 @@ struct Alternative {
 // DECISIONS 60's band between quantizations). `eligible` lists indices into `scored` (the
 // candidates that hold the asked context); `anchor` is the one with the best worth among them. A
 // candidate wins only if its modelled KLD is lower than the anchor's by more than kWorthTie and its
-// request time is longer by no more than `resolution` (worth units: ln of the time ratio). Among
-// the winners the lowest KLD, then the lowest index in `scored`; none: the anchor. Context beyond
-// what was asked is headroom (DECISIONS 73) and does not count. A resolution of 0 returns `anchor`.
+// request time is longer by no more than the resolution of the two's comparison (worth units: ln
+// of the time ratio): `bands` by the wider of their decision_basis (#618), a band that does not
+// decide (Resolution::decides) never moves the pick. Among the winners the lowest KLD, then the
+// lowest index in `scored`; none: the anchor. Context beyond what was asked is headroom (DECISIONS
+// 73) and does not count. A resolution of 0 returns `anchor`.
+[[nodiscard]] std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
+                                                    const std::vector<std::size_t>& eligible,
+                                                    std::size_t anchor,
+                                                    const Resolutions& bands) noexcept;
+// One deciding band for every comparison, whatever its estimates rest on (the rule before #618).
 [[nodiscard]] std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
                                                     const std::vector<std::size_t>& eligible,
                                                     std::size_t anchor, double resolution) noexcept;

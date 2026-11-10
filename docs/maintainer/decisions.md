@@ -1705,15 +1705,29 @@ on the W4A8 tiles, not this kernel, which steps the same way (RTX 5060 Ti 104 ->
 
 **Decision.** `choose()` finds the best worth (the anchor). A candidate whose request time on the
 reference card is longer by no more than `Choice::resolution` (the generation's decode rms, `ln` of
-the time ratio; since #618 typed by `Choice::resolution_basis`: own, the measured carry for a
-generation without its own error, or unmeasured (the largest carry) where neither exists, see
-`resolution_of`) is indistinguishable from it in speed, so the speed term does not rank them; the
+the time ratio; since #618 typed per comparison by the wider basis of its two estimates,
+`Choice::resolution_basis`: own, the measured carry for a generation without its own error, or the largest carry
+(assumed) where no carry onto those estimates was measured, see `resolution_of`) is
+indistinguishable from it in speed, so the speed term does not rank them; the
 accuracy term does. The order is the one of the cross-quantization band (DECISIONS 60): a candidate
 wins only if its modelled KLD is lower than the anchor's by more than `kWorthTie`; the lowest KLD
 first, then the lowest canonical index; otherwise the anchor stays (`resolve_within_resolution`).
 Context beyond what was asked is headroom (DECISIONS 73) and does not count, so an equal-KLD
 sibling (a narrower chunk, plain against a drafter, BF16 against INT8 at 8K) never moves the pick.
 A NaN KLD never wins. Without a reference card the resolution is 0 and nothing changes.
+
+Only a band that rests on two or more lab cards decides (`Resolution::decides`: an own row today;
+Ada's three cards, Blackwell's two). The carries onto GA10x, Turing and Volta are each the
+residuals of one lab card (RTX 3060, RTX 2080 Ti, Quadro GV100), and the largest carry stands in,
+assumed, where nothing was measured. Such a band is never narrower than the own one it widens, but
+widening is not conservative here: a wider band lets a more accurate and slower candidate displace
+the best worth, up to 72 % slower at the largest carry. So each comparison the rule weighs, the
+best worth against a candidate, takes the band of the wider basis of the two estimates: where either
+is not own (on Ada: an unmeasured weight class, the exact route's prefill or the BF16-KV prompt
+kernel, rows of one Ada card), the band does not decide and the best worth stands against that
+candidate. The worth itself still ranks by point estimates (their error per basis is the cost
+model's work, #613). With `Gates::typed_resolution` closed, the old single number weighs every
+comparison as before (#618).
 
 `Choice::resolved_within_resolution`, `anchor` and `anchor_worth` record the move; the `why` line
 says it, and `explain` lists the anchor as `within_resolution` with a positive `worth_delta`. The
