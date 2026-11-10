@@ -21,8 +21,8 @@ struct MmqPlaneBytes {
 // Whether the format has the I8 tiles' codec (format_traits qx_g64).
 bool i8_format(QType qtype);
 
-// Whether the weight's code, scale and high planes sit on the 16-byte (Q5: 8-byte) boundaries the
-// I8 tiles read at.
+// Whether the weight's code and scale planes sit on 16-byte boundaries and its high plane (Q5 only;
+// Q4 has none) on an 8-byte one, as the I8 tiles read them.
 bool i8_planes_aligned(const Weight& w);
 
 // Whether K and the padded row count are multiples of 512, the I8 tiles' extent.
