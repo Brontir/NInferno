@@ -51,7 +51,7 @@ jobs:
           esac
       - name: Diff lint tests
         run: python3 -B -m unittest tests/test_diff_lint.py
-      - name: Diff lint (fails on removed definitions still called and broken string literals; warns on removed includes and pasted blocks)
+      - name: Diff lint (fails on broken string literals and files it cannot read; warns on removed definitions, removed includes and pasted blocks)
         if: github.event_name == 'pull_request'
         env:
           BASE_REF: ${{ github.base_ref }}

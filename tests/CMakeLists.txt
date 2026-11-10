@@ -83,10 +83,11 @@ add_test(NAME ninferno_kernel_facts_sass_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_kernel_facts_sass.py)
 set_tests_properties(ninferno_kernel_facts_sass_test PROPERTIES LABELS host)
 
-# tools/audit/diff_lint.py: duplicated added blocks, removed definitions still called and removed
-# includes still needed, on planted diffs (#611), no GPU.
+# tools/audit/diff_lint.py: broken string literals, duplicated added blocks, removed definitions
+# still called and removed includes still needed, on planted diffs (#611), no GPU.
 add_test(NAME ninferno_diff_lint_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_diff_lint.py)
+set_tests_properties(ninferno_diff_lint_test PROPERTIES LABELS host)
 
 # routes/*.json: evidence_us / tuned_on provenance (#634), no GPU.
 add_test(NAME ninferno_route_table_evidence_test

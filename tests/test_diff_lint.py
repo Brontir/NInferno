@@ -1,5 +1,6 @@
 """tools/audit/diff_lint.py on planted diffs: each rule fires on the mistake and stays quiet on the
-look-alikes. Plain git diff -U0 text and an in-memory tree; no git, no GPU."""
+look-alikes. Mostly plain git diff -U0 text and an in-memory tree; the Main tests and the constructor
+skip run through a scratch git repository. No GPU."""
 import contextlib
 import io
 import json
@@ -707,6 +708,34 @@ class MaskAndLiteralFixes(unittest.TestCase):
 
     def test_inc_files_are_checked(self):
         self.assertEqual(lits("rows.inc", 'const char* s = "oops\n;\n'), [1])
+
+    def test_elif_0_keeps_the_group_dead(self):
+        self.assertEqual(lits("t.cpp", "#if 0\nit's\n#elif 0\nstill off'\n#else\nconst char* s = \"oops\n;\n#endif\n"), [6])
+        self.assertEqual(lits("t.cpp", "#if 0\nit's\n#elif X\nconst char* s = \"oops\n;\n#endif\n"), [4])
+
+
+class QuotedPaths(unittest.TestCase):
+    BROKEN = 'const char* s = "oops'
+
+    def quoted_diff(self, field_minus, field_plus):
+        return "\n".join(["diff --git x y", "--- " + field_minus, "+++ " + field_plus, "@@ -0,0 +1,2 @@",
+                          "+" + self.BROKEN, "+;"]) + "\n"
+
+    def test_a_name_with_a_blank_or_a_non_ascii_character_is_read(self):
+        # git ends a name with a blank with a tab and C-quotes one with a non-ASCII character.
+        for minus, plus, path in (("/dev/null", "b/src/my file.cpp\t", "src/my file.cpp"),
+                                  ("/dev/null", '"b/\\303\\274nit.cpp"', "ünit.cpp"),
+                                  ('"a/q\\"t.cpp"', '"b/q\\"t.cpp"', 'q"t.cpp')):
+            with self.subTest(path=path):
+                self.assertIn(path, dl.parse_diff(self.quoted_diff(minus, plus)))
+                tree = dl.DictTree({path: self.BROKEN + "\n;\n"})
+                found = dl.lint(self.quoted_diff(minus, plus), tree)
+                self.assertEqual([(f[0], f[2]) for f in found], [(path, "bad-literal")])
+
+    def test_a_file_the_head_tree_cannot_read_fails(self):
+        found = dl.lint(diff("gone.cpp", added=["int x = 1;"]), dl.DictTree({}))
+        self.assertEqual(rules(found), ["unread-file"])
+        self.assertNotIn("unread-file", dl.WARN_RULES)
 
 
 if __name__ == "__main__":

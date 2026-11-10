@@ -124,6 +124,29 @@ class DictTree:
 # ---------------------------------------------------------------- diff parsing
 
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+C_ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
+
+
+def diff_path(field, prefix):
+    """The path of a `--- a/x` / `+++ b/x` field: git C-quotes a name with a special or non-ASCII
+    character ("b/\\303\\274nit.cpp") and ends a name holding a blank with a tab."""
+    field = field.rstrip("\t")
+    if field.startswith('"') and field.endswith('"') and len(field) >= 2:
+        raw, out, i = field[1:-1], bytearray(), 0
+        while i < len(raw):
+            c = raw[i]
+            if c == "\\" and i + 1 < len(raw):
+                if raw[i + 1] in "01234567":
+                    out.append(int(raw[i + 1:i + 4], 8))
+                    i += 4
+                    continue
+                out.append(C_ESCAPES.get(raw[i + 1], ord(raw[i + 1])))
+                i += 2
+                continue
+            out += c.encode("utf-8")
+            i += 1
+        field = out.decode("utf-8", errors="replace")
+    return field[len(prefix):] if field.startswith(prefix) else field
 
 
 def parse_diff(text):
@@ -155,10 +178,10 @@ def parse_diff(text):
             if row.endswith("/dev/null"):
                 cur = None
             else:
-                path = row[6:] if row.startswith("+++ b/") else row[4:]
+                path = diff_path(row[4:], "b/")
                 cur = files.setdefault(path, {"added": [], "removed": [], "old": old_path or path})
         elif row.startswith("--- "):
-            old_path = None if row.endswith("/dev/null") else row[6:] if row.startswith("--- a/") else row[4:]
+            old_path = None if row.endswith("/dev/null") else diff_path(row[4:], "a/")
         elif HUNK.match(row):
             m = HUNK.match(row)
             old, new = int(m.group(1)), int(m.group(3))
@@ -180,7 +203,7 @@ def parse_deleted(text):
         elif row.startswith("diff "):
             path = pending = None
         elif row.startswith("--- "):
-            pending = None if row.endswith("/dev/null") else row[6:]
+            pending = None if row.endswith("/dev/null") else diff_path(row[4:], "a/")
         elif row.startswith("+++ "):
             path = pending if row.endswith("/dev/null") else None
         elif HUNK.match(row):
@@ -592,8 +615,9 @@ def cxx_open_lines(text):
                     if0 += 1
                 elif kind == "endif":
                     if0 -= 1
-                elif kind in ("else", "elif") and if0 == 1:
-                    if0 = 0
+                elif if0 == 1 and (kind == "else" or (kind == "elif" and not re.fullmatch(
+                        r"0[ \t]*(?://.*|/\*.*)?", rest))):
+                    if0 = 0  # `#elif 0` keeps the group dead
                 continue
             if kind == "if" and re.fullmatch(r"0[ \t]*(?://.*|/\*.*)?", rest):
                 if0 = 1
@@ -714,6 +738,13 @@ def lint(diff_text, tree, allow=frozenset(), base=None):
     """`base`: the tree before the change, for masking removed lines inside the whole old file."""
     files = parse_diff(diff_text)
     findings = []
+    # A file with added lines that the head tree cannot read would lose its findings silently
+    # (a path the parser did not decode, a submodule): that is a failure of the lint, not a pass.
+    for path, d in files.items():
+        if d["added"] and lintable(path, CODE_EXT | LIT_CXX_EXT | {".py"}) and tree.read(path) is None:
+            first = d["added"][0][0]
+            findings.append((path, first, "unread-file", "the head tree has no such file; nothing "
+                             "in it was checked"))
     for path, d in files.items():
         if lintable(path, CODE_EXT) and d["added"]:
             findings += dup_blocks(path, d["added"], tree.read(path))
