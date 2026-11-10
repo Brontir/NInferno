@@ -105,7 +105,8 @@ NOT_DECIDING = {
     "src/ops/wrapper/candidate_selector.cpp", "src/ops/wrapper/embedding.cpp",
     "src/ops/wrapper/gdn_input_proj.cpp", "src/ops/wrapper/linear_add.cpp",
     "src/ops/wrapper/linear_swiglu.cpp",
-    "src/product/plan/plan_facts.cpp", "src/spec/round_cost.cpp",  # plan and speculation costs
+    # plan_facts also restates the MoE W4A8 bank refusal (ExpertRoutes); no selector golden reads it.
+    "src/product/plan/plan_facts.cpp", "src/spec/round_cost.cpp",  # plan, spec costs
     "src/runtime/engine/engine.cpp", "src/runtime/engine/model_instance.cpp",  # engine setup
     "src/runtime/engine/warmup_widths.cpp",
 }
