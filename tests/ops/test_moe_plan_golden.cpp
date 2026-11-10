@@ -24,6 +24,7 @@
 #include "ops/generic/selector_facts.h"
 #include "ops/moe/moe_internal.h"
 
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -138,6 +139,82 @@ const char* profile_name(Profile p) {
 }
 
 int g_evidence_mismatches = 0;
+std::string g_board; // the board being dumped
+
+// Provenance pinned as literals, one per kind: some answer on this board under this authority
+// carries exactly this evidence, so a wrong donor, kind or distance out of table_origin, fill_from
+// or a8_class_entry shows as a pin never met. Read off the base build's dump (the routes/ tables
+// of the repository at the time of writing); a changed table moves a pin together with the
+// route it means to move. Distances to 1e-4.
+struct ProvenancePin {
+    const char* board;
+    const char* authority; // moe::authority_name
+    moe::Evidence::Kind kind;
+    const char* donor;
+    double distance;
+    // The A8 route's provenance a table band carries (TableClassA8), else none.
+    bool has_overlay;
+    moe::Evidence::Kind overlay_kind;
+    const char* overlay_donor;
+    double overlay_distance;
+    bool seen;
+};
+
+ProvenancePin g_pins[] = {
+    // The RTX 5090's gb202 table lacks this layer: the gb206 table lent it.
+    {"rtx5090", "table", moe::Evidence::Kind::Borrowed, "gb206", 5.03195, false, {}, "", 0, false},
+    {"rtx5080", "table", moe::Evidence::Kind::Borrowed, "gb206", 2.82193, false, {}, "", 0, false},
+    // The RTX 4070 reads the ad104:60sm table (not its own board): lent from ad106 all the same.
+    {"rtx4070", "table", moe::Evidence::Kind::Borrowed, "ad106", 1.32842, false, {}, "", 0, false},
+    // Its own table's entry: measured.
+    {"rtx5060ti", "table", moe::Evidence::Kind::Measured, "", 0, false, {}, "", 0, false},
+    // An sm_120 board of no table of its own reads gb206's, a board 1.01 away: carried.
+    {"unknown-sm120-48sm",
+     "table",
+     moe::Evidence::Kind::Carried,
+     "gb206",
+     1.01108,
+     false,
+     {},
+     "",
+     0,
+     false},
+    // The class's A8 route over a lent band: the RTX 5070 Ti takes the RTX 5080's route (0.57
+    // away).
+    {"rtx5070ti", "table+class-a8", moe::Evidence::Kind::Borrowed, "gb206", 2.25184, true,
+     moe::Evidence::Kind::Carried, "rtx5080", 0.570089, false},
+    {"rtx5090", "table+class-a8", moe::Evidence::Kind::Measured, "", 0, true,
+     moe::Evidence::Kind::Measured, "rtx5090", 0, false},
+    {"rtx5070ti",
+     "decode-r8",
+     moe::Evidence::Kind::Carried,
+     "rtx5080",
+     0.570089,
+     false,
+     {},
+     "",
+     0,
+     false},
+};
+
+void note_pins(const moe::MoePlanQuery& q) {
+    const auto& e = q.evidence;
+    for (ProvenancePin& pin : g_pins) {
+        if (g_board != pin.board ||
+            moe::authority_name(q.authority) != std::string_view(pin.authority) ||
+            e.kind != pin.kind || e.donor != pin.donor ||
+            std::abs(e.distance - pin.distance) > 1e-4 ||
+            e.overlay.has_value() != pin.has_overlay) {
+            continue;
+        }
+        if (pin.has_overlay &&
+            (e.overlay->kind != pin.overlay_kind || e.overlay->donor != pin.overlay_donor ||
+             std::abs(e.overlay->distance - pin.overlay_distance) > 1e-4)) {
+            continue;
+        }
+        pin.seen = true;
+    }
+}
 
 // The authority list's name behind each label the goldens print.
 std::string_view source_of(moe::MoeAuthority a) {
@@ -232,6 +309,7 @@ std::string describe(const ops::MoeWeights& weights, const ops::MoeConfig& confi
     // The evidence names the authority that answered; a table's or the tuner's is measured or
     // carried, a rule's a ranker's (the decode R8 route carries a board's when one is near).
     if (!evidence_fits(q, weights, config)) { ++g_evidence_mismatches; }
+    note_pins(q);
     const moe::MoeStageRoutes stages = moe::stage_routes(weights, q.plan);
     std::ostringstream out;
     out << moe::plan_name(q.plan) << " jobs=" << q.plan.job_columns << " "
@@ -304,6 +382,7 @@ void dump_layer(const Layer& l, std::map<std::string, std::string>& dumps) {
             out += unpacked;
             continue;
         }
+        g_board             = b.name;
         const DeviceClass d = generic::board_device_class(b);
         const ScopedDeviceClass scoped(d);
         for (const LinearPolicy policy :
@@ -372,6 +451,18 @@ int main(int argc, char** argv) {
         if (moe::authority_order() != expected_order) {
             std::cerr << "moe plan golden: the authority order moved\n";
             ++failed;
+        }
+        if (std::string_view(kBuildSet) == "base") {
+            for (const ProvenancePin& pin : g_pins) {
+                if (!pin.seen) {
+                    std::cerr << "moe plan golden: no answer of " << pin.board << " under "
+                              << pin.authority << " carries the pinned evidence (donor '"
+                              << pin.donor
+                              << "')
+                                 ";
+                        ++failed;
+                }
+            }
         }
         if (g_evidence_mismatches != 0) {
             std::cerr << "moe plan golden: " << g_evidence_mismatches
