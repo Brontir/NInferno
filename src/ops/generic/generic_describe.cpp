@@ -28,8 +28,12 @@ ScopedKernelDescribe::ScopedKernelDescribe(KernelResources& out) noexcept : prev
 }
 ScopedKernelDescribe::~ScopedKernelDescribe() { t_describe = previous_; }
 
-std::optional<KernelResources> rmma_resources(int schedule, const Weight& w, Epilogue epilogue,
-                                              std::int32_t tokens, std::int32_t rows) {
+// The register-MMA kernel a launch would run, found by running the launch in describe mode. The
+// selector's rmma_resources (generic_rmma_describe.cpp) answers the same from the committed facts
+// with no CUDA; ninferno_rmma_describe_test holds the two equal.
+std::optional<KernelResources> rmma_resources_by_launch(int schedule, const Weight& w,
+                                                        Epilogue epilogue, std::int32_t tokens,
+                                                        std::int32_t rows) {
     if (schedule < 0 || schedule >= rmma_schedule_count() || !rmma_schedule_launchable(schedule) ||
         tokens < 1 || !supports(w)) {
         return std::nullopt;

@@ -23,11 +23,15 @@ add_library(ninferno_core_host STATIC
   ggml_frag.cpp
   sha256.cpp
   tensor.cpp
+  kernel_occupancy.cpp
 )
 ninferno_internal_includes(ninferno_core_host)
 target_include_directories(ninferno_core_host PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 target_include_directories(ninferno_core_host PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/generated_public)
 target_link_libraries(ninferno_core_host PRIVATE ninferno::json)
+# kernel_occupancy.cpp reads the toolkit's cuda_occupancy.h, a header-only calculator: the include
+# directory, no library.
+target_include_directories(ninferno_core_host SYSTEM PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
 
 # core/device_class_nodevice.cpp is current_device_class() of a build with no CUDA runtime: it always
 # throws. A host-only test adds it to its own sources (an object, so no archive order matters);
@@ -40,7 +44,6 @@ add_library(ninferno_core STATIC
   device_class.cpp
   per_device.cpp
   device_traits.cpp
-  kernel_occupancy.cpp
   device_image_probe.cu
   tune_timer.cu
   host_worker_pool.cpp

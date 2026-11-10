@@ -139,6 +139,13 @@ ninferno_add_op_test(ninferno_selector_golden_test
 target_compile_definitions(ninferno_selector_golden_test PRIVATE
   NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden")
 
+# The selector's register-MMA kernel description (rmma_resources: facts, no CUDA) equals the launch's
+# own (rmma_resources_by_launch, the real launch run in describe mode), per format, schedule,
+# epilogue and width on every board with facts (#620). No GPU.
+ninferno_add_op_test(ninferno_rmma_describe_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_rmma_describe.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
 # The selector on the real device with no substituted board: select_route and w4a8_ws_extra return,
 # and the R8 decode table of a board that has one is found (#620). Skips (77) without a GPU.
 ninferno_add_op_test(ninferno_selector_real_device_test
