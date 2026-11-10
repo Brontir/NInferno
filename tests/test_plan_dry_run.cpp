@@ -1635,8 +1635,10 @@ void test_exact_reads_no_continuous_fact() {
 // inside the band, and the board's seconds and the decision's never disagree about it. Here they
 // do. The band is a decision (principle 2): it must be read from the seconds priced on the
 // reference card (decision_seconds), never from the board's own (seconds, an estimate to show). A
-// step that compared the board's seconds fails the first and the third check below (checked with
-// that mutation in a scratch build).
+// step that compared the board's seconds fails the first three checks below. Each other check was
+// seen to fail in a scratch build under the mutation it guards: the resolution-0 guard dropped, the
+// first or the last winner taken instead of the most accurate, the band edge excluded, the guard
+// for an unpriced anchor dropped, an unpriced candidate made eligible.
 void test_resolution_step() {
     namespace ch         = pr::choice;
     const auto candidate = [](double kld, double seconds, double decision_seconds) {
@@ -1648,11 +1650,16 @@ void test_resolution_step() {
     };
     constexpr double kBand = 0.05; // the resolution, in worth units (ln of a time ratio)
     // [0] the anchor; [1] more accurate, inside the band by the decision, far outside by the board;
-    // [2] more accurate still, outside the band by the decision, inside by the board.
+    // [2] more accurate still, outside the band by the decision, inside by the board; [3] both more
+    // accurate and faster than the anchor; [4] and [5] inside the band by both, [4] the most
+    // accurate of the three in-band candidates [1] [4] [5], and not the first nor the last of them.
     const std::vector<ch::Scored> scored = {
         candidate(0.10, 1.0, 1.0),
         candidate(0.05, std::exp(0.50), std::exp(0.01)),
         candidate(0.01, std::exp(0.01), std::exp(0.50)),
+        candidate(0.04, std::exp(-0.20), std::exp(-0.20)),
+        candidate(0.03, std::exp(0.02), std::exp(0.02)),
+        candidate(0.06, std::exp(0.02), std::exp(0.02)),
     };
     check(
         ch::resolve_within_resolution(scored, {0, 1}, 0, kBand) == 1,
@@ -1661,15 +1668,42 @@ void test_resolution_step() {
     check(ch::resolve_within_resolution(scored, {0, 2}, 0, kBand) == 0,
           "resolution step: a candidate outside the band by the decision's seconds loses although "
           "the board's seconds put it inside");
-    check(ch::resolve_within_resolution(scored, {0, 1, 2}, 0, kBand) == 1,
-          "resolution step: among the candidates inside the band the winner is the most accurate, "
-          "and the outside one never is");
-    check(ch::resolve_within_resolution(scored, {0, 1, 2}, 0, 0.0) == 0,
-          "resolution step: a resolution of 0 returns the anchor");
+    check(ch::resolve_within_resolution(scored, {0, 1, 2, 4, 5}, 0, kBand) == 4,
+          "resolution step: among the candidates inside the band the winner is the one with the "
+          "lowest KLD (not the first, not the last), and the outside one never is");
+    check(ch::resolve_within_resolution(scored, {0, 1, 2, 3}, 0, 0.0) == 0,
+          "resolution step: a resolution of 0 returns the anchor although a candidate is both more "
+          "accurate and faster");
     std::vector<ch::Scored> unpriced = scored;
     unpriced[1].decision_seconds     = 0;
     check(ch::resolve_within_resolution(unpriced, {0, 1}, 0, kBand) == 0,
           "resolution step: a candidate without a decision price is not eligible");
+    // A candidate exactly at the edge of the band is inside it: the edge is the logarithm of the
+    // time ratio, kWorthTie above the resolution (the rule's own slack), built to the last bit.
+    const double edge = std::log(2.0);
+    double band_edge  = edge - ch::kWorthTie;
+    for (int i = 0; i < 8 && band_edge + ch::kWorthTie < edge; ++i) {
+        band_edge = std::nextafter(band_edge, 1.0);
+    }
+    for (int i = 0; i < 8 && band_edge + ch::kWorthTie > edge; ++i) {
+        band_edge = std::nextafter(band_edge, 0.0);
+    }
+    check(band_edge + ch::kWorthTie == edge, "resolution step: the band edge was built exactly");
+    const std::vector<ch::Scored> at_edge = {
+        candidate(0.10, 1.0, 1.0), candidate(0.05, 2.0, 2.0), // exactly at the edge
+        candidate(0.05, 2.0 * (1 + 1e-6), 2.0 * (1 + 1e-6)),  // a hair beyond it
+    };
+    check(ch::resolve_within_resolution(at_edge, {0, 1}, 0, band_edge) == 1,
+          "resolution step: a candidate exactly at the band edge is inside the band");
+    check(ch::resolve_within_resolution(at_edge, {0, 2}, 0, band_edge) == 0,
+          "resolution step: a candidate a hair beyond the band edge is outside it");
+    // An anchor without a decision price (0 or not a number) has no band: it stays the pick.
+    for (const double no_price : {0.0, std::nan("")}) {
+        std::vector<ch::Scored> no_anchor = scored;
+        no_anchor[0].decision_seconds     = no_price;
+        check(ch::resolve_within_resolution(no_anchor, {0, 1, 3, 4}, 0, kBand) == 0,
+              "resolution step: an anchor without a decision price stays the pick");
+    }
 }
 
 // One price for a quantization whichever facts carry it (product::quant_option_of): a hub row's

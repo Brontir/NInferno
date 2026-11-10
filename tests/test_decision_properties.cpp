@@ -19,6 +19,9 @@
 //       (generic_gemm.cpp, asked by q8_prefill_a8 under the prefill scope, not by select_route) and
 //       the route the W4A8 path executes (w4a8_executed_route). Every variant moves global_bytes
 //       (the cache slot), so a gate that read it would fail under several variant names at once.
+//       Decisions only: a non-fact that scales every route's price alike (the ordinal or the TDP
+//       as a common factor) flips no decision and is invisible here; one that scales some routes
+//       and not others is caught.
 //   P6  clock invariance over every row: the clocks the driver reports (a factory overclock, a
 //       vendor's lower boost, none at all) move no route of a board the table knows
 //       (test_selector_golden.cpp run_clock_invariance does this for the golden boards only).
@@ -79,10 +82,10 @@ struct Known {
     // as a window [min_share, max_share]. A share, not an absolute count, so that a table with
     // more rows does not trip it by size alone; but it is a RECORDED baseline, not a derived bound:
     // the share this test measured on the table of the day, max_share rounded up and min_share
-    // rounded down to a tenth of a percent (a hundredth for the 0.09 % group). A change of the
-    // board table moves the share (a row like an existing one moves it by up to a few tenths), and
-    // the window must then be re-recorded; the lower bound makes an improvement of the law do the
-    // same instead of passing silently.
+    // rounded down to a tenth of a percent (min_share to a hundredth for the 0.09 % group). A
+    // change of the board table moves the share (a row like an existing one moves it by up to a few
+    // tenths), and the window must then be re-recorded; the lower bound makes an improvement of the
+    // law do the same instead of passing silently.
     double min_share;
     double max_share;
     // The worst price ratio the group covers, as a recorded window [min_ratio, max_ratio] (the
@@ -108,7 +111,10 @@ struct Known {
 // Which charge explains which group below comes from experiments on a scratch copy of the law
 // (each charge removed alone and together; made by the review of this PR, not run by this test):
 // with all three removed 0.83 % of the SM-scale cases still fail (register MMA only, worst x1.336)
-// against 33.5 % today, and the cause of that residual is not known.
+// against 33.5 % today. The cause of that residual is in the plan comment of issue #690
+// (https://github.com/Brontir/NInferno/issues/690#issuecomment-6773348851): the split-K reduce is
+// priced under the per-CTA fill, and the shared activation read loses a co-resident CTA when the
+// busiest SM's CTA count grows.
 //
 // Each failing case is sorted by what can explain it. "within the SM ratio": the price rose by no
 // more than sms' / sms, the most q x sms (the bytes charged to the busiest SM) can grow. "beyond
@@ -127,8 +133,8 @@ constexpr Known kKnown[] = {
      "three removed to 0.99 % (issue #690)",
      0.350, 0.351, 0, 0},
     {"P1 sms x1.25", "rmma beyond the SM ratio",
-     "charge (c) on top of (a): removing (c) alone leaves 545 of the 675 cases, worst x1.336 "
-     "(issue #690)",
+     "charge (c) with (a): removing (c) alone leaves 20 of the 675 cases (x1.336), removing (a) "
+     "alone grows the group to 13 156 (x1.90): the two charges change together (issue #690)",
      0.0008, 0.001, 1.42, 1.43},
     {"P1 sms x1.25", "staged within the SM ratio",
      "charge (a): removed alone the group disappears (issue #690)", 0.435, 0.436, 0, 0},
@@ -439,6 +445,12 @@ void property_price_monotone(const std::vector<Row>& rows) {
     if (sms_cases_priced == 0) {
         note("vacuous", "P1 priced no route", "(all rows)", "no route was priced on the SM scale");
     }
+    if (routes_skipped_unpriced != 0) {
+        // A route priced on the stock board and not on a scaled one is a case P1 no longer
+        // verifies for that route (a fact-dependent admission, say): a failure, not a skip.
+        note("vacuous", "P1 route priced on the stock board only", "(all rows)",
+             std::to_string(routes_skipped_unpriced) + " routes");
+    }
 }
 
 // ---- P3: fields the selector does not read move nothing
@@ -647,7 +659,10 @@ int main() {
                 std::cout << '\n';
                 if (share > known->max_share ||
                     (ratio_checked && g.worst > known->max_ratio * (1.0 + kResolution))) {
-                    std::cout << "    WAIVER EXCEEDED\n";
+                    std::cout << "    WAIVER EXCEEDED: the law got worse, or the board table "
+                                 "changed; if only core/data/gpu_facts.json changed, re-record the "
+                                 "window from the share printed above, otherwise fix the law "
+                                 "(issue #690)\n";
                     ++unexpected;
                 } else if (share < known->min_share ||
                            (ratio_checked && g.worst < known->min_ratio)) {
