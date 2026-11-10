@@ -3212,12 +3212,12 @@ std::uint64_t route_demotion_count() noexcept {
 }
 
 // Volta prefill (generic_volta_cutlass.cu): a tiled-route call of the prefill band (17 tokens on,
-// kPrefillMinTokens) decodes its weight once and multiplies on CUTLASS's sm_70 GEMM. The tiled
+// kPrefillBandMinTokens) decodes its weight once and multiplies on CUTLASS's sm_70 GEMM. The tiled
 // kernel (HMMA m8n8k4 on sm_70, generic_tiled.cuh) decodes a 128-row slice of the weight in each
 // CTA, once per 128-token block: ceil(N / 128) CTAs a block, in waves of the SMs, each wave as long
-// as one CTA's decode of 128 x K weights (0.37 .. 0.47 ms at K = 4096 on the V100). The decoded copy
-// spreads the same decode over every SM, then reads two FP16 bytes a weight into the GEMM, so it
-// costs in proportion to N and wins wherever the tile's grid leaves SMs idle or takes a second
+// as one CTA's decode of 128 x K weights (0.37 .. 0.47 ms at K = 4096 on the V100). The decoded
+// copy spreads the same decode over every SM, then reads two FP16 bytes a weight into the GEMM, so
+// it costs in proportion to N and wins wherever the tile's grid leaves SMs idle or takes a second
 // wave. V100 (ninferno_linear_bench, T = 32..240, the tile's time against the copy's): Q4_K 24576 x
 // 4096 (192 CTAs: 2.4 waves) 1.36..2.29 ms against 1.20..1.40, 4096 x 12288 (32 CTAs) 1.07..1.31
 // against 0.82..0.88, 4096 x 4096 0.36..0.44 against 0.27..0.28, Q5_K 4096 x 12288 1.13..1.37
@@ -3226,10 +3226,10 @@ std::uint64_t route_demotion_count() noexcept {
 // (0.82..0.93 against 0.52..0.54). A Qwen3.5 9B layer's four linears: 14 % less time at T = 64,
 // 35 % at T = 192.
 // The copy's narrowest margin above is 1.13 (24576 x 4096 below 129 tokens) at the V100's 870
-// GB/s, and its time is its bytes over the DRAM rate while the tile's is its waves on the SMs (80 on
-// every Volta part): a board under 870 / 1.13 GB/s (the Titan V's 653) or of unknown bandwidth
+// GB/s, and its time is its bytes over the DRAM rate while the tile's is its waves on the SMs (80
+// on every Volta part): a board under 870 / 1.13 GB/s (the Titan V's 653) or of unknown bandwidth
 // keeps the tile below kVoltaTileMaxTokens, where two token blocks already decode the weight twice.
-constexpr std::int32_t kVoltaCutlassMinTokens = 17;
+constexpr std::int32_t kVoltaCutlassMinTokens = kPrefillBandMinTokens;
 constexpr std::int32_t kVoltaTileMaxTokens    = 256;
 constexpr double kVoltaCopyMinDramGbps        = 870.0 / 1.13;
 

@@ -563,7 +563,8 @@ int route_tune_main(int argc, char** argv) {
                     width_winners.push_back({t, pick});
                 }
                 for (std::size_t i = 0; i < width_winners.size(); ++i) {
-                    const std::int32_t lo = i == 0 ? 17 : width_winners[i].first;
+                    const std::int32_t lo =
+                        i == 0 ? generic::kPrefillBandMinTokens : width_winners[i].first;
                     const std::int32_t hi =
                         i + 1 < width_winners.size() ? width_winners[i + 1].first - 1 : 1 << 24;
                     const generic::Route r = width_winners[i].second;

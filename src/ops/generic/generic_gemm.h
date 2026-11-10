@@ -13,6 +13,7 @@
 #include "core/weight.h"
 #include "ninferno/ops/linear.h"
 #include "ninferno/option_enums.h"
+#include "ops/route_pins.h"
 
 #include <cuda_runtime.h>
 
@@ -48,8 +49,9 @@ inline constexpr std::int32_t kW4a8WideMinTokens    = 128;
 inline constexpr std::int32_t kPdlPrefetchMaxTokens = 16;
 // The first width of the prefill band: one past the widest speculative verify (16 tokens), where a
 // call takes the prefill profile's one route per problem and the speed profile's batched-verify
-// rules end (select_route, heuristic_route, the Volta routes).
-inline constexpr std::int32_t kPrefillBandMinTokens = 17;
+// rules end (select_route, heuristic_route, the Volta routes). The one definition is
+// ops/route_pins.h's (the pins' band starts here too), which is below this header.
+inline constexpr std::int32_t kPrefillBandMinTokens = ops::kPrefillPinMinTokens;
 
 enum class Epilogue : std::uint8_t {
     Store,       // out = W x (GemmArgs::relu2: relu(W x)^2, one rounding)
@@ -432,7 +434,7 @@ inline constexpr std::int32_t kMmqMinTokens = 5;
 // int8: the Q4 SwiGLU 2456 us a chunk against 1385, Q5 down 1219 against 635, the Q5 5120-row
 // linear 825 against 290. They take the int8 tiers on the cards where int8 activations pay
 // (half-rate fp32-accumulate HMMA: GeForce, Ada/Ampere inference parts), not on sm80/90/100.
-inline constexpr std::int32_t kQ8PrefillA8Tokens = 17;
+inline constexpr std::int32_t kQ8PrefillA8Tokens = kPrefillBandMinTokens;
 [[nodiscard]] bool prefill_a8_format(QType qtype);
 // The policy a prefill-width call of this format runs under: the artifact's own, except that
 // where int8 activations pay, A8 for a Q4/Q5/Q6 G64 weight the artifact records as A16Only
