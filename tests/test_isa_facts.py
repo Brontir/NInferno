@@ -13,8 +13,10 @@ import io
 import json
 import os
 import re
+import shutil
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 spec = importlib.util.spec_from_file_location(
@@ -54,7 +56,7 @@ nvcc 13.4.92
 shape hmma_16816_f32_bf16 4096
 fact mma_cycles_per_sm 8.012 clk
 fact mma_cycles_per_partition 32.048 clk
-fact tensor_flops_per_sm_clock 511.2 flop
+fact tensor_flops_per_sm_clock 511.233 flop
 fact mma_cycles_per_sm_w4 8.3 clk
 fact mma_cycles_per_sm_w8 8.1 clk
 fact mma_cycles_per_sm_w16 8.0 clk
@@ -76,7 +78,36 @@ fact int32_cycles_per_warp_instruction 2.01 clk
         ("hfma2", 5.0), ("ffma", 4.1), ("shfl", 24.0), ("cvt_i2f", 4.5), ("cvt_f2i", 12.0),
         ("cvt_f32_to_f16", 6.5), ("cvt_f16_to_f32", 4.5))) + \
     "note the SM clock ranged 2400..2535 MHz over the L2 / DRAM chases\nselfcheck ok\nend\n" + \
-    "note compute processes on the probe's GPU after the run: 0\n"
+    "note compute processes on the probe's GPU before the run: 0\n" + \
+    "note compute processes on the probe's GPU after the run: 0\n" + \
+    "note compute processes on the probe's GPU during the run besides the probe (nvidia-smi " + \
+    "every 200 ms): 0\n"
+DURING_IDLE = ("note compute processes on the probe's GPU during the run besides the probe "
+               "(nvidia-smi every 200 ms): 0\n")
+# The lines `run` writes around the probe's own output (its header lines before, its process
+# notes after): what a faked run's probe binary does not print.
+RUN_LINES = ("source_sha256 ", "arch ", "sass_per_mma ", "note compute processes")
+
+
+def during_of(samples):
+    """nvidia-smi --query-compute-apps=timestamp,gpu_bus_id,pid -lms 200 output: one sample per
+    list, each entry a pid on the GPU at 01 (or "<bus>:<pid>" on another one)."""
+    lines = []
+    for i, pids in enumerate(samples):
+        for p in pids:
+            bus, pid = p.split(":") if ":" in p else ("01", p)
+            lines.append(f"2026/11/10 12:00:{i // 5:02d}.{i % 5 * 200:03d}, 00000000:{bus}:00.0, "
+                         f"{pid}")
+    return "".join(line + "\n" for line in lines)
+
+
+# The SASS of isa_probe_mma_unit for sm_89: one HMMA.16816 is one m16n8k16.
+SASS_89 = """
+\t\tFunction : _Z18isa_probe_mma_unitPfjj
+        /*0000*/                   IMAD.MOV.U32 R1, RZ, RZ, c[0x0][0x28] ;
+        /*0100*/                   HMMA.16816.F32.BF16 R4, R12, R14, R4 ;
+        /*0200*/                   EXIT ;
+"""
 
 
 def earlier_run(version):
@@ -126,7 +157,9 @@ class IsaFacts(unittest.TestCase):
         self.assertEqual((row["sass_per_mma"], row["mem_clock_khz"]), (1, 10501000))
         self.assertEqual(row["notes"],
                          ["the SM clock ranged 2400..2535 MHz over the L2 / DRAM chases",
-                          "compute processes on the probe's GPU after the run: 0"])
+                          "compute processes on the probe's GPU before the run: 0",
+                          "compute processes on the probe's GPU after the run: 0",
+                          DURING_IDLE[5:-1]])
         self.assertAlmostEqual(row["facts"]["dram_latency_w8"]["value"], 584.0)
         # The tensor rate is derived from the parser's flops table over the measured cycles, not
         # read from the probe: a Volta run that printed 512 for m8n8k4 (four 8x8x4 products a
@@ -136,6 +169,8 @@ class IsaFacts(unittest.TestCase):
         volta = SAMPLE.replace("shape hmma_16816_f32_bf16 4096", "shape hmma_884_f32_f16 512") \
             .replace("cc 89", "cc 70").replace("fact mma_cycles_per_sm 8.012 clk",
                                                "fact mma_cycles_per_sm 2.014 clk") \
+            .replace("fact mma_cycles_per_partition 32.048", "fact mma_cycles_per_partition 8.056") \
+            .replace("fact tensor_flops_per_sm_clock 511.233", "fact tensor_flops_per_sm_clock 254.220") \
             .replace("arch sm_89", "arch sm_70").replace("sass_per_mma 1", "sass_per_mma 4")
         head, facts = ip.parse_run(volta)
         row = ip.row_of(head, facts, "isa_probe_70.txt")
@@ -218,8 +253,12 @@ class IsaFacts(unittest.TestCase):
         for line, bad, said in (
                 ("arch sm_89\n", "arch sm_80\n", "built for sm_80, not sm_89"),
                 ("sass_per_mma 1\n", "sass_per_mma 0\n", "no positive count"),
+                ("sass_per_mma 1\n", "sass_per_mma 2\n", "are not the 4096 flops"),
+                ("selfcheck ok\n", "selfcheck ok\nrefused the SASS of one x\n",
+                 "`run` refused this run: the SASS of one x"),
                 ("sass_per_mma 1\n", "sass_per_mma four\n", "no positive count"),
-                ("mem_clock_khz 10501000\n", "mem_clock_khz -1\n", "no positive count"),
+                ("mem_clock_khz 10501000\n", "mem_clock_khz -1\n", "mem_clock_khz is no count"),
+                ("mem_clock_khz 10501000\n", "mem_clock_khz fast\n", "mem_clock_khz is no count"),
                 ("source_sha256 " + ip.source_sha256() + "\n", "source_sha256 abc\n",
                  "odd source_sha256")):
             with self.assertRaises(ValueError, msg=bad) as e:
@@ -230,6 +269,217 @@ class IsaFacts(unittest.TestCase):
             ip.parse_run(blackwell)
         self.assertIn("built for sm_120, not sm_120a", str(e.exception))
         ip.parse_run(blackwell.replace("arch sm_120", "arch sm_120a"))
+        # A rated memory clock the device does not give (the attribute reads 0) is a note of
+        # the row, not a refusal of the run.
+        head, facts = ip.parse_run(SAMPLE.replace("mem_clock_khz 10501000\n", "mem_clock_khz 0\n"))
+        row = ip.row_of(head, facts, "isa_probe_89.txt")
+        self.assertNotIn("mem_clock_khz", row)
+        self.assertIn(ip.MEM_CLOCK_NOT_GIVEN, row["notes"])
+
+    def test_a_row_is_a_run_shown_idle(self):
+        # From probe 17 a row is a run whose notes show its GPU idle before, during and after,
+        # wherever the file came from: a refused run's output merged by hand is still no row.
+        busy = SAMPLE.replace(DURING_IDLE, DURING_IDLE.replace(": 0\n", ": 1 (pid 4242)\n"))
+        before = "note compute processes on the probe's GPU before the run: 0\n"
+        after = "note compute processes on the probe's GPU after the run: 0\n"
+        unread = "note compute processes on the probe's GPU during the run: not read (x)\n"
+        waived = "note " + ip.WAIVED + "\n"
+        for text, said in (
+                (busy, "another compute process on the probe's GPU during the run: 1"),
+                (SAMPLE.replace(before, before.replace(": 0", ": 2 (pid 1, 2)")),
+                 "before the run: 2"),
+                (SAMPLE.replace(after, after.replace(": 0", ": 1 (pid 9)")), "after the run: 1"),
+                (SAMPLE.replace(before, ""), "no note of the compute processes before"),
+                (SAMPLE.replace(DURING_IDLE, ""), "no note of the compute processes during"),
+                (SAMPLE + after, "noted twice"),
+                (SAMPLE.replace(DURING_IDLE, unread), "--idle-unchecked` accepts an unread list"),
+                (SAMPLE + waived, "noted as waived, yet every process list was read"),
+                (busy + waived, "another compute process"),
+                (SAMPLE.replace(before, before.replace(": 0", ": some")), "odd compute-process")):
+            with self.assertRaises(ValueError, msg=said) as e:
+                ip.parse_run(text)
+            self.assertIn(said, str(e.exception))
+        # A list not read is accepted with the waiver, and the row says so.
+        head, _ = ip.parse_run(SAMPLE.replace(DURING_IDLE, unread) + waived)
+        self.assertIn(ip.WAIVED, head["notes"])
+        anygpu = "note compute processes on any GPU (the probe's not known) after the run: 0\n"
+        ip.parse_run(SAMPLE.replace(after, anygpu) + waived)
+        with self.assertRaises(ValueError):
+            ip.parse_run(SAMPLE.replace(after, anygpu))
+        # A process on some GPU when the probe's is not known may be on the probe's: refused,
+        # with the waiver too.
+        with self.assertRaises(ValueError) as e:
+            ip.parse_run(SAMPLE.replace(after, anygpu.replace(": 0", ": 1 (pid 9)")) + waived)
+        self.assertIn("another compute process on any GPU", str(e.exception))
+
+    def test_during_list_without_the_probe_pid(self):
+        # In a container whose nvidia-smi prints host-namespace pids, the probe's own pid is not
+        # listed: one entry may be the probe (not read, waivable); two never are both the probe
+        # (another process seen, never waived).
+        bus = ip._bus("0000:01:00.0")
+        waived = ["compute processes on the probe's GPU before the run: 0",
+                  "compute processes on the probe's GPU after the run: 0", ip.WAIVED]
+
+        def refusal(samples):
+            note = ip._during_note([r.split(", ") for r in during_of(samples).splitlines()],
+                                   bus, "4321")
+            return ip.idle_refusal(waived + [note[5:]])
+        self.assertIsNone(refusal([["4242"]]))
+        self.assertIsNone(refusal([["[N/A]"]] * 3))
+        self.assertIsNone(refusal([]))
+        for samples in ([["4242", "5555"]], [["4242"], ["5555"]], [["[N/A]", "[N/A]"]],
+                        [["4321", "4242"]], [["4321", "[N/A]"]], [["[N/A]"], ["4242"]]):
+            self.assertIn("another compute process", refusal(samples) or "", samples)
+
+        # Two samples printed with one timestamp, or a pid listed twice in one sample, are one
+        # process: the probe alone stays idle, and one foreign pid stays not read.
+        def one_stamp(pids):
+            return [["2026/11/10 12:00:00.000", "00000000:01:00.0", p] for p in pids]
+
+        def note_of(rows, own="4321"):
+            return ip._during_note(rows, bus, own)
+        self.assertTrue(note_of(one_stamp(["4321"] * 5)).endswith(": 0"))
+        self.assertTrue(note_of(one_stamp(["4321", "4321"])).endswith(": 0"))
+        self.assertIn("not read", note_of(one_stamp(["4242"] * 5)))
+        # Unnamed rows cannot be told apart: two in one sample may be two processes.
+        self.assertIn("not read", note_of(one_stamp(["[N/A]"])))
+        self.assertIn(": 2 (pid 4242, [N/A];", note_of(one_stamp(["[N/A]", "[N/A]", "4242"])))
+        # A count other than 0 always names what it counted.
+        for rows in (one_stamp(["4321", "[N/A]", "[N/A]"]), one_stamp(["4321", "4242", "4242"])):
+            note = note_of(rows)
+            self.assertRegex(note, r": [1-9]\d* \(pid [^)]+\)$", rows)
+        # An earlier probe's run carries no such notes and owes none.
+        ip.parse_run(earlier_run(16))
+
+    def run_faked(self, d, *, before="", after="", during=None, probe_rc=0, mem_khz=None,
+                  waive=False, sass=SASS_89, no_bus=False):
+        """isa_probe.py run with nvcc, cuobjdump, nvidia-smi and the probe binary faked; the
+        exit code, the --out path and stderr."""
+        pid = 4321
+        if during is None:
+            during = during_of([[str(pid)]] * 20)
+        lines = [l for l in SAMPLE.splitlines() if not l.startswith(RUN_LINES)]
+        probe_out = "\n".join(lines) + "\n"
+        if not no_bus:
+            probe_out = probe_out.replace(
+                "nvcc 13.4.92", "nvcc 13.4.92\nnote device 0 is the GPU at PCI 0000:01:00.0")
+        if mem_khz is not None:
+            probe_out = probe_out.replace("mem_clock_khz 10501000", f"mem_clock_khz {mem_khz}")
+        if probe_rc:
+            probe_out = probe_out.replace("selfcheck ok", "selfcheck FAIL tensor rate")
+        apps = iter((before, after))
+
+        class Proc:
+            def __init__(self, text, rc, pid):
+                self.text, self.returncode, self.pid = text, rc, pid
+
+            def terminate(self):
+                pass
+
+            def communicate(self):
+                return self.text, None
+
+        def run(cmd, **kw):
+            exe = os.path.basename(cmd[0])
+            if exe == "nvcc":
+                return ip.subprocess.CompletedProcess(cmd, 0)
+            if exe == "cuobjdump":
+                return ip.subprocess.CompletedProcess(cmd, 0, sass, "")
+            self.assertEqual((exe, cmd[1]), ("nvidia-smi", "--query-compute-apps=gpu_bus_id,pid"))
+            return ip.subprocess.CompletedProcess(cmd, 0, next(apps), "")
+
+        def popen(cmd, **kw):
+            if os.path.basename(cmd[0]) != "nvidia-smi":
+                return Proc(probe_out, probe_rc, pid)
+            if cmd[1].startswith("--query-gpu"):
+                return Proc("00000000:01:00.0, P0, 2520, 10501\n" * 20, 0, 1)
+            self.assertEqual(cmd[1], "--query-compute-apps=timestamp,gpu_bus_id,pid")
+            return Proc(during, 0, 2)
+
+        out = os.path.join(d, "isa_probe_89_1.txt")
+        args = argparse.Namespace(arch="89", nvcc="nvcc", cuobjdump="cuobjdump", out=out,
+                                  idle_unchecked=waive)
+        err = io.StringIO()
+        with mock.patch.object(ip.subprocess, "run", run), \
+                mock.patch.object(ip.subprocess, "Popen", popen), \
+                contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            rc = ip.cmd_run(args)
+        return rc, out, err.getvalue()
+
+    def test_run_writes_a_refused_run_under_another_name(self):
+        # `run` writes --out only for a run that is a row; a refused run's output goes to
+        # <out>.refused, which merge does not take, so "merge the first run" cannot merge it.
+        other = during_of([["4321", "4242", "02:5555"]] * 5)
+        na = during_of([["[N/A]"]] * 5)
+        for kw, rc_want, said in (
+                ({}, 0, None),
+                ({"during": other}, 3, "during the run: 1 (pid 4242)"),
+                ({"before": "00000000:01:00.0, 999\n"}, 3, "before the run: 1 (pid 999)"),
+                ({"after": "00000000:01:00.0, 999\n"}, 3, "after the run: 1 (pid 999)"),
+                ({"probe_rc": 3}, 3, "the probe exited 3"),
+                # A process on another GPU is not the probe's GPU's.
+                ({"before": "00000000:02:00.0, 999\n"}, 0, None),
+                # During the run the probe is one of the listed processes. A list without its own
+                # pid that shows nothing, or one entry throughout (a foreign-namespace pid, or
+                # [N/A]: maybe the probe), was not read: refused, accepted with the waiver.
+                ({"during": ""}, 3, "no process listed"),
+                ({"during": na}, 3, "one process listed throughout, pid [N/A]"),
+                ({"during": during_of([["4242"]] * 5)}, 3, "one process listed throughout"),
+                ({"during": "", "waive": True}, 0, None),
+                ({"during": na, "waive": True}, 0, None),
+                ({"during": during_of([["4242"]] * 5), "waive": True}, 0, None),
+                # Two entries where the probe can be at most one, or an entry beside the probe's
+                # own pid, are another process seen: refused, waiver or not.
+                ({"during": other, "waive": True}, 3, "during the run: 1 (pid 4242)"),
+                ({"during": during_of([["4321", "[N/A]"]]), "waive": True}, 3,
+                 "during the run: 1 (pid [N/A])"),
+                ({"during": during_of([["4242", "5555"]] * 3), "waive": True}, 3,
+                 "1 (pid 4242, 5555; the probe's own pid 4321 not among them, up to 2"),
+                ({"during": during_of([["4242"], ["5555"]]), "waive": True}, 3,
+                 "1 (pid 4242, 5555; the probe's own pid 4321 not among them, up to 1"),
+                ({"during": during_of([["[N/A]", "[N/A]"]] * 3), "waive": True}, 3,
+                 "1 (pid [N/A]; the probe's own pid 4321 not among them, up to 2"),
+                # The probe's GPU not known (no bus id printed): a process on any GPU may be on
+                # the probe's, refused; none anywhere is a list that cannot say which GPU, waived.
+                ({"no_bus": True, "before": "00000000:02:00.0, 999\n", "waive": True}, 3,
+                 "on any GPU (the probe's not known) before the run: 1 (pid 999)"),
+                ({"no_bus": True}, 3, "the probe's GPU not known"),
+                ({"no_bus": True, "waive": True}, 0, None),
+                ({"mem_khz": 0}, 0, None),
+                # The SASS of one mma.sync not the shape's flops (an opcode of no known shape):
+                # refused by `run`, and the file says so, so a copy under the row's name is too.
+                ({"sass": SASS_89.replace("HMMA.16816.F32.BF16", "HMMA.F32.BF16")}, 3,
+                 "is not its 4096 flops")):
+            with tempfile.TemporaryDirectory() as d:
+                rc, out, err = self.run_faked(d, **kw)
+                self.assertEqual(rc, rc_want, (kw, err))
+                refused = out + ip.REFUSED
+                if rc_want == 0:
+                    self.assertTrue(os.path.exists(out), kw)
+                    self.assertFalse(os.path.exists(refused), kw)
+                    with open(out) as f:
+                        text = f.read()
+                    head, facts = ip.parse_run(text)
+                    self.assertEqual(ip.WAIVED in head["notes"], kw.get("waive", False), kw)
+                    if kw.get("mem_khz") == 0:
+                        self.assertIn(ip.MEM_CLOCK_NOT_GIVEN,
+                                      ip.row_of(head, facts, "x")["notes"])
+                    continue
+                self.assertFalse(os.path.exists(out), kw)
+                self.assertTrue(os.path.exists(refused), kw)
+                self.assertIn(said, err, kw)
+                self.assertIn("no row to merge", err, kw)
+                inputs = os.path.join(d, "inputs")
+                os.mkdir(inputs)
+                for path in (refused, out):
+                    if path == out:
+                        shutil.copy(refused, out)
+                    args = argparse.Namespace(input=path, inputs=inputs,
+                                              table=os.path.join(d, "t.json"))
+                    with contextlib.redirect_stderr(io.StringIO()), \
+                            contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(ip.cmd_merge(args), 1, (kw, path))
+                    self.assertEqual(os.listdir(inputs), [], kw)
 
     def test_sass_per_mma(self):
         # One mma.sync of the build is the MMAs of isa_probe_mma_unit, read with sass_counts'
@@ -344,6 +594,48 @@ class IsaFacts(unittest.TestCase):
         with self.assertRaises(ValueError):
             ip.parse_run(SAMPLE.replace("fact mma_cycles_per_sm 8.012 clk", "fact mma_cycles_per_sm"))
 
+    def test_facts_inside_the_bounds_the_architecture_and_the_probe_allow(self):
+        def with_mma(sm, partition=None, rate=None, latency=None, **lines):
+            """SAMPLE with mma_cycles_per_sm `sm` and what the probe derives from it (consistent
+            unless given), other fact lines replaced by `lines` (name -> printed value)."""
+            text = SAMPLE
+            for name, value in (("mma_cycles_per_sm", sm),
+                                ("mma_cycles_per_partition", partition or f"{4 * float(sm):.3f}"),
+                                ("tensor_flops_per_sm_clock", rate or f"{4096 / float(sm):.3f}"),
+                                ("mma_dependent_latency",
+                                 latency or f"{max(33.1, 2 * float(sm)):.3f}")) + tuple(lines.items()):
+                text = re.sub(rf"^fact {name} \S+ ", f"fact {name} {value} ", text, flags=re.M)
+            return text
+
+        def refused(text, why):
+            with self.assertRaises(ValueError) as e:
+                ip.parse_run(text)
+            self.assertIn(why, str(e.exception))
+
+        # A positive finite but extreme mma_cycles_per_sm is refused, not derived into an
+        # infinite or zero tensor_flops_per_sm_clock (4096 / 1e-320 overflows, / 1e308 is 0.0).
+        for sm in ("1e-320", "1e308", "1.999", "256.001"):
+            refused(with_mma(sm, partition="32.048", rate="511.233", latency="33.1"),
+                    "outside the probe's 16..2048")
+        # The edges of the probe's self-check range (isa_probe.cu): 2048 and 16 flop a clock.
+        for sm, rate in (("2.000", 2048.0), ("256.000", 16.0)):
+            row = ip.row_of(*ip.parse_run(with_mma(sm)), "x")
+            self.assertEqual(row["facts"]["tensor_flops_per_sm_clock"]["value"], rate)
+        # Fewer warps run the same MMAs: none beats the pipe's 2048 flop a clock.
+        refused(with_mma("8.012", mma_cycles_per_sm_w4="1.999"), "above the pipe's 2048")
+        ip.parse_run(with_mma("8.012", mma_cycles_per_sm_w4="2.000"))
+        # What the probe derives from mma_cycles_per_sm agrees with it to the printed places.
+        refused(with_mma("8.012", partition="32.051"), "is not 4 x mma_cycles_per_sm")
+        ip.parse_run(with_mma("8.012", partition="32.050"))
+        refused(with_mma("8.012", rate="511.300"), "is not the shape line's 4096 flops")
+        ip.parse_run(with_mma("8.012", rate="511.265"))
+        refused(with_mma("8.012", latency="16.022"), "under half the issue interval")
+        ip.parse_run(with_mma("8.012", latency="16.023"))
+        # A dependent latency is at least one clock.
+        refused(with_mma("8.012", lat_ffma="0.999"), "lat_ffma 0.999 is under one clock")
+        refused(with_mma("8.012", l1_latency_w1="0.5"), "l1_latency_w1 0.5 is under one clock")
+        ip.parse_run(with_mma("8.012", lat_ffma="1.000"))
+
     def test_a_run_owes_the_facts_of_its_probe_version(self):
         # A run carries every fact its own probe version prints and none a later version added:
         # an earlier probe's saved run still parses without the later facts, the checked-in
@@ -427,7 +719,10 @@ class IsaFacts(unittest.TestCase):
             if probe >= 17:
                 self.assertEqual(row["tool"]["arch"], f"sm_{key}", key)
                 self.assertRegex(row["tool"]["source_sha256"], ip.SHA256, key)
-                self.assertGreater(row["mem_clock_khz"], 0, key)
+                if "mem_clock_khz" in row:
+                    self.assertGreater(row["mem_clock_khz"], 0, key)
+                else:
+                    self.assertIn(ip.MEM_CLOCK_NOT_GIVEN, row["notes"], key)
                 token = row["mma_shape"].split("_")[1]
                 m, n, k = SC.MMA_SHAPES[token]
                 self.assertEqual(row["sass_per_mma"] * 2 * m * n * k, row["mma_flops"],

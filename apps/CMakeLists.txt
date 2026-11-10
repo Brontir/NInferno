@@ -27,6 +27,11 @@ add_executable(ninferno-gemma4 gemma4/main.cpp)
 ninferno_internal_includes(ninferno-gemma4)
 target_link_libraries(ninferno-gemma4 PRIVATE ninferno_gemma4 ninferno_convert)
 
+# What the engine sees of each GPU as JSON, for tools/audit/facts_vs_driver.py (#612 step 2).
+add_executable(ninferno-facts-probe facts/main.cpp)
+ninferno_internal_includes(ninferno-facts-probe)
+target_link_libraries(ninferno-facts-probe PRIVATE ninferno_core ninferno::json ninferno::cudart)
+
 add_executable(ninferno-dense dense/main.cpp)
 ninferno_internal_includes(ninferno-dense)
 target_link_libraries(ninferno-dense PRIVATE ninferno_dense ninferno_convert)
