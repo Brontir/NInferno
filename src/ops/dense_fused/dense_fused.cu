@@ -457,6 +457,7 @@ std::size_t span_bytes(const Tensor& t) {
 
 } // namespace
 
+// FUSION-SITE: dense_qkv_prepare
 void dense_qkv_prepare(const DenseQkvPrepare& a, cudaStream_t stream) {
     constexpr const char* op = "dense_qkv_prepare";
     require(a.positions.dtype == DType::I32 && a.positions.ne[1] == 1 && a.positions.ne[2] == 1 &&
@@ -628,6 +629,7 @@ void dense_qkv_prepare(const DenseQkvPrepare& a, cudaStream_t stream) {
     CUDA_CHECK(cudaGetLastError());
 }
 
+// FUSION-SITE: residual_norm
 void residual_norm(const ResidualNorm& a, cudaStream_t stream) {
     constexpr const char* op  = "residual_norm";
     const std::int32_t width  = a.x.ne[0];

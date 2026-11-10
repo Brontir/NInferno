@@ -819,6 +819,7 @@ void launch_prepare(const PrepareCall& c, const Tensor& positions, cudaStream_t 
 
 } // namespace
 
+// FUSION-SITE: gemma4_qkv_prepare
 void gemma4_qkv_prepare(const Tensor& q_src, const Tensor& k_src, const Tensor& v_src,
                         std::int32_t head_dim, const Tensor& q_weight, const Tensor& k_weight,
                         float eps, const Tensor& positions, float theta, std::int32_t rotary_pairs,

@@ -41,6 +41,7 @@ bool same_parent(const ProjectionSlice& a, const ProjectionSlice& b) {
 
 // Runs the projection: consecutive slices of one parent become one call; each call's rows are
 // spread over the outputs they intersect.
+// FUSION-SITE: vec_shared_quantize
 void project(const Tensor& x_matrix, const SegmentedProjectionWeights& w,
              std::span<const ProjectionOutput> outputs, WorkspaceArena& workspace,
              cudaStream_t stream) {
@@ -242,6 +243,7 @@ segmented_swiglu_pair_workspace_capacity_bytes(const SegmentedProjectionWeights&
     return bytes;
 }
 
+// FUSION-SITE: mmq_gated_pair
 bool segmented_swiglu_pair(const Tensor& x, const SegmentedProjectionWeights& weights, bool gelu,
                            Tensor& out, WorkspaceArena& workspace, cudaStream_t stream) {
     const std::int32_t half = weights.rows() / 2;

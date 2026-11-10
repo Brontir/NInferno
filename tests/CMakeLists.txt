@@ -63,6 +63,12 @@ add_test(NAME ninferno_registry_add_test
 add_test(NAME ninferno_kit_validate_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_kit_validate.py)
 
+# tools/audit/fusion_sites.json against the FUSION-SITE markers in the code: a fusion site missing from
+# the registry, or an entry whose site is gone, fails (#617 step A), no GPU.
+add_test(NAME ninferno_fusion_sites_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_fusion_sites.py)
+set_tests_properties(ninferno_fusion_sites_test PROPERTIES LABELS host)
+
 # tools/bench/selection_regret.py: the offline selection regret's statuses, holdouts and exit codes
 # (#301), no GPU.
 add_test(NAME ninferno_selection_regret_test

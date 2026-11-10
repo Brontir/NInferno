@@ -1226,6 +1226,7 @@ CombineArgs combine_args(const Workspace& ws, const Geometry& g, const MoeConfig
 }
 
 // The launch sequence.
+// FUSION-SITE: moe_select_plan
 void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue epilogue,
          Tensor& out, WorkspaceArena& workspace, cudaStream_t stream, const MoePlan& p,
          const Tensor* router_input = nullptr) {

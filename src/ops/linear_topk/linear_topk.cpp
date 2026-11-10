@@ -273,6 +273,7 @@ std::size_t linear_topk_workspace_capacity_bytes(QType qtype, std::int32_t head_
     return layout.peak_bytes();
 }
 
+// FUSION-SITE: lm_head_topk
 void linear_topk(const Tensor& hidden, const Weight& head, std::int32_t valid_rows,
                  Tensor& candidate_ids, Tensor& candidate_scores, WorkspaceArena& workspace,
                  cudaStream_t stream) {

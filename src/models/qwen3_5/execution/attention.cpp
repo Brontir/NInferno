@@ -36,6 +36,7 @@ constexpr std::int32_t kFusedTextQkNormRopeMaximumTokens = 256;
 constexpr float kFusedTextRopeTheta  = 1.0e7F;
 constexpr float kFusedTextRmsEpsilon = 1.0e-6F;
 
+// FUSION-SITE: qk_norm_rope
 bool fused_text_qk_norm_rope(const Tensor& positions, const RopeConfig& rope,
                              const AttentionConfig& attention, float rms_norm_eps,
                              std::int32_t tokens) {
