@@ -4,6 +4,7 @@
 #include "convert/dense.h"
 #include "convert/formats.h"
 #include "convert/numerics.h"
+#include "spec/dspine.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1340,6 +1341,11 @@ void drafter_q8(Model& model, Recipe& recipe, const char* model_type, const char
 
 Architecture architecture_of(const OJson& config) {
     const auto name = declared_architecture(config);
+    // A DSpine draft is a DFlash draft by name only: its code bridge and causal block would be
+    // dropped, and the artifact would draft wrong (docs/maintainer/dspine.md).
+    if (spec::is_dspine_config(config)) {
+        throw std::runtime_error("a DSpine drafter (code bridge) is not converted yet");
+    }
     if (name == "Gemma4ForCausalLM" || name == "Gemma4ForConditionalGeneration" ||
         name == "Gemma4UnifiedForConditionalGeneration") {
         return Architecture::Gemma4Text;
