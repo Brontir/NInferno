@@ -27,8 +27,11 @@ PROBE_TIMEOUT_S = 300
 
 
 def load_rows(path):
-    with open(path, encoding="utf-8") as f:
-        gpus = json.load(f)["gpus"]
+    with open(path, encoding="utf-8-sig") as f:  # a BOM (a Windows redirect) is accepted
+        document = json.load(f)
+    gpus = document.get("gpus") if isinstance(document, dict) else None
+    if not isinstance(gpus, list) or not gpus:
+        raise ValueError(f"gpu facts: {path} is not an object with a nonempty \"gpus\" list")
     rows = {}
     for g in gpus:
         facts_compare.check_row(g)
@@ -44,8 +47,8 @@ def run(probe_output, rows):
     facts_compare.validate_probe(probe_output)  # ValueError: exit 2, never a clean audit
     results = []
     for device in probe_output["devices"]:
-        q = device.get("queried", {})
-        row = rows.get(q.get("pci_device_id"))
+        q = device.get("queried", {})  # validate_probe: an object (an error device too)
+        row = None if "error" in device else rows.get(q.get("pci_device_id"))
         name = q.get("name", "?")
         if device.get("pci_bus_id"):
             name += f" [{device['pci_bus_id']}]"
@@ -65,13 +68,19 @@ def main(argv):
     ap.add_argument("--strict", action="store_true",
                     help="exit 1 when a field is unverified (the driver gave no value)")
     args = ap.parse_args(argv)
+    for stream in (sys.stdout, sys.stderr):
+        # A device name outside the console's code page must not end the run with a traceback.
+        try:
+            stream.reconfigure(errors="backslashreplace")
+        except AttributeError:  # a captured stream without reconfigure
+            pass
     if bool(args.probe) == bool(args.probe_json):
         ap.error("give --probe or --probe-json, not both and not neither")
     if args.device is not None and not args.probe:
         ap.error("--device goes with --probe")
     try:
         if args.probe_json:
-            probe_output = json.loads(Path(args.probe_json).read_text(encoding="utf-8"))
+            probe_output = json.loads(Path(args.probe_json).read_text(encoding="utf-8-sig"))
         else:
             command = [args.probe] + (["--device", str(args.device)] if args.device is not None else [])
             try:
@@ -89,7 +98,9 @@ def main(argv):
         summary, text = run(probe_output, load_rows(args.facts))
         if args.json_out:
             Path(args.json_out).write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")
-    except (OSError, ValueError, KeyError, TypeError) as error:  # TypeError: a backstop
+    except (OSError, ValueError, KeyError, TypeError, ArithmeticError, RecursionError) as error:
+        # TypeError, KeyError: a backstop for a shape validate_probe does not name; ArithmeticError:
+        # a number too large for a float; RecursionError: deeply nested JSON
         print(f"facts_vs_driver: {error}", file=sys.stderr)
         return 2
     print(text)

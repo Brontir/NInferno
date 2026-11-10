@@ -8,6 +8,8 @@ A real recorded probe output goes to tests/data/facts_probe_recorded.json (see R
 """
 import copy
 import json
+import math
+import os
 import re
 import subprocess
 import sys
@@ -514,7 +516,9 @@ class Compare(unittest.TestCase):
     def test_variants_are_boards_that_differ_from_the_row(self):
         recorded = {i: r["variants"] for i, r in ROWS.items() if "variants" in r}
         self.assertEqual(recorded, {0x2D04: [{"vram_gib": 8}],
-                                    0x1F82: [{"gbps": 12.0, "boost_mhz": 1590}]})
+                                    0x1F82: [{"gbps": 12.0, "boost_mhz": 1590}],
+                                    0x2786: [{"gbps": 20.0}],
+                                    0x2503: [{"vram_gib": 8, "bus_bits": 128}]})
         row = ROWS[0x2D04]
         for bad in ([], {"vram_gib": 8}, [{}], [{"vram_gib": 16}], [{"vram_gib": 0}],
                     [{"vram_gib": "8"}], [{"sms": 30}], [{"vram_gib": True}]):
@@ -896,6 +900,316 @@ class RunningTheProbe(unittest.TestCase):
     def test_a_probe_that_prints_no_json_is_exit_2(self):
         done = subprocess.CompletedProcess([], 0, "not json", "")
         self.assertEqual(self.main_with(done)[0], 2)
+
+
+MACHINE_FACTS_CPP = (ROOT / "src" / "core" / "machine_facts.cpp").read_text(encoding="utf-8")
+
+
+def snap_to_grid(x):
+    """snap_to_fact_grid of machine_facts.cpp: x on the 2^(1/16) grid."""
+    return 2.0 ** (math.floor(16.0 * math.log2(x) + 0.5) / 16.0)
+
+
+def engine_expect(row, q):
+    """(source, driver_read, bus, memory clock) machine_facts stores for a row and the driver's
+    values: a transcription of the row branch of machine_facts.cpp, written here without
+    facts_compare, so a change of the rule in one place and not in the other fails."""
+    laptop = row["form"] == "laptop"
+    source, read = 1, False
+    bus, clock = row["bus_bits"], math.floor(row["gbps"] * 1e6 / 2.0 + 0.5)
+    if laptop:
+        source = 2
+        if not row.get("boost_min_mhz", 0) > 0:
+            read = True
+    if q["sms"] > 0 and q["sms"] != row["sms"]:
+        source = 2
+    whole = not laptop and (q["sms"] <= 0 or q["sms"] == row["sms"])
+    if whole and q["memory_bus_bits"] >= 32 and q["memory_bus_bits"] % 32 == 0 and \
+            q["memory_bus_bits"] != row["bus_bits"]:
+        source, read, bus = 2, True, q["memory_bus_bits"]
+    if whole and q["memory_clock_khz"] >= 100000 and q["memory_clock_khz"] * 1000 < clock * 978:
+        source, read = 2, True
+        clock = math.floor(snap_to_grid(q["memory_clock_khz"]) + 0.5)
+    return source, read, bus, clock
+
+
+def device_of_row(row, **driver):
+    """A device of the given row as the engine would store it for the driver's values (sms,
+    memory_bus_bits, memory_clock_khz, global_bytes, sm_clock_khz, major, minor)."""
+    d = device_4090()
+    cc = row["cc"]
+    l2 = int(row.get("l2_mib", 1) * MIB)
+    base = dict(pci_device_id=int(row["id"], 16), name="NVIDIA " + row["name"], chip=row["chip"],
+                major=cc // 10, minor=cc % 10, sms=row["sms"], l2_bytes=l2,
+                global_bytes=int(row["vram_gib"] * GIB * 0.99), memory_bus_bits=row["bus_bits"],
+                memory_clock_khz=int(row["gbps"] * 1e6 / 2) + 1000,
+                sm_clock_khz=row["boost_mhz"] * 1000, persisting_l2_max_bytes=l2 * 3 // 4)
+    base.update(driver)
+    d["queried"].update(base)
+    d["synthetic"].update(pci_device_id=base["pci_device_id"], chip=row["chip"],
+                          major=base["major"], minor=base["minor"], sms=base["sms"],
+                          persisting_l2_max_bytes=base["persisting_l2_max_bytes"])
+    laptop = row["form"] == "laptop"
+    ref = row.get("boost_min_mhz", 0) * 1000 or row["boost_mhz"] * 1000
+    alone = {"source": 2 if laptop else 1, "sku": row["name"], "reference_clock_khz": ref,
+             "memory_bus_bits": row["bus_bits"],
+             "memory_clock_khz": math.floor(row["gbps"] * 1e6 / 2.0 + 0.5),
+             "l2_mib": float(row.get("l2_mib", 0)), "mma_slow": row.get("mma_slow", False),
+             "driver_read": laptop and not row.get("boost_min_mhz", 0) > 0}
+    d["engine_row_facts"] = dict(alone)
+    source, read, bus, clock = engine_expect(row, d["queried"])
+    d["engine_table_facts"] = dict(alone, source=source, driver_read=read, memory_bus_bits=bus,
+                                   memory_clock_khz=clock)
+    return d
+
+
+def engine_statuses(d, row):
+    return {r["field"]: r["status"] for r in facts_compare.compare_device(d, row)
+            if r["field"].startswith("engine_")}
+
+
+class EngineRule(unittest.TestCase):
+    """The audit's expectation of the engine's stored facts is the engine's own rule: computed
+    from the driver's values, never from the audit's statuses."""
+
+    def test_the_thresholds_are_the_engines(self):
+        # machine_facts.cpp is read, so a threshold changed there and not in the audit fails here.
+        text = " ".join(MACHINE_FACTS_CPP.split())
+        bus = re.search(r"driver\.memory_bus_bits >= (\d+) && driver\.memory_bus_bits % (\d+) == 0",
+                        text)
+        self.assertIsNotNone(bus)
+        self.assertEqual({int(g) for g in bus.groups()}, {facts_compare.ENGINE_BUS_CHANNEL_BITS})
+        clock = re.search(r"driver\.memory_clock_khz >= (\d+) && std::int64_t\{driver\."
+                          r"memory_clock_khz\} \* 1000 < std::int64_t\{f\.memory_clock_khz\} "
+                          r"\* (\d+)\)", text)
+        self.assertIsNotNone(clock)
+        self.assertEqual(int(clock.group(1)), facts_compare.ENGINE_MIN_MEMORY_CLOCK_KHZ)
+        self.assertEqual(int(clock.group(2)), facts_compare.ENGINE_SLOWER_MEMORY_PER_MILLE)
+        self.assertEqual(facts_compare.ENGINE_SLOWER_MEMORY_PER_MILLE, 978)
+        # 978/1000 is 2^(-1/32) = 0.97857 truncated to the thousandth.
+        self.assertEqual(math.floor(2 ** (-1 / 32) * 1000), 978)
+        self.assertIn("const bool whole_board = row->form != FormFactor::Laptop && "
+                      "(driver.sms <= 0 || driver.sms == row->sms);", text)
+        self.assertIn("if (row->boost_min_mhz > 0) {", text)
+
+    def test_every_engine_field_follows_the_engine_over_a_grid_of_driver_values(self):
+        no_range = row_of(0x2C18)
+        del no_range["boost_min_mhz"]
+        rows = [ROWS[0x2684], ROWS[0x2C18], no_range, ROWS[0x20B2], ROWS[0x2786], ROWS[0x2503]]
+        checked = 0
+        for row in rows:
+            row_khz = math.floor(row["gbps"] * 1e6 / 2.0 + 0.5)
+            threshold = row_khz * 978 // 1000
+            clocks = {0, 1, 99999, 100000, row_khz, row_khz + 1000, row_khz - 1000,
+                      threshold - 1, threshold, threshold + 1, threshold + 2}
+            clocks |= {int(row_khz * f) for f in (0.99, 0.985, 0.98, 0.97, 0.95, 0.9)}
+            buses = {-1, 0, 1, 31, 32, 100, 128, 192, 256, 384, row["bus_bits"], 5120}
+            sms = {-1, 0, row["sms"], row["sms"] - 1, row["sms"] + 1, max(1, row["sms"] // 4)}
+            for s in sms:
+                for bus in buses:
+                    for clock in clocks:
+                        d = device_of_row(row, sms=s, memory_bus_bits=bus, memory_clock_khz=clock)
+                        bad = [f for f, st in engine_statuses(d, row).items() if st == "mismatch"]
+                        self.assertEqual(bad, [], (row["id"], s, bus, clock))
+                        checked += 1
+        self.assertGreater(checked, 3000)
+
+    def test_the_grid_is_not_vacuous(self):
+        # The same facts with the flag or the source flipped fail, at both sides of each edge.
+        row = ROWS[0x2684]
+        for clock, read in ((10_268_999, True), (10_269_000, False), (10_269_001, False),
+                            (10_200_000, True), (10_300_000, False), (99_999, False)):
+            d = device_of_row(row, memory_clock_khz=clock)
+            self.assertEqual(d["engine_table_facts"]["driver_read"], read, clock)
+            self.assertEqual(engine_statuses(d, row)["engine_driver_read"], "match", clock)
+            d["engine_table_facts"]["driver_read"] = not read
+            self.assertEqual(engine_statuses(d, row)["engine_driver_read"], "mismatch", clock)
+            d["engine_table_facts"]["driver_read"] = read
+            d["engine_table_facts"]["source"] = 1 if read else 2
+            self.assertEqual(engine_statuses(d, row)["engine_source"], "mismatch", clock)
+
+    def test_a_laptop_with_a_recorded_variant_keeps_the_rows_memory(self):
+        # machine_facts reads nothing for a laptop with a boost range, whatever `variants` says
+        # (test_machine_facts.cpp, laptops_conservative).
+        row = row_of(0x2C18, variants=[{"bus_bits": 192}, {"gbps": 16.0}])
+        d = device_of_row(row, memory_bus_bits=192, memory_clock_khz=8_001_000)
+        self.assertFalse(d["engine_table_facts"]["driver_read"])
+        self.assertEqual(d["engine_table_facts"]["memory_bus_bits"], 256)
+        s = engine_statuses(d, row)
+        self.assertEqual(s["engine_driver_read"], "match")
+        d["engine_table_facts"]["driver_read"] = True  # as if a laptop was read like a board
+        self.assertEqual(engine_statuses(d, row)["engine_driver_read"], "mismatch")
+
+    def test_a_slice_never_reads_whatever_the_mig_mode_says(self):
+        row = ROWS[0x20B2]
+        for mode in (-1, 0, 1):
+            d = device_of_row(row, sms=54, memory_bus_bits=2560, memory_clock_khz=1_000_000)
+            d["mig_mode"] = mode
+            self.assertEqual((d["engine_table_facts"]["source"],
+                              d["engine_table_facts"]["driver_read"]), (2, False))
+            self.assertNotIn("mismatch", engine_statuses(d, row).values(), mode)
+            d["engine_table_facts"]["driver_read"] = True
+            self.assertEqual(engine_statuses(d, row)["engine_driver_read"], "mismatch", mode)
+
+    def test_a_failing_board_still_has_the_engines_facts_checked_as_the_engine_computes_them(self):
+        # No `variants`, so the table fields fail, but the engine did what its code says: the
+        # engine rows must not blame it.
+        row = ROWS[0x2684]
+        for change in ({"memory_bus_bits": 128}, {"memory_clock_khz": 9_000_000},
+                       {"sms": 100}, {"sms": 200}):
+            d = device_of_row(row, **change)
+            self.assertIn("mismatch", statuses(d, row).values(), change)
+            self.assertEqual([f for f, st in engine_statuses(d, row).items() if st == "mismatch"],
+                             [], change)
+        # An id the driver reports under another compute capability is unknown to the engine.
+        d = device_of_row(row, major=9, minor=0)
+        d["engine_table_facts"].update(sku="", driver_read=True)
+        s = statuses(d, row)
+        self.assertEqual(s[("table", "cc")], "mismatch")
+        self.assertEqual(s[("table", "engine_sku")], "match")
+        self.assertEqual(s[("table", "engine_driver_read")], "match")
+        d["engine_table_facts"]["driver_read"] = False
+        self.assertEqual(statuses(d, row)[("table", "engine_driver_read")], "mismatch")
+
+    def test_a_recorded_bus_must_be_one_the_engine_reads(self):
+        row = ROWS[0x2684]
+        for width in (100, 33, 49, 208):
+            with self.assertRaises(ValueError, msg=width):
+                facts_compare.check_variants(dict(row, variants=[{"bus_bits": width}]))
+        for width in (32, 64, 192, 256):
+            facts_compare.check_variants(dict(row, variants=[{"bus_bits": width}]))
+
+    def test_the_engines_own_documented_variants_pass_with_the_shipped_table(self):
+        # machine_facts.cpp and test_machine_facts.cpp (memory_variants): an RTX 4070 with GDDR6
+        # under 0x2786 and an 8 GB RTX 3060 on a 128-bit bus under 0x2503.
+        narrow_driver = dict(memory_clock_khz=7_501_000, memory_bus_bits=128,
+                             global_bytes=int(8 * GIB * 0.99))
+        cases = [
+            (0x2786, dict(memory_clock_khz=10_501_000)),   # the GDDR6X board
+            (0x2786, dict(memory_clock_khz=10_001_000)),   # the GDDR6 board
+            (0x2503, dict(memory_clock_khz=7_501_000)),    # the 12 GB board
+            (0x2503, narrow_driver),                       # the 8 GB board
+        ]
+        for pci, driver in cases:
+            d = device_of_row(ROWS[pci], **driver)
+            summary, _ = facts_vs_driver.run({"devices": [d]}, ROWS)
+            self.assertTrue(summary["ok"], (hex(pci), driver, summary["devices"][0]["mismatches"]))
+        g6 = device_of_row(ROWS[0x2786], memory_clock_khz=10_001_000)
+        self.assertEqual((g6["engine_table_facts"]["source"], g6["engine_table_facts"]["driver_read"]),
+                         (2, True))
+        narrow = device_of_row(ROWS[0x2503], **narrow_driver)
+        self.assertEqual(narrow["engine_table_facts"]["memory_bus_bits"], 128)
+        # A board of that kind that the table does not record still fails: a 128-bit bus with the
+        # 12 GB board's memory size.
+        wrong = device_of_row(ROWS[0x2503], memory_bus_bits=128)
+        summary, _ = facts_vs_driver.run({"devices": [wrong]}, ROWS)
+        self.assertFalse(summary["ok"])
+
+
+class ValidationReview(unittest.TestCase):
+    def test_driver_read_is_a_boolean_in_both_parts(self):
+        # Written out, not derived from BOOL_KEYS.
+        for part in ("engine_table_facts", "engine_row_facts"):
+            for bad in (1, 0, None, "true", [True]):
+                d = device_4090()
+                d[part]["driver_read"] = bad
+                with self.assertRaises(ValueError, msg=(part, bad)):
+                    facts_compare.validate_probe({"devices": [d]})
+            d = device_4090()
+            del d[part]["driver_read"]
+            with self.assertRaises(ValueError, msg=part):
+                facts_compare.validate_probe({"devices": [d]})
+        self.assertEqual(len([k for k in facts_compare.BOOL_KEYS if k[1] == "driver_read"]), 2)
+
+    def test_the_probe_prints_driver_read_in_both_facts(self):
+        printed = ProbeSource.keys_after("Json facts_json", "\n}\n")
+        self.assertIn("driver_read", printed)
+        self.assertIn("mma_slow", printed)
+
+    def test_is_number_does_not_overflow(self):
+        for big in (10 ** 400, -10 ** 400, float("inf")):
+            self.assertFalse(facts_compare.is_number(big))
+        self.assertTrue(facts_compare.is_number(10 ** 300))
+        self.assertFalse(facts_compare.is_number(True))
+
+    def test_rows_with_a_wrong_boost_min_are_refused(self):
+        good = dict(ROWS[0x2C18])
+        facts_compare.check_row(good)
+        for bad in ("1597", None, True, -1, float("nan")):
+            with self.assertRaises(ValueError, msg=bad):
+                facts_compare.check_row(dict(good, boost_min_mhz=bad))
+
+
+class MalformedInput(unittest.TestCase):
+    """Every bad input is one line on stderr and exit 2; exit 1 means the audit found a mismatch."""
+
+    def run_text(self, text, *extra, env=None, raw=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "probe.json"
+            path.write_bytes(raw if raw is not None else text.encode("utf-8"))
+            done = subprocess.run([sys.executable, "-B", TOOL, "--probe-json", str(path)] +
+                                  list(extra), capture_output=True, text=True, env=env)
+        return done
+
+    def assert_clean_exit_2(self, done, label):
+        self.assertEqual(done.returncode, 2, f"{label}: {done.stdout} {done.stderr}")
+        self.assertNotIn("Traceback", done.stderr, label)
+        self.assertEqual(len(done.stderr.strip().splitlines()), 1, f"{label}: {done.stderr}")
+
+    def test_an_error_device_with_a_queried_that_is_not_an_object(self):
+        for queried in ([1], "s", None, 5):
+            probe = {"devices": [{"index": 0, "error": "x", "queried": queried}]}
+            self.assert_clean_exit_2(self.run_text(json.dumps(probe)), repr(queried))
+        probe = {"devices": [{"index": 0, "error": "x", "queried": {"name": 5}}]}
+        self.assert_clean_exit_2(self.run_text(json.dumps(probe)), "name 5")
+        probe = {"devices": [{"index": 0, "error": "x", "pci_bus_id": [1]}]}
+        self.assert_clean_exit_2(self.run_text(json.dumps(probe)), "pci_bus_id")
+        ok = {"devices": [{"index": 0, "error": "x", "queried": {"name": "n"}}]}
+        self.assertEqual(self.run_text(json.dumps(ok)).returncode, 1)  # a mismatch, not bad input
+
+    def test_huge_numbers(self):
+        huge = "1" + "0" * 400
+        self.assert_clean_exit_2(self.run_text('{"devices":[{"index":%s,"error":"x"}]}' % huge),
+                                 "index")
+        for key in ("sms", "memory_clock_khz", "global_bytes"):
+            d = device_4090()
+            text = json.dumps({"devices": [d]}).replace(
+                f'"{key}": {d["queried"][key]}', f'"{key}": {huge}', 1)
+            self.assertIn(huge, text)
+            self.assert_clean_exit_2(self.run_text(text), key)
+
+    def test_deeply_nested_json(self):
+        self.assert_clean_exit_2(self.run_text("[" * 100000), "nesting")
+
+    def test_a_name_the_console_cannot_encode(self):
+        d = device_4090()
+        d["queried"]["name"] = "NVIDIA GeForce RTX 4090 é中"
+        env = dict(os.environ, PYTHONIOENCODING="ascii")
+        done = self.run_text(json.dumps({"devices": [d]}), env=env)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertNotIn("Traceback", done.stderr)
+        self.assertIn("RTX 4090", done.stdout)
+
+    def test_a_utf8_bom_is_accepted(self):
+        raw = b"\xef\xbb\xbf" + json.dumps({"devices": [device_4090()]}).encode("utf-8")
+        self.assertEqual(self.run_text("", raw=raw).returncode, 0)
+
+    def test_an_index_is_a_small_whole_number(self):
+        for index in (-1, 0.5, 1.0, "0", True, None, 10 ** 6):
+            d = device_4090()
+            d["index"] = index
+            self.assert_clean_exit_2(self.run_text(json.dumps({"devices": [d]})), repr(index))
+
+    def test_wrong_facts_files(self):
+        probe = json.dumps({"devices": [device_4090()]})
+        for name, content in (("no gpus", {"schema": 1}), ("null gpus", {"gpus": None}),
+                              ("list", []), ("empty", {"gpus": []}), ("number", 5)):
+            with tempfile.TemporaryDirectory() as tmp:
+                facts = Path(tmp) / "facts.json"
+                facts.write_text(json.dumps(content), encoding="utf-8")
+                done = self.run_text(probe, "--facts", str(facts))
+            self.assert_clean_exit_2(done, name)
+            self.assertIn("gpu facts", done.stderr, name)
 
 
 class ProbeSource(unittest.TestCase):

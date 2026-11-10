@@ -27,7 +27,7 @@ Each row is one SKU, keyed by its PCI product id:
 | `mma_slow` | only when true: `mma.sync` without tensor cores (TU116, TU117 and the GTX 16 boards of TU106) |
 | `target` | only when false: listed for identification, not a target (H100, H200, B200) |
 | `sources` | the datasheet or product page, a database page, and the pci-ids entry of the id |
-| `variants` | only where another board is sold, or reports itself, under the id: one object per board, with the values in which it differs from the row (`vram_gib`, `gbps`, `boost_mhz`). The facts-vs-driver audit reads it; `machine_facts` does not |
+| `variants` | only where another board is sold, or reports itself, under the id: one object per board, with the values in which it differs from the row (`vram_gib`, `gbps`, `boost_mhz`, `bus_bits`; a bus width must be a whole number of 32-bit channels, the only widths `machine_facts` reads). The facts-vs-driver audit reads it, so a recorded board passes the audit as information; `machine_facts` never reads it and decides from the driver's values alone |
 | `note` | caveats: an id shared by two memory sizes, values from secondary sources |
 
 The reference clock is the published boost clock of NVIDIA's reference board. It is the value the
@@ -62,6 +62,11 @@ row in the table has it.
   memory clock (an overclock) is not read, so such a board keeps the row's; a board on a faster
   memory than its row's (a GTX 1650 with GDDR6) is priced as the row. A value no memory has (a bus
   that is not a whole number of 32-bit channels, a clock under 100 MHz) is as good as unreported.
+  The engine decides this from the driver's values alone. The facts-vs-driver audit (`tools/audit`)
+  checks the engine's facts by the same rule, and separately fails a board whose memory differs
+  from its row unless the row records that board in `variants`: record every such board there.
+  A test reads `machine_facts.cpp` and fails if the audit's thresholds (978/1000, 100 000 kHz,
+  32-bit channels) differ from the engine's.
 - **An unknown id** takes the driver's SM and memory clocks rounded to the nearest 2^(k/16), and
   keeps the bus width. The source is *extrapolated*. With no clocks reported it is *none*, there is
   no roofline, and the cost model stands aside.

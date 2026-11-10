@@ -14,7 +14,13 @@ validate_probe rejects a document with a key missing or of the wrong type before
          unknown: unverified, or a slice where the memory is reduced too), a laptop's range or a
          vendor's boost window; anything else is a mismatch. The engine's reading of the row
          alone (engine_row_facts) against the JSON, exactly; the facts the query stored
-         (engine_table_facts) against that reading.
+         (engine_table_facts) against that reading. What the engine should have stored (source,
+         driver_read, the bus and memory clock it read) follows machine_facts' own rule on the
+         driver's values (a whole board, a bus in whole 32-bit channels, a clock under 978/1000
+         of the row's), never the audit's statuses: the engine ignores `variants`, so a board
+         the audit fails (an unrecorded variant) still has the engine's facts checked as the
+         engine computes them. Where the audit's `variants` differ from that rule (a recorded
+         bus that is no whole number of channels), check_row refuses the row.
   arch   the architecture limits synthetic_device_class writes for the compute capability
          against the queried ones (shared memory per block and per SM, threads, blocks and
          registers per SM) and the reserved-shared invariant of the queried class; the per-block
@@ -24,8 +30,8 @@ validate_probe rejects a document with a key missing or of the wrong type before
 
 Not compared, because the driver cannot answer or the probe does not print it: tdp_w, pcie,
 segment, form, the driver's name against the row's (the engine's SKU is compared with it), the
-MachineFacts share and driver_read, and every feature but mma_slow (the build's, engine against
-engine). feature_mma_slow queried against synthetic is "derived": both classes read the same row,
+MachineFacts share, and every feature but mma_slow (the build's, engine against engine). The
+MachineFacts driver_read is compared (engine_driver_read, engine_row_driver_read). feature_mma_slow queried against synthetic is "derived": both classes read the same row,
 so it only catches a query that did not store the facts. Whether the engine's mma_slow is the
 row's is the engine_mma_slow check. A row without l2_mib is a mismatch on every board of it.
 
@@ -38,25 +44,41 @@ import math
 MIB = 1024 * 1024
 GIB = 1024 * MIB
 
-# Relative tolerances. The memory clock is the issue's +-0.5 %. The boost clock is the VBIOS's
-# peak SM clock: a stock board reads the published reference within 1.5 %, a partner board's
-# factory boost up to 7 % above it and an OEM board's up to 3 % under it (information inside that
-# window, not a failure), a laptop anywhere in its published range; farther off is a wrong row.
-# The L2 and memory size are what a driver reports against a marketed figure; GDDR ECC on (an
-# A6000, an L40, an A10) keeps 1/16 of the memory, so a professional or datacenter board's total
-# is down to about 0.928 of the marketed size; a GeForce board reports nearly all of it.
+# Relative tolerances. Every one of them is a CHOSEN tolerance of this audit: none is a measured
+# or a published figure, and none is the engine's (the engine's own thresholds are the ENGINE_*
+# constants below, which a test ties to machine_facts.cpp). A board off a tolerance fails the
+# audit, so widen one only for a recorded board that needs it.
+#   MEMORY_CLOCK_TOLERANCE 0.005: chosen; the issue (#612) asked for +-0.5 % on the memory clock.
+#   BOOST_TOLERANCE 0.015: chosen; the driver's peak SM clock of a stock board is expected within
+#     1.5 % of the published reference.
+#   BOOST_UNDER 0.03, BOOST_OVER 0.07: chosen window for a vendor's boost (a partner board's
+#     factory overclock, an OEM board under the reference): information, not a failure.
+#   L2_TOLERANCE 0.01: chosen; the driver's L2 against the marketed figure.
+#   VRAM_HIGH 1.003: chosen; the driver's total cannot exceed the marketed size, 0.3 % is slack
+#     for the marketed figure's rounding.
+#   VRAM_LOW_GEFORCE 0.97: chosen; a GeForce board reports nearly all of its memory.
+#   VRAM_LOW_ECC 0.92: derived, with a chosen margin. GDDR ECC on (an A6000, an L40, an A10)
+#     keeps 1/16 of the memory, so at best 15/16 = 0.9375 of the marketed size; 0.92 leaves about
+#     2 % for the driver's own reservation.
+#   PERSISTING_LOW 0.125: chosen; a persisting-L2 cap under 1/8 of the L2 is not a cache cap.
 L2_TOLERANCE = 0.01
 MEMORY_CLOCK_TOLERANCE = 0.005
 BOOST_TOLERANCE = 0.015
 BOOST_UNDER, BOOST_OVER = 0.03, 0.07
 VRAM_LOW_ECC, VRAM_LOW_GEFORCE, VRAM_HIGH = 0.92, 0.97, 1.003
-# The persisting-L2 cap: synthetic_device_class writes 3/4 of the L2 and a driver's is the board's;
-# a cap under this share of the L2, or over all of it, is not a cache cap.
 PERSISTING_LOW = 0.125
-# machine_facts reads a driver memory clock only when it is under 978/1000 of the row's (more than
-# half a step of the 2^(1/16) grid below it).
+# The engine's thresholds in machine_facts (the row branch), restated for the audit's expected
+# values; tests/test_facts_vs_driver.py reads machine_facts.cpp and fails when one differs.
+# It reads a driver memory clock only when it is at least ENGINE_MIN_MEMORY_CLOCK_KHZ and under
+# 978/1000 of the row's. 978 is derived: half a step of the 2^(1/16) fact grid is a ratio of
+# 2^(-1/32) = 0.9786, which the engine rounds down to 978/1000 in integer arithmetic.
 ENGINE_SLOWER_MEMORY_PER_MILLE = 978
-VERIFIED_SOURCE = 1  # FactSource::Verified: the engine reads the row as it is
+ENGINE_MIN_MEMORY_CLOCK_KHZ = 100000
+# It reads a driver bus width only as a whole number (at least one) of 32-bit channels.
+ENGINE_BUS_CHANNEL_BITS = 32
+# A CUDA ordinal: a chosen bound, far above any machine's device count.
+MAX_DEVICE_INDEX = 4096
+VERIFIED_SOURCE = 1 # FactSource::Verified: the engine reads the row as it is
 EXTRAPOLATED_SOURCE = 2  # FactSource::Extrapolated: a laptop, a memory variant or a slice
 
 
@@ -67,7 +89,12 @@ def result(source, field, expected, actual, status, note=""):
 
 def is_number(value):
     """A finite int or float; a bool is not one."""
-    return type(value) in (int, float) and math.isfinite(value)
+    if type(value) not in (int, float):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:  # an int too large for a float
+        return False
 
 
 def unavailable(actual):
@@ -124,8 +151,14 @@ def check_variants(row):
         if not isinstance(v, dict) or not v or set(v) - set(VARIANT_KEYS):
             raise ValueError(f"{where}: each is an object of {', '.join(VARIANT_KEYS)}")
         for key, value in v.items():
-            if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
+            if not is_number(value) or value <= 0:
                 raise ValueError(f"{where}: {key} is not a positive number")
+        bus = v.get("bus_bits", ENGINE_BUS_CHANNEL_BITS)
+        if bus % ENGINE_BUS_CHANNEL_BITS:
+            # machine_facts reads a driver bus width only in whole 32-bit channels: any other
+            # width is "as good as unreported", so the engine would not take this board's bus.
+            raise ValueError(f"{where}: bus_bits is not a whole number of "
+                             f"{ENGINE_BUS_CHANNEL_BITS}-bit channels (the engine would not read it)")
         if all(v[key] == row[key] for key in v):
             raise ValueError(f"{where}: a variant that does not differ from the row")
 
@@ -143,6 +176,9 @@ def check_row(row):
             raise ValueError(f"{where}: {key} is missing or not a positive number")
     if "l2_mib" in row and (not is_number(row["l2_mib"]) or row["l2_mib"] < 0):
         raise ValueError(f"{where}: l2_mib is not a number")
+    if "boost_min_mhz" in row and (not is_number(row["boost_min_mhz"]) or
+                                   row["boost_min_mhz"] < 0):
+        raise ValueError(f"{where}: boost_min_mhz is not a number")
     if row.get("chip") in NO_TENSOR_CHIPS and row.get("mma_slow") is not True:
         raise ValueError(f"{where}: a {row['chip']} row must carry mma_slow (no tensor cores)")
     check_variants(row)
@@ -220,14 +256,24 @@ def validate_probe(probe_output):
     for position, device in enumerate(devices):
         if not isinstance(device, dict):
             raise ValueError(f"invalid probe output: device {position} is not an object")
-        if not is_number(device.get("index")):
-            raise ValueError(f"invalid probe output: device {position}: \"index\" is not a number")
+        if type(device.get("index")) is not int or not 0 <= device["index"] < MAX_DEVICE_INDEX:
+            raise ValueError(f"invalid probe output: device {position}: \"index\" is not a "
+                             f"whole number from 0 to {MAX_DEVICE_INDEX - 1}")
         if device["index"] in seen:
             raise ValueError(f"invalid probe output: device index {device['index']} appears twice")
         seen.add(device["index"])
+        # Every device is named in the report, so these are typed on an error device too.
+        if "pci_bus_id" in device and not isinstance(device["pci_bus_id"], str):
+            raise ValueError(f"invalid probe output: device {position}: pci_bus_id is not text")
         if "error" in device:
             if not isinstance(device["error"], str):
                 raise ValueError(f"invalid probe output: device {position}: \"error\" is not text")
+            if "queried" in device and not isinstance(device["queried"], dict):
+                raise ValueError(f"invalid probe output: device {position}: \"queried\" is not "
+                                 "an object")
+            if not isinstance(device.get("queried", {}).get("name", ""), str):
+                raise ValueError(f"invalid probe output: device {position}: queried.name is not "
+                                 "text")
             continue
         for part in DEVICE_PARTS:
             if not isinstance(device.get(part), dict):
@@ -251,8 +297,6 @@ def validate_probe(probe_output):
             if not isinstance(device[part].get(key), bool):
                 raise ValueError(f"invalid probe output: device {position}: {part}.{key} "
                                  "is missing or not a boolean")
-        if "pci_bus_id" in device and not isinstance(device["pci_bus_id"], str):
-            raise ValueError(f"invalid probe output: device {position}: pci_bus_id is not text")
         if device.get("mig_mode") not in (-1, 0, 1) or type(device.get("mig_mode")) is not int:
             raise ValueError(f"invalid probe output: device {position}: mig_mode is missing or not "
                              "-1 (unknown), 0 or 1")
@@ -369,7 +413,7 @@ def compare_row(q, row, mig_mode):
     return out, slice_part
 
 
-def compare_engine(device, row, table_results):
+def compare_engine(device, row):
     """The engine's reading of the row against the JSON, and the query's stored facts against it."""
     out = []
 
@@ -399,6 +443,17 @@ def compare_engine(device, row, table_results):
     want_slow = row.get("mma_slow", False)
     add("engine_row_mma_slow", want_slow, alone["mma_slow"],
         "match" if alone["mma_slow"] == want_slow else "mismatch", json_note)
+    q = device["queried"]
+    # The engine takes a row only for its architecture: an id the driver reports with another
+    # compute capability is unknown to it, and it reads the driver alone (machine_facts.cpp).
+    if q["major"] != 0 and q["major"] * 10 + q["minor"] != row["cc"]:
+        add("engine_sku", "", stored["sku"], "match" if stored["sku"] == "" else "mismatch",
+            "the compute capability is not the row's: the engine does not use the row (the cc "
+            "field fails)")
+        add("engine_driver_read", True, stored["driver_read"],
+            "match" if stored["driver_read"] is True else "mismatch",
+            "an id the engine does not know is read from the driver alone")
+        return out
     # What the query stored: the row alone where the driver agrees with the row; where a variant,
     # a slice or a laptop made the engine read the driver, only the bounds of that reading.
     stored_note = "the facts the query stored against the engine's reading of the row"
@@ -410,17 +465,18 @@ def compare_engine(device, row, table_results):
     add("engine_mma_slow", want_slow, stored["mma_slow"],
         "match" if stored["mma_slow"] == want_slow else "mismatch",
         "the engine's mma_slow (a board fact the driver cannot answer) against the row")
-    by_field = {r["field"]: r["status"] for r in table_results}
-    sliced = by_field.get("sms") in ("info", "unavailable")
-    whole_board = not laptop and not sliced
-    mem = device["queried"]["memory_clock_khz"]
-    read_bus = whole_board and by_field.get("bus_bits") == "info"
-    read_clock = whole_board and by_field.get("memory_clock_khz") == "info" and mem >= 100000 and \
-        mem * 1000 < alone["memory_clock_khz"] * ENGINE_SLOWER_MEMORY_PER_MILLE
-    # driver_read (machine_facts.cpp: a laptop row without a boost range, 218; a bus read, 245; a
-    # clock read, 251): the facts include the driver's values. A slice keeps the row's values and
-    # prices its share apart, so it does not set it. The row alone reads nothing from the driver
-    # but a laptop row without a range still sets it.
+    # The engine's own rule, from the driver's values (machine_facts.cpp, the row branch); no
+    # audit status enters it, so a board the audit fails still gets the engine's expected facts.
+    sms, bus, mem = q["sms"], q["memory_bus_bits"], q["memory_clock_khz"]
+    other_sms = sms > 0 and sms != row["sms"]  # source Extrapolated; fewer SMs: a share
+    whole_board = not laptop and not other_sms
+    row_khz = math.floor(row_memory_khz(row) + 0.5)  # the engine's llround of the row's clock
+    read_bus = whole_board and bus >= ENGINE_BUS_CHANNEL_BITS and \
+        bus % ENGINE_BUS_CHANNEL_BITS == 0 and bus != row["bus_bits"]
+    read_clock = whole_board and mem >= ENGINE_MIN_MEMORY_CLOCK_KHZ and \
+        mem * 1000 < row_khz * ENGINE_SLOWER_MEMORY_PER_MILLE
+    # driver_read: a laptop row without a boost range (the driver's clock is read), a bus read, a
+    # clock read. A slice keeps the row's values and prices its share apart: nothing is read.
     row_reads = laptop and not row.get("boost_min_mhz", 0) > 0
     add("engine_row_driver_read", row_reads, alone["driver_read"],
         "match" if alone["driver_read"] == row_reads else "mismatch", json_note)
@@ -428,13 +484,6 @@ def compare_engine(device, row, table_results):
     add("engine_driver_read", want_read, stored["driver_read"],
         "match" if stored["driver_read"] == want_read else "mismatch",
         "set when the engine read the driver's values into the facts")
-    deviated = laptop or sliced or any(
-        by_field.get(f) == "info" for f in ("bus_bits", "memory_clock_khz"))
-    if not deviated:
-        same("engine_source", alone["source"], stored["source"], stored_note)
-        for field in ("reference_clock_khz", "memory_bus_bits", "memory_clock_khz"):
-            same(f"engine_{field}", alone[field], stored[field], stored_note)
-        return out
     bound = "the query read the driver: within the row's bounds"
     if laptop:
         # The bottom of the range where the row has it, else at most the row's top.
@@ -445,29 +494,26 @@ def compare_engine(device, row, table_results):
     else:
         same("engine_reference_clock_khz", alone["reference_clock_khz"],
              stored["reference_clock_khz"], stored_note)
-    if laptop or sliced:
-        # A laptop and a slice keep the row's memory values (a slice's share is priced apart,
-        # a laptop from its published range): the driver's narrower bus or lower clock is not read.
-        for field in ("memory_bus_bits", "memory_clock_khz"):
-            same(f"engine_{field}", alone[field], stored[field],
-                 "a laptop or a slice keeps the row's memory values")
+    # The memory values are the driver's only where the engine read them; a laptop and a slice
+    # keep the row's (a slice's share is priced apart, a laptop from its published range).
+    if read_bus:
+        same("engine_memory_bus_bits", bus, stored["memory_bus_bits"],
+             "the bus width the driver reported, read into the facts")
     else:
-        # A whole board of a recorded memory variant: the engine reads the driver's bus, and a
-        # clock never faster than the row's.
-        q_bus = device["queried"]["memory_bus_bits"]
-        add("engine_memory_bus_bits", alone["memory_bus_bits"], stored["memory_bus_bits"],
-            "match" if stored["memory_bus_bits"] in (alone["memory_bus_bits"], q_bus)
-            else "mismatch", bound)
+        same("engine_memory_bus_bits", alone["memory_bus_bits"], stored["memory_bus_bits"],
+             stored_note)
+    if read_clock:
+        # The engine writes the driver's clock on the 2^(1/16) grid; only its bounds are checked.
         add("engine_memory_clock_khz", alone["memory_clock_khz"], stored["memory_clock_khz"],
-            "match" if 0 < stored["memory_clock_khz"] <= alone["memory_clock_khz"]
-            else "mismatch", "never faster than the row's, never unknown")
-    # The source follows the deviation: a laptop and a slice are always Extrapolated; a whole
-    # board is Extrapolated when the engine read its bus, or a memory clock more than 2.2 % under
-    # the row's (machine_facts.cpp), and keeps Verified for a faster memory (the row's rate stays).
-    if laptop or sliced or read_bus or read_clock:
-        want_source = EXTRAPOLATED_SOURCE
+            "match" if 0 < stored["memory_clock_khz"] < alone["memory_clock_khz"] else "mismatch",
+            "the driver's clock on the grid: under the row's, never unknown")
     else:
-        want_source = VERIFIED_SOURCE
+        same("engine_memory_clock_khz", alone["memory_clock_khz"], stored["memory_clock_khz"],
+             stored_note)
+    # The source is Extrapolated for a laptop, a differing SM count (a slice), a bus read or a
+    # slower memory read; a faster memory (an overclock) leaves the row as it is.
+    want_source = EXTRAPOLATED_SOURCE if laptop or other_sms or read_bus or read_clock \
+        else VERIFIED_SOURCE
     same("engine_source", want_source, stored["source"],
          "1 the row as it is, 2 a laptop, a slice, or a bus or slower memory read from the driver")
     return out
@@ -487,7 +533,7 @@ def compare_device(device, row):
     else:
         table, _ = compare_row(q, row, device["mig_mode"])
         out += table
-        out += compare_engine(device, row, table)
+        out += compare_engine(device, row)
 
     s = device["synthetic"]
     for field in ("smem_per_block_optin", "smem_per_sm", "max_threads_per_sm", "max_blocks_per_sm",
