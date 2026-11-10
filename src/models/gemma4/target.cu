@@ -223,6 +223,7 @@ std::size_t Target::workspace_bytes(const Model& model, std::int32_t max_context
 // One pass of every layer over the T columns of x whose absolute positions are in `pos`.
 // `h` enters holding input_norm(x) of layer 0 and leaves holding final_norm(x): each layer's
 // closing residual update writes the next reader's normalized input in the same launch.
+// FUSION-SITE: gemma4_target_geglu
 void TargetPass::layers(DeviceArena& work_, Tensor& x, Tensor& h, const Tensor& pos, KvBindings kv,
                         ops::Gemma4AttentionEnvelope envelope, Activations activations,
                         const FeatureTap* tap, const Tensor* ple) const {

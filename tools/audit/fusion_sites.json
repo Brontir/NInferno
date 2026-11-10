@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "about": "Registry of fusion sites (#617 step A): every place where two or more ops can run as one fused kernel or as separate launches, where it is decided today, the alternatives, and what prices it. Data only; nothing reads it at run time. Each site's deciding function carries a `// FUSION-SITE: <id>` line above its signature, and tests/test_fusion_sites.py fails when the code and this file disagree. byte_promise: Equal (every alternative gives the same bytes), OwnOrder (the alternatives sum in different orders, so the invariant profile must pin one), NotApplicable, Unreviewed. priced.status: priced (the generic route cost model prices the alternatives), partial (some alternative or term), fact (a hardware or format predicate decides, no price), literal (a constant measured on the cards named in the evidence), none (one form only, or a rule with no price). invariant_pin: which alternative the invariant route profile runs (unreviewed: not yet read from the code). parity_test: a test that runs the alternatives against each other (null: none known). oracle_test: a test that checks the site's output against an oracle or a tolerance (null: none known). The JSON is the source; a generated constexpr header is intended for steps B and D, as gpu_facts.json becomes board_registry.h.",
+  "about": "Registry of the fusion sites found so far (#617 step A; the markers in the code enumerate it, and a site not yet found is not in it): places where two or more ops can run as one fused kernel or as separate launches, where it is decided today, the alternatives, and what prices it. Data only; nothing reads it at run time. Each site's deciding function carries a `// FUSION-SITE: <id>` line above its signature, and tests/test_fusion_sites.py fails when the code and this file disagree. byte_promise: Equal (every alternative gives the same bytes), OwnOrder (the alternatives sum in different orders, so the invariant profile must pin one), NotApplicable, Unreviewed. priced.status: priced (the generic route cost model prices the alternatives), partial (some alternative or term), fact (a hardware or format predicate decides, no price), literal (a constant measured on the cards named in the evidence), none (one form only, or a rule with no price). invariant_pin: which alternative the invariant route profile runs (unreviewed: not yet read from the code). parity_test: a test that runs the alternatives against each other (null: none known). oracle_test: a test that checks the site's output against an oracle or a tolerance (null: none known). The JSON is the source; a generated constexpr header is intended for steps B and D, as gpu_facts.json becomes board_registry.h.",
   "sites": [
     {
       "id": "q8_pair",
@@ -901,7 +901,7 @@
     },
     {
       "id": "dense_mlp_gate_up",
-      "name": "dense MLP gate/up chain (dense and Gemma layers)",
+      "name": "dense MLP gate/up chain (DensePass::dense_mlp)",
       "layer": "mlp",
       "fuses": [
         "gate/up projection",
@@ -911,7 +911,7 @@
         "file": "src/models/dense/target.cu",
         "function": "dense_mlp"
       },
-      "rule_today": "DensePass::dense_mlp: a packed gate_up with SiLU takes linear_swiglu; a packed gate_up whose format linear_geglu_supports takes linear_geglu; another packed gate_up takes project + gelu_tanh_mul; an unpacked gate and up try segmented_swiglu_pair (the vec gated pair at decode and verify widths) and otherwise run two projections + silu_mul. The rule is structural, no price.",
+      "rule_today": "DensePass::dense_mlp: a packed gate_up with SiLU takes linear_swiglu; a packed gate_up whose format linear_geglu_supports takes linear_geglu; another packed gate_up takes project + gelu_tanh_mul; an unpacked gate and up try segmented_swiglu_pair (the vec gated pair at decode and verify widths) and otherwise run two projections + silu_mul. The rule is structural, no price. Gemma 4 has its own paths (gemma4_target_geglu, gemma4_drafter_geglu).",
       "alternatives": [
         "linear_swiglu",
         "linear_geglu",
@@ -935,7 +935,7 @@
     },
     {
       "id": "dense_mlp_down",
-      "name": "dense MLP down projection + residual (dense and Gemma layers)",
+      "name": "dense MLP down projection + residual (DensePass::dense_mlp)",
       "layer": "mlp",
       "fuses": [
         "down projection",
@@ -967,7 +967,7 @@
     },
     {
       "id": "drafter_attn_input",
-      "name": "drafter fused Q8 attention input projection",
+      "name": "drafter fused Q8 attention input projection (Qwen 3.5 DFlash drafters)",
       "layer": "attention",
       "fuses": [
         "packed query/key/value projection",
@@ -977,10 +977,10 @@
         "file": "src/models/qwen3_5/execution/draft.cpp",
         "function": "fused_q8"
       },
-      "rule_today": "fused_q8_weight: the fused op runs only for Q8 row-split weights (a drafter stored in other formats takes the generic projections with the same state effects). Used for the layer's query_key_value weight in the DFlash2 proposal paths.",
+      "rule_today": "fused_q8 (draft.cpp) is asked per layer in both the DFlash2 proposal path and propose_batch_impl's non-DFlash2 branch. It is true only for a Q8 row-split weight, and such a weight exists only if the load-time gate in src/models/qwen3_5/execution/parameters.cpp built it: Q/K/V are consecutive rows of one parent and ops::fused_attn_input_proj_geometry holds (the 9B 4096 width does not: it takes the segmented bank). The planning gate in src/models/qwen3_5/program/planning/startup.cpp makes the same check to size the bank scratch. Otherwise the generic bank (segmented projection) runs.",
       "alternatives": [
-        "fused Q8 attention input op",
-        "generic projections"
+        "fused attn_input_proj op",
+        "generic segmented bank"
       ],
       "priced": {
         "status": "fact",
@@ -1008,10 +1008,10 @@
         "file": "src/models/qwen3_5/execution/draft.cpp",
         "function": "fused_context"
       },
-      "rule_today": "The fused context path runs only when every layer's context key and value weights are Q8 row-split (fused_q8); otherwise the generic projections with the same state effects.",
+      "rule_today": "The fused context materialization runs only when config.dflash2, the ring is not int8, and fused_context holds (every layer's context key and value weights are Q8 row-split); otherwise each layer appends through its own projections (a DFlash1 drafter always takes the per-layer linear_pair, see q8_pair).",
       "alternatives": [
-        "fused context K/V path",
-        "generic projections"
+        "fused ContextKVMaterialize across the layers",
+        "per-layer linear_pair + key norm + RoPE + append"
       ],
       "priced": {
         "status": "fact",
@@ -1040,7 +1040,7 @@
         "file": "src/ops/generic/generic_ggml.cpp",
         "function": "ggml_vec_gated_pair"
       },
-      "rule_today": "Tried by segmented_swiglu_pair for T <= kGgmlVecMaxTokens: each half must take the vec kernel as a call alone would (ggml_vec_takes_tuned, the tuner times the problem first) and the workspace must hold the pair; otherwise the caller falls through (see mmq_gated_pair for the wider band).",
+      "rule_today": "Tried by segmented_swiglu_pair for T <= kGgmlVecMaxTokens (8): each half must take the vec kernel as a call alone would (ggml_vec_takes_tuned, the tuner times the problem first) and the workspace must hold the pair. When it returns false the caller runs two projections + silu_mul (it does not fall through to MMQ: that band starts above T = 8, see mmq_gated_pair).",
       "alternatives": [
         "vec gated pair (one launch per half pair)",
         "two projections + silu_mul"
@@ -1057,6 +1057,68 @@
       "one_card_literal": false,
       "evidence": [
         "src/ops/generic/generic_ggml.cpp"
+      ]
+    },
+    {
+      "id": "gemma4_target_geglu",
+      "name": "Gemma 4 target MLP gate/up GeGLU",
+      "layer": "mlp",
+      "fuses": [
+        "gate/up projection",
+        "GeGLU"
+      ],
+      "decided_in": {
+        "file": "src/models/gemma4/target.cu",
+        "function": "layers"
+      },
+      "rule_today": "TargetPass::layers: linear_geglu (GeGLU in the projection epilogue) when ops::linear_geglu_supports the gate_up weight; otherwise project + gelu_tanh_mul. Verify activations use the verify linear policy.",
+      "alternatives": [
+        "linear_geglu (epilogue)",
+        "project + gelu_tanh_mul"
+      ],
+      "priced": {
+        "status": "fact",
+        "by": "format predicate linear_geglu_supports",
+        "unpriced": "whole site"
+      },
+      "byte_promise": "OwnOrder",
+      "invariant_pin": "unreviewed",
+      "parity_test": null,
+      "oracle_test": null,
+      "one_card_literal": false,
+      "evidence": [
+        "src/models/gemma4/target.cu"
+      ]
+    },
+    {
+      "id": "gemma4_drafter_geglu",
+      "name": "Gemma 4 drafter MLP gate/up GeGLU",
+      "layer": "mlp",
+      "fuses": [
+        "gate/up projection",
+        "GeGLU"
+      ],
+      "decided_in": {
+        "file": "src/models/gemma4/mtp_round.cu",
+        "function": "step"
+      },
+      "rule_today": "DrafterPass::step: the same rule as the target: linear_geglu when linear_geglu_supports, else project + gelu_tanh_mul.",
+      "alternatives": [
+        "linear_geglu (epilogue)",
+        "project + gelu_tanh_mul"
+      ],
+      "priced": {
+        "status": "fact",
+        "by": "format predicate linear_geglu_supports",
+        "unpriced": "whole site"
+      },
+      "byte_promise": "OwnOrder",
+      "invariant_pin": "unreviewed",
+      "parity_test": null,
+      "oracle_test": null,
+      "one_card_literal": false,
+      "evidence": [
+        "src/models/gemma4/mtp_round.cu"
       ]
     }
   ],

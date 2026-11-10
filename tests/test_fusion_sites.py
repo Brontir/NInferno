@@ -71,7 +71,7 @@ def signature_start(lines, i):
     return j
 
 
-KEYWORDS = {"if", "while", "for", "switch", "return", "else", "do", "case", "throw", "new"}
+KEYWORDS = {"if", "while", "for", "switch", "return", "else", "do", "case", "throw", "new", "co_return"}
 
 
 def names_function(line, name):
@@ -83,15 +83,20 @@ def names_function(line, name):
 
 
 def starts_definition(lines, j):
-    """True when the statement that starts at line j reaches a `{` before a `;`: a function
-    definition, not a call or a declaration."""
+    """True when the statement that starts at line j reaches a `{` before a `;` outside every
+    parenthesis: a function definition, not a call (whose braced or lambda arguments sit inside
+    the parentheses) or a declaration."""
+    depth = 0
     for k in range(j, min(j + 12, len(lines))):
-        text = re.sub(r"//.*", "", lines[k])
-        brace, semi = text.find("{"), text.find(";")
-        if brace >= 0 and (semi < 0 or brace < semi):
-            return True
-        if semi >= 0:
-            return False
+        for ch in re.sub(r"//.*", "", lines[k]):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+            elif depth <= 0 and ch == "{":
+                return True
+            elif depth <= 0 and ch == ";":
+                return False
     return False
 
 
