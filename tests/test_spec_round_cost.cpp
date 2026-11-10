@@ -624,62 +624,51 @@ int main() {
     // The load bounds of a pair priced for another card are derived from the round cost on that
     // card's rates, not from its multiprocessors: at C streams the depth (of those measured, up to
     // each choice's) that gains most over plain decode, its one-request gain times R_1 / R_C, plain
-    // where none gains, the shallowest of the choices' (one table serves them all).
+    // where none gains, the shallowest of the choices' (one table serves them all), recorded where
+    // the depth falls (a table is clipped to its running minimum). From theory, not read back from
+    // the product's tables: C x (k + 1) verify rows are priced up to kPricedVerifyRows (8), so a
+    // depth-3 round is priced at 2 streams only; a DFlash choice's block (16 rows) is not priced at
+    // 2 streams at all, which holds a profile with one at plain from 2.
     {
         const std::string gemma =
             "unsloth/gemma-4-12b-it-GGUF@fc034cfff751157913579611efad8462ac1be606 Q4_K_M";
-        for (const std::string target : {std::string(kQ9), gemma}) {
-            for (const auto& [name, rtx] :
-                 {std::pair<const char*, sp::GpuKey>{
-                      "RTX 4060 Ti", card("ad106:34sm", "ad106", "sm89", 89, 34, 2535, 288)},
-                  std::pair<const char*, sp::GpuKey>{
-                      "RTX 4090", card("ad102:128sm", "ad102", "sm89", 89, 128, 2520, 1008)}}) {
-                sp::Profile p =
-                    sp::profile_for_target({&pair_of(target, "ad104:60sm")}, "sm89", {}, &rtx);
-                expect(p.load_basis == "facts" && !p.load.empty() && p.load.back().depth == 0 &&
-                           p.load.back().lanes <= sp::kPricedVerifyRows + 1,
-                       std::string(name) + ": bounds from the facts, plain by the unpriced rows: " +
-                           sp::load_label(p.load));
-                std::printf("%s %s load %s:", name, target.substr(0, 24).c_str(),
-                            sp::load_label(p.load).c_str());
-                for (std::int32_t streams = 2; streams <= sp::kPricedVerifyRows; ++streams) {
-                    // The planner's reading of the table at `streams`: the bound last at or below.
-                    std::int32_t depth = std::numeric_limits<std::int32_t>::max();
-                    for (const auto& b : p.load) {
-                        if (b.lanes > streams) { break; }
-                        depth = b.depth;
+        const sp::GpuKey small = card("ad106:34sm", "ad106", "sm89", 89, 34, 2535, 288);
+        const sp::GpuKey large = card("ad102:128sm", "ad102", "sm89", 89, 128, 2520, 1008);
+        for (const auto& [target, expected] :
+             {std::pair<std::string, const char*>{std::string(kQ9), "2:0"},
+              std::pair<std::string, const char*>{gemma, "2:3,3:0"}}) {
+            auto lab = pair_of(target, "ad104:60sm");
+            // Without the kernel counts the scale is the round cost's own ratio (no launch term).
+            for (auto& m : lab.tune.measurements) { m.graph_kernels = m.graph_rounds = 0; }
+            std::vector<sp::Profile> by_card;
+            for (const sp::GpuKey* rtx : {&small, &large}) {
+                sp::Profile p = sp::profile_for_target({&lab}, "sm89", {}, rtx);
+                expect(p.load_basis == "facts" && sp::load_label(p.load) == expected,
+                       target.substr(0, 24) + ": load " + sp::load_label(p.load) + ", expected " +
+                           expected);
+                by_card.push_back(std::move(p));
+            }
+            if (target == gemma) {
+                const sp::Profile& p = by_card[0];
+                const auto config    = p.overall.config;
+                const sp::ProposalRows rows =
+                    config.proposal_head ? lab.tune.proposal_rows : sp::ProposalRows{};
+                double previous = 0;
+                for (std::size_t i = 0; i < 2; ++i) {
+                    const sp::GpuKey& rtx = i == 0 ? small : large;
+                    const auto ratio      = sp::load_gain(*lab.round_facts, config,
+                                                          sp::card_rates(rtx).kappa(), 1.0, 2, rows);
+                    const auto found      = by_card[i].joint_scale.find(config.label());
+                    expect(ratio && found != by_card[i].joint_scale.end() &&
+                               found->second.contains(2) &&
+                               std::abs(found->second.at(2) - *ratio) < 1e-9,
+                           "R_1 / R_2 of " + config.label() + " on the card's own rates");
+                    if (ratio) {
+                        expect(i == 0 || std::abs(*ratio - previous) > 1e-6,
+                               "the joint verify's price differs between the two cards");
+                        previous = *ratio;
                     }
-                    // Predicted: the shallowest of the choices' best depths.
-                    std::int32_t expected = std::numeric_limits<std::int32_t>::max();
-                    for (const sp::Choice* c : {&p.overall, &p.thinking, &p.non_thinking}) {
-                        if (!c->config.enabled()) { continue; }
-                        std::int32_t best_depth = 0;
-                        double best             = 1.0;
-                        for (std::int32_t d = 1; d <= c->config.k; ++d) {
-                            sp::SpecConfig at = c->config;
-                            at.k              = d;
-                            const auto scale  = p.joint_scale.find(at.label());
-                            const auto gain   = d == c->config.k
-                                                    ? std::optional<double>(c->speedup())
-                                                    : sp::measured_gain(p, at, c == &p.thinking);
-                            if (scale == p.joint_scale.end() || !scale->second.contains(streams) ||
-                                !gain) {
-                                continue;
-                            }
-                            if (*gain * scale->second.at(streams) > best) {
-                                best       = *gain * scale->second.at(streams);
-                                best_depth = d;
-                            }
-                        }
-                        expected = std::min(expected, best_depth);
-                    }
-                    std::printf(" C=%d:d%d", streams, depth);
-                    expect(depth == expected, std::string(name) + ": the depth in force at " +
-                                                  std::to_string(streams) + " streams is " +
-                                                  std::to_string(expected) + ", not " +
-                                                  std::to_string(depth));
                 }
-                std::printf("\n");
             }
         }
     }

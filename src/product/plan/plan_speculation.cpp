@@ -583,6 +583,11 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
         }
         r.load                 = bounds_of(r.engine.load);
         r.load_basis           = r.load.empty() ? "none" : "measured";
+        // Where the served profile's own table is the one in force, its basis (spec::Profile).
+        if (serves_profile && !r.load.empty() && subject != nullptr && subject->resolved &&
+            subject->resolved->found() && !subject->resolved->profile.load_basis.empty()) {
+            r.load_basis = subject->resolved->profile.load_basis;
+        }
         r.depth_at_concurrency = depth_at(r.engine, concurrency);
     }
     return out;

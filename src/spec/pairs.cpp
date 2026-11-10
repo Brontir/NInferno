@@ -339,7 +339,8 @@ Profile selected(const MeasuredPair& pair, bool home, const SelectOptions& optio
     if (!home) {
         std::erase_if(p.measurements,
                       [](const Measurement& m) { return m.config.k > kPortableDepth; });
-        p.load = {LoadBound{.lanes = 2, .depth = 0}};
+        p.load       = {LoadBound{.lanes = 2, .depth = 0}};
+        p.load_basis = "literal";
         if (p.fit_fallback && p.fit_fallback->config.k > kPortableDepth) {
             p.fit_fallback.reset();
         }
@@ -349,7 +350,10 @@ Profile selected(const MeasuredPair& pair, bool home, const SelectOptions& optio
     SelectOptions select_options    = options;
     select_options.portable_within = 0;
     select(p, select_options);
-    if (home) { price_joint(p, pair, card_rates_of_board(pair.lab_board)); }
+    if (home) {
+        if (!p.load.empty()) { p.load_basis = "measured"; }
+        price_joint(p, pair, card_rates_of_board(pair.lab_board));
+    }
     return p;
 }
 
@@ -726,6 +730,9 @@ std::vector<LoadBound> facts_load(const Profile& p) {
             }
             depth = std::min(depth, best_depth);
         }
+        // Only a fall in depth is recorded: a bound is a ceiling and the table is ascending in
+        // streams, so a stream count that would run deeper than the one before stays at it (the
+        // table is clipped to its running minimum, never raised again as streams grow).
         if (depth < previous) { out.push_back(LoadBound{.lanes = streams, .depth = depth}); }
         previous = depth;
     }
@@ -811,7 +818,10 @@ Profile generation_median(const std::vector<const MeasuredPair*>& home,
             const bool loads = std::all_of(each.begin(), each.end(), [&](const Profile& p) {
                 return p.load == each.front().load;
             });
-            if (!loads || out.load.empty()) { out.load = {LoadBound{.lanes = 2, .depth = 0}}; }
+            if (!loads || out.load.empty()) {
+                out.load       = {LoadBound{.lanes = 2, .depth = 0}};
+                out.load_basis = "literal";
+            }
             return out;
         }
     }
@@ -1013,7 +1023,8 @@ std::optional<Profile> profile_for_group(const std::vector<const MeasuredPair*>&
         choice.acceptance             = acceptance;
         choice.floor_tokens_per_round = floor;
     }
-    out.load = {LoadBound{.lanes = 2, .depth = 0}};
+    out.load       = {LoadBound{.lanes = 2, .depth = 0}};
+    out.load_basis = "literal";
     return out;
 }
 
