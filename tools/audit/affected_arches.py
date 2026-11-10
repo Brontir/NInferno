@@ -6,7 +6,12 @@ selector goldens, any file that uses an arch macro (NINFERNO_BUILD_ARCH, WITHOUT
 __CUDA_ARCH__), any device source, and any header a .cu file includes, transitively. Otherwise a
 conservative path map applies: per-arch files (volta_*, *_sm75*, a chip's name) map to their own
 arch; host-only product, chat, serve, UI and convert code maps to "any one arch" plus the host
-label. A path nothing matches answers "all".
+label. A path nothing matches answers "all". A diff is judged on both sides (merge base and head,
+read from git, not from the checkout), so removing an arch macro still answers "all". Label-filtered
+ctest commands are named only when every registered test has a LABELS property; until then the answer
+is the full ctest and says why. A `ninja -n` listing of the native Windows build (`.obj`, backslashes,
+CRLF) reads like the Unix one, and a listing with build lines it cannot read is an error, never
+"no test needed".
 
 Usage:
   affected_arches.py [--base REF] [--head REF] [--json]    diff base...head (default origin/master..HEAD)
@@ -139,7 +144,7 @@ class Verdict:
         self.host = True
         self.reasons[path] = "host: " + why
 
-    def result(self):
+    def result(self, labels=(0, 0)):
         arches = list(ARCHES) if self.all else sorted(self.arches, key=ARCHES.index)
         table, any_one = load_stands()
         stands = {a: table[a] for a in arches}
@@ -150,26 +155,58 @@ class Verdict:
             "all": self.all,
             "host": self.host or self.all,
             "stands": stands,
-            "ctest": self.ctest(),
+            "ctest": self.ctest(labels),
             "reasons": self.reasons,
         }
 
-    def ctest(self):
-        """Labels of the test registrations (issue #611 step 1): host everywhere, gpu on the arches."""
+    def ctest(self, labels=(0, 0)):
+        """The test selection. Label-filtered commands are named only when every registered test
+        carries a LABELS property (issue #611 step 1, labels arrive with #625); until then `-L`
+        would select a fraction of the suite and silently skip the rest, so the answer is the full
+        ctest, with the reason."""
+        total, labelled = labels
         if self.all:
             return "full ctest on every arch's stand"
+        if not (self.arches or self.host):
+            return "no test needed"
+        where = "on the listed stands" if self.arches else "on one stand"
+        if total == 0 or labelled < total:
+            return (f"full ctest {where} (only {labelled} of {total} registered tests carry a "
+                    "LABELS property, so a label filter would skip tests)")
         if self.arches:
             return "ctest -L 'host|gpu|golden' on the listed stands"
-        if self.host:
-            return "ctest -L host on one stand"
-        return "no test needed"
+        return "ctest -L host on one stand"
+
+
+# Ignored build trees (.gitignore: build/, build-*/, cmake-build-*/) hold generated CMake files that
+# list the same sources unguarded; they never take part in discovery.
+BUILD_DIR = re.compile(r"^(?:build|build-.*|cmake-build-.*|\.git)$")
+CMAKE_NAME = re.compile(r"(?:^|/)CMakeLists\.txt$|\.cmake$")
+TOP_DIRS = ("src", "apps", "tests", "third_party", "include")
+
+
+def git_run(root, *args):
+    cp = subprocess.run(["git", "-C", str(root), *args], capture_output=True)
+    if cp.returncode:
+        raise SystemExit("git %s failed: %s" % (" ".join(args), cp.stderr.decode(errors="replace").strip()))
+    return cp.stdout
 
 
 class Repo:
-    """Header graph of a source tree: which headers a .cu file includes, transitively."""
+    """Header graph of a source tree: which headers a .cu file includes, transitively.
 
-    def __init__(self, root, files=None):
+    With ref=None the tree is the working directory; with a git ref every file name and content is
+    read from that commit, whatever is checked out."""
+
+    def __init__(self, root, files=None, ref=None):
         self.root = Path(root)
+        self.ref = ref
+        self._text = {}
+        self._tree = None
+        if ref is not None:
+            self._tree = [n for n in git_run(root, "ls-tree", "-r", "--name-only", "-z", ref)
+                          .decode("utf-8", errors="replace").split("\0") if n
+                          and not any(BUILD_DIR.match(q) for q in PurePosixPath(n).parts)]
         self.files = files if files is not None else self._walk()
         self.fileset = set(self.files)
         self.by_suffix = {}
@@ -178,10 +215,14 @@ class Repo:
             for i in range(len(parts)):
                 self.by_suffix.setdefault("/".join(parts[i:]), []).append(f)
         self.device_headers = None
+        if ref is not None:
+            self._preload([f for f in self._tree if f.endswith(SOURCE_EXT) or CMAKE_NAME.search(f)])
 
     def _walk(self):
+        if self._tree is not None:
+            return [n for n in self._tree if n.split("/")[0] in TOP_DIRS and n.endswith(SOURCE_EXT)]
         out = []
-        for top in ("src", "apps", "tests", "third_party", "include"):
+        for top in TOP_DIRS:
             base = self.root / top
             if not base.is_dir():
                 continue
@@ -190,7 +231,58 @@ class Repo:
                     out.append(p.relative_to(self.root).as_posix())
         return out
 
+    def _preload(self, names):
+        """All blobs of the ref through one `git cat-file --batch`."""
+        if not names:
+            return
+        req = "".join(f"{self.ref}:{n}\n" for n in names).encode()
+        cp = subprocess.run(["git", "-C", str(self.root), "cat-file", "--batch"], input=req,
+                            capture_output=True)
+        if cp.returncode:
+            raise SystemExit("git cat-file failed: " + cp.stderr.decode(errors="replace").strip())
+        data, pos = cp.stdout, 0
+        for n in names:
+            eol = data.index(b"\n", pos)
+            head = data[pos:eol].split()
+            pos = eol + 1
+            if len(head) == 3 and head[1] == b"blob":
+                size = int(head[2])
+                self._text[n] = data[pos:pos + size].decode("utf-8", errors="replace")
+                pos += size + 1
+
     def read(self, path):
+        if self.ref is not None:
+            return self._text.get(path, "")
+        try:
+            return (self.root / path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
+
+    def cmake_files(self):
+        if self._tree is not None:
+            return [n for n in self._tree if CMAKE_NAME.search(n)]
+        out = []
+        for cm in self.root.rglob("*"):
+            rel = cm.relative_to(self.root).parts
+            if any(BUILD_DIR.match(q) for q in rel[:-1]) or not (cm.name == "CMakeLists.txt"
+                                                                  or cm.suffix == ".cmake"):
+                continue
+            if cm.is_file():
+                out.append("/".join(rel))
+        return out
+
+    def test_labels(self):
+        """(registered tests, tests with a LABELS property) read from the CMake files of the tree."""
+        names, labelled = set(), set()
+        for cm in self.cmake_files():
+            text = re.sub(r"(?m)#.*$", "", self.read(cm) if self.ref is not None else self._disk(cm))
+            names.update(re.findall(r"add_test\s*\(\s*NAME\s+(\S+)", text, re.I))
+            for m in re.finditer(r"set_tests_properties\s*\(([^)]*?)PROPERTIES([^)]*)\)", text, re.I | re.S):
+                if "LABELS" in m.group(2):
+                    labelled.update(m.group(1).split())
+        return len(names), len(names & labelled)
+
+    def _disk(self, path):
         try:
             return (self.root / path).read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -215,13 +307,9 @@ class Repo:
         """basename -> one entry per listing: the set of arches of its guards, None if unguarded."""
         if getattr(self, "_listing", None) is None:
             listing = {}
-            for cm in self.root.rglob("*"):
-                if not (cm.name == "CMakeLists.txt" or cm.suffix == ".cmake") or not cm.is_file():
-                    continue
-                if any(part in ("build", ".git") for part in cm.parts):
-                    continue
+            for cm in self.cmake_files():
                 stack = []
-                for line in cm.read_text(encoding="utf-8", errors="replace").splitlines():
+                for line in (self.read(cm) if self.ref is not None else self._disk(cm)).splitlines():
                     code = line.split("#")[0]
                     m = re.match(r"\s*(if|elseif|else|endif)\s*\((.*)", code, re.I)
                     if m:
@@ -266,17 +354,23 @@ class Repo:
         return self.device_headers
 
 
-def classify(paths, repo, read=None):
-    """read(path) gives the text of a changed file; default: the repo's working tree."""
+def classify(paths, repo, read=None, base=None):
+    """read(path) gives the text of a changed file; default: the repo's tree.
+
+    `base` is the Repo of the other side of a diff: a change that REMOVES an arch macro or the last
+    .cu include of a header is judged on both sides, so removals still get GPU coverage."""
     read = read or repo.read
     v = Verdict()
-    device = repo.headers_reached_from_cu()
+    device = set(repo.headers_reached_from_cu())
+    if base is not None:
+        device |= base.headers_reached_from_cu()
     for p in sorted(set(paths)):
         if any(re.search(pat, p) for pat in ALL_PATTERNS):
             v.add_all(p, "routes, data, build or golden file")
             continue
-        if p.endswith(SOURCE_EXT) and ARCH_MACROS.search(read(p) or ""):
-            v.add_all(p, "uses an arch macro")
+        if p.endswith(SOURCE_EXT) and (ARCH_MACROS.search(read(p) or "")
+                                       or (base is not None and ARCH_MACROS.search(base.read(p) or ""))):
+            v.add_all(p, "uses an arch macro (before or after the change)")
             continue
         name = PurePosixPath(p).name.lower()
         if re.search(OTHER_ARCH_NAME, name):
@@ -302,7 +396,7 @@ def classify(paths, repo, read=None):
             v.add_host(p, "host-only code or docs")
             continue
         v.add_all(p, "no rule: conservative")
-    return v.result()
+    return v.result(repo.test_labels())
 
 
 def git_diff_paths(base, head, root):
@@ -316,22 +410,42 @@ def git_diff_paths(base, head, root):
     return [line for line in cp.stdout.splitlines() if line]
 
 
+BUILD_LINE = re.compile(r"\bBuilding \w+ object\b")
+# `.o` (Unix) or `.obj` (Ninja/MSVC); the object path may hold spaces and may be quoted.
+OBJECT_LINE = re.compile(r"\bBuilding \w+ object\s+(.+?)\.(?:o|obj)[\"']?\s*$")
+
+
 def sources_from_ninja(text, repo):
-    """Sources of the objects a `ninja -n` listing would rebuild; the build tree mirrors the source."""
+    """Sources of the objects a `ninja -n` listing would rebuild; the build tree mirrors the source.
+
+    Reads both spellings of a dry run: `a/CMakeFiles/t.dir/x.cu.o` and the native Windows
+    `a\\CMakeFiles\\t.dir\\x.cu.obj` (CRLF line ends, quoted paths). A line that says "Building ...
+    object" but cannot be parsed is an error, never a silent "nothing to test"."""
     out = set()
+    unparsed = []
     for line in text.splitlines():
-        m = re.search(r"Building \w+ object (\S+?)\.o\b", line)
-        if not m:
+        line = line.strip()
+        if not BUILD_LINE.search(line):
             continue
-        m2 = re.match(r"(.*?)/?CMakeFiles/[^/]+\.dir/(.*)$", m.group(1))
-        cand = m.group(1)
+        m = OBJECT_LINE.search(line)
+        if not m:
+            unparsed.append(line)
+            continue
+        obj = m.group(1).strip().strip("\"'").replace(chr(92), "/")
+        m2 = re.match(r"(.*?)/?CMakeFiles/[^/]+\.dir/(.*)$", obj)
+        cand = obj
         if m2:
             cand = f"{m2.group(1)}/{m2.group(2)}" if m2.group(1) else m2.group(2)
+        if cand not in repo.fileset and cand.endswith(".cuda"):
+            cand = cand[:-len(".cuda")] + ".cu"
         if cand in repo.fileset:
             out.add(cand)
         else:
             hits = repo.by_suffix.get(PurePosixPath(cand).name, [])
             out.update(hits if hits else [cand])
+    if unparsed:
+        raise SystemExit("ninja -n: %d build line(s) not understood, refusing to answer "
+                         "'no test needed'; first: %s" % (len(unparsed), unparsed[0]))
     return sorted(out)
 
 
@@ -368,14 +482,20 @@ def main(argv=None):
     ap.add_argument("--ninja", metavar="BUILD_DIR")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
-    repo = Repo(args.root)
-    if args.ninja:
-        paths = ninja_dirty_sources(args.ninja, repo)
-    elif args.files:
-        paths = args.files
+    base_repo = None
+    if args.ninja or args.files:
+        repo = Repo(args.root)
+        paths = ninja_dirty_sources(args.ninja, repo) if args.ninja else args.files
     else:
         paths = git_diff_paths(args.base, args.head, args.root)
-    res = classify(paths, repo)
+        # classify what the head ref contains, not what is checked out; the base side is the merge
+        # base (what `base...head` compares against), read the same way
+        repo = Repo(args.root, ref=args.head)
+        mb = subprocess.run(["git", "-C", str(args.root), "merge-base", args.base, args.head],
+                            capture_output=True, text=True)
+        base_repo = Repo(args.root, ref=mb.stdout.strip() if mb.returncode == 0 and mb.stdout.strip()
+                         else args.base)
+    res = classify(paths, repo, base=base_repo)
     print(json.dumps(res, indent=1) if args.json else render(res))
     return 0
 

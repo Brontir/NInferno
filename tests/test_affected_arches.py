@@ -160,7 +160,94 @@ class Classify(unittest.TestCase):
         self.assertEqual(res["arches"], [])
         self.assertTrue(res["host"])
         self.assertEqual(list(res["stands"]), ["any"])
+        # no test carries a LABELS property in this tree: no label filter is recommended
+        self.assertTrue(res["ctest"].startswith("full ctest on one stand"), res["ctest"])
+        self.assertIn("0 of 0", res["ctest"])
+
+    LABELLED = ("add_test(NAME t1 COMMAND x)\nset_tests_properties(t1 PROPERTIES LABELS host)\n"
+                "add_test(NAME t2 COMMAND x)\nset_tests_properties(t2 PROPERTIES LABELS gpu)\n")
+
+    def test_label_filter_only_when_every_test_is_labelled(self):
+        partial = "add_test(NAME t3 COMMAND x)\n"
+        res = self.run_diff(["src/chat/a.cpp"], {"tests/CMakeLists.txt": self.LABELLED + partial})
+        self.assertTrue(res["ctest"].startswith("full ctest on one stand"), res["ctest"])
+        self.assertIn("2 of 3", res["ctest"])
+        res = self.run_diff(["src/chat/a.cpp"], {"tests/CMakeLists.txt": self.LABELLED})
         self.assertEqual(res["ctest"], "ctest -L host on one stand")
+        res = self.run_diff(["profiles/gv100.json"], {"tests/CMakeLists.txt": self.LABELLED})
+        self.assertEqual(res["ctest"], "ctest -L 'host|gpu|golden' on the listed stands")
+        both = ("add_test(NAME a COMMAND x)\nadd_test(NAME b COMMAND x)\n"
+                "set_tests_properties(a b PROPERTIES LABELS host)\n")
+        res = self.run_diff(["src/chat/a.cpp"], {"tests/CMakeLists.txt": both})
+        self.assertEqual(res["ctest"], "ctest -L host on one stand")
+
+    def test_ignored_build_trees_do_not_take_part_in_cmake_discovery(self):
+        guarded = 'if(NINFERNO_BUILD_ARCH STREQUAL "70")\n volta_a.cu\nendif()\n'
+        unguarded = "add_library(x volta_a.cu)\n"
+        files = {"src/ops/volta_a.cu": "", "src/ops/sources.cmake": guarded}
+        for d in ("build", "build-debug", "cmake-build-release"):
+            files[d + "/CMakeFiles/ops.dir/DependInfo.cmake"] = unguarded
+            files[d + "/sub/CMakeLists.txt"] = unguarded
+        res = self.run_diff(["src/ops/volta_a.cu"], files)
+        self.assertEqual(res["arches"], ["sm_70"])
+        self.assertFalse(res["all"])
+
+    def git(self, *args):
+        import shutil
+        import subprocess
+        if shutil.which("git") is None:
+            self.skipTest("git not available")
+        subprocess.run(["git", "-C", str(self.root), "-c", "user.name=t", "-c", "user.email=t@t",
+                        *args], check=True, capture_output=True)
+
+    def commit_all(self, msg, tag=None):
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", msg)
+        if tag:
+            self.git("tag", tag)
+
+    def test_head_ref_is_read_from_git_not_from_the_checkout(self):
+        import contextlib
+        import io
+        import json
+        self.git("init", "-q")
+        self.tree({"src/chat/tool_calls.cpp": "int f() { return 1; }\n"})
+        self.commit_all("base", "base")
+        self.tree({"src/chat/tool_calls.cpp": "#if NINFERNO_BUILD_ARCH == 70\nint f();\n#endif\n"})
+        self.commit_all("adds an arch macro", "feature")
+        self.git("checkout", "-q", "base")          # the checkout stays at the base
+        paths = aa.git_diff_paths("base", "feature", self.root)
+        self.assertEqual(paths, ["src/chat/tool_calls.cpp"])
+        self.assertFalse(aa.classify(paths, aa.Repo(self.root))["all"])   # the stale checkout
+        res = aa.classify(paths, aa.Repo(self.root, ref="feature"), base=aa.Repo(self.root, ref="base"))
+        self.assertTrue(res["all"])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            aa.main(["--root", str(self.root), "--base", "base", "--head", "feature", "--json"])
+        self.assertTrue(json.loads(out.getvalue())["all"])
+
+    def test_include_graph_of_the_head_ref(self):
+        self.git("init", "-q")
+        self.tree({"src/ops/k.cu": "// none\n", "src/ops/h.h": "int x;\n"})
+        self.commit_all("base", "base")
+        self.tree({"src/ops/k.cu": '#include "h.h"\n'})
+        self.commit_all("kernel now includes h.h", "feature")
+        self.git("checkout", "-q", "base")
+        res = aa.classify(["src/ops/h.h"], aa.Repo(self.root, ref="feature"),
+                          base=aa.Repo(self.root, ref="base"))
+        self.assertTrue(res["all"])
+
+    def test_removing_the_last_arch_macro_still_answers_all(self):
+        self.git("init", "-q")
+        self.tree({"src/chat/tool_calls.cpp": "#ifdef __CUDA_ARCH__\nint f();\n#endif\n"})
+        self.commit_all("base")
+        self.tree({"src/chat/tool_calls.cpp": "int f();\n"})
+        self.commit_all("removes the macro")
+        paths = ["src/chat/tool_calls.cpp"]
+        self.assertFalse(aa.classify(paths, aa.Repo(self.root, ref="HEAD"))["all"])   # head alone
+        res = aa.classify(paths, aa.Repo(self.root, ref="HEAD"), base=aa.Repo(self.root, ref="HEAD~1"))
+        self.assertTrue(res["all"])
+        self.assertIn("before or after", res["reasons"][paths[0]])
 
     def test_other_arch_and_unknown_paths_answer_all(self):
         self.assertTrue(self.run_diff(["src/ops/hopper_fp8.cu"])["all"])
@@ -183,6 +270,53 @@ class Classify(unittest.TestCase):
         res = aa.classify(aa.sources_from_ninja(text, repo), repo)
         self.assertEqual(res["arches"], ["sm_70"])
         self.assertTrue(res["host"])
+
+    NINJA_TREE = {"src/ops/volta_a.cu": "", "src/chat/c.cpp": "", "src/my dir/sp.cpp": "",
+                  "src/ops/sources.cmake": 'if(NINFERNO_BUILD_ARCH STREQUAL "70")\n volta_a.cu\nendif()\n'}
+
+    def test_ninja_windows_listing_selects_same_arches_as_linux(self):
+        self.tree(self.NINJA_TREE)
+        repo = aa.Repo(self.root)
+        bs = chr(92)
+        linux = ("[1/2] Building CUDA object src/ops/CMakeFiles/ops.dir/volta_a.cu.o\n"
+                 "[2/2] Building CXX object src/chat/CMakeFiles/chat.dir/c.cpp.o\n")
+        win = ("[1/2] Building CUDA object " + bs.join(["src", "ops", "CMakeFiles", "ops.dir", "volta_a.cu.obj"])
+               + "\r\n[2/2] Building CXX object src/chat/CMakeFiles/chat.dir/c.cpp.obj\r\n")
+        self.assertEqual(aa.sources_from_ninja(win, repo), aa.sources_from_ninja(linux, repo))
+        res = aa.classify(aa.sources_from_ninja(win, repo), repo)
+        self.assertEqual(res["arches"], ["sm_70"])
+        self.assertNotEqual(res["ctest"], "no test needed")
+
+    def test_ninja_windows_odd_spellings(self):
+        self.tree(self.NINJA_TREE)
+        repo = aa.Repo(self.root)
+        bs = chr(92)
+        for line in ('Building CXX object "src/my dir/CMakeFiles/t.dir/sp.cpp.obj"',
+                     "Building CXX object " + bs.join(["src", "my dir", "CMakeFiles", "t.dir", "sp.cpp.obj"]) + "\r",
+                     "Building CXX object src/my dir/CMakeFiles/t.dir/sp.cpp.o"):
+            self.assertEqual(aa.sources_from_ninja(line + "\n", repo), ["src/my dir/sp.cpp"], line)
+        self.assertEqual(aa.sources_from_ninja(
+            "Building CUDA object src/ops/CMakeFiles/ops.dir/volta_a.cuda.obj\n", repo),
+            ["src/ops/volta_a.cu"])
+
+    def test_ninja_unparsed_build_lines_fail_loudly(self):
+        self.tree(self.NINJA_TREE)
+        repo = aa.Repo(self.root)
+        with self.assertRaises(SystemExit) as cm:
+            aa.sources_from_ninja("[1/1] Building CXX object weird/thing.cpp.gch\n", repo)
+        self.assertIn("not understood", str(cm.exception))
+        # a dry run with no build lines at all is a legitimate "nothing to rebuild"
+        self.assertEqual(aa.sources_from_ninja("ninja: no work to do.\n", repo), [])
+        # through the CLI path the exit is non-zero
+        saved = aa.subprocess.run
+        aa.subprocess.run = lambda *a, **k: aa.subprocess.CompletedProcess(
+            a, 0, "[1/1] Building CXX object x.cpp.weird\n", "")
+        try:
+            with self.assertRaises(SystemExit) as cm:
+                aa.main(["--root", str(self.root), "--ninja", "build"])
+            self.assertTrue(cm.exception.code)
+        finally:
+            aa.subprocess.run = saved
 
     def test_cli_files_json(self):
         import contextlib
