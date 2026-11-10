@@ -65,15 +65,35 @@ def generation_of(rows, cc):
     raise ValueError(f"no generation row for cc {cc}")
 
 
-def measured_boards(path):
-    """kMmqPrefillPays: [(name, cc, sms, l2, dram, pays)] from core/measured_boards.h."""
+def registry_rows(path):
+    """{pci id: row} of core/data/gpu_facts.json, the board registry's source (#608)."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    return {int(r["id"], 16): r for r in data["gpus"]}
+
+
+def measured_boards(path, facts=None):
+    """kMmqPrefillPays: [(name, cc, sms, l2, dram, pays)] from core/measured_boards.h. Each board
+    is `board_registry::board(pci id[, dram override])` (core/board_registry.h): its compute
+    capability, SMs and L2 come from the registry row, its DRAM from bus bits x Gbps / 8 unless
+    the override names it. A literal `Board{...}` is read as before."""
     text = Path(path).read_text(encoding="utf-8")
+    facts = Path(facts) if facts else Path(path).parent / "data" / "gpu_facts.json"
+    rows = registry_rows(facts)
     consts = {}
     for m in re.finditer(r"constexpr Board (k\w+)\{(\d+), (\d+), (\d+), ([\d.]+), ([\d.]+)"
                          r"(?:, (true|false))?\}", text):
         if m[7] == "true":
             raise ValueError(f"{m[1]}: mma_slow boards are not mirrored")
         consts[m[1]] = (int(m[2]) * 10 + int(m[3]), int(m[4]), float(m[5]), float(m[6]))
+    for m in re.finditer(r"constexpr Board (k\w+)\s*=\s*board_registry::board\(\s*(0x[0-9A-Fa-f]+)"
+                         r"\s*(?:,\s*([\d.]+)\s*)?\)", text):
+        row = rows.get(int(m[2], 16))
+        if row is None:
+            raise ValueError(f"{m[1]}: PCI id {m[2]} is not in {facts}")
+        if row.get("mma_slow", False):
+            raise ValueError(f"{m[1]}: mma_slow boards are not mirrored")
+        dram = float(m[3]) if m[3] else row["bus_bits"] * row["gbps"] / 8.0
+        consts[m[1]] = (int(row["cc"]), int(row["sms"]), float(row.get("l2_mib", 0)), dram)
     table = re.search(r"kMmqPrefillPays\[\] = \{(.*?)\};", text, re.S)
     out = []
     for m in re.finditer(r"\{(k\w+), (true|false)\}", table[1]):
