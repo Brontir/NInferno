@@ -9,7 +9,10 @@
 //  - the activation class of the family (A16, A8, A4): a route admitted under the A16-only policy
 //    is an A16 route, and no route of the A4 class is admitted below AllowA4;
 //  - the workspace need: A16 routes need none, the routes that quantize the activation do (R8 only
-//    at its verify widths, ggml's matrix kernel through its own query).
+//    at its verify widths; ggml's matrix kernel has its own query, which reads the device, so it is
+//    not asked here);
+//  - the catalogue itself: the schedule counts per family are pinned in this file, and the names
+//    of the routes are distinct and parse back.
 //
 // And profile_admits, the one profile filter (route_authorities.h), says what those fields say: in
 // the prefill band it is route_is_token_invariant, under the other profiles and below the band it
@@ -32,9 +35,11 @@
 #include <fstream>
 #include <iostream>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <iterator>
 #include <vector>
 
 #ifndef NINFERNO_SOURCE_DIR
@@ -108,24 +113,68 @@ Activation activation_of(Family f) {
     return Activation::A16;
 }
 
-// Every (family, schedule) of this build.
+// The schedules each family has, written down here and not read from the implementation: a
+// schedule added, removed or moved to another family changes a count below, and the test then asks
+// its author to say which checks the new route needs. W4A4 is compiled on the Blackwell build only
+// (generic_gemm.cpp, w4a4_schedule_count).
+#ifdef NINFERNO_WITHOUT_NVFP4
+constexpr int kW4a4Schedules = 0;
+#else
+constexpr int kW4a4Schedules = 4;
+#endif
+
+struct FamilyCount {
+    Family family;
+    int count;
+    int (*schedules)();
+};
+
+int one_schedule() { return 1; }
+
+const FamilyCount kCatalogue[] = {
+    {Family::RegisterMma, 20, generic::rmma_schedule_count},
+    {Family::Scalar, 1, one_schedule},
+    {Family::W4a4Mma, kW4a4Schedules, generic::w4a4_schedule_count},
+    {Family::TiledMma, 3, generic::tiled_schedule_count},
+    {Family::W4a8Mma, 6, generic::w4a8_schedule_count},
+    {Family::StagedMma, 13, generic::staged_schedule_count},
+    {Family::Nvfp4TiledMma, 3, generic::nvfp4_tiled_schedule_count},
+    {Family::R8Mma, 4, generic::r8_schedule_count},
+    {Family::GgmlMmq, 1, one_schedule},
+    {Family::GgmlVec, 1, one_schedule},
+    {Family::I8Mma, 3, generic::i8_schedule_count},
+};
+
+// The last family is the last of the enumeration: a family added makes this fail to compile.
+static_assert(static_cast<std::size_t>(Family::I8Mma) + 1 == std::size(kCatalogue));
+
+// Every (family, schedule) of this build, after the pinned counts have been compared with the
+// implementation's.
 std::vector<Route> catalogue() {
     std::vector<Route> routes;
-    const auto add = [&](Family f, int count) {
-        for (int i = 0; i < count; ++i) routes.push_back(Route{f, static_cast<std::uint8_t>(i)});
-    };
-    add(Family::RegisterMma, generic::rmma_schedule_count());
-    add(Family::Scalar, 1);
-    add(Family::W4a4Mma, generic::w4a4_schedule_count());
-    add(Family::TiledMma, generic::tiled_schedule_count());
-    add(Family::W4a8Mma, generic::w4a8_schedule_count());
-    add(Family::StagedMma, generic::staged_schedule_count());
-    add(Family::Nvfp4TiledMma, generic::nvfp4_tiled_schedule_count());
-    add(Family::R8Mma, generic::r8_schedule_count());
-    add(Family::GgmlMmq, 1);
-    add(Family::GgmlVec, 1);
-    add(Family::I8Mma, generic::i8_schedule_count());
+    for (const FamilyCount& f : kCatalogue) {
+        if (f.schedules() != f.count) {
+            fail(std::string(catalogue_family_name(f.family)) + ": " +
+                 std::to_string(f.schedules()) + " schedules, the catalogue pins " +
+                 std::to_string(f.count));
+        }
+        for (int i = 0; i < f.count; ++i) {
+            routes.push_back(Route{f.family, static_cast<std::uint8_t>(i)});
+        }
+    }
     return routes;
+}
+
+// The names of the catalogue's routes are distinct and parse back to the route (a schedule moved
+// to another family or renumbered keeps its name pointing at the same tile).
+void check_names(const std::vector<Route>& routes, const std::string& board) {
+    std::set<std::string> seen;
+    for (const Route r : routes) {
+        const std::string name = generic::route_name(r);
+        if (!seen.insert(name).second) fail(board + " " + label(r) + ": the name '" + name + "' twice");
+        const auto back = generic::parse_route(name);
+        if (!back || !(*back == r)) fail(board + " " + label(r) + ": '" + name + "' does not parse back");
+    }
 }
 
 std::string label(Route r) {
@@ -246,11 +295,10 @@ void check_workspace(const std::vector<Route>& routes, const std::string& board)
                 }
                 break;
             }
-            case Family::GgmlMmq: // its own query (ggml_mmq_workspace_bytes)
+            case Family::GgmlMmq: // its own query (ggml_mmq_workspace_bytes), not asked here: the
+                                  // query bounds its stream-k fixup by the device's SM count
+                                  // (cudaGetDeviceProperties), which a host test has no board for
                 if (bytes != 0) fail(where + ": ggml's matrix kernel in route_workspace_bytes");
-                if (generic::ggml_mmq_workspace_bytes(kK, 4096, 16) == 0) {
-                    fail(where + ": ggml's matrix kernel needs a workspace");
-                }
                 break;
             case Family::RegisterMma:
             case Family::Scalar:
@@ -266,28 +314,34 @@ void check_workspace(const std::vector<Route>& routes, const std::string& board)
 }
 
 // A route admitted under a policy has the activation class the policy allows.
-void check_activation(const std::vector<Route>& routes, const std::string& board) {
-    struct Format {
-        QType qtype;
-        std::int32_t n, k;
-    };
+struct Format {
+    QType qtype;
+    std::int32_t n, k;
+};
 
-    constexpr Format kFormats[] = {
-        {QType::BF16, 4096, 4096},        {QType::Q4_G64_FP16, 4096, 4096},
-        {QType::Q8_G32_FP16, 4096, 4096}, {QType::FP8_E4M3FN_ROW_BF16, 4096, 4096},
-        {QType::NVFP4, 4096, 4096},       {QType::GGML_Q4_K, 4096, 4096},
-        {QType::GGML_Q6_K, 4096, 4096},   {QType::GGML_IQ3_S, 4096, 4096},
-        {QType::GGML_Q4_0, 4096, 4096},
-    };
+constexpr Format kFormats[] = {
+    {QType::BF16, 4096, 4096},        {QType::Q4_G64_FP16, 4096, 4096},
+    {QType::Q8_G32_FP16, 4096, 4096}, {QType::FP8_E4M3FN_ROW_BF16, 4096, 4096},
+    {QType::NVFP4, 4096, 4096},       {QType::GGML_Q4_K, 4096, 4096},
+    {QType::GGML_Q6_K, 4096, 4096},   {QType::GGML_IQ3_S, 4096, 4096},
+    {QType::GGML_Q4_0, 4096, 4096},
+};
+
+// The host copy of a patterned weight of the format; the device view is made from it with a
+// payload address nothing dereferences.
+std::optional<quantized_weight::PackedWeight> host_weight(const Format& f) {
+    quantized_weight::PatternedWeightOptions options;
+    if (f.qtype == QType::NVFP4) options.weight_scale_divisor = options.input_scale_divisor = 1.0F;
+    try {
+        return quantized_weight::make_patterned_weight(f.qtype, f.n, f.k, 7U, options);
+    } catch (const std::invalid_argument&) { return std::nullopt; }
+}
+
+void check_activation(const std::vector<Route>& routes, const std::string& board) {
     void* const payload = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
     for (const Format& f : kFormats) {
-        quantized_weight::PatternedWeightOptions options;
-        if (f.qtype == QType::NVFP4)
-            options.weight_scale_divisor = options.input_scale_divisor = 1.0F;
-        std::optional<quantized_weight::PackedWeight> host;
-        try {
-            host.emplace(quantized_weight::make_patterned_weight(f.qtype, f.n, f.k, 7U, options));
-        } catch (const std::invalid_argument&) { continue; }
+        const auto host = host_weight(f);
+        if (!host) continue;
         const Weight w = host->device_weight(payload);
         if (!generic::supports(w)) continue;
         for (const Route r : routes) {
@@ -338,15 +392,58 @@ void check_filter(const std::vector<Route>& routes, const std::string& board) {
     }
 }
 
+// With a weight, the prefill band also keeps a tiled-codec format on its tiled route: the answer is
+// "token-invariant, and not a non-tiled route of a weight the tiled kernels read". Below the band
+// and under the other profiles the weight changes nothing. The cases that matter must exist: a
+// format with a tiled kernel refusing an invariant non-tiled route and admitting the tiled one,
+// and a format without a tiled kernel admitting the invariant non-tiled route.
+void check_filter_weighted(const std::vector<Route>& routes, const std::string& board) {
+    const generic::Ask prefill_wide{generic::Profile::Prefill, 17, 1};
+    const generic::Ask prefill_narrow{generic::Profile::Prefill, 16, 1};
+    const generic::Ask speed{generic::Profile::Speed, 512, 1};
+    void* const payload = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
+    int tiled_refused = 0, tiled_kept = 0, plain_kept = 0;
+    for (const Format& f : kFormats) {
+        const auto host = host_weight(f);
+        if (!host) continue;
+        const Weight w = host->device_weight(payload);
+        if (!generic::supports(w)) continue;
+        const bool tiled = generic::tiled_supports(generic::codec_of(w));
+        for (const Route r : routes) {
+            const std::string where = board + " " + generic::qtype_name(f.qtype) + " " + label(r);
+            const bool invariant    = generic::route_is_token_invariant(r);
+            const bool want = invariant && !(tiled && r.family != Family::TiledMma);
+            if (generic::profile_admits(r, prefill_wide, &w) != want) {
+                fail(where + ": the prefill band's filter with a weight is not (invariant, and "
+                             "tiled where the codec has a tiled kernel)");
+            }
+            for (const generic::Ask& open : {prefill_narrow, speed}) {
+                if (!generic::profile_admits(r, open, &w)) {
+                    fail(where + ": " + generic::profile_name(open.profile) +
+                         " refuses a route given a weight");
+                }
+            }
+            if (invariant && tiled && r.family != Family::TiledMma) tiled_refused += want ? 0 : 1;
+            if (invariant && tiled && r.family == Family::TiledMma) tiled_kept += want ? 1 : 0;
+            if (invariant && !tiled && r.family != Family::TiledMma) plain_kept += want ? 1 : 0;
+        }
+    }
+    if (tiled_refused == 0) fail(board + ": no tiled-codec format refused an invariant register route");
+    if (tiled_kept == 0) fail(board + ": no tiled-codec format kept its tiled route");
+    if (plain_kept == 0) fail(board + ": no format without a tiled kernel kept an invariant route");
+}
+
 void run_board(const generic::FactsBoard& b) {
     const ScopedDeviceClass scoped(generic::board_device_class(b));
     const std::vector<Route> routes = catalogue();
     if (routes.empty()) fail(std::string(b.name) + ": an empty catalogue");
+    check_names(routes, b.name);
     check_summation(routes, b.name);
     check_invariance(routes, b.name);
     check_workspace(routes, b.name);
     check_activation(routes, b.name);
     check_filter(routes, b.name);
+    check_filter_weighted(routes, b.name);
     std::cout << b.name << ": " << routes.size() << " routes\n";
 }
 
