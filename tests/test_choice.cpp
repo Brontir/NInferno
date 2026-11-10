@@ -2355,7 +2355,7 @@ std::vector<PropertyBoard> gpu_fact_boards() {
         b.card.clock_hz = g.at("boost_mhz").get<double>() * 1e6;
         b.card.dram_bytes_per_s =
             g.at("bus_bits").get<double>() / 8 * g.at("gbps").get<double>() * 1e9;
-        b.card.l2_bytes = g.at("l2_mib").get<double>() * 1048576;
+        b.card.l2_bytes = g.value("l2_mib", 0.0) * 1048576;
         b.card.fp4      = cc >= 120;
         out.push_back(std::move(b));
     }
