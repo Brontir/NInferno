@@ -37,10 +37,9 @@ the widest speculative verify (16 tokens) while the timings sit inside it, the t
 entries name a single card (count them from `--list`), and for example `kR8MaxTokens` and
 `kR8DecodeTokens` (RTX 5080), the single-sequence rule of mmq verify (RTX 5070 Ti), the
 narrow-through-16 rule (RTX 5090) and `w4a8_ws_wins: ampere` (RTX 3090, taken for sm_80 and sm_86)
-decide on every card. The class says
-what the timing was, not how far the rule reaches; the `boards` field is where to look. A step
-that holds fitted or placed constants out of a derivation reads this field, not the prose;
-`--list` prints it and the test prints the count per class. Where a descriptor only says where a
+decide on every card. The class says what the timing was, not how far the rule reaches; the
+`boards` field is where to look. A step that holds fitted or placed constants out of a derivation
+reads this field, not the prose; `--list` prints it and the test prints the count per class. Where a descriptor only says where a
 value comes from (the engine's round width at the call, the Ask's lane count handed on), it is
 `Structural` with unknown boards and its tolerance names the entry that holds the timing; several
 descriptors then share one record, and none of them is a second measurement.
@@ -98,6 +97,9 @@ in `route_authorities.cpp` (the authority cascade: `nvfp4_half_l2`, `r8_schedule
   entries changes decisions, and only the selector goldens (`test_selector_golden`) hold the
   order, not this record;
 - a rule switched off by an early return, and a new bare-literal gate added inside an authority;
+- what an authority does with a route after it has built it (whether it admits it, which of two
+  it returns) and the token argument it hands to a rule: a change there moves decisions that only
+  the selector goldens hold;
 - the format membership of the measured rules: `heuristic_w4a8: 65..127 formats` holds the
   `tokens < kW4a8WideMinTokens` edge, not the `wide_format` switch in `generic_gemm.cpp` that says
   which formats take the wider tile, and the per-format flags in `format_traits.h` (`r8_verify`,
@@ -201,5 +203,4 @@ Where the provenance of a rule was found: the comments at its use in `generic_ge
 `generic_gemm.h` and `route_authorities.cpp` (quoted in the tolerance where they state a margin),
 `decisions.md` 58 for the verify widths, and `deterministic-decisions.md` for the rules that rest
 on few boards (the R8 rule's SM-count edge, placed between the two measured boards, 84 and 170
-SMs). The history before the
-0.1.0 squash is not in the repository.
+SMs). The history before the 0.1.0 squash is not in the repository.

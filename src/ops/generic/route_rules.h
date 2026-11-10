@@ -212,7 +212,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "(RTX 5070 Ti C1 117.0 -> 115.2 tok/s, all of it in the copy rounds), while the C4 verify "
      "gains (233.5 -> 249.3)",
      ""},
-    // Where `lanes` comes from: the one-argument overload reads the engine's round width at the
+    // Where `lanes` comes from: the four-argument overload reads the engine's round width at the
     // call; route_authorities.cpp's two Ask builders do the same, so a constant there would turn
     // the lane rule on or off for every call.
     {"mmq_verify_rule: lanes at the call", Basis::Structural, "generic_gemm.cpp",
