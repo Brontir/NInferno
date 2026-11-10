@@ -17,6 +17,7 @@
         "driver": "13040",
         "runtime": "13050"
       },
+      "notes": [],
       "facts": {
         "resident_ctas_per_sm": {
           "value": 4.0,
@@ -183,6 +184,7 @@
         "driver": "13040",
         "runtime": "13040"
       },
+      "notes": [],
       "facts": {
         "resident_ctas_per_sm": {
           "value": 4.0,

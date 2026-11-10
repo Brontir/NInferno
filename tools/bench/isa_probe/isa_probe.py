@@ -75,6 +75,9 @@ def parse_run(text):
             checked = True
             if parts[1:2] != ["ok"]:
                 failures.append(" ".join(parts[2:]))
+        elif parts[0] == "note":
+            # Information the probe adds (the SM clock's range over the chases): kept, not a fact.
+            head.setdefault("notes", []).append(" ".join(parts[1:]))
         elif parts[0] in HEADER:
             head[parts[0]] = " ".join(parts[1:])
         else:
@@ -104,6 +107,7 @@ def row_of(head, facts, source):
         "mma_flops": int(flops),
         "tool": {"probe": head["probe"], "nvcc": head["nvcc"], "driver": head.get("driver", ""),
                  "runtime": head.get("runtime", "")},
+        "notes": head.get("notes", []),
         "facts": {name: facts[name] for name in FACTS},
     }
 

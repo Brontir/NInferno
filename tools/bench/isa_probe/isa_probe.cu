@@ -70,8 +70,11 @@ __device__ __forceinline__ int smid() {
 // One MMA of the architecture's shape on packed 1.0 operands; `acc` holds the accumulators. The
 // shape code is read back from the device (shape_code), never decided on the host, where
 // __CUDA_ARCH__ is not defined.
+// ISA_PROBE_ACC is the accumulator count of the shape (8 for Volta's m8n8k4, 4 otherwise), all of
+// them live in the chain so no instruction but the MMA sits in the measured loop.
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
 #    define ISA_PROBE_SHAPE_CODE 2
+#    define ISA_PROBE_ACC        4
 
 __device__ __forceinline__ void mma_once(float (&c)[4], unsigned a0, unsigned a1, unsigned a2,
                                          unsigned a3, unsigned b0, unsigned b1) {
@@ -82,6 +85,7 @@ __device__ __forceinline__ void mma_once(float (&c)[4], unsigned a0, unsigned a1
 }
 #elif defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 750
 #    define ISA_PROBE_SHAPE_CODE 1
+#    define ISA_PROBE_ACC        4
 
 __device__ __forceinline__ void mma_once(float (&c)[4], unsigned a0, unsigned a1, unsigned,
                                          unsigned, unsigned b0, unsigned) {
@@ -92,18 +96,20 @@ __device__ __forceinline__ void mma_once(float (&c)[4], unsigned a0, unsigned a1
 }
 #else
 #    define ISA_PROBE_SHAPE_CODE 0
+#    define ISA_PROBE_ACC        8
 
-__device__ __forceinline__ void mma_once(float (&c)[4], unsigned a0, unsigned a1, unsigned,
+// Volta's native shape (sm_70 has no m16n8k16: ptxas would lower it to several of these), all
+// eight accumulators chained.
+__device__ __forceinline__ void mma_once(float (&c)[8], unsigned a0, unsigned a1, unsigned,
                                          unsigned, unsigned b0, unsigned b1) {
-    // m8n8k4 keeps 8 accumulators; the probe chains the first four and parks the rest.
-    float d4 = 0.f, d5 = 0.f, d6 = 0.f, d7 = 0.f;
     asm volatile("mma.sync.aligned.m8n8k4.row.col.f32.f16.f16.f32 {%0,%1,%2,%3,%4,%5,%6,%7}, "
                  "{%8,%9}, {%10,%11}, {%0,%1,%2,%3,%4,%5,%6,%7};\n"
-                 : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3]), "+f"(d4), "+f"(d5), "+f"(d6),
-                   "+f"(d7)
+                 : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3]), "+f"(c[4]), "+f"(c[5]),
+                   "+f"(c[6]), "+f"(c[7])
                  : "r"(a0), "r"(a1), "r"(b0), "r"(b1));
 }
 #endif
+constexpr int kAcc = ISA_PROBE_ACC;
 
 __global__ void shape_code(int* out) {
 #ifdef __CUDA_ARCH__
@@ -120,9 +126,9 @@ constexpr Shape kShapes[] = {
     {"hmma_884_f32_f16", 512}, {"hmma_1688_f32_f16", 2048}, {"hmma_16816_f32_bf16", 4096}};
 
 __global__ void mma_throughput(Span* spans, float* sink, unsigned a, unsigned b) {
-    float acc[kUnroll][4];
+    float acc[kUnroll][kAcc];
     for (int u = 0; u < kUnroll; ++u)
-        for (int e = 0; e < 4; ++e) acc[u][e] = 0.f;
+        for (int e = 0; e < kAcc; ++e) acc[u][e] = 0.f;
     __syncthreads();
     const long long t0 = clock64();
     for (int i = 0; i < kThroughputN; ++i) {
@@ -132,18 +138,35 @@ __global__ void mma_throughput(Span* spans, float* sink, unsigned a, unsigned b)
     __syncthreads();
     const long long t1 = clock64();
     float s            = 0.f;
-    for (int u = 0; u < kUnroll; ++u) s += acc[u][0] + acc[u][1] + acc[u][2] + acc[u][3];
+    for (int u = 0; u < kUnroll; ++u)
+        for (int e = 0; e < kAcc; ++e) s += acc[u][e];
     if (threadIdx.x == 0) spans[blockIdx.x] = {t0, t1, smid()};
     if (s == 12345.f) sink[0] = s; // keeps the chain alive, never true
 }
 
 __global__ void mma_latency(Span* spans, float* sink, unsigned a, unsigned b) {
-    float acc[4]       = {0.f, 0.f, 0.f, 0.f};
+    float acc[kAcc];
+    for (int e = 0; e < kAcc; ++e) acc[e] = 0.f;
     const long long t0 = clock64();
     for (int i = 0; i < kLatencyLinks; ++i) mma_once(acc, a, a, a, a, b, b);
     const long long t1 = clock64();
     if (threadIdx.x == 0) spans[blockIdx.x] = {t0, t1, smid()};
-    if (acc[0] + acc[1] + acc[2] + acc[3] == 12345.f) sink[0] = acc[0];
+    float s = 0.f;
+    for (int e = 0; e < kAcc; ++e) s += acc[e];
+    if (s == 12345.f) sink[0] = s;
+}
+
+// A warp of FFMAs on every SM beside the chasing warp, so the card's clock does not sink to its
+// idle step during the latency chases (a lone warp waiting on memory does not lift it); it stops
+// when the host raises the mapped flag. One warp of FFMA on one partition contends with the chase
+// for at most an issue slot a link.
+__global__ void spinner(const volatile int* stop, float* sink) {
+    float x = threadIdx.x * 1e-3f;
+    while (*stop == 0) {
+#pragma unroll
+        for (int i = 0; i < 1024; ++i) x = fmaf(x, 0.999f, 0.001f);
+    }
+    if (x == 12345.f) sink[0] = x;
 }
 
 // ---- INT32 and FP32 pipes ----
@@ -356,7 +379,7 @@ int main() {
     CHECK(cudaDriverGetVersion(&driver));
     CHECK(cudaRuntimeGetVersion(&runtime));
     const int cc = p.major * 10 + p.minor;
-    std::printf("probe isa_probe 7\n");
+    std::printf("probe isa_probe 8\n");
     std::printf("card %s\n", p.name);
     std::printf("cc %d\n", cc);
     std::printf("sms %d\n", p.multiProcessorCount);
@@ -443,6 +466,19 @@ int main() {
     CHECK(cudaMalloc(&buf, elements * sizeof(unsigned)));
     std::map<std::string, double> lat;
     std::vector<double> mhz; // the SM clock seen by each L2 / DRAM chase
+    // The clock holder: one warp of FFMA per SM on a second stream for the whole latency section,
+    // stopped through a mapped host flag.
+    volatile int* stop_host = nullptr;
+    int* stop_dev           = nullptr;
+    CHECK(cudaHostAlloc(reinterpret_cast<void**>(const_cast<int**>(&stop_host)), sizeof(int),
+                        cudaHostAllocMapped));
+    *stop_host = 0;
+    CHECK(cudaHostGetDevicePointer(reinterpret_cast<void**>(&stop_dev), const_cast<int*>(stop_host),
+                                   0));
+    cudaStream_t side = nullptr;
+    CHECK(cudaStreamCreateWithFlags(&side, cudaStreamNonBlocking));
+    spinner<<<pr.sms, 32, 0, side>>>(stop_dev, pr.fsink);
+    CHECK(cudaGetLastError());
 
     // The spans of the chasing warps: entry CTA x 8 + warp, the first `warps` of every CTA.
     struct Chase {
@@ -492,11 +528,21 @@ int main() {
             }
         }
     }
+    *stop_host = 1;
+    CHECK(cudaStreamSynchronize(side));
+    CHECK(cudaStreamDestroy(side));
     fact("sm_clock_mhz_chase", median(mhz), "mhz");
-    check(mhz.size() == 12 && *std::max_element(mhz.begin(), mhz.end()) <=
-                                  1.05 * *std::min_element(mhz.begin(), mhz.end()),
-          "the SM clock moved by over 5 % between the L2 / DRAM chases (lock the clocks: "
-          "nvidia-smi -lgc)");
+    // Each chase's ns come from its own window (clock64 against globaltimer within it), so a clock
+    // that moved between chases leaves the ns right and only the clk figures of those levels at
+    // the clock they ran at: reported, not refused.
+    if (mhz.size() == 12) {
+        const double lo = *std::min_element(mhz.begin(), mhz.end());
+        const double hi = *std::max_element(mhz.begin(), mhz.end());
+        if (hi > 1.05 * lo)
+            std::printf("note the SM clock ranged %.0f..%.0f MHz over the L2 / DRAM chases; their "
+                        "clk figures are at those clocks, the ns stand\n",
+                        lo, hi);
+    }
     chase_shared<<<pr.sms, 128>>>(pr.spans, pr.usink);
     chase_shared<<<pr.sms, 128>>>(pr.spans, pr.usink);
     fact("shared_latency", median_span(pr.collect(pr.sms)) / kLatencyLinks, "clk");

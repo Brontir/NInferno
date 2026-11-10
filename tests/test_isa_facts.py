@@ -38,7 +38,8 @@ fact int32_cycles_per_warp_instruction 2.01 clk
     "".join(f"fact {lv}_latency_ns_w{w} {(v + 3 * w) / 2.52:.1f} ns\n"
             for lv, v in (("l2", 260.0), ("dram", 560.0), ("dram_tlbwarm", 520.0))
             for w in (1, 2, 4, 8)) + \
-    "fact sm_clock_mhz_chase 2520.0 mhz\nfact shared_latency 29.5 clk\nselfcheck ok\nend\n"
+    "fact sm_clock_mhz_chase 2520.0 mhz\nfact shared_latency 29.5 clk\n" \
+    "note the SM clock ranged 2400..2535 MHz over the L2 / DRAM chases\nselfcheck ok\nend\n"
 
 
 class IsaFacts(unittest.TestCase):
@@ -51,6 +52,7 @@ class IsaFacts(unittest.TestCase):
         self.assertEqual((row["cc"], row["sms"], row["mma_shape"], row["mma_flops"]),
                          (89, 128, "hmma_16816_f32_bf16", 4096))
         self.assertEqual(row["tool"]["nvcc"], "13.4.92")
+        self.assertEqual(row["notes"], ["the SM clock ranged 2400..2535 MHz over the L2 / DRAM chases"])
         self.assertAlmostEqual(row["facts"]["dram_latency_w8"]["value"], 584.0)
         self.assertEqual(ip.arch_key(120, "hmma_16816_f32_bf16 4096"), "120a")
         self.assertEqual(ip.arch_key(75, "hmma_1688_f32_f16 2048"), "75")
