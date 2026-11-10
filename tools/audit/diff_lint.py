@@ -634,7 +634,9 @@ def cxx_open_lines(text):
         line = line.rstrip("\r")
         i, n, quote, carry = 0, len(line), carry, None
         if quote is None and raw is None and not block and not spliced:
-            dm = DIRECTIVE_RX.match(line)
+            # A comment is whitespace to the preprocessor: `#/**/if 0` and `/* note */ #if 0` are
+            # directives.
+            dm = DIRECTIVE_RX.match(re.sub(r"/\*.*?\*/", " ", line))
             kind, rest = (dm.group(1), dm.group(2).strip()) if dm else ("", "")
             value = cond_literal(rest)
             zero, one = value == 0, value is not None and value != 0

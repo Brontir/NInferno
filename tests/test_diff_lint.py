@@ -741,6 +741,13 @@ class MaskAndLiteralFixes(unittest.TestCase):
             with self.subTest(other=other):
                 self.assertEqual(lits("t.cpp", f"#if {other}\nconst char* s = \"oops\n;\n#endif\n"), [2])
 
+    def test_a_comment_before_the_directive_keyword(self):
+        for opener in ("#/**/if 0", "/* note */ #if 0", "# /* a */ if /* b */ 0"):
+            with self.subTest(opener=opener):
+                self.assertEqual(lits("t.cpp", f"{opener}\nit's\n#endif\nint b;\n"), [])
+        # a comment that only looks like a directive opener is not one
+        self.assertEqual(lits("t.cpp", "/* #if 0 */\nconst char* s = \"oops\n;\n"), [2])
+
     def test_an_angle_header_name_opens_no_literal(self):
         self.assertEqual(lits("t.cpp", "#include <don't.h>\nint a;\n"), [])
         self.assertEqual(lits("t.cpp", "#  include_next <it's/a.h> // ok\nint a;\n"), [])
