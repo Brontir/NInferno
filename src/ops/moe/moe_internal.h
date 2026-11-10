@@ -20,7 +20,7 @@
 #include "ninferno/ops/moe.h"
 #include "ops/generic/generic_gemm.h"
 
-#include <cuda_runtime.h>
+#include "core/cuda_stream.h"
 
 #include <array>
 #include <cstdint>
