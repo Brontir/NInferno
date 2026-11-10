@@ -134,6 +134,35 @@ def engine_expected(q, row):
     return out
 
 
+DEVICE_PARTS = ("queried", "synthetic", "engine_table_facts")
+
+
+def validate_probe(probe_output):
+    """Raises ValueError unless the probe document is a complete recording: a nonempty list of
+    devices, each with the driver's query, the synthetic class and the engine's table reading.
+    A partial capture must not pass as a clean audit."""
+    devices = probe_output.get("devices") if isinstance(probe_output, dict) else None
+    if not isinstance(devices, list) or not devices:
+        raise ValueError("invalid probe output: \"devices\" is missing, not a list or empty")
+    for position, device in enumerate(devices):
+        if not isinstance(device, dict) or "index" not in device:
+            raise ValueError(f"invalid probe output: device {position} is not an object with an index")
+        for part in DEVICE_PARTS:
+            if not isinstance(device.get(part), dict):
+                raise ValueError(f"invalid probe output: device {position} has no \"{part}\" object")
+        if "raw" in device and not isinstance(device["raw"], dict):
+            raise ValueError(f"invalid probe output: device {position}: \"raw\" is not an object")
+        if not isinstance(device["synthetic"].get("features"), dict) or \
+                not isinstance(device["queried"].get("features"), dict):
+            raise ValueError(f"invalid probe output: device {position} has no \"features\" object")
+        for part in ("queried", "synthetic"):
+            if "persisting_l2_max_bytes" not in device[part]:
+                raise ValueError(f"invalid probe output: device {position}: {part} has no "
+                                 "persisting_l2_max_bytes")
+        if "sku" not in device["engine_table_facts"]:
+            raise ValueError(f"invalid probe output: device {position}: engine_table_facts has no sku")
+
+
 def compare_device(device, row):
     """Results for one device of the probe against its gpu_facts.json row (None: no such row)."""
     q = device["queried"]
@@ -235,8 +264,8 @@ def compare_device(device, row):
             vram_status, vram_note = "mismatch", "marketed capacity against the driver's total"
         out.append(result("table", "vram_gib", row["vram_gib"], round(q["global_bytes"] / GIB, 3),
                           vram_status, vram_note))
-        engine = device.get("engine_table_facts")
-        if engine is not None and engine.get("sku"):
+        engine = device["engine_table_facts"]  # validate_probe: the probe always prints it
+        if engine.get("sku"):
             # What machine_facts makes of the row and this driver: the row as it is, or a
             # laptop at the bottom of its boost range, a memory variant at the driver's bus and
             # clock, a slice (source Extrapolated, its share priced apart).
@@ -252,7 +281,7 @@ def compare_device(device, row):
                 out.append(result("table", "engine_l2_mib", l2, engine["l2_mib"],
                                   "match" if close(l2, engine["l2_mib"], 1e-6) else "mismatch",
                                   "the engine's reading of the table against the JSON"))
-        elif engine is not None:
+        else:
             out.append(result("table", "engine_sku", row["name"], "", "mismatch",
                               "the engine's table has no row for this id"))
 
@@ -276,7 +305,7 @@ def compare_device(device, row):
                           s["smem_per_block_optin"] + reserved,
                           "match" if s["smem_per_block_optin"] + reserved == s["smem_per_sm"]
                           else "mismatch", "the synthetic class's own pair, with the driver's reserved"))
-    persisting = q.get("persisting_l2_max_bytes", 0)
+    persisting = q["persisting_l2_max_bytes"]
     out.append(result("arch", "persisting_l2_max_bytes", s["persisting_l2_max_bytes"], persisting,
                       "match" if s["persisting_l2_max_bytes"] == persisting else "info",
                       "synthetic writes 3/4 of the L2; the driver's cap is the board's"))

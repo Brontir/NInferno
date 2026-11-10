@@ -33,6 +33,7 @@ def load_rows(path):
 
 def run(probe_output, rows):
     """(summary, text) for a probe's parsed JSON."""
+    facts_compare.validate_probe(probe_output)  # ValueError: exit 2, never a clean audit
     results = []
     for device in probe_output["devices"]:
         q = device["queried"]

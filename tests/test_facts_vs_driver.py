@@ -311,6 +311,32 @@ class Cli(unittest.TestCase):
         self.assertEqual([m["field"] for m in summary["devices"][1]["mismatches"]], ["l2_mib"])
         self.assertEqual(summary["devices"][0]["mismatches"], [])
 
+    def test_an_empty_or_partial_recording_is_exit_2(self):
+        # No devices, or a device without a part the audit reads, is invalid input (2), never a
+        # clean audit (0).
+        no_engine = device_4090()
+        del no_engine["engine_table_facts"]
+        no_queried = device_4090()
+        del no_queried["queried"]
+        no_synthetic = device_4090()
+        del no_synthetic["synthetic"]
+        no_persisting = device_4090()
+        del no_persisting["queried"]["persisting_l2_max_bytes"]
+        for name, probe in (("empty list", {"devices": []}), ("no devices key", {}),
+                            ("devices not a list", {"devices": {"0": device_4090()}}),
+                            ("not an object", []), ("device not an object", {"devices": [1]}),
+                            ("no engine facts", {"devices": [no_engine]}),
+                            ("engine facts not an object",
+                             {"devices": [dict(device_4090(), engine_table_facts=None)]}),
+                            ("no queried", {"devices": [no_queried]}),
+                            ("no synthetic", {"devices": [no_synthetic]}),
+                            ("no persisting cap", {"devices": [no_persisting]}),
+                            ("one good, one partial", {"devices": [device_4090(), no_engine]})):
+            done, summary = self.run_cli(probe)
+            self.assertEqual(done.returncode, 2, name + ": " + done.stdout)
+            self.assertIn("invalid probe output", done.stderr, name)
+            self.assertIsNone(summary, name)
+
     def test_a_missing_probe_is_exit_2(self):
         done = subprocess.run([sys.executable, "-B", str(ROOT / "tools" / "audit" / "facts_vs_driver.py"),
                                "--probe", str(ROOT / "no_such_probe")], capture_output=True, text=True)
