@@ -87,6 +87,20 @@ DURING_IDLE = ("note compute processes on the probe's GPU during the run besides
 # The lines `run` writes around the probe's own output (its header lines before, its process
 # notes after): what a faked run's probe binary does not print.
 RUN_LINES = ("source_sha256 ", "arch ", "sass_per_mma ", "note compute processes")
+
+
+def during_of(samples):
+    """nvidia-smi --query-compute-apps=timestamp,gpu_bus_id,pid -lms 200 output: one sample per
+    list, each entry a pid on the GPU at 01 (or "<bus>:<pid>" on another one)."""
+    lines = []
+    for i, pids in enumerate(samples):
+        for p in pids:
+            bus, pid = p.split(":") if ":" in p else ("01", p)
+            lines.append(f"2026/11/10 12:00:{i // 5:02d}.{i % 5 * 200:03d}, 00000000:{bus}:00.0, "
+                         f"{pid}")
+    return "".join(line + "\n" for line in lines)
+
+
 # The SASS of isa_probe_mma_unit for sm_89: one HMMA.16816 is one m16n8k16.
 SASS_89 = """
 \t\tFunction : _Z18isa_probe_mma_unitPfjj
@@ -290,19 +304,45 @@ class IsaFacts(unittest.TestCase):
         ip.parse_run(SAMPLE.replace(after, anygpu) + waived)
         with self.assertRaises(ValueError):
             ip.parse_run(SAMPLE.replace(after, anygpu))
+        # A process on some GPU when the probe's is not known may be on the probe's: refused,
+        # with the waiver too.
+        with self.assertRaises(ValueError) as e:
+            ip.parse_run(SAMPLE.replace(after, anygpu.replace(": 0", ": 1 (pid 9)")) + waived)
+        self.assertIn("another compute process on any GPU", str(e.exception))
+
+    def test_during_list_without_the_probe_pid(self):
+        # In a container whose nvidia-smi prints host-namespace pids, the probe's own pid is not
+        # listed: one entry may be the probe (not read, waivable); two never are both the probe
+        # (another process seen, never waived).
+        bus = ip._bus("0000:01:00.0")
+        waived = ["compute processes on the probe's GPU before the run: 0",
+                  "compute processes on the probe's GPU after the run: 0", ip.WAIVED]
+
+        def refusal(samples):
+            note = ip._during_note([r.split(", ") for r in during_of(samples).splitlines()],
+                                   bus, "4321")
+            return ip.idle_refusal(waived + [note[5:]])
+        self.assertIsNone(refusal([["4242"]]))
+        self.assertIsNone(refusal([["[N/A]"]] * 3))
+        self.assertIsNone(refusal([]))
+        for samples in ([["4242", "5555"]], [["4242"], ["5555"]], [["[N/A]", "[N/A]"]],
+                        [["4321", "4242"]], [["4321", "[N/A]"]], [["[N/A]"], ["4242"]]):
+            self.assertIn("another compute process", refusal(samples) or "", samples)
         # An earlier probe's run carries no such notes and owes none.
         ip.parse_run(earlier_run(16))
 
     def run_faked(self, d, *, before="", after="", during=None, probe_rc=0, mem_khz=None,
-                  waive=False, sass=SASS_89):
+                  waive=False, sass=SASS_89, no_bus=False):
         """isa_probe.py run with nvcc, cuobjdump, nvidia-smi and the probe binary faked; the
         exit code, the --out path and stderr."""
         pid = 4321
         if during is None:
-            during = f"00000000:01:00.0, {pid}\n" * 20
+            during = during_of([[str(pid)]] * 20)
         lines = [l for l in SAMPLE.splitlines() if not l.startswith(RUN_LINES)]
-        probe_out = "\n".join(lines).replace(
-            "nvcc 13.4.92", "nvcc 13.4.92\nnote device 0 is the GPU at PCI 0000:01:00.0") + "\n"
+        probe_out = "\n".join(lines) + "\n"
+        if not no_bus:
+            probe_out = probe_out.replace(
+                "nvcc 13.4.92", "nvcc 13.4.92\nnote device 0 is the GPU at PCI 0000:01:00.0")
         if mem_khz is not None:
             probe_out = probe_out.replace("mem_clock_khz 10501000", f"mem_clock_khz {mem_khz}")
         if probe_rc:
@@ -333,6 +373,7 @@ class IsaFacts(unittest.TestCase):
                 return Proc(probe_out, probe_rc, pid)
             if cmd[1].startswith("--query-gpu"):
                 return Proc("00000000:01:00.0, P0, 2520, 10501\n" * 20, 0, 1)
+            self.assertEqual(cmd[1], "--query-compute-apps=timestamp,gpu_bus_id,pid")
             return Proc(during, 0, 2)
 
         out = os.path.join(d, "isa_probe_89_1.txt")
@@ -348,7 +389,8 @@ class IsaFacts(unittest.TestCase):
     def test_run_writes_a_refused_run_under_another_name(self):
         # `run` writes --out only for a run that is a row; a refused run's output goes to
         # <out>.refused, which merge does not take, so "merge the first run" cannot merge it.
-        other = "00000000:01:00.0, 4321\n00000000:01:00.0, 4242\n00000000:02:00.0, 5555\n"
+        other = during_of([["4321", "4242", "02:5555"]] * 5)
+        na = during_of([["[N/A]"]] * 5)
         for kw, rc_want, said in (
                 ({}, 0, None),
                 ({"during": other}, 3, "during the run: 1 (pid 4242)"),
@@ -357,17 +399,32 @@ class IsaFacts(unittest.TestCase):
                 ({"probe_rc": 3}, 3, "the probe exited 3"),
                 # A process on another GPU is not the probe's GPU's.
                 ({"before": "00000000:02:00.0, 999\n"}, 0, None),
-                # During the run the probe's own pid must be in the list: a list without it (the
-                # sampler gave nothing, or pids printed as [N/A]) was not read, not idle, and the
-                # waiver then applies; [N/A] is never counted as another process.
-                ({"during": ""}, 3, "no sample listed the probe itself"),
-                ({"during": "00000000:01:00.0, [N/A]\n" * 20}, 3,
-                 "no sample listed the probe itself"),
-                ({"during": "00000000:01:00.0, 4321\n00000000:01:00.0, [N/A]\n"}, 3,
-                 "a pid given as [N/A]"),
+                # During the run the probe is one of the listed processes. A list without its own
+                # pid that shows nothing, or one entry throughout (a foreign-namespace pid, or
+                # [N/A]: maybe the probe), was not read: refused, accepted with the waiver.
+                ({"during": ""}, 3, "no process listed"),
+                ({"during": na}, 3, "one process listed throughout, pid [N/A]"),
+                ({"during": during_of([["4242"]] * 5)}, 3, "one process listed throughout"),
                 ({"during": "", "waive": True}, 0, None),
-                ({"during": "00000000:01:00.0, [N/A]\n", "waive": True}, 0, None),
+                ({"during": na, "waive": True}, 0, None),
+                ({"during": during_of([["4242"]] * 5), "waive": True}, 0, None),
+                # Two entries where the probe can be at most one, or an entry beside the probe's
+                # own pid, are another process seen: refused, waiver or not.
                 ({"during": other, "waive": True}, 3, "during the run: 1 (pid 4242)"),
+                ({"during": during_of([["4321", "[N/A]"]]), "waive": True}, 3,
+                 "during the run: 1 (pid [N/A])"),
+                ({"during": during_of([["4242", "5555"]] * 3), "waive": True}, 3,
+                 "1 (pid 4242, 5555; the probe's own pid 4321 not among them, up to 2"),
+                ({"during": during_of([["4242"], ["5555"]]), "waive": True}, 3,
+                 "1 (pid 4242, 5555; the probe's own pid 4321 not among them, up to 1"),
+                ({"during": during_of([["[N/A]", "[N/A]"]] * 3), "waive": True}, 3,
+                 "1 (pid [N/A]; the probe's own pid 4321 not among them, up to 2"),
+                # The probe's GPU not known (no bus id printed): a process on any GPU may be on
+                # the probe's, refused; none anywhere is a list that cannot say which GPU, waived.
+                ({"no_bus": True, "before": "00000000:02:00.0, 999\n", "waive": True}, 3,
+                 "on any GPU (the probe's not known) before the run: 1 (pid 999)"),
+                ({"no_bus": True}, 3, "the probe's GPU not known"),
+                ({"no_bus": True, "waive": True}, 0, None),
                 ({"mem_khz": 0}, 0, None),
                 # The SASS of one mma.sync not the shape's flops (an opcode of no known shape):
                 # refused by `run`, and the file says so, so a copy under the row's name is too.

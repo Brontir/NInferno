@@ -305,14 +305,18 @@ def idle_refusal(notes):
         if when in seen:
             return f"the compute processes {when} the run are noted twice"
         seen[when] = value
-        if value.startswith("not read") or where.startswith("any GPU"):
+        if value.startswith("not read"):
             unread.append(f"{when}: {value}")
             continue
         count = PROCESS_COUNT.fullmatch(value)
         if not count:
             return f"odd compute-process note: {n!r}"
+        # With the probe's GPU not known, a process on any GPU may be on the probe's: refused
+        # like one seen there; none on any GPU is a list that cannot say which GPU, not read.
         if int(count.group(1)) != 0:
-            return f"another compute process on the probe's GPU {when} the run: {value}"
+            return (f"another compute process on {where} {when} the run: {value}")
+        if where.startswith("any GPU"):
+            unread.append(f"{when}: 0 on {where}")
     missing = [w for w in ("before", "during", "after") if w not in seen]
     if missing:
         return f"no note of the compute processes {' / '.join(missing)} the run"
@@ -513,24 +517,40 @@ def _apps_note(when, apps, bus):
 
 def _during_note(during, bus, own):
     """The note line of the compute processes nvidia-smi listed on the probe's GPU while the probe
-    (pid `own`) ran. The probe is one of them itself, so a list that never shows its pid was not
-    read (the sampler gave nothing in time, or this nvidia-smi does not show this process's
-    pids), and a pid printed as `[N/A]` is a process the list cannot name, which may be the
-    probe: not read either, never another process."""
+    (pid `own`) ran; `during` is rows of (timestamp, bus id, pid), one timestamp a sample.
+
+    The probe is one of the listed processes itself. Where its pid is listed, every other entry
+    (another pid, or one printed as `[N/A]`) is another process. Where it is not (the sampler gave
+    nothing in time, or this nvidia-smi prints pids of another namespace or none), the probe may
+    be any one entry, never two: a list with no entry, or with the same one entry throughout, was
+    not read (the waiver may cover it); a list with two entries in one sample or two distinct
+    entries over the run had at least one process besides the probe, which is never waived."""
     head = "note compute processes on the probe's GPU during the run"
     if during is None:
         return f"{head}: not read (nvidia-smi not run)"
     if bus is None:
         return f"{head}: not read (the probe's GPU not known)"
-    pids = {r[1] for r in during if _bus(r[0]) == bus}
-    if own not in pids:
-        return f"{head}: not read (no sample listed the probe itself)"
-    unnamed = sorted(p for p in pids if not p.isdigit())
-    if unnamed:
-        return f"{head}: not read (a pid given as {unnamed[0]})"
-    others = sorted(p for p in pids if p != own)
-    return (f"{head} besides the probe (nvidia-smi every 200 ms): {len(others)}"
-            + (f" (pid {', '.join(others)})" if others else ""))
+    samples = {}
+    for r in during:
+        if _bus(r[1]) == bus:
+            samples.setdefault(r[0], []).append(r[2])
+    entries = sorted({p for pids in samples.values() for p in pids})
+    busy = f"{head} besides the probe (nvidia-smi every 200 ms)"
+    if own in entries:
+        others = [p for p in entries if p != own]
+        beside = max(len(pids) - (own in pids) for pids in samples.values())
+        n = max(len(others), beside)
+        return f"{busy}: {n}" + (f" (pid {', '.join(others)})" if n else "")
+    if not entries:
+        return f"{head}: not read (no process listed, the probe's own pid {own} neither)"
+    most = max(len(pids) for pids in samples.values())
+    if most == 1 and len(entries) == 1:
+        return (f"{head}: not read (one process listed throughout, pid {entries[0]}, not the "
+                f"probe's own pid {own}: it may be the probe under another pid namespace)")
+    # The probe is at most one of them.
+    n = max(most, len(entries)) - 1
+    return (f"{busy}: {n} (pid {', '.join(entries)}; the probe's own pid {own} not among them, "
+            f"up to {most} a sample)")
 
 
 # The suffix of a refused run's file (never an isa_probe_<arch>.txt, so never merged as a row),
@@ -587,14 +607,14 @@ def cmd_run(a):
         # The clocks (the memory clock is the P-state's, which the device API does not give) and
         # the compute processes, sampled through the run.
         clocks = sampler("--query-gpu=pci.bus_id,pstate,clocks.sm,clocks.mem")
-        apps = sampler("--query-compute-apps=gpu_bus_id,pid")
+        apps = sampler("--query-compute-apps=timestamp,gpu_bus_id,pid")
         # The probe's stderr (CUDA errors) passes through; its stdout is kept whole, so a failed
         # or refused run still shows what it measured before stopping.
         probe = subprocess.Popen([exe], stdout=subprocess.PIPE, text=True)
         stdout, _ = probe.communicate()
         run = subprocess.CompletedProcess([exe], probe.returncode, stdout, None)
         samples = rows_of(clocks, 4) or []
-        during = rows_of(apps, 2)
+        during = rows_of(apps, 3)
         after = _compute_apps()
     m = re.search(r"^note device 0 is the GPU at PCI (\S+)$", run.stdout, re.M)
     bus = _bus(m.group(1)) if m else None
@@ -616,7 +636,8 @@ def cmd_run(a):
     # run whose process list could not be read (and the row says so), never one where another
     # process was seen; the note is written only when it is used.
     if a.idle_unchecked and any(
-            m and (m.group(3).startswith("not read") or m.group(1).startswith("any GPU"))
+            m and (m.group(3).startswith("not read") or
+                   (m.group(1).startswith("any GPU") and m.group(3).startswith("0")))
             for m in (PROCESS_NOTE.fullmatch(n[5:]) for n in tail)):
         tail.append("note " + WAIVED)
     body = run.stdout if run.stdout.endswith("\n") or not run.stdout else run.stdout + "\n"
