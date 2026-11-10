@@ -268,14 +268,19 @@ void loop_counts_read() {
         // Schema 3: the critical path's counts per class are a chain of the loop's own
         // instructions, so no class exceeds its count and the chain is not empty.
         if (l.has_critical_path) {
-            const int depth = l.cp_mma + l.cp_ld + l.cp_lds + l.cp_shfl + l.cp_int + l.cp_fp +
-                              l.cp_cvt + l.cp_other;
+            // The converts count with the float ALU, but for I2I, an integer one.
+            const int cp_int = l.cp_imad + l.cp_iadd + l.cp_lop3 + l.cp_prmt + l.cp_shf;
+            const int cp_fp  = l.cp_hfma2 + l.cp_ffma;
+            const int cp_cvt = l.cp_cvt + l.cp_f2f;
+            const int depth =
+                l.cp_mma + l.cp_ld + l.cp_lds + l.cp_shfl + cp_int + cp_fp + cp_cvt + l.cp_other;
             std::cout << name << ": critical path " << depth << " deep, " << l.cp_mma << " MMA, "
-                      << l.cp_ld << " load, " << l.cp_int + l.cp_fp + l.cp_cvt << " ALU\n";
+                      << l.cp_ld << " load, " << cp_int + cp_fp + cp_cvt << " ALU\n";
             expect(depth > 0 && depth <= l.total,
                    name + ": critical path depth " + std::to_string(depth));
             expect(l.cp_mma <= l.mma && l.cp_ld <= l.ldg + l.ld + l.local && l.cp_lds <= l.lds &&
-                       l.cp_shfl <= l.shfl && l.cp_int <= l.int_alu && l.cp_fp <= l.fp_alu,
+                       l.cp_shfl <= l.shfl && cp_int <= l.int_alu && cp_fp <= l.fp_alu &&
+                       cp_int + cp_fp + cp_cvt <= l.int_alu + l.fp_alu,
                    name + ": a critical-path class above its loop count");
         } else {
             std::cout << name << ": no critical path (schema 2)\n";

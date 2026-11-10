@@ -28,9 +28,10 @@ constexpr std::string_view kColumns =
     "family decoder warps_m warps_k m_tiles n_tiles cluster epilogue latency add_sums registers "
     "stack local shared loops k_iter mma mma_ones mma_shape ldg ldg_bytes ld ld_bytes ldgsts "
     "ldgsts_bytes lds lds_bytes sts sts_bytes local local_bytes shfl int fp uniform other total "
-    "cp_mma cp_ld cp_lds cp_shfl cp_int cp_fp cp_cvt cp_other";
+    "cp_mma cp_ld cp_lds cp_shfl cp_imad cp_iadd cp_lop3 cp_prmt cp_shf cp_hfma2 cp_ffma cp_cvt "
+    "cp_f2f cp_other";
 // The length of the resources-only (schema 1) columns line: kColumns up to "shared"; and of the
-// schema 2 line, up to "total" (schema 3 adds the critical path's eight columns).
+// schema 2 line, up to "total" (schema 3 adds the critical path's columns).
 constexpr std::size_t kResourceColumnsLength = kColumns.find(" loops ");
 constexpr std::size_t kLoopColumnsLength     = kColumns.find(" cp_mma ");
 
@@ -80,8 +81,9 @@ Snapshot parse(std::string_view text) {
                 // Schema 3: the critical path's counts per latency class (sass_counts.py
                 // CP_FIELDS) follow.
                 if (*with_loops >= 3) {
-                    fields >> l.cp_mma >> l.cp_ld >> l.cp_lds >> l.cp_shfl >> l.cp_int >> l.cp_fp >>
-                        l.cp_cvt >> l.cp_other;
+                    fields >> l.cp_mma >> l.cp_ld >> l.cp_lds >> l.cp_shfl >> l.cp_imad >>
+                        l.cp_iadd >> l.cp_lop3 >> l.cp_prmt >> l.cp_shf >> l.cp_hfma2 >>
+                        l.cp_ffma >> l.cp_cvt >> l.cp_f2f >> l.cp_other;
                     l.has_critical_path = true;
                 }
                 if (!fields) throw std::runtime_error("kernel facts: malformed loop: " + line);

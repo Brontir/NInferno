@@ -243,19 +243,29 @@ class LoopFinder(unittest.TestCase):
         # counts round-trip through the row like the others.
         c = sc.loop_counts(body_of(KERNEL), tiles=1)
         self.assertEqual(c.cp_mma, 2)
-        self.assertGreaterEqual(c.cp_int + c.cp_fp + c.cp_other + c.cp_ld + c.cp_lds, 1)
-        self.assertLessEqual(c.cp_int, c.int)
-        self.assertLessEqual(c.cp_fp, c.fp)
+        int_classes = ("cp_imad", "cp_iadd", "cp_lop3", "cp_prmt", "cp_shf")
+        self.assertGreaterEqual(sum(getattr(c, f) for f in sc.CP_FIELDS) - c.cp_mma, 1)
+        self.assertLessEqual(sum(getattr(c, f) for f in int_classes), c.int)
+        self.assertLessEqual(c.cp_hfma2 + c.cp_ffma, c.fp)
         self.assertEqual(sc.LoopCounts.from_row(c.row()), c)
-        self.assertEqual(sc.cp_class("I2FP.F32.S32"), "cp_cvt")
-        self.assertEqual(sc.cp_class("HMMA.16816.F32.BF16"), "cp_mma")
-        self.assertEqual(sc.cp_class("LDS.128"), "cp_lds")
-        self.assertEqual(sc.cp_class("IMAD.WIDE.U32"), "cp_int")
+        # One class per measured latency: an instruction is priced at its own fact, the ones
+        # with none at their family's (IMAD for the integer ops, HFMA2 for FP16x2, FFMA for FP32).
+        for opcode, name in (
+                ("HMMA.16816.F32.BF16", "cp_mma"), ("LDS.128", "cp_lds"), ("LDG.E.128", "cp_ld"),
+                ("SHFL.IDX", "cp_shfl"), ("IMAD.WIDE.U32", "cp_imad"), ("MOV", "cp_imad"),
+                ("ISETP.GE.AND", "cp_imad"), ("IADD3", "cp_iadd"), ("IADD3.X", "cp_iadd"),
+                ("LOP3.LUT", "cp_lop3"), ("PRMT", "cp_prmt"), ("SHF.R.U32.HI", "cp_shf"),
+                ("HFMA2", "cp_hfma2"), ("HADD2.F32", "cp_hfma2"), ("FFMA", "cp_ffma"),
+                ("FMUL", "cp_ffma"), ("I2FP.F32.S32", "cp_cvt"), ("F2I.TRUNC.NTZ", "cp_cvt"),
+                ("F2F.F16.F32", "cp_f2f"), ("F2FP.BF16.F32.PACK_AB", "cp_f2f"),
+                ("BRA", "cp_other")):
+            self.assertEqual(sc.cp_class(opcode), name, opcode)
+        self.assertEqual(set(sc.CP_NOMINAL), set(sc.CP_FIELDS))
         # A chain of three dependent IMADs is three deep; two independent ones are one.
         chain = [(0x000, "IMAD R1, R0, R0, RZ ;"), (0x010, "IMAD R2, R1, R1, RZ ;"),
                  (0x020, "IMAD R3, R2, R2, RZ ;"), (0x030, "IMAD R4, R0, R0, RZ ;")]
         counts, short = sc.critical_path(body_of(chain), [0, 1, 2, 3])
-        self.assertEqual((counts["cp_int"], short), (3, 0.0))
+        self.assertEqual((counts["cp_imad"], short), (3, 0.0))
 
     def test_critical_path_follows_the_latencies(self):
         # Two chains from R0: a load into an IMAD, and five converts. Which is the longest is a
@@ -267,20 +277,25 @@ class LoopFinder(unittest.TestCase):
                  (0x050, "F2I R6, R5 ;"), (0x060, "I2F R7, R6 ;")]
         body, order = body_of(lines), list(range(len(lines)))
         isa = {"mma_dependent_latency": 32.893, "l1_latency_w1": 46.987, "l1_latency_w8": 50.0,
-               "shared_latency": 23.106, "lat_shfl": 26.002, "lat_imad": 4.033, "lat_hfma2": 4.11,
-               "lat_cvt_i2f_f2i": 11.5}
+               "shared_latency": 23.106, "lat_shfl": 26.002, "lat_imad": 4.033, "lat_iadd": 5.029,
+               "lat_lop3": 4.033, "lat_prmt": 4.053, "lat_shf": 4.033, "lat_hfma2": 4.11,
+               "lat_ffma": 4.033, "lat_cvt_i2f_f2i": 11.5, "lat_cvt_f32_f16": 5.047}
         measured = sc.chain_weights(isa)
         self.assertEqual((measured["cp_ld"], measured["cp_lds"], measured["cp_cvt"]),
                          (46.987, 23.106, 11.5))
+        self.assertEqual((measured["cp_iadd"], measured["cp_prmt"], measured["cp_f2f"]),
+                         (5.029, 4.053, 5.047))
         self.assertEqual(sc.chain_weights(isa, 8)["cp_ld"], 50.0)
-        # A row without the ALU latencies (an architecture not probed for them) gives no weights.
-        self.assertIsNone(sc.chain_weights({k: v for k, v in isa.items() if k != "lat_imad"}))
+        # A row without one of the ALU latencies (an architecture not probed for them) gives no
+        # weights.
+        for fact in ("lat_imad", "lat_iadd", "lat_ffma", "lat_cvt_f32_f16"):
+            self.assertIsNone(sc.chain_weights({k: v for k, v in isa.items() if k != fact}), fact)
         self.assertIsNone(sc.chain_weights(isa, 4))
         nominal, short = sc.critical_path(body, order)
-        self.assertEqual((nominal["cp_ld"], nominal["cp_int"], nominal["cp_cvt"], short),
+        self.assertEqual((nominal["cp_ld"], nominal["cp_imad"], nominal["cp_cvt"], short),
                          (1, 1, 0, 0.0))
         chosen, short = sc.critical_path(body, order, (measured,))
-        self.assertEqual((chosen["cp_ld"], chosen["cp_int"], chosen["cp_cvt"], short),
+        self.assertEqual((chosen["cp_ld"], chosen["cp_imad"], chosen["cp_cvt"], short),
                          (0, 0, 5, 0.0))
         self.assertAlmostEqual(sc.chain_clocks(chosen, measured), 57.5)
         # Chosen nominally and checked against the measured set: 57.5 - (46.987 + 4.033) short.
@@ -293,6 +308,20 @@ class LoopFinder(unittest.TestCase):
         self.assertAlmostEqual(short, 52.5 - 30.0)
         c = sc.loop_counts(body_of(KERNEL), tiles=1, weights=(measured, sc.CP_NOMINAL))
         self.assertGreaterEqual(c.cp_short, 0.0)
+        # Each convert at its own latency: five F32 / F16 converts (5.047 clocks each, 25.235)
+        # are a shorter chain than three I2F / F2I ones (11.5 each, 34.5), and an IADD3 chain
+        # (5.029) is longer than as many IMADs (4.033).
+        lines = [(0x000, "F2F.F16.F32 R1, R0 ;"), (0x010, "F2F.F32.F16 R2, R1 ;"),
+                 (0x020, "F2F.F16.F32 R3, R2 ;"), (0x030, "F2F.F32.F16 R4, R3 ;"),
+                 (0x040, "F2F.F16.F32 R5, R4 ;"), (0x050, "I2F R6, R0 ;"), (0x060, "F2I R7, R6 ;"),
+                 (0x070, "I2F R8, R7 ;")]
+        chosen, _ = sc.critical_path(body_of(lines), list(range(len(lines))), (measured,))
+        self.assertEqual((chosen["cp_f2f"], chosen["cp_cvt"]), (0, 3))
+        self.assertAlmostEqual(sc.chain_clocks(chosen, measured), 34.5)
+        lines = [(0x000, "IADD3 R1, R0, R0, RZ ;"), (0x010, "IADD3 R2, R1, R1, RZ ;"),
+                 (0x020, "IMAD R3, R0, R0, RZ ;"), (0x030, "IMAD R4, R3, R3, RZ ;")]
+        chosen, _ = sc.critical_path(body_of(lines), list(range(len(lines))), (measured,))
+        self.assertEqual((chosen["cp_iadd"], chosen["cp_imad"]), (2, 0))
 
     def test_irreducible_flow(self):
         # Two blocks that enter each other's middles (no header dominates the other): no natural
@@ -344,7 +373,8 @@ class Snapshot(unittest.TestCase):
         rows = self.rows()
         rows[self.KEY][4].cp_short = 1.25
         chain = kernel_facts.chain_line((sc.CP_NOMINAL,), "nominal")
-        self.assertEqual(chain, "nominal mma=33 ld=48 lds=25 shfl=27 int=4.5 fp=4.1 cvt=6 other=2")
+        self.assertEqual(chain, "nominal mma=33 ld=48 lds=25 shfl=27 imad=4.5 iadd=4.5 lop3=4.5 "
+                                "prmt=4.5 shf=4.5 hfma2=4.1 ffma=4.1 cvt=6 f2f=6 other=2")
         text = kernel_facts.render("89", rows, "13.4.92", "-O3", "abc", chain)
         header, parsed = kernel_facts.parse_snapshot(text)
         self.assertEqual((header["chain"], header["chain_short"]), (chain, "1 1.250"))
@@ -354,7 +384,9 @@ class Snapshot(unittest.TestCase):
         # An architecture whose row holds every latency is chosen with them, one set per resident
         # warp count; one without a row, or whose row lacks one, with the nominal set alone.
         facts = {"mma_dependent_latency": 32.9, "shared_latency": 23.1, "lat_shfl": 26.0,
-                 "lat_imad": 4.0, "lat_hfma2": 4.1, "lat_cvt_i2f_f2i": 11.5,
+                 "lat_imad": 4.0, "lat_iadd": 5.0, "lat_lop3": 4.0, "lat_prmt": 4.0,
+                 "lat_shf": 4.0, "lat_hfma2": 4.1, "lat_ffma": 4.0, "lat_cvt_i2f_f2i": 11.5,
+                 "lat_cvt_f32_f16": 5.0,
                  **{f"l1_latency_w{w}": 46.0 + w for w in sc.CP_WARPS}}
         table = {"arches": {
             "89": {"facts": {k: {"value": v, "unit": "clk"} for k, v in facts.items()}},
@@ -368,7 +400,8 @@ class Snapshot(unittest.TestCase):
             self.assertEqual((basis, [w["cp_ld"] for w in weights]),
                              ("measured", [47.0, 48.0, 50.0, 54.0]))
             self.assertEqual(kernel_facts.chain_line(weights, basis),
-                             "measured mma=32.9 ld=47 lds=23.1 shfl=26 int=4 fp=4.1 cvt=11.5 other=4")
+                             "measured mma=32.9 ld=47 lds=23.1 shfl=26 imad=4 iadd=5 lop3=4 prmt=4 "
+                             "shf=4 hfma2=4.1 ffma=4 cvt=11.5 f2f=5 other=4")
             for arch in ("70", "75"):
                 self.assertEqual(kernel_facts.chain_weight_sets(arch, path),
                                  ((sc.CP_NOMINAL,), "nominal"))

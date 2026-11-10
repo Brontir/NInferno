@@ -27,9 +27,10 @@ engine, matched by the registers and spill the sweep recorded), then with the co
                the activation loads inside every 16-K step at the L1 hit latency (none on the
                latency instances, which prefetch them), the accumulator chains at the MMA latency
                and the spill reloads at the L1 latency -- or, from a schema 3 snapshot, the
-               loop's longest register-dependence chain (cp_* columns) with each class at its
-               measured dependent latency (lat_*; the shared loads at the shared-memory latency,
-               the others at the L1 one), no shorter than the instruction count --
+               loop's longest register-dependence chain (cp_* columns, one per measured
+               latency fact) with each class at its own measured dependent latency (lat_*; the
+               shared loads at the shared-memory latency, the others at the L1 one), no shorter
+               than the instruction count --
                (c) the next iteration's weights landing,
                the DRAM latency with the TLB warm at the resident warps (the ring fetches one step
                ahead); the SM's time is rounds x iterations x that, no shorter than its bytes over

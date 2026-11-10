@@ -99,11 +99,25 @@ COUNT_FIELDS = ("mma", "mma_ones", "ldg", "ldg_bytes", "ld", "ld_bytes", "ldgsts
 # at one resident warp), and with nominal ones (CP_NOMINAL) only where that row lacks a fact; the
 # same chain_clocks then prices the counts. The L1 latency moves a little with the resident warps
 # (w2, w4, w8), where another chain may be the longest: critical_path reports by how many clocks.
-CP_FIELDS = ("cp_mma", "cp_ld", "cp_lds", "cp_shfl", "cp_int", "cp_fp", "cp_cvt", "cp_other")
-CP_NOMINAL = {"cp_mma": 33.0, "cp_ld": 48.0, "cp_lds": 25.0, "cp_shfl": 27.0, "cp_int": 4.5,
-              "cp_fp": 4.1, "cp_cvt": 6.0, "cp_other": 2.0}
+CP_FIELDS = ("cp_mma", "cp_ld", "cp_lds", "cp_shfl", "cp_imad", "cp_iadd", "cp_lop3", "cp_prmt",
+             "cp_shf", "cp_hfma2", "cp_ffma", "cp_cvt", "cp_f2f", "cp_other")
+# One class per measured latency fact, so that no instruction is priced at another's clocks (on
+# the Ampere and Ada cards an F2F takes 5 clocks where an I2F or an F2I takes 11.5, an IADD3 one
+# clock more than an IMAD). The opcodes with a fact of their own:
+CP_OPCODES = {
+    "cp_iadd": {"IADD", "IADD3", "IADD32I"},
+    "cp_lop3": {"LOP", "LOP3", "LOP32I"},
+    "cp_prmt": {"PRMT"},
+    "cp_shf": {"SHF", "SHL", "SHR"},
+    "cp_cvt": {"I2F", "F2I", "I2FP", "F2IP", "I2I"},
+    "cp_f2f": {"F2F", "F2FP"},
+}
+# The nominal clocks keep one value per family (integer, float, convert): no fact tells its
+# members apart where they apply.
+CP_NOMINAL = {"cp_mma": 33.0, "cp_ld": 48.0, "cp_lds": 25.0, "cp_shfl": 27.0, "cp_imad": 4.5,
+              "cp_iadd": 4.5, "cp_lop3": 4.5, "cp_prmt": 4.5, "cp_shf": 4.5, "cp_hfma2": 4.1,
+              "cp_ffma": 4.1, "cp_cvt": 6.0, "cp_f2f": 6.0, "cp_other": 2.0}
 CP_WARPS = (1, 2, 4, 8)  # the resident warps the ISA facts measure the L1 latency at
-CVT_OPCODES = {"I2F", "F2F", "F2I", "I2FP", "F2FP", "I2I", "F2IP"}
 # The snapshot's columns for these facts, in order.
 COLUMNS = ("loops", "k_iter", "mma", "mma_ones", "mma_shape") + COUNT_FIELDS[2:] + CP_FIELDS
 
@@ -615,12 +629,16 @@ def loop_counts(body, tiles=1, weights=(CP_NOMINAL,)):
 
 
 def cp_class(opcode):
-    """The latency class (CP_FIELDS) of an instruction."""
+    """The latency class (CP_FIELDS) of an instruction: the measured fact that prices it. An
+    integer op with no fact of its own counts with the IMAD (the ALU latency LOP3, PRMT and SHF
+    share on every measured card), an FP16x2 op with the HFMA2, any other float op with the
+    FFMA."""
     base = base_opcode(opcode)
     if base in MMA_OPCODES:
         return "cp_mma"
-    if base in CVT_OPCODES:
-        return "cp_cvt"
+    for name, opcodes in CP_OPCODES.items():
+        if base in opcodes:
+            return name
     kind = classify(opcode)
     if kind in ("ldg", "ld", "local"):
         return "cp_ld"
@@ -629,9 +647,9 @@ def cp_class(opcode):
     if kind == "shfl":
         return "cp_shfl"
     if kind == "int":
-        return "cp_int"
+        return "cp_imad"
     if kind == "fp":
-        return "cp_fp"
+        return "cp_hfma2" if base.startswith("H") else "cp_ffma"
     return "cp_other"
 
 
@@ -642,15 +660,18 @@ def chain_weights(isa, warps=1):
     """The clocks per latency class (CP_FIELDS) of an architecture's measured ISA facts (`isa`:
     {fact: value}, a row of src/core/data/isa_facts.json) at `warps` resident warps a scheduler
     (CP_WARPS): the MMA accumulator at the MMA's dependent latency, global and local loads at the
-    L1 hit latency, shared loads at the shared-memory one, shuffles, the integer decode at the
-    IMAD latency (LOP3 / PRMT / SHF are equal, IADD3 one clock more), the float math at the HFMA2
-    latency, converts at the I2F / F2I one, the rest (MOV, branches, uniform) at the ALU floor.
-    None where the row lacks one of them: no facts, never another architecture's."""
+    L1 hit latency, shared loads at the shared-memory one, and every other class at the lat_*
+    fact of its instruction (cp_class): IMAD, IADD3, LOP3, PRMT, SHF, HFMA2, FFMA, SHFL, the
+    I2F / F2I converts and the F32 / F16 ones; the rest (branches, uniform) at the IMAD's, the
+    ALU floor. None where the row lacks one of them: no facts, never another architecture's."""
     try:
         return {"cp_mma": isa["mma_dependent_latency"], "cp_ld": isa[f"l1_latency_w{warps}"],
                 "cp_lds": isa["shared_latency"], "cp_shfl": isa["lat_shfl"],
-                "cp_int": isa["lat_imad"], "cp_fp": isa["lat_hfma2"],
-                "cp_cvt": isa["lat_cvt_i2f_f2i"], "cp_other": isa["lat_imad"]}
+                "cp_imad": isa["lat_imad"], "cp_iadd": isa["lat_iadd"],
+                "cp_lop3": isa["lat_lop3"], "cp_prmt": isa["lat_prmt"], "cp_shf": isa["lat_shf"],
+                "cp_hfma2": isa["lat_hfma2"], "cp_ffma": isa["lat_ffma"],
+                "cp_cvt": isa["lat_cvt_i2f_f2i"], "cp_f2f": isa["lat_cvt_f32_f16"],
+                "cp_other": isa["lat_imad"]}
     except KeyError:
         return None
 
