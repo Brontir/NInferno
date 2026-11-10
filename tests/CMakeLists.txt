@@ -107,6 +107,13 @@ set_tests_properties(ninferno_route_table_evidence_test PROPERTIES LABELS host)
 add_test(NAME ninferno_mmq_transfer_audit_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_mmq_transfer_audit.py)
 
+# tools/audit/board_literal_lint.py: no hand-written `ninferno::Board` literal or bare five-number
+# board tuple outside the registry (roadmap #612 step 9), and the tree is clean. What it does not
+# see is listed in the script's docstring. No GPU.
+add_test(NAME ninferno_board_literal_lint_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_board_literal_lint.py)
+set_tests_properties(ninferno_board_literal_lint_test PROPERTIES LABELS host)
+
 # tools/audit/golden_diff.py: the compact summary of a selector golden change (#620), no GPU.
 add_test(NAME ninferno_golden_diff_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_golden_diff.py)
