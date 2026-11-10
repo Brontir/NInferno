@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exit tooling for measured route overrides (#614, PR-F3): prune what the ranker has caught up with.
+"""Exit tooling for measured route overrides (#614, PR-F3): prune what the ranker caught up with.
 
 A route table entry (routes/<class>.json) or a dense tuner problem (routes/tuner/dense_tune.json)
 is a measured override of the ranker (the cost model where it prices, else the rules). When the
@@ -8,36 +8,43 @@ at every width the override covers, the override earns nothing and is deleted, a
 reviewer can read.
 
 Input: the selection_regret.py report (ninferno-selection-regret-report/1) of one board, whose
-cases carry `authority`, `evidence`, `t`, `selected` (the route the case measured), `ranker` (the
-route the rules list alone gives: route_tune's --selected-out column, heuristic_route) and
-`ranker_vs_selected` (its median time over the selected route's, minus one; it must be a finite
-number). Only cases whose authority is `route-table` or `dense-tune` with `measured` evidence speak
-for an entry; a case's width is its `t`, and it speaks only if its `selected` is the route the
-entry names at that width (a report collected before the entry changed timed another route, and
-keeps the entry). The ranker is what the call runs once neither the route table nor the dense
-tuner answers it: with --dense-tune, a table entry whose problem the tuner routes for the class is
-kept (pruning it would hand the call to the tuner, not the ranker); give --dense-tune wherever the
-class has dense problems, since without it the tool cannot see them. The campaign runs the speed profile, so a case measures a
-prefill override only if it says so (`profile: "prefill"`, which no run writes yet). An entry is
-kept, whatever the speed cases say, when
+cases carry `authority`, `evidence`, `t`, `selected` (the route the case measured), `ranker` and
+`ranker_vs_selected` (the ranker's median time over the selected route's, minus one; it must be a
+finite number). `ranker` is route_tune's --selected-out column: ranker_answer, what the call runs
+where neither the route table nor the dense tuner answers (the NVFP4 half-L2 rule, then the rules
+under the Ask the call's rules see: an NVFP4 A16 call of 17 tokens or more as the prefill
+profile's). route_tune's selection reads the release's dense tuner entries as the engine's does,
+so `dense-tune` answers (and `dense-tune-prefill-band`, a dense prefill band's) reach the report.
+
+Only cases of an override authority (`route-table`, `dense-tune`, `dense-tune-prefill-band`) with
+`measured` evidence speak for an entry. A case's width is its `t`, and it speaks for a range only
+if its `selected` is that range's route: where ranges overlap (an r8 band inside a band) a case of
+one says nothing of the other, and a case whose route is none of those the entry names at its
+width (a report collected before the entry changed) keeps the entry. With --dense-tune, a table
+entry whose problem the tuner routes for the class is kept (pruning it would hand the call to the
+tuner, not the ranker); give --dense-tune wherever the class has dense problems, since without it
+the tool cannot see them. The campaign runs the speed profile, so a case measures a prefill
+override only if it says so (`profile: "prefill"`, which no run writes yet). An entry is kept,
+whatever the speed cases say, when
   - it holds a prefill override (`prefill`, `prefill_bands`, `prefill_tuned_on`; a dense problem
     with a prefill route) and no prefill-profile case covers each of its prefill ranges (every
-    `prefill_bands` range, and 17.. where a `prefill` route stands), cut as below;
+    `prefill_bands` range, and the `prefill` route over the widths from 17 the bands leave), cut
+    as below;
   - it `claim`s a problem (a measured claim the ranker does not make);
   - another table of the routes directory holds the same key (after pruning, this board would
     borrow that table's override, not the ranker's pick: route_table.cpp fill_from lends a missing
     key from the next nearest table), or, unless --allow-borrowers, a table lacking the key exists
     (it may borrow this one's: the nearest holder lends, and distances across generations are not
     mirrored here). Dense problems are keyed by exact class id and lend nothing.
-An entry is pruned only when every segment of every range it has routes in (`bands` and
-`r8_bands`; a dense problem's every non-null `routes` width, each a range of its own since the
-runtime takes them by the exact width, and each prefill band of generic_tune.cpp's
-kPrefillBandTokens that holds a route) has at least one case in its T range and every case there has `ranker_vs_selected` <=
-the resolution. A range is cut into segments at the regime edges (decode T<=4, verify 5..16) and at
-the board's ridge T* (the report's own, `by_board_regime_authority`), so a range that spans a
-regime needs a case in each part. A range that reaches 17 or more with no ridge in the report
-cannot be split, and keeps the entry. A case without a ranker time, or an incomplete one, keeps the
-entry; so does an entry no case names.
+An entry is pruned only when every segment of every range it has routes in has at least one case
+of that range's route in its T range and every such case has `ranker_vs_selected` <= the
+resolution. The ranges: `bands` and `r8_bands`; a dense problem's every non-null `routes` width,
+each a range of its own since the runtime takes them by the exact width, and each prefill band of
+generic_tune.cpp's kPrefillBandTokens that holds a route. A range is cut into segments at the
+regime edges (decode T<=4, verify 5..16) and at the board's ridge T* (the report's own,
+`by_board_regime_authority`), so a range that spans a regime needs a case in each part. A range
+that reaches 17 or more with no ridge in the report cannot be split, and keeps the entry. A case
+without a ranker time, or an incomplete one, keeps the entry; so does an entry no case names.
 
 The resolution is the ranker's slowdown against the override, 5 % by default: ranker time at most
 1.05 x the override's. route_as_table.py's --min-gain 5 counts the other way (the override saves
@@ -53,10 +60,10 @@ of every row, which regret_collect.py keeps and selection_regret.py passes on; t
 free text). That device must be the table's class: equal ids, or a full `chip:Nsm` id for a table
 of the bare chip whose `gpu.board.sms` is N (the RTX 5080's `gb203` is not the 70-SM
 `gb203:70sm`). --class must be a full class id (the dense keys carry it whole: a bare chip matches
-none) equal to the measured device. Default is a dry run: the plan is printed with the board and nothing is written.
---apply rewrites the files (both or neither: temp files, then renames), which must be in the
-canonical form (json.dumps(indent=1) plus a newline) so that the diff is only the deleted entries;
-otherwise it refuses.
+none) equal to the measured device. Default is a dry run: the plan is printed with the board and
+nothing is written. --apply rewrites the files (both or neither: temp files, then renames),
+which must be in the canonical form (json.dumps(indent=1) plus a newline) so that the diff is
+only the deleted entries; otherwise it refuses.
 
 Also the evidence check of the tables (evidence_gaps): every measured entry (one with `tuned_on`)
 should record `evidence_us`, rows [T, default us, chosen us], with a gain above the resolution.
@@ -72,13 +79,20 @@ import re
 import sys
 from pathlib import Path
 
-import selection_regret as regret
+# selection_regret.py sits beside this script; `python -I` puts no script directory on sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import selection_regret as regret  # noqa: E402
 
 RESOLUTION = 0.05  # the ranker's slowdown within which an override earns nothing
-TABLE_AUTHORITIES = {"route-table", "dense-tune"}
+# The authorities whose answers are the overrides, by the names the selector gives them
+# (route_authorities.cpp): a dense tuner's prefill band answers as dense-tune-prefill-band, and
+# speaks for its problem as dense-tune does.
+TABLE_AUTHORITIES = {"route-table": "route-table", "dense-tune": "dense-tune",
+                     "dense-tune-prefill-band": "dense-tune"}
 DECODE_MAX, VERIFY_MAX = 4, 16
 PREFILL_PROFILE = "prefill"
 INF = float("inf")
+MAX_T = 1 << 24  # the widest call a band names (route tables end their last band there)
 
 
 def entry_key(entry):
@@ -87,7 +101,8 @@ def entry_key(entry):
 
 
 def case_key(case):
-    """(format, compute, epilogue, n, k, T) of a case id `<format>.<compute>.<epilogue>.n<N>.k<K>.T<T>`."""
+    """(format, compute, epilogue, n, k, T) of a case id
+    `<format>.<compute>.<epilogue>.n<N>.k<K>.T<T>`."""
     found = re.fullmatch(r"(.+)\.(a16|a8|a4)\.([a-z_0-9]+)\.n(\d+)\.k(\d+)\.T(\d+)", case["id"])
     if not found:
         return None
@@ -139,7 +154,8 @@ def evidence_by_entry(report):
         if case.get("status") != "complete" or not finite(slowdown):
             slowdown = None
         profile = "prefill" if case.get("profile") == PREFILL_PROFILE else "speed"
-        out.setdefault((case["authority"], key), {"speed": [], "prefill": []})[profile].append(
+        authority = TABLE_AUTHORITIES[case["authority"]]
+        out.setdefault((authority, key), {"speed": [], "prefill": []})[profile].append(
             (t, slowdown, case.get("selected")))
     return out
 
@@ -157,27 +173,24 @@ def judge(cases, label, resolution):
     return []
 
 
-def route_at(ranges, t):
-    """The route the override names at width t: the first of `ranges` [(lo, hi, route)] holding t
-    (a table's bands before its r8_bands, its prefill bands before its prefill route), or None."""
-    return next((route for lo, hi, route in ranges if lo <= t <= hi), None)
-
-
 def cover(cases, ranges, ridge, resolution):
     """Reasons the cases of one profile do not clear every segment of `ranges` [(lo, hi, route)].
-    A case speaks for the override only if it measured the route the override names at its width
-    (`selected`): a report collected before the entry changed timed another route, and keeps it."""
+    Each range is judged only by the cases that measured its own route (`selected`): where ranges
+    overlap (an r8 band inside a band) a case of one says nothing of the other. A case whose route
+    is none of those the override names at its width was collected against another version of the
+    entry, and keeps it."""
     reasons = []
     for t, _, selected in sorted(cases, key=lambda c: c[0]):
-        route = route_at(ranges, t)
-        if route is not None and selected != route:
-            reasons.append(f"T {t}: the case measured {selected}, the entry routes {route} there")
-    for lo, hi, _ in ranges:
+        named = [route for lo, hi, route in ranges if lo <= t <= hi]
+        if named and selected not in named:
+            reasons.append(f"T {t}: the case measured {selected}, the entry routes "
+                           f"{' or '.join(map(str, named))} there")
+    for lo, hi, route in ranges:
         if ridge is None and hi > VERIFY_MAX:
             reasons.append(f"T {max(lo, VERIFY_MAX + 1)}..: no ridge in the report, a wide range "
                            "cannot be split")
         for a, b in segments(lo, hi, ridge):
-            inside = [c for c in cases if a <= c[0] <= b]
+            inside = [c for c in cases if a <= c[0] <= b and c[2] == route]
             reasons += judge(inside, f"T {a}..{b}", resolution)
     return reasons
 
@@ -202,13 +215,18 @@ def verdict(evidence, ranges, prefill_ranges, ridge, resolution):
 
 def entry_ranges(entry):
     """(speed ranges, prefill ranges) of a table entry, [(lo, hi, route)]: its bands and r8_bands,
-    and the ranges of its prefill override (each prefill band, then 17.. where a `prefill` route
-    stands: the prefill route answers where no prefill band does, route_at)."""
+    and the ranges of its prefill override: each prefill band, then the `prefill` route over the
+    widths from 17 the bands leave (it answers only there, route_table.cpp table_route_answer)."""
     speed = [(lo, hi, r) for lo, hi, r in entry.get("bands", []) + entry.get("r8_bands", [])]
     prefill = [(lo, hi, r) for lo, hi, r in entry.get("prefill_bands", [])]
     if entry.get("prefill") or "prefill_tuned_on" in entry:
-        if not prefill or entry.get("prefill"):
-            prefill.append((VERIFY_MAX + 1, INF, entry.get("prefill")))
+        start = VERIFY_MAX + 1
+        for lo, hi, _ in sorted(prefill):
+            if lo > start:
+                prefill.append((start, lo - 1, entry.get("prefill")))
+            start = max(start, hi + 1)
+        if start <= MAX_T:
+            prefill.append((start, INF, entry.get("prefill")))
     return speed, prefill
 
 

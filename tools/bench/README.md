@@ -152,15 +152,22 @@ Exit tooling (#614, F3): `route_table_prune.py report.json --table routes/<class
 and dense tuner problems whose ranker pick is within the resolution (default 5 %, as
 `route_as_table.py --min-gain`) of the override in every regime the entry has routes in, and with
 `--apply` deletes them (default: dry run; the files must be in canonical `indent=1` form so the diff
-is only the entries). It reads cases of authority `route-table`/`dense-tune`, evidence `measured`,
-with `ranker` (the route the rules list alone gives, `heuristic_route`: the cost model where it
-prices, else the rules) and `ranker_vs_selected` (its median time over the selected route's, minus
-one), and only cases whose `selected` route is the one the entry names at their width (a report
-taken before the entry changed keeps it). `ninferno_route_tune --selected-out` writes the three
-columns it needs, `authority`, `evidence` (`select_answer`'s) and `ranker` (resolved for the call
-and timed like the selected route), so the regret campaign's files feed it as they are; a file
-without them reads `unknown` and prunes nothing. A dense problem needs a case at every width it
-routes (the runtime takes those routes by the exact width), and each prefill band it routes. The
+is only the entries). It reads cases of authority `route-table`, `dense-tune` or
+`dense-tune-prefill-band` (a dense prefill band's answer), evidence `measured`, with `ranker` (the
+route the call takes where neither the table nor the tuner answers, `ranker_answer`: the NVFP4
+half-L2 rule, then the rules under the Ask the call's rules see) and `ranker_vs_selected` (its
+median time over the selected route's, minus one). Each range of an entry is judged only by the
+cases whose `selected` route is that range's route: where ranges overlap (an r8 band inside a band)
+a case of one says nothing of the other, a `prefill` route covers only the widths its prefill bands
+leave, and a case that measured none of the routes the entry names at its width (a report taken
+before the entry changed) keeps it. `ninferno_route_tune --selected-out` writes the three columns
+it needs, `authority`, `evidence` (`select_answer`'s) and `ranker` (resolved for the call and timed
+like the selected route), after `pci_device_id`; every reader takes the columns by name. Its
+selection reads the release's dense tuner entries as the engine's does (the tuner on in mode Off: it
+reads `routes/tuner/dense_tune.json` and never times or writes), so dense overrides answer there. A
+file without the columns reads `unknown` and prunes nothing. A dense problem needs a case at every
+width it routes (the runtime takes those routes by the exact width), and each prefill band it
+routes (prefill-profile cases, which no run writes yet). The
 report must name the measured `device` (route_tune's class id, kept by `regret_collect.py` and
 passed on by `selection_regret.py`); that device, not the `--board` label, must be the table's
 board. The CTest `ninferno_route_table_prune_test` also holds that every measured table entry

@@ -34,9 +34,11 @@
 // --selected-out writes, per problem and band point, the route the production path runs there
 // (select_route resolved for the call), which is timed too: tools/bench/regret_collect.py. Its
 // rows also name the authority that answered and its evidence (select_answer, #614) and `ranker`,
-// the route the rules list alone gives (heuristic_route: the cost model where it prices, else the
-// rules), resolved and timed the same way: what tools/bench/route_table_prune.py compares a
-// measured override with.
+// the route the call takes without a table or tuner entry (ranker_answer: the cost model where it
+// prices, else the rules, under the Ask the call's rules see), resolved and timed the same way:
+// what tools/bench/route_table_prune.py compares a measured override with. The selection reads
+// the release's dense tuner entries as the engine's does (the tuner on in mode Off: nothing is
+// timed or written), so a dense tuner override answers there as it does in a served model.
 // --select-reps N adds select_ns, the host time of one select_route of that call (the mean of N,
 // after a first one that fills the selection's caches): an eager call selects its route on the
 // host, so the selection is a share of a host-bound decode step.
@@ -202,6 +204,11 @@ int route_tune_main(int argc, char** argv) {
             if (!selected_csv) throw std::runtime_error("cannot open " + opt["--selected-out"]);
             selected_csv << "format,compute,epilogue,n,k,T,asked,selected,select_ns,run,device,"
                             "pci_device_id,authority,evidence,ranker\n";
+            // The selection reads the release's dense tuner entries as the engine's does: the
+            // tuner on, in mode Off (read the release's routes/tuner/dense_tune.json, time and
+            // write nothing; the user's own tuning cache is not read either).
+            generic::set_dense_tune(ninferno::TuneMode::Off, {});
+            generic::enable_dense_tune(true);
         }
         const int select_reps = opt.count("--select-reps") ? std::stoi(opt["--select-reps"]) : 0;
         const bool a8_candidates = opt.count("--a8-candidates") && opt["--a8-candidates"] == "1";
@@ -533,6 +540,23 @@ int route_tune_main(int argc, char** argv) {
                 winners.push_back({t, best_route});
                 if (selected_csv) {
                     const generic::Problem gp{p.qtype, policy, p.n, p.k, p.epilogue};
+                    {
+                        // The release's dense tuner entry of the problem, as the engine's
+                        // selection reads it (routes/tuner/dense_tune.json, keyed by this class
+                        // and build). The tuner is in its default mode, Off: it reads the release's
+                        // file only and never times or writes (generic_tune.cpp tune_dense).
+                        Tensor tx(x.p, DType::BF16, {p.k, t});
+                        Tensor ty(y.p, DType::BF16, {p.n, t});
+                        generic::Call call;
+                        call.x               = &tx;
+                        call.weight          = &w.weight;
+                        call.rows            = p.n;
+                        call.up_offset       = swiglu ? p.n : 0;
+                        call.epilogue        = p.epilogue;
+                        call.out[0]          = &ty;
+                        call.segment_rows[0] = p.n;
+                        generic::tune_dense(gp, call, nullptr);
+                    }
                     const generic::RouteAnswer answer =
                         generic::select_answer(gp, w.weight, t, ops::prefill_routes_active());
                     const generic::Route asked = answer.route;
@@ -560,10 +584,14 @@ int route_tune_main(int argc, char** argv) {
                     const generic::Route ran =
                         generic::resolve_route(asked, w.weight, layout).executed;
                     time_route(ran, t);
-                    // The rules list's own route (no pin, table or tuner entry), as it would run.
+                    // The ranker's route (no pin, table or tuner entry: ranker_answer, under the
+                    // Ask the call's rules see), as it would run.
                     const generic::Route ranker =
                         generic::resolve_route(
-                            generic::heuristic_route(gp, w.weight, t, ops::prefill_routes_active()),
+                            generic::ranker_answer(
+                                generic::ask_below_profiles(t, ops::prefill_routes_active()), gp,
+                                w.weight)
+                                .route,
                             w.weight, layout)
                             .executed;
                     time_route(ranker, t);

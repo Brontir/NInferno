@@ -6,6 +6,8 @@ import contextlib
 import copy
 import io
 import json
+import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -130,14 +132,15 @@ class Prune(unittest.TestCase):
         self.assertTrue(any("prefill" in why for why in plan[0][3]), plan[0][3])
         speed = [case(1, 0.0), case(8, 0.0), case(17, 0.0), case(512, 0.0)]
         # prefill-profile cases (none are written yet) clear it, in every prefill range: the band
-        # 17..128 and the route past it (17.. cut at the ridge)
-        pre = [dict(case(t, 0.01), profile="prefill") for t in (64, 17, 200, 512)]
+        # 17..128 and the route past it (129.., cut at the ridge: 129..131 and 132..)
+        pre = [dict(case(t, 0.01), profile="prefill") for t in (64, 17, 130, 200, 512)]
         self.assertTrue(self.plan_table(with_ridge(report(*speed, *pre)), table(e), 0.05)[0][2])
         lone = [dict(case(64, 0.01), profile="prefill")]
         plan = self.plan_table(with_ridge(report(*speed, *lone)), table(e), 0.05)
         self.assertFalse(plan[0][2])
         self.assertTrue(any(why.startswith("prefill T ") for why in plan[0][3]), plan[0][3])
-        slow = [dict(case(t, 0.3 if t == 512 else 0.0), profile="prefill") for t in (64, 17, 200, 512)]
+        slow = [dict(case(t, 0.3 if t == 512 else 0.0), profile="prefill")
+                for t in (64, 17, 130, 200, 512)]
         self.assertFalse(self.plan_table(with_ridge(report(*speed, *slow)), table(e), 0.05)[0][2])
 
     def test_every_band_needs_a_case_inside_its_range(self):
@@ -182,6 +185,37 @@ class Prune(unittest.TestCase):
         only_r8 = self.entry(bands=())
         only_r8["r8_bands"] = [[3, 4, "r8.w4r2"]]
         self.assertTrue(self.plan_table(report(case(3, 0.0)), table(only_r8), 0.05)[0][2])
+        # an r8 band inside a band: a case that measured the band's route says nothing of the R8
+        # route, so cases at T 1, 3 and 8 that all ran "a" leave the R8 band unmeasured
+        overlap = self.entry(bands=((1, 16, "a"),))
+        overlap["r8_bands"] = [[3, 4, "r8.w4r2"]]
+        ran_a = report(*[case(t, 0.0, selected="a") for t in (1, 3, 8)])
+        plan = prune.plan_table(ran_a, table(overlap), 0.05)
+        self.assertFalse(plan[0][2])
+        self.assertIn("T 3..4: no case", plan[0][3])
+        both = report(*[case(t, 0.0, selected="a") for t in (1, 3, 8)],
+                      case(4, 0.0, selected="r8.w4r2"))
+        self.assertTrue(prune.plan_table(both, table(overlap), 0.05)[0][2])
+
+    def test_a_prefill_fallback_past_its_bands_needs_its_own_case(self):
+        # prefill_bands 17..1000 "A" and the prefill route "B", which answers only past 1000
+        # (table_route_answer): cases that ran "A" at T 64 and 512 do not measure "B"
+        e = self.entry(bands=())
+        e["prefill"] = "B"
+        e["prefill_bands"] = [[17, 1000, "A"]]
+        e["prefill_tuned_on"] = "ad102:128sm"
+        pre = [dict(case(t, 0.0, selected="A"), profile="prefill") for t in (64, 512)]
+        plan = prune.plan_table(with_ridge(report(*pre)), table(e), 0.05)
+        self.assertFalse(plan[0][2])
+        self.assertTrue(any(why.startswith("prefill T 1001..") and why.endswith("no case")
+                            for why in plan[0][3]), plan[0][3])
+        self.assertEqual(prune.entry_ranges(e)[1], [(17, 1000, "A"), (1001, prune.INF, "B")])
+        past = dict(case(2000, 0.0, selected="B"), profile="prefill")
+        self.assertTrue(prune.plan_table(with_ridge(report(*pre, past)), table(e), 0.05)[0][2])
+        # the fallback fills every gap the bands leave, below them too
+        gap = dict(e, prefill_bands=[[64, 1000, "A"]])
+        self.assertEqual(prune.entry_ranges(gap)[1],
+                         [(64, 1000, "A"), (17, 63, "B"), (1001, prune.INF, "B")])
 
     def test_a_claim_keeps_the_entry(self):
         e = self.entry(bands=((1, 16, "a"),))
@@ -277,6 +311,26 @@ class Prune(unittest.TestCase):
         plan = prune.plan_dense(rep, dense, "ad102:128sm", 0.05)
         self.assertFalse(plan[0][2])
         self.assertIn("prefill T 33..64: no case", plan[0][3])
+        # the selector names a dense prefill band's answer dense-tune-prefill-band
+        # (route_authorities.cpp): those cases speak for the problem too
+        named = with_ridge(report(*[dict(case(t, 0.0, authority="dense-tune-prefill-band",
+                                              selected=route), profile="prefill")
+                                    for t, route in ((40, "w4a8.64x64"),
+                                                     (4096, "w4a8.128x128"))]))
+        self.assertTrue(prune.plan_dense(named, dense, "ad102:128sm", 0.05)[0][2])
+
+    def test_the_dense_prefill_bands_are_the_tuners(self):
+        # DENSE_PREFILL_BANDS mirrors generic_tune.cpp's kPrefillBandTokens and the prefill keys
+        # of the release's routes/tuner/dense_tune.json
+        source = (ROOT / "src/ops/generic/generic_tune.cpp").read_text(encoding="utf-8")
+        found = re.search(r"kPrefillBandTokens\s*=\s*\{([^}]*)\}", source)
+        self.assertIsNotNone(found)
+        literal = tuple(int(v) for v in found[1].replace("\n", " ").split(",") if v.strip())
+        self.assertEqual(prune.DENSE_PREFILL_BANDS, literal)
+        dense = json.loads((ROOT / "routes/tuner/dense_tune.json").read_text(encoding="utf-8"))
+        keys = {int(t) for p in dense["problems"].values() for t in p.get("prefill", {})}
+        self.assertTrue(keys)
+        self.assertLessEqual(keys, set(prune.DENSE_PREFILL_BANDS))
 
     def test_a_case_that_measured_another_route_keeps_the_entry(self):
         # a report collected before the entry changed: its cases timed the old route
@@ -552,6 +606,16 @@ class EvidenceGaps(unittest.TestCase):
                              {"x.json:q4k.a16.store.n2.k4096": "weak",
                               "x.json:q4k.a16.store.n4.k4096": "missing"})
             self.assertNotIn(b"\r\n", out_path.read_bytes())
+
+    def test_the_tool_runs_isolated(self):
+        # `python -I` puts no script directory on sys.path: the tool finds selection_regret itself
+        script = ROOT / "tools" / "bench" / "route_table_prune.py"
+        with tempfile.TemporaryDirectory() as directory:
+            done = subprocess.run([sys.executable, "-I", "-B", str(script), "--gaps",
+                                   str(ROOT / "routes")], cwd=directory, capture_output=True,
+                                  text=True, check=False)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout)["schema"], "ninferno-route-evidence-gaps/1")
 
 
 if __name__ == "__main__":
