@@ -723,6 +723,8 @@ namespace {
 // -22 %: IQ2_XS 4096x6656 w8r2), +0.1 % in the mean, where its own sweep keeps 52 that win.
 constexpr double kR8CarryDistance = 0.5;
 
+} // namespace
+
 // The current device's R8 decode table, once per ordinal (a process may drive boards of
 // different classes); null where no measured board is near enough.
 // A device query that fails is not cached (PerDevice retries a make that throws): the next call
@@ -736,6 +738,8 @@ const R8DecodeTable* r8_decode_table() {
         });
     } catch (const std::exception&) { return nullptr; }
 }
+
+namespace {
 
 std::optional<int> tuned_r8(const Problem& p) {
     const R8DecodeTable* table = r8_decode_table();
