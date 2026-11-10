@@ -72,8 +72,8 @@ int check_synthetic_class(const ninferno::DeviceContext& ctx) {
         t.pci_device_id, t.major, t.minor, t.sms, t.l2_bytes, t.global_bytes);
     const std::string at = "sm" + std::to_string(t.major * 10 + t.minor) + " synthetic: ";
     failures += expect(s.max_threads_per_sm == t.max_threads_per_sm,
-                       at + "threads per SM " + std::to_string(s.max_threads_per_sm) +
-                           ", device " + std::to_string(t.max_threads_per_sm));
+                       at + "threads per SM " + std::to_string(s.max_threads_per_sm) + ", device " +
+                           std::to_string(t.max_threads_per_sm));
     failures += expect(s.max_blocks_per_sm == t.max_blocks_per_sm,
                        at + "blocks per SM " + std::to_string(s.max_blocks_per_sm) + ", device " +
                            std::to_string(t.max_blocks_per_sm));
@@ -84,8 +84,8 @@ int check_synthetic_class(const ninferno::DeviceContext& ctx) {
                        at + "shared per SM " + std::to_string(s.smem_per_sm) + ", device " +
                            std::to_string(t.smem_per_sm));
     failures += expect(s.registers_per_sm == t.registers_per_sm,
-                       at + "registers per SM " + std::to_string(s.registers_per_sm) +
-                           ", device " + std::to_string(t.registers_per_sm));
+                       at + "registers per SM " + std::to_string(s.registers_per_sm) + ", device " +
+                           std::to_string(t.registers_per_sm));
     const int reserved = get(cudaDevAttrReservedSharedMemoryPerBlock);
     failures += expect(static_cast<int>(ninferno::arch_registry::shared_reserved_per_block(
                            t.major * 10 + t.minor)) == reserved,
