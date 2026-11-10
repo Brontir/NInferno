@@ -37,8 +37,8 @@ endfunction()
 #   host    runs and passes with no GPU (CUDA_VISIBLE_DEVICES= ctest -L host)
 #   gpu     needs a CUDA device
 #   real    needs a model artifact or fixtures it does not carry, and skips (exit 77) without
-#   golden  compares against a committed golden (selector, choice and plan goldens)
-#   slow    over 60 s on a lab stand
+#   golden  compares against a committed golden (decision fingerprint, selector, choice and plan goldens, including the MoE plan)
+#   slow    over 60 s on one development GPU board
 # A test combines them: a gpu test is also slow, a real one is also gpu.
 set(NINFERNO_TEST_LABEL_NAMES host gpu real golden slow)
 

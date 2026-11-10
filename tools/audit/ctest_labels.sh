@@ -12,6 +12,7 @@
 #
 # Exit 0: every test is labeled. 1: a test is not, or the build registers no test at all (an empty
 # list is a broken build, not a clean one). 2: the list could not be read or has an unexpected shape.
+[ -n "${BASH_VERSION:-}" ] || { echo "ctest_labels: run this with bash, not sh" >&2; exit 2; }
 set -u -o pipefail
 BUILD=${1:-.}
 CONFIG=${2:-${CTEST_CONFIG:-}}
@@ -58,7 +59,7 @@ except Exception as e:
     print("ctest_labels: unexpected test list: %s: %s" % (type(e).__name__, e), file=sys.stderr)
     sys.exit(2)
 if not tests:
-    print("ctest_labels: the build registers no test")
+    print("ctest_labels: the build registers no test (a multi-config build needs the configuration as the second argument)", file=sys.stderr)
     sys.exit(1)
 for name, why in bad:
     print("ctest_labels: %s: %s" % (name, why))
