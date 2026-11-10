@@ -1283,9 +1283,10 @@ Evidence a8_route_evidence() {
     if (answer.donor) {
         e.ranker   = Evidence::Ranker::None;
         e.distance = answer.distance;
-        e.kind  = answer.disposition == measured::Disposition::Measured ? Evidence::Kind::Measured
-                                                                        : Evidence::Kind::Carried;
-        e.donor = board_label(*answer.donor);
+        e.kind = answer.disposition == measured::Disposition::Measured ? Evidence::Kind::Measured
+                                                                       : Evidence::Kind::Carried;
+        // A measured answer has no donor: the board is its own source at distance 0.
+        if (e.kind == Evidence::Kind::Carried) { e.donor = board_label(*answer.donor); }
     } else {
         e.donor = "fallback-a8-route";
     }

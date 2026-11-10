@@ -36,7 +36,8 @@ the answer is `Incomplete` or `None`. Only a table with an incomplete row could 
 
 - `moe::a8_route_answer(Board)` (`ops/moe/moe_internal.h`): the class A8 route with its disposition.
   `a8_default_route()` is that answer on the running device, and `class_a8_route_evidence()` reads
-  the same answer's disposition, distance and donor, so the route and its evidence cannot differ.
+  the same answer's disposition, distance and donor (named only when `Carried`: a `Measured` board
+  is its own source), so the route and its evidence cannot differ.
 - `sparse_moe_q4_groupwise_frontier_answer(Board)` (`ops/sparse_moe/prefill`): the first T of the
   grouped prefill route for Q4/Q5 and Q4/Q6 groupwise banks, with its disposition.
 - `tests/ops/test_table_dispositions.cpp` checks both against the production lookups, ties the

@@ -137,9 +137,12 @@ void check_against_production() {
                std::string("a8 evidence kind does not follow the answer's disposition on ") +
                    fb.name);
         if (donor_kind) {
+            // The answer keeps its table entry; the evidence names a donor only when Carried (a
+            // Measured board is its own source).
             expect((ev.kind == moe::Evidence::Kind::Measured) ==
                            (a8.disposition == Disposition::Measured) &&
-                       ev.distance == a8.distance && a8.donor && !ev.donor.empty(),
+                       ev.distance == a8.distance && a8.donor &&
+                       ev.donor.empty() == (a8.disposition == Disposition::Measured),
                    std::string("a8 evidence differs from the answer on ") + fb.name);
         } else {
             expect(ev.donor == "fallback-a8-route" && !a8.donor,
