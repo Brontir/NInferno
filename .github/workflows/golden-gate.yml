@@ -26,7 +26,16 @@ jobs:
           python-version: "3.11"
       - name: The gate's own tests (path list against the selector's include closure)
         run: python3 -B tests/test_golden_gate.py
+      # The gate and its diff tool come from the base branch, so a PR cannot weaken them; the first
+      # landing (the base has none yet) falls back to the PR's own copies.
       - name: Decision-path diff needs a golden change or the goldens-equal label
         env:
           BASE_REF: ${{ github.base_ref }}
-        run: python3 tools/audit/golden_gate.py --base-ref "$BASE_REF" --event "$GITHUB_EVENT_PATH"
+        run: |
+          gate=tools/audit
+          mkdir -p "$RUNNER_TEMP/gate"
+          if git show "origin/$BASE_REF:tools/audit/golden_gate.py" > "$RUNNER_TEMP/gate/golden_gate.py" &&
+             git show "origin/$BASE_REF:tools/audit/golden_diff.py" > "$RUNNER_TEMP/gate/golden_diff.py"; then
+            gate="$RUNNER_TEMP/gate"
+          fi
+          python3 -B "$gate/golden_gate.py" --base-ref "$BASE_REF" --event "$GITHUB_EVENT_PATH" --paths tools/audit/decision_paths.txt

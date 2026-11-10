@@ -94,3 +94,4 @@ src/runtime/engine/decision_*
 src/artifact/formats.*
 src/convert/ggml_tables.inc
 src/artifact/layouts.*
+tests/test_golden_gate.py

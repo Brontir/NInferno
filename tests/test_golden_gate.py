@@ -91,6 +91,23 @@ NOT_DECIDING = {
     "src/ops/generic/segmented_gating.cu",  # kernel
     # the per-format dispatcher consumes a route; the generic selector (listed) makes the golden choice
     "src/ops/linear/linear.cpp", "src/ops/linear/linear_registry.h",
+    # consumers of a route or a board fact (found by the reverse check): they ask the selector,
+    # route_pins or machine_facts and act on the answer; the golden is made in the listed files
+    "src/models/gemma4/load_target.cpp", "src/models/qwen3_5/execution/parameters.cpp",  # model load
+    "src/ops/attn_input_proj/fp8/fp8_attn_input_plan.cpp",  # per-op plans
+    "src/ops/attn_input_proj/nvfp4/nvfp4_attn_input_plan.cpp",
+    "src/ops/gdn_input_proj/fp8/fp8_gdn_input_plan.cpp",
+    "src/ops/gdn_input_proj/nvfp4/nvfp4_gdn_input_plan.cpp",
+    "src/ops/linear_add/nvfp4/nvfp4_linear_add_plan.cpp",
+    "src/ops/linear_swiglu/nvfp4/nvfp4_linear_swiglu_plan.cpp",
+    "src/ops/linear/fp8/fp8_dispatch.cpp", "src/ops/linear/nvfp4/nvfp4_dispatch.cpp",  # dispatch
+    "src/ops/moe/moe.cpp", "src/ops/wrapper/attn_input_proj.cpp",  # op wrappers
+    "src/ops/wrapper/candidate_selector.cpp", "src/ops/wrapper/embedding.cpp",
+    "src/ops/wrapper/gdn_input_proj.cpp", "src/ops/wrapper/linear_add.cpp",
+    "src/ops/wrapper/linear_swiglu.cpp",
+    "src/product/plan/plan_facts.cpp", "src/spec/round_cost.cpp",  # plan and speculation costs
+    "src/runtime/engine/engine.cpp", "src/runtime/engine/model_instance.cpp",  # engine setup
+    "src/runtime/engine/warmup_widths.cpp",
 }
 # Includes that resolve to no tracked file: generated at build time (name -> the generator input,
 # which must be listed) or third-party code.
@@ -176,9 +193,7 @@ REVERSE_HEADERS = {
     "src/ops/generic/generic_gemm.h", "src/ops/route_pins.h", "src/core/mmq_columns.h",
     "src/core/board_registry.h", "src/core/cost_constants.h", "src/core/machine_facts.h",
 }
-REVERSE_SCOPE = [gg.glob_to_regex(g) for g in (
-    "src/ops/generic/*.cpp", "src/ops/*.cpp", "src/ops/linear/*.cpp", "src/runtime/engine/decision_*.cpp",
-    "src/core/*.cpp")]
+REVERSE_SCOPE = [gg.glob_to_regex(g) for g in ("src/**/*.cpp", "src/**/*.cu")]
 
 
 def reverse_includers(files):

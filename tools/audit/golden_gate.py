@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""CI gate for #620 step 9: a decision-path diff with no golden change needs the `goldens-equal` label.
+"""CI gate for #620 step 9: a decision-path diff needs a golden change or the `goldens-equal` label.
 
   golden_gate.py --base-ref master --event "$GITHUB_EVENT_PATH"
 
 1. The files changed since the merge-base with origin/<base-ref> are matched against the union of
-   tools/audit/decision_paths.txt at HEAD and at origin/<base-ref> (a PR cannot drop its own line). No match: pass, nothing more to do.
+   tools/audit/decision_paths.txt at HEAD and at origin/<base-ref> (a PR cannot drop its own
+   line). No match: pass, nothing more to do.
 2. Otherwise tools/audit/golden_diff.py --range origin/<base-ref>...HEAD summarizes the goldens.
 3. Goldens changed: print the summary, pass (the reviewer reads it).
    Goldens equal and the PR carries the label `goldens-equal`: pass, print the author's claim.
@@ -66,23 +67,29 @@ def labels_of(event):
 
 
 def decide(touched, golden_rc, labels):
-    """(exit code, message). golden_rc: 0 goldens equal, 1 changed (golden_diff --fail-on-change)."""
+    """(exit code, message). golden_rc: 0 goldens equal, 1 changed (--fail-on-change)."""
     if not touched:
         return 0, "no decision-path file changed: nothing to check"
     if golden_rc == 1:
-        return 0, "decision path changed and the goldens moved: the summary above is for the reviewer"
+        return 0, ("decision path changed and the goldens moved: "
+                   "the summary above is for the reviewer")
     if LABEL in labels:
-        return 0, f"label `{LABEL}`: the author claims this change is golden-equal; the goldens are equal"
+        return 0, (f"label `{LABEL}`: the author claims this change is golden-equal; "
+                   "the goldens are equal")
     return 1, (
         "the decision path changed but no selector golden did.\n"
-        "If the change is meant to move decisions, regenerate the goldens (test_selector_golden --update).\n"
-        f"If it is a refactor that leaves every decision as it was, add the label `{LABEL}` to the PR;\n"
-        "the label event starts a new run. Re-running the old run replays the old payload and keeps failing: add the label, do not re-run."
+        "If the change is meant to move decisions, regenerate the goldens "
+        "(test_selector_golden --update).\n"
+        "If it is a refactor that leaves every decision as it was, "
+        f"add the label `{LABEL}` to the PR;\n"
+        "the label event starts a new run. Re-running the old run replays the old payload "
+        "and keeps failing: add the label, do not re-run."
     )
 
 
 def git(args, cwd):
-    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout
+    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True,
+                          text=True).stdout
 
 
 def base_patterns(base_ref, repo, text=None):
@@ -96,8 +103,10 @@ def base_patterns(base_ref, repo, text=None):
 
 
 def main(argv=None, run_diff=None, changed_files=None, base_list=None):
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--base-ref", required=True, help="the PR's base branch (compared as origin/<base-ref>)")
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--base-ref", required=True,
+                    help="the PR's base branch (compared as origin/<base-ref>)")
     ap.add_argument("--event", help="path of the pull_request event payload (GITHUB_EVENT_PATH)")
     ap.add_argument("--repo", default=".")
     ap.add_argument("--paths", default=str(PATHS_FILE))
@@ -105,10 +114,12 @@ def main(argv=None, run_diff=None, changed_files=None, base_list=None):
     event = json.loads(Path(args.event).read_text(encoding="utf-8")) if args.event else {}
     try:
         patterns = load_patterns(Path(args.paths).read_text(encoding="utf-8"))
-        patterns += base_patterns(args.base_ref, args.repo, base_list)  # union of head and base lists
+        # the union of the head and base lists
+        patterns += base_patterns(args.base_ref, args.repo, base_list)
         rng = f"origin/{args.base_ref}...HEAD"
         if changed_files is None:
-            changed = [f for f in git(["diff", "--name-only", "--no-renames", "-z", rng], args.repo).split("\0") if f]
+            listing = git(["diff", "--name-only", "--no-renames", "-z", rng], args.repo)
+            changed = [f for f in listing.split("\0") if f]
         else:
             changed = changed_files
         touched = decision_files(changed, patterns)
@@ -117,7 +128,8 @@ def main(argv=None, run_diff=None, changed_files=None, base_list=None):
             print("decision-path files changed:\n  " + "\n  ".join(touched))
             if run_diff is None:
                 proc = subprocess.run(
-                    [sys.executable, str(GOLDEN_DIFF), "--repo", args.repo, "--range", rng, "--fail-on-change"],
+                    [sys.executable, str(GOLDEN_DIFF), "--repo", args.repo, "--range", rng,
+                     "--fail-on-change"],
                     capture_output=True, text=True)
                 golden_rc, out = proc.returncode, proc.stdout + proc.stderr
             else:
