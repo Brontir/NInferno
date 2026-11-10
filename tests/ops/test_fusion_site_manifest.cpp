@@ -99,6 +99,15 @@ int main() {
                    std::string::npos,
            "a ggml launch runs in stream order");
 
+    // A non-R8 route has no pre-quantized form to choose.
+    fusion::SiteQuery not_r8;
+    not_r8.device = &ada;
+    not_r8.route  = rmma;
+    not_r8.tokens = 4;
+    expect(text("r8_prequantized", not_r8) ==
+               "site r8_prequantized decided not_r8 route=" + rmma_name + " tokens=4",
+           "a register MMA route: not R8");
+
     // The gated-pair bands: the vector pair to kGgmlVecMaxTokens, the matrix pair above; a vector
     // band call does not fall through to the matrix pair.
     expect(text("vec_gated_pair", {&ada, 8}) ==

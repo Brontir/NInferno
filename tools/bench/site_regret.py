@@ -20,8 +20,8 @@ says what that branch cost against the other).
 
   site_regret.py from-rope-crossover CSV --board B --run R [--bound 256]   > doc.json
       the `--crossover` CSV of ninferno_rmsnorm_rope_bench (geometry,T,fused_us,split_us,...): the
-      qk_norm_rope site. The CSV's header lines carry what the run measured with: `graph_reps=N`
-      (the protocol) and `dispatch_bound <geometry>=<tokens>` (the width the dispatch fuses up to on
+      qk_norm_rope site. The CSV's header lines carry what the run measured with: `graph_reps=N` and
+      `min_of=M` (the protocol) and `dispatch_bound <geometry>=<tokens>` (the width the dispatch fuses up to on
       that board). The decided branch is fused for T <= that bound, decomposed above it; --bound
       overrides it for every geometry. A CSV without either header field is refused.
   site_regret.py check doc.json
@@ -117,26 +117,29 @@ def summarize(doc):
 
 
 def read_header(lines):
-    """(graph_reps, {geometry: dispatch bound}) from the CSV's `#` lines."""
-    graph_reps, bounds = None, {}
+    """(graph_reps, min_of, {geometry: dispatch bound}) from the CSV's `#` lines."""
+    graph_reps, min_of, bounds = None, None, {}
     for ln in lines:
         if not ln.startswith("#"):
             continue
         m = re.search(r"\bgraph_reps=(\d+)", ln)
         if m:
             graph_reps = int(m.group(1))
+        m = re.search(r"\bmin_of=(\d+)", ln)
+        if m:
+            min_of = int(m.group(1))
         m = re.search(r"\bdispatch_bound (\d+\+\d+)=(\d+)", ln)
         if m:
             bounds[m.group(1)] = int(m.group(2))
-    return graph_reps, bounds
+    return graph_reps, min_of, bounds
 
 
 def from_rope_crossover(csv_path, board, run, bound=None):
     with open(csv_path, newline="", encoding="utf-8") as f:
         raw = [ln for ln in f if ln.strip()]
-    graph_reps, bounds = read_header(raw)
-    if graph_reps is None:
-        raise ValueError(f"{csv_path}: no graph_reps= in the header (not a --crossover CSV)")
+    graph_reps, min_of, bounds = read_header(raw)
+    if graph_reps is None or min_of is None:
+        raise ValueError(f"{csv_path}: no graph_reps= and min_of= in the header (not a --crossover CSV)")
     rows = []
     for r in csv.DictReader(ln for ln in raw if not ln.startswith("#")):
         t = int(r["T"])
@@ -149,7 +152,7 @@ def from_rope_crossover(csv_path, board, run, bound=None):
             "candidates": [{"branch": "fused", "median_us": float(r["fused_us"])},
                            {"branch": "decomposed", "median_us": float(r["split_us"])}]})
     return {"schema": SCHEMA, "board": board, "run": run,
-            "protocol": f"graph_reps{graph_reps}_min3", "rows": rows}
+            "protocol": f"graph_reps{graph_reps}_min{min_of}", "rows": rows}
 
 
 def main(argv):

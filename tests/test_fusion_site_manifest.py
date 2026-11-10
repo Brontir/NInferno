@@ -87,7 +87,7 @@ class SiteRegret(unittest.TestCase):
         refuse(lambda d: d["rows"][0].update(candidates="fused,decomposed"))
 
     def test_rope_crossover_csv(self):
-        text = ("# device=x generation=ada graph_reps=32 launch_node_us=1.5\n"
+        text = ("# device=x generation=ada graph_reps=32 min_of=3 launch_node_us=1.5\n"
                 "# dispatch_bound 32+2=256\n"
                 "geometry,T,fused_us,split_us,fused_minus_split_us\n"
                 "32+2,128,4.0,5.0,-1.0\n"
@@ -104,13 +104,24 @@ class SiteRegret(unittest.TestCase):
             self.check(d)
             self.assertAlmostEqual(site_regret.regret_of(d["rows"][1]), 0.0)
             self.assertAlmostEqual(site_regret.regret_of(d["rows"][0]), 0.0)
+            # no min_of: refused, the protocol is never assumed
+            nomin = Path(tmp) / "nomin.csv"
+            nomin.write_text("# graph_reps=8\n# dispatch_bound 32+2=256\ngeometry,T,fused_us,split_us\n"
+                             "32+2,128,4.0,5.0\n", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                site_regret.from_rope_crossover(nomin, "b", "r")
+            other = Path(tmp) / "other.csv"
+            other.write_text("# graph_reps=16 min_of=5\n# dispatch_bound 32+2=256\ngeometry,T,fused_us,split_us\n"
+                             "32+2,128,4.0,5.0\n", encoding="utf-8")
+            self.assertEqual(site_regret.from_rope_crossover(other, "b", "r")["protocol"],
+                             "graph_reps16_min5")
             # no header fields: refused, never defaulted
             bare = Path(tmp) / "bare.csv"
             bare.write_text("geometry,T,fused_us,split_us\n32+2,128,4.0,5.0\n", encoding="utf-8")
             with self.assertRaises(ValueError):
                 site_regret.from_rope_crossover(bare, "b", "r")
             nobound = Path(tmp) / "nobound.csv"
-            nobound.write_text("# graph_reps=8\ngeometry,T,fused_us,split_us\n32+2,128,4.0,5.0\n",
+            nobound.write_text("# graph_reps=8 min_of=3\ngeometry,T,fused_us,split_us\n32+2,128,4.0,5.0\n",
                                encoding="utf-8")
             with self.assertRaises(ValueError):
                 site_regret.from_rope_crossover(nobound, "b", "r")
