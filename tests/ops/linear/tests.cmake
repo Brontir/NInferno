@@ -155,12 +155,15 @@ target_compile_definitions(ninferno_selector_golden_test PRIVATE
   NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden")
 
 # The register-MMA kernel's static shared memory as constexpr geometry (ops/generic/rmma_geometry.h,
-# static_asserted by the kernel) equals every row of every kernel-facts snapshot (#612 step 5); CPU.
-ninferno_add_op_test(ninferno_rmma_geometry_test
-  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_rmma_geometry.cpp"
-  LIBRARIES ninferno_ops)
+# static_asserted by the kernel, with the decoder rows pinned to their decoders) equals every row of
+# every kernel-facts snapshot (#612 step 5); a plain host test: header only, no GPU, no library.
+ninferno_add_test(ninferno_rmma_geometry_test NEEDS_SOURCE_DIR
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_rmma_geometry.cpp")
+set_tests_properties(ninferno_rmma_geometry_test PROPERTIES LABELS host)
+# The full build's architectures (the NVFP4 kernels, so the cluster hand-over): the one list of
+# CMakeLists.txt, comma-joined, not parsed from its text.
 target_compile_definitions(ninferno_rmma_geometry_test PRIVATE
-  NINFERNO_KERNEL_FACTS_DIR="${PROJECT_SOURCE_DIR}/src/ops/generic/data/kernel_facts")
+  NINFERNO_FULL_CUDA_ARCHS="$<JOIN:${NINFERNO_FULL_CUDA_ARCHS},$<COMMA>>")
 
 # The kernel-facts snapshots the register-MMA price reads (ops/generic/kernel_facts.h, #612).
 # Three checks, from the data inwards:

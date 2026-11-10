@@ -6,9 +6,9 @@
 // architecture. A kernel whose shared arrays change without the geometry (or the geometry without
 // the kernel: the static_assert) fails here, and so does a snapshot regenerated over a change.
 //
-// What the geometry does not own yet, stated as data below: each decoder's own table (the IQ
-// codebooks) and which decoders stage their activations; both are checked against the snapshots
-// here, not exported from the decoders.
+// The decoders' own tables, staging and group tails are rows of geometry::kDecoderGeometry,
+// static_asserted against the decoders by generic_gemm.cuh; the build's capabilities are the
+// compute capability (cp.async from sm_80) and CMakeLists.txt's NINFERNO_FULL_CUDA_ARCHS (NVFP4).
 // CPU, no GPU.
 
 #include "ops/generic/rmma_geometry.h"
@@ -18,6 +18,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -33,42 +34,22 @@ void fail(const std::string& message) {
     if (++failures <= 20) std::cerr << "FAIL: " << message << '\n';
 }
 
-// The decoders' own shared tables (generic_gemm.cuh kTableWords x 4 bytes), by the snapshot's name.
-const std::map<std::string, std::size_t>& decoder_tables() {
-    static const std::map<std::string, std::size_t> m = {
-        {"GgmlIq1MDecoder", 8192},  {"GgmlIq1SDecoder", 8192},   {"GgmlIq2SDecoder", 8192},
-        {"GgmlIq2XsDecoder", 4096}, {"GgmlIq2XxsDecoder", 2048}, {"GgmlIq3SDecoder", 2048},
-        {"GgmlIq3XxsDecoder", 1024}};
-    return m;
+// The architectures of the full build (the NVFP4 kernels and, with them, the cluster hand-over):
+// CMakeLists.txt's NINFERNO_FULL_CUDA_ARCHS, comma-joined into a compile definition: one list, not
+// restated or parsed here.
+std::set<std::string> full_build_archs() {
+    std::set<std::string> archs;
+    const std::string list = NINFERNO_FULL_CUDA_ARCHS;
+    for (std::size_t at = 0; at <= list.size();) {
+        std::size_t end = list.find(',', at);
+        if (end == std::string::npos) end = list.size();
+        if (end > at) archs.insert(list.substr(at, end - at));
+        at = end + 1;
+    }
+    return archs;
 }
 
-// The decoders that copy a SwiGLU step's activations ahead with cp.async (StageActsOf): J = 8 MMAs
-// a K step.
-bool stages_activations(const std::string& decoder) {
-    return decoder == "GgmlQ3KDecoder" || decoder == "GgmlQ45KQuadDecoder<4>" ||
-           decoder == "GgmlQ45KQuadDecoder<5>" || decoder == "GgmlQ6KDecoder";
-}
-
-constexpr int kStageJ = 8;
-
-// The register-MMA kernel's shared memory for one snapshot row, from the geometry.
-std::size_t expected_shared(const std::string& arch, const std::string& decoder, int warps_m,
-                            int warps_k, int m_tiles, int n_tiles, int cluster, int epilogue,
-                            bool latency) {
-    const int sets = geo::rmma_sets(epilogue == 2);
-    // The cluster hand-over exists in the sm_120a build (the NVFP4 kernels) only.
-    const bool with_nvfp4 = arch == "120a";
-    // cp.async: sm_80 and up (sm_70 and sm_75 copy synchronously, no stage).
-    const bool cp_async = arch != "70" && arch != "75";
-    const bool staged   = cp_async && latency && epilogue == 2 && n_tiles == 1 &&
-                        warps_m * warps_k <= 8 && stages_activations(decoder);
-    const auto table = decoder_tables().find(decoder);
-    return geo::rmma_static_shared_bytes(warps_m, warps_k, sets, m_tiles, n_tiles, cluster,
-                                         with_nvfp4, staged ? kStageJ : 0,
-                                         table == decoder_tables().end() ? 0 : table->second);
-}
-
-void check_file(const std::filesystem::path& path) {
+void check_file(const std::filesystem::path& path, const std::set<std::string>& full_archs) {
     std::ifstream in(path);
     if (!in) {
         fail("cannot read " + path.string());
@@ -97,7 +78,9 @@ void check_file(const std::filesystem::path& path) {
         }
         ++rows;
         ++rows_checked;
-        const std::size_t want = expected_shared(arch, decoder, wm, wk, mt, nt, cl, ep, lat != 0);
+        const std::size_t want =
+            geo::rmma_decoder_static_shared_bytes(decoder, wm, wk, mt, nt, cl, ep == 2, lat != 0,
+                                                  std::stoi(arch), full_archs.count(arch) != 0);
         if (want != shared) {
             fail("sm_" + arch + " " + decoder + " " + std::to_string(wm) + "x" +
                  std::to_string(wk) + " m" + std::to_string(mt) + " n" + std::to_string(nt) +
@@ -114,10 +97,13 @@ void check_file(const std::filesystem::path& path) {
 int main() {
     // The threads of a CTA are the warps' lanes.
     static_assert(geo::rmma_threads(1, 8) == 256 && geo::rmma_threads(4, 1) == 128);
+    const std::set<std::string> full = full_build_archs();
+    if (full.count("120a") == 0) fail("NINFERNO_FULL_CUDA_ARCHS does not name 120a");
     int files = 0;
-    for (const auto& entry : std::filesystem::directory_iterator(NINFERNO_KERNEL_FACTS_DIR)) {
+    for (const auto& entry : std::filesystem::directory_iterator(
+             std::filesystem::path(NINFERNO_SOURCE_DIR) / "src/ops/generic/data/kernel_facts")) {
         if (entry.path().extension() != ".txt") continue;
-        check_file(entry.path());
+        check_file(entry.path(), full);
         ++files;
     }
     if (files < 8) fail("fewer snapshots than architectures: " + std::to_string(files));
