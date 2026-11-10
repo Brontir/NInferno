@@ -93,9 +93,21 @@ def parse_run(text):
     return head, facts
 
 
+# Flops per warp instruction of each MMA shape the probe issues: 2 x m x n x k, and on Volta four
+# of them (one mma.sync.m8n8k4 performs four independent 8x8x4 products, one per quad pair: PTX
+# ISA). The row reads this table, so a probe output that printed another figure (probes before 10
+# printed 512 for the Volta shape) still gives the right rate; the measured cycles per MMA stay.
+SHAPE_FLOPS = {"hmma_884_f32_f16": 2048, "hmma_1688_f32_f16": 2048, "hmma_16816_f32_bf16": 4096}
+
+
 def row_of(head, facts, source):
-    """The table's row of one run; `source` names the committed probe output it came from."""
-    shape, flops = head["shape"].split()
+    """The table's row of one run; `source` names the committed probe output it came from. The
+    tensor rate is derived here: the shape's flops over the measured cycles per MMA per SM."""
+    shape, printed = head["shape"].split()
+    flops = SHAPE_FLOPS.get(shape, int(printed))
+    facts = dict(facts)
+    facts["tensor_flops_per_sm_clock"] = {
+        "value": round(flops / facts["mma_cycles_per_sm"]["value"], 3), "unit": "flop"}
     return {
         "provenance": "Measured",
         "source": source,
@@ -104,7 +116,7 @@ def row_of(head, facts, source):
         "sms": int(head.get("sms", 0)),
         "l2_bytes": int(head.get("l2_bytes", 0)),
         "mma_shape": shape,
-        "mma_flops": int(flops),
+        "mma_flops": flops,
         "tool": {"probe": head["probe"], "nvcc": head["nvcc"], "driver": head.get("driver", ""),
                  "runtime": head.get("runtime", "")},
         "notes": head.get("notes", []),

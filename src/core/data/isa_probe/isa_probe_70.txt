@@ -1,0 +1,48 @@
+probe isa_probe 9
+card Quadro GV100
+cc 70
+sms 80
+l2_bytes 6291456
+driver 13000
+runtime 12080
+nvcc 12.8.93
+shape hmma_884_f32_f16 512
+fact resident_ctas_per_sm 4.000 count
+fact mma_cycles_per_sm 2.014 clk
+fact mma_cycles_per_partition 8.057 clk
+fact tensor_flops_per_sm_clock 254.186 flop
+fact mma_dependent_latency 26.196 clk
+fact fp32_cycles_per_warp_instruction 2.014 clk
+fact int32_cycles_per_warp_instruction 2.004 clk
+fact l1_latency_w1 44.054 clk
+fact l1_latency_w2 44.033 clk
+fact l1_latency_w4 44.033 clk
+fact l1_latency_w8 45.027 clk
+fact l2_latency_w1 218.481 clk
+fact l2_latency_ns_w1 151.000 ns
+fact l2_latency_w2 218.871 clk
+fact l2_latency_ns_w2 151.250 ns
+fact l2_latency_w4 220.246 clk
+fact l2_latency_ns_w4 152.250 ns
+fact l2_latency_w8 221.805 clk
+fact l2_latency_ns_w8 153.250 ns
+fact dram_tlbwarm_latency_w1 486.242 clk
+fact dram_tlbwarm_latency_ns_w1 336.000 ns
+fact dram_tlbwarm_latency_w2 488.055 clk
+fact dram_tlbwarm_latency_ns_w2 336.000 ns
+fact dram_tlbwarm_latency_w4 510.211 clk
+fact dram_tlbwarm_latency_ns_w4 352.000 ns
+fact dram_tlbwarm_latency_w8 546.039 clk
+fact dram_tlbwarm_latency_ns_w8 376.000 ns
+fact dram_latency_w1 480.243 clk
+fact dram_latency_ns_w1 331.750 ns
+fact dram_latency_w2 497.332 clk
+fact dram_latency_ns_w2 343.750 ns
+fact dram_latency_w4 520.515 clk
+fact dram_latency_ns_w4 359.500 ns
+fact dram_latency_w8 556.105 clk
+fact dram_latency_ns_w8 384.250 ns
+fact sm_clock_mhz_chase 1447.341 mhz
+fact shared_latency 26.999 clk
+selfcheck ok
+end

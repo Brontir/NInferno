@@ -122,8 +122,11 @@ struct Shape {
     int flops;
 };
 
+// Flops per warp instruction: 2 x m x n x k, and on Volta four of them, since one
+// mma.sync.m8n8k4 performs four independent 8x8x4 products, one per quad pair (PTX ISA, "the
+// warp performs four matrix multiply-accumulates"): 4 x 2 x 8 x 8 x 4 = 2048.
 constexpr Shape kShapes[] = {
-    {"hmma_884_f32_f16", 512}, {"hmma_1688_f32_f16", 2048}, {"hmma_16816_f32_bf16", 4096}};
+    {"hmma_884_f32_f16", 2048}, {"hmma_1688_f32_f16", 2048}, {"hmma_16816_f32_bf16", 4096}};
 
 __global__ void mma_throughput(Span* spans, float* sink, unsigned a, unsigned b) {
     float acc[kUnroll][kAcc];
@@ -389,7 +392,7 @@ int main() {
     CHECK(cudaDriverGetVersion(&driver));
     CHECK(cudaRuntimeGetVersion(&runtime));
     const int cc = p.major * 10 + p.minor;
-    std::printf("probe isa_probe 9\n");
+    std::printf("probe isa_probe 10\n");
     std::printf("card %s\n", p.name);
     std::printf("cc %d\n", cc);
     std::printf("sms %d\n", p.multiProcessorCount);

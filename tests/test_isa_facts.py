@@ -8,6 +8,7 @@ round-trips into a row, and odd or incomplete outputs are refused. No GPU, no CU
 import importlib.util
 import json
 import os
+import re
 import unittest
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -15,6 +16,20 @@ spec = importlib.util.spec_from_file_location(
     "isa_probe", os.path.join(ROOT, "tools", "bench", "isa_probe", "isa_probe.py"))
 ip = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ip)
+
+
+def generation_bf16_rate(cc):
+    """The bf16 tensor rate per SM and clock of the generation row for compute capability `cc`
+    (src/core/generation.h: `{major, minor, <lent>, "name", bf16, ...}`), or None without one."""
+    with open(os.path.join(ROOT, "src", "core", "generation.h")) as f:
+        text = f.read()
+    # A row covers its major from its minor up to the next row's (ga10x is {8, 1, ...}: 8.1-8.8).
+    best = None
+    for m in re.finditer(r'\{\s*(\d+),\s*(\d+),\s*\d+,\s*"[^"]+",\s*([\d.]+)', text):
+        major, minor, rate = int(m.group(1)), int(m.group(2)), float(m.group(3))
+        if major == cc // 10 and minor <= cc % 10 and (best is None or minor >= best[0]):
+            best = (minor, rate)
+    return best[1] if best else None
 
 SAMPLE = """probe isa_probe 7
 card NVIDIA GeForce RTX 4090
@@ -54,6 +69,19 @@ class IsaFacts(unittest.TestCase):
         self.assertEqual(row["tool"]["nvcc"], "13.4.92")
         self.assertEqual(row["notes"], ["the SM clock ranged 2400..2535 MHz over the L2 / DRAM chases"])
         self.assertAlmostEqual(row["facts"]["dram_latency_w8"]["value"], 584.0)
+        # The tensor rate is derived from the parser's flops table over the measured cycles, not
+        # read from the probe: a Volta run that printed 512 for m8n8k4 (four 8x8x4 products a
+        # warp instruction: 2048) still gives V100's ~1024 flop/clk/SM.
+        self.assertAlmostEqual(row["facts"]["tensor_flops_per_sm_clock"]["value"],
+                               round(4096 / 8.012, 3))
+        volta = SAMPLE.replace("shape hmma_16816_f32_bf16 4096", "shape hmma_884_f32_f16 512") \
+            .replace("cc 89", "cc 70").replace("fact mma_cycles_per_sm 8.012 clk",
+                                               "fact mma_cycles_per_sm 2.014 clk")
+        head, facts = ip.parse_run(volta)
+        row = ip.row_of(head, facts, "isa_probe_70.txt")
+        self.assertEqual(row["mma_flops"], 2048)
+        self.assertAlmostEqual(row["facts"]["tensor_flops_per_sm_clock"]["value"],
+                               round(2048 / 2.014, 3))
         self.assertEqual(ip.arch_key(120, "hmma_16816_f32_bf16 4096"), "120a")
         self.assertEqual(ip.arch_key(75, "hmma_1688_f32_f16 2048"), "75")
         self.assertEqual([ip.unit_of(n) for n in ("l1_latency_w1", "dram_latency_ns_w2",
@@ -102,6 +130,17 @@ class IsaFacts(unittest.TestCase):
             for field in ("probe", "nvcc", "driver", "runtime"):
                 self.assertIn(field, row["tool"], f"{key} tool lacks {field}")
             self.assertEqual(set(row["facts"]), set(ip.FACTS), key)
+            # The measured tensor rate against the generation row's bf16 rate (core/generation.h)
+            # where both are the same operation: the native BF16 m16n8k16 with FP32 accumulate,
+            # cc 80 and up. Before that the row is a fitted aggregate of an emulated path (Volta's
+            # FP32 FMAs, Turing's f16 k8 pairs) and the probe's native shape is another number.
+            if row["cc"] >= 80:
+                rate = generation_bf16_rate(row["cc"])
+                self.assertIsNotNone(rate, f"{key}: no generation row")
+                measured = row["facts"]["tensor_flops_per_sm_clock"]["value"]
+                self.assertLess(abs(measured - rate) / rate, 0.05,
+                                f"{key}: measured {measured} flop/clk/SM, the generation row says "
+                                f"{rate}; the row is what moves")
             for name, v in row["facts"].items():
                 self.assertGreater(v["value"], 0.0, f"{key} {name}")
                 self.assertEqual(v["unit"], ip.unit_of(name), f"{key} {name}")
