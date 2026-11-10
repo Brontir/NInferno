@@ -28,7 +28,7 @@ The default configuration is Release. Ninja links and archives share the single-
 | `NINFERNO_CUDA_LINEINFO` | ON in NVFP4 (`sm_120`) trees that embed tree paths, else OFF | compile CUDA with `-lineinfo` (for profiling) |
 | `NINFERNO_SOURCE_TREE_PATHS` | ON | embed the source and build tree paths, so a binary run from the tree finds `routes/`, the drafters' rankings and the chat page there; the release scripts turn it off (those files ship beside the binaries) and source paths in CUDA errors are then relative to the tree |
 | `NINFERNO_VERSION_STRING` | the project version | the version the executables report |
-| `NINFERNO_SHARED_OP_TESTS` | OFF | link the op tests against one shared `ninferno_ops` |
+| `NINFERNO_SHARED_OP_TESTS` | OFF | link every test with device code against one shared library of the CUDA archives (Linux test trees; see below) |
 
 Apps or tests enable the internal product support components: media acquisition, prompt input,
 logging and serving. This is one derived condition, not a separate user option. FFmpeg belongs
@@ -155,6 +155,38 @@ above, `ninferno_ggml_mmq` and the model families) compiles with `-lineinfo` whe
 Source-list maintenance must preserve language, architecture, RDC mode, device-link ownership
 and numerical compiler options. Splitting a manifest does not reduce kernel instantiation work
 or justify combining shape translation units or enabling unity builds.
+
+## The shared test tree
+
+Without options every test executable links the CUDA archives statically, so each one carries the
+whole engine's device code (about 600 MB per test on `120a`), and a test tree is mostly copies of
+it. `NINFERNO_SHARED_OP_TESTS=ON` (Linux, `BUILD_TESTING=ON`) puts the member archives
+`ninferno_core_host`, `ninferno_core`, `ninferno_ops`, `ninferno_nvfp4_non_rdc` and
+`ninferno_ggml_mmq` whole into one shared library, `ninferno_ops_shared`
+(`cmake/SharedTestLibrary.cmake`), and every test with device code links it and the shared CUDA
+runtime instead.
+
+- Every library outside the members links a member by its redirect, `ninferno::core`,
+  `ninferno::ops`, ... (`cmake/NInfernoTargets.cmake`). Without the option a redirect is an alias of
+  the archive: every command of the build is the one the archive's own name gives. With it, a
+  redirect resolves on the executable being linked: the archive for an app or bench, the shared
+  library (and the archive's compile requirements) for a test with the `NINFERNO_SHARED_OPS`
+  property. `ninferno::cudart` resolves the same way. Members link each other by their own names.
+- A member holds per-process or per-device state (the substituted device class, the per-device
+  slots of the launch sites, the facts cache, the runtime's kernel registrations), so it is in the
+  library whole and a test that links the library holds no copy of it. `ninferno_sys` is not a
+  member: it holds no state, and every target links it by its own name.
+- At the end of the configure (`ninferno_decide_link_modes`) every executable of `tests/` whose
+  static closure reaches device code takes the library, unless declared `STATIC_LINK` in
+  `ninferno_add_test`; the others keep their static link. `STATIC_LINK` tests: those with
+  `LINKER:--wrap` (a wrap reaches no call made inside a shared library), the device-image refusal
+  (the product's link) and the host-only gate-atlas and choice tests. Each decision is asserted
+  (`ninferno_assert_link_mode`: no member archive and no static runtime beside the library; apps and
+  benches never reach the library or the shared runtime) and written to
+  `<build>/ninferno_link_modes.txt`; `ninferno_link_mode_test` (`tools/audit/link_mode.sh`) checks
+  the built binaries against it.
+- The apps and benches of such a tree link exactly as without the option; the members' host code is
+  compiled position-independent (device code is unchanged). Release trees never set the option.
 
 ## Consumers and verification
 

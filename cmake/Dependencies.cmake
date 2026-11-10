@@ -5,11 +5,18 @@ if(NOT WIN32)
 endif()
 
 # The CUDA runtime every target links: static in the product, so a release binary needs only the
-# NVIDIA driver on the user's machine; shared in the shared-op test tree, where the library and the
-# tests must use one runtime.
+# NVIDIA driver on the user's machine. In the shared test tree (NINFERNO_SHARED_OP_TESTS) it
+# resolves on the executable or library being linked: shared for ninferno_ops_shared and the tests
+# on it (property NINFERNO_SHARED_CUDART), which must use one runtime; static for everything else.
 add_library(ninferno::cudart INTERFACE IMPORTED GLOBAL)
 if(NINFERNO_SHARED_OP_TESTS)
-  target_link_libraries(ninferno::cudart INTERFACE CUDA::cudart)
+  set_property(TARGET ninferno::cudart PROPERTY INTERFACE_LINK_LIBRARIES
+    "$<IF:$<BOOL:$<TARGET_PROPERTY:NINFERNO_SHARED_CUDART>>,CUDA::cudart,CUDA::cudart_static>")
+  # Read by the closure walks of cmake/NInfernoTargets.cmake instead of the generator expression.
+  set_target_properties(ninferno::cudart PROPERTIES
+    NINFERNO_REDIRECT_KEY NINFERNO_SHARED_CUDART
+    NINFERNO_REDIRECT_STATIC CUDA::cudart_static
+    NINFERNO_REDIRECT_SHARED CUDA::cudart)
 else()
   target_link_libraries(ninferno::cudart INTERFACE CUDA::cudart_static)
 endif()
