@@ -97,7 +97,7 @@ namespace {
 
 RouteDescription describe_resolved(const DescribedWeight& described, const Problem& problem,
                                    const ResolvedRoute& resolved, std::int32_t tokens,
-                                   bool with_kernel) {
+                                   std::optional<std::size_t> workspace_free, bool with_kernel) {
     const Weight& w = described.weight;
     const Route ran = resolved.executed;
     RouteDescription out;
@@ -105,12 +105,16 @@ RouteDescription describe_resolved(const DescribedWeight& described, const Probl
     out.workspace_bytes = executed_workspace_bytes(ran, resolved.r8_prequantized, problem.k,
                                                    problem.n, problem.epilogue, tokens);
     // Volta's prefill band runs a tiled call as CUTLASS over a decoded FP16 copy of the weight
-    // rows (run_route, launch_volta_cutlass): the copy's first chunk is the workspace it takes.
-    if (ran.family == Family::TiledMma && volta_cutlass_compiled()) {
+    // rows (run_route, launch_volta_cutlass) when the call has workspace that holds a chunk: the
+    // chunk that fits is the workspace it takes. Without room the tiled figure stands (a format
+    // with no tile of its own then runs scalar).
+    if (ran.family == Family::TiledMma && volta_cutlass_compiled() && workspace_free) {
         try {
             if (volta_cutlass_runs(volta_cutlass_only(codec_of(w)), tokens)) {
-                out.workspace_bytes = volta_cutlass_workspace_bytes(
-                    problem.n, problem.k, tokens, problem.epilogue == Epilogue::SwiGlu);
+                const std::size_t chunk = volta_cutlass_chunk_bytes(
+                    problem.n, problem.k, tokens, problem.epilogue == Epilogue::SwiGlu,
+                    *workspace_free);
+                if (chunk != 0) out.workspace_bytes = chunk;
             }
         } catch (const std::exception&) {
             // a format without a codec has no CUTLASS copy: the tiled figure stands
@@ -173,7 +177,7 @@ std::optional<RouteDescription> describe_route(const DeviceClass& device, Route 
     const Problem problem{qtype, policy, n, k, epilogue};
     const ResolvedRoute resolved = resolve_route(
         asked, described.weight, engine_call(n, k, tokens, epilogue, workspace_free, true, 0, 1));
-    return describe_resolved(described, problem, resolved, tokens, with_kernel);
+    return describe_resolved(described, problem, resolved, tokens, workspace_free, with_kernel);
 }
 
 std::optional<RouteDescription> describe_call(const DeviceClass& device, QType qtype,
@@ -193,7 +197,7 @@ std::optional<RouteDescription> describe_call(const DeviceClass& device, QType q
                              described.weight, tokens, prefill, workspace_free.has_value());
     const ResolvedRoute resolved = resolve_route(
         asked, described.weight, engine_call(n, k, tokens, epilogue, workspace_free, true, 0, 1));
-    return describe_resolved(described, problem, resolved, tokens, with_kernel);
+    return describe_resolved(described, problem, resolved, tokens, workspace_free, with_kernel);
 }
 
 std::string describe_text(const RouteDescription& d) {
