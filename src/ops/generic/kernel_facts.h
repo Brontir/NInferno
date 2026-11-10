@@ -83,7 +83,7 @@ struct LoopCounts {
     int uniform              = 0; // uniform-datapath instructions
     int other                = 0; // branches, barriers, convergence, constant loads, NOP
     int total                = 0;
-    std::optional<StaticSchedule> schedule; // schema 4 snapshots; nullopt in a schema 2 one
+    std::optional<StaticSchedule> schedule; // every row of a snapshot with a loop
 };
 
 struct KernelFacts {
@@ -91,7 +91,7 @@ struct KernelFacts {
     std::size_t stack_bytes         = 0; // per thread: the stack frame (spills and stack arrays)
     std::size_t local_bytes         = 0; // per thread: other local memory
     std::size_t static_shared_bytes = 0; // per CTA
-    std::optional<LoopCounts> loop; // schema 2 and 4 snapshots; nullopt in a resources-only one
+    std::optional<LoopCounts> loop;      // schema 4 snapshots; nullopt in a resources-only one
 
     // Per thread: every local-memory byte (the driver's localSizeBytes), the one spill measure
     // the price, the wide rule and the live check all read.
@@ -106,6 +106,11 @@ struct SnapshotHeader {
     std::string source; // sha256 of the device sources it was made from
     std::size_t kernels = 0;
 };
+
+// Whether this reader accepts a snapshot's text: schema 4 (loop counts and schedule) or the
+// resources-only schema 1. Any other columns line, the loop without a schedule (schema 2) among
+// them, is refused, as tools/kernel_facts/kernel_facts.py refuses it.
+[[nodiscard]] bool snapshot_text_accepted(std::string_view text);
 
 // The build architecture labels with a committed snapshot, in file order.
 [[nodiscard]] std::vector<std::string_view> snapshot_archs();

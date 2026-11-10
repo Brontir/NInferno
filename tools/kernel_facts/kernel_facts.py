@@ -398,13 +398,14 @@ def render(arch, rows, nvcc, flags, source):
     alone where there is no loop. A row with a loop but no schedule is an error."""
     loops = [v[4] for v in rows.values() if v[4] is not None]
     if not loops:
-        columns = SCHEMA_COLUMNS[1][0]
+        schema = 1
     elif all(c.scheduled for c in loops):
-        columns = SCHEMA_COLUMNS[4][0]
+        schema = SCHEMA
     else:
         fail("a row has no control codes: only schema 4 (loop and schedule) is written")
+    columns = SCHEMA_COLUMNS[schema][0]
     lines = [
-        f"# NInferno kernel facts, schema {SCHEMA}: what ptxas made of the register-MMA kernels of",
+        f"# NInferno kernel facts, schema {schema}: what ptxas made of the register-MMA kernels of",
         f"# the sm_{arch} build, read off the linked binary with cuobjdump. Per kernel: the registers",
         "# a thread keeps, its stack frame and local bytes, the CTA's static shared memory",
         "# (--dump-resource-usage); then the K loop's instructions per iteration (-sass; one",

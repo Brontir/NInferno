@@ -29,13 +29,12 @@ constexpr std::string_view kColumns =
     "stack local shared loops k_iter mma mma_ones mma_shape ldg ldg_bytes ld ld_bytes ldgsts "
     "ldgsts_bytes lds lds_bytes sts sts_bytes local local_bytes shfl int fp uniform other total "
     "stall_sum sb_waits sb_waits_local outside_total outside_stall outside_waits outside_bar";
-// The lengths of the shorter columns lines kColumns begins with: the resources alone (schema 1,
-// up to "shared") and the loop's counts without the schedule (schema 2, up to "total").
+// The length of the one shorter columns line kColumns begins with: the resources alone (schema 1,
+// up to "shared"). The older loop-without-schedule columns (schema 2) are refused.
 constexpr std::size_t kResourceColumnsLength = kColumns.find(" loops ");
-constexpr std::size_t kLoopColumnsLength     = kColumns.find(" stall_sum ");
 
 // What a snapshot's rows carry past the resources, by its columns line.
-enum class Columns { Resources, Loop, Schedule };
+enum class Columns { Resources, Schedule };
 
 // One string per key: the row's spelling without the family column.
 std::string row_key(const RmmaKernelKey& k) {
@@ -72,9 +71,9 @@ Snapshot parse(std::string_view text) {
                 k.epilogue >> latency >> add_sums >> f.registers >> f.stack_bytes >>
                 f.local_bytes >> f.static_shared_bytes;
             if (!fields) throw std::runtime_error("kernel facts: malformed row: " + line);
-            // Schema 2: the K loop's counts follow (tools/kernel_facts/sass_counts.py COLUMNS),
-            // on every row of a file whose columns line names them and on none of another's;
-            // schema 4: then the static schedule.
+            // Schema 4: the K loop's counts follow (tools/kernel_facts/sass_counts.py COLUMNS),
+            // then the static schedule, on every row of a file whose columns line names them and
+            // on none of a resources-only one's.
             if (*columns != Columns::Resources) {
                 LoopCounts l;
                 fields >> l.loops >> l.k_iter >> l.mma >> l.mma_ones >> l.mma_shape >> l.ldg >>
@@ -82,15 +81,13 @@ Snapshot parse(std::string_view text) {
                     l.lds_bytes >> l.sts >> l.sts_bytes >> l.local >> l.local_bytes >> l.shfl >>
                     l.int_alu >> l.fp_alu >> l.uniform >> l.other >> l.total;
                 if (!fields) throw std::runtime_error("kernel facts: malformed loop: " + line);
-                if (*columns == Columns::Schedule) {
-                    StaticSchedule d;
-                    fields >> d.stall_sum >> d.sb_waits >> d.sb_waits_local >> d.outside_total >>
-                        d.outside_stall >> d.outside_waits >> d.outside_bar;
-                    if (!fields) {
-                        throw std::runtime_error("kernel facts: malformed schedule: " + line);
-                    }
-                    l.schedule = d;
+                StaticSchedule d;
+                fields >> d.stall_sum >> d.sb_waits >> d.sb_waits_local >> d.outside_total >>
+                    d.outside_stall >> d.outside_waits >> d.outside_bar;
+                if (!fields) {
+                    throw std::runtime_error("kernel facts: malformed schedule: " + line);
                 }
+                l.schedule = d;
                 f.loop = std::move(l);
             }
             if (fields >> std::ws; !fields.eof()) {
@@ -117,8 +114,6 @@ Snapshot parse(std::string_view text) {
                 // The columns are read by position: the file spells one of the lists exactly.
                 if (rest == kColumns)
                     columns = Columns::Schedule;
-                else if (rest == kColumns.substr(0, kLoopColumnsLength))
-                    columns = Columns::Loop;
                 else if (rest == kColumns.substr(0, kResourceColumnsLength))
                     columns = Columns::Resources;
                 else
@@ -174,6 +169,13 @@ bool sass_runs(std::string_view label, int major, int minor) {
 }
 
 } // namespace
+
+bool snapshot_text_accepted(std::string_view text) {
+    try {
+        (void)parse(text);
+        return true;
+    } catch (const std::runtime_error&) { return false; }
+}
 
 std::vector<std::string_view> snapshot_archs() {
     std::vector<std::string_view> v;
