@@ -711,8 +711,8 @@ std::vector<LoadBound> facts_load(const Profile& p) {
             std::int32_t best_depth = 0;
             double best             = 1.0;
             for (std::int32_t d = 1; d <= c->config.k; ++d) {
-                SpecConfig at = c->config;
-                at.k          = d;
+                SpecConfig at     = c->config;
+                at.k              = d;
                 const auto priced = p.joint_scale.find(at.label());
                 if (priced == p.joint_scale.end()) { continue; }
                 const auto scale = priced->second.find(streams);
