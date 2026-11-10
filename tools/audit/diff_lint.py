@@ -610,14 +610,15 @@ COND_LITERAL = re.compile(
     r"(0[xX][0-9A-Fa-f']+|0[bB][01']+|[0-9][0-9']*)(?:[uU](?:ll|LL|[lL])?|(?:ll|LL|[lL])[uU]?)?")
 
 
-def cond_literal(rest):
+def cond_literal(rest, cxx=True):
     """The value of a condition that is one integer literal (any base, digit separators and suffixes
-    allowed, inside any number of parentheses, a trailing comment ignored), else None."""
+    allowed, inside any number of parentheses, a trailing comment ignored), else None. `true` and
+    `false` are literals in C++ only (C before C23 reads `true` as an undefined name, 0)."""
     rest = re.sub(r"/\*.*?\*/", " ", rest)  # a comment is whitespace to the preprocessor
     rest = re.sub(r"[ \t]*(?://.*|/\*.*)$", "", rest).strip()
     while rest.startswith("(") and rest.endswith(")"):
         rest = rest[1:-1].strip()
-    if rest in ("false", "true"):  # C++ keywords, valid in #if
+    if cxx and rest in ("false", "true"):  # C++ keywords, valid in #if
         return int(rest == "true")
     m = COND_LITERAL.fullmatch(rest)
     if not m:
@@ -632,7 +633,22 @@ def cond_literal(rest):
     return int(digits)
 
 
-def cxx_open_lines(text):
+def spliced_lines(text):
+    """[(number of the last physical line, logical line)]: each line ending in a backslash is joined
+    with the next one (the backslash dropped), as the preprocessor does before it reads anything."""
+    out, buf = [], ""
+    rows = text.split("\n")
+    for num, row in enumerate(rows, 1):
+        row = row.rstrip("\r")
+        if row.endswith("\\") and num < len(rows):
+            buf += row[:-1]
+        else:
+            out.append((num, buf + row))
+            buf = ""
+    return out
+
+
+def cxx_open_lines(text, cxx=True):
     """1-based numbers of lines that end inside an ordinary string or char literal (C/C++).
 
     Comments (a `//` comment ending in a backslash goes on in the next line) and raw strings R"d(...)d"
@@ -641,32 +657,27 @@ def cxx_open_lines(text):
     bad, block, raw, carry = [], False, None, None  # raw: the closing `)delim"` while inside a raw string
     if0 = 0  # nesting depth inside a `#if 0` group
     chains = []  # per open conditional group: whether a branch with a literal-true condition was taken
-    spliced = False  # the previous line was a // comment ending in a backslash: this line is comment too
     # The open block comment began a line (only whitespace and closed comments before its `/*`).
     # The whole comment is one space to the preprocessor, so where it closes, the rest of its last
     # line is the start of that line: `/* note` + `*/ #if 0` is a directive.
     block_blank = False
-    half = False  # the previous line ended in `/` + backslash: a `/` or `*` here completes a comment opener
-    for num, line in enumerate(text.split("\n"), 1):
-        line = line.rstrip("\r")
+    last_bad = -2  # index of the logical line of the last report
+    # Backslash-newline pairs are joined first, as translation phase 2 does, so a comment opener, a
+    # closer, a directive or a condition split by one is read whole; a finding is reported at the
+    # last physical line of its logical line.
+    for idx, (num, line) in enumerate(spliced_lines(text)):
         i, n, quote, carry = 0, len(line), carry, None
-        if half:
-            half = False
-            if line.startswith("/"):   # `/\` newline `/` is `//` once the lines are spliced
-                spliced = True
-            elif line.startswith("*"):  # ... and `/\` newline `*` is `/*`
-                line, block, block_blank = "  " + line[2:], True, False
-        if block and block_blank and quote is None and raw is None and not spliced:
+        if block and block_blank and quote is None and raw is None:
             j = line.find("*/")
             if j >= 0:  # blanked in place, so every column keeps its meaning
                 line, block = " " * (j + 2) + line[j + 2:], False
-        if quote is None and raw is None and not block and not spliced:
+        if quote is None and raw is None and not block:
             # A comment is whitespace to the preprocessor: `#/**/if 0` and `/* note */ #if 0` are
             # directives. The mask keeps every column, so a position found in it is one in the line.
             masked = re.sub(r"/\*.*?\*/", lambda m: " " * len(m.group(0)), line)
             dm = DIRECTIVE_RX.match(masked)
             kind, rest = (dm.group(1), dm.group(2).strip()) if dm else ("", "")
-            value = cond_literal(rest)
+            value = cond_literal(rest, cxx)
             zero, one = value == 0, value is not None and value != 0
             if if0:  # the text of a `#if 0` group is not code: prose with an apostrophe is fine there
                 if kind in ("if", "ifdef", "ifndef"):
@@ -707,8 +718,6 @@ def cxx_open_lines(text):
                 # place, so every column keeps its meaning.
                 line = HAS_INCLUDE_ANGLE.sub(
                     lambda m: m.group(1) + " " * (len(m.group(0)) - len(m.group(1))), line)
-        if spliced:
-            spliced, i = line.endswith("\\"), n
         while i < n:
             c = line[i]
             if raw is not None:
@@ -734,12 +743,10 @@ def cxx_open_lines(text):
                     quote = None
                 i += 1
             elif line.startswith("//", i):
-                spliced, i = line.endswith("\\"), n  # a trailing backslash splices the next line in
+                i = n
             elif line.startswith("/*", i):
                 block_blank = re.sub(r"/\*.*?\*/", " ", line[:i]).strip() == ""
                 block, i = True, i + 2
-            elif c == "/" and i == n - 2 and line[i + 1] == "\\":
-                half, i = True, n
             elif c == '"':
                 m = RAW_PREFIX.search(line[:i])
                 d = re.match(r"[^\s()\\]{0,16}\(", line[i + 1:]) if m else None
@@ -758,8 +765,9 @@ def cxx_open_lines(text):
                     quote, i = "'", i + 1
             else:
                 i += 1
-        if quote and not (bad and bad[-1] == num - 1):  # the tail of a broken literal is not a second finding
+        if quote and last_bad != idx - 1:  # the tail of a broken literal is not a second finding
             bad.append(num)
+            last_bad = idx
     return bad
 
 
@@ -808,7 +816,7 @@ def bad_literals(path, content, only=None):
         return []
     e = ext(path)
     if e in LIT_CXX_EXT:
-        lines = cxx_open_lines(content)
+        lines = cxx_open_lines(content, e != ".c")
     elif e == ".py":
         lines = py_open_lines(content)
     else:

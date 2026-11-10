@@ -578,7 +578,7 @@ class WholeOldFileMask(unittest.TestCase):
     def test_a_file_named_dev_null_is_no_deletion_sentinel(self):
         for name in ("dev/null", "src/dev/null"):
             with self.subTest(name=name):
-                d = f"diff --git a/{name} b/{name}\n--- a/{name}\n+++ b/{name}\n@@ -1,0 +2 @@\n+int x;\n"
+                d = f"diff --git a/{name} b/{name}\n--- a/{name}\n+++ b/{name}\n@@ -1 +1 @@\n-int y;\n+int x;\n"
                 self.assertEqual(list(dl.parse_diff(d)), [name])
                 new = f"diff --git a/{name} b/{name}\nnew file mode 100644\n--- /dev/null\n+++ b/{name}\n@@ -0,0 +1 @@\n+int x;\n"
                 self.assertEqual(list(dl.parse_diff(new)), [name])
@@ -745,6 +745,30 @@ class MaskAndLiteralFixes(unittest.TestCase):
         self.assertEqual(lits("t.cpp", "int a; /\\\n/ it's\nconst char* s = \"oops\n;\n"), [3])
         # a lone `/` before a continuation that is no opener is code
         self.assertEqual(lits("t.cpp", "int a = b /\\\n c; const char* s = \"oops\n;\n"), [2])
+
+    def test_backslash_newline_is_joined_before_comments_and_directives_are_read(self):
+        # a block comment opened by a split opener, then a directive after its closer
+        self.assertEqual(lits("t.cpp", "/\\\n* note */ #if 0\nit's\n#endif\nint i;\n"), [])
+        # `**/` closes the comment: the char after the star is not lost
+        self.assertEqual(lits("t.cpp", "/\\\n**/ const char* s = \"oops\n;\n"), [2])
+        # a condition split by a continuation
+        self.assertEqual(lits("t.cpp", "#if \\\n0\ndon't\n#endif\nint i;\n"), [])
+        self.assertEqual(lits("t.cpp", "#if 0\ndon't\n#else\nconst char* s = \"oops\n;\n#endif\n"), [4])
+        self.assertEqual(lits("t.cpp", "#i\\\nf 0\ndon't\n#endif\nint i;\n"), [])
+        # a block comment closer split by a continuation ends the comment: code after it is checked
+        self.assertEqual(lits("t.cpp", "/* note *\\\n/ const char* s = \"oops\n;\n"), [2])
+        self.assertEqual(lits("t.cpp", "int a; /* note *\\\n/ int b;\nint c;\n"), [])
+        # a literal continued by a backslash is still no finding, and a broken one is reported
+        # at the last physical line of its logical line
+        self.assertEqual(lits("t.cpp", "const char* s = \"ab\\\ncd\";\nint i;\n"), [])
+        self.assertEqual(lits("t.cpp", "const char* s = \"ab\\\ncd;\nint i;\n"), [2])
+
+    def test_true_and_false_are_literals_in_cpp_only(self):
+        # C before C23 reads `true` as an undefined name (0): a .c file gets no answer, not a wrong one
+        self.assertEqual(lits("t.cpp", "#if true\nint a;\n#else\ndon't\n#endif\n"), [])
+        self.assertEqual(lits("t.c", "#if true\nconst char* s = \"oops\n;\n#endif\n"), [2])
+        self.assertEqual(lits("t.c", "#if false\nconst char* s = \"oops\n;\n#endif\n"), [2])
+        self.assertEqual(lits("t.c", "#if 0\ndon't\n#endif\nint i;\n"), [])
 
     def test_if_false_and_true_are_the_literals_zero_and_one(self):
         # C++ keywords are valid in #if: `#if false` is a dead group like `#if 0`
