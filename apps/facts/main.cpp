@@ -103,7 +103,9 @@ int main(int argc, char** argv) {
             const ninferno::DeviceClass& q        = ninferno::device_class(device);
             const ninferno::DeviceClass synthetic = ninferno::synthetic_device_class(
                 q.pci_device_id, q.major, q.minor, q.sms, q.l2_bytes, q.global_bytes);
-            const ninferno::MachineFacts facts = ninferno::machine_facts_of(q);
+            // What the query stored: runtime code reads q.facts, so a query that does not wire
+            // it shows here instead of being recomputed from the same inputs.
+            const ninferno::MachineFacts& facts = q.facts;
             Json raw{
                 {"reserved_shared_per_block",
                  attribute(cudaDevAttrReservedSharedMemoryPerBlock, device)},
