@@ -220,12 +220,14 @@ def cmd_merge(a):
     """One file in, one regenerate: the run's output is copied into the inputs directory under its
     architecture's name (replacing an older run of the same architecture) and the table is
     regenerated from all of them."""
+    # Read whole before the destination opens: the input may be the destination itself.
     with open(a.input) as f:
-        head, facts = parse_run(f.read())
+        text = f.read()
+    head, facts = parse_run(text)
     key = arch_key(int(head["cc"]), head["shape"])
     dest = os.path.join(a.inputs, f"isa_probe_{key}.txt")
-    with open(a.input) as src, open(dest, "w", newline="\n") as out:
-        out.write(src.read())
+    with open(dest, "w", newline="\n") as out:
+        out.write(text)
     print(f"isa_probe: {a.input} -> {dest}")
     return cmd_regenerate(a)
 
