@@ -515,6 +515,10 @@ def _apps_note(when, apps, bus):
         (f" (pid {pids})" if mine else "")
 
 
+# How nvidia-smi prints a pid it cannot give.
+UNNAMED = "[N/A]"
+
+
 def _during_note(during, bus, own):
     """The note line of the compute processes nvidia-smi listed on the probe's GPU while the probe
     (pid `own`) ran; `during` is rows of (timestamp, bus id, pid), one timestamp a sample.
@@ -530,20 +534,27 @@ def _during_note(during, bus, own):
         return f"{head}: not read (nvidia-smi not run)"
     if bus is None:
         return f"{head}: not read (the probe's GPU not known)"
+    # A sample's entries: its distinct pids (a pid listed twice in one sample, or in two samples
+    # printed with one timestamp, is one process, so the probe never counts against itself), and
+    # each `[N/A]` row on its own (unnamed rows cannot be told apart: two may be two processes).
     samples = {}
     for r in during:
         if _bus(r[1]) == bus:
-            samples.setdefault(r[0], []).append(r[2])
-    entries = sorted({p for pids in samples.values() for p in pids})
+            pids, unnamed = samples.setdefault(r[0], (set(), []))
+            if r[2] == UNNAMED:
+                unnamed.append(r[2])
+            else:
+                pids.add(r[2])
+    entries = sorted({p for pids, unnamed in samples.values() for p in pids | set(unnamed)})
     busy = f"{head} besides the probe (nvidia-smi every 200 ms)"
     if own in entries:
         others = [p for p in entries if p != own]
-        beside = max(len(pids) - (own in pids) for pids in samples.values())
+        beside = max(len(pids - {own}) + len(unnamed) for pids, unnamed in samples.values())
         n = max(len(others), beside)
         return f"{busy}: {n}" + (f" (pid {', '.join(others)})" if n else "")
     if not entries:
         return f"{head}: not read (no process listed, the probe's own pid {own} neither)"
-    most = max(len(pids) for pids in samples.values())
+    most = max(len(pids) + len(unnamed) for pids, unnamed in samples.values())
     if most == 1 and len(entries) == 1:
         return (f"{head}: not read (one process listed throughout, pid {entries[0]}, not the "
                 f"probe's own pid {own}: it may be the probe under another pid namespace)")

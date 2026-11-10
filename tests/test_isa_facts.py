@@ -328,6 +328,24 @@ class IsaFacts(unittest.TestCase):
         for samples in ([["4242", "5555"]], [["4242"], ["5555"]], [["[N/A]", "[N/A]"]],
                         [["4321", "4242"]], [["4321", "[N/A]"]], [["[N/A]"], ["4242"]]):
             self.assertIn("another compute process", refusal(samples) or "", samples)
+
+        # Two samples printed with one timestamp, or a pid listed twice in one sample, are one
+        # process: the probe alone stays idle, and one foreign pid stays not read.
+        def one_stamp(pids):
+            return [["2026/11/10 12:00:00.000", "00000000:01:00.0", p] for p in pids]
+
+        def note_of(rows, own="4321"):
+            return ip._during_note(rows, bus, own)
+        self.assertTrue(note_of(one_stamp(["4321"] * 5)).endswith(": 0"))
+        self.assertTrue(note_of(one_stamp(["4321", "4321"])).endswith(": 0"))
+        self.assertIn("not read", note_of(one_stamp(["4242"] * 5)))
+        # Unnamed rows cannot be told apart: two in one sample may be two processes.
+        self.assertIn("not read", note_of(one_stamp(["[N/A]"])))
+        self.assertIn(": 2 (pid 4242, [N/A];", note_of(one_stamp(["[N/A]", "[N/A]", "4242"])))
+        # A count other than 0 always names what it counted.
+        for rows in (one_stamp(["4321", "[N/A]", "[N/A]"]), one_stamp(["4321", "4242", "4242"])):
+            note = note_of(rows)
+            self.assertRegex(note, r": [1-9]\d* \(pid [^)]+\)$", rows)
         # An earlier probe's run carries no such notes and owes none.
         ip.parse_run(earlier_run(16))
 
