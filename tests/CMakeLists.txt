@@ -77,8 +77,8 @@ add_test(NAME ninferno_selection_regret_test
 add_test(NAME ninferno_regret_collect_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_regret_collect.py)
 
-# tools/bench/regret_bands.py: regret weighted by T band, per board, format and route family, and
-# the committed sweep archive manifest (#613), no GPU.
+# tools/bench/regret_bands.py: regret weighted by T band, per board, format and route family
+# (#613), no GPU.
 add_test(NAME ninferno_regret_bands_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_regret_bands.py)
 set_tests_properties(ninferno_regret_bands_test PROPERTIES LABELS host)

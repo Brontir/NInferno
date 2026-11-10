@@ -4,7 +4,8 @@
 Reads recorded route choices and reports the extra time they cost, per T band, grouped by board,
 format and route family. Offline and descriptive: it selects nothing, fits nothing, runs no GPU.
 
-Inputs (repeatable, mixable):
+Inputs (--doc files and --routes groups are repeatable, but not mixed in one run: legacy CSVs
+carry no provenance to report next to the documents'):
   --doc FILE.json     a ninferno-selection-regret/1 document (what regret_collect.py writes);
   --routes P1.csv ... --selected SEL.csv --board NAME
                       route_tune --routes-out passes of one board and its --selected-out file. These
@@ -15,7 +16,7 @@ Inputs (repeatable, mixable):
                       --doc inputs of different selector_revision/build_id are refused.
   --band-weights J    a mean of the band regrets with these weights (band -> weight); a group that
                       has no case in a weighted band gets no mean
-  --pick model        with --routes: score the pick of the model price (lowest model_us; T >= 17,
+  --pick model        with --routes only (not --selected, not --doc): score the pick of the model price (lowest model_us; T >= 17,
                       where the model ranks) instead of the recorded production selection.
 
 route_tune times the speed profile's selection at T <= 512: its widest band is batched decode and
@@ -42,6 +43,9 @@ BANDS = (("decode", 1, 8), ("verify", 9, 16), ("narrow", 17, 32), ("wide", 33, 1
 BAND_NAMES = tuple(b[0] for b in BANDS)
 
 
+MODEL_MIN_T = 17  # the cost model ranks routes only from this many tokens
+
+
 def band_of(t):
     for name, lo, hi in BANDS:
         if t >= lo and (hi is None or t <= hi):
@@ -66,16 +70,26 @@ def format_of(case):
     return case["id"].split(".", 1)[0]
 
 
+def skip_row(case_id, board, fmt, t, pick, reason):
+    """A case that could not be scored: kept as a row so every band says what it lost.
+
+    `pick` is the route the selector chose, or None where there is none (the model priced nothing).
+    """
+    return {"id": case_id, "board": board, "format": fmt, "t": t, "selected": pick,
+            "reason": reason}
+
+
 def rows_from_document(document):
-    """Complete cases of a regret document as rows; other cases are only counted."""
+    """Complete cases of a regret document as rows; the others come back as skipped rows."""
     report = regret.evaluate(document)
     by_id = {c["id"]: c for c in document["cases"]}
-    rows, skipped = [], 0
+    rows, skipped = [], []
     for case in report["cases"]:
-        if case["status"] != "complete":
-            skipped += 1
-            continue
         src = by_id[case["id"]]
+        if case["status"] != "complete":
+            skipped.append(skip_row(case["id"], case["board"], format_of(case), tokens_of(src),
+                                    case["selected"], f"document case {case['status']}"))
+            continue
         medians = case["median_ms"]
         rows.append({
             "id": case["id"], "board": case["board"], "format": format_of(case),
@@ -143,33 +157,39 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected"):
     routes = {}
     for key, route in timed:
         routes.setdefault(key, []).append(route)
-    rows, skipped = [], 0
+    rows, skipped = [], []
     if selected is not None:
         # A selection the sweep has no row for at all (a pass cut short) is skipped, not dropped.
-        skipped += len(set(selected) - set(routes))
+        for key in sorted(set(selected) - set(routes), key=lambda k: (k[:5], int(k[5]))):
+            skipped.append(skip_row(collect.case_id(key), board, key[0], int(key[5]), selected[key],
+                                    "pick has no sweep rows"))
     for key in sorted(routes, key=lambda k: (k[:5], int(k[5]))):
         eligible = [r for r in routes[key]
                     if not (key[1] == "a16" and collect.route_class(r) != "a16")]
         # A route a pass did not time leaves the case without a comparable best: the case is
         # skipped, never scored without that route (selection_regret.score_case alike).
+        def skip(pick, reason):
+            skipped.append(skip_row(collect.case_id(key), board, key[0], int(key[5]), pick, reason))
+
         if any(len(timed[(key, r)]) != passes for r in eligible):
-            skipped += 1
+            skip(selected.get(key) if selected is not None else None,
+                 "a candidate was not timed in every pass")
             continue
         cands = {r: statistics.median(timed[(key, r)]) for r in eligible}
         if pick == "model":
-            if int(key[5]) < 17:  # the model ranks only from 17 tokens
-                skipped += 1
+            if int(key[5]) < MODEL_MIN_T:  # the model ranks only from 17 tokens
+                skip(None, "the model ranks only from T 17")
                 continue
             priced = {r: statistics.median(model[(key, r)]) for r in cands
                       if all(x is not None for x in model[(key, r)])}
             if not priced:
-                skipped += 1
+                skip(None, "the model prices none of the candidates")
                 continue
             chosen = min(priced, key=lambda r: (priced[r], r))
         else:
             chosen = selected.get(key)
         if chosen not in cands:
-            skipped += 1
+            skip(chosen, "the pick was not timed among the candidates")
             continue
         best = min(cands, key=lambda r: (cands[r], r))
         rows.append({"id": collect.case_id(key), "board": board, "format": key[0],
@@ -178,13 +198,21 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected"):
     return rows, skipped
 
 
-def stats(rows):
-    """Time-weighted regret: extra time of the picks over the best, as a share of the best time."""
+def stats(rows, skipped=0):
+    """Time-weighted regret: extra time of the picks over the best, as a share of the best time.
+
+    `skipped` is the number of cases of the group that could not be scored; a group with none scored
+    reads None, not zero.
+    """
+    if not rows:
+        return {"cases": 0, "skipped": skipped, "tokens": 0, "selected_ms": 0.0, "best_ms": 0.0,
+                "weighted_regret": None, "geomean_regret": None, "worst_regret": None,
+                "cases_over_5pct": 0}
     sel = math.fsum(r["selected_ms"] for r in rows)
     best = math.fsum(r["best_ms"] for r in rows)
     ratios = [r["selected_ms"] / r["best_ms"] for r in rows]
     return {
-        "cases": len(rows), "tokens": sum(r["t"] for r in rows), "selected_ms": sel, "best_ms": best,
+        "cases": len(rows), "skipped": skipped, "tokens": sum(r["t"] for r in rows), "selected_ms": sel, "best_ms": best,
         "weighted_regret": sel / best - 1,
         "geomean_regret": math.exp(math.fsum(map(math.log, ratios)) / len(ratios)) - 1,
         "worst_regret": max(ratios) - 1,
@@ -192,26 +220,38 @@ def stats(rows):
     }
 
 
-def by_band(rows):
-    return {b: stats([r for r in rows if band_of(r["t"]) == b])
-            for b in BAND_NAMES if any(band_of(r["t"]) == b for r in rows)}
+def by_band(rows, skipped=()):
+    """Per band stats; a band with only skipped cases is present, with cases 0."""
+    return {b: stats([r for r in rows if band_of(r["t"]) == b],
+                     sum(1 for r in skipped if band_of(r["t"]) == b))
+            for b in BAND_NAMES if any(band_of(r["t"]) == b for r in list(rows) + list(skipped))}
 
 
-def report(rows, skipped=0, band_weights=None):
+def report(rows, skipped=(), band_weights=None):
     """Per band overall, then per board / format / route family, each by band.
 
     With `band_weights` (band -> weight) every group also gets "weighted", the mean of its band
     regrets by those weights, or None where the group has no case in a band of nonzero weight (a
-    mean over the bands it has would stand for a mix it does not cover).
+    mean over the bands it has would stand for a mix it does not cover). It is also None where a
+    weighted band has skipped cases, and "weighted_incomplete" then lists those bands: the mean of
+    the scored cases would read lower than the truth, and a printed skip share would still leave a
+    number that looks like a regret.
+
+    `skipped` is the list of skip rows the readers return; each keeps its T, board, format and
+    reason, counts in its group and band, and is listed under "skipped_cases". The family of a skip
+    row is the family of the pick, or "(no pick)" where the model priced none.
     """
-    for r in rows:
-        r["family"] = family_of(r["selected"])
+    for r in list(rows) + list(skipped):
+        r["family"] = family_of(r["selected"]) if r["selected"] else "(no pick)"
     out = {"schema": "ninferno-regret-bands/1", "bands": {n: [lo, hi] for n, lo, hi in BANDS},
            "metric": "sum(selected time) / sum(best observed time) - 1 per group and band",
-           "cases": len(rows), "cases_skipped": skipped, "overall": by_band(rows)}
+           "cases": len(rows), "cases_skipped": len(skipped), "overall": by_band(rows, skipped),
+           "skipped_cases": [{k: r[k] for k in ("id", "board", "format", "t", "family", "reason")}
+                             for r in skipped]}
     for dim in ("board", "format", "family"):
-        out["by_" + dim] = {k: by_band([r for r in rows if r[dim] == k])
-                            for k in sorted({r[dim] for r in rows})}
+        out["by_" + dim] = {
+            k: by_band([r for r in rows if r[dim] == k], [r for r in skipped if r[dim] == k])
+            for k in sorted({r[dim] for r in list(rows) + list(skipped)})}
     if band_weights is not None:
         if not isinstance(band_weights, dict):
             raise ValueError("band weights must be a JSON object of band -> weight")
@@ -228,9 +268,13 @@ def report(rows, skipped=0, band_weights=None):
     total = sum(band_weights.values())
     groups = [out["overall"]] + [g for k in out if k.startswith("by_") for g in out[k].values()]
     for group in groups:
-        covered = all(b in group for b, v in band_weights.items() if v > 0)
-        group["weighted"] = (sum(group[b]["weighted_regret"] * v for b, v in band_weights.items()
-                                 if v > 0) / total if covered else None)
+        used = [b for b, v in band_weights.items() if v > 0]
+        covered = all(b in group and group[b]["cases"] for b in used)
+        incomplete = [b for b in used if b in group and group[b]["skipped"]]
+        group["weighted"] = (sum(group[b]["weighted_regret"] * band_weights[b] for b in used)
+                             / total if covered and not incomplete else None)
+        if incomplete:
+            group["weighted_incomplete"] = incomplete
     return out
 
 
@@ -240,21 +284,23 @@ def pct(x):
 
 def markdown(rep):
     lines = ["# Band-weighted selection regret", "",
-             f"{rep['cases']} cases ({rep['cases_skipped']} skipped). Each cell is the extra time "
-             "of the picks over the best observed route, summed over the band's cases (time-weighted)."
-             + (" `weighted` averages the bands by the given weights (empty where a weighted band "
-                "has no case)." if "band_weights" in rep else ""),
+             f"{rep['cases']} cases scored, {rep['cases_skipped']} skipped. Each cell is the extra time "
+             "of the picks over the best observed route, summed over the band's scored cases "
+             "(time-weighted), then `(n / skipped)`: the scored and the skipped cases of the band; a "
+             "cell with skipped cases does not cover them."
+             + (" `weighted` averages the bands by the given weights (`-` where a weighted band "
+                "has no scored case or has skipped cases)." if "band_weights" in rep else ""),
              "", "Bands (T): " + ", ".join(f"{n} {lo}-{hi}" if hi else f"{n} {lo}+"
                                            for n, (lo, hi) in rep["bands"].items()), ""]
     weighted = "band_weights" in rep
 
     def table(title, groups):
-        head = ["| " + title + " | " + " | ".join(f"{b} (n)" for b in BAND_NAMES)
+        head = ["| " + title + " | " + " | ".join(f"{b} (n / skipped)" for b in BAND_NAMES)
                 + (" | weighted |" if weighted else " |"),
                 "|---|" + "---:|" * (len(BAND_NAMES) + weighted)]
         for name, bands in groups.items():
-            cells = [f"{pct(bands[b]['weighted_regret'])} ({bands[b]['cases']})" if b in bands
-                     else "" for b in BAND_NAMES]
+            cells = [f"{pct(bands[b]['weighted_regret'])} ({bands[b]['cases']} / "
+                     f"{bands[b]['skipped']})" if b in bands else "" for b in BAND_NAMES]
             if weighted:
                 cells.append(pct(bands.get("weighted")))
             head.append(f"| {name} | " + " | ".join(cells) + " |")
@@ -283,15 +329,26 @@ def main(argv=None):
     p.add_argument("--md", type=Path, help="write the markdown report here")
     args = p.parse_args(argv)
     try:
-        rows, skipped, named = [], 0, []
+        if args.doc and args.routes:
+            raise ValueError("--doc and --routes cannot be merged: documents carry the selector "
+                             "revision and build, legacy route CSVs carry none, so the report's "
+                             "provenance would label rows of an unknown build; run them separately")
+        if args.pick == "model" and (args.doc or args.selected):
+            raise ValueError("--pick model scores the model price's own pick from --routes; it "
+                             "cannot be combined with " + ("--doc" if args.doc else "--selected"))
+        rows, skipped, named = [], [], []
         for doc in args.doc:
             loaded = json.loads(doc.read_bytes(), object_pairs_hook=regret.unique_object)
             r, s = rows_from_document(loaded)
             named.append((doc.name, provenance_of(loaded)))
             rows += r
             skipped += s
-        if len(args.board) != len(args.routes) or len(args.selected) > len(args.routes):
-            raise ValueError("one --board per --routes group")
+        if len(args.board) != len(args.routes):
+            raise ValueError(f"one --board per --routes group ({len(args.board)} boards, "
+                             f"{len(args.routes)} groups)")
+        if len(args.selected) > len(args.routes):
+            raise ValueError(f"at most one --selected per --routes group ({len(args.selected)} "
+                             f"selected, {len(args.routes)} groups)")
         if args.routes and not args.qualified.strip():
             raise ValueError("--routes needs --qualified: route_tune does not check results, so "
                              "state the correctness tests that qualified these candidates")
@@ -304,7 +361,7 @@ def main(argv=None):
             rows += r
             skipped += s
         if not rows:
-            raise ValueError("no scored cases")
+            raise ValueError(f"no scored cases ({len(skipped)} skipped)")
         weights = json.loads(args.band_weights) if args.band_weights else None
         rep = report(rows, skipped, weights)
         if named:

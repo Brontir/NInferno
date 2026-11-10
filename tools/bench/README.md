@@ -149,15 +149,20 @@ One geomean over all cases hides where a selector loses: a change can cost 10% a
 at T 48+. `regret_bands.py` reports the extra time of the recorded picks over the best observed
 route, **summed over the cases of a band** (time-weighted: a long GEMM counts for what it costs, a
 tiny one barely), for the bands decode (T 1-8), verify (9-16), narrow (17-32), wide (33-128) and
-batch129 (129+), by board, format and route family (the part of the route name before the first
-dot). route_tune times the speed profile's selection up to T 512, so the widest band is batched
+batch129 (129+), by board, format and route family (the part of the selected route's name before
+its first dot). `by_board` is the acceptance cell: the cross-board groups (`overall`, `by_format`,
+`by_family`) pool boards by absolute time, so the slowest board dominates them and can mask a
+regression on a faster one. route_tune times the speed profile's selection up to T 512, so the widest band is batched
 decode and wide verify, not the prefill profile's 2048-token chunks: this says nothing about
 prefill.
 
 There is no default cross-band mean: no committed mix gives band weights the sweeps can carry.
 `--band-weights '{"decode":3,"verify":1}'` adds a `weighted` mean per group; a group with no case
-in a band of nonzero weight gets none, rather than a mean of the bands it has. A case is skipped and
-counted, never scored as zero regret, when its pick was not timed, when a pass did not time one of
+in a band of nonzero weight gets none, rather than a mean of the bands it has; likewise a group with
+skipped cases in a weighted band (its `weighted_incomplete` lists them), because the mean of the
+scored cases would read lower than the truth. Every group and band carries `skipped`, the markdown
+cell reads `regret (n / skipped)`, and the report lists each skipped case with its T, board, format,
+family of the pick and reason under `skipped_cases`. A case is skipped, never scored as zero regret, when its pick was not timed, when a pass did not time one of
 its candidates, or (`--pick model`, T >= 17 only) when the model prices none of them.
 
 ```bash
@@ -173,7 +178,9 @@ the run/device columns `regret_collect.py` requires; the board is named by hand,
 checks that the passes come from one build and board. route_tune does not check results, so
 `--routes` also needs `--qualified TEXT` naming the correctness tests that qualified its candidates
 (recorded as `legacy_qualification` in the JSON report), and `--pick selected` needs one
-`--selected` per `--routes` group. `--doc` inputs with different `selector_revision` or `build_id`
+`--selected` per `--routes` group. `--pick model` scores the model price's own pick from `--routes`
+and is refused with `--selected` or `--doc`. `--doc` and `--routes` cannot be mixed in one run (the
+documents carry a provenance the legacy CSVs lack). `--doc` inputs with different `selector_revision` or `build_id`
 are refused rather than merged; equal provenance is recorded as `provenance` in the report.
 
 ## Published performance numbers
