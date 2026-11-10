@@ -12,6 +12,65 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "audit"))
 import golden_gate as gg
 
+BLOCK_OPEN = ("if", "foreach", "while", "function", "macro", "block")
+
+
+def cmake_commands(text):
+    """[(lower-case command, argument text, nesting depth)] of a CMake file. Comments (`# ...` to
+    the line end, `#[[ ... ]]` bracket comments) are dropped; a `#` or a parenthesis inside a quoted
+    argument is text. The depth counts the if / foreach / while / function / macro / block
+    commands open around a command (an if(...) itself is at the depth outside it)."""
+    out, depth, i, n = [], 0, 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "#":
+            m = re.compile(r"#\[(=*)\[").match(text, i)
+            if m:
+                end = text.find("]" + m.group(1) + "]", m.end())
+                i = n if end < 0 else end + len(m.group(1)) + 2
+            else:
+                end = text.find("\n", i)
+                i = n if end < 0 else end
+            continue
+        m = re.compile(r"[A-Za-z_][A-Za-z0-9_]*[ \t]*\(").match(text, i)
+        if not m:
+            i += 1
+            continue
+        name = m.group(0).rstrip("( \t").lower()
+        j, level, buf = m.end(), 1, []
+        while j < n and level:
+            d = text[j]
+            if d == '"':
+                k = j + 1
+                while k < n and text[k] != '"':
+                    k += 2 if text[k] == "\\" else 1
+                buf.append(text[j:k + 1])
+                j = k + 1
+                continue
+            if d == "#":
+                end = text.find("\n", j)
+                j = n if end < 0 else end
+                continue
+            level += (d == "(") - (d == ")")
+            if level:
+                buf.append(d)
+            j += 1
+        args = " ".join("".join(buf).split())
+        if name.startswith("end") and name[3:] in BLOCK_OPEN:
+            depth = max(depth - 1, 0)
+        out.append((name, args, depth))
+        if name in BLOCK_OPEN:
+            depth += 1
+        i = j
+    return out
+
+
+def reaches_at_top_level(text, command, arg_start):
+    """True when the file has `command(<arg_start>...)` outside every block and not commented out."""
+    return any(name == command and depth == 0 and args.strip('"').startswith(arg_start)
+               for name, args, depth in cmake_commands(text))
+
+
 PATHS = gg.load_patterns(gg.PATHS_FILE.read_text(encoding="utf-8"))
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -356,11 +415,29 @@ class Completeness(unittest.TestCase):
         # the parents are not decision paths, so a change that cuts the chain must fail here
         def text(f):
             return (ROOT / f).read_text(encoding="utf-8")
-        top = text("tests/CMakeLists.txt")
-        self.assertIn("include(cmake/NInfernoTests.cmake)", top)
-        self.assertIn("include(ops/tests.cmake)", top)
-        self.assertIn('include("${CMAKE_CURRENT_LIST_DIR}/linear/tests.cmake")', text("tests/ops/tests.cmake"))
-        self.assertIn("ninferno_add_op_test(ninferno_selector_golden_test", text("tests/ops/linear/tests.cmake"))
+        # each link at the top level of its file (a CMake `include` inside if() or a comment is no link)
+        for f, command, arg in (
+                ("tests/CMakeLists.txt", "include", "cmake/NInfernoTests.cmake"),
+                ("tests/CMakeLists.txt", "include", "ops/tests.cmake"),
+                ("tests/ops/tests.cmake", "include", "${CMAKE_CURRENT_LIST_DIR}/linear/tests.cmake"),
+                ("tests/ops/linear/tests.cmake", "ninferno_add_op_test", "ninferno_selector_golden_test")):
+            with self.subTest(f=f, arg=arg):
+                self.assertTrue(reaches_at_top_level(text(f), command, arg))
+
+    def test_the_include_chain_check_sees_comments_and_blocks(self):
+        inc = "include(ops/tests.cmake)"
+        for src in (inc + "\n", "project(x)\n" + inc + " # trailing\n", 'if(A)\nendif()\n' + inc + "\n"):
+            with self.subTest(src=src):
+                self.assertTrue(reaches_at_top_level(src, "include", "ops/tests.cmake"))
+        for src in ("# " + inc + "\n", "#[[\n" + inc + "\n]]\n", "if(FALSE)\n  " + inc + "\nendif()\n",
+                    "if(SOME_OPTION)\n  " + inc + "\nendif()\n",
+                    "if(A)\n if(B)\n  " + inc + "\n endif()\nendif()\n",
+                    "foreach(x a b)\n" + inc + "\nendforeach()\n",
+                    'message("see " ")" )\n# ' + inc + "\n", "if(A)\n" + inc + "\nelse()\n" + inc + "\nendif()\n"):
+            with self.subTest(src=src):
+                self.assertFalse(reaches_at_top_level(src, "include", "ops/tests.cmake"))
+        # a `#` inside a quoted argument is not a comment, and a block that was closed ends
+        self.assertTrue(reaches_at_top_level('set(A "#x (")\n' + inc + "\n", "include", "ops/tests.cmake"))
 
     def test_workflow_reruns_on_label_events_and_on_edit_of_the_description_or_base(self):
         text = (ROOT / ".github/workflows/golden-gate.yml").read_text(encoding="utf-8")
