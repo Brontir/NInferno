@@ -39,10 +39,12 @@ constexpr const char* kUsage =
     "                            [--epilogue store|add|swiglu] [--policy a16|a8]\n"
     "                            [--registers R] [--local-bytes B] [--route FAMILY:INDEX]\n"
     "       ninferno-serve price --list-boards\n"
-    "BOARD: a facts-table name without spaces (rtx4090, l4, a100) or its PCI id (0x2684).\n"
-    "FORMAT: a route-table format name (q4, q4_k, iq3_s, bf16).\n"
+    "BOARD: a facts-table name without spaces (rtx4090, l4, a100pcie40gb; see --list-boards) or\n"
+    "its PCI id (0x2684).\n"
+    "FORMAT: a route-table format name (q4_g64, q4_k, iq3_s, bf16).\n"
     "--registers / --local-bytes: the register-MMA kernels' compiled facts, applied to every\n"
-    "schedule (absent: priced by threads alone, as a process without them is).\n";
+    "schedule of the heavy form (sub-block-scale formats where the board's terms are measured);\n"
+    "absent, it is priced by threads alone, as a process without them is.\n";
 
 // "GeForce RTX 4090" -> "rtx4090": lower case, the vendor words and the separators dropped.
 std::string board_key(std::string_view name) {
@@ -306,9 +308,11 @@ int run(const Options& o) {
                 cal.l1_bytes_per_sm_clock, cal.spill_accesses_per_step, cal.cluster_reduce_cycles,
                 cal.warp_reduce_cycles, cal.pipelined_stage_cycles, cal.pipelined_stage_k,
                 cal.pipelined_saturating_warps, cal.min_warp_fill);
-    if (o.registers) {
-        std::printf("kernel facts given: %d registers, %.0f local bytes per thread\n", *o.registers,
-                    o.local_bytes);
+    if ((o.registers || o.local_bytes > 0) && !heavy) {
+        std::printf("kernel facts given but not read: the plain form prices by threads alone\n");
+    } else if (o.registers || o.local_bytes > 0) {
+        std::printf("kernel facts given: %s registers, %.0f local bytes per thread\n",
+                    o.registers ? std::to_string(*o.registers).c_str() : "unset", o.local_bytes);
     } else if (heavy) {
         std::printf("kernel facts: none given (priced by threads alone; the selector may have read "
                     "its own)\n");
