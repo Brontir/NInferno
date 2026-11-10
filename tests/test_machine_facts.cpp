@@ -270,6 +270,44 @@ void grid() {
             expect(snap_to_fact_grid(hi) == std::exp2((k + 1) / 16.0), "above a midpoint snaps up");
         }
     }
+
+    // Driver readings and the whole kHz the engine stores for them, worked out by hand in exact
+    // arithmetic (k = floor(16 log2 x + 1/2), then 2^(k/16) rounded half up): real boards' clocks,
+    // and the integers either side of six midpoints. tests/test_facts_vs_driver.py reads this
+    // table and checks the audit's port against the same numbers.
+    struct GridPoint {
+        int driver_khz;
+        int stored_khz;
+    };
+
+    constexpr GridPoint kGridPoints[] = {
+        {1, 1},
+        {2, 2},
+        {100000, 101070},
+        {1500000, 1482910},
+        {2475000, 2493948},
+        {9000000, 9147842},
+        {9001000, 9147842},
+        {10001000, 9975792},
+        {10501000, 10417458},
+        {14001000, 14107901},
+        {21001000, 20834917},
+        {450525, 440872},
+        {450526, 460391},
+        {2548558, 2493948},
+        {2548559, 2604365},
+        {9762031, 9552851},
+        {9762032, 9975792},
+        {10194233, 9975792},
+        {10194234, 10417458},
+        {34289178, 33554432},
+        {34289179, 35040014},
+        {2101467501, 2056437387},
+    };
+    for (const GridPoint& g : kGridPoints) {
+        expect(std::llround(snap_to_fact_grid(g.driver_khz)) == g.stored_khz,
+               "grid point of " + std::to_string(g.driver_khz) + " kHz");
+    }
     double last = 0;
     for (double x = 1000; x < 4e6; x *= 1.003) {
         const double s = snap_to_fact_grid(x);

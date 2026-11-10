@@ -1030,11 +1030,21 @@ class EngineRule(unittest.TestCase):
         self.assertIn("const bool whole_board = row->form != FormFactor::Laptop && "
                       "(driver.sms <= 0 || driver.sms == row->sms);", text)
         self.assertIn("if (row->boost_min_mhz > 0) {", text)
-        # The grid: engine_snapped_khz is a port of these lines, so a change of the grid fails here.
-        self.assertIn("const double k = std::floor(16.0 * std::log2(x) + 0.5);", text)
-        self.assertIn("return std::exp2(k / 16.0);", text)
-        self.assertIn("f.memory_clock_khz = static_cast<int>(std::llround(snap_to_fact_grid("
-                      "driver.memory_clock_khz)));", text)
+
+    def test_the_grid_is_the_engines(self):
+        # engine_snapped_khz is a port of the engine's grid. Both are checked against one table of
+        # hand-worked points: the engine's test (tests/test_machine_facts.cpp, kGridPoints) checks
+        # snap_to_fact_grid against it, this test checks the port. A grid changed in the engine
+        # fails the engine's test until the table changes, and then the port fails here.
+        source = (ROOT / "tests" / "test_machine_facts.cpp").read_text(encoding="utf-8")
+        table = re.search(r"kGridPoints\[\] = \{(.*?)\n    \};", source, re.S)
+        self.assertIsNotNone(table)
+        points = [(int(a), int(b)) for a, b in re.findall(r"\{(\d+), (\d+)\}", table.group(1))]
+        entries = len(re.findall(r"\{", table.group(1)))
+        self.assertEqual(len(points), entries, "an entry of kGridPoints did not parse")
+        self.assertGreaterEqual(len(points), 20)
+        for driver_khz, stored_khz in points:
+            self.assertEqual(facts_compare.engine_snapped_khz(driver_khz), stored_khz, driver_khz)
 
     def test_every_engine_field_follows_the_engine_over_a_grid_of_driver_values(self):
         no_range = row_of(0x2C18)
