@@ -6,15 +6,8 @@
 // loaders read the planes, mmq-load-tiles.cuh). The ggml headers define CUDA_CHECK and friends, so
 // only this directory's translation units include them; everything here is raw pointers.
 
-#ifdef NINFERNO_HOST_ONLY
-// The declarations below name a stream and a bf16 pointer only (#620): no runtime for the selector.
-#    include "core/cuda_stream.h"
-struct __nv_bfloat16;
-struct dim3;
-#else
-#    include <cuda_bf16.h>
-#    include <cuda_runtime.h>
-#endif
+#include <cuda_bf16.h>
+#include <cuda_runtime.h>
 
 #include <cstddef>
 #include <cstdint>

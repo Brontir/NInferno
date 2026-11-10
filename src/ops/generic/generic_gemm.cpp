@@ -108,6 +108,11 @@ void validate_call(const Call& call) {
     }
 }
 
+// The bytes free in the rest of the arena from its next 256-byte address (nullopt: no arena; 0
+// where that address is already past its end: no route's planes are empty), against
+// which mmq_workspace_bytes' layout is held (resolve_route). Its blocks are 256-aligned, so from
+// there they land exactly as the layout counted them: an arena the planner sized to the route
+// holds it with nothing to spare.
 std::optional<std::size_t> workspace_free(const DeviceArena* workspace) {
     if (workspace == nullptr) return std::nullopt;
     const auto base = reinterpret_cast<std::uintptr_t>(workspace->base());
@@ -122,11 +127,18 @@ std::atomic<std::uint64_t> route_demotions{0};
 
 std::atomic<std::uint64_t> joined_launches{0};
 
+// A demotion that keeps the bytes: the staged MMA and the NVFP4 tiled route hand a call they
+// cannot read to the register MMA of the same summation order.
 bool same_bytes(Route asked, Route ran) {
     return ran.family == Family::RegisterMma &&
            (asked.family == Family::StagedMma || asked.family == Family::Nvfp4TiledMma);
 }
 
+// A call the asked route could not take ran another route, with other bytes and speed than a
+// route table or the heuristic chose: said once per pair of routes, with the call's facts, and
+// counted (route_demotion_count). No product run demoted in the lab (perplexity, generation and
+// serving at 1 and 4 streams on Ada, Blackwell and Turing); one names a caller that sized or
+// aligned its call short of its route.
 void note_demotion(Route asked, Route ran, int rows, int tokens, int k, bool x16, std::int64_t ldx,
                    std::size_t workspace) {
     route_demotions.fetch_add(1, std::memory_order_relaxed);
@@ -142,6 +154,10 @@ void note_demotion(Route asked, Route ran, int rows, int tokens, int k, bool x16
                  static_cast<long long>(ldx), workspace, route_name(ran).c_str());
 }
 
+// Every distinct problem that reached the generic path on a thread collecting them (seen_problems:
+// an Engine's load, on its own thread, so another live Engine's calls stay out), and under
+// NINFERNO_ROUTE_RECORD=<file> each distinct (format, compute, epilogue, N, K) appended to the file
+// in ninferno_route_tune's --shapes format, so a model's shapes come from running it.
 using SeenSet = std::set<std::tuple<int, int, int, std::int32_t, std::int32_t, std::int32_t, int>>;
 
 struct ThreadSeen {
@@ -246,6 +262,9 @@ void refuse_frag(const Weight& w, const char* op) {
 
 namespace {
 
+// A registered shape's own kernels of these formats compute BF16 activations only (the int8
+// tiers and R8 are the generic path's): a call such a gate keeps on its table is A16. The NVFP4
+// and FP8 shapes choose their quantized kernels themselves (their dispatch notes them).
 bool owned_tables_a16(QType qtype) {
     return qtype != QType::NVFP4 && qtype != QType::FP8_E4M3FN_ROW_BF16;
 }
@@ -290,6 +309,14 @@ bool owned_prefill_w4a8(const Weight& weight, LinearPolicy policy, std::int32_t 
 
 namespace {
 
+// Q4/Q5/Q6 G64 weights take int8 activations at prefill wherever the route admits W4A8 (the
+// artifact's A16Only uses included) on the cards where they pay (qx_prefill_a8_pays);
+// --activations exact keeps A16 (invariant routes). Qwen3.8-27B book 8K KLD 0.0047, top-1 97.1 %.
+// Int8 activations pay where the card's int8 mma runs well ahead of its bf16 mma with fp32
+// accumulation: the GeForce and Ada/Ampere inference parts (half-rate fp32-accumulate HMMA, a
+// quarter of int8). Qwen3.8-27B Q4/Q5 G64 24K prefill, MTP 3: RTX 4090
+// +18.7 %, L4 +14 %, A10 +7.8 %. The HBM training parts run fp32-accumulate HMMA at full rate,
+// and the activation quantization pass then costs more than the faster mma wins: A100 -3.5 %.
 bool qx_prefill_a8_pays() {
     try {
         const auto& d = device_class();
@@ -304,6 +331,9 @@ bool qx_prefill_a8_pays() {
 
 bool qx_format(QType qtype) { return format_traits(qtype).qx_g64; }
 
+// Whether the Q4/Q5/Q6 G64 weights take the int8 tiers at prefill: where int8 activations pay
+// (qx_prefill_a8_pays, `pays`), or as a route pin asks (--prefill-route w4a8 or i8: on every card;
+// a16: on none).
 bool qx_prefill_a8_takes(bool pays) {
     switch (route_pins().prefill) {
     case PrefillRoute::W4a8:
@@ -600,6 +630,26 @@ std::uint64_t route_demotion_count() noexcept {
     return route_demotions.load(std::memory_order_relaxed);
 }
 
+// GemmArgs::spread_smem. The eight-warp decode CTA (w1x8, one token tile, 72 registers) fits
+// three to an SM, and the block scheduler fills SMs that deep before it uses the rest: a call of
+// at most two CTAs per SM then runs on as few as a third of the SMs' memory pipes. Reserving a
+// third of an SM's shared memory per CTA holds it to two, spread over every SM. Same kernel, same
+// bytes. RTX 5090 at T = 1 under PDL (a kernel micro-bench, L2-cold weights): NVFP4 q/k/v
+// 4608x6656 11.8 -> 11.25 us, gate 4096x6656 11.1 -> 10.5 us; FP8 row-f32 20.2 -> 19.5 and 18.5
+// -> 17.8 us. At 416 CTAs and more it loses (6656x4096 NVFP4 9.4 -> 12.6 us) and so does SwiGLU
+// (two CTAs per SM already: 116 registers), which is why it is limited to thin Store calls. A
+// joined call (the attention gate beside q/k/v) takes it too: Muse Glimmer 30B NVFP4 decode 79.07
+// -> 79.97 t/s, and 78.93 with the chain head alone spread. Not Q8_G32: its six Muse layers side by
+// side lose what they gained with it (79.99 -> 79.63 t/s). The boards it was measured on, and any
+// other board by the nearest of them within measured::kCarryDistance (else off), never across
+// instruction sets: what decides is how many SMs a thin call spreads over, which the boards' SM
+// count, bandwidth and L2 carry. The RTX 5080 (84 SMs, same micro-bench): NVFP4 2048x4096 6.66
+// -> 6.10 us, 2560x2560 4.93 -> 4.68 us, 2688x4096 7.43 -> 7.06 us; FP8 2048x4096 11.04 -> 10.20
+// us, 2688x4096 13.21 -> 12.48 us; 64 CTAs (1024 rows) even. The RTX 5060 Ti (36 SMs; same
+// micro-bench, NVFP4/FP8/FP8 row-f32 at 1024..6656 rows, spread against packed, three rounds): even
+// on every problem, since only 1024 rows stay within two CTAs per SM there; the RTX 4080 SUPER:
+// even.
+
 namespace {
 
 struct SpreadMeasured {
@@ -620,6 +670,12 @@ bool spread_by_board(const DeviceClass& d) {
     return m != nullptr && m->faster;
 }
 
+// The current device's gates, once per ordinal: a process may drive boards of different classes
+// (an RTX 5090 beside a 4090), and each launch takes its own device's. Through PerDevice, so a
+// substituted DeviceClass (ScopedDeviceClass: the selector goldens, route_query) reads its own
+// board's gates, not the ones the host's GPU cached first. A device whose class cannot be read
+// throws and is asked again next time (caching "none" would turn PDL and the spread off for the
+// process on one transient failure).
 struct DeviceGates {
     bool spread = false; // spread_smem measured faster on the nearest measured board
     bool pdl    = false; // programmatic dependent launch (pdl_prefetch)

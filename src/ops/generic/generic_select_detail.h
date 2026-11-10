@@ -2,15 +2,18 @@
 
 // The helpers of the generic path's route selection that the launch code (generic_gemm.cpp) shares
 // with the selector (generic_select.cpp): lifted out of anonymous namespaces so the selector can
-// live in ninferno_ops_host with no CUDA runtime (#620).
+// be its own translation unit.
 
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/r8_decode_table.h"
 
 #include <cstdint>
 #include <optional>
 
 namespace ninferno::ops::detail::generic {
 
+// The bytes per block of each plane: the code plane (the whole block where blocks are unchanged),
+// the high and the scale plane (core/weight.h ggml_plane_bytes).
 struct MmqPlaneBytes {
     int codes, high, scales;
 };
@@ -34,6 +37,9 @@ bool bf16_mma_native();
 int rmma_index(int warps_m, int warps_k, int m_tiles, int n_tiles, int cluster = 1);
 
 bool w4a8_ws_extra(QType q);
+
+// The current device's R8 decode table (null where no measured board is near enough).
+const R8DecodeTable* r8_decode_table();
 
 int rules_r8(const Problem& p, std::int32_t tokens);
 

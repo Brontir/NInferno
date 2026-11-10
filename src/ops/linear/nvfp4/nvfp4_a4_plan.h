@@ -6,7 +6,7 @@
 #include "core/tensor.h"
 #include "ops/linear/nvfp4/nvfp4_layout.h"
 
-#include "core/cuda_stream.h"
+#include <cuda_runtime.h>
 
 #include <cstddef>
 #include <cstdint>
