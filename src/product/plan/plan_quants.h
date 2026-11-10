@@ -331,7 +331,8 @@ struct RankedRow {
     runtime::QuantCandidate candidate;
 };
 
-// What settled the winner against the rows seen before it.
+// What settled the winner against the rows seen before it: depends on the listing order by
+// design, and never read for the pick (plan_quants reads only `best`); tests and diagnostics only.
 enum class RankReason : std::uint8_t {
     Only,        // the first row inside the band
     LowerKld,    // the lower KLD (DECISIONS 60)
