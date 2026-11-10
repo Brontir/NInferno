@@ -85,6 +85,7 @@ DSpineConfig parse_dspine_config(const json& config) {
     out.vocab_size        = dimension(config, "vocab_size");
     out.block_size        = dimension(config, "block_size");
     if (!draft.contains("mask_token_id") || !draft.at("mask_token_id").is_number_integer() ||
+        draft.at("mask_token_id").get<std::int64_t>() < 0 ||
         json_unsigned(draft, "mask_token_id") >= out.vocab_size) {
         refuse("dflash_config.mask_token_id is missing or outside the vocabulary");
     }

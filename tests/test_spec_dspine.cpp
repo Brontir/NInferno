@@ -123,6 +123,8 @@ void test_refusals() {
            "rope scaling");
     expect(refused(edit([](json& c) { c["dflash_config"].erase("mask_token_id"); })),
            "no mask token");
+    expect(refused(edit([](json& c) { c["dflash_config"]["mask_token_id"] = -1; })),
+           "a negative mask token");
     expect(
         refused(edit([](json& c) { c["dflash_config"]["selected_prefix_decode_mode"] = "beam"; })),
         "another decode mode");
