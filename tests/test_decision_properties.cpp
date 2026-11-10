@@ -485,6 +485,9 @@ struct Variant {
     std::string what;
     DeviceClass board;
     DeviceClass control;
+    // False for the variant that is the control itself (the reported memory size, which `rebuilt`
+    // changes by the slot alone): comparing it with its own control would be a tautology.
+    bool has_control = true;
 };
 
 // The same board with fields the projection selector does not read changed. (Segment, TDP and the
@@ -495,11 +498,11 @@ std::vector<Variant> relabelled(const Row& row) {
     const std::vector<GpuFactsRow> stock(embedded.begin(), embedded.end());
     std::vector<Variant> out;
     const auto add = [&](const char* what, const std::vector<GpuFactsRow>& table, int slot,
-                         const std::function<void(DeviceClass&)>& edit) {
+                         const std::function<void(DeviceClass&)>& edit, bool has_control = true) {
         out.push_back({what, rebuilt(row, table, slot, edit),
-                       rebuilt(row, stock, slot, [](DeviceClass&) {})});
+                       rebuilt(row, stock, slot, [](DeviceClass&) {}), has_control});
     };
-    add("reported memory size", stock, 1, [](DeviceClass&) {});
+    add("reported memory size", stock, 1, [](DeviceClass&) {}, false);
     add("names", stock, 2, [](DeviceClass& d) { d.name = "another name"; });
     add("ordinal, PCI address, UUID", stock, 3, [](DeviceClass& d) {
         d.device              = 3;
@@ -547,10 +550,10 @@ void property_non_fact_fields(const std::vector<Row>& rows) {
         }
         for (const Variant& v : relabelled(row)) {
             // Against the stock board, and against the matched control (same cache slot, no edit).
-            const std::string control                                  = decisions_of(v.control);
-            const std::string changed                                  = decisions_of(v.board);
-            const std::pair<const char*, const std::string*> against[] = {
-                {"", &stock}, {" against its matched control", &control}};
+            const std::string control = v.has_control ? decisions_of(v.control) : std::string();
+            const std::string changed = decisions_of(v.board);
+            std::vector<std::pair<const char*, const std::string*>> against = {{"", &stock}};
+            if (v.has_control) { against.emplace_back(" against its matched control", &control); }
             for (const auto& [suffix, reference] : against) {
                 ++cases_checked;
                 routes_compared += routes;

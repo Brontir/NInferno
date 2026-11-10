@@ -1652,14 +1652,15 @@ void test_resolution_step() {
     // [0] the anchor; [1] more accurate, inside the band by the decision, far outside by the board;
     // [2] more accurate still, outside the band by the decision, inside by the board; [3] both more
     // accurate and faster than the anchor; [4] and [5] inside the band by both, [4] the most
-    // accurate of the three in-band candidates [1] [4] [5], and not the first nor the last of them.
+    // accurate of the three in-band candidates [1] [4] [5], and not the first nor the last of them;
+    // [5] is the fastest of them by the board's seconds, so the accuracy rule is what decides.
     const std::vector<ch::Scored> scored = {
         candidate(0.10, 1.0, 1.0),
         candidate(0.05, std::exp(0.50), std::exp(0.01)),
         candidate(0.01, std::exp(0.01), std::exp(0.50)),
         candidate(0.04, std::exp(-0.20), std::exp(-0.20)),
         candidate(0.03, std::exp(0.02), std::exp(0.02)),
-        candidate(0.06, std::exp(0.02), std::exp(0.02)),
+        candidate(0.06, std::exp(0.015), std::exp(0.015)),
     };
     check(
         ch::resolve_within_resolution(scored, {0, 1}, 0, kBand) == 1,
