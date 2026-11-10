@@ -139,6 +139,12 @@ ninferno_add_op_test(ninferno_selector_golden_test
 target_compile_definitions(ninferno_selector_golden_test PRIVATE
   NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden")
 
+# The selector on the real device with no substituted board: select_route and w4a8_ws_extra return,
+# and the R8 decode table of a board that has one is found (#620). Skips (77) without a GPU.
+ninferno_add_op_test(ninferno_selector_real_device_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_selector_real_device.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
 # The kernel-facts snapshots the register-MMA price reads (ops/generic/kernel_facts.h, #612).
 # Three checks, from the data inwards:
 # - ninferno_kernel_facts_test: this build's register-MMA kernels, read off the linked binary with

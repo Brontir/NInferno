@@ -316,9 +316,10 @@ measured_boards_known(std::span<const Measured, Extent> measured) noexcept {
 
 // The current device's class: the ScopedDeviceClass substitute of this thread, else the probed
 // class. Throws std::runtime_error when CUDA cannot report the device. Inline, so that the
-// reference to current_device_class() sits in the caller's object, which the linker reads before
-// the libraries: ninferno_core_host keeps no reference into ninferno_core, whatever the order the
-// two archives come in on a link line.
+// reference to current_device_class() sits in the object that calls device_class():
+// ninferno_core_host keeps no reference into ninferno_core. A host archive whose objects call it
+// (ninferno_ops_host's kernel_facts.cpp) still needs ninferno_core, or the host-only stub, after
+// it on the link line.
 [[nodiscard]] inline const DeviceClass& device_class() {
     if (const DeviceClass* substitute = substituted_device_class()) { return *substitute; }
     return current_device_class();

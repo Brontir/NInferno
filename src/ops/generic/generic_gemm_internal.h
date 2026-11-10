@@ -6,7 +6,7 @@
 #include "ops/generic/generic_variant_rules.h"
 #include "ops/generic/kernel_facts.h"
 
-#include "core/cuda_stream.h"
+#include <cuda_runtime.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -27,7 +27,6 @@ public:
 private:
     KernelResources* previous_;
 };
-#ifndef NINFERNO_HOST_ONLY // the launch describes a kernel; the selector does not
 inline void describe_kernel(KernelResources& out, const cudaFuncAttributes& a, dim3 grid,
                             int threads, std::size_t dynamic_smem, bool latency) noexcept {
     out.registers             = a.numRegs;
@@ -62,7 +61,6 @@ inline void describe_kernel(KernelResources& out, const kernel_facts::KernelFact
     out.grid_z                = grid.z;
     out.latency_variant       = latency;
 }
-#endif
 
 // The register-MMA launch of `codec` (one of the launch_rmma_* below): run_route's, and
 // rmma_resources' described one.

@@ -1,35 +1,38 @@
 #include "ops/generic/generic_gemm.h"
-#include "ops/generic/format_traits.h"
-#include "core/per_device.h"
-#include "ops/common/arch_limits.h"
-#include "ops/common/native_nvfp4.h"
 
 #include "core/device_class.h"
 #include "core/generation.h"
-#include "core/measured_boards.h"
-#include "core/tensor.h"
 #include "core/layout.h"
+#include "core/measured_boards.h"
+#include "core/per_device.h"
+#include "core/tensor.h"
 #include "ninferno/ops/prefill_routes.h"
+#include "ops/common/arch_limits.h"
+#include "ops/common/native_nvfp4.h"
 #include "ops/common/route_probe.h"
+#include "ops/generic/format_traits.h"
 #include "ops/generic/generic_gemm_internal.h"
-#include "ops/generic/generic_select_internal.h"
-#include "ops/generic/route_cost_constants.h"
 #include "ops/generic/generic_ggml_internal.h"
-#include "ops/generic/generic_schedules.h"
 #include "ops/generic/generic_i8_schedules.h"
-#include "ops/generic/generic_select_detail.h"
 #include "ops/generic/generic_schedule_tables.h"
+#include "ops/generic/generic_schedules.h"
+#include "ops/generic/generic_select_detail.h"
+#include "ops/generic/generic_select_internal.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
 #include "ops/generic/r8_decode_table.h"
+#include "ops/generic/route_cost_constants.h"
 #include "ops/generic/route_table.h"
 #include "ops/linear/nvfp4/nvfp4_a4_plan.h"
 #include "ops/route_pins.h"
 
+#include <cuda_bf16.h>
 
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <bit>
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -37,12 +40,10 @@
 #include <optional>
 #include <set>
 #include <span>
-#include <tuple>
-#include <cmath>
-#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 
 namespace ninferno::ops::detail::generic {
 
@@ -100,10 +101,19 @@ int run_values(WeightCodec codec) {
 
 } // namespace
 
+// W4A4: NVFP4 with A4 allowed and a finite, positive input-scale divisor.
 bool allows_w4a4(const Weight& w, LinearPolicy policy) {
     return w.qtype == QType::NVFP4 && allows_a4(policy) && std::isfinite(w.input_scale_divisor) &&
            w.input_scale_divisor > 0.0F;
 }
+
+// W4A8: a format with a W4A8 codec, a K of whole tiles (w4a8_k_admits), 16-byte code rows, A8
+// allowed. Where this build has the W4A4 kernels an NVFP4 weight under a policy that allows A4 is
+// not W4A8's, whatever its divisor: four-bit activations stay the route of the weights recorded
+// for them (A16 where no divisor lets W4A4 run, as before), W4A8 the one of those whose policy
+// allows eight bits only (a W4A16 checkpoint under --activations int8). The weight-less
+// nvfp4_prefill_a8_policy and the workspace query decide the same.
+// The policy part, which w4a8_refusal names Policy.
 
 namespace {
 
@@ -120,6 +130,10 @@ bool allows_w4a8(const Weight& w, LinearPolicy policy) {
            aligned_to(w.qdata, 16);
 }
 
+// I8: Q4 G64 with A8 allowed, K in whole 512-value runs (the weight scales of eight groups are
+// one 16-byte copy per row), 16-byte code and scale planes.
+// Its parts, which i8_refusal names Format, Alignment and Extent.
+
 bool i8_format(QType qtype) { return format_traits(qtype).qx_g64; }
 
 bool i8_planes_aligned(const Weight& w) {
@@ -130,15 +144,22 @@ bool i8_planes_aligned(const Weight& w) {
 
 bool i8_extent(const Weight& w) { return (w.k % 512) == 0 && (w.padded_shape[1] % 512) == 0; }
 
+// Whether the producer-warp tile can read the weight: its format, and IQ3_XXS's sign plane (read
+// 8 bytes at a time) on an 8-byte boundary.
 bool w4a8_ws_admits(const Weight& w) {
     return w4a8_ws_supports(w.qtype) && (w.qtype != QType::GGML_IQ3_XXS || aligned_to(w.qhigh, 8));
 }
 
+// R8: a format with an R8 codec, whole load groups of K, 16-byte code rows, A8 allowed. A lane
+// strides K by groups, so K need not fill 128-value tiles: Gemma 4 26B's dense down projection
+// (K = 2112) and gpt-oss's hidden (2880) take R8 at decode instead of the A16 register MMA.
 bool allows_r8(const Weight& w, LinearPolicy policy) {
     return allows_a8(policy) && r8_supports(w.qtype) && (w.k % r8_k_values(w.qtype)) == 0 &&
            aligned_to(w.qdata, 16);
 }
 
+// Whether a call of T tokens takes R8 (decode, T <= kR8DecodeTokens, and the activation fits):
+// r8_call_refusal names why not.
 bool r8_call(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
     return r8_call_refusal(w, policy, tokens) == R8CallRefusal::None;
 }
@@ -152,6 +173,7 @@ MmqPlaneBytes mmq_plane_bytes(QType q) {
 
 namespace {
 
+// The weight in the layout ggml's kernels read: whole blocks for Q4_K / Q5_K, the planes otherwise.
 bool ggml_layout_admits(const Weight& w) {
     const bool planes = w.qtype != QType::GGML_Q4_K && w.qtype != QType::GGML_Q5_K;
     if (planes != (w.layout == QuantLayout::GgmlPlanes)) return false;
@@ -165,11 +187,31 @@ bool ggml_layout_admits(const Weight& w) {
            (bytes.scales == 0 || aligned_to(w.scales, 16));
 }
 
+// Prefill (17 tokens and up) of the ggml block formats on ggml's matrix kernel instead of the W4A8
+// tiles, kMmqPrefillSlice tokens at a time. ninfer-all's 24K prefill of ISTA GSQ IQ3_S led ours on
+// the 16 GB cards, and its nsys is 75 % mul_mat_q (J 16..128, stream-k); ours ran the same kernel
+// at verify widths only. 24K prompt, two passes: RTX 4060 Ti 931 -> 971 tok/s (ninfer-all 1004),
+// the depth decode after it 47.7 -> 52.3; L4 763 -> 821; A10 (sm_86) 819 -> 897; RTX 2080 Ti
+// (Qwen3.8 27B IQ2_XXS) 611 -> 671, where the W4A8 tiles' BF16 path is emulated; RTX 4090 with
+// Unsloth's UD-Q4_K_XL 2977 -> 3330 (C1 and C8 even); RTX 5090 3930 -> 4306, UD-Q4_K_XL
+// 3771 -> 4152. Every format the kernel reads: only the classic-tile ones (IQ4_XS / IQ3_S /
+// IQ2_XS / IQ2_XXS / Q2_K) gave 949 on the 4060 Ti. The small sm_120 keeps the tiles (RTX 5060 Ti,
+// 36 SMs: 1047 -> 1015), and so does sm_80: A100 40 GB 1340 -> 1142. Every other board takes the
+// nearest measured board's answer of its instruction set at any distance, as the "64 SMs" line
+// between the 5060 Ti and the 5090 did (an RTX 5080 the 5090's, an RTX 5070 Ti, 5070 or 5060 the
+// 5060 Ti's: the 5070 Ti's route profile prefills on the tiles, DECISIONS 62); Volta and the
+// architectures nobody measured keep the tiles. The gate's table: measured::kMmqPrefillPays
+// (core/measured_boards.h), which the product's estimate reads too.
 bool mmq_prefill_device() { return measured::mmq_prefill_device_pays(); }
 
 
 } // namespace
 
+// Without tensor mma.sync (Volta) ggml's matrix kernel is out (device_supported: sm_75 on) and the
+// register-MMA tiles run on FP32 FMAs, so a call of 9..16 tokens (a deep speculative verify) runs
+// the vector kernel eight columns at a time (V100, Gemma 4 31B Q4_K_XL MTP, draft window 10: the
+// emulated tiles 1.0..2.6 ms a call, 67 % of the run); Q4_K / Q5_K / Q6_K / Q8 take Volta's HMMA
+// route from five tokens instead (volta_hmma_route).
 std::int32_t vec_max_tokens() {
     try {
         const auto& f = device_class().features;
@@ -180,6 +222,19 @@ std::int32_t vec_max_tokens() {
 
 namespace {
 
+// The verify widths the vector kernel takes by rule. Decode (T = 1) keeps R8 and the dense tuner:
+// on the RTX 2080 Ti the vector kernel lost decode by 10 % (9B Q4_K_M C1 88 -> 79 tok/s) and won
+// C4 by 10 %. Its integer dot products grow with the width on the CUDA cores while the register
+// MMA's do not, so with tensor mma.sync the register MMA takes the call from five tokens: in the
+// dense tuner's timings
+// of eight cards the vector kernel was within 4 % of the best route at T = 2..4 and behind it at
+// T = 8 on all of them, the most where a card has the least compute per byte of bandwidth
+// (A100: x1.5..1.6, RTX 3090 x1.4..1.5, RTX 5090 x1.1, RTX 4090 x1.03).
+// Without tensor mma.sync (Volta) the register MMA runs on FP32 FMAs, so the vector kernel takes
+// every width it reads (vec_max_tokens) but where Volta's HMMA route takes the call (Q4_K / Q5_K /
+// Q6_K / Q8 from five tokens, volta_hmma_route): V100, Qwen3.8 27B UD-Q4_K_XL, the register MMA at
+// T = 5..16 about 0.5 ms a call against 0.08 for the vector kernel at T = 4; C8 aggregate 37.3
+// tok/s against C4 86.3, DFlash2 (verify 6) C1 15.7 against plain 30.1.
 constexpr std::int32_t kVecRuleMaxTokens = 4;
 
 std::int32_t vec_rule_max_tokens() {
@@ -195,8 +250,22 @@ bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
     return tokens >= 2 && tokens <= vec_rule_max_tokens() && vec_call(w, policy, tokens);
 }
 
+// Speculative verify (T 9..16) of the codebook formats takes ggml's matrix kernel on
+// every device, ahead of the route tables (which timed A16 schedules only) and the A16 rules: its
+// int8 tile decodes a weight once per call where the register MMA's dequant runs per token tile.
+// End to end, ISTA IQ3_S 27B C4 MTP3 (16-token verify), every iq / K-quant band 9..16 on mmq:
+// L4 79.4 -> 89.2 tok/s (+12.3 %), RTX 5070 Ti 242.7 -> 270.9 (+11.6 %); ninfer-all runs
+// mul_mat_q<16> there (92.9 / 280.1). The route_tune grid, one call with L2 flushed, does not show
+// it (L4 rule 1.06 of its best). Where the BF16 MMA is emulated (Turing) every mmq format takes
+// it from 9 tokens, and the codebook formats below that too (mmq_verify_rule).
+bool bf16_mma_native();
+
 namespace {
 
+// The codebook formats only: their register-MMA dequant looks every value up in a grid table per
+// token tile, which the matrix kernel's one decode a call saves. The K-quants' affine dequant is
+// cheap, and there the register MMA keeps the band (RTX 4090, cellgt ABBA: UD-Q4_K_XL 27B DFlash2
+// C1 115.7 -> 111.7 and C4 271.5 -> 263.1 with them in the rule, Muse 30B Q4_K_M C4 282.7 -> 267.6).
 bool mmq_verify_format(QType q) { return format_traits(q).mmq_verify; }
 
 constexpr std::int32_t kMmqVerifyMinTokens = 9;
@@ -220,12 +289,15 @@ bool mmq_verify_rule(const Weight& w, LinearPolicy policy, std::int32_t rows, st
 int sm_count() {
     try {
         return device_class().sms;
-    } catch (const std::exception&) { return 1; }
+    } catch (const std::exception&) {
+        return 1;
+    }
 }
 
 
 } // namespace
 
+// Index of the register-MMA schedule with this shape; the list is generic_gemm_launch.cuh's.
 int rmma_index(int warps_m, int warps_k, int m_tiles, int n_tiles, int cluster) {
 #ifdef NINFERNO_WITHOUT_NVFP4
     if (cluster > 1) {
@@ -246,8 +318,43 @@ int rmma_index(int warps_m, int warps_k, int m_tiles, int n_tiles, int cluster) 
 
 namespace {
 
+// ggml formats that the decode heuristic below measured faster on the four-warp CTA once the
+// eight-warp grid needs a second wave (RTX 5080, T = 1): Q4_K, Q5_K, IQ4_XS, IQ3_XXS and the Q4_0
+// decoder family at n = 3840..8192, and the codebook formats IQ2_S and IQ3_S, whose
+// decode rather than the weight stream bounds them, by 11-16% at n = 4096..12288 (IQ3_S
+// 4096x2560 11.4 -> 9.7 us, IQ2_S 9216x2560 21.0 -> 18.6 us). Q8 (Q8_0) and Q6_K at K >= 12288
+// were faster on eight warps at every size.
 bool light_ggml_step(QType q) { return format_traits(q).light_step; }
 
+// Shape-class heuristic for the register MMA. It follows what ninferno_route_tune measured across
+// the recorded problems (Qwen3.5 0.8B in four formats on an RTX 5090): at T <= 16 one 16-row M tile
+// per CTA with K split across as many warps as keep >= 128 K values each (weight streaming wants
+// many CTAs each reading short contiguous runs); from 17 tokens outside the prefill profile by T
+// and the waves its tiles fill (below, measured on seven boards); under the prefill profile
+// WarpsK == 1 (so every call of 17 tokens or more sums K in one order) with eight N tiles, four
+// for a band that eight would pad (below).
+//
+// Decode (T <= 8, one N tile) with K split eight ways also looks at how many CTAs the call makes
+// (one per 16 rows) against the SMs (RTX 5080, Qwen3.5-4B/9B and Gemma 4 12B shapes):
+// - a call of at most a quarter as many CTAs as SMs (the 32-row GDN a/b projections: 2 CTAs, 12.6
+//   us for 139 KB) splits K over a cluster of eight CTAs as well: 7.5 -> 3.1 us;
+// - a call of at most one CTA per SM (an output projection of 2048..2688 rows: 128..168 CTAs on
+//   170 SMs) splits K over a cluster of two: half of every CTA's K runs on an SM the call left
+//   idle (RTX 5090, T = 1..4, L2 flushed: Q8 2048x4096 23.7 -> 17.6 us, 2688x4096 25.5 -> 17.6
+//   us, 2048x8192 39.8 -> 30.1 us, Q4_K 2048x4096 13.5 -> 9.4 us; a cluster of four was no
+//   faster, and from 176 CTAs (2816 rows) the pair only ties); without clusters (the Ada build)
+//   sixteen K-split warps in one CTA instead (RTX 4090, 128 SMs, T = 1..4: Q8 1280x4096 26.3 ->
+//   16.2 us, 2048x4096 26.6 -> 20.5 us, Q4_K 1536x4096 16.4 -> 12.3 us, BF16 2048x6144 46.1 ->
+//   45.1 us; from 160 CTAs it loses: Q4_K 2816x4096 17.4 -> 21.5 us);
+// - past two CTAs per SM (what the eight-warp CTA holds) the eight-warp grid runs a second, part
+//   empty wave; for the light ggml formats four warps per CTA (four CTAs per SM, one wave) is
+//   2-10% faster at n = 3840..8192 (Q4_K 4096x4096 16.0 -> 14.7 us, Q5_K 18.1 -> 16.6 us, Q4_0
+//   13.3 -> 12.8 us, IQ4_XS 15.1 -> 14.2 us); at n = 2560 (160 CTAs) eight warps stay faster.
+//   SwiGLU (gate and up rows: twice the loads and accumulators per warp) is not: Qwen3.5-9B's
+//   Q4_K gate/up at 24576x4096 took 76.0 us on eight warps and 93.9 us on four.
+// K over the SMs a call of at most one CTA per SM leaves idle: sixteen warps of one CTA where
+// clusters do not exist, else a cluster of eight CTAs for a call of at most a quarter as many CTAs
+// as SMs and a CTA pair for the rest (heuristic_rmma).
 int one_wave_split([[maybe_unused]] std::int64_t ctas, [[maybe_unused]] std::int64_t sms) {
 #ifdef NINFERNO_WITHOUT_NVFP4
     return rmma_index(1, 16, 1, 1);
@@ -256,39 +363,91 @@ int one_wave_split([[maybe_unused]] std::int64_t ctas, [[maybe_unused]] std::int
 #endif
 }
 
+// Waves of the SMs a grid of `rows` x `cols` tiles fills on the call (n rows, `tokens` tokens).
 double speed_waves(std::int64_t n, std::int32_t tokens, int rows, int cols) {
     const std::int64_t tiles = ((n + rows - 1) / rows) * ((tokens + cols - 1) / cols);
     return static_cast<double>(tiles) / static_cast<double>(sm_count());
 }
 
+// Whether a format's register-MMA decode is heavy: more than 128 registers on the m1.n4 tile of
+// four K warps (cuobjdump of every compiled format, sm_75..sm_120), every format but BF16 on a
+// native BF16 MMA. A heavy decode wants fewer K warps per token tile and longer K steps.
 bool heavy_decode(QType q) { return q != QType::BF16; }
 
+// The format whose 64x64 register-MMA tile spills where its 128x32 tile spills less (ptxas,
+// sm_86..sm_120): Q4_K, whose 128x32 tile was 10..20 % faster on all seven boards from 97 tokens.
 bool tall_tile_format(QType q) { return format_traits(q).tall_tile; }
 
+// Q6_K's one-tile call on a grid of one to two eight-warp CTAs per SM (sms < ctas <= 2 sms),
+// where the board's DRAM bytes per SM cycle are below this: the four-warp CTA, half the warps on
+// the SM issuing the plain decoder's narrow loads into a load queue they fill (rmma_wide_rule).
+// Store / add, T = 5 and 8, K 4096 and 15360, n at 1.25..2.0 CTAs per SM (w1x4 against w1x8):
+// RTX 4090 (3.1) 0.82-0.98, 4070 Ti (3.2) 0.80-0.99, 4060 Ti (3.4) 0.87-1.00; on the 5070 Ti
+// (5.2) 0.98-1.12. The boundary sits below the RTX 5080 and 5090 (4.4), not measured, which keep
+// eight warps. Q4_K lost on w1x4 on all four boards (1.04-1.53), and a grid of more than two CTAs
+// per SM keeps eight warps (light_ggml_step).
 inline constexpr double kRmmaQ6kFourWarpBytes = 4.0;
 
+// K-quant SwiGLU at T <= 8 on a board without cp.async (sm_75) whose bytes per SM cycle take the
+// latency variant: four K warps, the CTA whose register cap holds the activation ring of both row
+// sets (kRmmaAheadForm, generic_gemm.cuh; 214-217 registers on sm_75: the eight-warp CTA, whose
+// two CTAs a SM cap it at 128, has no ring form, and its latency kernel without one lost 7-8 %).
+// RTX 2080 Ti (5.9), Qwen3.5-9B gate/up 12288x4096 Q4_K: w1x8 142.4 us (plain, the old pick)
+// against 122.3 us w1x4 with the ring at T = 8, 141.2 -> 118.7 at T = 5, 136.5 -> 111.8 at T = 1.
 bool ring_swiglu_four_warps(QType q) {
     // Q4_K and Q5_K: the formats measured (Q3_K and Q6_K SwiGLU keep eight warps until they are).
     if (q != QType::GGML_Q4_K && q != QType::GGML_Q5_K) return false;
     try {
         const auto& d = device_class();
         return turing_cc(d.major, d.minor) && dram_bytes_per_sm_cycle() >= kRmmaLatencySwiGluBytes;
-    } catch (const std::exception&) { return false; }
+    } catch (const std::exception&) {
+        return false;
+    }
 }
 
+// The K values one register-MMA step of the format covers: four runs of its decoder (rmma_kernel's
+// KStep = 4 x Decoder::kRun): 32 for BF16, Q8 and U4 G32 (eight-value runs), 64 for FP8, NVFP4
+// and the 16-value groupwise runs, 128 for the 32-value decoders (K-quants, IQ, MXFP4, the
+// quad-run U4 G32 / G64 at K % 128 == 0) and for the ggml 32-blocks stepped four at a time
+// (run_values 128).
 std::int64_t rmma_k_step(QType qtype, std::int32_t k) {
     Weight weight;
     weight.qtype = qtype;
     WeightCodec codec{};
     try {
         codec = codec_of(weight);
-    } catch (const std::invalid_argument&) { return 128; }
-    const bool quad_u4 =
-        (codec == WeightCodec::U4ZpG32 || codec == WeightCodec::U4ZpG64) && k > 0 && (k % 128) == 0;
+    } catch (const std::invalid_argument&) {
+        return 128;
+    }
+    const bool quad_u4 = (codec == WeightCodec::U4ZpG32 || codec == WeightCodec::U4ZpG64) &&
+                         k > 0 && (k % 128) == 0;
     const int run = quad_u4 ? 32 : run_values(codec);
     return run >= 128 ? run : 4 * run;
 }
 
+// The K split of a one-tile store / add call of more CTAs than SMs (T <= 8), held to one fact of
+// the addressing, never a timing: the CTA's longest warp walks more K steps of its rows than its
+// load ring holds (two steps, rmma_kernel's ring; a step is rmma_k_step values): steps / warps
+// rounded up, at least three. The CTA ends with that warp; with two steps or fewer its ring never
+// refills, every step's load latency and the cross-warp reduction exposed (Q4_K K = 4096 on
+// sixteen warps, two steps each, streamed DRAM at 57..70 % of peak on all five lab boards against
+// 71..74 % for the best split). K = 2560 on eight warps (three steps for half the warps) keeps up:
+// Q6_K 4096x2560 at T = 5 / 8 on eight warps against four, RTX 4070 Ti 19.6 against 21.1 us, RTX
+// 3060 32.4 against 32.9 (the RTX 5070 Ti and 2080 Ti ran four warps faster there: DECISIONS 61).
+// Its callers start at eight or four warps; eight that break it take four where four keep it and
+// the grid fills their CTA slots, else the pick stands. Sixteen warps hold one CTA a SM
+// (kRmmaMinBlocks caps the split's one-tile store / add kernels at 128 registers a thread, so `w` K
+// warps hold 16 / w CTAs a SM): fewer warps a CTA keep the warps a SM holds only on a grid of at
+// least that many CTAs a SM. Below it the split trades resident warps (the loads in flight) for
+// ring refills: K = 1024 (2048 rows, 128 CTAs) on four warps against eight, RTX 5070 Ti (1.8 CTAs
+// a SM) 20-37 % slower, RTX 5090 (0.75) 18-38 %, RTX 4070 Ti (2.1) within 3 %; the RTX 4060 Ti
+// (3.8, just under its four slots) ran four warps 2-16 % faster, which this leaves on eight.
+// Open (DECISIONS): how much a grid's last, partly filled round of resident CTAs costs. Pricing
+// it by its empty slots was wrong on two of four boards (RTX 4090 Q6_K 3840x15360 add: four warps
+// in one half-filled round 65 us, eight warps in one full round 79; RTX 3060 Q4_K 4096x2560:
+// eight warps 8-10 % slower although they fill more) and right on two (RTX 4070 Ti / 5070 Ti
+// light K-quants 6-12 % faster on eight): a round under the warps that saturate DRAM is what
+// costs, and that count is not a fact we hold yet.
 int rmma_k_split_fit(int index, const Problem& problem, std::int64_t ctas, std::int64_t sms) {
     if (problem.epilogue == Epilogue::SwiGlu || sms <= 0 || ctas <= sms) return index;
     const RmmaScheduleInfo info = rmma_schedule_info(index);
@@ -297,7 +456,7 @@ int rmma_k_split_fit(int index, const Problem& problem, std::int64_t ctas, std::
     }
     const std::int64_t step  = rmma_k_step(problem.qtype, problem.k);
     const std::int64_t steps = (static_cast<std::int64_t>(problem.k) + step - 1) / step;
-    const auto refills       = [&](int warps_k) { return (steps + warps_k - 1) / warps_k > 2; };
+    const auto refills = [&](int warps_k) { return (steps + warps_k - 1) / warps_k > 2; };
     // The warps a SM holds at 128 registers a thread (kRmmaMinBlocks).
     constexpr std::int64_t kSlotWarps = 65536 / (32 * 128);
     if (info.warps_k <= 4 || refills(info.warps_k) || !refills(4) || ctas * 4 < kSlotWarps * sms) {
@@ -306,11 +465,18 @@ int rmma_k_split_fit(int index, const Problem& problem, std::int64_t ctas, std::
     return rmma_index(1, 4, 1, 1);
 }
 
+// Outside the prefill profile a tiled codec's 128x128 kernel pays once its tiles fill kSpeedFill
+// waves of the SMs (from 33 tokens, on a native BF16 MMA): below that the register MMA's
+// narrower tiles fill them (Q4_K n = 1024 at T 64..128: the tiled kernel 5..7x on every board).
 bool tiled_speed_pays(std::int32_t n, std::int32_t tokens) {
     return tokens >= kTiledSpeedMinTokens && bf16_mma_native() &&
            speed_waves(n, tokens, 128, 128) >= kSpeedFill;
 }
 
+// The invariant profile's register MMA (prefill_routes.h): the decode split of K for every T, so
+// a token's bytes are the same at every width (the order depends on WarpsK alone,
+// generic_gemm.cuh). Eight tokens per CTA through T = 8, where decode batches live; 32 above, so
+// a prefill chunk reads each weight a quarter as often.
 int invariant_rmma(std::int32_t k, std::int32_t tokens) {
     const int n_tiles = tokens <= 8 ? 1 : 4;
     if (k >= 1024) return rmma_index(1, 8, 1, n_tiles);
@@ -318,6 +484,9 @@ int invariant_rmma(std::int32_t k, std::int32_t tokens) {
     return tokens <= 8 ? rmma_index(4, 1, 1, 1) : rmma_index(4, 1, 1, 8);
 }
 
+// W4A4 tiles. Under the prefill profile the widest tile (the tuner's prefill winner on every
+// recorded NVFP4 problem but one, where it was within noise); otherwise the widest that still
+// gives every SM a CTA, else the narrow ones.
 int heuristic_w4a4(std::int32_t rows, std::int32_t tokens, bool prefill_band) {
     if (prefill_band) return w4a4_schedule_count() - 1;
     const int sms   = sm_count();
@@ -333,6 +502,49 @@ int heuristic_w4a4(std::int32_t rows, std::int32_t tokens, bool prefill_band) {
 
 } // namespace
 
+// W4A8 tiles (indices into kW4a8Schedules), chosen by format and T in the product (RTX 5080,
+// Qwen3.8-27B UD-IQ4_XS p512 under fast). 64 tokens by 64 rows by default (the fastest of ten
+// tile shapes on Gemma 4 12B Q4_0, SmolLM3 3B Q4_0 and Q4_K_M and TinyLlama Q5_0). From 128 tokens,
+// 128x64 for the GGUF lookup and K-quant formats of that model: IQ4_XS (0.82-0.97 per call
+// against 64x64, p512 0.93x -> 0.98x llama.cpp), IQ2_S, IQ2_XS and Q6_K (0.53-0.92), then
+// IQ3_S, IQ3_XXS, Q4_K and Q5_K (p512 2155-2162 -> 2195-2203 = 0.98x -> 1.00x llama.cpp,
+// A B B A twice). 128x128 was slower in the product for IQ4_XS (1.06-1.29x per call, p512
+// 1890) though faster in an isolated benchmark: the product decides. Every W4A8 tile sums K
+// in one order, so the choice never changes a bit of the output (all tiles byte-identical).
+//
+// From 128 tokens the 128x64 tile with four producer warps (w4a8_ws_kernel) replaces the classic
+// 128x64 tile of the formats measured in the product, on the GPUs measured: the same grid, a
+// faster CTA, the same bytes. RTX 5080 (sm_120), Muse 30B IQ3_XXS (IQ3_XXS, Q6_K and Q4_K layers)
+// at a 29.7k-token prompt, chunk 1024: prefill 2103 -> 2431 t/s, W4A8 kernel time 12.37 -> 10.40 s;
+// Gemma 4 31B UD-IQ3_XXS (IQ3_XXS, IQ2_S) at 7.9k tokens: 1696 -> 1912 t/s; greedy outputs
+// byte-identical. Per call (W4A8 micro-bench, T = 200 and 1024,
+// time against the best classic tile), RTX 5080 and RTX 5090: IQ3_XXS
+// 0.79-0.93, IQ2_S 0.86-0.95, Q4_K 0.88-0.95, Q6_K 0.90-0.98; RTX 4090 (sm_89): IQ3_XXS 0.78-0.94,
+// IQ2_S 0.89-0.93, Q6_K Store 0.95-0.96 (at down-projection and attention shapes: Store
+// geomean 0.975, AddResidual 0.985, 0.92-1.06), while Q4_K (1.06-1.13) and Q6_K SwiGLU (1.10) lose
+// there and keep the classic tile. IQ3_S on the global grid lost (1.01-1.08: its decode did not
+// keep four producer warps ahead of the MMA warps); on its shared-table codec (W4a8Iq3SPaired) it
+// is taken on sm_89 / sm_120 (w4a8_ws_extra). The
+// micro-bench also has the producer-warp tile ahead for IQ4_XS, IQ2_XS, Q5_K and, against 64x64,
+// for IQ2_XXS, Q8, Q4_0/Q4_1/Q5_0/Q5_1 and IQ4_NL on sm_120: not taken until measured in the
+// product (a 64x64 format moving to 128 tokens per CTA halves its grid); of them only Q4_0 is
+// compiled for it (w4a8_ws_supports) and taken, on sm_89 (below). Only the measured
+// architectures take it: sm_120 (RTX 5080, 5090) and sm_89 (RTX 4090) for the formats below,
+// Ampere (sm_80/86) for every format it reads (w4a8_ws_wins); sm_121 and the rest keep the
+// classic tiles. IQ3_XXS's producer decode reads the sign plane 8 bytes at a time: a plane not
+// 8-byte aligned keeps the classic tile.
+//
+// Q4_0 on the RTX 4090, from 64x64, for matrices of at least 5376 x 5376: Gemma 4 31B QAT (all
+// Q4_0, every problem 5376 or more each way) prefill 1914 -> 2149 t/s at 22.6-31.4k tokens
+// (A B B A, greedy byte-identical); per call (W4A8 micro-bench, T 1024 / 512) gate+up 43008x5376
+// 0.51 / 0.53, q/k/v 0.84-0.90, o and down 0.81-0.90. Gemma 4 26B QAT's dense Q4_0 (K 2816, or 2816
+// rows: 13-15 MB, read cold in the product but from L2 in the micro-bench) ran 0.357 -> 0.383 s per
+// prompt there (nsys) and keeps 64x64. The bound is the smallest measured win: nothing
+// between 2816 and 5376 was measured (a 4096-wide 8B-class model, 9.4 MB matrices), nor any sm_89
+// card with less L2 than the RTX 4090's 72 MB (RTX 4060 Ti, 4070 Ti Super, 4080).
+// IQ4_XS, IQ2_XS, IQ2_XXS and IQ3_S on sm_89 / sm_120 (see the note below): the producer-warp
+// tile also replaces their classic 128x64 tile where a measured choice (the shipped dense tuner
+// table) names it, since those measurements had no producer-warp tile of these formats to time.
 bool w4a8_ws_extra(QType q) {
     if (!format_traits(q).w4a8_ws_tuned) return false;
     static PerDevice<bool> on;
@@ -340,7 +552,9 @@ bool w4a8_ws_extra(QType q) {
         try {
             const auto& d = device_class();
             return gb20x_cc(d.major, d.minor) || ada_cc(d.major, d.minor);
-        } catch (const std::exception&) { return false; }
+        } catch (const std::exception&) {
+            return false;
+        }
     });
 }
 
@@ -354,7 +568,9 @@ bool w4a8_ws_wins(const Problem& p, const Weight& w) {
         blackwell     = gb20x_cc(d.major, d.minor);
         ada           = ada_cc(d.major, d.minor);
         ampere        = ampere_cc(d.major, d.minor);
-    } catch (const std::exception&) { return false; }
+    } catch (const std::exception&) {
+        return false;
+    }
     // Ampere, sm_80 and sm_86 alike (measured on an RTX 3090, ga102: the tile forced on every
     // format it reads, one 16K prompt, D WS
     // WS D): Muse 30B Q4_K_M prefill 1278 / 1273 -> 1398 / 1399 t/s, Qwen3.8 27B UD-Q4_K_XL 1290 /
@@ -389,6 +605,11 @@ bool w4a8_ws_wins(const Problem& p, const Weight& w) {
     }
 }
 
+// Q4_K from 128 tokens on the RTX 4090 (sm_89, token-major grid, the 128x128 tile's Ada flavor):
+// 128 tokens by 128 rows wherever that grid still gives three quarters of the SMs a CTA. Muse 30B
+// Q4_K_M shapes (W4A8 micro-bench, time against the classic 128x64 at T = 1024 / 512 / 200): SwiGLU
+// 19968x6656 0.86 / 0.86 / 0.94, Store 6656x19968 0.98 / 0.84 / 0.87, 4096x6656 0.89 / 0.90 and at
+// T = 200 (64 CTAs) 1.65, 256x6656 1.71: those keep 128x64.
 bool w4a8_wide_q4k(const Problem& p, std::int32_t tokens) {
     if (p.qtype != QType::GGML_Q4_K) return false;
     try {
@@ -398,9 +619,19 @@ bool w4a8_wide_q4k(const Problem& p, std::int32_t tokens) {
         const std::int64_t ctas =
             ((p.n + rows_per_block - 1) / rows_per_block) * ((tokens + 127) / 128);
         return 4 * ctas >= 3 * static_cast<std::int64_t>(d.sms);
-    } catch (const std::exception&) { return false; }
+    } catch (const std::exception&) {
+        return false;
+    }
 }
 
+// R8 decode (T = 1) on the RTX 5080 at Qwen3.5-4B/9B shapes: Q8 is fastest on
+// four warps of one row each everywhere but 2560x9216 (within 2%); the codebook formats move to
+// eight warps of two rows from K >= 8192 (the activation each CTA quantizes grows with K: IQ3_XXS
+// 4096x12288 32.1 -> 27.9 us), and IQ2_XXS/XS/S also for N >= 12288 (IQ2_S 12288x4096 28.3 -> 24.9
+// us) and to two rows per warp for N >= 4096 (IQ2_XS 9216x2560 14.1 -> 12.8 us). The ggml 4/5-bit
+// blocks and K-quants (27B/31B/35B shapes) follow the same K rule within 2 % of
+// their best schedule. Every R8 schedule sums a row in the same order (lane l takes block groups l,
+// l + 32, ...), so the choice changes no bit.
 int r8_index(int warps, int rows) {
     for (std::size_t i = 0; i < kR8Schedules.size(); ++i) {
         if (kR8Schedules[i].warps == warps && kR8Schedules[i].rows == rows) {
@@ -410,6 +641,32 @@ int r8_index(int warps, int rows) {
     return 0;
 }
 
+// Verify widths (the pre-quantized form, 27B/31B/35B shapes): four warps of one
+// row, IQ2_* two rows at T = 4 and from N = 34816 (within 3 % of the best schedule elsewhere).
+//
+// Decode at K = 5120..6656 on the RTX 5080 (gb203:84sm; T = 1, store epilogue,
+// Gemma 4 31B / Qwen3.8 shapes): each CTA quantizes the whole activation before its first block,
+// and at this K a CTA of four single-row warps spends a visible share on that prologue. IQ3_XXS
+// moves to two rows per warp from N = 8192 (43008x5376 112.9 -> 106.6 us, 8192x5376 26.4 -> 24.0;
+// 5120x6144 gains 1 %, and at K <= 4096, w4r1 is ahead at every N), IQ3_S and IQ2_S to
+// eight warps of two rows from N = 5120 (IQ2_S 5120x6144 20.5 -> 15.9 us, IQ3_S 8192x5376 28.5 ->
+// 27.5; never slower on the larger shapes). A SwiGLU warp already reads two rows (gate and up),
+// which is where these rules land a store call, so SwiGLU calls keep the schedules above (5080,
+// repack_bench: Gemma 31B's 21504x5376 w4r1 104.1, w4r2 105.2 us); so do IQ2_XXS and IQ2_XS, not
+// measured at this K. Other GPUs, 5080-class boards with another SM count included, run these
+// shapes differently (the RTX 4090: w4r1 fastest on IQ3_XXS 43008x5376, 96.7 against w4r2 99.8
+// us): they keep the shape-class rules.
+//
+// The K >= 5120 rule holds on the sm_12x family, not on one board: the RTX 5060 Ti (gb206:36sm,
+// u3r, ninferno_r8_schedule_bench on the IQ3 16 GB artifacts' 63 problems) is fastest with eight
+// warps of two rows on every IQ2_*/IQ3_S store and add from N = 5120 (IQ2_XXS 10240x5120 w4r2
+// 43.5 -> w8r2 40.0 us, IQ2_XS 17408x5120 83.6 -> 79.4, IQ3_S 16384x5120 w4r1 100.6 -> 94.5) and
+// IQ3_XXS two rows per warp from N = 5120 (16384x5120 92.8 -> 82.5, 6144x5120 36.0 -> 34.0), so
+// the rule now keys on the architecture, with IQ2_XXS/XS joining IQ2_S. Q3_K at K >= 8192 stays at
+// four single-row warps: Qwen3.8's 5120x17408 add is 7-10 % faster so on the 5060 Ti, the
+// RTX 4080 SUPER and the RTX 4070 Ti SUPER (113.2 -> 103.0, 64.8 -> 60.3, 73.0 -> 66.3 us).
+// Whether this tree's R8 kernel is the one-slot form (generic_r8.cuh NINFERNO_R8_ONE_SLOT: an
+// sm_70 build; a tree compiles one architecture).
 constexpr bool r8_one_slot_build() {
 #if defined(NINFERNO_BUILD_ARCH) && NINFERNO_BUILD_ARCH < 75
     return true;
@@ -468,8 +725,19 @@ int rules_r8(const Problem& p, std::int32_t tokens) {
 
 namespace {
 
+// Before the rules, a decode call takes the entry for the exact problem in the table of the
+// nearest measured board (r8_decode_table.h), when that board is a variant of this one: the
+// codebook problems of Gemma 4 31B, Muse Glimmer 30B, Qwen3.6-35B-A3B and Qwen3.8-27B where another
+// schedule measured faster on that board. A table carries to boards within kR8CarryDistance of it
+// (board_distance: a 4090 D or a 3090 Ti takes the 4090's or the 3090's, at 0.17 and 0.14) and no
+// further: the 4090's 80 entries on the 4080 SUPER (distance 1.2; 3 sweeps) won 41, lost 30 (to
+// -22 %: IQ2_XS 4096x6656 w8r2), +0.1 % in the mean, where its own sweep keeps 52 that win.
 constexpr double kR8CarryDistance = 0.5;
 
+// The current device's R8 decode table, once per ordinal (a process may drive boards of
+// different classes); null where no measured board is near enough.
+// A device query that fails is not cached (PerDevice retries a make that throws): the next call
+// asks again rather than leaving the device on the heuristics for the process's life.
 const R8DecodeTable* r8_decode_table() {
     static PerDevice<const R8DecodeTable*> table;
     try {
@@ -477,7 +745,9 @@ const R8DecodeTable* r8_decode_table() {
             return nearest_known_measured(std::span(kR8DecodeTables), board_of(device_class()),
                                           kR8CarryDistance);
         });
-    } catch (const std::exception&) { return nullptr; }
+    } catch (const std::exception&) {
+        return nullptr;
+    }
 }
 
 std::optional<int> tuned_r8(const Problem& p) {
@@ -519,7 +789,8 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                     double bytes = 0.0; // a device whose class cannot be read: eight warps
                     try {
                         bytes = dram_bytes_per_sm_cycle();
-                    } catch (const std::exception&) {}
+                    } catch (const std::exception&) {
+                    }
                     if (bytes > 0.0 && bytes < kRmmaQ6kFourWarpBytes) {
                         return rmma_k_split_fit(rmma_index(1, 4, 1, 1), problem, ctas, sms);
                     }
@@ -528,16 +799,17 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
             } else if (tokens <= 16) {
                 // 9..16 tokens (verify of an 8- or 16-token draft): one 8-token tile per CTA would
                 // put two or three CTA columns on the token axis, each streaming and decoding the
-                // whole weight. Four K-split warps with two tiles cover 16 tokens per
-                // column: 1.00-1.12 of the best of seven schedules against 1.24-1.58 for w1x8 n1
-                // (geomean per format, RTX 5080, Q8/Q4_0/IQ4_XS/Q4_K/Q5_K/Q6_K/IQ3_XXS at
-                // 27B/31B/35B shapes; at T = 24 Q8 1.35 against 1.68). A call of at most one CTA
-                // per SM through T = 16 takes the decode split of K above (two CTA columns): the
-                // four-warp tiles leave SMs idle on that grid. The dense tuner's timings of nine
-                // cards (sm_70 to sm_120) had the rule above lose such calls (n = 48..2048 rows:
-                // K/V, gates, small outputs) by x1.4..2.1 (median per card) to the sixteen-warp
-                // split; on the RTX 5090 the CTA pair or cluster of eight was 0..17 % faster still
-                // (n = 48 and 1024, T = 12 and 16: 8..20 us against 16..41 for the rule).
+                // whole weight. Four K-split warps with two tiles cover 16 tokens per column: 1.00-1.12
+                // of the best of seven schedules against 1.24-1.58 for w1x8 n1 (geomean per format,
+                // RTX 5080, Q8/Q4_0/IQ4_XS/Q4_K/Q5_K/Q6_K/IQ3_XXS at 27B/31B/35B
+                // shapes; at T = 24 Q8 1.35 against 1.68).
+                // A call of at most one CTA per SM through T = 16 takes the decode split of K
+                // above (two CTA columns): the four-warp tiles leave SMs idle on that grid. The
+                // dense tuner's timings of nine cards (sm_70 to sm_120) had the rule above lose
+                // such calls (n = 48..2048 rows: K/V, gates, small outputs) by x1.4..2.1 (median
+                // per card) to the sixteen-warp split; on the RTX 5090 the CTA pair or cluster of
+                // eight was 0..17 % faster still (n = 48 and 1024, T = 12 and 16: 8..20 us against
+                // 16..41 for the rule).
                 const std::int64_t ctas = (static_cast<std::int64_t>(problem.n) + 15) / 16;
                 const std::int64_t sms  = sm_count();
                 if (ctas <= sms) return one_wave_split(ctas, sms);
@@ -553,14 +825,14 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
         // tokens 32 per column cover it with the same grid and half the MMA work, and through 64
         // two columns of 32 while one column leaves SMs idle (fewer than two CTAs per SM). RTX 4080
         // Super (ad103:80sm, the dense tuner's prefill bands, A16 IQ1_S, IQ1_M and Q2_K at 5120 to
-        // 17408 rows, time of m1.n8 over the best): T = 17 and 32 1.48-3.21 on every problem; T =
-        // 64 1.20-1.58 below 160 CTAs, 1.00 at 272. RTX 5090 (gb202:170sm), Q6_K A16 output head
+        // 17408 rows, time of m1.n8 over the best): T = 17 and 32 1.48-3.21 on every problem; T = 64
+        // 1.20-1.58 below 160 CTAs, 1.00 at 272. RTX 5090 (gb202:170sm), Q6_K A16 output head
         // (248320 rows): m1.n4 the best at T = 17 (1.22) and 32 (1.54), m1.n8 at 64. RTX 5060 Ti
         // (gb206:36sm, the same artifacts as the 4080 SUPER): T = 17 and 32 1.60-2.14 on every
         // problem. In the product (ninferno-perplexity at context 32, tuner off on both arms): 4080
         // SUPER Qwen3.8-27B IQ3 246.6 -> 252.9 tok/s, the 5090's Q4_K_XL even.
         const std::int64_t ctas = (static_cast<std::int64_t>(problem.n) + 63) / 64;
-        const bool narrow_band  = tokens <= 32 || (tokens <= 64 && ctas < 2 * sm_count());
+        const bool narrow_band = tokens <= 32 || (tokens <= 64 && ctas < 2 * sm_count());
         return rmma_index(4, 1, 1, narrow_band ? 4 : 8);
     }
     if (tokens <= 16 || (split != 8 && tokens < kRmmaMidMinTokens)) return narrow();
@@ -616,10 +888,10 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
 
 int heuristic_w4a8(const Problem& problem, const Weight& weight, std::int32_t tokens) {
     constexpr int k32x128 = 0, k128x128 = 2, k128x64 = 3, k64x64 = 4, k128x64ws = 5;
-    // 17..32 tokens (verify of a 16-token draft, short prompts): 32 tokens by 128 rows wastes less
-    // of the tile than 64x64 and reads each weight tile once per 128 rows. (RTX 5080, 7 GGUF
-    // formats at 27B/31B/35B shapes, time over the best of seven routes, geomean per format) at T =
-    // 17: 32x128 1.05-1.45 against 64x64 1.14-1.57, better for every format at 17, 20, 24, 32.
+    // 17..32 tokens (verify of a 16-token draft, short prompts): 32 tokens by 128 rows wastes less of
+    // the tile than 64x64 and reads each weight tile once per 128 rows. (RTX 5080,
+    // 7 GGUF formats at 27B/31B/35B shapes, time over the best of seven routes, geomean per format)
+    // at T = 17: 32x128 1.05-1.45 against 64x64 1.14-1.57, better for every format at 17, 20, 24, 32.
     if (tokens <= 32) return k32x128;
     if (tokens <= 64) return k64x64;
     // From 65 tokens a 128-token tile reads each weight tile once where 64x64 reads it twice, but
@@ -767,6 +1039,8 @@ bool mmq_call(const Weight& w, LinearPolicy policy, std::int32_t rows, std::int3
            (rows % ggml_mmq::kRowMultiple) == 0 && mmq_admits(w, policy);
 }
 
+// The DRAM bytes the board's bandwidth asks of each SM per cycle: the facts' bandwidth over the
+// SMs times the reference clock (rmma_latency_pays reads it); 0 when a fact is unknown.
 double dram_bytes_per_sm_cycle() {
     static PerDevice<double> bytes;
     // A device whose class cannot be read throws, and PerDevice retries on the next call (the
@@ -818,6 +1092,9 @@ bool r8_fits(QType qtype, std::int32_t k, std::int32_t tokens) {
            kStaticSharedBytesPerBlock;
 }
 
+// Q4_0 at the verify widths (T = 2..4): R8 pays on a large matrix and loses on a small one
+// (A B B A, C = 4: Gemma 4 31B QAT, every dense matrix >= 44M values, RTX 4090 +15.7 %,
+// RTX 3090 +26 %; Gemma 4 26B QAT, at most 12M, -0.7 % and -2.7 %, its MTP verify -1.1 %).
 inline constexpr std::int64_t kR8VerifyQ40MinValues = 24ll << 20;
 
 bool r8_verify_takes_shape(QType qtype, std::int64_t n, std::int64_t k) {
@@ -831,6 +1108,8 @@ bool r8_verify_takes_shape(QType qtype, std::int64_t n, std::int64_t k) {
     } catch (const std::exception&) { return false; }
 }
 
+// Whether the device's BF16 MMA is native (sm_80 and up); a device that cannot be queried
+// counts as native, the routes that assume nothing about it.
 bool bf16_mma_native() {
     try {
         return device_class().features.mma_bf16_native;
@@ -844,9 +1123,11 @@ bool r8_verify_takes(QType qtype) {
     } catch (const std::exception&) { return false; }
 }
 
+// The build admits a tile its architecture holds; an sm_80 build run on a later 99 KiB part
+// (forward-compatible SASS) must still turn the 144-160 KiB tiles away, so the device decides too.
 bool staged_device_fits(int schedule) {
-    const auto s      = kStagedSchedules.at(static_cast<std::size_t>(schedule));
-    const auto bytes  = static_cast<std::size_t>(s.rows + s.tokens) * 64 * 2 * s.stages;
+    const auto s     = kStagedSchedules.at(static_cast<std::size_t>(schedule));
+    const auto bytes = static_cast<std::size_t>(s.rows + s.tokens) * 64 * 2 * s.stages;
     std::size_t limit = 0;
     try {
         limit = device_class().smem_per_block_optin;
@@ -981,7 +1262,8 @@ bool supports(const Weight& w) {
     case QType::GGML_TQ1_0:
     case QType::GGML_TQ2_0:
     case QType::GGML_Q1_0:
-    case QType::GGML_Q2_0: {
+    case QType::GGML_Q2_0:
+    {
         const auto plane = ggml_plane_bytes(w.qtype);
         return w.layout == QuantLayout::GgmlPlanes && w.scales != nullptr &&
                (w.qhigh != nullptr || plane.high == 0) &&
@@ -994,7 +1276,8 @@ bool supports(const Weight& w) {
                (w.k % 64) == 0 && std::isfinite(w.weight_scale_divisor) &&
                w.weight_scale_divisor > 0.0F;
     case QType::MXFP4:
-        return w.layout == QuantLayout::BlockScaleK32E8M0 && w.scales != nullptr && (w.k % 32) == 0;
+        return w.layout == QuantLayout::BlockScaleK32E8M0 && w.scales != nullptr &&
+               (w.k % 32) == 0;
     case QType::Q4_G64_FP16:
     case QType::Q8_G32_FP16:
         return w.layout == QuantLayout::RowSplit && w.scales != nullptr &&
@@ -1016,8 +1299,8 @@ bool rmma_tile_compiled(WeightCodec codec, int m_tiles, int n_tiles, std::int32_
     // run_values: 32 for a decoder of 32-value blocks, 128 for the ggml 32-blocks that step four
     // blocks at a time; both read 32 values per decode (kRun == 32). So does the u4 G32/G64
     // quad-run decoder that launch_rmma_u4zp_g32/_g64 (and the MoE launches) take at K % 128 == 0.
-    const bool quad_u4 =
-        (codec == WeightCodec::U4ZpG32 || codec == WeightCodec::U4ZpG64) && k > 0 && (k % 128) == 0;
+    const bool quad_u4 = (codec == WeightCodec::U4ZpG32 || codec == WeightCodec::U4ZpG64) &&
+                         k > 0 && (k % 128) == 0;
     return !((run_values(codec) >= 32 || quad_u4) && m_tiles * n_tiles >= 16);
 }
 
@@ -1092,7 +1375,7 @@ R8CallRefusal r8_call_refusal(const Weight& w, LinearPolicy policy, std::int32_t
     }
     if (tokens > r8_verify_widest(w.qtype)) return R8CallRefusal::VerifyWidth;
     return r8_verify_takes_shape(w.qtype, w.n, w.k) ? R8CallRefusal::None
-                                                    : R8CallRefusal::VerifyShape;
+                                                     : R8CallRefusal::VerifyShape;
 }
 
 ScheduleRefusal r8_refusal(int index, const Weight& w, LinearPolicy policy) {
@@ -1125,8 +1408,8 @@ ScheduleRefusal w4a8_refusal(int index, const Weight& w, LinearPolicy policy) {
     }
     // The classic tiles read a ggml high plane a byte at a time; the producer tiles in vector
     // words (generic_refusal), and IQ3_XXS's sign plane 8 bytes at a time (w4a8_ws_admits).
-    const bool high_off =
-        w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16);
+    const bool high_off = w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr &&
+                          !aligned_to(w.qhigh, 16);
     if (!aligned_to(w.qdata, 16) || (producer && high_off) ||
         (producer && w.qtype == QType::GGML_IQ3_XXS && !aligned_to(w.qhigh, 8))) {
         return ScheduleRefusal::Alignment;
@@ -1156,14 +1439,14 @@ ScheduleRefusal rmma_refusal(int index, const Weight& w) {
     if (codec == WeightCodec::Fp8 || codec == WeightCodec::Fp8RowF32 ||
         codec == WeightCodec::Fp8B128 || codec == WeightCodec::Bf16 ||
         codec == WeightCodec::Mxfp4 || codec == WeightCodec::U4Zp ||
-        codec == WeightCodec::U4ZpG64 || codec == WeightCodec::GgmlQ4K ||
-        codec == WeightCodec::GgmlQ5K || codec == WeightCodec::GgmlQ6K ||
-        codec == WeightCodec::GgmlQ3K || codec == WeightCodec::GgmlQ2K ||
-        codec == WeightCodec::GgmlIq4Xs || codec == WeightCodec::GgmlIq3Xxs ||
-        codec == WeightCodec::GgmlIq3S || codec == WeightCodec::GgmlQ40 ||
-        codec == WeightCodec::GgmlQ41 || codec == WeightCodec::GgmlQ50 ||
-        codec == WeightCodec::GgmlQ51 || codec == WeightCodec::GgmlIq4Nl ||
-        is_ggml_block(w.qtype)) {
+        codec == WeightCodec::U4ZpG64 ||
+        codec == WeightCodec::GgmlQ4K || codec == WeightCodec::GgmlQ5K ||
+        codec == WeightCodec::GgmlQ6K || codec == WeightCodec::GgmlQ3K ||
+        codec == WeightCodec::GgmlQ2K || codec == WeightCodec::GgmlIq4Xs ||
+        codec == WeightCodec::GgmlIq3Xxs || codec == WeightCodec::GgmlIq3S ||
+        codec == WeightCodec::GgmlQ40 || codec == WeightCodec::GgmlQ41 ||
+        codec == WeightCodec::GgmlQ50 || codec == WeightCodec::GgmlQ51 ||
+        codec == WeightCodec::GgmlIq4Nl || is_ggml_block(w.qtype)) {
         return aligned_to(w.qdata, 16) ? ScheduleRefusal::None : ScheduleRefusal::Alignment;
     }
     return aligned_to(w.qdata, 8) ? ScheduleRefusal::None : ScheduleRefusal::Alignment;
@@ -1231,6 +1514,13 @@ ScheduleRefusal i8_refusal(int index, const Weight& w, LinearPolicy policy) {
 
 namespace {
 
+// The checks every family's refusal shares (all but the scalar path's, which route_admits keeps):
+// the generic path reads the weight (Format), the device has the route's instructions, and a ggml
+// block format's high (sign / bit) plane lies on a 16-byte boundary. A view into a packed buffer
+// can leave it off one (a row view stays aligned: 32 bytes a row and 256 values), and the kernels
+// read it in vector words, all but the classic W4A8 tiles (one byte at a time; w4a8_refusal). The
+// 2080 Ti and A100 gates faulted (misaligned address) on an IQ3_XXS plane 4 bytes off once the cost
+// model's pick left the classic tile. NotDeclared stands for none.
 ScheduleRefusal generic_refusal(Route route, const Weight& w) {
     if (!supports(w)) return ScheduleRefusal::Format;
     if (!has_features(current_features(), route_requires(route))) {
@@ -1334,6 +1624,9 @@ bool route_admits(Route route, const Weight& w, LinearPolicy policy) {
            has_features(current_features(), route_requires(route));
 }
 
+// Without tensor mma.sync a one-tile register-MMA call of at most four tokens sums lane by lane
+// (GemmArgs::lane_local) outside the invariant profile: a token's sums then depend on its tile.
+
 namespace {
 
 bool rmma_sums_lane_local(int schedule) {
@@ -1358,7 +1651,7 @@ bool route_is_token_invariant(Route route) {
     case Family::Nvfp4TiledMma:
         return nvfp4_tiled_schedule_info(route.schedule).classes == 1; // rmma WarpsK == 1
     case Family::Scalar:
-        return true;      // one lane order per element, independent of T
+        return true; // one lane order per element, independent of T
     case Family::GgmlMmq: // stream-k splits K by the call's tile count
         return false;
     case Family::GgmlVec: // a lane's slices and one butterfly per token, whatever T
@@ -1388,6 +1681,11 @@ bool same_summation(Route a, Route b) { return summation_order(a) == summation_o
 
 namespace {
 
+// The NVFP4 tiled route in the order of the register MMA with WarpsK = `classes`, for calls of two
+// token tiles or more whose tiles give every SM at least one CTA; nullopt otherwise. Against the
+// invariant register MMA (WarpsK 8) on an RTX 5090: -8..-40% from there on the
+// Muse Glimmer 30B MLP and a synthetic [4096, 4096]; below one wave, or at one token tile, it
+// loses (up to 5x at T = 32).
 std::optional<Route> nvfp4_tiled_route(const Problem& problem, const Weight& weight,
                                        [[maybe_unused]] int classes,
                                        [[maybe_unused]] std::int32_t tokens) {
@@ -1420,9 +1718,8 @@ int i8_pick(const Problem& problem, QType qtype, std::int32_t tokens) {
     double best_cost  = 0;
     for (int i = 0; i < i8_schedule_count(); ++i) {
         if (!i8_fits(i, qtype)) continue;
-        const auto s = kI8Schedules[i];
-        const double ctas =
-            std::ceil(problem.n * sets / s.block_n) * std::ceil(tokens / double(s.block_m));
+        const auto s       = kI8Schedules[i];
+        const double ctas  = std::ceil(problem.n * sets / s.block_n) * std::ceil(tokens / double(s.block_m));
         const double waves = std::ceil(ctas / sms);
         const double cost  = waves * s.block_m * s.block_n / kI8Eff[i];
         if (best < 0 || cost < best_cost) {
@@ -1433,6 +1730,8 @@ int i8_pick(const Problem& problem, QType qtype, std::int32_t tokens) {
     return best;
 }
 
+// i8_pick's tile where the weight is admitted to it. The schedules differ in what they admit only
+// by i8_fits (i8_refusal), so this is the best tile of those the weight is admitted to.
 std::optional<Route> i8_route(const Problem& problem, const Weight& weight, std::int32_t tokens) {
     const int pick = i8_pick(problem, weight.qtype, tokens);
     if (pick < 0) return std::nullopt;
@@ -1441,6 +1740,8 @@ std::optional<Route> i8_route(const Problem& problem, const Weight& weight, std:
     return r;
 }
 
+// The heuristic's W4A8 tile, else the first schedule that fits the build (Turing: the 128x128
+// tile needs 80 KiB).
 std::optional<Route> w4a8_route(const Problem& problem, const Weight& weight, std::int32_t tokens) {
     const Route tuned{Family::W4a8Mma,
                       static_cast<std::uint8_t>(heuristic_w4a8(problem, weight, tokens))};
@@ -1452,15 +1753,20 @@ std::optional<Route> w4a8_route(const Problem& problem, const Weight& weight, st
     return std::nullopt;
 }
 
+// Outside the prefill profile BF16 weights take the staged MMA from 33 tokens where one of its
+// tiles fills the SMs: 256x128 (two stages) from two waves, 128x64 (two stages, two CTAs per SM)
+// from one, 64x64 (three stages) from half a wave; else the register MMA. ninferno_route_tune's
+// BF16 timings on seven boards, with the register-MMA rule above: 1.116 of the best (geomean)
+// against 1.15..1.36 for the largest tile that filled the SMs and 1.33..1.64 for the old gate
+// (from 256 tokens, the first tile); a wider tile than the call's grid leaves SMs idle (n = 1024
+// at T = 256: the 128x128 tile 2.5x the register MMA, n = 48: 6x).
 std::optional<Route> staged_speed_route(const Problem& problem, const Weight& weight,
                                         std::int32_t tokens) {
     if (tokens < kRmmaMidMinTokens) return std::nullopt;
-
     struct Pick {
         int rows, cols, stages;
         double waves;
     };
-
     for (const Pick p : {Pick{256, 128, 2, 2.0}, Pick{128, 64, 2, 1.0}, Pick{64, 64, 3, 0.5}}) {
         if (speed_waves(problem.n, tokens, p.rows, p.cols) < p.waves) continue;
         for (int i = 0; i < staged_schedule_count(); ++i) {
@@ -1512,8 +1818,7 @@ Route heuristic_route(const Problem& problem, const Weight& weight, std::int32_t
     // Where the BF16 MMA is emulated (Turing), the band between R8 / the vector kernel and W4A8
     // takes ggml's int8 matrix kernel for the formats it reads: the register MMA there runs on
     // the emulation, about three times its native cost.
-    if (mmq_verify_rule(weight, problem.policy, problem.n, tokens))
-        return Route{Family::GgmlMmq, 0};
+    if (mmq_verify_rule(weight, problem.policy, problem.n, tokens)) return Route{Family::GgmlMmq, 0};
     // NVFP4 A16 outside the invariant profile stays on the register MMA: against its prefill
     // schedule the tiled route loses on the Muse gate/up and synthetic shapes (+11..+20%)
     // and wins on the down projection only from T = 2048. A route table may still name it.
@@ -1597,10 +1902,25 @@ std::optional<Route> pinned_route(const Problem& problem, const Weight& weight, 
 
 } // namespace
 
+// Without tensor mma.sync (Volta) a call of 1..16 tokens of Q4_K / Q5_K / Q6_K or Q8 G32 takes
+// the HMMA kernel (generic_volta_hmma.cu): it runs as a register-MMA route (run_route launches it
+// in place of the emulated tiles, volta_hmma_takes), f16 activations as the tiled route's from 17
+// tokens. Its alternatives grow with T on Volta's CUDA cores: the register MMA's emulated
+// fragments (FP32 FMAs and shuffles), ggml's vector kernel (dp4a, the activation re-read for every
+// column) and R8 (dp4a); the tensor cores multiply eight or sixteen columns for the price of one,
+// so the call costs reading its weight once, whatever its width up to eight (sixteen: two column
+// groups). An A16 call takes it from one token. A call with an int8 route keeps that route
+// through the widths it holds where tensor mma.sync exists (kVecRuleMaxTokens): there an HMMA
+// leaves at least half of its eight columns empty while the int8 kernels' per-column work is still
+// small, and from five tokens the HMMA kernel takes over, where those cards move to their MMA.
+// One card (GV100) checked the band, Qwen3.5-9B shapes: at T = 5..8 the HMMA kernel took 0.52..0.91
+// of the vector kernel's time, except Q4_K gate/up at T = 5 (140 against 128 us); at T = 2..4 the
+// vector kernel was up to 1.4x faster.
 std::optional<Route> volta_hmma_route(const Problem& problem, const Weight& weight,
                                       std::int32_t tokens) {
     if (tokens < kVoltaHmmaMinTokens || tokens > kVoltaHmmaMaxTokens ||
-        current_features().mma_tensor || !supports(weight) || !volta_hmma_codec(codec_of(weight)) ||
+        current_features().mma_tensor || !supports(weight) ||
+        !volta_hmma_codec(codec_of(weight)) ||
         (weight.k % volta_hmma_k_multiple(codec_of(weight))) != 0) {
         return std::nullopt;
     }
@@ -1624,8 +1944,8 @@ Route select_route(const Problem& problem, const Weight& weight, std::int32_t to
                       static_cast<std::uint8_t>(invariant_rmma(problem.k, tokens))};
         if (!route_admits(r, weight, problem.policy)) return Route{Family::Scalar, 0};
         // NVFP4 wide calls: the tiled kernel sums in the register MMA's order (the same bytes).
-        if (const auto t = nvfp4_tiled_route(problem, weight,
-                                             rmma_schedule_info(r.schedule).warps_k, tokens)) {
+        if (const auto t =
+                nvfp4_tiled_route(problem, weight, rmma_schedule_info(r.schedule).warps_k, tokens)) {
             return *t;
         }
         return r;
@@ -1634,8 +1954,8 @@ Route select_route(const Problem& problem, const Weight& weight, std::int32_t to
     if (const std::int8_t forced = route_probe_state.quantized_act; forced >= 0) {
         const bool prefill_band = prefill && tokens >= 17;
         if (forced == 1 && allows_w4a4(weight, problem.policy)) {
-            const Route r{Family::W4a4Mma, static_cast<std::uint8_t>(
-                                               heuristic_w4a4(problem.n, tokens, prefill_band))};
+            const Route r{Family::W4a4Mma,
+                          static_cast<std::uint8_t>(heuristic_w4a4(problem.n, tokens, prefill_band))};
             if (route_admits(r, weight, problem.policy)) return r;
         }
         if (forced == 1 && r8_call(weight, problem.policy, tokens)) {
@@ -1670,6 +1990,7 @@ Route select_route(const Problem& problem, const Weight& weight, std::int32_t to
 
 namespace {
 
+// The automatic selection after the profiles, the probe and Volta's fixed routes (select_route).
 Route auto_route(const Problem& problem, const Weight& weight, std::int32_t tokens, bool prefill) {
     // NVFP4 keeps the width invariance its own kernels give where a device has them (the shape
     // tables of sm_100+; ops/linear/nvfp4): on sm_89/86 the same projections are the generic
@@ -1704,7 +2025,7 @@ Route auto_route(const Problem& problem, const Weight& weight, std::int32_t toke
     const bool vec     = vec_rule(weight, problem.policy, tokens);
     const bool a8      = a8_wide || vec || r8_call(weight, problem.policy, tokens) ||
                     mmq_verify_rule(weight, problem.policy, problem.n, tokens);
-    const auto tuned = a8 ? std::optional<Route>{} : table_route(problem, tokens, prefill);
+    const auto tuned   = a8 ? std::optional<Route>{} : table_route(problem, tokens, prefill);
     if (tuned) {
         // Under the prefill profile a format with a tiled codec keeps its tiled route: the tiled
         // and register-MMA families sum in different orders.
@@ -1716,8 +2037,8 @@ Route auto_route(const Problem& problem, const Weight& weight, std::int32_t toke
             return *tuned;
         }
     }
-    // The dense tuner's choice at decode widths (generic_tune.cpp): an A16 schedule for an A16
-    // call, an R8 schedule for an R8 decode call; never a W4A8 call.
+    // The dense tuner's choice at decode widths (generic_tune.cpp): an A16 schedule for an A16 call,
+    // an R8 schedule for an R8 decode call; never a W4A8 call.
     if (!a8_wide) {
         // Under the vector kernel's rule any timed route that beat it may stand in.
         const bool r8_ok = r8_call(weight, problem.policy, tokens) ||
@@ -1744,6 +2065,8 @@ Route auto_route(const Problem& problem, const Weight& weight, std::int32_t toke
 
 } // namespace
 
+// The route pinned family `f` gives a call of 17 tokens or more, nullopt where it cannot compute
+// it (the family's codec, K, alignment, policy or device).
 std::optional<Route> prefill_family_route(PrefillRoute f, const Problem& p, const Weight& w,
                                           std::int32_t tokens, bool prefill) {
     switch (f) {
@@ -1785,6 +2108,7 @@ std::optional<Route> prefill_family_route(PrefillRoute f, const Problem& p, cons
     return std::nullopt;
 }
 
+// The route pinned family `f` gives a call of 1..16 tokens, nullopt where it cannot compute it.
 std::optional<Route> decode_family_route(DecodeRoute f, const Problem& p, const Weight& w,
                                          std::int32_t tokens, bool prefill) {
     switch (f) {
@@ -1865,11 +2189,29 @@ bool r8_verify_tunable(const Weight& w, LinearPolicy policy, std::int32_t tokens
            r8_verify_compiled(w.qtype);
 }
 
+// Volta prefill (generic_volta_cutlass.cu): a tiled-route call of the prefill band (17 tokens on,
+// kPrefillMinTokens) decodes its weight once and multiplies on CUTLASS's sm_70 GEMM. The tiled
+// kernel (HMMA m8n8k4 on sm_70, generic_tiled.cuh) decodes a 128-row slice of the weight in each
+// CTA, once per 128-token block: ceil(N / 128) CTAs a block, in waves of the SMs, each wave as long
+// as one CTA's decode of 128 x K weights (0.37 .. 0.47 ms at K = 4096 on the V100). The decoded copy
+// spreads the same decode over every SM, then reads two FP16 bytes a weight into the GEMM, so it
+// costs in proportion to N and wins wherever the tile's grid leaves SMs idle or takes a second
+// wave. V100 (ninferno_linear_bench, T = 32..240, the tile's time against the copy's): Q4_K 24576 x
+// 4096 (192 CTAs: 2.4 waves) 1.36..2.29 ms against 1.20..1.40, 4096 x 12288 (32 CTAs) 1.07..1.31
+// against 0.82..0.88, 4096 x 4096 0.36..0.44 against 0.27..0.28, Q5_K 4096 x 12288 1.13..1.37
+// against 0.90..0.94. The one shape whose grid is a whole wave, 10240 x 4096 (80 CTAs on 80 SMs),
+// keeps the tile ahead below 129 tokens (0.37..0.47 ms against 0.50) and loses from 129, two waves
+// (0.82..0.93 against 0.52..0.54). A Qwen3.5 9B layer's four linears: 14 % less time at T = 64,
+// 35 % at T = 192.
+// The copy's narrowest margin above is 1.13 (24576 x 4096 below 129 tokens) at the V100's 870
+// GB/s, and its time is its bytes over the DRAM rate while the tile's is its waves on the SMs (80 on
+// every Volta part): a board under 870 / 1.13 GB/s (the Titan V's 653) or of unknown bandwidth
+// keeps the tile below kVoltaTileMaxTokens, where two token blocks already decode the weight twice.
 constexpr std::int32_t kVoltaCutlassMinTokens = 17;
 
-constexpr std::int32_t kVoltaTileMaxTokens = 256;
+constexpr std::int32_t kVoltaTileMaxTokens    = 256;
 
-constexpr double kVoltaCopyMinDramGbps = 870.0 / 1.13;
+constexpr double kVoltaCopyMinDramGbps        = 870.0 / 1.13;
 
 bool volta_cutlass_takes(std::int32_t tokens) {
     static PerDevice<bool> enabled;
@@ -1881,6 +2223,7 @@ bool volta_cutlass_takes(std::int32_t tokens) {
     });
 }
 
+// Whether a tiled format's call of `tokens` takes the copy rather than its tile on this board.
 bool volta_copy_pays(std::int32_t tokens) {
     static PerDevice<bool> fast_dram;
     return tokens >= kVoltaTileMaxTokens || fast_dram.get([](int) {
@@ -1890,6 +2233,9 @@ bool volta_copy_pays(std::int32_t tokens) {
     });
 }
 
+// Whether a TiledMma call of `tokens` runs on the decoded copy (and so needs its workspace): a
+// CUTLASS-only format's (`only`: it has no tile of its own) from the prefill band's 17 tokens, a
+// tiled format's where the copy pays.
 bool volta_cutlass_runs(bool only, std::int32_t tokens) {
     return volta_cutlass_takes(tokens) && (only || volta_copy_pays(tokens));
 }
