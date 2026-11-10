@@ -53,6 +53,9 @@ VRAM_LOW_ECC, VRAM_LOW_GEFORCE, VRAM_HIGH = 0.92, 0.97, 1.003
 # The persisting-L2 cap: synthetic_device_class writes 3/4 of the L2 and a driver's is the board's;
 # a cap under this share of the L2, or over all of it, is not a cache cap.
 PERSISTING_LOW = 0.125
+# machine_facts reads a driver memory clock only when it is under 978/1000 of the row's (more than
+# half a step of the 2^(1/16) grid below it).
+ENGINE_SLOWER_MEMORY_PER_MILLE = 978
 VERIFIED_SOURCE = 1  # FactSource::Verified: the engine reads the row as it is
 EXTRAPOLATED_SOURCE = 2  # FactSource::Extrapolated: a laptop, a memory variant or a slice
 
@@ -145,9 +148,35 @@ def check_row(row):
     check_variants(row)
 
 
-def variant_has(row, key, is_the_drivers):
-    """True when a board recorded under the row's id has `key` at the driver's value."""
-    return any(key in v and is_the_drivers(v[key]) for v in row.get("variants", []))
+def vram_floor(row):
+    return VRAM_LOW_GEFORCE if row.get("segment") == "geforce" else VRAM_LOW_ECC
+
+
+def recorded_variants(row, q):
+    """The row's `variants` whose every differing field is the driver's value and whose every
+    other field is the row's: one board, not a mix of two. A value the driver did not give fits
+    any board."""
+    low, boost, mem, bus = vram_floor(row), q["sm_clock_khz"], q["memory_clock_khz"], \
+        q["memory_bus_bits"]
+    fits = []
+    for v in row.get("variants", []):
+        vram_ok = low <= q["global_bytes"] / (v.get("vram_gib", row["vram_gib"]) * GIB) <= VRAM_HIGH
+        bus_ok = unavailable(bus) or bus == v.get("bus_bits", row["bus_bits"])
+        mem_ok = unavailable(mem) or close(memory_khz(v.get("gbps", row["gbps"])), mem,
+                                           MEMORY_CLOCK_TOLERANCE)
+        if "boost_mhz" in v:
+            boost_ok = unavailable(boost) or close(v["boost_mhz"] * 1000, boost, BOOST_TOLERANCE)
+        else:
+            boost_ok = unavailable(boost) or row["boost_mhz"] * 1000 * (1 - BOOST_UNDER) <= boost \
+                <= row["boost_mhz"] * 1000 * (1 + BOOST_OVER)
+        if vram_ok and bus_ok and mem_ok and boost_ok:
+            fits.append(v)
+    return fits
+
+
+def recorded_has(recorded, key):
+    """True when a recorded board that fits the driver differs from the row in `key`."""
+    return any(key in v for v in recorded)
 
 
 # The raw attributes kernel_occupancy.h assumes a value for (engine_occupancy_limits, same names).
@@ -257,7 +286,8 @@ def compare_row(q, row, mig_mode):
     # cannot be told from a wrong row, so the field is unverified.
     vram = row["vram_gib"] * GIB
     ratio = q["global_bytes"] / vram
-    vram_low = VRAM_LOW_GEFORCE if row.get("segment") == "geforce" else VRAM_LOW_ECC
+    vram_low = vram_floor(row)
+    recorded = recorded_variants(row, q)
     fewer = mig_capable(row) and 0 < q["sms"] < row["sms"]
     shrunk = 0 < ratio < vram_low
     slice_part = fewer and (mig_mode == 1 or (mig_mode == -1 and shrunk))
@@ -289,7 +319,7 @@ def compare_row(q, row, mig_mode):
         add("bus_bits", row["bus_bits"], bus, "match")
     elif slice_part and bus < row["bus_bits"]:
         add("bus_bits", row["bus_bits"], bus, "info", part_note)
-    elif variant_has(row, "bus_bits", lambda recorded: recorded == bus):
+    elif recorded_has(recorded, "bus_bits"):
         add("bus_bits", row["bus_bits"], bus, "info",
             "the bus of a board the table records under the row's id")
     else:
@@ -300,7 +330,7 @@ def compare_row(q, row, mig_mode):
         add("memory_clock_khz", want_khz, mem, "unavailable")
     elif close(want_khz, mem, MEMORY_CLOCK_TOLERANCE):
         add("memory_clock_khz", want_khz, mem, "match")
-    elif variant_has(row, "gbps", lambda gbps: close(memory_khz(gbps), mem, MEMORY_CLOCK_TOLERANCE)):
+    elif recorded_has(recorded, "gbps"):
         add("memory_clock_khz", want_khz, mem, "info",
             "the memory of a board the table records under the row's id")
     else:
@@ -315,7 +345,7 @@ def compare_row(q, row, mig_mode):
     elif is_laptop(row) and low * (1 - BOOST_TOLERANCE) <= boost < want_boost:
         add("boost_clock_khz", want_boost, boost, "info",
             "a laptop's power limit inside the published boost range")
-    elif variant_has(row, "boost_mhz", lambda mhz: close(mhz * 1000, boost, BOOST_TOLERANCE)):
+    elif recorded_has(recorded, "boost_mhz"):
         add("boost_clock_khz", want_boost, boost, "info",
             "the reference clock of a board the table records under the row's id")
     elif want_boost * (1 - BOOST_UNDER) <= boost <= want_boost * (1 + BOOST_OVER):
@@ -329,8 +359,7 @@ def compare_row(q, row, mig_mode):
         vram_status, vram_note = "match", ""
     elif slice_part:
         vram_status, vram_note = "info", part_note
-    elif variant_has(row, "vram_gib",
-                     lambda gib: vram_low <= q["global_bytes"] / (gib * GIB) <= VRAM_HIGH):
+    elif recorded_has(recorded, "vram_gib"):
         vram_status, vram_note = "info", "the memory size of a board the table records under the " \
                                          "row's id"
     else:
@@ -414,8 +443,19 @@ def compare_engine(device, row, table_results):
         add("engine_memory_clock_khz", alone["memory_clock_khz"], stored["memory_clock_khz"],
             "match" if 0 < stored["memory_clock_khz"] <= alone["memory_clock_khz"]
             else "mismatch", "never faster than the row's, never unknown")
-    add("engine_source", EXTRAPOLATED_SOURCE, stored["source"],
-        "match" if stored["source"] in (VERIFIED_SOURCE, EXTRAPOLATED_SOURCE) else "mismatch", bound)
+    # The source follows the deviation: a laptop and a slice are always Extrapolated; a whole
+    # board is Extrapolated when the engine read its bus, or a memory clock more than 2.2 % under
+    # the row's (machine_facts.cpp), and keeps Verified for a faster memory (the row's rate stays).
+    mem = device["queried"]["memory_clock_khz"]
+    read_bus = by_field.get("bus_bits") == "info"
+    read_clock = by_field.get("memory_clock_khz") == "info" and mem >= 100000 and \
+        mem * 1000 < alone["memory_clock_khz"] * ENGINE_SLOWER_MEMORY_PER_MILLE
+    if laptop or by_field.get("sms") in ("info", "unavailable") or read_bus or read_clock:
+        want_source = EXTRAPOLATED_SOURCE
+    else:
+        want_source = VERIFIED_SOURCE
+    same("engine_source", want_source, stored["source"],
+         "1 the row as it is, 2 a laptop, a slice, or a bus or slower memory read from the driver")
     return out
 
 

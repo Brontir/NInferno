@@ -374,6 +374,75 @@ class Compare(unittest.TestCase):
             d["queried"]["memory_clock_khz"] = khz
             self.assertEqual(statuses(d)[("table", "memory_clock_khz")], "mismatch", khz)
 
+    def test_a_variant_is_one_board_not_a_mix_of_two(self):
+        # GTX 1650: the only recorded variant is 12 Gbps with a 1590 MHz boost. The base board's
+        # memory with the variant's boost, or the variant's memory with the base boost, is
+        # neither board.
+        base_memory = device_1650()
+        base_memory["queried"]["sm_clock_khz"] = 1_590_000
+        s = statuses(base_memory)
+        self.assertEqual(s[("table", "memory_clock_khz")], "match")
+        self.assertEqual(s[("table", "boost_clock_khz")], "mismatch")
+        variant_memory = device_1650()
+        variant_memory["queried"]["memory_clock_khz"] = 6_000_000
+        self.assertEqual(statuses(variant_memory)[("table", "memory_clock_khz")], "mismatch")
+        whole = device_1650()
+        whole["queried"].update(memory_clock_khz=6_000_000, sm_clock_khz=1_590_000)
+        self.assertEqual(no_mismatch(self, statuses(whole))[("table", "boost_clock_khz")], "info")
+        # A variant that differs in several fields must fit in all of them (memory size too).
+        row = row_of(0x2684, variants=[{"vram_gib": 12, "bus_bits": 192}])
+        d = device_4090()
+        d["queried"].update(global_bytes=int(12 * GIB * 0.98), memory_bus_bits=384)
+        self.assertEqual(statuses(d, row)[("table", "vram_gib")], "mismatch")
+
+    def test_source_of_a_laptop_is_extrapolated(self):
+        laptop = device_laptop()
+        laptop["engine_table_facts"]["source"] = 1
+        self.assertEqual(statuses(laptop)[("table", "engine_source")], "mismatch")
+        self.assertEqual(statuses(device_laptop())[("table", "engine_source")], "match")
+
+    def test_source_of_a_slice_is_extrapolated(self):
+        sliced = device_a100()
+        sliced["mig_mode"] = 1
+        sliced["queried"]["sms"] = 42
+        sliced["engine_table_facts"]["source"] = 1
+        self.assertEqual(statuses(sliced)[("table", "engine_source")], "mismatch")
+
+    def test_source_of_a_bus_variant_is_extrapolated(self):
+        bus_row = row_of(0x2684, variants=[{"bus_bits": 256}])
+        bus = device_4090()
+        bus["queried"]["memory_bus_bits"] = 256
+        bus["engine_table_facts"].update(memory_bus_bits=256, source=1)
+        self.assertEqual(statuses(bus, bus_row)[("table", "engine_source")], "mismatch")
+        bus["engine_table_facts"]["source"] = 2
+        self.assertEqual(statuses(bus, bus_row)[("table", "engine_source")], "match")
+
+    def test_source_of_a_slower_memory_variant_is_extrapolated(self):
+        slow_row = row_of(0x2684, variants=[{"gbps": 18.0}])
+        slow = device_4090()
+        slow["queried"]["memory_clock_khz"] = 9_000_000
+        slow["engine_table_facts"].update(memory_clock_khz=9_000_000, source=1)
+        self.assertEqual(statuses(slow, slow_row)[("table", "engine_source")], "mismatch")
+        slow["engine_table_facts"]["source"] = 2
+        self.assertEqual(statuses(slow, slow_row)[("table", "engine_source")], "match")
+
+    def test_source_of_a_faster_memory_variant_stays_verified(self):
+        # The 1650's GDDR6 keeps the row's rate: the engine reads nothing from the driver.
+        fast = device_1650()
+        fast["queried"].update(memory_clock_khz=6_000_000, sm_clock_khz=1_590_000)
+        self.assertEqual(statuses(fast)[("table", "engine_source")], "match")
+        fast["engine_table_facts"]["source"] = 2
+        self.assertEqual(statuses(fast)[("table", "engine_source")], "mismatch")
+
+    def test_source_of_a_memory_under_2_2_percent_slower_stays_verified(self):
+        near_row = row_of(0x2684, variants=[{"gbps": 20.6}])
+        near = device_4090()
+        near["queried"]["memory_clock_khz"] = 10_300_000
+        self.assertEqual(statuses(near, near_row)[("table", "memory_clock_khz")], "info")
+        self.assertEqual(statuses(near, near_row)[("table", "engine_source")], "match")
+        near["engine_table_facts"]["source"] = 2
+        self.assertEqual(statuses(near, near_row)[("table", "engine_source")], "mismatch")
+
     def test_variants_are_boards_that_differ_from_the_row(self):
         recorded = {i: r["variants"] for i, r in ROWS.items() if "variants" in r}
         self.assertEqual(recorded, {0x2D04: [{"vram_gib": 8}],
