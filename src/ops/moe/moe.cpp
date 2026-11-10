@@ -1005,7 +1005,7 @@ MoePlan untuned_plan(const MoeWeights& weights, const MoeConfig& config, std::in
                              p.job_columns % kMoeW4a8BlockM == 0);
     };
     // A prefill call of 17 tokens or more that admits the grouped W4A8 takes it, as a dense W4A8
-    // call does (generic_gemm.cpp select_route): the tables' prefill plans are A16 schedules,
+    // call does (generic_select.cpp select_route): the tables' prefill plans are A16 schedules,
     // measured before the grouped W4A8 was the default, and one would hide it (RTX 5080, gpt-oss
     // MXFP4 experts: the gb203 entry 2950 us at T=1024, the W4A8 2110 us).
     MoePlan p               = plan_for(g, tokens, prefill);

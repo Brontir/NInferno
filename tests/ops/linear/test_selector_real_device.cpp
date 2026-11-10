@@ -1,8 +1,11 @@
 // The selector on the real device, with no substituted board (#620): every per-device cache
 // (PerDevice) reads the ordinal and the class of the GPU the process runs on. The golden test runs
-// the selector under ScopedDeviceClass only, so it cannot tell a selector that throws or silently
-// falls back when no substitute is set; this one calls select_route and w4a8_ws_extra bare, and
-// requires r8_decode_table to be present on a board that has one. Skips (77) without a GPU.
+// the selector under ScopedDeviceClass only, so it never exercises the real-device reads; this one
+// calls select_route and w4a8_ws_extra bare over four formats, three policies and five widths, and
+// requires r8_decode_table to be non-null on a board that has a measured table of its own. The
+// device reads catch their own exceptions (sm_count falls back to 1, bf16_mma_native to false,
+// r8_decode_table to nullptr), so "does not throw" proves little by itself; the table check is the
+// one that sees a silent fallback. Skips (77) without a GPU.
 #include "ops/quantized_weight.h"
 
 #include "core/device_class.h"

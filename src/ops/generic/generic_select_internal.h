@@ -1,6 +1,6 @@
 #pragma once
 
-// Helpers of the generic path's route selection (generic_gemm.cpp) that its other files share.
+// Helpers of the generic path's route selection (generic_select.cpp) that its other files share.
 
 #include "core/device_class.h"
 #include "ops/generic/generic_gemm.h"
@@ -101,7 +101,7 @@ struct ActivationPlanes {
 
 ActivationPlanes activation_planes(Route route, std::int32_t k, std::int32_t tokens);
 
-// Shared by the selection and the workspace queries (generic_gemm.cpp).
+// Shared by the selection and the workspace queries (generic_select.cpp).
 std::int32_t vec_max_tokens();
 bool volta_tiled_qtype(QType qtype);
 bool volta_cutlass_qtype(QType qtype);
@@ -115,8 +115,8 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
                   const PricedRoute& take);
 std::optional<Route> cost_route(const Problem& problem, const Weight& weight, std::int32_t tokens);
 
-// The weight-side admission of the A8 and A4 tiles and of R8 (generic_gemm.cpp; their refusals
-// name the reason).
+// The weight-side admission of the A8 and A4 tiles and of R8 (generic_select.cpp, generic_gemm.cpp;
+// their refusals name the reason).
 bool allows_w4a8(const Weight& w, LinearPolicy policy);
 bool allows_i8(const Weight& w, LinearPolicy policy);
 bool allows_w4a4(const Weight& w, LinearPolicy policy);

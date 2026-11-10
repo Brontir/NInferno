@@ -1,9 +1,10 @@
 #pragma once
 
 // What the generic path knows about each stored format, as one table: a row per QType, read by the
-// admission predicates of generic_gemm.cpp (r8_supports, w4a8_supports, ...). A new format is one
-// row here, not a case label in a dozen switches. Reading a row never queries the device: a
-// predicate that also looks at the card keeps that part and reads only the format from here.
+// admission predicates of generic_routes.cpp and generic_select.cpp (r8_supports, w4a8_supports,
+// ...). A new format is one row here, not a case label in a dozen switches. Reading a row never
+// queries the device: a predicate that also looks at the card keeps that part and reads only the
+// format from here.
 //
 // Each field says what kind of knowledge it is:
 //   codec fact       true of the bytes of the format, for every build and card;
