@@ -81,7 +81,9 @@ the cells: cells - size constants - (runs - the constant runs and sizes share) -
 error of the replicate visits is not used as the denominator: it holds the run drift too, so it would
 over-count the noise and lose the power against misfits. Beside the ratio the output prints the drift
 it saw (OBSERVED, not fitted): per width the median over the sizes of visit 2 / visit 1, and the median
-and range over the widths, and the ratio without the run offsets for comparison.
+and range over the widths, and the ratio without the run offsets for comparison. It also prints the
+residual beyond the request noise, the misfit's own size as a share of the time: the ratio grows as the
+request noise falls, this does not, so the candidate cause a no-verdict names is chosen on it (WAVE_RMS).
 The regret per bucket (R1) stays as a report: the table of picks is the same for
 every f in (0.111, 0.200] and its neighbours differ at one to three sizes, so the regret cannot
 separate f 0.10 from 0.30.
@@ -144,11 +146,20 @@ FIT_EPS = 1e-6  # float rounding only (an exact law gives an interval of zero wi
 # 1.7 (3.1); a per-width launch constant is taken by the offsets (1.0, f 0.199); 68-SM wave
 # quantisation 2.4, an occupancy step x1.08 at J >= 80 2.8, a per-tile tail of 0.5 % a tile 3.0, an f
 # that depends on J (0.10..0.30) 3.3, a cost step x1.25 at N > 256 (L2) 5.5, an occupancy step x1.3 9,
-# a per-tile tail of 2 % a tile 11. At 1 % request noise a misfit's ratio about doubles (wave 4.7).
+# a per-tile tail of 2 % a tile 11. The ratio scales with 1 / request noise: at 1 % a misfit's ratio
+# about doubles (wave 4.6), at 0.5 % it about quadruples (wave 9.0). A run drift leaves a residual
+# beyond the noise of about 0.24 % rms at +-1 % per run, so at 0.5 % request noise the pure law with
+# that drift reads about 2.7.
 LOF_MAX = 3.0
-# a priori, from the same grids: up to this ratio the no-verdict text also names the 68-SM wave
-# quantisation of the stream-k launch as a candidate cause (2.4 at 2 % request noise, 4.7 at 1 %)
-LOF_WAVE = 5.0
+# The misfit's own size does not scale with the noise: the residual beyond the request noise,
+# sqrt(residual variance - request variance), a share of the size's time. The 68-SM wave quantisation
+# of the stream-k launch (64 row blocks over 68 SMs, the law's tile cost per wave) gives 0.80-0.90 %
+# at 0.5, 1 and 2 % request noise, with and without a run drift; an occupancy step x1.08 1.0, an f that
+# depends on J or a 0.5 % tail 1.1, a cost step x1.18 at N > 256 1.5, x1.25 2.0, an occupancy step x1.3
+# 3.4, a 2 % tail 4.3 (synthetic grids, none a measurement). A priori bound: up to this share the
+# no-verdict text names the wave quantisation as one candidate cause (a misfit larger than that is more
+# than the wave effect of the law's own tile cost can give).
+WAVE_RMS = 0.0125
 MEDIAN_VAR = 1.5708  # pi / 2: the variance of a median of m requests ~ (pi / 2) s^2 / m (normal theory)
 # GA10x / Ada bracket (DECISIONS 74), by columns; the edges 168 / 200 are the midpoints between the
 # sample sizes 160|176 and 192|208 of the old rows, not fitted: (first col, last col, lo %, hi %)
@@ -312,6 +323,15 @@ def lack_of_fit(rss: float, dof: int, rel: list[float], within: list[float] | No
     return 0.0 if resid <= 1e-18 else float("inf")  # requests without any spread: only an exact law fits
 
 
+def beyond_noise(rss: float, dof: int, rel: list[float], within: list[float] | None) -> float | None:
+    """sqrt(max(residual variance per degree of freedom - the mean relative variance of a cell median
+    expected from its requests, 0)): the misfit's own size, a share of the size's time (with rel = 1 /
+    s_N^2), which unlike the ratio does not grow as the request noise falls; None as lack_of_fit."""
+    if within is None or dof <= 0:
+        return None
+    return max(rss / dof - statistics.mean(r * v for r, v in zip(rel, within)), 0.0) ** 0.5
+
+
 def fit_f(cells: list[tuple[int, float, float, float]], blocks: list, rel: list[float],
           within: list[float] | None = None, per_run: bool = True) -> dict:
     """f = a / b of the work law over `cells` (N, x1, x2, median ms), cell i weighted by rel[i]
@@ -338,6 +358,7 @@ def fit_f(cells: list[tuple[int, float, float, float]], blocks: list, rel: list[
            "cells": len(cells), "sizes": len({c[0] for c in cells}), "runs": len(set(blocks)) if per_run else 0,
            "nconst": nconst, "offsets": offsets}
     out["lof"] = lack_of_fit(rss, dof, rel, within)
+    out["beyond"] = beyond_noise(rss, dof, rel, within)
     ids = sorted(set(blocks), key=str)
     index = {x: i for i, x in enumerate(ids)}
     rng = random.Random(BOOT_SEED)
@@ -709,6 +730,9 @@ def grid(a: argparse.Namespace) -> None:
                + ("" if bare_lof is None else f"; without the run offsets {bare_lof:.2f}"))
         print(f"  a = {fit['a']:.3f} ms, b = {fit['b']:.3f} ms (a 128-column tile's step over the linears), "
               f"residual rms {100 * fit['rms']:.2f} % of the size's time, lack-of-fit ratio {lof}")
+        if fit["beyond"] is not None:
+            print(f"  residual beyond the request noise {100 * fit['beyond']:.2f} % rms of the size's time (the "
+                  "misfit's own size: unlike the ratio it does not grow as the request noise falls)")
         free = fit["nconst"] - fit["sizes"]
         print(f"  degrees of freedom {fit['dof']} = {fit['cells']} cells - {fit['sizes']} size constants - {free} run "
               f"offsets ({fit['runs']} runs, {fit['runs'] - free} shared with the size constants) - 2 (a, b)")
@@ -783,9 +807,10 @@ def grid(a: argparse.Namespace) -> None:
     elif fit["lof"] is not None and fit["lof"] > LOF_MAX:
         why5 = ("the residual exceeds the request noise after the run drift is taken out: the work law does not "
                 "fit this card (see the visit ratios for the drift)")
-        if fit["lof"] <= LOF_WAVE:
-            why5 += ("; at this ratio one candidate cause is the wave quantisation of the stream-k launch over the "
-                     "card's SMs (68 on the RTX 2080 Ti), which the law does not hold")
+        if fit["beyond"] is not None and fit["beyond"] <= WAVE_RMS:
+            why5 += (f"; the residual beyond the request noise is {100 * fit['beyond']:.2f} % of the time, within the "
+                     f"{100 * WAVE_RMS:g} % (a priori) that the wave quantisation of the stream-k launch over the card's "
+                     "SMs (68 on the RTX 2080 Ti) can give, which the law does not hold: one candidate cause")
         s5, t5 = "nofit", (f"ratio {fit['lof']:.2f} above {LOF_MAX:g}: {why5}; the fit's f {fit['f']:.3f} is not a "
                            "measurement of f")
     else:
@@ -817,7 +842,7 @@ def grid(a: argparse.Namespace) -> None:
                    f"{PRED_LO:.2f}..{PRED_HI:.2f}; measure more visits before deciding")
     else:
         verdict = (f"no verdict on f {ASSUMED_F:.2f}: {why5}; R2 and R3 find no "
-                   "fault with the table at f %.2f" % ASSUMED_F)
+                   f"fault with the table at f {ASSUMED_F:.2f}")
     print("  " + verdict)
 
 

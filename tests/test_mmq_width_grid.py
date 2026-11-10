@@ -638,21 +638,32 @@ class Readers(Base):
                 self.assertIn("run offsets D_r (FITTED nuisance terms, not facts about the card", out)
 
     def test_a_per_run_offset_is_taken_out_exactly(self):
-        # the exact law plus one constant per server run (up to +-3 ms): the fitted offsets take it all, so
+        # the exact law plus one constant per server run (up to +-5 ms): the fitted offsets take it all, so
         # f is the truth and nothing is left; the same cells without the offsets in the fit read a misfit
-        files = self.law_files(0.20, visits=2, offset=3.0, seed=4)
+        files = self.law_files(0.20, visits=2, offset=5.0, seed=4)
         rc, out, err = self.run_main("grid", *files)
         self.assertEqual(rc, 0, err)
         self.assertEqual(self.fitted(out), (0.2, 0.2, 0.2))
         self.assertIn("residual rms 0.00 % of the size's time, lack-of-fit ratio 0.00", out)
         self.assertIn("f 0.20 stands", out)
         data = g.load(files)
-        cells, blocks = [], []
+        cells, blocks, put = [], [], {}
         for j in g.WIDTHS:
             for n in g.SIZES:
                 for v, fi in zip(data.d[f"J{j}"][n], data.src[f"J{j}"][n]):
                     cells.append((n, *g.law_terms(n - 7, j), v[0]))
                     blocks.append((j, fi))
+                    # the offset the generator put into this run: the cell minus the law (computed here)
+                    put[(j, fi)] = v[0] - (42.0 + 53.0 * -(-(n - 7) // j) * (0.2 + 0.8 * j / 128))
+        # the printed range of the fitted offsets is the range of the offsets put in, around their median
+        mid = sorted(put.values())[len(put) // 2 - 1: len(put) // 2 + 1]
+        mid = sum(mid) / 2
+        m = re.search(r"run offsets D_r \(FITTED nuisance terms[^)]*\): ([+-][0-9.]+) \.\. ([+-][0-9.]+) ms around "
+                      r"the median run", out)
+        self.assertIsNotNone(m, out)
+        self.assertAlmostEqual(float(m.group(1)), min(put.values()) - mid, delta=2e-3)
+        self.assertAlmostEqual(float(m.group(2)), max(put.values()) - mid, delta=2e-3)
+        self.assertGreater(float(m.group(2)) - float(m.group(1)), 6.0)  # +-5 ms per run: a range of 6-10 ms
         with_runs = g.fit_f(cells, blocks, [1.0] * len(cells))
         bare = g.fit_f(cells, blocks, [1.0] * len(cells), per_run=False)
         self.assertAlmostEqual(with_runs["f"], 0.2, places=9)
@@ -719,6 +730,9 @@ class Readers(Base):
         # pinned for this seed: 336 cells, 298 degrees of freedom (21 size constants, 15 run offsets, a, b)
         self.assertIn("residual rms 0.37 % of the size's time, lack-of-fit ratio 1.02", out)
         self.assertNotIn("does not fit", out.split("verdict on the criteria")[1])
+        # the law leaves nothing beyond the request noise (the residual itself is the noise, 0.37 %)
+        beyond = float(re.search(r"residual beyond the request noise ([0-9.]+) % rms", out).group(1))
+        self.assertLessEqual(beyond, 0.15)
 
     def test_a_law_that_does_not_hold_gives_no_measurement_of_f(self):
         # the review's misfit shapes at a true f 0.20: an occupancy step (tiles of J >= 80 cost x1.3) and a
@@ -739,7 +753,7 @@ class Readers(Base):
         self.assertEqual(rc, 0, err)
         self.assertIn("no verdict on f 0.20: " + text, out)
         # a milder misfit: the tiles of N > 256 cost x1.25 (ratio about 5.5, above the a-priori 3)
-        self.assertEqual((g.LOF_MAX, g.LOF_WAVE), (3.0, 5.0))
+        self.assertEqual((g.LOF_MAX, g.WAVE_RMS), (3.0, 0.0125))
         late = self.law_files(0.20, noise=0.02, visits=2, shape=lambda n, j, w: w * (1.25 if n > 256 else 1.0))
         rc, out, err = self.run_main("grid", *late)
         self.assertEqual(rc, 0, err)
@@ -748,21 +762,36 @@ class Readers(Base):
     def test_a_misfit_still_reads_no_verdict_under_a_run_drift(self):
         # the run offsets take a drift of the server runs, not a misfit of the law: under +-1 % per run the
         # cost step at N > 256 (an L2 effect, ratio about 5.5) and the per-tile tail (about 11) still give no
-        # verdict on f, and a step of x1.18 (ratio 3-5) names the wave quantisation as a candidate too
-        shapes = (("L2 x1.25 at N > 256", lambda n, j, w: w * (1.25 if n > 256 else 1.0), 5.0, False),
-                  ("tail 2 % a tile", lambda n, j, w: w * (1 + 0.02 * (-(-(n - 7) // j) - 1)), 8.0, False),
-                  ("L2 x1.18 at N > 256", lambda n, j, w: w * (1.18 if n > 256 else 1.0), 3.0, True))
-        for name, shape, least, wave in shapes:
+        # verdict on f. The wave quantisation is named on the residual beyond the request noise (about 0.85 %
+        # of the time for the 68-SM geometry whatever the noise), not on the ratio, which grows as the noise
+        # falls: at 1 % and 0.5 % request noise the wave grid reads about 4.6 and 9 and is named both times;
+        # a step x1.18 at N > 256 (1.5 % beyond the noise) and the L2 step at 0.5 % noise (2.0 %) are not.
+        def wave(n, j, w):
+            t = -(-(n - 7) // j)
+            return w * 68 / 64 * -(-(64 * t) // 68) / t  # 64 row blocks a tile column over 68 SMs, per wave
+
+        l2 = lambda n, j, w: w * (1.25 if n > 256 else 1.0)  # noqa: E731
+        shapes = (("L2 x1.25 at N > 256", l2, 0.02, 5.0, False),
+                  ("tail 2 % a tile", lambda n, j, w: w * (1 + 0.02 * (-(-(n - 7) // j) - 1)), 0.02, 8.0, False),
+                  ("L2 x1.18 at N > 256", lambda n, j, w: w * (1.18 if n > 256 else 1.0), 0.02, 3.0, False),
+                  ("L2 x1.25 at N > 256, 0.5 % request noise", l2, 0.005, 15.0, False),
+                  ("68-SM waves, 1 % request noise", wave, 0.01, 3.0, True),
+                  ("68-SM waves, 0.5 % request noise", wave, 0.005, 7.0, True))
+        for name, shape, noise, least, named in shapes:
             for seed in range(2):
-                rc, out, err = self.run_main("grid", *self.law_files(0.20, noise=0.02, visits=2, drift=0.01,
+                rc, out, err = self.run_main("grid", *self.law_files(0.20, noise=noise, visits=2, drift=0.01,
                                                                      seed=seed, shape=shape))
                 self.assertEqual(rc, 0, err)
                 self.assertIn("R5: NO VERDICT on f", out, (name, seed))
                 self.assertGreater(self.ratio(out)[1], least, (name, seed))
-                self.assertEqual("wave quantisation of the stream-k launch" in out, wave, (name, seed))
-                if wave:
-                    self.assertLessEqual(self.ratio(out)[1], g.LOF_WAVE, (name, seed))
+                self.assertEqual("wave quantisation of the stream-k launch" in out, named, (name, seed))
+                beyond = float(re.search(r"residual beyond the request noise ([0-9.]+) % rms", out).group(1))
+                self.assertEqual(beyond <= 100 * g.WAVE_RMS, named, (name, seed, beyond))
+                if named:
+                    self.assertTrue(0.7 <= beyond <= 1.0, (name, seed, beyond))
                     self.assertIn("(68 on the RTX 2080 Ti)", out)
+                    self.assertIn(f"the residual beyond the request noise is {beyond:.2f} % of the time, within the "
+                                  "1.25 % (a priori)", out)
 
     def test_an_interval_across_an_edge_is_undecided(self):
         rc, out, err = self.run_main("grid", *self.law_files(0.15, noise=0.02, visits=2, seed=2))
