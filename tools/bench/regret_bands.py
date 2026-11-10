@@ -200,6 +200,25 @@ def provenance_of(document):
     return prov
 
 
+def merged_board_devices(named):
+    """Board label -> device class of the merged --doc inputs; one label on two devices is refused.
+
+    `named` is (file name, device or None, board labels). A document that names no device says
+    nothing about its boards. Two documents naming one label on different devices (their case ids
+    may differ) would pool two GPUs into one by_board cell with no trace, so the merge is rejected.
+    """
+    seen = {}  # board -> (device, file)
+    for name, device, boards in named:
+        if not device:
+            continue
+        for board in sorted(boards):
+            if board in seen and seen[board][0] != device:
+                raise ValueError(f"board {board} is on device {seen[board][0]} in {seen[board][1]} "
+                                 f"but on {device} in {name}: one board label is one device class")
+            seen.setdefault(board, (device, name))
+    return {board: device for board, (device, _) in sorted(seen.items())}
+
+
 def merged_provenance(named):
     """Provenance of the merged --doc inputs; inputs of different provenance are refused.
 
@@ -295,11 +314,11 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected", excluded=N
     for key in sorted(unselected, key=lambda k: (k[:5], int(k[5]))):
         skipped.append(skip_row(collect.case_id(key), board, key[0], int(key[5]), None,
                                 "no selection recorded for this case"))
-    if pick == "selected":
-        # A selection the sweep has no row for at all (a pass cut short) is skipped, not dropped.
-        for key in sorted(set(selected) - set(routes), key=lambda k: (k[:5], int(k[5]))):
-            skipped.append(skip_row(collect.case_id(key), board, key[0], int(key[5]), selected[key],
-                                    "pick has no sweep rows"))
+    # A selection the sweep has no row for at all (a pass cut short) is skipped, not dropped, in
+    # either pick: the selection file proves the case exists.
+    for key in sorted(set(selected) - set(routes), key=lambda k: (k[:5], int(k[5]))):
+        skipped.append(skip_row(collect.case_id(key), board, key[0], int(key[5]), selected[key],
+                                "pick has no sweep rows"))
     for key in sorted(routes, key=lambda k: (k[:5], int(k[5]))):
         eligible = [r for r in routes[key]
                     if not (key[1] == "a16" and collect.route_class(r) != "a16")]
@@ -522,15 +541,17 @@ def main(argv=None):
         if args.pick == "model" and args.doc:
             raise ValueError("--pick model scores the model price's own pick from --routes; it "
                              "cannot be combined with --doc")
-        rows, skipped, named, inputs, excluded = [], [], [], [], []
+        rows, skipped, named, inputs, excluded, devices = [], [], [], [], [], []
         for doc in args.doc:
             loaded = json.loads(doc.read_bytes(), object_pairs_hook=regret.unique_object)
             r, s = rows_from_document(loaded)
             named.append((doc.name, provenance_of(loaded)))
+            devices.append((doc.name, loaded.get("device"), {x["board"] for x in r + s}))
             inputs.append((str(doc), r + s))
             rows += r
             skipped += s
         provenance = merged_provenance(named) if named else None
+        board_devices = merged_board_devices(devices)
         if len(args.board) != len(args.routes):
             raise ValueError(f"one --board per --routes group ({len(args.board)} boards, "
                              f"{len(args.routes)} groups)")
@@ -556,6 +577,8 @@ def main(argv=None):
         rep = report(rows, skipped, weights)
         if provenance is not None:
             rep["provenance"] = provenance
+        if board_devices:
+            rep["board_devices"] = board_devices
         if args.routes:
             rep["legacy_qualification"] = args.qualified.strip()
             # Prefill-profile (case, route) pairs of the route CSVs, left out (rows_from_csv).

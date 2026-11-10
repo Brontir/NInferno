@@ -229,6 +229,19 @@ class Csv(unittest.TestCase):
             self.assertEqual([r["reason"] for r in skipped],
                              ["fewer than two candidates of the case's compute class"])
 
+    def test_a_selection_without_sweep_rows_is_a_skip_in_both_picks(self):
+        # A sweep cut short before a case's rows leaves its selection with no row: the case stays
+        # in the coverage as a skip, whichever pick scores the rest.
+        p1 = self.write("p1.csv", ROUTES + "q4k,a16,store,64,64,40,rmma.a,20,30\n"
+                        "q4k,a16,store,64,64,40,rmma.b,10,40\n")
+        sel = self.write("s.csv", SELECTED + "q4k,a16,store,64,64,40,rmma.a,rmma.a\n"
+                         "q4k,a16,store,64,64,48,rmma.a,rmma.a\n")
+        for pick in ("selected", "model"):
+            rows, skipped = bands.rows_from_csv([p1], sel, "b", pick=pick)
+            self.assertEqual([r["t"] for r in rows], [40], pick)
+            self.assertEqual([(r["t"], r["reason"]) for r in skipped],
+                             [(48, "pick has no sweep rows")], pick)
+
     def tied_pick(self, tied_rows, other_rows, fmt="q4k,a16", long=True,
                   longest="1.2345678901234567"):
         """The model pick of the T=40 key whose tied rows are written as given, beside other keys.
@@ -775,6 +788,30 @@ class Cli(unittest.TestCase):
         self.assertEqual(json.loads(out.read_text())["provenance"],
                          {"selector_revision": "r1", "build_id": "b1", "holdout": "board",
                           "fit_boards": [], "fit_models": []})
+
+    def test_docs_of_one_board_label_on_two_devices_are_refused(self):
+        # A board label is one device class: two documents naming the label on different devices
+        # (disjoint case ids pass the duplicate check) would pool two GPUs in one by_board cell.
+        def on(name, case_id, device):
+            d = document([case(case_id, "b1", "rmma.a", {"rmma.a": 2.0, "rmma.b": 1.0})])
+            if device:
+                d["device"] = device
+            path = self.root / name
+            path.write_text(json.dumps(d), encoding="utf-8")
+            return path
+
+        a = on("a.json", "q4k.a16.T40", "ga106:28sm")
+        code, err = self.run_main(["--doc", str(a), "--doc", str(on("b.json", "q4k.a16.T48",
+                                                                    "ad102:128sm"))])
+        self.assertEqual(code, 2)
+        self.assertIn("b1", err)
+        self.assertIn("device", err)
+        # The same device, or a document that names none, merges; the report records the mapping.
+        out = self.root / "o.json"
+        for other in (on("c.json", "q4k.a16.T48", "ga106:28sm"), on("d.json", "q4k.a16.T48", None)):
+            self.assertEqual(self.run_main(["--doc", str(a), "--doc", str(other),
+                                            "--json", str(out)])[0], 0)
+            self.assertEqual(json.loads(out.read_text())["board_devices"], {"b1": "ga106:28sm"})
 
     def test_docs_of_another_evaluation_scope_are_refused(self):
         # One selector_revision is one frozen selector with one fit inventory: documents that
