@@ -2333,9 +2333,8 @@ void resolution_rule() {
 }
 
 // #618 step 8: properties of the choice over every board of src/core/data/gpu_facts.json. Host
-// only, no behaviour change. A property that fails today is a finding, not a test failure: it is
-// printed as "FINDING" with the offending case and listed in the PR; the test fails only when the
-// harness itself breaks. Once a finding is fixed, the property moves into check().
+// only, no behaviour change. A property that fails is a finding: it is
+// printed as "FINDING" with the offending case and listed in the PR; any finding fails the test.
 struct PropertyBoard {
     std::string name;
     ch::CardFacts card;
@@ -2404,10 +2403,15 @@ void choice_properties(const json& fixture) {
     ch::Task task;
     task.contexts = {32768};
 
-    // (a) Generation invariance. (a1) The choice reads the board's CardFacts alone: the boards of
-    // gpu_facts.json whose facts are equal under different names and PCI ids (CardFacts has
-    // neither) pick the same. (a2) Boards of one generation pick the same candidate whatever their
-    // rates. (a3) The same call twice gives the same pick (no hidden mutable state).
+    // (a) Determinism and equal facts. choose() takes CardFacts, which carry neither a name nor a
+    // PCI id, so (a1) boards of gpu_facts.json with equal facts under different names pick the same
+    // by construction of the call: it is folded into determinism here (the same facts, the same
+    // pick). Where a name or PCI id could leak into a decision is the device class / GpuInfo path
+    // (choice_card_of in product/plan), which needs the plan's inputs and is not reached by this
+    // host test. (a2) Boards of one generation pick the same candidate today: a snapshot of the
+    // current rules, not an invariant (choose() reads spec rates legitimately, e.g. a DRAM rate
+    // under kVoltaCopyMinDramBps); a finding there is a decision to read, not necessarily a bug.
+    // (a3) The same call twice gives the same pick (no hidden mutable state).
     std::map<std::string, std::pair<std::string, std::string>> by_facts, by_generation;
     int equal_fact_pairs = 0, repeats = 0;
     for (const PropertyBoard& pb : boards) {
@@ -2446,7 +2450,10 @@ void choice_properties(const json& fixture) {
     // (b) Monotonicity, one board of each generation, read from choose()'s output. More weight on
     // accuracy (lambda) never raises the chosen KLD (only where the worth decides: a board whose
     // generation has a deciding reference card); a longer asked context never raises the chosen KV
-    // bytes a token nor the most streams that hold it; more free memory never lowers the stage
+    // bytes a token (this holds because a KV codec's KLD term does not depend on the context and
+    // the request time rises with the bytes read; a codec whose dequantisation costs more time than
+    // its bytes save could legitimately go wider at a longer context, and would be a finding to
+    // read) nor the most streams that hold it; more free memory never lowers the stage
     // (the context the choice settles on, Auto's steps).
     std::set<std::string> seen;
     int lambda_boards = 0, boards_checked = 0;
