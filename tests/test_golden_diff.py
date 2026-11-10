@@ -104,6 +104,42 @@ class DiffTest(unittest.TestCase):
         n, _ = changes("q4 p1 add 8x8 speed-c1 T=1..16 C\n", "q4 p1 add 8x8 speed-c1 T=1 C\n")
         self.assertGreater(n, 0)
 
+    def test_c1_key_on_one_side_only(self):
+        speed = "q4 p1 add 8x8 speed T=1..2048 A\n"
+        n, _ = changes(speed, speed + "q4 p1 add 8x8 speed-c1 T=1 X\n")
+        self.assertEqual(n, 1)  # A -> X at T=1 only
+
+    def test_speed_change_with_c1_pinned_to_old_route(self):
+        old = "q4 p1 add 8x8 speed T=1..2048 A\n"
+        new = "q4 p1 add 8x8 speed T=1..2048 B\nq4 p1 add 8x8 speed-c1 T=1..16 A\n"
+        self.assertEqual(changes(old, new)[0], len(gd.KTOKENS))  # the pinned c1 is no change of its own
+
+    def test_speed_change_counted_once_with_c1_present(self):
+        old = "q4 p1 add 8x8 speed T=1..2048 A\nq4 p1 add 8x8 speed-c1 T=1 A\n"
+        new = "q4 p1 add 8x8 speed T=1..2048 B\nq4 p1 add 8x8 speed-c1 T=1 A\n"
+        self.assertEqual(changes(old, new)[0], len(gd.KTOKENS))
+
+    def test_c1_max_matches_the_test_source(self):
+        src = (Path(__file__).resolve().parent / "ops" / "linear" / "test_selector_golden.cpp").read_text(
+            encoding="utf-8"
+        )
+        m = re.search(r"Profile::SpeedC1 && t > (\d+)\) continue", src)
+        self.assertIsNotNone(m)
+        self.assertEqual(int(m.group(1)), gd.C1_MAX)
+
+    def test_duplicate_release_rows_fail(self):
+        dup = INDEX + "base/a10 111111111111 7b7cafcde150 13.4.92\n"
+        with self.assertRaises(gd.GoldenParseError):
+            gd.resolve(FILES, dup)
+
+    def test_digest_only_change_prints_an_info_line(self):
+        old = {"base": {"a10.7b7cafcde150.txt": "# a10 x y\n# facts aaa\n" + NEW_A}}
+        new = {"base": {"a10.7b7cafcde150.txt": "# a10 x y\n# facts bbb\n" + NEW_A}}
+        index = "release 13.4.92\nbase/a10 c180c3754514 7b7cafcde150 13.4.92\n"
+        out = []
+        self.assertEqual(gd.summarize(old, new, 20, out, index, index), (0, 0, 0))
+        self.assertIn("no decision changes (facts digest: aaa -> bbb)", "\n".join(out))
+
     def test_unsampled_width_fails(self):
         with self.assertRaises(gd.GoldenParseError):
             gd.check_widths(gd.parse_golden("q4 p1 add 8x8 speed T=7 A\n"), "x")

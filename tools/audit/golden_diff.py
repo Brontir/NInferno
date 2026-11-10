@@ -116,8 +116,7 @@ def check_widths(g, name):
 
 
 def decisions(g):
-    """{problem key: {T: route}} over the sampled widths. A speed-c1 width missing at T <= 16
-    answers as the speed route of the same problem (the dump omits it)."""
+    """{problem key: {T: route}} over the sampled widths, as written in the file."""
     table = {}
     for key, runs in g.runs.items():
         row = {}
@@ -126,13 +125,32 @@ def decisions(g):
                 if lo <= t <= hi:
                     row[t] = route
         table[key] = row
-    for key, row in list(table.items()):
-        if key[4] == "speed-c1":
-            speed = table.get(key[:4] + ("speed",), {})
-            for t in KTOKENS:
-                if t <= C1_MAX and t not in row and t in speed:
-                    row[t] = speed[t]
     return table
+
+
+def effective_c1(table, key):
+    """The speed-c1 row of a problem: a width the dump omits (T <= 16, it answers as speed) is
+    the same problem's speed route, also when the file has no speed-c1 key at all."""
+    row = dict(table.get(key, {}))
+    speed = table.get(key[:4] + ("speed",), {})
+    for t in KTOKENS:
+        if t <= C1_MAX and t not in row and t in speed:
+            row[t] = speed[t]
+    return row
+
+
+def c1_rows(key, d_old, d_new):
+    """Old and new effective speed-c1 rows with the widths that are no change of their own
+    blanked: unchanged ones, and ones that merely follow a changed speed route (the pair equals
+    the speed pair at that width, and is counted there)."""
+    so = d_old.get(key[:4] + ("speed",), {})
+    sn = d_new.get(key[:4] + ("speed",), {})
+    ro, rn = effective_c1(d_old, key), effective_c1(d_new, key)
+    for t in KTOKENS:
+        if ro.get(t) == rn.get(t) or (ro.get(t), rn.get(t)) == (so.get(t), sn.get(t)):
+            ro.pop(t, None)
+            rn.pop(t, None)
+    return ro, rn
 
 
 def diff_rows(old, new):
@@ -166,7 +184,11 @@ def diff_golden(old, new):
             res["meta"].append(f"not packed {k[0]} {k[1]}x{k[2]}: {a} -> {b}")
     d_old, d_new = decisions(old), decisions(new)
     for key in sorted(set(d_old) | set(d_new)):
-        segs = diff_rows(d_old.get(key, {}), d_new.get(key, {}))
+        if key[4] == "speed-c1":
+            ro, rn = c1_rows(key, d_old, d_new)
+        else:
+            ro, rn = d_old.get(key, {}), d_new.get(key, {})
+        segs = diff_rows(ro, rn)
         if segs:
             res["segments"][key] = segs
     return res
@@ -226,6 +248,10 @@ def resolve(tree, index_text):
                 hit = [e for e in entries if e[2] == release]
                 if not hit:
                     raise GoldenParseError(f"facts_index.txt: {s}/{board} has no row of release {release}")
+                if len(hit) > 1:
+                    raise GoldenParseError(
+                        f"facts_index.txt: {s}/{board} has {len(hit)} rows of release {release}"
+                    )
                 chosen = f"{board}.{hit[0][1]}.txt"
                 if chosen not in files:
                     raise GoldenParseError(f"facts_index.txt: {s}/{chosen} is listed but missing")
@@ -265,6 +291,8 @@ def summarize(old_tree, new_tree, detail, out, old_index=None, new_index=None):
             res["info"].append(f"facts_index: {a[2] or '-'} -> {b[2] or '-'}")
         changed = sum(widths(v) for v in res["segments"].values())
         if not changed and not res["meta"]:
+            if res["info"]:
+                out.append(f"{label}: no decision changes ({'; '.join(res['info'])})")
             continue
         changed_total += changed
         meta_total += len(res["meta"])
