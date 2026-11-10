@@ -693,6 +693,13 @@ std::size_t shared_planes_bytes(const MoeWeights& w, std::int32_t min_tokens,
 }
 
 } // namespace
+
+bool moe_volta_hmma_admitted(const MoeWeights& weights, const MoeConfig& config) {
+    return volta_hmma_admitted(weights, validate(weights, config));
+}
+
+bool moe_mx8_banks(const MoeWeights& weights) { return mx8_banks(weights); }
+
 } // namespace detail::moe
 
 std::size_t moe_workspace_bytes(const MoeWeights& weights, const MoeConfig& config,

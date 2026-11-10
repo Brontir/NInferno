@@ -475,6 +475,13 @@ struct MoePlanQuery {
 // select_plan with its reason; pure (no kernel runs, no device memory read).
 [[nodiscard]] MoePlanQuery moe_plan_query(const MoeWeights& weights, const MoeConfig& config,
                                           std::int32_t tokens, bool prefill);
+// Whether the layer's banks and geometry take Volta's grouped HMMA stages (MoePlan::volta_hmma):
+// the predicate select_plan and the workspace bound use, on the build's features. Validates the
+// layer (throws as the Op does).
+[[nodiscard]] bool moe_volta_hmma_admitted(const MoeWeights& weights, const MoeConfig& config);
+// Whether two plain MXFP4 banks take the block-scaled MMA with MXFP8 activations (route name
+// "w4a8.mx8") where the plan runs the W4A8 tier.
+[[nodiscard]] bool moe_mx8_banks(const MoeWeights& weights);
 [[nodiscard]] bool table_covers(const MoeWeights& weights, const MoeConfig& config,
                                 std::int32_t tokens);
 // Forgets every tuned plan (tests).

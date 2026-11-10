@@ -1,6 +1,7 @@
 #include "ops/moe/moe_cost.h"
 
 #include "core/generation.h"
+#include "ninferno/ops/linear.h"
 
 #include <algorithm>
 #include <cmath>
@@ -9,10 +10,17 @@ namespace ninferno::ops::detail::moe {
 
 namespace {
 
-// The int8 activation of the R8 and W4A8 tiers as stored: 36 bytes a 32 values (the codes, a scale
-// and a block sum, moe_internal.h), BF16 otherwise.
-constexpr double kInt8ActivationBytesPerValue = 36.0 / 32.0;
-constexpr double kBf16BytesPerValue           = 2.0;
+// The int8 activation of the R8 and W4A8 tiers as stored: 32 codes and a scale a 32-value block
+// (36 bytes), 40 with the block's sum for a format with a min (r8_admits keeps the same list);
+// BF16 otherwise.
+constexpr double kInt8ActivationBytesPerValue       = 36.0 / 32.0;
+constexpr double kInt8SummedActivationBytesPerValue = 40.0 / 32.0;
+constexpr double kBf16BytesPerValue                 = 2.0;
+
+bool format_has_min(QType q) {
+    return q == QType::GGML_Q4_1 || q == QType::GGML_Q5_1 || q == QType::GGML_Q4_K ||
+           q == QType::GGML_Q5_K;
+}
 
 bool int8_activations(MoeStageKernel kind) {
     return kind == MoeStageKernel::R8 || kind == MoeStageKernel::W4a8;
@@ -33,6 +41,7 @@ std::optional<MoeBoardFacts> moe_board_facts(const DeviceClass& device) {
     out.clock_hz              = device.facts.reference_clock_hz();
     out.bf16_ops_per_clock_sm = row.bf16;
     out.s8_ops_per_clock_sm   = row.s8;
+    out.bf16_native           = device.features.mma_bf16_native;
     return out;
 }
 
@@ -50,24 +59,40 @@ std::optional<MoeStagePrice> price_moe_stage(const MoeStageShape& shape, MoeStag
     }
     const double assignments = static_cast<double>(tokens) * shape.top_k;
     const double touched     = expected_experts_touched(shape.experts, shape.top_k, tokens);
-    const double act_value =
-        int8_activations(kind) ? kInt8ActivationBytesPerValue : kBf16BytesPerValue;
+    const double act_value   = !int8_activations(kind)       ? kBf16BytesPerValue
+                               : format_has_min(shape.qtype) ? kInt8SummedActivationBytesPerValue
+                                                             : kInt8ActivationBytesPerValue;
+    // A gate and up stage reads the T rows of x, which a token's k assignments share; a down stage
+    // reads the T x k rows of the activation.
+    const double act_rows =
+        shape.stage == Stage::GateUp ? static_cast<double>(tokens) : assignments;
     MoeStagePrice out;
-    out.bytes = shape.bank_bytes * touched / shape.experts + assignments * shape.cols * act_value +
+    out.bytes = shape.bank_bytes * touched / shape.experts + act_rows * shape.cols * act_value +
                 assignments * shape.out_rows * kBf16BytesPerValue;
     out.dram_seconds = out.bytes / board.dram_bytes_per_s;
     const double ops = 2.0 * assignments * shape.rows * shape.cols;
     double rate      = 0.0; // ops per second the kind's units reach
     switch (kind) {
     case MoeStageKernel::R8:
-        out.compute_priced = false; // dp4a issue work: no term
+        out.compute_priced = false;
+        out.compute_note   = "R8's dp4a issue work has no term in the law";
         break;
     case MoeStageKernel::W4a8:
+        if (shape.mx8) {
+            out.compute_priced = false;
+            out.compute_note   = "the block-scaled MXFP8 MMA has no rate fact of its own";
+            break;
+        }
         rate = board.s8_ops_per_clock_sm * board.sms * board.clock_hz;
         if (rate <= 0) return std::nullopt; // no int8 tensor cores on this generation
         break;
     case MoeStageKernel::RegisterMma:
     case MoeStageKernel::VoltaHmma:
+        if (!board.bf16_native) {
+            out.compute_priced = false;
+            out.compute_note   = "no native BF16 MMA: the generation's rate is a fitted aggregate";
+            break;
+        }
         rate = board.bf16_ops_per_clock_sm * board.sms * board.clock_hz;
         if (rate <= 0) return std::nullopt;
         break;
@@ -85,6 +110,8 @@ std::optional<MoeStageShape> moe_stage_shape(const MoeWeights& weights, const Mo
     if (experts <= 0 || bank.n <= 0 || bank.n % experts != 0) return std::nullopt;
     MoeStageShape s;
     s.stage      = stage;
+    s.qtype      = bank.qtype;
+    s.mx8        = moe_mx8_banks(weights);
     s.bank_bytes = static_cast<double>(bank.payload_bytes);
     s.experts    = experts;
     s.top_k      = config.top_k;
@@ -106,6 +133,8 @@ const char* moe_candidate_status_name(MoeCandidate::Status status) {
         return "dominated";
     case MoeCandidate::Status::PricedBelow:
         return "priced-below";
+    case MoeCandidate::Status::Tied:
+        return "tied";
     case MoeCandidate::Status::Unpriced:
         return "unpriced";
     }
@@ -126,6 +155,26 @@ const char* moe_kernel_name(MoeStageKernel kind) {
     return "?";
 }
 
+MoeCandidate::Status rank_against_selected(const std::optional<MoeStagePrice>& price,
+                                           const std::optional<MoeStagePrice>& selected,
+                                           std::string& why) {
+    if (!price || !selected) {
+        why = "no roofline or no rate for the kind";
+        return MoeCandidate::Status::Unpriced;
+    }
+    if (!price->compute_priced || !selected->compute_priced) {
+        why = !price->compute_priced ? price->compute_note
+                                     : "the selected kind: " + selected->compute_note;
+        return MoeCandidate::Status::Unpriced;
+    }
+    if (std::abs(price->seconds - selected->seconds) <= 1e-12 * selected->seconds) {
+        why = "the same price as the selected kind: the law has no term to order them";
+        return MoeCandidate::Status::Tied;
+    }
+    return price->seconds < selected->seconds ? MoeCandidate::Status::PricedBelow
+                                              : MoeCandidate::Status::Dominated;
+}
+
 std::vector<MoeCandidate> moe_candidates(const MoeWeights& weights, const MoeConfig& config,
                                          std::int32_t tokens, bool prefill, Stage stage) {
     std::vector<MoeCandidate> out;
@@ -144,9 +193,13 @@ std::vector<MoeCandidate> moe_candidates(const MoeWeights& weights, const MoeCon
             return true; // every expert format runs on it (plan_compiled aside: a schedule's tile)
         case MoeStageKernel::R8:
             if (r8_admits(weights, bank, tokens)) return true;
-            why = r8_bank_refusal(bank) != BankRefusal::None
-                      ? bank_refusal_name(r8_bank_refusal(bank))
-                      : "tokens past the bank's R8 limit, or the activation does not fit a CTA";
+            if (!allows_a8(weights.expert_policy)) {
+                why = "the expert policy allows no int8 activations";
+            } else if (r8_bank_refusal(bank) != BankRefusal::None) {
+                why = bank_refusal_name(r8_bank_refusal(bank));
+            } else {
+                why = "tokens past the bank's R8 limit, or the activation does not fit a CTA";
+            }
             return false;
         case MoeStageKernel::W4a8: {
             const BankRefusal refusal = w4a8_bank_refusal(weights, bank);
@@ -155,11 +208,11 @@ std::vector<MoeCandidate> moe_candidates(const MoeWeights& weights, const MoeCon
             return false;
         }
         case MoeStageKernel::VoltaHmma:
-            if (!device.features.mma_tensor && tokens >= 17 &&
-                moe_volta_hmma_codec(generic::codec_of(bank))) {
-                return true;
-            }
-            why = "needs a board without mma.sync, T >= 17 and a codec with an f16 fragment";
+            // The production predicate (select_plan's Volta authority): the build's features, both
+            // banks, the fragment layout rule, K and the geometry; T >= 17 is its threshold.
+            if (tokens >= 17 && moe_volta_hmma_admitted(weights, config)) return true;
+            why = "needs a build without mma.sync, T >= 17 and both banks of a format with an f16 "
+                  "fragment (K and the geometry in whole groups)";
             return false;
         }
         return false;
@@ -173,6 +226,13 @@ std::vector<MoeCandidate> moe_candidates(const MoeWeights& weights, const MoeCon
                                       MoeStageKernel::RegisterMma, MoeStageKernel::VoltaHmma}) {
         MoeCandidate c;
         c.kernel = kind;
+        if (kind == selected) {
+            // The plan runs it: admitted by construction, whatever a predicate here would say.
+            c.status = MoeCandidate::Status::Selected;
+            if (const auto price = priced(kind)) c.seconds = price->seconds;
+            out.push_back(std::move(c));
+            continue;
+        }
         if (!admitted(kind, c.why)) {
             c.status = MoeCandidate::Status::Inadmissible;
             out.push_back(std::move(c));
@@ -180,18 +240,7 @@ std::vector<MoeCandidate> moe_candidates(const MoeWeights& weights, const MoeCon
         }
         const auto price = priced(kind);
         if (price) c.seconds = price->seconds;
-        if (kind == selected) {
-            c.status = MoeCandidate::Status::Selected;
-        } else if (!price || !selected_price) {
-            c.status = MoeCandidate::Status::Unpriced;
-            c.why    = "no roofline or no rate for the kind";
-        } else if (!price->compute_priced || !selected_price->compute_priced) {
-            c.status = MoeCandidate::Status::Unpriced;
-            c.why    = "R8's issue-rate work has no term in the law: not comparable";
-        } else {
-            c.status = price->seconds < selected_price->seconds ? MoeCandidate::Status::PricedBelow
-                                                                : MoeCandidate::Status::Dominated;
-        }
+        c.status = rank_against_selected(price, selected_price, c.why);
         out.push_back(std::move(c));
     }
     return out;

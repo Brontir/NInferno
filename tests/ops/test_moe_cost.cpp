@@ -1,12 +1,28 @@
 // The MoE stage price (ops/moe/moe_cost.h, #616 step 4): the law's own terms on small cases, the
 // candidate list on a layer of the lab's models, and the replica: every MoE row of the sweeps on
-// disk (routes/<class>.json "moe": evidence_us / evidence_decode_us rows [T, default us, chosen
-// us], measured by ninferno_moe_bench --plans sweep on the board of the table), priced by
-// price_moe_stage on that board's facts with the table's own plan, predicted against measured:
-// the ratio (a floor: it must not exceed 1) and the rank agreement of predicted and measured times
-// across the rows of a board (Kendall's concordance; a tie in the prediction is counted apart, the
-// law having no term to order two plans of the same bytes). Host only, no GPU; it changes no route
-// (the moe plan goldens are the check of that).
+// disk (routes/<class>.json "moe": rows [T, default us, chosen us]; "evidence_us" comes from the
+// MoE sweep of the bench, "evidence_decode_us" from the load-time MoE tuner, the minimum over
+// the candidates' medians), priced by price_moe_stage on that board's facts with the table's own
+// plan, predicted against measured. Only the boards whose table holds that board's own sweep are
+// replayed: RTX 4060 Ti, RTX 5090, RTX 5080, RTX 5060 Ti (the RTX 5070 Ti table's MoE section is
+// the RTX 5080's sweep, so it is not a source). Every row of those tables is either replayed or
+// counted under the reason it was not, the counts are printed, an unknown expert format fails
+// the test, and the number of replayed rows per board is asserted exactly (a renamed field or a
+// new format cannot empty the replica silently).
+//
+// Two checks, both verification thresholds chosen for this test (not measured facts of a chip,
+// not published numbers):
+//   - predicted / measured of every replayed row is at most 1.10. The price is the bytes and the
+//     unit rates, a lower bound of a call that reads x and the weights once. It is not a physical
+//     floor in the tuner's regime: the same x is fed every repetition, so the L2 serves its
+//     re-reads (and part of the weights on a small bank), and a measured time can sit below the
+//     price. 10 % is the slack the checked boards need over that effect (the largest ratio is
+//     1.005, the RTX 4060 Ti).
+//   - the rank agreement of predicted and measured times across the rows of a board (Kendall's
+//     concordance over the pairs the prediction orders) is above 0.8; a tie in the prediction is
+//     counted apart, the law having no term to order two plans of the same bytes. It is high
+//     mostly because both times grow with T.
+// Host only, no GPU; it changes no route (the moe plan goldens are the check of that).
 #include "ops/quantized_weight.h"
 
 #include "core/device_class.h"
@@ -15,6 +31,7 @@
 #include "ops/generic/selector_facts.h"
 #include "ops/moe/moe_cost.h"
 #include "ops/moe/moe_internal.h"
+#include "runtime/engine/interleave_cost.h"
 
 #include <nlohmann/json.hpp>
 
@@ -144,6 +161,92 @@ void law_checks() {
           "no int8 tensor cores: no W4A8 price");
     check(!moe::price_moe_stage(moe::MoeStageShape{}, moe::MoeStageKernel::R8, 1, board),
           "an empty shape has no price");
+
+    // The terms by hand, exactly: at T = 1 a gate/up stage touches 10 of 100 experts (1e8 bytes),
+    // reads one row of x (1000 values, BF16) and writes 10 assignments x 500 rows (BF16).
+    const auto close = [](double a, double b) { return std::abs(a - b) <= 1e-9 * std::abs(b); };
+    check(decode && close(decode->bytes, 1e8 + 1000 * 2.0 + 10 * 500 * 2.0),
+          "decode bytes: touched experts + x once + the outputs");
+    check(decode && close(decode->dram_seconds, decode->bytes / 1e12), "DRAM seconds = bytes / bw");
+    // 2 x 4096 x 10 assignments x 1000 rows x 1000 cols over 64 x 100 x 2e9 ops/s.
+    check(wide && close(wide->compute_seconds, 2.0 * 4096 * 10 * 1000 * 1000 / (64.0 * 100 * 2e9)),
+          "compute seconds = 2 x assignments x rows x cols / (rate x SMs x clock)");
+    check(wide && w4 && close(wide->compute_seconds / w4->compute_seconds, 2048.0 / 64.0),
+          "the int8 tier's compute time is the rate ratio, no other factor");
+    // A down stage reads its T x k activation rows (10 x as many as a gate/up's x).
+    moe::MoeStageShape down = s;
+    down.stage              = moe::Stage::Down;
+    const auto down_price = moe::price_moe_stage(down, moe::MoeStageKernel::RegisterMma, 1, board);
+    check(down_price && close(down_price->bytes, 1e8 + 10 * 1000 * 2.0 + 10 * 500 * 2.0),
+          "a down stage reads one activation row per assignment");
+    // The int8 activation: 36 bytes a 32 values, 40 with a block sum (a format with a min).
+    moe::MoeStageShape k4 = s;
+    k4.qtype              = QType::GGML_Q4_K;
+    const auto a8_plain   = moe::price_moe_stage(s, moe::MoeStageKernel::W4a8, 1, board);
+    const auto a8_min     = moe::price_moe_stage(k4, moe::MoeStageKernel::W4a8, 1, board);
+    check(a8_plain && a8_min && close(a8_min->bytes - a8_plain->bytes, 1000 * 4.0 / 32.0),
+          "a format with a min adds the block sum to the int8 activation");
+
+    // Where the law has no rate fact the compute term is absent and says why.
+    moe::MoeStageShape mx = s;
+    mx.mx8                = true;
+    const auto mx8        = moe::price_moe_stage(mx, moe::MoeStageKernel::W4a8, 4096, board);
+    check(mx8 && !mx8->compute_priced && !mx8->compute_note.empty() &&
+              mx8->seconds == mx8->dram_seconds,
+          "the block-scaled MXFP8 stage is not priced at the int8 rate");
+    check(w4 && w4->compute_priced && w4->compute_note.empty(), "the plain W4A8 stage is priced");
+    moe::MoeBoardFacts emulated = board;
+    emulated.bf16_native        = false;
+    for (const moe::MoeStageKernel kind :
+         {moe::MoeStageKernel::RegisterMma, moe::MoeStageKernel::VoltaHmma}) {
+        const auto p = moe::price_moe_stage(s, kind, 4096, emulated);
+        check(p && !p->compute_priced && !p->compute_note.empty() && p->seconds == p->dram_seconds,
+              "no native BF16 MMA: the fitted aggregate rate does not price the compute");
+    }
+
+    // The ranking of two prices: an unpriced side is not ranked, equal prices tie.
+    std::string why;
+    using Status     = moe::MoeCandidate::Status;
+    const auto cheap = moe::price_moe_stage(s, moe::MoeStageKernel::RegisterMma, 4096, board);
+    const auto same  = moe::price_moe_stage(s, moe::MoeStageKernel::VoltaHmma, 4096, board);
+    check(cheap && same && moe::rank_against_selected(same, cheap, why) == Status::Tied &&
+              !why.empty(),
+          "two kinds of equal price are a tie, not one dominated");
+    check(cheap && w4 && moe::rank_against_selected(w4, cheap, why) == Status::PricedBelow &&
+              moe::rank_against_selected(cheap, w4, why) == Status::Dominated,
+          "a cheaper kind is priced below, a dearer one dominated");
+    const auto emulated_a =
+        moe::price_moe_stage(s, moe::MoeStageKernel::RegisterMma, 4096, emulated);
+    const auto emulated_b = moe::price_moe_stage(s, moe::MoeStageKernel::VoltaHmma, 4096, emulated);
+    check(emulated_a && emulated_b &&
+              moe::rank_against_selected(emulated_a, emulated_b, why) == Status::Unpriced &&
+              !why.empty(),
+          "Volta's HMMA and the emulated register MMA are not ranked by the fitted rate");
+    check(moe::rank_against_selected(std::nullopt, cheap, why) == Status::Unpriced,
+          "no price, no rank");
+}
+
+// The expert-coverage law has several copies; this one is bound to the runtime's (fixed point,
+// runtime/engine/interleave_cost.h) on a grid, so that they cannot drift apart unseen.
+void coverage_binding_checks() {
+    for (const std::uint32_t experts : {8U, 32U, 64U, 128U, 256U, 512U}) {
+        for (const std::uint32_t top_k : {1U, 2U, 4U, 8U, 22U}) {
+            if (top_k > experts) continue;
+            for (const std::uint32_t tokens : {0U, 1U, 2U, 3U, 7U, 16U, 64U, 300U}) {
+                const double here = moe::expected_experts_touched(
+                    static_cast<std::int32_t>(experts), static_cast<std::int32_t>(top_k),
+                    static_cast<std::int32_t>(tokens));
+                const double there =
+                    static_cast<double>(
+                        ninferno::runtime::touched_expert_fraction_q32(experts, top_k, tokens)) /
+                    4294967296.0 * experts;
+                check(std::abs(here - there) <= 1e-6 * experts,
+                      "expert coverage E=" + std::to_string(experts) +
+                          " k=" + std::to_string(top_k) + " T=" + std::to_string(tokens) + ": " +
+                          std::to_string(here) + " vs the runtime's " + std::to_string(there));
+            }
+        }
+    }
 }
 
 // The candidates of a layer on boards of three generations: the statuses the law gives.
@@ -164,10 +267,19 @@ void candidate_checks() {
                         check(!c.why.empty() && !c.seconds,
                               std::string(name) + ": an inadmissible candidate says why");
                     }
-                    if (c.status == moe::MoeCandidate::Status::Dominated ||
-                        c.status == moe::MoeCandidate::Status::PricedBelow) {
+                    const bool ranked = c.status == moe::MoeCandidate::Status::Dominated ||
+                                        c.status == moe::MoeCandidate::Status::PricedBelow ||
+                                        c.status == moe::MoeCandidate::Status::Tied;
+                    if (ranked) {
                         check(c.kernel != moe::MoeStageKernel::R8,
                               "R8 is never ranked by a law that does not price it");
+                        // Volta and Turing have no native BF16 MMA: the generation's BF16 rate is
+                        // a fitted aggregate there, so no kind is ranked by the law on them.
+                        check(d.features.mma_bf16_native,
+                              std::string(name) + ": a kind ranked without a native BF16 MMA");
+                    }
+                    if (c.status == moe::MoeCandidate::Status::Unpriced) {
+                        check(!c.why.empty(), std::string(name) + ": an unpriced kind says why");
                     }
                 }
                 check(selected == 1, std::string(name) + " T=" + std::to_string(t) +
@@ -177,6 +289,12 @@ void candidate_checks() {
         }
     }
 }
+
+// The verification thresholds of the header (chosen for this test, not measured facts).
+constexpr double kFloorTolerance = 1.10;
+constexpr double kMinConcordance = 0.8;
+// The tables carry no activation field; the one non-gated (relu^2) layer is Nemotron's.
+constexpr std::int32_t kRelu2Hidden = 2688;
 
 struct Row {
     double predicted, measured;
@@ -193,15 +311,15 @@ void replica(const std::filesystem::path& routes_dir) {
     struct Source {
         const char* file;
         const char* board;
+        std::size_t expected_rows; // the rows of its table the replica replays, exactly
     };
 
-    const Source sources[] = {{"ad106.json", "rtx4060ti"},
-                              {"gb202.json", "rtx5090"},
-                              {"gb203.json", "rtx5080"},
-                              {"gb203-70sm.json", "rtx5070ti"},
-                              {"gb206.json", "rtx5060ti"}};
-    std::printf("replica: price_moe_stage (bytes law + roofline, no fitted constant) against the "
-                "sweeps in routes/*.json\n");
+    const Source sources[] = {{"ad106.json", "rtx4060ti", 19},
+                              {"gb202.json", "rtx5090", 9},
+                              {"gb203.json", "rtx5080", 23},
+                              {"gb206.json", "rtx5060ti", 24}};
+    std::printf("replica: price_moe_stage (bytes law + roofline) against the sweeps in "
+                "routes/*.json\n");
     std::printf("%-10s %5s %12s %8s %8s %12s %9s\n", "board", "rows", "geomean p/m", "min", "max",
                 "concordance", "pred ties");
     for (const Source& source : sources) {
@@ -214,19 +332,29 @@ void replica(const std::filesystem::path& routes_dir) {
         check(facts.has_value(), std::string(source.board) + ": the board has a roofline");
         if (!facts) continue;
         std::vector<Row> rows;
+        // The rows of the table not replayed, by reason.
+        std::map<std::string, int> skipped;
         for (const Json& e : table.value("moe", Json::array())) {
-            const auto q  = qtype_of(e.at("format").get<std::string>());
-            const auto dq = qtype_of(e.value("down_format", e.at("format").get<std::string>()));
-            if (!q || !dq) continue;
+            const std::string format = e.at("format").get<std::string>();
+            const std::string down   = e.value("down_format", format);
+            const auto q             = qtype_of(format);
+            const auto dq            = qtype_of(down);
+            if (!q || !dq) {
+                check(false,
+                      std::string(source.board) +
+                          ": an expert format the test cannot build: " + (q ? down : format));
+                continue;
+            }
             const std::int32_t experts = e.at("experts"), top_k = e.at("top_k"),
                                hidden = e.at("hidden"), inter = e.at("inter");
-            // Nemotron's mixer is the one non-gated (relu^2) layer of the tables.
-            const bool relu2 = hidden == 2688;
+            // The tables carry no activation field: Nemotron's mixer (hidden 2688) is the one
+            // non-gated (relu^2) layer of them.
+            const bool relu2 = hidden == kRelu2Hidden;
             std::unique_ptr<Built> layer;
             try {
                 layer = build(*q, *dq, experts, top_k, hidden, inter, relu2);
             } catch (const std::invalid_argument& error) {
-                std::printf("%-10s skipped a layer: %s\n", source.board, error.what());
+                ++skipped[std::string("layer the fixture cannot pack: ") + error.what()];
                 continue;
             }
             const moe::MoeRouteKey key = moe::route_key(layer->weights, layer->config);
@@ -237,14 +365,30 @@ void replica(const std::filesystem::path& routes_dir) {
                     const std::int32_t t   = row.at(0);
                     const double chosen_us = row.at(2).get<double>();
                     const auto plan        = moe::table_plan(key, t, prefill);
-                    if (!plan || chosen_us <= 0) continue;
+                    if (chosen_us <= 0) {
+                        ++skipped["no measured time"];
+                        continue;
+                    }
+                    if (!plan) {
+                        ++skipped["no table plan at that T"];
+                        continue;
+                    }
                     const auto seconds =
                         moe::moe_layer_seconds(layer->weights, layer->config, *plan, t, *facts);
-                    if (!seconds) continue;
+                    if (!seconds) {
+                        ++skipped["no price"];
+                        continue;
+                    }
                     rows.push_back({*seconds, chosen_us * 1e-6});
                 }
             }
         }
+        for (const auto& [reason, count] : skipped) {
+            std::printf("%-10s skipped %d row(s): %s\n", source.board, count, reason.c_str());
+        }
+        check(rows.size() == source.expected_rows,
+              std::string(source.board) + ": replayed " + std::to_string(rows.size()) +
+                  " rows, expected " + std::to_string(source.expected_rows));
         if (rows.empty()) {
             std::printf("%-10s %5d (no rows)\n", source.board, 0);
             continue;
@@ -276,14 +420,17 @@ void replica(const std::filesystem::path& routes_dir) {
                 : 0.0;
         std::printf("%-10s %5zu %12.3f %8.3f %8.3f %12.3f %9ld\n", source.board, rows.size(),
                     geomean_ratio(rows), lo, hi, concordance, ties);
-        // A floor: no stage runs faster than its bytes and its roofline, so the prediction never
-        // exceeds the measurement by more than the uniform-routing assumption's slack.
-        check(hi <= 1.10, std::string(source.board) +
-                              ": a row's predicted floor exceeds its "
-                              "measured time by more than 10 % (" +
-                              std::to_string(hi) + ")");
-        check(concordance > 0.5, std::string(source.board) + ": the prediction orders the rows "
-                                                             "no better than chance");
+        // The verification thresholds of the header: the price is not a physical floor where the
+        // same x is read every repetition, so a row may exceed 1 by the L2's share.
+        check(hi <= kFloorTolerance, std::string(source.board) +
+                                         ": a row's predicted time exceeds its measured time by "
+                                         "more than the tolerance (" +
+                                         std::to_string(hi) + " > " +
+                                         std::to_string(kFloorTolerance) + ")");
+        check(concordance > kMinConcordance,
+              std::string(source.board) + ": the prediction orders the rows no better than " +
+                  std::to_string(kMinConcordance) + " of the pairs (" +
+                  std::to_string(concordance) + ")");
     }
 }
 
@@ -293,6 +440,7 @@ int main() {
     try {
         law_checks();
         candidate_checks();
+        coverage_binding_checks();
         replica(std::filesystem::path(NINFERNO_ROUTES_DIR));
     } catch (const std::exception& error) {
         std::fprintf(stderr, "moe cost: %s\n", error.what());
