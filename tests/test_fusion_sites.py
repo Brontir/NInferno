@@ -26,7 +26,7 @@ REQUIRED = ("id", "name", "layer", "fuses", "decided_in", "rule_today", "alterna
             "evidence")
 # Any slash-separated path with a source or doc extension, in any directory (not only src/).
 PATH_IN_TEXT = re.compile(
-    r"(?<![\w/.-])((?:[\w+-]+/)+[\w+.-]+\.(?:cpp|cc|cu|cuh|h|hpp|inl|md|json|py|cmake|sh))\b")
+    r"(?<![\w/.-])((?:[\w+.-]+/)+[\w+.-]+\.(?:cpp|cc|cu|cuh|h|hpp|inl|md|json|py|cmake|sh|txt))\b")
 
 
 def load():
@@ -192,6 +192,8 @@ class FusionSites(unittest.TestCase):
     def test_path_regex_accepts_dotted_basenames(self):
         self.assertEqual(PATH_IN_TEXT.findall("see docs/v0.1.0.md and a/b/c.cu."),
                          ["docs/v0.1.0.md", "a/b/c.cu"])
+        self.assertEqual(PATH_IN_TEXT.findall("docs/qwen3.5/perf.md and tests/CMakeLists.txt"),
+                         ["docs/qwen3.5/perf.md", "tests/CMakeLists.txt"])
 
     def test_invariant_pin_and_parity_test(self):
         for s in self.sites:

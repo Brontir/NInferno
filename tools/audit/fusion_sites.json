@@ -709,7 +709,7 @@
                     "#617 analysis (GDN row)",
                     "src/ops/gdn_input_proj/fp8/fp8_gdn_conv_plan.cpp"
                 ],
-                "oracle_test": "tests/ops/test_gdn_input_proj_conv_snapshot.cpp"
+                "oracle_test": null
             },
             {
                 "id": "gdn_conv_q8",
