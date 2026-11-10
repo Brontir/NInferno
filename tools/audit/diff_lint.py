@@ -10,6 +10,10 @@ macros. Where it is not precise it warns; it fails only where a finding is near 
                    the line above), when the only uses are member initializers or comments, or when the
                    name is passed to an UPPER_CASE macro (it may be generated). Operators, constructors,
                    destructors, names under 3 characters and `main` are skipped.
+  bad-literal      (FAILS, exit 1) an added line in a .c/.cc/.cpp/.cu/.h/.cuh/.hpp/.inl file that ends
+                   inside an ordinary string or char literal (a real newline where `\n` was meant), or in a
+                   .py file inside a single-quoted string. Comments, escapes, '"', C++ raw strings (tracked
+                   across lines in the whole file) and Python triple quotes are understood.
   removed-include  (WARNS) a removed quoted #include whose header defines, at column 0, a type the file
                    still uses, when no remaining include reaches the header. Forward declarations count
                    as a declaration; a file with an include that cannot be resolved is skipped.
@@ -24,7 +28,8 @@ for a deliberate removal, a line `diff-lint: allow removed-def NAME` (or `remove
 commit message of the PR.
 
 Usage: diff_lint.py [--base REF] [--head REV] [--exact]   (default: merge base with origin/master, HEAD)
-Exit 1 on a removed-def finding.
+       diff_lint.py --scan-tree [--head REV]   (bad-literal over every line of the tree, not a diff)
+Exit 1 on a removed-def or bad-literal finding.
 """
 import argparse
 import os
@@ -36,6 +41,7 @@ ALLOW = "diff-lint: allow"
 CODE_EXT = {".h", ".hpp", ".cpp", ".cc", ".c", ".cu", ".cuh", ".py", ".sh", ".cmake"}
 CXX_EXT = {".h", ".hpp", ".cpp", ".cc", ".c", ".cu", ".cuh"}
 DEF_EXT = {".h", ".cpp", ".cu", ".cuh"}
+LIT_CXX_EXT = {".c", ".cc", ".cpp", ".cu", ".h", ".cuh", ".hpp", ".inl"}
 SKIP_DIRS = ("third_party/", "routes/", "build/")
 MIN_RUN = 4
 LONG_COPY = 10
@@ -411,6 +417,126 @@ def removed_includes(tree, files, allow=frozenset()):
     return out
 
 
+# ---------------------------------------------------------------- rule: line ends inside a string literal
+
+RAW_PREFIX = re.compile(r"(?:u8|u|U|L)?R$")
+
+
+def cxx_open_lines(text):
+    """1-based numbers of lines that end inside an ordinary string or char literal (C/C++).
+
+    Comments and raw strings R"d(...)d" are tracked across lines; a backslash at the end of the line
+    continues the literal and is not reported. After a report the scan restarts in code on the next line."""
+    bad, block, raw, carry = [], False, None, None  # raw: the closing `)delim"` while inside a raw string
+    for num, line in enumerate(text.split("\n"), 1):
+        line = line.rstrip("\r")
+        i, n, quote, carry = 0, len(line), carry, None
+        while i < n:
+            c = line[i]
+            if raw is not None:
+                j = line.find(raw, i)
+                if j < 0:
+                    i = n
+                else:
+                    i, raw = j + len(raw), None
+            elif block:
+                j = line.find("*/", i)
+                if j < 0:
+                    i = n
+                else:
+                    i, block = j + 2, False
+            elif quote:
+                if c == "\\":
+                    if i + 1 == n:  # line continuation: the literal goes on in the next line
+                        carry, quote = quote, None
+                        break
+                    i += 2
+                    continue
+                if c == quote:
+                    quote = None
+                i += 1
+            elif line.startswith("//", i):
+                i = n  # (a trailing backslash would continue a comment: harmless to ignore)
+            elif line.startswith("/*", i):
+                block, i = True, i + 2
+            elif c == '"':
+                m = RAW_PREFIX.search(line[:i])
+                d = re.match(r"[^\s()\\]{0,16}\(", line[i + 1:]) if m else None
+                if d and not (m.start() > 0 and (line[m.start() - 1].isalnum() or line[m.start() - 1] == "_")):
+                    raw = ")" + d.group(0)[:-1] + '"'
+                    i += 1 + d.end()
+                else:
+                    quote, i = '"', i + 1
+            elif c == "'":
+                tok = re.search(r"[0-9A-Za-z_.]*$", line[:i]).group(0)
+                if tok[:1].isdigit():  # a C++14 digit separator: 1'000'000
+                    i += 1
+                else:
+                    quote, i = "'", i + 1
+            else:
+                i += 1
+        if quote and not (bad and bad[-1] == num - 1):  # the tail of a broken literal is not a second finding
+            bad.append(num)
+    return bad
+
+
+def py_open_lines(text):
+    """1-based numbers of lines that end inside a single-quoted (not triple-quoted) Python string."""
+    bad, triple, carry = [], None, None
+    for num, line in enumerate(text.split("\n"), 1):
+        line = line.rstrip("\r")
+        i, n, quote, carry = 0, len(line), carry, None
+        while i < n:
+            c = line[i]
+            if triple:
+                if c == "\\":
+                    i += 2
+                elif line.startswith(triple, i):
+                    i, triple = i + 3, None
+                else:
+                    i += 1
+            elif quote:
+                if c == "\\":
+                    if i + 1 == n:
+                        carry, quote = quote, None
+                        break
+                    i += 2
+                    continue
+                if c == quote:
+                    quote = None
+                i += 1
+            elif c == "#":
+                break
+            elif c in "\"'":
+                if line.startswith(c * 3, i):
+                    triple, i = c * 3, i + 3
+                else:
+                    quote, i = c, i + 1
+            else:
+                i += 1
+        if quote and not (bad and bad[-1] == num - 1):
+            bad.append(num)
+    return bad
+
+
+def bad_literals(path, content, only=None):
+    """Findings for lines (restricted to the line numbers in `only`) that end inside a string literal."""
+    if content is None:
+        return []
+    e = ext(path)
+    if e in LIT_CXX_EXT:
+        lines = cxx_open_lines(content)
+    elif e == ".py":
+        lines = py_open_lines(content)
+    else:
+        return []
+    src = content.split("\n")
+    return [(path, n, "bad-literal",
+             "the line ends inside an unterminated string or char literal (a real newline where `\\n` "
+             "was meant?)") for n in lines
+            if (only is None or n in only) and ALLOW not in src[n - 1]]
+
+
 # ---------------------------------------------------------------- driver
 
 def lint(diff_text, tree, allow=frozenset()):
@@ -419,6 +545,9 @@ def lint(diff_text, tree, allow=frozenset()):
     for path, d in files.items():
         if lintable(path, CODE_EXT) and d["added"]:
             findings += dup_blocks(path, d["added"], tree.read(path))
+    for path, d in files.items():
+        if lintable(path, LIT_CXX_EXT | {".py"}) and d["added"]:
+            findings += bad_literals(path, tree.read(path), {n for n, _ in d["added"]})
     removed = [(p, d["removed"]) for p, d in files.items()]
     removed += [(p, [rows]) for p, rows in parse_deleted(diff_text).items()]
     findings += removed_calls(tree, removed, allow)
@@ -431,11 +560,19 @@ def main(argv=None):
     ap.add_argument("--base", default="origin/master")
     ap.add_argument("--head", default="HEAD")
     ap.add_argument("--exact", action="store_true", help="diff BASE..HEAD instead of from the merge base")
+    ap.add_argument("--scan-tree", action="store_true", help="bad-literal over every line of HEAD's tree")
     a = ap.parse_args(argv)
 
     def git(*x):
         return subprocess.run(["git", *x], capture_output=True, text=True, encoding="utf-8",
                               errors="replace", check=True).stdout
+
+    if a.scan_tree:
+        tree = GitTree(a.head)
+        found = [f for p in tree.names() if lintable(p, LIT_CXX_EXT | {".py"}) for f in bad_literals(p, tree.read(p))]
+        for path, line, rule, why in found:
+            print(f"{path}:{line}: [{rule}] {why}")
+        return 1 if found else 0
 
     base = a.base if a.exact else git("merge-base", a.base, a.head).strip()
     allow = set(re.findall(r"diff-lint: allow (removed-def|removed-include) (\S+)",

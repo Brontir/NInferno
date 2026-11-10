@@ -330,5 +330,92 @@ class Main(unittest.TestCase):
         self.assertIn("::warning file=src/use.cpp,line=1,title=diff-lint removed-include::", out)
 
 
+def lits(path, text, added=None):
+    """bad-literal findings for a file; `added` = 1-based added line numbers (default: all lines)."""
+    n = len(text.split("\n")) if added is None else None
+    rows = text.split("\n")
+    added = added or list(range(1, n + 1))
+    d = diff(path, added=[rows[i - 1] for i in added], new_start=added[0])
+    return [f[1] for f in dl.lint(d, dl.DictTree({path: text})) if f[2] == "bad-literal"]
+
+
+class BadLiteral(unittest.TestCase):
+    def test_newline_inside_a_cpp_string_is_flagged_at_the_first_line(self):
+        text = 'void f() {\n    std::cout << "SKIP: no usable CUDA device\n                 ";\n}\n'
+        self.assertEqual(lits("t.cpp", text, [2, 3]), [2])
+
+    def test_only_added_lines_are_reported(self):
+        text = 'void f() {\n    std::cout << "SKIP\n                 ";\n}\n'
+        self.assertEqual(lits("t.cpp", text, [4]), [])
+
+    def test_all_cpp_extensions(self):
+        for name in ("a.c", "a.cc", "a.cu", "a.h", "a.cuh", "a.hpp", "a.inl"):
+            self.assertEqual(lits(name, 'const char* s = "abc\n";\n', [1]), [1], name)
+
+    def test_char_literal_with_a_quote_is_valid(self):
+        text = "char q = '\"';\nconst char* s = \"a\" '\"' \"b\";\nchar a = '\\'';\n"
+        self.assertEqual(lits("t.cpp", text), [])
+
+    def test_escaped_quote_is_valid(self):
+        text = 'const char* s = "say \\"hi\\"";\nconst char* t = "backslash \\\\";\n'
+        self.assertEqual(lits("t.cpp", text), [])
+
+    def test_escaped_quote_at_the_end_is_unterminated(self):
+        self.assertEqual(lits("t.cpp", 'const char* s = "say \\"\n'), [1])
+
+    def test_line_continuation_inside_a_string_is_valid(self):
+        self.assertEqual(lits("t.cpp", '#define MSG "first \\\n second"\n'), [])
+
+    def test_raw_string_spanning_lines_is_valid(self):
+        text = ('const char* k = R"cuda(\n__global__ void f() { printf("x\\n"); }\nit\'s "quoted\n)cuda";\n'
+                'const char* m = R"(a\nb)" "c";\nint after = 1;\n')
+        self.assertEqual(lits("t.cu", text), [])
+
+    def test_text_after_a_raw_string_is_still_checked(self):
+        self.assertEqual(lits("t.cpp", 'auto a = R"x(\nbody)x"; auto b = "oops\n;\n'), [2])
+
+    def test_line_comment_with_a_quote_is_valid(self):
+        text = '// it\'s "quoted\nint x = 1;  // don\'t "\n/* a " b\n still " comment */ int y;\n'
+        self.assertEqual(lits("t.cpp", text), [])
+
+    def test_quote_inside_a_string_after_a_comment_marker(self):
+        self.assertEqual(lits("t.cpp", 'const char* u = "http://x"; int z;\n'), [])
+
+    def test_digit_separator_is_not_a_char_literal(self):
+        self.assertEqual(lits("t.cpp", "int n = 1'000'000;\nunsigned m = 0xFF'FF;\n"), [])
+
+    def test_broken_literal_is_isolated_to_its_line(self):
+        text = 'a = "x\nb = 1;\nc = "y\n'
+        self.assertEqual(lits("t.cpp", text), [1, 3])
+
+    def test_allow_marker(self):
+        self.assertEqual(lits("t.cpp", 'a = "x // diff-lint: allow\n"\n', [1]), [])
+
+    def test_python_single_quoted_string_with_a_newline_is_flagged(self):
+        text = "print('no usable CUDA device\n      ')\n"
+        self.assertEqual(lits("t.py", text), [1])
+
+    def test_python_double_quoted_is_flagged_and_valid_forms_are_not(self):
+        self.assertEqual(lits("t.py", 'x = "abc\n"\n'), [1])
+        ok = ("a = 'it\\'s'\nb = \"say \\\"hi\\\"\"  # it's \"quoted\nc = 'one \\\n two'\nd = '\"' + \"'\"\n")
+        self.assertEqual(lits("t.py", ok), [])
+
+    def test_python_triple_quoted_string_may_span_lines(self):
+        text = ('"""Doc string\nwith it\'s "quotes" and one more "\n"""\nx = \'\'\'a\nb "c\n\'\'\'\n'
+                'y = f"""\n{1}\n"""\nz = 1\n')
+        self.assertEqual(lits("t.py", text), [])
+
+    def test_python_triple_quote_then_broken_line(self):
+        self.assertEqual(lits("t.py", 'x = """a\nb"""\ny = \'oops\n\'\n'), [3])
+
+    def test_other_files_are_not_checked(self):
+        self.assertEqual(lits("t.sh", 'echo "a\nb"\n'), [])
+
+    def test_cli_exits_1_and_names_file_and_line(self):
+        code, out = git_repo_main({"t.cpp": "int x;\n"}, {"t.cpp": 'int x;\nconst char* s = "a\n";\n'})
+        self.assertEqual(code, 1)
+        self.assertIn("t.cpp:2: [bad-literal]", out)
+
+
 if __name__ == "__main__":
     unittest.main()
