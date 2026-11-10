@@ -184,3 +184,9 @@ ninferno_add_test(ninferno_generic_routes_host_test
 target_sources(ninferno_generic_routes_host_test PRIVATE ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp)
 target_compile_definitions(ninferno_generic_routes_host_test PRIVATE NINFERNO_HOST_ONLY)
 cmake_language(DEFER CALL ninferno_assert_host_only ninferno_generic_routes_host_test)
+
+# Link-order check (#620 step 11): an executable that links only ninferno_ops and reaches
+# ninferno_ops_host's kernel_facts.cpp must resolve current_device_class() from ninferno_core whatever
+# else it links. Linked against the archives themselves, not the shared test library.
+ninferno_add_test(ninferno_ops_link_only_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_ops_link_only.cpp")
+target_link_libraries(ninferno_ops_link_only_test PRIVATE ninferno_ops)
