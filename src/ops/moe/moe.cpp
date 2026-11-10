@@ -8,6 +8,7 @@
 #include "core/ggml_frag.h"
 #include "core/layout.h"
 #include "ninferno/ops/prefill_routes.h"
+#include "ninferno/ops/route_table.h"
 #include "ops/common/math.h"
 #include "ops/common/native_nvfp4.h"
 #include "ops/generic/generic_gemm.h"
