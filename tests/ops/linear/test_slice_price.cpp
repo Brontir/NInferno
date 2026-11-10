@@ -24,6 +24,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -61,6 +62,25 @@ std::string selected(const generic::Problem& p, const Weight& w, std::int32_t t,
     try {
         return generic::route_name(generic::select_route(p, w, t, prefill));
     } catch (const std::exception& error) { return std::string("threw: ") + error.what(); }
+}
+
+// Whether `f` throws. A host without a GPU cannot answer every call (ggml's matrix kernel reads
+// the device's properties for its column tiles): the slice must then throw as its own shape does,
+// and the pair is counted as not compared.
+int not_compared = 0;
+
+template <class F>
+bool throws(F&& f) {
+    try {
+        f();
+        return false;
+    } catch (const std::exception&) { return true; }
+}
+
+bool both_answer(bool own_threw, bool slice_threw, const std::string& at) {
+    check(own_threw == slice_threw, at + ": the slice throws where its own shape does");
+    if (own_threw || slice_threw) ++not_compared;
+    return !own_threw && !slice_threw;
 }
 
 constexpr std::int32_t kK = 4096, kOwnRows = 1024, kParentRows = 8192;
@@ -110,15 +130,24 @@ int main() {
                         const std::string at = call + " T=" + std::to_string(t);
                         // The selector, at the speed profile and in the prefill band.
                         for (const bool prefill : {false, true}) {
-                            const std::string o = selected(p, own, t, prefill);
-                            const std::string s = selected(p, parent, t, prefill);
+                            const std::string o     = selected(p, own, t, prefill);
+                            const std::string s     = selected(p, parent, t, prefill);
+                            const std::string where = at + (prefill ? " prefill" : " speed");
+                            if (!both_answer(o.starts_with("threw"), s.starts_with("threw"),
+                                             where)) {
+                                continue;
+                            }
                             if (o != s) ++moved;
-                            check(o == s, at + (prefill ? " prefill" : " speed") +
-                                              ": the slice takes " + s + ", its own shape " + o);
+                            check(o == s,
+                                  where + ": the slice takes " + s + ", its own shape " + o);
                         }
                         // Every family's cheapest route and its price.
-                        const auto fo = generic::family_alternatives(p, own, t, false);
-                        const auto fs = generic::family_alternatives(p, parent, t, false);
+                        std::vector<generic::FamilyAlternative> fo, fs;
+                        const bool fo_threw =
+                            throws([&] { fo = generic::family_alternatives(p, own, t, false); });
+                        const bool fs_threw =
+                            throws([&] { fs = generic::family_alternatives(p, parent, t, false); });
+                        if (!both_answer(fo_threw, fs_threw, at + " families")) continue;
                         check(fo.size() == fs.size(), at + ": the same families");
                         for (std::size_t i = 0; i < std::min(fo.size(), fs.size()); ++i) {
                             check(fo[i].family == fs[i].family && fo[i].route == fs[i].route &&
@@ -149,10 +178,16 @@ int main() {
                             if (prefill && t < 32) continue;
                             const std::string at = call + " T=" + std::to_string(t) +
                                                    (prefill ? " prefill" : " speed");
-                            const auto qo = generic::route_query(d, qtype, policy, epilogue, rows,
-                                                                 kK, t, prefill, 0);
-                            const auto qs = generic::route_query(d, qtype, policy, epilogue, rows,
-                                                                 kK, t, prefill, kParentRows);
+                            std::optional<generic::Route> qo, qs;
+                            const bool qo_threw = throws([&] {
+                                qo = generic::route_query(d, qtype, policy, epilogue, rows, kK, t,
+                                                          prefill, 0);
+                            });
+                            const bool qs_threw = throws([&] {
+                                qs = generic::route_query(d, qtype, policy, epilogue, rows, kK, t,
+                                                          prefill, kParentRows);
+                            });
+                            if (!both_answer(qo_threw, qs_threw, at + " query")) continue;
                             check(qo == qs, at + ": query of the slice " + text(qs) +
                                                 ", of its own shape " + text(qo));
                         }
@@ -160,10 +195,16 @@ int main() {
                     for (const std::int32_t t : kPricedTokens) {
                         const std::string at   = call + " T=" + std::to_string(t);
                         const std::size_t room = std::size_t{1} << 30;
-                        const auto own_d = generic::describe_call(d, qtype, policy, epilogue, rows,
-                                                                  kK, t, room, false, 0);
-                        const auto slice_d = generic::describe_call(
-                            d, qtype, policy, epilogue, rows, kK, t, room, false, kParentRows);
+                        std::optional<generic::RouteDescription> own_d, slice_d;
+                        const bool od_threw = throws([&] {
+                            own_d = generic::describe_call(d, qtype, policy, epilogue, rows, kK, t,
+                                                           room, false, 0);
+                        });
+                        const bool sd_threw = throws([&] {
+                            slice_d = generic::describe_call(d, qtype, policy, epilogue, rows, kK,
+                                                             t, room, false, kParentRows);
+                        });
+                        if (!both_answer(od_threw, sd_threw, at + " described")) continue;
                         check(own_d.has_value() == slice_d.has_value(), at + ": described");
                         if (!own_d || !slice_d) continue;
                         check(own_d->resolved.asked == slice_d->resolved.asked &&
@@ -183,7 +224,8 @@ int main() {
         }
     }
     std::cout << "slice price: " << checks << " checks, " << failures << " failed, " << moved
-              << " selections where the slice takes another route than its own shape\n";
+              << " selections where the slice takes another route than its own shape, "
+              << not_compared << " pairs not compared (both threw: no device here)\n";
     if (checks == 0) {
         std::cerr << "FAIL: nothing checked\n";
         return 1;
