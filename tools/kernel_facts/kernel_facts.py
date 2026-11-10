@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""The kernel-facts snapshot of one build architecture (#612): what ptxas made of the generic
-path's register-MMA kernels, read off the linked binary with `cuobjdump --dump-resource-usage`
-and written as committed data (src/ops/generic/data/kernel_facts/sm_<arch>.txt). No GPU is
-involved: the selector's price reads these files (ops/generic/kernel_facts.h), never the host
-GPU's kernels, so a decision is the same on every machine, whatever nvcc or driver.
+"""The kernel-facts snapshot of one build architecture (#612, #613): what ptxas made of the
+generic path's register-MMA kernels, read off the linked binary with `cuobjdump
+--dump-resource-usage` (registers, stack, local and shared memory) and `cuobjdump -sass` (the
+instructions of the K loop, counted per iteration: sass_counts.py), and written as committed data
+(src/ops/generic/data/kernel_facts/sm_<arch>.txt). No GPU is involved: the selector's price reads
+these files (ops/generic/kernel_facts.h), never the host GPU's kernels, so a decision is the same
+on every machine, whatever nvcc or driver.
 
     kernel_facts.py extract --binary BIN --arch 89 --nvcc 13.4.92 [--flags TEXT]
                             [--source-root DIR] [-o FILE]
@@ -13,14 +15,17 @@ GPU's kernels, so a decision is the same on every machine, whatever nvcc or driv
 `extract` writes the snapshot (stdout without -o). `check` extracts the same from BIN and compares
 it with FILE row by row: exit 0 where they agree, 1 where they differ (every differing kernel is
 named, with the line to regenerate), 77 where BIN was compiled by another nvcc than FILE records
-and holds the same kernels (ptxas then allocates other registers by construction; the price still
-reads FILE, so the decisions stay the release's), 3 on a usage or tool error. A kernel added or
-removed fails under any nvcc.
+and holds the same kernels (ptxas then allocates other registers and schedules other instructions
+by construction; the price still reads FILE, so the decisions stay the release's), 3 on a usage or
+tool error. A kernel added or removed fails under any nvcc.
 
 The binary is the linked executable or shared library (any program that links ninferno_ops):
 under relocatable device code the per-unit objects report no shared memory and a smaller stack
 for a kernel, the device link decides them. `cuobjdump` and `cu++filt` come from the CUDA
-toolkit's bin directory (--cuda-bin, else the directory of `nvcc` on PATH, else CUDA_PATH).
+toolkit's bin directory (--cuda-bin, else the directory of `nvcc` on PATH, else CUDA_PATH). The
+SASS pass disassembles the register-MMA kernels in batches (--sass-batch; about ten minutes for
+an engine's 2400 kernels, 1.5 GB of memory) and keeps only their loops; --sass-dump reads a saved
+`cuobjdump -sass` instead, --no-sass leaves the loop columns out (a resources-only check).
 
 A kernel's key: the decoder type, the schedule's template arguments (warps_m, warps_k, m_tiles,
 n_tiles, cluster: the entries of NINFERNO_GENERIC_RMMA_SCHEDULES, generic_schedules.h), the
@@ -38,12 +43,19 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
-SCHEMA = 1
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import sass_counts  # noqa: E402
+
+SCHEMA = 2
 NAMESPACE = "ninferno::ops::detail::generic::"
 FAMILY = "rmma"
-COLUMNS = ("family decoder warps_m warps_k m_tiles n_tiles cluster epilogue latency add_sums "
-           "registers stack local shared")
+RESOURCE_COLUMNS = ("registers", "stack", "local", "shared")
+KEY_COLUMNS = ("decoder", "warps_m", "warps_k", "m_tiles", "n_tiles", "cluster", "epilogue",
+               "latency", "add_sums")
+COLUMNS = " ".join(("family",) + KEY_COLUMNS + RESOURCE_COLUMNS + sass_counts.COLUMNS)
+EPILOGUE_SWIGLU = 2  # Epilogue::SwiGlu (generic_gemm.h): two row sets per warp
 # The sources whose text decides the device code: the CUDA units and headers of the ops tree.
 SOURCE_GLOBS = (".cu", ".cuh")
 SOURCE_DIRS = ("src/ops",)
@@ -192,13 +204,20 @@ def rmma_key(demangled):
             as_bool(add_sums))
 
 
-def extract_rows(binary, cuda_bin, dump=None):
-    """{arch: {key: (registers, stack, local, shared)}} of the binary's rmma kernels. A kernel
-    that appears in two images of one arch (a template instantiated in two units) must agree."""
+def key_tiles(key):
+    """The m16n8 tiles one warp of the kernel accumulates: m_tiles * n_tiles, twice under SwiGLU."""
+    _, _, _, m_tiles, n_tiles, _, epilogue, _, _ = key
+    return m_tiles * n_tiles * (2 if epilogue == EPILOGUE_SWIGLU else 1)
+
+
+def extract_resources(binary, cuda_bin, dump=None):
+    """({arch: {key: (registers, stack, local, shared)}}, {arch: {mangled: key}}) of the binary's
+    rmma kernels. A kernel that appears in two images of one arch (a template instantiated in two
+    units) must agree."""
     usage = resource_usage(binary, cuda_bin, dump)
     rmma = [u for u in usage if "rmma_kernel" in u[1]]
     names = demangle(sorted({name for _, name, _ in rmma}), cuda_bin)
-    rows = {}
+    rows, keys = {}, {}
     for arch, name, value in rmma:
         key = rmma_key(names[name])
         if key is None:
@@ -208,7 +227,124 @@ def extract_rows(binary, cuda_bin, dump=None):
             fail(f"{name} appears twice in {arch} of {binary or dump} with different resources "
                  f"{per_arch[key]} and {value}")
         per_arch[key] = value
-    return rows
+        keys.setdefault(arch, {})[name] = key
+    return rows, keys
+
+
+SASS_BATCH = 256
+# The longest --function list handed to cuobjdump: a Windows command line holds 32 767 characters
+# in all, and 256 mangled rmma names run to 38 KB.
+SASS_BATCH_CHARS = 24000
+
+
+def name_batches(names, batch=SASS_BATCH, max_chars=SASS_BATCH_CHARS):
+    """`names` cut into lists of at most `batch` names whose comma-joined length stays within
+    `max_chars` (a single longer name is a batch of its own); batch 0: one batch of everything."""
+    if batch <= 0:
+        return [list(names)]
+    out, current, length = [], [], 0
+    for name in names:
+        if current and (len(current) >= batch or length + 1 + len(name) > max_chars):
+            out.append(current)
+            current, length = [], 0
+        current.append(name)
+        length += len(name) + (1 if length else 0)
+    if current:
+        out.append(current)
+    return out
+
+
+def sass_lines(binary, cuda_bin, arch, sass_dump=None, names=None, batch=SASS_BATCH):
+    """The lines of `cuobjdump -sass` for one image of the binary, streamed, or of a saved dump.
+    With `names` (the mangled functions wanted) and a batch size, cuobjdump is run per batch with
+    --function: disassembling a whole linked image at once holds the image's worth of state
+    (nvdisasm took 26 GB on a 370 MB relocatable sm_75 binary and was killed on a 30 GB host),
+    per batch it stays near 1.5 GB at about a quarter of a second per function; batch 0 streams
+    the whole image in one run (faster where the memory is there)."""
+    if sass_dump:
+        with open(sass_dump, errors="replace") as f:
+            yield from f
+        return
+    tool = cuda_tool("cuobjdump", cuda_bin)
+    batches = [None] if not names or batch <= 0 else name_batches(names, batch)
+    for chunk in batches:
+        command = [tool, "-sass", "-arch", arch]
+        if chunk is not None:
+            command += ["-fun", ",".join(chunk)]
+        command.append(binary)
+        # stderr goes to a file, not a pipe: a pipe nobody drains while the dump streams would
+        # stall cuobjdump once its warnings (a function absent from one image) fill it.
+        with tempfile.TemporaryFile(mode="w+", errors="replace") as errors:
+            try:
+                proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=errors, text=True,
+                                        errors="replace", bufsize=1 << 20)
+            except OSError as error:
+                fail(f"cannot run cuobjdump ({error}); the command line was "
+                     f"{len(' '.join(command))} characters")
+            try:
+                yield from proc.stdout
+            finally:
+                if proc.poll() is None:  # the consumer stopped early: do not leave the dump running
+                    proc.kill()
+                code = proc.wait()
+            errors.seek(0)
+            if code != 0:
+                fail(f"cuobjdump -sass failed on {binary}: {errors.read().strip()[:400]}")
+
+
+def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None, batch=SASS_BATCH):
+    """{key: LoopCounts} of the rmma kernels `keys` ({mangled: key}) of one image, from its SASS.
+    A kernel disassembled twice in the image (two units) must agree."""
+    counts = {}
+    lines = sass_lines(binary, cuda_bin, arch, sass_dump, sorted(keys), batch)
+    for name, body in sass_counts.iter_functions(lines, lambda n: n in keys):
+        key = keys[name]
+        c = sass_counts.loop_counts(body, key_tiles(key))
+        if key in counts and counts[key] != c:
+            fail(f"{name} is disassembled twice in {arch} with different loops {counts[key]} "
+                 f"and {c}")
+        counts[key] = c
+    return counts
+
+
+def extract_rows(binary, cuda_bin, arch, dump=None, sass_dump=None, sass=True,
+                 batch=SASS_BATCH):
+    """{key: (registers, stack, local, shared, LoopCounts)} of one image of the binary (`arch`:
+    the label, "89"); the LoopCounts is None under sass=False."""
+    rows, keys = extract_resources(binary, cuda_bin, dump)
+    image = image_arch(rows, arch)
+    resources = rows[image]
+    if not sass:
+        return {k: (*v, None) for k, v in resources.items()}
+    counts = extract_counts(binary, cuda_bin, image, keys[image], sass_dump, batch)
+    missing = sorted(k for k in resources if k not in counts)
+    if missing:
+        fail(f"{len(missing)} rmma kernels of {image} have resources but no SASS, first "
+             f"{row_key(missing[0])}")
+    return {k: (*v, counts[k]) for k, v in resources.items()}
+
+
+def loop_audit(rows):
+    """Lines naming what the loop finder could not settle: kernels without a loop, with several
+    candidate loops, and decoders whose rows disagree on k_iter (one decoder has one kRun, so one
+    loop iteration covers one K count in every schedule, epilogue and variant)."""
+    out = []
+    none = [k for k, v in rows.items() if v[4] is not None and v[4].loops == 0]
+    several = [k for k, v in rows.items() if v[4] is not None and v[4].loops > 1]
+    if none:
+        out.append(f"{len(none)} kernels without a K loop, first {row_key(none[0])}")
+    if several:
+        out.append(f"{len(several)} kernels with several candidate loops, first "
+                   f"{row_key(several[0])}")
+    by_decoder = {}
+    for k, v in rows.items():
+        if v[4] is not None:
+            by_decoder.setdefault(k[0], set()).add(v[4].k_iter)
+    for decoder, k_iters in sorted(by_decoder.items()):
+        if len(k_iters) > 1:
+            out.append(f"{decoder}: k_iter differs across its kernels: "
+                       f"{', '.join(str(k) for k in sorted(k_iters))}")
+    return out
 
 
 def source_hash(root):
@@ -230,19 +366,35 @@ def source_hash(root):
     return h.hexdigest()
 
 
+def row_key(key):
+    return " ".join(str(v) for v in key)
+
+
 def row_line(key, value):
-    return " ".join(str(v) for v in (FAMILY, *key, *value))
+    fields = [FAMILY, *key, *value[:4]]
+    if value[4] is not None:
+        fields += value[4].row()
+    return " ".join(str(v) for v in fields)
 
 
 def render(arch, rows, nvcc, flags, source):
+    with_loops = any(v[4] is not None for v in rows.values())
+    columns = COLUMNS if with_loops else COLUMNS.split(" loops ")[0]
     lines = [
         f"# NInferno kernel facts, schema {SCHEMA}: what ptxas made of the register-MMA kernels of",
-        f"# the sm_{arch} build (registers a thread keeps, its stack frame and local bytes, the CTA's",
-        "# static shared memory), read off the linked binary with cuobjdump --dump-resource-usage.",
-        "# Generated by tools/kernel_facts/kernel_facts.py; never edited by hand. The selector's",
-        "# price reads this file, not the host GPU's kernels (ops/generic/kernel_facts.h, #612), and",
-        "# ninferno_kernel_facts_test asserts that a build's kernels equal it. After a kernel or",
-        "# toolchain change regenerate it with the build's own binary:",
+        f"# the sm_{arch} build, read off the linked binary with cuobjdump. Per kernel: the registers",
+        "# a thread keeps, its stack frame and local bytes, the CTA's static shared memory",
+        "# (--dump-resource-usage); then the K loop's instructions per iteration (-sass; one",
+        "# iteration is two K steps, k_iter K values per warp): the candidate loops found, the",
+        "# MMAs, of them the min-term ones (A = 1.0 pairs) and the MMA shape, the loads and stores",
+        "# by space with the bytes a warp requests (32 lanes x width; LDG global, LD generic, LDGSTS",
+        "# async copy, LDS/STS shared, LDL/STL local), SHFL, integer and float ALU, uniform-datapath,",
+        "# the rest, the total. Static counts of one full iteration; how the loop is found is in",
+        "# tools/kernel_facts/sass_counts.py. Generated by tools/kernel_facts/kernel_facts.py; never",
+        "# edited by hand. The selector's price reads this file, not the host GPU's kernels",
+        "# (ops/generic/kernel_facts.h, #612), and ninferno_kernel_facts_test asserts that a build's",
+        "# kernels equal it. After a kernel or toolchain change regenerate it with the build's own",
+        "# binary:",
         f"#   python3 tools/kernel_facts/kernel_facts.py extract --binary <linked exe> --arch {arch}",
         f"#     --nvcc <version> -o src/ops/generic/data/kernel_facts/sm_{arch}.txt",
         f"arch {arch}",
@@ -250,28 +402,42 @@ def render(arch, rows, nvcc, flags, source):
         f"flags {flags}",
         f"source {source}",
         f"kernels {len(rows)}",
-        f"columns {COLUMNS}",
+        f"columns {columns}",
     ]
     lines += [row_line(k, rows[k]) for k in sorted(rows)]
     return "\n".join(lines) + "\n"
 
 
 def parse_snapshot(text):
+    """(header, {key: (registers, stack, local, shared, LoopCounts or None)}) of a snapshot; a
+    schema 1 file (resources only) parses with None for the loop."""
     header, rows = {}, {}
-    for line in text.splitlines():
-        if not line or line.startswith("#"):
-            continue
+    lines = [l for l in text.splitlines() if l and not l.startswith("#")]
+    for line in lines:
         fields = line.split()
-        if fields[0] == FAMILY:
-            if len(fields) != 14:
-                fail(f"malformed row: {line}")
-            key = (fields[1], *(int(v) for v in fields[2:10]))
-            rows[key] = tuple(int(v) for v in fields[10:14])
-        else:
+        if fields[0] != FAMILY:
             header[fields[0]] = line[len(fields[0]) + 1:] if len(fields) > 1 else ""
-    for want in ("arch", "nvcc", "kernels"):
+    for want in ("arch", "nvcc", "kernels", "columns"):
         if want not in header:
             fail(f"snapshot has no '{want}' line")
+    # Every row spells the header's columns: 14 fields in a resources-only file, 14 plus the
+    # loop's in a schema 2 one, never a mixture.
+    columns = header["columns"].split()
+    if columns not in (COLUMNS.split()[:14], COLUMNS.split()):
+        fail(f"unexpected columns: {header['columns']}")
+    width = len(columns)
+    for line in lines:
+        fields = line.split()
+        if fields[0] != FAMILY:
+            continue
+        if len(fields) != width:
+            fail(f"a row of {len(fields)} fields under {width} columns: {line}")
+        try:
+            key = (fields[1], *(int(v) for v in fields[2:10]))
+            counts = sass_counts.LoopCounts.from_row(fields[14:]) if width > 14 else None
+            rows[key] = (*(int(v) for v in fields[10:14]), counts)
+        except ValueError as error:
+            fail(f"malformed row ({error}): {line}")
     if int(header["kernels"]) != len(rows):
         fail(f"snapshot says {header['kernels']} kernels, holds {len(rows)}")
     return header, rows
@@ -286,18 +452,26 @@ def image_arch(rows, arch):
 
 
 def cmd_extract(args):
-    rows = extract_rows(args.binary, args.cuda_bin, args.dump)
-    per_arch = rows[image_arch(rows, args.arch)]
-    if not per_arch:
+    rows = extract_rows(args.binary, args.cuda_bin, args.arch, args.dump, args.sass_dump,
+                        not args.no_sass, args.sass_batch)
+    if not rows:
         fail("no rmma_kernel in the binary")
+    audit = loop_audit(rows)
+    for line in audit:
+        print(f"kernel_facts: {line}", file=sys.stderr)
     source = args.source or (source_hash(args.source_root) if args.source_root else "unknown")
-    text = render(args.arch, per_arch, args.nvcc or "unknown", args.flags or "unknown", source)
+    text = render(args.arch, rows, args.nvcc or "unknown", args.flags or "unknown", source)
     if args.output:
         with open(args.output, "w", newline="\n") as f:
             f.write(text)
-        print(f"kernel_facts: wrote {len(per_arch)} kernels of sm_{args.arch} to {args.output}")
+        print(f"kernel_facts: wrote {len(rows)} kernels of sm_{args.arch} to {args.output}")
     else:
         sys.stdout.write(text)
+    if audit:
+        # Written for inspection, but not a snapshot to commit: the loop finder did not settle.
+        print(f"kernel_facts: {len(audit)} loop audit findings (above): the counts are not "
+              "settled, do not commit them", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -305,27 +479,36 @@ def cmd_check(args):
     if not os.path.exists(args.expected):
         print(f"kernel_facts: no snapshot {args.expected} for this build architecture: generate "
               "it with\n  python3 tools/kernel_facts/kernel_facts.py extract --binary "
-              f"{args.binary} --arch <label> --nvcc {args.nvcc or '<version>'} -o {args.expected}")
+              f"{args.binary or args.dump} --arch <label> --nvcc {args.nvcc or '<version>'} "
+              f"-o {args.expected}")
         return 1
     with open(args.expected) as f:
         header, expected = parse_snapshot(f.read())
     arch = header["arch"]
-    rows = extract_rows(args.binary, args.cuda_bin, args.dump)
-    got = rows[image_arch(rows, arch)]
+    other_nvcc = bool(args.nvcc) and args.nvcc != header["nvcc"]
+    # A snapshot without loop columns is checked on its resources alone; under another nvcc the
+    # kernel set is all that is compared, so the SASS pass (minutes) is not run.
+    with_sass = not args.no_sass and not other_nvcc and \
+        any(v[4] is not None for v in expected.values())
+    got = extract_rows(args.binary, args.cuda_bin, arch, args.dump, args.sass_dump, with_sass,
+                       args.sass_batch)
+    if not with_sass:
+        expected = {k: (*v[:4], None) for k, v in expected.items()}
     missing = sorted(k for k in expected if k not in got)
     extra = sorted(k for k in got if k not in expected)
-    other_nvcc = args.nvcc and args.nvcc != header["nvcc"]
     if other_nvcc and not (missing or extra):
-        # The set of kernels does not depend on the compiler; their registers do.
-        print(f"kernel_facts: SKIPPED the resources: this build's nvcc {args.nvcc} is not the "
-              f"snapshot's {header['nvcc']} ({args.expected}); ptxas then allocates other "
-              "registers by construction. The kernel set agrees. The price reads the snapshot "
-              "either way; regenerate it only on the release toolchain.")
+        # The set of kernels does not depend on the compiler; their registers and schedules do.
+        print(f"kernel_facts: SKIPPED the resources and loop counts: this build's nvcc "
+              f"{args.nvcc} is not the snapshot's {header['nvcc']} ({args.expected}); ptxas then "
+              "allocates other registers and schedules other instructions by construction. The "
+              "kernel set agrees. The price reads the snapshot either way; regenerate it only on "
+              "the release toolchain.")
         return 77
     differ = [] if other_nvcc else sorted(
         k for k in expected if k in got and expected[k] != got[k])
     if not (missing or extra or differ):
-        print(f"kernel_facts: {len(got)} kernels of sm_{arch} equal {args.expected}")
+        print(f"kernel_facts: {len(got)} kernels of sm_{arch} equal {args.expected}"
+              + ("" if with_sass else " (resources only)"))
         return 0
     shown = 0
     for k in differ:
@@ -342,11 +525,12 @@ def cmd_check(args):
         shown += 1
     if shown > args.show:
         print(f"  ... {shown - args.show} more")
-    print(f"kernel_facts: the sm_{arch} kernels of {args.binary} differ from {args.expected}: "
+    binary = args.binary or args.dump
+    print(f"kernel_facts: the sm_{arch} kernels of {binary} differ from {args.expected}: "
           f"{len(differ)} changed, {len(missing)} missing, {len(extra)} new (nvcc "
           f"{args.nvcc or 'unknown'}, snapshot {header['nvcc']}). A kernel, flag or compiler "
           "change moved them: regenerate the snapshot with\n"
-          f"  python3 tools/kernel_facts/kernel_facts.py extract --binary {args.binary} "
+          f"  python3 tools/kernel_facts/kernel_facts.py extract --binary {binary} "
           f"--arch {arch} --nvcc <version> -o {args.expected}\n"
           "and review the selector goldens that move with it.")
     return 1
@@ -359,6 +543,12 @@ def main(argv=None):
         p = sub.add_parser(name)
         p.add_argument("--binary", help="the linked executable or shared library")
         p.add_argument("--dump", help="a saved `cuobjdump --dump-resource-usage` output instead")
+        p.add_argument("--sass-dump", help="a saved `cuobjdump -sass` output of the image instead")
+        p.add_argument("--no-sass", action="store_true",
+                       help="resources only: no SASS pass, no loop columns")
+        p.add_argument("--sass-batch", type=int, default=SASS_BATCH,
+                       help="kernels per cuobjdump run of the SASS pass (0: the whole image at "
+                            f"once; default {SASS_BATCH}, bounded memory)")
         p.add_argument("--cuda-bin", help="directory of cuobjdump and cu++filt")
         p.add_argument("--nvcc", help="the nvcc version the binary was built with")
     e = sub.choices["extract"]
@@ -375,6 +565,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.command != "hash" and not (args.binary or args.dump):
         parser.error("--binary or --dump is required")
+    if args.command != "hash" and not (args.binary or args.sass_dump or args.no_sass):
+        parser.error("the SASS pass needs --binary or --sass-dump (or --no-sass)")
     if args.command == "hash":
         print(source_hash(args.source_root))
         return 0

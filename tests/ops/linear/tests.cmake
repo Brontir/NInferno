@@ -109,6 +109,21 @@ ninferno_add_op_test(ninferno_route_traffic_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_traffic.cpp"
   LIBRARIES ninferno_linear_test_support)
 
+# A route's description (#298): the fields agree with the functions the launch and selector ask.
+ninferno_add_op_test(ninferno_route_description_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_description.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
+set_tests_properties(ninferno_route_description_test PROPERTIES SKIP_RETURN_CODE 77)
+
+# The same on a substituted GV100: a tiled call of a CUTLASS-only format without room for the
+# decoded copy runs scalar and the description says so (#653).
+ninferno_add_op_test(ninferno_route_description_volta_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_description_volta.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
+set_tests_properties(ninferno_route_description_volta_test PROPERTIES SKIP_RETURN_CODE 77)
+
 # Route selection on the GPU classes this machine lacks (substituted DeviceClass, one process
 # per board): every choice admitted, no feature the board lacks, its own route table.
 ninferno_add_op_test(ninferno_route_classes_test
@@ -192,6 +207,12 @@ ninferno_add_op_test(ninferno_kernel_facts_live_test
   LIBRARIES ninferno_linear_test_support)
 target_compile_definitions(ninferno_kernel_facts_live_test PRIVATE
   NINFERNO_NVCC_VERSION="${CMAKE_CUDA_COMPILER_VERSION}")
+
+# The selector's named authorities (#614): the lists are well formed, on every facts board each
+# answer's evidence is consistent with its kind, and known cases name the authority that answers.
+ninferno_add_op_test(ninferno_route_authorities_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_authorities.cpp"
+  LIBRARIES ninferno_linear_test_support)
 
 # The generic path's dense tuner: tuned at the first eager call, within the activation class, R8
 # decode bytes kept, the cache file read back, nothing timed inside a graph capture.
