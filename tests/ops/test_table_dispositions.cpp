@@ -29,6 +29,7 @@
 #include <iostream>
 #include <iterator>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -216,6 +217,50 @@ void check_reach_edge_and_unknown_bandwidth() {
     expect(fi.disposition == Disposition::Incomplete && !fi.donor && fi.distance == 0 &&
                fi.min_tokens == detail::kSparseMoePrefillQ4Q5Min,
            "a 5090 without its bandwidth is Incomplete, with the frontier literal");
+    // The edge from the other side: the same doubled 4090 with its L2 unknown. The distance is
+    // still exactly 1.0 (|log2| of the SM ratio is 1; an unknown L2 adds 0, as does the equal
+    // bandwidth), so the nearest entry by plain distance is at the reach and is within it: the
+    // edge is in. No entry is complete for the board, so Incomplete with the literal, no donor.
+    Board twice_no_l2  = twice;
+    twice_no_l2.l2_mib = 0;
+    expect(board_distance(twice_no_l2, measured::kRtx4090) == 1.0,
+           "a doubled 4090 without its L2 is still at exactly the reach");
+    const auto ei = moe::a8_route_answer(twice_no_l2);
+    expect(ei.disposition == Disposition::Incomplete && !ei.donor && ei.route.down == -1,
+           "a board at exactly the reach with an unknown L2 is Incomplete, with the A8 literal");
+    const auto ef = detail::sparse_moe_q4_groupwise_frontier_answer(twice_no_l2);
+    expect(ef.disposition == Disposition::Incomplete && !ef.donor &&
+               ef.min_tokens == detail::kSparseMoePrefillQ4Q5Min,
+           "a board at exactly the reach with an unknown L2 is Incomplete, with the frontier "
+           "literal");
+}
+
+// An entry of a local table: a measured board and a tag to tell the donors apart.
+struct TaggedEntry {
+    Board board;
+    int tag;
+};
+
+// Two entries at the same distance from the board: the earlier one answers (the tie rule of
+// nearest_known_measured, "ties to the earlier").
+void check_tie_to_the_earlier() {
+    Board small               = measured::kRtx4090;
+    small.sms                 = measured::kRtx4090.sms / 2;
+    Board large               = measured::kRtx4090;
+    large.sms                 = 2 * measured::kRtx4090.sms;
+    const TaggedEntry table[] = {{small, 1}, {large, 2}};
+    expect(board_distance(measured::kRtx4090, small) == 1.0 &&
+               board_distance(measured::kRtx4090, large) == 1.0,
+           "the two entries are equally far from the 4090");
+    const auto a = measured::table_answer(std::span<const TaggedEntry>(table), measured::kRtx4090,
+                                          measured::kCarryDistance);
+    expect(a.disposition == Disposition::Carried && a.entry != nullptr && a.entry->tag == 1,
+           "a tie between two entries goes to the earlier");
+    const TaggedEntry reversed[] = {{large, 2}, {small, 1}};
+    const auto b                 = measured::table_answer(std::span<const TaggedEntry>(reversed),
+                                                          measured::kRtx4090, measured::kCarryDistance);
+    expect(b.disposition == Disposition::Carried && b.entry != nullptr && b.entry->tag == 2,
+           "a tie between two entries goes to the earlier, in either order");
 }
 
 // One SKU's answers written by hand, each from the measurement or the distance recorded in the
@@ -231,7 +276,7 @@ struct Expected {
     int q4_min;
     double a8_distance    = -1; // < 0: not checked
     double q4_distance    = -1;
-    const Board* a8_donor = nullptr; // null: which board is not checked (that one answers, is)
+    const Board* a8_donor = nullptr; // null: the donor's identity is not checked (its presence is)
     const Board* q4_donor = nullptr;
 };
 
@@ -340,6 +385,7 @@ int main(int argc, char** argv) {
         check_against_production();
         check_measured_boards_and_fallback();
         check_reach_edge_and_unknown_bandwidth();
+        check_tie_to_the_earlier();
         Counts a8_counts, q4_counts;
         const std::string now = dump(a8_counts, q4_counts);
         check_hand_written();

@@ -17,10 +17,11 @@ board. It answers in the words the measured gates use (`measured::Disposition`,
   that this very SKU was run: an RTX 5090 D has the 5090's SMs, L2 and bandwidth and takes the 5090's
   row, though only the 5090 was measured.
 - `Carried`: a row within `measured::kCarryDistance`, every compared quantity known. The reach (1.0)
-  is a threshold placed between measurements, not a chip fact: carries hold at 0.14 to 0.57, and the
-  RTX 4090's R8 decode entries fail on the RTX 4080 SUPER at 1.2. Over the 105 rows below every
-  answer is the same for any reach from 0.83 to 1.21 (the A10 at 0.83 from the 3090 is the farthest
-  `Carried` row, the RTX 4080 SUPER at 1.22 from the 4090 the nearest row out of reach).
+  is a threshold placed between measurements, not a chip fact: it is meant to cover the variants
+  and near neighbours (0.14 to 0.57), and the RTX 4090's R8 decode entries fail on the RTX 4080
+  SUPER at 1.2. Over the 105 rows below every answer is the same for any reach from 0.83 to 1.21
+  (the A10 at 0.83 from the 3090 is the farthest `Carried` row, the RTX 4080 SUPER at 1.22 from the
+  4090 the nearest row out of reach).
 - `Incomplete`: no row with every quantity known is within the distance, but the nearest row by plain
   distance is, with its L2 or bandwidth unknown on either side. The distance could then understate
   the difference, so the table's literal answers (as a bounded gate takes the unmeasured default for
@@ -127,19 +128,21 @@ Fallback literal: 47, the Blackwell/Ada edge. The literal answers 88 of 105 rows
 `Incomplete` 4: A10G, RTX 3080 12GB, L40S, RTX PRO 6000 Server).
 
 **Open risk.** Ampere cards outside the 3090's reach take the 47 literal: the RTX 3060, 3060 Ti,
-3070, 3070 Ti, A4000, 3050, A2 and the two RTX 3060 Laptop GPU rows (14 rows). So do the cards of
-the generations with no row at all: the 8 GA100 rows (A100, A30, A800), the 23 Turing rows and the 7
-Volta rows. (The A10G and the RTX 3080 12GB are `Incomplete` in the facts table only because it has
-no L2 for them; a device reports its own L2, so they may well be `Carried` from the 3090 at their
-real distance.) The only Ampere measurement (3090) lost 28 % at C4 with 47 against 17,
-so the step may carry to the whole generation. A C4 sweep at frontier 47 / 25 / 17 on an RTX 3060
-would show whether it does; if it does, a generation-keyed rule (a frontier of 17 for a board
-without Ada's tensor-core rate) would turn those SKUs into a measured-and-labelled answer. That is a
-behaviour change and needs the GPU run; nothing here changes the default.
+3070, 3070 Ti, A4000, 3050, A2 and the two RTX 3060 Laptop GPU rows (14 rows, with their LHR and 8GB
+/ 6GB rows). So do the cards of the generations with no row at all: the 8 GA100 rows (A100, A30,
+A800), the 23 Turing rows and the 7 Volta rows. (The A10G and the RTX 3080 12GB are `Incomplete` in
+the facts table only because it has no L2 for them; a device reports its own L2, so they may well be
+`Carried` from the 3090 at their real distance.) The only Ampere measurement (3090) lost 28 % at C4
+with 47 against 17, so the step may carry to the whole generation. A C4 sweep at frontier 47 / 25 /
+17 on an RTX 3060 would show whether it does; if it does, a generation-keyed rule (a frontier of 17
+for a board without Ada's tensor-core rate) would turn those SKUs into a measured-and-labelled
+answer. That is a behaviour change and needs the GPU run; nothing here changes the default.
 
 ## Verified and not verified
 
 The host test and the production-equality checks run without a GPU. The production-equality checks
-cover the boards of the build set (`generic::kFactsBoards`, each under `ScopedDeviceClass`), not the
-105 rows. Not verified: the dispositions' meaning on a GPU (no kernel runs in the test), and the open
-Ampere frontier risk above (it needs the sweep on an Ampere card).
+cover the sixteen boards the selector goldens are kept for (`generic::kFactsBoards`, each under
+`ScopedDeviceClass`), not the 105 rows. The tie rule of the lookup (two rows at equal distance: the
+earlier answers) is pinned by a local two-row case in the test, not by any row. Not verified: the
+dispositions' meaning on a GPU (no kernel runs in the test), and the open Ampere frontier risk above
+(it needs the sweep on an Ampere card).
