@@ -1662,6 +1662,7 @@ int test_refusal_structural_tag() {
              " to",
              " <b>bold</b>",
              "\n<x> after a newline",
+             "t<b> and to<i>",
          }) {
         failures += check(admits(ok), "refusal tag admits: " + std::string(ok));
     }
@@ -1674,6 +1675,9 @@ int test_refusal_structural_tag() {
              "to=functions.x<|channel|>commentary",
              "<<|channel|>commentary to=functions.x",
              " <|channel|>commentary to=functions.x",
+             "t<|channel|>commentary to=functions.x<|message|>{}",
+             "to<|constrain|>json<|message|>{}",
+             " to<|channel|>analysis to=python",
              "\n<|channel|>final<|constrain|>json",
              "<|channel|>commentary to=functions.x",
              "<|channel|>analysis to=python<|message|>",
@@ -1690,7 +1694,7 @@ int test_refusal_structural_tag() {
     // An answer that is empty, only whitespace, or only a prefix of "to=" or of a structural token
     // may stop there.
     for (const std::string_view whole :
-         {"t", "to", " to", "Hello there", "", " ", "\n\t", "<", " <"}) {
+         {"t", "to", " to", "Hello there", "", " ", "\n\t", "<", " <", "t<", "to<"}) {
         ninferno::structured::ConstraintMatcher matcher(compiled);
         const bool accepted = matcher.accept_bytes(whole);
         failures += check(accepted && matcher.completed(),

@@ -2538,15 +2538,16 @@ public:
              OrderedJson{{"type", "or"},
                          {"elements", OrderedJson::array({literal("analysis"), literal("final")})}},
              literal(kMessage), text()});
-        const OrderedJson plain = sequence(
-            {OrderedJson{{"type", "regex"},
-                         {"pattern", "[ \\t\\r\\n]*([^ \\t\\r\\n<t]|t[^o]|to[^=]|<[^|<])"}},
-             text()});
-        // An answer that is empty, only whitespace, or that whitespace and then only "t", "to" or
-        // "<": the prefixes `plain` needs one more byte to tell from "to=" or a structural token,
-        // here whole, with nothing after them, so "to=" stays out.
+        const OrderedJson plain =
+            sequence({OrderedJson{{"type", "regex"},
+                                  {"pattern",
+                                   "[ \\t\\r\\n]*([^ \\t\\r\\n<t]|t[^o<]|to[^=<]|(t|to)?<[^|<])"}},
+                      text()});
+        // An answer that is empty, only whitespace, or that whitespace and then only a prefix
+        // `plain` needs one more byte to tell from "to=" or a structural token ("t", "to", "<",
+        // "t<", "to<"), here whole, with nothing after it.
         const OrderedJson prefix_only =
-            OrderedJson{{"type", "regex"}, {"pattern", "[ \\t\\r\\n]*(t|to|<)?"}};
+            OrderedJson{{"type", "regex"}, {"pattern", "[ \\t\\r\\n]*((t|to)?<|t|to)?"}};
         return OrderedJson{
             {"type", "structural_tag"},
             {"format", OrderedJson{{"type", "or"},
