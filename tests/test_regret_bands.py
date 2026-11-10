@@ -27,8 +27,8 @@ class Bands(unittest.TestCase):
     def test_edges(self):
         got = {t: bands.band_of(t) for t in (1, 8, 9, 16, 17, 32, 33, 128, 129, 4096)}
         self.assertEqual(got, {1: "decode", 8: "decode", 9: "verify", 16: "verify", 17: "narrow",
-                               32: "narrow", 33: "wide", 128: "wide", 129: "prefill",
-                               4096: "prefill"})
+                               32: "narrow", 33: "wide", 128: "wide", 129: "batch129",
+                               4096: "batch129"})
         with self.assertRaises(ValueError):
             bands.band_of(0)
 
@@ -63,7 +63,7 @@ class Report(unittest.TestCase):
         self.assertAlmostEqual(decode["weighted_regret"], 111 / 110 - 1)
         self.assertAlmostEqual(decode["worst_regret"], 0.1)
         self.assertEqual(decode["cases_over_5pct"], 1)
-        self.assertNotIn("prefill", rep["overall"])
+        self.assertNotIn("batch129", rep["overall"])
 
     def test_groups(self):
         rows, _ = self.rows()
@@ -87,20 +87,15 @@ class Report(unittest.TestCase):
         with self.assertRaises(ValueError):
             bands.report(rows, band_weights={"decode": 0})
 
-    def test_default_weights_are_the_benchmark_time_share(self):
-        doc = document([
-            case("q4k.a16.store.n1.k1.T1", "b", "rmma.a", {"rmma.a": 2, "rmma.b": 1}),
-            case("q4k.a16.store.n1.k1.T512", "b", "rmma.a", {"rmma.a": 100, "rmma.b": 50}),
-            case("q4k.a16.store.n1.k1.T40", "b", "rmma.a", {"rmma.a": 9, "rmma.b": 3}),
-        ])
-        rows, _ = bands.rows_from_document(doc)
-        group = bands.report(rows)["by_board"]["b"]
-        # decode: 13312 tokens x 1 ms/token; prefill: 188416 tokens x 50/512 ms/token.
-        decode, prefill = 13312 * 1.0, 188416 * 50 / 512
-        self.assertAlmostEqual(group["weights"]["decode"], decode / (decode + prefill))
-        self.assertAlmostEqual(group["weights"]["prefill"], prefill / (decode + prefill))
-        self.assertEqual(group["weights"].get("wide", 0), 0)
-        self.assertAlmostEqual(group["weighted"], 1.0)  # both bands lose 2x
+    def test_no_mean_without_weights_or_coverage(self):
+        rows, _ = self.rows()
+        self.assertNotIn("weighted", bands.report(rows)["by_board"]["b1"])
+        # A weighted band the group has no case in: no mean, not a mean of the rest.
+        rep = bands.report(rows, band_weights={"decode": 1, "batch129": 1})
+        self.assertIsNone(rep["by_board"]["b1"]["weighted"])
+        for bad in ([1, 2], {"decode": "x"}, {"decode": float("nan")}):
+            with self.assertRaises(ValueError):
+                bands.report(rows, band_weights=bad)
 
     def test_incomplete_cases_are_counted_not_scored(self):
         bad = case("q4k.a16.store.n1.k1.T3", "b1", "rmma.a", {"rmma.a": 1, "rmma.b": 1})
@@ -137,8 +132,32 @@ class Csv(unittest.TestCase):
         self.assertEqual((row["best"], row["board"], row["t"]), ("rmma.b", "boardX", 4))
         self.assertAlmostEqual(row["selected_ms"], 0.021)
         self.assertAlmostEqual(row["best_ms"], 0.011)
-        rows, _ = bands.rows_from_csv([p1, p2], None, "boardX", pick="model")
-        self.assertEqual(rows[0]["selected"], "rmma.a")  # lowest model_us
+        # The model ranks only from 17 tokens: a T=4 case is not scored by it.
+        self.assertEqual(bands.rows_from_csv([p1, p2], None, "boardX", pick="model"), ([], 1))
+
+    def test_model_pick_skips_unpriced_routes(self):
+        p1 = self.write("p1.csv", ROUTES + "q4k,a16,store,64,64,40,rmma.a,20,30\n"
+                        "q4k,a16,store,64,64,40,rmma.b,10,40\n"
+                        "q4k,a16,store,64,64,40,rmma.c,8,\n")
+        rows, skipped = bands.rows_from_csv([p1], None, "b", pick="model")
+        self.assertEqual((skipped, rows[0]["selected"], rows[0]["best"]), (0, "rmma.a", "rmma.c"))
+
+    def test_a_route_one_pass_missed_skips_the_case(self):
+        p1 = self.write("p1.csv", ROUTES + "q4k,a16,store,64,64,4,rmma.a,20,30\n"
+                        "q4k,a16,store,64,64,4,rmma.b,10,40\n")
+        p2 = self.write("p2.csv", ROUTES + "q4k,a16,store,64,64,4,rmma.a,20,30\n")
+        sel = self.write("s.csv", SELECTED + "q4k,a16,store,64,64,4,rmma.a,rmma.a\n")
+        self.assertEqual(bands.rows_from_csv([p1, p2], sel, "b"), ([], 1))
+
+    def test_bad_timings_and_duplicate_selections_are_refused(self):
+        zero = self.write("z.csv", ROUTES + "q4k,a16,store,64,64,4,rmma.a,0,30\n")
+        with self.assertRaises(ValueError):
+            bands.rows_from_csv([zero], None, "b", pick="model")
+        p1 = self.write("p1.csv", ROUTES + "q4k,a16,store,64,64,4,rmma.a,20,30\n")
+        twice = self.write("s.csv", SELECTED + "q4k,a16,store,64,64,4,rmma.a,rmma.a\n"
+                           "q4k,a16,store,64,64,4,rmma.a,rmma.a\n")
+        with self.assertRaises(ValueError):
+            bands.rows_from_csv([p1], twice, "b")
 
     def test_untimed_selection_is_skipped(self):
         p1 = self.write("p1.csv", ROUTES + "q4k,a16,store,64,64,4,rmma.a,20,30\n"
@@ -160,15 +179,6 @@ class Csv(unittest.TestCase):
         self.assertAlmostEqual(rep["overall"]["wide"]["weighted_regret"], 1.0)
         self.assertIn("wide (n)", out_md.read_text())
         self.assertEqual(bands.main(["--routes", str(p1), "--board", "b"]), 2)
-
-
-class Manifest(unittest.TestCase):
-    def test_committed_manifest_is_readable(self):
-        path = Path(__file__).resolve().parents[1] / "tools" / "bench" / "data" / "sweep_archive.json"
-        totals = bands.archive_summary(path)
-        self.assertEqual(sorted(totals), ["l2080", "l3060", "l3090", "l4060", "l4090", "l5070",
-                                          "l5090", "lgv100"])
-        self.assertTrue(all(t["route_sweeps"] > 0 for t in totals.values()))
 
 
 if __name__ == "__main__":

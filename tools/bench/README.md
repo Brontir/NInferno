@@ -32,7 +32,7 @@ python3 tools/bench/run_ninferno_bench_matrix.py --preset core             # run
 | `r8_decode_table.py` | Generate `src/ops/generic/r8_decode_table.h` from R8 schedule sweeps. |
 | `hard_set.py` | One serving configuration through the hard question set ([eval/corpora/hard50](../../eval/corpora/hard50/README.md)): answers graded against the references, decode rate and, at a fixed speculative depth, tokens per round. |
 | `selection_regret.py` | Offline regret of recorded production choices against qualified, matched alternatives on held-out boards or models ([below](#offline-selection-regret)). |
-| `regret_bands.py` | Regret weighted by T band, per board, format and route family, from regret documents or plain route_tune CSVs ([below](#regret-by-t-band-and-the-sweep-archive)). |
+| `regret_bands.py` | Regret weighted by T band, per board, format and route family, from regret documents or plain route_tune CSVs ([below](#regret-by-t-band)). |
 | `regret_collect.py` | The lab collector for `selection_regret.py`: `ninferno_route_tune --selected-out` (the route the production path runs per problem and width) and one `--routes-out` sweep per pass into its input ([below](#offline-selection-regret)). |
 | `quality_rows.py` | Perplexity and KL divergence of each `--activations` mode against `exact` on the fixed corpus, appended as `docs/performance/` rows. |
 
@@ -142,25 +142,22 @@ python3 tools/bench/regret_collect.py --selected sel_p1.csv sel_p2.csv sel_p3.cs
 The report preserves selector/build identity and a SHA-256
 of the exact input bytes. This is an offline evaluation aid for #301, not runtime autotuning.
 
-## Regret by T band and the sweep archive
+## Regret by T band
 
 One geomean over all cases hides where a selector loses: a change can cost 10% at T 17-32 and win
 at T 48+. `regret_bands.py` reports the extra time of the recorded picks over the best observed
 route, **summed over the cases of a band** (time-weighted: a long GEMM counts for what it costs, a
 tiny one barely), for the bands decode (T 1-8), verify (9-16), narrow (17-32), wide (33-128) and
-prefill (129+), by board, format and route family (the part of the route name before the first dot).
-Each group also gets one `weighted` number, the mean of its band regrets by the time the benchmark
-mix spends in each band on that board (DECISIONS 50 takes its weights from the benchmark; the mix is
-20 requests of 2048 prompt + 512 answer tokens and 6 of 24576 + 512, `docs/performance/methodology.md`).
-The weight of a band is the mix's tokens that run at its widths times the best observed time per
-token there (sum of best times over the sum of T of the group's cases), normalized:
-prefill tokens, 20 x 2048 + 6 x 24576, go to the prefill band, because the engine prefills in chunks
-of 2048 (`prefill_chunk`, `src/models/*/session.h`); the 26 x 512 answer tokens go to the decode band
-(concurrency 1-8). With a drafter an answer would run at verify width k+1, but the repo has no one
-default depth, so none is assumed. Bands without benchmark tokens (verify, narrow, wide) weigh 0 in
-the mean and stay in the per-band table. The JSON carries every group's `weights`. `--band-weights`
-overrides them. A pick the sweep did not time, or that
-is not an a16 route in an a16 case, is counted as skipped, never as zero regret.
+batch129 (129+), by board, format and route family (the part of the route name before the first
+dot). route_tune times the speed profile's selection up to T 512, so the widest band is batched
+decode and wide verify, not the prefill profile's 2048-token chunks: this says nothing about
+prefill.
+
+There is no default cross-band mean: no committed mix gives band weights the sweeps can carry.
+`--band-weights '{"decode":3,"verify":1}'` adds a `weighted` mean per group; a group with no case
+in a band of nonzero weight gets none, rather than a mean of the bands it has. A case is skipped and
+counted, never scored as zero regret, when its pick was not timed, when a pass did not time one of
+its candidates, or (`--pick model`, T >= 17 only) when the model prices none of them.
 
 ```bash
 python3 tools/bench/regret_bands.py --doc selection.json --doc other_board.json --md bands.md --json bands.json
@@ -170,16 +167,9 @@ python3 -m unittest discover -s tests -p test_regret_bands.py
 ```
 
 `--doc` takes the `ninferno-selection-regret/1` documents `regret_collect.py` writes. `--routes`
-takes plain `route_tune` CSVs (medians over the passes given), because **none of the archived
-sweeps carries the run/device columns** `regret_collect.py` requires; the board is named by hand.
-
-[`data/sweep_archive.json`](data/sweep_archive.json) lists what exists where: for each stand
-(`/root/claude`, listed read-only on 2026-11-10) every directory holding route sweeps
-(`route_sweeps`, `route_tune --routes-out`), selections (`selected`, `--selected-out`) or regret
-documents (`regret_docs`), with the count, bytes, date range, whether the CSVs are stamped
-(`stamped` / `unstamped`) and any device named. Nothing is copied into the repository; the files
-stay on the stands. `regret_bands.py --archive data/sweep_archive.json` prints per-stand totals.
-Stand directories are scratch and may be cleaned, so refresh the manifest when a sweep is used.
+takes plain `route_tune` CSVs (medians over the passes given), because the existing sweeps predate
+the run/device columns `regret_collect.py` requires; the board is named by hand, and nothing then
+checks that the passes come from one build and board.
 
 ## Published performance numbers
 

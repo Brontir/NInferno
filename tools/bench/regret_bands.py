@@ -9,10 +9,15 @@ Inputs (repeatable, mixable):
   --routes P1.csv ... --selected SEL.csv --board NAME
                       route_tune --routes-out passes of one board and its --selected-out file. These
                       are accepted without the run/device columns regret_collect.py demands, because
-                      the existing sweep archive predates them (see data/sweep_archive.json).
-  --band-weights J    override the default weights (the benchmark mix's time share per band) with JSON
-  --pick model        with --routes: score the pick of the model price (lowest model_us) instead of
-                      the recorded production selection.
+                      the existing sweep archive predates them. Without those columns nothing tells
+                      two passes of different builds or boards apart: give passes of one run.
+  --band-weights J    a mean of the band regrets with these weights (band -> weight); a group that
+                      has no case in a weighted band gets no mean
+  --pick model        with --routes: score the pick of the model price (lowest model_us; T >= 17,
+                      where the model ranks) instead of the recorded production selection.
+
+route_tune times the speed profile's selection at T <= 512: its widest band is batched decode and
+wide verify, not the prefill profile's 2048-token chunks, so this tool says nothing about prefill.
 """
 import argparse
 import json
@@ -28,9 +33,10 @@ import selection_regret as regret  # noqa: E402
 
 # Upper edge (inclusive) of each band and what it is in the product. The decode regime is T <= 8
 # (R8 and the vector kernel), 9..16 is a speculative verify, 17..32 the narrow batched widths where
-# the cost model misranks most, 33..128 wide verify/batched decode, and 129+ prefill chunks.
+# the cost model misranks most, 33..128 wide verify/batched decode, and 129+ the widest batched
+# calls route_tune times (192..512, speed profile; not the prefill profile's chunks).
 BANDS = (("decode", 1, 8), ("verify", 9, 16), ("narrow", 17, 32), ("wide", 33, 128),
-         ("prefill", 129, None))
+         ("batch129", 129, None))
 BAND_NAMES = tuple(b[0] for b in BANDS)
 
 
@@ -89,9 +95,16 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected"):
             if at in seen:
                 raise ValueError(f"{path}: {collect.case_id(at[0])} {at[1]} timed twice in one pass")
             seen.add(at)
-            timed.setdefault(at, []).append(float(row["median_us"]))
+            us = float(row["median_us"])
+            if not (math.isfinite(us) and us > 0):
+                raise ValueError(f"{path}: {collect.case_id(at[0])} {at[1]}: median_us {us}")
+            timed.setdefault(at, []).append(us)
             if pick == "model":
-                model.setdefault(at, []).append(float(row["model_us"]))
+                # Empty where the model prices no route (route_tune leaves the cell blank).
+                text = (row.get("model_us") or "").strip()
+                price = float(text) if text else None
+                model.setdefault(at, []).append(
+                    price if price is not None and math.isfinite(price) and price > 0 else None)
     passes = len(route_paths)
     selected = None
     if pick == "selected":
@@ -99,19 +112,29 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected"):
             raise ValueError("--selected is needed to score the recorded selection")
         selected = {}
         for row in collect.read_rows(selected_path, collect.KEY + ("selected",)):
-            selected[collect.key_of(row)] = row["selected"].strip()
+            key = collect.key_of(row)
+            if key in selected:
+                raise ValueError(f"{selected_path}: {collect.case_id(key)} selected twice")
+            selected[key] = row["selected"].strip()
     routes = {}
     for key, route in timed:
         routes.setdefault(key, []).append(route)
     rows, skipped = [], 0
     for key in sorted(routes, key=lambda k: (k[:5], int(k[5]))):
-        # A route missing from a pass has no comparable median: it is not a candidate.
-        cands = {r: statistics.median(timed[(key, r)]) for r in routes[key]
-                 if len(timed[(key, r)]) == passes
-                 and not (key[1] == "a16" and collect.route_class(r) != "a16")}
+        eligible = [r for r in routes[key]
+                    if not (key[1] == "a16" and collect.route_class(r) != "a16")]
+        # A route a pass did not time leaves the case without a comparable best: the case is
+        # skipped, never scored without that route (selection_regret.score_case alike).
+        if any(len(timed[(key, r)]) != passes for r in eligible):
+            skipped += 1
+            continue
+        cands = {r: statistics.median(timed[(key, r)]) for r in eligible}
         if pick == "model":
+            if int(key[5]) < 17:  # the model ranks only from 17 tokens
+                skipped += 1
+                continue
             priced = {r: statistics.median(model[(key, r)]) for r in cands
-                      if model[(key, r)][0] > 0}
+                      if all(x is not None for x in model[(key, r)])}
             if not priced:
                 skipped += 1
                 continue
@@ -126,15 +149,6 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected"):
                      "t": int(key[5]), "selected": chosen, "best": best,
                      "selected_ms": cands[chosen] / 1000.0, "best_ms": cands[best] / 1000.0})
     return rows, skipped
-
-
-# The benchmark mix (DECISIONS 50, "the weights" paragraph of the request-mix decision): 20 short
-# requests of 2048 prompt + 512 answer tokens and 6 long ones of about 24576 + 512
-# (docs/performance/methodology.md). The engine prefills in chunks of 2048 (prefill_chunk in
-# src/models/*/session.h), so every prompt token runs at a width of 129 or more: the prefill band.
-# Answers run at the benchmark's concurrency 1..8, which is the decode band; speculation would
-# widen that to a verify of k+1 rows, but the repo has no single default depth, so none is assumed.
-BENCH_TOKENS = {"prefill": 20 * 2048 + 6 * 24576, "decode": 26 * 512}
 
 
 def stats(rows):
@@ -156,27 +170,12 @@ def by_band(rows):
             for b in BAND_NAMES if any(band_of(r["t"]) == b for r in rows)}
 
 
-def bench_weights(bands_of_group):
-    """Time share of the benchmark mix per band on this group's rows.
-
-    benchmark tokens in the band x the best observed time per token there (sum of best times over
-    the sum of T of the group's cases in the band). Bands the mix has no tokens in, or the group
-    has no cases in, weigh 0. Facts of the mix and measured times only; nothing is fitted.
-    """
-    out = {}
-    for band, tokens in BENCH_TOKENS.items():
-        got = bands_of_group.get(band)
-        if got and got["tokens"]:
-            out[band] = tokens * got["best_ms"] / got["tokens"]
-    return out
-
-
 def report(rows, skipped=0, band_weights=None):
     """Per band overall, then per board / format / route family, each by band.
 
-    Every group gets "weights" and "weighted": the mean of its band regrets weighted by the time the
-    benchmark mix spends in each band on that group's rows (bench_weights), or by `band_weights`
-    (band -> weight) when given.
+    With `band_weights` (band -> weight) every group also gets "weighted", the mean of its band
+    regrets by those weights, or None where the group has no case in a band of nonzero weight (a
+    mean over the bands it has would stand for a mix it does not cover).
     """
     for r in rows:
         r["family"] = family_of(r["selected"])
@@ -187,18 +186,23 @@ def report(rows, skipped=0, band_weights=None):
         out["by_" + dim] = {k: by_band([r for r in rows if r[dim] == k])
                             for k in sorted({r[dim] for r in rows})}
     if band_weights:
+        if not isinstance(band_weights, dict):
+            raise ValueError("band weights must be a JSON object of band -> weight")
         unknown = set(band_weights) - set(BAND_NAMES)
-        if unknown or any(w < 0 for w in band_weights.values()) or not any(band_weights.values()):
+        if (not isinstance(band_weights, dict) or unknown
+                or not all(isinstance(w, (int, float)) and math.isfinite(w) and w >= 0
+                           for w in band_weights.values())
+                or not any(band_weights.values())):
             raise ValueError(f"band weights must name {BAND_NAMES} and not all be zero")
         out["band_weights"] = band_weights
+    if not band_weights:
+        return out
+    total = sum(band_weights.values())
     groups = [out["overall"]] + [g for k in out if k.startswith("by_") for g in out[k].values()]
     for group in groups:
-        weights = band_weights or bench_weights(group)
-        w = {b: weights.get(b, 0) for b in group}
-        total = sum(w.values())
-        group["weights"] = {b: v / total for b, v in w.items()} if total else {}
-        group["weighted"] = (sum(group[b]["weighted_regret"] * w[b] for b in w) / total
-                             if total else None)
+        covered = all(b in group for b, v in band_weights.items() if v > 0)
+        group["weighted"] = (sum(group[b]["weighted_regret"] * v for b, v in band_weights.items()
+                                 if v > 0) / total if covered else None)
     return out
 
 
@@ -209,12 +213,12 @@ def pct(x):
 def markdown(rep):
     lines = ["# Band-weighted selection regret", "",
              f"{rep['cases']} cases ({rep['cases_skipped']} skipped). Each cell is the extra time "
-             "of the picks over the best observed route, summed over the band's cases (time-weighted). "
-             "`weighted` averages the bands by the time the benchmark mix spends in each on that "
-             "board (prefill and decode tokens x best time per token; other bands weigh 0).",
-             "", "Bands (T): " + ", ".join(f"{n} {lo}-{hi if hi else '+'}"
+             "of the picks over the best observed route, summed over the band's cases (time-weighted)."
+             + (" `weighted` averages the bands by the given weights (empty where a weighted band "
+                "has no case)." if "band_weights" in rep else ""),
+             "", "Bands (T): " + ", ".join(f"{n} {lo}-{hi}" if hi else f"{n} {lo}+"
                                            for n, (lo, hi) in rep["bands"].items()), ""]
-    weighted = True
+    weighted = "band_weights" in rep
 
     def table(title, groups):
         head = ["| " + title + " | " + " | ".join(f"{b} (n)" for b in BAND_NAMES)
@@ -234,18 +238,6 @@ def markdown(rep):
     return "\n".join(lines)
 
 
-def archive_summary(path):
-    document = json.loads(Path(path).read_text(encoding="utf-8"))
-    if document.get("schema") != "ninferno-sweep-archive/1":
-        raise ValueError("unsupported manifest schema")
-    out = {}
-    for stand, dirs in document["stands"].items():
-        out[stand] = {k: sum(d[k] for d in dirs)
-                      for k in ("route_sweeps", "selected", "regret_docs", "stamped", "bytes")}
-        out[stand]["dirs"] = len(dirs)
-    return out
-
-
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     p.add_argument("--doc", type=Path, action="append", default=[])
@@ -258,12 +250,8 @@ def main(argv=None):
     p.add_argument("--band-weights", help='JSON, e.g. {"decode":0.4,"verify":0.2}')
     p.add_argument("--json", type=Path, help="write the JSON report here")
     p.add_argument("--md", type=Path, help="write the markdown report here")
-    p.add_argument("--archive", type=Path, help="print the totals of a sweep_archive.json and exit")
     args = p.parse_args(argv)
     try:
-        if args.archive:
-            print(json.dumps(archive_summary(args.archive), indent=1, sort_keys=True))
-            return 0
         rows, skipped = [], 0
         for doc in args.doc:
             r, s = rows_from_document(json.loads(doc.read_bytes(), object_pairs_hook=regret.unique_object))
