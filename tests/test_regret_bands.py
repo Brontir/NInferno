@@ -183,7 +183,8 @@ class Csv(unittest.TestCase):
         self.assertEqual(self.counts(bands.rows_from_csv([p1, p2], sel, "b")), (0, 1))
 
     def test_a_selection_without_sweep_rows_is_skipped(self):
-        p1 = self.write("p1.csv", ROUTES + "q4k,a16,store,64,64,4,rmma.a,20,30" + chr(10))
+        p1 = self.write("p1.csv", ROUTES + "q4k,a16,store,64,64,4,rmma.a,20,30" + chr(10)
+                        + "q4k,a16,store,64,64,4,rmma.b,10,40" + chr(10))
         sel = self.write("s.csv", SELECTED + "q4k,a16,store,64,64,4,rmma.a,rmma.a" + chr(10)
                          + "q4k,a16,store,64,64,8,rmma.a,rmma.a" + chr(10))
         rows, skipped = bands.rows_from_csv([p1], sel, "b")
@@ -198,6 +199,35 @@ class Csv(unittest.TestCase):
                            "q4k,a16,store,64,64,4,rmma.a,rmma.a\n")
         with self.assertRaises(ValueError):
             bands.rows_from_csv([p1], twice, "b")
+
+    def test_one_class_candidate_is_no_comparison_not_zero_regret(self):
+        # An a16 case: the pick plus only an a8 route leaves one candidate of its class.
+        p1 = self.write("p1.csv", ROUTES + "q4k,a16,store,64,64,40,rmma.a,20,30\n"
+                        "q4k,a16,store,64,64,40,ggml_mmq.x64,10,40\n")
+        sel = self.write("s.csv", SELECTED + "q4k,a16,store,64,64,40,rmma.a,rmma.a\n")
+        for pick, selected in (("selected", sel), ("model", None)):
+            rows, skipped = bands.rows_from_csv([p1], selected, "b", pick=pick)
+            self.assertEqual(rows, [])
+            self.assertEqual([r["reason"] for r in skipped],
+                             ["fewer than two candidates of the case's compute class"])
+
+    def test_model_tie_is_a_skip_whatever_the_row_order(self):
+        # route_tune writes the price rounded, so two routes can tie; which one production keeps
+        # (the first offered) is not in the CSV, so neither order may decide the pick.
+        a = "q4k,a16,store,64,64,40,rmma.a,20,30\n"
+        b = "q4k,a16,store,64,64,40,rmma.b,10,30\n"
+        c = "q4k,a16,store,64,64,40,rmma.c,15,40\n"
+        for text in (a + b + c, b + a + c, c + b + a):
+            p1 = self.write("p1.csv", ROUTES + text)
+            rows, skipped = bands.rows_from_csv([p1], None, "b", pick="model")
+            self.assertEqual((rows, [r["reason"] for r in skipped]),
+                             ([], ["the model prices the best candidates equally"]))
+        # A tie above the lowest price does not matter.
+        p1 = self.write("p1.csv", ROUTES + "q4k,a16,store,64,64,40,rmma.a,20,30\n"
+                        "q4k,a16,store,64,64,40,rmma.b,10,40\n"
+                        "q4k,a16,store,64,64,40,rmma.c,15,40\n")
+        rows, skipped = bands.rows_from_csv([p1], None, "b", pick="model")
+        self.assertEqual((skipped, rows[0]["selected"]), ([], "rmma.a"))
 
     def test_untimed_selection_is_skipped(self):
         p1 = self.write("p1.csv", ROUTES + "q4k,a16,store,64,64,4,rmma.a,20,30\n"
@@ -459,7 +489,8 @@ class Cli(unittest.TestCase):
 
     def test_legacy_routes_need_a_qualification_statement(self):
         p1 = self.root / "p1.csv"
-        p1.write_text(ROUTES + "q4k,a16,store,64,64,40,rmma.a,20,30\n", encoding="utf-8")
+        p1.write_text(ROUTES + "q4k,a16,store,64,64,40,rmma.a,20,30\n"
+                      "q4k,a16,store,64,64,40,rmma.b,10,40\n", encoding="utf-8")
         code, err = self.run_main(["--routes", str(p1), "--pick", "model", "--board", "b"])
         self.assertEqual((code, "--qualified" in err), (2, True))
         out = self.root / "o.json"

@@ -185,7 +185,14 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected"):
             if not priced:
                 skip(None, "the model prices none of the candidates")
                 continue
-            chosen = min(priced, key=lambda r: (priced[r], r))
+            low = min(priced.values())
+            if sum(1 for v in priced.values() if v == low) > 1:
+                # route_tune writes the price rounded; production keeps the first route offered on
+                # an equal price and the CSV does not say which that was, so the pick is unknown
+                # (a name or file order would pick one by accident and move the regret with it).
+                skip(None, "the model prices the best candidates equally")
+                continue
+            chosen = min(priced, key=priced.get)
         else:
             chosen = selected.get(key)
         if chosen is None:
@@ -196,6 +203,11 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected"):
             # key) is left out of the candidates above; say so rather than "not timed".
             skip(chosen, "the pick is not of the case's compute class" if chosen in routes[key]
                  else "the pick was not timed among the candidates")
+            continue
+        if len(cands) < 2:
+            # One candidate of the case's class: nothing to compare, and 0 % would read as a win
+            # (the document evaluator calls this no_comparison).
+            skip(chosen, "fewer than two candidates of the case's compute class")
             continue
         best = min(cands, key=lambda r: (cands[r], r))
         rows.append({"id": collect.case_id(key), "board": board, "format": key[0],
