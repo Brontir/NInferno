@@ -324,39 +324,53 @@ int main() {
     // count, the round cost's own (load_gain at a gain of 1) on the lab board's rates. A priced
     // scale is what a plan's estimate multiplies the one-request gain by.
     {
-        const auto& lab             = pair_of(kQ9, "ad104:60sm");
-        auto second                 = lab; // the same measurement on a second Ada card
-        second.tune.key.gpu         = "ad102:128sm";
-        const auto home             = sp::profile_for_target({&lab, &second}, "sm89");
-        const sp::SpecConfig chosen = home.overall.config;
-        const double kappa          = sp::card_rates_of_board(lab.lab_board).kappa();
-        expect(chosen.enabled() && !home.joint_scale.empty(),
-               "a home profile prices its joint verify");
+        // The registry's rows carry kernel counts, which add the launch term (the block below);
+        // without them the scale is the round cost's own ratio.
+        auto lab = pair_of(kQ9, "ad104:60sm");
+        for (auto& m : lab.tune.measurements) { m.graph_kernels = m.graph_rounds = 0; }
+        auto second         = lab; // the same measurement on a second Ada card
+        second.tune.key.gpu = "ad102:128sm";
+        const auto home     = sp::profile_for_target({&lab, &second}, "sm89");
+        const double kappa  = sp::card_rates_of_board(lab.lab_board).kappa();
+        expect(!home.joint_scale.empty(), "a home profile prices its joint verify");
+        const auto direct_at = [&](const sp::SpecConfig& at, std::int32_t streams) {
+            return sp::load_gain(*lab.round_facts, at, kappa, 1.0, streams,
+                                 at.proposal_head ? lab.tune.proposal_rows : sp::ProposalRows{});
+        };
+        // Every priced entry is load_gain's.
+        int compared = 0;
+        for (const auto& [label, by_streams] : home.joint_scale) {
+            const auto at = sp::SpecConfig::parse(label);
+            for (const auto& [streams, scale] : by_streams) {
+                const auto direct = direct_at(at, streams);
+                expect(direct && near(scale, *direct, 1e-12) && scale > 0 && std::isfinite(scale),
+                       "the joint scale is load_gain's at " + label + " x" +
+                           std::to_string(streams));
+                ++compared;
+            }
+        }
+        // And every depth up to the non-thinking choice (mtp:3+head on this pair) is priced
+        // wherever the round cost prices it.
+        const sp::SpecConfig chosen = home.non_thinking.config;
+        expect(chosen.enabled() && chosen.mode == sp::Mode::Mtp,
+               "the non-thinking choice drafts with MTP on this pair");
         for (std::int32_t k = 1; k <= chosen.k; ++k) {
             sp::SpecConfig at = chosen;
             at.k              = k;
             const auto found  = home.joint_scale.find(at.label());
             for (std::int32_t streams = 2; streams <= sp::kPricedVerifyRows; ++streams) {
-                const auto direct =
-                    sp::load_gain(*lab.round_facts, at, kappa, 1.0, streams,
-                                  at.proposal_head ? lab.tune.proposal_rows : sp::ProposalRows{});
                 const bool listed =
                     found != home.joint_scale.end() && found->second.contains(streams);
-                expect(listed == direct.has_value() &&
-                           (!listed || near(found->second.at(streams), *direct, 1e-12)),
-                       "the joint scale is load_gain's at " + at.label() + " x" +
+                expect(listed == direct_at(at, streams).has_value(),
+                       "priced exactly where the round cost prices " + at.label() + " x" +
                            std::to_string(streams));
-                if (listed) {
-                    expect(found->second.at(streams) > 0 &&
-                               std::isfinite(found->second.at(streams)),
-                           "the joint scale is positive: " + at.label());
-                }
             }
         }
-        // Not at home (one card of the generation: the portable choice, plain from two streams),
-        // nothing is priced.
+        expect(compared > 0, "the joint scale was compared with load_gain");
+        // One card of the generation is no home (the portable choice): the joint verify is
+        // priced only for a profile at home.
         expect(sp::profile_for_target({&lab}, "sm89").joint_scale.empty(),
-               "a profile that decodes plainly under load prices no joint verify");
+               "a profile that is not at home prices no joint verify");
     }
     // The draft head over the rows an artifact's proposal head carries (#205: MTP reads its own
     // 57,344-row prefix of the 147,456 rows it read before, Qwen3.5-9B Q4_K_M, Q6_K head). The

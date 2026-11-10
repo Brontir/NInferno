@@ -111,8 +111,9 @@ struct DrafterOption {
     // The gain at `streams` streams: base_gain_at scaled by the joint verify's price where it is
     // priced (below 1 when the round at that load no longer pays: the choice then weighs plain
     // decode), else base_gain_at; and never more than the least gain priced at a smaller count of
-    // streams (the gain does not climb back as the load grows, priced there or not). Before any
-    // count is priced it is the one-request ceiling.
+    // streams (the gain does not climb back as the load grows, priced there or not; a count whose
+    // bound is unmeasured holds a placeholder and bounds nothing). Before any count is priced it
+    // is the one-request ceiling.
     [[nodiscard]] double speedup_at(std::uint32_t streams) const noexcept {
         if (plain_from_streams != 0 && streams >= plain_from_streams) { return 1; }
         double gain  = base_gain_at(streams);
@@ -122,7 +123,8 @@ struct DrafterOption {
             const double priced = base_gain_at(j.streams) * j.scale;
             if (j.streams == streams) {
                 gain = priced;
-            } else {
+            } else if (bound_measured_at(j.streams)) {
+                // A bound with no measured gain holds a placeholder, which bounds nothing.
                 least = std::min(least, priced);
             }
         }
@@ -142,11 +144,10 @@ struct DrafterOption {
         return std::any_of(joint.begin(), joint.end(),
                            [&](const JointScale& j) { return j.streams <= streams; });
     }
-    // Whether a measurement gives the gain at `streams` streams: `measured`, and the load table's
-    // bound in force there measured at its depth (a published profile lists no depths but its
-    // choice's). Plain decode's from plain_from_streams on is no gain to measure.
-    [[nodiscard]] bool measured_at(std::uint32_t streams) const noexcept {
-        if (!measured) { return false; }
+
+    // Whether the load table's bound in force at `streams` streams was measured at its depth
+    // (true before any bound and from plain_from_streams on).
+    [[nodiscard]] bool bound_measured_at(std::uint32_t streams) const noexcept {
         if (plain_from_streams != 0 && streams >= plain_from_streams) { return true; }
         bool known = true;
         for (const LoadGain& g : load) {
@@ -154,6 +155,13 @@ struct DrafterOption {
             known = g.measured;
         }
         return known;
+    }
+
+    // Whether a measurement gives the gain at `streams` streams: `measured`, and the load table's
+    // bound in force there measured at its depth (a published profile lists no depths but its
+    // choice's). Plain decode's from plain_from_streams on is no gain to measure.
+    [[nodiscard]] bool measured_at(std::uint32_t streams) const noexcept {
+        return measured && bound_measured_at(streams);
     }
 };
 

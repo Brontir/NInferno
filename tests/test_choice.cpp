@@ -1886,6 +1886,15 @@ void joint_price_scales_the_gain(const json& fixture) {
     check(!d.joint_priced_at(1) && d.joint_priced_at(2) && d.joint_priced_at(4) &&
               !d.joint_priced_at(5),
           "priced at the listed streams below the plain bound");
+    // An unmeasured bound's placeholder gain (1) priced at 2 streams does not hold the measured
+    // bound at 4 streams below its own price.
+    ch::DrafterOption u{"mtp:4", "mtp", 2.0, 8, "measured"};
+    u.load  = {{.streams = 2, .speedup = 1.0, .depth = 1, .bounded = true, .measured = false},
+               {.streams = 4, .speedup = 1.6, .depth = 3, .bounded = true}};
+    u.joint = {{.streams = 2, .scale = 0.9}, {.streams = 4, .scale = 0.8}};
+    check(!u.measured_at(2) && u.measured_at(4) && std::abs(u.speedup_at(4) - 1.28) < 1e-12,
+          "an unmeasured bound's placeholder does not bound a measured gain: " +
+              std::to_string(u.speedup_at(4)));
     b.model.drafters        = {d};
     b.model.default_drafter = 1;
     ch::Candidate with{KvCacheStorage::Int8Group64, KvCacheStorage::BFloat16,
