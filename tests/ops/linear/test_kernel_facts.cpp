@@ -290,6 +290,46 @@ void loop_counts_read() {
     }
 }
 
+void schedules_read() {
+    // The static schedule (schema 4, #613 PR-C) of every row of every snapshot that carries it,
+    // within the bounds a kernel's control codes allow: every issued instruction stalls at least
+    // one clock, so a stall sum is at least its instruction count; the waits, the local waits and
+    // the barriers are instructions of their part; a found loop has instructions outside it (the
+    // prologue and the store at least). Every row of a schema 4 snapshot has a schedule, of a
+    // schema 2 one none. No value is pinned: a recompile moves them.
+    for (const auto arch : kf::snapshot_archs()) {
+        const std::string name = "sm_" + std::string(arch);
+        const auto rows        = kf::rmma_rows(arch);
+        expect(rows.size() == kf::snapshot_header(arch)->kernels,
+               name + ": " + std::to_string(rows.size()) + " rows read");
+        int with = 0, without = 0, bad = 0;
+        std::string first;
+        for (const auto& f : rows) {
+            if (!f.loop) continue;
+            if (!f.loop->schedule) {
+                ++without;
+                continue;
+            }
+            ++with;
+            const kf::LoopCounts& l     = *f.loop;
+            const kf::StaticSchedule& d = *l.schedule;
+            const bool ok =
+                d.stall_sum >= l.total && 0 <= d.sb_waits_local && d.sb_waits_local <= d.sb_waits &&
+                d.sb_waits <= l.total && d.outside_stall >= d.outside_total &&
+                0 <= d.outside_waits && d.outside_waits <= d.outside_total && 0 <= d.outside_bar &&
+                d.outside_bar <= d.outside_total && (l.loops == 0 || d.outside_total > 0);
+            if (!ok && bad++ == 0) {
+                first = "stall_sum " + std::to_string(d.stall_sum) + " total " +
+                        std::to_string(l.total) + " outside " + std::to_string(d.outside_total);
+            }
+        }
+        expect(with == 0 || without == 0, name + ": rows with and without a schedule");
+        expect(bad == 0,
+               name + ": " + std::to_string(bad) + " schedules out of bounds, first " + first);
+        std::cout << name << ": " << rows.size() << " rows, " << with << " with a schedule\n";
+    }
+}
+
 } // namespace
 
 int main() {
@@ -298,6 +338,7 @@ int main() {
         release_engines();
         canonical_names();
         loop_counts_read();
+        schedules_read();
         occupancy_from_facts();
         boards_read_facts();
         build_kernels_find_facts();

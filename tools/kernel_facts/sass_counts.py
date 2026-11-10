@@ -46,6 +46,30 @@ them, divided by the 16x8 tile and the tiles the warp holds (m_tiles * n_tiles *
 is 0 where there is no tensor MMA, a weight MMA's shape is unknown, or the sum is not a whole
 number of K; it equals 2 * 4 * kRun of the decoder where the loop was found right, which
 `kernel_facts.py extract` checks across every row of a decoder.
+
+The static schedule (schema 4, #613 PR-C; `Control`, `schedule_counts`). From sm_70 on every
+instruction is 128 bits, and cuobjdump prints them as two 64-bit words, the low one on the
+instruction's line and the high one alone on the next. Bits 41-57 of the high word (105-121 of the
+instruction) are the control code ptxas writes for the warp scheduler: the stall count (41-44,
+the clocks the warp waits before it issues its next instruction), the yield flag (45), the
+scoreboard the instruction sets when its result is written (46-48) and when its sources have
+been read (49-51; 7 sets none), and the mask of scoreboards it waits on before it issues (52-57);
+58-61 are the operand-reuse flags. The layout is the public one of the reverse-engineered
+assemblers and of the microbenchmark papers (CuAssembler, CuAsm/CuSMVersion.py and
+CuControlCode.py: the control code at bit 64 + 41 of the 128-bit word, stall 0x0000f, yield 0x10,
+write barrier 0xe0, read barrier 0x700, wait mask 0x1f800; Jia et al., "Dissecting the NVIDIA
+Volta GPU Architecture via Microbenchmarking", 2018, section 2.2). Per kernel, over the counted
+iteration: the sum of the stall counts (`stall_sum`, the clocks one warp alone needs to issue the
+iteration when no scoreboard holds it; at least one per instruction), the instructions that wait
+on a scoreboard (`sb_waits`, a variable-latency result or a source release the warp cannot hide
+alone), and of them those waiting on a local load's result (`sb_waits_local`: a scoreboard whose
+pending writers since its last wait include an LDL, the iteration walked twice so that a load of
+the previous iteration reaches a wait at the top); and the code outside the K loop, which a warp
+runs once (the prologue, the first fetch, the split-K reduce, the epilogue): every instruction the
+entry reaches outside the loop's blocks (`outside_total`, a static count: each of the
+alternatives counts, a callee does not), their stall sum (`outside_stall`), their scoreboard
+waits (`outside_waits`) and their CTA barriers (`outside_bar`). A DEPBAR's wait on the copy
+counter is in its operand, not in the mask, and is not counted as a wait.
 """
 
 import re
@@ -54,6 +78,8 @@ from collections import Counter
 INSTRUCTION = re.compile(r"/\*([0-9a-f]{4,})\*/\s+(@!?U?P\w+\s+)?([A-Z][A-Z0-9_.]*)\s*([^;]*);")
 FUNCTION = re.compile(r"Function : (\S+)")
 TARGET = re.compile(r"0x([0-9a-f]+)\s*$")
+# The second line of a 128-bit instruction: its high 64-bit word alone in a comment.
+HIGH_WORD = re.compile(r"^\s*/\*\s*0x([0-9a-f]{16})\s*\*/\s*$")
 REGISTER = re.compile(r"^(U?R)(\d+)")
 
 MMA_OPCODES = ("HMMA", "IMMA", "QMMA", "OMMA", "DMMA", "BMMA")
@@ -90,14 +116,41 @@ WIDTHS = ((".256", 32), (".128", 16), (".64", 8), (".U8", 1), (".S8", 1), (".U16
 COUNT_FIELDS = ("mma", "mma_ones", "ldg", "ldg_bytes", "ld", "ld_bytes", "ldgsts",
                 "ldgsts_bytes", "lds", "lds_bytes", "sts", "sts_bytes", "local", "local_bytes",
                 "shfl", "int", "fp", "uniform", "other", "total")
-# The snapshot's columns for these facts, in order.
-COLUMNS = ("loops", "k_iter", "mma", "mma_ones", "mma_shape") + COUNT_FIELDS[2:]
+# The static schedule's columns (schema 4), from the control codes (module docstring).
+SCHEDULE_FIELDS = ("stall_sum", "sb_waits", "sb_waits_local", "outside_total", "outside_stall",
+                   "outside_waits", "outside_bar")
+# The snapshot's columns for these facts, in order: the loop's counts (schema 2), then the
+# schedule (schema 4).
+LOOP_COLUMNS = ("loops", "k_iter", "mma", "mma_ones", "mma_shape") + COUNT_FIELDS[2:]
+COLUMNS = LOOP_COLUMNS + SCHEDULE_FIELDS
+NO_BARRIER = 7
+
+
+class Control:
+    """The control code of one sm_70+ instruction, from its high 64-bit word (module docstring)."""
+
+    __slots__ = ("stall", "yield_flag", "write_barrier", "read_barrier", "wait_mask", "reuse")
+
+    def __init__(self, high_word):
+        code = high_word >> 41
+        self.stall = code & 0xF
+        self.yield_flag = (code >> 4) & 1
+        self.write_barrier = (code >> 5) & 7
+        self.read_barrier = (code >> 8) & 7
+        self.wait_mask = (code >> 11) & 0x3F
+        self.reuse = (code >> 17) & 0xF
+
+    def fields(self):
+        return (self.stall, self.yield_flag, self.write_barrier, self.read_barrier,
+                self.wait_mask, self.reuse)
 
 
 def iter_functions(lines, wanted=None):
-    """(mangled name, [(offset, guarded, opcode, operands)]) for each Function block of
-    `cuobjdump -sass` text (an iterable of lines), as the text is read; `wanted(name)` selects
-    the functions parsed, the others are skipped line by line."""
+    """(mangled name, [(offset, guarded, opcode, operands, high word)]) for each Function block
+    of `cuobjdump -sass` text (an iterable of lines), as the text is read; the high word is the
+    128-bit instruction's upper half printed on the next line (the control code), None where the
+    text has none. `wanted(name)` selects the functions parsed, the others are skipped line by
+    line."""
     name, body = None, None
     for line in lines:
         if "Function" in line:
@@ -114,7 +167,11 @@ def iter_functions(lines, wanted=None):
         if m:
             guard = (m.group(2) or "").strip()
             body.append((int(m.group(1), 16), guard not in ("", "@PT"), m.group(3),
-                         m.group(4).strip()))
+                         m.group(4).strip(), None))
+            continue
+        m = HIGH_WORD.match(line)
+        if m and body and body[-1][4] is None:
+            body[-1] = body[-1][:4] + (int(m.group(1), 16),)
     if body is not None:
         yield name, body
 
@@ -160,9 +217,9 @@ def branch_edges(guarded, opcode, operands):
 def successors(body):
     """The control-flow successors of every instruction (indices into `body`), or None where the
     flow is unknown (an indirect branch, a branch to an offset outside the function)."""
-    at = {offset: i for i, (offset, _, _, _) in enumerate(body)}
+    at = {offset: i for i, (offset, *_) in enumerate(body)}
     out = []
-    for i, (_, guarded, opcode, operands) in enumerate(body):
+    for i, (_, guarded, opcode, operands, *_) in enumerate(body):
         nexts = []
         base = base_opcode(opcode)
         if base.startswith(("BRX", "JMX")):
@@ -438,8 +495,9 @@ def ones_mma_indices(body, succ):
     constant move or a copy of a ONES register, NOT after any other write (a guarded one too) and
     at the entry, and the meet of two paths is ONES only where both are; a redefinition later in
     the loop body reaches the loop's top through the back edge."""
-    tokens = [operand_tokens(operands) for _, _, _, operands in body]
-    defs = [ones_definition(g, op, t, operands) for (_, g, op, operands), t in zip(body, tokens)]
+    tokens = [operand_tokens(operands) for _, _, _, operands, *_ in body]
+    defs = [ones_definition(g, op, t, operands)
+            for (_, g, op, operands, *_), t in zip(body, tokens)]
     tracked = {d[1] for d in defs if d and d[0] == "const"}
     grown = True
     while grown:  # the copies of tracked registers, transitively
@@ -454,7 +512,7 @@ def ones_mma_indices(body, succ):
     for i, nexts in enumerate(succ):
         for n in nexts:
             preds[n].append(i)
-    written = [written_registers(op, operands) & tracked for _, _, op, operands in body]
+    written = [written_registers(op, operands) & tracked for _, _, op, operands, *_ in body]
     order = sorted(tracked)
     index = {r: k for k, r in enumerate(order)}
     state_in = [[TOP] * len(order) for _ in body]
@@ -479,7 +537,7 @@ def ones_mma_indices(body, succ):
                 state_in[i], state_out[i] = inc, out
                 changed = True
     found = set()
-    for i, (_, _, opcode, _) in enumerate(body):
+    for i, (_, _, opcode, *_) in enumerate(body):
         if base_opcode(opcode) in MMA_OPCODES and len(tokens[i]) >= 2:
             a = tokens[i][1]
             if a in tracked and state_in[i][index[a]] == IS_ONES:
@@ -490,55 +548,146 @@ def ones_mma_indices(body, succ):
 class LoopCounts:
     """The K loop's counts of one kernel (the module docstring). `loops` is the number of
     candidate loops (0: none found, the counts are then 0); `mma_shape` the MMA opcode, `-`
-    without one, `a:n+b:m` where shapes mix."""
+    without one, `a:n+b:m` where shapes mix. `scheduled`: the static-schedule fields
+    (SCHEDULE_FIELDS) are known, from the control codes of every instruction; a schema 2 row and
+    a text without control codes leave them out."""
 
     def __init__(self):
         self.loops = 0
         self.k_iter = 0
         self.mma_shape = "-"
-        for f in COUNT_FIELDS:
+        for f in COUNT_FIELDS + SCHEDULE_FIELDS:
             setattr(self, f, 0)
+        self.scheduled = False
+
+    def columns(self):
+        return COLUMNS if self.scheduled else LOOP_COLUMNS
 
     def row(self):
-        """The snapshot's columns (COLUMNS), as strings."""
-        return [str(getattr(self, c)) for c in COLUMNS]
+        """The snapshot's columns (COLUMNS, LOOP_COLUMNS without the schedule), as strings."""
+        return [str(getattr(self, c)) for c in self.columns()]
+
+    def without_schedule(self):
+        """A copy without the schedule fields, as a schema 2 row reads."""
+        c = LoopCounts()
+        for name in LOOP_COLUMNS:
+            setattr(c, name, getattr(self, name))
+        return c
 
     @classmethod
     def from_row(cls, fields):
-        """The counts of a snapshot row's loop columns; ValueError on a field that is no count."""
-        if len(fields) != len(COLUMNS):
-            raise ValueError(f"{len(fields)} loop fields, {len(COLUMNS)} columns")
+        """The counts of a snapshot row's loop columns, with the schedule (COLUMNS) or without it
+        (LOOP_COLUMNS); ValueError on a field that is no count."""
+        if len(fields) not in (len(COLUMNS), len(LOOP_COLUMNS)):
+            raise ValueError(f"{len(fields)} loop fields, {len(COLUMNS)} or {len(LOOP_COLUMNS)} "
+                             "columns")
         c = cls()
+        c.scheduled = len(fields) == len(COLUMNS)
         for name, value in zip(COLUMNS, fields):
             setattr(c, name, value if name == "mma_shape" else int(value))
         return c
+
+    def schedule_problems(self):
+        """What the schedule fields cannot be, as text (empty where they hold): every issued
+        instruction waits at least one clock (ptxas writes a stall of 0 only on code no path
+        reaches: the padding NOPs, the trailing self-branch), so a stall sum is at least its
+        instruction count; the waits, the local waits and the barriers are instructions of their
+        part."""
+        if not self.scheduled:
+            return []
+        out = []
+        if self.stall_sum < self.total:
+            out.append(f"stall_sum {self.stall_sum} < total {self.total}")
+        if not 0 <= self.sb_waits_local <= self.sb_waits <= self.total:
+            out.append(f"sb_waits_local {self.sb_waits_local}, sb_waits {self.sb_waits}, "
+                       f"total {self.total} out of order")
+        if self.outside_stall < self.outside_total:
+            out.append(f"outside_stall {self.outside_stall} < outside_total {self.outside_total}")
+        if not (0 <= self.outside_waits <= self.outside_total and
+                0 <= self.outside_bar <= self.outside_total):
+            out.append(f"outside_waits {self.outside_waits} or outside_bar {self.outside_bar} "
+                       f"above outside_total {self.outside_total}")
+        return out
 
     def __eq__(self, other):
         return isinstance(other, LoopCounts) and self.row() == other.row()
 
     def __repr__(self):
-        return "LoopCounts(" + " ".join(f"{c}={v}" for c, v in zip(COLUMNS, self.row())) + ")"
+        pairs = zip(self.columns(), self.row())
+        return "LoopCounts(" + " ".join(f"{c}={v}" for c, v in pairs) + ")"
+
+
+def controls(body):
+    """The Control of every instruction of a body, or None where one has no high word."""
+    if any(len(ins) < 5 or ins[4] is None for ins in body):
+        return None
+    return [Control(ins[4]) for ins in body]
+
+
+def schedule_counts(body, control, iteration, outside):
+    """{field: value} of SCHEDULE_FIELDS (module docstring): `iteration`, the indices of the
+    counted iteration in the order it executes, `outside`, the indices of the code outside the K
+    loop. The local waits follow the scoreboards along the iteration walked twice, the second
+    walk counted: a wait clears the scoreboards of its mask, a write barrier set by an LDL makes
+    its scoreboard local until then."""
+    out = dict.fromkeys(SCHEDULE_FIELDS, 0)
+    for i in iteration:
+        out["stall_sum"] += control[i].stall
+        out["sb_waits"] += control[i].wait_mask != 0
+    local = [False] * 6
+    for walk in (0, 1):
+        for i in iteration:
+            c = control[i]
+            if c.wait_mask:
+                waited = [b for b in range(6) if (c.wait_mask >> b) & 1]
+                if walk and any(local[b] for b in waited):
+                    out["sb_waits_local"] += 1
+                for b in waited:
+                    local[b] = False
+            if c.write_barrier != NO_BARRIER and base_opcode(body[i][2]) == "LDL":
+                local[c.write_barrier] = True
+    for i in outside:
+        out["outside_total"] += 1
+        out["outside_stall"] += control[i].stall
+        out["outside_waits"] += control[i].wait_mask != 0
+        out["outside_bar"] += base_opcode(body[i][2]) == "BAR"
+    return out
 
 
 def loop_counts(body, tiles=1):
     """The K loop's LoopCounts of a function body (iter_functions); `tiles` the m16n8 tiles one
-    warp accumulates (m_tiles * n_tiles * row sets), for k_iter."""
+    warp accumulates (m_tiles * n_tiles * row sets), for k_iter. The schedule fields where every
+    instruction carries its control code."""
     out = LoopCounts()
     if not body:
         return out
-    succ = successors(body)
-    if succ is None:
+    control = controls(body)
+
+    def scheduled(iteration, outside):
+        if control is not None:
+            for name, value in schedule_counts(body, control, iteration, outside).items():
+                setattr(out, name, value)
+            out.scheduled = True
         return out
+
+    succ = successors(body)
+    if succ is None:  # unknown flow: no loop and nothing counted, the schedule's parts too
+        return scheduled([], [])
     blocks, edges = basic_blocks(body, succ)
     live = reachable(edges)
     dom, preds = dominators(edges, live)
     loops = natural_loops(edges, dom, preds, live)
-    has_mma = any(base_opcode(op) in MMA_OPCODES for _, _, op, _ in body)
+    has_mma = any(base_opcode(op) in MMA_OPCODES for _, _, op, *_ in body)
     marker = (lambda op: base_opcode(op) in MMA_OPCODES) if has_mma else \
         (lambda op: base_opcode(op) == "FFMA")
 
     def indices(members):
         for b in sorted(members):
+            s, e = blocks[b]
+            yield from range(s, e + 1)
+
+    def in_order(path):
+        for b in path:
             s, e = blocks[b]
             yield from range(s, e + 1)
 
@@ -554,7 +703,7 @@ def loop_counts(body, tiles=1):
     iterations = {h: p for h, p in iterations.items() if p}
     out.loops = len(iterations)
     if not iterations:
-        return out
+        return scheduled([], list(indices(live)))
     path = max(iterations.values(),
                key=lambda p: tuple(sum(w) for w in zip(*(weight(b) for b in p))))
     ones = ones_mma_indices(body, succ) if has_mma else set()
@@ -589,4 +738,6 @@ def loop_counts(body, tiles=1):
         per_tile = 16 * 8 * tiles
         if mnk_sum and not unknown_shape and mnk_sum % per_tile == 0:
             out.k_iter = mnk_sum // per_tile
-    return out
+    # Outside: what the entry reaches beyond the blocks of the loop whose iteration was counted
+    # (its header is the path's first block).
+    return scheduled(list(in_order(path)), list(indices(live - loops[path[0]])))
