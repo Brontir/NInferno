@@ -69,11 +69,19 @@ Json class_of(const ninferno::DeviceClass& d) {
 
 } // namespace
 
+// A whole, non-negative ordinal ("2"), or -1 for anything else ("-1", "abc", "1x").
+static int device_ordinal(const char* text) {
+    char* end        = nullptr;
+    const long value = std::strtol(text, &end, 10);
+    return end != text && *end == '\0' && value >= 0 && value < 4096 ? static_cast<int>(value) : -1;
+}
+
 int main(int argc, char** argv) {
     int only = -1;
     for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--device") == 0 && i + 1 < argc) {
-            only = std::atoi(argv[++i]);
+        if (std::strcmp(argv[i], "--device") == 0 && i + 1 < argc &&
+            (only = device_ordinal(argv[i + 1])) >= 0) {
+            ++i;
         } else {
             std::fprintf(stderr, "usage: ninferno-facts-probe [--device N]\n");
             return 2;

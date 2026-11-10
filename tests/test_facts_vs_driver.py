@@ -58,11 +58,11 @@ class Compare(unittest.TestCase):
 
     def test_each_table_field_fails_alone(self):
         for field, change in (
-                ("sms", lambda q: q.update(sms=114)),
+                ("sms", lambda q: q.update(sms=130)),
                 ("l2_mib", lambda q: q.update(l2_bytes=64 * MIB)),
-                ("bus_bits", lambda q: q.update(memory_bus_bits=320)),
+                ("bus_bits", lambda q: q.update(memory_bus_bits=300)),  # no whole channel count
                 ("memory_clock_khz", lambda q: q.update(memory_clock_khz=10_600_000)),  # +0.95 %
-                ("boost_clock_khz", lambda q: q.update(sm_clock_khz=2_400_000)),
+                ("boost_clock_khz", lambda q: q.update(sm_clock_khz=2_200_000)),
                 ("vram_gib", lambda q: q.update(global_bytes=12 * 1024 * MIB)),
                 ("cc", lambda q: q.update(minor=6))):
             d = device_4090()
@@ -110,11 +110,12 @@ class Compare(unittest.TestCase):
         self.assertEqual(s[("arch", "feature_pdl")], "info")
         self.assertEqual(s[("arch", "persisting_l2_max_bytes")], "info")
 
-    def test_factory_boost_is_information(self):
-        # A partner board's VBIOS boost (+5.8 %, a 2080 Ti read 1635 against 1545) is not a
-        # failure; under the reference or over +10 % is.
+    def test_vendor_boost_is_information(self):
+        # A partner board's VBIOS boost (+5.8 %, a 2080 Ti read 1635 against 1545) or an OEM
+        # board's lower one is not a failure; more than 10 % off is.
         for khz, want in ((2_520_000 * 1.058, "info"), (2_520_000 * 1.014, "match"),
-                          (2_520_000 * 0.98, "mismatch"), (2_520_000 * 1.12, "mismatch")):
+                          (2_520_000 * 0.98, "info"), (2_520_000 * 1.12, "mismatch"),
+                          (2_520_000 * 0.88, "mismatch")):
             d = device_4090()
             d["queried"]["sm_clock_khz"] = int(khz)
             self.assertEqual(statuses(d)[("table", "boost_clock_khz")], want, khz)
@@ -127,16 +128,52 @@ class Compare(unittest.TestCase):
         d["queried"]["global_bytes"] = int(24 * 1024 * MIB * 0.91)
         self.assertEqual(statuses(d)[("table", "vram_gib")], "mismatch")
 
-    def test_engine_off_the_row_is_not_compared(self):
-        # A laptop (bottom of its boost range) or a memory variant (the driver's bus and clock):
-        # the engine reads source Extrapolated and its values differ from the row on purpose.
-        d = device_4090()
-        d["engine_table_facts"].update(source=2, reference_clock_khz=1_455_000,
-                                       memory_bus_bits=192, memory_clock_khz=9_000_000)
+    def assert_no_mismatch(self, d):
         s = statuses(d)
-        self.assertEqual(s[("table", "engine_source")], "info")
-        self.assertNotIn(("table", "engine_reference_clock_khz"), s)
-        self.assertNotIn("mismatch", [v for k, v in s.items() if k[1].startswith("engine_")])
+        self.assertNotIn("mismatch", s.values(), [k for k, v in s.items() if v == "mismatch"])
+        return s
+
+    def test_memory_variant_is_read_from_the_driver(self):
+        # A board on a narrower bus and a slower memory under the row's id (an 8 GB 3060, a GDDR6
+        # 4070): the driver's bus and clock are information, and the engine prices them.
+        d = device_4090()
+        d["queried"].update(memory_bus_bits=256, memory_clock_khz=9_000_000)
+        d["engine_table_facts"].update(source=2, memory_bus_bits=256,
+                                       memory_clock_khz=round(facts_compare.snap_to_fact_grid(9_000_000)))
+        s = self.assert_no_mismatch(d)
+        self.assertEqual(s[("table", "bus_bits")], "info")
+        self.assertEqual(s[("table", "memory_clock_khz")], "info")
+        self.assertEqual(s[("table", "engine_source")], "match")
+        d["engine_table_facts"]["memory_bus_bits"] = 384  # the engine kept the row: wrong
+        self.assertEqual(statuses(d)[("table", "engine_memory_bus_bits")], "mismatch")
+
+    def test_laptop_is_priced_at_the_bottom_of_its_range(self):
+        # RTX 5090 Laptop (0x2C18): boost 1597 to 2160 MHz by the OEM's power limit.
+        d = device_4090()
+        d["queried"].update(pci_device_id=0x2C18, name="NVIDIA GeForce RTX 5090 Laptop GPU",
+                            major=12, minor=0, sms=82, l2_bytes=64 * MIB,
+                            global_bytes=int(24 * 1024 * MIB * 0.98), memory_bus_bits=256,
+                            memory_clock_khz=14_001_000, sm_clock_khz=1_800_000)
+        d["engine_table_facts"].update(source=2, sku="GeForce RTX 5090 Laptop GPU",
+                                       reference_clock_khz=1_597_000, memory_bus_bits=256,
+                                       memory_clock_khz=14_000_000, l2_mib=64.0)
+        s = self.assert_no_mismatch(d)
+        self.assertEqual(s[("table", "boost_clock_khz")], "info")
+        d["engine_table_facts"]["reference_clock_khz"] = 2_160_000  # the top of the range: wrong
+        self.assertEqual(statuses(d)[("table", "engine_reference_clock_khz")], "mismatch")
+        d = device_4090()
+        d["engine_table_facts"]["source"] = 2  # a desktop board read as extrapolated: wrong
+        self.assertEqual(statuses(d)[("table", "engine_source")], "mismatch")
+
+    def test_slice_keeps_the_rows_values(self):
+        # A MIG slice reports fewer SMs; the engine prices its share and keeps the row's values.
+        d = device_4090()
+        d["queried"]["sms"] = 64
+        d["engine_table_facts"]["source"] = 2
+        s = self.assert_no_mismatch(d)
+        self.assertEqual(s[("table", "sms")], "info")
+        self.assertEqual(s[("table", "engine_reference_clock_khz")], "match")
+        self.assertEqual(s[("table", "engine_l2_mib")], "match")
 
     def test_engine_table_reading_against_the_json(self):
         d = device_4090()
