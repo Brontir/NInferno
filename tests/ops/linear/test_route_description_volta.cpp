@@ -2,8 +2,8 @@
 // runs CUTLASS over the decoded copy only when the build has it, the band takes the call and its
 // workspace holds a chunk; otherwise run_route runs the scalar kernel and notes a demotion, and
 // the description says so (executed Scalar, Demotion::VoltaCopy, the scalar route's workspace,
-// tile and traffic). Host only, on a substituted GV100 class (one board per process: the
-// selector caches what it reads of the device).
+// tile and traffic (the last two empty: it has no tile model)). Host only, on a substituted GV100
+// class (one board per process: the selector caches what it reads of the device).
 #include "ops/op_tester.h"
 #include "ops/quantized_weight.h"
 
@@ -75,11 +75,16 @@ int main() {
             check(none->resolved.asked == tiled && none->resolved.executed == scalar &&
                       none->resolved.reason == generic::Demotion::VoltaCopy,
                   name + ": no workspace runs scalar and says why");
+            // The scalar route has no tile and no traffic model (route_tile, route_traffic are
+            // empty for it): the description carries what those functions answer, not the tiled
+            // route's.
+            const generic::Problem p{qtype, LinearPolicy::A16Only, n, k, generic::Epilogue::Store};
             check(
                 none->workspace_bytes == 0 &&
                     none->tile.has_value() ==
                         generic::route_tile(scalar, generic::Epilogue::Store, tokens).has_value() &&
-                    none->traffic.has_value(),
+                    none->traffic.has_value() ==
+                        generic::route_traffic(scalar, w, p, tokens).has_value(),
                 name + ": the scalar route's workspace, tile and traffic");
             // With room for a chunk the copy runs where the build has it; else still scalar.
             const std::size_t room = std::size_t{1} << 30;
