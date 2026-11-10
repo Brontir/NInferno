@@ -440,6 +440,8 @@ void check_known() {
 // The walk may leave an authority unreached when an earlier one always answers first (the staged
 // MMA, the fallbacks); check_direct asks every authority on its own, so what the walk misses is
 // still held by name there. Only these two cannot answer on a substituted board at all.
+// (Unreached by the walk, and held by the direct asks: staged-rule, staged-fallback and
+// scalar-fallback, which the grid has no weight for or always leaves to an earlier authority.)
 const std::map<std::string_view, std::string_view> kUnreached = {
     {"dense-tune", "routes timed on a device are not a substituted board's "
                    "(tuned_dense_route: substituted_foreign_class) and no tune runs here"},
@@ -450,7 +452,8 @@ const std::map<std::string_view, std::string_view> kUnreachedKinds = {};
 void check_coverage(const std::set<std::string_view>& names) {
     std::string missing;
     for (const std::string_view n : names) {
-        if (g_reached_sources.count(std::string(n)) == 0 && kUnreached.count(n) == 0) {
+        if (g_reached_sources.count(std::string(n)) == 0 &&
+            g_direct_sources.count(std::string(n)) == 0 && kUnreached.count(n) == 0) {
             missing += " " + std::string(n);
         }
     }
@@ -544,7 +547,8 @@ int run_board(const generic::FactsBoard& b, const std::set<std::string_view>& na
                                 check_readers(board, problem, w, t, prefill, a, where, sampled);
                                 // Every authority on its own at the sampled calls, for the round
                                 // of one sequence and of several (the MMQ verify rule reads it).
-                                if (sampled) {
+                                if (shape.n == 4096 && epilogue == generic::Epilogue::Store &&
+                                    (sampled || t == 9 || t == 16)) {
                                     const generic::Profile ask_profile =
                                         profile == 2 ? generic::Profile::Invariant
                                         : prefill    ? generic::Profile::Prefill
@@ -561,6 +565,51 @@ int run_board(const generic::FactsBoard& b, const std::set<std::string_view>& na
                         }
                     }
                 }
+            }
+        }
+    }
+    // BF16 is no packed format (make_patterned_weight has none, so the grid above holds none): the
+    // weight by hand, for the authorities only a BF16 weight reaches (the staged MMA).
+    {
+        Weight bf16{};
+        bf16.payload         = payload;
+        bf16.payload_bytes   = std::size_t{4096} * 4096 * 2;
+        bf16.qtype           = QType::BF16;
+        bf16.shape[0]        = 4096;
+        bf16.shape[1]        = 4096;
+        bf16.padded_shape[0] = 4096;
+        bf16.padded_shape[1] = 4096;
+        bf16.ndim            = 2;
+        bf16.qdata           = payload;
+        bf16.n               = 4096;
+        bf16.k               = 4096;
+        bf16.layout          = QuantLayout::Contiguous;
+        const generic::Problem problem{QType::BF16, LinearPolicy::A16Only, 4096, 4096,
+                                       generic::Epilogue::Store};
+        if (!generic::supports(bf16))
+            fail(std::string(b.name) + ": a BF16 weight is not supported");
+        for (const int profile : {0, 1, 2}) { // speed, prefill, invariant
+            std::optional<ops::ScopedInvariantRoutes> invariant;
+            if (profile == 2) invariant.emplace();
+            const bool prefill = profile == 1;
+            for (const std::int32_t t : {1, 4, 9, 16, 17, 64, 512}) {
+                if (prefill && t < 17) continue;
+                const std::string where =
+                    std::string(b.name) + " bf16 4096x4096" + (prefill ? " prefill" : "") +
+                    (profile == 2 ? " invariant" : "") + " T=" + std::to_string(t);
+                try {
+                    const generic::RouteAnswer a =
+                        generic::select_answer(problem, bf16, t, prefill);
+                    check_evidence(a, names, where, profile == 2);
+                    ++tally[a.evidence.source];
+                    const generic::Profile ask_profile = profile == 2 ? generic::Profile::Invariant
+                                                         : prefill    ? generic::Profile::Prefill
+                                                                      : generic::Profile::Speed;
+                    for (const int lanes : {1, 4}) {
+                        check_direct(generic::Ask{ask_profile, t, lanes}, problem, bf16, names,
+                                     where + " direct lanes " + std::to_string(lanes));
+                    }
+                } catch (const std::exception& error) { fail(where + ": threw " + error.what()); }
             }
         }
     }
