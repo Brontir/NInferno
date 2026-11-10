@@ -155,7 +155,8 @@ int main() {
         const auto prefetch = g::launch_lifetime(
             "decode_prefetch", g::launch_overlap(mma, g::Epilogue::Store, 1, false, false, true),
             true, std::nullopt, std::nullopt);
-        check(prefetch.releases, "a prefetching register MMA releases (it triggers after its wait)");
+        check(prefetch.releases,
+              "a prefetching register MMA releases (it triggers after its wait)");
         check(prefetch.starts_early &&
                   !g::first_scratch_violation({projection, prefetch}).has_value(),
               "pre-quantized R8 then a decode prefetch launch: clean");
