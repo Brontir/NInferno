@@ -67,9 +67,25 @@ std::size_t route_workspace_bytes(Route route, std::int32_t k, std::int32_t toke
     return layout.peak_bytes(1);
 }
 
+std::size_t executed_workspace_bytes(Route route, bool r8_prequantized, std::int32_t k,
+                                     std::int32_t rows, Epilogue epilogue, std::int32_t tokens) {
+    switch (route.family) {
+    case Family::GgmlMmq:
+        return mmq_workspace_bytes(k, epilogue == Epilogue::SwiGlu ? 2 * rows : rows,
+                                   std::min(tokens, kMmqPrefillSlice));
+    case Family::GgmlVec:
+        return vec_workspace_bytes(k, std::min(tokens, ggml_mmq::kVecMaxColumns));
+    case Family::R8Mma:
+        return r8_prequantized ? route_workspace_bytes(route, k, tokens) : 0;
+    default:
+        return route_workspace_bytes(route, k, tokens);
+    }
+}
+
 std::size_t volta_prefill_workspace_bytes(QType qtype, std::int32_t rows, std::int32_t k,
                                           std::int32_t max_tokens, bool swiglu) {
-    if (max_tokens < 17 || !volta_cutlass_runs(volta_cutlass_only_qtype(qtype), max_tokens) ||
+    if (max_tokens < kPrefillBandMinTokens ||
+        !volta_cutlass_runs(volta_cutlass_only_qtype(qtype), max_tokens) ||
         !volta_cutlass_qtype(qtype))
         return 0;
     return volta_cutlass_workspace_bytes(rows, k, max_tokens, swiglu);
@@ -105,7 +121,7 @@ std::size_t workspace_capacity_bytes(const Problem& problem, const Weight* weigh
     const bool a4            = problem.qtype == QType::NVFP4 && w4a4_schedule_count() > 0 &&
                     allows_a4(problem.policy) &&
                     (weight == nullptr || allows_w4a4(*weight, problem.policy)) && forced != 0 &&
-                    (max_tokens >= 17 || forced == 1);
+                    (max_tokens >= kPrefillBandMinTokens || forced == 1);
     if (a4) {
         return with_gather(route_workspace_bytes(Route{Family::W4a4Mma, 0}, problem.k, max_tokens));
     }
@@ -116,7 +132,7 @@ std::size_t workspace_capacity_bytes(const Problem& problem, const Weight* weigh
     const bool a8          = w4a8_supports(problem.qtype) && allows_a8(problem.policy) &&
                     w4a8_k_admits(problem.qtype, problem.k) &&
                     (weight == nullptr || allows_w4a8(*weight, problem.policy)) && forced != 0 &&
-                    ((max_tokens >= 17 && !volta_tiled) || forced == 1);
+                    ((max_tokens >= kPrefillBandMinTokens && !volta_tiled) || forced == 1);
     // R8 at verify widths reads the same planes (the activation quantized once per call). Every
     // format with the pre-quantized form: the dense tuner may give it R8 at verify widths.
     const bool r8_verify = r8_verify_compiled(problem.qtype) && allows_a8(problem.policy) &&
