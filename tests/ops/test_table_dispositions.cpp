@@ -7,7 +7,8 @@
 // from the code under test, so it only pins what the code does). Also checks that the disposition's
 // value is the one the production lookup returns on the same board (the disposition never disagrees
 // with the answer), that the route's evidence kind follows the answer's disposition, that every
-// measured board answers Measured for itself, that a literal has no donor, the counts per
+// measured board answers Measured for itself, that a literal has no donor, that a board at exactly
+// the reach is Carried and one with its bandwidth unknown is Incomplete, the counts per
 // disposition that docs/maintainer/table-dispositions.md quotes, and a few SKUs whose answer is
 // written by hand from the measurement comments beside the tables (the independent check).
 #include "core/device_class.h"
@@ -185,10 +186,42 @@ void check_measured_boards_and_fallback() {
            "a 5090 without its L2 is Incomplete, with the literal");
 }
 
+// The reach is inclusive, and an unknown bandwidth counts as an unknown L2 does.
+void check_reach_edge_and_unknown_bandwidth() {
+    // A 4090 with twice the SMs is at exactly 1.0 of the 4090 (one doubling of the SMs; the L2 and
+    // the bandwidth are the row's), which is kCarryDistance. The 4090 is a row of both tables, so
+    // both carry from it.
+    Board twice = measured::kRtx4090;
+    twice.sms   = 2 * measured::kRtx4090.sms;
+    expect(board_distance(twice, measured::kRtx4090) == 1.0 && measured::kCarryDistance == 1.0,
+           "a 4090 with twice the SMs is at exactly the reach");
+    const auto a8 = moe::a8_route_answer(twice);
+    expect(a8.disposition == Disposition::Carried && a8.distance == 1.0 && a8.donor &&
+               measured::same_board_facts(*a8.donor, measured::kRtx4090) && a8.route.down == 2,
+           "a board at exactly the reach of the 4090 carries its A8 route");
+    const auto f = detail::sparse_moe_q4_groupwise_frontier_answer(twice);
+    expect(f.disposition == Disposition::Carried && f.distance == 1.0 && f.donor &&
+               measured::same_board_facts(*f.donor, measured::kRtx4090),
+           "a board at exactly the reach of the 4090 carries its frontier");
+    // A 5090 whose bandwidth is unknown, its L2 known: no row is complete for it and the nearest
+    // by plain distance is the 5090's own, so Incomplete with the literal in both tables. The A8
+    // literal is w4r1 at IQ2_XXS T = 4, where the 5090's row has w4r2.
+    Board no_dram_5090     = measured::kRtx5090;
+    no_dram_5090.dram_gbps = 0;
+    const auto ai          = moe::a8_route_answer(no_dram_5090);
+    expect(ai.disposition == Disposition::Incomplete && !ai.donor && ai.distance == 0 &&
+               ai.route.down == -1 && ai.route.gate_up_2bit[0][3] == 0,
+           "a 5090 without its bandwidth is Incomplete, with the A8 literal");
+    const auto fi = detail::sparse_moe_q4_groupwise_frontier_answer(no_dram_5090);
+    expect(fi.disposition == Disposition::Incomplete && !fi.donor && fi.distance == 0 &&
+               fi.min_tokens == detail::kSparseMoePrefillQ4Q5Min,
+           "a 5090 without its bandwidth is Incomplete, with the frontier literal");
+}
+
 // One SKU's answers written by hand, each from the measurement or the distance recorded in the
 // source beside its table (not read off the code under test): the A8 disposition and its route's
-// down schedule, the frontier's disposition and first T, and the distance where the source names
-// one.
+// down schedule, the frontier's disposition and first T, and the distance and the donor where the
+// source names them.
 struct Expected {
     std::uint32_t id;
     const char* why;
@@ -196,8 +229,10 @@ struct Expected {
     int a8_down;
     Disposition q4;
     int q4_min;
-    double a8_distance = -1; // < 0: not checked
-    double q4_distance = -1;
+    double a8_distance    = -1; // < 0: not checked
+    double q4_distance    = -1;
+    const Board* a8_donor = nullptr; // null: which board is not checked (that one answers, is)
+    const Board* q4_donor = nullptr;
 };
 
 void check_hand_written() {
@@ -210,20 +245,24 @@ void check_hand_written() {
         // moe.cpp: ad102's down is 2 x 2 (schedule 2); the frontier table has the row, 47.
         {0x2684, "RTX 4090: a row of both tables", M, 2, M, 47},
         // measured_boards.h (kCarryDistance): the 4090 D is 0.17 from the 4090.
-        {0x2685, "RTX 4090 D: a variant of the 4090", C, 2, C, 47, 0.17, 0.17},
+        {0x2685, "RTX 4090 D: a variant of the 4090", C, 2, C, 47, 0.17, 0.17, &measured::kRtx4090,
+         &measured::kRtx4090},
         // moe.cpp: gb203's down is 4 x 1 (schedule 3); the frontier table has no 5080 row and the
         // 5090's is beyond reach, so its literal, 47.
         {0x2C02, "RTX 5080: an A8 row, no frontier row", M, 3, N, 47},
         // measured_boards.h: the 5070 Ti is 0.57 from the 5080.
-        {0x2C05, "RTX 5070 Ti: near the 5080", C, 3, N, 47, 0.57},
+        {0x2C05, "RTX 5070 Ti: near the 5080", C, 3, N, 47, 0.57, -1, &measured::kRtx5080},
         // sparse_moe_prefill_plan.cpp: the 3090 measured 17; moe.cpp lists no Ampere row.
         {0x2204, "RTX 3090: the Ampere frontier row", N, -1, M, 17},
         // measured_boards.h: the 3090 Ti is 0.14 from the 3090.
-        {0x2203, "RTX 3090 Ti: a variant of the 3090", N, -1, C, 17, -1, 0.14},
+        {0x2203, "RTX 3090 Ti: a variant of the 3090", N, -1, C, 17, -1, 0.14, nullptr,
+         &measured::kRtx3090},
         // measured_boards.h: the 4090's entries on the 4080 SUPER (1.2) are out of reach.
         {0x2702, "RTX 4080 SUPER: beyond kCarryDistance of the 4090", N, -1, N, 47},
-        // moe.cpp: "ad106 (RTX 4060 Ti, no entry)": the unmeasured default.
-        {0x2803, "RTX 4060 Ti: no entry", N, -1, N, 47},
+        // moe.cpp: "ad106 (RTX 4060 Ti, no entry)": the unmeasured default. 0x2803 is the 8 GB
+        // card; the schedules were measured on the 16 GB one (0x2805: the same SMs, L2 and
+        // bandwidth, so the same board for both tables).
+        {0x2803, "RTX 4060 Ti 8GB: no entry", N, -1, N, 47},
         // gpu_facts.json gives no l2_mib for these SKUs, so the nearest measured entry has a fact
         // unknown (a device reports its L2 itself, and may be Carried); Incomplete keeps the
         // literal. The A10G and the 3080 12GB are Ampere (no A8 row), near the 3090; the L40S is
@@ -254,6 +293,18 @@ void check_hand_written() {
         }
         if (e.q4_distance >= 0) {
             expect(std::abs(frontier.distance - e.q4_distance) < 0.005, "frontier distance" + what);
+        }
+        // A board answers exactly on Measured and Carried, and it is the one the source names.
+        expect(a8.donor.has_value() == (e.a8 == M || e.a8 == C), "a8 donor presence" + what);
+        expect(frontier.donor.has_value() == (e.q4 == M || e.q4 == C),
+               "frontier donor presence" + what);
+        if (e.a8_donor != nullptr) {
+            expect(a8.donor && measured::same_board_facts(*a8.donor, *e.a8_donor),
+                   "a8 donor" + what);
+        }
+        if (e.q4_donor != nullptr) {
+            expect(frontier.donor && measured::same_board_facts(*frontier.donor, *e.q4_donor),
+                   "frontier donor" + what);
         }
         if (e.a8 == I || e.q4 == I) {
             expect(row->l2_mib == 0, "an Incomplete row lacks its L2" + what);
@@ -288,6 +339,7 @@ int main(int argc, char** argv) {
         for (int i = 1; i < argc; ++i) update = update || std::string_view(argv[i]) == "--update";
         check_against_production();
         check_measured_boards_and_fallback();
+        check_reach_edge_and_unknown_bandwidth();
         Counts a8_counts, q4_counts;
         const std::string now = dump(a8_counts, q4_counts);
         check_hand_written();

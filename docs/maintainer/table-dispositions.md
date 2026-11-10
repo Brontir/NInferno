@@ -16,7 +16,11 @@ board. It answers in the words the measured gates use (`measured::Disposition`,
 - `Measured`: the board's facts are a table row's (distance 0, every quantity known). It does not say
   that this very SKU was run: an RTX 5090 D has the 5090's SMs, L2 and bandwidth and takes the 5090's
   row, though only the 5090 was measured.
-- `Carried`: a row within `measured::kCarryDistance`, every compared quantity known.
+- `Carried`: a row within `measured::kCarryDistance`, every compared quantity known. The reach (1.0)
+  is a threshold placed between measurements, not a chip fact: carries hold at 0.14 to 0.57, and the
+  RTX 4090's R8 decode entries fail on the RTX 4080 SUPER at 1.2. Over the 105 rows below every
+  answer is the same for any reach from 0.83 to 1.21 (the A10 at 0.83 from the 3090 is the farthest
+  `Carried` row, the RTX 4080 SUPER at 1.22 from the 4090 the nearest row out of reach).
 - `Incomplete`: no row with every quantity known is within the distance, but the nearest row by plain
   distance is, with its L2 or bandwidth unknown on either side. The distance could then understate
   the difference, so the table's literal answers (as a bounded gate takes the unmeasured default for
@@ -24,8 +28,10 @@ board. It answers in the words the measured gates use (`measured::Disposition`,
 - `None`: no row is within the distance; the table's declared literal, no donor.
 
 It selects the donor with `nearest_known_measured`, exactly as the lookups did before, so a
-disposition cannot disagree with the value. A complete row that answers makes the answer `Measured`
-or `Carried` even where a nearer row is `Incomplete`.
+disposition cannot disagree with the value. Every row of both tables knows its facts (each table
+asserts `measured_boards_known`), so an unknown is the board's own: no row is complete for it, and
+the answer is `Incomplete` or `None`. Only a table with an incomplete row could answer `Measured` or
+`Carried` from a complete row while a nearer row is `Incomplete`.
 
 - `moe::a8_route_answer(Board)` (`ops/moe/moe_internal.h`): the class A8 route with its disposition.
   `a8_default_route()` is that answer on the running device, and `class_a8_route_evidence()` reads
@@ -34,7 +40,9 @@ or `Carried` even where a nearer row is `Incomplete`.
   grouped prefill route for Q4/Q5 and Q4/Q6 groupwise banks, with its disposition.
 - `tests/ops/test_table_dispositions.cpp` checks both against the production lookups, ties the
   route's evidence to the answer, checks fourteen rows against answers written by hand from the
-  measurement comments beside the tables, checks the counts below, and pins the disposition of every
+  measurement comments beside the tables (with the donor where the comment names one), checks a
+  board at exactly the reach (`Carried`) and one with its bandwidth unknown (`Incomplete`), checks
+  the counts below, and pins the disposition of every
   target SKU of `core/data/gpu_facts.json` (keyed by PCI id) in
   `tests/ops/table_dispositions/dispositions.txt` (host only; `--update` rewrites it from the code
   under test, so that file pins behaviour, it is not an independent expectation).
@@ -63,7 +71,8 @@ bytes per value and the activation reads are the largest share. That is why only
 have a row and every other format takes w4r1. It is already fact-based, and it stays.
 
 **What cannot be derived now.**
-- The per-T edge (w4r1 to w4r2 at T = 3 or 4 on the RTX 5090 and 5080, w2r1 at T = 4..7 on the 5080)
+- The per-T edge (w4r1 to w4r2 for IQ2_XXS at T = 4 on the RTX 5090 and T = 3 on the 5080, for
+  IQ2_XS at T = 8 and T = 2; w2r1 for IQ2_S at T = 4..7 on the 5080)
   is a 2-9 % difference between schedules (a 2 us timer step at the small calls). The cost model
   prices no grouped stage yet, so there is no predicted schedule to compare the measurements with; a
   rule fitted to three boards' sweeps would only restate them.
@@ -118,9 +127,11 @@ Fallback literal: 47, the Blackwell/Ada edge. The literal answers 88 of 105 rows
 `Incomplete` 4: A10G, RTX 3080 12GB, L40S, RTX PRO 6000 Server).
 
 **Open risk.** Ampere cards outside the 3090's reach take the 47 literal: the RTX 3060, 3060 Ti,
-3070, 3070 Ti, A4000, 3050 and A2. (The A10G and the RTX 3080 12GB are `Incomplete` in the facts
-table only because it has no L2 for them; a device reports its own L2, so they may well be `Carried`
-from the 3090 at their real distance.) The only Ampere measurement (3090) lost 28 % at C4 with 47 against 17,
+3070, 3070 Ti, A4000, 3050, A2 and the two RTX 3060 Laptop GPU rows (14 rows). So do the cards of
+the generations with no row at all: the 8 GA100 rows (A100, A30, A800), the 23 Turing rows and the 7
+Volta rows. (The A10G and the RTX 3080 12GB are `Incomplete` in the facts table only because it has
+no L2 for them; a device reports its own L2, so they may well be `Carried` from the 3090 at their
+real distance.) The only Ampere measurement (3090) lost 28 % at C4 with 47 against 17,
 so the step may carry to the whole generation. A C4 sweep at frontier 47 / 25 / 17 on an RTX 3060
 would show whether it does; if it does, a generation-keyed rule (a frontier of 17 for a board
 without Ada's tensor-core rate) would turn those SKUs into a measured-and-labelled answer. That is a
@@ -128,6 +139,7 @@ behaviour change and needs the GPU run; nothing here changes the default.
 
 ## Verified and not verified
 
-The host test and the production-equality checks run without a GPU. Not verified: the dispositions'
-meaning on a GPU (no kernel runs in the test), and the open Ampere frontier risk above (it needs the
-sweep on an Ampere card).
+The host test and the production-equality checks run without a GPU. The production-equality checks
+cover the boards of the build set (`generic::kFactsBoards`, each under `ScopedDeviceClass`), not the
+105 rows. Not verified: the dispositions' meaning on a GPU (no kernel runs in the test), and the open
+Ampere frontier risk above (it needs the sweep on an Ampere card).

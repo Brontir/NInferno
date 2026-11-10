@@ -74,12 +74,11 @@ struct Gate {
 // within the gate's distance; null: none), how far it is, what the distance could not compare, the
 // answer, and how the evidence applies (Disposition, core/measured_disposition.h: the one
 // vocabulary of the gates and of the value tables below). The answer is the legacy rule's, but for
-// one case: a gate bounded by a distance does
-// not take an Incomplete donor's answer (the unmeasured default instead), since the quantity it
-// could not compare may be what puts the donor out of reach. So a missing fact never promotes a
-// transfer the full facts would refuse (conservatively: also when the known quantities alone
-// would reach); a gate that carries at any distance (the MMQ gate's) admits regardless of the
-// quantities, and keeps its answer.
+// one case: a gate bounded by a distance does not take an Incomplete donor's answer (the
+// unmeasured default instead), since the quantity it could not compare may be what puts the donor
+// out of reach. So a missing fact never promotes a transfer the full facts would refuse
+// (conservatively: also when the known quantities alone would reach); a gate that carries at any
+// distance (the MMQ gate's) admits regardless of the quantities, and keeps its answer.
 struct GateAnswer {
     using Disposition = measured::Disposition;
     const Gate* donor = nullptr;
@@ -158,13 +157,14 @@ inline constexpr Gate kMmqPrefillPays[] = {
 // were left out; the value is the default, as gate_answer's bounded gate takes it. None: no entry
 // is within the distance, and the value is the table's declared default (a literal, its provenance
 // named by the table's owner). The donor is chosen exactly as the lookups choose it
-// (nearest_known_measured), so the disposition never disagrees with the answer: a complete entry
-// that answers makes the answer Measured or Carried even where a nearer entry is Incomplete.
+// (nearest_known_measured), so the disposition never disagrees with the answer. Where every entry
+// knows its facts (both tables assert measured_boards_known), an unknown is the board's own, no
+// entry is complete for it, and the answer is Incomplete or None. Only a table with an incomplete
+// entry could give Measured or Carried from a complete entry while a nearer entry is Incomplete.
 template <class Entry>
 struct TableAnswer {
-    const Entry* entry = nullptr; // the donor's entry, null on Incomplete and None
-    double distance    = 0;       // board_distance to the donor (0 without one)
-    BoardUnknowns unknown;        // Incomplete: what the nearest entry could not compare
+    const Entry* entry      = nullptr; // the donor's entry, null on Incomplete and None
+    double distance         = 0;       // board_distance to the donor (0 without one)
     Disposition disposition = Disposition::None;
 };
 
@@ -180,9 +180,8 @@ template <class Entry, std::size_t Extent>
         return out;
     }
     const Entry* plain = nearest_measured(table, board, max_distance);
-    if (plain != nullptr) {
-        out.unknown = board_unknowns(board, plain->board);
-        if (out.unknown.any()) { out.disposition = Disposition::Incomplete; }
+    if (plain != nullptr && board_unknowns(board, plain->board).any()) {
+        out.disposition = Disposition::Incomplete;
     }
     return out;
 }

@@ -1279,12 +1279,12 @@ std::optional<MoeAnswer> invariant_authority(const MoeCall& c) {
 Evidence a8_route_evidence() {
     Evidence e        = by_rule("decode");
     const auto answer = a8_route_answer(board_of(device_class()));
-    using D           = measured::Disposition;
-    if (answer.donor && (answer.disposition == D::Measured || answer.disposition == D::Carried)) {
+    // A donor is there exactly when the disposition is Measured or Carried (a8_route_answer).
+    if (answer.donor) {
         e.ranker   = Evidence::Ranker::None;
         e.distance = answer.distance;
-        e.kind =
-            answer.disposition == D::Measured ? Evidence::Kind::Measured : Evidence::Kind::Carried;
+        e.kind  = answer.disposition == measured::Disposition::Measured ? Evidence::Kind::Measured
+                                                                        : Evidence::Kind::Carried;
         e.donor = board_label(*answer.donor);
     } else {
         e.donor = "fallback-a8-route";
