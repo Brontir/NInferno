@@ -208,6 +208,12 @@ ninferno_add_op_test(ninferno_kernel_facts_live_test
 target_compile_definitions(ninferno_kernel_facts_live_test PRIVATE
   NINFERNO_NVCC_VERSION="${CMAKE_CUDA_COMPILER_VERSION}")
 
+# The selector's named authorities (#614): the lists are well formed, on every facts board each
+# answer's evidence is consistent with its kind, and known cases name the authority that answers.
+ninferno_add_op_test(ninferno_route_authorities_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_authorities.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
 # The generic path's dense tuner: tuned at the first eager call, within the activation class, R8
 # decode bytes kept, the cache file read back, nothing timed inside a graph capture.
 ninferno_add_op_test(ninferno_dense_tune_test
