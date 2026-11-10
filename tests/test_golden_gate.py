@@ -67,8 +67,12 @@ def cmake_commands(text):
 
 def reaches_at_top_level(text, command, arg_start):
     """True when the file has `command(<arg_start>...)` outside every block and not commented out."""
-    return any(name == command and depth == 0 and args.strip('"').startswith(arg_start)
-               for name, args, depth in cmake_commands(text))
+    for name, args, depth in cmake_commands(text):
+        if name == "return" and depth == 0:   # the rest of the file is never processed
+            return False
+        if name == command and depth == 0 and args.strip('"').startswith(arg_start):
+            return True
+    return False
 
 
 PATHS = gg.load_patterns(gg.PATHS_FILE.read_text(encoding="utf-8"))
@@ -436,6 +440,11 @@ class Completeness(unittest.TestCase):
                     'message("see " ")" )\n# ' + inc + "\n", "if(A)\n" + inc + "\nelse()\n" + inc + "\nendif()\n"):
             with self.subTest(src=src):
                 self.assertFalse(reaches_at_top_level(src, "include", "ops/tests.cmake"))
+        # an unconditional return() before the link stops the file; one after it, or inside if(), does not
+        self.assertFalse(reaches_at_top_level("return()\n" + inc + "\n", "include", "ops/tests.cmake"))
+        self.assertFalse(reaches_at_top_level("set(A 1)\nreturn ( )\n" + inc + "\n", "include", "ops/tests.cmake"))
+        self.assertTrue(reaches_at_top_level(inc + "\nreturn()\n", "include", "ops/tests.cmake"))
+        self.assertTrue(reaches_at_top_level("if(A)\nreturn()\nendif()\n" + inc + "\n", "include", "ops/tests.cmake"))
         # a `#` inside a quoted argument is not a comment, and a block that was closed ends
         self.assertTrue(reaches_at_top_level('set(A "#x (")\n' + inc + "\n", "include", "ops/tests.cmake"))
 
