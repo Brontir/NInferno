@@ -16,6 +16,9 @@ found by comparing with the table it was copied from.
      route_table.cpp table_route reads them) and, for route_as, the donor's T'.
  A free-text tuned_on (a model name, a tool and card) is not a board key and is not checked; a
  tuned_on without evidence_us is a label and is not checked.
+Rule (c) assumes the shape-owned table picks the same kernel at T' on both boards; a shape
+that branches on the SM count (src/ops/linear/nvfp4/shapes/n2048_k5376.cu, select_a4 by
+grid waves) can break that across a wave threshold, which this lint cannot see.
 """
 import json
 import sys
