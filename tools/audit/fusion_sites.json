@@ -349,11 +349,11 @@
                     "regroup_bf16_heads"
                 ],
                 "decided_in": {
-                    "file": "src/ops/wrapper/rmsnorm.cpp",
-                    "function": "gated_rmsnorm_regroups"
+                    "file": "src/models/qwen3_5/execution/text.cpp",
+                    "function": "gdn_mix"
                 },
                 "rule_today":
-                    "An alignment predicate (D 64..256 by 64, 4-byte aligned tensors, out apart from x and z) plus the tiled out_proj column order (text.cpp) selects gated_rmsnorm_regrouped over gated_rmsnorm + regroup_bf16_heads.",
+                    "gdn_mix picks the fused gated_rmsnorm_regrouped only when the out_proj is in the tiled column order (output_heads_tiled) and the alignment predicate ops::gated_rmsnorm_regroups holds (D 64..256 by 64, 4-byte aligned tensors, out apart from x and z). Otherwise it runs gated_rmsnorm, then regroup_bf16_heads when the order is tiled.",
                 "alternatives": [
                     "gated_rmsnorm_regrouped",
                     "gated_rmsnorm + regroup_bf16_heads"
