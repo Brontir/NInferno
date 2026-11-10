@@ -312,7 +312,10 @@ measured_boards_known(std::span<const Measured, Extent> measured) noexcept {
 
 // The class of the device this thread runs on, probed once: what device_class() returns where no
 // class is substituted (ScopedDeviceClass). Throws where CUDA cannot report the device; a host-only
-// build (device_class_nodevice.cpp) always throws.
+// build (device_class_nodevice.cpp) always throws. It is defined outside ninferno_core_host
+// (device_class.cpp in ninferno_core, or the stub), yet device_class_host.cpp calls it: a target
+// that links ninferno_core_host alone must also link one of the two, or it has an undefined
+// symbol.
 [[nodiscard]] const DeviceClass& current_device_class();
 [[nodiscard]] const DeviceClass& device_class(int device);
 
