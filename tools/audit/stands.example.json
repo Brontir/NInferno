@@ -1,0 +1,10 @@
+{
+  "stands": {
+    "sm_70": ["stand-a"],
+    "sm_75": ["stand-b"],
+    "sm_86": ["stand-c", "stand-d"],
+    "sm_89": ["stand-e", "stand-f", "stand-g"],
+    "sm_120a": ["stand-h", "stand-i"]
+  },
+  "any_one": "stand-d"
+}

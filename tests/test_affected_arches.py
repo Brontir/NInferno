@@ -1,3 +1,4 @@
+import os
 import sys
 import tempfile
 import unittest
@@ -7,14 +8,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "audit"))
 import affected_arches as aa
 
 ALL = list(aa.ARCHES)
+EXAMPLE = Path(__file__).resolve().parents[1] / "tools" / "audit" / "stands.example.json"
 
 
 class Classify(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
         self.root = Path(self.dir.name)
+        self.saved_env = os.environ.get(aa.STANDS_ENV)
+        os.environ[aa.STANDS_ENV] = str(EXAMPLE)
 
     def tearDown(self):
+        if self.saved_env is None:
+            os.environ.pop(aa.STANDS_ENV, None)
+        else:
+            os.environ[aa.STANDS_ENV] = self.saved_env
         self.dir.cleanup()
 
     def tree(self, files):
@@ -112,8 +120,23 @@ class Classify(unittest.TestCase):
                    'if(NINFERNO_BUILD_ARCH STREQUAL "89")\n b_sm89.cu\nendif()\n'})
         res = self.run_diff(["src/ops/volta_a.cu", "src/ops/b_sm89.cu"])
         self.assertEqual(res["arches"], ["sm_70", "sm_89"])
-        self.assertEqual(res["stands"]["sm_70"], ["lgv100"])
-        self.assertEqual(res["stands"]["sm_89"], ["l4060", "l4070", "l4090"])
+        self.assertEqual(res["stands"]["sm_70"], ["stand-a"])
+        self.assertEqual(res["stands"]["sm_89"], ["stand-e", "stand-f", "stand-g"])
+
+    def test_no_stands_file_names_no_machine(self):
+        os.environ[aa.STANDS_ENV] = str(self.root / "missing.json")
+        with self.assertRaises(SystemExit):
+            self.run_diff(["src/chat/tool_calls.cpp"])
+        del os.environ[aa.STANDS_ENV]
+        saved = aa.STANDS_LOCAL
+        aa.STANDS_LOCAL = self.root / "none.json"
+        try:
+            res = self.run_diff(["src/chat/tool_calls.cpp"])
+            self.assertEqual(res["stands"], {"any": []})
+            res = self.run_diff(["src/ops/other.cu"], {"src/ops/other.cu": ""})
+            self.assertEqual(res["stands"]["sm_70"], [])
+        finally:
+            aa.STANDS_LOCAL = saved
 
     def test_host_only_is_any_one_arch(self):
         res = self.run_diff(["src/chat/tool_calls.cpp", "src/convert/a.cpp", "docs/x.md",

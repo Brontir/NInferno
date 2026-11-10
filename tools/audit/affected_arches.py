@@ -16,21 +16,38 @@ Needs no GPU. Exit 0 on success, a message and non-zero on a usage or git failur
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 
 ARCHES = ("sm_70", "sm_75", "sm_86", "sm_89", "sm_120a")
-STANDS = {
-    "sm_70": ["lgv100"],
-    "sm_75": ["l2080"],
-    "sm_86": ["l3060", "l3090"],
-    "sm_89": ["l4060", "l4070", "l4090"],
-    "sm_120a": ["l5070", "l5090"],
-}
-# The stand that runs host-only changes: any one will do.
-ANY_ONE_STAND = "l3090"
+# Machines that test each arch are site-specific and are not kept in the repository. They are read
+# from the JSON file named by $NINFERNO_STANDS_FILE, else from tools/audit/stands.local.json (not
+# tracked). Format, see tools/audit/stands.example.json:
+#   {"stands": {"sm_89": ["stand-a"], ...}, "any_one": "stand-a"}
+# Without a file every arch lists no machine and host-only changes name none.
+STANDS_ENV = "NINFERNO_STANDS_FILE"
+STANDS_LOCAL = Path(__file__).resolve().parent / "stands.local.json"
+
+
+def load_stands():
+    """Returns ({arch: [machine, ...]}, machine for host-only changes or None)."""
+    name = os.environ.get(STANDS_ENV)
+    path = Path(name) if name else STANDS_LOCAL
+    stands = {a: [] for a in ARCHES}
+    if not path.is_file():
+        if name:
+            raise SystemExit(f"{STANDS_ENV}={name}: no such file")
+        return stands, None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    for arch, names in data.get("stands", {}).items():
+        if arch not in stands:
+            raise SystemExit(f"{path}: unknown arch {arch}")
+        stands[arch] = list(names)
+    return stands, data.get("any_one")
+
 
 # Paths whose change can move any arch's behaviour.
 ALL_PATTERNS = [
@@ -50,7 +67,7 @@ ARCH_NAME_PATTERNS = [
     ("sm_89", r"sm_?89|ad10[0-9]|4060|4070|4090"),
     ("sm_120a", r"sm_?120|gb20[0-9]|5070|5090|blackwell"),
 ]
-# Arches outside the five lab arches cannot be tested on one stand: run everything.
+# Arches outside the five lab arches cannot be tested on one machine: run everything.
 OTHER_ARCH_NAME = r"sm_?(80|90|100|103)|ga100|gh100|hopper|a100|h100"
 # Host-only: no read of the card's compute capability, generation, nvfp4 or mma_slow facts (checked
 # by grep). src/ui (catalog.cpp, app.cpp pick fp4 by cc), src/serve (request_log.cpp reads the
@@ -108,9 +125,10 @@ class Verdict:
 
     def result(self):
         arches = list(ARCHES) if self.all else sorted(self.arches, key=ARCHES.index)
-        stands = {a: STANDS[a] for a in arches}
+        table, any_one = load_stands()
+        stands = {a: table[a] for a in arches}
         if not arches and self.host:
-            stands = {"any": [ANY_ONE_STAND]}
+            stands = {"any": [any_one] if any_one else []}
         return {
             "arches": arches,
             "all": self.all,
@@ -316,7 +334,7 @@ def render(res):
     else:
         lines = ["arches: any one" if res["host"] else "arches: none"]
     for a, st in res["stands"].items():
-        lines.append(f"  {a}: {', '.join(st)}")
+        lines.append(f"  {a}: {', '.join(st) or '(none configured)'}")
     if res["host"]:
         lines.append("host: yes")
     lines.append("ctest: " + res["ctest"])
