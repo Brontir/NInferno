@@ -40,7 +40,22 @@ TOTAL_LINE = re.compile(r"^total: \d+ decisions changed", re.M)
 NO_CHANGE_LINE = re.compile(r"^no golden changes$", re.M)
 # golden_diff reads two trees of text files; a run that takes longer than this is hung, not slow
 # (chosen, not measured: a whole golden set diffs in seconds)
-DIFF_TIMEOUT_S = float(os.environ.get("NINFERNO_GOLDEN_DIFF_TIMEOUT", "600"))
+DIFF_TIMEOUT_S = 600.0
+
+
+def diff_timeout_s():
+    """NINFERNO_GOLDEN_DIFF_TIMEOUT in seconds, else DIFF_TIMEOUT_S. Read when the gate runs, so a
+    bad value is a clear error of the gate and not an exception at import."""
+    raw = os.environ.get("NINFERNO_GOLDEN_DIFF_TIMEOUT")
+    if raw is None:
+        return DIFF_TIMEOUT_S
+    try:
+        value = float(raw)
+    except ValueError:
+        value = float("nan")
+    if not value > 0 or value == float("inf"):
+        raise ValueError(f"NINFERNO_GOLDEN_DIFF_TIMEOUT={raw!r} is not a positive number of seconds")
+    return value
 
 
 def glob_to_regex(pattern):
@@ -155,13 +170,14 @@ def main(argv=None, run_diff=None, changed_files=None, base_list=None):
         if touched:
             print("decision-path files changed:\n  " + "\n  ".join(touched))
             if run_diff is None:
+                timeout = diff_timeout_s()  # a bad value: ValueError, exit 2 below
                 try:
                     proc = subprocess.run(
                         [sys.executable, str(GOLDEN_DIFF), "--repo", args.repo, "--range", rng,
                          "--fail-on-change"],
-                        capture_output=True, text=True, timeout=DIFF_TIMEOUT_S)
+                        capture_output=True, text=True, timeout=timeout)
                 except subprocess.TimeoutExpired:
-                    print(f"golden_gate: golden_diff ran longer than {DIFF_TIMEOUT_S:g} s", file=sys.stderr)
+                    print(f"golden_gate: golden_diff ran longer than {timeout:g} s", file=sys.stderr)
                     return 2
                 golden_rc, out = proc.returncode, proc.stdout + proc.stderr
             else:

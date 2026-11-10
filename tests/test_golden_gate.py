@@ -607,6 +607,16 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(rc, 2, out + err)
         self.assertIn("longer than 2 s", err)
 
+    def test_a_bad_timeout_value_is_exit_2_with_its_name(self):
+        for raw in ("abc", "0", "-5", "inf", "nan"):
+            os.environ["NINFERNO_GOLDEN_DIFF_TIMEOUT"] = raw
+            try:
+                rc, out, err = self.gate({"routes/a.json": '{"x": 1}\n'}, tool="print('hello')\n")
+            finally:
+                del os.environ["NINFERNO_GOLDEN_DIFF_TIMEOUT"]
+            self.assertEqual(rc, 2, f"{raw!r}: {out}{err}")
+            self.assertIn("NINFERNO_GOLDEN_DIFF_TIMEOUT", err)
+
     def test_a_missing_diff_tool_is_exit_2(self):
         rc, out, err = self.gate({"routes/a.json": '{"x": 1}\n'}, tool=MISSING)
         self.assertEqual(rc, 2, out + err)
