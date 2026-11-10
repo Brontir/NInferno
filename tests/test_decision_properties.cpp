@@ -4,7 +4,8 @@
 // (selector_facts.h board_device_class, ScopedDeviceClass), so it needs no GPU to run. The
 // register-MMA price reads the registers and spill of the compiled kernels from the committed
 // kernel-facts snapshot of the SASS (generic_cost.cpp rmma_kept -> rmma_resources), not from the
-// running GPU: the counts below are the same with a GPU visible and without one.
+// running GPU: the counts below are the same with a GPU visible and without one. They are not the
+// same in every build: what P1 prices is the routes the build holds (see `Build` below).
 //
 //   P1  price monotone: for every priced route of a call of 17 tokens or more, a board with 1.25x
 //       the SMs, or 1.25x the DRAM bandwidth, all else equal, prices it no slower (to 1e-9). The
@@ -42,6 +43,7 @@
 #include "core/units.h"
 #include "core/weight.h"
 #include "core/weight_view.h"
+#include "ops/common/arch_limits.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_select_internal.h"
 #include "ops/generic/route_query.h"
@@ -56,7 +58,6 @@
 #include <iostream>
 #include <map>
 #include <optional>
-#include <set>
 #include <span>
 #include <sstream>
 #include <string>
@@ -73,28 +74,74 @@ using generic::Epilogue;
 
 // ---- Expected failures -------------------------------------------------------------------------
 
+// A waived group's recorded window, for one build (`Build` below).
+//
+// The share of the cases this property checked for the route's family that the waiver covers, as
+// [min_share, max_share]. A share, not an absolute count, so that a table with more rows does not
+// trip it by size alone. Both ends are RECORDED from this test's output (the "record" line it
+// prints for every waived group), not fitted:
+//   max_share  the share measured, rounded up to a tenth of a percent. A group that grows past it
+//              fails: the waiver may not hide a law that got worse.
+//   min_share  the one-row floor measured, rounded down to a hundredth of a percent: the lowest
+//              share one edit of one board row of the table can leave, (c - c_max) / (F + F_max),
+//              where c is the group's cases, F the family's, c_max the most cases of the group one
+//              row holds and F_max the most cases of the family one row holds (removing or changing
+//              that row takes at most c_max of the group away; the row changed or added brings at
+//              most F_max cases, as large as the largest row of today). A share between min_share
+//              and the recorded one passes and prints "re-record kKnown"; one below min_share is
+//              more than one row of the table explains (a change of the law, or of several rows)
+//              and fails, so that the ceiling cannot be left loose above an improved law: the
+//              room a regression can hide in under a stale ceiling is at most one row's worth.
+// The worst price ratio the group covers, as [min_ratio, max_ratio]; 0 in both: no ratio check.
+//   max_ratio  the worst measured, rounded up to 0.01; worse fails.
+//   min_ratio  the runner-up row's worst (the worst ratio of the group without the row that holds
+//              the worst case), rounded down to 0.01: an edit of one row leaves the worst at least
+//              there. Between it and the recorded worst: passes, prints "re-record kKnown".
+// The "within" groups have no ratio check: their membership is by each row's own SM ratio (the
+// test below), so no larger ratio can occur in them.
+struct Window {
+    double min_share;
+    double max_share;
+    double min_ratio;
+    double max_ratio;
+};
+
+// What P1 prices is the routes the build holds, and two of the build's own facts change it (the
+// selector's admission reads them, not the substituted board): whether it compiles the NVFP4
+// kernels and the thread-block cluster splits of the register MMA (CMakeLists.txt
+// NINFERNO_FULL_CUDA_ARCHS: 120a, 121a, 120f; without them generic_gemm.cpp
+// rmma_schedule_launchable admits no cluster schedule and w4a4_schedule_count is 0), and the
+// shared memory one block may opt into (ops/common/arch_limits.h kMaxSharedBytesPerBlock, which
+// admits the W4A8 and I8 tiles: w4a8_fits, i8_fits). An sm_120a build prices the cluster
+// schedules of the register MMA on every board with clusters, cases an sm_89 build never sees, so
+// the shares differ by build and are recorded per build. Windows are recorded for the 99 KiB
+// builds, with the NVFP4 kernels (sm_120a) and without them (sm_89; an sm_86 build holds the same
+// routes). Another build (sm_70, sm_75, sm_80) has no recorded window: the groups are
+// still matched (a new group or an XPASS fails), the shares are printed and not checked.
+struct Build {
+    bool nvfp4_kernels;
+    std::size_t block_shared_bytes;
+};
+#ifdef NINFERNO_WITHOUT_NVFP4
+constexpr Build kBuild{false, ops::kMaxSharedBytesPerBlock};
+#else
+constexpr Build kBuild{true, ops::kMaxSharedBytesPerBlock};
+#endif
+constexpr bool kBuildRecorded = kBuild.block_shared_bytes == 99 * 1024;
+
 struct Known {
     const char* property;
     const char* key;
     const char*
         cause; // which charge of the price law explains the group (the three charges, below)
-    // The share of the cases this property checked for the route's family that the waiver covers,
-    // as a window [min_share, max_share]. A share, not an absolute count, so that a table with
-    // more rows does not trip it by size alone; but it is a RECORDED baseline, not a derived bound:
-    // the share this test measured on the table of the day, max_share rounded up and min_share
-    // rounded down to a tenth of a percent (min_share to a hundredth for the 0.09 % group). A
-    // change of the board table moves the share (a row like an existing one moves it by up to a few
-    // tenths), and the window must then be re-recorded; the lower bound makes an improvement of the
-    // law do the same instead of passing silently.
-    double min_share;
-    double max_share;
-    // The worst price ratio the group covers, as a recorded window [min_ratio, max_ratio] (the
-    // worst measured, rounded down / up to 0.01). 0 in both: no ratio check. The "within" groups
-    // have none: their membership is by each row's own SM ratio (the test below), so no larger
-    // ratio can occur in them.
-    double min_ratio;
-    double max_ratio;
+    Window without_nvfp4; // recorded on an sm_89 build
+    Window with_nvfp4;    // recorded on an sm_120a build
 };
+
+const Window* window_of(const Known& k) {
+    if (!kBuildRecorded) return nullptr;
+    return kBuild.nvfp4_kernels ? &k.with_nvfp4 : &k.without_nvfp4;
+}
 
 // The price of a route on a board with more SMs is higher, by up to x1.52, for the families below
 // (found by this test, roadmap #620 step 6; the defect of the law is issue #690). price_routes
@@ -109,7 +156,8 @@ struct Known {
 //   (c) the bus-bound memory time is divided by the busy SM's warp fill (the register-MMA and
 //       pipelined paths), so a fill that drops with more SMs raises it.
 // Which charge explains which group below comes from experiments on a scratch copy of the law
-// (each charge removed alone and together; made by the review of this PR, not run by this test):
+// (each charge removed alone and together; made by the review of this PR on a build without the
+// NVFP4 kernels, not run by this test; the shares in the causes are that build's):
 // with all three removed 0.83 % of the SM-scale cases still fail (register MMA only, worst x1.336)
 // against 33.5 % today. The cause of that residual is in the plan comment of issue #690
 // (https://github.com/Brontir/NInferno/issues/690#issuecomment-6773348851): the split-K reduce is
@@ -119,36 +167,50 @@ struct Known {
 // Each failing case is sorted by what can explain it. "within the SM ratio": the price rose by no
 // more than sms' / sms, the most q x sms (the bytes charged to the busiest SM) can grow. "beyond
 // the SM ratio": the warp-fill term adds to it. A waived group may not grow past max_share of the
-// family's cases nor past max_ratio, nor fall below min_share / min_ratio; a group that stops
-// failing is an XPASS that fails the test. So a change that makes the price rise with the SMs in
-// more cases or by more (a bw / sqrt(sms) share, say) fails, and so does a fix of the law (or a
-// change of the board table) that moves a share: the window is then re-recorded. Bandwidth x1.25
+// family's cases nor past max_ratio, nor fall below its one-row floors min_share / min_ratio
+// (`Window`); a group that stops failing is an XPASS that fails the test. So a change that makes
+// the price rise with the SMs in more cases or by more (a bw / sqrt(sms) share, say) fails, and so
+// does a fix of the law that shrinks a group by more than one board row can: the window is then
+// re-recorded from the "record" line the test prints. Bandwidth x1.25
 // fails nowhere. The tolerance is 1e-9: the price is deterministic. (The test cannot see a route's
 // CTA count, so it cannot tell a rise a wave count explains from one it does not, case by case,
 // and the shares cannot be replaced by a predicate.)
 constexpr Known kKnown[] = {
-    {"P1 sms x1.25", "rmma within the SM ratio",
+    {"P1 sms x1.25",
+     "rmma within the SM ratio",
      "charge (a): removed alone the group falls from 35.0 % to 2.6 % of the family's cases, with "
      "all "
      "three removed to 0.99 % (issue #690)",
-     0.350, 0.351, 0, 0},
-    {"P1 sms x1.25", "rmma beyond the SM ratio",
+     {0.350, 0.351, 0, 0},
+     {0.350, 0.351, 0, 0}},
+    {"P1 sms x1.25",
+     "rmma beyond the SM ratio",
      "charge (c) with (a): removing (c) alone leaves 20 of the 675 cases (x1.336), removing (a) "
      "alone grows the group to 13 156 (x1.90): the two charges change together (issue #690)",
-     0.0008, 0.001, 1.42, 1.43},
-    {"P1 sms x1.25", "staged within the SM ratio",
-     "charge (a): removed alone the group disappears (issue #690)", 0.435, 0.436, 0, 0},
-    {"P1 sms x1.25", "w4a8 within the SM ratio",
+     {0.0008, 0.001, 1.42, 1.43},
+     {0.0008, 0.001, 1.42, 1.43}},
+    {"P1 sms x1.25",
+     "staged within the SM ratio",
+     "charge (a): removed alone the group disappears (issue #690)",
+     {0.435, 0.436, 0, 0},
+     {0.435, 0.436, 0, 0}},
+    {"P1 sms x1.25",
+     "w4a8 within the SM ratio",
      "charges (a) and (b): removing (b) alone leaves 14.0 % of the family's cases, all three none "
      "(issue #690)",
-     0.238, 0.239, 0, 0},
-    {"P1 sms x1.25", "w4a8 beyond the SM ratio",
+     {0.238, 0.239, 0, 0},
+     {0.238, 0.239, 0, 0}},
+    {"P1 sms x1.25",
+     "w4a8 beyond the SM ratio",
      "charges (a) and (b) together: removing either alone makes the group disappear (issue #690)",
-     0.024, 0.025, 1.52, 1.53},
-    {"P1 sms x1.25", "i8 within the SM ratio",
+     {0.024, 0.025, 1.52, 1.53},
+     {0.024, 0.025, 1.52, 1.53}},
+    {"P1 sms x1.25",
+     "i8 within the SM ratio",
      "charge (b): removed alone the group falls from 39.1 % to 0.72 % of the family's cases "
      "(issue #690)",
-     0.390, 0.391, 0, 0},
+     {0.390, 0.391, 0, 0},
+     {0.390, 0.391, 0, 0}},
 };
 
 // ---- Findings ----------------------------------------------------------------------------------
@@ -157,7 +219,8 @@ struct Group {
     int count    = 0;
     double worst = 0; // property-specific severity (a price ratio); 0 where none
     std::string example;
-    std::set<std::string> rows;
+    std::map<std::string, int> rows;         // the group's cases per board row
+    std::map<std::string, double> row_worst; // the worst severity per board row
 };
 
 std::map<std::pair<std::string, std::string>, Group> groups;
@@ -167,7 +230,9 @@ void note(const std::string& property, const std::string& key, const std::string
           const std::string& example, double severity = 0) {
     Group& g = groups[{property, key}];
     ++g.count;
-    g.rows.insert(row);
+    ++g.rows[row];
+    double& row_worst = g.row_worst[row];
+    row_worst         = std::max(row_worst, severity);
     if (g.example.empty() || severity > g.worst) {
         g.example = example;
         g.worst   = std::max(g.worst, severity);
@@ -178,6 +243,7 @@ void note(const std::string& property, const std::string& key, const std::string
 
 struct Row {
     std::string name;
+    std::string label; // the name and the PCI id: unique where names repeat (laptop boards)
     generic::FactsBoard board;
     const GpuFactsRow* source;
 };
@@ -189,7 +255,10 @@ std::vector<Row> rows_of_table() {
     for (const GpuFactsRow& r : table) {
         if (r.sms <= 0 || r.boost_mhz <= 0 || r.bus_bits <= 0 || r.gbps <= 0) { continue; }
         Row row;
-        row.name   = r.name;
+        row.name = r.name;
+        std::ostringstream label;
+        label << r.name << " [0x" << std::hex << std::uppercase << r.pci_device_id << ']';
+        row.label  = label.str();
         row.source = &r;
         rows.push_back(std::move(row));
         Row& placed = rows.back();
@@ -324,6 +393,9 @@ std::string family_name(int family) {
 
 // The cases P1 checked on the SM scale, per route family: the denominator of a waiver's share.
 std::map<std::string, int> sms_cases_by_family;
+// The same per family and board row: the most one row holds bounds what an edit of one row of the
+// table can move a share by (Window min_share).
+std::map<std::string, std::map<std::string, int>> sms_cases_by_family_row;
 int sms_cases_priced = 0, routes_skipped_unpriced = 0;
 int sms_cases_fell = 0, sms_cases_equal = 0; // the price fell / stayed (to 1e-9) with the SMs
 
@@ -401,6 +473,8 @@ void property_price_monotone(const std::vector<Row>& rows) {
                                     if (prices == &sms) {
                                         ++sms_cases_priced;
                                         ++sms_cases_by_family[family_name(route.first)];
+                                        ++sms_cases_by_family_row[family_name(route.first)]
+                                                                 [row.label];
                                         if (it->second < seconds * (1.0 - kResolution)) {
                                             ++sms_cases_fell;
                                         } else if (it->second <= seconds * (1.0 + kResolution)) {
@@ -423,7 +497,8 @@ void property_price_monotone(const std::vector<Row>& rows) {
                                     std::ostringstream text;
                                     text << where << ": " << seconds << " s -> " << it->second
                                          << " s";
-                                    note(property, key, row.name, text.str(), it->second / seconds);
+                                    note(property, key, row.label, text.str(),
+                                         it->second / seconds);
                                 }
                             }
                         }
@@ -639,6 +714,76 @@ void property_clock_invariance(const std::vector<Row>& rows) {
     std::cout << '\n';
 }
 
+// ---- The waivers' windows ----------------------------------------------------------------------
+
+// A waived P1 group against its window (`Window`): prints its share, its one-row floors and the
+// "record" line kKnown is re-recorded from; returns 1 where the group fails its window.
+int check_window(const Known& known, const std::string& key, const Group& g) {
+    const std::string family = key.substr(0, key.find(' '));
+    const int family_cases   = sms_cases_by_family[family];
+    const double share       = family_cases > 0 ? g.count / static_cast<double>(family_cases) : 1.0;
+    int row_max              = 0; // the most of the group's cases one row holds
+    for (const auto& [row, n] : g.rows) { row_max = std::max(row_max, n); }
+    int family_row_max = 0; // the most of the family's cases one row holds
+    for (const auto& [row, n] : sms_cases_by_family_row[family]) {
+        family_row_max = std::max(family_row_max, n);
+    }
+    const double floor_share =
+        family_cases > 0 ? (g.count - row_max) / static_cast<double>(family_cases + family_row_max)
+                         : 0.0;
+    // The worst ratio without the row that holds the worst case.
+    double runner_up = 0;
+    bool worst_seen  = false;
+    for (const auto& [row, worst] : g.row_worst) {
+        if (!worst_seen && worst == g.worst) {
+            worst_seen = true;
+            continue;
+        }
+        runner_up = std::max(runner_up, worst);
+    }
+    const bool ratio_group = key.find("beyond") != std::string::npos;
+    std::cout << "    share of the family's " << family_cases
+              << " SM-scale cases: " << 100.0 * share << " %, one-row floor " << 100.0 * floor_share
+              << " % (" << row_max << " cases on one row, " << family_row_max
+              << " of the family's on one row)";
+    if (ratio_group) { std::cout << ", runner-up row's worst x" << runner_up; }
+    std::cout << "\n    record: {" << std::floor(floor_share * 1e4) / 1e4 << ", "
+              << std::ceil(share * 1e3) / 1e3 << ", "
+              << (ratio_group ? std::floor(runner_up * 100) / 100 : 0.0) << ", "
+              << (ratio_group ? std::ceil(g.worst * 100) / 100 : 0.0) << "}\n";
+
+    const Window* w = window_of(known);
+    if (w == nullptr) {
+        std::cout << "    not checked: no window is recorded for this build\n";
+        return 0;
+    }
+    const bool ratio_checked = w->max_ratio > 0;
+    std::cout << "    window: share " << 100.0 * w->min_share << " .. " << 100.0 * w->max_share
+              << " %";
+    if (ratio_checked) {
+        std::cout << ", worst ratio x" << w->min_ratio << " .. x" << w->max_ratio;
+    }
+    std::cout << '\n';
+    if (share > w->max_share || (ratio_checked && g.worst > w->max_ratio * (1.0 + kResolution))) {
+        std::cout << "    WAIVER EXCEEDED: the law got worse, or the board table changed; if only "
+                     "core/data/gpu_facts.json changed, re-record the window from the record "
+                     "line above, otherwise fix the law (issue #690)\n";
+        return 1;
+    }
+    if (share < w->min_share || (ratio_checked && g.worst < w->min_ratio)) {
+        std::cout << "    WAIVER BELOW ITS ONE-ROW FLOOR: the group shrank by more than an edit of "
+                     "one board row explains (the law improved, or several rows changed): "
+                     "re-record kKnown from the record line above\n";
+        return 1;
+    }
+    // More than the rounding step under the ceiling: below the share recorded.
+    if (share < w->max_share - 1e-3 || (ratio_checked && g.worst < w->max_ratio - 1e-2)) {
+        std::cout << "    shrank below its recorded share, within one row of the table: passes; "
+                     "re-record kKnown from the record line above\n";
+    }
+    return 0;
+}
+
 } // namespace
 
 int main() {
@@ -646,6 +791,12 @@ int main() {
         const std::vector<Row> rows = rows_of_table();
         std::cout << rows.size() << " board rows of gpu_facts.json (" << gpu_facts_table().size()
                   << " in the table)\n";
+        std::cout << "build sm_" << NINFERNO_BUILD_ARCH_LABEL << ": NVFP4 and cluster kernels "
+                  << (kBuild.nvfp4_kernels ? "compiled" : "not compiled")
+                  << ", block shared memory " << kBuild.block_shared_bytes << " B: "
+                  << (kBuildRecorded ? "the waiver windows of this build are checked"
+                                     : "no waiver window is recorded for this build")
+                  << '\n';
         property_price_monotone(rows);
         property_non_fact_fields(rows);
         property_clock_invariance(rows);
@@ -662,33 +813,7 @@ int main() {
             std::cout << "\n    e.g. " << g.example << '\n';
             if (known) {
                 std::cout << "    cause: " << known->cause << '\n';
-                const std::string family = id.second.substr(0, id.second.find(' '));
-                const int family_cases   = sms_cases_by_family[family];
-                const double share =
-                    family_cases > 0 ? g.count / static_cast<double>(family_cases) : 1.0;
-                const bool ratio_checked = known->max_ratio > 0;
-                std::cout << "    share of the family's " << family_cases
-                          << " SM-scale cases: " << 100.0 * share << " % (recorded window "
-                          << 100.0 * known->min_share << " .. " << 100.0 * known->max_share
-                          << " %)";
-                if (ratio_checked) {
-                    std::cout << ", worst ratio window x" << known->min_ratio << " .. x"
-                              << known->max_ratio;
-                }
-                std::cout << '\n';
-                if (share > known->max_share ||
-                    (ratio_checked && g.worst > known->max_ratio * (1.0 + kResolution))) {
-                    std::cout << "    WAIVER EXCEEDED: the law got worse, or the board table "
-                                 "changed; if only core/data/gpu_facts.json changed, re-record the "
-                                 "window from the share printed above, otherwise fix the law "
-                                 "(issue #690)\n";
-                    ++unexpected;
-                } else if (share < known->min_share ||
-                           (ratio_checked && g.worst < known->min_ratio)) {
-                    std::cout << "    WAIVER BELOW ITS RECORDED WINDOW: the group shrank (the law "
-                                 "improved or the table changed): re-record kKnown\n";
-                    ++unexpected;
-                }
+                unexpected += check_window(*known, id.second, g);
             } else {
                 ++unexpected;
             }
