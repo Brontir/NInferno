@@ -319,13 +319,46 @@ class SelectionRegretTest(unittest.TestCase):
             data["board_facts"] = {"held-board": bad}
             with self.assertRaises(ValueError):
                 regret.ridges_of(data, GENERATION_HEADER)
+        # A value that is not an object is refused, the falsy ones too: only an absent field (or
+        # an empty object) means "no facts".
+        for bad in ("x", None, False, 0, []):
+            data = document()
+            data["board_facts"] = bad
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                regret.ridges_of(data, GENERATION_HEADER)
         data = document()
-        data["board_facts"] = "x"
-        with self.assertRaises(ValueError):
-            regret.ridges_of(data, GENERATION_HEADER)
+        self.assertEqual(regret.ridges_of(data, GENERATION_HEADER), {})
+        data["board_facts"] = {}
+        self.assertEqual(regret.ridges_of(data, GENERATION_HEADER), {})
         with tempfile.TemporaryDirectory() as directory:  # the CLI exits 2, not a traceback
             data = document()
             data["board_facts"] = {"held-board": {"cc": 120}}
+            path = Path(directory) / "input.json"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(regret.main([str(path)]), 2)
+
+    def test_a_board_without_tensor_cores_has_no_tensor_ridge(self):
+        # A GTX 1660 Ti (sm75, 24 SMs, 1770 MHz, 288 GB/s): Turing's int8 tensor rate would give a
+        # ridge of 84.96, but the board has no tensor cores.
+        facts = {"cc": 75, "sms": 24, "dram_gbps": 288.0, "boost_mhz": 1770}
+        data = document()
+        data["cases"][0]["id"] = "wide.T64"
+        data["board_facts"] = {"held-board": dict(facts)}
+        self.assertAlmostEqual(regret.ridges_of(data, GENERATION_HEADER)["held-board"], 84.96,
+                               places=2)
+        data["board_facts"] = {"held-board": dict(facts, mma_slow=False)}
+        self.assertIn("held-board", regret.ridges_of(data, GENERATION_HEADER))
+        data["board_facts"] = {"held-board": dict(facts, mma_slow=True)}
+        self.assertEqual(regret.ridges_of(data, GENERATION_HEADER), {})
+        report = regret.evaluate(data, None, regret.ridges_of(data, GENERATION_HEADER))
+        group = report["by_board_regime_authority"][0]
+        self.assertEqual((group["regime"], group["ridge_t"]), ("T>=17 ridge unknown", None))
+        for bad in (0, 1, "true", None):
+            data["board_facts"] = {"held-board": dict(facts, mma_slow=bad)}
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                regret.ridges_of(data, GENERATION_HEADER)
+        with tempfile.TemporaryDirectory() as directory:  # and the CLI exits 2
             path = Path(directory) / "input.json"
             path.write_text(json.dumps(data), encoding="utf-8")
             with contextlib.redirect_stderr(io.StringIO()):

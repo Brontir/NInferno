@@ -133,12 +133,15 @@ Regret by authority and regime (#614): a `--selected-out` CSV may also carry `au
 authority that answered, e.g. `route-table`, `cost-model`, `r8-table`) and `evidence` (`pin`,
 `measured`, `ranker`, `carried`, `transferred`, `borrowed`); each case records them with its width
 `t`. A file without the columns reads `unknown` for both, so the tools work on older data.
-`regret_collect.py --pci-id 0x2B85` adds the board's compute capability, SMs, DRAM rate and boost
-clock from `core/data/gpu_facts.json`; `selection_regret.py` reports
-`by_board_regime_authority`: per board x regime x authority the usual summary and the evidence
-kinds. Regimes by T: decode T<=4, verify 5..16, and from 17 below or above the card's ridge
+`regret_collect.py --pci-id 0x2B85` adds the board's compute capability, SMs, DRAM rate, boost
+clock and `mma_slow` from `core/data/gpu_facts.json` (the rows' device must be that board's
+class: its chip, or its architecture where the class has no chip, and its SMs);
+`selection_regret.py` reports `by_board_regime_authority`: per board x regime x authority the
+usual summary and the evidence kinds. Regimes by T: decode T<=4, verify 5..16, and from 17 below
+or above the card's ridge
 T* = s8 x SMs x boost clock x 4.5/8 / (2 x DRAM bytes/s), as the MMQ transfer audit computes it
-(`s8` from `core/generation.h`; `--generation-header`); without board facts, `T>=17 ridge unknown`.
+(`s8` from `core/generation.h`; `--generation-header`); without board facts, and on a board without
+tensor cores (`mma_slow`), `T>=17 ridge unknown`.
 
 Exit tooling (#614, F3): `route_table_prune.py report.json --table routes/<class>.json
 [--dense-tune routes/tuner/dense_tune.json --class <id>]` lists the measured route-table entries

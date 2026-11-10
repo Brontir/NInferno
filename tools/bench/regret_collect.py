@@ -16,8 +16,9 @@ A --selected CSV may also carry `authority` and `evidence` columns (the route au
 answered and the kind of evidence it rests on, #614 route authorities); each case then records
 them, and selection_regret.py groups regret by board x regime x authority. Without the columns
 (written before route_tune named them) both read "unknown": the collector still works on old data.
---pci-id adds the board's compute capability, SMs, DRAM rate and boost clock from gpu_facts.json to
-the document, from which selection_regret.py computes the card's ridge for its regimes.
+--pci-id adds the board's compute capability, SMs, DRAM rate, boost clock and `mma_slow` (no tensor
+cores) from gpu_facts.json to the document, from which selection_regret.py computes the card's
+ridge for its regimes; the rows' device must be that board's class (chip or architecture, and SMs).
 
 Each row names its run, board and timing protocol (#518): a pass's --selected-out and --routes-out
 must come from one run, every file from one board, and a case's passes from one protocol ("copies":
@@ -143,14 +144,19 @@ def read_selections(paths, authorities=None):
 
 def board_facts(gpu_facts, pci_id):
     """The row of core/data/gpu_facts.json for a PCI device id (hex string), as the numbers the
-    ridge needs: compute capability, SMs, DRAM GB/s (bus bits x Gbps / 8) and boost clock."""
+    ridge needs: compute capability, SMs, DRAM GB/s (bus bits x Gbps / 8), boost clock, and
+    whether the board lacks tensor cores (`mma_slow`: the generation's tensor rate is not its).
+    With them the row's name and chip, by which collect() tells it is the board of the CSVs."""
     wanted = int(str(pci_id), 16)
     data = json.loads(Path(gpu_facts).read_text(encoding="utf-8"))
     for row in data["gpus"]:
         if int(row["id"], 16) == wanted:
-            return {"name": row["name"], "cc": int(row["cc"]), "sms": int(row["sms"]),
-                    "dram_gbps": row["bus_bits"] * row["gbps"] / 8.0,
-                    "boost_mhz": row["boost_mhz"]}
+            slow = row.get("mma_slow", False)
+            if type(slow) is not bool:
+                raise ValueError(f"{gpu_facts}: {row['id']}: mma_slow is not true or false")
+            return {"name": row["name"], "chip": row["chip"], "cc": int(row["cc"]),
+                    "sms": int(row["sms"]), "dram_gbps": row["bus_bits"] * row["gbps"] / 8.0,
+                    "boost_mhz": row["boost_mhz"], "mma_slow": slow}
     raise ValueError(f"{gpu_facts}: no row for PCI id {pci_id}")
 
 
@@ -243,11 +249,18 @@ def collect(selected_csvs, pass_csvs, board, model, revision, build_id, holdout,
         document["qualification"] = qualified
     device = boards.pop()
     if facts:
-        # The registry row must be the board these CSVs came from: its SMs are in the class id.
-        named = re.search(r":(\d+)sm", device)
-        if named and int(named[1]) != facts["sms"]:
-            raise ValueError(f"--pci-id names a board of {facts['sms']} SMs ({facts['name']}), "
-                             f"the rows' device {device} has {named[1]}")
+        # The registry row must be the board these CSVs came from. The device's class id names
+        # its chip and its SMs ("tu116:24sm"); the SMs alone do not tell a GTX 1660 Ti from an
+        # RTX 4060 (ad107, 24 SMs too), whose ridge the first does not have. A board whose chip
+        # the class tables do not hold is named by its architecture ("sm90:132sm", an H100).
+        named = re.match(r"([^:\s]+):(\d+)sm\b", device)
+        if not named:
+            raise ValueError(f"--pci-id: the rows' device {device} is not a class id "
+                             "(<chip>:<SMs>sm), so the board cannot be told; leave --pci-id out")
+        if (named[1] not in (facts["chip"], f"sm{facts['cc']}")
+                or int(named[2]) != facts["sms"]):
+            raise ValueError(f"--pci-id names {facts['name']} ({facts['chip']}, sm{facts['cc']}, "
+                             f"{facts['sms']} SMs); the rows' device is {device}")
         document["board_facts"] = {board: facts}
     document["device"] = device  # route_tune's device class id, as every row named it
     return document

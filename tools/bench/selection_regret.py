@@ -84,9 +84,11 @@ def regime_of(t, ridge):
 def ridges_of(document, generation_header):
     """{board: ridge T*} for the boards the document gives `board_facts`, the way #605 computes it
     (int8 tensor rate of the generation x SMs x boost clock, over DRAM rate, for the 4.5-bit
-    Q4_K): ops/s x bytes per value / (2 x DRAM bytes/s). A board with none has no ridge."""
+    Q4_K): ops/s x bytes per value / (2 x DRAM bytes/s). A board with none has no ridge, nor has
+    one without tensor cores (`mma_slow`, a GTX 16): the generation's tensor rate is not its."""
     require(isinstance(document, dict), "expected JSON object")
-    facts = document.get("board_facts") or {}
+    # Absent is "no facts"; a value that is not an object (null, false, a list) is a bad document.
+    facts = document.get("board_facts", {})
     require(isinstance(facts, dict), "board_facts: expected object")
     if not facts:
         return {}
@@ -100,6 +102,10 @@ def ridges_of(document, generation_header):
             require(type(f[key]) in (int, float) and math.isfinite(f[key]) and f[key] > 0,
                     f"{where}.{key}: expected a finite positive number")
         require(type(f["cc"]) is int, f"{where}.cc: expected an integer")
+        slow = f.get("mma_slow", False)
+        require(type(slow) is bool, f"{where}.mma_slow: expected true or false")
+        if slow:
+            continue  # no tensor cores: the tensor ridge is not this board's, said as unknown
         try:
             generation = audit.generation_of(rows, f["cc"])
         except ValueError:
