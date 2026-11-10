@@ -18,7 +18,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <cstdlib>
 #include <optional>
 
 namespace ninferno::ops::detail::generic {
@@ -180,19 +179,22 @@ std::optional<RmmaKept> rmma_kept(int schedule, const Weight& weight, Epilogue e
 }
 
 // The counted register-MMA terms (rmma_counted_terms.h, #613 PR-7a) in place of the fitted spill
-// and the weight-only tensor term, where the environment asks (NINFERNO_RMMA_COUNTED_TERMS=1).
-// Off, the price is golden-equal to the fitted one; the switch exists for the A/B that decides
-// whether the counted law ships as the default (the replica over the lab sweeps moves 3-50 % of
-// the picks per board, mostly to faster measured routes, not all).
-bool rmma_counted_terms_enabled() {
-    static const bool enabled = [] {
-        const char* v = std::getenv("NINFERNO_RMMA_COUNTED_TERMS");
-        return v != nullptr && *v != '\0' && *v != '0';
-    }();
-    return enabled;
-}
+// and the weight-only tensor term: route_cost::kRmmaCountedLaw says which law this binary prices
+// (false until the A/B of the counted law; off, the price is golden-equal to the fitted one), and a
+// test overrides it for its process.
+std::optional<bool> g_rmma_counted_law_override;
 
 } // namespace
+
+bool rmma_counted_law() noexcept {
+    return g_rmma_counted_law_override.value_or(route_cost::kRmmaCountedLaw);
+}
+
+void rmma_counted_law_for_test(std::optional<bool> law) noexcept {
+    g_rmma_counted_law_override = law;
+}
+
+namespace {
 
 // The speed-profile route of a call of 17 tokens or more from a cost model of every tile the
 // build holds for the weight (register MMA, tiled, staged): a tile's time on the busiest SM is its
@@ -273,8 +275,8 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
     };
     // Time of `ctas` CTAs of `rows` output rows x `cols` (K over `cluster` CTAs) of `threads`
     // threads, at most `occ` resident per SM; `local_bytes` is the spill per thread of the kernel;
-    // `loop` the kernel's counted K loop (rmma_counted_terms.h), read under the switch.
-    const bool counted = rmma_counted_terms_enabled();
+    // `loop` the kernel's counted K loop (rmma_counted_terms.h), read under the counted law.
+    const bool counted = rmma_counted_law();
     const auto cost    = [&](double rows, double cols, double threads, double cluster, double occ,
                           double warps_k, bool pipelined, double eff, double local_bytes = 0.0,
                           const kernel_facts::LoopCounts* loop = nullptr) {
@@ -318,12 +320,13 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         double spill       = q * threads * local_bytes * route_cost::kSpillAccessesPerStep.value() *
                        std::ceil(kc / (route_cost::kRmmaHeavyStepK.value() * warps_k)) /
                        (route_cost::kL1BytesPerSmClock.value() * clk);
-        // Under the switch, the loop's own counts: every MMA of an iteration (the min-term ones
-        // included) over the tensor rate, its LDL / STL bytes over the L1 rate.
+        // Under the counted law, the loop's own counts: every MMA of an iteration (the min-term
+        // ones included) over the tensor rate, its LDL / STL waits at the L1 latency shared by the
+        // warps a scheduler holds.
         if (counted && loop != nullptr && rmma_counted::usable(*loop)) {
             const auto t =
-                rmma_counted::terms(*loop, q, threads / 32.0, kc, warps_k, peak_sm,
-                                       route_cost::kL1BytesPerSmClock.value() * clk, clk, d.major);
+                rmma_counted::terms(*loop, q, threads / 32.0, kc, warps_k, peak_sm, warps,
+                                       route_cost::kL1HitLatencyCycles.value(), clk, d.major);
             mma   = t.mma;
             spill = t.spill;
         }

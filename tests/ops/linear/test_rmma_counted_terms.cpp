@@ -4,12 +4,15 @@
 // with ones, and the ones count is zero on every kernel that adds the sums or has no min term;
 // the loop's iterations cover a CTA's K range; the terms of a constructed loop are the arithmetic
 // written down. No GPU.
+#include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_schedules.h"
 #include "ops/generic/kernel_facts.h"
 #include "ops/generic/rmma_counted_terms.h"
+#include "ops/generic/route_cost_constants.h"
 
 #include <cmath>
 #include <iostream>
+#include <optional>
 #include <string>
 
 namespace {
@@ -123,9 +126,10 @@ void ones_share_on_the_snapshots() {
 }
 
 void terms_arithmetic() {
-    // A constructed loop: 128 MMAs of m16n8k16 (64 of them ones), 256 K per iteration, 2 KB of
-    // local traffic, 1000 instructions of which 400 INT and 390 FP; a CTA of 4 warps on a 2 GHz
-    // chip at 512 flop per clock, 128 B per clock of L1; 2 waves, kc 4096 unsplit.
+    // A constructed loop: 128 MMAs of m16n8k16 (64 of them ones), 256 K per iteration, 4 LDL / STL
+    // of 2 KB, 1000 instructions of which 400 INT and 390 FP; a CTA of 4 warps on a 2 GHz chip at
+    // 512 flop per clock, 8 warps resident (2 a scheduler), 32 clocks of L1 latency; 2 waves, kc
+    // 4096 unsplit.
     kf::LoopCounts l;
     l.loops          = 1;
     l.k_iter         = 256;
@@ -138,10 +142,13 @@ void terms_arithmetic() {
     l.fp_alu         = 390;
     l.total          = 1000;
     const double clk = 2e9;
-    const auto t     = rc::terms(l, 2.0, 4.0, 4096.0, 1.0, 512.0 * clk, 128.0 * clk, clk, 8);
+    const auto t     = rc::terms(l, 2.0, 4.0, 4096.0, 1.0, 512.0 * clk, 8.0, 32.0, clk, 8);
     expect(std::fabs(t.warp_iterations - 2.0 * 4.0 * 16.0) < 1e-9, "warp iterations");
     expect(std::fabs(t.mma - 128.0 * 128 * 4096.0 / (512.0 * clk)) < 1e-15, "mma seconds");
-    expect(std::fabs(t.spill - 128.0 * 2048.0 / (128.0 * clk)) < 1e-15, "spill seconds");
+    expect(std::fabs(t.spill - 128.0 * 4.0 * 32.0 / 2.0 / clk) < 1e-15, "spill seconds");
+    // One warp a scheduler hides nothing; a quarter of a warp is still one.
+    const auto lone = rc::terms(l, 2.0, 4.0, 4096.0, 1.0, 512.0 * clk, 1.0, 32.0, clk, 8);
+    expect(std::fabs(lone.spill - 128.0 * 4.0 * 32.0 / clk) < 1e-15, "spill at one warp");
     expect(std::fabs(t.issue_slots - 128.0 * 1000.0 / (4.0 * clk)) < 1e-15, "issue slots");
     expect(std::fabs(t.int_pipe - 128.0 * 400.0 * 2.0 / (4.0 * clk)) < 1e-15, "int pipe");
     expect(std::fabs(t.fp_pipe - 128.0 * 390.0 / (4.0 * clk)) < 1e-15, "fp pipe");
@@ -150,11 +157,22 @@ void terms_arithmetic() {
     // Turing's shapes and pipes.
     l.mma_shape = "HMMA.1688.F32";
     expect(rc::mma_flops(l) == 2048.0, "m16n8k8 flops");
-    const auto t75 = rc::terms(l, 2.0, 4.0, 4096.0, 1.0, 1536.0 * clk, 128.0 * clk, clk, 7);
+    const auto t75 = rc::terms(l, 2.0, 4.0, 4096.0, 1.0, 1536.0 * clk, 8.0, 32.0, clk, 7);
     expect(std::fabs(t75.fp_pipe - 128.0 * 390.0 * 2.0 / (4.0 * clk)) < 1e-15, "Turing fp pipe");
     // Not usable: no loop, no K, no MMA.
     kf::LoopCounts none;
-    expect(!rc::usable(none) && rc::terms(none, 1, 1, 1, 1, 1, 1, 1, 8).mma == 0, "unusable");
+    expect(!rc::usable(none) && rc::terms(none, 1, 1, 1, 1, 1, 1, 1, 1, 8).mma == 0, "unusable");
+}
+
+void law_gate() {
+    // The binary prices one law (route_cost::kRmmaCountedLaw, false until the A/B); a test flips
+    // it for its process and clears the override.
+    namespace g = ninferno::ops::detail::generic;
+    expect(g::rmma_counted_law() == g::route_cost::kRmmaCountedLaw, "the registry's law");
+    g::rmma_counted_law_for_test(!g::route_cost::kRmmaCountedLaw);
+    expect(g::rmma_counted_law() != g::route_cost::kRmmaCountedLaw, "the override");
+    g::rmma_counted_law_for_test(std::nullopt);
+    expect(g::rmma_counted_law() == g::route_cost::kRmmaCountedLaw, "cleared");
 }
 
 } // namespace
@@ -163,6 +181,7 @@ int main() {
     try {
         ones_share_on_the_snapshots();
         terms_arithmetic();
+        law_gate();
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
         ++failures;

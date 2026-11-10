@@ -15,8 +15,9 @@ engine, matched by the registers and spill the sweep recorded), then with the co
 
   today        the shipped price (the plain form outside sm_86 / sm_120, the heavy form there)
   ones         the tensor term from the loop's MMAs, the min-term ones included
-  ones_spill   ones, and the spill from the loop's LDL / STL bytes (what the engine prices under
-               NINFERNO_RMMA_COUNTED_TERMS=1)
+  ones_spill   ones, and the spill from the loop's LDL / STL count at the L1 hit latency, shared
+               by the warps a scheduler holds (what the engine prices under
+               route_cost::kRmmaCountedLaw)
   issue_max    ones_spill with the issue bound beside the bytes-plus-tensor sum
   issue_nofill max(bytes, tensor, issue) + reduce + chain, no fitted fill at all
 
@@ -52,7 +53,8 @@ A16_SCALE = 1.11
 K = dict(rmma_step_cycles=150.0, rmma_step_k=16.0, rmma_saturating_warps=11.0,
          rmma_heavy_saturating_warps=8.0, l2_ga10x=32.0, l2_gb20x=24.0, rmma_heavy_step_k=128.0,
          spill_accesses_per_step=2.0, l1_bytes_per_sm_clock=128.0, reg_alloc_per_warp=256.0,
-         cluster_reduce_cycles=30.0, warp_reduce_cycles=2.75, min_warp_fill=0.05)
+         cluster_reduce_cycles=30.0, warp_reduce_cycles=2.75, min_warp_fill=0.05,
+         l1_hit_latency_cycles=32.0)
 ROUTE = re.compile(r"rmma\.m(\d+)\.n(\d+)\.w(\d+)x(\d+)(?:\.c(\d+))?")
 MMA_FLOPS = {"16816": 4096, "1688": 2048, "1684": 1024}
 LAWS = ("today", "ones", "ones_spill", "issue_max", "issue_nofill")
@@ -157,7 +159,8 @@ def price(chip, call, inst, sched, law):
         per_slot = 1.0 / (chip["schedulers"] * clk)
         t.update(iters=iters,
                  mma_counted=wi * inst["mma"] * flops / peak_sm,
-                 spill_counted=wi * inst["local_bytes"] / (K["l1_bytes_per_sm_clock"] * clk),
+                 spill_counted=wi * inst["local"] * K["l1_hit_latency_cycles"]
+                 / max(1.0, warps / chip["schedulers"]) / clk,
                  int_pipe=wi * inst["int"] * chip["int_cycles"] * per_slot,
                  fp_pipe=wi * inst["fp"] * chip["fp_cycles"] * per_slot)
         t["issue"] = max(wi * inst["total"] * per_slot, t["int_pipe"], t["fp_pipe"])

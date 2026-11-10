@@ -702,6 +702,13 @@ struct KernelResources {
     std::optional<kernel_facts::LoopCounts> loop;
 };
 
+// Which register-MMA law price_routes applies (#613 PR-7a): route_cost::kRmmaCountedLaw, the one
+// law of the binary, unless a test set an override for its process (nullopt clears it). The
+// counted law reads KernelResources::loop in place of the fitted spill and weight-only tensor
+// terms; off, the price is golden-equal to the fitted one.
+[[nodiscard]] bool rmma_counted_law() noexcept;
+void rmma_counted_law_for_test(std::optional<bool> law) noexcept;
+
 // The compiled facts the cost model read for one register-MMA schedule of one format (#556): what
 // price_routes took from rmma_resources. A test installs a sink to digest exactly these reads (the
 // selector golden keys a facts-priced board's file by them); nothing is recorded otherwise.
