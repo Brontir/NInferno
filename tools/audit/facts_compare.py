@@ -204,7 +204,8 @@ NUMBER_KEYS.update({part: FACTS_NUMBERS for part in FACTS_PARTS})
 INTEGER_KEYS = (("queried", "pci_device_id"), ("queried", "major"), ("queried", "minor"))
 STRING_KEYS = (("queried", "name"), ("queried", "chip"), ("engine_table_facts", "sku"),
                ("engine_row_facts", "sku"))
-BOOL_KEYS = (("engine_table_facts", "mma_slow"), ("engine_row_facts", "mma_slow"))
+BOOL_KEYS = (("engine_table_facts", "mma_slow"), ("engine_row_facts", "mma_slow"),
+             ("engine_table_facts", "driver_read"), ("engine_row_facts", "driver_read"))
 
 
 def validate_probe(probe_output):
@@ -410,7 +411,24 @@ def compare_engine(device, row, table_results):
         "match" if stored["mma_slow"] == want_slow else "mismatch",
         "the engine's mma_slow (a board fact the driver cannot answer) against the row")
     by_field = {r["field"]: r["status"] for r in table_results}
-    deviated = laptop or by_field.get("sms") in ("info", "unavailable") or any(
+    sliced = by_field.get("sms") in ("info", "unavailable")
+    whole_board = not laptop and not sliced
+    mem = device["queried"]["memory_clock_khz"]
+    read_bus = whole_board and by_field.get("bus_bits") == "info"
+    read_clock = whole_board and by_field.get("memory_clock_khz") == "info" and mem >= 100000 and \
+        mem * 1000 < alone["memory_clock_khz"] * ENGINE_SLOWER_MEMORY_PER_MILLE
+    # driver_read (machine_facts.cpp: a laptop row without a boost range, 218; a bus read, 245; a
+    # clock read, 251): the facts include the driver's values. A slice keeps the row's values and
+    # prices its share apart, so it does not set it. The row alone reads nothing from the driver
+    # but a laptop row without a range still sets it.
+    row_reads = laptop and not row.get("boost_min_mhz", 0) > 0
+    add("engine_row_driver_read", row_reads, alone["driver_read"],
+        "match" if alone["driver_read"] == row_reads else "mismatch", json_note)
+    want_read = row_reads or read_bus or read_clock
+    add("engine_driver_read", want_read, stored["driver_read"],
+        "match" if stored["driver_read"] == want_read else "mismatch",
+        "set when the engine read the driver's values into the facts")
+    deviated = laptop or sliced or any(
         by_field.get(f) == "info" for f in ("bus_bits", "memory_clock_khz"))
     if not deviated:
         same("engine_source", alone["source"], stored["source"], stored_note)
@@ -427,7 +445,7 @@ def compare_engine(device, row, table_results):
     else:
         same("engine_reference_clock_khz", alone["reference_clock_khz"],
              stored["reference_clock_khz"], stored_note)
-    if laptop or by_field.get("sms") in ("info", "unavailable"):
+    if laptop or sliced:
         # A laptop and a slice keep the row's memory values (a slice's share is priced apart,
         # a laptop from its published range): the driver's narrower bus or lower clock is not read.
         for field in ("memory_bus_bits", "memory_clock_khz"):
@@ -446,11 +464,7 @@ def compare_engine(device, row, table_results):
     # The source follows the deviation: a laptop and a slice are always Extrapolated; a whole
     # board is Extrapolated when the engine read its bus, or a memory clock more than 2.2 % under
     # the row's (machine_facts.cpp), and keeps Verified for a faster memory (the row's rate stays).
-    mem = device["queried"]["memory_clock_khz"]
-    read_bus = by_field.get("bus_bits") == "info"
-    read_clock = by_field.get("memory_clock_khz") == "info" and mem >= 100000 and \
-        mem * 1000 < alone["memory_clock_khz"] * ENGINE_SLOWER_MEMORY_PER_MILLE
-    if laptop or by_field.get("sms") in ("info", "unavailable") or read_bus or read_clock:
+    if laptop or sliced or read_bus or read_clock:
         want_source = EXTRAPOLATED_SOURCE
     else:
         want_source = VERIFIED_SOURCE

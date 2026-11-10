@@ -32,7 +32,7 @@ FEATURES = {"mma_bf16": True, "mma_bf16_native": True, "mma_tensor": True, "mma_
 def facts_of_4090():
     return {"source": 1, "sku": "GeForce RTX 4090", "reference_clock_khz": 2_520_000,
             "memory_bus_bits": 384, "memory_clock_khz": 10_500_000, "l2_mib": 72.0,
-            "mma_slow": False}
+            "mma_slow": False, "driver_read": False}
 
 
 def device_4090():
@@ -331,7 +331,8 @@ class Compare(unittest.TestCase):
         # driver's bus and clock are information, the engine reads them (source 2).
         d = device_4090()
         d["queried"].update(memory_bus_bits=256, memory_clock_khz=9_000_000)
-        d["engine_table_facts"].update(source=2, memory_bus_bits=256, memory_clock_khz=9_000_000)
+        d["engine_table_facts"].update(source=2, memory_bus_bits=256, memory_clock_khz=9_000_000,
+                                       driver_read=True)
         row = row_of(0x2684, variants=[{"bus_bits": 256, "gbps": 18.0}])
         s = no_mismatch(self, statuses(d, row))
         self.assertEqual(s[("table", "engine_memory_bus_bits")], "match")
@@ -400,6 +401,73 @@ class Compare(unittest.TestCase):
         laptop["engine_table_facts"]["source"] = 1
         self.assertEqual(statuses(laptop)[("table", "engine_source")], "mismatch")
         self.assertEqual(statuses(device_laptop())[("table", "engine_source")], "match")
+
+    def driver_read_of(self, d, row="table"):
+        return statuses(d, row)[("table", "engine_driver_read")]
+
+    def test_driver_read_is_false_for_a_plain_whole_board(self):
+        d = device_4090()
+        self.assertEqual(self.driver_read_of(d), "match")
+        self.assertEqual(statuses(d)[("table", "engine_row_driver_read")], "match")
+        d["engine_table_facts"]["driver_read"] = True  # the query claims it read the driver
+        self.assertEqual(self.driver_read_of(d), "mismatch")
+        d = device_4090()
+        d["engine_row_facts"]["driver_read"] = True
+        self.assertEqual(statuses(d)[("table", "engine_row_driver_read")], "mismatch")
+
+    def test_driver_read_is_true_for_a_slower_memory_variant(self):
+        slow_row = row_of(0x2684, variants=[{"gbps": 18.0}])
+        slow = device_4090()
+        slow["queried"]["memory_clock_khz"] = 9_000_000
+        slow["engine_table_facts"].update(memory_clock_khz=9_000_000, source=2, driver_read=True)
+        self.assertEqual(self.driver_read_of(slow, slow_row), "match")
+        slow["engine_table_facts"]["driver_read"] = False
+        self.assertEqual(self.driver_read_of(slow, slow_row), "mismatch")
+
+    def test_driver_read_is_true_for_a_bus_variant(self):
+        bus_row = row_of(0x2684, variants=[{"bus_bits": 256}])
+        bus = device_4090()
+        bus["queried"]["memory_bus_bits"] = 256
+        bus["engine_table_facts"].update(memory_bus_bits=256, source=2, driver_read=True)
+        self.assertEqual(self.driver_read_of(bus, bus_row), "match")
+        bus["engine_table_facts"]["driver_read"] = False
+        self.assertEqual(self.driver_read_of(bus, bus_row), "mismatch")
+
+    def test_driver_read_is_false_for_a_slice(self):
+        # The engine prices a slice's share apart and reads no driver value into the facts.
+        d = device_a100()
+        d["mig_mode"] = 1
+        d["queried"].update(sms=42, l2_bytes=20 * MIB, global_bytes=40_000_000_000,
+                            memory_bus_bits=2560)
+        d["engine_table_facts"]["source"] = 2
+        self.assertEqual(self.driver_read_of(d), "match")
+        d["engine_table_facts"]["driver_read"] = True
+        self.assertEqual(self.driver_read_of(d), "mismatch")
+
+    def test_driver_read_is_false_for_a_faster_memory_variant(self):
+        fast = device_1650()
+        fast["queried"].update(memory_clock_khz=6_000_000, sm_clock_khz=1_590_000)
+        self.assertEqual(self.driver_read_of(fast), "match")
+        fast["engine_table_facts"]["driver_read"] = True
+        self.assertEqual(self.driver_read_of(fast), "mismatch")
+
+    def test_driver_read_of_a_laptop_follows_its_boost_range(self):
+        # A laptop row with a boost range is priced from it: nothing read. Without one the engine
+        # reads the driver's clock, and sets the flag even for the row alone.
+        d = device_laptop()
+        self.assertEqual(self.driver_read_of(d), "match")
+        d["engine_table_facts"]["driver_read"] = True
+        self.assertEqual(self.driver_read_of(d), "mismatch")
+        row = row_of(0x2C18)
+        del row["boost_min_mhz"]
+        d = device_laptop()
+        d["engine_table_facts"].update(driver_read=True, reference_clock_khz=1_800_000)
+        d["engine_row_facts"].update(driver_read=True, reference_clock_khz=2_160_000)
+        s = statuses(d, row)
+        self.assertEqual(s[("table", "engine_driver_read")], "match")
+        self.assertEqual(s[("table", "engine_row_driver_read")], "match")
+        d["engine_row_facts"]["driver_read"] = False
+        self.assertEqual(statuses(d, row)[("table", "engine_row_driver_read")], "mismatch")
 
     def test_source_of_a_slice_is_extrapolated(self):
         sliced = device_a100()

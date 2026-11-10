@@ -83,7 +83,8 @@ Json facts_json(const ninferno::MachineFacts& facts) {
                 {"memory_bus_bits", facts.memory_bus_bits},
                 {"memory_clock_khz", facts.memory_clock_khz},
                 {"l2_mib", facts.l2_mib},
-                {"mma_slow", facts.mma_slow}};
+                {"mma_slow", facts.mma_slow},
+                {"driver_read", facts.driver_read}};
 }
 
 // machine_facts of the board's row alone: the id and compute capability the driver reports, the
