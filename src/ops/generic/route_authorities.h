@@ -55,7 +55,7 @@ struct Ask {
     // The prefill band: the prefill profile's calls of 17 tokens or more, which take one route per
     // problem; below it the profile's calls route as the speed profile's.
     [[nodiscard]] bool prefill_band() const noexcept {
-        return profile == Profile::Prefill && tokens >= 17;
+        return profile == Profile::Prefill && tokens >= kPrefillBandMinTokens;
     }
 
     [[nodiscard]] bool prefill() const noexcept { return profile == Profile::Prefill; }
@@ -67,6 +67,23 @@ struct Ask {
 // The Ask of a call below the profiles (auto_route, heuristic_route: the pins' A16 answer, the
 // tuner's baseline): Prefill or Speed by `prefill` whatever profile is active.
 [[nodiscard]] Ask ask_below_profiles(std::int32_t tokens, bool prefill);
+
+// The profile filter (#614, step A2): whether the Ask's profile lets `route` answer. It is the one
+// place the profiles' contracts are stated; the authorities (route_authorities.cpp) and the route
+// table's loader (route_table.cpp) both ask it. What a route can compute at all (the format, the
+// policy, the build, the device's features) is route_admits' half, not this one.
+//
+// The prefill band (Ask::prefill_band): every call of 17 tokens or more takes one route per
+// problem, so the route must sum in the order every width shares (route_is_token_invariant). With a
+// weight, a format with a tiled codec keeps its tiled route there (the tiled and register-MMA
+// families sum in different orders); the loader has no weight and does not ask that half. Below
+// the band, and under the speed and invariant profiles, every route passes.
+[[nodiscard]] bool profile_admits(Route route, const Ask& ask, const Weight* weight = nullptr);
+
+// Under the prefill profile a route that stands in for `reference` (a table's prefill route, the
+// rules' choice) must sum as it does, so a prefill token's bytes do not depend on which of the two
+// its call's width took (same_summation). Other profiles: every route passes.
+[[nodiscard]] bool profile_admits_as(Route route, const Ask& ask, Route reference);
 
 struct Evidence {
     enum class Kind : std::uint8_t { Pin, Measured, Ranker, Carried, Transferred, Borrowed };
