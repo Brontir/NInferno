@@ -93,6 +93,14 @@ FLAGGED = {
     "return_braced_default": "Board f(Board b = {}) { return {kM, 0, 1, 2, 3}; }",
     "return_after_nested_lambda": "Board f() { auto g = [](int a) { return a; };"
                                   " return {kM, 0, 1, 2, 3}; }",
+    # A prefixed character or string literal before the board on the same line.
+    "after_wide_char": "if (sep == L'/') return Board{kMajor, 0, kSms, kL2, kBw};",
+    "after_u16_char": "if (c == u'/') return Board{kMajor, 0, kSms, kL2, kBw};",
+    "after_u32_char": "if (c == U'/') return Board{kMajor, 0, kSms, kL2, kBw};",
+    "after_u8_char": "if (c == u8'/') return Board{kMajor, 0, kSms, kL2, kBw};",
+    "after_wide_string": 'if (s == L"a/b") return Board{kMajor, 0, kSms, kL2, kBw};',
+    "after_u8_raw_string": "if (s == u8R\"(a'b)\") return Board{kMajor, 0, kSms, kL2, kBw};",
+    "after_digit_separator": "int n = 1'000; Board b{kMajor, 0, kSms, kL2, kBw};",
     "std_array_short_rows": "std::array<Board, 2> a{{{8, 6, 82}, {8, 9, 128}}};",
     "std_array_designated": "std::array<Board, 1> a{{{.major = 8, .minor = 6, .sms = 82}}};",
     "std_array_size_name": "std::array<Board, kN> a = {{{8, 6, 82}}};",
@@ -135,6 +143,7 @@ CLEAN = {
                                " { return {1, 2}; }; return measured::kX; }",
     "return_in_lambda_without_type": "Board f() { auto g = [&] { return {kA, kB}; }; return x; }",
     "return_in_local_class": "Board f() { struct P { int a() { return {1, 2}; } }; return x; }",
+    "prefixed_char_hides_nothing_else": "auto c = L'\"'; // Board{12, 0, 170, 96, 1792}",
     "comment_line": "// was Board{12, 0, 170, 96, 1792}",
     "comment_block": "/* Board{12, 0, 170}\n still */ int x;",
     "comment_block_tuple": "/* {12, 0, 170, 96, 1792}\n */ int x;",

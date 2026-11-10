@@ -150,6 +150,19 @@ NUMTOK = re.compile(
 RAW = re.compile(r'R"([^()\\ ]{0,16})\(')
 
 
+CHAR_PREFIXES = {"L", "u", "U", "u8"}
+
+
+def in_word(text, i):
+    """True when the quote at text[i] follows a word and is therefore a digit separator
+    (`1'000`), not the start of a character literal: the word before it is not an encoding
+    prefix (`L'/'`, `u'x'`, `U'x'`, `u8'x'`)."""
+    j = i
+    while j > 0 and (text[j - 1].isalnum() or text[j - 1] == "_"):
+        j -= 1
+    return j < i and text[j:i] not in CHAR_PREFIXES
+
+
 def blank(text):
     """`text` with comments and the inside of string/char literals replaced by spaces; line breaks
     stay, so offsets and line numbers are unchanged."""
@@ -190,7 +203,7 @@ def blank(text):
                 out.append('"')
                 j += 1
             i = j
-        elif c == "'" and not (i and (text[i - 1].isalnum() or text[i - 1] == "_")):
+        elif c == "'" and not in_word(text, i):
             j = i + 1
             while j < n and text[j] != "'" and text[j] != "\n":
                 j = j + 2 if text[j] == "\\" and j + 1 < n else j + 1
