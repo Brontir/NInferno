@@ -78,6 +78,7 @@ struct Price {
         }
         total.seconds += *step.seconds;
         total.launches += step.launches;
+        if (!std::isfinite(total.seconds)) { return std::nullopt; } // the sum overflowed
     }
     return total;
 }

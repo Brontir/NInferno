@@ -53,6 +53,9 @@ int main() {
         expect(!chain::price(Alternative{"x", {}}), "empty chain");
         expect(!chain::price(Alternative{"x", {Step{-1.0, 1}}}), "negative seconds refused");
         expect(!chain::price(Alternative{"x", {Step{1.0e-5, 0}}}), "launches = 0 refused");
+        const double big = std::numeric_limits<double>::max();
+        expect(!chain::price(Alternative{"x", {Step{big, 1}, Step{big, 1}}}),
+               "finite steps whose sum overflows are unpriced");
         expect(!chain::price(Alternative{"x", {Step{std::numeric_limits<double>::infinity(), 1}}}),
                "infinite seconds refused");
         std::vector<Alternative> a{
