@@ -1,6 +1,8 @@
 import contextlib
 import io
 import json
+import random
+import re
 import sys
 import tempfile
 import threading
@@ -127,6 +129,15 @@ class Measure(Base):
             self.assertEqual(r["k"], 7)
         self.assertTrue(all(b["enable_thinking"] is False and b["max_tokens"] == 1 and "stream" not in b
                             for b in FakeServe.seen))
+
+    def test_warmup_comes_first_and_the_floor_is_measured_on_an_empty_body(self):
+        # --warmup 1: one 120-word request first; then the calibration of the first size starts with the
+        # salt word alone (no body word), so the template's own count is measured, not inferred
+        self.assertEqual(self.measure(self.root / "m.jsonl", "80")[0], 0)
+        words = [len(b["messages"][0]["content"].split()) for b in FakeServe.seen]
+        self.assertEqual(words[0], 1 + 120)
+        self.assertEqual(words[1], 1)
+        self.assertEqual(words[2], 1 + 80 - (TEMPLATE + SALT_TOKENS + 1))  # first guess: n - the empty prompt (20)
 
     def test_salt_is_seven_tokens_wide_and_never_repeats(self):
         # literal widths, not g.SALT_DIGITS: the fake counts one token a digit, a narrower salt must fail here
@@ -255,22 +266,122 @@ class Readers(Base):
         self.assertEqual(rc, 0, err)
         self.assertIn("differs from the measured best in 0 of 9 sizes", out)
         self.assertIn("material mismatch): 0", out)
-        self.assertIn("R1: not met", out)
+        self.assertIn("R5: not met", out)
 
     def test_a_card_whose_f_is_far_from_the_assumption_refutes_it(self):
-        # times that follow the rule at f 0.05: the assumed table loses much more than 0.5 pp to the least
+        # times that follow the rule at f 0.05: the fit measures 0.05; the regret report and its mean pinned
         rc, out, err = self.run_main("grid", *self.model_files(g.SIZES, f=0.05, base=0.0))
         self.assertEqual(rc, 0, err)
-        self.assertIn("R1: MET", out)
+        self.assertIn("R5: MET", out)
         self.assertIn("is REFUTED", out)
+        self.assertIn("regret at the assumed f 0.20: 0.87 %", out)  # the mean over the sizes, not the worst
+        self.assertIn("R1 (report, not a verdict): difference 0.87 pp", out)
 
     def test_a_wrong_pick_shows_as_a_mismatch(self):
-        # at 142 tokens the width predicted at f 0.20 is far slower than another
+        # at 142 tokens the width predicted at f 0.20 is far slower than another: 1 of 4 sizes is exactly
+        # the 25 % share, which R2 does not exceed
         files = self.model_files([96, 128, 142, 160], nudge={(80, 142): 40.0, (96, 142): 40.0})
         rc, out, _ = self.run_main("grid", *files)
         self.assertEqual(rc, 0)
         self.assertIn("MISMATCH", out)
         self.assertIn("material mismatch): 1", out)
+        self.assertIn("R2: not met  (1 of 4 sizes against 1.0)", out)
+
+    # --- the law itself, over the kit's own sizes (the reviewer's synthetic grids) -----------------------
+    def law_files(self, f, sizes=None, C=42.0, L=53.0, k=7, noise=0.0, seed=1, grows=0.0):
+        """T = C + grows x N + L x tiles x (f + (1 - f) J / 128) at every width, 4 requests a cell, each
+        times (1 + uniform(-noise / 2, noise / 2)); computed here, not with the module's functions."""
+        rng = random.Random(seed)
+        files = []
+        for j in g.WIDTHS:
+            rows = []
+            for n in sizes or g.SIZES:
+                t = C + grows * n + L * -(-(n - k) // j) * (f + (1 - f) * j / 128)
+                rows.append(row(f"J{j}", n, [t * (1 + rng.uniform(-noise / 2, noise / 2)) for _ in range(4)], k=k))
+            files.append(self.write(f"grid_J{j}.jsonl", rows))
+        return files
+
+    def fitted(self, out):
+        m = re.search(r"measured f = a / b = ([0-9.]+), 95 % bootstrap interval \[([0-9.]+), ([0-9.]+)\]", out)
+        self.assertIsNotNone(m, out)
+        return tuple(float(x) for x in m.groups())
+
+    def test_the_exact_law_at_the_assumed_f_over_the_kit_sizes_stands(self):
+        # the old reader REFUTED the truth here: J 48 / J 112 beat the six production widths at 6 sizes
+        rc, out, err = self.run_main("grid", *self.law_files(0.20))
+        self.assertEqual(rc, 0, err)
+        self.assertIn("f 0.20 stands", out)
+        self.assertNotIn("REFUTED", out)
+        self.assertIn("R2: not met  (0 of 21 sizes", out)
+        self.assertIn("R5: not met", out)
+        self.assertEqual(self.fitted(out), (0.2, 0.2, 0.2))
+        self.assertIn("residual rms 0.000 ms", out)  # the law, with tiles in columns, fits exactly
+        # the two extra widths are shown, as information only
+        self.assertIn("J 48 / J 112 beat the best production width at 7 sizes", out)
+
+    def test_the_exact_law_away_from_the_assumption_is_refuted_with_the_true_f(self):
+        # 0.10 and 0.30 were "stands" or refuted for the wrong reason before; the fit measures them
+        for f in (0.05, 0.10, 0.12, 0.15, 0.25, 0.30, 0.43):
+            rc, out, err = self.run_main("grid", *self.law_files(f))
+            self.assertEqual(rc, 0, err)
+            self.assertIn("f 0.20 is REFUTED", out, f)
+            self.assertIn("R5: MET", out, f)
+            fit, lo, hi = self.fitted(out)
+            self.assertAlmostEqual(fit, f, delta=0.01)
+            self.assertTrue(lo <= f + 1e-3 and f - 1e-3 <= hi, (f, lo, hi))
+            self.assertIn("residual rms 0.000 ms", out)
+
+    def test_a_noisy_law_recovers_f(self):
+        # 2 % request noise (uniform), median of four, fixed seed: f recovered, the interval holds it
+        for f, verdict in ((0.12, "f 0.20 is REFUTED"), (0.20, "f 0.20 stands"), (0.43, "f 0.20 is REFUTED")):
+            rc, out, err = self.run_main("grid", *self.law_files(f, noise=0.02, seed=7))
+            self.assertEqual(rc, 0, err)
+            fit, lo, hi = self.fitted(out)
+            self.assertAlmostEqual(fit, f, delta=0.01)
+            self.assertTrue(lo <= f <= hi, (f, lo, hi))
+            self.assertLess(hi - lo, 0.05)
+            self.assertIn(verdict, out)
+
+    def test_a_width_independent_part_that_grows_with_n_does_not_move_f(self):
+        # the rest of the prefill grows with N; one constant per size keeps it out of b
+        rc, out, err = self.run_main("grid", *self.law_files(0.12, grows=0.3))
+        self.assertEqual(rc, 0, err)
+        self.assertAlmostEqual(self.fitted(out)[0], 0.12, delta=1e-3)
+
+    def test_the_fit_is_deterministic(self):
+        # the same cells give the same interval to the last bit (a fixed bootstrap seed)
+        rng = random.Random(3)
+        cells = [(n, *g.law_terms(n - 7, j), (42 + 53 * -(-(n - 7) // j) * (0.2 + 0.8 * j / 128))
+                  * (1 + rng.uniform(-0.01, 0.01))) for n in g.SIZES for j in g.WIDTHS]
+        first, second = g.fit_f(cells), g.fit_f(cells)
+        self.assertTrue(first["ok"])
+        self.assertEqual(first, second)
+        self.assertLess(first["lo"], first["hi"])
+
+    def test_widths_that_do_not_matter_give_no_gain_and_no_f(self):
+        # every width as fast as every other: the table gains nothing over the fewest tiles (R3, equal
+        # counts as no gain) and the time does not grow with the width (no f)
+        files = [self.write(f"grid_J{j}.jsonl", [row(f"J{j}", n, [50.0 + n / 10] * 4) for n in g.SIZES])
+                 for j in g.WIDTHS]
+        rc, out, err = self.run_main("grid", *files)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("R3: MET", out)
+        self.assertIn("R5: MET (refutes f 0.20)  (no f:", out)
+        self.assertIn("is REFUTED", out)
+
+    def test_noise_is_the_median_range_of_a_cell(self):
+        # 13 of 24 cells spread 1 %, 11 spread 50 %: the median is 1.0 %, a mean would be about 23 %
+        files, i = [], 0
+        for j in g.WIDTHS:
+            rows = []
+            for n in (96, 128, 160):
+                s = 0.01 if i < 13 else 0.5
+                i += 1
+                rows.append(row(f"J{j}", n, [10.0, 10.0, 10.0 * (1 + s), 10.0]))
+            files.append(self.write(f"grid_J{j}.jsonl", rows))
+        rc, out, err = self.run_main("grid", *files)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("noise (median range of one cell's requests) 1.0 %", out)
 
     def test_buckets_have_one_table_each_and_an_edge_belongs_to_the_bucket_below(self):
         cols = [n - 7 for n in g.SIZES]
@@ -299,6 +410,28 @@ class Readers(Base):
         self.assertEqual(g.margins(264, 7), 0)
         self.assertNotIn(136, g.SIZES + g.AB_SIZES)
         self.assertNotIn(264, g.AB_SIZES)
+
+    def test_the_mmq_gate_is_a_margin_too(self):
+        # 24 tokens = 17 columns sits on the 17-column gate: one more token of k leaves ggml's matrix kernel
+        self.assertEqual(g.margins(24, 7), 0)
+        self.assertEqual(g.margins(32, 7), 8)  # 25 columns: 8 above the gate, far from 64
+        self.assertLess(g.margins(23, 7), 0)
+        self.assertNotIn(24, g.SIZES)
+        self.assertEqual(len(g.SIZES), 21)
+        self.assertGreaterEqual(min(g.SIZES) - g.K_ASSUMED - g.MMQ_GATE, g.MARGIN_WARN)
+
+    def test_predicted_ranges_hold_their_edges(self):
+        self.assertIsNone(g.pred_range(128))
+        for c, want in ((129, (-19.0, -14.0)), (168, (-19.0, -14.0)), (169, (-13.0, -9.0)), (200, (-13.0, -9.0)),
+                        (201, (-0.5, 0.5)), (260, (-0.5, 0.5))):
+            self.assertEqual(g.pred_range(c), want, c)
+        self.assertIsNone(g.pred_range(261))
+
+    def test_the_hook_default_f_is_the_assumed_f(self):
+        patch = (Path(__file__).resolve().parents[1] / "tools" / "bench" / "524_grid_hook.patch").read_text()
+        m = re.search(r'getenv\("NINFERNO_MMQ_F"\)\) : ([0-9.]+);', patch)
+        self.assertIsNotNone(m)
+        self.assertEqual(float(m.group(1)), g.ASSUMED_F)
 
     def test_grid_refuses_stale_rows(self):
         files = self.grid_files()
@@ -411,6 +544,82 @@ class Readers(Base):
         self.assertEqual(rc, 0, err)
         self.assertIn("k lies in [6, 6]", out)
         self.assertIn("exact", out)
+        self.assertEqual(out.strip().splitlines()[-1], "KPROBE k_lo=6 k_hi=6 trusted=1")
+
+    def test_kprobe_gives_an_interval_for_spaced_sizes(self):
+        # sizes two apart: the step between 134 and 136 puts the crossing at 135 or 136, k in [6, 7]
+        rows = [row("J128", n, [10.0 if n <= 134 else 14.0] * 3) for n in range(128, 147, 2)]
+        rc, out, err = self.run_main("kprobe", self.write("p.jsonl", rows))
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(out.strip().splitlines()[-1], "KPROBE k_lo=6 k_hi=7 trusted=1")
+
+    def test_kprobe_does_not_trust_a_step_among_steps(self):
+        # two steps of 10 % and 9 %: neither is an edge
+        ms = {n: 10.0 for n in range(128, 147)}
+        for n in range(135, 147):
+            ms[n] = 11.0
+        for n in range(140, 147):
+            ms[n] = 11.0 * 1.09
+        rows = [row("J128", n, [ms[n]] * 3) for n in range(128, 147)]
+        rc, out, err = self.run_main("kprobe", self.write("p.jsonl", rows))
+        self.assertEqual(rc, 0, err)
+        self.assertIn("do not trust this interval", out)
+        self.assertEqual(out.strip().splitlines()[-1], "KPROBE k_lo=6 k_hi=6 trusted=0")
+
+    # --- the A/B reader's verdict path on the law (old = fewest tiles, new = the table at 0.20) ----------
+    # Picks written out by hand (not with g.pick) for c = N - 7 at the mix sizes and the judged ones:
+    # old: 2 tiles of 128 at 129..256 columns; new at f 0.20: 80 at 135..153, 96 at 169..185, 128 at 201..249.
+    NEW_AT_020 = {142: 80, 144: 80, 160: 80, 176: 96, 192: 96, 208: 128, 224: 128, 240: 128, 256: 128}
+
+    def law_ab_files(self, f=0.20, C=42.0, L=53.0, k=7, same=False, outliers=()):
+        """Three rounds of old / new on the law at f; `same`: the new arm runs the old widths; `outliers`:
+        (arm, visit, N) cells that get one request at 5x (the median is unchanged, the mean is not)."""
+        def t(n, j):
+            return C + L * -(-(n - k) // j) * (f + (1 - f) * j / 128)
+
+        files = []
+        for v in range(3):
+            for lab in ("old", "new"):
+                rows = []
+                for n in g.AB_SIZES:
+                    c = n - k
+                    jo = 128 if c > 64 else (64 if c > 32 else (32 if c > 16 else 16))
+                    if lab == "old" or same:
+                        j = jo
+                    else:
+                        j = self.NEW_AT_020.get(n) or g.pick(c, 0.20, g.PRODUCTION)
+                    ms = [t(n, j)] * 4
+                    if (lab, v, n) in outliers:
+                        ms[3] *= 5
+                    rows.append(row(lab, n, ms, k=k, **({"f": 0.20} if lab == "new" else {})))
+                files.append(self.write(f"ab_{v}_{lab}.jsonl", rows))
+        return files
+
+    def test_ab_on_the_law_pins_outside_mix_and_r4(self):
+        # the law at f 0.20, C 42 / L 53 ms: mix old 148, new (2 x 116.2 + 2 x 126.8 + 4 x 148) / 8 = 134.75,
+        # -8.95 %; predicted mix (-19 -19 -13 -13 -0.5 x4) / 8 .. (-14 -14 -9 -9 +0.5 x4) / 8 = -8.25 .. -5.5,
+        # R4 band -10.25 .. -3.5: not met. Per size: 135..153 columns -21.5 % (outside -19..-14), 169..185
+        # -14.3 % (outside -13..-9), 201..249 0 % (inside): 5 of the 9 judged sizes outside.
+        rc, out, err = self.run_main("ab", *self.law_ab_files(outliers=(("new", 1, 144), ("old", 2, 160))))
+        self.assertEqual(rc, 0, err)
+        self.assertIn("measured change outside the predicted range: 5 of 9 sizes that have a prediction", out)
+        self.assertIn("mix [144, 160, 176, 192, 208, 224, 240, 256]: old 148.00 new 134.75 ms -9.0 %  "
+                      "(per visit -9.0 .. -9.0 %, 3 visits)", out)
+        self.assertIn("one): -8.2 .. -5.5 %", out)
+        self.assertIn("R4: not met (measured -9.0 % against -10.2 .. -3.5 %)", out)
+        self.assertEqual(out.count("OUTSIDE"), 5)
+
+    def test_ab_with_no_change_meets_r4(self):
+        rc, out, err = self.run_main("ab", *self.law_ab_files(same=True))
+        self.assertEqual(rc, 0, err)
+        self.assertIn("R4: MET (refutes f 0.20) (measured +0.0 %", out)
+
+    def test_ab_picks_on_columns_not_tokens(self):
+        # k 40: 142 tokens are 102 columns, one tile of 128 for both arms (on tokens the new arm would be 80)
+        rc, out, err = self.run_main("ab", *self.law_ab_files(k=40))
+        self.assertEqual(rc, 0, err)
+        self.assertRegex(out, r"N=142  102 J128->J128 ")
+        self.assertRegex(out, r"N= 96   56 J64 ->J64  ")
 
 
 if __name__ == "__main__":

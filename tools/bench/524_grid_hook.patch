@@ -52,10 +52,10 @@ index aae368a30..157fad9b9 100644
 -    for (const int J : mmq_columns::tiles(major, minor, kWorkTilesFormat<type>)) {
 +    // GRID HOOK (temporary, never merged; tools/bench/run_524_turing_grid.sh applies it):
 +    // NINFERNO_MMQ_J=<w> forces one width (16 32 48 64 80 96 112 128); NINFERNO_MMQ_MODE=old|new
-+    // takes the DECISIONS 69 table (fewest tiles) or the work table with NINFERNO_MMQ_F as f.
++    // takes the DECISIONS 69 table (fewest tiles) or the work table with NINFERNO_MMQ_F as f (unset: 0.20, the kit assumption).
 +    const char* mode        = std::getenv("NINFERNO_MMQ_MODE");
 +    static const int forced = std::getenv("NINFERNO_MMQ_J") ? std::atoi(std::getenv("NINFERNO_MMQ_J")) : 0;
-+    static const double fenv = std::getenv("NINFERNO_MMQ_F") ? std::atof(std::getenv("NINFERNO_MMQ_F")) : 0.25;
++    static const double fenv = std::getenv("NINFERNO_MMQ_F") ? std::atof(std::getenv("NINFERNO_MMQ_F")) : 0.20;
 +    const bool prod_work    = mmq_columns::uses_work_table(major, minor, kWorkTilesFormat<type>);
 +    const bool work_table   = mode ? std::string(mode) == "new" : prod_work;
 +    const double tile_fixed = mode ? fenv : mmq_columns::tile_fixed(major, minor, kWorkTilesFormat<type>);

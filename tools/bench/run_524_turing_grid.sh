@@ -13,20 +13,26 @@
 # the grid decides. Nothing in the kit is tuned to the data: every predicted value is printed beside the
 # measured one, and what would REFUTE f = 0.20 is fixed here, before any data exists
 # (tools/bench/mmq_width_grid.py, CRITERIA, prints the same text at the top of the grid output):
-#   R1 grid: the regret at f 0.20 exceeds the least regret over the f buckets by more than 0.5 pp.
+#   R5 grid: f MEASURED by a least-squares fit of the work law T = C_N + a tiles (1 - J/128)
+#      + b tiles J/128 over all cells (f = a / b, one constant per size) has a 95 % bootstrap interval
+#      (fixed seed) that does not hold 0.20, or the law does not fit.
 #   R2 grid: more than 25 % of the sizes have a width picked at f 0.20 that is more than 2 % slower
-#      than the best measured width.
+#      than the best of the six production widths (J 48 / J 112 are measured, their gains are shown
+#      apart: they win some sizes by padding whatever f is, and the table cannot pick them).
 #   R3 grid: the regret at f 0.20 is not below the regret of the fewest tiles.
 #   R4 ab: the mix change lies more than 2 pp outside the predicted mix range.
-#   Any one met refutes f = 0.20 for this card; the thresholds are a priori, not fitted.
+#   R1 grid (a report, not a verdict): the regret at f 0.20 against the least over the f buckets;
+#      neighbouring buckets' tables differ at one to three sizes, so it cannot separate 0.10 from 0.30.
+#   Any one of R2..R5 met refutes f = 0.20 for this card; the thresholds and the interval level are
+#   a priori, not fitted.
 #   - Basis: f 0.20 is a value measured on other cards, assumed equal for Turing because two facts match:
 #     the int8 tensor rate per SM (generation.h s8 2048 on both rows; 215 TOPS at 68 SMs x 1.545 GHz)
 #     and the K-quant decode on the same 64 int32 lanes. The measured cards split two against two:
 #     RTX 3090 and RTX 4070 Ti best at 0.15-0.20, RTX 3060 and RTX 4090 best at 0.25-0.30, the buckets
-#     around 0.20 differing by 0.07-0.28 % of mean regret. The two facts do not fix f either: Blackwell
-#     (GB20x) has the same s8 2048 and the same Q4_K / Q6_K tile configuration and measured 0.10 (best
-#     0.05-0.15). So the transfer is the weakest step; the grid scores one f per bucket of the table of
-#     picks (every f from 0 to 1) and decides.
+#     around 0.20 differing by 0.07-0.28 pp of mean regret (DECISIONS 74). The two facts do not fix f
+#     either: Blackwell (GB20x) has the same s8 2048 and the same Q4_K / Q6_K tile configuration and was
+#     best at 0.10 alone (0.06 % against 0.31 % at 0.05 and 0.45 % at 0.15-0.20). So the transfer is
+#     the weakest step; the grid fits f to all cells and prints it with its interval beside 0.20.
 #   - Shared memory: 64 KiB on sm_75. By core/mmq_columns.h (tile_shared_bytes; the J 128 values are
 #     pinned in tests/test_choice.cpp) a Q4_K / Q6_K tile is 38 912 B of weight rows + 144 B x J of y
 #     (rounded up to 1 KiB) + 4 B x J of ids: 42 048 B (J 16), 44 160 (32), 46 272 (48), 48 384 (64),
@@ -49,7 +55,7 @@
 # SIZES ARE PROMPT TOKENS, THE KERNEL SEES COLUMNS = TOKENS - k. The prefill is split at execution
 # boundaries (prompt_layout.cpp), so an N-token prompt runs a body call of N - k columns plus small
 # tail calls. k is the env K (default 7, an ASSUMPTION that is not measured); the `probe` phase prints
-# the interval of k that the time step at 128 columns implies; run it first and set K to what it says.
+# the interval of k that the time step at 128 columns implies (and `all` applies it, see Usage).
 # Every pick, tile count and prediction uses N - k and the output header says so. Sizes sit at least
 # 4 columns from a tile edge of the widths 64 80 96 128 at k = 7 (136 and 264 were moved to 142 and 270).
 # `prompt_ms` holds a width-independent part (tail calls, the first token), which dilutes the
@@ -59,13 +65,13 @@
 # temporary hooks that were not committed, tools/bench/524_grid_hook.patch is that hook again):
 # Qwen3-8B Q4_K_M, ninferno-serve --no-prefix-reuse --max-concurrency 1 --prefill-chunk 1024 (above the
 # largest size; confirm in the server log that no size was split), 8 forced widths
-# (16 32 48 64 80 96 112 128) x 21 prompt sizes (24..512 tokens), 4 requests a point, thinking off,
+# (16 32 48 64 80 96 112 128) x 21 prompt sizes (32..512 tokens), 4 requests a point, thinking off,
 # metric = the server's prefill time (timings.prompt_ms of a 1-token chat completion, median, ms)
 # with the prompt size checked per request (timings.prompt_n). A size that cannot be built is skipped
-# and reported (the readers then need it skipped at every width). The regret of the model's picks
-# (core/mmq_columns.h rule at each f, widths 16 32 64 80 96 128) against the best of all eight widths,
-# mean over the sizes, is printed per f bucket, at f 0.20 and for the fewest tiles, with the predicted
-# width per size beside the measured best. The A/B is the same binary with NINFERNO_MMQ_MODE=old
+# and reported (the readers then need it skipped at every width). f is fitted to all cells with its
+# interval (R5); the regret of the model's picks (core/mmq_columns.h rule at each f, widths 16 32 64 80
+# 96 128) against the best of those six widths, mean over the sizes, is printed per f bucket, at f 0.20
+# and for the fewest tiles, with the predicted width per size beside the measured best. The A/B is the same binary with NINFERNO_MMQ_MODE=old
 # (fewest tiles) and =new (work table at F_AB), old new old new old new, 4 requests a size per visit;
 # its table shows the spread of the visits and the predicted range beside each change.
 # One result file per visit (grid_J<w>.jsonl, ab_<round>_<mode>.jsonl): a directory that already
@@ -73,7 +79,10 @@
 #
 # Usage (from a clean checkout of the repository, idle RTX 2080 Ti):
 #   MODEL=/path/Qwen3-8B-Q4_K_M.gguf tools/bench/run_524_turing_grid.sh [all|build|probe|grid|ab]
-# `all` = build, probe, grid, ab. The first GPU is used (set CUDA_VISIBLE_DEVICES for another).
+# `all` = build, probe, grid, ab; after the probe it takes K from the probe when the probe gives one
+# value, and stops when K lies outside the probed interval or the probe is not clear. The first GPU is
+# used (set CUDA_VISIBLE_DEVICES to one index or UUID for another: the GPU checks query that device,
+# and CUDA_DEVICE_ORDER=PCI_BUS_ID makes CUDA's index the one nvidia-smi shows).
 # Env: MODEL (required), OUT (results dir, default profiles/524_turing), BUILD (default build-524t),
 # PORT (18524; it must be free: a server that already answers is refused), K (tokens - columns,
 # default 7, assumed), F_AB (A/B f, default 0.20; set it to the grid's best), JOBS (8), FORCE=1 (skip
@@ -87,6 +96,7 @@ OUT=${OUT:-profiles/524_turing}
 BUILD=${BUILD:-build-524t}
 PORT=${PORT:-18524}
 K=${K:-7}
+[[ "$K" =~ ^[0-9]+$ ]] || { echo "K must be a whole number of tokens (got $K)"; exit 2; }
 PREFILL_CHUNK=1024
 F_AB=${F_AB:-0.20}
 JOBS=${JOBS:-8}
@@ -99,11 +109,17 @@ SLOG=
 
 case "$PHASE" in build | probe | grid | ab | all) ;; *) echo "usage: $0 [all|build|probe|grid|ab]"; exit 2 ;; esac
 
-cc=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1)
-name=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)
-echo "GPU: $name sm_${cc/./}"
+# The server takes visible device 0: the first entry of CUDA_VISIBLE_DEVICES (an index or a UUID), or
+# device 0. With PCI_BUS_ID order CUDA's index is nvidia-smi's, so the checks below query that board.
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
+DEV=${CUDA_VISIBLE_DEVICES:-0}
+DEV=${DEV%%,*}
+[ -n "$DEV" ] || { echo "CUDA_VISIBLE_DEVICES is set but empty: no device is visible"; exit 1; }
+cc=$(nvidia-smi -i "$DEV" --query-gpu=compute_cap --format=csv,noheader)
+name=$(nvidia-smi -i "$DEV" --query-gpu=name --format=csv,noheader)
+echo "GPU $DEV: $name sm_${cc/./}"
 [ "$cc" = "7.5" ] || { echo "not a Turing card (compute capability $cc)"; exit 1; }
-if [ "${FORCE:-0}" != 1 ] && [ -n "$(nvidia-smi --query-compute-apps=pid --format=csv,noheader)" ]; then
+if [ "${FORCE:-0}" != 1 ] && [ -n "$(nvidia-smi -i "$DEV" --query-compute-apps=pid --format=csv,noheader)" ]; then
   echo "the GPU is busy (nvidia-smi compute apps); stop them or FORCE=1"; exit 1
 fi
 
@@ -224,6 +240,29 @@ probe() {
   echo "set K to a value inside the interval (the default $K is assumed) for grid and ab"
 }
 
+# `all`: the grid and the A/B run with the probed k. The last line of probe.txt is
+# "KPROBE k_lo=<a> k_hi=<b> trusted=<0|1>" (mmq_width_grid.py kprobe). One value: K takes it. An
+# interval: K must lie in it. A probe that is not clear, or a K outside: stop before any grid row.
+apply_probe() {
+  local line lo hi trusted
+  line=$(grep '^KPROBE ' "$OUT/probe.txt" | tail -1) || { echo "$OUT/probe.txt has no KPROBE line"; exit 1; }
+  read -r _ lo hi trusted <<< "$line"
+  lo=${lo#k_lo=} hi=${hi#k_hi=} trusted=${trusted#trusted=}
+  [[ "$lo" =~ ^-?[0-9]+$ && "$hi" =~ ^-?[0-9]+$ && "$trusted" =~ ^[01]$ ]] ||
+    { echo "malformed probe line: $line"; exit 1; }
+  if [ "$trusted" != 1 ]; then
+    echo "the k probe is not clear (see $OUT/probe.txt): set K by hand and run the grid and ab phases"; exit 1
+  fi
+  if [ "$lo" = "$hi" ]; then
+    [ "$K" = "$lo" ] || echo "K $K -> $lo: the probe measured k = $lo"
+    K=$lo
+  elif [ "$K" -lt "$lo" ] || [ "$K" -gt "$hi" ]; then
+    echo "K $K lies outside the probed interval [$lo, $hi]: set K inside it and run the grid and ab phases"; exit 1
+  else
+    echo "K $K lies inside the probed interval [$lo, $hi]"
+  fi
+}
+
 grid() {
   need_hooked_binary
   for J in 16 32 48 64 80 96 112 128; do
@@ -253,6 +292,6 @@ case "$PHASE" in
   probe) probe ;;
   grid) grid ;;
   ab) ab ;;
-  all) build; probe; grid; ab ;;
+  all) build; probe; apply_probe; grid; ab ;;
 esac
 echo "results in $OUT (probe.txt, grid.txt, ab.txt, *.jsonl); commit nothing from the hooked build"

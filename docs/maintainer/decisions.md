@@ -1705,13 +1705,19 @@ on the W4A8 tiles, not this kernel, which steps the same way (RTX 5060 Ti 104 ->
 best range 0.15-0.25. This is an assumption, not a derivation: 0.20 is a value measured on other cards,
 assumed for Turing because its int8 tensor rate per SM is theirs (2048 ops a clock, `s8` 2048 on both
 rows) and the K-quant decode runs on the same 64 int32 lanes. The measured ones split two against two:
-RTX 3090 and RTX 4070 Ti are best at 0.15-0.20 (0.28 % and 0.14 % worse at 0.25-0.30), RTX 3060 and
-RTX 4090 are best at 0.25-0.30 (0.21 % and 0.18 % worse at 0.15-0.20), so the neighbouring buckets
-around 0.20 differ by 0.07-0.28 % of mean regret and a single visit cannot separate them. The two
-facts do not fix f either: GB20x has the same `s8` and the same Q4_K / Q6_K tile configuration and
-measured 0.10 (best 0.05-0.15). The grid therefore scores one f per bucket of the table of picks (every
-f from 0 to 1) and the criteria that refute 0.20 are fixed in the kit's header before the run
-(`tools/bench/mmq_width_grid.py`, `CRITERIA`). Turing holds one block per SM at every width where
+RTX 3090 and RTX 4070 Ti are best at 0.15-0.20 (0.28 and 0.07 pp less regret than at 0.25-0.30), RTX
+3060 and RTX 4090 are best at 0.25-0.30 (0.21 and 0.17 pp less than at 0.15-0.20), so the neighbouring
+buckets around 0.20 differ by 0.07-0.28 pp of mean regret and the regret of one visit cannot separate
+them. The two facts do not fix f either: GB20x has the same `s8` and the same Q4_K / Q6_K tile
+configuration and was best at 0.10 alone (0.06 % against 0.31 % at 0.05 and 0.45 % at 0.15-0.20). The
+grid therefore MEASURES f: a least-squares fit of the work law, T = C_N + a x tiles x (1 - J / 128) +
+b x tiles x J / 128 with one constant per size, over all its cells gives f = a / b with a bootstrap
+interval (fixed seed), printed beside the predicted 0.20; the criteria that refute 0.20 (0.20 outside
+the 95 % interval, among others) are fixed in the kit's header before the run
+(`tools/bench/mmq_width_grid.py`, `CRITERIA`). The regret per bucket of the table of picks is printed
+as a report only: on the kit's own sizes it cannot tell 0.10 from 0.30, and the regret is taken
+against the six widths the table picks from (J 48 and J 112 are measured too, and shown apart: they
+win some sizes by padding whatever f is). Turing holds one block per SM at every width where
 sm_86's 100 KiB holds two up to J 64 (shared memory only; registers per thread are not checked),
 which can raise the fixed share of the narrow tiles. The Q4_K / Q6_K tile is 42 048 B (J 16) to
 57 856 B (J 128), 38 912 B of weight rows plus the y tile and ids (`tile_shared_bytes`; the J 128

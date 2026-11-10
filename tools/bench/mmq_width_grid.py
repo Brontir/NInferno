@@ -24,31 +24,49 @@ measure  one running ninferno-serve: for each prompt size N, `--reps` non-stream
          per visit: stale rows never mix in). `--sizes ab` / `mix` take the A/B / mix size lists.
 grid     reads the per-width files of `measure` (label "J<w>"; all eight widths, the same sizes at
          every width, else it refuses) and prints, with the assumption f 0.20 beside the measurement:
+         f MEASURED by a least-squares fit of the work law over all cells, with a bootstrap interval
+         (FIT below), the per-size predicted width against the measured best of the six production
+         widths, the mismatch count, what the two extra widths 48 and 112 would gain (information),
          the f buckets (one table of picks each, with the sizes that decide each edge), the regret per
-         bucket and at f 0.20, the least, the difference, the spread, the per-size predicted width
-         against the measured best, the mismatch count and the verdict of the criteria that were
-         fixed before the run (CRITERIA below).
+         bucket and at f 0.20 (a report), and the verdict of the criteria that were fixed before the
+         run (CRITERIA below).
 ab       reads files labelled old/new (the same sizes, the same number of visits at every size, the
          whole mix) and prints the per-size change (medians with the range of the visits) beside the
          predicted range, the mismatch count, and the mix change beside its predicted range.
 kprobe   reads one `measure` file made with the width forced to 128 and consecutive sizes (130..146)
-         and prints the interval of k that the biggest step in time implies (columns cross 128 there).
+         and prints the interval of k that the biggest step in time implies (columns cross 128 there),
+         ending with one machine-readable line `KPROBE k_lo=<a> k_hi=<b> trusted=<0|1>` that the
+         script's `all` reads (it refuses to go on with a K outside [a, b], and takes K = a if a = b).
 
 Both readers refuse empty files, malformed lines, rows whose prompt_n differs from n, rows without k,
 and a cell measured twice in `grid` (stale rows), and print the number of requests behind every label.
 
-The regret of a pick = (time at the picked width - least time over all widths measured) / least,
-averaged over the sizes; the pick is the production rule (core/mmq_columns.h pick: least
+The regret of a pick = (time at the picked width - least time over the six production widths) /
+that least, averaged over the sizes; the pick is the production rule (core/mmq_columns.h pick: least
 ceil(c / J) x (f + (1 - f) J / 128) among 16 32 64 80 96 128, the narrower on a tie), c = N - k.
+J 48 and J 112 are measured too (they follow the same law and show what more widths would give), but
+the table cannot pick them, so no criterion compares a pick with them: they win some sizes by padding
+alone (41 and 105 columns, for example) whatever f is.
+
+FIT. The work law the table rests on, T(N, J) = C_N + a x tiles x (1 - J / 128) + b x tiles x J / 128
+(tiles = ceil(c / J); one constant C_N per size, because the width-independent part grows with N), is
+fitted by least squares over the cells (size x width, the median of each cell), so f = a / b is
+MEASURED, not scored bucket by bucket; with C_N per size only the differences between the widths at
+one size carry it. The interval is a bootstrap over the cells (BOOT_N draws, fixed seed BOOT_SEED: the
+output is deterministic). The regret per bucket (R1) stays as a report: the table of picks is the
+same for every f in (0.111, 0.200] and its neighbours differ at one to three sizes, so the regret
+cannot separate f 0.10 from 0.30.
 Nothing is tuned to the data: every predicted value is computed from the rule or taken from the
 constants above before the data is read, and is printed beside the measured one. The only constants
-are the thresholds of CRITERIA, TOL and the group edges of PRED_AB, all set a priori and labelled so.
+are the thresholds of CRITERIA, TOL, the interval level and the group edges of PRED_AB, all set a
+priori and labelled so.
 """
 from __future__ import annotations
 
 import argparse
 import itertools
 import json
+import random
 import statistics
 import sys
 import time
@@ -60,15 +78,20 @@ from pathlib import Path
 K_ASSUMED = 7  # ASSUMED, not measured: tokens - columns of the body call (see "columns" below); `kprobe` measures it
 # Grid and A/B sizes are PROMPT TOKENS; the kernel sees columns = tokens - k. Sizes were moved off the
 # zero-margin spots (136 -> 142, 264 -> 270): every size keeps at least `MARGIN_WARN` columns of
-# distance from a tile edge of the widths 64 80 96 128 for k = 7 (`margins`), so a k that is a few off
-# does not change a tile count.
-SIZES = [24, 32, 48, 64, 80, 96, 112, 128, 142, 144, 160, 176, 192, 208, 224, 256, 288, 320, 384, 448, 512]
+# distance from a tile edge of the widths 64 80 96 128 and from the MMQ gate (MMQ_GATE) for k = 7
+# (`margins`), so a k that is a few off changes neither a tile count nor the route. The smallest size
+# is 32 (25 columns), not 24: 24 - 7 = 17 columns sits on the gate, and a k of 8 would take that cell
+# off ggml's matrix kernel at every width. 40 keeps the grid at 21 sizes.
+SIZES = [32, 40, 48, 64, 80, 96, 112, 128, 142, 144, 160, 176, 192, 208, 224, 256, 288, 320, 384, 448, 512]
 AB_SIZES = [96, 128, 142, 144, 160, 176, 192, 208, 224, 240, 256, 270, 288, 320, 384, 448, 512]
 MIX = [144, 160, 176, 192, 208, 224, 240, 256]
 WIDTHS = [16, 32, 48, 64, 80, 96, 112, 128]
 PRODUCTION = [16, 32, 64, 80, 96, 128]
 OLD = [16, 32, 64, 128]
 EDGE_WIDTHS = [64, 80, 96, 128]
+# ggml's matrix kernel takes a prefill call from 17 columns (src/ops/generic/route_authorities.cpp,
+# mmq_prefill_gate: a call of fewer tokens goes elsewhere); a fact of the route, not a threshold
+MMQ_GATE = 17
 MARGIN_WARN = 4
 ASSUMED_F = 0.20  # the assumption under test (an assumption, not a derivation)
 F_ONE = 0.43  # DECISIONS 69, shown as the representative of the top bucket when it lies in it
@@ -78,16 +101,24 @@ TOL = 2.0  # percent: a predicted width slower than the best by more than this i
 R1_PP = 0.5  # percentage points of regret that the assumed f may lose to the least bucket
 R2_SHARE = 0.25  # share of sizes with a material mismatch at the assumed f
 R4_PP = 2.0  # percentage points the A/B mix may lie outside the predicted mix range
+FIT_LEVEL = 0.95  # chosen a priori: the two-sided level of the bootstrap interval of the fitted f
+BOOT_N = 1000  # bootstrap draws over the cells (a priori; enough for a 95 % percentile interval)
+BOOT_SEED = 524  # fixed: the same files print the same interval
+FIT_EPS = 1e-6  # float rounding only (an exact law gives an interval of zero width), not a margin
 # GA10x / Ada bracket (DECISIONS 74), by columns; the edges 168 / 200 are the midpoints between the
 # sample sizes 160|176 and 192|208 of the old rows, not fitted: (first col, last col, lo %, hi %)
 PRED_AB = [(129, 168, -19.0, -14.0), (169, 200, -13.0, -9.0), (201, 260, -0.5, 0.5)]
 CRITERIA = f"""REFUTATION CRITERIA for f = {ASSUMED_F:.2f} (fixed before the run; the thresholds are not fitted):
-  R1 grid: the regret at f {ASSUMED_F:.2f} exceeds the least regret over the f buckets by more than {R1_PP} pp.
+  R5 grid: f fitted to the work law over all cells (FIT) has a {int(FIT_LEVEL * 100)} % bootstrap interval that does not
+     hold {ASSUMED_F:.2f} (predicted {ASSUMED_F:.2f}, measured f with its interval), or the law does not fit (b <= 0).
   R2 grid: more than {int(R2_SHARE * 100)} % of the sizes have a material mismatch: the width picked at f {ASSUMED_F:.2f} is more
-     than {TOL:g} % slower than the best measured width.
+     than {TOL:g} % slower than the best of the six production widths (J 48 / J 112 are not pickable).
   R3 grid: the regret at f {ASSUMED_F:.2f} is not below the regret of the fewest tiles (the table gives no gain).
   R4 ab (f {ASSUMED_F:.2f}): the mix change lies more than {R4_PP:g} pp outside the predicted mix range.
-Any one met refutes f = {ASSUMED_F:.2f} for this card; none met leaves it standing (it is not proved by one visit)."""
+  R1 grid is a REPORT, not a verdict: the regret at f {ASSUMED_F:.2f} against the least over the f buckets
+     ({R1_PP} pp shown for scale). Neighbouring buckets' tables differ at one to three sizes, so the
+     regret cannot separate f 0.10 from 0.30; the fit (R5) can.
+Any one of R2..R5 met refutes f = {ASSUMED_F:.2f} for this card; none met leaves it standing (one visit is not a proof)."""
 
 
 class Fail(Exception):
@@ -105,7 +136,10 @@ def margin(c: int, j: int) -> int:
 
 
 def margins(n: int, k: int) -> int:
-    return min(margin(n - k, j) for j in EDGE_WIDTHS)
+    """Columns the count may be off before a tile count of the edge widths changes or the call leaves
+    ggml's matrix kernel (MMQ_GATE); negative when the call is below the gate already."""
+    c = n - k
+    return min(min(margin(c, j) for j in EDGE_WIDTHS), c - MMQ_GATE)
 
 
 def pick(n: int, f: float | None, widths: list[int]) -> int:
@@ -120,6 +154,70 @@ def pick(n: int, f: float | None, widths: list[int]) -> int:
 
 def work(c: int, j: int, f: float) -> float:
     return -(-c // j) * (f + (1 - f) * j / 128)
+
+
+def law_terms(c: int, j: int) -> tuple[float, float]:
+    """The two regressors of the work law at c columns and width j: tiles x (1 - J/128), tiles x J/128."""
+    t = -(-c // j)
+    return t * (1 - j / 128), t * j / 128
+
+
+def fit_law(cells: list[tuple[int, float, float, float]], weights: list[int] | None = None):
+    """Least squares of y = C_N + a x1 + b x2 over cells (N, x1, x2, y), one free constant per size N
+    (within-size centring), each cell counted `weights[i]` times. Returns (a, b, residual rms) or None
+    when the sizes do not determine a and b (every size's widths on one line: all one tile)."""
+    groups: dict[int, list[tuple[int, float, float, float]]] = defaultdict(list)
+    for i, (n, x1, x2, y) in enumerate(cells):
+        w = 1 if weights is None else weights[i]
+        if w:
+            groups[n].append((w, x1, x2, y))
+    s11 = s12 = s22 = s1y = s2y = syy = 0.0
+    wsum = 0
+    for rows in groups.values():
+        wn = sum(r[0] for r in rows)
+        m1, m2, my = (sum(r[0] * r[i] for r in rows) / wn for i in (1, 2, 3))
+        for w, x1, x2, y in rows:
+            d1, d2, dy = x1 - m1, x2 - m2, y - my
+            s11, s12, s22 = s11 + w * d1 * d1, s12 + w * d1 * d2, s22 + w * d2 * d2
+            s1y, s2y, syy = s1y + w * d1 * dy, s2y + w * d2 * dy, syy + w * dy * dy
+            wsum += w
+    det = s11 * s22 - s12 * s12
+    if s11 <= 0 or s22 <= 0 or det <= 1e-9 * s11 * s22:
+        return None
+    a = (s1y * s22 - s2y * s12) / det
+    b = (s2y * s11 - s1y * s12) / det
+    rss = max(syy - a * s1y - b * s2y, 0.0)
+    return a, b, (rss / wsum) ** 0.5
+
+
+def fit_f(cells: list[tuple[int, float, float, float]]) -> dict:
+    """f = a / b of the work law with its bootstrap interval over the cells (BOOT_N draws, BOOT_SEED)."""
+    full = fit_law(cells)
+    if full is None:
+        return {"ok": False, "why": "the sizes do not determine the law (every width one tile?)"}
+    a, b, rms = full
+    if not b > 0:
+        return {"ok": False, "why": f"b = {b:.4g} ms is not positive: the time does not grow with the "
+                                    "tile's width, the work law does not describe this card"}
+    rng = random.Random(BOOT_SEED)
+    m = len(cells)
+    draws, bad = [], 0
+    for _ in range(BOOT_N):
+        w = [0] * m
+        for _ in range(m):
+            w[rng.randrange(m)] += 1
+        r = fit_law(cells, w)
+        if r is None or not r[1] > 0:
+            bad += 1
+            continue
+        draws.append(r[0] / r[1])
+    if not draws:
+        return {"ok": False, "why": "no bootstrap draw determines the law"}
+    draws.sort()
+    q = (1 - FIT_LEVEL) / 2
+    lo = draws[round(q * (len(draws) - 1))]
+    hi = draws[round((1 - q) * (len(draws) - 1))]
+    return {"ok": True, "f": a / b, "lo": lo, "hi": hi, "a": a, "b": b, "rms": rms, "bad": bad}
 
 
 def pick_table(cols: list[int], f: float | None, widths: list[int] = PRODUCTION) -> tuple[int, ...]:
@@ -402,11 +500,12 @@ def grid(a: argparse.Namespace) -> None:
     if min(cols) < 1:
         raise Fail(f"size {sizes[cols.index(min(cols))]} has no column with k {k}")
     med = {j: {n: statistics.median(flat(d[f"J{j}"][n])) for n in sizes} for j in WIDTHS}
-    best = {n: min(m[n] for m in med.values()) for n in sizes}
+    # the best the table can reach: J 48 / J 112 are measured but not pickable (their gains are shown apart)
+    best = {n: min(med[j][n] for j in PRODUCTION) for n in sizes}
     low = [(n, margins(n, k)) for n in sizes if margins(n, k) < MARGIN_WARN]
     if low:
-        print(f"warning: sizes within {MARGIN_WARN} columns of a tile edge at k {k} (a k that far off "
-              f"changes a tile count): {low}")
+        print(f"warning: sizes within {MARGIN_WARN} columns of a tile edge or of the {MMQ_GATE}-column MMQ gate "
+              f"at k {k} (a k that far off changes a tile count or the route): {low}")
     cells = [(max(v) - min(v)) / statistics.median(v) for lab in labels for rows in d[lab].values()
              for v in rows if len(v) > 1]
     noise = 100 * statistics.median(cells) if cells else float("nan")
@@ -417,19 +516,49 @@ def grid(a: argparse.Namespace) -> None:
     def regret(table: tuple[int, ...]) -> float:
         return 100 * statistics.mean((med[j][n] - best[n]) / best[n] for j, n in zip(table, sizes))
 
-    print("\nper size: the prediction at f %.2f beside the measurement (ms = median of the visit)" % ASSUMED_F)
-    print("  N  cols  predicted  best   ms@pred  ms@best  loss   " + " ".join(f"J{j:<5}" for j in WIDTHS))
+    fit = fit_f([(n, *law_terms(c, j), med[j][n]) for n, c in zip(sizes, cols) for j in WIDTHS])
+    print(f"\nFIT of the work law T = C_N + a tiles (1 - J/128) + b tiles J/128 over {len(sizes) * len(WIDTHS)} "
+          f"cells (one C_N per size):")
+    if fit["ok"]:
+        print(f"  measured f = a / b = {fit['f']:.3f}, {int(FIT_LEVEL * 100)} % bootstrap interval "
+              f"[{fit['lo']:.3f}, {fit['hi']:.3f}] ({BOOT_N} draws over the cells, seed {BOOT_SEED}"
+              f"{', %d draws undetermined' % fit['bad'] if fit['bad'] else ''})   predicted f {ASSUMED_F:.2f}")
+        print(f"  a = {fit['a']:.3f} ms, b = {fit['b']:.3f} ms (a 128-column tile's step over the linears), "
+              f"residual rms {fit['rms']:.3f} ms = {100 * fit['rms'] / statistics.median(best.values()):.2f} % "
+              f"of the median best time")
+        tf = pick_table(cols, fit["f"])
+        moved = [f"{n}t/{c}c:J{x}->J{y}" for n, c, x, y in zip(sizes, cols, ta, tf) if x != y]
+        print(f"  the table of picks at the measured f {fit['f']:.3f} against f {ASSUMED_F:.2f}: "
+              + (f"differs at {len(moved)} sizes ({', '.join(moved)}), regret {regret(tf):.2f} % against "
+                 f"{regret(ta):.2f} %" if moved else "the same at every size"))
+    else:
+        print(f"  no f: {fit['why']}")
+
+    print("\nper size: the prediction at f %.2f beside the measurement (ms = median of the visit; best = the "
+          "best of the six production widths)" % ASSUMED_F)
+    print("  N  cols  predicted  best   ms@pred  ms@best  loss   " + " ".join(f"J{j:<5}" for j in WIDTHS)
+          + "  J48/J112 gain")
     strict = material = 0
+    extra = []
     for n, c, jp in zip(sizes, cols, ta):
-        jb = min(WIDTHS, key=lambda j: med[j][n])
+        jb = min(PRODUCTION, key=lambda j: med[j][n])
         loss = 100 * (med[jp][n] / best[n] - 1)
         strict += med[jp][n] > best[n]
         material += loss > TOL
         flag = "  MISMATCH" if loss > TOL else ("  differs" if med[jp][n] > best[n] else "")
+        jx = min((48, 112), key=lambda j: med[j][n])
+        gain = 100 * (1 - med[jx][n] / best[n])
+        if gain > 0:
+            extra.append((n, c, jx, gain))
         print(f"{n:4d} {c:5d}  J{jp:<8d} J{jb:<4d} {med[jp][n]:8.2f} {best[n]:8.2f} {loss:5.1f}%  "
-              + " ".join(f"{med[j][n]:6.2f}" for j in WIDTHS) + flag)
+              + " ".join(f"{med[j][n]:6.2f}" for j in WIDTHS)
+              + (f"  J{jx} {gain:.1f}%" if gain > 0 else "  -") + flag)
     print(f"width picked at f {ASSUMED_F:.2f} differs from the measured best in {strict} of {len(sizes)} sizes "
           f"(slower at all); more than {TOL:g} % slower (material mismatch): {material}")
+    print("information, no verdict (the table cannot pick them): J 48 / J 112 beat the best production width at "
+          + (f"{len(extra)} sizes: " + ", ".join(f"{n}t/{c}c J{j} {g:.1f} %" for n, c, j, g in extra)
+             + f"; mean gain over all {len(sizes)} sizes {sum(e[3] for e in extra) / len(sizes):.2f} %"
+             if extra else "no size"))
 
     print("\nf buckets (one table of picks each; an edge belongs to the bucket below it) and regret:")
     res = []
@@ -450,13 +579,21 @@ def grid(a: argparse.Namespace) -> None:
           f"difference {r_a - least:.2f} pp   spread over the buckets {spread:.2f} pp   "
           f"noise (median range of one cell's requests) {noise:.1f} %")
     print("\nverdict on the criteria fixed before the run:")
-    r1, r2, r3 = r_a - least > R1_PP, material > R2_SHARE * len(sizes), r_a >= r_old
+    r2, r3 = material > R2_SHARE * len(sizes), r_a >= r_old
+    if fit["ok"]:
+        r5 = not fit["lo"] - FIT_EPS <= ASSUMED_F <= fit["hi"] + FIT_EPS
+        t5 = (f"measured f {fit['f']:.3f} [{fit['lo']:.3f}, {fit['hi']:.3f}] against the predicted {ASSUMED_F:.2f}: "
+              f"{ASSUMED_F:.2f} {'outside' if r5 else 'inside'} the interval")
+    else:
+        r5, t5 = True, f"no f: {fit['why']}"
+    print(f"  R1 (report, not a verdict): difference {r_a - least:.2f} pp to the least bucket ({R1_PP} pp for "
+          "scale; it cannot separate f 0.10 from 0.30)")
     for name, hit, text in (
-            ("R1", r1, f"difference {r_a - least:.2f} pp against {R1_PP} pp"),
             ("R2", r2, f"{material} of {len(sizes)} sizes against {R2_SHARE * len(sizes):.1f}"),
-            ("R3", r3, f"regret {r_a:.2f} % at f {ASSUMED_F:.2f} against {r_old:.2f} % fewest tiles")):
+            ("R3", r3, f"regret {r_a:.2f} % at f {ASSUMED_F:.2f} against {r_old:.2f} % fewest tiles"),
+            ("R5", r5, t5)):
         print(f"  {name}: {'MET (refutes f %.2f)' % ASSUMED_F if hit else 'not met'}  ({text})")
-    print("  " + ("f %.2f is REFUTED for this card by the criteria above" % ASSUMED_F if r1 or r2 or r3
+    print("  " + ("f %.2f is REFUTED for this card by the criteria above" % ASSUMED_F if r2 or r3 or r5
                   else "f %.2f stands (one visit of four requests a cell; not a proof)" % ASSUMED_F))
 
 
@@ -565,8 +702,12 @@ def kprobe(a: argparse.Namespace) -> None:
     print(f"biggest step {top:+.1f} % between N={x} and N={b} (next: {jumps[1][0]:+.1f} %): the call crosses "
           f"{e} columns there, so k lies in [{x - e}, {b - e - 1}]"
           f"{' (exact: consecutive sizes)' if b - x == 1 else ''}")
-    if top < 3 * max(jumps[1][0], 0.1):
+    # 3x the next step: chosen a priori (not fitted), a step that is no outlier among the others is no edge
+    trusted = top >= 3 * max(jumps[1][0], 0.1)
+    if not trusted:
         print("warning: the step is not clearly above the other steps: do not trust this interval")
+    # one machine-readable line, read by the script's `all` (keep it the last line and this format)
+    print(f"KPROBE k_lo={x - e} k_hi={b - e - 1} trusted={int(trusted)}")
 
 
 def main() -> int:
