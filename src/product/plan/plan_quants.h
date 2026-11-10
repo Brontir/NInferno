@@ -311,6 +311,47 @@ using ReadTensorTable = std::function<std::optional<GgufTensorTable>(const std::
 // quantization's plan); fills plan.rule_code and plan.rule_params with the same as data.
 [[nodiscard]] std::string quant_rule_line(QuantPlan& plan, const DryRunInputs& inputs);
 
+// The cross-row ranking of the quantizations (the worth trade in plan_quants), as pure functions
+// of plain values: no device, plan, clock or global inside. The caller scores the rows (the
+// choice at each row's weights) and hands the numbers over.
+//
+// A row's best worth its weights could reach (no memory planned: an upper bound).
+struct RowBound {
+    std::size_t index = 0; // the row's place in the quant table
+    double worth      = 0;
+};
+
+// A row served at its own choice: its context, worth and KLD, and the rule's view of it.
+struct RankedRow {
+    std::size_t index     = 0;
+    std::uint32_t context = 0;
+    double worth          = 0;
+    double kld            = 0;
+    runtime::QuantCandidate candidate;
+};
+
+// What settled the winner against the rows seen before it.
+enum class RankReason : std::uint8_t {
+    Only,        // the first row inside the band
+    LowerKld,    // the lower KLD (DECISIONS 60)
+    HigherWorth, // the same KLD, the higher worth
+    RuleOrder,   // worth and KLD tied: the rule's order (runtime::quant_ranks_above)
+};
+
+struct RowRank {
+    std::optional<std::size_t> best; // position in the rows handed over
+    double top        = 0;           // the best worth among them
+    RankReason reason = RankReason::Only;
+};
+
+// The bounds from the highest worth down; equal bounds keep their order.
+[[nodiscard]] std::vector<RowBound> order_bounds(std::vector<RowBound> bounds);
+// Whether a row with this bound can still land inside `band` of the best worth served so far.
+[[nodiscard]] bool bound_in_reach(double bound, double top, double band) noexcept;
+// Among the rows within `band` of the best worth: the lower KLD, then the higher worth, then the
+// rule's order.
+[[nodiscard]] RowRank rank_rows(const std::vector<RankedRow>& rows, double band);
+
 // A plan of a model at given inputs: plan_model, or at a configuration choice's drafter.
 using PlanAt = std::function<PlannedSpeculation(const DryRunInputs&)>;
 

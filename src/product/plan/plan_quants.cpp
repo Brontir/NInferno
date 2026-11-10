@@ -703,6 +703,48 @@ bool holds_own_context(const PlanSourceFacts& facts, const DryRunInputs& inputs,
     return own_plan(plan_model(facts, at_context(inputs, context)).plan);
 }
 
+std::vector<RowBound> order_bounds(std::vector<RowBound> bounds) {
+    std::stable_sort(bounds.begin(), bounds.end(),
+                     [](const RowBound& a, const RowBound& b) { return a.worth > b.worth; });
+    return bounds;
+}
+
+bool bound_in_reach(double bound, double top, double band) noexcept {
+    return !(bound < top - band);
+}
+
+RowRank rank_rows(const std::vector<RankedRow>& rows, double band) {
+    RowRank out;
+    out.top = -INFINITY;
+    for (const RankedRow& r : rows) { out.top = std::max(out.top, r.worth); }
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        const RankedRow& s = rows[i];
+        if (s.worth < out.top - band) { continue; }
+        if (!out.best) {
+            out.best   = i;
+            out.reason = RankReason::Only;
+            continue;
+        }
+        const RankedRow& b = rows[*out.best];
+        std::optional<RankReason> why;
+        if (s.kld < b.kld - choice::kWorthTie) {
+            why = RankReason::LowerKld;
+        } else if (std::abs(s.kld - b.kld) <= choice::kWorthTie) {
+            if (s.worth > b.worth + choice::kWorthTie) {
+                why = RankReason::HigherWorth;
+            } else if (std::abs(s.worth - b.worth) <= choice::kWorthTie &&
+                       runtime::quant_ranks_above(s.candidate, b.candidate)) {
+                why = RankReason::RuleOrder;
+            }
+        }
+        if (why) {
+            out.best   = i;
+            out.reason = *why;
+        }
+    }
+    return out;
+}
+
 QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListing>& listing,
                       const DryRunInputs& inputs) {
     QuantPlan out;
@@ -895,7 +937,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         // Two rows' worths within the generation's measured decode error are a tie: the lower KLD
         // wins (DECISIONS 60), then the rule's order.
         const double band = std::max(choice::kWorthTie, choice::worth_band(choice_card_of(inputs.gpu)));
-        std::vector<std::pair<double, std::size_t>> bounds;
+        std::vector<RowBound> bounds;
         for (std::size_t i = 0; i < out.rows.size(); ++i) {
             const QuantRow& row = out.rows[i];
             if (!row.candidate.supported ||
@@ -907,20 +949,20 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                                                  inputs_for(inputs, row.listing), pins,
                                                  row.listing.quant, OwnContext::Unbounded);
             if (bound && bound->choice.chosen) {
-                bounds.emplace_back(bound->choice.scored[*bound->choice.chosen].worth, i);
+                bounds.push_back({i, bound->choice.scored[*bound->choice.chosen].worth});
             }
         }
-        std::stable_sort(bounds.begin(), bounds.end(),
-                         [](const auto& a, const auto& b) { return a.first > b.first; });
+        bounds = order_bounds(std::move(bounds));
         struct Served {
             std::size_t index;
             std::uint32_t context;
             choice::Scored scored;
         };
         std::vector<Served> served_rows;
+        std::vector<RankedRow> ranked;
         double top = -INFINITY; // the best worth served
-        for (const auto& [bound, i] : bounds) {
-            if (bound < top - band) { break; }
+        for (const auto& [i, bound] : bounds) {
+            if (!bound_in_reach(bound, top, band)) { break; }
             const QuantRow& row = out.rows[i];
             const auto served = choose_at_weights(row_facts(shape, row),
                                                   inputs_for(inputs, row.listing), pins,
@@ -930,30 +972,21 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                 continue;
             }
             served_rows.push_back({i, served->choice.context, served->choice.scored[*served->choice.chosen]});
-            top = std::max(top, served_rows.back().scored.worth);
+            const choice::Scored& sc = served_rows.back().scored;
+            ranked.push_back(
+                {i, served_rows.back().context, sc.worth, sc.accuracy.kld, out.rows[i].candidate});
+            top = std::max(top, sc.worth);
         }
         // Within the band of the best worth: the lower KLD, then the higher worth, then the rule's
-        // order.
+        // order (rank_rows).
+        const RowRank ranking = rank_rows(ranked, band);
         std::optional<std::size_t> best;
-        double best_worth           = 0;
-        std::uint32_t best_context  = 0;
+        std::uint32_t best_context = 0;
         choice::Scored best_scored;
-        for (const Served& s : served_rows) {
-            if (s.scored.worth < top - band) { continue; }
-            const double worth = s.scored.worth;
-            const double kld   = s.scored.accuracy.kld;
-            const bool wins =
-                !best || kld < best_scored.accuracy.kld - choice::kWorthTie ||
-                (std::abs(kld - best_scored.accuracy.kld) <= choice::kWorthTie &&
-                 (worth > best_worth + choice::kWorthTie ||
-                  (std::abs(worth - best_worth) <= choice::kWorthTie &&
-                   runtime::quant_ranks_above(out.rows[s.index].candidate, out.rows[*best].candidate))));
-            if (wins) {
-                best         = s.index;
-                best_worth   = worth;
-                best_context = s.context;
-                best_scored  = s.scored;
-            }
+        if (ranking.best) {
+            best         = ranked[*ranking.best].index;
+            best_context = ranked[*ranking.best].context;
+            best_scored  = served_rows[*ranking.best].scored;
         }
         if (best && *best != out.pick->index) {
             // The largest at its own choice: what the trade was against.
