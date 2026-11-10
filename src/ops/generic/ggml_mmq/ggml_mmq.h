@@ -10,6 +10,7 @@
 // The declarations below name a stream and a bf16 pointer only (#620): no runtime for the selector.
 #    include "core/cuda_stream.h"
 struct __nv_bfloat16;
+struct dim3;
 #else
 #    include <cuda_bf16.h>
 #    include <cuda_runtime.h>
