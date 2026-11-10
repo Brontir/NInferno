@@ -308,6 +308,12 @@ class Collect(unittest.TestCase):
         self.assertEqual(doc["board_facts"]["held-board"]["name"], "RTX 4500 Ada Generation")
         self.assertEqual(doc["board_facts"]["held-board"]["dram_gbps"], 432.0)
 
+    def test_an_id_the_registry_does_not_list_still_collects(self):
+        # A new SKU the engine runs by its class: the document is written, without a ridge.
+        doc = self.collect_recorded("0x2fff", "0x2fff")
+        self.assertEqual(doc["pci_device_id"], "0x2fff")
+        self.assertNotIn("board_facts", doc)
+
     def test_an_empty_or_absent_pci_id_keeps_the_class_check(self):
         doc = self.collect_recorded("", "")
         self.assertNotIn("pci_device_id", doc)

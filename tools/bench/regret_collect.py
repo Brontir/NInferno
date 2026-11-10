@@ -233,7 +233,12 @@ def collect(selected_csvs, pass_csvs, board, model, revision, build_id, holdout,
             raise ValueError(f"--pci-id names {facts['name']} ({facts['id']}); the rows were "
                              f"recorded on PCI id 0x{recorded:04x}")
         if not facts and gpu_facts is not None:
-            facts = board_facts(gpu_facts, f"0x{recorded:04x}")
+            # A board the registry does not list (a new SKU; the engine runs it by its class)
+            # still collects: only the ridge, which needs its row, is left out.
+            try:
+                facts = board_facts(gpu_facts, f"0x{recorded:04x}")
+            except ValueError:
+                facts = None
     for key, seen in protocols.items():
         if len(seen) > 1:
             kinds = "; ".join(f"{describe(p)} in {', '.join(sorted(ps))}" for p, ps in seen.items())
