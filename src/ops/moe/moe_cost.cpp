@@ -5,25 +5,29 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace ninferno::ops::detail::moe {
 
 namespace {
 
-// The int8 activation of the R8 and W4A8 tiers as stored: 32 codes and a scale a 32-value block
-// (36 bytes), 40 with the block's sum for a format with a min (r8_admits keeps the same list);
-// BF16 otherwise.
+// The int8 activation of the R8 gate/up and the W4A8 tier as stored: 32 codes and a scale a
+// 32-value block (36 bytes), 40 with the block's sum for a format with a min (moe_format_has_min,
+// the definition r8_admits' shared-memory bound reads); BF16 otherwise.
 constexpr double kInt8ActivationBytesPerValue       = 36.0 / 32.0;
 constexpr double kInt8SummedActivationBytesPerValue = 40.0 / 32.0;
 constexpr double kBf16BytesPerValue                 = 2.0;
+constexpr double kFp32BytesPerValue                 = 4.0;
 
-bool format_has_min(QType q) {
-    return q == QType::GGML_Q4_1 || q == QType::GGML_Q5_1 || q == QType::GGML_Q4_K ||
-           q == QType::GGML_Q5_K;
-}
-
-bool int8_activations(MoeStageKernel kind) {
-    return kind == MoeStageKernel::R8 || kind == MoeStageKernel::W4a8;
+// The bytes a value of the stage's activation takes in DRAM on `kind`: an R8 down stage reads the
+// BF16 intermediate (it quantizes it inside the kernel), an R8 gate/up the codes the router's CTAs
+// wrote, the W4A8 tier the codes its quantize pass wrote.
+double activation_bytes_per_value(const MoeStageShape& shape, MoeStageKernel kind) {
+    const bool int8 = kind == MoeStageKernel::W4a8 ||
+                      (kind == MoeStageKernel::R8 && shape.stage == Stage::GateUp);
+    if (!int8) return kBf16BytesPerValue;
+    return moe_format_has_min(shape.qtype) ? kInt8SummedActivationBytesPerValue
+                                           : kInt8ActivationBytesPerValue;
 }
 
 const Weight& bank_of(const MoeWeights& weights, Stage stage) {
@@ -59,16 +63,19 @@ std::optional<MoeStagePrice> price_moe_stage(const MoeStageShape& shape, MoeStag
     }
     const double assignments = static_cast<double>(tokens) * shape.top_k;
     const double touched     = expected_experts_touched(shape.experts, shape.top_k, tokens);
-    const double act_value   = !int8_activations(kind)       ? kBf16BytesPerValue
-                               : format_has_min(shape.qtype) ? kInt8SummedActivationBytesPerValue
-                                                             : kInt8ActivationBytesPerValue;
+    const double act_value   = activation_bytes_per_value(shape, kind);
     // A gate and up stage reads the T rows of x, which a token's k assignments share; a down stage
     // reads the T x k rows of the activation.
     const double act_rows =
         shape.stage == Stage::GateUp ? static_cast<double>(tokens) : assignments;
     MoeStagePrice out;
+    // The W4A8 stage first quantizes its activation: reads the BF16 rows, writes the codes (the
+    // kernel then reads the codes, the activation term above).
+    if (kind == MoeStageKernel::W4a8) {
+        out.quantize_bytes = act_rows * shape.cols * (kBf16BytesPerValue + act_value);
+    }
     out.bytes = shape.bank_bytes * touched / shape.experts + act_rows * shape.cols * act_value +
-                assignments * shape.out_rows * kBf16BytesPerValue;
+                assignments * shape.out_rows * kBf16BytesPerValue + out.quantize_bytes;
     out.dram_seconds = out.bytes / board.dram_bytes_per_s;
     const double ops = 2.0 * assignments * shape.rows * shape.cols;
     double rate      = 0.0; // ops per second the kind's units reach
@@ -109,14 +116,19 @@ std::optional<MoeStageShape> moe_stage_shape(const MoeWeights& weights, const Mo
     const std::int32_t experts = static_cast<std::int32_t>(weights.router.n);
     if (experts <= 0 || bank.n <= 0 || bank.n % experts != 0) return std::nullopt;
     MoeStageShape s;
-    s.stage      = stage;
-    s.qtype      = bank.qtype;
-    s.mx8        = moe_mx8_banks(weights);
-    s.bank_bytes = static_cast<double>(bank.payload_bytes);
-    s.experts    = experts;
-    s.top_k      = config.top_k;
-    s.rows       = static_cast<std::int32_t>(bank.n / experts);
-    s.cols       = static_cast<std::int32_t>(bank.k);
+    s.stage   = stage;
+    s.qtype   = bank.qtype;
+    s.mx8     = moe_mx8_banks(weights);
+    s.experts = experts;
+    s.top_k   = config.top_k;
+    s.rows    = static_cast<std::int32_t>(bank.n / experts);
+    s.cols    = static_cast<std::int32_t>(bank.k);
+    // The kernel walks the logical K; a grouped format stores K padded (padded_shape[1], a
+    // multiple of 128) and its tail is never read: price the bytes of the logical K.
+    const double stored_k = static_cast<double>(bank.padded_shape[1]);
+    s.bank_bytes =
+        static_cast<double>(bank.payload_bytes) *
+        (stored_k > static_cast<double>(bank.k) ? static_cast<double>(bank.k) / stored_k : 1.0);
     // A gate and an up row give one output (SwiGLU); a non-gated expert's one row gives one.
     const std::int32_t sets = config.activation == MoeActivation::Relu2 ? 1 : 2;
     s.out_rows              = stage == Stage::GateUp ? s.rows / sets : s.rows;
@@ -171,6 +183,13 @@ MoeCandidate::Status rank_against_selected(const std::optional<MoeStagePrice>& p
         why = "the same price as the selected kind: the law has no term to order them";
         return MoeCandidate::Status::Tied;
     }
+    // The margin between the two prices: a gap of the order of a missing term (launch, tile or
+    // wave effects, none priced here) does not order the kinds, and the reader sees how wide it is.
+    char margin[96];
+    std::snprintf(margin, sizeof margin, "%.2f us against the selected kind's %.2f us (%+.2f %%)",
+                  price->seconds * 1e6, selected->seconds * 1e6,
+                  (price->seconds - selected->seconds) / selected->seconds * 100.0);
+    why = margin;
     return price->seconds < selected->seconds ? MoeCandidate::Status::PricedBelow
                                               : MoeCandidate::Status::Dominated;
 }
@@ -202,17 +221,31 @@ std::vector<MoeCandidate> moe_candidates(const MoeWeights& weights, const MoeCon
             }
             return false;
         case MoeStageKernel::W4a8: {
+            // The layer-wide rule (with_w4a8): a bank's own refusal, or an NVFP4 bank refused for
+            // the A4 policy on either bank, which keeps both stages off the tier. The calls it is
+            // CHOSEN for (T >= 17 in the prefill profile, T >= 64 in the speed profile, a job width
+            // of whole W4A8 tiles: MoeCall::w4a8_prefill, speed_w4a8) are rules of the cascade,
+            // not admission: the stage runs at any T once the banks admit it, so it is listed and
+            // priced here at every T. (Volta's HMMA below is different: its threshold is part of
+            // the predicate production asks.)
+            const MoePlan allowed = with_w4a8(MoePlan{}, weights, true);
+            if (stage == Stage::Down ? allowed.w4a8_down : allowed.w4a8_gate_up) return true;
             const BankRefusal refusal = w4a8_bank_refusal(weights, bank);
-            if (refusal == BankRefusal::None) return true;
-            why = bank_refusal_name(refusal);
+            why                       = refusal != BankRefusal::None
+                                            ? bank_refusal_name(refusal)
+                                            : "the layer-wide A4 veto: an NVFP4 bank is refused for the A4 policy, both "
+                                              "stages stay off the tier";
             return false;
         }
         case MoeStageKernel::VoltaHmma:
             // The production predicate (select_plan's Volta authority): the build's features, both
-            // banks, the fragment layout rule, K and the geometry; T >= 17 is its threshold.
-            if (tokens >= 17 && moe_volta_hmma_admitted(weights, config)) return true;
-            why = "needs a build without mma.sync, T >= 17 and both banks of a format with an f16 "
-                  "fragment (K and the geometry in whole groups)";
+            // banks, the fragment layout rule, K and the geometry, from kMoeVoltaHmmaMinTokens.
+            if (tokens >= kMoeVoltaHmmaMinTokens && moe_volta_hmma_admitted(weights, config)) {
+                return true;
+            }
+            why = "needs a build without mma.sync, T >= " + std::to_string(kMoeVoltaHmmaMinTokens) +
+                  " and both banks of a format with an f16 fragment (K and the geometry in whole "
+                  "groups)";
             return false;
         }
         return false;
@@ -220,6 +253,14 @@ std::vector<MoeCandidate> moe_candidates(const MoeWeights& weights, const MoeCon
     const auto priced = [&](MoeStageKernel kind) -> std::optional<MoeStagePrice> {
         if (!board || !shape) return std::nullopt;
         return price_moe_stage(*shape, kind, tokens, *board);
+    };
+    // `seconds` only for a full price; the DRAM floor of one without its compute term is kept
+    // apart.
+    const auto fill_price = [](MoeCandidate& c, const std::optional<MoeStagePrice>& price) {
+        if (!price) return;
+        c.dram_seconds   = price->dram_seconds;
+        c.compute_priced = price->compute_priced;
+        if (price->compute_priced) c.seconds = price->seconds;
     };
     const auto selected_price = priced(selected);
     for (const MoeStageKernel kind : {MoeStageKernel::R8, MoeStageKernel::W4a8,
@@ -229,7 +270,7 @@ std::vector<MoeCandidate> moe_candidates(const MoeWeights& weights, const MoeCon
         if (kind == selected) {
             // The plan runs it: admitted by construction, whatever a predicate here would say.
             c.status = MoeCandidate::Status::Selected;
-            if (const auto price = priced(kind)) c.seconds = price->seconds;
+            fill_price(c, priced(kind));
             out.push_back(std::move(c));
             continue;
         }
@@ -239,32 +280,49 @@ std::vector<MoeCandidate> moe_candidates(const MoeWeights& weights, const MoeCon
             continue;
         }
         const auto price = priced(kind);
-        if (price) c.seconds = price->seconds;
+        fill_price(c, price);
         c.status = rank_against_selected(price, selected_price, c.why);
         out.push_back(std::move(c));
     }
     return out;
 }
 
-std::optional<double> moe_layer_seconds(const MoeWeights& weights, const MoeConfig& config,
-                                        const MoePlan& plan, std::int32_t tokens,
-                                        const MoeBoardFacts& board) {
+std::optional<MoeLayerPrice> moe_layer_price(const MoeWeights& weights, const MoeConfig& config,
+                                             const MoePlan& plan, std::int32_t tokens,
+                                             const MoeBoardFacts& board) {
     const MoeStageRoutes routes = stage_routes(weights, plan);
-    double seconds              = 0;
+    MoeLayerPrice out;
+    std::int32_t hidden = 0;
     for (const Stage stage : {Stage::GateUp, Stage::Down}) {
         const auto shape = moe_stage_shape(weights, config, stage);
         if (!shape) return std::nullopt;
         const auto price = price_moe_stage(
             *shape, (stage == Stage::Down ? routes.down : routes.gate_up).kernel, tokens, board);
         if (!price) return std::nullopt;
-        seconds += price->seconds;
+        out.seconds += price->seconds;
+        out.dram_seconds += price->dram_seconds;
+        out.compute_binds = out.compute_binds ||
+                            (price->compute_priced && price->compute_seconds > price->dram_seconds);
+        if (!price->compute_priced && out.compute_priced) {
+            out.compute_priced = false;
+            out.compute_note   = price->compute_note;
+        }
+        if (stage == Stage::Down) hidden = shape->rows;
     }
     // The router: its weights, the activation and the logits, once.
-    const double router_bytes =
-        static_cast<double>(weights.router.payload_bytes) +
-        static_cast<double>(tokens) * weights.router.k * kBf16BytesPerValue +
-        static_cast<double>(tokens) * weights.router.n * 4.0;
-    return seconds + router_bytes / board.dram_bytes_per_s;
+    double extra_bytes = static_cast<double>(weights.router.payload_bytes) +
+                         static_cast<double>(tokens) * weights.router.k * kBf16BytesPerValue +
+                         static_cast<double>(tokens) * weights.router.n * kFp32BytesPerValue;
+    // The separate combine where the down stage is not R8 (an R8 down stage's last CTAs combine in
+    // its epilogue; the conditions of that fusion, such as a shared expert or a wide hidden size,
+    // are not modelled): reads the T x k slot rows of BF16 and writes T rows.
+    if (routes.down.kernel != MoeStageKernel::R8) {
+        extra_bytes +=
+            (static_cast<double>(tokens) * config.top_k + tokens) * hidden * kBf16BytesPerValue;
+    }
+    out.seconds += extra_bytes / board.dram_bytes_per_s;
+    out.dram_seconds += extra_bytes / board.dram_bytes_per_s;
+    return out;
 }
 
 } // namespace ninferno::ops::detail::moe

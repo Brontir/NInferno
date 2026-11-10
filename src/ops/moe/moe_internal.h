@@ -303,6 +303,10 @@ void moe_with_plan(const Tensor& x, const MoeWeights& weights, const MoeConfig& 
 // activation (gate/up of an unpadded x), an activation that fits a CTA's shared memory;
 // moe_with_plan refuses an R8 stage that is not.
 [[nodiscard]] bool r8_admits(const MoeWeights& weights, const Weight& bank, std::int32_t tokens);
+// Whether the bank's format keeps a per-block minimum, so that R8's and W4A8's int8 activation
+// carries each block's sum too (40 bytes a 32-value block instead of 36): r8_admits' shared-memory
+// bound and the stage price (moe_cost.h) read this one definition.
+[[nodiscard]] bool moe_format_has_min(QType qtype);
 // Whether a heuristic plan's down stage takes R8 at T: on a build without tensor mma.sync
 // (Volta's register MMA runs on FP32 FMAs) wherever the layer admits it, at T and at the bank's
 // widest R8 call (the same route at every T); never elsewhere.
@@ -540,6 +544,9 @@ inline constexpr int kMoeW4a8BlockM = 64; // slots per CTA (divides kJobColumns)
 // T=17): a prefill chunk of a family that runs its prefill in the speed profile (Gemma 4), a
 // verify of many rows.
 inline constexpr std::int32_t kMoeW4a8SpeedMinTokens = 64;
+// The narrowest call Volta's grouped HMMA stages take (volta_authority); the stage price reads the
+// same figure.
+inline constexpr std::int32_t kMoeVoltaHmmaMinTokens = 17;
 inline constexpr int kMoeW4a8BlockN = 64; // weight tile rows per CTA (32 local rows when gated)
 static_assert(kJobColumns % kMoeW4a8BlockM == 0);
 

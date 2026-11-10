@@ -842,6 +842,11 @@ std::int32_t r8_token_limit(const Weight& bank) {
                                                                 : limit;
 }
 
+bool moe_format_has_min(QType q) {
+    return q == QType::GGML_Q4_1 || q == QType::GGML_Q5_1 || q == QType::GGML_Q4_K ||
+           q == QType::GGML_Q5_K;
+}
+
 bool r8_admits(const MoeWeights& w, const Weight& bank, std::int32_t tokens) {
     if (!allows_a8(w.expert_policy) || tokens < 1 || tokens > r8_token_limit(bank) ||
         !r8_expert_supports(bank)) {
@@ -857,9 +862,7 @@ bool r8_admits(const MoeWeights& w, const Weight& bank, std::int32_t tokens) {
     // 4915).
     std::int64_t slots = 1;
     while (slots < tokens) { slots *= 2; }
-    const auto q    = bank.qtype;
-    const bool sums = q == QType::GGML_Q4_1 || q == QType::GGML_Q5_1 || q == QType::GGML_Q4_K ||
-                      q == QType::GGML_Q5_K;
+    const bool sums = moe_format_has_min(bank.qtype);
     return slots * (static_cast<std::int64_t>(bank.k) / 32) * (sums ? 40 : 36) <=
            kStaticSharedBytesPerBlock;
 }
@@ -1330,7 +1333,9 @@ std::optional<MoeAnswer> table_authority(const MoeCall& c) {
 // Volta from T = 17, under a band of no route table: its own tensor cores (the int8 tier and the
 // register MMA run emulated there).
 std::optional<MoeAnswer> volta_authority(const MoeCall& c) {
-    if (c.tokens < 17 || !volta_hmma_admitted(c.weights, c.g)) { return std::nullopt; }
+    if (c.tokens < kMoeVoltaHmmaMinTokens || !volta_hmma_admitted(c.weights, c.g)) {
+        return std::nullopt;
+    }
     MoePlan v    = plan_for(c.g, c.tokens, true);
     v.volta_hmma = true;
     return MoeAnswer{v, MoeAuthority::VoltaHmma, by_rule("volta-hmma")};

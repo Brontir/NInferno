@@ -11,21 +11,26 @@
 // One stage (GateUp or Down) of T tokens reads
 //   - the weights of the experts the T x k assignments touch, once from DRAM: of E experts, k per
 //     token, uniform routing, an expected E (1 - (1 - k/E)^T) of them (docs/maintainer/decisions.md
-//     65 prices concurrent rows so); each a whole bank row span (`bank_bytes` / E);
-//   - its activations (BF16, or int8 with a block scale, and a block sum for a format with a min,
-//     on the W4A8 and R8 tiers): a gate and up stage reads the T rows of x once (the k assignments
-//     of a token share its row, the CTAs' re-reads hit the L2), a down stage the T x k rows of the
-//     activation; and writes the stage's output rows once. This is a DRAM floor for a call that
-//     reads x once; in the tuner's regime (the same x every repetition) the L2 serves re-reads, so
-//     a measured time can sit below it;
+//     65 prices concurrent rows so); each a whole bank row span (`bank_bytes` / E). The bytes are
+//     those of the logical K the kernel walks, not of the K the bank is stored at (a grouped
+//     format stores K padded to a multiple of 128; the kernel never reads the tail);
+//   - its activations: BF16 on the register MMA, on Volta's HMMA and on an R8 down stage (which
+//     reads the BF16 intermediate and quantizes it itself); int8 with a block scale, and a block
+//     sum for a format with a min, on an R8 gate/up (the router's CTAs wrote the codes) and on the
+//     W4A8 tier, whose stage first runs a quantize pass that reads the BF16 activation and writes
+//     the codes (both priced). A gate and up stage reads the T rows of x once (the k assignments
+//     of a token share its row), a down stage the T x k rows of the activation; and writes the
+//     stage's output rows once. This is a DRAM floor for a call that reads each byte once from
+//     DRAM. The tuner flushes the L2 before every sample (moe_tune.cpp, tune_timer.h), so the L2
+//     does not lower a measured time below it;
 // and computes 2 x assignments x rows x cols operations on the tensor cores the kind uses (the
 // generation's `bf16` rate for the register MMA and Volta's HMMA, `s8` for the W4A8 tier; both
 // ops per clock per SM, core/generation.h) at the SM count and the reference clock.
 // seconds = max(DRAM seconds, compute seconds): the bytes and the unit rates bound the time from
-// below, so a measured time is expected to be at least this (the replica verifies that against a
-// tolerance, tests/ops/test_moe_cost.cpp). Where the law has no term it says so instead of
-// guessing, and the price is its DRAM floor alone (`compute_priced` false):
-//   - R8: dp4a issue work (a SIMT instruction count, the law the campaign refuted five times);
+// below, so a measured time is expected to be at least this (the replica verifies that,
+// tests/ops/test_moe_cost.cpp). Where the law has no term it says so instead of guessing, and the
+// price is its DRAM floor alone (`compute_priced` false):
+//   - R8: dp4a issue work (a SIMT instruction count that no law here holds yet);
 //   - the block-scaled MXFP8 MMA of two MXFP4 banks (route "w4a8.mx8"): the generation row has no
 //     rate for it, and the int8 rate is not its rate;
 //   - the BF16 MMA where the generation has no native one (Volta, Turing: DeviceFeatures::
@@ -33,10 +38,12 @@
 //     (core/generation.h), not a fact of the chip, and the same figure would price Volta's native
 //     HMMA (m8n8k4) like the emulated register MMA. The facts of those two generations need their
 //     own rate rows (#668 measures Volta's) before the law can price them.
+// Also absent from every price: launch and fixed overheads, the kernel's DRAM efficiency below
+// the peak bandwidth, tile and wave effects (fitted quantities elsewhere, route_cost_constants.h),
+// the R8 gate/up's code write by the router's CTAs, Volta's x conversion pass, the shared expert,
+// and the combine fused into an R8 down stage (a separate one is priced by moe_layer_price).
 // A candidate list never ranks a kind against another by a price that has no compute term (status
-// Unpriced), and two kinds of equal price are Tied, not one dominated. Launch times, tile
-// efficiencies and wave effects are fitted quantities elsewhere (route_cost_constants.h) and are
-// absent here.
+// Unpriced), and two kinds of equal price are Tied, not one dominated.
 
 #include "core/device_class.h"
 #include "core/weight.h"
@@ -65,10 +72,11 @@ struct MoeBoardFacts {
 
 [[nodiscard]] std::optional<MoeBoardFacts> moe_board_facts(const DeviceClass& device);
 
-// One grouped stage's problem: the bank's bytes as stored (Weight::payload_bytes), the experts, the
-// top-k, the rows each expert's span has and its output rows (half of them under a gate and up),
-// the columns (K) of the stage, the bank's format (the int8 activation carries a block sum for a
-// format with a min), whether the plan's W4A8 stage is the block-scaled MXFP8 one.
+// One grouped stage's problem: the bank's bytes the kernel reads (Weight::payload_bytes scaled from
+// the stored K, padded_shape[1], to the logical K), the experts, the top-k, the rows each expert's
+// span has and its output rows (half of them under a gate and up), the columns (K) of the stage,
+// the bank's format (the int8 activation carries a block sum for a format with a min), whether the
+// plan's W4A8 stage is the block-scaled MXFP8 one.
 struct MoeStageShape {
     Stage stage           = Stage::GateUp;
     QType qtype           = QType::BF16;
@@ -82,7 +90,9 @@ struct MoeStageShape {
 };
 
 struct MoeStagePrice {
-    double bytes           = 0;
+    double bytes = 0;
+    double quantize_bytes =
+        0; // of `bytes`: the W4A8 stage's quantize pass (read BF16, write codes)
     double dram_seconds    = 0;
     double compute_seconds = 0;
     double seconds         = 0; // max of the two
@@ -112,17 +122,21 @@ struct MoeStagePrice {
 // path:
 //   Selected: the kind the plan runs;  Inadmissible: the bank or call refuses it (`why`);
 //   Dominated / PricedBelow: priced dearer / cheaper than the selected, by the same law (a
-//   PricedBelow kind is one the cascade did not take though the facts rank it first);
+//   PricedBelow kind is one the cascade did not take though the facts rank it first); `why` gives
+//   the margin;
 //   Tied: the same price as the selected (the law has no term to order them);
 //   Unpriced: admitted but not comparable by the law (a price without its compute term, see
 //   above, or the board has no roofline), `why` says which.
-// `seconds` is the stage's price where there is one.
+// `seconds` is the stage's price only where it is a full one (`compute_priced`); a kind without its
+// compute term carries `dram_seconds` alone, a floor that is not a price to sort by.
 struct MoeCandidate {
     enum class Status { Selected, Inadmissible, Dominated, PricedBelow, Tied, Unpriced };
     MoeStageKernel kernel = MoeStageKernel::RegisterMma;
     Status status         = Status::Unpriced;
     std::string why;
+    bool compute_priced = false; // `seconds` is a full price
     std::optional<double> seconds;
+    std::optional<double> dram_seconds;
 };
 
 [[nodiscard]] const char* moe_candidate_status_name(MoeCandidate::Status status);
@@ -130,7 +144,8 @@ struct MoeCandidate {
 
 // How a kind of price `price` stands against the selected kind's `selected` (never Selected or
 // Inadmissible): Unpriced where either has no price or lacks its compute term, Tied at equal
-// seconds, else PricedBelow / Dominated. `why` says the reason of an Unpriced or Tied.
+// seconds, else PricedBelow / Dominated. `why` says the reason of an Unpriced or Tied, and the
+// margin (microseconds and percent of the selected kind's price) of the other two.
 [[nodiscard]] MoeCandidate::Status
 rank_against_selected(const std::optional<MoeStagePrice>& price,
                       const std::optional<MoeStagePrice>& selected, std::string& why);
@@ -140,12 +155,23 @@ rank_against_selected(const std::optional<MoeStagePrice>& price,
                                                        const MoeConfig& config, std::int32_t tokens,
                                                        bool prefill, Stage stage);
 
-// The layer's two grouped stages on `plan` (each stage's kernel from stage_routes), seconds; the
-// router and combine launches, whose bytes the law prices as the router's weights, are added.
+// The layer's price on a plan: its two grouped stages (each stage's kernel from stage_routes), the
+// router's bytes (its weights, the activation, the logits) and, where the down stage is not R8
+// (whose last CTAs combine), the separate combine (reads T x k x H BF16, writes T x H). A stage
+// without its compute term stands at its DRAM floor: `compute_priced` false says the number is a
+// floor in that case, not a full price.
+struct MoeLayerPrice {
+    double seconds      = 0;     // stages' max(DRAM, compute) + router + combine
+    double dram_seconds = 0;     // the same with every stage at its DRAM time
+    bool compute_priced = true;  // every stage has its compute term
+    bool compute_binds  = false; // some stage's compute time exceeds its DRAM time
+    std::string compute_note;    // the first unpriced stage's reason
+};
+
 // nullopt where a stage has no price.
-[[nodiscard]] std::optional<double> moe_layer_seconds(const MoeWeights& weights,
-                                                      const MoeConfig& config, const MoePlan& plan,
-                                                      std::int32_t tokens,
-                                                      const MoeBoardFacts& board);
+[[nodiscard]] std::optional<MoeLayerPrice> moe_layer_price(const MoeWeights& weights,
+                                                           const MoeConfig& config,
+                                                           const MoePlan& plan, std::int32_t tokens,
+                                                           const MoeBoardFacts& board);
 
 } // namespace ninferno::ops::detail::moe
