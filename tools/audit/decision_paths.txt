@@ -29,6 +29,8 @@ include/ninferno/ops/prefill_routes.h
 routes/**
 src/core/data/gpu_facts.json
 src/core/device_class.*
+src/core/device_class_host.*
+src/core/arch_registry.h
 src/core/generation.*
 src/product/choice/**
 src/ops/generic/data/kernel_facts/**
@@ -73,6 +75,14 @@ cmake/BoardRegistry.cmake
 cmake/EmbedText.cmake
 src/core/CMakeLists.txt
 src/core/embedded_gpu_facts.h.in
+# which kernel-facts snapshots are embedded (sources.cmake lists the sm_*.txt, the .in turns them
+# into ops/generic/embedded_kernel_facts.h) and which sources and kernels the selector's library
+# is built from; the root file defines the build architecture and feature macros that pick the
+# device class features and the golden build set
+src/ops/generic/sources.cmake
+src/ops/generic/embedded_kernel_facts.h.in
+src/ops/generic/ggml_mmq/sources.cmake
+CMakeLists.txt
 # the golden producer and what it builds weights with
 tests/ops/linear/test_selector_golden.cpp
 tests/ops/quantized_weight.h

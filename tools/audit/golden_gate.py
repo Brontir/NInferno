@@ -110,9 +110,9 @@ def main(argv=None, run_diff=None, changed_files=None, base_list=None):
     ap.add_argument("--event", help="path of the pull_request event payload (GITHUB_EVENT_PATH)")
     ap.add_argument("--repo", default=".")
     ap.add_argument("--paths", default=str(PATHS_FILE))
-    args = ap.parse_args(argv)
-    event = json.loads(Path(args.event).read_text(encoding="utf-8")) if args.event else {}
+    args = ap.parse_args(argv)  # bad arguments: argparse exits 2
     try:
+        event = json.loads(Path(args.event).read_text(encoding="utf-8")) if args.event else {}
         patterns = load_patterns(Path(args.paths).read_text(encoding="utf-8"))
         # the union of the head and base lists
         patterns += base_patterns(args.base_ref, args.repo, base_list)
@@ -135,6 +135,10 @@ def main(argv=None, run_diff=None, changed_files=None, base_list=None):
             else:
                 golden_rc, out = run_diff(rng)
             print(out.rstrip())
+            # an old golden_diff dies on an uncaught exception with exit 1, the code of "goldens
+            # changed": a traceback is a tool failure, whatever the code says
+            if golden_rc == 1 and "Traceback (most recent call last)" in out:
+                golden_rc = 2
             if golden_rc not in (0, 1):
                 print("golden_gate: golden_diff failed", file=sys.stderr)
                 return 2
@@ -146,5 +150,14 @@ def main(argv=None, run_diff=None, changed_files=None, base_list=None):
     return code
 
 
+def run():
+    """Entry point: every tool failure, caught or not, exits 2; 1 is only "the gate refused"."""
+    try:
+        return main()
+    except Exception as error:  # noqa: BLE001
+        print(f"golden_gate: unexpected {type(error).__name__}: {error}", file=sys.stderr)
+        return 2
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run())

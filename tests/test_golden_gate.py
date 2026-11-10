@@ -115,6 +115,9 @@ NOT_DECIDING = {
 GENERATED = {
     "core/board_registry_rows.inc": "cmake/BoardRegistry.cmake",
     "core/embedded_gpu_facts.h": "src/core/embedded_gpu_facts.h.in",
+    "core/arch_registry_rows.inc": "cmake/BoardRegistry.cmake",  # rows of the "archs" array of gpu_facts.json
+    # which sm_*.txt snapshots are embedded is decided by sources.cmake (listed too)
+    "ops/generic/embedded_kernel_facts.h": "src/ops/generic/embedded_kernel_facts.h.in",
 }
 THIRD_PARTY = ("ggml-cuda/", "nlohmann/")
 INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]', re.M)
@@ -182,6 +185,203 @@ class Closure(unittest.TestCase):
                 quoted |= set(re.findall(r'^\s*#\s*include\s*"([^"]+)"', text, re.M))
         for name in sorted(quoted & unresolved):
             self.assertTrue(name in GENERATED or name.startswith(THIRD_PARTY), f"unresolved include {name}")
+
+
+# The completeness walk. The include closure above finds the headers the selector compiles in; this
+# finds the rest of what a golden depends on: the sources the linked libraries are built from
+# (src/core and src/ops, as their CMake lists name them) and the non-code files the build or the
+# run reads (CMake files, generator templates, JSON tables). Each candidate is listed in
+# decision_paths.txt, or named here with the reason it cannot move a selector golden. A new
+# decision file that is in neither place fails with its name: decide, then list it in
+# decision_paths.txt or add a line below.
+#
+# Scope: the golden is tests/ops/linear/selector_golden, made by ninferno_selector_golden_test,
+# which links ninferno_core, ninferno_ops and ninferno_ggml_mmq. Other libraries (models, runtime,
+# serve, spec, chat, ui, product plan) are not linked into it. Offline tools that write listed data
+# (tools/kernel_facts, tools/bench/r8_decode_table.py, route_table_merge.py, moe_tune_to_table.py)
+# are run by hand, not by the build; what they write is listed, so a change shows in that file.
+EXCLUDED = [
+    ("**/*.cu", "device code: it computes the route it is given; what a kernel costs the selector "
+                "(registers, spills) is read from the kernel-facts snapshots, which are listed, and a kernel "
+                "change that moves them fails ninferno_kernel_facts_test until they are regenerated"),
+    ("**/*.cuh", "device code, as .cu"),
+    ("src/core/cyclic_kv_cache.cpp", "KV cache state"), ("src/core/paged_kv_cache.cpp", "KV cache state"),
+    ("src/core/host_kv_arena.cpp", "KV cache state"), ("src/core/linear_attention_state.cpp", "state"),
+    ("src/core/host_memory.cpp", "host memory"), ("src/core/host_worker_pool.cpp", "host threads"),
+    ("src/core/decode_graph.cpp", "CUDA graph capture"), ("src/core/debug_poison.cpp", "debug"),
+    ("src/core/gdn_replay_records.cpp", "state records"),
+    ("src/core/device_traits.cpp", "reads the driver (display, WDDM) for the plan, not the selector"),
+    ("src/core/gate_atlas.cpp", "audit table that calls the gate; the gate's rule is in a listed header"),
+    ("src/core/kernel_occupancy.cpp", "occupancy for launch code and the kernel-facts test; the selector "
+                                      "prices from the snapshots, not from it"),
+    ("src/ops/*/*/shapes/*.cpp", "per-shape tables of the per-format dispatch; the generic selector, "
+                                 "which makes the golden choice, does not call them"),
+    ("src/ops/**/*_dispatch.cpp", "per-format dispatch: it runs a route"),
+    ("src/ops/**/*_format.cpp", "weight geometry checks"),
+    ("src/ops/**/*plan.cpp", "per-op plans: they ask the selector and act on the answer"),
+    ("src/ops/wrapper/*.cpp", "op wrappers"),
+    ("src/ops/context_kv_materialize/*.cpp", "not the linear projection"),
+    ("src/ops/kv_cache/**", "not the linear projection"),
+    ("src/ops/linear_attention/**", "not the linear projection"),
+    ("src/ops/linear_topk/*.cpp", "not the linear projection"),
+    ("src/ops/rmsnorm_rope/*.cpp", "not the linear projection"),
+    ("src/ops/softmax_attention/**", "attention, not the linear projection"),
+    ("src/ops/moe/moe_tune.cpp", "load-time MoE tuner (times plans); no selector golden reads it"),
+    ("cmake/Dependencies.cmake", "third-party fetch"), ("cmake/GitCommit.cmake", "version string"),
+    ("cmake/Windows.cmake", "Windows toolchain"), ("cmake/windows-utf8.manifest", "Windows manifest"),
+    ("cmake/NInfernoTargets.cmake", "compile flags (-lineinfo, archive kind); a flag that moves SASS shows "
+                                    "in the kernel-facts snapshot test"),
+    ("src/CMakeLists.txt", "target wiring"),
+    ("src/*/CMakeLists.txt", "build files of libraries the golden test does not link"),
+    ("src/models/**", "model programs: not linked into the golden test"),
+    ("src/ops/**/sources.cmake", "source lists of the per-op libraries: they run a route"),
+    ("src/ops/CMakeLists.txt", "target wiring of ninferno_ops (the selector's own lists are listed)"),
+    ("src/ops/basic_sources.cmake", "source list of the elementwise ops"),
+    ("src/chat/**", "chat conventions: not linked into the golden test"),
+    ("src/spec/**", "speculation data: not linked into the golden test"),
+    ("src/ui/**", "web UI: not linked into the golden test"),
+]
+EXCLUDED_RX = [(g, gg.glob_to_regex(g), why) for g, why in EXCLUDED]
+NON_CODE_EXT = (".json", ".inc", ".in", ".cmake", ".txt", ".html", ".manifest")
+SOURCE_LIST_ROOTS = ("src/core", "src/ops")
+LISTED_SOURCE = re.compile(r'["\s]((?:\$\{CMAKE_CURRENT_LIST_DIR\}/)?[\w/.\-]+\.(?:cpp|cu))\b')
+
+
+def library_sources(files):
+    """The .cpp/.cu files that the CMake lists of src/core and src/ops name."""
+    known, out = set(files), set()
+    for cm in files:
+        base = Path(cm).parent.as_posix()
+        if not (cm.startswith(SOURCE_LIST_ROOTS) and (cm.endswith(".cmake") or cm.endswith("CMakeLists.txt"))):
+            continue
+        text = (ROOT / cm).read_text(encoding="utf-8", errors="replace")
+        for name in LISTED_SOURCE.findall(text):
+            cand = f"{base}/{name.replace('${CMAKE_CURRENT_LIST_DIR}/', '')}"
+            if cand in known:
+                out.add(cand)
+    return out
+
+
+def decision_candidates(files):
+    """Library sources and non-code build/run inputs that can matter to a golden."""
+    cands = set(library_sources(files))
+    for f in files:
+        if f.startswith("src/ui/third_party/"):
+            continue
+        in_tree = f.startswith(("src/", "cmake/", "include/")) or f == "CMakeLists.txt"
+        if in_tree and (f.endswith(NON_CODE_EXT) or Path(f).name == "CMakeLists.txt"):
+            cands.add(f)
+    return cands
+
+
+def unaccounted(files):
+    return sorted(f for f in decision_candidates(files)
+                  if f not in NOT_DECIDING and not gg.decision_files([f], PATHS)
+                  and not any(rx.match(f) for _, rx, _ in EXCLUDED_RX))
+
+
+class Completeness(unittest.TestCase):
+    def test_every_decision_candidate_is_listed_or_excluded_with_a_reason(self):
+        missing = unaccounted(tracked())
+        self.assertEqual(missing, [], "these files can feed a selector golden and are neither in "
+                         "tools/audit/decision_paths.txt nor excluded (with a reason) in EXCLUDED: "
+                         + ", ".join(missing))
+
+    def test_a_new_decision_file_is_caught_by_name(self):
+        new = ["src/ops/generic/data/new_table.json", "src/core/data/other_facts.json",
+               "src/ops/generic/new_table.inc"]
+        self.assertEqual(unaccounted(tracked() + new), sorted(new))
+
+    def test_exclusions_match_something_and_name_a_reason(self):
+        files = tracked()
+        for glob, rx, why in EXCLUDED_RX:
+            self.assertTrue(why.strip(), glob)
+            self.assertTrue(any(rx.match(f) for f in files), f"{glob} matches no tracked file")
+
+    def test_the_gate_guards_itself(self):
+        # a PR that edits the manifest, the gate, its diff tool, its workflow or its tests is a
+        # decision-path change: it needs a golden change or the label, and the reviewer sees it
+        for f in ("tools/audit/decision_paths.txt", "tools/audit/golden_gate.py", "tools/audit/golden_diff.py",
+                  ".github/workflows/golden-gate.yml", "tests/test_golden_gate.py"):
+            self.assertTrue(gg.decision_files([f], PATHS), f)
+
+    def test_build_inputs_of_the_embedded_kernel_facts_and_the_direct_selector_inputs(self):
+        for f in ("src/ops/generic/sources.cmake", "src/ops/generic/embedded_kernel_facts.h.in",
+                  "src/ops/generic/data/kernel_facts/sm_120a.txt", "CMakeLists.txt",
+                  "src/core/mmq_columns.h", "src/core/measured_boards.h"):
+            self.assertTrue(gg.decision_files([f], PATHS), f)
+
+    def test_workflow_reruns_on_an_edited_description(self):
+        text = (ROOT / ".github/workflows/golden-gate.yml").read_text(encoding="utf-8")
+        types = re.search(r"types:\s*\[([^\]]*)\]", text).group(1)
+        for t in ("opened", "synchronize", "reopened", "labeled", "unlabeled", "edited"):
+            self.assertIn(t, types)
+
+
+class ToolFailuresExitTwo(unittest.TestCase):
+    """1 means "the gate refused", 0 "ok"; every tool failure is 2."""
+
+    def gate(self, argv, **kw):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            return gg.main(argv, **kw), err.getvalue()
+
+    def test_unreadable_event_and_manifest_and_git_failure(self):
+        with tempfile.TemporaryDirectory() as d:
+            bad = Path(d) / "event.json"
+            bad.write_text("{not json", encoding="utf-8")
+            rc, _ = self.gate(["--base-ref", "master", "--event", str(bad)], changed_files=[])
+            self.assertEqual(rc, 2)
+            rc, _ = self.gate(["--base-ref", "master", "--event", str(Path(d) / "missing.json")], changed_files=[])
+            self.assertEqual(rc, 2)
+            rc, _ = self.gate(["--base-ref", "master", "--paths", str(Path(d) / "missing.txt")], changed_files=[])
+            self.assertEqual(rc, 2)
+            binary = Path(d) / "paths.txt"
+            binary.write_bytes(b"\xff\xfe\x00")
+            rc, _ = self.gate(["--base-ref", "master", "--paths", str(binary)], changed_files=[])
+            self.assertEqual(rc, 2)
+            rc, _ = self.gate(["--base-ref", "no-such-branch", "--repo", d], base_list="")  # git diff fails
+            self.assertEqual(rc, 2)
+
+    def test_bad_arguments_exit_2(self):
+        with self.assertRaises(SystemExit) as cm:
+            self.gate([])
+        self.assertEqual(cm.exception.code, 2)
+
+    def test_a_traceback_with_exit_1_is_a_tool_failure(self):
+        rc, out, err, _ = run(["routes/gb202.json"], (1, "Traceback (most recent call last):\n  ...\nUnicodeDecodeError"))
+        self.assertEqual(rc, 2)
+
+    def test_an_unexpected_exception_exits_2(self):
+        orig = gg.main
+
+        def boom(*a, **k):
+            raise RuntimeError("boom")
+
+        gg.main = boom
+        try:
+            err = io.StringIO()
+            with redirect_stderr(err):
+                self.assertEqual(gg.run(), 2)
+        finally:
+            gg.main = orig
+        self.assertIn("boom", err.getvalue())
+
+    def test_golden_diff_tool_failures_exit_2(self):
+        import golden_diff as gd
+        with tempfile.TemporaryDirectory() as d:
+            a, b = Path(d) / "a" / "full", Path(d) / "b" / "full"
+            a.mkdir(parents=True)
+            b.mkdir(parents=True)
+            (a / "x.txt").write_bytes(b"\xff\xfe\xfd")
+            (b / "x.txt").write_bytes(b"\xff\xfe\xfd")
+            for argv in ([str(Path(d) / "a"), str(Path(d) / "b")], [str(Path(d) / "nope"), str(Path(d) / "b")]):
+                err = io.StringIO()
+                with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                    self.assertEqual(gd.main(argv + ["--fail-on-change"]), 2, argv)
+            err = io.StringIO()
+            with redirect_stderr(err):
+                self.assertEqual(gd.main(["--range", "a...b", "--repo", str(Path(d) / "no-repo")]), 2)
 
 
 # The reverse check asks of the files that read the selector's own headers: is this source part of

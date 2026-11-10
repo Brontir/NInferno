@@ -3,9 +3,13 @@ name: golden-gate
 # #620 step 9: a decision-path diff with no golden change needs the `goldens-equal` label.
 # Its own workflow, so a label event cancels only this gate and never the lint run of the same SHA.
 # Make `golden-gate` a required check in branch protection.
+# `edited` re-runs the gate when the PR description or its base branch changes. A pull_request
+# workflow is the PR's own copy, so this gate is a reminder for honest contributors, not a lock:
+# the manifest, the gate scripts and this file are all on the manifest, so a PR that edits them
+# is flagged for the human reviewer.
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    types: [opened, synchronize, reopened, labeled, unlabeled, edited]
 
 permissions:
   contents: read

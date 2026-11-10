@@ -324,7 +324,7 @@ def load_dir(root):
     """(tree {set: {file name: text}}, facts_index text or None) from a selector_golden dir."""
     root = Path(root)
     if not root.is_dir():
-        raise SystemExit(f"golden_diff: not a directory: {root}")
+        raise GoldenParseError(f"not a directory: {root}")
     tree = {}
     for sub in sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith(".")):
         tree[sub.name] = {f.name: f.read_text(encoding="utf-8") for f in sorted(sub.glob("*.txt"))}
@@ -391,7 +391,8 @@ def main(argv=None):
             (old, old_ix), (new, new_ix) = load_dir(args.base_dir), load_dir(args.head_dir)
         out = []
         changed, meta, files = summarize(old, new, args.detail, out, old_ix, new_ix)
-    except (GoldenParseError, subprocess.CalledProcessError) as error:
+    except (GoldenParseError, subprocess.CalledProcessError, OSError, ValueError) as error:
+        # every tool failure is 2 (1 means "goldens changed"): unreadable file, bad encoding, git error
         print(f"golden_diff: {getattr(error, 'stderr', None) or error}", file=sys.stderr)
         return 2
     print("\n".join(out) if out else "no golden changes")
@@ -401,5 +402,14 @@ def main(argv=None):
     return 1 if (args.fail_on_change and anything) else 0
 
 
+def run():
+    """Entry point: an exception nothing above caught is a tool failure, exit 2, never the traceback's 1."""
+    try:
+        return main()
+    except Exception as error:  # noqa: BLE001
+        print(f"golden_diff: unexpected {type(error).__name__}: {error}", file=sys.stderr)
+        return 2
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run())
