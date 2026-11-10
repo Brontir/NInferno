@@ -72,8 +72,14 @@ done
 # caught here, not by the toolkit's name.
 check_kernel_facts() {
   local arch=$1 bin=$2 nvcc_bin=$3
+  check_kernel_facts_as "$arch" "$bin" "$(nvcc_version "$nvcc_bin")" "$(dirname "$nvcc_bin")"
+}
+# The same with the compiler named: a resumed Volta engine was built by CUDA 12.8 (the only
+# compiler the build path takes for it), and any toolkit's cuobjdump reads its sm_70 binary.
+check_kernel_facts_as() {
+  local arch=$1 bin=$2 version=$3 cuda_bin=$4
   python3 -B "$ROOT/tools/kernel_facts/kernel_facts.py" check --binary "$bin" --expected "$FACTS/sm_$arch.txt" \
-    --nvcc "$(nvcc_version "$nvcc_bin")" --cuda-bin "$(dirname "$nvcc_bin")" \
+    --nvcc "$version" --cuda-bin "$cuda_bin" \
     || { echo "package.sh: the sm_$arch kernels differ from their snapshot (kernel-facts snapshots, #612)" >&2; exit 1; }
 }
 check_selector_facts() {
@@ -96,8 +102,13 @@ for arch in $ARCHS; do
   if [ "${NINFERNO_PACKAGE_RESUME:-0}" = 1 ] && [ -x "$STAGE/bin/ninferno-serve-sm$arch" ] && [ -f "$STAGE/bin/ninferno-serve.dispatch" ]; then
     echo "package.sh: sm_$arch already packed (resume)"
     # Its facts again: the tree, a flag or the index may have changed since it was staged.
-    arch_nvcc=$NVCC; [ "$arch" = 70 ] && arch_nvcc=$CUDA70/bin/nvcc
-    check_kernel_facts "$arch" "$STAGE/bin/ninferno-serve-sm$arch" "$arch_nvcc"
+    if [ "$arch" = 70 ] && [ -z "$CUDA70" ]; then
+      check_kernel_facts_as 70 "$STAGE/bin/ninferno-serve-sm70" \
+        "$(sed -n 's/^nvcc \(.*\)$/\1/p' "$FACTS/sm_70.txt")" "$(dirname "$NVCC")"
+    else
+      arch_nvcc=$NVCC; [ "$arch" = 70 ] && arch_nvcc=$CUDA70/bin/nvcc
+      check_kernel_facts "$arch" "$STAGE/bin/ninferno-serve-sm$arch" "$arch_nvcc"
+    fi
     if [ "$arch" = 86 ] || [ "$arch" = 120a ]; then check_selector_facts "$arch" "$STAGE/bin/ninferno-serve-sm$arch"; fi
     first=${first:-$STAGE}
     engines+="${engines:+, }{\"tag\": \"$arch\", \"arch\": ${arch//[!0-9]/}, \"specific\": $specific, \"ptx\": $ptx}"
