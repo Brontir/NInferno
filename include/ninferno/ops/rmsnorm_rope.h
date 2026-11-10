@@ -71,4 +71,12 @@ void rmsnorm_rope(const Tensor& positions, const Tensor& q_norm_weight, const Te
 // layers (0.8B/2B 8,2; 4B/9B 16,4; 27B 24,4; 35B 16,2; 122B/397B 32,2).
 [[nodiscard]] bool rmsnorm_rope_text_heads(std::int32_t query_heads, std::int32_t key_heads);
 
+// The widest text-form call (tokens) a dispatch should still fuse on a device with these per-SM
+// facts (DeviceClass::sms, max_blocks_per_sm, max_threads_per_sm): the fused grid of the widest
+// instantiated geometry within two waves of resident blocks, a power of two (the wave rule,
+// ops/common/sm_wave_rules.h grid_wave_bound_tokens). 0 where a fact is unknown. Above it the
+// three separate kernels are ahead. Both forms are the same arithmetic bit for bit.
+[[nodiscard]] std::int32_t rmsnorm_rope_text_fused_max_tokens(int sms, int max_blocks_per_sm,
+                                                              int max_threads_per_sm);
+
 } // namespace ninferno::ops

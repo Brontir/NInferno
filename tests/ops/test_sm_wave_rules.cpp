@@ -98,8 +98,47 @@ void report_nvfp4(int sms) {
 
 } // namespace
 
+// The fused text qk-norm + RoPE's bound (rmsnorm_rope): a grid of 12 three-warp CTAs a token (the
+// widest geometry, 32 + 2 heads) within two waves of resident CTAs, a power of two. The RTX 5090 is
+// the measured board: its 256 is unchanged. The other boards' bounds are the rule's prediction,
+// pinned here (A/B pending).
+void check_rope_wave_bound() {
+    struct Board {
+        const char* name;
+        int sms, max_blocks, max_threads;
+        std::int32_t bound;
+    };
+
+    // The facts as the driver reports them (cc 7.0: 32 slots / 2048 threads; 7.5: 16 / 1024; 8.0:
+    // 32 / 2048; 8.6: 16 / 1536; 8.9: 24 / 1536; 9.0: 32 / 2048; 12.0: 24 / 1536).
+    const Board boards[] = {
+        {"RTX 5090", 170, 24, 1536, 256},   {"RTX PRO 6000", 188, 24, 1536, 256},
+        {"RTX 5080", 84, 24, 1536, 128},    {"RTX 5070 Ti", 70, 24, 1536, 128},
+        {"RTX 5070", 48, 24, 1536, 128},    {"RTX 5060 Ti", 36, 24, 1536, 64},
+        {"RTX 4090", 128, 24, 1536, 256},   {"RTX 4080", 76, 24, 1536, 128},
+        {"RTX 4070 Ti", 60, 24, 1536, 128}, {"RTX 4070", 46, 24, 1536, 64},
+        {"RTX 4060 Ti", 34, 24, 1536, 64},  {"L4", 58, 24, 1536, 128},
+        {"RTX 3090", 82, 16, 1536, 128},    {"RTX 3060", 28, 16, 1536, 64},
+        {"A100", 108, 32, 2048, 256},       {"GV100 / TITAN V", 80, 32, 2048, 256},
+        {"RTX 2080 Ti", 68, 16, 1024, 64},  {"H100 SXM", 132, 32, 2048, 256},
+    };
+    for (const Board& b : boards) {
+        const int resident = sm_rules::resident_ctas_per_sm(b.max_blocks, b.max_threads, 96);
+        const auto bound   = sm_rules::grid_wave_bound_tokens(b.sms, resident, 12, 2);
+        std::printf("%s (%d SMs, %d CTAs an SM): fused through %d tokens\n", b.name, b.sms,
+                    resident, bound);
+        expect(bound == b.bound, std::string("rope wave bound ") + b.name);
+    }
+    expect(sm_rules::grid_wave_bound_tokens(0, 16, 12, 2) == 0 &&
+               sm_rules::grid_wave_bound_tokens(170, 0, 12, 2) == 0 &&
+               sm_rules::grid_wave_bound_tokens(170, 16, 0, 2) == 0 &&
+               sm_rules::grid_wave_bound_tokens(1, 1, 12, 2) == 0,
+           "rope wave bound: unknown facts or no token fitting answer 0 (the caller's default)");
+}
+
 int main() {
     check_tuned_board_unchanged();
+    check_rope_wave_bound();
     std::printf("170 SMs: every decision unchanged (fp8 split, tiles 1..16384 x K %d/%d/%d; "
                 "nvfp4 route to T %d)\n",
                 kFp8Ks[0], kFp8Ks[1], kFp8Ks[2], kMaxTokens);

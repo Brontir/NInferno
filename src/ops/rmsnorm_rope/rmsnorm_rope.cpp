@@ -1,5 +1,6 @@
 #include "ninferno/ops/rmsnorm_rope.h"
 
+#include "ops/common/sm_wave_rules.h"
 #include "ops/rmsnorm_rope/launch.h"
 
 #include <array>
@@ -99,10 +100,45 @@ void rmsnorm_rope(const Tensor& positions, const Tensor& norm_weight, Tensor& x,
     detail::rmsnorm_rope_single_launch(positions, norm_weight, x, tokens, stream);
 }
 
+namespace {
+
+// The (query, key) geometries of rmsnorm_rope_text_heads, as the launch dispatches them.
+constexpr std::array<std::array<std::int32_t, 2>, 5> kTextGeometries{
+    {{8, 2}, {16, 2}, {16, 4}, {24, 4}, {32, 2}}};
+
+constexpr std::int32_t text_blocks_per_token(std::int32_t query_heads, std::int32_t key_heads) {
+    return (query_heads + key_heads + detail::kTextHeadsPerBlock - 1) / detail::kTextHeadsPerBlock;
+}
+
+constexpr std::int32_t widest_text_blocks_per_token() {
+    std::int32_t widest = 0;
+    for (const auto& g : kTextGeometries) {
+        const std::int32_t blocks = text_blocks_per_token(g[0], g[1]);
+        if (blocks > widest) widest = blocks;
+    }
+    return widest;
+}
+
+// Two waves: the 5090's measurement brackets the count (the fused form wins through 256 tokens, a
+// 1.13-wave grid for the widest geometry, and loses at 1024); 2 is the least whole count above the
+// winning width, and the doubling grid below absorbs the rest (see the header).
+constexpr int kFusedTextWaves = 2;
+
+} // namespace
+
 bool rmsnorm_rope_text_heads(std::int32_t query_heads, std::int32_t key_heads) {
-    return (query_heads == 8 && key_heads == 2) || (query_heads == 16 && key_heads == 2) ||
-           (query_heads == 16 && key_heads == 4) || (query_heads == 24 && key_heads == 4) ||
-           (query_heads == 32 && key_heads == 2);
+    for (const auto& g : kTextGeometries) {
+        if (g[0] == query_heads && g[1] == key_heads) return true;
+    }
+    return false;
+}
+
+std::int32_t rmsnorm_rope_text_fused_max_tokens(int sms, int max_blocks_per_sm,
+                                                int max_threads_per_sm) {
+    const int resident = detail::sm_rules::resident_ctas_per_sm(
+        max_blocks_per_sm, max_threads_per_sm, detail::kTextHeadsPerBlock * 32);
+    return detail::sm_rules::grid_wave_bound_tokens(sms, resident, widest_text_blocks_per_token(),
+                                                    kFusedTextWaves);
 }
 
 void rmsnorm_rope(const Tensor& positions, const Tensor& q_norm_weight, const Tensor& k_norm_weight,

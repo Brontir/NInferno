@@ -8,6 +8,10 @@
 
 namespace ninferno::ops::detail {
 
+// The text form: one warp per head, three heads per block (launch.cu). Its grid is
+// tokens x ceil((Q + K heads) / 3) blocks of three warps.
+inline constexpr int kTextHeadsPerBlock = 3;
+
 void rmsnorm_rope_pair_launch(const Tensor& positions, const Tensor& q_norm_weight,
                               const Tensor& k_norm_weight, Tensor& q, Tensor& k,
                               std::int32_t tokens, cudaStream_t stream);
