@@ -216,18 +216,23 @@ struct QuantOption {
 // generation's measured decode error, kDecodePredictionError; 0 where none is measured).
 [[nodiscard]] double worth_band(const CardFacts& card) noexcept;
 
-// What a speed estimate's resolution rests on (#618). Own: the board's generation has measured
-// decode rows and states its error (kDecodePredictionError). Transferred: it has none (an unknown
-// generation lends the nearest one's rows, a known one is not measured against the fixture), so the
-// error is that of carrying another generation's rows onto a board (kTransferredDecodeError).
-enum class ResolutionBasis : std::uint8_t { Own, Transferred };
+// What a speed estimate's resolution rests on (#618). None: no reference, so no estimate decides.
+// Own: the board's generation has measured decode rows and states its error
+// (kDecodePredictionError). Transferred: it has none, but a measured carry of kTransferGeneration's
+// rows onto it states one (kTransferredDecodeError, by target). WorstCase: a compute capability
+// with no generation row, or a known generation with neither: the largest measured carry
+// (kCarriedForwardWorstCaseDecodeError).
+enum class ResolutionBasis : std::uint8_t { None, Own, Transferred, WorstCase };
 
 [[nodiscard]] constexpr std::string_view resolution_basis_name(ResolutionBasis basis) noexcept {
-    return basis == ResolutionBasis::Own ? "own" : "transferred";
+    return basis == ResolutionBasis::None          ? "none"
+           : basis == ResolutionBasis::Own         ? "own"
+           : basis == ResolutionBasis::Transferred ? "transferred"
+                                                   : "worst_case";
 }
 
 struct Resolution {
-    ResolutionBasis basis = ResolutionBasis::Own;
+    ResolutionBasis basis = ResolutionBasis::None;
     double rms            = 0; // ln(predicted / measured), root mean square
 };
 
@@ -500,7 +505,7 @@ struct Choice {
     // (resolved_within_resolution).
     double resolution = 0;
     // What `resolution` rests on (resolution_of): the board's generation's own rows, or a transfer.
-    ResolutionBasis resolution_basis = ResolutionBasis::Own;
+    ResolutionBasis resolution_basis = ResolutionBasis::None;
     // The resolution moved the pick (#301, DECISIONS 75): among the candidates whose speed is
     // inside `resolution` of the best worth's (the anchor), the one of strictly lower modelled KLD
     // took it (resolve_within_resolution). False: the anchor stood. `anchor` indexes the best

@@ -1459,8 +1459,11 @@ Resolution resolution_of(const CardFacts& board) noexcept {
         for (const PredictionError& e : kDecodePredictionError) {
             if (e.generation == gen) { return {ResolutionBasis::Own, e.rms}; }
         }
+        for (const TransferredError& e : kTransferredDecodeError) {
+            if (e.target == gen) { return {ResolutionBasis::Transferred, e.rms}; }
+        }
     }
-    return {ResolutionBasis::Transferred, kTransferredDecodeError};
+    return {ResolutionBasis::WorstCase, kCarriedForwardWorstCaseDecodeError};
 }
 
 double single_request_seconds(const ModelFacts& model, const CardFacts& card,

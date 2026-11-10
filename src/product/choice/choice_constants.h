@@ -302,14 +302,24 @@ struct PredictionError {
 };
 inline constexpr PredictionError kDecodePredictionError[] = {{"ada", 0.0226}, {"gb20x", 0.0170}};
 
-// The resolution of a decision whose board's generation has no row above (#618 step 3): the error
-// of carrying one generation's rows onto another board. Derived from decode_measured.json: every
-// short-context row (not marked long) of a card whose generation has no kDecodePredictionError row
-// (Ampere, Turing, Volta) is priced as if the card were of kTransferGeneration (its rows, the
-// board's own bytes rate, SMs and clock), and the constant is sqrt(mean(ln(predicted /
-// measured)^2)) over them. ninferno_choice_test recomputes it (transferred_resolution) and prints
-// each generation's share.
-inline constexpr double kTransferredDecodeError = 0.3412;
+// The resolution of a decision on a generation with no kDecodePredictionError row (#618 step 3),
+// by the direction of the carry: lender kTransferGeneration, target the board's generation. Derived
+// from decode_measured.json: the rms of ln(predicted / measured) over every short-context row (not
+// marked long) of the target's cards, priced as if the card were of kTransferGeneration (its rows,
+// the board's own bytes rate, SMs and clock). Volta's row also carries Ada's route and ISA pricing
+// (no int8 MMA, HBM2), which is part of its error. ninferno_choice_test recomputes each row
+// (transferred_resolution); they are never pooled into one mean.
+struct TransferredError {
+    std::string_view target;
+    double rms;
+};
+inline constexpr TransferredError kTransferredDecodeError[] = {
+    {"ga10x", 0.0786}, {"turing", 0.2151}, {"volta", 0.5447}};
+
+// A board whose compute capability has no generation row lends the nearest one's rows, a carry
+// forward in time that no measured row covers: the explicit worst case, the largest of the measured
+// transfer rows above (the test asserts it). Labelled as such in the plan.
+inline constexpr double kCarriedForwardWorstCaseDecodeError = 0.5447;
 
 // kDp4aOpsPerSmClock (a generation without an int8 MMA decodes its int8 route at it, choice.cpp
 // decode_int8_peak): core/cost_constants.h, a chip fact shared with spec/round_cost.h.

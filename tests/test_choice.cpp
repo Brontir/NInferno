@@ -9,6 +9,7 @@
 // CPU.
 
 #include "product/choice/choice.h"
+#include "core/generation.h"
 #include "core/mmq_columns.h"
 #include "product/choice/choice_replay.h"
 
@@ -2330,29 +2331,36 @@ void resolution_rule() {
           "no reference estimate: unchanged");
 }
 
-// The resolution of a Transferred estimate (#618 step 3), derived from decode_measured.json: the
-// rms of ln(predicted / measured) when the rows of kTransferGeneration are carried onto the cards
-// of the generations that state no error of their own (kDecodePredictionError: Ampere, Turing,
-// Volta; each card priced as an "ada" with its own bytes rate, SMs and clock). Every short-context
-// row (not marked long) of such a card counts; the long rows have their own guards in
-// decodes_from_facts. The constant is checked against it, not fitted.
+// The resolution of a Transferred estimate (#618 step 3), derived from decode_measured.json per
+// target generation: the rms of ln(predicted / measured) when the rows of the lender
+// (kTransferGeneration) are carried onto the cards of a generation that states no error of its own
+// (kDecodePredictionError: Ampere, Turing, Volta). Each card is priced as a card of the lender's
+// compute capability with its own bytes rate, SMs and clock; every short-context row (not marked
+// long) counts, the long rows have their own guards in decodes_from_facts. The rows are not pooled.
+// Volta's row also carries the lender's route and ISA pricing (no int8 MMA, HBM2). The constants
+// are checked against it, not fitted.
 void transferred_resolution(const json& fixture) {
-    double sq = 0;
-    int n     = 0;
-    std::map<std::string, std::pair<double, int>> by_generation;
+    // The lender's compute capability, from the generation table.
+    int lender_major = 0, lender_minor = 0;
+    for (const GenerationRow& row : kGenerations) {
+        if (std::string_view(row.name) == ch::kTransferGeneration) {
+            lender_major = row.major, lender_minor = row.minor_lo;
+        }
+    }
+    check(lender_major > 0, "the lender is a generation of the table");
+    std::map<std::string, std::pair<double, int>> by_target;
     for (const json& row : fixture.at("rows")) {
         if (row.value("long", false)) { continue; }
         const json& m           = fixture.at("models").at(row.at("model").get<std::string>());
         const std::string q     = row.at("quant").get<std::string>();
         const ch::ModelFacts mf = model_at(m, q);
-        ch::CardFacts cf      = card_of(fixture.at("cards").at(row.at("card").get<std::string>()));
-        const std::string gen = std::string(ch::generation_of(cf));
-        if (std::any_of(std::begin(ch::kDecodePredictionError),
-                        std::end(ch::kDecodePredictionError),
+        ch::CardFacts cf        = card_of(fixture.at("cards").at(row.at("card").get<std::string>()));
+        const std::string gen   = std::string(ch::generation_of(cf));
+        if (std::any_of(std::begin(ch::kDecodePredictionError), std::end(ch::kDecodePredictionError),
                         [&](const ch::PredictionError& e) { return e.generation == gen; })) {
             continue; // its own rows state its error
         }
-        cf.major = 8, cf.minor = 9; // carried: the Ada rows, this board's rates
+        cf.major = lender_major, cf.minor = lender_minor; // carried: the lender's rows, this board's rates
         const ch::QuantOption qo = quant_of(q, m.at("quants").at(q));
         ch::Candidate c;
         c.kv    = kv_of(row.at("kv").get<std::string>());
@@ -2362,47 +2370,67 @@ void transferred_resolution(const json& fixture) {
         const ch::Speed s = ch::speed_of(mf, cf, qo, c, row.at("concurrency").get<std::uint32_t>(),
                                          row.at("context").get<double>());
         const double e    = std::log(s.decode_per_stream / row.at("decode").get<double>());
-        sq += e * e, ++n;
-        auto& g = by_generation[gen];
+        auto& g           = by_target[gen];
         g.first += e * e, ++g.second;
     }
-    const double rms = std::sqrt(sq / n);
-    for (const auto& [gen, v] : by_generation) {
-        std::cout << "  carried onto " << gen << ": " << v.second << " points, rms "
-                  << std::sqrt(v.first / v.second) << "\n";
+    double worst = 0;
+    for (const ch::TransferredError& t : ch::kTransferredDecodeError) {
+        const auto it = by_target.find(std::string(t.target));
+        check(it != by_target.end() && it->second.second == 12, std::string(t.target) + ": 12 carried rows");
+        if (it == by_target.end()) { continue; }
+        const double rms = std::sqrt(it->second.first / it->second.second);
+        std::cout << "  carried " << ch::kTransferGeneration << " -> " << t.target << ": "
+                  << it->second.second << " points, rms " << rms << " (stated " << t.rms << ")\n";
+        check(std::abs(rms - t.rms) < 0.0015,
+              std::string(t.target) + ": the stated transferred resolution is the carried rows' rms");
+        worst = std::max(worst, rms);
     }
-    std::cout << "transferred resolution (Ada's rows carried onto the other cards), " << n
-              << " points: rms " << rms << " (stated " << ch::kTransferredDecodeError << ")\n";
-    check(n == 36 && std::abs(rms - ch::kTransferredDecodeError) < 0.0015,
-          "the stated transferred resolution is the carried rows' rms");
-    check(ch::kTransferredDecodeError > ch::kDecodePredictionError[0].rms,
-          "carrying costs more than the generation's own rows");
-    // The basis by board: Ada and Blackwell state their own rows' error; the other known
-    // generations and a compute capability with no row carry.
-    for (const auto& [name, own] :
-         std::vector<std::pair<const char*, bool>>{{"RTX 4090", true},
-                                                   {"RTX 5090", true},
-                                                   {"RTX 3060", false},
-                                                   {"RTX 2080 Ti", false},
-                                                   {"Quadro GV100", false}}) {
+    check(by_target.size() == std::size(ch::kTransferredDecodeError),
+          "every carried target has a stated row");
+    check(std::abs(worst - ch::kCarriedForwardWorstCaseDecodeError) < 0.0015,
+          "the carried-forward worst case is the largest measured transfer");
+    // The basis by board: Ada and Blackwell state their own rows' error; the other known generations
+    // their carried row; a compute capability with no generation row the worst case.
+    for (const auto& [name, basis] : std::vector<std::pair<const char*, ch::ResolutionBasis>>{
+             {"RTX 4090", ch::ResolutionBasis::Own},
+             {"RTX 5090", ch::ResolutionBasis::Own},
+             {"RTX 3060", ch::ResolutionBasis::Transferred},
+             {"RTX 2080 Ti", ch::ResolutionBasis::Transferred},
+             {"Quadro GV100", ch::ResolutionBasis::Transferred}}) {
         if (!fixture.at("cards").contains(name)) { continue; }
         const ch::CardFacts card = card_of(fixture.at("cards").at(name));
         const ch::Resolution r   = ch::resolution_of(card);
-        check((r.basis == ch::ResolutionBasis::Own) == own &&
-                  r.rms == (own ? ch::worth_band(card) : ch::kTransferredDecodeError),
+        double want              = 0;
+        if (basis == ch::ResolutionBasis::Own) {
+            want = ch::worth_band(card);
+        } else {
+            for (const ch::TransferredError& t : ch::kTransferredDecodeError) {
+                if (t.target == ch::generation_of(card)) { want = t.rms; }
+            }
+        }
+        check(r.basis == basis && r.rms == want && want > 0,
               std::string(name) + ": the resolution's basis");
     }
     ch::CardFacts lent = card_of(fixture.at("cards").at("RTX 5090"));
     lent.major         = 13;
     lent.minor         = 0;
-    check(ch::resolution_of(lent).basis == ch::ResolutionBasis::Transferred,
-          "a compute capability with no generation row: transferred");
+    const ch::Resolution carried = ch::resolution_of(lent);
+    check(carried.basis == ch::ResolutionBasis::WorstCase &&
+              carried.rms == ch::kCarriedForwardWorstCaseDecodeError,
+          "a compute capability with no generation row: the worst case");
+    // No reference, no estimate: the basis is None, not Own.
+    const Bench none           = nine_b(fixture, "RTX 3060");
+    const ch::Choice undecided = ch::choose(
+        none.model, none.card, none.quants[0],
+        ch::allowed_axes(none.model, KvCacheStorage::Int8Group64), {}, ch::Task{}, oracle(none, 20e9));
+    check(undecided.resolution_basis == ch::ResolutionBasis::None && undecided.resolution == 0,
+          "a board with no reference card: basis none");
 }
 
 // What typing the resolution by the estimate's basis changes (#618 step 3, a behaviour change made
 // visible): for every fixture card and bench, the old (the reference generation's one number,
 // Gates::typed_resolution closed) and the new resolution, the candidates each chooses, and whether
-// the choice moves. Nothing is asserted about the count of moves; the table is the record.
+// the choice moves. No fixture choice moves (asserted); the table is the record.
 void resolution_by_basis(const json& fixture) {
     int total = 0, moved = 0, typed = 0;
     std::vector<std::pair<std::string, Bench>> benches;
@@ -2426,9 +2454,12 @@ void resolution_by_basis(const json& fixture) {
     const auto describe = [](const ch::Choice& c) {
         if (!c.chosen) { return std::string("none"); }
         const ch::Candidate& k = chosen(c).candidate;
-        return std::string(kv_cache_storage_name(k.kv)) + "/act" +
+        return std::string(kv_cache_storage_name(k.kv)) + "/ring" +
+               std::string(kv_cache_storage_name(k.ring)) + "/state" +
+               std::to_string(static_cast<int>(k.state)) + "/act" +
                std::to_string(static_cast<int>(k.activations)) + "/chunk" +
-               std::to_string(k.chunk) + "/drafter" + std::to_string(k.drafter);
+               std::to_string(k.chunk) + "/drafter" + std::to_string(k.drafter) + "/context" +
+               std::to_string(c.context);
     };
     for (const auto& [label, b] : benches) {
         const ch::Allowed allowed = ch::allowed_axes(b.model, KvCacheStorage::Int8Group64);
@@ -2463,6 +2494,8 @@ void resolution_by_basis(const json& fixture) {
     }
     std::cout << "resolution by basis: " << total << " choices, " << typed
               << " with a retyped resolution, " << moved << " changed\n";
+    check(moved == 0, "typing the resolution by its basis moves no choice on the fixture boards");
+    check(typed > 0, "some resolutions are retyped");
 }
 
 int main() {

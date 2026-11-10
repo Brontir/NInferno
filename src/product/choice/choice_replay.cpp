@@ -398,13 +398,16 @@ Task task_of(const json& j) {
 }
 
 json gates_json(const Gates& g) {
-    return json{{"accuracy", optional_json(g.accuracy)}, {"moe_chunk", g.moe_chunk}};
+    return json{{"accuracy", optional_json(g.accuracy)},
+                {"moe_chunk", g.moe_chunk},
+                {"typed_resolution", g.typed_resolution}};
 }
 
 Gates gates_of(const json& j) {
     Gates g;
     g.accuracy  = optional_of<bool>(j.at("accuracy"));
     read(g.moe_chunk, j.at("moe_chunk"));
+    if (j.contains("typed_resolution")) { read(g.typed_resolution, j.at("typed_resolution")); }
     return g;
 }
 
@@ -484,6 +487,7 @@ json choice_summary(const Choice& c) {
                 {"chunk_by_speed", c.chunk_by_speed},
                 {"drafter_by_worth", c.drafter_by_worth},
                 {"resolution", c.resolution},
+                {"resolution_basis", std::string(resolution_basis_name(c.resolution_basis))},
                 {"why", c.why}};
 }
 
