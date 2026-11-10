@@ -366,6 +366,31 @@ struct Reference {
                                                      std::uint32_t chunk, bool* transferred = nullptr);
 
 [[nodiscard]] std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates = {});
+
+// What an MoE's chunk decision rests on: Own (the generation the shares were measured on, priced on
+// its reference card), DerivedFromFacts (another generation whose MoE prefill rate rests on two lab
+// cards: the shares are a function of the tokens an expert takes, its saturated rate its own;
+// priced on the board itself: a chunk has no accuracy term, so no byte-class reason to price it
+// elsewhere), Transferred (a generation without both: the default chunk stands), None (not an MoE,
+// or the gate is closed).
+enum class ChunkBasis : std::uint8_t { None, Own, DerivedFromFacts, Transferred };
+
+[[nodiscard]] constexpr std::string_view chunk_basis_name(ChunkBasis basis) noexcept {
+    switch (basis) {
+    case ChunkBasis::None:
+        return "none";
+    case ChunkBasis::Own:
+        return "own";
+    case ChunkBasis::DerivedFromFacts:
+        return "derived_from_facts";
+    case ChunkBasis::Transferred:
+        return "transferred";
+    }
+    return "none";
+}
+
+[[nodiscard]] ChunkBasis chunk_basis_of(const ModelFacts& model, const CardFacts& card,
+                                        const Gates& gates = {});
 // Whether the worth decides the KV codec and the activations for `model` on this card: its
 // generation's factors decide and its family's switch terms rest on two cards (accuracy_decides);
 // else the family's defaults stand.
@@ -467,6 +492,7 @@ struct Choice {
     std::uint32_t context = 0;         // the own context per stream the choice settled on
     bool by_worth = false;             // the worth decided the KV codec and activations (else the defaults)
     bool chunk_by_speed = false;       // an MoE's chunk was the fastest (else the default stood)
+    ChunkBasis chunk_basis = ChunkBasis::None; // what the chunk decision rests on
     // The worth decided the drafter (else the profile's choice stood: no decision constants, or a
     // drafter whose gain no measurement gives).
     bool drafter_by_worth = false;

@@ -482,6 +482,7 @@ json choice_summary(const Choice& c) {
                 {"context", c.context},
                 {"by_worth", c.by_worth},
                 {"chunk_by_speed", c.chunk_by_speed},
+                {"chunk_basis", std::string(chunk_basis_name(c.chunk_basis))},
                 {"drafter_by_worth", c.drafter_by_worth},
                 {"resolution", c.resolution},
                 {"why", c.why}};
