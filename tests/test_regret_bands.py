@@ -211,17 +211,27 @@ class Csv(unittest.TestCase):
             self.assertEqual([r["reason"] for r in skipped],
                              ["fewer than two candidates of the case's compute class"])
 
-    def test_model_tie_is_a_skip_whatever_the_row_order(self):
-        # route_tune writes the price rounded, so two routes can tie; which one production keeps
-        # (the first offered) is not in the CSV, so neither order may decide the pick.
+    def test_a_same_family_tie_keeps_the_first_row_of_the_pass(self):
+        # Production keeps the first route offered on an equal price, and within one family
+        # route_tune writes the rows in that order: the first tied row is the pick.
         a = "q4k,a16,store,64,64,40,rmma.a,20,30\n"
         b = "q4k,a16,store,64,64,40,rmma.b,10,30\n"
+        c = "q4k,a16,store,64,64,40,rmma.c,15,40\n"
+        for text, first in ((a + b + c, "rmma.a"), (b + a + c, "rmma.b"), (c + b + a, "rmma.b")):
+            p1 = self.write("p1.csv", ROUTES + text)
+            rows, skipped = bands.rows_from_csv([p1], None, "b", pick="model")
+            self.assertEqual((skipped, rows[0]["selected"]), ([], first))
+
+    def test_a_tie_across_families_is_a_skip_whatever_the_row_order(self):
+        # tiled and staged are written and offered in other orders: the pick is unknown.
+        a = "q4k,a16,store,64,64,40,tiled.a,20,30\n"
+        b = "q4k,a16,store,64,64,40,staged.b,10,30\n"
         c = "q4k,a16,store,64,64,40,rmma.c,15,40\n"
         for text in (a + b + c, b + a + c, c + b + a):
             p1 = self.write("p1.csv", ROUTES + text)
             rows, skipped = bands.rows_from_csv([p1], None, "b", pick="model")
             self.assertEqual((rows, [r["reason"] for r in skipped]),
-                             ([], ["the model prices the best candidates equally"]))
+                             ([], ["the model prices the best candidates of two families equally"]))
         # A tie above the lowest price does not matter.
         p1 = self.write("p1.csv", ROUTES + "q4k,a16,store,64,64,40,rmma.a,20,30\n"
                         "q4k,a16,store,64,64,40,rmma.b,10,40\n"

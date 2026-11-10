@@ -177,7 +177,12 @@ skipped cases in a weighted band (its `weighted_incomplete` lists them), because
 scored cases would read lower than the truth. Every group and band carries `skipped`, the markdown
 cell reads `regret (n / skipped)`, and the report lists each skipped case with its T, board, format,
 family of the pick and reason under `skipped_cases`. A case is skipped, never scored as zero regret, when its pick was not timed, when a pass did not time one of
-its candidates, or (`--pick model`, T >= 17 only) when the model prices none of them.
+its candidates, when no selection is recorded for it, when the pick is of another compute class
+than the case's key, when fewer than two candidates of its class were timed, or (`--pick model`,
+T >= 17 only) when the model prices none of them or prices the best candidates of two route families
+equally. A tie within one family takes the first row of the pass, which is the route production
+offers first (`cost_route` keeps the first on an equal price). `--pick model` ranks only within the
+case's compute class; production under AllowA8 also offers the a8 candidates.
 
 ```bash
 python3 tools/bench/regret_bands.py --doc selection.json --doc other_board.json --md bands.md --json bands.json

@@ -186,13 +186,16 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected"):
                 skip(None, "the model prices none of the candidates")
                 continue
             low = min(priced.values())
-            if sum(1 for v in priced.values() if v == low) > 1:
-                # route_tune writes the price rounded; production keeps the first route offered on
-                # an equal price and the CSV does not say which that was, so the pick is unknown
-                # (a name or file order would pick one by accident and move the regret with it).
-                skip(None, "the model prices the best candidates equally")
+            tied = [r for r in routes[key] if r in priced and priced[r] == low]  # in row order
+            if len({family_of(r) for r in tied}) > 1:
+                # Production (generic_cost.cpp cost_route, a strict `<`) keeps the first route
+                # offered on an equal price. Within one family route_tune writes the rows in the
+                # order the price offers them (schedule index, route_tune_tool.cpp), so the first
+                # tied row is production's pick; across families the two orders differ (tiled and
+                # staged), so the pick is unknown and the case is skipped, not guessed.
+                skip(None, "the model prices the best candidates of two families equally")
                 continue
-            chosen = min(priced, key=priced.get)
+            chosen = tied[0]
         else:
             chosen = selected.get(key)
         if chosen is None:
