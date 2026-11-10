@@ -990,11 +990,12 @@ std::optional<MeasuredPair> carried_of(const MeasuredPair& pair, const PairQuery
 // One card's tunes (spec-tune measures one drafter at a time) are one measurement of the pair:
 // their runs pooled, so its choice weighs every drafter the card measured. A load table or fit
 // fallback is the one drafter's it was measured with: kept only when the tunes agree. Records of
-// two different boards of one class (both named) are two cards: each board's rates price its own
-// rounds; a record naming none joins its class's first card. The records are pooled in content
-// order (in_content_order): the pooled measurements (summed in that order), drafters and target
-// fields, each mode's round facts (the first record in that order that has them) and the order
-// of the cards (GPU class id) never depend on the registry's order.
+// two different cards of one class (both named; boards of the same facts are one card, card_of) are
+// two cards: each card's rates price its own rounds; a record naming none joins its class's first
+// card. The records are pooled in content order (in_content_order): the pooled measurements (summed
+// in that order), drafters and target fields, each mode's round facts (the first record in that
+// order that has them) and the order of the cards (GPU class id) never depend on the registry's
+// order.
 std::vector<MeasuredPair> pool_cards(std::vector<MeasuredPair> records) {
     std::vector<const MeasuredPair*> order;
     for (const auto& r : records) { order.push_back(&r); }
@@ -1004,7 +1005,7 @@ std::vector<MeasuredPair> pool_cards(std::vector<MeasuredPair> records) {
     for (auto& p : measured) {
         const auto same = std::find_if(cards.begin(), cards.end(), [&](const MeasuredPair& c) {
             return c.tune.key.gpu == p.tune.key.gpu && c.generation == p.generation &&
-                   (c.lab_board == 0 || p.lab_board == 0 || c.lab_board == p.lab_board);
+                   (c.lab_board == 0 || p.lab_board == 0 || card_of(c) == card_of(p));
         });
         if (same == cards.end()) {
             cards.push_back(std::move(p));

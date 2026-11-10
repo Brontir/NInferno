@@ -250,6 +250,16 @@ int main() {
             expect(sp::pair_group(both, "qwen3_5", "mtp", 4.9).size() == 2,
                    "the twin boards' record of a target once, beside another card's");
         }
+        // A target's own tune records under two board names of one chip are one card's: pooled
+        // into one measurement (one lab card), not two unpooled records of which one is dropped.
+        {
+            const std::vector<sp::MeasuredPair> lite = {named(0x2503, "ga106:28sm", "sm86"),
+                                                        named(0x2504, "ga106:28sm", "sm86")};
+            const auto twin =
+                sp::pair_choice(lite, lite[0].target, "qwen3_5", {"mtp"}, 4.9, "sm86");
+            expect(twin && twin->source.find("(1 lab card(s))") != std::string::npos,
+                   "a target's records under two board names of one chip are one lab card");
+        }
         // Two cards of one class (the same chip and SM count, another memory configuration or
         // rate) stand as two.
         expect(sp::pair_group(
