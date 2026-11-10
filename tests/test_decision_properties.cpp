@@ -96,14 +96,12 @@ constexpr const char* kWaveCause =
     "price_routes charges the busiest SM q = ceil(CTAs/sms) CTAs of bytes at bw/sms and divides "
     "by a warp fill that depends on q (wave quantization of the memory term)";
 constexpr Known kKnown[] = {
-    {"P1 sms x1.25", "RegisterMma within the SM ratio", kWaveCause, 1000000, 2.0},
-    {"P1 sms x1.25", "RegisterMma beyond the SM ratio", kWaveCause, 1000000, 2.0},
-    {"P1 sms x1.25", "StagedMma within the SM ratio", kWaveCause, 1000000, 2.0},
-    {"P1 sms x1.25", "StagedMma beyond the SM ratio", kWaveCause, 1000000, 2.0},
-    {"P1 sms x1.25", "W4a8Mma within the SM ratio", kWaveCause, 1000000, 2.0},
-    {"P1 sms x1.25", "W4a8Mma beyond the SM ratio", kWaveCause, 1000000, 2.0},
-    {"P1 sms x1.25", "I8Mma within the SM ratio", kWaveCause, 1000000, 2.0},
-    {"P1 sms x1.25", "I8Mma beyond the SM ratio", kWaveCause, 1000000, 2.0},
+    {"P1 sms x1.25", "RegisterMma within the SM ratio", kWaveCause, 280000, 1.31},
+    {"P1 sms x1.25", "RegisterMma beyond the SM ratio", kWaveCause, 750, 1.45},
+    {"P1 sms x1.25", "StagedMma within the SM ratio", kWaveCause, 15200, 1.26},
+    {"P1 sms x1.25", "W4a8Mma within the SM ratio", kWaveCause, 22900, 1.26},
+    {"P1 sms x1.25", "W4a8Mma beyond the SM ratio", kWaveCause, 2400, 1.53},
+    {"P1 sms x1.25", "I8Mma within the SM ratio", kWaveCause, 2050, 1.26},
 };
 
 // ---- Findings ----------------------------------------------------------------------------------
