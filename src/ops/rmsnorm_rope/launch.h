@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/device_class.h"
 #include "core/tensor.h"
 
 #include <cuda_runtime.h>
