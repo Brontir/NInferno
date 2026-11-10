@@ -20,6 +20,23 @@ engine, matched by the registers and spill the sweep recorded), then with the co
                route_cost::kRmmaCountedLaw)
   issue_max    ones_spill with the issue bound beside the bytes-plus-tensor sum
   issue_nofill max(bytes, tensor, issue) + reduce + chain, no fitted fill at all
+  rereads      ones_spill with the weights crossing the DRAM bus once per token tile where no two
+               tiles of one weight row block can be resident together (blockIdx.x runs the row
+               blocks first: gx >= occupancy x SMs) and the matrix outstrips the L2
+  overlap      rereads, the bytes and the tensor time overlapping by the share the other warps of a
+               scheduler can cover, (1 - 1 / W) x min(bytes, tensor) at W resident warps a scheduler
+  maxform      rereads as a roofline: max(bytes, tensor, issue), spill, reduce / fill + chain
+
+The last three are the max-form study of #613 (the K loop fetches the next step's weights before
+this step's MMAs, one step of lookahead; the activations load inside the step). On the eight lab
+sweeps none of them ranks better than the sum: the max form raises the regret at 33+ tokens on
+every heavy-form board (3060 1.03 -> 1.11, 5070 Ti 1.11 -> 1.21), the partial overlap sits between,
+and the re-read factor fixes the 3060's 15360x3840 SwiGLU rows but charges tensor-bound Q6_K rows
+at 256+ tokens 4-32 DRAM passes the measured time does not show (they overlap the tensor floor).
+The sum form ranks best because the kernels at 255 registers hold 2 warps a scheduler: a warp's
+load wait is covered by one other warp's work at most, and the activation loads inside the step
+expose their latency every step, which the fitted chain stands for. A law that beats the sum needs
+the per-warp timeline (load latency against the step's issue time), PR-2's pipe facts and PR-7b.
 
 and reports, per board and T band, predicted / measured (geomean, p5..p95) and the ranking
 regret (the measured time of the law's pick over the measured best, summed per band), plus the
@@ -57,7 +74,8 @@ K = dict(rmma_step_cycles=150.0, rmma_step_k=16.0, rmma_saturating_warps=11.0,
          l1_hit_latency_cycles=32.0)
 ROUTE = re.compile(r"rmma\.m(\d+)\.n(\d+)\.w(\d+)x(\d+)(?:\.c(\d+))?")
 MMA_FLOPS = {"16816": 4096, "1688": 2048, "1684": 1024}
-LAWS = ("today", "ones", "ones_spill", "issue_max", "issue_nofill")
+LAWS = ("today", "ones", "ones_spill", "issue_max", "issue_nofill", "rereads", "overlap",
+        "maxform")
 
 
 def chip_of(repo, name):
@@ -70,7 +88,7 @@ def chip_of(repo, name):
         max_thr=1024 if cc == 75 else 1536,
         max_cta=16 if cc in (75, 86) else 24 if cc == 89 else 32,
         regs_sm=65536.0, l2=K["l2_gb20x"] if cc == 120 else K["l2_ga10x"],
-        heavy_ok=cc in (86, 120),
+        heavy_ok=cc in (86, 120), l2_bytes=row.get("l2_mib", 0) * 2 ** 20,
         # rmma_counted_terms.h: INT32 2 clocks a warp instruction, FP32 2 on Turing, 1 after
         int_cycles=2.0, fp_cycles=2.0 if cc == 75 else 1.0, schedulers=4.0)
 
@@ -165,6 +183,13 @@ def price(chip, call, inst, sched, law):
                  fp_pipe=wi * inst["fp"] * chip["fp_cycles"] * per_slot)
         t["issue"] = max(wi * inst["total"] * per_slot, t["int_pipe"], t["fp_pipe"])
     heavy_bytes = dram + l2_w + l2_x
+    # The weights cross the DRAM bus once per token tile where no two tiles of one weight row block
+    # can be resident together and the matrix outstrips the L2 (the max-form study).
+    resident = max(occ, 1.0) * sms
+    reads = tiles if (tiles > 1 and n * k * bpw > chip["l2_bytes"] and gx >= resident) else 1
+    t["reads"] = reads
+    bytes_reread = (dram * reads + l2_w + l2_x + t["spill_counted"]) if heavy else mem * reads
+    per_sched = max(1.0, warps / chip["schedulers"])
     if law == "today":
         total = ((heavy_bytes + spill if heavy else mem) + mma + reduce) / fill + chain
     elif law == "ones":
@@ -175,6 +200,14 @@ def price(chip, call, inst, sched, law):
         total = max((heavy_bytes + t["spill_counted"] if heavy else mem) + t["mma_counted"] + reduce, t["issue"]) / fill + chain
     elif law == "issue_nofill":
         total = max(heavy_bytes + t["spill_counted"] if heavy else mem, t["mma_counted"], t["issue"]) + reduce + chain
+    elif law == "rereads":
+        total = (bytes_reread + t["mma_counted"] + reduce) / fill + chain
+    elif law == "overlap":
+        hidden = (1.0 - 1.0 / per_sched) * min(bytes_reread, t["mma_counted"])
+        total = (bytes_reread + t["mma_counted"] + reduce - hidden) / fill + chain
+    elif law == "maxform":
+        core = max(bytes_reread - (t["spill_counted"] if heavy else 0.0), t["mma_counted"], t["issue"])
+        total = (core + (t["spill_counted"] if heavy else 0.0) + reduce) / fill + chain
     else:
         raise ValueError(law)
     return total * A16_SCALE, t
