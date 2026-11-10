@@ -159,7 +159,7 @@ void the_synthetic_class_matches_the_guide() {
         // the CUDA programming guide corrects (#662): Volta and Xavier (7.0, 7.2: 96 KiB of shared
         // memory, 2048 threads, where the legacy class gave the unlisted row's 99/100 KiB, 1536),
         // Orin (8.7: 16 blocks) and 12.x (24 blocks).
-        const bool volta = cc == 70 || cc == 72;
+        const bool volta        = cc == 70 || cc == 72;
         const std::size_t block = volta ? std::size_t{96 * 1024} : old.block;
         const std::size_t sm    = volta ? std::size_t{96 * 1024} : old.sm;
         const int threads       = volta ? 2048 : old.threads;
