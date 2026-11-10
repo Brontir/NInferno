@@ -25,8 +25,9 @@ target_include_directories(ninferno_core_host PUBLIC ${CMAKE_CURRENT_BINARY_DIR}
 target_link_libraries(ninferno_core_host PRIVATE ninferno::json)
 
 # core/device_class_nodevice.cpp is current_device_class() of a build with no CUDA runtime: it always
-# throws. A host-only test adds it to its own sources (an object, so no archive order matters);
-# nothing beside ninferno_core links it, which defines the real one.
+# throws. A host-only test that reaches device_class() adds it to its own sources (an object, so no
+# archive order matters; none does yet); nothing beside ninferno_core links it, which defines the
+# real one.
 
 add_library(ninferno_core STATIC
   arena.cu

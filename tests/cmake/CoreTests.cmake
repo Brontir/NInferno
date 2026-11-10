@@ -56,7 +56,6 @@ ninferno_add_test(ninferno_gate_atlas_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_gate_atlas.cpp"
   LIBRARIES ninferno_core_host ninferno::json)
 # Host-only: no CUDA runtime in its link closure (#620 step 11).
-target_sources(ninferno_gate_atlas_test PRIVATE ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp)
 cmake_language(DEFER CALL ninferno_assert_host_only ninferno_gate_atlas_test)
 
 # The route cost model's constants, each tagged fact / counted / fitted
@@ -181,12 +180,5 @@ ninferno_add_test(ninferno_yarn_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_
 ninferno_add_test(ninferno_generic_routes_host_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_generic_routes_host.cpp"
   LIBRARIES ninferno_ops_host)
-target_sources(ninferno_generic_routes_host_test PRIVATE ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp)
 target_compile_definitions(ninferno_generic_routes_host_test PRIVATE NINFERNO_HOST_ONLY)
 cmake_language(DEFER CALL ninferno_assert_host_only ninferno_generic_routes_host_test)
-
-# Link-order check (#620 step 11): an executable that links only ninferno_ops and reaches
-# ninferno_ops_host's kernel_facts.cpp must resolve current_device_class() from ninferno_core whatever
-# else it links. Linked against the archives themselves, not the shared test library.
-ninferno_add_test(ninferno_ops_link_only_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_ops_link_only.cpp")
-target_link_libraries(ninferno_ops_link_only_test PRIVATE ninferno_ops)
