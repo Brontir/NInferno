@@ -596,8 +596,27 @@ def removed_includes(tree, files, allow=frozenset(), base=None):
 DIRECTIVE_RX = re.compile(r"[ \t]*#[ \t]*(\w+)(.*)")
 
 
-ZERO_COND = re.compile(r"0[ \t]*(?://.*|/\*.*)?")
-ONE_COND = re.compile(r"[1-9][0-9]*[ \t]*(?://.*|/\*.*)?")
+COND_LITERAL = re.compile(
+    r"(0[xX][0-9A-Fa-f']+|0[bB][01']+|[0-9][0-9']*)(?:[uU](?:ll|LL|[lL])?|(?:ll|LL|[lL])[uU]?)?")
+
+
+def cond_literal(rest):
+    """The value of a condition that is one integer literal (any base, digit separators and suffixes
+    allowed, inside any number of parentheses, a trailing comment ignored), else None."""
+    rest = re.sub(r"[ \t]*(?://.*|/\*.*)$", "", rest).strip()
+    while rest.startswith("(") and rest.endswith(")"):
+        rest = rest[1:-1].strip()
+    m = COND_LITERAL.fullmatch(rest)
+    if not m:
+        return None
+    digits = m.group(1).replace("'", "")
+    if digits.startswith(("0x", "0X")):
+        return int(digits[2:], 16) if len(digits) > 2 else None
+    if digits.startswith(("0b", "0B")):
+        return int(digits[2:], 2) if len(digits) > 2 else None
+    if len(digits) > 1 and digits.startswith("0"):
+        return int(digits, 8) if re.fullmatch(r"[0-7]+", digits) else None
+    return int(digits)
 
 
 def cxx_open_lines(text):
@@ -616,7 +635,8 @@ def cxx_open_lines(text):
         if quote is None and raw is None and not block and not spliced:
             dm = DIRECTIVE_RX.match(line)
             kind, rest = (dm.group(1), dm.group(2).strip()) if dm else ("", "")
-            zero, one = bool(ZERO_COND.fullmatch(rest)), bool(ONE_COND.fullmatch(rest))
+            value = cond_literal(rest)
+            zero, one = value == 0, value is not None and value != 0
             if if0:  # the text of a `#if 0` group is not code: prose with an apostrophe is fine there
                 if kind in ("if", "ifdef", "ifndef"):
                     if0 += 1
@@ -647,6 +667,10 @@ def cxx_open_lines(text):
                 chains[-1] = kind == "else" or one
             if kind in ("error", "warning"):  # the text is a message
                 continue
+            if kind in ("include", "include_next", "import") and rest.startswith("<"):
+                # A header name <...> is one token: an apostrophe in it opens no literal.
+                close = line.find(">", line.find("<"))
+                i = close + 1 if close >= 0 else n
         if spliced:
             spliced, i = line.endswith("\\"), n
         while i < n:

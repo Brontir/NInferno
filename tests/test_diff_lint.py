@@ -725,6 +725,28 @@ class MaskAndLiteralFixes(unittest.TestCase):
         self.assertEqual(lits("t.cpp", "#if X\nint a;\n#else\nconst char* s = \"oops\n;\n#endif\n"), [4])
         self.assertEqual(lits("t.cpp", "#ifdef A\n#if 1\nint a;\n#else\nz'\n#endif\n#else\nconst char* s = \"oops\n;\n#endif\n"), [8])
 
+    def test_other_spellings_of_a_literal_zero_or_one(self):
+        # `(0)`, `00`, `0L`, `0x0`, `0'0` are a zero the compiler drops; `(1)`, `1u`, `0x1` are a one.
+        for zero in ("(0)", "00", "0L", "0ull", "0x0", "0b0", "0'0", "((0))", "0 /* off */"):
+            with self.subTest(zero=zero):
+                self.assertEqual(lits("t.cpp", f"#if {zero}\nit's\n#endif\nint b;\n"), [])
+                self.assertEqual(lits("t.cpp", f"#if X\n#elif {zero}\nit's\n#endif\n"), [])
+        for one in ("(1)", "1u", "0x1", "2L", "010"):
+            with self.subTest(one=one):
+                self.assertEqual(lits("t.cpp", f"#if {one}\nint a;\n#else\ndon't\n#endif\n"), [])
+                self.assertEqual(lits("t.cpp", f"#if {one}\nconst char* s = \"oops\n;\n#endif\n"), [2])
+        # not one literal: evaluated by nobody here, so every branch stays checked
+        for other in ("0 || X", "(0) + X", "08", "0x", "1.0", "(0"):
+            with self.subTest(other=other):
+                self.assertEqual(lits("t.cpp", f"#if {other}\nconst char* s = \"oops\n;\n#endif\n"), [2])
+
+    def test_an_angle_header_name_opens_no_literal(self):
+        self.assertEqual(lits("t.cpp", "#include <don't.h>\nint a;\n"), [])
+        self.assertEqual(lits("t.cpp", "#  include_next <it's/a.h> // ok\nint a;\n"), [])
+        # after the header name the line is code again, and a quoted name is still a literal
+        self.assertEqual(lits("t.cpp", "#include <a.h> /* c\n*/ const char* s = \"oops\n;\n"), [2])
+        self.assertEqual(lits("t.cpp", "#include \"don't.h\nint a;\n"), [1])
+
 
 class QuotedPaths(unittest.TestCase):
     BROKEN = 'const char* s = "oops'
