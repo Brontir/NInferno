@@ -171,9 +171,11 @@ void check_names(const std::vector<Route>& routes, const std::string& board) {
     std::set<std::string> seen;
     for (const Route r : routes) {
         const std::string name = generic::route_name(r);
-        if (!seen.insert(name).second) fail(board + " " + label(r) + ": the name '" + name + "' twice");
+        if (!seen.insert(name).second)
+            fail(board + " " + label(r) + ": the name '" + name + "' twice");
         const auto back = generic::parse_route(name);
-        if (!back || !(*back == r)) fail(board + " " + label(r) + ": '" + name + "' does not parse back");
+        if (!back || !(*back == r))
+            fail(board + " " + label(r) + ": '" + name + "' does not parse back");
     }
 }
 
@@ -412,7 +414,7 @@ void check_filter_weighted(const std::vector<Route>& routes, const std::string& 
         for (const Route r : routes) {
             const std::string where = board + " " + generic::qtype_name(f.qtype) + " " + label(r);
             const bool invariant    = generic::route_is_token_invariant(r);
-            const bool want = invariant && !(tiled && r.family != Family::TiledMma);
+            const bool want         = invariant && !(tiled && r.family != Family::TiledMma);
             if (generic::profile_admits(r, prefill_wide, &w) != want) {
                 fail(where + ": the prefill band's filter with a weight is not (invariant, and "
                              "tiled where the codec has a tiled kernel)");
@@ -428,7 +430,8 @@ void check_filter_weighted(const std::vector<Route>& routes, const std::string& 
             if (invariant && !tiled && r.family != Family::TiledMma) plain_kept += want ? 1 : 0;
         }
     }
-    if (tiled_refused == 0) fail(board + ": no tiled-codec format refused an invariant register route");
+    if (tiled_refused == 0)
+        fail(board + ": no tiled-codec format refused an invariant register route");
     if (tiled_kept == 0) fail(board + ": no tiled-codec format kept its tiled route");
     if (plain_kept == 0) fail(board + ": no format without a tiled kernel kept an invariant route");
 }
