@@ -15,9 +15,7 @@ bool device_supported() {
         // takes their verify widths, as on Volta.
         const auto& d = device_class();
         return d.compute_capability() >= 75 && !d.features.mma_slow;
-    } catch (const std::exception&) {
-        return false;
-    }
+    } catch (const std::exception&) { return false; }
 }
 
 bool vec_supported(Type type) {
@@ -39,8 +37,10 @@ bool vec_supported(Type type) {
     case Type::Q5_0:
     case Type::Q5_1:
     case Type::IQ4_NL:
-    case Type::IQ1_M: return true;
-    default: return false;
+    case Type::IQ1_M:
+        return true;
+    default:
+        return false;
     }
 }
 

@@ -1,6 +1,6 @@
-// The MoE plan names and schedules (#620): the host part of moe.cpp (no CUDA), which the route table
-// parses a band's plan with and the selector's golden reads without a device. The launch and the
-// plan's choice stay in moe.cpp.
+// The MoE plan names and schedules (#620): the host part of moe.cpp (no CUDA), which the route
+// table parses a band's plan with and the selector's golden reads without a device. The launch and
+// the plan's choice stay in moe.cpp.
 #include "ninferno/ops/moe.h"
 
 #include "ops/moe/moe_internal.h"
@@ -70,7 +70,8 @@ bool r8_expert_format(QType format) {
     // NVFP4 experts decode on R8 only without the native NVFP4 kernels (moe_r8_ggml4.cu).
     case QType::NVFP4:
         return !kNativeNvfp4;
-    default: return false;
+    default:
+        return false;
     }
 }
 
@@ -132,7 +133,7 @@ std::optional<StageRoute> parse_stage(std::string_view name) {
 std::optional<MoePlan> parse_plan(std::string_view name, std::int32_t hidden) {
     // "|a16": a band measured on A16 (register-MMA stages only).
     constexpr std::string_view kA16 = "|a16";
-    const bool a16 = name.size() > kA16.size() && name.ends_with(kA16);
+    const bool a16                  = name.size() > kA16.size() && name.ends_with(kA16);
     if (a16) { name.remove_suffix(kA16.size()); }
     const auto bar = name.find('|');
     if (bar == std::string_view::npos) { return std::nullopt; }

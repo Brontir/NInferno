@@ -156,6 +156,7 @@ struct VecOut {
 [[nodiscard]] bool vec_supported(Type type);
 // The planar activation of `columns` tokens of K values (K whole 256-value blocks).
 [[nodiscard]] std::size_t vec_activation_bytes(int k, int columns);
+
 // Where the planar activation's scales start: its codes, rounded up to 16 bytes.
 inline std::size_t vec_scales_offset(int k, int columns) {
     return (std::size_t(k) * columns + 15) / 16 * 16;
