@@ -476,22 +476,37 @@ DeviceClass rebuilt(const Row& row, const std::vector<GpuFactsRow>& table, int s
     return d;
 }
 
+// One variant of the board and its matched control: the control is built with the same `slot` (so
+// the same reported memory size and cache key) and no edit, so that the variant and the control
+// differ in the field under test alone. A variant compared with the stock board only also differs
+// in the reported memory size, which `rebuilt` changes for the cache: a route that read a ratio of
+// the edited fact and the reported memory would not move.
+struct Variant {
+    std::string what;
+    DeviceClass board;
+    DeviceClass control;
+};
+
 // The same board with fields the projection selector does not read changed. (Segment, TDP and the
 // PCIe generation are facts a B2 decision may read, machine_facts.h; the selector reads none of
 // them, and this is what the property pins: each has a variant of its own, so a failure names it.)
-std::vector<std::pair<std::string, DeviceClass>> relabelled(const Row& row) {
+std::vector<Variant> relabelled(const Row& row) {
     const std::span<const GpuFactsRow> embedded = gpu_facts_table();
     const std::vector<GpuFactsRow> stock(embedded.begin(), embedded.end());
-    std::vector<std::pair<std::string, DeviceClass>> out;
-    out.emplace_back("reported memory size", rebuilt(row, stock, 1, [](DeviceClass&) {}));
-    out.emplace_back("names",
-                     rebuilt(row, stock, 2, [](DeviceClass& d) { d.name = "another name"; }));
-    out.emplace_back("ordinal, PCI address, UUID", rebuilt(row, stock, 3, [](DeviceClass& d) {
-                         d.device              = 3;
-                         d.identity.pci_domain = 1;
-                         d.identity.pci_bus    = 0x41;
-                         d.identity.uuid.fill(0xAB);
-                     }));
+    std::vector<Variant> out;
+    const auto add = [&](const char* what, const std::vector<GpuFactsRow>& table, int slot,
+                         const std::function<void(DeviceClass&)>& edit) {
+        out.push_back({what, rebuilt(row, table, slot, edit),
+                       rebuilt(row, stock, slot, [](DeviceClass&) {})});
+    };
+    add("reported memory size", stock, 1, [](DeviceClass&) {});
+    add("names", stock, 2, [](DeviceClass& d) { d.name = "another name"; });
+    add("ordinal, PCI address, UUID", stock, 3, [](DeviceClass& d) {
+        d.device              = 3;
+        d.identity.pci_domain = 1;
+        d.identity.pci_bus    = 0x41;
+        d.identity.uuid.fill(0xAB);
+    });
     // The table row's fields, through the loader's own derivation of the facts.
     const auto edited_row = [&](const std::function<void(GpuFactsRow&)>& edit) {
         std::vector<GpuFactsRow> table = stock;
@@ -500,30 +515,23 @@ std::vector<std::pair<std::string, DeviceClass>> relabelled(const Row& row) {
         }
         return table;
     };
-    out.emplace_back("the table row's name, note, sources",
-                     rebuilt(row, edited_row([](GpuFactsRow& r) {
-                                 r.name    = "renamed in the table";
-                                 r.note    = "a different note";
-                                 r.sources = {"https://example.invalid/other"};
-                             }),
-                             4, [](DeviceClass&) {}));
-    out.emplace_back("the table row's tdp",
-                     rebuilt(row, edited_row([](GpuFactsRow& r) { r.tdp_w = r.tdp_w * 2 + 1; }), 5,
-                             [](DeviceClass&) {}));
-    out.emplace_back("the table row's nominal vram", rebuilt(row, edited_row([](GpuFactsRow& r) {
-                                                                 r.vram_gib = r.vram_gib * 2 + 1;
-                                                             }),
-                                                             6, [](DeviceClass&) {}));
-    out.emplace_back(
-        "the table row's pcie generation",
-        rebuilt(row, edited_row([](GpuFactsRow& r) { r.pcie_gen = r.pcie_gen == 5 ? 3 : 5; }), 7,
-                [](DeviceClass&) {}));
-    out.emplace_back("the table row's segment",
-                     rebuilt(row, edited_row([](GpuFactsRow& r) {
-                                 r.segment = r.segment == Segment::Datacenter ? Segment::GeForce
-                                                                              : Segment::Datacenter;
-                             }),
-                             8, [](DeviceClass&) {}));
+    const auto none = [](DeviceClass&) {};
+    add("the table row's name, note, sources", edited_row([](GpuFactsRow& r) {
+            r.name    = "renamed in the table";
+            r.note    = "a different note";
+            r.sources = {"https://example.invalid/other"};
+        }),
+        4, none);
+    add("the table row's tdp", edited_row([](GpuFactsRow& r) { r.tdp_w = r.tdp_w * 2 + 1; }), 5,
+        none);
+    add("the table row's nominal vram",
+        edited_row([](GpuFactsRow& r) { r.vram_gib = r.vram_gib * 2 + 1; }), 6, none);
+    add("the table row's pcie generation",
+        edited_row([](GpuFactsRow& r) { r.pcie_gen = r.pcie_gen == 5 ? 3 : 5; }), 7, none);
+    add("the table row's segment", edited_row([](GpuFactsRow& r) {
+            r.segment = r.segment == Segment::Datacenter ? Segment::GeForce : Segment::Datacenter;
+        }),
+        8, none);
     return out;
 }
 
@@ -537,14 +545,22 @@ void property_non_fact_fields(const std::vector<Row>& rows) {
             note("vacuous", "no route chosen", row.name,
                  row.name + ": every decision is a refusal");
         }
-        for (const auto& [what, variant] : relabelled(row)) {
-            ++cases_checked;
-            routes_compared += routes;
-            const std::string changed = decisions_of(variant);
-            if (changed == stock) { continue; }
-            note("P3 unread fields", what, row.name,
-                 row.name + " (" + what + "): " + std::to_string(differing_lines(stock, changed)) +
-                     " decisions move, first " + first_difference(stock, changed));
+        for (const Variant& v : relabelled(row)) {
+            // Against the stock board, and against the matched control (same cache slot, no edit).
+            const std::string control                                  = decisions_of(v.control);
+            const std::string changed                                  = decisions_of(v.board);
+            const std::pair<const char*, const std::string*> against[] = {
+                {"", &stock}, {" against its matched control", &control}};
+            for (const auto& [suffix, reference] : against) {
+                ++cases_checked;
+                routes_compared += routes;
+                if (changed == *reference) { continue; }
+                const std::string what = v.what + suffix;
+                note("P3 unread fields", what, row.name,
+                     row.name + " (" + what +
+                         "): " + std::to_string(differing_lines(*reference, changed)) +
+                         " decisions move, first " + first_difference(*reference, changed));
+            }
         }
     }
     // SKU twins: boards whose rows differ in nothing but the PCI id and the labels.
