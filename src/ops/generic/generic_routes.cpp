@@ -8,6 +8,7 @@
 #include "ops/common/native_nvfp4.h"
 #include "ops/generic/format_traits.h"
 #include "ops/generic/generic_i8_schedules.h"
+#include "ops/generic/generic_schedule_tables.h"
 #include "ops/generic/generic_schedules.h"
 #include "ops/generic/generic_variant_rules.h"
 #include "ops/generic/route_cost_constants.h"
