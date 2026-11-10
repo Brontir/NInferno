@@ -42,6 +42,7 @@
 #include <cuda_fp8.h>
 
 #include <cstdint>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 
@@ -2197,6 +2198,44 @@ struct StageActsOf : std::false_type {};
 template <class D>
 struct StageActsOf<D, std::void_t<decltype(D::kStageActs)>> : std::bool_constant<D::kStageActs> {};
 
+// The decoder constants the shared-memory geometry reads are rows of geometry::kDecoderGeometry
+// (rmma_geometry.h, which the host test checks against the kernel-facts snapshots): each row is
+// pinned to its decoder here.
+template <class D>
+constexpr int TableWordsOf() {
+    if constexpr (TableOf<D>::value) {
+        return D::kTableWords;
+    } else {
+        return 0;
+    }
+}
+
+template <class D>
+constexpr bool decoder_matches_geometry(std::string_view name) {
+    const geometry::DecoderGeometry g = geometry::decoder_geometry(name);
+    return g.name == name && g.run == D::kRun && g.table_words == TableWordsOf<D>() &&
+           g.stage_acts == StageActsOf<D>::value && g.group_tail == GroupTailOf<D>::value;
+}
+
+static_assert(decoder_matches_geometry<GgmlIq1MDecoder>("GgmlIq1MDecoder"));
+static_assert(decoder_matches_geometry<GgmlIq1SDecoder>("GgmlIq1SDecoder"));
+static_assert(decoder_matches_geometry<GgmlIq2SDecoder>("GgmlIq2SDecoder"));
+static_assert(decoder_matches_geometry<GgmlIq2XsDecoder>("GgmlIq2XsDecoder"));
+static_assert(decoder_matches_geometry<GgmlIq2XxsDecoder>("GgmlIq2XxsDecoder"));
+static_assert(decoder_matches_geometry<GgmlIq3SDecoder>("GgmlIq3SDecoder"));
+static_assert(decoder_matches_geometry<GgmlIq3XxsDecoder>("GgmlIq3XxsDecoder"));
+static_assert(decoder_matches_geometry<GgmlQ3KDecoder>("GgmlQ3KDecoder"));
+static_assert(decoder_matches_geometry<GgmlQ6KDecoder>("GgmlQ6KDecoder"));
+static_assert(decoder_matches_geometry<GgmlQ6KWideDecoder>("GgmlQ6KWideDecoder"));
+static_assert(decoder_matches_geometry<GgmlQ45KQuadDecoder<4>>("GgmlQ45KQuadDecoder<4>"));
+static_assert(decoder_matches_geometry<GgmlQ45KQuadDecoder<5>>("GgmlQ45KQuadDecoder<5>"));
+static_assert(decoder_matches_geometry<Ggml32Decoder<Ggml32::Q4_0>>("Ggml32Decoder<0>"));
+static_assert(decoder_matches_geometry<Ggml32Decoder<Ggml32::Q4_1>>("Ggml32Decoder<1>"));
+static_assert(decoder_matches_geometry<Ggml32Decoder<Ggml32::Q5_0>>("Ggml32Decoder<2>"));
+static_assert(decoder_matches_geometry<Ggml32Decoder<Ggml32::Q5_1>>("Ggml32Decoder<3>"));
+static_assert(decoder_matches_geometry<Ggml32Decoder<Ggml32::IQ4_NL>>("Ggml32Decoder<4>"));
+static_assert(decoder_matches_geometry<Mxfp4SpreadDecoder>("Mxfp4SpreadDecoder"));
+
 // A decoder with finish() (kFinish: the wide Q6_K) loads its runs in a raw form that finish()
 // completes with the whole warp once the loads have landed: mma_step finishes the step's runs in
 // place after issuing the step's activation loads (finished in the fetch, the swap waited for the
@@ -3250,8 +3289,9 @@ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Late
     // add, one row set and half the weight per activation, lost 5-20 % with it (the shared memory
     // comes out of L1, which the quad's weight words hit): they load in the step.
     constexpr bool kRaw      = Latency && UnpackOf<Decoder>::value;
-    constexpr bool kActStage = Latency && StageActsOf<Decoder>::value && kSwiGlu && NT == 1 &&
-                               Schedule::kWarpsM * WK <= 8 && !GroupTailOf<Decoder>::value;
+    constexpr bool kActStage =
+        geometry::rmma_stages_activations(Latency, StageActsOf<Decoder>::value, kSwiGlu, NT,
+                                          Schedule::kWarpsM * WK, GroupTailOf<Decoder>::value);
 #if NINFERNO_FMA_MMA || !NINFERNO_HAS_CP_ASYNC
     constexpr bool kStaged = false; // no cp.async (sm_75 copies synchronously, memory.cuh)
 #else

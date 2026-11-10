@@ -15,9 +15,15 @@
 //                 build with the NVFP4 kernels (the cluster path does not exist below sm_120a);
 //   act_stage     a K-quant SwiGLU step of one token tile copies its activations ahead with
 //                 cp.async: 2 slots x WM x WK warps x J x 32 lanes x 8 bytes;
-//   the decoder's own table (the IQ codebooks), a constant of the decoder (decoder_table_bytes).
+//   the decoder's own table (the IQ codebooks): kTableWords words, a constant of the decoder.
+//
+// The decoder constants the geometry reads (kRun, kTableWords, kStageActs, kGroupTail) are rows of
+// kDecoderGeometry, keyed by the kernel-facts spelling of the decoder; generic_gemm.cuh static_
+// asserts every row against its decoder, and the kernel's activation staging is decided by
+// rmma_stages_activations below, one predicate for the kernel and the host.
 
 #include <cstddef>
+#include <string_view>
 
 // A kernel's static_assert calls these from device code.
 #ifdef __CUDACC__
@@ -74,4 +80,67 @@ rmma_static_shared_bytes(int warps_m, int warps_k, int sets, int m_tiles, int n_
            (stage_j > 0 ? rmma_act_stage_bytes(warps_m, warps_k, stage_j) : 0) + decoder_table;
 }
 
+// ---- The decoders' constants, as host-visible rows (static_asserted by generic_gemm.cuh).
+
+struct DecoderGeometry {
+    std::string_view name; // the kernel-facts spelling (kernel_facts.h decoder_name)
+    int run;               // kRun: values a lane reads a step; J = run / 4 MMAs a K step
+    int table_words;       // kTableWords: the codebook staged in shared memory (0: none)
+    bool stage_acts;       // kStageActs: a SwiGLU step copies its activations ahead (cp.async)
+    bool group_tail;       // kGroupTail: K of whole scale groups (never stages)
+};
+
+// The decoders with a table, staging or a group tail; every other decoder has none of the three.
+inline constexpr DecoderGeometry kDecoderGeometry[] = {
+    {"GgmlIq1MDecoder", 32, 2048, false, false},    {"GgmlIq1SDecoder", 32, 2048, false, false},
+    {"GgmlIq2SDecoder", 32, 2048, false, false},    {"GgmlIq2XsDecoder", 32, 1024, false, false},
+    {"GgmlIq2XxsDecoder", 32, 512, false, false},   {"GgmlIq3SDecoder", 32, 512, false, false},
+    {"GgmlIq3XxsDecoder", 32, 256, false, false},   {"GgmlQ3KDecoder", 32, 0, true, false},
+    {"GgmlQ6KDecoder", 32, 0, true, false},         {"GgmlQ6KWideDecoder", 32, 0, true, false},
+    {"GgmlQ45KQuadDecoder<4>", 32, 0, true, false}, {"GgmlQ45KQuadDecoder<5>", 32, 0, true, false},
+    {"Ggml32Decoder<0>", 32, 0, false, true},       {"Ggml32Decoder<1>", 32, 0, false, true},
+    {"Ggml32Decoder<2>", 32, 0, false, true},       {"Ggml32Decoder<3>", 32, 0, false, true},
+    {"Ggml32Decoder<4>", 32, 0, false, true},       {"Mxfp4SpreadDecoder", 32, 0, false, true},
+};
+
+constexpr DecoderGeometry decoder_geometry(std::string_view name) noexcept {
+    for (const DecoderGeometry& row : kDecoderGeometry) {
+        if (row.name == name) return row;
+    }
+    return {name, 0, 0, false, false};
+}
+
+// The activation staging of a K-quant SwiGLU step (rmma_kernel's kActStage): the decoder stages,
+// the kernel is the latency variant of a SwiGLU epilogue over one column tile, at most eight warps.
+[[nodiscard]] NINFERNO_GEOMETRY_HD constexpr bool
+rmma_stages_activations(bool latency, bool decoder_stages, bool swiglu, int n_tiles, int warps,
+                        bool group_tail) noexcept {
+    return latency && decoder_stages && swiglu && n_tiles == 1 && warps <= 8 && !group_tail;
+}
+
+// What the build carries: cp.async is sm_80 and up (ops/common/memory.cuh NINFERNO_HAS_CP_ASYNC;
+// the sm_70 and sm_75 builds copy synchronously, so nothing is staged), the NVFP4 kernels and the
+// cluster hand-over with them are the full build's (CMakeLists.txt NINFERNO_FULL_CUDA_ARCHS, which
+// the geometry test reads): the caller passes `with_nvfp4` from that list.
+[[nodiscard]] constexpr bool build_has_cp_async(int compute_capability) noexcept {
+    return compute_capability >= 80;
+}
+
+// The static shared memory of one register-MMA instance of the named decoder on a build of
+// `compute_capability` (70, 75, 80, ...): the sum of the pieces above.
+[[nodiscard]] constexpr std::size_t
+rmma_decoder_static_shared_bytes(std::string_view decoder, int warps_m, int warps_k, int m_tiles,
+                                 int n_tiles, int cluster, bool swiglu, bool latency,
+                                 int compute_capability, bool with_nvfp4) noexcept {
+    const DecoderGeometry g = decoder_geometry(decoder);
+    const bool staged       = build_has_cp_async(compute_capability) &&
+                        rmma_stages_activations(latency, g.stage_acts, swiglu, n_tiles,
+                                                warps_m * warps_k, g.group_tail);
+    return rmma_static_shared_bytes(warps_m, warps_k, rmma_sets(swiglu), m_tiles, n_tiles, cluster,
+                                    with_nvfp4, staged ? g.run / 4 : 0,
+                                    static_cast<std::size_t>(g.table_words) * sizeof(unsigned));
+}
+
 } // namespace ninferno::ops::detail::generic::geometry
+
+#undef NINFERNO_GEOMETRY_HD
