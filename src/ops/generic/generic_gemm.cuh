@@ -1204,7 +1204,6 @@ __device__ __forceinline__ unsigned pick_bytes(unsigned w0, unsigned w1, unsigne
 // four blocks, each one scale group: MMA j is block j / 2, nibble j % 2. Q4_0 w = d*(q - 8),
 // Q5_0 w = d*(q - 16), IQ4_NL w = d*kvalues_iq4nl[q]; Q4_1 / Q5_1 w = d*q + m, the min term.
 enum class Ggml32 { Q4_0, Q4_1, Q5_0, Q5_1, IQ4_NL };
-
 template <Ggml32 F>
 struct Ggml32Decoder {
     static constexpr bool kF16       = kF16Operands && F != Ggml32::IQ4_NL;
