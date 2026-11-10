@@ -7,6 +7,17 @@
 // slice's own shape, packed alone: the same format, rows and K. The pure query agrees: a call
 // described as a slice of its parent (route_query, describe_call with parent_rows) answers as
 // the own shape at every width, the widths and band the cost model does not price included.
+//
+// Complementary to the whole-weight identity in test_route_traffic.cpp: this test compares a slice
+// with its own shape through the same bytes_per_weight, so a factor applied to both sides alike
+// (dropping the SwiGLU `* sets`, flooring the stored rows at 1 instead of at the call's rows)
+// passes here and only that identity catches it; a revert at any one pricing site (a8_candidates,
+// price_routes, route_traffic, describe_resolved) is caught here.
+//
+// Without a GPU ggml's matrix kernel cannot read the device's properties for its column tiles, so
+// the pairs that choose between MMQ and the register MMA throw on both sides and are counted, not
+// compared (113 on a sm_89 build); with a device every pair is compared.
+#include "ops/op_tester.h"
 #include "ops/quantized_weight.h"
 
 #include "core/device_class.h"
@@ -223,9 +234,17 @@ int main() {
             }
         }
     }
+    const bool device = !cuda_unavailable();
+    check(moved == 0, std::to_string(moved) +
+                          " selections where the slice takes another route than its own shape");
+    // With a device every pair answers; without one the MMQ-or-register-MMA pairs need it.
+    if (device) {
+        check(not_compared == 0, std::to_string(not_compared) + " pairs threw with a device");
+    }
     std::cout << "slice price: " << checks << " checks, " << failures << " failed, " << moved
               << " selections where the slice takes another route than its own shape, "
-              << not_compared << " pairs not compared (both threw: no device here)\n";
+              << not_compared << " pairs not compared"
+              << (device ? "" : " (no device: the MMQ-or-register-MMA pairs need one)") << '\n';
     if (checks == 0) {
         std::cerr << "FAIL: nothing checked\n";
         return 1;

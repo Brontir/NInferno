@@ -106,7 +106,10 @@ int main() {
 
     // A whole weight (Weight::n the call's rows, twice them under SwiGLU) or one of no stored rows
     // keeps payload / (n K) to the bit, so no whole-weight price moves; a slice of a fused parent
-    // takes its rows' share.
+    // takes its rows' share. Complementary to test_slice_price.cpp, which compares a slice with its
+    // own shape through this same helper and so cannot see a factor wrong on both sides (dropping
+    // the SwiGLU `* sets`, flooring the stored rows at 1): only this identity catches those, while
+    // the slice test catches a revert at any one pricing site.
     for (const auto epilogue : {g::Epilogue::Store, g::Epilogue::SwiGlu}) {
         const std::int32_t sets = epilogue == g::Epilogue::SwiGlu ? 2 : 1;
         for (const auto& [n, k] :
