@@ -828,8 +828,8 @@ llama.cpp-style base URLs.
   rule. gpt-oss harmony has no opener token: its call is a message of its own, so the request
   carries a constraint that closes only the call header positions (`<|channel|>commentary`, a
   `to` recipient after `<|start|>assistant`, `<|channel|>analysis` or `<|channel|>final`) and
-  leaves the analysis and the answer free; a request with its own constraint, or with
-  `ignore_eos`, keeps the cut alone. Atem and Llama 3 JSON are not steered. A call any syntax
+  leaves the analysis and the answer free; a request with its own constraint, with
+  `ignore_eos`, or continuing an assistant message keeps the cut alone. Atem and Llama 3 JSON are not steered. A call any syntax
   writes anyway is cut out of the answer, as is one written as plain text (a Qwen model
   kept from `<tool_call>` can still write a bare `<function=...>`). A bare `{"name": "...",
   "arguments": ...}` object naming a declared tool (Hermes JSON) or Gemma 4's `call:...` is cut

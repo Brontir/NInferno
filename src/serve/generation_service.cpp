@@ -1116,9 +1116,8 @@ GenerationOutcome GenerationService::run(PreparedRequest& prepared, const Stream
     if (result.constraint.violated && prepared.steer_constraint) {
         // The header steer is the server's, not the client's: the output stands, and a call the
         // model wrote past it is cut as without the steer.
-        std::fprintf(stderr, "[serve] tool_choice none steer not enforced: %s
-                             ",
-                             result.constraint.violation.c_str());
+        std::fprintf(stderr, "[serve] tool_choice none steer not enforced: %s\n",
+                     result.constraint.violation.c_str());
     } else if (result.constraint.violated) {
         // Never present unenforced output as conforming.
         ApiError error;
