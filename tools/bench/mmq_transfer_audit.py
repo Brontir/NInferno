@@ -65,6 +65,15 @@ def generation_of(rows, cc):
     raise ValueError(f"no generation row for cc {cc}")
 
 
+def ridge_t(gen, sms, clock_mhz, dram_gbps):
+    """A card's ridge T* for the representative Q4_K: the generation's int8 rate (`gen`, a row of
+    generations()) x SMs x boost clock over DRAM, ops/s x bytes per value / (2 x DRAM bytes/s).
+    None where a rate is unknown. The one place the formula lives (load_cards, selection_regret)."""
+    if not (clock_mhz and dram_gbps and sms and gen[4] > 0):
+        return None
+    return gen[4] * sms * clock_mhz * 1e6 * BYTES_PER_VALUE / (2 * dram_gbps * 1e9)
+
+
 def registry_rows(path):
     """{pci id: row} of core/data/gpu_facts.json, the board registry's source (#608)."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -143,10 +152,7 @@ def load_cards(routes_dir, gen_rows, facts):
         if clock is None:
             print(f"warning: {path.name}: no gpu_facts.json row matches board {board}; "
                   "its ridge is unknown", file=sys.stderr)
-        ridge = None
-        if clock and gen[4] > 0:
-            ops = gen[4] * board["sms"] * clock * 1e6
-            ridge = ops * BYTES_PER_VALUE / (2 * board["dram_gbps"] * 1e9)
+        ridge = ridge_t(gen, board["sms"], clock, board["dram_gbps"])
         entries = {(e["format"], e["compute"], e.get("epilogue"), e["n"], e["k"]): e
                    for e in doc["entries"]}
         cards[path.stem] = {"name": doc["gpu"].get("name", path.stem), "board": board,

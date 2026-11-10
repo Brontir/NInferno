@@ -64,7 +64,7 @@ int check() {
     bool has_table       = false;
     for (const auto& t : generic::kR8DecodeTables) { has_table = has_table || t.gpu == id; }
     try {
-        const bool present = generic::r8_decode_table() != nullptr;
+        const bool present = generic::r8_decode_table().table != nullptr;
         if (has_table && !present) {
             std::cerr << "r8_decode_table is null on " << id << ", which has a measured table\n";
             ++failures;
