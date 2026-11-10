@@ -512,7 +512,10 @@ void check_incomplete_gate() {
                 if (e.kind == generic::Evidence::Kind::Measured || e.donor.empty()) {
                     fail(where + ": unknown L2 printed as '" + generic::evidence_text(e) + "'");
                 }
-            } else if (e.kind != generic::Evidence::Kind::Measured || !e.donor.empty()) {
+            } else if (e.kind == generic::Evidence::Kind::Transferred ||
+                       (e.kind == generic::Evidence::Kind::Measured) != e.donor.empty()) {
+                // The board's own facts: measured (no donor) where it is a measured board, carried
+                // (a donor) where a measured board within reach answers.
                 fail(where + ": the board's own facts printed as '" + generic::evidence_text(e) +
                      "'");
             }
