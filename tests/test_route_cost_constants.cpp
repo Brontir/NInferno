@@ -128,17 +128,12 @@ int main(int argc, char** argv) {
             ++fitted;
             if (c.holdout.kind == ninferno::HoldoutKind::Unset) {
                 std::fprintf(stderr,
-                             "%.*s: Fitted with no Holdout (forgotten, not declared none)
-                             ",
-                             static_cast<int>(c.name.size()),
-                             c.name.data());
+                             "%.*s: Fitted with no Holdout (forgotten, not declared none)\n",
+                             static_cast<int>(c.name.size()), c.name.data());
                 ++failures;
             } else if (!c.holdout.complete()) {
-                std::fprintf(stderr,
-                             "%.*s: its Holdout leaves a required field empty
-                             ",
-                             static_cast<int>(c.name.size()),
-                             c.name.data());
+                std::fprintf(stderr, "%.*s: its Holdout leaves a required field empty\n",
+                             static_cast<int>(c.name.size()), c.name.data());
                 ++failures;
             }
         }
@@ -150,6 +145,12 @@ int main(int argc, char** argv) {
                 std::printf("%-8s %-32.*s", provenance_name(c.from),
                             static_cast<int>(c.name.size()), c.name.data());
                 for (const double v : c.values) std::printf(" %g", v);
+                if (c.from == rc::Provenance::Fitted) {
+                    std::printf("  [holdout %s]",
+                                c.holdout.kind == ninferno::HoldoutKind::Checked ? "checked"
+                                : c.holdout.kind == ninferno::HoldoutKind::None  ? "none"
+                                                                                 : "UNSET");
+                }
                 std::printf("\n");
             }
         }
