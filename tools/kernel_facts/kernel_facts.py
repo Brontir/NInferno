@@ -232,6 +232,26 @@ def extract_resources(binary, cuda_bin, dump=None):
 
 
 SASS_BATCH = 256
+# The longest --function list handed to cuobjdump: a Windows command line holds 32 767 characters
+# in all, and 256 mangled rmma names run to 38 KB.
+SASS_BATCH_CHARS = 24000
+
+
+def name_batches(names, batch=SASS_BATCH, max_chars=SASS_BATCH_CHARS):
+    """`names` cut into lists of at most `batch` names whose comma-joined length stays within
+    `max_chars` (a single longer name is a batch of its own); batch 0: one batch of everything."""
+    if batch <= 0:
+        return [list(names)]
+    out, current, length = [], [], 0
+    for name in names:
+        if current and (len(current) >= batch or length + 1 + len(name) > max_chars):
+            out.append(current)
+            current, length = [], 0
+        current.append(name)
+        length += len(name) + (1 if length else 0)
+    if current:
+        out.append(current)
+    return out
 
 
 def sass_lines(binary, cuda_bin, arch, sass_dump=None, names=None, batch=SASS_BATCH):
@@ -246,8 +266,7 @@ def sass_lines(binary, cuda_bin, arch, sass_dump=None, names=None, batch=SASS_BA
             yield from f
         return
     tool = cuda_tool("cuobjdump", cuda_bin)
-    batches = [None] if not names or batch <= 0 else \
-        [names[i:i + batch] for i in range(0, len(names), batch)]
+    batches = [None] if not names or batch <= 0 else name_batches(names, batch)
     for chunk in batches:
         command = [tool, "-sass", "-arch", arch]
         if chunk is not None:
@@ -256,8 +275,12 @@ def sass_lines(binary, cuda_bin, arch, sass_dump=None, names=None, batch=SASS_BA
         # stderr goes to a file, not a pipe: a pipe nobody drains while the dump streams would
         # stall cuobjdump once its warnings (a function absent from one image) fill it.
         with tempfile.TemporaryFile(mode="w+", errors="replace") as errors:
-            proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=errors, text=True,
-                                    errors="replace", bufsize=1 << 20)
+            try:
+                proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=errors, text=True,
+                                        errors="replace", bufsize=1 << 20)
+            except OSError as error:
+                fail(f"cannot run cuobjdump ({error}); the command line was "
+                     f"{len(' '.join(command))} characters")
             try:
                 yield from proc.stdout
             finally:
@@ -389,25 +412,32 @@ def parse_snapshot(text):
     """(header, {key: (registers, stack, local, shared, LoopCounts or None)}) of a snapshot; a
     schema 1 file (resources only) parses with None for the loop."""
     header, rows = {}, {}
-    sass_fields = len(sass_counts.COLUMNS)
-    for line in text.splitlines():
-        if not line or line.startswith("#"):
-            continue
+    lines = [l for l in text.splitlines() if l and not l.startswith("#")]
+    for line in lines:
         fields = line.split()
-        if fields[0] == FAMILY:
-            if len(fields) not in (14, 14 + sass_fields):
-                fail(f"malformed row: {line}")
-            try:
-                key = (fields[1], *(int(v) for v in fields[2:10]))
-                counts = sass_counts.LoopCounts.from_row(fields[14:]) if len(fields) > 14 else None
-                rows[key] = (*(int(v) for v in fields[10:14]), counts)
-            except ValueError as error:
-                fail(f"malformed row ({error}): {line}")
-        else:
+        if fields[0] != FAMILY:
             header[fields[0]] = line[len(fields[0]) + 1:] if len(fields) > 1 else ""
-    for want in ("arch", "nvcc", "kernels"):
+    for want in ("arch", "nvcc", "kernels", "columns"):
         if want not in header:
             fail(f"snapshot has no '{want}' line")
+    # Every row spells the header's columns: 14 fields in a resources-only file, 14 plus the
+    # loop's in a schema 2 one, never a mixture.
+    columns = header["columns"].split()
+    if columns not in (COLUMNS.split()[:14], COLUMNS.split()):
+        fail(f"unexpected columns: {header['columns']}")
+    width = len(columns)
+    for line in lines:
+        fields = line.split()
+        if fields[0] != FAMILY:
+            continue
+        if len(fields) != width:
+            fail(f"a row of {len(fields)} fields under {width} columns: {line}")
+        try:
+            key = (fields[1], *(int(v) for v in fields[2:10]))
+            counts = sass_counts.LoopCounts.from_row(fields[14:]) if width > 14 else None
+            rows[key] = (*(int(v) for v in fields[10:14]), counts)
+        except ValueError as error:
+            fail(f"malformed row ({error}): {line}")
     if int(header["kernels"]) != len(rows):
         fail(f"snapshot says {header['kernels']} kernels, holds {len(rows)}")
     return header, rows
@@ -449,7 +479,8 @@ def cmd_check(args):
     if not os.path.exists(args.expected):
         print(f"kernel_facts: no snapshot {args.expected} for this build architecture: generate "
               "it with\n  python3 tools/kernel_facts/kernel_facts.py extract --binary "
-              f"{args.binary} --arch <label> --nvcc {args.nvcc or '<version>'} -o {args.expected}")
+              f"{args.binary or args.dump} --arch <label> --nvcc {args.nvcc or '<version>'} "
+              f"-o {args.expected}")
         return 1
     with open(args.expected) as f:
         header, expected = parse_snapshot(f.read())
@@ -494,11 +525,12 @@ def cmd_check(args):
         shown += 1
     if shown > args.show:
         print(f"  ... {shown - args.show} more")
-    print(f"kernel_facts: the sm_{arch} kernels of {args.binary} differ from {args.expected}: "
+    binary = args.binary or args.dump
+    print(f"kernel_facts: the sm_{arch} kernels of {binary} differ from {args.expected}: "
           f"{len(differ)} changed, {len(missing)} missing, {len(extra)} new (nvcc "
           f"{args.nvcc or 'unknown'}, snapshot {header['nvcc']}). A kernel, flag or compiler "
           "change moved them: regenerate the snapshot with\n"
-          f"  python3 tools/kernel_facts/kernel_facts.py extract --binary {args.binary} "
+          f"  python3 tools/kernel_facts/kernel_facts.py extract --binary {binary} "
           f"--arch {arch} --nvcc <version> -o {args.expected}\n"
           "and review the selector goldens that move with it.")
     return 1

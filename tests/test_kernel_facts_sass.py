@@ -182,6 +182,56 @@ class LoopFinder(unittest.TestCase):
         self.assertEqual(c.loops, 2)
         self.assertEqual(c.mma, 6)
 
+    def test_ones_definitions(self):
+        # A guarded move of the constant establishes nothing and clears the register; a write
+        # whose first operand is a predicate (SHFL.IDX PT, R52) still clears it; HFMA2's constant
+        # form counts only with the 1.0 halves; a copy carries it; a redefinition later in the loop
+        # reaches the loop's top through the back edge.
+        def ones(lines):
+            body = body_of(lines)
+            return sorted(body[i][0] for i in sc.ones_mma_indices(body, sc.successors(body)))
+
+        self.assertEqual(ones(KERNEL), [0x190, 0x2c0])
+        guarded = [(o, "@P0 " + t if o == 0x040 else t) for o, t in KERNEL]
+        self.assertEqual(ones(guarded), [])
+        shfl = KERNEL[:11] + [(0x155, "SHFL.IDX PT, R52, R53, 0x1, 0x1f ;")] + KERNEL[11:]
+        self.assertEqual(ones(shfl), [])
+        lop = KERNEL[:11] + [(0x155, "LOP3.LUT P0, R52, R53, 0xf, RZ, 0xc0, !PT ;")] + KERNEL[11:]
+        self.assertEqual(ones(lop), [])
+        hfma = [(o, "HFMA2 R52, -RZ, RZ, 1.5, 1.5 ;" if o == 0x040 else t) for o, t in KERNEL]
+        self.assertEqual(ones(hfma), [])
+        hfma = [(o, "HFMA2 R52, -RZ, RZ, 1.875, 1.875 ;" if o == 0x040 else t) for o, t in KERNEL]
+        self.assertEqual(ones(hfma), [0x190, 0x2c0])
+        copied = [(o, "MOV R60, R52 ;" if o == 0x050 else t) for o, t in KERNEL]
+        copied = [(o, t.replace("R52, R18", "R60, R18")) for o, t in copied]
+        self.assertEqual(ones(copied), [0x190, 0x2c0])
+        # R52 rewritten after the MMAs inside the body: the first MMA of the next iteration reads
+        # it through the back edge, so neither is ones.
+        redefined = KERNEL[:38] + [(0x2d5, "IMAD R52, R52, R53, RZ ;")] + KERNEL[38:]
+        self.assertEqual(ones(redefined), [])
+        self.assertEqual(sc.operand_tokens("R60, R52.reuse, -RZ, 1.5, c[0x0][0x28], [R2.64+0x10]"),
+                         ["R60", "R52", "RZ", "1.5", "c[0x0][0x28]", "[R2.64+0x10]"])
+        self.assertEqual(sc.written_registers("SHFL.IDX", "PT, R4, R5, 0x1, 0x1f"), {"R4"})
+        self.assertEqual(sc.written_registers("ISETP.GE.AND", "P0, PT, R0, R1, PT"), set())
+        self.assertEqual(sc.written_registers("LDG.E.128", "R8, desc[UR8][R2.64]"),
+                         {"R8", "R9", "R10", "R11"})
+
+    def test_irreducible_flow(self):
+        # Two blocks that enter each other's middles (no header dominates the other): no natural
+        # loop, so no K loop; nothing crashes.
+        lines = [
+            (0x000, "ISETP.GE.AND P0, PT, R0, R1, PT ;"),
+            (0x010, "@P0 BRA 0x050 ;"),
+            (0x020, "HMMA.16816.F32.BF16 R36, R8, R16, R36 ;"),
+            (0x030, "ISETP.GE.AND P1, PT, R0, R1, PT ;"),
+            (0x040, "@P1 BRA 0x070 ;"),
+            (0x050, "HMMA.16816.F32.BF16 R40, R8, R18, R40 ;"),
+            (0x060, "@P0 BRA 0x030 ;"),
+            (0x070, "EXIT ;"),
+        ]
+        c = sc.loop_counts(body_of(lines), tiles=1)
+        self.assertEqual((c.loops, c.mma), (0, 0))
+
     def test_classes_and_widths(self):
         self.assertEqual(sc.classify("IMAD.WIDE.U32"), "int")
         self.assertEqual(sc.classify("HADD2.BF16_V2"), "fp")
@@ -214,7 +264,9 @@ class Snapshot(unittest.TestCase):
         self.assertEqual(sum(1 for l in text.splitlines() if not l.startswith("#")), 6 + 1)
 
     def test_schema_one_parses_without_loops(self):
-        text = "arch 89\nnvcc 13.4.92\nkernels 1\nrmma Bf16Decoder 1 4 1 1 1 0 0 0 48 0 0 1536\n"
+        text = ("arch 89\nnvcc 13.4.92\nkernels 1\ncolumns " +
+                " ".join(kernel_facts.COLUMNS.split()[:14]) +
+                "\nrmma Bf16Decoder 1 4 1 1 1 0 0 0 48 0 0 1536\n")
         _, rows = kernel_facts.parse_snapshot(text)
         self.assertEqual(rows[self.KEY], (48, 0, 0, 1536, None))
 
@@ -228,6 +280,32 @@ class Snapshot(unittest.TestCase):
         self.assertEqual(len(lines), 2)
         self.assertIn("without a K loop", lines[0])
         self.assertIn("k_iter differs", lines[1])
+
+    def test_rows_match_the_columns_line(self):
+        text = kernel_facts.render("89", self.rows(), "13.4.92", "-O3", "abc")
+        lines = text.splitlines()
+        row = next(l for l in lines if l.startswith("rmma "))
+        short = text.replace(row, " ".join(row.split()[:14]))
+        with self.assertRaises(SystemExit):
+            kernel_facts.parse_snapshot(short)  # a 14-field row under the loop columns
+        columns = next(l for l in lines if l.startswith("columns "))
+        schema1 = text.replace(columns, " ".join(columns.split()[:15]))
+        with self.assertRaises(SystemExit):
+            kernel_facts.parse_snapshot(schema1)  # a 37-field row under the resource columns
+        with self.assertRaises(SystemExit):
+            kernel_facts.parse_snapshot(text.replace(columns + "\n", ""))  # no columns line
+        _, rows = kernel_facts.parse_snapshot(schema1.replace(row, " ".join(row.split()[:14])))
+        self.assertEqual(rows[self.KEY][4], None)
+
+    def test_name_batches(self):
+        names = [f"_Z{i:04d}" + "x" * 90 for i in range(100)]  # 96 characters each
+        batches = kernel_facts.name_batches(names, batch=256, max_chars=1000)
+        self.assertEqual(sum(len(b) for b in batches), 100)
+        self.assertTrue(all(len(",".join(b)) <= 1000 for b in batches))
+        self.assertEqual(len(batches[0]), 10)  # 10 x 96 + 9 commas = 969
+        self.assertEqual([len(b) for b in kernel_facts.name_batches(names, batch=30)], [30, 30, 30, 10])
+        self.assertEqual(kernel_facts.name_batches(names, batch=0), [names])
+        self.assertEqual(kernel_facts.name_batches(["a" * 50], batch=4, max_chars=10), [["a" * 50]])
 
     def test_key_tiles(self):
         self.assertEqual(kernel_facts.key_tiles(("D", 4, 1, 2, 4, 1, 0, 0, 0)), 8)
@@ -288,7 +366,8 @@ class Check(unittest.TestCase):
         self.assertEqual(self.run_check(self.expected_text(bump), nvcc="13.0.1"), 77)
         self.assertEqual(self.run_check(self.expected_text(bump), extra=["--no-sass"]), 0)
         text = self.expected_text()
-        resources_only = [" ".join(l.split()[:14]) if l.startswith("rmma ") else l
+        resources_only = [" ".join(l.split()[:14]) if l.startswith("rmma ") else
+                          " ".join(l.split()[:15]) if l.startswith("columns ") else l
                           for l in text.splitlines()]
         self.assertEqual(self.run_check("\n".join(resources_only) + "\n"), 0)
 

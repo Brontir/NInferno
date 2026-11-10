@@ -328,49 +328,148 @@ def classify(opcode):
     return "other"
 
 
+OPERAND_REGISTER = re.compile(r"^[-~!|]*(U?R(?:Z|\d+))(?:\.\w+)*\|?$")
+PREDICATE = re.compile(r"^!?U?P(?:T|\d+)$")
+# Instructions that write no general register although a register may lead their operands.
+NO_REGISTER_WRITE = ("ST", "RED", "BRA", "ISETP", "FSETP", "HSETP2", "DSETP", "LDGSTS", "EXIT",
+                     "RET", "CALL", "BSSY", "BSYNC", "WARPSYNC", "BAR", "DEPBAR", "NOP", "PREEXIT",
+                     "ACQBULK", "KILL", "BRX", "JMX", "JMP", "PLOP3")
+
+
+def operand_tokens(operands):
+    """The comma-separated operands, each trimmed; a register loses its modifiers and suffixes
+    (`R52.reuse`, `-RZ`, `R2.64` become R52, RZ, R2), anything else (an immediate, a constant
+    bank, an address) stays as written."""
+    out = []
+    for f in operands.split(","):
+        f = f.strip()
+        if not f:
+            continue
+        m = OPERAND_REGISTER.match(f)
+        out.append(m.group(1) if m else f)
+    return out
+
+
+def destination(opcode, tokens):
+    """The register an instruction writes (after any predicate it also writes: `SHFL.IDX PT, R4`,
+    `LOP3.LUT P0, R6`), or None."""
+    if base_opcode(opcode).startswith(NO_REGISTER_WRITE):
+        return None
+    for t in tokens:
+        if PREDICATE.match(t):
+            continue
+        return t if REGISTER.match(t) and t not in ("RZ", "URZ") else None
+    return None
+
+
 def written_registers(opcode, operands):
-    """The registers an instruction writes: its first operand and the pair, quad or MMA
-    accumulator it extends to; none for a store, a branch or a compare."""
-    first = operands.split(",")[0].strip()
-    m = REGISTER.match(first)
-    base = base_opcode(opcode)
-    if not m or base.startswith(("ST", "RED", "BRA", "ISETP", "FSETP", "LDGSTS")):
+    """The registers an instruction writes: its destination and the pair, quad or MMA accumulator
+    it extends to; none for a store, a branch or a compare."""
+    tokens = operand_tokens(operands)
+    dest = destination(opcode, tokens)
+    if dest is None:
         return set()
+    base = base_opcode(opcode)
+    raw = operands.split(",")[0]
     if base in MMA_OPCODES:
         width = 2 if ".F16" in opcode and ".F32" not in opcode else 4
     elif base == "LDSM":
         width = 4 if ".4" in opcode else 2 if ".2" in opcode else 1
     elif ".128" in opcode or ".256" in opcode:
         width = 4
-    elif ".64" in opcode or ".WIDE" in opcode or ".64" in first:
+    elif ".64" in opcode or ".WIDE" in opcode or ".64" in raw:
         width = 2
     else:
         width = 1
+    m = REGISTER.match(dest)
     return {m.group(1) + str(int(m.group(2)) + k) for k in range(width)}
 
 
-def ones_mma_indices(body):
-    """Indices of the MMAs whose A operand is a register holding the 1.0 pair at that point of the
-    function in address order: set by a move of the constant (MOV, UMOV, or IMAD.MOV.U32 Rd, RZ,
-    RZ, imm as Ampere and Ada spell it), by HFMA2's constant form (Rd, -RZ, RZ, 1.875, 1.875), or
-    by a copy of such a register, until another instruction writes it."""
-    ones = set()
+def ones_definition(guarded, opcode, tokens):
+    """What an instruction makes of its destination as a 1.0-pair holder: ("const", Rd) for an
+    unguarded move of the constant (MOV / UMOV / MOV32I Rd, imm; IMAD.MOV.U32 Rd, RZ, RZ, imm as
+    Ampere and Ada spell it; HFMA2 Rd, -RZ, RZ, 1.875, 1.875: the two f16 halves, compared as
+    written), ("copy", Rd, Rs) for an unguarded register copy in those forms, else None. A guarded
+    definition is no definition here: written_registers clears it."""
+    if guarded or len(tokens) < 2:
+        return None
+    base = base_opcode(opcode)
+    move = base in ("MOV", "MOV32I", "UMOV") or opcode.startswith("IMAD.MOV")
+    if move and all(t == "RZ" for t in tokens[1:-1]):
+        if tokens[-1] in ONES:
+            return ("const", tokens[0])
+        if REGISTER.match(tokens[-1]) and tokens[-1] not in ("RZ", "URZ"):
+            return ("copy", tokens[0], tokens[-1])
+    if base == "HFMA2" and len(tokens) == 5 and tokens[1:3] == ["RZ", "RZ"] and \
+            tuple(tokens[3:5]) in ONES_HALVES:
+        return ("const", tokens[0])
+    return None
+
+
+TOP, IS_ONES, NOT_ONES = 0, 1, 2
+
+
+def meet(a, b):
+    if a == TOP:
+        return b
+    if b == TOP or a == b:
+        return a
+    return NOT_ONES
+
+
+def ones_mma_indices(body, succ):
+    """Indices of the MMAs whose A operand holds the 1.0 pair on every path that reaches them: a
+    reaching-definitions pass over the control flow (`succ`, successors()) for the registers a
+    ones constant is ever moved into, and their copies. A register is ONES after an unguarded
+    constant move or a copy of a ONES register, NOT after any other write (a guarded one too) and
+    at the entry, and the meet of two paths is ONES only where both are; a redefinition later in
+    the loop body reaches the loop's top through the back edge."""
+    tokens = [operand_tokens(operands) for _, _, _, operands in body]
+    defs = [ones_definition(g, op, t) for (_, g, op, _), t in zip(body, tokens)]
+    tracked = {d[1] for d in defs if d and d[0] == "const"}
+    grown = True
+    while grown:  # the copies of tracked registers, transitively
+        grown = False
+        for d in defs:
+            if d and d[0] == "copy" and d[2] in tracked and d[1] not in tracked:
+                tracked.add(d[1])
+                grown = True
+    if not tracked:
+        return set()
+    preds = [[] for _ in body]
+    for i, nexts in enumerate(succ):
+        for n in nexts:
+            preds[n].append(i)
+    written = [written_registers(op, operands) & tracked for _, _, op, operands in body]
+    order = sorted(tracked)
+    index = {r: k for k, r in enumerate(order)}
+    state_in = [[TOP] * len(order) for _ in body]
+    state_out = [[TOP] * len(order) for _ in body]
+    changed = True
+    while changed:
+        changed = False
+        for i in range(len(body)):
+            inc = [NOT_ONES] * len(order) if i == 0 else [TOP] * len(order)
+            for p in preds[i]:
+                inc = [meet(a, b) for a, b in zip(inc, state_out[p])]
+            out = list(inc)
+            for r in written[i]:
+                out[index[r]] = NOT_ONES
+            d = defs[i]
+            if d and d[1] in tracked:
+                if d[0] == "const":
+                    out[index[d[1]]] = IS_ONES
+                elif d[2] in tracked:
+                    out[index[d[1]]] = inc[index[d[2]]]
+            if inc != state_in[i] or out != state_out[i]:
+                state_in[i], state_out[i] = inc, out
+                changed = True
     found = set()
-    for i, (_, _, opcode, operands) in enumerate(body):
-        base = base_opcode(opcode)
-        fields = [f.strip().split(".")[0] for f in operands.split(",")]
-        if base in MMA_OPCODES and len(fields) >= 2 and fields[1] in ones:
-            found.add(i)
-        move = base in ("MOV", "MOV32I", "UMOV") or opcode.startswith("IMAD.MOV")
-        if move and len(fields) >= 2 and all(f == "RZ" for f in fields[1:-1]) and \
-                (fields[-1] in ONES or fields[-1] in ones):
-            ones.add(fields[0])
-            continue
-        if base == "HFMA2" and len(fields) == 5 and fields[1:3] == ["-RZ", "RZ"] and \
-                tuple(fields[3:5]) in ONES_HALVES:
-            ones.add(fields[0])
-            continue
-        ones -= written_registers(opcode, operands)
+    for i, (_, _, opcode, _) in enumerate(body):
+        if base_opcode(opcode) in MMA_OPCODES and len(tokens[i]) >= 2:
+            a = tokens[i][1]
+            if a in tracked and state_in[i][index[a]] == IS_ONES:
+                found.add(i)
     return found
 
 
@@ -444,7 +543,7 @@ def loop_counts(body, tiles=1):
         return out
     path = max(iterations.values(),
                key=lambda p: tuple(sum(w) for w in zip(*(weight(b) for b in p))))
-    ones = ones_mma_indices(body) if has_mma else set()
+    ones = ones_mma_indices(body, succ) if has_mma else set()
     shapes = Counter()
     mnk_sum = 0
     unknown_shape = False
