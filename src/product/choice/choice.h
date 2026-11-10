@@ -216,6 +216,24 @@ struct QuantOption {
 // generation's measured decode error, kDecodePredictionError; 0 where none is measured).
 [[nodiscard]] double worth_band(const CardFacts& card) noexcept;
 
+// What a speed estimate's resolution rests on (#618). Own: the board's generation has measured
+// decode rows and states its error (kDecodePredictionError). Transferred: it has none (an unknown
+// generation lends the nearest one's rows, a known one is not measured against the fixture), so the
+// error is that of carrying another generation's rows onto a board (kTransferredDecodeError).
+enum class ResolutionBasis : std::uint8_t { Own, Transferred };
+
+[[nodiscard]] constexpr std::string_view resolution_basis_name(ResolutionBasis basis) noexcept {
+    return basis == ResolutionBasis::Own ? "own" : "transferred";
+}
+
+struct Resolution {
+    ResolutionBasis basis = ResolutionBasis::Own;
+    double rms            = 0; // ln(predicted / measured), root mean square
+};
+
+// The resolution a decision on this board's generation uses.
+[[nodiscard]] Resolution resolution_of(const CardFacts& board) noexcept;
+
 // What the user asks: the context each stream holds of its own (the contexts in turn: a pinned
 // one, or Auto's targets runtime::quant_own_targets gives), the streams, the request shape. The
 // request is a mix (DECISIONS 73): the short one (prompt + answer) and a long one whose prompt
@@ -290,11 +308,6 @@ enum class SpeedBasis { Own, Transferred, LentGeneration };
     return basis == SpeedBasis::Own ? "own" : basis == SpeedBasis::Transferred ? "transferred" : "lent_generation";
 }
 
-// The resolution of a speed estimate by what it rests on (#618): Own, the generation's own measured
-// decode error (worth_band); Transferred and LentGeneration, the error of carrying another
-// generation's rows (kTransferredDecodeError). 0 where an Own generation has no measured error.
-[[nodiscard]] double resolution_of(const CardFacts& card, SpeedBasis basis) noexcept;
-
 struct Speed {
     double decode_per_stream = 0; // tokens a second each stream decodes at the context given
     double prefill           = 0; // prompt tokens a second
@@ -334,9 +347,8 @@ struct Gates {
     // quantization curve): nullopt, from their cards (accuracy_decides, kQuantKldCards).
     std::optional<bool> accuracy;
     bool moe_chunk = kMoeChunkTwoCards; // the MoE chunk shares
-    // The resolution typed by the basis of each estimate (#618). False: the one number of the
-    // reference generation's own decode error for every candidate (the rule before #618); a test
-    // closes it to list what the typing changes.
+    // The resolution typed by its basis (#618). False: the reference card's generation's one number
+    // (worth_band), the rule before #618; a test closes it to list what the typing changes.
     bool typed_resolution = true;
 };
 
@@ -462,10 +474,6 @@ struct Scored {
     Accuracy accuracy;
     double seconds = 0;            // request_seconds on the board (an estimate to show)
     double decision_seconds = 0;   // request_seconds on the reference card (0: none)
-    // The resolution of that estimate (resolution_of the reference card and the basis the estimate
-    // rests on; 0 without a reference).
-    double resolution         = 0;
-    SpeedBasis decision_basis = SpeedBasis::Own;
     double worth = 0;              // -ln(decision_seconds) - lambda kld (0 without a reference)
     bool variant = false;          // a coupled storage's other value beside the chosen (not eligible)
     std::string drafter = "plain"; // its drafter's configuration (DrafterOption::label)
@@ -484,16 +492,15 @@ struct Choice {
     // drafter whose gain no measurement gives).
     bool drafter_by_worth = false;
     // The speed estimate's resolution wherever a reference exists (#301; the chunk axis needs it
-    // where the worth does not decide), typed by the basis of each candidate's estimate (#618,
-    // resolution_of): the reference card's generation's measured decode error (worth_band) for an
-    // Own estimate, kTransferredDecodeError for a Transferred one. This is the widest of the
-    // candidates' (the narrowest case is the Own one); the rules use the pair's. It is the speed
-    // term's uncertainty in worth (-ln seconds) units; 0 without a reference. An
+    // where the worth does not decide): the reference card's generation's measured decode error
+    // (worth_band), the speed term's uncertainty in worth (-ln seconds) units; 0 without one. An
     // alternative that loses by no more than the smaller of it and the two's speed difference is
     // indistinguishable (explain: within_resolution); the point estimate decides, unless a
     // candidate that far from the best worth is strictly more accurate
     // (resolved_within_resolution).
     double resolution = 0;
+    // What `resolution` rests on (resolution_of): the board's generation's own rows, or a transfer.
+    ResolutionBasis resolution_basis = ResolutionBasis::Own;
     // The resolution moved the pick (#301, DECISIONS 75): among the candidates whose speed is
     // inside `resolution` of the best worth's (the anchor), the one of strictly lower modelled KLD
     // took it (resolve_within_resolution). False: the anchor stood. `anchor` indexes the best
@@ -537,13 +544,11 @@ struct Alternative {
 // DECISIONS 60's band between quantizations). `eligible` lists indices into `scored` (the
 // candidates that hold the asked context); `anchor` is the one with the best worth among them. A
 // candidate wins only if its modelled KLD is lower than the anchor's by more than kWorthTie and its
-// request time is longer by no more than the resolution between the two (worth units: ln of the
-// time ratio; the wider of their Scored::resolution, each typed by the basis of its estimate,
-// #618). Among the winners the lowest KLD, then the lowest index in `scored`; none: the anchor.
-// Context beyond what was asked is headroom (DECISIONS 73) and does not count. A pair whose
-// resolution is 0 is not weighed.
+// request time is longer by no more than `resolution` (worth units: ln of the time ratio). Among
+// the winners the lowest KLD, then the lowest index in `scored`; none: the anchor. Context beyond
+// what was asked is headroom (DECISIONS 73) and does not count. A resolution of 0 returns `anchor`.
 [[nodiscard]] std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
                                                     const std::vector<std::size_t>& eligible,
-                                                    std::size_t anchor) noexcept;
+                                                    std::size_t anchor, double resolution) noexcept;
 
 } // namespace ninferno::product::choice

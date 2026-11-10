@@ -498,12 +498,6 @@ std::string fixed(double value, int digits) {
     return out.str();
 }
 
-// The resolution between two candidates' speed estimates: the wider of theirs, each by what its
-// estimate rests on (resolution_of; #618).
-double pair_resolution(const Scored& a, const Scored& b) noexcept {
-    return std::max(a.resolution, b.resolution);
-}
-
 Scored score(const ModelFacts& model, const CardFacts& card, const std::optional<Reference>& ref,
              const QuantOption& quant, const Candidate& c, const Task& task,
              const OwnContextFn& own_context) {
@@ -517,16 +511,6 @@ Scored score(const ModelFacts& model, const CardFacts& card, const std::optional
     s.seconds     = request_seconds(model, card, quant, c, task);
     if (ref) {
         s.decision_seconds = request_seconds(model, ref->card, quant, c, task);
-        // What the decision estimate rests on: the weaker of the short and the long request's.
-        const double middle = task.prompt + task.answer / 2.0;
-        s.decision_basis =
-            speed_of(model, ref->card, quant, c, task.concurrency, middle, task.prompt).basis;
-        if (const std::uint32_t long_prompt = task.long_prompt(); long_prompt > 0) {
-            const Speed longer = speed_of(model, ref->card, quant, c, task.concurrency,
-                                          long_prompt + task.answer / 2.0, long_prompt);
-            if (longer.basis != SpeedBasis::Own) { s.decision_basis = longer.basis; }
-        }
-        s.resolution = resolution_of(ref->card, s.decision_basis);
         s.worth = -std::log(s.decision_seconds) - task.accuracy_weight * s.accuracy.kld;
     }
     return s;
@@ -1469,8 +1453,14 @@ double worth_band(const CardFacts& card) noexcept {
     return 0;
 }
 
-double resolution_of(const CardFacts& card, SpeedBasis basis) noexcept {
-    return basis == SpeedBasis::Own ? worth_band(card) : kTransferredDecodeError;
+Resolution resolution_of(const CardFacts& board) noexcept {
+    if (generation_known(board.major, board.minor)) {
+        const std::string_view gen = generation_of(board);
+        for (const PredictionError& e : kDecodePredictionError) {
+            if (e.generation == gen) { return {ResolutionBasis::Own, e.rms}; }
+        }
+    }
+    return {ResolutionBasis::Transferred, kTransferredDecodeError};
 }
 
 double single_request_seconds(const ModelFacts& model, const CardFacts& card,
@@ -1717,10 +1707,13 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         return out;
     }
     const std::optional<Reference> ref = reference_of(card, gates);
-    out.by_worth                       = decides_switches(model, card, gates);
+    out.by_worth       = decides_switches(model, card, gates);
+    if (ref) {
+        const Resolution typed = resolution_of(card);
+        out.resolution         = gates.typed_resolution ? typed.rms : worth_band(ref->card);
+        out.resolution_basis   = gates.typed_resolution ? typed.basis : ResolutionBasis::Own;
+    }
     out.chunk_by_speed = ref && ref->chunk_decides && model.moe() && !pins.chunk;
-    // The reference generation's own resolution until a candidate is scored (an Own estimate's).
-    out.resolution = ref ? worth_band(ref->card) : 0;
     // The enumeration order breaks exact ties (better()): one canonical order of each axis's
     // values (allowed_axes'), never the order a caller listed them in (#301).
     std::vector<KvCacheStorage> kvs = pins.kv ? std::vector<KvCacheStorage>{*pins.kv} : allowed.kv;
@@ -1751,13 +1744,6 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
             return model.drafters[a - 1].label < model.drafters[b - 1].label;
         });
     }
-    // A candidate scored; a closed Gates::typed_resolution gives it the generation's one number
-    // (the rule before #618).
-    const auto price = [&](const Candidate& candidate, const Task& at) {
-        Scored s = score(model, card, ref, quant, candidate, at, own_context);
-        if (!gates.typed_resolution && ref) { s.resolution = worth_band(ref->card); }
-        return s;
-    };
     for (const KvCacheStorage kv : kvs) {
         for (const ActivationMode mode : modes) {
             // --activations exact refuses a rounded recurrent state the user pinned.
@@ -1768,8 +1754,9 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
             const Coupled coupled = coupled_storages(model, kv, mode, pins);
             for (const std::size_t drafter : drafters) {
                 for (const std::uint32_t chunk : chunks) {
-                    out.scored.push_back(
-                        price({kv, coupled.ring, coupled.state, mode, chunk, drafter}, task));
+                    out.scored.push_back(score(model, card, ref, quant,
+                                               {kv, coupled.ring, coupled.state, mode, chunk, drafter},
+                                               task, own_context));
                 }
             }
         }
@@ -1811,7 +1798,9 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         Task at     = task;
         at.contexts = {context};
         if (at.long_prompt() != priced.long_prompt()) {
-            for (Scored& s : out.scored) { s = price(s.candidate, at); }
+            for (Scored& s : out.scored) {
+                s = score(model, card, ref, quant, s.candidate, at, own_context);
+            }
             priced = at;
         }
         std::vector<std::size_t> holding;
@@ -1823,7 +1812,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         }
         if (chosen) {
             const std::size_t best = *chosen;
-            chosen                 = resolve_within_resolution(out.scored, holding, best);
+            chosen   = resolve_within_resolution(out.scored, holding, best, out.resolution);
             resolved = *chosen != best;
             anchor   = best;
             settled  = context;
@@ -1850,7 +1839,6 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     out.resolved_within_resolution = resolved;
     out.anchor                     = anchor;
     out.anchor_worth               = out.scored[anchor].worth;
-    for (const Scored& s : out.scored) { out.resolution = std::max(out.resolution, s.resolution); }
     for (Scored& s : out.scored) { s.fits = s.own_context >= settled; }
     const Scored& c = out.scored[*chosen];
     out.why =
@@ -1901,15 +1889,14 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
 }
 
 std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
-                                      const std::vector<std::size_t>& eligible,
-                                      std::size_t anchor) noexcept {
+                                      const std::vector<std::size_t>& eligible, std::size_t anchor,
+                                      double resolution) noexcept {
     std::size_t pick = anchor;
-    const Scored& a  = scored[anchor];
+    if (!(resolution > 0)) { return pick; }
+    const Scored& a = scored[anchor];
     if (!(a.decision_seconds > 0)) { return pick; }
     for (const std::size_t i : eligible) {
         const Scored& s = scored[i];
-        const double resolution = pair_resolution(a, s);
-        if (!(resolution > 0)) { continue; }
         // Strictly more accurate (a NaN KLD never is), and not slower than the resolution.
         if (!(s.decision_seconds > 0) || !(s.accuracy.kld + kWorthTie < a.accuracy.kld)) {
             continue;
@@ -1999,7 +1986,7 @@ std::vector<Alternative> explain(const Choice& choice) {
                 alt.why_code = "within_resolution";
                 alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) +
                               " above the chosen, inside the speed estimate's resolution (" +
-                              fixed(100 * pair_resolution(s, chosen), 1) +
+                              fixed(100 * choice.resolution, 1) +
                               " % decode rms): the chosen is the more accurate (KLD " +
                               fixed(chosen.accuracy.kld, 4) + " against " +
                               fixed(s.accuracy.kld, 4) + ")";
@@ -2010,7 +1997,7 @@ std::vector<Alternative> explain(const Choice& choice) {
                 const Scored& a   = choice.scored[choice.anchor];
                 const bool inside = s.decision_seconds > 0 && a.decision_seconds > 0 &&
                                     std::log(s.decision_seconds / a.decision_seconds) <=
-                                        pair_resolution(a, s) + kWorthTie;
+                                        choice.resolution + kWorthTie;
                 alt.why_code = inside ? "within_resolution" : "outside_resolution";
                 alt.why_not =
                     "worth " + fixed(s.worth - chosen.worth, 3) + " above the chosen, " +
@@ -2018,7 +2005,7 @@ std::vector<Alternative> explain(const Choice& choice) {
                                           "estimate's resolution of the best worth")
                             : "but slower than the best worth by more than the speed "
                               "estimate's resolution (" +
-                                  fixed(100 * pair_resolution(a, s), 1) +
+                                  fixed(100 * choice.resolution, 1) +
                                   " %): the rule picks the most accurate inside that band");
             } else if (std::abs(s.worth - chosen.worth) <= kWorthTie &&
                        s.own_context != chosen.own_context) {
@@ -2034,7 +2021,7 @@ std::vector<Alternative> explain(const Choice& choice) {
             } else if (s.decision_seconds > 0 && chosen.decision_seconds > 0 &&
                        chosen.worth - s.worth <=
                            std::min(
-                               pair_resolution(s, chosen),
+                               choice.resolution,
                                std::abs(std::log(s.decision_seconds / chosen.decision_seconds))) +
                                kWorthTie &&
                        chosen.worth - s.worth > kWorthTie) {
@@ -2046,9 +2033,9 @@ std::vector<Alternative> explain(const Choice& choice) {
                 // at equal accuracy the gap is the speed difference exactly.
                 alt.why_code = "within_resolution";
                 alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) +
-                              " against the chosen, inside the speed estimate's resolution (" +
-                              fixed(100 * pair_resolution(s, chosen), 1) +
-                              " % decode rms): the point estimate decides";
+                               " against the chosen, inside the speed estimate's resolution (" +
+                               fixed(100 * choice.resolution, 1) +
+                               " % decode rms): the point estimate decides";
             } else {
                 alt.why_code = "lower_worth";
                 alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) + " against the chosen";
@@ -2084,7 +2071,7 @@ std::vector<Alternative> explain(const Choice& choice) {
             alt.why_code = "within_resolution";
             alt.why_not  = "worth " + fixed(anchor.worth - chosen.worth, 3) +
                           " above the chosen, inside the speed estimate's resolution (" +
-                          fixed(100 * pair_resolution(anchor, chosen), 1) +
+                          fixed(100 * choice.resolution, 1) +
                           " % decode rms): the chosen is the more accurate (KLD " +
                           fixed(chosen.accuracy.kld, 4) + " against " +
                           fixed(anchor.accuracy.kld, 4) +
