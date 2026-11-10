@@ -101,6 +101,9 @@ inline bool emit_evaluated(std::string_view id, const SiteQuery& q, SiteLine& ou
             out = declared(id, needs);
             return true;
         }
+        // The launch reads DeviceClass::features.pdl of the current device (generic_gemm.cpp
+        // device_gates().pdl, passed to launch_overlap by run_route): the same flag, here of the
+        // board asked.
         generic::ResolvedRoute resolved{.asked = *q.route, .executed = *q.route};
         resolved.r8_prequantized = r8 && generic::r8_prequantized_takes(*q.route, *q.qtype, q.k,
                                                                         q.tokens, q.workspace_free);
@@ -129,6 +132,14 @@ inline bool emit_evaluated(std::string_view id, const SiteQuery& q, SiteLine& ou
         return true;
     }
     if (id == "r8_prequantized") {
+        if (q.route && q.route->family != generic::Family::R8Mma) {
+            // The site is R8's alone: any other route has no pre-quantized form to choose.
+            out = {std::string(id),
+                   "decided",
+                   "not_r8",
+                   {{"route", std::string(generic::route_name(*q.route))}, {"tokens", tokens}}};
+            return true;
+        }
         std::string needs;
         if (!q.route) { needs += "route,"; }
         if (!q.qtype || q.k <= 0) { needs += "qtype,k,"; }

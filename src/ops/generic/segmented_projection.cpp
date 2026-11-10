@@ -226,13 +226,13 @@ segmented_swiglu_pair_workspace_capacity_bytes(const SegmentedProjectionWeights&
     if (!gated_halves(weights)) return 0;
     const std::int32_t half = weights.rows() / 2;
     std::size_t bytes       = 0;
-    if (min_tokens <= generic::kGgmlVecMaxTokens) {
+    if (generic::ggml_gated_pair_for(min_tokens) == generic::GgmlGatedPair::Vec) {
         bytes = generic::ggml_vec_gated_pair_bytes(
             weights.columns(), half, std::min(max_tokens, generic::kGgmlVecMaxTokens));
     }
     // The matrix kernel's band, or its prefill slice where that route holds (its route decides
     // per call; sized for its widest width).
-    if (max_tokens > generic::kGgmlVecMaxTokens) {
+    if (generic::ggml_gated_pair_for(max_tokens) == generic::GgmlGatedPair::Mmq) {
         const auto halves = *gated_halves(weights);
         const std::int32_t slice =
             std::min(generic::ggml_mmq_slice_tokens(halves.first.weight->qtype),
