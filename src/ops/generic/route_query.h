@@ -120,6 +120,14 @@ struct PricedRouteQuery {
 priced_routes_query(const DeviceClass& device, QType qtype, LinearPolicy policy, Epilogue epilogue,
                     std::int32_t n, std::int32_t k, std::int32_t tokens);
 
+// Whether the selector admits `route` for such a call on `device`: route_admits on the described
+// weight (every refusal of the family's rule: not compiled, format, codec tile, resource,
+// instruction, alignment, extent), as describe_route decides before it describes. The one rule
+// the price tool and its test read; false where the generic path does not read such a weight.
+[[nodiscard]] bool route_admitted_query(const DeviceClass& device, Route route, QType qtype,
+                                        LinearPolicy policy, Epilogue epilogue, std::int32_t n,
+                                        std::int32_t k);
+
 // The payload bytes of the weight such a call is described with (the converter's layout of the
 // stored matrix: 2 n rows under SwiGLU, `parent_rows` where the call reads a slice): the bytes per
 // value the cost model prices by are these over n x k.

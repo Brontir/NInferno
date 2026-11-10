@@ -10,6 +10,7 @@
 //     terms times the A16 scale for the inputs the selector passes (the route's tile, the
 //     described weight's bytes, the compiled facts it read): the client's wiring.
 #include "core/device_class.h"
+#include "core/format_facts.h"
 #include "core/generation.h"
 #include "core/weight.h"
 #include "ninferno/ops/linear.h"
@@ -29,6 +30,7 @@
 #include <exception>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace g  = ninferno::ops::detail::generic;
@@ -334,15 +336,17 @@ void check_price_formats() {
     if (bad > 0 || names.empty()) ++failures;
 }
 
-// ---- Check 4: the price tool prices only what this build and board can launch ----
-// `price --route F:N` exits 0 (a price printed) exactly where the selector's resource rules admit
-// the schedule: register-MMA where this build compiles it (rmma_schedule_launchable), staged where
-// its shared stages fit this build's block and the board's (staged_fits, staged_device_fits, as
-// staged_refusal does), else 2 with no price. 99 KiB boards (RTX 4090, RTX 5090) and a 227 KiB
-// one (H100 SXM) tell the board's limit from the build's.
-int price_exit(const char* board, const std::string& route) {
-    std::vector<std::string> args = {"price", "--board", board, "--format", "bf16",
-                                     "--n",   "4096",    "--k", "4096",     "--t",
+// ---- Check 4: the price tool prices only the routes the selector admits ----
+// `price --route F:N` exits 0 (a price printed) exactly where the selector admits the route for
+// the call on this build and board (route_query.h route_admitted_query: route_admits, the
+// family's whole rule), else 2 with no price: every register-MMA, tiled and staged route, for
+// BF16 and Q4_K, on 99 KiB boards (RTX 4090, RTX 5090) and a 227 KiB one with clusters (H100
+// SXM). Explicit cases pin the rule's refusals by name, so a query that drifted from the
+// selector would not pass by agreeing with itself.
+int price_exit(const std::string& board, const std::string& format, const std::string& k,
+               const std::string& route) {
+    std::vector<std::string> args = {"price", "--board", board, "--format", format,
+                                     "--n",   "4096",    "--k", k,          "--t",
                                      "64",    "--route", route};
     std::vector<char*> argv;
     for (auto& a : args) argv.push_back(a.data());
@@ -352,45 +356,102 @@ int price_exit(const char* board, const std::string& route) {
     return rc;
 }
 
-void check_price_launchable() {
-    long bad = 0, priced = 0, refused = 0;
-    const auto expect = [&](const char* board, const std::string& route, bool launchable) {
-        const int rc   = price_exit(board, route);
-        const int want = launchable ? 0 : 2;
+const g::FactsBoard* facts_board(const char* name) {
+    for (const auto& b : g::kFactsBoards) {
+        if (std::strcmp(b.name, name) == 0) return &b;
+    }
+    return nullptr;
+}
+
+std::string board_id(const g::FactsBoard& board) {
+    char id[16];
+    std::snprintf(id, sizeof id, "0x%04X", static_cast<unsigned>(board.pci_device_id));
+    return id;
+}
+
+void check_price_admitted() {
+    long bad = 0, priced = 0, refused = 0, named = 0;
+    const auto expect = [&](const g::FactsBoard& board, QType q, std::int32_t k, g::Route r,
+                            bool admitted, const char* why) {
+        const std::string route = std::string(g::family_name(r.family)) + ":" +
+                                  std::to_string(static_cast<int>(r.schedule));
+        const int rc   = price_exit(board_id(board), g::qtype_name(q), std::to_string(k), route);
+        const int want = admitted ? 0 : 2;
         if (rc != want) {
-            std::fprintf(stderr, "FAIL: price --board %s --route %s exits %d, want %d\n", board,
-                         route.c_str(), rc, want);
+            std::fprintf(stderr,
+                         "FAIL: price --board %s --format %s --k %d --route %s exits %d, "
+                         "want %d (%s)\n",
+                         board.name, g::qtype_name(q), k, route.c_str(), rc, want, why);
             ++bad;
         }
-        ++(launchable ? priced : refused);
+        ++(admitted ? priced : refused);
     };
-    for (const char* name : {"rtx4090", "rtx5090", "h100-sxm"}) {
-        const g::FactsBoard* board = nullptr;
-        for (const auto& b : g::kFactsBoards) {
-            if (std::strcmp(b.name, name) == 0) board = &b;
-        }
-        if (board == nullptr) {
-            std::fprintf(stderr, "FAIL: no facts board %s\n", name);
-            ++bad;
-            continue;
-        }
-        char id[16];
-        std::snprintf(id, sizeof id, "0x%04X", static_cast<unsigned>(board->pci_device_id));
-        const DeviceClass d = g::board_device_class(*board);
-        for (int i = 0; i < g::staged_schedule_count(); ++i) {
-            bool launchable = g::staged_fits(i);
-            if (launchable) {
-                const ninferno::ScopedDeviceClass scoped(d);
-                launchable = g::staged_device_fits(i);
+    const auto query = [](const g::FactsBoard& board, QType q, std::int32_t k, g::Route r) {
+        return g::route_admitted_query(g::board_device_class(board), r, q, LinearPolicy::A16Only,
+                                       g::Epilogue::Store, 4096, k);
+    };
+    const g::FactsBoard* ada    = facts_board("rtx4090");
+    const g::FactsBoard* hopper = facts_board("h100-sxm");
+    const g::FactsBoard* gb202  = facts_board("rtx5090");
+    if (!ada || !hopper || !gb202) {
+        std::fprintf(stderr, "FAIL: a facts board of check 4 is missing\n");
+        ++failures;
+        return;
+    }
+    // Every route of the three families, against the selector's own rule.
+    for (const g::FactsBoard* board : {ada, gb202, hopper}) {
+        for (const QType q : {QType::BF16, QType::GGML_Q4_K}) {
+            const std::pair<g::Family, int> families[] = {
+                {g::Family::RegisterMma, g::rmma_schedule_count()},
+                {g::Family::TiledMma, g::tiled_schedule_count()},
+                {g::Family::StagedMma, g::staged_schedule_count()}};
+            for (const auto& [family, count] : families) {
+                for (int i = 0; i < count; ++i) {
+                    const g::Route r{family, static_cast<std::uint8_t>(i)};
+                    expect(*board, q, 4096, r, query(*board, q, 4096, r), "route_admitted_query");
+                }
             }
-            expect(id, "staged:" + std::to_string(i), launchable);
         }
     }
-    for (int i = 0; i < g::rmma_schedule_count(); ++i) {
-        expect("rtx4090", "rmma:" + std::to_string(i), g::rmma_schedule_launchable(i));
+    // The refusals by name (each priced and exited 0 before the tool read the selector's rule).
+    const auto pin = [&](const g::FactsBoard& board, QType q, std::int32_t k, g::Route r,
+                         bool admitted, const char* why) {
+        ++named;
+        if (query(board, q, k, r) != admitted) {
+            std::fprintf(stderr, "FAIL: route_admitted_query disagrees with the pinned case (%s)\n",
+                         why);
+            ++bad;
+        }
+        expect(board, q, k, r, admitted, why);
+    };
+    using F = g::Family;
+    pin(*ada, QType::GGML_Q4_K, 4096, {F::StagedMma, 0}, false, "staged reads BF16 only");
+    pin(*ada, QType::GGML_Q4_K, 4096, {F::RegisterMma, 19}, false,
+        "no 1x16 register-MMA tile for Q4_K");
+    pin(*ada, QType::BF16, 4096, {F::RegisterMma, 16}, false,
+        "cluster schedule, no clusters on Ada");
+    pin(*hopper, QType::BF16, 4096, {F::RegisterMma, 16}, g::rmma_schedule_launchable(16),
+        "cluster schedule on a board with clusters, where this build compiles it");
+    pin(*ada, QType::BF16, 4000, {F::StagedMma, 0}, false, "K not whole 64-value steps");
+    pin(*ada, QType::BF16, 4096, {F::TiledMma, 0}, false, "the tiled kernel has no BF16 tile");
+    // Tiled schedules whose tiles do not fit this build's block for a format (tiled_fits).
+    for (const QType q : kFormats) {
+        const auto codec = ninferno::format_facts(q).codec;
+        if (!codec || !g::tiled_supports(*codec)) continue;
+        try {
+            (void)g::described_weight_bytes(q, g::Epilogue::Store, 4096, 4096);
+        } catch (const std::exception&) {
+            continue; // a shape the format's layout does not take
+        }
+        for (int i = 0; i < g::tiled_schedule_count(); ++i) {
+            if (!g::tiled_fits(i, *codec)) {
+                pin(*ada, q, 4096, {F::TiledMma, static_cast<std::uint8_t>(i)}, false,
+                    "tiled tiles past this build's block");
+            }
+        }
     }
-    std::printf("price launchable: %ld routes priced, %ld refused, %ld differ\n", priced, refused,
-                bad);
+    std::printf("price admitted: %ld routes priced, %ld refused (%ld pinned cases), %ld differ\n",
+                priced, refused, named, bad);
     if (bad > 0 || priced == 0) ++failures;
 }
 
@@ -398,7 +459,7 @@ int main() {
     check_golden();
     check_wiring();
     check_price_formats();
-    check_price_launchable();
+    check_price_admitted();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;
