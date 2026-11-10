@@ -33,12 +33,19 @@ Not seen (known limits): a row that starts with a name or an id (`{"rtx3090", 8,
 `{0x2204, 8, 6, ...}`), a helper call (`make_board(8, 6, 82, 6, 936)`, `emplace_back(...)`), a
 board written field by field (`b.sms = 82;`), a typed literal whose first field is a lower-case
 name, a designated group without a type (`{.major = 8, .minor = 6, ...}`), JSON and Python
-files (routes/*.json, tests/*.py), an alias declared in another file, code under `#if 0` (read
-like any other).
+files (routes/*.json, tests/*.py), an alias declared in another file, a table whose first row
+is a name rather than a braced row (`Board k[] = {measured::kRtx5090, {8, 9, 128}}`), the second
+declarator of a statement (`Board a = measured::kX, b{...};`; five bare numbers there are still
+caught by the tuple rule). Code under `#if 0` is read like any other.
+
+Flagged although it is no board: an unqualified `Board` of an unrelated type in a file that defines
+its own (`namespace chess { struct Board {...}; Board start{8, 8}; }`), and a five-number list that
+happens to fall inside the ranges (a tensor shape). Name such a file in ALLOW with the reason.
 
 Exceptions are files named in ALLOW, each with the sorted normalised texts of its literals and a
 reason. The pin is the literals themselves: a new, replaced or edited literal fails until the pin is
-reviewed, and so does a pinned literal that is gone.
+reviewed, and so does a pinned literal that is gone. The pin holds a literal's text, not its place:
+moving a pinned literal inside its file, or swapping two pinned rows, passes.
 """
 import re
 import subprocess
