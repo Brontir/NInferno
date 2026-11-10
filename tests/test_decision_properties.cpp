@@ -1,20 +1,19 @@
 // Property tests for the projection selector's decisions, set 1 (roadmap #620 step 6; the
 // specification is Roadmap 0's report 08, Q3). Every property runs over the board rows of
 // core/data/gpu_facts.json through the same substitution the selector goldens use
-// (selector_facts.h board_device_class, ScopedDeviceClass), so it needs no GPU to run. Where a
-// device is visible, the register-MMA price reads the registers and spill of the HOST GPU's
-// compiled kernels (generic_cost.cpp rmma_kept -> rmma_resources, cudaFuncGetAttributes); without
-// one it prices by threads alone. The same facts are read for every substituted board, so the
-// properties hold on either, but the counts of P1 differ a little between the two.
+// (selector_facts.h board_device_class, ScopedDeviceClass), so it needs no GPU to run. The
+// register-MMA price reads the registers and spill of the compiled kernels from the committed
+// kernel-facts snapshot of the SASS (generic_cost.cpp rmma_kept -> rmma_resources), not from the
+// running GPU: the counts below are the same with a GPU visible and without one.
 //
 //   P1  price monotone: for every priced route of a call of 17 tokens or more, a board with 1.25x
 //       the SMs, or 1.25x the DRAM bandwidth, all else equal, prices it no slower (to 1e-9). The
 //       price (price_routes), not the choice.
 //   P3  fields the selector does not read: the board's labels (names, PCI address, UUID, ordinal),
-//   the table's
-//       sources and notes, TDP, nominal VRAM, PCIe generation, segment and the memory size the
-//       driver reports move no route. Boards of the table that differ in their PCI id alone
-//       (SKU twins) choose alike.
+//       the table row's name, sources and note, and (each on its own) its TDP, nominal VRAM, PCIe
+//       generation and segment, and the memory size the driver reports, move no route. Every
+//       variant also takes a slot of its own in the per-class caches (see `rebuilt`). Boards of the
+//       table that differ in their PCI id alone (SKU twins) choose alike.
 //   P6  clock invariance over every row: the clocks the driver reports (a factory overclock, a
 //       vendor's lower boost, none at all) move no route of a board the table knows
 //       (test_selector_golden.cpp run_clock_invariance does this for the golden boards only).
@@ -69,8 +68,15 @@ struct Known {
     const char* property;
     const char* key;
     const char* cause;
-    int max_count; // the cases the waiver covers, at most (a host with a GPU reads other registers)
-    double max_ratio; // the worst price ratio it covers
+    // The most the waiver covers, as a share of the cases this property checked for the route's
+    // family (not an absolute count: adding board rows to the table must not trip it). A recorded
+    // baseline, not a derived bound: the share this test measured when the waiver was written,
+    // rounded up to the next half percent.
+    double max_share;
+    // The worst price ratio it covers. 0: the SM ratio of the row's own grid step, the largest
+    // ceil(1.25 sms) / sms of the rows checked (a derived bound: the class is defined by it).
+    // Otherwise a recorded baseline of the worst ratio measured, rounded up to the next 0.01.
+    double max_ratio;
 };
 
 // The price of a route on a board with more SMs is higher by up to 1.5x for the families below
@@ -87,21 +93,21 @@ struct Known {
 // Each failing case is sorted by what can explain it. "within the SM ratio": the price rose by no
 // more than sms' / sms, the most q x sms (the bytes charged to the busiest SM) can grow. "beyond
 // the SM ratio": the warp-fill term (or a chain term) adds to it. A waived group may not grow past
-// max_count nor past max_ratio, so a change that makes the price rise with the SMs in more cases
-// or by more (a bw / sqrt(sms) share, say) fails; a group that stops failing is an XPASS that
-// fails the test, so the list is pruned as the model is fixed. The tolerance is 1e-9: the price
-// is deterministic. (The test cannot see a route's CTA count, so it cannot tell a rise a wave
-// count explains from one it does not, case by case.)
+// max_share of the family's cases nor past max_ratio, so a change that makes the price rise with
+// the SMs in more cases or by more (a bw / sqrt(sms) share, say) fails; a group that stops failing
+// is an XPASS that fails the test, so the list is pruned as the model is fixed. The tolerance is
+// 1e-9: the price is deterministic. (The test cannot see a route's CTA count, so it cannot tell a
+// rise a wave count explains from one it does not, case by case.)
 constexpr const char* kWaveCause =
     "price_routes charges the busiest SM q = ceil(CTAs/sms) CTAs of bytes at bw/sms and divides "
     "by a warp fill that depends on q (wave quantization of the memory term)";
 constexpr Known kKnown[] = {
-    {"P1 sms x1.25", "RegisterMma within the SM ratio", kWaveCause, 280000, 1.31},
-    {"P1 sms x1.25", "RegisterMma beyond the SM ratio", kWaveCause, 750, 1.45},
-    {"P1 sms x1.25", "StagedMma within the SM ratio", kWaveCause, 15200, 1.26},
-    {"P1 sms x1.25", "W4a8Mma within the SM ratio", kWaveCause, 22900, 1.26},
-    {"P1 sms x1.25", "W4a8Mma beyond the SM ratio", kWaveCause, 2400, 1.53},
-    {"P1 sms x1.25", "I8Mma within the SM ratio", kWaveCause, 2050, 1.26},
+    {"P1 sms x1.25", "rmma within the SM ratio", kWaveCause, 1.0, 0},
+    {"P1 sms x1.25", "rmma beyond the SM ratio", kWaveCause, 1.0, 1.45},
+    {"P1 sms x1.25", "staged within the SM ratio", kWaveCause, 1.0, 0},
+    {"P1 sms x1.25", "w4a8 within the SM ratio", kWaveCause, 1.0, 0},
+    {"P1 sms x1.25", "w4a8 beyond the SM ratio", kWaveCause, 1.0, 1.53},
+    {"P1 sms x1.25", "i8 within the SM ratio", kWaveCause, 1.0, 0},
 };
 
 // ---- Findings ----------------------------------------------------------------------------------
@@ -271,12 +277,14 @@ void describe(DescribedWeight& out, QType qtype, Epilogue epilogue, std::int32_t
     out.weight     = native_weight(out.view, nvfp4 ? 1.0F : 0.0F);
 }
 
-const char* family_name(int family) {
-    constexpr const char* kNames[] = {"RegisterMma", "Scalar",    "W4a4Mma",       "TiledMma",
-                                      "W4a8Mma",     "StagedMma", "Nvfp4TiledMma", "R8Mma",
-                                      "GgmlMmq",     "GgmlVec",   "I8Mma"};
-    return family >= 0 && family < static_cast<int>(std::size(kNames)) ? kNames[family] : "family?";
+std::string family_name(int family) {
+    return std::string(generic::family_name(static_cast<generic::Family>(family)));
 }
+
+// The cases P1 checked on the SM scale, per route family: the denominator of a waiver's share.
+std::map<std::string, int> sms_cases_by_family;
+int sms_cases_priced = 0, routes_skipped_unpriced = 0;
+double largest_sm_ratio = 1.0; // the largest ceil(1.25 sms) / sms among the rows priced
 
 using Prices = std::map<std::pair<int, int>, double>; // (family, schedule) -> seconds
 
@@ -315,6 +323,7 @@ void property_price_monotone(const std::vector<Row>& rows) {
         }
         const DeviceClass more_sms = with_sms(base);
         const DeviceClass more_bw  = with_bandwidth(base);
+        largest_sm_ratio = std::max(largest_sm_ratio, more_sms.sms / static_cast<double>(base.sms));
         for (const QType q : kFormats) {
             for (const Shape s : kShapes) {
                 for (const LinearPolicy policy : policies_of(q)) {
@@ -342,8 +351,17 @@ void property_price_monotone(const std::vector<Row>& rows) {
                                     {"P1 sms x1.25", &sms}, {"P1 bandwidth x1.25", &bw}};
                                 for (const auto& [property, prices] : scaled) {
                                     const auto it = prices->find(route);
-                                    if (it == prices->end()) { continue; }
+                                    if (it == prices->end()) {
+                                        // Priced on the stock board, not on the scaled one: no
+                                        // case, but counted and printed.
+                                        ++routes_skipped_unpriced;
+                                        continue;
+                                    }
                                     ++cases_checked;
+                                    if (prices == &sms) {
+                                        ++sms_cases_priced;
+                                        ++sms_cases_by_family[family_name(route.first)];
+                                    }
                                     if (it->second <= seconds * (1.0 + kResolution)) { continue; }
                                     std::string key = family_name(route.first);
                                     if (prices == &sms) {
@@ -370,69 +388,103 @@ void property_price_monotone(const std::vector<Row>& rows) {
         }
     }
     std::cout << "P1: " << rows.size() - unpriced_rows << " priced rows, " << unpriced_rows
-              << " without a roofline\n";
+              << " without a roofline, " << sms_cases_priced << " SM-scale cases and "
+              << cases_checked - sms_cases_priced << " bandwidth-scale cases, "
+              << routes_skipped_unpriced << " routes priced on stock and not on the scaled board\n";
+    for (const auto& [family, n] : sms_cases_by_family) {
+        std::cout << "    SM-scale cases of " << family << ": " << n << '\n';
+    }
+    if (sms_cases_priced == 0) {
+        note("vacuous", "P1 priced no route", "(all rows)", "no route was priced on the SM scale");
+    }
 }
 
 // ---- P3: fields the selector does not read move nothing
 // ------------------------------------------------
 
-// A board built as board_device_class builds it (synthetic_device_class from the row's numbers,
-// the driver's values, the facts from machine_facts over `table`), with `edit` applied to the
-// driver-side fields first: every derived field (mma_slow, the facts) follows from the relabelled
-// inputs, none is edited on a built class.
-DeviceClass rebuilt(const Row& row, const std::vector<GpuFactsRow>& table,
+// The board as board_device_class builds it (the production builder), with `edit` applied to the
+// driver-side fields and the facts derived again from machine_facts over `table`: every derived
+// field (mma_slow, the facts) follows from the edited inputs, none is edited on a built class.
+//
+// Every variant also takes a slot of its own in anything the selector caches per device class
+// (the per-class gates of generic_gemm.cpp are computed once per class key, and the key does not
+// hold a name, an ordinal, a PCI address, a UUID or the table row): `slot` changes the reported
+// memory size, the one key field this test pins as neutral (the "reported memory size" variant),
+// by a different amount for each variant. Without it a read of a label made inside a cached gate
+// would be answered from the stock board's slot and never be seen.
+DeviceClass rebuilt(const Row& row, const std::vector<GpuFactsRow>& table, int slot,
                     const std::function<void(DeviceClass&)>& edit) {
-    const generic::FactsBoard& b = row.board;
-    DeviceClass d                = synthetic_device_class(b.pci_device_id, b.major, b.minor, b.sms,
-                                                          b.l2_mib * kMiB, b.memory_gib * 1024 * kMiB);
-    d.sm_clock_khz               = b.sm_clock_mhz * 1000;
-    d.memory_clock_khz           = b.memory_clock_mhz * 1000;
-    d.memory_bus_bits            = b.bus_bits;
+    DeviceClass d = generic::board_device_class(row.board);
     edit(d);
-    d.facts = machine_facts(driver_report_of(d), table);
+    d.global_bytes = d.global_bytes * 2 + 4096 * static_cast<std::size_t>(slot);
+    d.facts        = machine_facts(driver_report_of(d), table);
     return d;
 }
 
 // The same board with fields the projection selector does not read changed. (Segment, TDP and the
 // PCIe generation are facts a B2 decision may read, machine_facts.h; the selector reads none of
-// them, and this is what the property pins.)
+// them, and this is what the property pins: each has a variant of its own, so a failure names it.)
 std::vector<std::pair<std::string, DeviceClass>> relabelled(const Row& row) {
     const std::span<const GpuFactsRow> embedded = gpu_facts_table();
     const std::vector<GpuFactsRow> stock(embedded.begin(), embedded.end());
     std::vector<std::pair<std::string, DeviceClass>> out;
-    out.emplace_back("names", rebuilt(row, stock, [](DeviceClass& d) { d.name = "another name"; }));
-    out.emplace_back("ordinal, PCI address, UUID", rebuilt(row, stock, [](DeviceClass& d) {
+    out.emplace_back("reported memory size", rebuilt(row, stock, 1, [](DeviceClass&) {}));
+    out.emplace_back("names",
+                     rebuilt(row, stock, 2, [](DeviceClass& d) { d.name = "another name"; }));
+    out.emplace_back("ordinal, PCI address, UUID", rebuilt(row, stock, 3, [](DeviceClass& d) {
                          d.device              = 3;
                          d.identity.pci_domain = 1;
                          d.identity.pci_bus    = 0x41;
                          d.identity.uuid.fill(0xAB);
                      }));
-    out.emplace_back("reported memory size", rebuilt(row, stock, [](DeviceClass& d) {
-                         d.global_bytes = d.global_bytes * 2 + 4096;
-                     }));
-    // The table row's non-clock fields, through the loader's own derivation of the facts.
-    std::vector<GpuFactsRow> table = stock;
-    for (GpuFactsRow& r : table) {
-        if (r.pci_device_id != row.source->pci_device_id) { continue; }
-        r.name     = "renamed in the table";
-        r.note     = "a different note";
-        r.sources  = {"https://example.invalid/other"};
-        r.tdp_w    = r.tdp_w * 2 + 1;
-        r.vram_gib = r.vram_gib * 2 + 1;
-        r.pcie_gen = r.pcie_gen == 5 ? 3 : 5;
-        r.segment  = r.segment == Segment::Datacenter ? Segment::GeForce : Segment::Datacenter;
-    }
-    out.emplace_back("the table row's name, note, sources, tdp, vram, pcie, segment",
-                     rebuilt(row, table, [](DeviceClass&) {}));
+    // The table row's fields, through the loader's own derivation of the facts.
+    const auto edited_row = [&](const std::function<void(GpuFactsRow&)>& edit) {
+        std::vector<GpuFactsRow> table = stock;
+        for (GpuFactsRow& r : table) {
+            if (r.pci_device_id == row.source->pci_device_id) { edit(r); }
+        }
+        return table;
+    };
+    out.emplace_back("the table row's name, note, sources",
+                     rebuilt(row, edited_row([](GpuFactsRow& r) {
+                                 r.name    = "renamed in the table";
+                                 r.note    = "a different note";
+                                 r.sources = {"https://example.invalid/other"};
+                             }),
+                             4, [](DeviceClass&) {}));
+    out.emplace_back("the table row's tdp",
+                     rebuilt(row, edited_row([](GpuFactsRow& r) { r.tdp_w = r.tdp_w * 2 + 1; }), 5,
+                             [](DeviceClass&) {}));
+    out.emplace_back("the table row's nominal vram", rebuilt(row, edited_row([](GpuFactsRow& r) {
+                                                                 r.vram_gib = r.vram_gib * 2 + 1;
+                                                             }),
+                                                             6, [](DeviceClass&) {}));
+    out.emplace_back(
+        "the table row's pcie generation",
+        rebuilt(row, edited_row([](GpuFactsRow& r) { r.pcie_gen = r.pcie_gen == 5 ? 3 : 5; }), 7,
+                [](DeviceClass&) {}));
+    out.emplace_back("the table row's segment",
+                     rebuilt(row, edited_row([](GpuFactsRow& r) {
+                                 r.segment = r.segment == Segment::Datacenter ? Segment::GeForce
+                                                                              : Segment::Datacenter;
+                             }),
+                             8, [](DeviceClass&) {}));
     return out;
 }
 
 void property_non_fact_fields(const std::vector<Row>& rows) {
+    std::size_t routes_compared = 0;
     for (const Row& row : rows) {
-        const DeviceClass d     = generic::board_device_class(row.board);
-        const std::string stock = decisions_of(d);
+        const DeviceClass d      = generic::board_device_class(row.board);
+        const std::string stock  = decisions_of(d);
+        const std::size_t routes = routes_in(stock);
+        if (routes == 0) {
+            note("vacuous", "no route chosen", row.name,
+                 row.name + ": every decision is a refusal");
+        }
         for (const auto& [what, variant] : relabelled(row)) {
             ++cases_checked;
+            routes_compared += routes;
             const std::string changed = decisions_of(variant);
             if (changed == stock) { continue; }
             note("P3 unread fields", what, row.name,
@@ -465,7 +517,9 @@ void property_non_fact_fields(const std::vector<Row>& rows) {
                      first_difference(a, b));
         }
     }
-    std::cout << "P3: " << rows.size() << " rows relabelled, " << pairs << " SKU twin pairs\n";
+    if (routes_compared == 0) { note("vacuous", "P3 compared no route", "(all rows)", "none"); }
+    std::cout << "P3: " << rows.size() << " rows relabelled, " << routes_compared
+              << " route decisions compared, " << pairs << " SKU twin pairs\n";
 }
 
 // ---- P6: the driver's clocks move no route of a board the table knows ---------------------------
@@ -534,9 +588,18 @@ int main() {
             std::cout << "\n    e.g. " << g.example << '\n';
             if (known) {
                 std::cout << "    cause: " << known->cause << '\n';
-                if (g.count > known->max_count || g.worst > known->max_ratio) {
-                    std::cout << "    WAIVER EXCEEDED: at most " << known->max_count
-                              << " cases and x" << known->max_ratio << '\n';
+                const std::string family = id.second.substr(0, id.second.find(' '));
+                const int family_cases   = sms_cases_by_family[family];
+                const double share =
+                    family_cases > 0 ? g.count / static_cast<double>(family_cases) : 1.0;
+                const double ratio_ceiling =
+                    known->max_ratio > 0 ? known->max_ratio : largest_sm_ratio;
+                std::cout << "    share of the family's " << family_cases
+                          << " SM-scale cases: " << 100.0 * share << " % (waiver at most "
+                          << 100.0 * known->max_share << " %), ratio ceiling x" << ratio_ceiling
+                          << '\n';
+                if (share > known->max_share || g.worst > ratio_ceiling * (1.0 + kResolution)) {
+                    std::cout << "    WAIVER EXCEEDED\n";
                     ++unexpected;
                 }
             } else {

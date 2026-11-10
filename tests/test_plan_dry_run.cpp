@@ -1420,12 +1420,24 @@ void test_rows_at_choice() {
 // 2; roadmap #620 step 6, property P8). With --activations exact pinned, the clock, the DRAM
 // bandwidth and the L2 of the card's profile key (the facts the configuration choice prices its
 // estimates on) moved to twice, half and none leave the choice's KV codec, ring, recurrent state,
-// activations, chunk and drafter, and the dry run's codecs and selected rung, as they were. Over
-// every plan fixture of this file on five generations, at two contexts and one and four streams.
-// (The summation class is a function of the activation mode and the route set, not an output of
-// the choice or the dry run: it has no field to compare here.)
+// activations, chunk and drafter as they were. The signature also holds what the decision priced:
+// the choice's resolution and, for every scored candidate, its decision seconds and worth at full
+// precision. Those are priced on the generation's reference card, so they must be bit-identical
+// under every move; the winner alone would not show a price that follows the board's clock or
+// bandwidth (every candidate's price scales alike and the winner stays inside the tie band).
+// Over every plan fixture of this file on five generations, at two contexts and one and four
+// streams. Known limits, stated so the counts below are read right: only a card that has a
+// reference card (the RTX 4090) has a decision price at all, so only its baselines can move; no L2
+// reader is reached by these fixtures today (the matrix-kernel gate that reads it asks about a
+// dense K-quant layer format, which the fixtures do not carry), so the L2 moves are a guard for a
+// future reader; the dry run's half of the signature (plan_model) does not read the GPU key today
+// and is a constant of the test; the key's SM count and the quantization pick (plan_quants reads
+// the key through choice_card_of) are not among the moves. (The summation class is a function of
+// the activation mode and the route set, not an output of the choice or the dry run: it has no
+// field to compare here.)
 int b1_fits_without_choice = 0, b1_choices = 0, b1_by_worth = 0, b1_chunk_by_speed = 0;
-int b1_drafter_axis = 0, b1_drafter_chosen = 0;
+int b1_drafter_axis = 0, b1_drafter_chosen = 0, b1_drafter_by_worth = 0;
+int b1_with_reference = 0, b1_several_candidates = 0;
 
 std::string b1_signature(const pr::PlanSourceFacts& facts, const pr::DryRunInputs& inputs,
                          bool count = false) {
@@ -1453,6 +1465,11 @@ std::string b1_signature(const pr::PlanSourceFacts& facts, const pr::DryRunInput
             b1_chunk_by_speed += served->choice.chunk_by_speed ? 1 : 0;
             const auto& chosen = served->choice.scored[*served->choice.chosen].candidate;
             b1_drafter_chosen += chosen.drafter != 0 ? 1 : 0;
+            b1_drafter_by_worth += served->choice.drafter_by_worth ? 1 : 0;
+            b1_with_reference += served->choice.resolution > 0 ? 1 : 0;
+            int eligible = 0;
+            for (const auto& s : served->choice.scored) { eligible += !s.variant && s.fits; }
+            b1_several_candidates += eligible > 1 ? 1 : 0;
         }
         if (inputs.subject != nullptr &&
             !pr::drafter_axis(*inputs.subject, inputs.ask).options.empty()) {
@@ -1465,6 +1482,12 @@ std::string b1_signature(const pr::PlanSourceFacts& facts, const pr::DryRunInput
             << ninferno::kv_cache_storage_name(c.ring) << " state "
             << ninferno::recurrent_state_storage_name(c.state) << " act "
             << static_cast<int>(c.activations) << " chunk " << c.chunk << " drafter " << c.drafter;
+        // What the decision priced, bit for bit (hex floats): on the reference card, not the board.
+        out << std::hexfloat << " resolution " << served->choice.resolution;
+        for (const auto& s : served->choice.scored) {
+            out << " [" << s.decision_seconds << ' ' << s.worth << ']';
+        }
+        out << std::defaultfloat;
     } else {
         out << "none";
     }
@@ -1513,9 +1536,12 @@ void test_exact_reads_no_continuous_fact() {
             // subject that carries them): the drafter is an axis of the choice only then, and a
             // fact that leaked into it would move the drafter column of the signature.
             const bool with_drafters = std::string(family.name) == "qwen27b";
-            // The subject is resolved against the GPU key the plan runs on, as production does:
-            // a moved key gets its own subject, so a speculation profile that followed a moved
-            // fact would change the drafter axis, its default and its depths.
+            // The subject is built once, from the stock key, and shared by every move: this test
+            // pins that the choice among the drafters OFFERED does not move with the key's
+            // continuous facts. It does not claim the speculation profile is independent of the
+            // key: this registry carries no measured pairs, so the profile never reads the key
+            // here, and with measured pairs it may follow the key's clock and bandwidth (a
+            // byte-neutral choice, tier S of deterministic-decisions.md).
             pr::PlanSourceFacts target     = facts;
             target.shape.hidden_size       = 5120;
             target.shape.num_hidden_layers = 64;
@@ -1569,11 +1595,6 @@ void test_exact_reads_no_continuous_fact() {
                             moved.gpu.sm_clock_khz = static_cast<int>(stock.sm_clock_khz * m.clock);
                             moved.gpu.dram_gbps    = stock.dram_gbps * m.bandwidth;
                             moved.gpu.l2_bytes     = stock.l2_bytes * m.l2;
-                            std::optional<pr::SpeculationSubject> moved_subject;
-                            if (drafted) {
-                                moved_subject = subject_for(moved.gpu);
-                                moved.subject = &*moved_subject;
-                            }
                             ++compared;
                             const std::string got = b1_signature(facts, moved);
                             check(got == base,
@@ -1594,11 +1615,17 @@ void test_exact_reads_no_continuous_fact() {
     // drafter axis with options (spec automatic, a subject that carries drafters) and an MoE's
     // chunk picked by speed on the generation's reference card (an MoE shape on Ada).
     check(b1_drafter_axis > 0, "B1 under exact: some baselines offer the choice a drafter axis");
+    check(b1_drafter_by_worth > 0, "B1 under exact: some baselines decide the drafter by worth");
+    check(b1_with_reference > 0 && b1_several_candidates > 0,
+          "B1 under exact: some baselines price several candidates on a reference card");
     check(b1_chunk_by_speed > 0, "B1 under exact: some baselines pick an MoE's chunk by speed");
     std::cout << "B1 under exact: " << compared << " perturbed plans compared against "
               << b1_choices << " choices (" << b1_by_worth << " by worth, " << b1_chunk_by_speed
               << " chunk by speed, " << b1_drafter_axis << " with a drafter axis, "
-              << b1_drafter_chosen << " drafting)\n";
+              << b1_drafter_by_worth << " of them decided by worth, " << b1_drafter_chosen
+              << " drafting, " << b1_with_reference << " priced on a reference card, "
+              << b1_several_candidates << " with more than one eligible candidate; "
+              << b1_fits_without_choice << " plans fit with no choice)\n";
 }
 
 // One price for a quantization whichever facts carry it (product::quant_option_of): a hub row's
