@@ -212,56 +212,106 @@ else:
         if o.startswith("tests/") or "/tests/" in o:
             ow = owner(o)
             if ow in exe_of: add_exe_tests(ow)
-    # cmake changes: every changed line must sit in a test/executable registration that resolves to a ctest
-    # test or an executable (or be a comment); anything else (apps, libraries, options) is NOT VERIFIED
+    # cmake changes: every changed line, added or removed, must sit in a test/executable registration (or be a
+    # comment); a registration of a literal name must name a ctest test or an executable that exists; anything
+    # else (apps, libraries, options, an unparsable statement) is NOT VERIFIED
     names = set(cmd_of) | set(exe_of)
     REG = {"ninferno_add_test", "add_test", "add_executable", "set_tests_properties"}
-    def stmts(path):
-        try: lines = open(path, errors="ignore").read().splitlines()
-        except OSError: return []
-        res, depth, start, cmd, text = [], 0, 0, "", ""
-        for k, l in enumerate(lines, 1):
-            code = l.split("#", 1)[0]
-            if depth == 0:
-                m = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(", code)
-                if not m: continue
-                start, cmd, text = k, m.group(1).lower(), ""
-            text += code + "\n"; depth += code.count("(") - code.count(")")
-            if depth <= 0: res.append((start, k, cmd, text)); depth = 0
+    is_reg = lambda cmd: cmd in REG or re.search(r"add_\w*test", cmd) is not None
+    IDENT = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(")
+    def parse_cmake(text):  # statements as (first line, last line, command, args, unclosed); strings, [[..]] and comments skipped
+        res, n, i, line = [], len(text), 0, 1
+        def bracket(i):  # end index of a bracket argument/comment starting at i, or -1
+            m = re.match(r"\[(=*)\[", text[i:i + 40])
+            if not m: return -1
+            e = text.find("]" + m.group(1) + "]", i + len(m.group(0)))
+            return n if e < 0 else e + len(m.group(1)) + 2
+        while i < n:
+            c = text[i]
+            if c == "\n": line += 1; i += 1; continue
+            if c == "#":
+                j = bracket(i + 1)
+                if j < 0: j = text.find("\n", i); j = n if j < 0 else j
+                line += text.count("\n", i, j); i = j; continue
+            m = IDENT.match(text, i)
+            if not m: i += 1; continue
+            start, cmd, i = line, m.group(1).lower(), m.end()
+            depth, args, cur, have = 1, [], "", False
+            while i < n and depth > 0:
+                c = text[i]
+                if c == "\n": line += 1
+                if c in " \t\r\n":
+                    if have: args.append(cur); cur, have = "", False
+                    i += 1
+                elif c == "#":
+                    j = bracket(i + 1)
+                    if j < 0: j = text.find("\n", i); j = n if j < 0 else j
+                    line += text.count("\n", i, j); i = j
+                elif c == '"':
+                    k = i + 1
+                    while k < n and text[k] != '"': k += 2 if text[k] == "\\" else 1
+                    cur += text[i + 1:k]; have = True; line += text.count("\n", i, k); i = k + 1
+                elif c == "[" and bracket(i) > 0:
+                    j = bracket(i); cur += text[i:j]; have = True; line += text.count("\n", i, j); i = j
+                elif c == "(": depth += 1; i += 1
+                elif c == ")":
+                    depth -= 1; i += 1
+                    if depth == 0 and have: args.append(cur); cur, have = "", False
+                else: cur += c; have = True; i += 1
+            res.append((start, line, cmd, args, depth > 0 or line - start > 300))
         return res
+    def reg_name(st):  # (literal registered name or None, is a variable-built name)
+        cmd, a = st[2], st[3]
+        if cmd == "set_tests_properties": return None, True
+        k = 1 if cmd == "add_test" and len(a) > 1 and a[0].upper() == "NAME" else 0
+        if len(a) <= k: return None, True
+        v = a[k]
+        return (v, False) if re.fullmatch(r"[A-Za-z0-9_.+-]+", v) else (None, True)
+    def pass_statement(st, side):  # True when the changed line in statement st is accounted for
+        if st is None: return True   # a comment or blank line
+        if st[4] or not is_reg(st[2]): return False
+        lit, var = reg_name(st)
+        if st[2] == "set_tests_properties":
+            ts = [t for t in (st[3][:st[3].index("PROPERTIES")] if "PROPERTIES" in st[3] else st[3])]
+            if all(t in cmd_of for t in ts): tests.update(ts); return True
+            return False
+        if lit is not None:
+            if lit in cmd_of: tests.add(lit); return True
+            if lit in exe_of: add_exe_tests(lit); return True
+            if side == "old": return True   # a registration that is gone: nothing to run
+            out("SKIP", f"cmake registers '{lit}' but ctest lists no test or executable of that name; not checked")
+            return False
+        toks = {t for a in st[3] for t in re.findall(r"[A-Za-z0-9_.+-]+", a)} & names   # a variable-built name
+        for tok in toks:
+            if tok in cmd_of: tests.add(tok)
+            elif tok in exe_of: add_exe_tests(tok)
+        return bool(toks)
+    at = lambda sts, ln: next((x for x in sts if x[0] <= ln <= x[1]), None)
     cm = sh("git", "-C", src, "diff", "--no-renames", "-U0", rng, "--", "*.cmake", "*CMakeLists.txt")
-    bad_lines, st_cache = [], {}
-    cur_file, hunk, ln = None, None, 0
-    def close_hunk():
-        if hunk and hunk["removed"] and not (hunk["added"] and hunk["ok"]):
-            bad_lines.append(f"{cur_file}: {hunk['removed']} removed line(s)")
+    bad_lines, new_cache, old_cache = [], {}, {}
+    def sts_of(path, side):
+        cache = new_cache if side == "new" else old_cache
+        if path not in cache:
+            try:
+                text = open(os.path.join(src, path), errors="ignore").read() if side == "new" else sh("git", "-C", src, "show", f"origin/master:{path}")
+            except (OSError, subprocess.CalledProcessError): text = ""
+            cache[path] = parse_cmake(text)
+        return cache[path]
+    old_file = new_file = None; nln = oln = 0
     for l in cm.splitlines():
-        if l.startswith("+++ "):
-            close_hunk(); hunk = None
-            cur_file = l[6:] if l.startswith("+++ b/") else None
-            if cur_file and cur_file not in st_cache: st_cache[cur_file] = stmts(os.path.join(src, cur_file))
-        elif l.startswith("--- "): continue
+        if l.startswith("--- "): old_file = l[6:] if l.startswith("--- a/") else None
+        elif l.startswith("+++ "): new_file = l[6:] if l.startswith("+++ b/") else None
         elif l.startswith("@@"):
-            close_hunk()
-            m = re.match(r"@@ -\S+ \+(\d+)", l); ln = int(m.group(1)); hunk = {"added": 0, "removed": 0, "ok": True}
-        elif l.startswith("+") and hunk is not None:
-            hunk["added"] += 1
-            body = l[1:]; st = next((x for x in st_cache.get(cur_file, []) if x[0] <= ln <= x[1]), None)
-            if st is None:
-                if body.strip() and not body.strip().startswith("#"): hunk["ok"] = False; bad_lines.append(f"{cur_file}:{ln}")
-            else:
-                hit = set(re.findall(r"[A-Za-z0-9_.+-]+", st[3])) & names
-                if (st[2] in REG or re.search(r"add_\w*test", st[2])) and hit:
-                    for tok in hit:
-                        if tok in cmd_of: tests.add(tok)
-                        elif tok in exe_of: add_exe_tests(tok)
-                else:
-                    hunk["ok"] = False; bad_lines.append(f"{cur_file}:{ln}")
-                    m = re.search(r"(?:ninferno_add_test|add_executable|add_test)\(\s*(?:NAME\s+)?([A-Za-z0-9_]+)", st[3])
-                    if m and (st[2] in REG or re.search(r"add_\w*test", st[2])): out("SKIP", f"cmake adds '{m.group(1)}' but ctest lists no test or executable of that name; not checked")
-            ln += 1
-        elif l.startswith("-") and hunk is not None: hunk["removed"] += 1
-    close_hunk()
+            m = re.match(r"@@ -(\d+)(?:,\d+)? \+(\d+)", l); oln, nln = int(m.group(1)), int(m.group(2))
+        elif l.startswith("+") and new_file:
+            st = at(sts_of(new_file, "new"), nln)
+            if not l[1:].strip() or l[1:].lstrip().startswith("#"): st = None if st is None else st
+            if not pass_statement(st, "new"): bad_lines.append(f"{new_file}:{nln}")
+            nln += 1
+        elif l.startswith("-") and old_file:
+            st = at(sts_of(old_file, "old"), oln)
+            if not pass_statement(st, "old"): bad_lines.append(f"{old_file}:{oln}(removed)")
+            oln += 1
     if bad_lines:
         uniq = sorted(set(bad_lines))
         out("SKIP", f"cmake change not mapped to a checked test/target ({len(uniq)} place(s), e.g. {', '.join(uniq[:3])}); configuring succeeded, but the targets it affects are not built")
