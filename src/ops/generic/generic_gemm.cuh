@@ -2254,6 +2254,15 @@ NINFERNO_DECODER_GEOMETRY_ROW("GgmlIq3XxsFragDecoder", GgmlIq3XxsFragDecoder)
 NINFERNO_DECODER_GEOMETRY_ROW("GgmlIq2SFragDecoder", GgmlIq2SFragDecoder)
 #undef NINFERNO_DECODER_GEOMETRY_ROW
 
+// The build capability the geometry reads (geometry::build_has_cp_async) is the one rmma_kernel's
+// kStaged gate compiles under, on every architecture this file is compiled for.
+#ifdef __CUDA_ARCH__
+static_assert(geometry::build_has_cp_async(__CUDA_ARCH__ / 10) ==
+                  (NINFERNO_HAS_CP_ASYNC && !NINFERNO_FMA_MMA),
+              "geometry::build_has_cp_async (rmma_geometry.h) differs from the kernel's cp.async "
+              "gate (NINFERNO_HAS_CP_ASYNC, NINFERNO_FMA_MMA)");
+#endif
+
 // A decoder with finish() (kFinish: the wide Q6_K) loads its runs in a raw form that finish()
 // completes with the whole warp once the loads have landed: mma_step finishes the step's runs in
 // place after issuing the step's activation loads (finished in the fetch, the swap waited for the
