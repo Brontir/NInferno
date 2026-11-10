@@ -1,5 +1,6 @@
-"""tools/bench/gap_map.py on synthetic inputs: format bits from the doc tables, the two laws, the
-binding law, no-law rows, evidence attribution and the CLI. No GPU, no repository data."""
+"""tools/bench/gap_map.py: the two laws, the binding law, no-law rows, evidence attribution and the
+CLI on synthetic inputs, plus checks of the facts it parses out of the committed doc and header.
+No GPU."""
 import json
 import sys
 import tempfile
@@ -25,6 +26,8 @@ FACTS = {"gpus": [
      "name": "Test Board"},
     {"chip": "ad999", "sms": 100, "cc": 89, "boost_mhz": 2000, "bus_bits": 128, "gbps": 16.0,
      "name": "Test Board Half"},
+    {"chip": "tw", "sms": 20, "cc": 89, "boost_mhz": 1500, "bus_bits": 128, "gbps": 8.0, "name": "Twin A"},
+    {"chip": "tw", "sms": 20, "cc": 89, "boost_mhz": 1800, "bus_bits": 128, "gbps": 8.0, "name": "Twin B"},
     {"chip": "gx", "sms": 10, "cc": 70, "boost_mhz": 1000, "bus_bits": 128, "gbps": 8.0,
      "name": "Volta Test"},
 ]}  # Test Board: 512 GB/s; Half: 256 GB/s
@@ -51,8 +54,24 @@ class Facts(unittest.TestCase):
     def test_real_doc_covers_every_route_format(self):
         repo = Path(__file__).resolve().parents[1]
         bits = gm.load_format_bits((repo / "docs/maintainer/tensor-formats.md").read_text(encoding="utf-8"))
-        missing = [r for r, c in gm.ROUTE_FORMATS.items() if c not in bits and r != "u4zp"]
+        missing = [r for r, c in gm.ROUTE_FORMATS.items() if c not in bits and not r.startswith(("u4zp", "q3g"))]
         self.assertEqual(missing, [])
+
+    def test_real_doc_bits_values(self):
+        repo = Path(__file__).resolve().parents[1]
+        b = gm.load_format_bits((repo / "docs/maintainer/tensor-formats.md").read_text(encoding="utf-8"))
+        # The qmax table (7, 15, 31) must not overwrite the bits/weight table.
+        self.assertEqual([b["q4_g64_fp16"], b["q5_g64_fp16"], b["q6_g64_fp16"], b["q8_g32_fp16"]],
+                         [4.25, 5.25, 6.25, 8.5])
+        self.assertEqual(b["ggml_q4_k"], 4.5)
+        self.assertEqual(b["ggml_q6_k"], 210 * 8 / 256)
+        self.assertEqual(b["nvfp4"], 4.5)
+
+    def test_qmax_table_does_not_overwrite(self):
+        qmax = "| `q4_g64_fp16` | 4 | `0x8` | `[-8, 7]` | 7 |"
+        bits = "| `q4_g64_fp16` | 4 | 64 | `[-8, 7]` | one binary16 scale/group | 4.25 |"
+        doc = chr(10).join([bits, DOC, qmax, ""])
+        self.assertEqual(gm.load_format_bits(doc)["q4_g64_fp16"], 4.25)
 
     def test_generations_and_board(self):
         g = gm.load_generations(HEADER)
@@ -110,6 +129,54 @@ class Laws(unittest.TestCase):
 
 
 class Rows(unittest.TestCase):
+    def test_ambiguous_board_is_no_law(self):
+        self.assertIsNone(gm.board_from_facts(FACTS, "tw", 20, None))
+        self.assertEqual(len(gm.board_candidates(FACTS, "tw", 20, None)), 2)
+        rows = gm.rows_from_route_table(table(tuned_on="tw:20sm"), "t", FACTS, self.gens, self.bits)
+        self.assertTrue(all(r["gap"] is None and "ambiguous" in r["why"] for r in rows))
+        # the same chip and SM count as the table's own board: the table's board stands
+        doc = table(tuned_on="ad999:100sm")
+        rows = gm.rows_from_route_table(doc, "t", FACTS, self.gens, self.bits)
+        self.assertTrue(all(r["gap"] is not None for r in rows))
+
+    def test_swiglu_and_add_through_route_rows(self):
+        base = gm.rows_from_route_table(table(), "a", FACTS, self.gens, self.bits)[0]
+        sw = gm.rows_from_route_table(table(epilogue="swiglu"), "b", FACTS, self.gens, self.bits)[0]
+        ad = gm.rows_from_route_table(table(epilogue="add"), "c", FACTS, self.gens, self.bits)[0]
+        self.assertAlmostEqual(sw["bytes"] - base["bytes"], 4096 * 4096 * 4.5 / 8)
+        self.assertAlmostEqual(ad["bytes"] - base["bytes"], 1 * 4096 * 2)
+
+    def test_l2_flag(self):
+        facts = {"gpus": [dict(FACTS["gpus"][0], l2_mib=1000)]}
+        r = gm.rows_from_route_table(table(), "t", facts, self.gens, self.bits)[0]
+        self.assertTrue(r["l2_resident"])
+        facts = {"gpus": [dict(FACTS["gpus"][0], l2_mib=1)]}
+        self.assertFalse(gm.rows_from_route_table(table(), "t", facts, self.gens, self.bits)[0]["l2_resident"])
+
+    def test_below_law_rows_are_flagged_and_left_out(self):
+        rows = [dict(card="C", kind="linear", format="q4k", band="T1", gap=0.6, law_us=50.0,
+                     measured_us=30.0, binds="dram", why=None),
+                dict(card="C", kind="linear", format="q4k", band="T1", gap=2.0, law_us=50.0,
+                     measured_us=100.0, binds="dram", why=None)]
+        self.assertEqual(len(gm.below_law(rows)), 1)
+        (g,) = gm.aggregate(rows, 5.0)
+        self.assertEqual((g["scored"], g["below_law"]), (1, 1))
+        self.assertEqual(len(gm.top_gaps(rows, 5, 5.0)["linear"]), 1)
+
+    def test_fitted_rates_give_no_tensor_law(self):
+        gens = gm.load_generations(HEADER + '    {7, 5, 9, "turing", 1536.0, 2048.0, false, 1.0, 1.11, true},')
+        volta, turing = gm.generation_of(gens, 70), gm.generation_of(gens, 75)
+        board = {"sms": 10, "boost_mhz": 1000.0, "dram_gbs": 100.0}
+        self.assertIn("fitted", gm.tensor_rate(volta, board, "a16")[1])
+        self.assertIn("fitted", gm.tensor_rate(turing, board, "a16")[1])
+        self.assertIsNotNone(gm.tensor_rate(turing, board, "a8")[0])
+        doc = self.decode_doc(active_params=1e9, input_table_params=0)
+        doc["cards"]["C"].update(major=7, minor=0)
+        doc["rows"] = [{"card": "C", "model": "M", "quant": "Q", "prompt": 1000, "prefill": 1000.0}]
+        r = gm.rows_from_prefill(doc, gens)[0]
+        self.assertIsNone(r["gap"])
+        self.assertIn("fitted rate", r["why"])
+
     def setUp(self):
         self.gens = gm.load_generations(HEADER)
         self.bits = gm.load_format_bits(DOC)
@@ -146,7 +213,7 @@ class Rows(unittest.TestCase):
         return {"models": {"M": m},
                 "cards": {"C": {"major": 8, "minor": 9, "sms": 10, "clock_hz": 2e9,
                                 "dram_bytes_per_s": 8e9}},
-                "rows": [{"card": "C", "model": "M", "quant": "Q", "kv": "int8", "state": "f16",
+                "rows": [{"card": "C", "model": "M", "quant": "Q", "kv": "int8", "state": "f16", "ring": "bf16",
                           "concurrency": 2, "context": 100, "decode": 100.0}]}
 
     def test_decode_step_bytes(self):
@@ -156,17 +223,26 @@ class Rows(unittest.TestCase):
         self.assertAlmostEqual(r["measured_us"], 1e4)
         self.assertEqual(r["binds"], "dram")
 
+    def test_decode_leaves_out_speculation_and_counts_the_ring(self):
+        doc = self.decode_doc(sliding_attention_width=512.0, window=64,
+                              ring_bytes_per_token={"bf16": 10})
+        doc["models"]["M"]["quants"]["Q"]["speculation_bytes"] = 500_000
+        doc["rows"][0].update(ring="bf16", context=5000)
+        r = gm.rows_from_decode(doc, self.gens)[0]
+        nbytes = (10_000_000 - 2_000_000 - 500_000) + 2 * (1000 * 5000 + 10 * 64)
+        self.assertAlmostEqual(r["bytes"], nbytes)
+
     def test_decode_no_law_cases(self):
         self.assertIsNone(gm.rows_from_decode(self.decode_doc(experts=8), self.gens)[0]["gap"])
         doc = self.decode_doc(sliding_attention_width=512.0)
-        doc["rows"][0]["context"] = 5000
-        self.assertIsNone(gm.rows_from_decode(doc, self.gens)[0]["gap"])
+        doc["rows"][0].update(context=5000, ring="bf16")
+        self.assertIsNone(gm.rows_from_decode(doc, self.gens)[0]["gap"])  # ring bytes not in the fixture
 
     def test_prefill_uses_int8_rate_where_the_generation_has_one(self):
         doc = self.decode_doc(active_params=1e9, input_table_params=1e8)
         doc["rows"] = [{"card": "C", "model": "M", "quant": "Q", "prompt": 1000, "prefill": 1000.0}]
         r = gm.rows_from_prefill(doc, self.gens)[0]
-        self.assertAlmostEqual(r["tensor_us"], 2 * 9e8 * 1000 / (10 * 2e9 * 2048.0) * 1e6)
+        self.assertAlmostEqual(r["tensor_us"], 2 * 1e9 * 1000 / (10 * 2e9 * 2048.0) * 1e6)
         self.assertEqual(r["binds"], "tensor")
 
 
