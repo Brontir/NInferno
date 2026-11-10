@@ -22,6 +22,11 @@ using namespace ninferno;
 static_assert(arch_registry::find(12, 0).smem_per_block_optin == 99 * 1024);
 static_assert(arch_registry::find(12, 0).smem_per_sm == 100 * 1024);
 static_assert(arch_registry::find(12, 0).max_threads_per_sm == 1536);
+static_assert(arch_registry::find(12, 0).max_blocks_per_sm == 24);
+static_assert(arch_registry::find(12, 1).max_blocks_per_sm == 24);
+static_assert(arch_registry::find(8, 7).max_blocks_per_sm == 16);
+static_assert(arch_registry::find(7, 0).max_threads_per_sm == 2048);
+static_assert(arch_registry::find(7, 0).max_blocks_per_sm == 32);
 static_assert(arch_registry::find(8, 9).max_blocks_per_sm == 24);
 static_assert(arch_registry::find(8, 6).max_blocks_per_sm == 16);
 static_assert(arch_registry::find(8, 0).smem_per_block_optin == 163 * 1024);
@@ -141,7 +146,7 @@ void every_covered_capability_keeps_its_value() {
     }
 }
 
-void the_synthetic_class_keeps_its_value() {
+void the_synthetic_class_matches_the_guide() {
     // Every cc 0..129, listed or not.
     for (int cc = 0; cc < 130; ++cc) {
         const int major = cc / 10, minor = cc % 10;
@@ -150,13 +155,19 @@ void the_synthetic_class_keeps_its_value() {
         const DeviceClass d =
             synthetic_device_class(0, major, minor, 40, std::size_t{8} << 20, std::size_t{8} << 30);
         legacy::Synthetic old = legacy::synthetic(major, minor);
-        // Volta's synthetic class has always read the unlisted row's shared memory and threads
-        // (99 and 100 KiB, 1536) for the capabilities of major 7 below 7.5; they stay so (see
-        // synthetic_device_class); real Volta is 96 KiB, 96 KiB, 2048.
-        expect(d.smem_per_block_optin == old.block, at + "shared per block");
-        expect(d.smem_per_sm == old.sm, at + "shared per SM");
-        expect(d.max_threads_per_sm == old.threads, at + "threads per SM");
-        expect(d.max_blocks_per_sm == old.blocks, at + "blocks per SM");
+        // The legacy synthetic class (kept verbatim above) differs from the table in the places
+        // the CUDA programming guide corrects (#662): Volta and Xavier (7.0, 7.2: 96 KiB of shared
+        // memory, 2048 threads, where the legacy class gave the unlisted row's 99/100 KiB, 1536),
+        // Orin (8.7: 16 blocks) and 12.x (24 blocks).
+        const bool volta = cc == 70 || cc == 72;
+        const std::size_t block = volta ? std::size_t{96 * 1024} : old.block;
+        const std::size_t sm    = volta ? std::size_t{96 * 1024} : old.sm;
+        const int threads       = volta ? 2048 : old.threads;
+        const int blocks        = cc == 87 ? 16 : (cc == 120 || cc == 121) ? 24 : old.blocks;
+        expect(d.smem_per_block_optin == block, at + "shared per block");
+        expect(d.smem_per_sm == sm, at + "shared per SM");
+        expect(d.max_threads_per_sm == threads, at + "threads per SM");
+        expect(d.max_blocks_per_sm == blocks, at + "blocks per SM");
         expect(d.registers_per_sm == old.registers, at + "registers per SM");
     }
 }
@@ -186,7 +197,7 @@ void the_table_is_well_formed() {
 
 int main() {
     every_covered_capability_keeps_its_value();
-    the_synthetic_class_keeps_its_value();
+    the_synthetic_class_matches_the_guide();
     the_table_is_well_formed();
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
