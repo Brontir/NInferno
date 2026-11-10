@@ -306,14 +306,23 @@ measured_boards_known(std::span<const Measured, Extent> measured) noexcept {
 [[nodiscard]] std::vector<std::string> gpu_class_chain(std::string_view chip, int sms,
                                                        std::string_view arch);
 
-// The current device's class, cached per ordinal. Throws std::runtime_error when CUDA cannot
-// report the device or the ordinal is invalid.
-[[nodiscard]] const DeviceClass& device_class();
-
 // The class of the device this thread runs on, probed once: what device_class() returns where no
 // class is substituted (ScopedDeviceClass). Throws where CUDA cannot report the device; a host-only
-// build (device_class_nodevice.cpp) always throws.
+// build (device_class_nodevice.cpp) always throws. Defined in ninferno_core (device_class.cpp) or
+// the host-only stub, never in ninferno_core_host.
 [[nodiscard]] const DeviceClass& current_device_class();
+
+[[nodiscard]] const DeviceClass* substituted_device_class() noexcept;
+
+// The current device's class: the ScopedDeviceClass substitute of this thread, else the probed
+// class. Throws std::runtime_error when CUDA cannot report the device. Inline, so that the
+// reference to current_device_class() sits in the caller's object, which the linker reads before
+// the libraries: ninferno_core_host keeps no reference into ninferno_core, whatever the order the
+// two archives come in on a link line.
+[[nodiscard]] inline const DeviceClass& device_class() {
+    if (const DeviceClass* substitute = substituted_device_class()) { return *substitute; }
+    return current_device_class();
+}
 [[nodiscard]] const DeviceClass& device_class(int device);
 
 // The identity of ordinal `device`: cudaDeviceGetPCIBusId and cudaGetDeviceProperties' uuid,

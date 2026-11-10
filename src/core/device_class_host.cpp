@@ -486,9 +486,4 @@ std::string device_class_key(const DeviceClass& d) {
     return key;
 }
 
-const DeviceClass& device_class() {
-    if (t_substitute != nullptr) { return *t_substitute; }
-    return current_device_class();
-}
-
 } // namespace ninferno
