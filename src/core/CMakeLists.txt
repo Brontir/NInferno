@@ -9,6 +9,16 @@ configure_file(embedded_gpu_facts.h.in
 ninferno_generate_board_registry(${CMAKE_CURRENT_SOURCE_DIR}/data/gpu_facts.json
   ${CMAKE_CURRENT_BINARY_DIR}/generated_public/core/board_registry_rows.inc)
 
+# The decision code's part of core, with no CUDA runtime: the headers of the facts it reads
+# (generation.h, cost_constants.h, mmq_columns.h, board_registry.h and its generated rows) and the
+# sources they need. ninferno_core links it; a target that links only this and no cudart can be
+# built and run on a machine with no toolkit (tests/cmake/ProductTests.cmake asserts the closure).
+add_library(ninferno_core_host STATIC
+  dtype.cpp
+)
+ninferno_internal_includes(ninferno_core_host)
+target_include_directories(ninferno_core_host PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/generated_public)
+
 add_library(ninferno_core STATIC
   arena.cu
   device.cu
@@ -19,7 +29,6 @@ add_library(ninferno_core STATIC
   gate_atlas.cpp
   device_image_probe.cu
   tune_timer.cu
-  dtype.cpp
   host_worker_pool.cpp
   gdn_replay_records.cpp
   cyclic_kv_cache.cpp
@@ -40,5 +49,5 @@ ninferno_internal_includes(ninferno_core)
 target_include_directories(ninferno_core PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 target_include_directories(ninferno_core PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/generated_public)
 ninferno_cuda_archive(ninferno_core)
-target_link_libraries(ninferno_core PUBLIC ninferno::cudart CUDA::nvtx3 Threads::Threads
+target_link_libraries(ninferno_core PUBLIC ninferno_core_host ninferno::cudart CUDA::nvtx3 Threads::Threads
   PRIVATE ninferno::json)
