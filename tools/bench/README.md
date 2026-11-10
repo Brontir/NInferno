@@ -34,6 +34,7 @@ python3 tools/bench/run_ninferno_bench_matrix.py --preset core             # run
 | `selection_regret.py` | Offline regret of recorded production choices against qualified, matched alternatives on held-out boards or models ([below](#offline-selection-regret)). |
 | `regret_collect.py` | The lab collector for `selection_regret.py`: `ninferno_route_tune --selected-out` (the route the production path runs per problem and width) and one `--routes-out` sweep per pass into its input ([below](#offline-selection-regret)). |
 | `mmq_transfer_audit.py` | Offline audit of how the MMQ choice transfers between same-generation cards (#373): route-table agreement and gate-label regret by workload regime, from `routes/*.json` and `data/mmq_paired_prefill.json`; no GPU ([report](../../docs/maintainer/mmq-transfer-audit.md)). |
+| `run_524_turing_grid.sh`, `mmq_width_grid.py`, `524_grid_hook.patch` | Measurement kit for the Turing column-tile step (#524, [DECISIONS 74](../../docs/maintainer/decisions.md)): forced-width grid and A/B on an idle RTX 2080 Ti with `ninferno-serve`. The widths come from a bench-only kernel patch the script applies for the build and reverts; it is never merged into the kernel. Not run on a card yet. |
 | `quality_rows.py` | Perplexity and KL divergence of each `--activations` mode against `exact` on the fixed corpus, appended as `docs/performance/` rows. |
 
 ## Offline selection regret

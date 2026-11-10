@@ -1702,17 +1702,22 @@ on the W4A8 tiles, not this kernel, which steps the same way (RTX 5060 Ti 104 ->
 256 tokens): its 64 x 64 against 128 x 64 tile steps need their own grid.
 
 **Turing, predicted, to verify (#524).** RTX 2080 Ti (sm_75, 68 SMs, 64 KiB of shared memory): f 0.20,
-best range 0.15-0.25. Its int8 tensor rate per SM is GA10x's (2048 ops a clock, `s8` 2048 on both
-rows) and the K-quant decode runs on the same 64 int32 lanes, so a tile's split between the fixed
-decode and the part in J is GA10x's and Ada's; the lack of cp.async (synchronous weight loads) can
-only raise the fixed share. The Q4_K / Q6_K tile is 45.4 KB (J 16) to 62.0 KB (J 128): all eight
-widths fit 64 KiB (Q2_K's 128-column tile, 70 144 B, does not: `widest_tile` 64, it keeps the
+best range 0.15-0.25. This is an assumption, not a derivation: 0.20 is the value measured on GA10x
+(RTX 3060 0.15-0.30, RTX 3090 0.15-0.20) and on Ada (0.15-0.20), assumed for Turing because its int8
+tensor rate per SM is theirs (2048 ops a clock, `s8` 2048 on both rows) and the K-quant decode runs
+on the same 64 int32 lanes. Those two facts do not fix f: GB20x has the same `s8` and the same
+Q4_K / Q6_K tile configuration and measured 0.10 (best 0.05-0.15), so the grid scans f 0.05-0.43. Turing
+holds one block per SM at every width where sm_86's 100 KiB holds two up to J 64, which can raise the
+fixed share of the narrow tiles. The Q4_K / Q6_K tile is 42 048 B (J 16) to 57 856 B (J 128), 38 912 B
+of weight rows plus the y tile and ids (`tile_shared_bytes`, pinned in `tests/test_choice.cpp`): all
+eight widths fit 64 KiB (Q2_K's 128-column tile, 70 144 B, does not: `widest_tile` 64, it keeps the
 fewest tiles). On 68 SMs a 4096-row product (32 row tiles) fills 94 % of a wave with two tiles of
 80, 96 or 128 columns against 1.41 waves for three of 64, so the padding that 80 / 96 save at
-136..192 tokens turns into time more cleanly than on the 3090's 82 SMs. Predicted A/B at f 0.20:
-144..160 tokens -14..-19 %, 176..192 -9..-13 %, 208..256 within 0.5 %. The Turing row keeps the
-fewest tiles until `tools/bench/run_524_turing_grid.sh` (forced-width grid, then the A/B) has run
-on an RTX 2080 Ti and the grid agrees. Nothing is changed by this note.
+136..192 tokens may turn into time more cleanly than on the 3090's 82 SMs. Predicted A/B if f is 0.20
+(the bracket of the GA10x and Ada results): 144..160 tokens -14..-19 %, 176..192 -9..-13 %, 208..256
+within 0.5 %. The Turing row keeps the fewest tiles until `tools/bench/run_524_turing_grid.sh`
+(forced-width grid, then the A/B; the widths come from a bench-only patch that is never merged into the
+kernel) has run on an RTX 2080 Ti and the grid agrees. Nothing is changed by this note.
 
 ## 75. Inside the speed estimate's resolution the more accurate candidate wins (#301, 09.11, rule; not yet run on the stands)
 
