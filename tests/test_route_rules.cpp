@@ -2,9 +2,10 @@
 // describe: every descriptor has a unique name, a literal that is in its file (whitespace aside), a
 // recorded boards / cards / tolerance field ("unknown" or "none recorded" where the record is
 // silent, never empty) and an empty kernel hash (none is recorded); a named constant's value is the
-// one the source defines; and every threshold constant of the selection code (src/ops/generic, matched by name: Min / Max /
-// Tokens / Fill / Distance / Values / Bytes / Gbps) has a descriptor or is allowlisted as a non-rule, so
-// a rule cannot change, move or appear without its record. `--list` prints them. No GPU.
+// one the source defines; and every threshold constant of the selection code (src/ops/generic,
+// matched by name: Min / Max / Tokens / Fill / Distance / Values / Bytes / Gbps) has a descriptor
+// or is allowlisted as a non-rule, so a rule cannot change, move or appear without its record.
+// `--list` prints them. No GPU.
 
 #include "ops/generic/route_rules.h"
 
@@ -98,7 +99,7 @@ int main(int argc, char** argv) {
     std::set<std::string> found_names;
     const auto root = std::filesystem::path(NINFERNO_SOURCE_DIR) / "src/ops/generic";
     for (const auto& item : std::filesystem::directory_iterator(root)) {
-        const auto ext = item.path().extension();
+        const auto ext         = item.path().extension();
         const std::string file = item.path().filename().string();
         if ((ext != ".h" && ext != ".cpp") || file == "route_rules.h") continue;
         std::string text = read(file);
@@ -110,8 +111,9 @@ int main(int argc, char** argv) {
             const std::string name = (*it)[1].str();
             found_names.insert(name);
             if (names.count(name) == 0 && kNotRules.count(name) == 0) {
-                fail(name + " (" + file + ") is a threshold constant of the selection code without "
-                                         "a descriptor in kRouteRules (or an entry in kNotRules)");
+                fail(name + " (" + file +
+                     ") is a threshold constant of the selection code without "
+                     "a descriptor in kRouteRules (or an entry in kNotRules)");
             }
         }
     }
