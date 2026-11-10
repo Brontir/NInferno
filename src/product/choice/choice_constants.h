@@ -150,19 +150,21 @@ inline constexpr DecodeLaunches kDecodeLaunches[] = {
     {"qwen3_5_text", WeightClass::IQ4, 32, 161, {167, 295, 167}, 1, 7}, // RTX 4060 Ti's census
 };
 
-// What a kernel costs a step beyond its bytes, by generation: the census's measured residual, one row,
-// the three models (decode_census.json): a weight-reading kernel's time less its weights at kDramEta,
-// a small one's less the state and KV bytes it reads, the mean over every kernel of the class. Where
-// the census explains it: Ada's plain R8 projections 1.5 us of launch and ramp plus the graph's
-// 0.29 us gap (the median 1.9-2.2 us); the SwiGLU and residual epilogues 2.2-6 us and the Q8_0 R8 on
-// the 4090 3.5 us raise the mean to 2.35; its norms 1.7-1.9 us (four times their bytes), the attention
-// at a short context 6.6. Blackwell's PDL hides the plain projections' launch (0.2 us median: their
-// weights are read during the norm) but not the epilogues', and its small kernels carry the prefetch.
-// Turing: a weight-reading kernel 7.2-11.2 us beyond its bytes (the three models' means), one card. A row of one card prices only its own boards'
-// estimate (marked transferred; no decision reads it: the choice prices on a reference card's
-// generation; DECISIONS 60); a generation without a row takes Ada's (transferred). Ampere (RTX 3060,
-// one card): a weight-reading kernel 3.1-5.8 us, no PDL, no Ada L2. Volta (Quadro GV100, one card):
-// its own row, a weight-reading kernel's from Q8_0 alone (its K-quants: kWeightSmRate, DECISIONS 72).
+// What a kernel costs a step beyond its bytes, by generation: the census's measured residual, one
+// row, the three models (decode_census.json): a weight-reading kernel's time less its weights at
+// kDramEta, a small one's less the state and KV bytes it reads, the mean over every kernel of the
+// class. Where the census explains it: Ada's plain R8 projections 1.5 us
+// (launch_node_seconds("ada"): the same t0 sits in this residual; not yet split) of launch and ramp
+// plus the graph's 0.29 us gap (the median 1.9-2.2 us); the SwiGLU and residual epilogues 2.2-6 us
+// and the Q8_0 R8 on the 4090 3.5 us raise the mean to 2.35; its norms 1.7-1.9 us (four times their
+// bytes), the attention at a short context 6.6. Blackwell's PDL hides the plain projections' launch
+// (0.2 us median: their weights are read during the norm) but not the epilogues', and its small
+// kernels carry the prefetch. Turing: a weight-reading kernel 7.2-11.2 us beyond its bytes (the
+// three models' means), one card. A row of one card prices only its own boards' estimate (marked
+// transferred; no decision reads it: the choice prices on a reference card's generation; DECISIONS
+// 60); a generation without a row takes Ada's (transferred). Ampere (RTX 3060, one card): a
+// weight-reading kernel 3.1-5.8 us, no PDL, no Ada L2. Volta (Quadro GV100, one card): its own row,
+// a weight-reading kernel's from Q8_0 alone (its K-quants: kWeightSmRate, DECISIONS 72).
 struct KernelCost {
     std::string_view generation;
     double gemv;  // seconds a weight-reading kernel beyond its bytes

@@ -119,11 +119,9 @@ CardRates rates(int major, int minor, int sms, double clock_hz, double dram_byte
             out.eta_cards = e.cards;
         }
     }
+    out.launch_seconds = launch_node_seconds(out.generation);
     for (const auto& l : kLaunchTime) {
-        if (l.generation == out.generation) {
-            out.launch_seconds = l.seconds;
-            out.eta_dram       = l.eta_dram;
-        }
+        if (l.generation == out.generation) { out.eta_dram = l.eta_dram; }
     }
     return out;
 }
