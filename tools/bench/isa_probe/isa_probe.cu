@@ -6,7 +6,8 @@
 //
 // Build (CUDA 13.x; sm_70 needs CUDA 12.8's nvcc):
 //   nvcc -O3 -std=c++17 -arch=sm_<arch> -o isa_probe tools/bench/isa_probe/isa_probe.cu
-// Run (about 20 s, 600 MB of device memory; the GPU should be otherwise idle):
+// Run (about 20 s; 2 GiB of device memory for the load-latency buffer, beside the CUDA context;
+// the GPU should be otherwise idle):
 //   ./isa_probe            # `fact <name> <value> <unit>` lines, parsed by isa_probe.py
 // Exit 0 with `selfcheck ok`; 3 when a result fails the self-check (its reasons printed), 2 on a
 // CUDA error.
