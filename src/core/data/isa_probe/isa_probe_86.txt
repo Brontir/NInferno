@@ -1,0 +1,48 @@
+probe isa_probe 7
+card NVIDIA GeForce RTX 3090
+cc 86
+sms 82
+l2_bytes 6291456
+driver 13040
+runtime 13050
+nvcc 13.5.37
+shape hmma_16816_f32_bf16 4096
+fact resident_ctas_per_sm 4.000 count
+fact mma_cycles_per_sm 8.001 clk
+fact mma_cycles_per_partition 32.003 clk
+fact tensor_flops_per_sm_clock 511.946 flop
+fact mma_dependent_latency 32.893 clk
+fact fp32_cycles_per_warp_instruction 1.055 clk
+fact int32_cycles_per_warp_instruction 2.021 clk
+fact l1_latency_w1 46.987 clk
+fact l1_latency_w2 46.972 clk
+fact l1_latency_w4 46.972 clk
+fact l1_latency_w8 46.982 clk
+fact l2_latency_w1 242.254 clk
+fact l2_latency_ns_w1 130.250 ns
+fact l2_latency_w2 241.930 clk
+fact l2_latency_ns_w2 130.000 ns
+fact l2_latency_w4 241.635 clk
+fact l2_latency_ns_w4 130.000 ns
+fact l2_latency_w8 241.254 clk
+fact l2_latency_ns_w8 130.000 ns
+fact dram_tlbwarm_latency_w1 514.316 clk
+fact dram_tlbwarm_latency_ns_w1 276.000 ns
+fact dram_tlbwarm_latency_w2 511.918 clk
+fact dram_tlbwarm_latency_ns_w2 276.000 ns
+fact dram_tlbwarm_latency_w4 515.270 clk
+fact dram_tlbwarm_latency_ns_w4 276.000 ns
+fact dram_tlbwarm_latency_w8 526.562 clk
+fact dram_tlbwarm_latency_ns_w8 284.000 ns
+fact dram_latency_w1 518.582 clk
+fact dram_latency_ns_w1 278.750 ns
+fact dram_latency_w2 522.438 clk
+fact dram_latency_ns_w2 281.000 ns
+fact dram_latency_w4 526.700 clk
+fact dram_latency_ns_w4 283.000 ns
+fact dram_latency_w8 537.079 clk
+fact dram_latency_ns_w8 288.750 ns
+fact sm_clock_mhz_chase 1860.013 mhz
+fact shared_latency 23.107 clk
+selfcheck ok
+end
