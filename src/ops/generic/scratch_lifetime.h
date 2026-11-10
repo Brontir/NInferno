@@ -169,7 +169,9 @@ launch_lifetime(std::string_view name, const LaunchOverlap& overlap, bool pdl,
     out.starts_early = pdl && (overlap.joins() || overlap.prefetches());
     // A prefetching register MMA triggers its dependents right after its own wait whether or not
     // the release was asked (generic_gemm.cuh, the prefetch path's pdl::trigger_dependents), so
-    // the launch after it may start while it still runs: it releases.
+    // the launch after it may start while it still runs: it releases. An R8 prefetch triggers only
+    // where its release was asked (generic_r8.cuh), which overlap.releases() already says; marking
+    // every prefetch as releasing over-marks R8, the safe side (more hazards checked, none missed).
     out.releases = overlap.releases() || (pdl && overlap.prefetches());
     if (prepared && rule) {
         out.add({*prepared, ScratchAccess::Read, ScratchFirst::AfterWait, ScratchLast::AtExit});
