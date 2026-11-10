@@ -120,8 +120,8 @@ ninferno_add_op_test(ninferno_format_traits_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_format_traits.cpp"
   LIBRARIES ninferno_linear_test_support)
 
-# The kernel roofline (#613 PR-4): price_routes' register-MMA and pipelined prices equal the formula
-# they replaced bit for bit (the golden boards, every schedule, shapes, widths, compiled facts), and
+# The kernel roofline (#613 PR-4): price_routes prices equal the golden table of the formula
+# it replaced (fixed outputs from before the move), and
 # the selector's priced routes are the roofline's terms (host only).
 ninferno_add_op_test(ninferno_kernel_roofline_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_kernel_roofline.cpp"
