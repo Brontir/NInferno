@@ -224,12 +224,16 @@ void check_hand_written() {
         {0x2702, "RTX 4080 SUPER: beyond kCarryDistance of the 4090", N, -1, N, 47},
         // moe.cpp: "ad106 (RTX 4060 Ti, no entry)": the unmeasured default.
         {0x2803, "RTX 4060 Ti: no entry", N, -1, N, 47},
-        // gpu_facts.json gives no l2_mib for these three SKUs, so the nearest measured entry has a
-        // fact unknown (a device reports its L2 itself, and may be Carried); Incomplete keeps the
-        // literal. The A10G and the 3080 12GB are Ampere (no A8 row), near the 3090.
+        // gpu_facts.json gives no l2_mib for these SKUs, so the nearest measured entry has a fact
+        // unknown (a device reports its L2 itself, and may be Carried); Incomplete keeps the
+        // literal. The A10G and the 3080 12GB are Ampere (no A8 row), near the 3090; the L40S is
+        // an AD102 board near the 4090 (the frontier has its row); the 5080 Laptop is near the
+        // 5080 (an A8 row only).
         {0x2237, "A10G: no L2 in the facts table, near the 3090", N, -1, I, 47},
         {0x220A, "RTX 3080 12GB: no L2 in the facts table, near the 3090", N, -1, I, 47},
         {0x2BB5, "RTX PRO 6000 Server: no L2 in the facts table, near the 5090", I, -1, I, 47},
+        {0x26B9, "L40S: no L2 in the facts table, near the 4090", I, -1, I, 47},
+        {0x2C19, "RTX 5080 Laptop: no L2 in the facts table, near the 5080", I, -1, N, 47},
     };
     for (const Expected& e : rows) {
         const GpuFactsRow* row = find_gpu_facts(e.id);
@@ -272,8 +276,8 @@ void check_counts(const Counts& a8, const Counts& q4) {
     const auto same = [](const Counts& c, int m, int ca, int i, int n) {
         return c.measured == m && c.carried == ca && c.incomplete == i && c.none == n;
     };
-    expect(same(a8, 0, 0, 0, 0), "A8 route counts differ from the document");
-    expect(same(q4, 0, 0, 0, 0), "frontier counts differ from the document");
+    expect(same(a8, 4, 8, 4, 89), "A8 route counts differ from the document");
+    expect(same(q4, 4, 13, 4, 84), "frontier counts differ from the document");
 }
 
 } // namespace
