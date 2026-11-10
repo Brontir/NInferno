@@ -121,6 +121,12 @@ void test_refusals() {
            "rope theta");
     expect(refused(edit([](json& c) { c["rope_scaling"] = {{"rope_type", "yarn"}}; })),
            "rope scaling");
+    expect(refused(edit([](json& c) { c["dflash_config"].erase("mask_token_id"); })),
+           "no mask token");
+    expect(
+        refused(edit([](json& c) { c["dflash_config"]["selected_prefix_decode_mode"] = "beam"; })),
+        "another decode mode");
+    expect(refused(edit([](json& c) { c["draft_vocab_size"] = 32000; })), "a reduced vocabulary");
     expect(refused(edit([](json& c) { c["attention_bias"] = true; })), "attention bias");
     expect(refused(edit([](json& c) { c["mlp_bias"] = true; })), "mlp bias");
     expect(refused(edit([](json& c) { c["hidden_act"] = "gelu"; })), "another activation");
