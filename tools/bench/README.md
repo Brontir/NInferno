@@ -35,6 +35,7 @@ python3 tools/bench/run_ninferno_bench_matrix.py --preset core             # run
 | `regret_collect.py` | The lab collector for `selection_regret.py`: `ninferno_route_tune --selected-out` (the route the production path runs per problem and width) and one `--routes-out` sweep per pass into its input ([below](#offline-selection-regret)). |
 | `mmq_transfer_audit.py` | Offline audit of how the MMQ choice transfers between same-generation cards (#373): route-table agreement and gate-label regret by workload regime, from `routes/*.json` and `data/mmq_paired_prefill.json`; no GPU ([report](../../docs/maintainer/mmq-transfer-audit.md)). |
 | `quality_rows.py` | Perplexity and KL divergence of each `--activations` mode against `exact` on the fixed corpus, appended as `docs/performance/` rows. |
+| `run_521_gateup.sh` | The measurement #521 needs and does not have: gated gate/up launches of ggml's vector kernel at T = 2-4 against two non-gated launches (an upper bound) and the register MMA, two passes, paired per-pass differences; aborts on a missing cell ([DECISIONS 76](../../docs/maintainer/decisions.md)). |
 
 ## Offline selection regret
 

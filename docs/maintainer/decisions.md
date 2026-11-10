@@ -1724,37 +1724,73 @@ than the resolution slower; the chunk and the drafter carry no KLD term and neve
 Regret against recorded measurements: `tools/bench/selection_regret.py` and `regret_collect.py`
 (held-out observed regret). Left: run them over the stands' route sweeps for the moved picks.
 
-## 76. The vector kernel's T = 4 loss on Ampere is instruction-bound; the gated pairs stay on the band until they are measured (#521, 09.11, measured)
+## 76. The vector kernel's T = 4 loss on Ampere: an instruction count orders the cards but does not reproduce the size; the gated pairs stay on the band (#521, 09.11, analysis; gated pair not measured)
 
 **Decision.** No route change. #560's bounded twin took the part of the loss that has a counted
 saving; the rest sits in the gated gate/up launches, and the issue's data has no gated-shape row, so
-no rule is written for it (a rule would move calls nobody timed).
+no rule is written for it (a rule would move calls nobody timed). The measurement that is missing is
+a kit, `tools/bench/run_521_gateup.sh`, not run yet.
+
+**Where the numbers come from.** The measured numbers of this entry (the gains and losses, the 47 %,
+the end-to-end +1.6 % and +2.8 %) and the SASS count "105 + 37 T" are the ones recorded in the text
+of issue #521. They are not committed as rows: no route-tune table, fixture or log holding them is in
+the repository, and the SASS count has no tool output here either. The kit above is how they are
+reproduced. The ratios and rho below are computed from `src/core/data/gpu_facts.json` (SMs x boost
+clock / (gbps x bus bits / 8); rho = 37 / (1152 x 4 x ratio)).
 
 **Cause, from facts.** The vector kernel's slice loop is 105 + 37 T warp instructions per 2048
-weights (SASS, sm_86 and sm_89 alike), 16 T of them dp4a on the half-rate INT pipe; the register
-MMA's loop has no T term. The instruction cost per weight is the same on every GA10x/AD10x card, so
-what differs is the DRAM time it hides behind: per T the kernel adds rho = 37 / (1152 x
-(4 x SMs x clk / BW)) of the DRAM time.
+weights (SASS, sm_86 and sm_89 alike; no other architecture was counted), 16 T of them dp4a on the
+half-rate INT pipe; the register MMA's loop has no T term. The instruction cost per weight is the
+same on every GA10x/AD10x card, so what differs is the DRAM time it hides behind: per T the kernel
+adds rho = 37 / (1152 x (4 x SMs x clk / BW)) of the DRAM time.
 
-| card | SMs x GHz / (GB/s) | predicted rho | measured a16 gain at T = 4 (before #560) |
-|---|---|---|---|
-| RTX 3060 | 0.138 | 5.8 % | +5.4..6.9 % |
-| RTX 3090 | 0.166 | 5.4 % | +4.6..7.9 % |
-| RTX 5060 Ti | 0.206 | 3.9 % | +0.9..1.9 % |
-| RTX 4090 | 0.352 | 2.5 % | -1.3..-2.3 % (the vector kernel wins) |
+| card | SMs x GHz / (GB/s) | predicted rho (per T) | measured a16 gain at T = 4 (before #560) | prediction against measurement |
+|---|---|---|---|---|
+| RTX 3060 | 0.138 | 5.8 % | +5.4..6.9 % | inside the measured range |
+| RTX 3090 | 0.148 | 5.4 % | +4.6..7.9 % | inside the measured range |
+| RTX 5060 Ti | 0.207 | 3.9 % | +0.9..1.9 % | 2 to 4 times too high |
+| RTX 4090 | 0.320 | 2.5 % | -1.3..-2.3 % (the vector kernel wins) | wrong sign: a gain predicted, a loss measured |
 
-The order of the cards and the sign are right; the per-T slope is 1.4-1.6x the count on both the
-3090 and the 4090 (a post-hoc SASS count, not a pre-registered hit). A second term, CTA residency
-(85 registers: 5 CTAs of 128 threads per SM against 7 at 72), explained the 3090's jump at T = 4 and
-was taken in #560 for the plain non-gated instance. Predicted +5..6 % at C = 4 on the 3060, measured
-+1.6 % (Qwen3.5-9B) and +2.8 % (Gemma 4 12B): the twin covers down, attention and the LM head,
-about 47 % of Gemma's decode parameters, 47 % x 6 % = 2.8 % (Qwen: 2.8 % predicted, 1.6 % measured,
-unsplit per shape).
+What the table shows. Ordered by the ratio the four cards come in the order of the measured gains
+(3060 and 3090 high and not separated, 5060 Ti low, 4090 negative), so the count ranks them. It does
+not reproduce the size: the 5060 Ti is predicted two to four times above what was measured. rho is
+positive for every card, so it predicts no sign by itself; on the 4090 the measurement is the
+opposite sign. The sign comes from the crossover with the register MMA and from the CTA-residency
+term (below), which are in issue #521 and not in this entry. The table also sets a per-T increment
+(rho) beside a level at T = 4, so it checks the order and the size of the term, not a level. The
+per-T slope is 1.4-1.6 times the count on both the 3090 and the 4090 (a post-hoc SASS count, not a
+pre-registered hit): the model under-predicts the slope. These are mismatches: the model is wrong
+there until a term explains them; nothing here smooths them.
+
+A second term, CTA residency (85 registers: 5 CTAs of 128 threads per SM against 7 at 72), explained
+the 3090's jump at T = 4 and was taken in #560 for the plain non-gated instance. On the 3060 the
+per-kernel prediction was +5..6 % at C = 4; end to end, after #560, Gemma 4 12B measured +2.8 %
+against 47 % of its decode parameters x 6 % = 2.8 % predicted (a match), and Qwen3.5-9B measured
++1.6 % against 2.8 % predicted (the prediction is 1.8 times high; its share of the twinned shapes
+was not split per shape). What the 47 % covers is worded differently here (down, attention and the
+LM head) and in the issue (down plus attention); it is not reproducible from this repository.
 
 **Open.** The gated launches (about half the weight bytes) keep the unbounded instance; a bound there
-costs registers (110 for 3 columns) or spills. The candidate rule, "T <= 3 for a gated pair where
-SMs x clk / BW is under ~0.17", has its threshold between two measured cards (3090 loses, 5060 Ti
-ties), and it would move exactly the gated pairs of boards under it: the RTX 3060 and 3090 (GA106,
-GA102), and no board measured above it (4090, 5060 Ti, 5070 Ti unchanged). Whether the gated pair at
-T = 4 is better as two twinned non-gated launches or as the register MMA is untimed. Next:
-`route-tune` on the gate/up shapes (T = 3, 4) on the 3060 and 3090 before any code.
+costs registers (110 for 3 columns) or spills. The candidate rule is "T <= 3 for a gated pair where
+SMs x clk / BW is under a threshold". It is a candidate, not adopted: its threshold lies between two
+measured cards (3090 loses at 0.148, 5060 Ti ties at 0.207), so it is anywhere in that bracket,
+and the bracket holds the RTX 2080 Ti 0.171, 3070 0.177, 5070 0.179 and 5070 Ti 0.192 among others.
+Both boards that lose are Ampere and both that do not are Ada or Blackwell, so on four cards the
+ratio and the generation cannot be told apart.
+
+What the rule would move, over all 113 rows of the registry (`gpu_facts.json`): at 0.17 it is 57
+rows, about half the registry, of which two boards were measured (the RTX 3060 and 3090); the other
+55 would be moved on the strength of a ratio alone. By family: 19 GA10x (cc 86: RTX 3050, 3060, 3060
+Ti, 3070 Ti, 3080, 3080 Ti, 3090, 3090 Ti and the laptop 3060 rows, RTX A2, A4000, A5000), 13
+Turing (GTX 1650 / 1660 variants, T400 / T600 / T1000, RTX 2060 / 2070 / 2060 SUPER / 2070 SUPER),
+8 GA100 (A30, A100, A800), 7 Hopper (H100, H200, H800), 6 Volta (V100, GV100), 3 consumer Blackwell
+(RTX 5060 and the 5080 Laptop rows) and 1 data-center Blackwell (B200). Across the bracket the
+count runs from 42 rows (a threshold just above the 3090) to 76 (just below the 5060 Ti). The
+instruction count was taken on sm_86 and sm_89 only, so the domain of any such rule is GA10x
+(cc 86) until another generation is counted and measured; the 38 rows of other families under 0.17
+are outside what any number here supports. Whether the gated pair at T = 4 is better as two twinned non-gated launches or as the
+register MMA is untimed. Next: the kit on the 3060 and 3090 (T = 3, 4) before any code, with a
+4090 or 5060 Ti as control. Its limit: the tuner cannot time production's sequence (one activation
+quantisation for both launches, StoreF32 then GateProduct), so the kit prints 2 x a single launch as
+an upper bound of the twinned form, too high by one quantisation, and says in its verdict what that
+allows it to refute.
