@@ -102,15 +102,24 @@ int main() {
             // description's agree: a smaller free space halves the chunk or refuses it. (The arena
             // itself is not built here: run_route's alignment of a real arena is not reproduced.)
             const std::size_t full = generic::volta_cutlass_chunk_bytes(n, k, tokens, false, room);
-            for (const std::size_t free : {full, full - 1, full / 2, std::size_t{1}}) {
-                const auto d    = ask(free);
-                const bool runs = generic::volta_cutlass_call_runs(generic::codec_of(w), n, k,
-                                                                   tokens, false, free);
-                const std::size_t chunk =
-                    generic::volta_cutlass_chunk_bytes(n, k, tokens, false, free);
-                check(d.has_value() && (d->resolved.executed == tiled) == runs &&
-                          (!runs || d->workspace_bytes == chunk) && (!runs || chunk <= free),
-                      name + ": description and gate agree at free " + std::to_string(free));
+            const bool cutlass =
+                generic::volta_cutlass_call_runs(generic::codec_of(w), n, k, tokens, false, room);
+            // A stub build (no sm_70 kernel) has no chunk: full is 0 and full - 1 would wrap.
+            if (full != 0) {
+                for (const std::size_t avail : {full, full - 1, full / 2, std::size_t{1}}) {
+                    const auto d    = ask(avail);
+                    const bool runs = generic::volta_cutlass_call_runs(generic::codec_of(w), n, k,
+                                                                       tokens, false, avail);
+                    const std::size_t chunk =
+                        generic::volta_cutlass_chunk_bytes(n, k, tokens, false, avail);
+                    check(d.has_value() && (d->resolved.executed == tiled) == runs &&
+                              (!runs || d->workspace_bytes == chunk) && (!runs || chunk <= avail),
+                          name + ": description and gate agree at free " + std::to_string(avail));
+                    if (cutlass && avail == full) check(runs, name + ": the full chunk runs");
+                    if (cutlass && avail == full - 1)
+                        check(chunk < full, name + ": one byte short halves the chunk or refuses");
+                    if (avail == 1) check(!runs, name + ": one byte of workspace cannot run");
+                }
             }
         } else {
             check(none->resolved.executed == tiled &&
