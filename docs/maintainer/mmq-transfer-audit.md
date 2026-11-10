@@ -45,7 +45,7 @@ whose width is tokens x streams: a 4-stream MTP-5 verify is 24 wide) reads `band
   the MMQ bands reach T 17..23 in 11 tables. Some of those calls leave the table in production
   (`mmq_verify_rule`, A8, R8 and NVFP4 paths); the count applies to the A16 calls that reach it.
 - At verify widths the rate does not follow the board distance monotonically: Ada 5.2-12.4 %
-  (4090/4070 Ti at distance 3.18 is the highest, 4090/4060 Ti at 4.30 is 7.3 %), GA10x 3060/3090
+  (4090/L4 at distance 3.18 is the highest, 4090/4060 Ti at 4.30 is 7.3 %), GA10x 3060/3090
   11.6 % (3.64), GB20x 5090/5070 Ti 2.3 % (2.78), 5080/5070 Ti 0 % (0.57), 5090/5080 0 % (2.21), but
   5090/5060 Ti 24.1 % and 5070 Ti/5060 Ti 30.4 %: the 5060 Ti table never picks MMQ in the pairs'
   shared problems (MMQ points 0 on that side), the 5090 and the 70-SM card do. The same split the
@@ -84,6 +84,8 @@ size of the loss when the donor is the wrong side.
 - GA10x has one timed card (3060): the 3060/3090 pair has no regret at all (no 3090 timings; the
   3090 is not a gate row). Ada has no L4 or 4080 timings; GB20x has no card between 70 and 170 SMs
   (the 5080 table has no MMQ entries in common with a measured prefill) and no 5060 Ti timings.
+- An `fp8r32` problem is paired by its own key only; production would also let it read the peer's
+  `fp8` entry of the shape, so gb202's fp8r32 problems drop out of its pairs.
 - The ridge uses one representative format (Q4_K) and the reference boost clock, not a measured
   clock; per-format ridges move by the bytes per value (IQ4_XS, Q6_K).
 - Layer 2 is one prompt length per set and Q4_K family-heavy: the IQ4_XS miss on the 5070 Ti
