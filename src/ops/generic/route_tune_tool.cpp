@@ -166,6 +166,12 @@ int route_tune_main(int argc, char** argv) {
         // device.id(), their UUIDs differ.
         const std::string device_id =
             device.id() + (uuid_known(device.identity) ? " " + uuid_text(device.identity) : "");
+        // --describe runs no sweep and writes no rows: opening an output would truncate it.
+        if (opt.count("--describe") && opt["--describe"] == "1" &&
+            (opt.count("--routes-out") || opt.count("--selected-out"))) {
+            throw std::runtime_error("--describe 1 writes no CSV: drop --routes-out and "
+                                     "--selected-out");
+        }
         std::ofstream routes_csv;
         if (opt.count("--routes-out")) {
             routes_csv.open(opt["--routes-out"]);
