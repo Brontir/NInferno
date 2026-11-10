@@ -92,12 +92,22 @@ FLAGGED = {
     # An alias reached through a namespace, however deep.
     "alias_through_namespace": "namespace facts { using GPUBoard = ninferno::Board; }\n"
                                "facts::GPUBoard b{kMajor, 0, kSms, kL2, kBw};",
-    "alias_through_nested_namespace": "using GB = Board; a::b::GB b{kMajor, 0, kSms, kL2, kBw};",
-    "alias_through_global_namespace": "using GB = Board; ::a::GB b(kMajor, 0, kSms, kL2, kBw);",
-    "alias_template_argument": "using GB = Board; std::vector<a::GB> v = {{kMajor, 0, 1, 2, 3}};",
-    "alias_return_qualified": "using GB = Board; a::GB f() { return {kM, 0, 1, 2, kB}; }",
-    "alias_return_trailing_qualified": "using GB = Board; auto f() -> a::GB"
-                                      " { return {kM, 0, 1, 2, kB}; }",
+    "alias_through_nested_namespace": "namespace a::b { using GB = Board; }\n"
+                                      "a::b::GB b{kMajor, 0, kSms, kL2, kBw};",
+    "alias_through_namespace_tail": "namespace a { namespace b { using GB = Board; } }\n"
+                                    "b::GB b{kMajor, 0, kSms, kL2, kBw};",
+    "alias_through_global_namespace": "namespace a { using GB = Board; }\n"
+                                      "::a::GB b(kMajor, 0, kSms, kL2, kBw);",
+    "alias_in_class": "struct S { using GB = Board; };\nS::GB b{kMajor, 0, kSms, kL2, kBw};",
+    "alias_template_argument": "namespace a { using GB = Board; }\n"
+                               "std::vector<a::GB> v = {{kMajor, 0, 1, 2, 3}};",
+    "alias_return_qualified": "namespace a { using GB = Board; }\n"
+                              "a::GB f() { return {kM, 0, 1, 2, kB}; }",
+    "alias_return_trailing_qualified": "namespace a { using GB = Board; }\n"
+                                       "auto f() -> a::GB { return {kM, 0, 1, 2, kB}; }",
+    # The same alias basename in two namespaces: the one declared here is flagged.
+    "alias_same_basename_declared_here": "namespace facts { using GB = Board; }\n"
+                                         "chess::GB c{1, 2}; facts::GB b{kMajor, 0, kSms, kL2, kBw};",
     # An alias defined through another alias, in any order, qualified or not.
     "alias_chain": "using B = Board; using C = B; C b{kMajor, 0, kSms, kL2, kBw};",
     "alias_chain_reversed": "using C = B; using B = Board; C b{kMajor, 0, kSms, kL2, kBw};",
@@ -122,6 +132,30 @@ FLAGGED = {
                                   " { return {kM, 0, 1, 2, kB}; }",
     "return_through_alias": "using B = Board; B f(int x) { if (x) return {kM, 0, 1, 2, 3};"
                             " return {}; }",
+    # A template-id or an operator name for the function.
+    "return_template_id": "template <> Board make_board<int>() { return {kMajor, 0, kSms, kL2, kBw}; }",
+    "return_template_id_nested": "template <> Board make<std::array<int, 2>>(int)"
+                                 " { return {kM, 0, 1, 2, kB}; }",
+    "return_qualified_template_id": "Board Foo<int>::make() { return {kM, 0, 1, 2, kB}; }",
+    "return_operator_plus": "Board operator+(X, X) { return {kMajor, kMinor, kSms, kL2, kBw}; }",
+    "return_operator_call": "Board Foo::operator()(int) const { return {kM, 0, 1, 2, kB}; }",
+    "return_operator_subscript": "Board& Foo::operator[](int i) { return {kM, 0, 1, 2, kB}; }",
+    "return_operator_shift": "Board operator<<(Board, int) { return {kM, 0, 1, 2, kB}; }",
+    # A requires-clause word that is part of a longer name does not hide the function.
+    "return_param_ends_with_requires": "Board f(int prerequires) { return {kM, 0, 1, 2, kB}; }",
+    "return_param_my_requires": "Board f(int my_requires) { return {kM, 0, 1, 2, kB}; }",
+    # Binary literals, and a typed Board of qualified constants only.
+    "binary_first": "Board b{0b1100, 0, 170, 96, 1792};",
+    "binary_separator_suffix": "Board b{0B1'100u, 0, 170, 96, 1792};",
+    "binary_tuple": "x = {0b1100, 0, 170, 96, 1792};",
+    "all_qualified_direct": "Board b{facts::kMajor, facts::kMinor, facts::kSms, facts::kL2,"
+                            " facts::kBw};",
+    "all_qualified_parens": "Board b(facts::kMajor, facts::kMinor, facts::kSms, facts::kL2,"
+                            " facts::kBw);",
+    "all_qualified_return": "Board f() { return {facts::kMajor, facts::kMinor, facts::kSms,"
+                            " facts::kL2, facts::kBw}; }",
+    "all_qualified_field": "{.board = {facts::kMajor, facts::kMinor, facts::kSms, facts::kL2,"
+                           " facts::kBw}},",
     # A template argument with a call in it.
     "std_array_call_size": "std::array<Board, board_count()> a = {{{kMajor, 0, 170, 96, kBw}}};",
     # Qualified constants and the spellings of an alias.
@@ -193,6 +227,14 @@ CLEAN = {
                                       " { return {kM, 0, 1, 2, kB}; }",
     "return_trailing_other_const": "auto f() -> int const { return {kM, 0, 1, 2, kB}; }",
     "alias_of_another_type_qualified": "using GB = chess::Board; a::GB b{kMajor, 0, 1, 2, 3};",
+    "alias_of_another_namespace": "namespace facts { using GPUBoard = ninferno::Board; }\n"
+                                  "chess::GPUBoard b{kMajor, kMinor};",
+    "alias_global_spelled_in_namespace": "using GB = Board; a::GB b{kMajor, 0, 1, 2, 3};",
+    "alias_of_class_other_scope": "struct S { using GB = Board; };\nT::GB b{kMajor, 0, 1, 2, 3};",
+    "return_other_template_id": "template <> int make<int>() { return {kM, 0, 1, 2, kB}; }",
+    "return_other_operator": "int operator+(X, X) { return {kM, 0, 1, 2, kB}; }",
+    "list_of_qualified_boards_array": "Board k[] = {measured::kA, measured::kB};",
+    "list_of_qualified_boards_std_array": "std::array<Board, 2> k{measured::kA, measured::kB};",
     "member_alias_access": "using GB = Board; x.GB{kMajor, 0, 1, 2, 3};",
     "return_other_ref_qualified": "int Foo::bar() const & { return {kM, 0, 1, 2, kB}; }",
     "return_other_rvalue": "Foo Foo::bar() && { return {kM, 0, 1, 2, kB}; }",
@@ -237,6 +279,29 @@ class Violations(unittest.TestCase):
             start = time.monotonic()
             lint.violations(code)
             self.assertLess(time.monotonic() - start, 3.0, code[:40])
+
+    def test_a_long_requires_clause_is_read_in_bounded_time(self):
+        import time
+        unit = {"requires_requires": "Board f(T) requires requires { x; } ",
+                "requires_requires_open": "Board f(T) requires requires { ",
+                "requires_paren_open": "Board f(T) requires (",
+                "requires_name": "Board f(T) requires C<T> ",
+                "requires_conj": "Board f(T) requires (a) && "}
+        for name, u in unit.items():
+            code = u * (50000 // len(u))
+            start = time.monotonic()
+            lint.violations(code)
+            self.assertLess(time.monotonic() - start, 1.0, name)
+
+    def test_a_clause_longer_than_the_bound_is_not_followed(self):
+        clause = " && ".join(["C<T>"] * 200)
+        code = "Board f(T) requires " + clause + " { return {kM, 0, 1, 2, kB}; }"
+        self.assertEqual(lint.violations(code), [])
+
+    def test_a_braced_value_in_a_clause_is_taken_for_the_body(self):
+        # Documented limit: `requires C<T, int{3}>` ends the clause at its first brace.
+        code = "Board f(T) requires C<T, int{3}> { return {kM, 0, 1, 2, kB}; }"
+        self.assertEqual(lint.violations(code), [])
 
     def test_flags_every_spelling(self):
         for name, code in FLAGGED.items():

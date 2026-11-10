@@ -31,11 +31,23 @@ Not flagged: conversions from fields (`Board{cc / 10, cc % 10, sms}`, `Board{row
 words that only start with Board (`BoardRow`, `BoardCount`).
 
 A qualified constant as the first field (`facts::kMajor`) counts only when a plain number follows
-in the group: without one it is a list of registry boards.
+in the group of a list or a table (`Board k[] = {...}`, `std::vector<Board>`): without one it is a
+list of registry boards. After `Board b{`, in a `return {` of a Board function and in
+`.board = {`, the group is one board and all-qualified fields are flagged. Numbers are decimal,
+hex and binary (`0b1100`), with digit separators and suffixes.
+
+A function name may carry a template-id (`make_board<int>()`, `Foo<T>::make()`) or be an
+operator (`operator+`, `operator()`, `operator[]`). A discovered alias is read bare, or qualified
+as it was declared: `namespace facts { using GPUBoard = Board; }` is `facts::GPUBoard`, not
+`chess::GPUBoard`; an alias declared at global scope is not seen through a qualifier.
 
 The braced `return` of a lambda or local class nested in a Board function is not that function's
 return and is skipped; a lambda with template parameters (`[]<class T>(T t) {`) is not recognised
 as one, and a braced default nested two deep in a parameter list hides the function.
+
+A requires-clause (C++20) after the parameters is walked for at most 300 tokens and a
+requires-expression skipped up to 4000 characters; beyond that the function is not seen. A braced
+initialiser at paren depth 0 inside the clause (`requires C<T, int{3}>`) is taken for the body.
 
 Not seen (known limits): a row that starts with a name or an id (`{"rtx3090", 8, 6, 82, ...}`,
 `{0x2204, 8, 6, ...}`), a helper call (`make_board(8, 6, 82, 6, 936)`, `emplace_back(...)`), a
@@ -137,7 +149,7 @@ ALLOW = {
         "registry"),
 }
 
-NUM = r"[-+]?(?:0[xX][0-9a-fA-F']+|\d[\d']*(?:\.\d*)?(?:[eE][-+]?\d+)?|\.\d+)[fFuUlL]*"
+NUM = r"[-+]?(?:0[xX][0-9a-fA-F']+|0[bB][01']+|\d[\d']*(?:\.\d*)?(?:[eE][-+]?\d+)?|\.\d+)[fFuUlL]*"
 TUPLE = re.compile(r"\{\s*(%s)\s*,\s*(%s)\s*,\s*(%s)\s*,\s*(%s)\s*,\s*(%s)\s*"
                    r"(?:,\s*(?:true|false)\s*)?,?\s*\}" % ((NUM,) * 5))
 DOT_BOARD = re.compile(r"\.board\s*=\s*\{")
@@ -148,7 +160,7 @@ ALIAS = re.compile(r"\busing\s+(\w+)\s*=\s*(?:const\b\s*)?(?:::\s*)?((?:\w+\s*::
                    r"|\btypedef\s+(?:const\b\s*)?(?:::\s*)?((?:\w+\s*::\s*)*\w+)\s*"
                    r"(?:const\b\s*)?(\w+)\s*;")
 NUMTOK = re.compile(
-    r"0[xX][0-9a-fA-F']+[uUlL]*|\d[\d']*(?:\.\d*)?(?:[eE][-+]?\d+)?[fFuUlL]*|\.\d+[fF]?")
+    r"0[xX][0-9a-fA-F']+[uUlL]*|0[bB][01']+[uUlL]*|\d[\d']*(?:\.\d*)?(?:[eE][-+]?\d+)?[fFuUlL]*|\.\d+[fF]?")
 RAW = re.compile(r'R"([^()\\ ]{0,16})\(')
 
 
@@ -221,16 +233,21 @@ def blank(text):
     return "".join(out)
 
 
-def close(code, i):
-    """Index of the bracket that closes the one at code[i], or None when unbalanced."""
+BRACKET = re.compile(r"[(){}\[\]]")
+
+
+def close(code, i, limit=None):
+    """Index of the bracket that closes the one at code[i], or None when unbalanced (or, with a
+    `limit`, not closed within that many characters)."""
     depth = 0
-    for j in range(i, len(code)):
-        if code[j] in "({[":
+    stop = len(code) if limit is None else min(len(code), i + limit)
+    for m in BRACKET.finditer(code, i, stop):
+        if m.group() in "({[":
             depth += 1
-        elif code[j] in ")}]":
+        else:
             depth -= 1
             if depth == 0:
-                return j
+                return m.start()
     return None
 
 
@@ -265,25 +282,30 @@ def constant(arg):
     return bool(arg.strip()) and re.fullmatch(r"[\s0()+\-*/%<>|&~^]*", arg) is not None
 
 
-def is_fields(code, parts):
+def is_fields(code, parts, direct=False):
     """True when the arguments `parts` (spans) read as the fields of a board: at least two, the
     first a constant. A first argument that is a qualified name (`measured::kRtx5090`) is also the
     spelling of a registry board in a list of boards, so it counts only when a plain number
-    follows among the arguments."""
+    follows among the arguments; for a `direct` literal (the group initialises one Board, not a
+    list of them: `Board b{...}`, `return {...}` of a Board function, `.board = {...}`) the fields
+    may all be qualified constants."""
     if len(parts) < 2:
         return False
     first = code[parts[0][0]:parts[0][1]]
     if not constant(first):
         return False
-    if "::" not in first:
+    if direct or "::" not in first:
         return True
     return any(NUMTOK.fullmatch(code[s:e].strip()) for s, e in parts[1:])
 
 
 def number(tok):
-    """The value of a number token; integer suffixes (u, l, ul, ll ...) are dropped first. A hex
+    """The value of a number token (decimal, hex, binary); integer suffixes (u, l, ul, ll ...) are
+    dropped first. A hex
     token keeps its trailing f/F, which is a digit there."""
     tok = tok.replace("'", "")
+    if tok.lower().lstrip("+-").startswith("0b"):
+        return float(int(tok.rstrip("uUlL"), 2))
     if tok.lower().lstrip("+-").startswith("0x"):
         return float(int(tok.rstrip("uUlL"), 16))
     return float(tok.rstrip("fFuUlL"))
@@ -318,9 +340,10 @@ def rows(code, a, b):
     return out
 
 
-def initialiser(code, start, bracket):
+def initialiser(code, start, bracket, direct=False):
     """Spans of the board literals of the initialiser whose bracket is code[bracket]; `start` is
-    where the literal begins (the type or the designator)."""
+    where the literal begins (the type or the designator); `direct` when the group initialises a
+    single Board (see is_fields)."""
     end = close(code, bracket)
     if end is None:
         return []
@@ -329,90 +352,111 @@ def initialiser(code, start, bracket):
         return []
     if code[parts[0][0]] == "{":
         return rows(code, bracket + 1, end)
-    if is_fields(code, parts):
+    if is_fields(code, parts, direct):
         return [(start, end + 1)]
     return []
 
 
-def type_name(names):
+def type_name(table):
     """The spellings of the Board type: the bare name (`Board`, `::ninferno::Board`) only where
-    nothing qualifies it (`chess::Board` is another type), a discovered alias also through any
-    namespace (`facts::GPUBoard`, `::a::b::GPUBoard`: the alias was declared as Board)."""
+    nothing qualifies it (`chess::Board` is another type); a discovered alias bare, or qualified
+    only as it was declared: `table` maps each alias to the namespaces (tuples of names) that
+    enclose its declaration, and a qualifier must be the whole path or its tail
+    (`namespace facts { using GPUBoard = Board; }` is `facts::GPUBoard` here and in
+    `ninferno::facts::GPUBoard`, never `chess::GPUBoard`)."""
     bare = r"(?<![\w.:])(?:::\s*)?(?:ninferno\s*::\s*)?Board\b"
-    aliases = sorted(set(names) - {"Board"})
-    if not aliases:
+    if not table:
         return bare
-    alt = "|".join(map(re.escape, aliases))
-    return r"(?:%s|(?<![\w.])(?:::\s*)?(?:\w+\s*::\s*)*(?:%s)\b)" % (bare, alt)
+    alts = set()
+    for alias, paths in table.items():
+        alts.add(re.escape(alias))
+        for path in paths:
+            for k in range(len(path)):
+                alts.add(r"\s*::\s*".join(map(re.escape, path[k:])) + r"\s*::\s*" + re.escape(alias))
+    return r"(?:%s|(?<![\w.:])(?:::\s*)?(?:%s)\b)" % (bare, "|".join(sorted(alts)))
 
 
-def typed_pattern(names):
-    ty = type_name(names)
+def typed_pattern(table):
+    ty = type_name(table)
     tail = r"(?:\w+\s*)?(?:\[[^\]]*\]\s*)?=?\s*([{(])"
     plain = ty + r"(?!\s*::)\s*(?:const\b\s*)?[&*]*\s*(?:const\b\s*)?" + tail
     templ = r"<\s*" + ty + r"\s*(?:,[^<>;{}]*)?>\s*(?:const\b\s*)?[&*]*\s*" + tail
     return re.compile(plain + "|" + templ)
 
 
-def returns(names):
+# `<...>` of a template-id, one level of nesting inside (`make<std::array<int, 2>>`).
+TARGS = r"<[^<>;{}()]*(?:<[^<>;{}()]*>[^<>;{}()]*)*>"
+# A function's name: an operator (`operator+`, `operator()`, `operator[]`, `operator bool`), or a
+# word with an optional template-id.
+FNAME = (r"(?:operator\s*(?:\(\s*\)|\[\s*\]|[-+*/%^&|~!=<>,]+|\w+)|\w+(?:\s*" + TARGS + r")?)")
+
+
+def returns(table):
     """Matches the head of a function whose body is searched for braced returns, and gives the `{`
     that opens the body: `Board f(...) [const] [&|&&] [noexcept(...)] [override] {` (the name may
     be qualified, `Device::board`; a
     parameter may have a braced default, `Board b = {}`) and a trailing return `-> Board {`."""
-    ty = type_name(names)
+    ty = type_name(table)
     # After the parameters: cv and virt-specifiers, `noexcept(...)`, `throw(...)`, a ref-qualifier
     # (`&`, `&&`) and an attribute (`[[...]]`), in any order. `&&|&(?!&)` reads a run of `&` one
     # way only: `&&?` could split it many ways, and a run with no `{` after it took exponential time.
     paren = r"\s*\((?:[^()]|\([^()]*\))*\)"
     quals = (r"(?:(?:(?:const|volatile|override|final|mutable|constexpr)\b|noexcept\b(?:%s)?|"
              r"throw%s|&&|&(?!&)|\[\[[^\]]*\]\])\s*)*" % (paren, paren))
-    head = (ty + r"(?!\s*::)\s*(?:const\b\s*)?[&*]*\s*(?:\w+\s*::\s*)*\w+\s*"
-            r"\((?:(?!requires\b)[^;{}]|\{[^;{}]*\})*\)\s*" + quals + r"(?:\{|requires\b(?P<req1>))")
+    head = (ty + r"(?!\s*::)\s*(?:const\b\s*)?[&*]*\s*(?:\w+\s*(?:%s)?\s*::\s*)*" % TARGS + FNAME +
+            r"\s*\((?:(?!(?<!\w)requires\b)[^;{}]|\{[^;{}]*\})*\)\s*" + quals +
+            r"(?:\{|requires\b(?P<req1>))")
     trailing = (r"->\s*(?:const\b\s*)?" + ty + r"(?!\s*::)\s*(?:const\b\s*)?[&*]*\s*"
                 r"(?:const\b\s*)?(?:\{|requires\b(?P<req2>))")
     return re.compile(head + "|" + trailing)
 
 
+TOKEN = re.compile(r"\w+|\S")
+# The walk after `requires` reads at most this many tokens and skips a requires-expression of at
+# most this many characters; a clause longer than that is not followed (the function is not seen).
+MAX_CLAUSE_TOKENS = 300
+MAX_REQUIRES_EXPRESSION = 4000
+
+
 def body_brace(code, m):
     """The index of the `{` that opens the body of the function head matched by returns(). After a
     requires-clause (C++20) the head ends at the word `requires`: the body is the first `{` at
-    depth 0 that is not the braces of a requires-expression (`requires { ... }` or
-    `requires(T t) { ... }`); None when a `;` or a `}` comes first. One pass, no backtracking."""
+    paren depth 0 that is not the braces of a requires-expression (`requires { ... }` or
+    `requires(T t) { ... }`); None when a `;` or a `}` comes first, or when the clause is longer
+    than MAX_CLAUSE_TOKENS tokens. The walk keeps the word before the brace as it goes (past a
+    closed paren group, the word before that group), so it costs a bounded number of steps per
+    head. Known limit: a braced initialiser at paren depth 0 inside the clause
+    (`requires C<T, int{3}>`) is taken for the body."""
     if m.group("req1") is None and m.group("req2") is None:
         return m.end() - 1
-    depth, j = 0, m.end()
-    while j < len(code):
-        c = code[j]
-        if c == "(":
-            depth += 1
-        elif c == ")":
-            depth -= 1
-            if depth < 0:
+    stack = []     # the word before each open paren
+    before = None  # the word a `{` here would follow: the last token, or before a closed group
+    j = m.end()
+    for _ in range(MAX_CLAUSE_TOKENS):
+        t = TOKEN.search(code, j)
+        if t is None:
+            return None
+        tok, j = t.group(), t.end()
+        if tok == "(":
+            stack.append(before)
+            before = None
+        elif tok == ")":
+            if not stack:
                 return None
-        elif depth == 0:
-            if c in ";}":
+            before = stack.pop()
+        elif stack:
+            before = None
+        elif tok in ";}":
+            return None
+        elif tok == "{":
+            if before != "requires":
+                return t.start()
+            end = close(code, t.start(), MAX_REQUIRES_EXPRESSION)
+            if end is None:
                 return None
-            if c == "{":
-                pre = code[:j].rstrip()
-                if pre.endswith(")"):
-                    k, d = len(pre) - 1, 0
-                    while k >= 0:
-                        d += (pre[k] == ")") - (pre[k] == "(")
-                        if d == 0:
-                            break
-                        k -= 1
-                    pre = pre[:k].rstrip() if k >= 0 else pre
-                # A `requires` after the clause's own one opens a requires-expression; the clause's
-                # own, followed by `(expr) {`, is the clause and that `{` is the body.
-                word = re.search(r"\brequires$", pre)
-                if word and word.start() >= m.end():
-                    end = close(code, j)
-                    if end is None:
-                        return None
-                    j = end
-                else:
-                    return j
-        j += 1
+            j, before = end + 1, None
+        else:
+            before = tok if tok[0].isalnum() or tok[0] == "_" else None
     return None
 
 
@@ -465,44 +509,76 @@ def normal(text):
     return re.sub(r"\s*([{}(),=])\s*", r"\1", re.sub(r"\s+", " ", text)).strip()
 
 
-def alias_names(code):
-    """{"Board"} and every alias of it declared in `code`, chains followed to a fixed point
-    (`using B = Board; using C = B;`, in any order): an alias of `Board` or `ninferno::Board`
-    spelled so, or of an alias found so, through any namespace."""
+SCOPE_HEAD = re.compile(r"\b(?:namespace|struct|class|union)\s+(?:\[\[[^\]]*\]\]\s*)?"
+                        r"((?:\w+\s*::\s*)*\w+)\s*(?:final\b\s*)?(?::(?!:)[^;{}]*)?$")
+BRACE = re.compile(r"[{}]")
+
+
+def scopes_at(code, positions):
+    """{position: tuple of the named scopes (namespace, struct, class, union) around it}."""
+    out, stack = {}, []
+    todo = sorted(set(positions))
+    k = 0
+    for b in BRACE.finditer(code):
+        while k < len(todo) and todo[k] < b.start():
+            out[todo[k]] = tuple(n for entry in stack for n in entry)
+            k += 1
+        if b.group() == "{":
+            h = SCOPE_HEAD.search(code, max(0, b.start() - 300), b.start())
+            stack.append(tuple(re.sub(r"\s+", "", h.group(1)).split("::")) if h else ())
+        elif stack:
+            stack.pop()
+    for pos in todo[k:]:
+        out[pos] = tuple(n for entry in stack for n in entry)
+    return out
+
+
+def alias_table(code):
+    """{alias: set of the scopes it is declared in} for every alias of `Board` declared in `code`,
+    chains followed to a fixed point (`using B = Board; using C = B;`, in any order): an alias of
+    `Board` or `ninferno::Board` spelled so, or of an alias found so, through any namespace."""
     decls = []
     for m in ALIAS.finditer(code):
         alias, target = (m.group(1), m.group(2)) if m.group(1) else (m.group(4), m.group(3))
-        decls.append((alias, re.sub(r"\s+", "", target)))
+        decls.append((alias, re.sub(r"\s+", "", target), m.start()))
     names = {"Board"}
     grew = True
     while grew:
         grew = False
-        for alias, target in decls:
+        for alias, target, _pos in decls:
             if alias in names:
                 continue
             if target in ("Board", "ninferno::Board") or target.split("::")[-1] in names - {"Board"}:
                 names.add(alias)
                 grew = True
-    return names
+    where = scopes_at(code, [pos for _a, _t, pos in decls]) if len(names) > 1 else {}
+    table = {}
+    for alias, _target, pos in decls:
+        if alias in names and alias != "Board":
+            table.setdefault(alias, set()).add(where[pos])
+    return table
 
 
 def literals(text):
     """[(line, normalised literal, source line)] of the board literals in `text`, in file order.
     A literal nested in another counts once, as the outer one."""
     code = blank(text)
-    names = alias_names(code)
+    table = alias_table(code)
     spans = []
-    for m in typed_pattern(names).finditer(code):
-        spans += initialiser(code, m.start(), m.end() - 1)
-    for m in returns(names).finditer(code):
+    for m in typed_pattern(table).finditer(code):
+        # A group right after the type names one Board; after `<Board>` or `Board k[]` it may be
+        # a list of boards, where `{measured::kA, measured::kB}` is registry names.
+        spans += initialiser(code, m.start(), m.end() - 1,
+                             direct=not m.group().startswith("<") and "[" not in m.group())
+    for m in returns(table).finditer(code):
         body = body_brace(code, m)
         if body is None:
             continue
         end = close(code, body)
         for r in own_returns(code, body, end if end is not None else len(code)):
-            spans += initialiser(code, r.end() - 1, r.end() - 1)
+            spans += initialiser(code, r.end() - 1, r.end() - 1, direct=True)
     for m in DOT_BOARD.finditer(code):
-        spans += initialiser(code, m.start(), m.end() - 1)
+        spans += initialiser(code, m.start(), m.end() - 1, direct=True)
     for m in TUPLE.finditer(code):
         if board_shaped(m):
             spans.append((m.start(), m.end()))
