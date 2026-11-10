@@ -191,7 +191,8 @@ void free_pages_checks() {
     check(pinned_host_limit(*host) == by_available,
           "an explicit tier is still judged by MemAvailable");
     // The automatic tier stays on MemAvailable: modern kernels reclaim page cache for a pin
-    // (l1080, l4070: 10 / 30 GiB pinned with 1-7 GiB free), and a refused pin halves it (#476).
+    // (GTX 1080 Ti, RTX 4070 Ti: 10 / 30 GiB pinned with 1-7 GiB free), and a refused pin halves it
+    // (#476).
     check(automatic_host_tier_budget(*host, 1) ==
               static_cast<std::uint64_t>(static_cast<long double>(by_available) *
                                          kAutomaticHostTierShare),

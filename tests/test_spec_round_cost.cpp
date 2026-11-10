@@ -321,7 +321,7 @@ int main() {
     }
     // The draft head over the rows an artifact's proposal head carries (#205: MTP reads its own
     // 57,344-row prefix of the 147,456 rows it read before, Qwen3.5-9B Q4_K_M, Q6_K head). The
-    // rounds/s gain R(147,456) / R(57,344) - 1 against hard50's on the RTX 4060 Ti (l4060):
+    // rounds/s gain R(147,456) / R(57,344) - 1 against hard50's on the RTX 4060 Ti:
     // +9.4 / +12.9 / +16.5 / +19.6 % at mtp:2..5.
     {
         const auto& facts = *pair_of(kQ9, "ad104:60sm").round_facts;

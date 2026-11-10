@@ -673,7 +673,7 @@
    "quant": "Q4_K_M",
    "prompt": 3203,
    "prefill": 3331.4,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4060)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -681,7 +681,7 @@
    "quant": "Q4_K_M",
    "prompt": 3160,
    "prefill": 3296.6,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4060)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -689,7 +689,7 @@
    "quant": "Q4_K_M",
    "prompt": 6877,
    "prefill": 3361.9,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4060)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -697,7 +697,7 @@
    "quant": "Q4_K_M",
    "prompt": 6629,
    "prefill": 3360.0,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4060)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -705,7 +705,7 @@
    "quant": "Q4_K_M",
    "prompt": 14390,
    "prefill": 3286.8,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4060)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -713,7 +713,7 @@
    "quant": "Q4_K_M",
    "prompt": 13923,
    "prefill": 3292.0,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4060)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -721,7 +721,7 @@
    "quant": "Q8_0",
    "prompt": 3203,
    "prefill": 3494.6,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4060)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -729,7 +729,7 @@
    "quant": "Q8_0",
    "prompt": 3160,
    "prefill": 3445.7,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4060)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -737,7 +737,7 @@
    "quant": "Q8_0",
    "prompt": 6877,
    "prefill": 3556.2,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4060)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -745,7 +745,7 @@
    "quant": "Q8_0",
    "prompt": 6629,
    "prefill": 3551.0,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4060)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -753,7 +753,7 @@
    "quant": "Q8_0",
    "prompt": 14390,
    "prefill": 3490.0,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4060)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -761,7 +761,7 @@
    "quant": "Q8_0",
    "prompt": 13923,
    "prefill": 3499.9,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4060)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -769,7 +769,7 @@
    "quant": "Q4_K_M",
    "prompt": 3203,
    "prefill": 5754.0,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4070)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -777,7 +777,7 @@
    "quant": "Q4_K_M",
    "prompt": 3160,
    "prefill": 5696.2,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4070)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -785,7 +785,7 @@
    "quant": "Q4_K_M",
    "prompt": 6877,
    "prefill": 5839.3,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4070)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -793,7 +793,7 @@
    "quant": "Q4_K_M",
    "prompt": 6629,
    "prefill": 5836.6,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4070)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -801,7 +801,7 @@
    "quant": "Q4_K_M",
    "prompt": 14390,
    "prefill": 5715.0,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4070)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -809,7 +809,7 @@
    "quant": "Q4_K_M",
    "prompt": 13923,
    "prefill": 5736.0,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4070)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -817,7 +817,7 @@
    "quant": "Q8_0",
    "prompt": 3203,
    "prefill": 6116.6,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4070)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -825,7 +825,7 @@
    "quant": "Q8_0",
    "prompt": 3160,
    "prefill": 6065.3,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4070)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -833,7 +833,7 @@
    "quant": "Q8_0",
    "prompt": 6877,
    "prefill": 6324.1,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4070)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -841,7 +841,7 @@
    "quant": "Q8_0",
    "prompt": 6629,
    "prefill": 6312.9,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4070)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -849,7 +849,7 @@
    "quant": "Q8_0",
    "prompt": 14390,
    "prefill": 6196.8,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4070)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -857,7 +857,7 @@
    "quant": "Q8_0",
    "prompt": 13923,
    "prefill": 6236.7,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4070)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4090",
@@ -865,7 +865,7 @@
    "quant": "Q4_K_M",
    "prompt": 3203,
    "prefill": 11676.1,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4090)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -873,7 +873,7 @@
    "quant": "Q4_K_M",
    "prompt": 3160,
    "prefill": 11422.2,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4090)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -881,7 +881,7 @@
    "quant": "Q4_K_M",
    "prompt": 6877,
    "prefill": 12007.4,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4090)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -889,7 +889,7 @@
    "quant": "Q4_K_M",
    "prompt": 6629,
    "prefill": 11958.8,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4090)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -897,7 +897,7 @@
    "quant": "Q4_K_M",
    "prompt": 14390,
    "prefill": 11788.2,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4090)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -905,7 +905,7 @@
    "quant": "Q4_K_M",
    "prompt": 13923,
    "prefill": 11817.4,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4090)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -913,7 +913,7 @@
    "quant": "Q8_0",
    "prompt": 3203,
    "prefill": 11875.1,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4090)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -921,7 +921,7 @@
    "quant": "Q8_0",
    "prompt": 3160,
    "prefill": 11570.1,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4090)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -929,7 +929,7 @@
    "quant": "Q8_0",
    "prompt": 6877,
    "prefill": 12115.8,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4090)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -937,7 +937,7 @@
    "quant": "Q8_0",
    "prompt": 6629,
    "prefill": 12120.3,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4090)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -945,7 +945,7 @@
    "quant": "Q8_0",
    "prompt": 14390,
    "prefill": 11952.9,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4090)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -953,7 +953,7 @@
    "quant": "Q8_0",
    "prompt": 13923,
    "prefill": 11970.6,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4090)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 4090)"
   },
   {
    "card": "RTX 3060",
@@ -961,7 +961,7 @@
    "quant": "Q4_K_M",
    "prompt": 3203,
    "prefill": 2066.5,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l3060)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -969,7 +969,7 @@
    "quant": "Q4_K_M",
    "prompt": 3160,
    "prefill": 2044.5,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l3060)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -977,7 +977,7 @@
    "quant": "Q4_K_M",
    "prompt": 6877,
    "prefill": 2064.7,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l3060)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -985,7 +985,7 @@
    "quant": "Q4_K_M",
    "prompt": 6629,
    "prefill": 2066.8,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l3060)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -993,7 +993,7 @@
    "quant": "Q4_K_M",
    "prompt": 14390,
    "prefill": 2016.1,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l3060)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -1001,7 +1001,7 @@
    "quant": "Q4_K_M",
    "prompt": 13923,
    "prefill": 2020.9,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l3060)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -1009,7 +1009,7 @@
    "quant": "Q8_0",
    "prompt": 3203,
    "prefill": 2065.2,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l3060)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -1017,7 +1017,7 @@
    "quant": "Q8_0",
    "prompt": 3160,
    "prefill": 2045.7,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l3060)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -1025,7 +1025,7 @@
    "quant": "Q8_0",
    "prompt": 6877,
    "prefill": 2070.7,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l3060)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -1033,7 +1033,7 @@
    "quant": "Q8_0",
    "prompt": 6629,
    "prefill": 2070.8,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l3060)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -1041,7 +1041,7 @@
    "quant": "Q8_0",
    "prompt": 14390,
    "prefill": 2024.0,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l3060)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -1049,7 +1049,7 @@
    "quant": "Q8_0",
    "prompt": 13923,
    "prefill": 2029.0,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l3060)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 3060)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1057,7 +1057,7 @@
    "quant": "Q4_K_M",
    "prompt": 3203,
    "prefill": 2516.8,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l2080)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1065,7 +1065,7 @@
    "quant": "Q4_K_M",
    "prompt": 3160,
    "prefill": 2489.7,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l2080)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1073,7 +1073,7 @@
    "quant": "Q4_K_M",
    "prompt": 6877,
    "prefill": 2516.4,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l2080)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1081,7 +1081,7 @@
    "quant": "Q4_K_M",
    "prompt": 6629,
    "prefill": 2519.9,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l2080)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1089,7 +1089,7 @@
    "quant": "Q4_K_M",
    "prompt": 14390,
    "prefill": 2425.4,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l2080)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1097,7 +1097,7 @@
    "quant": "Q4_K_M",
    "prompt": 13923,
    "prefill": 2426.0,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l2080)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1105,7 +1105,7 @@
    "quant": "Q8_0",
    "prompt": 3203,
    "prefill": 2033.2,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l2080)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1113,7 +1113,7 @@
    "quant": "Q8_0",
    "prompt": 3160,
    "prefill": 2015.6,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l2080)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1121,7 +1121,7 @@
    "quant": "Q8_0",
    "prompt": 6877,
    "prefill": 2033.1,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l2080)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1129,7 +1129,7 @@
    "quant": "Q8_0",
    "prompt": 6629,
    "prefill": 2032.7,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l2080)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1137,7 +1137,7 @@
    "quant": "Q8_0",
    "prompt": 14390,
    "prefill": 1974.7,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l2080)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1145,7 +1145,7 @@
    "quant": "Q8_0",
    "prompt": 13923,
    "prefill": 1970.3,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l2080)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1153,7 +1153,7 @@
    "quant": "Q4_K_M",
    "prompt": 3203,
    "prefill": 6988.5,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5070)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1161,7 +1161,7 @@
    "quant": "Q4_K_M",
    "prompt": 3160,
    "prefill": 6911.2,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5070)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1169,7 +1169,7 @@
    "quant": "Q4_K_M",
    "prompt": 6877,
    "prefill": 7057.6,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5070)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1177,7 +1177,7 @@
    "quant": "Q4_K_M",
    "prompt": 6629,
    "prefill": 7056.4,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5070)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1185,7 +1185,7 @@
    "quant": "Q4_K_M",
    "prompt": 14390,
    "prefill": 6937.7,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5070)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1193,7 +1193,7 @@
    "quant": "Q4_K_M",
    "prompt": 13923,
    "prefill": 6944.2,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5070)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1201,7 +1201,7 @@
    "quant": "Q8_0",
    "prompt": 3203,
    "prefill": 7523.1,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l5070)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1209,7 +1209,7 @@
    "quant": "Q8_0",
    "prompt": 3160,
    "prefill": 7433.6,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l5070)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1217,7 +1217,7 @@
    "quant": "Q8_0",
    "prompt": 6877,
    "prefill": 7624.9,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l5070)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1225,7 +1225,7 @@
    "quant": "Q8_0",
    "prompt": 6629,
    "prefill": 7620.0,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l5070)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1233,7 +1233,7 @@
    "quant": "Q8_0",
    "prompt": 14390,
    "prefill": 7502.6,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l5070)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1241,7 +1241,7 @@
    "quant": "Q8_0",
    "prompt": 13923,
    "prefill": 7509.1,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l5070)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5090",
@@ -1249,7 +1249,7 @@
    "quant": "Q4_K_M",
    "prompt": 3203,
    "prefill": 14797.6,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1257,7 +1257,7 @@
    "quant": "Q4_K_M",
    "prompt": 3160,
    "prefill": 14614.1,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1265,7 +1265,7 @@
    "quant": "Q4_K_M",
    "prompt": 6877,
    "prefill": 14958.9,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1273,7 +1273,7 @@
    "quant": "Q4_K_M",
    "prompt": 6629,
    "prefill": 14993.3,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1281,7 +1281,7 @@
    "quant": "Q4_K_M",
    "prompt": 14390,
    "prefill": 14727.8,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1289,7 +1289,7 @@
    "quant": "Q4_K_M",
    "prompt": 13923,
    "prefill": 14741.6,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1297,7 +1297,7 @@
    "quant": "Q8_0",
    "prompt": 3203,
    "prefill": 14182.0,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l5090)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1305,7 +1305,7 @@
    "quant": "Q8_0",
    "prompt": 3160,
    "prefill": 14033.6,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l5090)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1313,7 +1313,7 @@
    "quant": "Q8_0",
    "prompt": 6877,
    "prefill": 14476.8,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l5090)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1321,7 +1321,7 @@
    "quant": "Q8_0",
    "prompt": 6629,
    "prefill": 14434.2,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l5090)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1329,7 +1329,7 @@
    "quant": "Q8_0",
    "prompt": 14390,
    "prefill": 14211.6,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l5090)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1337,7 +1337,7 @@
    "quant": "Q8_0",
    "prompt": 13923,
    "prefill": 14307.4,
-   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l5090)"
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (RTX 5090)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1345,7 +1345,7 @@
    "quant": "Q4_K_M",
    "prompt": 3162,
    "prefill": 1502.1,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l2080)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1353,7 +1353,7 @@
    "quant": "Q4_K_M",
    "prompt": 3122,
    "prefill": 1507.2,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l2080)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1361,7 +1361,7 @@
    "quant": "Q4_K_M",
    "prompt": 6837,
    "prefill": 1433.7,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l2080)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1369,7 +1369,7 @@
    "quant": "Q4_K_M",
    "prompt": 6593,
    "prefill": 1440.3,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l2080)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1377,7 +1377,7 @@
    "quant": "Q4_K_M",
    "prompt": 14381,
    "prefill": 1285.4,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l2080)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1385,7 +1385,7 @@
    "quant": "Q4_K_M",
    "prompt": 13935,
    "prefill": 1295.2,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l2080)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 3060",
@@ -1393,7 +1393,7 @@
    "quant": "Q4_K_M",
    "prompt": 3162,
    "prefill": 1281.5,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l3060)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -1401,7 +1401,7 @@
    "quant": "Q4_K_M",
    "prompt": 3122,
    "prefill": 1283.4,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l3060)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -1409,7 +1409,7 @@
    "quant": "Q4_K_M",
    "prompt": 6837,
    "prefill": 1239.9,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l3060)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -1417,7 +1417,7 @@
    "quant": "Q4_K_M",
    "prompt": 6593,
    "prefill": 1246.1,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l3060)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -1425,7 +1425,7 @@
    "quant": "Q4_K_M",
    "prompt": 14381,
    "prefill": 1143.5,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l3060)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -1433,7 +1433,7 @@
    "quant": "Q4_K_M",
    "prompt": 13935,
    "prefill": 1150.5,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l3060)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 3060)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -1441,7 +1441,7 @@
    "quant": "Q4_K_M",
    "prompt": 3162,
    "prefill": 2011.9,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4060)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -1449,7 +1449,7 @@
    "quant": "Q4_K_M",
    "prompt": 3122,
    "prefill": 2014.1,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4060)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -1457,7 +1457,7 @@
    "quant": "Q4_K_M",
    "prompt": 6837,
    "prefill": 1983.1,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4060)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -1465,7 +1465,7 @@
    "quant": "Q4_K_M",
    "prompt": 6593,
    "prefill": 1990.2,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4060)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -1473,7 +1473,7 @@
    "quant": "Q4_K_M",
    "prompt": 14381,
    "prefill": 1852.4,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4060)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -1481,7 +1481,7 @@
    "quant": "Q4_K_M",
    "prompt": 13935,
    "prefill": 1862.8,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4060)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -1489,7 +1489,7 @@
    "quant": "Q8_0",
    "prompt": 3162,
    "prefill": 2049.5,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4060)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -1497,7 +1497,7 @@
    "quant": "Q8_0",
    "prompt": 3122,
    "prefill": 2034.2,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4060)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -1505,7 +1505,7 @@
    "quant": "Q8_0",
    "prompt": 6837,
    "prefill": 2071.4,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4060)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -1513,7 +1513,7 @@
    "quant": "Q8_0",
    "prompt": 6593,
    "prefill": 2074.0,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4060)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -1521,7 +1521,7 @@
    "quant": "Q8_0",
    "prompt": 14381,
    "prefill": 1922.2,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4060)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -1529,7 +1529,7 @@
    "quant": "Q8_0",
    "prompt": 13935,
    "prefill": 1938.4,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4060)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -1537,7 +1537,7 @@
    "quant": "Q4_K_M",
    "prompt": 3162,
    "prefill": 3722.6,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4070)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -1545,7 +1545,7 @@
    "quant": "Q4_K_M",
    "prompt": 3122,
    "prefill": 3716.9,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4070)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -1553,7 +1553,7 @@
    "quant": "Q4_K_M",
    "prompt": 6837,
    "prefill": 3688.7,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4070)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -1561,7 +1561,7 @@
    "quant": "Q4_K_M",
    "prompt": 6593,
    "prefill": 3696.8,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4070)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -1569,7 +1569,7 @@
    "quant": "Q4_K_M",
    "prompt": 14381,
    "prefill": 3424.4,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4070)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -1577,7 +1577,7 @@
    "quant": "Q4_K_M",
    "prompt": 13935,
    "prefill": 3447.0,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4070)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4090",
@@ -1585,7 +1585,7 @@
    "quant": "Q4_K_M",
    "prompt": 3162,
    "prefill": 7145.4,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4090)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -1593,7 +1593,7 @@
    "quant": "Q4_K_M",
    "prompt": 3122,
    "prefill": 7252.0,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4090)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -1601,7 +1601,7 @@
    "quant": "Q4_K_M",
    "prompt": 6837,
    "prefill": 7224.7,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4090)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -1609,7 +1609,7 @@
    "quant": "Q4_K_M",
    "prompt": 6593,
    "prefill": 7279.2,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4090)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -1617,7 +1617,7 @@
    "quant": "Q4_K_M",
    "prompt": 14381,
    "prefill": 6792.0,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4090)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -1625,7 +1625,7 @@
    "quant": "Q4_K_M",
    "prompt": 13935,
    "prefill": 6846.1,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4090)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -1633,7 +1633,7 @@
    "quant": "Q8_0",
    "prompt": 3162,
    "prefill": 7018.2,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4090)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -1641,7 +1641,7 @@
    "quant": "Q8_0",
    "prompt": 3122,
    "prefill": 6955.4,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4090)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -1649,7 +1649,7 @@
    "quant": "Q8_0",
    "prompt": 6837,
    "prefill": 7180.8,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4090)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -1657,7 +1657,7 @@
    "quant": "Q8_0",
    "prompt": 6593,
    "prefill": 7191.7,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4090)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -1665,7 +1665,7 @@
    "quant": "Q8_0",
    "prompt": 14381,
    "prefill": 6740.3,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4090)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -1673,7 +1673,7 @@
    "quant": "Q8_0",
    "prompt": 13935,
    "prefill": 6809.4,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4090)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 4090)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1681,7 +1681,7 @@
    "quant": "Q4_K_M",
    "prompt": 3162,
    "prefill": 4478.6,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1689,7 +1689,7 @@
    "quant": "Q4_K_M",
    "prompt": 3122,
    "prefill": 4495.4,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1697,7 +1697,7 @@
    "quant": "Q4_K_M",
    "prompt": 6837,
    "prefill": 4420.9,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1705,7 +1705,7 @@
    "quant": "Q4_K_M",
    "prompt": 6593,
    "prefill": 4434.7,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1713,7 +1713,7 @@
    "quant": "Q4_K_M",
    "prompt": 14381,
    "prefill": 4140.1,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1721,7 +1721,7 @@
    "quant": "Q4_K_M",
    "prompt": 13935,
    "prefill": 4167.5,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1729,7 +1729,7 @@
    "quant": "Q8_0",
    "prompt": 3162,
    "prefill": 4552.9,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1737,7 +1737,7 @@
    "quant": "Q8_0",
    "prompt": 3122,
    "prefill": 4547.1,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1745,7 +1745,7 @@
    "quant": "Q8_0",
    "prompt": 6837,
    "prefill": 4572.2,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1753,7 +1753,7 @@
    "quant": "Q8_0",
    "prompt": 6593,
    "prefill": 4579.8,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1761,7 +1761,7 @@
    "quant": "Q8_0",
    "prompt": 14381,
    "prefill": 4251.3,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1769,7 +1769,7 @@
    "quant": "Q8_0",
    "prompt": 13935,
    "prefill": 4284.7,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5090",
@@ -1777,7 +1777,7 @@
    "quant": "Q8_0",
    "prompt": 3122,
    "prefill": 8790.7,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5090)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1785,7 +1785,7 @@
    "quant": "Q8_0",
    "prompt": 3162,
    "prefill": 8843.9,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5090)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1793,7 +1793,7 @@
    "quant": "Q8_0",
    "prompt": 6593,
    "prefill": 8968.4,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5090)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1801,7 +1801,7 @@
    "quant": "Q8_0",
    "prompt": 6837,
    "prefill": 9010.6,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5090)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1809,7 +1809,7 @@
    "quant": "Q8_0",
    "prompt": 13935,
    "prefill": 8543.2,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5090)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1817,7 +1817,7 @@
    "quant": "Q8_0",
    "prompt": 14381,
    "prefill": 8404.2,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5090)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1825,7 +1825,7 @@
    "quant": "Q4_K_M",
    "prompt": 3122,
    "prefill": 9088.2,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5090)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1833,7 +1833,7 @@
    "quant": "Q4_K_M",
    "prompt": 3162,
    "prefill": 9048.9,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5090)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1841,7 +1841,7 @@
    "quant": "Q4_K_M",
    "prompt": 6593,
    "prefill": 9118.0,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5090)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1849,7 +1849,7 @@
    "quant": "Q4_K_M",
    "prompt": 6837,
    "prefill": 9060.0,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5090)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1857,7 +1857,7 @@
    "quant": "Q4_K_M",
    "prompt": 13935,
    "prefill": 8642.7,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5090)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1865,7 +1865,7 @@
    "quant": "Q4_K_M",
    "prompt": 14381,
    "prefill": 8543.4,
-   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5090)"
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1873,7 +1873,7 @@
    "quant": "Q6_K",
    "prompt": 7406,
    "prefill": 12528.5,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1881,7 +1881,7 @@
    "quant": "Q6_K",
    "prompt": 21928,
    "prefill": 12122.7,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1889,7 +1889,7 @@
    "quant": "Q5_K_M",
    "prompt": 7406,
    "prefill": 13916.8,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1897,7 +1897,7 @@
    "quant": "Q5_K_M",
    "prompt": 21928,
    "prefill": 13398.5,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1905,7 +1905,7 @@
    "quant": "Q4_K_S",
    "prompt": 7406,
    "prefill": 15421.5,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1913,7 +1913,7 @@
    "quant": "Q4_K_S",
    "prompt": 21928,
    "prefill": 14779.8,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 4090",
@@ -1921,7 +1921,7 @@
    "quant": "Q6_K",
    "prompt": 7406,
    "prefill": 10932.8,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -1929,7 +1929,7 @@
    "quant": "Q6_K",
    "prompt": 21928,
    "prefill": 10628.7,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -1937,7 +1937,7 @@
    "quant": "Q5_K_M",
    "prompt": 7406,
    "prefill": 11778.5,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -1945,7 +1945,7 @@
    "quant": "Q5_K_M",
    "prompt": 21928,
    "prefill": 11384.4,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -1953,7 +1953,7 @@
    "quant": "Q4_K_S",
    "prompt": 7406,
    "prefill": 12807.3,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -1961,7 +1961,7 @@
    "quant": "Q4_K_S",
    "prompt": 21928,
    "prefill": 12214.7,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -1969,7 +1969,7 @@
    "quant": "Q6_K",
    "prompt": 7406,
    "prefill": 5335.8,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -1977,7 +1977,7 @@
    "quant": "Q6_K",
    "prompt": 21928,
    "prefill": 5128.0,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -1985,7 +1985,7 @@
    "quant": "Q5_K_M",
    "prompt": 7406,
    "prefill": 5701.3,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -1993,7 +1993,7 @@
    "quant": "Q5_K_M",
    "prompt": 21928,
    "prefill": 5462.3,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -2001,7 +2001,7 @@
    "quant": "Q4_K_S",
    "prompt": 7406,
    "prefill": 6119.9,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -2009,7 +2009,7 @@
    "quant": "Q4_K_S",
    "prompt": 21928,
    "prefill": 5815.7,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -2017,7 +2017,7 @@
    "quant": "Q6_K",
    "prompt": 7406,
    "prefill": 3013.9,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -2025,7 +2025,7 @@
    "quant": "Q6_K",
    "prompt": 21928,
    "prefill": 2900.6,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -2033,7 +2033,7 @@
    "quant": "Q5_K_M",
    "prompt": 7406,
    "prefill": 3225.8,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -2041,7 +2041,7 @@
    "quant": "Q5_K_M",
    "prompt": 21928,
    "prefill": 3092.9,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -2049,7 +2049,7 @@
    "quant": "Q4_K_S",
    "prompt": 7406,
    "prefill": 3453.3,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -2057,7 +2057,7 @@
    "quant": "Q4_K_S",
    "prompt": 21928,
    "prefill": 3289.4,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -2065,7 +2065,7 @@
    "quant": "Q6_K",
    "prompt": 7406,
    "prefill": 6089.5,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -2073,7 +2073,7 @@
    "quant": "Q6_K",
    "prompt": 21928,
    "prefill": 5897.2,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -2081,7 +2081,7 @@
    "quant": "Q5_K_M",
    "prompt": 7406,
    "prefill": 6142.6,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -2089,7 +2089,7 @@
    "quant": "Q5_K_M",
    "prompt": 21928,
    "prefill": 5940.3,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -2097,7 +2097,7 @@
    "quant": "Q4_K_S",
    "prompt": 7406,
    "prefill": 7410.8,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -2105,7 +2105,7 @@
    "quant": "Q4_K_S",
    "prompt": 21928,
    "prefill": 7115.1,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 3060",
@@ -2113,7 +2113,7 @@
    "quant": "Q6_K",
    "prompt": 7406,
    "prefill": 1898.7,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -2121,7 +2121,7 @@
    "quant": "Q6_K",
    "prompt": 21928,
    "prefill": 1809.6,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -2129,7 +2129,7 @@
    "quant": "Q5_K_M",
    "prompt": 7406,
    "prefill": 1982.7,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -2137,7 +2137,7 @@
    "quant": "Q5_K_M",
    "prompt": 21928,
    "prefill": 1887.5,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -2145,7 +2145,7 @@
    "quant": "Q4_K_S",
    "prompt": 7406,
    "prefill": 2145.4,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -2153,7 +2153,7 @@
    "quant": "Q4_K_S",
    "prompt": 21928,
    "prefill": 2026.7,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -2161,7 +2161,7 @@
    "quant": "Q6_K",
    "prompt": 7406,
    "prefill": 2397.3,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -2169,7 +2169,7 @@
    "quant": "Q6_K",
    "prompt": 21928,
    "prefill": 2238.2,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -2177,7 +2177,7 @@
    "quant": "Q5_K_M",
    "prompt": 7406,
    "prefill": 2508.2,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -2185,7 +2185,7 @@
    "quant": "Q5_K_M",
    "prompt": 21928,
    "prefill": 2340.1,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -2193,7 +2193,7 @@
    "quant": "Q4_K_S",
    "prompt": 7406,
    "prefill": 2619.7,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -2201,7 +2201,7 @@
    "quant": "Q4_K_S",
    "prompt": 21928,
    "prefill": 2418.3,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 5090",
@@ -2209,7 +2209,7 @@
    "quant": "Q5_K_M",
    "prompt": 7347,
    "prefill": 8764.1,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -2217,7 +2217,7 @@
    "quant": "Q5_K_M",
    "prompt": 21721,
    "prefill": 7822.8,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -2225,7 +2225,7 @@
    "quant": "Q6_K",
    "prompt": 7347,
    "prefill": 7552.8,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -2233,7 +2233,7 @@
    "quant": "Q6_K",
    "prompt": 21721,
    "prefill": 6866.6,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 4090",
@@ -2241,7 +2241,7 @@
    "quant": "Q5_K_M",
    "prompt": 7347,
    "prefill": 6860.1,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -2249,7 +2249,7 @@
    "quant": "Q5_K_M",
    "prompt": 21721,
    "prefill": 6138.1,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -2257,7 +2257,7 @@
    "quant": "Q6_K",
    "prompt": 7347,
    "prefill": 6327.7,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -2265,7 +2265,7 @@
    "quant": "Q6_K",
    "prompt": 21721,
    "prefill": 5713.2,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -2273,7 +2273,7 @@
    "quant": "Q5_K_M",
    "prompt": 7347,
    "prefill": 3818.9,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -2281,7 +2281,7 @@
    "quant": "Q5_K_M",
    "prompt": 21721,
    "prefill": 3401.5,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -2289,7 +2289,7 @@
    "quant": "Q6_K",
    "prompt": 7347,
    "prefill": 3669.5,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -2297,7 +2297,7 @@
    "quant": "Q6_K",
    "prompt": 21721,
    "prefill": 3292.9,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -2305,7 +2305,7 @@
    "quant": "Q5_K_M",
    "prompt": 7347,
    "prefill": 3541.3,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -2313,7 +2313,7 @@
    "quant": "Q5_K_M",
    "prompt": 21721,
    "prefill": 3094.7,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -2321,7 +2321,7 @@
    "quant": "Q6_K",
    "prompt": 7347,
    "prefill": 3263.5,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -2329,7 +2329,7 @@
    "quant": "Q6_K",
    "prompt": 21721,
    "prefill": 2886.1,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -2337,7 +2337,7 @@
    "quant": "Q5_K_M",
    "prompt": 7347,
    "prefill": 1907.0,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4060)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -2345,7 +2345,7 @@
    "quant": "Q5_K_M",
    "prompt": 21721,
    "prefill": 1673.9,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4060)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -2353,7 +2353,7 @@
    "quant": "Q6_K",
    "prompt": 7347,
    "prefill": 1753.3,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4060)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -2361,7 +2361,7 @@
    "quant": "Q6_K",
    "prompt": 21721,
    "prefill": 1555.7,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4060)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 3060",
@@ -2369,7 +2369,7 @@
    "quant": "Q5_K_M",
    "prompt": 7347,
    "prefill": 1200.5,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -2377,7 +2377,7 @@
    "quant": "Q5_K_M",
    "prompt": 21721,
    "prefill": 1026.3,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -2385,7 +2385,7 @@
    "quant": "Q6_K",
    "prompt": 7347,
    "prefill": 1105.2,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -2393,7 +2393,7 @@
    "quant": "Q6_K",
    "prompt": 21721,
    "prefill": 959.1,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -2401,7 +2401,7 @@
    "quant": "Q5_K_M",
    "prompt": 7347,
    "prefill": 1352.8,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -2409,7 +2409,7 @@
    "quant": "Q5_K_M",
    "prompt": 21721,
    "prefill": 1108.4,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -2417,7 +2417,7 @@
    "quant": "Q6_K",
    "prompt": 7347,
    "prefill": 1149.8,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "Quadro GV100",
@@ -2425,7 +2425,7 @@
    "quant": "Q6_K",
    "prompt": 7406,
    "prefill": 3016.7,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (lgv100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (lgv100)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (Quadro GV100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -2433,7 +2433,7 @@
    "quant": "Q6_K",
    "prompt": 21928,
    "prefill": 2879.4,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (lgv100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (lgv100)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (Quadro GV100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -2441,7 +2441,7 @@
    "quant": "Q5_K_M",
    "prompt": 7406,
    "prefill": 2741.7,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (lgv100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (lgv100)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (Quadro GV100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -2449,7 +2449,7 @@
    "quant": "Q5_K_M",
    "prompt": 21928,
    "prefill": 2623.4,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (lgv100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (lgv100)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (Quadro GV100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -2457,7 +2457,7 @@
    "quant": "Q4_K_S",
    "prompt": 7406,
    "prefill": 2736.5,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (lgv100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (lgv100)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (Quadro GV100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -2465,7 +2465,7 @@
    "quant": "Q4_K_S",
    "prompt": 21928,
    "prefill": 2603.3,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (lgv100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (lgv100)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (Quadro GV100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -2473,7 +2473,7 @@
    "quant": "Q4_K_M",
    "prompt": 7347,
    "prefill": 1518.1,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (lgv100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (lgv100)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (Quadro GV100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -2481,7 +2481,7 @@
    "quant": "Q4_K_M",
    "prompt": 21721,
    "prefill": 1247.4,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (lgv100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (lgv100)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (Quadro GV100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -2489,7 +2489,7 @@
    "quant": "Q5_K_M",
    "prompt": 7347,
    "prefill": 1670.2,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (lgv100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (lgv100)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (Quadro GV100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -2497,7 +2497,7 @@
    "quant": "Q5_K_M",
    "prompt": 21721,
    "prefill": 1281.7,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (lgv100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (lgv100)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (Quadro GV100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -2505,7 +2505,7 @@
    "quant": "Q6_K",
    "prompt": 7347,
    "prefill": 1693.7,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (lgv100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (lgv100)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (Quadro GV100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -2513,7 +2513,7 @@
    "quant": "Q6_K",
    "prompt": 21721,
    "prefill": 1298.8,
-   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (lgv100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (lgv100)"
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (Quadro GV100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "RTX 5090",
@@ -2521,7 +2521,7 @@
    "quant": "Q3_K_M",
    "prompt": 7406,
    "prefill": 13662.7,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -2529,7 +2529,7 @@
    "quant": "Q3_K_M",
    "prompt": 21928,
    "prefill": 13137.9,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 4090",
@@ -2537,7 +2537,7 @@
    "quant": "Q3_K_M",
    "prompt": 7406,
    "prefill": 11844.9,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -2545,7 +2545,7 @@
    "quant": "Q3_K_M",
    "prompt": 21928,
    "prefill": 11391.4,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -2553,7 +2553,7 @@
    "quant": "Q3_K_M",
    "prompt": 7406,
    "prefill": 5723.8,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -2561,7 +2561,7 @@
    "quant": "Q3_K_M",
    "prompt": 21928,
    "prefill": 5547.8,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -2569,7 +2569,7 @@
    "quant": "Q3_K_M",
    "prompt": 7406,
    "prefill": 5713.5,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -2577,7 +2577,7 @@
    "quant": "Q3_K_M",
    "prompt": 21928,
    "prefill": 5449.7,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -2585,7 +2585,7 @@
    "quant": "Q3_K_M",
    "prompt": 7406,
    "prefill": 3210.4,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -2593,7 +2593,7 @@
    "quant": "Q3_K_M",
    "prompt": 21928,
    "prefill": 3069.1,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 3060",
@@ -2601,7 +2601,7 @@
    "quant": "Q3_K_M",
    "prompt": 7406,
    "prefill": 1960.4,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -2609,7 +2609,7 @@
    "quant": "Q3_K_M",
    "prompt": 21928,
    "prefill": 1862.2,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -2617,7 +2617,7 @@
    "quant": "Q3_K_M",
    "prompt": 7406,
    "prefill": 2368.3,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -2625,7 +2625,7 @@
    "quant": "Q3_K_M",
    "prompt": 21928,
    "prefill": 2201.3,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 5090",
@@ -2633,7 +2633,7 @@
    "quant": "IQ4_XS",
    "prompt": 7406,
    "prefill": 16496.8,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -2641,7 +2641,7 @@
    "quant": "IQ4_XS",
    "prompt": 21928,
    "prefill": 15701.5,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -2649,7 +2649,7 @@
    "quant": "IQ4_XS",
    "prompt": 7406,
    "prefill": 8201.9,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -2657,7 +2657,7 @@
    "quant": "IQ4_XS",
    "prompt": 21928,
    "prefill": 7842.7,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -2665,7 +2665,7 @@
    "quant": "IQ4_XS",
    "prompt": 7406,
    "prefill": 6701.5,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -2673,7 +2673,7 @@
    "quant": "IQ4_XS",
    "prompt": 21928,
    "prefill": 6336.1,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -2681,7 +2681,7 @@
    "quant": "IQ4_XS",
    "prompt": 7406,
    "prefill": 3755.3,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -2689,7 +2689,7 @@
    "quant": "IQ4_XS",
    "prompt": 21928,
    "prefill": 3568.7,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 3060",
@@ -2697,7 +2697,7 @@
    "quant": "IQ4_XS",
    "prompt": 7406,
    "prefill": 2362.8,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -2705,7 +2705,7 @@
    "quant": "IQ4_XS",
    "prompt": 21928,
    "prefill": 2221.1,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -2713,7 +2713,7 @@
    "quant": "IQ4_XS",
    "prompt": 7406,
    "prefill": 3006.3,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -2721,7 +2721,7 @@
    "quant": "IQ4_XS",
    "prompt": 21928,
    "prefill": 2750.2,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 5090",
@@ -2729,7 +2729,7 @@
    "quant": "UD-Q4_K_XL",
    "prompt": 7406,
    "prefill": 14838.0,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -2737,7 +2737,7 @@
    "quant": "UD-Q4_K_XL",
    "prompt": 21928,
    "prefill": 14224.5,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 4090",
@@ -2745,7 +2745,7 @@
    "quant": "UD-Q4_K_XL",
    "prompt": 7406,
    "prefill": 11792.8,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -2753,7 +2753,7 @@
    "quant": "UD-Q4_K_XL",
    "prompt": 21928,
    "prefill": 11370.0,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -2761,7 +2761,7 @@
    "quant": "UD-Q4_K_XL",
    "prompt": 7406,
    "prefill": 6936.4,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -2769,7 +2769,7 @@
    "quant": "UD-Q4_K_XL",
    "prompt": 21928,
    "prefill": 6682.9,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -2777,7 +2777,7 @@
    "quant": "UD-Q4_K_XL",
    "prompt": 7406,
    "prefill": 5790.2,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -2785,7 +2785,7 @@
    "quant": "UD-Q4_K_XL",
    "prompt": 21928,
    "prefill": 5542.3,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -2793,7 +2793,7 @@
    "quant": "UD-Q4_K_XL",
    "prompt": 7406,
    "prefill": 3320.2,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -2801,7 +2801,7 @@
    "quant": "UD-Q4_K_XL",
    "prompt": 21928,
    "prefill": 3178.3,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 3060",
@@ -2809,7 +2809,7 @@
    "quant": "UD-Q4_K_XL",
    "prompt": 7406,
    "prefill": 2079.8,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -2817,7 +2817,7 @@
    "quant": "UD-Q4_K_XL",
    "prompt": 21928,
    "prefill": 1974.0,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -2825,7 +2825,7 @@
    "quant": "UD-Q4_K_XL",
    "prompt": 7406,
    "prefill": 2486.4,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -2833,7 +2833,7 @@
    "quant": "UD-Q4_K_XL",
    "prompt": 21928,
    "prefill": 2313.8,
-   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 5090",
@@ -2841,7 +2841,7 @@
    "quant": "Q4_K_M",
    "prompt": 7406,
    "prefill": 24247.3,
-   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -2849,7 +2849,7 @@
    "quant": "Q4_K_M",
    "prompt": 21928,
    "prefill": 22607.2,
-   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 4090",
@@ -2857,7 +2857,7 @@
    "quant": "Q4_K_M",
    "prompt": 7406,
    "prefill": 20082.1,
-   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -2865,7 +2865,7 @@
    "quant": "Q4_K_M",
    "prompt": 21928,
    "prefill": 18789.4,
-   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -2873,7 +2873,7 @@
    "quant": "Q4_K_M",
    "prompt": 7406,
    "prefill": 12132.5,
-   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -2881,7 +2881,7 @@
    "quant": "Q4_K_M",
    "prompt": 21928,
    "prefill": 11320.7,
-   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -2889,7 +2889,7 @@
    "quant": "Q4_K_M",
    "prompt": 7406,
    "prefill": 10504.1,
-   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -2897,7 +2897,7 @@
    "quant": "Q4_K_M",
    "prompt": 21928,
    "prefill": 9629.6,
-   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -2905,7 +2905,7 @@
    "quant": "Q4_K_M",
    "prompt": 7406,
    "prefill": 5920.4,
-   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -2913,7 +2913,7 @@
    "quant": "Q4_K_M",
    "prompt": 21928,
    "prefill": 5428.5,
-   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 3060",
@@ -2921,7 +2921,7 @@
    "quant": "Q4_K_M",
    "prompt": 7406,
    "prefill": 3558.2,
-   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -2929,7 +2929,7 @@
    "quant": "Q4_K_M",
    "prompt": 21928,
    "prefill": 3256.3,
-   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -2937,7 +2937,7 @@
    "quant": "Q4_K_M",
    "prompt": 7406,
    "prefill": 4116.8,
-   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -2945,7 +2945,7 @@
    "quant": "Q4_K_M",
    "prompt": 21928,
    "prefill": 3660.3,
-   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "Quadro GV100",
@@ -2953,7 +2953,7 @@
    "quant": "Q4_K_M",
    "prompt": 7406,
    "prefill": 4503.4,
-   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (the stands' kit build), 2026-10-31 (lgv100)"
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (the stands' kit build), 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -2961,7 +2961,7 @@
    "quant": "Q4_K_M",
    "prompt": 21928,
    "prefill": 4061.2,
-   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (the stands' kit build), 2026-10-31 (lgv100)"
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (the stands' kit build), 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "RTX 5090",
@@ -2969,7 +2969,7 @@
    "quant": "Q4_K_M",
    "prompt": 41354,
    "prefill": 13331.7,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -2977,7 +2977,7 @@
    "quant": "Q4_K_M",
    "prompt": 82324,
    "prefill": 11636.8,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -2985,7 +2985,7 @@
    "quant": "Q4_K_M",
    "prompt": 41221,
    "prefill": 6861.1,
-   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -2993,7 +2993,7 @@
    "quant": "Q4_K_M",
    "prompt": 81730,
    "prefill": 5245.8,
-   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -3001,7 +3001,7 @@
    "quant": "Q8_0",
    "prompt": 41354,
    "prefill": 12861.1,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -3009,7 +3009,7 @@
    "quant": "Q8_0",
    "prompt": 82324,
    "prefill": 11252.7,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 4090",
@@ -3017,7 +3017,7 @@
    "quant": "Q4_K_M",
    "prompt": 41354,
    "prefill": 10771.3,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -3025,7 +3025,7 @@
    "quant": "Q4_K_M",
    "prompt": 82324,
    "prefill": 9447.1,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -3033,7 +3033,7 @@
    "quant": "Q4_K_M",
    "prompt": 41221,
    "prefill": 5372.9,
-   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -3041,7 +3041,7 @@
    "quant": "Q4_K_M",
    "prompt": 81730,
    "prefill": 4028.6,
-   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -3049,7 +3049,7 @@
    "quant": "Q8_0",
    "prompt": 41354,
    "prefill": 10909.0,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -3057,7 +3057,7 @@
    "quant": "Q8_0",
    "prompt": 82324,
    "prefill": 9548.5,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -3065,7 +3065,7 @@
    "quant": "Q4_K_M",
    "prompt": 41354,
    "prefill": 6439.6,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -3073,7 +3073,7 @@
    "quant": "Q4_K_M",
    "prompt": 82324,
    "prefill": 5718.0,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -3081,7 +3081,7 @@
    "quant": "Q4_K_M",
    "prompt": 41221,
    "prefill": 3251.5,
-   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -3089,7 +3089,7 @@
    "quant": "Q4_K_M",
    "prompt": 81730,
    "prefill": 2435.8,
-   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -3097,7 +3097,7 @@
    "quant": "Q8_0",
    "prompt": 41354,
    "prefill": 6838.0,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -3105,7 +3105,7 @@
    "quant": "Q8_0",
    "prompt": 82324,
    "prefill": 6027.3,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -3113,7 +3113,7 @@
    "quant": "Q4_K_M",
    "prompt": 41354,
    "prefill": 5186.7,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -3121,7 +3121,7 @@
    "quant": "Q4_K_M",
    "prompt": 82324,
    "prefill": 4486.3,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -3129,7 +3129,7 @@
    "quant": "Q4_K_M",
    "prompt": 41221,
    "prefill": 2631.7,
-   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -3137,7 +3137,7 @@
    "quant": "Q4_K_M",
    "prompt": 81730,
    "prefill": 1948.5,
-   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -3145,7 +3145,7 @@
    "quant": "Q8_0",
    "prompt": 41354,
    "prefill": 5579.8,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -3153,7 +3153,7 @@
    "quant": "Q8_0",
    "prompt": 82324,
    "prefill": 4802.2,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 3060",
@@ -3161,7 +3161,7 @@
    "quant": "Q4_K_M",
    "prompt": 41354,
    "prefill": 1830.9,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -3169,7 +3169,7 @@
    "quant": "Q4_K_M",
    "prompt": 82324,
    "prefill": 1571.9,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -3177,7 +3177,7 @@
    "quant": "Q4_K_M",
    "prompt": 41221,
    "prefill": 861.6,
-   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -3185,7 +3185,7 @@
    "quant": "Q4_K_M",
    "prompt": 81730,
    "prefill": 633.0,
-   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -3193,7 +3193,7 @@
    "quant": "Q8_0",
    "prompt": 41354,
    "prefill": 1812.3,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -3201,7 +3201,7 @@
    "quant": "Q8_0",
    "prompt": 82324,
    "prefill": 1569.6,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -3209,7 +3209,7 @@
    "quant": "Q4_K_M",
    "prompt": 41354,
    "prefill": 2144.2,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -3217,7 +3217,7 @@
    "quant": "Q4_K_M",
    "prompt": 82324,
    "prefill": 1781.0,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -3225,7 +3225,7 @@
    "quant": "Q4_K_M",
    "prompt": 41221,
    "prefill": 917.9,
-   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -3233,7 +3233,7 @@
    "quant": "Q4_K_M",
    "prompt": 81730,
    "prefill": 644.3,
-   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -3241,7 +3241,7 @@
    "quant": "Q8_0",
    "prompt": 41354,
    "prefill": 1756.1,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -3249,7 +3249,7 @@
    "quant": "Q8_0",
    "prompt": 82324,
    "prefill": 1511.5,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "Quadro GV100",
@@ -3257,7 +3257,7 @@
    "quant": "Q4_K_M",
    "prompt": 41354,
    "prefill": 2570.8,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master fd6e572c (the stands' kit build), 2026-10-31 (lgv100)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master fd6e572c (the stands' kit build), 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -3265,7 +3265,7 @@
    "quant": "Q4_K_M",
    "prompt": 82324,
    "prefill": 2005.8,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master fd6e572c (the stands' kit build), 2026-10-31 (lgv100)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master fd6e572c (the stands' kit build), 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -3273,7 +3273,7 @@
    "quant": "Q4_K_M",
    "prompt": 41221,
    "prefill": 926.9,
-   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master fd6e572c (the stands' kit build), 2026-10-31 (lgv100)"
+   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master fd6e572c (the stands' kit build), 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -3281,7 +3281,7 @@
    "quant": "Q4_K_M",
    "prompt": 81730,
    "prefill": 631.2,
-   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master fd6e572c (the stands' kit build), 2026-10-31 (lgv100)"
+   "source": "mprefl.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, the median of 3 slices), master fd6e572c (the stands' kit build), 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -3289,7 +3289,7 @@
    "quant": "Q8_0",
    "prompt": 41354,
    "prefill": 2525.4,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master fd6e572c (the stands' kit build), 2026-10-31 (lgv100)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master fd6e572c (the stands' kit build), 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -3297,7 +3297,7 @@
    "quant": "Q8_0",
    "prompt": 82324,
    "prefill": 2111.7,
-   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master fd6e572c (the stands' kit build), 2026-10-31 (lgv100)"
+   "source": "mprefl.sh (unsloth/Qwen3.5-9B-MTP-GGUF, --no-prefix-reuse, the median of 3 slices), master fd6e572c (the stands' kit build), 2026-10-31 (Quadro GV100)"
   }
  ]
 }

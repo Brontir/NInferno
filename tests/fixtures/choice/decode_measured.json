@@ -173,7 +173,7 @@
    "concurrency": 1,
    "context": 159,
    "decode": 51.09,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -186,7 +186,7 @@
    "concurrency": 2,
    "context": 159,
    "decode": 48.66,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -199,7 +199,7 @@
    "concurrency": 4,
    "context": 159,
    "decode": 45.7,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -212,7 +212,7 @@
    "concurrency": 8,
    "context": 159,
    "decode": 43.11,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -225,7 +225,7 @@
    "concurrency": 1,
    "context": 159,
    "decode": 31.59,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -238,7 +238,7 @@
    "concurrency": 2,
    "context": 159,
    "decode": 30.89,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -251,7 +251,7 @@
    "concurrency": 4,
    "context": 159,
    "decode": 29.78,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -264,7 +264,7 @@
    "concurrency": 8,
    "context": 159,
    "decode": 27.98,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -277,7 +277,7 @@
    "concurrency": 1,
    "context": 160,
    "decode": 36.85,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -290,7 +290,7 @@
    "concurrency": 2,
    "context": 160,
    "decode": 34.33,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -303,7 +303,7 @@
    "concurrency": 4,
    "context": 160,
    "decode": 33.53,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -316,7 +316,7 @@
    "concurrency": 8,
    "context": 160,
    "decode": 31.42,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -329,7 +329,7 @@
    "concurrency": 1,
    "context": 159,
    "decode": 54.94,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -342,7 +342,7 @@
    "concurrency": 2,
    "context": 159,
    "decode": 52.67,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -355,7 +355,7 @@
    "concurrency": 4,
    "context": 159,
    "decode": 49.39,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -368,7 +368,7 @@
    "concurrency": 8,
    "context": 159,
    "decode": 46.75,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -381,7 +381,7 @@
    "concurrency": 1,
    "context": 159,
    "decode": 53.2,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -394,7 +394,7 @@
    "concurrency": 2,
    "context": 159,
    "decode": 50.76,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -407,7 +407,7 @@
    "concurrency": 4,
    "context": 159,
    "decode": 47.87,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -420,7 +420,7 @@
    "concurrency": 8,
    "context": 159,
    "decode": 45.43,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4060 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -433,7 +433,7 @@
    "concurrency": 1,
    "context": 159,
    "decode": 86.69,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -446,7 +446,7 @@
    "concurrency": 2,
    "context": 159,
    "decode": 81.49,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -459,7 +459,7 @@
    "concurrency": 4,
    "context": 159,
    "decode": 77.78,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -472,7 +472,7 @@
    "concurrency": 8,
    "context": 159,
    "decode": 70.48,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -485,7 +485,7 @@
    "concurrency": 1,
    "context": 159,
    "decode": 53.88,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -498,7 +498,7 @@
    "concurrency": 2,
    "context": 159,
    "decode": 52.2,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -511,7 +511,7 @@
    "concurrency": 4,
    "context": 159,
    "decode": 50.58,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -524,7 +524,7 @@
    "concurrency": 8,
    "context": 159,
    "decode": 47.2,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -537,7 +537,7 @@
    "concurrency": 1,
    "context": 160,
    "decode": 62.43,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -550,7 +550,7 @@
    "concurrency": 2,
    "context": 160,
    "decode": 56.37,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -563,7 +563,7 @@
    "concurrency": 4,
    "context": 160,
    "decode": 54.25,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -576,7 +576,7 @@
    "concurrency": 8,
    "context": 160,
    "decode": 48.2,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -589,7 +589,7 @@
    "concurrency": 1,
    "context": 159,
    "decode": 91.55,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -602,7 +602,7 @@
    "concurrency": 2,
    "context": 159,
    "decode": 86.66,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -615,7 +615,7 @@
    "concurrency": 4,
    "context": 159,
    "decode": 83.65,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -628,7 +628,7 @@
    "concurrency": 8,
    "context": 159,
    "decode": 73.3,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -641,7 +641,7 @@
    "concurrency": 1,
    "context": 159,
    "decode": 90.12,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -654,7 +654,7 @@
    "concurrency": 2,
    "context": 159,
    "decode": 86.0,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -667,7 +667,7 @@
    "concurrency": 4,
    "context": 159,
    "decode": 78.0,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -680,7 +680,7 @@
    "concurrency": 8,
    "context": 159,
    "decode": 71.45,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4070 Ti)"
   },
   {
    "card": "RTX 4090",
@@ -693,7 +693,7 @@
    "concurrency": 1,
    "context": 159,
    "decode": 162.87,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -706,7 +706,7 @@
    "concurrency": 2,
    "context": 159,
    "decode": 151.15,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -719,7 +719,7 @@
    "concurrency": 4,
    "context": 159,
    "decode": 144.32,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -732,7 +732,7 @@
    "concurrency": 8,
    "context": 159,
    "decode": 131.05,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -745,7 +745,7 @@
    "concurrency": 1,
    "context": 159,
    "decode": 101.11,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -758,7 +758,7 @@
    "concurrency": 2,
    "context": 159,
    "decode": 96.41,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -771,7 +771,7 @@
    "concurrency": 4,
    "context": 159,
    "decode": 93.71,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -784,7 +784,7 @@
    "concurrency": 8,
    "context": 159,
    "decode": 86.84,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -797,7 +797,7 @@
    "concurrency": 1,
    "context": 160,
    "decode": 116.32,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -810,7 +810,7 @@
    "concurrency": 2,
    "context": 160,
    "decode": 106.35,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -823,7 +823,7 @@
    "concurrency": 4,
    "context": 160,
    "decode": 102.29,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 4090",
@@ -836,7 +836,7 @@
    "concurrency": 8,
    "context": 160,
    "decode": 93.36,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 4090)"
   },
   {
    "card": "RTX 3060",
@@ -849,7 +849,7 @@
    "concurrency": 1,
    "context": 159,
    "decode": 60.96,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l3060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -862,7 +862,7 @@
    "concurrency": 2,
    "context": 159,
    "decode": 56.89,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l3060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -875,7 +875,7 @@
    "concurrency": 4,
    "context": 159,
    "decode": 49.4,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l3060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -888,7 +888,7 @@
    "concurrency": 8,
    "context": 159,
    "decode": 48.35,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l3060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -901,7 +901,7 @@
    "concurrency": 1,
    "context": 159,
    "decode": 38.72,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l3060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -914,7 +914,7 @@
    "concurrency": 2,
    "context": 159,
    "decode": 36.85,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l3060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -927,7 +927,7 @@
    "concurrency": 4,
    "context": 159,
    "decode": 35.23,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l3060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -940,7 +940,7 @@
    "concurrency": 8,
    "context": 159,
    "decode": 30.56,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l3060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -953,7 +953,7 @@
    "concurrency": 1,
    "context": 160,
    "decode": 43.37,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l3060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -966,7 +966,7 @@
    "concurrency": 2,
    "context": 160,
    "decode": 39.82,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l3060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -979,7 +979,7 @@
    "concurrency": 4,
    "context": 160,
    "decode": 34.28,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l3060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 3060",
@@ -992,7 +992,7 @@
    "concurrency": 8,
    "context": 160,
    "decode": 33.52,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l3060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 3060)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1005,7 +1005,7 @@
    "concurrency": 1,
    "context": 159,
    "decode": 95.87,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l2080)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1018,7 +1018,7 @@
    "concurrency": 2,
    "context": 159,
    "decode": 85.5,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l2080)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1031,7 +1031,7 @@
    "concurrency": 4,
    "context": 159,
    "decode": 74.47,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l2080)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1044,7 +1044,7 @@
    "concurrency": 8,
    "context": 159,
    "decode": 70.45,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l2080)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1057,7 +1057,7 @@
    "concurrency": 1,
    "context": 159,
    "decode": 58.38,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l2080)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1070,7 +1070,7 @@
    "concurrency": 2,
    "context": 159,
    "decode": 56.1,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l2080)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1083,7 +1083,7 @@
    "concurrency": 4,
    "context": 159,
    "decode": 52.59,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l2080)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1096,7 +1096,7 @@
    "concurrency": 8,
    "context": 159,
    "decode": 41.55,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l2080)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1109,7 +1109,7 @@
    "concurrency": 1,
    "context": 160,
    "decode": 65.62,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l2080)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1122,7 +1122,7 @@
    "concurrency": 2,
    "context": 160,
    "decode": 53.92,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l2080)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1135,7 +1135,7 @@
    "concurrency": 4,
    "context": 160,
    "decode": 44.96,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l2080)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -1148,7 +1148,7 @@
    "concurrency": 8,
    "context": 160,
    "decode": 45.58,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l2080)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 2080 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1161,7 +1161,7 @@
    "concurrency": 1,
    "context": 159,
    "decode": 150.04,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1174,7 +1174,7 @@
    "concurrency": 2,
    "context": 159,
    "decode": 138.39,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1187,7 +1187,7 @@
    "concurrency": 4,
    "context": 159,
    "decode": 119.07,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1200,7 +1200,7 @@
    "concurrency": 8,
    "context": 159,
    "decode": 119.49,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1213,7 +1213,7 @@
    "concurrency": 1,
    "context": 159,
    "decode": 92.97,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1226,7 +1226,7 @@
    "concurrency": 2,
    "context": 159,
    "decode": 89.15,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1239,7 +1239,7 @@
    "concurrency": 4,
    "context": 159,
    "decode": 84.76,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1252,7 +1252,7 @@
    "concurrency": 8,
    "context": 159,
    "decode": 79.97,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1265,7 +1265,7 @@
    "concurrency": 1,
    "context": 160,
    "decode": 105.51,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1278,7 +1278,7 @@
    "concurrency": 2,
    "context": 160,
    "decode": 95.98,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1291,7 +1291,7 @@
    "concurrency": 4,
    "context": 160,
    "decode": 86.25,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1304,7 +1304,7 @@
    "concurrency": 8,
    "context": 160,
    "decode": 82.53,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 5070 Ti)"
   },
   {
    "card": "RTX 5090",
@@ -1317,7 +1317,7 @@
    "concurrency": 1,
    "context": 159,
    "decode": 268.38,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1330,7 +1330,7 @@
    "concurrency": 2,
    "context": 159,
    "decode": 244.96,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1343,7 +1343,7 @@
    "concurrency": 4,
    "context": 159,
    "decode": 213.67,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1356,7 +1356,7 @@
    "concurrency": 8,
    "context": 159,
    "decode": 209.89,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1369,7 +1369,7 @@
    "concurrency": 1,
    "context": 159,
    "decode": 170.41,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1382,7 +1382,7 @@
    "concurrency": 2,
    "context": 159,
    "decode": 161.64,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1395,7 +1395,7 @@
    "concurrency": 4,
    "context": 159,
    "decode": 155.15,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1408,7 +1408,7 @@
    "concurrency": 8,
    "context": 159,
    "decode": 145.57,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1421,7 +1421,7 @@
    "concurrency": 1,
    "context": 160,
    "decode": 189.75,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1434,7 +1434,7 @@
    "concurrency": 2,
    "context": 160,
    "decode": 165.73,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1447,7 +1447,7 @@
    "concurrency": 4,
    "context": 160,
    "decode": 146.41,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 5090)"
   },
   {
    "card": "RTX 5090",
@@ -1460,7 +1460,7 @@
    "concurrency": 8,
    "context": 160,
    "decode": 145.3,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (RTX 5090)"
   },
   {
    "card": "Quadro GV100",
@@ -1473,7 +1473,7 @@
    "concurrency": 1,
    "context": 159,
    "decode": 95.88,
-   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (lgv100)"
+   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -1486,7 +1486,7 @@
    "concurrency": 2,
    "context": 159,
    "decode": 81.6,
-   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (lgv100)"
+   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -1499,7 +1499,7 @@
    "concurrency": 4,
    "context": 159,
    "decode": 68.5,
-   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (lgv100)"
+   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -1512,7 +1512,7 @@
    "concurrency": 8,
    "context": 159,
    "decode": 56.49,
-   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (lgv100)"
+   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -1525,7 +1525,7 @@
    "concurrency": 1,
    "context": 159,
    "decode": 67.84,
-   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (lgv100)"
+   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -1538,7 +1538,7 @@
    "concurrency": 2,
    "context": 159,
    "decode": 63.1,
-   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (lgv100)"
+   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -1551,7 +1551,7 @@
    "concurrency": 4,
    "context": 159,
    "decode": 58.16,
-   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (lgv100)"
+   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -1564,7 +1564,7 @@
    "concurrency": 8,
    "context": 159,
    "decode": 49.44,
-   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (lgv100)"
+   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -1577,7 +1577,7 @@
    "concurrency": 1,
    "context": 160,
    "decode": 64.12,
-   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (lgv100)"
+   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -1590,7 +1590,7 @@
    "concurrency": 2,
    "context": 160,
    "decode": 52.84,
-   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (lgv100)"
+   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -1603,7 +1603,7 @@
    "concurrency": 4,
    "context": 160,
    "decode": 43.93,
-   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (lgv100)"
+   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "Quadro GV100",
@@ -1616,7 +1616,7 @@
    "concurrency": 8,
    "context": 160,
    "decode": 36.18,
-   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (lgv100)"
+   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (Quadro GV100)"
   },
   {
    "card": "RTX 5090",
@@ -1629,7 +1629,7 @@
    "concurrency": 1,
    "context": 7262,
    "decode": 260.58,
-   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "long": true
   },
   {
@@ -1643,7 +1643,7 @@
    "concurrency": 1,
    "context": 41614,
    "decode": 237.63,
-   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "long": true
   },
   {
@@ -1657,7 +1657,7 @@
    "concurrency": 1,
    "context": 82583,
    "decode": 214.7,
-   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "long": true
   },
   {
@@ -1671,7 +1671,7 @@
    "concurrency": 1,
    "context": 7194,
    "decode": 182.32,
-   "source": "mdecl.sh: 513 tokens after a 6938-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mdecl.sh: 513 tokens after a 6938-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "long": true
   },
   {
@@ -1685,7 +1685,7 @@
    "concurrency": 1,
    "context": 41481,
    "decode": 175.98,
-   "source": "mdecl.sh: 513 tokens after a 41225-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mdecl.sh: 513 tokens after a 41225-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "long": true
   },
   {
@@ -1699,7 +1699,7 @@
    "concurrency": 1,
    "context": 81990,
    "decode": 170.31,
-   "source": "mdecl.sh: 513 tokens after a 81734-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mdecl.sh: 513 tokens after a 81734-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "long": true
   },
   {
@@ -1713,7 +1713,7 @@
    "concurrency": 1,
    "context": 7262,
    "decode": 170.39,
-   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "long": true
   },
   {
@@ -1727,7 +1727,7 @@
    "concurrency": 1,
    "context": 41614,
    "decode": 160.27,
-   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "long": true
   },
   {
@@ -1741,7 +1741,7 @@
    "concurrency": 1,
    "context": 82583,
    "decode": 149.95,
-   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "long": true
   },
   {
@@ -1755,7 +1755,7 @@
    "concurrency": 1,
    "context": 7262,
    "decode": 160.11,
-   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "long": true
   },
   {
@@ -1769,7 +1769,7 @@
    "concurrency": 1,
    "context": 41614,
    "decode": 145.62,
-   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "long": true
   },
   {
@@ -1783,7 +1783,7 @@
    "concurrency": 1,
    "context": 82583,
    "decode": 131.56,
-   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "long": true
   },
   {
@@ -1797,7 +1797,7 @@
    "concurrency": 1,
    "context": 7194,
    "decode": 112.51,
-   "source": "mdecl.sh: 513 tokens after a 6938-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mdecl.sh: 513 tokens after a 6938-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "long": true
   },
   {
@@ -1811,7 +1811,7 @@
    "concurrency": 1,
    "context": 41481,
    "decode": 108.94,
-   "source": "mdecl.sh: 513 tokens after a 41225-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mdecl.sh: 513 tokens after a 41225-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "long": true
   },
   {
@@ -1825,7 +1825,7 @@
    "concurrency": 1,
    "context": 81990,
    "decode": 104.66,
-   "source": "mdecl.sh: 513 tokens after a 81734-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mdecl.sh: 513 tokens after a 81734-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "long": true
   },
   {
@@ -1839,7 +1839,7 @@
    "concurrency": 1,
    "context": 7262,
    "decode": 100.05,
-   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "long": true
   },
   {
@@ -1853,7 +1853,7 @@
    "concurrency": 1,
    "context": 41614,
    "decode": 94.07,
-   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "long": true
   },
   {
@@ -1867,7 +1867,7 @@
    "concurrency": 1,
    "context": 82583,
    "decode": 88.36,
-   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "long": true
   },
   {
@@ -1881,7 +1881,7 @@
    "concurrency": 1,
    "context": 7262,
    "decode": 146.33,
-   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l5070)",
+   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)",
    "long": true
   },
   {
@@ -1895,7 +1895,7 @@
    "concurrency": 1,
    "context": 41614,
    "decode": 132.54,
-   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l5070)",
+   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)",
    "long": true
   },
   {
@@ -1909,7 +1909,7 @@
    "concurrency": 1,
    "context": 82583,
    "decode": 119.34,
-   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l5070)",
+   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)",
    "long": true
   },
   {
@@ -1923,7 +1923,7 @@
    "concurrency": 1,
    "context": 7194,
    "decode": 102.44,
-   "source": "mdecl.sh: 513 tokens after a 6938-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l5070)",
+   "source": "mdecl.sh: 513 tokens after a 6938-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)",
    "long": true
   },
   {
@@ -1937,7 +1937,7 @@
    "concurrency": 1,
    "context": 41481,
    "decode": 98.93,
-   "source": "mdecl.sh: 513 tokens after a 41225-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l5070)",
+   "source": "mdecl.sh: 513 tokens after a 41225-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)",
    "long": true
   },
   {
@@ -1951,7 +1951,7 @@
    "concurrency": 1,
    "context": 81990,
    "decode": 94.83,
-   "source": "mdecl.sh: 513 tokens after a 81734-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l5070)",
+   "source": "mdecl.sh: 513 tokens after a 81734-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)",
    "long": true
   },
   {
@@ -1965,7 +1965,7 @@
    "concurrency": 1,
    "context": 7262,
    "decode": 92.41,
-   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l5070)",
+   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)",
    "long": true
   },
   {
@@ -1979,7 +1979,7 @@
    "concurrency": 1,
    "context": 41614,
    "decode": 86.71,
-   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l5070)",
+   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)",
    "long": true
   },
   {
@@ -1993,7 +1993,7 @@
    "concurrency": 1,
    "context": 82583,
    "decode": 80.81,
-   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l5070)",
+   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)",
    "long": true
   },
   {
@@ -2007,7 +2007,7 @@
    "concurrency": 1,
    "context": 7262,
    "decode": 85.14,
-   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4070)",
+   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)",
    "long": true
   },
   {
@@ -2021,7 +2021,7 @@
    "concurrency": 1,
    "context": 41614,
    "decode": 77.08,
-   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4070)",
+   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)",
    "long": true
   },
   {
@@ -2035,7 +2035,7 @@
    "concurrency": 1,
    "context": 82583,
    "decode": 65.1,
-   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4070)",
+   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)",
    "long": true
   },
   {
@@ -2049,7 +2049,7 @@
    "concurrency": 1,
    "context": 7194,
    "decode": 58.62,
-   "source": "mdecl.sh: 513 tokens after a 6938-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4070, measured again at 08:20)",
+   "source": "mdecl.sh: 513 tokens after a 6938-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti, measured again at 08:20)",
    "long": true
   },
   {
@@ -2063,7 +2063,7 @@
    "concurrency": 1,
    "context": 41481,
    "decode": 56.31,
-   "source": "mdecl.sh: 513 tokens after a 41225-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4070, measured again at 08:20)",
+   "source": "mdecl.sh: 513 tokens after a 41225-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti, measured again at 08:20)",
    "long": true
   },
   {
@@ -2077,7 +2077,7 @@
    "concurrency": 1,
    "context": 81990,
    "decode": 51.42,
-   "source": "mdecl.sh: 513 tokens after a 81734-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4070, measured again at 08:20)",
+   "source": "mdecl.sh: 513 tokens after a 81734-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti, measured again at 08:20)",
    "long": true
   },
   {
@@ -2091,7 +2091,7 @@
    "concurrency": 1,
    "context": 7262,
    "decode": 53.29,
-   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4070, measured again at 08:20: the first run's 7K Q8_0 row 49.52)",
+   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti, measured again at 08:20: the first run's 7K Q8_0 row 49.52)",
    "long": true
   },
   {
@@ -2105,7 +2105,7 @@
    "concurrency": 1,
    "context": 41614,
    "decode": 48.09,
-   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4070, measured again at 08:20)",
+   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti, measured again at 08:20)",
    "long": true
   },
   {
@@ -2119,7 +2119,7 @@
    "concurrency": 1,
    "context": 82583,
    "decode": 40.42,
-   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4070, measured again at 08:20)",
+   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti, measured again at 08:20)",
    "long": true
   },
   {
@@ -2133,7 +2133,7 @@
    "concurrency": 1,
    "context": 7262,
    "decode": 50.09,
-   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4060)",
+   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)",
    "long": true
   },
   {
@@ -2147,7 +2147,7 @@
    "concurrency": 1,
    "context": 41614,
    "decode": 45.17,
-   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4060)",
+   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)",
    "long": true
   },
   {
@@ -2161,7 +2161,7 @@
    "concurrency": 1,
    "context": 82583,
    "decode": 40.49,
-   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4060)",
+   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)",
    "long": true
   },
   {
@@ -2175,7 +2175,7 @@
    "concurrency": 1,
    "context": 7194,
    "decode": 35.81,
-   "source": "mdecl.sh: 513 tokens after a 6938-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4060)",
+   "source": "mdecl.sh: 513 tokens after a 6938-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)",
    "long": true
   },
   {
@@ -2189,7 +2189,7 @@
    "concurrency": 1,
    "context": 41481,
    "decode": 34.44,
-   "source": "mdecl.sh: 513 tokens after a 41225-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4060)",
+   "source": "mdecl.sh: 513 tokens after a 41225-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)",
    "long": true
   },
   {
@@ -2203,7 +2203,7 @@
    "concurrency": 1,
    "context": 81990,
    "decode": 32.97,
-   "source": "mdecl.sh: 513 tokens after a 81734-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4060)",
+   "source": "mdecl.sh: 513 tokens after a 81734-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)",
    "long": true
   },
   {
@@ -2217,7 +2217,7 @@
    "concurrency": 1,
    "context": 7262,
    "decode": 31.14,
-   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4060)",
+   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)",
    "long": true
   },
   {
@@ -2231,7 +2231,7 @@
    "concurrency": 1,
    "context": 41614,
    "decode": 29.14,
-   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4060)",
+   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)",
    "long": true
   },
   {
@@ -2245,7 +2245,7 @@
    "concurrency": 1,
    "context": 82583,
    "decode": 27.04,
-   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4060)",
+   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)",
    "long": true
   },
   {
@@ -2259,7 +2259,7 @@
    "concurrency": 1,
    "context": 7262,
    "decode": 59.88,
-   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l3060)",
+   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)",
    "long": true
   },
   {
@@ -2273,7 +2273,7 @@
    "concurrency": 1,
    "context": 41614,
    "decode": 53.81,
-   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l3060)",
+   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)",
    "long": true
   },
   {
@@ -2287,7 +2287,7 @@
    "concurrency": 1,
    "context": 82583,
    "decode": 48.53,
-   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l3060)",
+   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)",
    "long": true
   },
   {
@@ -2301,7 +2301,7 @@
    "concurrency": 1,
    "context": 7194,
    "decode": 41.46,
-   "source": "mdecl.sh: 513 tokens after a 6938-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l3060)",
+   "source": "mdecl.sh: 513 tokens after a 6938-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)",
    "long": true
   },
   {
@@ -2315,7 +2315,7 @@
    "concurrency": 1,
    "context": 41481,
    "decode": 38.87,
-   "source": "mdecl.sh: 513 tokens after a 41225-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l3060)",
+   "source": "mdecl.sh: 513 tokens after a 41225-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)",
    "long": true
   },
   {
@@ -2329,7 +2329,7 @@
    "concurrency": 1,
    "context": 81990,
    "decode": 36.11,
-   "source": "mdecl.sh: 513 tokens after a 81734-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l3060)",
+   "source": "mdecl.sh: 513 tokens after a 81734-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)",
    "long": true
   },
   {
@@ -2343,7 +2343,7 @@
    "concurrency": 1,
    "context": 7262,
    "decode": 38.19,
-   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l3060)",
+   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)",
    "long": true
   },
   {
@@ -2357,7 +2357,7 @@
    "concurrency": 1,
    "context": 41614,
    "decode": 35.74,
-   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l3060)",
+   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)",
    "long": true
   },
   {
@@ -2371,7 +2371,7 @@
    "concurrency": 1,
    "context": 82583,
    "decode": 33.3,
-   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l3060)",
+   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)",
    "long": true
   },
   {
@@ -2385,7 +2385,7 @@
    "concurrency": 1,
    "context": 7262,
    "decode": 92.38,
-   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l2080)",
+   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)",
    "long": true
   },
   {
@@ -2399,7 +2399,7 @@
    "concurrency": 1,
    "context": 41614,
    "decode": 79.87,
-   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l2080)",
+   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)",
    "long": true
   },
   {
@@ -2413,7 +2413,7 @@
    "concurrency": 1,
    "context": 82583,
    "decode": 69.71,
-   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l2080)",
+   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)",
    "long": true
   },
   {
@@ -2427,7 +2427,7 @@
    "concurrency": 1,
    "context": 7194,
    "decode": 60.45,
-   "source": "mdecl.sh: 513 tokens after a 6938-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l2080)",
+   "source": "mdecl.sh: 513 tokens after a 6938-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)",
    "long": true
   },
   {
@@ -2441,7 +2441,7 @@
    "concurrency": 1,
    "context": 41481,
    "decode": 53.89,
-   "source": "mdecl.sh: 513 tokens after a 41225-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l2080)",
+   "source": "mdecl.sh: 513 tokens after a 41225-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)",
    "long": true
   },
   {
@@ -2455,7 +2455,7 @@
    "concurrency": 1,
    "context": 81990,
    "decode": 47.97,
-   "source": "mdecl.sh: 513 tokens after a 81734-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l2080)",
+   "source": "mdecl.sh: 513 tokens after a 81734-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)",
    "long": true
   },
   {
@@ -2469,7 +2469,7 @@
    "concurrency": 1,
    "context": 7262,
    "decode": 57.01,
-   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l2080)",
+   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)",
    "long": true
   },
   {
@@ -2483,7 +2483,7 @@
    "concurrency": 1,
    "context": 41614,
    "decode": 51.96,
-   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l2080)",
+   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)",
    "long": true
   },
   {
@@ -2497,7 +2497,7 @@
    "concurrency": 1,
    "context": 82583,
    "decode": 47.45,
-   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l2080)",
+   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)",
    "long": true
   },
   {
@@ -2511,7 +2511,7 @@
    "concurrency": 1,
    "context": 7262,
    "decode": 93.27,
-   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master fd6e572c (the stands' kit build), 2026-10-31 (lgv100)",
+   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master fd6e572c (the stands' kit build), 2026-10-31 (Quadro GV100)",
    "long": true
   },
   {
@@ -2525,7 +2525,7 @@
    "concurrency": 1,
    "context": 41614,
    "decode": 73.28,
-   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master fd6e572c (the stands' kit build), 2026-10-31 (lgv100)",
+   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master fd6e572c (the stands' kit build), 2026-10-31 (Quadro GV100)",
    "long": true
   },
   {
@@ -2539,7 +2539,7 @@
    "concurrency": 1,
    "context": 82583,
    "decode": 69.43,
-   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master fd6e572c (the stands' kit build), 2026-10-31 (lgv100)",
+   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master fd6e572c (the stands' kit build), 2026-10-31 (Quadro GV100)",
    "long": true
   },
   {
@@ -2553,7 +2553,7 @@
    "concurrency": 1,
    "context": 7194,
    "decode": 55.56,
-   "source": "mdecl.sh: 513 tokens after a 6938-token prompt less the first token's time, the median of 3, master fd6e572c (the stands' kit build), 2026-10-31 (lgv100)",
+   "source": "mdecl.sh: 513 tokens after a 6938-token prompt less the first token's time, the median of 3, master fd6e572c (the stands' kit build), 2026-10-31 (Quadro GV100)",
    "long": true
   },
   {
@@ -2567,7 +2567,7 @@
    "concurrency": 1,
    "context": 41481,
    "decode": 52.92,
-   "source": "mdecl.sh: 513 tokens after a 41225-token prompt less the first token's time, the median of 3, master fd6e572c (the stands' kit build), 2026-10-31 (lgv100)",
+   "source": "mdecl.sh: 513 tokens after a 41225-token prompt less the first token's time, the median of 3, master fd6e572c (the stands' kit build), 2026-10-31 (Quadro GV100)",
    "long": true
   },
   {
@@ -2581,7 +2581,7 @@
    "concurrency": 1,
    "context": 81990,
    "decode": 44.94,
-   "source": "mdecl.sh: 513 tokens after a 81734-token prompt less the first token's time, the median of 3, master fd6e572c (the stands' kit build), 2026-10-31 (lgv100)",
+   "source": "mdecl.sh: 513 tokens after a 81734-token prompt less the first token's time, the median of 3, master fd6e572c (the stands' kit build), 2026-10-31 (Quadro GV100)",
    "long": true
   },
   {
@@ -2595,7 +2595,7 @@
    "concurrency": 1,
    "context": 7262,
    "decode": 55.7,
-   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master fd6e572c (the stands' kit build), 2026-10-31 (lgv100)",
+   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master fd6e572c (the stands' kit build), 2026-10-31 (Quadro GV100)",
    "long": true
   },
   {
@@ -2609,7 +2609,7 @@
    "concurrency": 1,
    "context": 41614,
    "decode": 47.47,
-   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master fd6e572c (the stands' kit build), 2026-10-31 (lgv100)",
+   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master fd6e572c (the stands' kit build), 2026-10-31 (Quadro GV100)",
    "long": true
   },
   {
@@ -2623,7 +2623,7 @@
    "concurrency": 1,
    "context": 82583,
    "decode": 45.94,
-   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master fd6e572c (the stands' kit build), 2026-10-31 (lgv100)",
+   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master fd6e572c (the stands' kit build), 2026-10-31 (Quadro GV100)",
    "long": true
   },
   {
@@ -2637,7 +2637,7 @@
    "concurrency": 1,
    "context": 20681,
    "decode": 251.0,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (5), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (5), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "long": true
   },
   {
@@ -2651,7 +2651,7 @@
    "concurrency": 2,
    "context": 21307,
    "decode": 221.7,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (4), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (4), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "long": true
   },
   {
@@ -2665,7 +2665,7 @@
    "concurrency": 4,
    "context": 21291,
    "decode": 181.8,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (5), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (5), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "long": true
   },
   {
@@ -2679,7 +2679,7 @@
    "concurrency": 8,
    "context": 21592,
    "decode": 157.5,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (7), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (7), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "long": true
   },
   {
@@ -2693,7 +2693,7 @@
    "concurrency": 1,
    "context": 20681,
    "decode": 163.2,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (7), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (7), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "long": true
   },
   {
@@ -2707,7 +2707,7 @@
    "concurrency": 2,
    "context": 21307,
    "decode": 151.4,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (7), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (7), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "long": true
   },
   {
@@ -2721,7 +2721,7 @@
    "concurrency": 4,
    "context": 21291,
    "decode": 138.6,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (7), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (7), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "long": true
   },
   {
@@ -2735,7 +2735,7 @@
    "concurrency": 8,
    "context": 21592,
    "decode": 119.0,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (9), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (9), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "long": true
   },
   {
@@ -2749,7 +2749,7 @@
    "concurrency": 1,
    "context": 20592,
    "decode": 179.4,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (7), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (7), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "long": true
   },
   {
@@ -2763,7 +2763,7 @@
    "concurrency": 2,
    "context": 21242,
    "decode": 153.8,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (7), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (7), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "long": true
   },
   {
@@ -2777,7 +2777,7 @@
    "concurrency": 4,
    "context": 21158,
    "decode": 130.0,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (8), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (8), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "long": true
   },
   {
@@ -2791,7 +2791,7 @@
    "concurrency": 8,
    "context": 21424,
    "decode": 117.6,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (9), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (9), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "long": true
   },
   {
@@ -2805,7 +2805,7 @@
    "concurrency": 1,
    "context": 20681,
    "decode": 152.4,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (8), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (8), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "long": true
   },
   {
@@ -2819,7 +2819,7 @@
    "concurrency": 2,
    "context": 21307,
    "decode": 136.0,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (8), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (8), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "long": true
   },
   {
@@ -2833,7 +2833,7 @@
    "concurrency": 4,
    "context": 21291,
    "decode": 120.6,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (9), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (9), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "long": true
   },
   {
@@ -2847,7 +2847,7 @@
    "concurrency": 8,
    "context": 21592,
    "decode": 96.8,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (11), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (11), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "long": true
   },
   {
@@ -2861,7 +2861,7 @@
    "concurrency": 1,
    "context": 20681,
    "decode": 97.2,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (12), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (12), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "long": true
   },
   {
@@ -2875,7 +2875,7 @@
    "concurrency": 2,
    "context": 21307,
    "decode": 90.2,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (12), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (12), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "long": true
   },
   {
@@ -2889,7 +2889,7 @@
    "concurrency": 4,
    "context": 21291,
    "decode": 83.1,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (14), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (14), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "long": true
   },
   {
@@ -2903,7 +2903,7 @@
    "concurrency": 8,
    "context": 21592,
    "decode": 70.4,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (15), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (15), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "long": true
   },
   {
@@ -2917,7 +2917,7 @@
    "concurrency": 1,
    "context": 20592,
    "decode": 111.0,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (11), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (11), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "long": true
   },
   {
@@ -2931,7 +2931,7 @@
    "concurrency": 2,
    "context": 21242,
    "decode": 99.0,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (11), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (11), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "long": true
   },
   {
@@ -2945,7 +2945,7 @@
    "concurrency": 4,
    "context": 21158,
    "decode": 89.6,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (13), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (13), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "long": true
   },
   {
@@ -2959,7 +2959,7 @@
    "concurrency": 8,
    "context": 21424,
    "decode": 74.1,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (14), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (14), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "long": true
   },
   {
@@ -2973,7 +2973,7 @@
    "concurrency": 1,
    "context": 20681,
    "decode": 140.6,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (9), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (9), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)",
    "long": true
   },
   {
@@ -2987,7 +2987,7 @@
    "concurrency": 2,
    "context": 21307,
    "decode": 124.3,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (8), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (8), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)",
    "long": true
   },
   {
@@ -3001,7 +3001,7 @@
    "concurrency": 4,
    "context": 21291,
    "decode": 100.2,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (11), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (11), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)",
    "long": true
   },
   {
@@ -3015,7 +3015,7 @@
    "concurrency": 8,
    "context": 21592,
    "decode": 86.6,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (13), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (13), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)",
    "long": true
   },
   {
@@ -3029,7 +3029,7 @@
    "concurrency": 1,
    "context": 20681,
    "decode": 89.2,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (13), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (13), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)",
    "long": true
   },
   {
@@ -3043,7 +3043,7 @@
    "concurrency": 2,
    "context": 21307,
    "decode": 83.2,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (14), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (14), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)",
    "long": true
   },
   {
@@ -3057,7 +3057,7 @@
    "concurrency": 4,
    "context": 21291,
    "decode": 75.2,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (15), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (15), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)",
    "long": true
   },
   {
@@ -3071,7 +3071,7 @@
    "concurrency": 8,
    "context": 21592,
    "decode": 64.2,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (18), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (18), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)",
    "long": true
   },
   {
@@ -3085,7 +3085,7 @@
    "concurrency": 1,
    "context": 20592,
    "decode": 101.0,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (12), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (12), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)",
    "long": true
   },
   {
@@ -3099,7 +3099,7 @@
    "concurrency": 2,
    "context": 21242,
    "decode": 89.6,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (12), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (12), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)",
    "long": true
   },
   {
@@ -3113,7 +3113,7 @@
    "concurrency": 4,
    "context": 21158,
    "decode": 76.4,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (15), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (15), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)",
    "long": true
   },
   {
@@ -3127,7 +3127,7 @@
    "concurrency": 8,
    "context": 21424,
    "decode": 67.0,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (16), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (16), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)",
    "long": true
   },
   {
@@ -3141,7 +3141,7 @@
    "concurrency": 1,
    "context": 20681,
    "decode": 81.0,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (15), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (15), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)",
    "long": true
   },
   {
@@ -3155,7 +3155,7 @@
    "concurrency": 2,
    "context": 21307,
    "decode": 72.2,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (16), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (16), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)",
    "long": true
   },
   {
@@ -3169,7 +3169,7 @@
    "concurrency": 4,
    "context": 21291,
    "decode": 62.6,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (18), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (18), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)",
    "long": true
   },
   {
@@ -3183,7 +3183,7 @@
    "concurrency": 8,
    "context": 21592,
    "decode": 48.8,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (23), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (23), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)",
    "long": true
   },
   {
@@ -3197,7 +3197,7 @@
    "concurrency": 1,
    "context": 20681,
    "decode": 52.0,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (42), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (42), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)",
    "long": true
   },
   {
@@ -3211,7 +3211,7 @@
    "concurrency": 2,
    "context": 21307,
    "decode": 49.4,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (23), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (23), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)",
    "long": true
   },
   {
@@ -3225,7 +3225,7 @@
    "concurrency": 4,
    "context": 21291,
    "decode": 45.8,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (25), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (25), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)",
    "long": true
   },
   {
@@ -3239,7 +3239,7 @@
    "concurrency": 1,
    "context": 20592,
    "decode": 59.1,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (20), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (20), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)",
    "long": true
   },
   {
@@ -3253,7 +3253,7 @@
    "concurrency": 2,
    "context": 21242,
    "decode": 53.0,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (22), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (22), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)",
    "long": true
   },
   {
@@ -3267,7 +3267,7 @@
    "concurrency": 4,
    "context": 21158,
    "decode": 48.2,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (24), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (24), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)",
    "long": true
   },
   {
@@ -3281,7 +3281,7 @@
    "concurrency": 8,
    "context": 21424,
    "decode": 39.0,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (30), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (30), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4070 Ti)",
    "long": true
   },
   {
@@ -3295,7 +3295,7 @@
    "concurrency": 1,
    "context": 20681,
    "decode": 48.0,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (25), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4060)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (25), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)",
    "long": true
   },
   {
@@ -3309,7 +3309,7 @@
    "concurrency": 2,
    "context": 21307,
    "decode": 43.4,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (27), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4060)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (27), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)",
    "long": true
   },
   {
@@ -3323,7 +3323,7 @@
    "concurrency": 4,
    "context": 21291,
    "decode": 37.4,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (31), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4060)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (31), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)",
    "long": true
   },
   {
@@ -3337,7 +3337,7 @@
    "concurrency": 8,
    "context": 21592,
    "decode": 30.2,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (38), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4060)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (38), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)",
    "long": true
   },
   {
@@ -3351,7 +3351,7 @@
    "concurrency": 1,
    "context": 20681,
    "decode": 30.4,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (39), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4060)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (39), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)",
    "long": true
   },
   {
@@ -3365,7 +3365,7 @@
    "concurrency": 2,
    "context": 21307,
    "decode": 28.8,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (41), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4060)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (41), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)",
    "long": true
   },
   {
@@ -3379,7 +3379,7 @@
    "concurrency": 4,
    "context": 21291,
    "decode": 26.2,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (44), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4060)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (44), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)",
    "long": true
   },
   {
@@ -3393,7 +3393,7 @@
    "concurrency": 8,
    "context": 21592,
    "decode": 22.2,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (52), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4060)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (52), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)",
    "long": true
   },
   {
@@ -3407,7 +3407,7 @@
    "concurrency": 1,
    "context": 20592,
    "decode": 35.3,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (34), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4060)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (34), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)",
    "long": true
   },
   {
@@ -3421,7 +3421,7 @@
    "concurrency": 2,
    "context": 21242,
    "decode": 32.0,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (36), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4060)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (36), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)",
    "long": true
   },
   {
@@ -3435,7 +3435,7 @@
    "concurrency": 4,
    "context": 21158,
    "decode": 29.4,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (39), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4060)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (39), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)",
    "long": true
   },
   {
@@ -3449,7 +3449,7 @@
    "concurrency": 8,
    "context": 21424,
    "decode": 25.0,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (46), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4060)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (46), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4060 Ti)",
    "long": true
   },
   {
@@ -3463,7 +3463,7 @@
    "concurrency": 1,
    "context": 20681,
    "decode": 57.0,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (21), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l3060)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (21), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)",
    "long": true
   },
   {
@@ -3477,7 +3477,7 @@
    "concurrency": 2,
    "context": 21307,
    "decode": 50.6,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (23), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l3060)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (23), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)",
    "long": true
   },
   {
@@ -3491,7 +3491,7 @@
    "concurrency": 4,
    "context": 21291,
    "decode": 40.3,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (28), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l3060)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (28), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)",
    "long": true
   },
   {
@@ -3505,7 +3505,7 @@
    "concurrency": 8,
    "context": 21592,
    "decode": 29.1,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (40), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l3060)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (40), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)",
    "long": true
   },
   {
@@ -3519,7 +3519,7 @@
    "concurrency": 1,
    "context": 20681,
    "decode": 37.2,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (33), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l3060)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (33), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)",
    "long": true
   },
   {
@@ -3533,7 +3533,7 @@
    "concurrency": 2,
    "context": 21307,
    "decode": 34.2,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (57), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l3060)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (57), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)",
    "long": true
   },
   {
@@ -3547,7 +3547,7 @@
    "concurrency": 4,
    "context": 21291,
    "decode": 30.5,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (38), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l3060)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (38), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 3060)",
    "long": true
   },
   {
@@ -3561,7 +3561,7 @@
    "concurrency": 1,
    "context": 20681,
    "decode": 87.0,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (14), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l2080)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (14), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)",
    "long": true
   },
   {
@@ -3575,7 +3575,7 @@
    "concurrency": 2,
    "context": 21307,
    "decode": 73.2,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (15), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l2080)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (15), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)",
    "long": true
   },
   {
@@ -3589,7 +3589,7 @@
    "concurrency": 4,
    "context": 21291,
    "decode": 57.8,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (19), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l2080)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (19), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)",
    "long": true
   },
   {
@@ -3603,7 +3603,7 @@
    "concurrency": 8,
    "context": 21592,
    "decode": 45.8,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (25), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l2080)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (25), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)",
    "long": true
   },
   {
@@ -3617,7 +3617,7 @@
    "concurrency": 1,
    "context": 20681,
    "decode": 55.0,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (51), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l2080)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (51), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)",
    "long": true
   },
   {
@@ -3631,7 +3631,7 @@
    "concurrency": 2,
    "context": 21307,
    "decode": 50.8,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (31), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l2080)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (31), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 2080 Ti)",
    "long": true
   }
  ]

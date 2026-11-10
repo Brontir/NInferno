@@ -1374,7 +1374,7 @@
    "context": 1536,
    "decode": 274.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1388,7 +1388,7 @@
    "context": 1536,
    "decode": 252.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1402,7 +1402,7 @@
    "context": 1536,
    "decode": 240.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1416,7 +1416,7 @@
    "context": 1536,
    "decode": 216.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1430,7 +1430,7 @@
    "context": 1536,
    "decode": 286.9,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1444,7 +1444,7 @@
    "context": 1536,
    "decode": 259.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1458,7 +1458,7 @@
    "context": 1536,
    "decode": 227.5,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1472,7 +1472,7 @@
    "context": 1536,
    "decode": 222.5,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1486,7 +1486,7 @@
    "context": 1536,
    "decode": 267.7,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1500,7 +1500,7 @@
    "context": 1536,
    "decode": 238.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1514,7 +1514,7 @@
    "context": 1536,
    "decode": 218.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1528,7 +1528,7 @@
    "context": 1536,
    "decode": 205.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1542,7 +1542,7 @@
    "context": 1536,
    "decode": 227.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1556,7 +1556,7 @@
    "context": 1536,
    "decode": 202.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1570,7 +1570,7 @@
    "context": 1536,
    "decode": 191.9,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1584,7 +1584,7 @@
    "context": 1536,
    "decode": 190.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1598,7 +1598,7 @@
    "context": 1536,
    "decode": 203.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1612,7 +1612,7 @@
    "context": 1536,
    "decode": 183.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1626,7 +1626,7 @@
    "context": 1536,
    "decode": 177.5,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1640,7 +1640,7 @@
    "context": 1536,
    "decode": 176.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1654,7 +1654,7 @@
    "context": 1536,
    "decode": 183.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1668,7 +1668,7 @@
    "context": 1536,
    "decode": 161.1,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1682,7 +1682,7 @@
    "context": 1536,
    "decode": 139.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1696,7 +1696,7 @@
    "context": 1536,
    "decode": 132.5,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1710,7 +1710,7 @@
    "context": 1536,
    "decode": 160.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1724,7 +1724,7 @@
    "context": 1536,
    "decode": 143.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1738,7 +1738,7 @@
    "context": 1536,
    "decode": 129.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1752,7 +1752,7 @@
    "context": 1536,
    "decode": 121.1,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1766,7 +1766,7 @@
    "context": 1536,
    "decode": 138.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1780,7 +1780,7 @@
    "context": 1536,
    "decode": 122.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1794,7 +1794,7 @@
    "context": 1536,
    "decode": 110.1,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1808,7 +1808,7 @@
    "context": 1536,
    "decode": 107.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1822,7 +1822,7 @@
    "context": 1536,
    "decode": 174.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1836,7 +1836,7 @@
    "context": 1536,
    "decode": 161.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1850,7 +1850,7 @@
    "context": 1536,
    "decode": 152.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1864,7 +1864,7 @@
    "context": 1536,
    "decode": 142.5,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1878,7 +1878,7 @@
    "context": 1536,
    "decode": 181.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1892,7 +1892,7 @@
    "context": 1536,
    "decode": 172.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1906,7 +1906,7 @@
    "context": 1536,
    "decode": 161.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1920,7 +1920,7 @@
    "context": 1536,
    "decode": 150.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1934,7 +1934,7 @@
    "context": 1536,
    "decode": 167.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1948,7 +1948,7 @@
    "context": 1536,
    "decode": 154.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1962,7 +1962,7 @@
    "context": 1536,
    "decode": 148.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1976,7 +1976,7 @@
    "context": 1536,
    "decode": 138.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -1990,7 +1990,7 @@
    "context": 1536,
    "decode": 138.7,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2004,7 +2004,7 @@
    "context": 1536,
    "decode": 129.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2018,7 +2018,7 @@
    "context": 1536,
    "decode": 124.9,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2032,7 +2032,7 @@
    "context": 1536,
    "decode": 118.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2046,7 +2046,7 @@
    "context": 1536,
    "decode": 126.7,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2060,7 +2060,7 @@
    "context": 1536,
    "decode": 119.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2074,7 +2074,7 @@
    "context": 1536,
    "decode": 115.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2088,7 +2088,7 @@
    "context": 1536,
    "decode": 98.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2102,7 +2102,7 @@
    "context": 1536,
    "decode": 113.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2116,7 +2116,7 @@
    "context": 1536,
    "decode": 103.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2130,7 +2130,7 @@
    "context": 1536,
    "decode": 96.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2144,7 +2144,7 @@
    "context": 1536,
    "decode": 84.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2158,7 +2158,7 @@
    "context": 1536,
    "decode": 98.1,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2172,7 +2172,7 @@
    "context": 1536,
    "decode": 89.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2186,7 +2186,7 @@
    "context": 1536,
    "decode": 84.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2200,7 +2200,7 @@
    "context": 1536,
    "decode": 75.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2214,7 +2214,7 @@
    "context": 1536,
    "decode": 85.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2228,7 +2228,7 @@
    "context": 1536,
    "decode": 79.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2242,7 +2242,7 @@
    "context": 1536,
    "decode": 74.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2256,7 +2256,7 @@
    "context": 1536,
    "decode": 62.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4090): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2270,7 +2270,7 @@
    "context": 1536,
    "decode": 156.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2284,7 +2284,7 @@
    "context": 1536,
    "decode": 143.3,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2298,7 +2298,7 @@
    "context": 1536,
    "decode": 133.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2312,7 +2312,7 @@
    "context": 1536,
    "decode": 129.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2326,7 +2326,7 @@
    "context": 1536,
    "decode": 168.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2340,7 +2340,7 @@
    "context": 1536,
    "decode": 153.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2354,7 +2354,7 @@
    "context": 1536,
    "decode": 125.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2368,7 +2368,7 @@
    "context": 1536,
    "decode": 132.5,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2382,7 +2382,7 @@
    "context": 1536,
    "decode": 153.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2396,7 +2396,7 @@
    "context": 1536,
    "decode": 141.5,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2410,7 +2410,7 @@
    "context": 1536,
    "decode": 121.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2424,7 +2424,7 @@
    "context": 1536,
    "decode": 125.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2438,7 +2438,7 @@
    "context": 1536,
    "decode": 126.5,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2452,7 +2452,7 @@
    "context": 1536,
    "decode": 114.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2466,7 +2466,7 @@
    "context": 1536,
    "decode": 107.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2480,7 +2480,7 @@
    "context": 1536,
    "decode": 105.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2494,7 +2494,7 @@
    "context": 1536,
    "decode": 113.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2508,7 +2508,7 @@
    "context": 1536,
    "decode": 102.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2522,7 +2522,7 @@
    "context": 1536,
    "decode": 97.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2536,7 +2536,7 @@
    "context": 1536,
    "decode": 93.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2550,7 +2550,7 @@
    "context": 1536,
    "decode": 103.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2564,7 +2564,7 @@
    "context": 1536,
    "decode": 93.1,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2578,7 +2578,7 @@
    "context": 1536,
    "decode": 81.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2592,7 +2592,7 @@
    "context": 1536,
    "decode": 75.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2606,7 +2606,7 @@
    "context": 1536,
    "decode": 88.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2620,7 +2620,7 @@
    "context": 1536,
    "decode": 80.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2634,7 +2634,7 @@
    "context": 1536,
    "decode": 73.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2648,7 +2648,7 @@
    "context": 1536,
    "decode": 66.7,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2662,7 +2662,7 @@
    "context": 1536,
    "decode": 76.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2676,7 +2676,7 @@
    "context": 1536,
    "decode": 68.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2690,7 +2690,7 @@
    "context": 1536,
    "decode": 62.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2704,7 +2704,7 @@
    "context": 1536,
    "decode": 58.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l5070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 5070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2718,7 +2718,7 @@
    "context": 1536,
    "decode": 92.5,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2732,7 +2732,7 @@
    "context": 1536,
    "decode": 87.9,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2746,7 +2746,7 @@
    "context": 1536,
    "decode": 85.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2760,7 +2760,7 @@
    "context": 1536,
    "decode": 75.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2774,7 +2774,7 @@
    "context": 1536,
    "decode": 100.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2788,7 +2788,7 @@
    "context": 1536,
    "decode": 95.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2802,7 +2802,7 @@
    "context": 1536,
    "decode": 89.7,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2816,7 +2816,7 @@
    "context": 1536,
    "decode": 80.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2830,7 +2830,7 @@
    "context": 1536,
    "decode": 90.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2844,7 +2844,7 @@
    "context": 1536,
    "decode": 84.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2858,7 +2858,7 @@
    "context": 1536,
    "decode": 81.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2872,7 +2872,7 @@
    "context": 1536,
    "decode": 73.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2886,7 +2886,7 @@
    "context": 1536,
    "decode": 74.5,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2900,7 +2900,7 @@
    "context": 1536,
    "decode": 70.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2914,7 +2914,7 @@
    "context": 1536,
    "decode": 67.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2928,7 +2928,7 @@
    "context": 1536,
    "decode": 62.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2942,7 +2942,7 @@
    "context": 1536,
    "decode": 66.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2956,7 +2956,7 @@
    "context": 1536,
    "decode": 63.1,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2970,7 +2970,7 @@
    "context": 1536,
    "decode": 61.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2984,7 +2984,7 @@
    "context": 1536,
    "decode": 54.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -2998,7 +2998,7 @@
    "context": 1536,
    "decode": 61.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3012,7 +3012,7 @@
    "context": 1536,
    "decode": 55.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3026,7 +3026,7 @@
    "context": 1536,
    "decode": 52.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3040,7 +3040,7 @@
    "context": 1536,
    "decode": 44.7,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3054,7 +3054,7 @@
    "context": 1536,
    "decode": 51.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3068,7 +3068,7 @@
    "context": 1536,
    "decode": 46.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4070): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4070 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3082,7 +3082,7 @@
    "context": 1536,
    "decode": 55.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3096,7 +3096,7 @@
    "context": 1536,
    "decode": 53.7,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3110,7 +3110,7 @@
    "context": 1536,
    "decode": 50.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3124,7 +3124,7 @@
    "context": 1536,
    "decode": 48.1,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3138,7 +3138,7 @@
    "context": 1536,
    "decode": 60.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3152,7 +3152,7 @@
    "context": 1536,
    "decode": 57.3,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3166,7 +3166,7 @@
    "context": 1536,
    "decode": 52.9,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3180,7 +3180,7 @@
    "context": 1536,
    "decode": 50.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3194,7 +3194,7 @@
    "context": 1536,
    "decode": 53.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3208,7 +3208,7 @@
    "context": 1536,
    "decode": 51.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3222,7 +3222,7 @@
    "context": 1536,
    "decode": 47.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3236,7 +3236,7 @@
    "context": 1536,
    "decode": 45.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3250,7 +3250,7 @@
    "context": 1536,
    "decode": 44.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3264,7 +3264,7 @@
    "context": 1536,
    "decode": 42.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3278,7 +3278,7 @@
    "context": 1536,
    "decode": 40.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3292,7 +3292,7 @@
    "context": 1536,
    "decode": 38.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3306,7 +3306,7 @@
    "context": 1536,
    "decode": 39.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3320,7 +3320,7 @@
    "context": 1536,
    "decode": 37.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3334,7 +3334,7 @@
    "context": 1536,
    "decode": 36.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3348,7 +3348,7 @@
    "context": 1536,
    "decode": 34.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3362,7 +3362,7 @@
    "context": 1536,
    "decode": 36.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3376,7 +3376,7 @@
    "context": 1536,
    "decode": 33.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3390,7 +3390,7 @@
    "context": 1536,
    "decode": 31.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3404,7 +3404,7 @@
    "context": 1536,
    "decode": 28.5,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3418,7 +3418,7 @@
    "context": 1536,
    "decode": 30.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3432,7 +3432,7 @@
    "context": 1536,
    "decode": 28.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3446,7 +3446,7 @@
    "context": 1536,
    "decode": 27.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3460,7 +3460,7 @@
    "context": 1536,
    "decode": 25.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3474,7 +3474,7 @@
    "context": 1536,
    "decode": 26.7,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3488,7 +3488,7 @@
    "context": 1536,
    "decode": 24.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3502,7 +3502,7 @@
    "context": 1536,
    "decode": 23.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3516,7 +3516,7 @@
    "context": 1536,
    "decode": 22.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l4060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 4060 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3530,7 +3530,7 @@
    "context": 1536,
    "decode": 64.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3544,7 +3544,7 @@
    "context": 1536,
    "decode": 62.7,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3558,7 +3558,7 @@
    "context": 1536,
    "decode": 51.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3572,7 +3572,7 @@
    "context": 1536,
    "decode": 44.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3586,7 +3586,7 @@
    "context": 1536,
    "decode": 71.1,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3600,7 +3600,7 @@
    "context": 1536,
    "decode": 64.7,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3614,7 +3614,7 @@
    "context": 1536,
    "decode": 52.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3628,7 +3628,7 @@
    "context": 1536,
    "decode": 49.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3642,7 +3642,7 @@
    "context": 1536,
    "decode": 64.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3656,7 +3656,7 @@
    "context": 1536,
    "decode": 60.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3670,7 +3670,7 @@
    "context": 1536,
    "decode": 53.1,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3684,7 +3684,7 @@
    "context": 1536,
    "decode": 50.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3698,7 +3698,7 @@
    "context": 1536,
    "decode": 52.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3712,7 +3712,7 @@
    "context": 1536,
    "decode": 48.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3726,7 +3726,7 @@
    "context": 1536,
    "decode": 42.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3740,7 +3740,7 @@
    "context": 1536,
    "decode": 43.3,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3754,7 +3754,7 @@
    "context": 1536,
    "decode": 47.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3768,7 +3768,7 @@
    "context": 1536,
    "decode": 42.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3782,7 +3782,7 @@
    "context": 1536,
    "decode": 36.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3796,7 +3796,7 @@
    "context": 1536,
    "decode": 38.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3810,7 +3810,7 @@
    "context": 1536,
    "decode": 41.9,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3824,7 +3824,7 @@
    "context": 1536,
    "decode": 37.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3838,7 +3838,7 @@
    "context": 1536,
    "decode": 36.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3852,7 +3852,7 @@
    "context": 1536,
    "decode": 32.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 3060): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3866,7 +3866,7 @@
    "context": 1536,
    "decode": 100.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l2080): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 2080 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3880,7 +3880,7 @@
    "context": 1536,
    "decode": 95.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l2080): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 2080 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3894,7 +3894,7 @@
    "context": 1536,
    "decode": 75.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l2080): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 2080 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3908,7 +3908,7 @@
    "context": 1536,
    "decode": 60.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l2080): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 2080 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3922,7 +3922,7 @@
    "context": 1536,
    "decode": 102.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l2080): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 2080 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3936,7 +3936,7 @@
    "context": 1536,
    "decode": 93.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l2080): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 2080 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3950,7 +3950,7 @@
    "context": 1536,
    "decode": 77.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l2080): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 2080 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3964,7 +3964,7 @@
    "context": 1536,
    "decode": 67.4,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l2080): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 2080 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3978,7 +3978,7 @@
    "context": 1536,
    "decode": 98.1,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l2080): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 2080 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -3992,7 +3992,7 @@
    "context": 1536,
    "decode": 91.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l2080): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 2080 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -4006,7 +4006,7 @@
    "context": 1536,
    "decode": 79.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l2080): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 2080 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -4020,7 +4020,7 @@
    "context": 1536,
    "decode": 74.0,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l2080): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 2080 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -4034,7 +4034,7 @@
    "context": 1536,
    "decode": 81.6,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l2080): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 2080 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -4048,7 +4048,7 @@
    "context": 1536,
    "decode": 69.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l2080): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 2080 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -4062,7 +4062,7 @@
    "context": 1536,
    "decode": 59.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l2080): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 2080 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -4076,7 +4076,7 @@
    "context": 1536,
    "decode": 62.3,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l2080): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 2080 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -4090,7 +4090,7 @@
    "context": 1536,
    "decode": 74.1,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l2080): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 2080 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -4104,7 +4104,7 @@
    "context": 1536,
    "decode": 51.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l2080): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 2080 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -4118,7 +4118,7 @@
    "context": 1536,
    "decode": 45.3,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l2080): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 2080 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -4132,7 +4132,7 @@
    "context": 1536,
    "decode": 54.1,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l2080): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 2080 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -4146,7 +4146,7 @@
    "context": 1536,
    "decode": 61.8,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l2080): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 2080 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -4160,7 +4160,7 @@
    "context": 1536,
    "decode": 49.2,
    "prefill": null,
-   "source": "mbatch.sh 2026-10-31 master kit build (l2080): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "source": "mbatch.sh 2026-10-31 master kit build (RTX 2080 Ti): the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
   },
   {
@@ -4174,7 +4174,7 @@
    "context": 21291,
    "decode": 231.4,
    "prefill": null,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (4), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (4), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "step": true,
    "long": true
   },
@@ -4189,7 +4189,7 @@
    "context": 21592,
    "decode": 150.0,
    "prefill": null,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (7), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (7), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "step": true,
    "long": true
   },
@@ -4204,7 +4204,7 @@
    "context": 21291,
    "decode": 220.4,
    "prefill": null,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (5), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (5), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "step": true,
    "long": true
   },
@@ -4219,7 +4219,7 @@
    "context": 21592,
    "decode": 145.0,
    "prefill": null,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (7), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (7), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "step": true,
    "long": true
   },
@@ -4234,7 +4234,7 @@
    "context": 20681,
    "decode": 81.0,
    "prefill": null,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (15), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (15), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "step": true,
    "long": true
   },
@@ -4249,7 +4249,7 @@
    "context": 21307,
    "decode": 72.4,
    "prefill": null,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (15), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (15), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "step": true,
    "long": true
   },
@@ -4264,7 +4264,7 @@
    "context": 21291,
    "decode": 66.0,
    "prefill": null,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (17), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (17), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "step": true,
    "long": true
   },
@@ -4279,7 +4279,7 @@
    "context": 21592,
    "decode": 55.5,
    "prefill": null,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (20), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (20), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5090)",
    "step": true,
    "long": true
   },
@@ -4294,7 +4294,7 @@
    "context": 20681,
    "decode": 237.2,
    "prefill": null,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (5), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (5), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "step": true,
    "long": true
   },
@@ -4309,7 +4309,7 @@
    "context": 21307,
    "decode": 195.4,
    "prefill": null,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (5), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (5), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "step": true,
    "long": true
   },
@@ -4324,7 +4324,7 @@
    "context": 21291,
    "decode": 151.2,
    "prefill": null,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (7), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (7), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "step": true,
    "long": true
   },
@@ -4339,7 +4339,7 @@
    "context": 21592,
    "decode": 98.6,
    "prefill": null,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (11), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (11), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "step": true,
    "long": true
   },
@@ -4354,7 +4354,7 @@
    "context": 20681,
    "decode": 239.2,
    "prefill": null,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (5), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (5), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "step": true,
    "long": true
   },
@@ -4369,7 +4369,7 @@
    "context": 21307,
    "decode": 189.3,
    "prefill": null,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (6), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (6), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "step": true,
    "long": true
   },
@@ -4384,7 +4384,7 @@
    "context": 21291,
    "decode": 142.4,
    "prefill": null,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (7), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (7), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "step": true,
    "long": true
   },
@@ -4399,7 +4399,7 @@
    "context": 21592,
    "decode": 94.2,
    "prefill": null,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (12), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (12), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "step": true,
    "long": true
   },
@@ -4414,7 +4414,7 @@
    "context": 20681,
    "decode": 49.8,
    "prefill": null,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (24), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (24), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "step": true,
    "long": true
   },
@@ -4429,7 +4429,7 @@
    "context": 21307,
    "decode": 46.4,
    "prefill": null,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (25), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (25), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "step": true,
    "long": true
   },
@@ -4444,7 +4444,7 @@
    "context": 21291,
    "decode": 42.6,
    "prefill": null,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (27), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (27), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "step": true,
    "long": true
   },
@@ -4459,7 +4459,7 @@
    "context": 21592,
    "decode": 37.2,
    "prefill": null,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (30), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4090)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 8 rows (30), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 4090)",
    "step": true,
    "long": true
   },
@@ -4474,7 +4474,7 @@
    "context": 20681,
    "decode": 228.4,
    "prefill": null,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (5), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 1 rows (5), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)",
    "step": true,
    "long": true
   },
@@ -4489,7 +4489,7 @@
    "context": 21307,
    "decode": 185.8,
    "prefill": null,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (12), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l5070)",
+   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (12), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (RTX 5070 Ti)",
    "step": true,
    "long": true
   }

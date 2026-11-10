@@ -14,7 +14,8 @@ the PCI-ID table (src/core/data/gpu_facts.json). Prints:
      (k <= 7) a plan picks for a target the other card measured: the other card's tokens a round
      over this card's R(facts), each section weighted as the mix (section_weight), against the
      configuration this card's own tune measured fastest (k <= 7);
-  4. with --hard DIR (hard50 results: DIR/<stand>/<tag>/{plain,mtp:K,dflash:K}.json), the speedup
+  4. with --hard DIR (hard50 results: DIR/<board>/<tag>/{plain,mtp:K,dflash:K}.json, <board> a PCI
+     device id such as 0x2782, or a name --hard-ids maps to one), the speedup
      E / R(facts) on each card with that card left out of its generation's eta fit, against the
      measured speedup (E counted as tokens - 1 - accepted - plain steps rounds).
 """
@@ -31,8 +32,6 @@ REG = json.loads((ROOT / "src/spec/data/drafter_registry.json").read_text(encodi
 BOARDS = {g["id"].upper(): g for g in json.loads((ROOT / "src/core/data/gpu_facts.json").read_text(encoding="utf-8"))["gpus"]}
 GEN = {70: "volta", 75: "turing", 86: "ga10x", 89: "ada", 120: "gb20x"}
 SHARE = 0.30
-STANDS = {"l4070": "0x2782", "l4090": "0x2684", "l4060": "0x2805", "l5070": "0x2C05", "l5090": "0x2B85",
-          "l3060": "0x2503", "l2080": "0x1E04", "lgv100": "0x1DBA"}  # the registry pairs' lab_board (by name below), not the stands' own ids (0x2504, 0x1E07: same rates)
 HARD_TAGS = {"q9b_q4km": "unsloth/Qwen3.5-9B-MTP-GGUF@9716a636ee4bddc3fed678220b7a33dd2a4160ae Q4_K_M",
              "g12_q4km": "unsloth/gemma-4-12b-it-GGUF@fc034cfff751157913579611efad8462ac1be606 Q4_K_M",
              "oss20": "ggml-org/gpt-oss-20b-GGUF@15dcfc7e7c608c6161507211ed43c5b590801b4b MXFP4",
@@ -233,6 +232,7 @@ def fitted(r):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--hard")
+    ap.add_argument("--hard-ids", help="JSON {directory name: PCI device id} for --hard directories")
     args = ap.parse_args()
     rows = rows_of_registry()
     gens = sorted({r["board"]["gen"] for r in rows})
@@ -254,12 +254,16 @@ def main():
     if args.hard:
         print("\n| held-out card | model | config | E | measured x | predicted x | error |\n|---|---|---|---|---|---|---|")
         pairs = {p["target_repo"]: p for p in REG["pairs"] if "round_facts" in p}
+        # A directory names its board by PCI id, or through --hard-ids (the registry pairs'
+        # lab_board id, not a card's own where two ids share the rates).
+        ids = json.loads(Path(args.hard_ids).read_text(encoding="utf-8")) if args.hard_ids else {}
         for d in sorted(glob.glob(os.path.join(args.hard, "*", "*"))):
             stand, tag = Path(d).parts[-2:]
             key = HARD_TAGS.get(tag)
-            if key not in pairs or stand not in STANDS or not os.path.exists(os.path.join(d, "plain.json")):
+            pci = ids.get(stand, stand).upper()
+            if key not in pairs or pci not in BOARDS or not os.path.exists(os.path.join(d, "plain.json")):
                 continue
-            b = board(STANDS[stand])
+            b = board(pci)
             sel = [r for r in rows if r["board"]["gen"] == b["gen"] and fitted(r) and r["board"]["name"] != b["name"]]
             if not sel:
                 continue  # its generation has no other card
