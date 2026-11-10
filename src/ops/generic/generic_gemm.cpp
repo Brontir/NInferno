@@ -358,7 +358,7 @@ LinearPolicy prefill_a8_policy(QType qtype, LinearPolicy policy) {
 }
 
 std::size_t prefill_a8_workspace_bytes(const Problem& problem, std::int32_t min_tokens,
-                                      std::int32_t max_tokens) {
+                                       std::int32_t max_tokens) {
     // NVFP4 under a policy with A8 and without W4A4 (owned_prefill_w4a8): the W4A8 planes of its
     // calls of 17 tokens or more, which the shape's own plan does not run.
     if (nvfp4_prefill_a8_policy(problem.qtype, problem.policy)) {
