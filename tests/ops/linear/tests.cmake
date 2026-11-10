@@ -97,15 +97,34 @@ ninferno_add_op_test(ninferno_launch_overlap_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_launch_overlap.cpp"
   LIBRARIES ninferno_linear_test_support)
 
+# Scratch read lifetimes of generic launches (#309): which launch reads or writes which workspace
+# region until when, and that no launch starting under its predecessor takes a region it still
+# uses (host only).
+ninferno_add_op_test(ninferno_scratch_lifetime_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_scratch_lifetime.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
 # A route's tile and logical traffic (#298): the schedules' declared geometry (host only).
 ninferno_add_op_test(ninferno_route_traffic_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_traffic.cpp"
   LIBRARIES ninferno_linear_test_support)
 
+# A route's description (#298): the fields agree with the functions the launch and selector ask.
+ninferno_add_op_test(ninferno_route_description_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_description.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
+set_tests_properties(ninferno_route_description_test PROPERTIES SKIP_RETURN_CODE 77)
+
 # Route selection on the GPU classes this machine lacks (substituted DeviceClass, one process
 # per board): every choice admitted, no feature the board lacks, its own route table.
 ninferno_add_op_test(ninferno_route_classes_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_classes.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
+# The format traits table against the predicates it replaced, for every QType.
+ninferno_add_op_test(ninferno_format_traits_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_format_traits.cpp"
   LIBRARIES ninferno_linear_test_support)
 
 # ops::linear's candidates per call (#306): the owned Q8 kernel's launch and the generic route,
@@ -188,6 +207,12 @@ ninferno_add_op_test(ninferno_kernel_facts_live_test
   LIBRARIES ninferno_linear_test_support)
 target_compile_definitions(ninferno_kernel_facts_live_test PRIVATE
   NINFERNO_NVCC_VERSION="${CMAKE_CUDA_COMPILER_VERSION}")
+
+# The selector's named authorities (#614): the lists are well formed, on every facts board each
+# answer's evidence is consistent with its kind, and known cases name the authority that answers.
+ninferno_add_op_test(ninferno_route_authorities_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_authorities.cpp"
+  LIBRARIES ninferno_linear_test_support)
 
 # The generic path's dense tuner: tuned at the first eager call, within the activation class, R8
 # decode bytes kept, the cache file read back, nothing timed inside a graph capture.
