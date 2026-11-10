@@ -435,6 +435,10 @@ void run_crossover(const Options& options, cudaStream_t stream) {
                 device.name.c_str(), generation.c_str(), sms, warps_per_sm, clock_hz / 1.0e6,
                 bw / 1.0e9, node_l > 0.0 ? std::to_string(node_l * 1.0e6).c_str() : "none",
                 options.graph_reps);
+    for (const auto& [qh, kh] : options.geometries) {
+        std::printf("# dispatch_bound %d+%d=%d\n", qh, kh,
+                    ops::rmsnorm_rope_text_fused_max_tokens(device, qh, kh));
+    }
     std::printf("geometry,T,fused_us,split_us,fused_minus_split_us\n");
     for (const auto& [qh, kh] : options.geometries) {
         std::vector<int> ts;

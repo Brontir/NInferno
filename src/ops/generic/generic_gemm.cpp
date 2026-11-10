@@ -3510,6 +3510,13 @@ std::optional<double> route_cost_seconds(const Problem& problem, const Weight& w
     return out;
 }
 
+bool r8_prequantized_takes(Route route, QType qtype, std::int32_t k, std::int32_t tokens,
+                           std::optional<std::size_t> workspace_free) {
+    return route.family == Family::R8Mma && tokens >= 2 && tokens <= kR8VerifyTokens &&
+           workspace_free.has_value() && r8_verify_compiled(qtype) &&
+           *workspace_free >= route_workspace_bytes(route, k, tokens);
+}
+
 // FUSION-SITE: r8_prequantized
 ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call) {
     ResolvedRoute out{.asked = asked, .executed = asked};
@@ -3560,10 +3567,8 @@ ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call
     // Its planes in the workspace free to the call: a workspace short of them takes the CTA's own
     // quantization where the tokens fit it, else A16 (said as a demotion), not an allocation
     // failure at the launch.
-    out.r8_prequantized = route.family == Family::R8Mma && call.tokens >= 2 &&
-                          call.tokens <= kR8VerifyTokens && call.workspace_free.has_value() &&
-                          r8_verify_compiled(w.qtype) &&
-                          *call.workspace_free >= route_workspace_bytes(route, w.k, call.tokens);
+    out.r8_prequantized =
+        r8_prequantized_takes(route, w.qtype, w.k, call.tokens, call.workspace_free);
     if (route.family == Family::R8Mma &&
         (!staged || !(out.r8_prequantized || r8_fits(w.qtype, w.k, call.tokens)))) {
         demote(a16(), staged ? Demotion::R8Fit : Demotion::Alignment);

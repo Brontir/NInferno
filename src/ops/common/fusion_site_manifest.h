@@ -13,9 +13,17 @@
 //   site <id> <status> <branch> [<key>=<value> ...]
 //
 //   decided   the branch follows from the inputs listed on the line;
-//   band      the call-width band alone is evaluated; the branch names what the band allows and the
-//             rest of the rule (a weight's format, a workspace) is the launch's;
-//   declared  nothing is evaluated at plan time ("per_call"): the registry's rule applies.
+//   band      the call-width band alone is evaluated; the branch says what the band allows and the
+//             rest of the rule (a weight's format, a tuner's timing) is the launch's;
+//   declared  nothing is evaluated: the site has no host predicate yet, or the query lacks an input
+//             its predicate reads (`needs=` lists them): "per_call", and the registry's rule
+//             applies.
+//
+// Every evaluated site asks the function the launch asks, never a copy of its rule:
+//   pdl_overlap      generic::launch_overlap (the launch's overlap decision)
+//   r8_prequantized  generic::r8_prequantized_takes (resolve_route)
+//   vec_gated_pair, mmq_gated_pair   generic::ggml_gated_pair_for (segmented_swiglu_pair)
+//   qk_norm_rope     ops::rmsnorm_rope_text_takes_width (the Qwen 3.5 attention's dispatch)
 //
 // Not wired into the engine's startup manifest: that would add a section to every manifest. The
 // engine adds `sites` when this lands in a manifest PR; until then the function is the contract and
@@ -24,9 +32,12 @@
 
 #include "core/device_class.h"
 #include "ops/common/fusion_site_table.h"
+#include "ninferno/ops/rmsnorm_rope.h"
 #include "ops/generic/generic_gemm.h"
 
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -35,9 +46,24 @@
 
 namespace ninferno::ops::detail::fusion {
 
+// What a site's predicate may read. A field a predicate needs and the query leaves unset makes that
+// site `declared` with the field named in `needs=`.
 struct SiteQuery {
     const DeviceClass* device = nullptr;
     std::int32_t tokens = 1; // the call's width (a decode or verify width, or a prefill chunk)
+    // The route the call runs (resolve_route's executed route), with the call's epilogue, whether
+    // its launch asked to join the previous kernel or release the next, and for R8 the weight's
+    // format, K and the workspace free to the call (nullopt: none).
+    std::optional<generic::Route> route;
+    generic::Epilogue epilogue = generic::Epilogue::Store;
+    bool join_asked            = false;
+    bool release_asked         = false;
+    std::optional<QType> qtype;
+    std::int32_t k = 0;
+    std::optional<std::size_t> workspace_free;
+    // The text attention geometry (query heads, key heads); 0: not given.
+    std::int32_t query_heads = 0;
+    std::int32_t key_heads   = 0;
 };
 
 struct SiteLine {
@@ -55,38 +81,86 @@ struct SiteLine {
 
 namespace detail_ {
 
-inline SiteLine declared(std::string_view id) {
-    return {std::string(id), "declared", "per_call", {}};
+inline SiteLine declared(std::string_view id, std::string needs = {}) {
+    SiteLine line{std::string(id), "declared", "per_call", {}};
+    if (!needs.empty()) { line.inputs.emplace_back("needs", std::move(needs)); }
+    return line;
 }
 
 // The sites an emitter evaluates; every other row of the table is `declared`.
 inline bool emit_evaluated(std::string_view id, const SiteQuery& q, SiteLine& out) {
     const std::string tokens = std::to_string(q.tokens);
     if (id == "pdl_overlap") {
-        const bool pdl = q.device != nullptr && q.device->features.pdl;
-        out            = {std::string(id),
-                          "decided",
-               pdl ? "overlap" : "stream_order",
-                          {{"pdl", pdl ? "1" : "0"}}};
+        std::string needs;
+        if (q.device == nullptr) { needs += "device,"; }
+        if (!q.route) { needs += "route,"; }
+        const bool r8 = q.route && q.route->family == generic::Family::R8Mma;
+        if (r8 && (!q.qtype || q.k <= 0)) { needs += "qtype,k,"; }
+        if (!needs.empty()) {
+            needs.pop_back();
+            out = declared(id, needs);
+            return true;
+        }
+        generic::ResolvedRoute resolved{.asked = *q.route, .executed = *q.route};
+        resolved.r8_prequantized = r8 && generic::r8_prequantized_takes(*q.route, *q.qtype, q.k,
+                                                                        q.tokens, q.workspace_free);
+        const generic::LaunchOverlap overlap = generic::launch_overlap(
+            resolved, q.epilogue, q.tokens, q.join_asked, q.release_asked, q.device->features.pdl);
+        out = {std::string(id),
+               "decided",
+               overlap.joins() || overlap.releases() || overlap.prefetches() ? "overlap"
+                                                                             : "stream_order",
+               {{"route", std::string(generic::route_name(*q.route))},
+                {"join", std::string(generic::overlap_refusal_name(overlap.join))},
+                {"release", std::string(generic::overlap_refusal_name(overlap.release))},
+                {"prefetch", std::string(generic::overlap_refusal_name(overlap.prefetch))},
+                {"pdl", q.device->features.pdl ? "1" : "0"},
+                {"tokens", tokens}}};
         return true;
     }
     if (id == "vec_gated_pair" || id == "mmq_gated_pair") {
-        const bool vec    = q.tokens <= generic::kGgmlVecMaxTokens;
-        const bool is_vec = id == "vec_gated_pair";
-        out               = {
+        const bool vec_band = generic::ggml_gated_pair_for(q.tokens) == generic::GgmlGatedPair::Vec;
+        const bool mine     = (id == "vec_gated_pair") == vec_band;
+        out                 = {
             std::string(id),
             "band",
-            is_vec ? (vec ? "tried" : "not_tried") : (vec ? "after_vec" : "first"),
+            mine ? "tried" : "not_tried",
             {{"tokens", tokens}, {"vec_max_tokens", std::to_string(generic::kGgmlVecMaxTokens)}}};
         return true;
     }
     if (id == "r8_prequantized") {
-        const bool in_band = q.tokens >= 2 && q.tokens <= generic::kR8VerifyTokens;
-        out                = {
-            std::string(id),
-            "band",
-            in_band ? "prequantized_if_fits" : "in_kernel",
-            {{"tokens", tokens}, {"verify_max_tokens", std::to_string(generic::kR8VerifyTokens)}}};
+        std::string needs;
+        if (!q.route) { needs += "route,"; }
+        if (!q.qtype || q.k <= 0) { needs += "qtype,k,"; }
+        if (!needs.empty()) {
+            needs.pop_back();
+            out = declared(id, needs);
+            return true;
+        }
+        const bool pre =
+            generic::r8_prequantized_takes(*q.route, *q.qtype, q.k, q.tokens, q.workspace_free);
+        out = {std::string(id),
+               "decided",
+               pre ? "prequantized" : "in_kernel",
+               {{"route", std::string(generic::route_name(*q.route))},
+                {"tokens", tokens},
+                {"workspace_free", q.workspace_free ? std::to_string(*q.workspace_free) : "none"}}};
+        return true;
+    }
+    if (id == "qk_norm_rope") {
+        if (q.device == nullptr || q.query_heads <= 0 || q.key_heads <= 0) {
+            out = declared(id, q.device == nullptr ? "device" : "query_heads,key_heads");
+            return true;
+        }
+        const bool fused =
+            rmsnorm_rope_text_takes_width(*q.device, q.query_heads, q.key_heads, q.tokens);
+        out = {std::string(id),
+               "band",
+               fused ? "fused" : "decomposed",
+               {{"geometry", std::to_string(q.query_heads) + '+' + std::to_string(q.key_heads)},
+                {"tokens", tokens},
+                {"max_tokens", std::to_string(rmsnorm_rope_text_fused_max_tokens(
+                                   *q.device, q.query_heads, q.key_heads))}}};
         return true;
     }
     return false;

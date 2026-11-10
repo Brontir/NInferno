@@ -155,6 +155,12 @@ std::int32_t rmsnorm_rope_text_fused_max_tokens(const DeviceClass& device, std::
     return bound > 0 ? bound : kFusedTextDefaultMaximumTokens;
 }
 
+bool rmsnorm_rope_text_takes_width(const DeviceClass& device, std::int32_t query_heads,
+                                   std::int32_t key_heads, std::int32_t tokens) {
+    return rmsnorm_rope_text_heads(query_heads, key_heads) &&
+           tokens <= rmsnorm_rope_text_fused_max_tokens(device, query_heads, key_heads);
+}
+
 void rmsnorm_rope(const Tensor& positions, const Tensor& q_norm_weight, const Tensor& k_norm_weight,
                   const Tensor& q_in, const Tensor& k_in, Tensor& q_out, Tensor& k_out,
                   cudaStream_t stream) {

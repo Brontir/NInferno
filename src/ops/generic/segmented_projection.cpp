@@ -253,7 +253,7 @@ bool segmented_swiglu_pair(const Tensor& x, const SegmentedProjectionWeights& we
     }
     const auto halves = gated_halves(weights);
     if (!halves) return false;
-    if (xm.ne[1] <= generic::kGgmlVecMaxTokens) {
+    if (generic::ggml_gated_pair_for(xm.ne[1]) == generic::GgmlGatedPair::Vec) {
         return generic::ggml_vec_gated_pair(xm, halves->first, halves->second, half, gelu, out,
                                             workspace, nullptr, stream);
     }

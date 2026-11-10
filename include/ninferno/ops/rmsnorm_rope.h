@@ -83,6 +83,14 @@ void rmsnorm_rope(const Tensor& positions, const Tensor& q_norm_weight, const Te
 // (the fused form won through it and lost at 1024). A call wider than a graph is captured for pays
 // the eager launch, so the bound is understated there. Both forms are the same arithmetic bit for
 // bit.
+// Whether a text-form call of `tokens` is within the fused width for this geometry on `device`: the
+// geometry is instantiated and tokens <= rmsnorm_rope_text_fused_max_tokens. The model's other
+// conditions (RoPE kind, theta, epsilon, head width) stay its own. The dispatch and the fusion-site
+// manifest (ops/common/fusion_site_manifest.h) both ask this function.
+[[nodiscard]] bool rmsnorm_rope_text_takes_width(const DeviceClass& device,
+                                                 std::int32_t query_heads, std::int32_t key_heads,
+                                                 std::int32_t tokens);
+
 [[nodiscard]] std::int32_t rmsnorm_rope_text_fused_max_tokens(const DeviceClass& device,
                                                               std::int32_t query_heads,
                                                               std::int32_t key_heads);

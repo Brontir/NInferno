@@ -910,6 +910,12 @@ struct BuildManifest {
 
 // Transient storage a route needs for T tokens (W4A4, W4A8: the quantized activation).
 [[nodiscard]] std::size_t route_workspace_bytes(Route route, std::int32_t k, std::int32_t tokens);
+// Whether a call of `tokens` on R8 `route` takes the pre-quantized verify form (resolve_route's
+// r8_prequantized): R8 family, 2..kR8VerifyTokens tokens, a workspace with room for its planes, a
+// format compiled for it. resolve_route and the fusion-site manifest ask this one function.
+[[nodiscard]] bool r8_prequantized_takes(Route route, QType qtype, std::int32_t k,
+                                         std::int32_t tokens,
+                                         std::optional<std::size_t> workspace_free);
 // Family::GgmlMmq's workspace for a call of `plane_rows` weight rows (SwiGlu: gate and up) and T
 // tokens: the q8_1 activation, the FP32 plane and the stream-k fixup bound.
 // Whether ggml's matrix kernel (Family::GgmlMmq) reads the format.
@@ -932,6 +938,15 @@ struct BuildManifest {
 [[nodiscard]] std::size_t ggml_vec_workspace_bytes(std::int32_t k, std::int32_t tokens);
 // The widest call ggml's vector kernel takes (ggml_mmq::kVecMaxColumns).
 inline constexpr std::int32_t kGgmlVecMaxTokens = 8;
+// Which ggml gated pair a call of `tokens` tries first (segmented_swiglu_pair): the vector pair up
+// to kGgmlVecMaxTokens, the matrix pair above (a vector-band call that cannot take its pair does
+// not fall through to the matrix pair). The launch and the fusion-site manifest ask this one
+// function.
+enum class GgmlGatedPair : std::uint8_t { Vec, Mmq };
+
+[[nodiscard]] constexpr GgmlGatedPair ggml_gated_pair_for(std::int32_t tokens) noexcept {
+    return tokens <= kGgmlVecMaxTokens ? GgmlGatedPair::Vec : GgmlGatedPair::Mmq;
+}
 // The widest call ggml's matrix kernel takes (its 5..16-token band).
 inline constexpr std::int32_t kGgmlMmqMaxTokens = 16;
 // Whether a call of `problem` on `weight` of T tokens takes ggml's vector kernel, the bytes of its

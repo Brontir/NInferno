@@ -259,6 +259,10 @@
                     "rmsnorm_rope (one launch)",
                     "2 x rmsnorm + rope"
                 ],
+                "regret_branches": [
+                    "fused",
+                    "decomposed"
+                ],
                 "priced": {
                     "status": "literal",
                     "by":
