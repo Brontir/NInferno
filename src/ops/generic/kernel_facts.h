@@ -63,6 +63,19 @@ struct LoopCounts {
     int uniform              = 0; // uniform-datapath instructions
     int other                = 0; // branches, barriers, convergence, constant loads, NOP
     int total                = 0;
+    // The critical path of one iteration (#613 PR-7b): instructions on the longest chain of the
+    // body's register dataflow, as counts per latency class (the price weights them with the
+    // card's measured latencies, src/core/data/isa_facts.json). Zero in a snapshot made before
+    // schema 3 (has_critical_path false).
+    bool has_critical_path = false;
+    int cp_mma             = 0; // tensor MMAs on the chain (the accumulator dependences)
+    int cp_ld              = 0; // global and local loads on it
+    int cp_lds             = 0; // shared loads
+    int cp_shfl            = 0;
+    int cp_int             = 0; // INT32 ops
+    int cp_fp              = 0; // FP32 / FP16x2 ops
+    int cp_cvt             = 0; // conversions (I2F, F2F, F2FP, F2I)
+    int cp_other           = 0;
 };
 
 struct KernelFacts {

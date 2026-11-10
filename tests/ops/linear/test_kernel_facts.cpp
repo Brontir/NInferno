@@ -265,6 +265,21 @@ void loop_counts_read() {
                name + ": the total is below its parts");
         expect(l.ldg > 0 && l.ldg_bytes == 32 * 16 * static_cast<std::size_t>(l.ldg),
                name + ": the BF16 weights are 16-byte global loads");
+        // Schema 3: the critical path's counts per class are a chain of the loop's own
+        // instructions, so no class exceeds its count and the chain is not empty.
+        if (l.has_critical_path) {
+            const int depth = l.cp_mma + l.cp_ld + l.cp_lds + l.cp_shfl + l.cp_int + l.cp_fp +
+                              l.cp_cvt + l.cp_other;
+            std::cout << name << ": critical path " << depth << " deep, " << l.cp_mma << " MMA, "
+                      << l.cp_ld << " load, " << l.cp_int + l.cp_fp + l.cp_cvt << " ALU\n";
+            expect(depth > 0 && depth <= l.total,
+                   name + ": critical path depth " + std::to_string(depth));
+            expect(l.cp_mma <= l.mma && l.cp_ld <= l.ldg + l.ld + l.local && l.cp_lds <= l.lds &&
+                       l.cp_shfl <= l.shfl && l.cp_int <= l.int_alu && l.cp_fp <= l.fp_alu,
+                   name + ": a critical-path class above its loop count");
+        } else {
+            std::cout << name << ": no critical path (schema 2)\n";
+        }
         if (arch == "70") {
             // Volta multiplies with FFMAs (NINFERNO_FMA_MMA): no tensor MMA, no K from shapes.
             expect(l.mma == 0 && l.k_iter == 0 && l.fp_alu > 0, name + ": the FFMA loop");

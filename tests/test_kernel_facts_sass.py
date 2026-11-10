@@ -216,6 +216,26 @@ class LoopFinder(unittest.TestCase):
         self.assertEqual(sc.written_registers("LDG.E.128", "R8, desc[UR8][R2.64]"),
                          {"R8", "R9", "R10", "R11"})
 
+    def test_critical_path(self):
+        # The fixture's two HMMAs accumulate into R32 one after the other, so both sit on the
+        # longest chain; every class count is bounded by the class's own count, and the path's
+        # counts round-trip through the row like the others.
+        c = sc.loop_counts(body_of(KERNEL), tiles=1)
+        self.assertEqual(c.cp_mma, 2)
+        self.assertGreaterEqual(c.cp_int + c.cp_fp + c.cp_other + c.cp_ld + c.cp_lds, 1)
+        self.assertLessEqual(c.cp_int, c.int)
+        self.assertLessEqual(c.cp_fp, c.fp)
+        self.assertEqual(sc.LoopCounts.from_row(c.row()), c)
+        self.assertEqual(sc.cp_class("I2FP.F32.S32"), "cp_cvt")
+        self.assertEqual(sc.cp_class("HMMA.16816.F32.BF16"), "cp_mma")
+        self.assertEqual(sc.cp_class("LDS.128"), "cp_lds")
+        self.assertEqual(sc.cp_class("IMAD.WIDE.U32"), "cp_int")
+        # A chain of three dependent IMADs is three deep; two independent ones are one.
+        chain = [(0x000, "IMAD R1, R0, R0, RZ ;"), (0x010, "IMAD R2, R1, R1, RZ ;"),
+                 (0x020, "IMAD R3, R2, R2, RZ ;"), (0x030, "IMAD R4, R0, R0, RZ ;")]
+        counts = sc.critical_path(body_of(chain), [0, 1, 2, 3])
+        self.assertEqual(counts["cp_int"], 3)
+
     def test_irreducible_flow(self):
         # Two blocks that enter each other's middles (no header dominates the other): no natural
         # loop, so no K loop; nothing crashes.

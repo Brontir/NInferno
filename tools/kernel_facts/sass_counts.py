@@ -90,8 +90,17 @@ WIDTHS = ((".256", 32), (".128", 16), (".64", 8), (".U8", 1), (".S8", 1), (".U16
 COUNT_FIELDS = ("mma", "mma_ones", "ldg", "ldg_bytes", "ld", "ld_bytes", "ldgsts",
                 "ldgsts_bytes", "lds", "lds_bytes", "sts", "sts_bytes", "local", "local_bytes",
                 "shfl", "int", "fp", "uniform", "other", "total")
+# The critical path of one iteration (#613 PR-7b): the instructions on the longest chain of the
+# body's register dataflow (a read depends on the latest earlier writer of the register within
+# the iteration; the loads of the next step, consumed an iteration later, carry no edge), as
+# counts per latency class along it. The path is chosen with nominal latencies (CP_NOMINAL); the
+# price re-weights the counts with the card's measured ones (src/core/data/isa_facts.json).
+CP_FIELDS = ("cp_mma", "cp_ld", "cp_lds", "cp_shfl", "cp_int", "cp_fp", "cp_cvt", "cp_other")
+CP_NOMINAL = {"cp_mma": 33.0, "cp_ld": 48.0, "cp_lds": 25.0, "cp_shfl": 27.0, "cp_int": 4.5,
+              "cp_fp": 4.1, "cp_cvt": 6.0, "cp_other": 2.0}
+CVT_OPCODES = {"I2F", "F2F", "F2I", "I2FP", "F2FP", "I2I", "F2IP"}
 # The snapshot's columns for these facts, in order.
-COLUMNS = ("loops", "k_iter", "mma", "mma_ones", "mma_shape") + COUNT_FIELDS[2:]
+COLUMNS = ("loops", "k_iter", "mma", "mma_ones", "mma_shape") + COUNT_FIELDS[2:] + CP_FIELDS
 
 
 def iter_functions(lines, wanted=None):
@@ -482,7 +491,7 @@ class LoopCounts:
         self.loops = 0
         self.k_iter = 0
         self.mma_shape = "-"
-        for f in COUNT_FIELDS:
+        for f in COUNT_FIELDS + CP_FIELDS:
             setattr(self, f, 0)
 
     def row(self):
@@ -492,7 +501,8 @@ class LoopCounts:
     @classmethod
     def from_row(cls, fields):
         """The counts of a snapshot row's loop columns; ValueError on a field that is no count."""
-        if len(fields) != len(COLUMNS):
+        # A schema 2 row stops before the critical path's columns (CP_FIELDS), which read 0.
+        if len(fields) not in (len(COLUMNS), len(COLUMNS) - len(CP_FIELDS)):
             raise ValueError(f"{len(fields)} loop fields, {len(COLUMNS)} columns")
         c = cls()
         for name, value in zip(COLUMNS, fields):
@@ -575,4 +585,65 @@ def loop_counts(body, tiles=1):
         per_tile = 16 * 8 * tiles
         if mnk_sum and not unknown_shape and mnk_sum % per_tile == 0:
             out.k_iter = mnk_sum // per_tile
+    for name, n in critical_path(body, list(indices(path))).items():
+        setattr(out, name, n)
     return out
+
+
+def cp_class(opcode):
+    """The latency class (CP_FIELDS) of an instruction."""
+    base = base_opcode(opcode)
+    if base in MMA_OPCODES:
+        return "cp_mma"
+    if base in CVT_OPCODES:
+        return "cp_cvt"
+    kind = classify(opcode)
+    if kind in ("ldg", "ld", "local"):
+        return "cp_ld"
+    if kind == "lds":
+        return "cp_lds"
+    if kind == "shfl":
+        return "cp_shfl"
+    if kind == "int":
+        return "cp_int"
+    if kind == "fp":
+        return "cp_fp"
+    return "cp_other"
+
+
+READ_REGISTER = re.compile(r"\bU?R\d+\b")
+
+
+def critical_path(body, order):
+    """The counts per latency class (CP_FIELDS) along the longest nominally weighted chain of
+    register dependences through the instructions `order` (body indices, in iteration order):
+    instruction i depends on the latest earlier instruction of the chain that wrote a register it
+    reads (RZ / URZ aside); a dependence on a register no earlier instruction wrote is a value
+    from the previous iteration or the prologue and carries no edge."""
+    classes = []
+    dist, best_from = [], []
+    last_writer = {}
+    for i in order:
+        _, _, opcode, operands = body[i]
+        cls = cp_class(opcode)
+        written = written_registers(opcode, operands)
+        reads = {r for r in READ_REGISTER.findall(operands) if r not in ("RZ", "URZ")}
+        pred, longest = -1, 0.0
+        for r in reads:
+            w = last_writer.get(r)
+            if w is not None and dist[w] > longest:
+                pred, longest = w, dist[w]
+        k = len(classes)
+        classes.append(cls)
+        dist.append(longest + CP_NOMINAL[cls])
+        best_from.append(pred)
+        for r in written:
+            last_writer[r] = k
+    counts = {name: 0 for name in CP_FIELDS}
+    if not classes:
+        return counts
+    k = max(range(len(classes)), key=lambda j: dist[j])
+    while k >= 0:
+        counts[classes[k]] += 1
+        k = best_from[k]
+    return counts

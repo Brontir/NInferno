@@ -62,7 +62,8 @@ committed per architecture as kernel-facts snapshots, written from the release t
 with `cuobjdump` (`tools/kernel_facts/kernel_facts.py`, no GPU), and the engine prices from the
 snapshot, never from the kernels of the machine it runs on: a build with another nvcc decides as
 the release does. Beside the registers a snapshot holds each kernel's K loop counted off its SASS
-(the MMAs, the loads by space and bytes, the ALU work per loop iteration;
+(the MMAs, the loads by space and bytes, the ALU work per loop iteration, and the longest
+register-dependence chain through it counted per latency class, schema 3;
 `tools/kernel_facts/sass_counts.py` says how the loop is found), the facts the counted cost model
 reads (#613). `package.sh` (and `package-native.ps1`) check it twice: the nvcc version against
 the snapshots, and each engine's kernels against its snapshot (`kernel_facts.py check` on the

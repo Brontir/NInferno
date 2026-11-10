@@ -48,7 +48,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sass_counts  # noqa: E402
 
-SCHEMA = 2
+SCHEMA = 3
 NAMESPACE = "ninferno::ops::detail::generic::"
 FAMILY = "rmma"
 RESOURCE_COLUMNS = ("registers", "stack", "local", "shared")
@@ -421,9 +421,10 @@ def parse_snapshot(text):
         if want not in header:
             fail(f"snapshot has no '{want}' line")
     # Every row spells the header's columns: 14 fields in a resources-only file, 14 plus the
-    # loop's in a schema 2 one, never a mixture.
+    # loop's in a schema 2 one, plus the critical path's in a schema 3 one, never a mixture.
     columns = header["columns"].split()
-    if columns not in (COLUMNS.split()[:14], COLUMNS.split()):
+    n_cp = len(sass_counts.CP_FIELDS)
+    if columns not in (COLUMNS.split()[:14], COLUMNS.split()[:-n_cp], COLUMNS.split()):
         fail(f"unexpected columns: {header['columns']}")
     width = len(columns)
     for line in lines:

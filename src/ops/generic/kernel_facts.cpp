@@ -27,9 +27,12 @@ struct Snapshot {
 constexpr std::string_view kColumns =
     "family decoder warps_m warps_k m_tiles n_tiles cluster epilogue latency add_sums registers "
     "stack local shared loops k_iter mma mma_ones mma_shape ldg ldg_bytes ld ld_bytes ldgsts "
-    "ldgsts_bytes lds lds_bytes sts sts_bytes local local_bytes shfl int fp uniform other total";
-// The length of the resources-only (schema 1) columns line: kColumns up to "shared".
+    "ldgsts_bytes lds lds_bytes sts sts_bytes local local_bytes shfl int fp uniform other total "
+    "cp_mma cp_ld cp_lds cp_shfl cp_int cp_fp cp_cvt cp_other";
+// The length of the resources-only (schema 1) columns line: kColumns up to "shared"; and of the
+// schema 2 line, up to "total" (schema 3 adds the critical path's eight columns).
 constexpr std::size_t kResourceColumnsLength = kColumns.find(" loops ");
+constexpr std::size_t kLoopColumnsLength     = kColumns.find(" cp_mma ");
 
 // One string per key: the row's spelling without the family column.
 std::string row_key(const RmmaKernelKey& k) {
@@ -47,7 +50,7 @@ std::string row_key(const RmmaKernelKey& k) {
 // <shared>`). A malformed line is a build error of the data, not a runtime condition: it throws.
 Snapshot parse(std::string_view text) {
     Snapshot s;
-    std::optional<bool> with_loops; // what the columns line, read before any row, promises
+    std::optional<int> with_loops; // the columns line's schema (1, 2 or 3), read before any row
     std::istringstream in{std::string(text)};
     for (std::string line; std::getline(in, line);) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
@@ -68,12 +71,19 @@ Snapshot parse(std::string_view text) {
             if (!fields) throw std::runtime_error("kernel facts: malformed row: " + line);
             // Schema 2: the K loop's counts follow (tools/kernel_facts/sass_counts.py COLUMNS),
             // on every row of a file whose columns line names them and on none of another's.
-            if (*with_loops) {
+            if (*with_loops >= 2) {
                 LoopCounts l;
                 fields >> l.loops >> l.k_iter >> l.mma >> l.mma_ones >> l.mma_shape >> l.ldg >>
                     l.ldg_bytes >> l.ld >> l.ld_bytes >> l.ldgsts >> l.ldgsts_bytes >> l.lds >>
                     l.lds_bytes >> l.sts >> l.sts_bytes >> l.local >> l.local_bytes >> l.shfl >>
                     l.int_alu >> l.fp_alu >> l.uniform >> l.other >> l.total;
+                // Schema 3: the critical path's counts per latency class (sass_counts.py
+                // CP_FIELDS) follow.
+                if (*with_loops >= 3) {
+                    fields >> l.cp_mma >> l.cp_ld >> l.cp_lds >> l.cp_shfl >> l.cp_int >> l.cp_fp >>
+                        l.cp_cvt >> l.cp_other;
+                    l.has_critical_path = true;
+                }
                 if (!fields) throw std::runtime_error("kernel facts: malformed loop: " + line);
                 f.loop = std::move(l);
             }
@@ -100,9 +110,11 @@ Snapshot parse(std::string_view text) {
             else if (first == "columns") {
                 // The columns are read by position: the file spells either list exactly.
                 if (rest == kColumns)
-                    with_loops = true;
+                    with_loops = 3;
+                else if (rest == kColumns.substr(0, kLoopColumnsLength))
+                    with_loops = 2;
                 else if (rest == kColumns.substr(0, kResourceColumnsLength))
-                    with_loops = false;
+                    with_loops = 1;
                 else
                     throw std::runtime_error("kernel facts: unexpected columns: " + rest);
             }
