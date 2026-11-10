@@ -3,8 +3,7 @@
 //   - every record is complete (a Checked or an explicit None with the fields its kind needs; an
 //     Unset one was forgotten) and appears once;
 //   - every key matches its DEFINITION in its file (a definition, a struct field or a function,
-//   read
-//     from the file's text, not a substring of it): a renamed or removed constant fails;
+//     read from the file's text, not a substring of it): a renamed or removed constant fails;
 //   - every constant a covered file marks or behaves as fitted has a record, or sits on that file's
 //     not-fitted list below with the reason it is none: route_cost_constants.h (every definition
 //     tagged Provenance::Fitted), choice_constants.h (every definition), core/generation.h (the
@@ -63,7 +62,9 @@ std::map<std::string, Definition> definitions_of(const std::string& text, Mode m
     std::map<std::string, Definition> out;
     if (mode == Mode::RowFields) {
         const std::size_t at  = text.find("struct GenerationRow {");
-        const std::size_t end = text.find("};", at);
+        // The struct's closing brace stands at column 0; a "};" inside a field's initializer
+        // does not end it.
+        const std::size_t end = text.find("\n};", at);
         std::istringstream lines(text.substr(at, end - at));
         const std::regex field(R"(^\s*double\s+(\w+))");
         for (std::string line; std::getline(lines, line);) {
@@ -73,7 +74,8 @@ std::map<std::string, Definition> definitions_of(const std::string& text, Mode m
         return out;
     }
     const std::regex tagged(R"(inline constexpr\s+(?:Scalar|Constant<\d+>)\s+(k\w+)\{)");
-    const std::regex any(R"(^(?:inline )?constexpr\s+[\w:<>]+\s+(\w+)\s*[\[\(=\{;])");
+    const std::regex any(
+        R"(^(?:\[\[nodiscard\]\]\s*)?(?:inline\s+)?constexpr\s+[\w:<>,\s]+?\s(\w+)\s*[\[\(=\{;])");
     std::istringstream lines(text);
     std::vector<std::string> all;
     for (std::string line; std::getline(lines, line);) all.push_back(line);
@@ -228,7 +230,8 @@ int main() {
             }
             recorded.insert(name);
             if (!r->row.empty() &&
-                it->second.text.find("{\"" + std::string(r->row) + "\"") == std::string::npos) {
+                !std::regex_search(it->second.text,
+                                   std::regex(R"(\{\s*\")" + std::string(r->row) + R"(\")"))) {
                 fail(name + ": no row \"" + std::string(r->row) + "\" in its definition");
             }
             if (spec.not_fitted.count(name)) fail(name + ": recorded and listed as not fitted");
@@ -263,7 +266,7 @@ int main() {
                 }
             }
             if (rows.empty()) continue;
-            const std::regex row(R"(\{\"(\w+)\")");
+            const std::regex row(R"(\{\s*\"(\w+)\")");
             std::size_t count = 0;
             for (auto it = std::sregex_iterator(def.text.begin(), def.text.end(), row);
                  it != std::sregex_iterator(); ++it) {
