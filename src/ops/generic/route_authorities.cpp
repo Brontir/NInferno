@@ -339,9 +339,10 @@ std::optional<RouteAnswer> mmq_prefill_gate(const Ask& ask, const Problem& probl
         e.kind = Evidence::Kind::Carried;
         break;
     case D::Incomplete:
-        // A quantity unknown on either side: the board itself (distance 0) is still the board
-        // measured on; any farther donor is a transfer.
-        e.kind = gate.distance == 0 ? Evidence::Kind::Measured : Evidence::Kind::Transferred;
+        // A quantity unknown on either side: the distance can understate the difference, even at
+        // 0 (equal SM counts are not one board), so the answer is not the board's own measure at
+        // any distance: a transfer, the donor named.
+        e.kind = Evidence::Kind::Transferred;
         break;
     case D::Transferred:
     case D::None:

@@ -54,10 +54,13 @@ RouteAnswer workspace_free_answer(const RouteAnswer& selected, const Problem& pr
     const Route kept =
         workspace_free_route(selected.route, problem, weight, tokens, prefill, workspace);
     if (kept == selected.route) return selected;
-    return heuristic_answer(
+    // The route is workspace_free_route's own (the run path's), whatever walk it makes; the
+    // evidence is that of the A16 heuristic, which is the walk it makes today.
+    const RouteAnswer heuristic = heuristic_answer(
         ask_below_profiles(tokens, prefill),
         Problem{problem.qtype, LinearPolicy::A16Only, problem.n, problem.k, problem.epilogue},
         weight);
+    return RouteAnswer{kept, heuristic.evidence};
 }
 
 // The engine's call as route_query describes it: `n` rows, K-wide contiguous x unless `ldx` says.

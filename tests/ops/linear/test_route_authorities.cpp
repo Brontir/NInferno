@@ -200,8 +200,14 @@ void check_direct(const generic::Ask& ask, const generic::Problem& problem, cons
                 if (!answer) continue;
                 ++g_direct_answers;
                 const std::string_view source = answer->evidence.source;
+                // r8-rules answers as r8-table only where the decode table gave the entry (a
+                // measured or carried answer); its own rule answers are the ranker's.
                 const bool right =
-                    source == a.name || (a.name == "r8-rules" && source == "r8-table");
+                    a.name == "r8-rules"
+                        ? source == (answer->evidence.kind == generic::Evidence::Kind::Ranker
+                                         ? "r8-rules"
+                                         : "r8-table")
+                        : source == a.name;
                 if (!right) {
                     fail(where + ": " + std::string(a.name) + " answered as '" +
                          std::string(source) + "'");
@@ -214,6 +220,21 @@ void check_direct(const generic::Ask& ask, const generic::Problem& problem, cons
                 fail(where + ": " + std::string(a.name) + " threw " + error.what());
             }
         }
+    }
+}
+
+// A description that throws is not compared, so only the one known cause is allowed: the
+// description of a ggml matrix-kernel route with workspace reads the host GPU's SM count for the
+// kernel's workspace layout (ggml_mmq device_facts), and a host without a GPU has none. Any other
+// throw fails, with its message.
+void describe_threw(const std::string& where, generic::Route selected, bool workspace,
+                    const std::exception& error) {
+    ++g_describe_threw;
+    const std::string message = error.what();
+    if (!workspace || selected.family != generic::Family::GgmlMmq ||
+        message.find("no CUDA-capable device") == std::string::npos) {
+        fail(where + ": describe_call threw " + (workspace ? "with" : "without") +
+             " workspace on " + generic::route_name(selected) + ": " + message);
     }
 }
 
@@ -258,7 +279,7 @@ void check_readers(const DeviceClass& device, const generic::Problem& problem, c
         const std::string text = generic::describe_text(*d);
         const std::string tail = " " + generic::evidence_text(a.evidence);
         if (!text.ends_with(tail)) fail(where + ": describe_text does not end with " + tail);
-    } catch (const std::exception&) { ++g_describe_threw; }
+    } catch (const std::exception& error) { describe_threw(where, a.route, true, error); }
     // Without workspace a W4A4, W4A8 or I8 selection runs the A16 heuristic's route instead
     // (workspace_free_route): the description names that route, and the evidence is the evidence
     // of the walk that gave it, never the selection's of another route.
@@ -276,12 +297,19 @@ void check_readers(const DeviceClass& device, const generic::Problem& problem, c
                                    problem.epilogue};
         const generic::RouteAnswer heuristic =
             generic::heuristic_answer(generic::ask_below_profiles(t, prefill), a16, w);
-        const bool kept = d->resolved.asked == a.route;
+        // The route the run path takes for this call (the description's asked route is that).
+        const generic::Route run_route =
+            generic::workspace_free_route(a.route, problem, w, t, prefill, false);
+        const bool kept = run_route == a.route;
         if (!kept) ++g_substituted;
         const generic::RouteAnswer& owner = kept ? a : heuristic;
-        if (!kept && !(d->resolved.asked == heuristic.route)) {
-            fail(where + ": without workspace the call asks for " +
-                 generic::route_name(d->resolved.asked) + ", neither the selection's " +
+        if (!(d->resolved.asked == run_route)) {
+            fail(where + ": without workspace the description asks for " +
+                 generic::route_name(d->resolved.asked) + ", the run path takes " +
+                 generic::route_name(run_route));
+        } else if (!kept && !(run_route == heuristic.route)) {
+            fail(where + ": without workspace the run path takes " +
+                 generic::route_name(run_route) + ", neither the selection's " +
                  generic::route_name(a.route) + " nor the A16 heuristic's " +
                  generic::route_name(heuristic.route));
         } else if (!same_evidence(*d->evidence, owner.evidence)) {
@@ -297,7 +325,7 @@ void check_readers(const DeviceClass& device, const generic::Problem& problem, c
         if (!text.ends_with(" " + generic::evidence_text(d->evidence.value()))) {
             fail(where + ": describe_text does not end with its evidence");
         }
-    } catch (const std::exception&) { ++g_describe_threw; }
+    } catch (const std::exception& error) { describe_threw(where, a.route, false, error); }
 }
 
 void check_evidence(const generic::RouteAnswer& a, const std::set<std::string_view>& names,
@@ -342,6 +370,13 @@ void check_evidence(const generic::RouteAnswer& a, const std::set<std::string_vi
         fail(where + ": donor '" + e.donor + "' has a space or a comma");
     }
     if (e.source == "cost-model" && e.ranker != R::Cost) fail(where + ": the cost model as a rule");
+    // The R8 decode table's entries are measured or carried; the R8 rules' own are the ranker's.
+    if (e.source == "r8-table" && e.kind != K::Measured && e.kind != K::Carried) {
+        fail(where + ": r8-table answer of kind " + generic::evidence_kind_name(e.kind));
+    }
+    if (e.source == "r8-rules" && e.kind != K::Ranker) {
+        fail(where + ": r8-rules answer of kind " + generic::evidence_kind_name(e.kind));
+    }
     if (e.source == "route-pin" || e.source == "route-probe") {
         if (e.kind != K::Pin) fail(where + ": a pin's answer is not Pin evidence");
     }
@@ -435,6 +470,56 @@ void check_known() {
     }
 }
 
+// The MMQ prefill gate on a board whose L2 size is unknown (a card outside the facts whose driver
+// reports none): the gate answers Incomplete, which is not a measurement of this board even at
+// distance 0, so the evidence names a donor and is not `measured`.
+void check_incomplete_gate() {
+    constexpr Shape big{4096, 4096};
+    for (const std::string_view name : {"rtx4090", "rtx5090", "rtx2080ti"}) {
+        const generic::FactsBoard* board = nullptr;
+        for (const generic::FactsBoard& b : generic::kFactsBoards) {
+            if (b.name == name) board = &b;
+        }
+        if (board == nullptr) {
+            fail("incomplete gate: no board " + std::string(name));
+            continue;
+        }
+        for (const std::size_t l2 :
+             {std::size_t{0}, generic::board_device_class(*board).l2_bytes}) {
+            DeviceClass device = generic::board_device_class(*board);
+            device.l2_bytes    = l2;
+            const ScopedDeviceClass scoped(device);
+            void* const payload = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
+            const quantized_weight::PackedWeight host = quantized_weight::make_patterned_weight(
+                QType::GGML_Q4_K, big.n, big.k, 7U, quantized_weight::PatternedWeightOptions{});
+            const Weight w = host.device_weight(payload);
+            const generic::Problem problem{QType::GGML_Q4_K, LinearPolicy::AllowA8, big.n, big.k,
+                                           generic::Epilogue::Store};
+            const std::string where =
+                std::string(name) + " q4k prefill gate, l2_bytes " + std::to_string(l2);
+            std::optional<generic::RouteAnswer> answer;
+            for (const generic::NamedAuthority& a : generic::rule_authorities()) {
+                if (a.name == "mmq-prefill-gate") {
+                    answer = a.answer(generic::resolve_ask(512, true), problem, w);
+                }
+            }
+            if (!answer) {
+                fail(where + ": the gate gives no answer");
+                continue;
+            }
+            const generic::Evidence& e = answer->evidence;
+            if (l2 == 0) {
+                if (e.kind == generic::Evidence::Kind::Measured || e.donor.empty()) {
+                    fail(where + ": unknown L2 printed as '" + generic::evidence_text(e) + "'");
+                }
+            } else if (e.kind != generic::Evidence::Kind::Measured || !e.donor.empty()) {
+                fail(where + ": the board's own facts printed as '" + generic::evidence_text(e) +
+                     "'");
+            }
+        }
+    }
+}
+
 // Authorities and kinds the grids above never reach, with why. Anything else unreached fails: a
 // new authority, or a restatement that moved the last call off one, must say so here.
 // The walk may leave an authority unreached when an earlier one always answers first (the staged
@@ -487,14 +572,7 @@ void check_coverage(const std::set<std::string_view>& names) {
               << g_substituted << '\n';
     if (!missing.empty()) fail("authorities never reached:" + missing);
     if (!missing_direct.empty()) fail("authorities never answering on their own:" + missing_direct);
-    // Without a GPU the cost model's price of a gated route throws (route_cost_seconds reads the
-    // host GPU's compiled facts): counted. A quarter of the asked descriptions is the bound,
-    // chosen (not fitted): a description that throws is not compared, so a change that made most
-    // of them throw would empty the check above.
-    if (g_describe_attempts == 0 || g_describe_threw * 4 > g_describe_attempts) {
-        fail("descriptions that threw: " + std::to_string(g_describe_threw) + " of " +
-             std::to_string(g_describe_attempts));
-    }
+    if (g_describe_attempts == 0) fail("no call was described");
     if (g_substituted == 0) fail("no described call without workspace left the selection's route");
     if (!missing_kinds.empty()) fail("evidence kinds never reached:" + missing_kinds);
 }
@@ -628,6 +706,7 @@ int main() {
         check_words();
         check_selected_header();
         check_known();
+        check_incomplete_gate();
         for (const generic::FactsBoard& b : generic::kFactsBoards) run_board(b, names);
         check_coverage(names);
     } catch (const std::exception& error) {

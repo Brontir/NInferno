@@ -599,7 +599,7 @@ beside the route the authority that answered and the evidence it rests on:
 `<route> authority=<name> evidence=<kind>`, and for an answer taken from another board
 `donor=<board or class> d=<distance>`. A line carries a `one lane` or
 `several lanes` clause where that round's runs (route and evidence) differ from the width-alone
-runs, so it can carry one where its routes line has none, when only the authority differs.
+runs.
 Kinds: `pin`, `measured` (this board's own), `ranker` (the cost model, or a rule: a derivation from
 the card's facts, or a literal fitted on one or more measured cards and applied to every board;
 the evidence does not tell the two apart, and names no donor), `carried` (a board within the carry
