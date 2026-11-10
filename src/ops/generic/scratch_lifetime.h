@@ -133,7 +133,22 @@ first_scratch_violation(const std::vector<LaunchLifetime>& launches) noexcept {
         if (!now.starts_early) continue;
         for (std::size_t j = i; j-- > 0;) {
             const LaunchLifetime& before = launches[j];
-            if (!before.releases) break; // the launch after it starts at its completion
+            if (!before.releases) {
+                // The launch after it starts at its completion, so none of its reads can race;
+                // its writes are visible only after the dependent's wait (the PDL memory model),
+                // so the immediate predecessor's writes still meet this launch's early uses.
+                if (j + 1 == i) {
+                    for (std::size_t a = 0; a < before.use_count; ++a) {
+                        if (before.uses[a].access != ScratchAccess::Write) continue;
+                        for (std::size_t b = 0; b < now.use_count; ++b) {
+                            if (const auto h = use_hazard(before.uses[a], now.uses[b])) {
+                                return ScratchViolation{i, j, *h};
+                            }
+                        }
+                    }
+                }
+                break;
+            }
             for (std::size_t a = 0; a < before.use_count; ++a) {
                 for (std::size_t b = 0; b < now.use_count; ++b) {
                     if (const auto h = use_hazard(before.uses[a], now.uses[b])) {

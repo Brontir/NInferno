@@ -151,6 +151,19 @@ int main() {
         // completion (the trigger is implicit at exit): nothing overlaps, so nothing conflicts.
         auto v = g::first_scratch_violation({projection, early_quantizer(kA)});
         check(!v.has_value(), "an early start under a non-releasing launch is not a hazard");
+        // Its writes, though, are visible only after the dependent's wait: an early read of them
+        // before that wait is still a hazard.
+        {
+            auto writer = launch("writer", false, false);
+            writer.add(
+                {kA, g::ScratchAccess::Write, g::ScratchFirst::AfterWait, g::ScratchLast::AtExit});
+            auto reader = launch("early_reader", true, false);
+            reader.add(
+                {kA, g::ScratchAccess::Read, g::ScratchFirst::BeforeWait, g::ScratchLast::AtExit});
+            const auto w = g::first_scratch_violation({writer, reader});
+            check(w && w->hazard == H::ReadAfterWrite,
+                  "a non-releasing writer's region read before the wait: read after write");
+        }
         const auto mma      = route(g::Family::RegisterMma, false);
         const auto prefetch = g::launch_lifetime(
             "decode_prefetch", g::launch_overlap(mma, g::Epilogue::Store, 1, false, false, true),
