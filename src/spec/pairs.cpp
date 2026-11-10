@@ -376,18 +376,19 @@ std::map<std::string, double> profile_round_costs(const Profile& profile) {
 namespace {
 
 // A card: its GPU class id and the board's facts that decide a round's price: chip, SM count,
-// memory bus width and data rate, memory size (the facts table's row of the record's PCI product
-// id). Two board names of one chip with the same facts (the RTX 3060 and its Lite Hash Rate
-// board, the RTX 2080 Ti and its Rev. A board) are one card; boards that differ in any of them are
-// two cards, each priced by its own rates (pool_cards). A board the table has no row for stands
-// as its id; a record naming no board is the class's card ("0").
+// reference clock, memory bus width and data rate, memory size (the facts table's row of the
+// record's PCI product id). Two board names of one chip with the same facts (the RTX 3060 and its
+// Lite Hash Rate board, the RTX 2080 Ti and its Rev. A board) are one card; boards that differ in
+// any of them are two cards, each priced by its own rates (pool_cards). A board the table has no
+// row for stands as its id; a record naming no board is the class's card ("0").
 std::string card_of(const MeasuredPair& pair) {
     std::string board = "0";
     if (pair.lab_board != 0) {
         if (const GpuFactsRow* row = find_gpu_facts(pair.lab_board)) {
             board = row->chip + "," + std::to_string(row->sms) + "sm," +
-                    std::to_string(row->bus_bits) + "bit," + std::to_string(row->gbps) + "gbps," +
-                    std::to_string(row->vram_gib) + "gib";
+                    std::to_string(row->boost_mhz) + "mhz," + std::to_string(row->bus_bits) +
+                    "bit," + std::to_string(row->gbps) + "gbps," + std::to_string(row->vram_gib) +
+                    "gib";
         } else {
             board = "id" + std::to_string(pair.lab_board);
         }

@@ -257,6 +257,34 @@ int main() {
                    "qwen3_5", "mtp", 4.9)
                        .size() == 2,
                "two different cards of one class count as two");
+        // Boards equal but for the reference clock are priced apart: two cards (Tesla V100 SXM2
+        // 16GB 1530 MHz and PCIe 16GB 1380 MHz).
+        expect(sp::pair_group(
+                   {named(0x1DB1, "gv100:80sm", "sm70"), named(0x1DB4, "gv100:80sm", "sm70")},
+                   "qwen3_5", "mtp", 4.9)
+                       .size() == 2,
+               "boards of one chip with other clocks count as two");
+        // A board the facts table has no row for stands as its id: two ids two cards, one id one.
+        expect(sp::pair_group(
+                   {named(0x7771, "ad104:60sm", "sm89"), named(0x7772, "ad104:60sm", "sm89")},
+                   "qwen3_5", "mtp", 4.9)
+                       .size() == 2,
+               "two boards without a facts row count as two");
+        expect(sp::pair_group(
+                   {named(0x7771, "ad104:60sm", "sm89"), named(0x7771, "ad104:60sm", "sm89")},
+                   "qwen3_5", "mtp", 4.9)
+                   .empty(),
+               "one board without a facts row is one card");
+        // A record naming no board is its class's card: beside another class's, two cards; beside
+        // a named board of its own class, no card of its own.
+        expect(sp::pair_group({named(0, "ad104:60sm", "sm89"), named(0, "ga106:28sm", "sm86")},
+                              "qwen3_5", "mtp", 4.9)
+                       .size() == 2,
+               "records naming no board are their classes' cards");
+        expect(sp::pair_group({named(0, "ad104:60sm", "sm89"), named(0x2782, "ad104:60sm", "sm89")},
+                              "qwen3_5", "mtp", 4.9)
+                   .empty(),
+               "a record naming no board is no second card beside its class's named board");
     }
     // Three cards, no depth all of them measured (one 1-3, one 3-5, one 1 and 5): each depth on
     // two cards stands, the group speculates (it decoded plainly for want of a common label).
