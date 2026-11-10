@@ -71,6 +71,17 @@ def signature_start(lines, i):
     return j
 
 
+KEYWORDS = {"if", "while", "for", "switch", "return", "else", "do", "case", "throw", "new"}
+
+
+def names_function(line, name):
+    """The line begins a declaration of `name`: only a return type, qualifiers and template
+    arguments before it (no `(`, `=`, `[` or control keyword), so a call in a condition or a lambda
+    body does not count."""
+    m = re.match(r"^([\w:<>,*&\s~]*)\b" + re.escape(name) + r"\s*\(", line)
+    return bool(m) and not (set(re.findall(r"\w+", m.group(1))) & KEYWORDS)
+
+
 def starts_definition(lines, j):
     """True when the statement that starts at line j reaches a `{` before a `;`: a function
     definition, not a call or a declaration."""
@@ -82,12 +93,6 @@ def starts_definition(lines, j):
         if semi >= 0:
             return False
     return False
-
-
-def is_definition_of(lines, j, name):
-    """The statement at line j defines `name`: its head (to the first `{` or `;`) names the function
-    followed by `(` and it ends in `{`."""
-    return bool(re.search(r"\b" + re.escape(name) + r"\s*\(", lines[j])) and starts_definition(lines, j)
 
 
 class FusionSites(unittest.TestCase):
@@ -137,17 +142,31 @@ class FusionSites(unittest.TestCase):
             self.assertEqual(file, site["decided_in"]["file"], f"{site_id}: marker is in another file")
             j = signature_start(lines, i)
             name = site["decided_in"]["function"]
-            self.assertTrue(j < len(lines) and re.search(r"\b" + re.escape(name) + r"\s*\(", lines[j]),
+            self.assertTrue(j < len(lines) and names_function(lines[j], name),
                             f"{site_id}: the code line after the marker is not the signature of {name}")
             self.assertTrue(starts_definition(lines, j),
                             f"{site_id}: the marker is above a call or a declaration, not a definition")
 
     def test_cited_files_exist(self):
+        def texts(node):
+            if isinstance(node, str):
+                yield node
+            elif isinstance(node, dict):
+                for v in node.values():
+                    yield from texts(v)
+            elif isinstance(node, list):
+                for v in node:
+                    yield from texts(v)
+
         for s in self.sites:
             self.assertTrue((ROOT / s["decided_in"]["file"]).is_file(), s["id"])
-            for text in s["evidence"] + [s["priced"]["by"], s["rule_today"]]:
-                for rel in PATH_IN_TEXT.findall(text):
-                    self.assertTrue((ROOT / rel).exists(), f"{s['id']}: {rel} does not exist")
+        # Every string of the registry, in sites, excluded and pending alike.
+        not_yet = {p["file"] for p in self.reg["pending"]}  # a pending PR's file is not in the tree
+        for text in texts(self.reg):
+            for rel in PATH_IN_TEXT.findall(text):
+                if rel in not_yet:
+                    continue
+                self.assertTrue((ROOT / rel).exists(), f"{rel} does not exist (in: {text[:60]}...)")
 
     def test_invariant_pin_and_parity_test(self):
         for s in self.sites:
