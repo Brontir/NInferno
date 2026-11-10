@@ -47,6 +47,113 @@ inline constexpr std::string_view kNotRecorded = "none recorded";
 inline constexpr std::string_view kUnknown     = "unknown";
 
 inline constexpr auto kRouteRules = std::to_array<RouteRule>({
+    // --- R8's widths, the matrix kernel's band and the verify rules (generic_gemm.h) ---
+    {"kR8MaxTokens", "generic_gemm.h", "inline constexpr std::int32_t kR8MaxTokens    = 4;", 4,
+     "gb203:84sm", "RTX 5080",
+     "no four-row schedule and at most four tokens: the K-quant codecs' registers spilled (up to 2 "
+     "KiB of stack a thread, w4r4 SwiGLU at eight tokens); w4r4 was the best T = 1 schedule on 2 "
+     "of 70 shapes, by 1 %",
+     ""},
+    {"kR8DecodeTokens", "generic_gemm.h", "inline constexpr std::int32_t kR8DecodeTokens = 1;", 1,
+     "gb203:84sm", "RTX 5080",
+     "R8 at T = 1 only: at T = 4 it lost on 26 of 42 decode shapes of Qwen3.5-4B/9B; at T = 1 it "
+     "won on all 42 (0.58-0.96 of the register MMA) and on 69 of 70 Qwen3.8-27B / Gemma 4 31B / "
+     "Qwen3.6-35B-A3B shapes (0.77-0.99; Q6_K 4096x2048 1.05)",
+     ""},
+    {"kR8VerifyTokens", "generic_gemm.h", "inline constexpr std::int32_t kR8VerifyTokens = 8;", 8,
+     "gb202:170sm, gb203:70sm, ad102:128sm", "RTX 5090, RTX 5070 Ti, RTX 4090",
+     "Q8 at T = 2..8 took 0.96-1.15 of its T = 1 time on R8 against 0.99-1.24 on the register MMA "
+     "(5090); past four tokens the other formats' R8 lost (Q4_K 1.48-1.89, IQ3_XXS 1.49-1.80, "
+     "IQ4_XS 1.19-1.53); the dp4a work equals the weight read at 21 tokens (A100, H100), 37 "
+     "(RTX 3060), 40 (GV100), 86 (RTX 4090); RTX 4090 Qwen3.5-9B Q8_0 dflash:7 229 -> 273 tok/s",
+     ""},
+    {"kMmqMinTokens", "generic_gemm.h", "inline constexpr std::int32_t kMmqMinTokens = 5;", 5,
+     "unknown (decisions.md 58 names the families: Ampere, Ada, Blackwell and Turing)",
+     "unknown (the same families)",
+     "docs/maintainer/decisions.md 58: five tokens, past the four R8 verifies for every format "
+     "but Q8; the vector kernel through T = 4 on the native-MMA boards, Turing's codebook formats "
+     "at T = 5..8 to the matrix kernel",
+     ""},
+    {"kMmqMaxTokens", "generic_ggml_internal.h",
+     "inline constexpr std::int32_t kMmqMaxTokens = 16;", 16,
+     "gb202:170sm, ad103:80sm, gb203:84sm", "RTX 5090, RTX 4080 SUPER, RTX 5080",
+     "no fixed rule holds across chips and formats (the dense tuner times it): against the "
+     "heuristic's tile, serve C4: 5090 ISTA IQ3_S +10 % at 16 tokens; Muse Q4_K_M -7..14 %, 4080 "
+     "SUPER ISTA -12 % at 8; 5080 IQ3_S even; below the band it loses to R8 (5090 C1 -11 %)",
+     ""},
+    {"kGgmlMmqMaxTokens", "generic_gemm.h",
+     "inline constexpr std::int32_t kGgmlMmqMaxTokens = 16;", 16, "see kMmqMaxTokens",
+     "see kMmqMaxTokens", "see kMmqMaxTokens (the same 5..16-token band)", ""},
+    {"kGgmlVecMaxTokens", "generic_gemm.h",
+     "inline constexpr std::int32_t kGgmlVecMaxTokens = 8;", 8, kUnknown, kUnknown,
+     "ggml_mmq::kVecMaxColumns, the kernel's own width; no margin recorded", ""},
+    {"kMmqVerifyMinTokens", "generic_gemm.cpp",
+     "constexpr std::int32_t kMmqVerifyMinTokens = 9;", 9, "ad104 (L4), gb203:70sm, ad102:128sm",
+     "L4, RTX 5070 Ti, RTX 4090",
+     "ISTA IQ3_S 27B C4 MTP3 (16-token verify): L4 79.4 -> 89.2 tok/s (+12.3 %), RTX 5070 Ti "
+     "242.7 -> 270.9 (+11.6 %); the K-quants lost on the 4090 (UD-Q4_K_XL 27B DFlash2 C1 115.7 -> "
+     "111.7, C4 271.5 -> 263.1) and stay on the register MMA",
+     ""},
+    {"kQ8PrefillA8Tokens", "generic_gemm.h",
+     "inline constexpr std::int32_t kQ8PrefillA8Tokens = 17;", 17, "gb202:170sm", "RTX 5090",
+     "the chunk-invariance contract's width, not a margin: a DFlash2 round of 17+ columns on A8 "
+     "cost Qwen3.8-27B --spec auto C=1 2-3 %, so only the prefill takes it",
+     ""},
+    {"kDenseTuneMaxTokens", "generic_gemm.h",
+     "inline constexpr std::int32_t kDenseTuneMaxTokens = 16;", 16, kUnknown, kUnknown,
+     "the decode and verify widths the dense tuner times; no margin recorded", ""},
+    {"kR8VerifyQ40MinValues", "generic_gemm.cpp",
+     "inline constexpr std::int64_t kR8VerifyQ40MinValues = 24ll << 20;", 25165824,
+     "ad102:128sm, ga102", "RTX 4090, RTX 3090",
+     "Q4_0 R8 at T = 2..4 pays on a large matrix (Gemma 4 31B QAT, every dense matrix >= 44M "
+     "values, C = 4: RTX 4090 +15.7 %, RTX 3090 +26 %) and loses on a small one (Gemma 4 26B QAT, "
+     "at most 12M: -0.7 %, -2.7 %, its MTP verify -1.1 %); nothing between 12M and 44M measured",
+     ""},
+    {"kRmmaQ6kFourWarpBytes", "generic_gemm.cpp",
+     "inline constexpr double kRmmaQ6kFourWarpBytes = 4.0;", 4.0,
+     "ad102:128sm, ad104:60sm, ad106:34sm, gb203:70sm", "RTX 4090, RTX 4070 Ti, RTX 4060 Ti, "
+     "RTX 5070 Ti",
+     "w1x4 against w1x8: RTX 4090 (3.1 bytes a SM cycle) 0.82-0.98, 4070 Ti (3.2) 0.80-0.99, 4060 "
+     "Ti (3.4) 0.87-1.00; 5070 Ti (5.2) 0.98-1.12; the 5080 and 5090 (4.4) not measured",
+     ""},
+    {"kRmmaLatencySwiGluBytes", "generic_gemm_internal.h",
+     "inline constexpr double kRmmaLatencySwiGluBytes = 4.5;", 4.5, kUnknown, kUnknown,
+     "the measurements are at rmma_latency_pays (generic_gemm_launch.cuh), not restated here", ""},
+    {"kRmmaLatencyOneSetBytes", "generic_gemm_internal.h",
+     "inline constexpr double kRmmaLatencyOneSetBytes = 5.5;", 5.5, kUnknown, kUnknown,
+     "the measurements are at rmma_latency_pays (generic_gemm_launch.cuh), not restated here", ""},
+    {"kRmmaWideBytes", "generic_gemm_internal.h",
+     "inline constexpr double kRmmaWideBytes = 5.5;", 5.5,
+     "ad102:128sm, gb203:70sm, ga106:28sm", "RTX 4090, RTX 5070 Ti, RTX 3060",
+     "A/B, T = 1..8: RTX 4090 (3.1 bytes a SM cycle) add 71 -> 59 us, 5070 Ti (5.2) every problem "
+     "1-8 % faster; on the RTX 3060 (7.2) the extra shuffles cost 2-10 %",
+     ""},
+    // --- Volta's routes (generic_gemm.cpp, generic_gemm_internal.h) ---
+    {"kVoltaCutlassMinTokens", "generic_gemm.cpp",
+     "constexpr std::int32_t kVoltaCutlassMinTokens = 17;", 17, "gv100", "V100",
+     "the prefill band's first width (kPrefillMinTokens); V100 ninferno_linear_bench, T = 32..240: "
+     "the tile's time against the copy's 1.07..2.29 ms against 0.27..1.40 on the shapes listed at "
+     "the rule",
+     ""},
+    {"kVoltaTileMaxTokens", "generic_gemm.cpp",
+     "constexpr std::int32_t kVoltaTileMaxTokens    = 256;", 256, "gv100", "V100 (the rule, for "
+     "boards under the copy's bandwidth bound, is not measured on them)",
+     "none recorded: two token blocks already decode the weight twice from 256", ""},
+    {"kVoltaCopyMinDramGbps", "generic_gemm.cpp",
+     "constexpr double kVoltaCopyMinDramGbps        = 870.0 / 1.13;", 870.0 / 1.13, "gv100", "V100 (870 "
+     "GB/s); the Titan V (653) is under the bound, not measured",
+     "the copy's narrowest margin is 1.13 (24576 x 4096 below 129 tokens) at 870 GB/s", ""},
+    {"kVoltaHmmaMinTokens", "generic_gemm_internal.h",
+     "inline constexpr std::int32_t kVoltaHmmaMinTokens = 1;", 1, "gv100", "V100",
+     "a byte-consistency contract, not a margin: a one-token call in a lane-local call ran the "
+     "FP32 GEMV and the same token in a wider call the HMMA kernel (test_moe)",
+     ""},
+    {"kVoltaHmmaMaxTokens", "generic_gemm_internal.h",
+     "inline constexpr std::int32_t kVoltaHmmaMaxTokens = 16;", 16, "gv100", "V100",
+     "the verify widths (Q4_K / Q5_K / Q6_K and Q8 G32); Quadro GV100 Qwen3.8 27B UD-Q4_K_XL: the "
+     "register MMA at T = 5..16 about 0.5 ms a call against 0.08 for the vector kernel at T = 4; C8 "
+     "aggregate 37.3 tok/s against C4 86.3",
+     ""},
     // --- The vector kernel's verify widths ---
     {"kVecRuleMaxTokens", "generic_gemm.cpp", "constexpr std::int32_t kVecRuleMaxTokens = 4;", 4,
      "tu102:68sm, ga100, ga102, gb202:170sm, ad102:128sm, gv100",
@@ -54,7 +161,9 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "the vector kernel was within 4 % of the best route at T = 2..4 and behind it at T = 8 on all "
      "eight cards of the dense tuner (A100 x1.5..1.6, RTX 3090 x1.4..1.5, RTX 5090 x1.1, RTX 4090 "
      "x1.03); RTX 2080 Ti: lost decode by 10 % (9B Q4_K_M C1 88 -> 79 tok/s), won C4 by 10 %; "
-     "Volta takes every width it reads instead",
+     "Volta takes every width it reads instead; docs/maintainer/decisions.md 58: the band rule "
+     "(vector kernel at T <= 4, register MMA from 5) is the one measured on Ampere, Ada and "
+     "Blackwell, held against a price-based pick (RTX 4070 Ti, Q6_K 3840x15360, T = 5)",
      ""},
     // --- The widths where the speed profile's heuristic choices change (generic_gemm.h) ---
     {"kRmmaMidMinTokens", "generic_gemm.h",
@@ -161,7 +270,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
     {"rules_r8: blackwell sm count", "generic_gemm.cpp", "device_class().sms <= 96", 96,
      "gb203:84sm, gb202:170sm", "RTX 5080, RTX 5090",
      "an SM-count rule whose edge lies between the measured boards (84 and 170 SMs; no board "
-     "between): 10240x5120 IQ3_S w4r1 18.4 us against w8r2 20.3 at 170, IQ3_XXS 16.0 against 18.0",
+     "between; docs/maintainer/deterministic-decisions.md lists it among the rules resting on few "
+     "boards): 10240x5120 IQ3_S w4r1 18.4 us against w8r2 20.3 at 170, IQ3_XXS 16.0 against 18.0",
      ""},
     {"rules_r8: blackwell iq3s", "generic_gemm.cpp", "p.qtype == QType::GGML_IQ3_S && p.n >= 5120",
      5120, "gb203:84sm, gb206:36sm", "RTX 5080, RTX 5060 Ti",

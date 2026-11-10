@@ -2,7 +2,8 @@
 // describe: every descriptor has a unique name, a literal that is in its file (whitespace aside), a
 // recorded boards / cards / tolerance field ("unknown" or "none recorded" where the record is
 // silent, never empty) and an empty kernel hash (none is recorded); a named constant's value is the
-// one the source defines; and every constant of generic_gemm.h's widths block has a descriptor, so
+// one the source defines; and every threshold constant of the selection code (src/ops/generic, matched by name: Min / Max /
+// Tokens / Fill / Distance / Values / Bytes / Gbps) has a descriptor or is allowlisted as a non-rule, so
 // a rule cannot change, move or appear without its record. `--list` prints them. No GPU.
 
 #include "ops/generic/route_rules.h"
@@ -82,25 +83,41 @@ int main(int argc, char** argv) {
             }
         }
     }
-    // The widths block of generic_gemm.h: every constant there is a described rule.
-    const std::string header = read("generic_gemm.h");
-    const auto begin = header.find("The widths where the speed profile's heuristic choices");
-    const auto end   = header.find("enum class Epilogue", begin);
-    if (begin == std::string::npos || end == std::string::npos) {
-        fail("generic_gemm.h: the widths block is not where this test expects it");
-    } else {
-        const std::string block = header.substr(begin, end - begin);
-        static const std::regex constant(R"(constexpr [^=;]*\b(k[A-Z]\w*)\s*=)");
-        std::size_t found = 0;
-        for (std::sregex_iterator it(block.begin(), block.end(), constant), stop; it != stop;
-             ++it) {
-            ++found;
-            if (names.count((*it)[1].str()) == 0) {
-                fail((*it)[1].str() + " is a constant of generic_gemm.h's widths block without a "
-                                      "descriptor in kRouteRules");
+    // Every token / width / fill / distance / values / bytes threshold constant of the selection
+    // code (the .h and .cpp of ops/generic) is a described rule, except the listed non-rules:
+    // sizes and limits that no selection compares a call against.
+    static const std::set<std::string> kNotRules = {
+        "kMaxSegments",    // the segmented projection's slot count (an array size)
+        "kMaxScratchUses", // scratch lifetime bookkeeping
+        "kBytes",          // a local buffer size of the tuner's L2 flush
+        "kExactMinor",     // a build switch (an "a" / "f" target's minor)
+    };
+    static const std::regex threshold(
+        R"(constexpr [^=;(){}]*\b(k\w*(?:Min|Max|Tokens|Fill|Distance|Values|Bytes|Gbps)\w*)\s*=)");
+    std::size_t scanned = 0;
+    std::set<std::string> found_names;
+    const auto root = std::filesystem::path(NINFERNO_SOURCE_DIR) / "src/ops/generic";
+    for (const auto& item : std::filesystem::directory_iterator(root)) {
+        const auto ext = item.path().extension();
+        const std::string file = item.path().filename().string();
+        if ((ext != ".h" && ext != ".cpp") || file == "route_rules.h") continue;
+        std::string text = read(file);
+        // Comments may name constants too: drop them (block, then line comments).
+        text = std::regex_replace(text, std::regex(R"(/\*[\s\S]*?\*/)"), "");
+        text = std::regex_replace(text, std::regex(R"(//[^\n]*)"), "");
+        ++scanned;
+        for (std::sregex_iterator it(text.begin(), text.end(), threshold), stop; it != stop; ++it) {
+            const std::string name = (*it)[1].str();
+            found_names.insert(name);
+            if (names.count(name) == 0 && kNotRules.count(name) == 0) {
+                fail(name + " (" + file + ") is a threshold constant of the selection code without "
+                                         "a descriptor in kRouteRules (or an entry in kNotRules)");
             }
         }
-        if (found == 0) fail("no constants found in the widths block");
+    }
+    if (scanned == 0 || found_names.size() < 10) fail("the threshold scan found too little");
+    for (const auto& name : kNotRules) {
+        if (found_names.count(name) == 0) fail(name + " is allowlisted but no longer defined");
     }
     if (argc > 1 && std::string(argv[1]) == "--list") {
         for (const auto& rule : rr::kRouteRules) {
