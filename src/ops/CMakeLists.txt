@@ -2,10 +2,15 @@
 add_library(ninferno_ops STATIC)
 ninferno_internal_includes(ninferno_ops)
 ninferno_cuda_archive(ninferno_ops)
+# ninferno_ops_host first: its kernel_facts.cpp calls the inline device_class(), so the reference to
+# current_device_class() (defined in ninferno_core) first appears while that archive is scanned, and
+# ninferno_core must come after it on the link line. CMake keeps the order of this list, so it is
+# part of the contract; tests/test_ops_link_only.cpp links nothing but ninferno_ops and fails to
+# link if the two are swapped.
 if(NINFERNO_WITH_NVFP4)
-  target_link_libraries(ninferno_ops PUBLIC ninferno_core PRIVATE ninferno_nvfp4_non_rdc)
+  target_link_libraries(ninferno_ops PUBLIC ninferno_ops_host ninferno_core PRIVATE ninferno_nvfp4_non_rdc)
 else()
-  target_link_libraries(ninferno_ops PUBLIC ninferno_core)
+  target_link_libraries(ninferno_ops PUBLIC ninferno_ops_host ninferno_core)
 endif()
 # The FP8 and BF16 TMA routes encode their tensor maps through the driver API on every build.
 target_link_libraries(ninferno_ops PUBLIC CUDA::cuda_driver)
