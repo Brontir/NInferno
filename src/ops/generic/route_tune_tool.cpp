@@ -445,7 +445,7 @@ int route_tune_main(int argc, char** argv) {
                          r.family == generic::Family::StagedMma ||
                          r.family == generic::Family::Nvfp4TiledMma ||
                          r.family == generic::Family::TiledMma) &&
-                        t < 17) {
+                        t < generic::kPrefillBandMinTokens) {
                         continue;
                     }
                     // R8 serves decode and verify widths only.
@@ -464,7 +464,8 @@ int route_tune_main(int argc, char** argv) {
                         best       = us;
                         best_route = r;
                     }
-                } else if (a8_sweep && t >= 17 && p.n % ops::ggml_mmq::kRowMultiple == 0 &&
+                } else if (a8_sweep && t >= generic::kPrefillBandMinTokens &&
+                           p.n % ops::ggml_mmq::kRowMultiple == 0 &&
                            generic::ggml_mmq_admits(w.weight, ops::LinearPolicy::AllowA8)) {
                     time_route({generic::Family::GgmlMmq, 0}, t);
                 }
