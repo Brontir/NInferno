@@ -17,6 +17,7 @@
 // No other generation or format has been run over the widths: a generation joins by its row, a
 // format by its grid.
 
+#include "core/arch_registry.h"
 #include "core/generation.h"
 #include "core/weight.h"
 
@@ -143,12 +144,7 @@ inline constexpr int kTileK         = 32;  // MMQ_TILE_NE_K
 // sharedMemPerBlockOptin; the CUDA programming guide's table): 96 KiB on sm_70, 64 KiB on sm_75,
 // 163 KiB on sm_80 and sm_87, 227 KiB from sm_90 on, 99 KiB on sm_86, sm_89 and sm_12x.
 [[nodiscard]] constexpr std::size_t shared_per_block(int major, int minor) noexcept {
-    const int cc = major * 10 + minor;
-    if (cc == 70 || cc == 72) { return 96 * 1024; }
-    if (cc == 75) { return 64 * 1024; }
-    if (cc == 80 || cc == 87) { return 163 * 1024; }
-    if (cc >= 90 && cc < 120) { return 227 * 1024; }
-    return 99 * 1024;
+    return arch_registry::find(major, minor).smem_per_block_optin; // the archs table
 }
 
 // The widest tile of the widths both tables hold (128, 64, 32, 16) that the device's shared memory

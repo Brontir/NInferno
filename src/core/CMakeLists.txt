@@ -8,6 +8,10 @@ configure_file(embedded_gpu_facts.h.in
 # target that includes it.
 ninferno_generate_board_registry(${CMAKE_CURRENT_SOURCE_DIR}/data/gpu_facts.json
   ${CMAKE_CURRENT_BINARY_DIR}/generated_public/core/board_registry_rows.inc)
+# And the "archs" array as constexpr rows (core/arch_registry.h): the SM limits per compute
+# capability that the build's limits, the MMQ tile widths and the synthetic device class read.
+ninferno_generate_arch_registry(${CMAKE_CURRENT_SOURCE_DIR}/data/gpu_facts.json
+  ${CMAKE_CURRENT_BINARY_DIR}/generated_public/core/arch_registry_rows.inc)
 
 add_library(ninferno_core STATIC
   arena.cu

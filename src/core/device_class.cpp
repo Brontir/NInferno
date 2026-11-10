@@ -1,4 +1,5 @@
 #include "core/device_class.h"
+#include "core/arch_registry.h"
 #include "core/generation.h"
 
 #include <cuda_runtime.h>
@@ -749,19 +750,22 @@ DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int m
     // board_mma_slow as the query sets it (the table's row, else the chip's); `facts` itself stays
     // empty until a test asks for it.
     d.features.mma_slow = board_mma_slow(machine_facts_of(d), major, minor, d.chip);
-    // The architecture's limits (CUDA programming guide, compute capability tables).
-    const int cc           = major * 10 + minor;
-    d.smem_per_block_optin = cc == 75                  ? 64 * 1024
-                             : cc == 80 || cc == 87      ? 163 * 1024
-                             : cc >= 90 && cc < 120      ? 227 * 1024
-                                                         : 99 * 1024;
-    d.smem_per_sm          = cc == 75                  ? 64 * 1024
-                             : cc == 80 || cc == 87      ? 164 * 1024
-                             : cc >= 90 && cc < 120      ? 228 * 1024
-                                                         : 100 * 1024;
-    d.max_threads_per_sm   = cc == 75 ? 1024 : cc == 80 || (cc >= 90 && cc < 120) ? 2048 : 1536;
-    d.max_blocks_per_sm    = cc == 75 ? 16 : cc == 86 ? 16 : cc == 89 ? 24 : 32;
-    d.registers_per_sm     = 64 * 1024;
+    // The architecture's limits: the archs table of gpu_facts.json (core/arch_registry.h).
+    const arch_registry::ArchRow& arch = arch_registry::find(major, minor);
+    d.smem_per_block_optin             = arch.smem_per_block_optin;
+    d.smem_per_sm                      = arch.smem_per_sm;
+    d.max_threads_per_sm               = arch.max_threads_per_sm;
+    d.max_blocks_per_sm                = arch.max_blocks_per_sm;
+    d.registers_per_sm                 = arch.registers_per_sm;
+    if (major == 7 && minor < 5) {
+        // The synthetic Volta class has always carried the unlisted row's shared memory and
+        // threads, not the architecture's (96 KiB, 2048): kept here so the selector goldens
+        // stay byte-equal in the step that moved the tables; the step that corrects it
+        // regenerates them (tests/test_arch_registry.cpp pins both).
+        d.smem_per_block_optin = arch_registry::kRows[0].smem_per_block_optin;
+        d.smem_per_sm          = arch_registry::kRows[0].smem_per_sm;
+        d.max_threads_per_sm   = arch_registry::kRows[0].max_threads_per_sm;
+    }
     d.persisting_l2_max_bytes = l2_bytes * 3 / 4;
     return d;
 }
