@@ -1994,7 +1994,8 @@ void resolution_labels(const json& fixture) {
                     const ch::Scored& anchor = c.scored[c.anchor];
                     const bool inside        = a.scored == &anchor ||
                                         std::log(a.scored->decision_seconds /
-                                                 anchor.decision_seconds) <= c.resolution + 1e-9;
+                                                 anchor.decision_seconds) <=
+                                            std::max(anchor.resolution, a.scored->resolution) + 1e-9;
                     check(c.resolved_within_resolution &&
                               a.why_code == (inside ? "within_resolution" : "outside_resolution"),
                           name + " " + a.value + ": a higher worth is " +
@@ -2002,7 +2003,8 @@ void resolution_labels(const json& fixture) {
                     continue;
                 }
                 const double apart = std::abs(std::log(a.scored->decision_seconds / best.decision_seconds));
-                const bool inside  = gap > 1e-9 && gap <= std::min(c.resolution, apart) + 1e-9;
+                const bool inside  = gap > 1e-9 &&
+                                    gap <= std::min(std::max(best.resolution, a.scored->resolution), apart) + 1e-9;
                 check(inside == (a.why_code == "within_resolution"),
                       name + " " + a.value + ": within_resolution exactly inside the band");
                 (inside ? within : lower) += 1;
@@ -2297,37 +2299,149 @@ void resolution_rule() {
         s.worth            = -std::log(seconds) - kld;
         return s;
     };
-    const std::vector<ch::Scored> scored{make(1.0, 0.02, 1000),   make(1.015, 0.01, 1000),
-                                         make(1.016, 0.005, 500), make(1.05, 0.001, 9000),
-                                         make(1.015, 0.01, 900),  make(1.0, 0.02, 1000)};
+    std::vector<ch::Scored> scored{make(1.0, 0.02, 1000),   make(1.015, 0.01, 1000),
+                                   make(1.016, 0.005, 500), make(1.05, 0.001, 9000),
+                                   make(1.015, 0.01, 900),  make(1.0, 0.02, 1000)};
     const std::vector<std::size_t> all{0, 1, 2, 3, 4, 5};
-    check(ch::resolve_within_resolution(scored, all, 0, 0.02) == 2,
-          "inside the resolution: the lowest KLD");
-    check(ch::resolve_within_resolution(scored, all, 0, 0) == 0, "no resolution: the best worth");
-    check(ch::resolve_within_resolution(scored, all, 0, 0.01) == 0,
-          "outside the resolution: the best worth");
-    check(ch::resolve_within_resolution(scored, all, 0, 0.06) == 3,
-          "a wider resolution reaches the 5 % one");
-    check(ch::resolve_within_resolution(scored, {0, 4, 1}, 0, 0.02) == 1,
-          "equal KLD: the lower index");
-    check(ch::resolve_within_resolution(scored, {4, 1}, 4, 0.02) == 4,
-          "equal KLD to the anchor: it stays");
+    const auto at = [&](double resolution) {
+        for (ch::Scored& s : scored) { s.resolution = resolution; }
+        return resolution;
+    };
+    at(0.02);
+    check(ch::resolve_within_resolution(scored, all, 0) == 2, "inside the resolution: the lowest KLD");
+    at(0);
+    check(ch::resolve_within_resolution(scored, all, 0) == 0, "no resolution: the best worth");
+    at(0.01);
+    check(ch::resolve_within_resolution(scored, all, 0) == 0, "outside the resolution: the best worth");
+    at(0.06);
+    check(ch::resolve_within_resolution(scored, all, 0) == 3, "a wider resolution reaches the 5 % one");
+    at(0.02);
+    check(ch::resolve_within_resolution(scored, {0, 4, 1}, 0) == 1, "equal KLD: the lower index");
+    check(ch::resolve_within_resolution(scored, {4, 1}, 4) == 4, "equal KLD to the anchor: it stays");
+    // The band of a pair is the wider of the two estimates' (#618): the anchor's Own 1 % and a
+    // Transferred 6 % candidate reach the 5 % one; two Own 1 % estimates do not.
+    at(0.01);
+    scored[3].resolution = 0.06;
+    check(ch::resolve_within_resolution(scored, all, 0) == 3, "the wider of the pair's resolutions");
+    scored[3].resolution = 0.01;
+    check(ch::resolve_within_resolution(scored, all, 0) == 0, "two narrow resolutions: the best worth");
+    at(0.02);
     // A lower index of equal KLD and equal context must not move the pick (#507: BF16 over INT8).
-    check(ch::resolve_within_resolution(scored, {5, 0}, 0, 0.02) == 0,
+    check(ch::resolve_within_resolution(scored, {5, 0}, 0) == 0,
           "equal KLD and context: the anchor stays");
     // More context alone never moves it.
     std::vector<ch::Scored> roomy = scored;
     roomy[1].accuracy.kld         = 0.02;
     roomy[1].own_context          = 90000;
-    check(ch::resolve_within_resolution(roomy, {0, 1}, 0, 0.02) == 0,
+    check(ch::resolve_within_resolution(roomy, {0, 1}, 0) == 0,
           "more context is headroom, not a reason");
     // A NaN KLD never wins.
     roomy[1].accuracy.kld = std::nan("");
-    check(ch::resolve_within_resolution(roomy, {0, 1}, 0, 0.02) == 0, "NaN KLD: the anchor stays");
+    check(ch::resolve_within_resolution(roomy, {0, 1}, 0) == 0, "NaN KLD: the anchor stays");
     std::vector<ch::Scored> none = scored;
     none[0].decision_seconds     = 0;
-    check(ch::resolve_within_resolution(none, all, 0, 0.02) == 0,
+    check(ch::resolve_within_resolution(none, all, 0) == 0,
           "no reference estimate: unchanged");
+}
+
+// The resolution of a Transferred estimate (#618 step 3), derived from decode_measured.json: the
+// rms of ln(predicted / measured) when the rows of kTransferGeneration are carried onto the cards
+// of other generations (each card priced as an "ada" with its own bytes rate, SMs and clock). Every
+// short-context row (not marked long) of a card whose generation is not "ada" counts; the long rows
+// have their own guards in decodes_from_facts. The constant is checked against it, not fitted.
+void transferred_resolution(const json& fixture) {
+    double sq = 0;
+    int n     = 0;
+    std::map<std::string, std::pair<double, int>> by_generation;
+    for (const json& row : fixture.at("rows")) {
+        if (row.value("long", false)) { continue; }
+        const json& m           = fixture.at("models").at(row.at("model").get<std::string>());
+        const std::string q     = row.at("quant").get<std::string>();
+        const ch::ModelFacts mf = model_at(m, q);
+        ch::CardFacts cf        = card_of(fixture.at("cards").at(row.at("card").get<std::string>()));
+        const std::string gen   = std::string(ch::generation_of(cf));
+        if (gen == ch::kTransferGeneration) { continue; }
+        cf.major = 8, cf.minor = 9; // carried: the Ada rows, this board's rates
+        const ch::QuantOption qo = quant_of(q, m.at("quants").at(q));
+        ch::Candidate c;
+        c.kv    = kv_of(row.at("kv").get<std::string>());
+        c.ring  = kv_of(row.at("ring").get<std::string>());
+        c.state = row.at("state").get<std::string>() == "f32" ? RecurrentStateStorage::FP32 : RecurrentStateStorage::FP16;
+        const ch::Speed s = ch::speed_of(mf, cf, qo, c, row.at("concurrency").get<std::uint32_t>(),
+                                         row.at("context").get<double>());
+        const double e    = std::log(s.decode_per_stream / row.at("decode").get<double>());
+        sq += e * e, ++n;
+        auto& g = by_generation[gen];
+        g.first += e * e, ++g.second;
+    }
+    const double rms = std::sqrt(sq / n);
+    for (const auto& [gen, v] : by_generation) {
+        std::cout << "  carried onto " << gen << ": " << v.second << " points, rms "
+                  << std::sqrt(v.first / v.second) << "\n";
+    }
+    std::cout << "transferred resolution (Ada's rows carried onto the other cards), " << n << " points: rms " << rms
+              << " (stated " << ch::kTransferredDecodeError << ")\n";
+    check(n >= 40 && std::abs(rms - ch::kTransferredDecodeError) < 0.0015,
+          "the stated transferred resolution is the carried rows' rms");
+    check(ch::kTransferredDecodeError > ch::kDecodePredictionError[0].rms,
+          "carrying costs more than the generation's own rows");
+}
+
+// What typing the resolution by the estimate's basis changes (#618 step 3, a behaviour change made
+// visible): for every fixture card and bench, the old (the reference generation's one number,
+// Gates::typed_resolution closed) and the new resolution, the candidates each chooses, and whether
+// the choice moves. Nothing is asserted about the count of moves; the table is the record.
+void resolution_by_basis(const json& fixture) {
+    int total = 0, moved = 0, typed = 0;
+    std::vector<std::pair<std::string, Bench>> benches;
+    for (const auto& [name, unused] : fixture.at("cards").items()) {
+        (void)unused;
+        benches.emplace_back(name + " Qwen3.5-9B", nine_b(fixture, name));
+        const json& m35 = fixture.at("models").at("Qwen3.6-35B-A3B");
+        Bench moe{model_of(m35), card_of(fixture.at("cards").at(name)), {}};
+        for (const auto& [qname, qrow] : m35.at("quants").items()) { moe.quants.push_back(quant_of(qname, qrow)); }
+        moe.model.drafters        = {{"dflash:7", "dflash", 2.5, 2, "measured"}, {"mtp:4", "mtp", 1.9, 2, "measured"}};
+        moe.model.default_drafter = 2;
+        benches.emplace_back(name + " Qwen3.6-35B-A3B", moe);
+    }
+    const auto describe = [](const ch::Choice& c) {
+        if (!c.chosen) { return std::string("none"); }
+        const ch::Candidate& k = chosen(c).candidate;
+        return std::string(kv_cache_storage_name(k.kv)) + "/act" + std::to_string(static_cast<int>(k.activations)) +
+               "/chunk" + std::to_string(k.chunk) + "/drafter" + std::to_string(k.drafter);
+    };
+    for (const auto& [label, b] : benches) {
+        const ch::Allowed allowed = ch::allowed_axes(b.model, KvCacheStorage::Int8Group64);
+        for (std::size_t qi = 0; qi < b.quants.size(); ++qi) {
+            for (const std::uint32_t context : {4096U, 32768U, 131072U}) {
+                ch::Task task;
+                task.contexts = {context};
+                ch::Gates old_gates{true, true};
+                old_gates.typed_resolution = false;
+                const ch::Choice before = ch::choose(b.model, b.card, b.quants[qi], allowed, {}, task,
+                                                     oracle(b, 40e9, qi), old_gates);
+                const ch::Choice after  = ch::choose(b.model, b.card, b.quants[qi], allowed, {}, task,
+                                                    oracle(b, 40e9, qi), ch::Gates{true, true});
+                if (!before.chosen || !after.chosen) { continue; }
+                const bool differs = describe(before) != describe(after);
+                const bool retyped = std::any_of(after.scored.begin(), after.scored.end(), [&](const ch::Scored& s) {
+                    return s.resolution != before.scored.front().resolution;
+                });
+                ++total, moved += differs, typed += retyped;
+                if (differs || retyped) {
+                    std::cout << "  resolution by basis: " << label << ' ' << b.quants[qi].label << ' ' << context
+                              << ": old " << before.resolution << ", new " << after.resolution << " (widest), "
+                              << (differs ? "CHANGED " + describe(before) + " -> " + describe(after)
+                                          : "choice unchanged: " + describe(after))
+                              << '\n';
+                }
+                // Where every estimate is Own the typing is the old number.
+                if (!retyped) { check(!differs, label + ": all-Own estimates choose as before"); }
+            }
+        }
+    }
+    std::cout << "resolution by basis: " << total << " choices, " << typed << " with a Transferred estimate, "
+              << moved << " changed\n";
 }
 
 int main() {
@@ -2336,7 +2450,9 @@ int main() {
     reproduces_the_measurements(fixture);
     {
         std::ifstream campaign(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/decode_measured.json");
-        decodes_from_facts(json::parse(campaign));
+        const json decode_rows = json::parse(campaign);
+        decodes_from_facts(decode_rows);
+        transferred_resolution(decode_rows);
         std::ifstream prefills(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/prefill_measured.json");
         const json prefill_rows = json::parse(prefills);
         prefills_by_format(prefill_rows);
@@ -2372,6 +2488,7 @@ int main() {
     choices_replay(fixture);
     resolution_labels(fixture);
     resolution_rule();
+    resolution_by_basis(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;

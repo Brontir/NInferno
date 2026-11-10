@@ -302,6 +302,14 @@ struct PredictionError {
 };
 inline constexpr PredictionError kDecodePredictionError[] = {{"ada", 0.0226}, {"gb20x", 0.0170}};
 
+// The resolution of a Transferred estimate (#618 step 3): the error of carrying one generation's
+// rows onto another board. Derived from decode_measured.json, like the rows above: every
+// short-context row (not marked long) of a card whose generation is not kTransferGeneration is
+// priced as if the card were of kTransferGeneration (its rows, the board's own bytes, SMs and
+// clocks), and the constant is sqrt(mean(ln(predicted / measured)^2)) over them. ninferno_choice_test
+// recomputes it ("transferred_resolution") and prints each generation's share.
+inline constexpr double kTransferredDecodeError = 0.05;
+
 // kDp4aOpsPerSmClock (a generation without an int8 MMA decodes its int8 route at it, choice.cpp
 // decode_int8_peak): core/cost_constants.h, a chip fact shared with spec/round_cost.h.
 
