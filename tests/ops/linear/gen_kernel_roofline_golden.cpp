@@ -7,11 +7,15 @@
 // To regenerate: check out the pre-refactor commit named in the .inc header, copy in the two files
 // that expose the selector's price as a query (src/ops/generic/route_query.h and route_query.cpp
 // from the PR branch: priced_routes_query, a pure addition that does not touch the formula) and
-// this file with its tests.cmake registration, build it in a full sm_120a build (NVFP4 on, so every
-// register-MMA schedule including the cluster K splits launches; 99 KiB of shared memory per
-// block), run it with the output path and the commit hash:
-//   ninferno_gen_kernel_roofline_golden kernel_roofline_golden.inc <commit>
-// and run clang-format on the output (the pre-push hook does: the committed file is the formatted
+// this file with its tests.cmake registration, and build it TWICE, because which routes a build
+// offers depends on the build set: in a full sm_120a build (NVFP4 on, so every register-MMA
+// schedule including the cluster K splits launches; 99 KiB of shared memory per block) and in an
+// sm_80 build (163 KiB, so the deep staged schedules 10-12 fit). Run each with the output path and
+// the commit hash:
+//   ninferno_gen_kernel_roofline_golden out.inc <commit>
+// then merge the two outputs (the union of their routes; a route both price must agree):
+//   merge_kernel_roofline_golden.py sm120a.inc sm80.inc kernel_roofline_golden.inc
+// and run clang-format on the result (the pre-push hook does: the committed file is the formatted
 // one). The grid below must match kGoldenFormats in test_kernel_roofline.cpp.
 #include "core/device_class.h"
 #include "ninferno/ops/linear.h"
