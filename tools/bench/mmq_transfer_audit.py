@@ -65,15 +65,45 @@ def generation_of(rows, cc):
     raise ValueError(f"no generation row for cc {cc}")
 
 
-def measured_boards(path):
-    """kMmqPrefillPays: [(name, cc, sms, l2, dram, pays)] from core/measured_boards.h."""
+def ridge_t(gen, sms, clock_mhz, dram_gbps):
+    """A card's ridge T* for the representative Q4_K: the generation's int8 rate (`gen`, a row of
+    generations()) x SMs x boost clock over DRAM, ops/s x bytes per value / (2 x DRAM bytes/s).
+    None where a rate is unknown. The one place the formula lives (load_cards, selection_regret)."""
+    if not (clock_mhz and dram_gbps and sms and gen[4] > 0):
+        return None
+    return gen[4] * sms * clock_mhz * 1e6 * BYTES_PER_VALUE / (2 * dram_gbps * 1e9)
+
+
+def registry_rows(path):
+    """{pci id: row} of core/data/gpu_facts.json, the board registry's source (#608)."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    return {int(r["id"], 16): r for r in data["gpus"]}
+
+
+def measured_boards(path, facts=None):
+    """kMmqPrefillPays: [(name, cc, sms, l2, dram, pays)] from core/measured_boards.h. Each board
+    is `board_registry::board(pci id[, dram override])` (core/board_registry.h): its compute
+    capability, SMs and L2 come from the registry row, its DRAM from bus bits x Gbps / 8 unless
+    the override names it. A literal `Board{...}` is read as before."""
     text = Path(path).read_text(encoding="utf-8")
+    facts = Path(facts) if facts else Path(path).parent / "data" / "gpu_facts.json"
+    rows = registry_rows(facts)
     consts = {}
     for m in re.finditer(r"constexpr Board (k\w+)\{(\d+), (\d+), (\d+), ([\d.]+), ([\d.]+)"
                          r"(?:, (true|false))?\}", text):
         if m[7] == "true":
             raise ValueError(f"{m[1]}: mma_slow boards are not mirrored")
         consts[m[1]] = (int(m[2]) * 10 + int(m[3]), int(m[4]), float(m[5]), float(m[6]))
+    for m in re.finditer(r"constexpr\s+Board\s+(k\w+)\s*=\s*board_registry::board\("
+                         r"\s*(0x[0-9A-Fa-f]+)[uU]?\s*(?:,\s*([\d.]+)\s*)?\)", text):
+        row = rows.get(int(m[2], 16))
+        if row is None:
+            raise ValueError(f"{m[1]}: PCI id {m[2]} is not in {facts}")
+        if row.get("mma_slow", False):
+            raise ValueError(f"{m[1]}: mma_slow boards are not mirrored")
+        # an override of 0 names none, as board()'s default argument does
+        dram = float(m[3]) if m[3] and float(m[3]) != 0 else row["bus_bits"] * row["gbps"] / 8.0
+        consts[m[1]] = (int(row["cc"]), int(row["sms"]), float(row.get("l2_mib", 0)), dram)
     table = re.search(r"kMmqPrefillPays\[\] = \{(.*?)\};", text, re.S)
     out = []
     for m in re.finditer(r"\{(k\w+), (true|false)\}", table[1]):
@@ -122,10 +152,7 @@ def load_cards(routes_dir, gen_rows, facts):
         if clock is None:
             print(f"warning: {path.name}: no gpu_facts.json row matches board {board}; "
                   "its ridge is unknown", file=sys.stderr)
-        ridge = None
-        if clock and gen[4] > 0:
-            ops = gen[4] * board["sms"] * clock * 1e6
-            ridge = ops * BYTES_PER_VALUE / (2 * board["dram_gbps"] * 1e9)
+        ridge = ridge_t(gen, board["sms"], clock, board["dram_gbps"])
         entries = {(e["format"], e["compute"], e.get("epilogue"), e["n"], e["k"]): e
                    for e in doc["entries"]}
         cards[path.stem] = {"name": doc["gpu"].get("name", path.stem), "board": board,
