@@ -69,7 +69,7 @@ static_assert(kRmmaSchedules.size() == 20 && kW4a4Schedules.size() == 4 &&
 
 // The NVFP4 tiled schedules (generic_nvfp4_tiled.cu dispatches by classes, no list of its own):
 // classes (the register MMA's WarpsK whose order it reproduces), block_m (tokens), block_n (rows).
-inline inline constexpr std::array<Nvfp4TiledScheduleInfo, 3> kNvfp4TiledSchedules{{
+inline constexpr std::array<Nvfp4TiledScheduleInfo, 3> kNvfp4TiledSchedules{{
     {1, 64, 128},
     {4, 64, 128},
     {8, 64, 128},

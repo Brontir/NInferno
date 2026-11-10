@@ -9,6 +9,7 @@
 #include "ops/generic/format_traits.h"
 #include "ops/generic/generic_i8_schedules.h"
 #include "ops/generic/generic_schedule_tables.h"
+#include "ops/generic/generic_select_internal.h"
 #include "ops/generic/generic_schedules.h"
 #include "ops/generic/generic_variant_rules.h"
 #include "ops/generic/route_cost_constants.h"
@@ -263,6 +264,8 @@ std::optional<Route> parse_route(std::string_view name) {
 }
 
 int i8_schedule_count() { return static_cast<int>(std::size(kI8Schedules)); }
+
+int i8_bits(QType q) { return q == QType::Q5_G64_FP16 ? 5 : q == QType::Q6_G64_FP16 ? 6 : 4; }
 
 bool i8_fits(int schedule, QType qtype) {
     // The high plane takes 0 / 8 / 16 bytes a group and weight row in every stage; a tile runs

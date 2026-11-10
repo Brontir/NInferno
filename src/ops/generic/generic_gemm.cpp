@@ -1203,7 +1203,6 @@ int k_multiple(WeightCodec codec) {
     }
 }
 
-int i8_bits(QType q) { return q == QType::Q5_G64_FP16 ? 5 : q == QType::Q6_G64_FP16 ? 6 : 4; }
 
 std::optional<ggml_mmq::Type> mmq_type(const Weight& w) {
     switch (w.qtype) {
