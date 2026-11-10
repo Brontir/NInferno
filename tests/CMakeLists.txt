@@ -94,3 +94,9 @@ if(UNIX)
   add_test(NAME ninferno_decision_inputs_test
     COMMAND bash "${PROJECT_SOURCE_DIR}/tools/audit/decision_inputs.sh")
 endif()
+
+# tools/bench/route_table_prune.py: the exit tooling for measured route overrides (#614), on
+# synthetic regret reports, and the tables' evidence_us check (gaps listed in
+# route_evidence_gaps.json, which may only shrink), no GPU.
+add_test(NAME ninferno_route_table_prune_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_route_table_prune.py)

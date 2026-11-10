@@ -264,6 +264,20 @@ class Collect(unittest.TestCase):
         doc = self.collect_with_authority([], [""], facts=right)
         self.assertEqual(doc["board_facts"]["held-board"]["sms"], 28)
 
+    def test_the_ranker_column_reaches_the_case(self):
+        doc = self.collect_with_authority(["authority", "evidence", "ranker"],
+                                          [",route-table,measured,rmma.b"] * 2)
+        self.assertEqual(doc["cases"][0]["ranker"], "rmma.b")
+        report = regret.evaluate(json.loads(json.dumps(doc)))
+        # selected rmma.a 10 ms against the ranker's rmma.b 12 ms: 20 % slower than the selected
+        self.assertAlmostEqual(report["cases"][0]["ranker_vs_selected"], 0.2)
+        none = self.collect_with_authority(["authority", "evidence"], [",route-table,measured"] * 2)
+        self.assertNotIn("ranker", none["cases"][0])
+        with self.assertRaisesRegex(ValueError, "another ranker"):
+            self.collect_with_authority(["authority", "evidence", "ranker"],
+                                        [",route-table,measured,rmma.a",
+                                         ",route-table,measured,rmma.b"])
+
 
 if __name__ == "__main__":
     unittest.main()

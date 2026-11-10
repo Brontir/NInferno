@@ -110,8 +110,8 @@ def describe(protocol):
 
 def read_selections(paths, authorities=None):
     """{(problem, T): the selected route} of the passes, which must agree. `authorities`, a dict,
-    is filled with {(problem, T): (authority, evidence)} from the optional columns of the same
-    names ("unknown" where a file has none or a row leaves one empty)."""
+    is filled with {(problem, T): (authority, evidence, ranker)} from the optional columns of the
+    same names (`ranker`, the route the ranker alone picks, "" where absent) ("unknown" where a file has none or a row leaves one empty)."""
     selected = None
     for path in paths:
         run = {}
@@ -123,7 +123,8 @@ def read_selections(paths, authorities=None):
                 raise ValueError(f"{path}: {case_id(key)} selected twice ({run[key]}, {route})")
             run[key] = route
             named = ((row.get("authority") or "").strip() or UNKNOWN,
-                     (row.get("evidence") or "").strip() or UNKNOWN)
+                     (row.get("evidence") or "").strip() or UNKNOWN,
+                     (row.get("ranker") or "").strip())
             if meta.setdefault(key, named) != named:
                 raise ValueError(f"{path}: {case_id(key)} answered twice with different "
                                  f"authority or evidence ({meta[key]}, {named})")
@@ -132,7 +133,7 @@ def read_selections(paths, authorities=None):
         if authorities is not None:
             for key, value in meta.items():
                 first = authorities.setdefault(key, value)
-                for what, a, b in zip(("authority", "evidence"), first, value):
+                for what, a, b in zip(("authority", "evidence", "ranker"), first, value):
                     if a != b:
                         raise ValueError(f"{path}: {case_id(key)} names another {what} than the "
                                          f"first pass's ({a}, {b})")
@@ -229,6 +230,8 @@ def collect(selected_csvs, pass_csvs, board, model, revision, build_id, holdout,
             "selected": selected[key], "candidates": candidates, "t": int(t),
             "authority": authorities[key][0], "evidence": authorities[key][1],
         })
+        if authorities[key][2]:  # the route the ranker alone picks (route_tune, where it prices)
+            cases[-1]["ranker"] = authorities[key][2]
     if not cases:
         raise ValueError("no selections")
     document = {

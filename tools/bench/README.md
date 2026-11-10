@@ -140,6 +140,18 @@ kinds. Regimes by T: decode T<=4, verify 5..16, and from 17 below or above the c
 T* = s8 x SMs x boost clock x 4.5/8 / (2 x DRAM bytes/s), as the MMQ transfer audit computes it
 (`s8` from `core/generation.h`; `--generation-header`); without board facts, `T>=17 ridge unknown`.
 
+Exit tooling (#614, F3): `route_table_prune.py report.json --table routes/<class>.json
+[--dense-tune routes/tuner/dense_tune.json --class <id>]` lists the measured route-table entries
+and dense tuner problems whose ranker pick is within the resolution (default 5 %, as
+`route_as_table.py --min-gain`) of the override in every regime the entry has routes in, and with
+`--apply` deletes them (default: dry run; the files must be in canonical `indent=1` form so the diff
+is only the entries). It reads cases of authority `route-table`/`dense-tune`, evidence `measured`,
+with `ranker` (the route the ranker alone picks; an optional `ranker` column of the selected CSV)
+and `ranker_vs_selected` (its median time over the selected route's, minus one). The CTest
+`ninferno_route_table_prune_test` also holds that every measured table entry (`tuned_on`) records
+`evidence_us` with a gain above the resolution; the existing gaps are listed in
+`tests/route_evidence_gaps.json`, which may only shrink.
+
 route_tune selects with its problems' policy (an `a16` problem is `A16Only`, the exact mode's
 linears, not the default `AllowA8` path of a published model's projections) and the speed route
 profile (`prefill_routes` inactive, so `T >= 17` is a batched decode call, not a prefill chunk);

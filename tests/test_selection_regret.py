@@ -357,6 +357,17 @@ class SelectionRegretTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "ends in T4"):
             regret.evaluate(data)
 
+    def test_ranker_time_against_the_selected_routes(self):
+        data = document()
+        data["cases"][0]["ranker"] = "best"
+        case = regret.evaluate(data)["cases"][0]
+        self.assertAlmostEqual(case["ranker_vs_selected"], 10 / 12 - 1)
+        data["cases"][0]["ranker"] = "absent"  # not timed: no figure, not a failure
+        self.assertNotIn("ranker_vs_selected", regret.evaluate(data)["cases"][0])
+        data["cases"][0]["ranker"] = " "
+        with self.assertRaises(ValueError):
+            regret.evaluate(data)
+
 
 if __name__ == "__main__":
     unittest.main()
