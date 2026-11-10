@@ -278,7 +278,7 @@ inline constexpr R8IssueRate kR8IssueRate[] = {
 // of the DRAM rate (C = 1: kDramEta; linear in log2 C between points; beyond the last, the last's):
 // the MoE step rows of speed_measured.json (the server's windows of exactly C rows, eight different
 // tasks) less every other term of the step, the mean over the generation's cards and quantizations
-// (lab/speed_model/fit_moe_decode.py). A generation without rows takes Ada's (transferred).
+// (tools/fits/speed_model/fit_moe_decode.py). A generation without rows takes Ada's (transferred).
 struct MoeRoutedEta {
     std::string_view generation;
     double rows;
@@ -302,8 +302,8 @@ struct PredictionError {
 };
 inline constexpr PredictionError kDecodePredictionError[] = {{"ada", 0.0226}, {"gb20x", 0.0170}};
 
-// kDp4aOpsPerSmClock (a generation without an int8 MMA decodes its int8 route at it, choice.cpp
-// decode_int8_peak): core/cost_constants.h, a chip fact shared with spec/round_cost.h.
+// kDp4aOpsPerSmClock (a generation without an int8 MMA decodes its int8 route at it,
+// spec/round_cost.cpp): core/cost_constants.h, a chip fact.
 
 // A row per generation (core/generation.h's names) and kind; a generation without its own row
 // takes kTransferGeneration's, marked as a transfer (its prefill: a generation's with the same BF16
@@ -771,9 +771,15 @@ struct ChunkShare {
 
 inline constexpr ChunkShare kMoeChunkShare[] = {
     {8, 0.409}, {16, 0.635}, {32, 0.813}, {64, 0.952}, {128, 1.0}};
-// The shares decide an MoE's chunk on a generation with a reference card (by speed alone: a chunk has
-// no accuracy term, so the accuracy terms' cards do not hold it).
-inline constexpr bool kMoeChunkTwoCards = true; // RTX 4070 Ti and 4090
+// The shares decide an MoE's chunk on the generation they were measured on
+// (kMoeChunkCurveGeneration, two cards: RTX 4070 Ti and 4090), on its reference card, by speed
+// alone (a chunk has no accuracy term, so the accuracy terms' cards do not hold it). Another
+// generation whose own MoE prefill rate rests on two lab cards (kPrefillEta) carries the curve's
+// slope unchanged to estimate its best chunk (Choice::chunk_estimate); a generation's rows estimate
+// for another, they do not decide
+// (#300), so its pick stays the default until a sweep on it is measured.
+inline constexpr bool kMoeChunkTwoCards                    = true;
+inline constexpr std::string_view kMoeChunkCurveGeneration = "ada";
 inline constexpr std::uint32_t kDefaultChunk = 1024;
 inline constexpr std::uint32_t kMoeChunks[] = {1024, 2048, 4096};
 

@@ -8,6 +8,10 @@ configure_file(embedded_gpu_facts.h.in
 # target that includes it.
 ninferno_generate_board_registry(${CMAKE_CURRENT_SOURCE_DIR}/data/gpu_facts.json
   ${CMAKE_CURRENT_BINARY_DIR}/generated_public/core/board_registry_rows.inc)
+# And the "archs" array as constexpr rows (core/arch_registry.h): the SM limits per compute
+# capability that the build's limits, the MMQ tile widths and the synthetic device class read.
+ninferno_generate_arch_registry(${CMAKE_CURRENT_SOURCE_DIR}/data/gpu_facts.json
+  ${CMAKE_CURRENT_BINARY_DIR}/generated_public/core/arch_registry_rows.inc)
 
 # The decision code's part of core, with no CUDA runtime: the headers of the facts it reads
 # (generation.h, cost_constants.h, mmq_columns.h, board_registry.h and its generated rows) and the
@@ -17,6 +21,7 @@ add_library(ninferno_core_host STATIC
   dtype.cpp
   device_class_host.cpp
   machine_facts.cpp
+  gate_atlas.cpp
 )
 ninferno_internal_includes(ninferno_core_host)
 target_include_directories(ninferno_core_host PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
@@ -29,7 +34,6 @@ add_library(ninferno_core STATIC
   device_class.cpp
   device_traits.cpp
   kernel_occupancy.cpp
-  gate_atlas.cpp
   device_image_probe.cu
   tune_timer.cu
   host_worker_pool.cpp

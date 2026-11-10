@@ -69,6 +69,12 @@ add_test(NAME ninferno_registry_add_test
 add_test(NAME ninferno_kit_validate_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_kit_validate.py)
 
+# The facts-vs-driver comparison (tools/audit/facts_vs_driver.py) on canned driver output (#612
+# step 2), no GPU.
+add_test(NAME ninferno_facts_vs_driver_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_facts_vs_driver.py)
+set_tests_properties(ninferno_facts_vs_driver_test PROPERTIES LABELS host)
+
 # tools/bench/selection_regret.py: the offline selection regret's statuses, holdouts and exit codes
 # (#301), no GPU.
 add_test(NAME ninferno_selection_regret_test
@@ -90,6 +96,11 @@ set_tests_properties(ninferno_route_table_evidence_test PROPERTIES LABELS host)
 # tools/bench/mmq_transfer_audit.py: same-generation MMQ transfer by workload regime (#373), no GPU.
 add_test(NAME ninferno_mmq_transfer_audit_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_mmq_transfer_audit.py)
+
+# tools/audit/golden_diff.py: the compact summary of a selector golden change (#620), no GPU.
+add_test(NAME ninferno_golden_diff_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_golden_diff.py)
+set_tests_properties(ninferno_golden_diff_test PROPERTIES LABELS host)
 
 # Repository hygiene, no GPU: only scripts (a #! first line) may be committed executable.
 add_test(NAME ninferno_file_modes_test
