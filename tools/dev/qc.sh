@@ -1,8 +1,8 @@
 #!/bin/bash
-# qc.sh BRANCH [TARGET...] : quick compile check of a Brontir/NInferno branch on a stand's CPU.
+# qc.sh BRANCH [TARGET...] : quick compile check of a Brontir/NInferno branch on a build machine's CPU.
 #
 # Compiles only what the branch touches, in one persistent build dir and one worktree, at the lowest
-# CPU and I/O priority so a ctest running on the stand is not starved. Never creates a second build.
+# CPU and I/O priority so a ctest running on the machine is not starved. Never creates a second build.
 #   - checks out origin/BRANCH (detached, cleaned) in $QC_ROOT/wt_qc;
 #   - without TARGETs: maps `git diff origin/master...origin/BRANCH` (deleted and renamed-away files
 #     included) to ninja targets:
@@ -25,18 +25,21 @@
 #       4 partial: no error, but something was capped, skipped, compiled but not linked or tested,
 #         needs a GPU, printed a skip marker, or has no test
 # Exit 0 with "nothing to compile" only when every changed file is documentation (docs/, *.md, .github/).
-# Env: QC_ROOT (/root/claude) QC_ARCH (89) QC_JOBS (4) QC_MAX_OBJ (60) QC_MAX_CU (40)
+# Env: QC_ROOT (work dir, default: current directory) QC_REPO (an existing checkout of the repo, default $QC_ROOT/wt_tst)
+#      QC_ENV_SH (optional script defining cuda_env, default $QC_ROOT/lab.sh if present) QC_ARCH (89) QC_JOBS (4)
+#      QC_MAX_OBJ (60) QC_MAX_CU (40)
 #      QC_MAX_UNITS (150, CUDA+C++ per target) QC_TEST_TIMEOUT (300 s per test)
 #      QC_MAX_GB (40, abort when the build dir is larger) QC_MIN_FREE_GB (15) QC_NO_TESTS=1 (build only)
 set -Eeuo pipefail
 trap 'rc=$?; echo "qc.sh: internal error (exit $rc) at line $LINENO" >&2; exit 3' ERR
 BR=${1:-}; [ -n "$BR" ] || { echo "usage: qc.sh BRANCH [TARGET...]" >&2; exit 3; }
 shift
-ROOT=$(realpath "${QC_ROOT:-/root/claude}"); ARCH=${QC_ARCH:-89}; JOBS=${QC_JOBS:-4}
+ROOT=$(realpath "${QC_ROOT:-$PWD}"); REPO=${QC_REPO:-$ROOT/wt_tst}; ARCH=${QC_ARCH:-89}; JOBS=${QC_JOBS:-4}
 W=$ROOT/wt_qc; B=$ROOT/build_qc_$ARCH; L=$ROOT/logs; mkdir -p "$L"
 exec 9>"$ROOT/qc.lock"; flock -n 9 || { echo "qc.sh: another qc.sh run is active, waiting"; flock 9; }
-set +u; . "$ROOT/lab.sh"; cuda_env; set -u
-export CCACHE_DIR=/root/.ccache CCACHE_BASEDIR=$W CCACHE_NOHASHDIR=1
+ENV_SH=${QC_ENV_SH:-$ROOT/lab.sh}
+set +u; if [ -f "$ENV_SH" ]; then . "$ENV_SH"; cuda_env; fi; set -u
+export CCACHE_DIR=${CCACHE_DIR:-$HOME/.ccache} CCACHE_BASEDIR=$W CCACHE_NOHASHDIR=1
 LOW="nice -n 19 ionice -c3"
 T0=$(date +%s); export QC_T0=$T0; tick() { echo "  [$(( $(date +%s) - T0 ))s] $*"; }
 TAG=$(echo "$BR" | tr / _)
@@ -48,7 +51,7 @@ FREE=$(df -BG --output=avail "$ROOT" | tail -1 | tr -dc 0-9)
 [ "$FREE" -ge "${QC_MIN_FREE_GB:-15}" ] || { echo "only $FREE GB free on $ROOT (< ${QC_MIN_FREE_GB:-15}); clean up first"; exit 3; }
 
 # 1. fetch + checkout (the build dir lives outside the worktree, so a clean is safe)
-[ -d "$W" ] || git -C "$ROOT/wt_tst" worktree add -q --detach "$W" origin/master
+[ -d "$W" ] || git -C "$REPO" worktree add -q --detach "$W" origin/master
 [ "$(realpath "$(git -C "$W" rev-parse --show-toplevel)")" = "$(realpath "$W")" ] || { echo "$W is not its own git worktree root; refusing checkout -f / clean"; exit 3; }
 git -C "$W" fetch -q origin master "+refs/heads/$BR:refs/remotes/origin/$BR" || { echo "fetch of $BR failed"; exit 3; }
 git -C "$W" checkout -q -f --detach "origin/$BR"
@@ -436,7 +439,7 @@ if [ $RC -ne 0 ]; then
 fi
 
 # 5. tests: only those whose executables this run relinked (or the whole build succeeded), through ctest
-#    with the GPU hidden so the stand's running ctest is undisturbed
+#    with the GPU hidden so a running ctest is undisturbed
 EXPECT=()
 while IFS=$'\t' read -r kind name exes; do
   [ "$kind" = TEST ] || continue
