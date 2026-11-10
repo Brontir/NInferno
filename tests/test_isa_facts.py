@@ -369,6 +369,10 @@ class IsaFacts(unittest.TestCase):
         for odd in ("probe isa_probe", "probe isa_probe fifteen", "probe other 15"):
             with self.assertRaises(ValueError, msg=odd):
                 ip.parse_run(SAMPLE.replace("probe " + now, odd))
+        # A version past the checked-in probe's owes what this parser cannot know: refused.
+        with self.assertRaises(ValueError) as e:
+            ip.parse_run(SAMPLE.replace("probe " + now, f"probe isa_probe {newest + 1}"))
+        self.assertIn("newer than the checked-in probe", str(e.exception))
 
     def test_merge_in_place(self):
         # Merging the file that already sits in the inputs directory under its architecture's
