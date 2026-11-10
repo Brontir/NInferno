@@ -2,7 +2,7 @@
 // goldens (a substituted DeviceClass, core/device_class.h) the plan select_plan gives for each MoE
 // layer of the lab's models, under the speed, prefill and invariant profiles at T = 1..8, 16, 17,
 // 32, 64, 128, 512 and 2048, and which authority of its cascade answered (moe_plan_query). Nothing
-// runs: the weights are descriptors over an aligned stand-in address, as in the selector golden.
+// runs: the weights are descriptors (no payload) over an aligned stand-in address.
 // The dump is compared with moe_plan_golden/<build set>/<board>.txt; a refactor of the cascade
 // (Roadmap steps 2-4) must leave every file as it was. Regenerate with --update after a change
 // that means to move routes.
@@ -251,6 +251,7 @@ void dump_layer(const Layer& l, std::map<std::string, std::string>& dumps) {
     try {
         const auto options_for = [&](QType q) {
             qw::PatternedWeightOptions o;
+            o.descriptor_only = true; // the plan reads descriptors: no payload to allocate or fill
             if (q == QType::NVFP4) o.weight_scale_divisor = o.input_scale_divisor = 1.0F;
             return o;
         };
