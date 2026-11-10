@@ -28,7 +28,8 @@ engine, matched by the registers and spill the sweep recorded), then with the co
                latency instances, which prefetch them), the accumulator chains at the MMA latency
                and the spill reloads at the L1 latency -- or, from a schema 3 snapshot, the
                loop's longest register-dependence chain (cp_* columns) with each class at its
-               measured dependent latency (lat_*), no shorter than the instruction count --
+               measured dependent latency (lat_*; the shared loads at the shared-memory latency,
+               the others at the L1 one), no shorter than the instruction count --
                (c) the next iteration's weights landing,
                the DRAM latency with the TLB warm at the resident warps (the ring fetches one step
                ahead); the SM's time is rounds x iterations x that, no shorter than its bytes over
@@ -53,6 +54,10 @@ import json
 import math
 import os
 import re
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "kernel_facts"))
+import sass_counts  # noqa: E402
 
 CC = {"GeForce RTX 2080 Ti": 75, "GeForce RTX 3060": 86, "GeForce RTX 3090": 86,
       "GeForce RTX 4060 Ti": 89, "GeForce RTX 4070 Ti": 89, "GeForce RTX 4090": 89,
@@ -83,7 +88,8 @@ def isa_of(repo, arch):
     path = os.path.join(repo, "src/core/data/isa_facts.json")
     if not os.path.exists(path):
         return None
-    row = json.load(open(path))["arches"].get(arch)
+    with open(path) as f:
+        row = json.load(f)["arches"].get(arch)
     return {k: v["value"] for k, v in row["facts"].items()} if row else None
 
 
@@ -95,7 +101,8 @@ def isa_warps(resident_warps):
 
 def chip_of(repo, name):
     cc = CC[name]
-    gpus = json.load(open(os.path.join(repo, "src/core/data/gpu_facts.json")))["gpus"]
+    with open(os.path.join(repo, "src/core/data/gpu_facts.json")) as f:
+        gpus = json.load(f)["gpus"]
     row = next(g for g in gpus if g["name"] == name)
     return dict(
         cc=cc, arch=ARCH[cc], sms=row["sms"], clk=row["boost_mhz"] * 1e6,
@@ -111,7 +118,9 @@ def chip_of(repo, name):
 def load_snapshot(repo, arch):
     path = os.path.join(repo, "src/ops/generic/data/kernel_facts", f"sm_{arch}.txt")
     cols, rows = None, {}
-    for line in open(path):
+    with open(path) as f:
+        lines = f.readlines()
+    for line in lines:
         if line.startswith("columns "):
             cols = line.split()[1:]
         elif line.startswith("rmma "):
@@ -219,20 +228,15 @@ def price(chip, call, inst, sched, law):
         t_sched = sched_warps * max(inst["total"], inst["int"] * isa["int32_cycles_per_warp_instruction"],
                                     inst["fp"] * isa["fp32_cycles_per_warp_instruction"],
                                     inst["mma"] * isa["mma_cycles_per_partition"])
-        if inst.get("cp_mma") is not None and "lat_imad" in isa:
+        lat = sass_counts.chain_weights(isa, w)
+        if inst.get("cp_mma") is not None and lat:
             # Schema 3: the loop's longest register-dependence chain, its instructions counted
-            # per latency class (sass_counts.py CP_FIELDS), each at the card's measured dependent
-            # latency: the MMA accumulator at the MMA latency, global / local and shared loads at
-            # the L1 hit latency (no shared-load fact yet), shuffles, the integer decode at the
-            # IMAD latency (LOP3 / PRMT / SHF are equal, IADD3 one clock more), the float math at
-            # the HFMA2 latency, converts at the I2F / F2I one, the rest (MOV, branches, uniform)
-            # at the ALU floor. The warp issues the other instructions under it, one a clock,
-            # so an iteration is no shorter than its count.
-            chain_clk = (inst["cp_mma"] * isa["mma_dependent_latency"] +
-                         (inst["cp_ld"] + inst["cp_lds"]) * l1 + inst["cp_shfl"] * isa["lat_shfl"] +
-                         (inst["cp_int"] + inst["cp_other"]) * isa["lat_imad"] +
-                         inst["cp_fp"] * isa["lat_hfma2"] + inst["cp_cvt"] * isa["lat_cvt_i2f_f2i"])
-            t_chain = max(float(inst["total"]), chain_clk)
+            # per latency class, each at the card's measured dependent latency at the resident
+            # warps (sass_counts.py chain_weights: the same clocks the snapshot chose the chain
+            # with, there at one warp; shared loads at the shared-memory latency). The warp issues
+            # the other instructions under it, one a clock, so an iteration is no shorter than
+            # its count.
+            t_chain = max(float(inst["total"]), sass_counts.chain_clocks(inst, lat))
         else:
             t_chain = (inst["total"] + (0.0 if inst["latency"] else steps * l1)
                        + inst["mma"] / acc * isa["mma_dependent_latency"] + inst["local"] * l1)

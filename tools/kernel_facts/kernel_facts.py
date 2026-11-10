@@ -27,6 +27,13 @@ SASS pass disassembles the register-MMA kernels in batches (--sass-batch; about 
 an engine's 2400 kernels, 1.5 GB of memory) and keeps only their loops; --sass-dump reads a saved
 `cuobjdump -sass` instead, --no-sass leaves the loop columns out (a resources-only check).
 
+The loop's critical path (the cp_* columns) is chosen with the architecture's measured dependent
+latencies, its row of src/core/data/isa_facts.json (--isa-facts for another file), and the
+snapshot's `chain` line records them; where the row or one of its latencies is missing the nominal
+clocks of sass_counts.py choose and the line says so. `check` with the SASS pass fails (1) on a
+snapshot whose `chain` line is not what the ISA facts give today: extract it again after an ISA
+row lands or moves.
+
 A kernel's key: the decoder type, the schedule's template arguments (warps_m, warps_k, m_tiles,
 n_tiles, cluster: the entries of NINFERNO_GENERIC_RMMA_SCHEDULES, generic_schedules.h), the
 epilogue, and the latency and add-sums variants, as they stand in the demangled symbol; the
@@ -38,6 +45,7 @@ as true/false.
 
 import argparse
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -59,6 +67,9 @@ EPILOGUE_SWIGLU = 2  # Epilogue::SwiGlu (generic_gemm.h): two row sets per warp
 # The sources whose text decides the device code: the CUDA units and headers of the ops tree.
 SOURCE_GLOBS = (".cu", ".cuh")
 SOURCE_DIRS = ("src/ops",)
+# The measured ISA facts the critical path's latencies come from (sass_counts.chain_weights).
+ISA_FACTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "src", "core",
+                         "data", "isa_facts.json")
 
 
 def fail(message, code=3):
@@ -292,14 +303,37 @@ def sass_lines(binary, cuda_bin, arch, sass_dump=None, names=None, batch=SASS_BA
                 fail(f"cuobjdump -sass failed on {binary}: {errors.read().strip()[:400]}")
 
 
-def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None, batch=SASS_BATCH):
-    """{key: LoopCounts} of the rmma kernels `keys` ({mangled: key}) of one image, from its SASS.
-    A kernel disassembled twice in the image (two units) must agree."""
+def chain_weight_sets(arch, isa_facts=ISA_FACTS):
+    """(weights, basis) the critical path of the `arch` kernels is chosen with: the measured
+    latencies of the architecture's row in the ISA facts table at each resident warp count
+    (sass_counts.CP_WARPS; the first, one warp, chooses the chain) under "measured"; where the
+    table has no row for it, or the row lacks one of the latencies, the nominal ones alone under
+    "nominal" (no facts: never another architecture's row)."""
+    with open(isa_facts) as f:
+        row = json.load(f)["arches"].get(arch)
+    facts = {name: v["value"] for name, v in row["facts"].items()} if row else {}
+    sets = [sass_counts.chain_weights(facts, w) for w in sass_counts.CP_WARPS]
+    if None in sets:
+        return (sass_counts.CP_NOMINAL,), "nominal"
+    return tuple(sets), "measured"
+
+
+def chain_line(weights, basis):
+    """The header's `chain` value: the basis and the clocks per class that chose the path."""
+    return basis + " " + " ".join(f"{name[3:]}={weights[0][name]:g}"
+                                  for name in sass_counts.CP_FIELDS)
+
+
+def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None, batch=SASS_BATCH,
+                   weights=(sass_counts.CP_NOMINAL,)):
+    """{key: LoopCounts} of the rmma kernels `keys` ({mangled: key}) of one image, from its SASS;
+    `weights` choose the critical path (sass_counts.critical_path). A kernel disassembled twice in
+    the image (two units) must agree."""
     counts = {}
     lines = sass_lines(binary, cuda_bin, arch, sass_dump, sorted(keys), batch)
     for name, body in sass_counts.iter_functions(lines, lambda n: n in keys):
         key = keys[name]
-        c = sass_counts.loop_counts(body, key_tiles(key))
+        c = sass_counts.loop_counts(body, key_tiles(key), weights)
         if key in counts and counts[key] != c:
             fail(f"{name} is disassembled twice in {arch} with different loops {counts[key]} "
                  f"and {c}")
@@ -308,15 +342,15 @@ def extract_counts(binary, cuda_bin, arch, keys, sass_dump=None, batch=SASS_BATC
 
 
 def extract_rows(binary, cuda_bin, arch, dump=None, sass_dump=None, sass=True,
-                 batch=SASS_BATCH):
+                 batch=SASS_BATCH, weights=(sass_counts.CP_NOMINAL,)):
     """{key: (registers, stack, local, shared, LoopCounts)} of one image of the binary (`arch`:
-    the label, "89"); the LoopCounts is None under sass=False."""
+    the label, "89"); the LoopCounts is None under sass=False; `weights` as extract_counts'."""
     rows, keys = extract_resources(binary, cuda_bin, dump)
     image = image_arch(rows, arch)
     resources = rows[image]
     if not sass:
         return {k: (*v, None) for k, v in resources.items()}
-    counts = extract_counts(binary, cuda_bin, image, keys[image], sass_dump, batch)
+    counts = extract_counts(binary, cuda_bin, image, keys[image], sass_dump, batch, weights)
     missing = sorted(k for k in resources if k not in counts)
     if missing:
         fail(f"{len(missing)} rmma kernels of {image} have resources but no SASS, first "
@@ -377,9 +411,16 @@ def row_line(key, value):
     return " ".join(str(v) for v in fields)
 
 
-def render(arch, rows, nvcc, flags, source):
+def render(arch, rows, nvcc, flags, source, chain=None):
+    """The snapshot's text; `chain` (chain_line) names the latencies the critical paths of
+    `rows` were chosen with."""
     with_loops = any(v[4] is not None for v in rows.values())
     columns = COLUMNS if with_loops else COLUMNS.split(" loops ")[0]
+    chain_lines = []
+    if with_loops and chain:
+        short = [v[4].cp_short for v in rows.values() if v[4].cp_short > 0]
+        chain_lines = [f"chain {chain}",
+                       f"chain_short {len(short)} {max(short, default=0.0):.3f}"]
     lines = [
         f"# NInferno kernel facts, schema {SCHEMA}: what ptxas made of the register-MMA kernels of",
         f"# the sm_{arch} build, read off the linked binary with cuobjdump. Per kernel: the registers",
@@ -389,7 +430,13 @@ def render(arch, rows, nvcc, flags, source):
         "# MMAs, of them the min-term ones (A = 1.0 pairs) and the MMA shape, the loads and stores",
         "# by space with the bytes a warp requests (32 lanes x width; LDG global, LD generic, LDGSTS",
         "# async copy, LDS/STS shared, LDL/STL local), SHFL, integer and float ALU, uniform-datapath,",
-        "# the rest, the total. Static counts of one full iteration; how the loop is found is in",
+        "# the rest, the total; then the loop's critical path, the instructions per latency class",
+        "# (cp_*) on the longest chain of register dependences of one iteration, chosen with the",
+        "# clocks per class of the `chain` line (measured: this architecture's row of",
+        "# src/core/data/isa_facts.json at one resident warp; nominal: that row lacks a latency);",
+        "# `chain_short` counts the kernels where another chain is longer at 2, 4 or 8 resident",
+        "# warps, and by how many clocks at most. Static counts of one full iteration; how the loop",
+        "# and the path are found is in",
         "# tools/kernel_facts/sass_counts.py. Generated by tools/kernel_facts/kernel_facts.py; never",
         "# edited by hand. The selector's price reads this file, not the host GPU's kernels",
         "# (ops/generic/kernel_facts.h, #612), and ninferno_kernel_facts_test asserts that a build's",
@@ -401,6 +448,7 @@ def render(arch, rows, nvcc, flags, source):
         f"nvcc {nvcc}",
         f"flags {flags}",
         f"source {source}",
+        *chain_lines,
         f"kernels {len(rows)}",
         f"columns {columns}",
     ]
@@ -453,15 +501,21 @@ def image_arch(rows, arch):
 
 
 def cmd_extract(args):
+    weights, basis = chain_weight_sets(args.arch, args.isa_facts)
     rows = extract_rows(args.binary, args.cuda_bin, args.arch, args.dump, args.sass_dump,
-                        not args.no_sass, args.sass_batch)
+                        not args.no_sass, args.sass_batch, weights)
     if not rows:
         fail("no rmma_kernel in the binary")
     audit = loop_audit(rows)
     for line in audit:
         print(f"kernel_facts: {line}", file=sys.stderr)
+    if basis == "nominal" and not args.no_sass:
+        print(f"kernel_facts: {args.isa_facts} has no dependent latencies for sm_{args.arch}: "
+              "the critical paths are chosen with nominal ones; extract again once its row is "
+              "measured", file=sys.stderr)
     source = args.source or (source_hash(args.source_root) if args.source_root else "unknown")
-    text = render(args.arch, rows, args.nvcc or "unknown", args.flags or "unknown", source)
+    text = render(args.arch, rows, args.nvcc or "unknown", args.flags or "unknown", source,
+                  chain_line(weights, basis))
     if args.output:
         with open(args.output, "w", newline="\n") as f:
             f.write(text)
@@ -491,8 +545,18 @@ def cmd_check(args):
     # kernel set is all that is compared, so the SASS pass (minutes) is not run.
     with_sass = not args.no_sass and not other_nvcc and \
         any(v[4] is not None for v in expected.values())
+    weights, basis = chain_weight_sets(arch, args.isa_facts)
+    if with_sass and "chain" in header and header["chain"] != chain_line(weights, basis):
+        # The critical paths were chosen with other latencies than the ISA facts give today (a
+        # row measured or measured again since): the cp_* columns are then another chain's.
+        print(f"kernel_facts: {args.expected} chose its critical paths with\n  {header['chain']}\n"
+              f"and {args.isa_facts} gives sm_{arch} today\n  {chain_line(weights, basis)}\n"
+              "Regenerate the snapshot with\n"
+              f"  python3 tools/kernel_facts/kernel_facts.py extract --binary "
+              f"{args.binary or args.dump} --arch {arch} --nvcc <version> -o {args.expected}")
+        return 1
     got = extract_rows(args.binary, args.cuda_bin, arch, args.dump, args.sass_dump, with_sass,
-                       args.sass_batch)
+                       args.sass_batch, weights)
     if not with_sass:
         expected = {k: (*v[:4], None) for k, v in expected.items()}
     missing = sorted(k for k in expected if k not in got)
@@ -552,6 +616,9 @@ def main(argv=None):
                             f"once; default {SASS_BATCH}, bounded memory)")
         p.add_argument("--cuda-bin", help="directory of cuobjdump and cu++filt")
         p.add_argument("--nvcc", help="the nvcc version the binary was built with")
+        p.add_argument("--isa-facts", default=ISA_FACTS,
+                       help="the measured ISA facts table whose latencies choose the critical "
+                            "path (default: the source tree's src/core/data/isa_facts.json)")
     e = sub.choices["extract"]
     e.add_argument("--arch", required=True, help="the build architecture label (89, 120a, ...)")
     e.add_argument("--flags", help="the CUDA flags of the build, recorded in the header")

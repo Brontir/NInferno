@@ -65,7 +65,10 @@ the release does. Beside the registers a snapshot holds each kernel's K loop cou
 (the MMAs, the loads by space and bytes, the ALU work per loop iteration, and the longest
 register-dependence chain through it counted per latency class, schema 3;
 `tools/kernel_facts/sass_counts.py` says how the loop is found), the facts the counted cost model
-reads (#613). `package.sh` (and `package-native.ps1`) check it twice: the nvcc version against
+reads (#613). That chain is chosen with the architecture's measured latencies
+(`src/core/data/isa_facts.json`; the snapshot's `chain` line records them), so a snapshot is
+extracted again when its ISA row lands or moves: `tests/test_kernel_facts_sass.py` and
+`kernel_facts.py check` fail until it is. `package.sh` (and `package-native.ps1`) check it twice: the nvcc version against
 the snapshots, and each engine's kernels against its snapshot (`kernel_facts.py check` on the
 linked binary, the SASS pass included: minutes per engine; on a GPU of the generation also
 `ninferno-serve selector-facts`, the running kernels' attributes against it). A mismatch (another

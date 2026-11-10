@@ -93,11 +93,16 @@ COUNT_FIELDS = ("mma", "mma_ones", "ldg", "ldg_bytes", "ld", "ld_bytes", "ldgsts
 # The critical path of one iteration (#613 PR-7b): the instructions on the longest chain of the
 # body's register dataflow (a read depends on the latest earlier writer of the register within
 # the iteration; the loads of the next step, consumed an iteration later, carry no edge), as
-# counts per latency class along it. The path is chosen with nominal latencies (CP_NOMINAL); the
-# price re-weights the counts with the card's measured ones (src/core/data/isa_facts.json).
+# counts per latency class along it. Which chain is the longest depends on the clocks of each
+# class, so the path is chosen with the latencies its price uses: the measured ISA facts of the
+# snapshot's architecture (chain_weights of its row in src/core/data/isa_facts.json, the L1 load
+# at one resident warp), and with nominal ones (CP_NOMINAL) only where that row lacks a fact; the
+# same chain_clocks then prices the counts. The L1 latency moves a little with the resident warps
+# (w2, w4, w8), where another chain may be the longest: critical_path reports by how many clocks.
 CP_FIELDS = ("cp_mma", "cp_ld", "cp_lds", "cp_shfl", "cp_int", "cp_fp", "cp_cvt", "cp_other")
 CP_NOMINAL = {"cp_mma": 33.0, "cp_ld": 48.0, "cp_lds": 25.0, "cp_shfl": 27.0, "cp_int": 4.5,
               "cp_fp": 4.1, "cp_cvt": 6.0, "cp_other": 2.0}
+CP_WARPS = (1, 2, 4, 8)  # the resident warps the ISA facts measure the L1 latency at
 CVT_OPCODES = {"I2F", "F2F", "F2I", "I2FP", "F2FP", "I2I", "F2IP"}
 # The snapshot's columns for these facts, in order.
 COLUMNS = ("loops", "k_iter", "mma", "mma_ones", "mma_shape") + COUNT_FIELDS[2:] + CP_FIELDS
@@ -491,6 +496,9 @@ class LoopCounts:
         self.loops = 0
         self.k_iter = 0
         self.mma_shape = "-"
+        # Clocks by which the critical path's chain falls short of the longest one under another
+        # of the weight sets it was checked against (critical_path); not a column.
+        self.cp_short = 0.0
         for f in COUNT_FIELDS + CP_FIELDS:
             setattr(self, f, 0)
 
@@ -516,9 +524,10 @@ class LoopCounts:
         return "LoopCounts(" + " ".join(f"{c}={v}" for c, v in zip(COLUMNS, self.row())) + ")"
 
 
-def loop_counts(body, tiles=1):
+def loop_counts(body, tiles=1, weights=(CP_NOMINAL,)):
     """The K loop's LoopCounts of a function body (iter_functions); `tiles` the m16n8 tiles one
-    warp accumulates (m_tiles * n_tiles * row sets), for k_iter."""
+    warp accumulates (m_tiles * n_tiles * row sets), for k_iter; `weights` the clocks per latency
+    class the critical path is chosen with and checked against (critical_path)."""
     out = LoopCounts()
     if not body:
         return out
@@ -585,7 +594,8 @@ def loop_counts(body, tiles=1):
         per_tile = 16 * 8 * tiles
         if mnk_sum and not unknown_shape and mnk_sum % per_tile == 0:
             out.k_iter = mnk_sum // per_tile
-    for name, n in critical_path(body, list(indices(path))).items():
+    counts, out.cp_short = critical_path(body, list(indices(path)), weights)
+    for name, n in counts.items():
         setattr(out, name, n)
     return out
 
@@ -614,19 +624,40 @@ def cp_class(opcode):
 READ_REGISTER = re.compile(r"\bU?R\d+\b")
 
 
-def critical_path(body, order):
-    """The counts per latency class (CP_FIELDS) along the longest nominally weighted chain of
-    register dependences through the instructions `order` (body indices, in iteration order):
-    instruction i depends on the latest earlier instruction of the chain that wrote a register it
-    reads (RZ / URZ aside; the destination is not a read, an accumulator is read as its own
-    operand); a dependence on a register no earlier instruction wrote is a value from the
-    previous iteration or the prologue and carries no edge."""
-    classes = []
-    dist, best_from = [], []
+def chain_weights(isa, warps=1):
+    """The clocks per latency class (CP_FIELDS) of an architecture's measured ISA facts (`isa`:
+    {fact: value}, a row of src/core/data/isa_facts.json) at `warps` resident warps a scheduler
+    (CP_WARPS): the MMA accumulator at the MMA's dependent latency, global and local loads at the
+    L1 hit latency, shared loads at the shared-memory one, shuffles, the integer decode at the
+    IMAD latency (LOP3 / PRMT / SHF are equal, IADD3 one clock more), the float math at the HFMA2
+    latency, converts at the I2F / F2I one, the rest (MOV, branches, uniform) at the ALU floor.
+    None where the row lacks one of them: no facts, never another architecture's."""
+    try:
+        return {"cp_mma": isa["mma_dependent_latency"], "cp_ld": isa[f"l1_latency_w{warps}"],
+                "cp_lds": isa["shared_latency"], "cp_shfl": isa["lat_shfl"],
+                "cp_int": isa["lat_imad"], "cp_fp": isa["lat_hfma2"],
+                "cp_cvt": isa["lat_cvt_i2f_f2i"], "cp_other": isa["lat_imad"]}
+    except KeyError:
+        return None
+
+
+def chain_clocks(counts, weights):
+    """The clocks of a chain: its instructions per latency class (`counts`, any mapping with the
+    CP_FIELDS) at `weights` clocks each."""
+    return sum(counts[name] * weights[name] for name in CP_FIELDS)
+
+
+def dependence_graph(body, order):
+    """(classes, preds) of the instructions `order` (body indices, in iteration order): the
+    latency class of each and the positions in `order` it depends on, ascending. Instruction i
+    depends on the latest earlier instruction that wrote a register it reads (RZ / URZ aside; the
+    destination is not a read, an accumulator is read as its own operand); a dependence on a
+    register no earlier instruction wrote is a value from the previous iteration or the prologue
+    and carries no edge."""
+    classes, preds = [], []
     last_writer = {}
     for i in order:
         _, _, opcode, operands = body[i]
-        cls = cp_class(opcode)
         tokens = operand_tokens(operands)
         written = written_registers(opcode, operands)
         dest = destination(opcode, tokens)
@@ -634,22 +665,45 @@ def critical_path(body, order):
         if dest is not None:
             sources.remove(dest)
         reads = {r for t in sources for r in READ_REGISTER.findall(t) if r not in ("RZ", "URZ")}
-        pred, longest = -1, 0.0
-        for r in reads:
-            w = last_writer.get(r)
-            if w is not None and dist[w] > longest:
-                pred, longest = w, dist[w]
         k = len(classes)
-        classes.append(cls)
-        dist.append(longest + CP_NOMINAL[cls])
-        best_from.append(pred)
+        classes.append(cp_class(opcode))
+        preds.append(sorted({last_writer[r] for r in reads if r in last_writer}))
         for r in written:
             last_writer[r] = k
+    return classes, preds
+
+
+def longest_chain(classes, preds, weights):
+    """(clocks, counts per latency class) of the longest chain of a dependence_graph with each
+    class at `weights` clocks; among equally long chains the one through the earliest
+    instructions (the same on every run)."""
+    dist, best_from = [], []
+    for k, cls in enumerate(classes):
+        pred, longest = -1, 0.0
+        for p in preds[k]:
+            if dist[p] > longest:
+                pred, longest = p, dist[p]
+        dist.append(longest + weights[cls])
+        best_from.append(pred)
     counts = {name: 0 for name in CP_FIELDS}
     if not classes:
-        return counts
+        return 0.0, counts
     k = max(range(len(classes)), key=lambda j: dist[j])
+    clocks = dist[k]
     while k >= 0:
         counts[classes[k]] += 1
         k = best_from[k]
-    return counts
+    return clocks, counts
+
+
+def critical_path(body, order, weights=(CP_NOMINAL,)):
+    """(counts, short): the counts per latency class (CP_FIELDS) along the longest chain of
+    register dependences (dependence_graph) through the instructions `order`, each class at
+    `weights[0]` clocks; and the most clocks by which that chain falls short of the longest one
+    under any other of `weights` (0.0: it is the longest, or as long as it, under all of them)."""
+    classes, preds = dependence_graph(body, order)
+    _, counts = longest_chain(classes, preds, weights[0])
+    short = 0.0
+    for other in weights[1:]:
+        short = max(short, longest_chain(classes, preds, other)[0] - chain_clocks(counts, other))
+    return counts, (short if short > 1e-9 else 0.0)

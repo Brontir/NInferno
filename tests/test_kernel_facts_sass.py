@@ -5,6 +5,7 @@ alternative version of a step, an epilogue, a subroutine after EXIT), the heavie
 once, the min-term MMAs told apart, k_iter from the weight MMAs; then the snapshot round trip and
 the check's verdicts. No GPU, no CUDA toolkit."""
 
+import json
 import os
 import sys
 import tempfile
@@ -233,8 +234,45 @@ class LoopFinder(unittest.TestCase):
         # A chain of three dependent IMADs is three deep; two independent ones are one.
         chain = [(0x000, "IMAD R1, R0, R0, RZ ;"), (0x010, "IMAD R2, R1, R1, RZ ;"),
                  (0x020, "IMAD R3, R2, R2, RZ ;"), (0x030, "IMAD R4, R0, R0, RZ ;")]
-        counts = sc.critical_path(body_of(chain), [0, 1, 2, 3])
-        self.assertEqual(counts["cp_int"], 3)
+        counts, short = sc.critical_path(body_of(chain), [0, 1, 2, 3])
+        self.assertEqual((counts["cp_int"], short), (3, 0.0))
+
+    def test_critical_path_follows_the_latencies(self):
+        # Two chains from R0: a load into an IMAD, and five converts. Which is the longest is a
+        # matter of the clocks per class: nominally the load's (48 + 4.5 over 5 x 6), with a
+        # card's measured 11.5-clock converts the converts' (57.5 over 46.987 + 4.033). The path
+        # is the first weight set's; the others say by how many clocks it is not theirs.
+        lines = [(0x000, "LDG.E R1, desc[UR8][R0.64] ;"), (0x010, "IMAD R2, R1, R1, RZ ;"),
+                 (0x020, "I2F R3, R0 ;"), (0x030, "F2I R4, R3 ;"), (0x040, "I2F R5, R4 ;"),
+                 (0x050, "F2I R6, R5 ;"), (0x060, "I2F R7, R6 ;")]
+        body, order = body_of(lines), list(range(len(lines)))
+        isa = {"mma_dependent_latency": 32.893, "l1_latency_w1": 46.987, "l1_latency_w8": 50.0,
+               "shared_latency": 23.106, "lat_shfl": 26.002, "lat_imad": 4.033, "lat_hfma2": 4.11,
+               "lat_cvt_i2f_f2i": 11.5}
+        measured = sc.chain_weights(isa)
+        self.assertEqual((measured["cp_ld"], measured["cp_lds"], measured["cp_cvt"]),
+                         (46.987, 23.106, 11.5))
+        self.assertEqual(sc.chain_weights(isa, 8)["cp_ld"], 50.0)
+        # A row without the ALU latencies (an architecture not probed for them) gives no weights.
+        self.assertIsNone(sc.chain_weights({k: v for k, v in isa.items() if k != "lat_imad"}))
+        self.assertIsNone(sc.chain_weights(isa, 4))
+        nominal, short = sc.critical_path(body, order)
+        self.assertEqual((nominal["cp_ld"], nominal["cp_int"], nominal["cp_cvt"], short),
+                         (1, 1, 0, 0.0))
+        chosen, short = sc.critical_path(body, order, (measured,))
+        self.assertEqual((chosen["cp_ld"], chosen["cp_int"], chosen["cp_cvt"], short),
+                         (0, 0, 5, 0.0))
+        self.assertAlmostEqual(sc.chain_clocks(chosen, measured), 57.5)
+        # Chosen nominally and checked against the measured set: 57.5 - (46.987 + 4.033) short.
+        counts, short = sc.critical_path(body, order, (sc.CP_NOMINAL, measured))
+        self.assertEqual(counts, nominal)
+        self.assertAlmostEqual(short, 57.5 - 51.02)
+        # The other way round the chosen chain is the measured set's, and nominally 22.5 short.
+        counts, short = sc.critical_path(body, order, (measured, sc.CP_NOMINAL))
+        self.assertEqual(counts, chosen)
+        self.assertAlmostEqual(short, 52.5 - 30.0)
+        c = sc.loop_counts(body_of(KERNEL), tiles=1, weights=(measured, sc.CP_NOMINAL))
+        self.assertGreaterEqual(c.cp_short, 0.0)
 
     def test_irreducible_flow(self):
         # Two blocks that enter each other's middles (no header dominates the other): no natural
@@ -282,6 +320,79 @@ class Snapshot(unittest.TestCase):
         self.assertEqual(rows, self.rows())
         self.assertIn("columns " + kernel_facts.COLUMNS, text)
         self.assertEqual(sum(1 for l in text.splitlines() if not l.startswith("#")), 6 + 1)
+        # With the latencies that chose the critical paths: two more header lines, the same rows.
+        rows = self.rows()
+        rows[self.KEY][4].cp_short = 1.25
+        chain = kernel_facts.chain_line((sc.CP_NOMINAL,), "nominal")
+        self.assertEqual(chain, "nominal mma=33 ld=48 lds=25 shfl=27 int=4.5 fp=4.1 cvt=6 other=2")
+        text = kernel_facts.render("89", rows, "13.4.92", "-O3", "abc", chain)
+        header, parsed = kernel_facts.parse_snapshot(text)
+        self.assertEqual((header["chain"], header["chain_short"]), (chain, "1 1.250"))
+        self.assertEqual(parsed, self.rows())
+
+    def test_chain_weight_sets(self):
+        # An architecture whose row holds every latency is chosen with them, one set per resident
+        # warp count; one without a row, or whose row lacks one, with the nominal set alone.
+        facts = {"mma_dependent_latency": 32.9, "shared_latency": 23.1, "lat_shfl": 26.0,
+                 "lat_imad": 4.0, "lat_hfma2": 4.1, "lat_cvt_i2f_f2i": 11.5,
+                 **{f"l1_latency_w{w}": 46.0 + w for w in sc.CP_WARPS}}
+        table = {"arches": {
+            "89": {"facts": {k: {"value": v, "unit": "clk"} for k, v in facts.items()}},
+            "70": {"facts": {k: {"value": v, "unit": "clk"} for k, v in facts.items()
+                             if not k.startswith("lat_")}}}}
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "isa.json")
+            with open(path, "w") as f:
+                json.dump(table, f)
+            weights, basis = kernel_facts.chain_weight_sets("89", path)
+            self.assertEqual((basis, [w["cp_ld"] for w in weights]),
+                             ("measured", [47.0, 48.0, 50.0, 54.0]))
+            self.assertEqual(kernel_facts.chain_line(weights, basis),
+                             "measured mma=32.9 ld=47 lds=23.1 shfl=26 int=4 fp=4.1 cvt=11.5 other=4")
+            for arch in ("70", "75"):
+                self.assertEqual(kernel_facts.chain_weight_sets(arch, path),
+                                 ((sc.CP_NOMINAL,), "nominal"))
+
+    def test_committed_chains_are_the_isa_facts(self):
+        # A committed snapshot with the critical path's columns names the latencies that chose
+        # them, and they are what the ISA facts table gives its architecture today: a row
+        # measured (or measured again) moves the chains, so the snapshot is extracted again with
+        # it. No toolkit: this holds on a build whose nvcc is not the snapshot's too.
+        data = Path(__file__).resolve().parents[1] / "src/ops/generic/data/kernel_facts"
+        seen = 0
+        for path in sorted(data.glob("sm_*.txt")):
+            header, _ = kernel_facts.parse_snapshot(path.read_text())
+            if header["columns"].split() != kernel_facts.COLUMNS.split():
+                continue
+            seen += 1
+            self.assertEqual(header.get("chain"),
+                             kernel_facts.chain_line(*kernel_facts.chain_weight_sets(header["arch"])),
+                             f"{path.name}: extract it again with today's ISA facts")
+        self.assertGreaterEqual(seen, 1)
+
+    def test_replica_prices_the_chain(self):
+        # The replica's timeline law (tools/bench/rmma_counted_replica.py) prices a committed
+        # kernel's chain with the same clocks per class the snapshot chose it with, read at the
+        # resident warps: a shared load at the shared-memory latency, not the L1 one.
+        repo = Path(__file__).resolve().parents[1]
+        sys.path.insert(0, str(repo / "tools" / "bench"))
+        import rmma_counted_replica as replica
+        chip = replica.chip_of(str(repo), "GeForce RTX 4090")
+        snap = replica.load_snapshot(str(repo), chip["arch"])
+        sched = (1, 1, 4, 1, 1)  # m_tiles, n_tiles, warps_m, warps_k, cluster
+        inst, how = replica.find_instance(snap, "bf16", sched, replica.EPILOGUE["store"], -1, -1)
+        self.assertEqual(how, "fallback")  # the plain instance of the schedule
+        call = dict(n=4096, k=4096, T=24, sets=1.0, bpw=replica.BPW["bf16"], heavy=False)
+        seconds, terms = replica.price(chip, call, inst, sched, "timeline")
+        self.assertGreater(seconds, 0.0)
+        lat = sc.chain_weights(chip["isa"], replica.isa_warps(terms["tl_warps"]))
+        clocks = sc.chain_clocks(inst, lat)
+        self.assertGreater(clocks, 0.0)
+        self.assertEqual(terms["tl_chain"], max(float(inst["total"]), clocks))
+        more = dict(inst, cp_lds=inst["cp_lds"] + 1000)
+        _, terms = replica.price(chip, call, more, sched, "timeline")
+        self.assertAlmostEqual(terms["tl_chain"] - clocks, 1000 * chip["isa"]["shared_latency"])
+        self.assertNotEqual(chip["isa"]["shared_latency"], lat["cp_ld"])
 
     def test_schema_one_parses_without_loops(self):
         text = ("arch 89\nnvcc 13.4.92\nkernels 1\ncolumns " +
@@ -346,6 +457,8 @@ class Check(unittest.TestCase):
         self.root = Path(self.dir.name)
         (self.root / "usage.txt").write_text(self.DUMP)
         (self.root / "sass.txt").write_text(sass(KERNEL).replace("_Z6kernelv", self.SYMBOL))
+        # An ISA facts table without the architecture: the critical path under nominal latencies.
+        (self.root / "isa.json").write_text('{"arches": {}}')
         # The demangler is the toolkit's: stand in for it, and for the symbol's key.
         self.saved = (kernel_facts.demangle, kernel_facts.rmma_key)
         kernel_facts.demangle = lambda names, cuda_bin: {n: n for n in names}
@@ -359,7 +472,8 @@ class Check(unittest.TestCase):
         expected = self.root / "expected.txt"
         expected.write_text(expected_text)
         argv = ["check", "--dump", str(self.root / "usage.txt"), "--sass-dump",
-                str(self.root / "sass.txt"), "--expected", str(expected), "--nvcc", nvcc, *extra]
+                str(self.root / "sass.txt"), "--expected", str(expected), "--nvcc", nvcc,
+                "--isa-facts", str(self.root / "isa.json"), *extra]
         return kernel_facts.main(argv)
 
     def expected_text(self, edit=None):
@@ -390,6 +504,21 @@ class Check(unittest.TestCase):
                           " ".join(l.split()[:15]) if l.startswith("columns ") else l
                           for l in text.splitlines()]
         self.assertEqual(self.run_check("\n".join(resources_only) + "\n"), 0)
+
+    def test_chain_of_other_latencies(self):
+        # A snapshot whose critical paths were chosen with the latencies the ISA facts give its
+        # architecture equals the build; one chosen with others (the row moved since) does not,
+        # whatever its rows say. Neither matters to a resources-only check or another nvcc's.
+        rows = kernel_facts.extract_rows(None, None, "89", str(self.root / "usage.txt"),
+                                         str(self.root / "sass.txt"))
+        today = kernel_facts.chain_line((sc.CP_NOMINAL,), "nominal")
+        text = kernel_facts.render("89", rows, "13.4.92", "-O3", "abc", today)
+        self.assertEqual(self.run_check(text), 0)
+        moved = text.replace("chain " + today, "chain " + today.replace("cvt=6", "cvt=11.5"))
+        self.assertNotEqual(moved, text)
+        self.assertEqual(self.run_check(moved), 1)
+        self.assertEqual(self.run_check(moved, extra=["--no-sass"]), 0)
+        self.assertEqual(self.run_check(moved, nvcc="13.0.1"), 77)
 
 
 if __name__ == "__main__":
