@@ -156,4 +156,43 @@ inline constexpr Gate kMmqPrefillPays[] = {
     }
 }
 
+// What a measured VALUE table's answer for a board rests on (#616 step 3): the tables that carry a
+// measured value (a schedule, a token frontier) by board distance, not a yes/no gate. Own: the
+// board itself is in the table (distance 0). Carried: a measured board within the table's distance
+// answers. Fallback: none does, and the value is the table's declared default (a literal, its
+// provenance named by the table's owner). The donor is chosen exactly as the lookups choose it
+// (nearest_known_measured), so the disposition never disagrees with the answer.
+enum class TableDisposition { Own, Carried, Fallback };
+
+[[nodiscard]] constexpr const char* table_disposition_name(TableDisposition d) noexcept {
+    switch (d) {
+    case TableDisposition::Own:
+        return "own";
+    case TableDisposition::Carried:
+        return "carried";
+    case TableDisposition::Fallback:
+        return "fallback";
+    }
+    return "fallback";
+}
+
+template <class Entry>
+struct TableAnswer {
+    const Entry* entry           = nullptr; // the donor's entry, null on a Fallback
+    double distance              = 0;       // board_distance to the donor (0 on a Fallback)
+    TableDisposition disposition = TableDisposition::Fallback;
+};
+
+// `table`'s answer for `board` within `max_distance`; an entry needs a `board` member.
+template <class Entry, std::size_t Extent>
+[[nodiscard]] TableAnswer<Entry> table_answer(std::span<const Entry, Extent> table,
+                                              const Board& board, double max_distance) noexcept {
+    TableAnswer<Entry> out;
+    out.entry = nearest_known_measured(table, board, max_distance);
+    if (out.entry == nullptr) { return out; }
+    out.distance    = board_distance(board, out.entry->board);
+    out.disposition = out.distance == 0 ? TableDisposition::Own : TableDisposition::Carried;
+    return out;
+}
+
 } // namespace ninferno::measured

@@ -2,6 +2,7 @@
 
 #include "core/weight.h"
 #include "core/arena.h"
+#include "core/measured_boards.h"
 #include "core/tensor.h"
 #include "ninferno/ops/sparse_moe.h"
 
@@ -9,6 +10,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 namespace ninferno::ops::detail {
 
@@ -162,6 +164,20 @@ allocate_sparse_moe_prefill_workspace(Arena& arena, std::int32_t capacity_tokens
 // First T the prefill route serves for a codec profile (0: none), under either route profile.
 [[nodiscard]] std::int32_t sparse_moe_prefill_min_tokens(QType routed_gate_up, QType routed_down,
                                                          bool prefill_profile) noexcept;
+
+// What the Q4/Q5 and Q4/Q6 groupwise frontier of a board rests on (#616 step 3), by the lookup the
+// frontier makes: Own (a measured board: RTX 5090, 4090, 3090), Carried (a measured board within
+// measured::kCarryDistance), or Fallback (kSparseMoePrefillQ4Q5Min, a declared literal; no donor).
+// See docs/maintainer/table-dispositions.md.
+struct SparseMoeFrontierAnswer {
+    std::int32_t min_tokens                = kSparseMoePrefillQ4Q5Min;
+    measured::TableDisposition disposition = measured::TableDisposition::Fallback;
+    double distance                        = 0;
+    std::optional<Board> donor;
+};
+
+[[nodiscard]] SparseMoeFrontierAnswer
+sparse_moe_q4_groupwise_frontier_answer(const Board& board) noexcept;
 [[nodiscard]] bool sparse_moe_uses_prefill(std::int32_t tokens, QType routed_gate_up,
                                            QType routed_down) noexcept;
 [[nodiscard]] std::size_t sparse_moe_prefill_workspace_bytes(std::int32_t max_tokens, bool nvfp4);

@@ -16,6 +16,7 @@
 // job is (expert, run of up to kJobColumns slots); its rows come from the expert's span of the
 // stacked plane and its columns are gathered through the slot -> token map.
 
+#include "core/measured_boards.h"
 #include "core/tensor.h"
 #include "ninferno/ops/moe.h"
 #include "ops/generic/generic_gemm.h"
@@ -337,6 +338,20 @@ struct A8Route {
     }
 };
 [[nodiscard]] std::optional<A8Route> a8_default_route();
+
+// What a board's A8 route rests on (#616 step 3), by the same lookup a8_default_route makes:
+// Own (the board is a measured one: RTX 4090, 5090, 5080), Carried (a measured board within
+// measured::kCarryDistance: `donor`, `distance`), or Fallback (the declared literal
+// kFallbackA8Route, a w4r1 gate/up at every T over the register-MMA down; no donor). Not a derived
+// rule: see docs/maintainer/table-dispositions.md for why no fact derives it yet.
+struct A8RouteAnswer {
+    A8Route route;
+    measured::TableDisposition disposition = measured::TableDisposition::Fallback;
+    double distance                        = 0;
+    std::optional<Board> donor;
+};
+
+[[nodiscard]] A8RouteAnswer a8_route_answer(const Board& board);
 
 // Whether every stage of the plan sums each dot product in one order whatever T is.
 [[nodiscard]] bool plan_is_token_invariant(const MoePlan& plan);

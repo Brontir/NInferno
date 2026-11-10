@@ -999,8 +999,9 @@ MoePlan heuristic_r8(const MoeWeights& w, const Geometry& g, MoePlan p, std::int
 
 // The measured board whose A8 route this device takes (within kCarryDistance), null: none.
 const ClassA8Route* a8_class_entry() {
-    return nearest_known_measured(std::span(kA8Routes), board_of(device_class()),
-                                  measured::kCarryDistance);
+    return measured::table_answer(std::span(kA8Routes), board_of(device_class()),
+                                  measured::kCarryDistance)
+        .entry;
 }
 
 } // namespace
@@ -1008,6 +1009,17 @@ const ClassA8Route* a8_class_entry() {
 std::optional<A8Route> a8_default_route() {
     const ClassA8Route* entry = a8_class_entry();
     return entry != nullptr ? entry->route : kFallbackA8Route;
+}
+
+A8RouteAnswer a8_route_answer(const Board& board) {
+    const auto answer =
+        measured::table_answer(std::span(kA8Routes), board, measured::kCarryDistance);
+    A8RouteAnswer out;
+    out.route       = answer.entry != nullptr ? answer.entry->route : kFallbackA8Route;
+    out.disposition = answer.disposition;
+    out.distance    = answer.distance;
+    if (answer.entry != nullptr) { out.donor = answer.entry->board; }
+    return out;
 }
 
 namespace {
