@@ -25,8 +25,6 @@
 #include "ops/linear/nvfp4/nvfp4_a4_plan.h"
 #include "ops/route_pins.h"
 
-#include <cuda_bf16.h>
-
 #include <algorithm>
 #include <array>
 #include <atomic>
