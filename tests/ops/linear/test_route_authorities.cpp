@@ -179,10 +179,10 @@ std::string known_source(const KnownCase& c) {
 
 void check_known() {
     constexpr Shape big{4096, 4096};
-    constexpr QType q8 = QType::Q8_G32_FP16;
-    constexpr QType q4k = QType::GGML_Q4_K;
+    constexpr QType q8         = QType::Q8_G32_FP16;
+    constexpr QType q4k        = QType::GGML_Q4_K;
     constexpr LinearPolicy a16 = LinearPolicy::A16Only;
-    const KnownCase cases[] = {
+    const KnownCase cases[]    = {
         {"rtx4090", q8, big, a16, 64, true, 1, "invariant-profile"},
         {"rtx4090", q8, big, a16, 4, false, 2, "route-probe"},
         {"rtx4090", q8, big, a16, 4, false, 3, "route-pin"},

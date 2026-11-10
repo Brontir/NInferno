@@ -1,7 +1,7 @@
 #!/bin/bash
 # commit+push then rebuild/run the authorities test on the stand
 cd C:/Users/MixaPC/wt_630fix
-git clang-format origin/master >/dev/null 2>&1
+git clang-format --binary /c/Users/MixaPC/AppData/Local/Programs/Python/Python312/Scripts/clang-format $(git merge-base HEAD origin/master) -- ":(exclude)third_party/**" >/dev/null 2>&1
 git add -A; git commit -qm "$1
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"; git push -q origin HEAD:refactor/614-route-authorities 2>&1 | tail -3
