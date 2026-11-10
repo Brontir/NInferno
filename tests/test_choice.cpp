@@ -2342,7 +2342,7 @@ void resolution_rule() {
 void transferred_resolution(const json& fixture) {
     // The lender's compute capability, from the generation table.
     int lender_major = 0, lender_minor = 0;
-    for (const GenerationRow& row : kGenerations) {
+    for (const ninferno::GenerationRow& row : ninferno::kGenerations) {
         if (std::string_view(row.name) == ch::kTransferGeneration) {
             lender_major = row.major, lender_minor = row.minor_lo;
         }
