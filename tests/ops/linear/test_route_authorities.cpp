@@ -541,11 +541,31 @@ const std::map<std::string_view, std::string_view> kUnreached = {
 };
 const std::map<std::string_view, std::string_view> kUnreachedKinds = {};
 
+// What this build leaves unreached on top of kUnreached, read from the build and never from an arch
+// number: the W4A4 rule answers only where a W4A4 MMA kernel is compiled in (w4a4_schedule_count
+// is 0 on a build without them, so route_admits refuses every W4A4 route and the rule has nothing
+// to answer with). A build that has the kernels keeps the rule held: it must be reached and must
+// answer on its own.
+std::map<std::string_view, std::string_view> build_unreached() {
+    std::map<std::string_view, std::string_view> excused;
+    if (generic::w4a4_schedule_count() == 0) {
+        excused.emplace("w4a4-rule", "no W4A4 MMA kernel in this build");
+    }
+    return excused;
+}
+
 void check_coverage(const std::set<std::string_view>& names) {
+    std::map<std::string_view, std::string_view> unreached     = kUnreached;
+    const std::map<std::string_view, std::string_view> excused = build_unreached();
+    unreached.insert(excused.begin(), excused.end());
+    std::string excused_text;
+    for (const auto& [name, why] : excused) {
+        excused_text += " " + std::string(name) + " (" + std::string(why) + ")";
+    }
     std::string missing;
     for (const std::string_view n : names) {
         if (g_reached_sources.count(std::string(n)) == 0 &&
-            g_direct_sources.count(std::string(n)) == 0 && kUnreached.count(n) == 0) {
+            g_direct_sources.count(std::string(n)) == 0 && unreached.count(n) == 0) {
             missing += " " + std::string(n);
         }
     }
@@ -554,7 +574,7 @@ void check_coverage(const std::set<std::string_view>& names) {
     for (const auto list : {generic::select_authorities(), generic::auto_authorities(),
                             generic::rule_authorities()}) {
         for (const generic::NamedAuthority& a : list) {
-            if (g_direct_sources.count(std::string(a.name)) == 0 && kUnreached.count(a.name) == 0) {
+            if (g_direct_sources.count(std::string(a.name)) == 0 && unreached.count(a.name) == 0) {
                 missing_direct += " " + std::string(a.name);
             }
         }
@@ -567,7 +587,9 @@ void check_coverage(const std::set<std::string_view>& names) {
             missing_kinds += " " + name;
         }
     }
-    std::cout << "unreached authorities:" << (missing.empty() ? " none" : missing) << '\n'
+    std::cout << "authorities excused by the build:"
+              << (excused_text.empty() ? " none" : excused_text) << '\n'
+              << "unreached authorities:" << (missing.empty() ? " none" : missing) << '\n'
               << "authorities never answering when asked directly:"
               << (missing_direct.empty() ? " none" : missing_direct) << '\n'
               << "unreached evidence kinds:" << (missing_kinds.empty() ? " none" : missing_kinds)
