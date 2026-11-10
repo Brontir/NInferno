@@ -33,6 +33,10 @@ words that only start with Board (`BoardRow`, `BoardCount`).
 A qualified constant as the first field (`facts::kMajor`) counts only when a plain number follows
 in the group: without one it is a list of registry boards.
 
+The braced `return` of a lambda or local class nested in a Board function is not that function's
+return and is skipped; a lambda with template parameters (`[]<class T>(T t) {`) is not recognised
+as one, and a braced default nested two deep in a parameter list hides the function.
+
 Not seen (known limits): a row that starts with a name or an id (`{"rtx3090", 8, 6, 82, ...}`,
 `{0x2204, 8, 6, ...}`), a helper call (`make_board(8, 6, 82, 6, 936)`, `emplace_back(...)`), a
 board written field by field (`b.sms = 82;`), a typed literal whose first field is a lower-case
@@ -325,14 +329,60 @@ def typed_pattern(names):
 
 
 def returns(names):
-    """Matches `Board f(...) [const] {`: the function whose body is searched for braced returns."""
+    """Matches the head of a function whose body is searched for braced returns, and gives the `{`
+    that opens the body: `Board f(...) [const] {` (the name may be qualified, `Device::board`; a
+    parameter may have a braced default, `Board b = {}`) and a trailing return `-> Board {`."""
     alt = "|".join(map(re.escape, sorted(names)))
     ty = r"(?:::\s*)?(?:ninferno\s*::\s*)?(?:%s)\b" % alt
-    return re.compile(r"(?<![\w.:])" + ty + r"(?!\s*::)\s*(?:const\b\s*)?[&*]*\s*\w+\s*"
-                      r"\([^;{}]*\)\s*(?:(?:const|noexcept|override|final)\b\s*)*\{")
+    quals = r"(?:(?:const|noexcept|override|final|mutable|constexpr)\b\s*)*"
+    head = (r"(?<![\w.:])" + ty + r"(?!\s*::)\s*(?:const\b\s*)?[&*]*\s*(?:\w+\s*::\s*)*\w+\s*"
+            r"\((?:[^;{}]|\{[^;{}]*\})*\)\s*" + quals + r"\{")
+    trailing = r"->\s*(?:const\b\s*)?" + ty + r"(?!\s*::)\s*[&*]*\s*\{"
+    return re.compile(head + "|" + trailing)
 
 
 RETURN_BRACE = re.compile(r"\breturn\s*\{")
+LOCAL_TYPE = re.compile(r"\b(?:struct|class|union)\b[^;{}()]*$")
+TRAILING_TYPE = re.compile(r"->\s*[^;{}()\[\]]*$")
+CALLABLE_QUALS = re.compile(r"(?:\b(?:mutable|noexcept|constexpr|const)\b\s*)+$")
+
+
+def opens_other_callable(code, brace):
+    """True when the `{` at code[brace] opens the body of a lambda or the members of a local class:
+    a `return {...}` inside is not the return of the function around it."""
+    pre = code[:brace].rstrip()
+    if LOCAL_TYPE.search(pre):
+        return True
+    pre = TRAILING_TYPE.sub("", pre).rstrip()
+    pre = CALLABLE_QUALS.sub("", pre).rstrip()
+    if pre.endswith("]"):
+        return True
+    if pre.endswith(")"):
+        depth = 0
+        for j in range(len(pre) - 1, -1, -1):
+            if pre[j] == ")":
+                depth += 1
+            elif pre[j] == "(":
+                depth -= 1
+                if depth == 0:
+                    return pre[:j].rstrip().endswith("]")
+    return False
+
+
+def own_returns(code, body, end):
+    """Matches of `return {` in the body code[body:end] that return from the function itself, not
+    from a lambda or local class nested in it."""
+    out = []
+    for r in RETURN_BRACE.finditer(code, body + 1, end):
+        stack = []
+        for j in range(body + 1, r.start()):
+            if code[j] == "{":
+                stack.append(j)
+            elif code[j] == "}" and stack:
+                stack.pop()
+        if not any(opens_other_callable(code, j) for j in stack):
+            out.append(r)
+    return out
 
 
 def normal(text):
@@ -352,7 +402,7 @@ def literals(text):
         spans += initialiser(code, m.start(), m.end() - 1)
     for m in returns(names).finditer(code):
         end = close(code, m.end() - 1)
-        for r in RETURN_BRACE.finditer(code, m.end(), end if end is not None else len(code)):
+        for r in own_returns(code, m.end() - 1, end if end is not None else len(code)):
             spans += initialiser(code, r.end() - 1, r.end() - 1)
     for m in DOT_BOARD.finditer(code):
         spans += initialiser(code, m.start(), m.end() - 1)

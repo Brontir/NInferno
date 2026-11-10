@@ -84,6 +84,15 @@ FLAGGED = {
     "typedef_global_qualified": "typedef ::ninferno::Board B; B b{kMajor, 0, 170, 96, kBw};",
     "using_const_alias": "using B = const Board; B b{kMajor, 0, 170, 96, kBw};",
     "typedef_const_after": "typedef Board const B; B b{kMajor, 0, 170, 96, kBw};",
+    # Where the Board function is written: out of class, a trailing return, a braced default.
+    "return_member_definition": "Board Foo::bar() { return {kM, 0, 1, 2, 3}; }",
+    "return_qualified_member": "ninferno::Board ninferno::Foo::bar() const"
+                               " { return {kM, 0, 1, 2, 3}; }",
+    "return_lambda_trailing": "auto g = [](int) -> Board { return {kM, 0, 1, 2, 3}; };",
+    "return_function_trailing": "auto f() -> Board { return {kM, 0, 1, 2, 3}; }",
+    "return_braced_default": "Board f(Board b = {}) { return {kM, 0, 1, 2, 3}; }",
+    "return_after_nested_lambda": "Board f() { auto g = [](int a) { return a; };"
+                                  " return {kM, 0, 1, 2, 3}; }",
     "std_array_short_rows": "std::array<Board, 2> a{{{8, 6, 82}, {8, 9, 128}}};",
     "std_array_designated": "std::array<Board, 1> a{{{.major = 8, .minor = 6, .sms = 82}}};",
     "std_array_size_name": "std::array<Board, kN> a = {{{8, 6, 82}}};",
@@ -122,6 +131,10 @@ CLEAN = {
     "alias_of_another_type": "using B = chess::Board; B b{kMajor, 0, 1, 2, 3};",
     "list_of_qualified_boards": "std::vector<Board> v = {measured::kA, measured::kB,"
                                 " measured::kC};",
+    "return_in_nested_lambda": "Board f() { auto g = []() -> std::pair<int, int>"
+                               " { return {1, 2}; }; return measured::kX; }",
+    "return_in_lambda_without_type": "Board f() { auto g = [&] { return {kA, kB}; }; return x; }",
+    "return_in_local_class": "Board f() { struct P { int a() { return {1, 2}; } }; return x; }",
     "comment_line": "// was Board{12, 0, 170, 96, 1792}",
     "comment_block": "/* Board{12, 0, 170}\n still */ int x;",
     "comment_block_tuple": "/* {12, 0, 170, 96, 1792}\n */ int x;",
