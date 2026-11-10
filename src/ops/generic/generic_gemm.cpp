@@ -921,7 +921,7 @@ int r8_index(int warps, int rows) {
 // us): they keep the shape-class rules.
 //
 // The K >= 5120 rule holds on the sm_12x family, not on one board: the RTX 5060 Ti (gb206:36sm,
-// u3r, ninferno_r8_schedule_bench on the IQ3 16 GB artifacts' 63 problems) is fastest with eight
+// ninferno_r8_schedule_bench on the IQ3 16 GB artifacts' 63 problems) is fastest with eight
 // warps of two rows on every IQ2_*/IQ3_S store and add from N = 5120 (IQ2_XXS 10240x5120 w4r2
 // 43.5 -> w8r2 40.0 us, IQ2_XS 17408x5120 83.6 -> 79.4, IQ3_S 16384x5120 w4r1 100.6 -> 94.5) and
 // IQ3_XXS two rows per warp from N = 5120 (16384x5120 92.8 -> 82.5, 6144x5120 36.0 -> 34.0), so
