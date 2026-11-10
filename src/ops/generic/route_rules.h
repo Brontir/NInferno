@@ -68,8 +68,10 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "inline constexpr std::int32_t kStreamMaxTokens      = 512;", 512, kUnknown, kUnknown,
      "none recorded", ""},
     {"kTiledSpeedMinTokens", "generic_gemm.h",
-     "inline constexpr std::int32_t kTiledSpeedMinTokens  = 33;", 33, "every board measured, not "
-     "listed (Q4_K n = 1024 at T 64..128)", "unknown",
+     "inline constexpr std::int32_t kTiledSpeedMinTokens  = 33;", 33,
+     "every board measured, not "
+     "listed (Q4_K n = 1024 at T 64..128)",
+     "unknown",
      "the tiled kernel 5..7x the register MMA's at Q4_K n = 1024, T 64..128, on every board", ""},
     {"kStagedSpeedMinTokens", "generic_gemm.h",
      "inline constexpr std::int32_t kStagedSpeedMinTokens = 256;", 256, kUnknown, kUnknown,
@@ -84,7 +86,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "inline constexpr std::int32_t kW4a8WideMinTokens    = 128;", 128,
      "ad103:80sm, gb202:170sm, gb206:36sm, ad102:128sm",
      "RTX 4080 SUPER, RTX 5090, RTX 5060 Ti, RTX 4090",
-     "below it (the 128x64 tile against 64x64): 1.10-1.56 on IQ2_*/IQ3_*/IQ4_XS (4080 SUPER), Q4_K 1.05-1.09 .. Q6_K "
+     "below it (the 128x64 tile against 64x64): 1.10-1.56 on IQ2_*/IQ3_*/IQ4_XS (4080 SUPER), Q4_K "
+     "1.05-1.09 .. Q6_K "
      "1.17-1.20 (5090), 1.08-1.29 (5060 Ti); in the product 4080 SUPER Qwen3.8-27B IQ3 412.9 -> "
      "472.4 tok/s, 5090 Q4_K_XL 738 -> 757",
      ""},
@@ -101,8 +104,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "+0.1 % in the mean; a 4090 D or a 3090 Ti (0.17, 0.14) take their tables",
      ""},
     // --- w4a8_ws_wins and its neighbour ---
-    {"w4a8_ws_wins: ampere", "generic_gemm.cpp", "if (ampere) return true;", 0, "ga102",
-     "RTX 3090",
+    {"w4a8_ws_wins: ampere", "generic_gemm.cpp", "if (ampere) return true;", 0, "ga102", "RTX 3090",
      "no format lost; one 16K prompt, D WS WS D: Muse 30B Q4_K_M 1278 / 1273 -> 1398 / 1399 t/s, "
      "Qwen3.8 27B UD-Q4_K_XL 1290 / 1289 -> 1314, Gemma 4 31B 1071 -> 1081; measured on the "
      "RTX 3090 only, taken for sm_80 and sm_86 alike",
@@ -125,9 +127,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "where the grid fills three quarters of the SMs, 1.65-1.71 under it (64 CTAs)",
      ""},
     // --- rules_r8's thresholds ---
-    {"rules_r8: iq2 two rows", "generic_gemm.cpp", "(tokens >= 4 || p.n >= 34816)", 34816,
-     kUnknown, kUnknown, "within 3 % of the best schedule elsewhere (27B/31B/35B verify shapes)",
-     ""},
+    {"rules_r8: iq2 two rows", "generic_gemm.cpp", "(tokens >= 4 || p.n >= 34816)", 34816, kUnknown,
+     kUnknown, "within 3 % of the best schedule elsewhere (27B/31B/35B verify shapes)", ""},
     {"rules_r8: turing eight warps", "generic_gemm.cpp", "decode_heavy && p.k >= 5120", 5120,
      "tu102:68sm", "RTX 2080 Ti",
      "ninferno_r8_schedule_bench on the IQ3 16 GB artifacts' 63 problems: the picks +6.25 % above "
