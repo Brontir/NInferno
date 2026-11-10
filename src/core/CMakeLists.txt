@@ -21,6 +21,7 @@ add_library(ninferno_core_host STATIC
   layout.cpp
   weight_view.cpp
   ggml_frag.cpp
+  sha256.cpp
 )
 ninferno_internal_includes(ninferno_core_host)
 target_include_directories(ninferno_core_host PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
@@ -49,7 +50,6 @@ add_library(ninferno_core STATIC
   tensor.cpp
   decode_graph.cpp
   debug_poison.cpp
-  sha256.cpp
   debug_fault.cu
 )
 ninferno_internal_includes(ninferno_core)

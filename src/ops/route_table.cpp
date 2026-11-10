@@ -522,7 +522,9 @@ DeviceTables& here() {
         return *slot;
     }
     int device = 0;
+#ifndef NINFERNO_HOST_ONLY // a host-only build has no device: the first slot
     if (cudaGetDevice(&device) != cudaSuccess || device < 0 || device >= kMaxDevices) device = 0;
+#endif
     return g_devices[static_cast<std::size_t>(device)];
 }
 
