@@ -66,6 +66,18 @@ FLAGGED = {
     "table_short_rows": "std::vector<Board> v = {{8, 6, 82}, {8, 9, 128}};",
     "table_two_fields": "Board k[] = {{12, 0}};",
     "table_second_row_only": "Board k[] = {measured::kRtx5090, {8, 9, 128, 72, 1008}};",
+    # Integer suffixes on a field: the tuple is still a board.
+    "tuple_suffixed_hex": "Board b = f({0xCu, 0, 170, 96, 1792});",
+    "tuple_suffixed_hex_ull": "x = {12, 0, 0xAAul, 96, 0x700ULL};",
+    "tuple_suffixed_decimal": "x = {12u, 0, 170L, 96, 1792ull};",
+    # A function returning Board: its braced returns are board literals.
+    "return_named_fields": "Board f() { return {kMajor, 0, 170, 96, kBw}; }",
+    "return_const_ref_qualified": "const Board& g(int a) const noexcept"
+                                  " { return {8, 6, kS, 6, 9}; }",
+    "return_through_alias": "using B = Board; B f(int x) { if (x) return {kM, 0, 1, 2, 3};"
+                            " return {}; }",
+    # A template argument with a call in it.
+    "std_array_call_size": "std::array<Board, board_count()> a = {{{kMajor, 0, 170, 96, kBw}}};",
     "std_array_short_rows": "std::array<Board, 2> a{{{8, 6, 82}, {8, 9, 128}}};",
     "std_array_designated": "std::array<Board, 1> a{{{.major = 8, .minor = 6, .sms = 82}}};",
     "std_array_size_name": "std::array<Board, kN> a = {{{8, 6, 82}}};",
@@ -99,6 +111,8 @@ CLEAN = {
     "ids": "std::vector<int> v{1, 2, 46, 47, 768};",
     "pdf_header": "header.insert(header.end(), {8, 2, 0, 0, 0});",
     "sizes_trailing_comma": "for (int t : {4, 2, 16, 64, 256,}) {",
+    "return_from_fields": "Board f(int cc) { return {cc / 10, cc % 10, 3}; }",
+    "return_of_another_type": "int h() { return {kA, 1}; }",
     "comment_line": "// was Board{12, 0, 170, 96, 1792}",
     "comment_block": "/* Board{12, 0, 170}\n still */ int x;",
     "comment_block_tuple": "/* {12, 0, 170, 96, 1792}\n */ int x;",

@@ -18,6 +18,7 @@ in a macro or follow any declarator. Flagged:
      When the first argument starts with `{` the group is a table: every row is tested, however
      few numbers it has (`{8, 6, 82}`), however it is written (`{.major = 8, ...}`, `{8, 0, kSms,
      ...}`);
+     A function returning `Board` has its braced `return {...}` tested the same way.
   2. a `.board = {...}` designated initialiser, tested like 1;
   3. any brace tuple of five numbers that reads as a board (major 5..15, minor 0..9, SMs 1..400,
      L2 up to 512 MiB, bandwidth of 100 GB/s or more), optionally a bool after it, optionally a
@@ -240,8 +241,12 @@ def constant(arg):
 
 
 def number(tok):
-    tok = tok.replace("'", "").rstrip("fFuUlL") if not tok.lower().startswith("0x") else tok.replace("'", "")
-    return float(int(tok, 16)) if tok.lower().startswith(("0x", "-0x", "+0x")) else float(tok)
+    """The value of a number token; integer suffixes (u, l, ul, ll ...) are dropped first. A hex
+    token keeps its trailing f/F, which is a digit there."""
+    tok = tok.replace("'", "")
+    if tok.lower().lstrip("+-").startswith("0x"):
+        return float(int(tok.rstrip("uUlL"), 16))
+    return float(tok.rstrip("fFuUlL"))
 
 
 def board_shaped(m):
@@ -294,8 +299,19 @@ def typed_pattern(names):
     ty = r"(?:::\s*)?(?:ninferno\s*::\s*)?(?:%s)\b" % alt
     tail = r"(?:\w+\s*)?(?:\[[^\]]*\]\s*)?=?\s*([{(])"
     plain = r"(?<![\w.:])" + ty + r"(?!\s*::)\s*(?:const\b\s*)?[&*]*\s*(?:const\b\s*)?" + tail
-    templ = r"<\s*" + ty + r"\s*(?:,[^<>;{}()]*)?>\s*(?:const\b\s*)?[&*]*\s*" + tail
+    templ = r"<\s*" + ty + r"\s*(?:,[^<>;{}]*)?>\s*(?:const\b\s*)?[&*]*\s*" + tail
     return re.compile(plain + "|" + templ)
+
+
+def returns(names):
+    """Matches `Board f(...) [const] {`: the function whose body is searched for braced returns."""
+    alt = "|".join(map(re.escape, sorted(names)))
+    ty = r"(?:::\s*)?(?:ninferno\s*::\s*)?(?:%s)\b" % alt
+    return re.compile(r"(?<![\w.:])" + ty + r"(?!\s*::)\s*(?:const\b\s*)?[&*]*\s*\w+\s*"
+                      r"\([^;{}]*\)\s*(?:(?:const|noexcept|override|final)\b\s*)*\{")
+
+
+RETURN_BRACE = re.compile(r"\breturn\s*\{")
 
 
 def normal(text):
@@ -313,6 +329,10 @@ def literals(text):
     spans = []
     for m in typed_pattern(names).finditer(code):
         spans += initialiser(code, m.start(), m.end() - 1)
+    for m in returns(names).finditer(code):
+        end = close(code, m.end() - 1)
+        for r in RETURN_BRACE.finditer(code, m.end(), end if end is not None else len(code)):
+            spans += initialiser(code, r.end() - 1, r.end() - 1)
     for m in DOT_BOARD.finditer(code):
         spans += initialiser(code, m.start(), m.end() - 1)
     for m in TUPLE.finditer(code):
