@@ -13,9 +13,10 @@ namespace ninferno::ops::detail {
 // tokens x ceil((Q + K heads) / 3) blocks of three warps.
 inline constexpr int kTextHeadsPerBlock = 3;
 
-// Resident blocks an SM holds of the widest text kernel instance on the current device (the
-// compiled kernel's occupancy: registers and shared memory included).
-int text_kernel_resident_ctas();
+// Resident blocks an SM holds of one geometry's text kernel instance on the current device (the
+// compiled kernel's occupancy: registers and shared memory included); 0 for a geometry the kernel
+// is not instantiated for.
+int text_kernel_resident_ctas(std::int32_t query_heads, std::int32_t key_heads);
 
 // The launch-amortisation law with an explicit chain excess in SM cycles
 // (rmsnorm_rope_text_fused_max_tokens passes the pending Fitted constant once calibrated): 0 where
