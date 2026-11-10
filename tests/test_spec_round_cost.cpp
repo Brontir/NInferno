@@ -1011,6 +1011,47 @@ int main() {
                "each count within the bound before: plain from three (" +
                    sp::load_label(sp::facts_load(p)) + ")");
     }
+    // The table bounds the choices the Engine runs: the served ones where the profile has them,
+    // and the fit fallback. The profile chose mtp:3 (x2, 2 x 0.6 = 1.2 at two streams) but the
+    // Engine runs mtp:2 (x1.5, 1.5 x 0.6 = 0.9: a loss); depth 1 gains for it (1.2012 x 0.95 over
+    // the mix), so the bound is 1, not the unrunnable choice's 3. A fit fallback mtp:1 at x1.05
+    // (1.05 x 0.95 < 1) loses at every bound, so the table decodes plainly from two streams.
+    {
+        sp::Profile p;
+        p.overall.config      = sp::SpecConfig::parse("mtp:3");
+        p.overall.tok_s       = 2.0;
+        p.overall.plain_tok_s = 1.0;
+        p.thinking = p.non_thinking = p.overall;
+        sp::Choice runs             = p.overall;
+        runs.config.k               = 2;
+        runs.tok_s                  = 1.5;
+        p.served                    = sp::ServedChoices{runs, runs, runs};
+        sp::SpecConfig one          = p.overall.config;
+        one.k                       = 1;
+        for (const char* family : {"math", "code", "prose", "thinking"}) {
+            const bool thinking = std::string(family) == "thinking";
+            p.measurements.push_back({.family = family, .tokens = 100, .seconds = 1.0});
+            p.measurements.push_back(
+                {.config = one, .family = family, .tokens = 100, .seconds = thinking ? 0.5 : 0.85});
+        }
+        p.joint_scale[one.label()]              = {{2, 0.95}};
+        p.joint_scale[runs.config.label()]      = {{2, 0.6}};
+        p.joint_scale[p.overall.config.label()] = {{2, 0.6}};
+        expect(sp::load_label(sp::facts_load(p)) == "2:1,3:0",
+               "the served choice bounds the table: 1, not the unrunnable 3 (" +
+                   sp::load_label(sp::facts_load(p)) + ")");
+        p.served.reset();
+        expect(sp::load_label(sp::facts_load(p)) == "2:3,3:0",
+               "without served choices the profile's own: 3 (" + sp::load_label(sp::facts_load(p)) +
+                   ")");
+        sp::Choice fallback = p.overall;
+        fallback.config     = one;
+        fallback.tok_s      = 1.05;
+        p.fit_fallback      = fallback;
+        expect(sp::load_label(sp::facts_load(p)) == "2:0",
+               "a fit fallback that loses at every bound: plain (" +
+                   sp::load_label(sp::facts_load(p)) + ")");
+    }
     // A table is clipped to its running minimum: a depth that rises again is not written.
     expect(sp::load_label(sp::clipped_load({3, 3, 2, 0})) == "2:3,4:2,5:0", "falls are recorded");
     expect(sp::load_label(sp::clipped_load({2, 2, 3, 2})) == "2:2", "a rise is clipped, no 4:2");

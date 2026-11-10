@@ -881,12 +881,21 @@ std::vector<LoadBound> clipped_load(const std::vector<std::int32_t>& depths) {
 // of those sections, without select's rule that a default loses to plain decode on none of them:
 // the bound governs throughput over the mix, so a depth may pass here while one section loses.
 std::vector<LoadBound> facts_load(const Profile& p) {
+    // The choices the table bounds are those the Engine runs: the served ones where the profile
+    // has them (engine_choices: the Engine cannot run its own), and the fit fallback, which runs
+    // as every choice where the default does not fit (over the whole mix, as the overall one).
+    // One table serves both, so a fallback that loses at a depth keeps the default from it too,
+    // though the fallback runs only where the default does not fit.
+    const ServedChoices& runs =
+        p.served ? *p.served : ServedChoices{p.overall, p.thinking, p.non_thinking};
     std::vector<std::pair<const Choice*, std::optional<bool>>> choices;
     for (const auto& [c, thinking] :
-         {std::pair<const Choice*, std::optional<bool>>{&p.overall, std::nullopt},
-          std::pair<const Choice*, std::optional<bool>>{&p.thinking, true},
-          std::pair<const Choice*, std::optional<bool>>{&p.non_thinking, false}}) {
-        if (c->config.enabled()) { choices.emplace_back(c, thinking); }
+         {std::pair<const Choice*, std::optional<bool>>{&runs.overall, std::nullopt},
+          std::pair<const Choice*, std::optional<bool>>{&runs.thinking, true},
+          std::pair<const Choice*, std::optional<bool>>{&runs.non_thinking, false},
+          std::pair<const Choice*, std::optional<bool>>{p.fit_fallback ? &*p.fit_fallback : nullptr,
+                                                        std::nullopt}}) {
+        if (c != nullptr && c->config.enabled()) { choices.emplace_back(c, thinking); }
     }
     // A choice's gain at C streams under a bound of `bound`: it runs min(bound, its own depth), at
     // that depth's one-request gain times R_1 / R_C there; nullopt where either is unknown.
