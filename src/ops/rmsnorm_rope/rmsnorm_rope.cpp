@@ -135,7 +135,7 @@ std::int32_t text_fused_max_tokens_with_excess(const DeviceClass& device, std::i
                                             ? generation_row(device.major, device.minor).name
                                             : std::string_view{};
     return ninferno::ops::detail::sm_rules::launch_amortized_tokens(
-        2, launch_node_seconds(generation), device.dram_gbps() * 1.0e9,
+        2, launch_node_seconds(generation), machine_facts_of(device).dram_gbps() * 1.0e9,
         (query_heads + key_heads) * kTextBytesPerHead, excess);
 }
 
