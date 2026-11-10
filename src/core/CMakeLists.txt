@@ -12,7 +12,8 @@ ninferno_generate_board_registry(${CMAKE_CURRENT_SOURCE_DIR}/data/gpu_facts.json
 # The decision code's part of core, with no CUDA runtime: the headers of the facts it reads
 # (generation.h, cost_constants.h, mmq_columns.h, board_registry.h and its generated rows) and the
 # sources they need. ninferno_core links it; a target that links only this and no cudart can be
-# built and run on a machine with no toolkit (tests/cmake/ProductTests.cmake asserts the closure).
+# built and run on a machine with no GPU and no CUDA runtime library (tests/cmake/ProductTests.cmake
+# asserts the closure); the toolkit's headers are still read (kernel_occupancy.cpp, below).
 add_library(ninferno_core_host STATIC
   dtype.cpp
   device_class_host.cpp
@@ -33,10 +34,11 @@ target_link_libraries(ninferno_core_host PRIVATE ninferno::json)
 # directory, no library.
 target_include_directories(ninferno_core_host SYSTEM PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
 
-# core/device_class_nodevice.cpp is current_device_class() of a build with no CUDA runtime: it always
-# throws. A host-only test adds it to its own sources (an object, so no archive order matters);
-# nothing beside ninferno_core links it, which defines the real one. core/per_device_nodevice.cpp is the
-# same for current_device_ordinal() and current_device_ordinal_or_none() (per_device.cpp).
+# core/device_class_nodevice.cpp is current_device_class() of a build with no CUDA runtime: it
+# always throws. core/per_device_nodevice.cpp is the same for current_device_ordinal() (it throws)
+# and current_device_ordinal_or_none() (-1); per_device.cpp holds the real ones. A host-only test
+# adds both to its own sources (an object, so no archive order matters); nothing beside
+# ninferno_core links them, which defines the real ones.
 
 add_library(ninferno_core STATIC
   arena.cu

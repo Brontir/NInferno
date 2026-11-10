@@ -5,6 +5,12 @@
 
 namespace ninferno::ops::detail::generic {
 
+static_assert(rmma_decoder_traits_match<U4ZpG32QuadDecoder>(rmma_decoder_of(WeightCodec::U4ZpG32,
+                                                                            128)),
+              "generic_rmma_decoders.h: the U4ZpG32 row differs from U4ZpG32QuadDecoder");
+static_assert(rmma_decoder_traits_match<U4ZpG32Decoder>(rmma_decoder_of(WeightCodec::U4ZpG32, 64)),
+              "generic_rmma_decoders.h: the U4ZpG32 row differs from U4ZpG32Decoder");
+
 void launch_rmma_u4zp_g32(int schedule, Epilogue epilogue, const GemmArgs& args,
                           cudaStream_t stream) {
     if (args.k % 128 == 0) {

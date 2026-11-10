@@ -156,8 +156,10 @@ namespace {
 // release engine's, the same on every machine whatever its nvcc or driver (#556). Nothing is
 // cached here, and the selector keeps no memo of its own (select_route runs on every launch, and
 // at 17 tokens or more outside the prefill profile prices every schedule): what is cached is the
-// snapshot read, once per kernel instance and device (launch_rmma_kernel, bounded by the template
-// instances), so a priced call is a describe-mode dispatch, not a table search per schedule. A
+// snapshot read, once per kernel instance and device (rmma_resources keeps a table of the
+// instances read, keyed by integers, generic_rmma_describe.cpp; the launch's describe mode keeps
+// one per template instance, bounded by the instances), so after the first call for an instance a
+// priced call is a few hash lookups, not a string built and a snapshot searched per schedule. A
 // device that runs PTX the driver compiled, a schedule the build does not hold for the weight, or
 // an instance the snapshot lacks has none and is priced by threads alone.
 struct RmmaKept {

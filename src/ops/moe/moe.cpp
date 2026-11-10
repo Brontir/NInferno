@@ -29,12 +29,6 @@
 namespace ninferno::ops {
 namespace detail::moe {
 
-namespace {
-
-
-} // namespace
-
-
 const char* bank_refusal_name(BankRefusal why) {
     switch (why) {
     case BankRefusal::None: return "admitted";

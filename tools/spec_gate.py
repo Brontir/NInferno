@@ -92,6 +92,9 @@ DECISION_FILES = (
     "src/ops/generic/generic_shared_bytes.h",                # the tiled and staged layouts' shared bytes
     "src/ops/generic/generic_workspace.cpp",                 # the workspace a route needs
     "src/ops/generic/ggml_mmq_host.cpp",                     # ggml's admission and activation sizes
+    "src/ops/generic/generic_ggml_host.cpp",                 # ggml's matrix and vector kernel formats
+    "src/ops/generic/selector_facts_host.cpp",               # the boards the selector prices from facts
+    "src/ops/generic/generic_facts_sink.cpp",                # the kernel-facts reads the price records
     "src/ops/moe/moe_plan.cpp",                              # the MoE plan names and schedules
     "src/ops/generic/generic_schedule_tables.h",             # the schedule tables
     "src/ops/generic/generic_i8_schedules.h",                # the I8 tiles

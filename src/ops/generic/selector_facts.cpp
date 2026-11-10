@@ -65,6 +65,12 @@ LiveCheckResult selector_facts_live_check(const FactsBoard& board) {
         const kernel_facts::ScopedLiveCheck live(reads);
         (void)selector_facts_probe(board);
     }
+    // The price must have run kernels through the launch (rmma_resources describes through it
+    // under a live check): a sink left empty checked nothing, which is no pass.
+    if (reads.empty()) {
+        throw std::runtime_error(std::string(board.name) +
+                                 ": the live check read no kernel from the running GPU");
+    }
     LiveCheckResult result;
     result.checked = reads.size();
     for (const auto& r : reads) {

@@ -114,10 +114,13 @@ struct SnapshotHeader {
 [[nodiscard]] std::string_view build_arch();
 
 // The maintainer's live check (ninferno-serve selector-facts, ninferno_kernel_facts_live_test):
-// while a sink is installed on this thread, every register-MMA kernel the launch describes is also
-// read from the running GPU (cudaFuncGetAttributes, cudaOccupancyMaxActiveBlocksPerMultiprocessor)
-// and both readings are recorded here for the caller to compare. The decisions themselves never
-// read the live values.
+// while a sink is installed on this thread, rmma_resources describes through the launch itself
+// (rmma_resources_by_launch: the host table lookup of generic_rmma_describe.cpp never reaches a
+// launch), and every register-MMA kernel that launch describes is also read from the running GPU
+// (cudaFuncGetAttributes, cudaOccupancyMaxActiveBlocksPerMultiprocessor); both readings are
+// recorded here for the caller to compare. A caller whose sink stays empty has checked nothing and
+// fails (selector_facts_live_check, ninferno_kernel_facts_live_test). The decisions themselves
+// never read the live values.
 struct LiveRead {
     RmmaKernelKey key;
     std::string arch;                     // the snapshot the price read (sass_arch), "" for none

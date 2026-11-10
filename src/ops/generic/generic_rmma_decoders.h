@@ -6,9 +6,12 @@
 // StageActsOf, SpreadOf, FinishOf, GroupTailOf, MinTermOf, WideOf). The launch reads the types; the
 // host reads this table, so rmma_resources (generic_rmma_describe.cpp) describes a launch with no
 // CUDA. The table is the types' truth as of a probe of the decoders (a program printing
-// decoder_name and the traits of each launch_rmma<Decoder> of generic_gemm_<format>.cu);
-// ninferno_rmma_describe_test compares the host's description with the launch's own for every
-// codec, schedule and epilogue, so a decoder that changes a trait fails it.
+// decoder_name and the traits of each launch_rmma<Decoder> of generic_gemm_<format>.cu). Two
+// checks hold it to the types: each generic_gemm_<format>.cu static_asserts the traits of its
+// decoder against the row here (rmma_decoder_traits_match, generic_gemm_launch.cuh), so a decoder
+// that changes a trait breaks that build; and ninferno_rmma_describe_test compares the host's
+// description with the launch's own for every codec, schedule and epilogue, which also holds the
+// names (a name is a runtime string: decoder_name).
 
 #include "ops/generic/generic_gemm.h"
 
@@ -29,8 +32,12 @@ struct RmmaDecoder {
 
 // The decoder launch_rmma_<format> instantiates for a call of K values; name == nullptr where the
 // codec has no register-MMA launch. U4Zp's G32 and G64 take their quad-run decoder at K a multiple
-// of 128.
-inline RmmaDecoder rmma_decoder_of(WeightCodec codec, std::int32_t k) {
+// of 128. MXFP4's is the FP4 converter's decoder (Mxfp4Decoder) where the build has one, else the
+// byte-permute spread decoder (Mxfp4SpreadDecoder, a build with NINFERNO_WITHOUT_NVFP4:
+// Mxfp4RmmaDecoder, generic_gemm.cuh): the caller says which (mxfp4_spread), so that this
+// function has the one body in every build.
+constexpr RmmaDecoder rmma_decoder_of(WeightCodec codec, std::int32_t k,
+                                      bool mxfp4_spread = false) {
     switch (codec) {
     case WeightCodec::Bf16:
         return {"Bf16Decoder", "", false, false, false, false, false, false};
@@ -101,7 +108,9 @@ inline RmmaDecoder rmma_decoder_of(WeightCodec codec, std::int32_t k) {
     case WeightCodec::GgmlQ20:
         return {"GgmlQ20Decoder", "", false, false, true, false, false, false};
     case WeightCodec::Mxfp4:
-        return {"Mxfp4SpreadDecoder", "", false, false, true, false, true, false};
+        return mxfp4_spread
+                   ? RmmaDecoder{"Mxfp4SpreadDecoder", "", false, false, true, false, true, false}
+                   : RmmaDecoder{"Mxfp4Decoder", "", false, false, false, false, false, false};
     case WeightCodec::U4ZpG32:
         return k % 128 == 0
                    ? RmmaDecoder{"U4ZpQuadDecoder<32>", "", false, false, true, false, false, false}

@@ -52,6 +52,9 @@ decision_patterns=(
   src/ops/generic/generic_shared_bytes.h
   src/ops/generic/generic_workspace.cpp
   src/ops/generic/ggml_mmq_host.cpp
+  src/ops/generic/generic_ggml_host.cpp
+  src/ops/generic/selector_facts_host.cpp
+  src/ops/generic/generic_facts_sink.cpp
   src/ops/moe/moe_plan.cpp
   src/ops/generic/generic_variant_rules.h
   src/ops/generic/generic_ggml.cpp

@@ -3,6 +3,10 @@
 
 namespace ninferno::ops::detail::generic {
 
+static_assert(rmma_decoder_traits_match<GgmlQ5KQuadDecoder>(rmma_decoder_of(WeightCodec::GgmlQ5K,
+                                                                            0)),
+              "generic_rmma_decoders.h: the GgmlQ5K row differs from GgmlQ5KQuadDecoder");
+
 void launch_rmma_ggml_q5k(int schedule, Epilogue epilogue, const GemmArgs& args,
                           cudaStream_t stream) {
     launch_rmma<GgmlQ5KQuadDecoder>(schedule, epilogue, args, stream);

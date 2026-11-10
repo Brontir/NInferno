@@ -1,7 +1,9 @@
 // The host part of the generic path's selector (#620 step 11): schedule tables' accessors, the
 // route names and their parser, the register-MMA variant rules and the format admission tests that
-// read no device. Moved verbatim from generic_gemm.cpp, so it builds into ninferno_ops_host with no
-// CUDA runtime.
+// read no device. Moved verbatim from generic_gemm.cpp and, for the functions that sat in the .cu
+// files (tiled_supports, volta_hmma_takes, volta_gemv_takes and their kin: tiled_fits and
+// staged_fits read the shared-byte sizes of generic_shared_bytes.h), from those, so it builds into
+// ninferno_ops_host with no CUDA runtime.
 
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_gemm_internal.h"

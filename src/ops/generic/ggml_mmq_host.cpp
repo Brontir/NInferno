@@ -54,7 +54,10 @@ std::size_t vec_activation_bytes(int k, int columns) {
 
 std::size_t fixup_bound(int columns) {
     // A stream-k launch holds at most one 128-row tile of the call's column tile per SM. The SMs
-    // are device_class()'s: a selector test's substitute counts its own card's.
+    // are device_class()'s: a selector test's substitute counts its own card's. The launch
+    // (select_launch, ggml_mmq_internal.cuh) counts the running device's SMs (device_facts()); the
+    // two are the same device wherever no substitute is set, and a substitute only prices a
+    // workspace for a board it never launches on.
     int j = 16;
     while (j < columns && j < 128) j *= 2;
     return std::size_t(device_class().sms) * j * 128 * sizeof(float);

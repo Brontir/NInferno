@@ -176,9 +176,9 @@ set_tests_properties(ninferno_tool_grammar_budget_test PROPERTIES SKIP_RETURN_CO
 ninferno_add_test(ninferno_yarn_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_yarn.cpp"
   LIBRARIES ninferno_core)
 
-# The host part of the generic selector (ops/generic/generic_routes.cpp, kernel_facts.cpp): route
-# names, the register-MMA variant rules, the kernel-facts snapshots; no CUDA runtime, no GPU
-# (#620 step 11).
+# The host part of the generic selector (ops/generic/generic_routes.cpp, kernel_facts.cpp and the
+# rest of ninferno_ops_host, with the device seams of generic_nodevice.cpp): route names, the
+# register-MMA variant rules, the kernel-facts snapshots; no CUDA runtime, no GPU (#620 step 11).
 ninferno_add_test(ninferno_generic_routes_host_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_generic_routes_host.cpp"
   LIBRARIES ninferno_ops_host)
