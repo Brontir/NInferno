@@ -754,6 +754,8 @@ class MaskAndLiteralFixes(unittest.TestCase):
         # after the header name the line is code again, and a quoted name is still a literal
         self.assertEqual(lits("t.cpp", "#include <a.h> /* c\n*/ const char* s = \"oops\n;\n"), [2])
         self.assertEqual(lits("t.cpp", "#include \"don't.h\nint a;\n"), [1])
+        # a `<` or `>` inside a comment before the header name is not its end
+        self.assertEqual(lits("t.cpp", "/* <a> */ #include <don't.h>\nint a;\n"), [])
 
 
 class QuotedPaths(unittest.TestCase):

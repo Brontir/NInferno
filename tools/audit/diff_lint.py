@@ -635,8 +635,9 @@ def cxx_open_lines(text):
         i, n, quote, carry = 0, len(line), carry, None
         if quote is None and raw is None and not block and not spliced:
             # A comment is whitespace to the preprocessor: `#/**/if 0` and `/* note */ #if 0` are
-            # directives.
-            dm = DIRECTIVE_RX.match(re.sub(r"/\*.*?\*/", " ", line))
+            # directives. The mask keeps every column, so a position found in it is one in the line.
+            masked = re.sub(r"/\*.*?\*/", lambda m: " " * len(m.group(0)), line)
+            dm = DIRECTIVE_RX.match(masked)
             kind, rest = (dm.group(1), dm.group(2).strip()) if dm else ("", "")
             value = cond_literal(rest)
             zero, one = value == 0, value is not None and value != 0
@@ -672,7 +673,7 @@ def cxx_open_lines(text):
                 continue
             if kind in ("include", "include_next", "import") and rest.startswith("<"):
                 # A header name <...> is one token: an apostrophe in it opens no literal.
-                close = line.find(">", line.find("<"))
+                close = masked.find(">", masked.find("<"))
                 i = close + 1 if close >= 0 else n
         if spliced:
             spliced, i = line.endswith("\\"), n
