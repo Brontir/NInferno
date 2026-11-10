@@ -1,22 +1,19 @@
 #pragma once
 
-// The compiled-kernel facts the selector's register-MMA price reads, as a digest (#556), and the
-// boards the selector goldens are kept for. One implementation for the selector golden test and
-// for the release (`ninferno-serve selector-facts`, tools/release/package.sh), so the digest the
-// goldens are keyed by and the digest a release build computes of its own engine cannot drift.
+// The boards the selector goldens are kept for, and the maintainer's live check that the
+// kernel-facts snapshot the register-MMA price reads (ops/generic/kernel_facts.h, #612) equals
+// this build's kernels on a GPU that runs them (`ninferno-serve selector-facts`,
+// tools/release/package.sh; ninferno_kernel_facts_live_test). One implementation for the test and
+// the release, so what the release checks is what the goldens were made from.
 
 #include "core/device_class.h"
+#include "ops/generic/kernel_facts.h"
 
 #include <cstddef>
 #include <cstdint>
-#include <set>
-#include <string>
-#include <tuple>
 #include <vector>
 
 namespace ninferno::ops::detail::generic {
-
-struct RmmaFactRead; // generic_gemm.h: one read the price made (ScopedRmmaFactsSink)
 
 // Datasheet numbers as the CUDA device query reports them (boost SM clock, memory clock = data
 // rate / 2, bus width).
@@ -55,32 +52,32 @@ inline constexpr FactsBoard kFactsBoards[] = {
 // Whether the board's register-MMA price reads compiled kernel facts (rmma_terms_measured).
 [[nodiscard]] bool board_prices_from_facts(const FactsBoard& board);
 
-// One fact the price read: (format, schedule, epilogue, registers, spill bytes, threads, latency
-// form).
-using RmmaFactKey = std::tuple<int, int, int, int, std::size_t, int, bool>;
+// The register-MMA price of `board` over every format with sub-block scales
+// (has_subblock_scales), a fixed set of shapes, epilogues and widths: the reads it makes of the
+// kernel facts, as a count. Throws where it reads none (the price of a facts-priced board found
+// no snapshot: a build whose kernel facts are not committed).
+std::size_t selector_facts_probe(const FactsBoard& board);
 
-// The distinct facts of a ScopedRmmaFactsSink's record.
-[[nodiscard]] std::set<RmmaFactKey> rmma_fact_keys(const std::vector<RmmaFactRead>& reads);
+// The probe under the live check: every kernel the price described, read from the snapshot and
+// from the running GPU (kernel_facts::LiveRead); `mismatches` holds the reads that disagree.
+struct LiveCheckResult {
+    std::size_t checked = 0;
+    std::vector<kernel_facts::LiveRead> mismatches;
+};
 
-// The facts the register-MMA price of `board` reads over every format with sub-block scales
-// (has_subblock_scales), a fixed set of shapes, epilogues and widths, on this build's kernels.
-// The selector golden test checks that its dumps read no fact outside this set. Throws where the
-// price reads none.
-[[nodiscard]] std::set<RmmaFactKey> selector_facts_probe(const FactsBoard& board);
-
-// The digest (12 hex digits) of a set of facts, and of the probe's.
-[[nodiscard]] std::string facts_digest(const std::set<RmmaFactKey>& keys);
-[[nodiscard]] std::string selector_facts_digest(const FactsBoard& board);
+[[nodiscard]] LiveCheckResult selector_facts_live_check(const FactsBoard& board);
 
 } // namespace ninferno::ops::detail::generic
 
 namespace ninferno::tools {
 
-// `ninferno-serve selector-facts`: one line "<board> <digest>" for each facts-priced golden board
-// of this build's compute capability (NINFERNO_BUILD_ARCH), from its own kernels, read on the
-// first GPU that runs them (the same major and an equal or higher minor; the same minor for an
-// architecture-specific build). Exit 2 where this build prices no board from facts or no GPU runs
-// its kernels (a release then reports the check as not run); 1 on any other error.
+// `ninferno-serve selector-facts`: for each facts-priced golden board of this build's compute
+// capability (NINFERNO_BUILD_ARCH), the live check of the kernels its price reads against the
+// committed snapshot, on the first GPU that runs this build's kernels (the same major and an equal
+// or higher minor; the same minor for an architecture-specific build). One line per board:
+// "<board> ok <n> kernels", or the disagreeing reads. Exit 0 where every board agrees; 2 where this
+// build prices no board from facts or no GPU runs its kernels (a release then reports the check as
+// not run); 1 on a mismatch or any other error.
 int selector_facts_main(int argc, char** argv);
 
 } // namespace ninferno::tools

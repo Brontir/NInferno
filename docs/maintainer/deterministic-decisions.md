@@ -4,12 +4,17 @@ Every runtime decision must be derived from the chip's specification, the artifa
 explicit options. Nothing may be measured on the user's machine. Measurements happen in the lab and
 reach the runtime only as facts or as constants.
 
-Decisions are deterministic per binary, and the release toolchain fixes them. The register-MMA
-price on sm_86 and sm_120 reads the registers and spill the compiler made of the kernels (nvcc 12.8
-and 13.x differ, #556), so two toolchains can pick other tiles for the same commit and card. The
-release is built with one pinned nvcc (`tools/release/package.sh`,
-`selector_golden/facts_index.txt`), and a facts-priced board's selector golden is keyed by
-the digest of the kernel facts it was made on (`<board>.<digest>.txt`).
+Decisions are deterministic per commit, not per binary. The register-MMA price on sm_86 and sm_120
+reads the registers and spill the compiler made of the kernels (nvcc 12.8 and 13.x differ, #556),
+and the launch's latency and wide variants read their occupancy and spill; both read them from the
+kernel-facts snapshots committed per architecture (`src/ops/generic/data/kernel_facts/sm_<arch>.txt`,
+`ops/generic/kernel_facts.h`, #612), never from the running GPU's kernels, so every machine decides
+as the release does whatever its nvcc or driver, any board is priced on a CPU, and the selector
+goldens are one file per board. The snapshots are written from the release toolchain's binaries
+(`tools/kernel_facts/kernel_facts.py`, `cuobjdump --dump-resource-usage`, no GPU); every build
+asserts its own kernels equal its snapshot (`ninferno_kernel_facts_test`), and the release runs the
+live check on a GPU of the generation (`ninferno-serve selector-facts`). A device that runs PTX the
+driver compiled has no facts: it is priced by threads alone and takes no variant.
 
 This page states the rule and its target. The engine does not meet all of it yet. Known gaps:
 
@@ -277,7 +282,8 @@ Rules apply in this order:
 
 | Kind | Source | Examples |
 |---|---|---|
-| Discrete | driver | generation and instruction set, SM count, L2, shared memory per block and SM, registers, compiled-kernel occupancy, VRAM class, driver model, MIG, display attached |
+| Discrete | driver | generation and instruction set, SM count, L2, shared memory per block and SM, registers, VRAM class, driver model, MIG, display attached |
+| Discrete | kernel-facts snapshot (committed per architecture) | a compiled kernel's registers, stack and static shared memory, and the occupancy computed from them (`core/kernel_occupancy.h`) |
 | Discrete | PCI ID | segment (GeForce / pro / datacenter), exceptions (TU116/117: no fast tensor MMA; L40: half rate) |
 | Discrete | OS, once at startup | the process's CPU bandwidth quota: the tightest along its cgroup and the cgroup's parents (v2 `cpu.max`, v1 `cpu.cfs_quota_us` / `cpu.cfs_period_us`), and the logical CPU count |
 | Continuous | PCI-ID reference table only | reference clock, bus width x memory clock, TDP, nominal VRAM, source |
