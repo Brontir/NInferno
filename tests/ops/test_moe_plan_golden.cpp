@@ -457,10 +457,8 @@ int main(int argc, char** argv) {
                 if (!pin.seen) {
                     std::cerr << "moe plan golden: no answer of " << pin.board << " under "
                               << pin.authority << " carries the pinned evidence (donor '"
-                              << pin.donor
-                              << "')
-                                 ";
-                        ++failed;
+                              << pin.donor << "')" << std::endl;
+                    ++failed;
                 }
             }
         }
