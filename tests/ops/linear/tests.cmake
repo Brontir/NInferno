@@ -133,8 +133,8 @@ target_compile_definitions(ninferno_selector_golden_test PRIVATE
   NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden"
   NINFERNO_NVCC_VERSION="${CMAKE_CUDA_COMPILER_VERSION}")
 
-# The selector's named authorities (#614): the lists are well formed, and on every facts board the
-# answer with evidence is select_route's route with evidence consistent with its kind.
+# The selector's named authorities (#614): the lists are well formed, on every facts board each
+# answer's evidence is consistent with its kind, and known cases name the authority that answers.
 ninferno_add_op_test(ninferno_route_authorities_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_authorities.cpp"
   LIBRARIES ninferno_linear_test_support)

@@ -293,7 +293,7 @@ std::optional<RouteAnswer> cost_model(const Ask& ask, const Problem& problem,
 
 // R8 for decode and for the verify of the formats with an R8 codec (r8_call): at one token the
 // entry of the nearest measured board's decode table (tuned_r8, within kR8CarryDistance), else the
-// R8 rules (heuristic_r8).
+// R8 rules (r8_rules_route), asked only when the table does not answer.
 std::optional<RouteAnswer> r8_schedule(const Ask& ask, const Problem& problem,
                                        const Weight& weight) {
     if (!r8_call(weight, problem.policy, ask.tokens)) return std::nullopt;

@@ -1,7 +1,7 @@
 // The route selector's authorities (ops/generic/route_authorities.h, #614 A1): the three lists are
 // well formed (distinct names, the rules end on the scalar route, which always answers), and on
 // every facts board (a substituted DeviceClass, as ninferno_selector_golden_test runs them) the
-// answer with evidence is the route select_route gives, its evidence names a listed authority,
+// evidence of every answer names a listed authority,
 // and the evidence is consistent with its kind: a Pin or a Ranker names no donor and no distance,
 // a Measured answer is this board's (distance 0), a Carried answer's donor lies within
 // kCarryDistance, a Borrowed or Transferred answer names its donor, and the invariant profile is
