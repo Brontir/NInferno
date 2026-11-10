@@ -100,6 +100,9 @@ constexpr int kReps      = 5;
 inline constexpr std::array<std::int32_t, 9> kPrefillBandTokens = {17,  32,  64,   127, 128,
                                                                    256, 512, 1024, 2048};
 inline constexpr std::size_t kPrefillBands                      = kPrefillBandTokens.size();
+// The first band is the prefill band's lower edge: the selection, the workspace plan and the tuner
+// read one boundary.
+static_assert(kPrefillBandTokens.front() == kPrefillBandMinTokens);
 
 std::size_t prefill_band(std::int32_t tokens) {
     for (std::size_t b = 0; b < kPrefillBands; ++b) {
