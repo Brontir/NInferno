@@ -1,1270 +1,1335 @@
 {
-  "schema": 1,
-  "about": "Registry of the fusion sites found so far (#617 step A; the markers in the code enumerate it, and a site not yet found is not in it): places where two or more ops can run as one fused kernel or as separate launches, where it is decided today, the alternatives, and what prices it. Data only; nothing reads it at run time. Each site's deciding function carries a `// FUSION-SITE: <id>` line above its signature, and tests/test_fusion_sites.py fails when the code and this file disagree. byte_promise: Equal (every alternative gives the same bytes), OwnOrder (the alternatives sum in different orders, so the invariant profile must pin one), NotApplicable, Unreviewed. priced.status: priced (the generic route cost model prices the alternatives), partial (some alternative or term), fact (a hardware or format predicate decides, no price), literal (a constant measured on the cards named in the evidence), none (one form only, or a rule with no price). invariant_pin: which alternative the invariant route profile runs (unreviewed: not yet read from the code). parity_test: a test that runs the alternatives against each other (null: none known). oracle_test: a test that checks the site's output against an oracle or a tolerance (null: none known). The JSON is the source; a generated constexpr header is intended for steps B and D, as gpu_facts.json becomes board_registry.h.",
-  "sites": [
-    {
-      "id": "q8_pair",
-      "name": "Q8 K/V pair (drafter)",
-      "layer": "projection",
-      "fuses": [
-        "linear (K)",
-        "linear (V)"
-      ],
-      "decided_in": {
-        "file": "src/ops/wrapper/linear_pair.cpp",
-        "function": "fused_pair"
-      },
-      "rule_today": "fused_pair = fused_domain() (registered Q8 G32 shapes, row views for K=2048) and chain_prefers_fused(). The #565 requested-bytes law (generic::route_traffic) can pick the two linear() calls only for the two-launch TwoSimtR8C4 schedule (K=5120, T<=85) and only where the shape table runs the call with a tile the device MMA takes natively; Volta and Turing keep the fused kernel (numeric contract), and so does the invariant route profile. One-launch fused schedules are unpriced.",
-      "alternatives": [
-        "fused dual kernel (q8_pair_dispatch)",
-        "two linear() calls"
-      ],
-      "priced": {
-        "status": "partial",
-        "by": "requested-bytes law of generic::route_traffic (not the route cost model)",
-        "unpriced": "the native-MMA gate and the invariant profile are predicates, not prices; MMA tile efficiency, occupancy, split-K partials and launches are unpriced"
-      },
-      "byte_promise": "OwnOrder",
-      "one_card_literal": false,
-      "evidence": [
-        "#565",
-        "#310",
-        "sweeps on 4060 Ti, 4090, 3060, 2080 Ti recorded in #565"
-      ],
-      "invariant_pin": "fused kernel (keeps it: unpriced under the profile)",
-      "parity_test": null,
-      "oracle_test": "tests/ops/linear_pair/test_q8_a16.cpp"
-    },
-    {
-      "id": "ffn_swiglu_epilogue",
-      "name": "gate/up SwiGLU epilogue (Qwen 3.5 dense FFN)",
-      "layer": "mlp",
-      "fuses": [
-        "gate/up projection",
-        "silu_mul"
-      ],
-      "decided_in": {
-        "file": "src/models/qwen3_5/execution/ffn.cpp",
-        "function": "ffn"
-      },
-      "rule_today": "linear_swiglu (Epilogue::SwiGlu in the generic Problem). A split gate/up weight (split_gate_up, ffn.cpp) takes segmented_swiglu even on the MTP path (see mmq_gated_pair); otherwise the MTP path (mtp flag) runs linear + silu_mul so its numerics equal the unfused chain. The unfused chain is never priced.",
-      "alternatives": [
-        "linear_swiglu (epilogue)",
-        "linear + silu_mul"
-      ],
-      "priced": {
-        "status": "none",
-        "by": "flag; the epilogue is part of the Problem and the unfused chain has no price",
-        "unpriced": "whole site"
-      },
-      "byte_promise": "OwnOrder",
-      "one_card_literal": false,
-      "evidence": [
-        "#617 analysis, section 1 and Q1 (MLP rows)"
-      ],
-      "invariant_pin": "unreviewed",
-      "parity_test": null,
-      "oracle_test": "tests/ops/linear_swiglu/test_q8_a16.cpp"
-    },
-    {
-      "id": "ffn_down_residual_epilogue",
-      "name": "down projection + residual add (Qwen 3.5 dense FFN)",
-      "layer": "mlp",
-      "fuses": [
-        "down projection",
-        "residual_add"
-      ],
-      "decided_in": {
-        "file": "src/models/qwen3_5/execution/ffn.cpp",
-        "function": "ffn"
-      },
-      "rule_today": "linear_add (Epilogue::AddResidual) except on the MTP path, which runs linear + residual_add. The add happens in the FP32 accumulator before the BF16 rounding, a different rounding from residual_add on a stored BF16 projection.",
-      "alternatives": [
-        "linear_add (epilogue)",
-        "linear + residual_add"
-      ],
-      "priced": {
-        "status": "none",
-        "by": "flag",
-        "unpriced": "whole site"
-      },
-      "byte_promise": "OwnOrder",
-      "one_card_literal": false,
-      "evidence": [
-        "#617 analysis, Q1 (attention and MLP rows)"
-      ],
-      "invariant_pin": "unreviewed",
-      "parity_test": null,
-      "oracle_test": "tests/ops/linear_add/test_q8_a16.cpp"
-    },
-    {
-      "id": "mmq_gated_pair",
-      "name": "GGUF gate/up pair (vec gated pair / MMQ plane + epilogue)",
-      "layer": "mlp",
-      "fuses": [
-        "gate projection",
-        "up projection",
-        "SwiGLU/GeGLU"
-      ],
-      "decided_in": {
-        "file": "src/ops/generic/generic_ggml.cpp",
-        "function": "ggml_mmq_gated_pair"
-      },
-      "rule_today": "segmented_swiglu_pair (segmented_projection.cpp) tries the ggml vec gated pair for T <= kGgmlVecMaxTokens, else ggml_mmq_gated_pair. Each pair function is decided by its `takes` lambda: both halves must take the kernel as a call alone would (tuner timing up to kMmqMaxTokens, else select_route above kMmqMaxTokens (16) with rows a multiple of kRowMultiple), and the workspace must hold the pair. The MMQ pair is not one launch (FP32 plane, then generic_mmq_epilogue.cu reads it back). Otherwise two projections + silu_mul.",
-      "alternatives": [
-        "vec gated pair (T <= kGgmlVecMaxTokens)",
-        "MMQ plane + epilogue launch",
-        "two projections + silu_mul",
-        "(unbuilt, #617 step I) in-kernel MMQ epilogue"
-      ],
-      "priced": {
-        "status": "partial",
-        "by": "the halves' route choice (tuner timing or select_route); the pair against two projections + silu_mul is not priced",
-        "unpriced": "plane read-back, launches"
-      },
-      "byte_promise": "OwnOrder",
-      "one_card_literal": false,
-      "evidence": [
-        "#617 analysis, section 1 and Q5 item 1",
-        "tests/ops/linear/test_segmented_swiglu.cpp per-token memcmp"
-      ],
-      "invariant_pin": "unreviewed",
-      "parity_test": null,
-      "oracle_test": "tests/ops/linear/test_segmented_swiglu.cpp"
-    },
-    {
-      "id": "vec_shared_quantize",
-      "name": "shared ggml vec activation quantize",
-      "layer": "quantization",
-      "fuses": [
-        "q8_1 quantize of x",
-        "two or more vec slice groups"
-      ],
-      "decided_in": {
-        "file": "src/ops/generic/segmented_projection.cpp",
-        "function": "project"
-      },
-      "rule_today": "x is quantized once when two or more parent groups take the vec kernel (a count), else each call quantizes itself.",
-      "alternatives": [
-        "quantize once for all groups",
-        "quantize per call"
-      ],
-      "priced": {
-        "status": "fact",
-        "by": "group count (vec_groups >= 2)",
-        "unpriced": "n/a"
-      },
-      "byte_promise": "Equal",
-      "one_card_literal": false,
-      "evidence": [
-        "#617 analysis, section 1"
-      ],
-      "invariant_pin": "unreviewed",
-      "parity_test": null,
-      "oracle_test": null
-    },
-    {
-      "id": "r8_prequantized",
-      "name": "R8 activation quantization: in-kernel vs pre-quantized planes",
-      "layer": "quantization",
-      "fuses": [
-        "activation quantize",
-        "R8 MMA projection"
-      ],
-      "decided_in": {
-        "file": "src/ops/generic/generic_gemm.cpp",
-        "function": "resolve_route"
-      },
-      "rule_today": "r8_prequantized = R8 family, 2 <= tokens <= kR8VerifyTokens, workspace large enough, format compiled for it. The pre-quantized form refuses PDL join, release and prefetch (see pdl_overlap).",
-      "alternatives": [
-        "quantize inside the R8 kernel",
-        "separate quantizer launch into workspace planes"
-      ],
-      "priced": {
-        "status": "fact",
-        "by": "predicate: 2 <= tokens <= kR8VerifyTokens, format compiled for it, workspace large enough",
-        "unpriced": "the lost PDL overlap is not priced"
-      },
-      "byte_promise": "Equal",
-      "one_card_literal": false,
-      "evidence": [
-        "#617 analysis, Q1 (quantization row)",
-        "comments at the r8 verify widths in generic_gemm.cpp"
-      ],
-      "invariant_pin": "unreviewed",
-      "parity_test": null,
-      "oracle_test": null
-    },
-    {
-      "id": "activation_quantizer_launch",
-      "name": "W4A8 / I8 / MMQ activation quantizer launch",
-      "layer": "quantization",
-      "fuses": [
-        "activation quantize",
-        "A8 projection"
-      ],
-      "decided_in": {
-        "file": "src/ops/generic/generic_cost.cpp",
-        "function": "a8_candidates"
-      },
-      "rule_today": "The quantizer always runs as a separate launch; the cost model charges kQuantLaunchSeconds plus kQuantBytesPerValue per value to every A8 candidate (both Fitted in route_cost_constants.h).",
-      "alternatives": [
-        "separate quantizer launch (the only form built)"
-      ],
-      "priced": {
-        "status": "priced",
-        "by": "route cost model: kQuantLaunchSeconds + kQuantBytesPerValue (Fitted)",
-        "unpriced": "n/a"
-      },
-      "byte_promise": "NotApplicable",
-      "one_card_literal": false,
-      "evidence": [
-        "#617 analysis, section 1",
-        "src/ops/generic/route_cost_constants.h"
-      ],
-      "invariant_pin": "n/a (only one form)",
-      "parity_test": null,
-      "oracle_test": null
-    },
-    {
-      "id": "qk_norm_rope",
-      "name": "qk-norm + RoPE (Qwen 3.5 text attention)",
-      "layer": "attention",
-      "fuses": [
-        "rmsnorm (q)",
-        "rmsnorm (k)",
-        "rope"
-      ],
-      "decided_in": {
-        "file": "src/models/qwen3_5/execution/attention.cpp",
-        "function": "fused_text_qk_norm_rope"
-      },
-      "rule_today": "rmsnorm_rope when tokens <= kFusedTextQkNormRopeMaximumTokens (256), theta 1e7, eps 1e-6, head_dim 256, rotary 64, no YaRN, one position axis; else two rmsnorms + rope. Both branches are the same arithmetic bit for bit.",
-      "alternatives": [
-        "rmsnorm_rope (one launch)",
-        "2 x rmsnorm + rope"
-      ],
-      "priced": {
-        "status": "literal",
-        "by": "the 256-token bound, measured on an RTX 5090 alone (fused +22..52 % through 256 tokens, -22 % at 1024)",
-        "unpriced": "wave fill on every other card"
-      },
-      "byte_promise": "Equal",
-      "one_card_literal": true,
-      "evidence": [
-        "#617 analysis, section 1 and step G",
-        "comment above kFusedTextQkNormRopeMaximumTokens"
-      ],
-      "invariant_pin": "none needed (Equal)",
-      "parity_test": null,
-      "oracle_test": "tests/ops/test_rmsnorm_rope.cpp"
-    },
-    {
-      "id": "dense_qkv_prepare",
-      "name": "dense QKV prepare (bias + norm + RoPE + KV write)",
-      "layer": "attention",
-      "fuses": [
-        "add_bias",
-        "qk-norm",
-        "rope",
-        "KV write"
-      ],
-      "decided_in": {
-        "file": "src/ops/dense_fused/dense_fused.cu",
-        "function": "dense_qkv_prepare"
-      },
-      "rule_today": "Always fused for the dense family; no unfused alternative in the code.",
-      "alternatives": [
-        "fused prepare (only form)"
-      ],
-      "priced": {
-        "status": "none",
-        "by": "always fused",
-        "unpriced": "n/a"
-      },
-      "byte_promise": "Equal",
-      "one_card_literal": false,
-      "evidence": [
-        "#617 analysis, section 1 and Q1 (attention rows)"
-      ],
-      "invariant_pin": "n/a (only one form)",
-      "parity_test": null,
-      "oracle_test": "tests/ops/test_dense_fused.cpp"
-    },
-    {
-      "id": "gemma4_qkv_prepare",
-      "name": "Gemma 4 QKV prepare (norm + RoPE + KV write)",
-      "layer": "attention",
-      "fuses": [
-        "q/k/v norm",
-        "rope",
-        "KV write"
-      ],
-      "decided_in": {
-        "file": "src/ops/gemma4_fused/gemma4_fused.cu",
-        "function": "gemma4_qkv_prepare"
-      },
-      "rule_today": "Always fused for Gemma 4 (several overloads: dflash, q-only); no unfused alternative in the code.",
-      "alternatives": [
-        "fused prepare (only form)"
-      ],
-      "priced": {
-        "status": "none",
-        "by": "always fused",
-        "unpriced": "n/a"
-      },
-      "byte_promise": "Equal",
-      "one_card_literal": false,
-      "evidence": [
-        "#617 analysis, section 1"
-      ],
-      "invariant_pin": "n/a (only one form)",
-      "parity_test": null,
-      "oracle_test": "tests/ops/test_gemma4_fused.cpp"
-    },
-    {
-      "id": "gdn_gated_norm_regroup",
-      "name": "GDN gated norm + head regroup",
-      "layer": "gdn",
-      "fuses": [
-        "gated_rmsnorm",
-        "regroup_bf16_heads"
-      ],
-      "decided_in": {
-        "file": "src/ops/wrapper/rmsnorm.cpp",
-        "function": "gated_rmsnorm_regroups"
-      },
-      "rule_today": "An alignment predicate (D 64..256 by 64, 4-byte aligned tensors, out apart from x and z) plus the tiled out_proj column order (text.cpp) selects gated_rmsnorm_regrouped over gated_rmsnorm + regroup_bf16_heads.",
-      "alternatives": [
-        "gated_rmsnorm_regrouped",
-        "gated_rmsnorm + regroup_bf16_heads"
-      ],
-      "priced": {
-        "status": "fact",
-        "by": "alignment and geometry predicate",
-        "unpriced": "n/a"
-      },
-      "byte_promise": "Equal",
-      "one_card_literal": false,
-      "evidence": [
-        "#617 analysis, section 1"
-      ],
-      "invariant_pin": "none needed (Equal)",
-      "parity_test": null,
-      "oracle_test": "tests/ops/test_gated_rmsnorm.cpp"
-    },
-    {
-      "id": "moe_select_plan",
-      "name": "MoE select + plan",
-      "layer": "moe",
-      "fuses": [
-        "expert selection",
-        "expert plan"
-      ],
-      "decided_in": {
-        "file": "src/ops/moe/moe.cpp",
-        "function": "run"
-      },
-      "rule_today": "Three alternatives in moe.cpp run(): the SIMT router last CTA selects and plans (moe_router_select_plan); else launch_select_plan, one CTA, when tokens <= kPlanWarps (16); else launch_select then launch_plan. This entry is the second against the third, a shared-memory fact.",
-      "alternatives": [
-        "select_plan_kernel (one launch)",
-        "select + plan (two launches)",
-        "router last CTA does both (see moe_router_select_plan)"
-      ],
-      "priced": {
-        "status": "fact",
-        "by": "tokens <= kPlanWarps (shared-memory limit)",
-        "unpriced": "the saved launch (#617 step K also moves the router in)"
-      },
-      "byte_promise": "Equal",
-      "one_card_literal": false,
-      "evidence": [
-        "#617 analysis, section 1 and Q5 item 3",
-        "src/ops/moe/moe_internal.h"
-      ],
-      "invariant_pin": "n/a (Equal)",
-      "parity_test": null,
-      "oracle_test": "tests/ops/test_moe.cpp"
-    },
-    {
-      "id": "kv_write_attention",
-      "name": "KV write inside causal softmax attention",
-      "layer": "attention",
-      "fuses": [
-        "KV append",
-        "causal softmax attention"
-      ],
-      "decided_in": {
-        "file": "src/ops/softmax_attention/dense/causal_cache/causal_softmax_attention.cpp",
-        "function": "causal_softmax_attention"
-      },
-      "rule_today": "The op always appends the current K/V before attending; no separate append alternative.",
-      "alternatives": [
-        "fused append + attention (the only form)"
-      ],
-      "priced": {
-        "status": "none",
-        "by": "always fused",
-        "unpriced": "n/a"
-      },
-      "byte_promise": "Equal",
-      "one_card_literal": false,
-      "evidence": [
-        "#617 analysis, section 1 (KV write already fused)",
-        "include/ninferno/ops/softmax_attention.h"
-      ],
-      "invariant_pin": "n/a (only one form)",
-      "parity_test": null,
-      "oracle_test": "tests/ops/softmax_attention/causal_cache.cpp"
-    },
-    {
-      "id": "pdl_overlap",
-      "name": "PDL join / release / prefetch between launches",
-      "layer": "launch",
-      "fuses": [
-        "consecutive projection launches (overlap, not one kernel)"
-      ],
-      "decided_in": {
-        "file": "src/ops/generic/generic_gemm.cpp",
-        "function": "launch_overlap"
-      },
-      "rule_today": "Only a register-MMA or R8 Store launch joins or releases; a release also needs PDL (OverlapRefusal::NoPdl), a join does not; the pre-quantized R8 form refuses all three (OverlapRefusal::PrequantizedR8); prefetch for T <= kPdlPrefetchMaxTokens (16).",
-      "alternatives": [
-        "overlap via programmatic dependent launch",
-        "stream order"
-      ],
-      "priced": {
-        "status": "fact",
-        "by": "predicates: the device PDL feature (release), route family and epilogue; plus kPdlPrefetchMaxTokens = 16 (generic_gemm.h), a literal of unknown provenance",
-        "unpriced": "the overlap saving is not priced"
-      },
-      "byte_promise": "NotApplicable",
-      "one_card_literal": false,
-      "evidence": [
-        "#617 analysis, section 1 and Q4",
-        "src/ops/generic/generic_gemm.h kPdlPrefetchMaxTokens",
-        "src/core/pdl.cuh (the 3090 node cost is its reason to leave PDL off below sm_90, not a price)"
-      ],
-      "invariant_pin": "n/a (no arithmetic)",
-      "parity_test": null,
-      "oracle_test": "tests/ops/linear/test_launch_overlap.cpp"
-    },
-    {
-      "id": "dense_out_residual_norm",
-      "name": "dense output projection + residual + FFN norm",
-      "layer": "norm",
-      "fuses": [
-        "output projection",
-        "residual add",
-        "rmsnorm"
-      ],
-      "decided_in": {
-        "file": "src/models/dense/target.cu",
-        "function": "forward"
-      },
-      "rule_today": "`fold` (pre-norm layer, no dump call, no post norms, residual multiplier 1, no output bias) runs linear_add (residual in the projection epilogue) + rmsnorm; otherwise project + residual_norm (the dense_fused launcher, which is only the second alternative). Gemma 4 and Qwen 3.5 choose their own chains and are not registered yet.",
-      "alternatives": [
-        "linear_add + rmsnorm (fold)",
-        "project + residual_norm (dense_fused)"
-      ],
-      "priced": {
-        "status": "none",
-        "by": "structural predicate `fold`",
-        "unpriced": "whole site"
-      },
-      "byte_promise": "OwnOrder",
-      "one_card_literal": false,
-      "evidence": [
-        "#617 analysis, section 1 and Q1 (norms and attention rows)",
-        "review of PR 638"
-      ],
-      "invariant_pin": "unreviewed",
-      "parity_test": null,
-      "oracle_test": "tests/ops/test_dense_fused.cpp"
-    },
-    {
-      "id": "moe_router_select_plan",
-      "name": "MoE router + select + plan in the router last CTA",
-      "layer": "moe",
-      "fuses": [
-        "router logits",
-        "expert selection",
-        "expert plan"
-      ],
-      "decided_in": {
-        "file": "src/ops/moe/moe.cpp",
-        "function": "run"
-      },
-      "rule_today": "route_in_router = router_simt && t <= kRouterSimtWarps && a <= 32 && !pdl: the SIMT router last CTA also selects and plans. Without PDL each launch is a gap (RTX 3090: Gemma 4 26B C=1 +1.3 %, C=4 +2.1 %, Qwen3.6-35B and Nemotron C=1 +1.2 / +1.4 %); with PDL the separate launch overlaps (RTX 5090: Qwen3.6-35B C=4 -3.3 %, Nemotron -2.3 %). router_simt is off under the invariant profile.",
-      "alternatives": [
-        "router launch with select+plan in its last CTA",
-        "router + select_plan / select + plan launches"
-      ],
-      "priced": {
-        "status": "literal",
-        "by": "two cards: RTX 3090 gains and RTX 5090 losses (comment in moe.cpp) as a PDL flag and a 32-assignment bound",
-        "unpriced": "the launch saving per generation"
-      },
-      "byte_promise": "Equal",
-      "invariant_pin": "separate launches (router_simt is off under the invariant profile)",
-      "parity_test": null,
-      "one_card_literal": false,
-      "evidence": [
-        "#617 analysis, Q5 item 3",
-        "comment above route_in_router in moe.cpp"
-      ],
-      "oracle_test": "tests/ops/test_moe.cpp"
-    },
-    {
-      "id": "moe_combine_fused",
-      "name": "MoE combine in the R8 down epilogue",
-      "layer": "moe",
-      "fuses": [
-        "down projection (R8)",
-        "combine of the k experts"
-      ],
-      "decided_in": {
-        "file": "src/ops/moe/moe.cpp",
-        "function": "run"
-      },
-      "rule_today": "fused_combine when the down stage is R8 and there is no shared expert, no branch, fused_combine_enabled(), and the down grid has at most kCombineTickets blocks: the last CTAs combine. Otherwise the combine kernel runs after the shared expert.",
-      "alternatives": [
-        "down R8 kernel whose last CTAs combine",
-        "down kernel + launch_combine"
-      ],
-      "priced": {
-        "status": "fact",
-        "by": "predicate (no shared expert, no branch, enabled flag, block count <= kCombineTickets)",
-        "unpriced": "the saved launch and the lost shared-expert overlap"
-      },
-      "byte_promise": "Equal",
-      "invariant_pin": "unreviewed",
-      "parity_test": "tests/ops/test_moe.cpp",
-      "one_card_literal": false,
-      "evidence": [
-        "#617 analysis, Q1 (MoE rows)",
-        "src/ops/moe/moe.cpp"
-      ],
-      "oracle_test": null
-    },
-    {
-      "id": "moe_router_quantize_x",
-      "name": "router quantizes x for an R8 gate/up",
-      "layer": "moe",
-      "fuses": [
-        "activation quantize",
-        "router"
-      ],
-      "decided_in": {
-        "file": "src/ops/moe/moe.cpp",
-        "function": "router_quantizes_x"
-      },
-      "rule_today": "The router CTAs quantize x for the R8 gate/up when gate_up_r8 >= 0, not W4A8, the bank input is the hidden state as is, and tokens <= kR8Tokens.",
-      "alternatives": [
-        "router CTAs quantize x",
-        "separate quantize"
-      ],
-      "priced": {
-        "status": "fact",
-        "by": "predicate (R8 gate/up, tokens <= kR8Tokens)",
-        "unpriced": "the saved launch"
-      },
-      "byte_promise": "Equal",
-      "invariant_pin": "unreviewed",
-      "parity_test": null,
-      "one_card_literal": false,
-      "evidence": [
-        "src/ops/moe/moe.cpp"
-      ],
-      "oracle_test": null
-    },
-    {
-      "id": "segmented_gdn_control",
-      "name": "segmented GDN norm + control projection",
-      "layer": "gdn",
-      "fuses": [
-        "rmsnorm",
-        "a/b projection",
-        "gdn gating"
-      ],
-      "decided_in": {
-        "file": "src/ops/generic/segmented_projection.cpp",
-        "function": "segmented_gdn_norm_gating_proj"
-      },
-      "rule_today": "A call of at most kSegmentedFusedControlMaxTokens (16, include/ninferno/ops/segmented_projection.h) columns whose a and b are each one row block of one format (BF16 or Q8_G32_FP16 row-split) runs as one kernel (generic::launch_gdn_norm_gating_simt); otherwise rmsnorm + generic projection + gating. Never under the invariant profile. The fused form computes a and b from the unrounded normalized input in FP32, so it is OwnOrder.",
-      "alternatives": [
-        "gdn_norm_gating SIMT kernel",
-        "rmsnorm + projection + gating"
-      ],
-      "priced": {
-        "status": "literal",
-        "by": "token bound 16 and a format predicate",
-        "unpriced": "whole site"
-      },
-      "byte_promise": "OwnOrder",
-      "invariant_pin": "separate chain (excluded under the invariant profile)",
-      "parity_test": null,
-      "one_card_literal": false,
-      "evidence": [
-        "#617 analysis, Q1 (GDN row)",
-        "include/ninferno/ops/segmented_projection.h"
-      ],
-      "oracle_test": "tests/ops/test_gdn_gating_proj.cpp"
-    },
-    {
-      "id": "bf16_gdn_control",
-      "name": "BF16 GDN norm + gating projection plan",
-      "layer": "gdn",
-      "fuses": [
-        "rmsnorm",
-        "a/b projection",
-        "gdn gating"
-      ],
-      "decided_in": {
-        "file": "src/ops/gdn_gating_proj/bf16/bf16_gdn_gating_proj_plan.cpp",
-        "function": "bf16_gdn_norm_gating_resolve_plan"
-      },
-      "rule_today": "FusedSimt27 (the fused norm + gating SIMT kernel) for the 27B geometry up to fused_simt27_max_cols() (16 under the prefill route profile, 42 otherwise). The 35B geometry at <= 16 columns, unless the invariant profile is active or simt_35_decode holds, takes MmaCooperativeSplit32 (norm partials in 32 splits, MMA control projection); the other alternative is Composed (norm, then the control projection, then gating).",
-      "alternatives": [
-        "FusedSimt27 / MmaCooperativeSplit32 (norm folded into the control kernel)",
-        "Composed (norm, control projection, gating)"
-      ],
-      "priced": {
-        "status": "literal",
-        "by": "column bounds 16 / 42 (42 is the measured speed frontier of the 27B kernel)",
-        "unpriced": "whole site"
-      },
-      "byte_promise": "OwnOrder",
-      "invariant_pin": "Composed / invariant routes (the 35B split is off under the invariant profile)",
-      "parity_test": null,
-      "one_card_literal": false,
-      "evidence": [
-        "comments in bf16_gdn_gating_proj_plan.cpp"
-      ],
-      "oracle_test": "tests/ops/test_gdn_gating_proj.cpp"
-    },
-    {
-      "id": "gdn_conv_fp8",
-      "name": "GDN input projection + causal conv (FP8)",
-      "layer": "gdn",
-      "fuses": [
-        "input projection",
-        "causal conv"
-      ],
-      "decided_in": {
-        "file": "src/ops/gdn_input_proj/fp8/fp8_gdn_conv_plan.cpp",
-        "function": "fp8_gdn_snapshot_resolve_plan"
-      },
-      "rule_today": "A16Only (the exact contract) materializes every width through the A16 projection; batch 1 with an A8 policy materializes through A8 from width 17; otherwise b1_a16_plan fuses the projection and the causal conv for width <= 3 and materializes wider calls.",
-      "alternatives": [
-        "conv fused in the projection epilogue/kernel",
-        "materialized projection + conv"
-      ],
-      "priced": {
-        "status": "literal",
-        "by": "column bounds in the plan (not priced)",
-        "unpriced": "whole site"
-      },
-      "byte_promise": "OwnOrder",
-      "invariant_pin": "materialized (A16Only materializes every width)",
-      "parity_test": null,
-      "one_card_literal": false,
-      "evidence": [
-        "#617 analysis (GDN row)",
-        "src/ops/gdn_input_proj/fp8/fp8_gdn_conv_plan.cpp"
-      ],
-      "oracle_test": "tests/ops/test_gdn_input_proj.cpp"
-    },
-    {
-      "id": "gdn_conv_q8",
-      "name": "GDN input projection + causal conv (Q8)",
-      "layer": "gdn",
-      "fuses": [
-        "input projection",
-        "causal conv"
-      ],
-      "decided_in": {
-        "file": "src/ops/gdn_input_proj/q8/q8_gdn_input_plan.cpp",
-        "function": "q8_gdn_input_conv_resolve_plan"
-      },
-      "rule_today": "batch > 1: materialized; 1 column: DecodeFused; <= 16 columns: SplitKMmaFused; else materialized.",
-      "alternatives": [
-        "conv fused in the projection epilogue/kernel",
-        "materialized projection + conv"
-      ],
-      "priced": {
-        "status": "literal",
-        "by": "column bounds in the plan (not priced)",
-        "unpriced": "whole site"
-      },
-      "byte_promise": "OwnOrder",
-      "invariant_pin": "materialized (the caller, src/ops/wrapper/gdn_input_proj.cpp, skips the plan under invariant_routes_active())",
-      "parity_test": null,
-      "one_card_literal": false,
-      "evidence": [
-        "#617 analysis (GDN row)",
-        "src/ops/gdn_input_proj/q8/q8_gdn_input_plan.cpp"
-      ],
-      "oracle_test": "tests/ops/test_gdn_input_proj.cpp"
-    },
-    {
-      "id": "gdn_conv_nvfp4",
-      "name": "GDN input projection + causal conv (NVFP4)",
-      "layer": "gdn",
-      "fuses": [
-        "input projection",
-        "causal conv"
-      ],
-      "decided_in": {
-        "file": "src/ops/gdn_input_proj/nvfp4/nvfp4_gdn_snapshot_plan.cpp",
-        "function": "nvfp4_gdn_conv_resolve_plan"
-      },
-      "rule_today": "batch > 1 and A16Only materialize. Otherwise, when W4A4 is not allowed (AllowA8, or a route probe forcing 0), the fused A16 schedules run through 16 tokens (DecodeFusedA16 at 1, SmallTFusedA16 to 16) and wider calls materialize; a probe forcing 1 materializes every width; with W4A4 allowed, fused only up to 3 tokens.",
-      "alternatives": [
-        "conv fused in the projection epilogue/kernel",
-        "materialized projection + conv"
-      ],
-      "priced": {
-        "status": "literal",
-        "by": "column bounds in the plan (not priced)",
-        "unpriced": "whole site"
-      },
-      "byte_promise": "OwnOrder",
-      "invariant_pin": "materialized (A16Only materializes every width, nvfp4_gdn_snapshot_plan.cpp)",
-      "parity_test": null,
-      "one_card_literal": false,
-      "evidence": [
-        "#617 analysis (GDN row)",
-        "src/ops/gdn_input_proj/nvfp4/nvfp4_gdn_snapshot_plan.cpp"
-      ],
-      "oracle_test": "tests/ops/test_gdn_input_proj.cpp"
-    },
-    {
-      "id": "gdn_conv_q4_q5",
-      "name": "GDN input projection + causal conv (Q4/Q5)",
-      "layer": "gdn",
-      "fuses": [
-        "input projection",
-        "causal conv"
-      ],
-      "decided_in": {
-        "file": "src/ops/gdn_input_proj/q4_q5/q4_q5_gdn_input_plan.cpp",
-        "function": "q4_q5_gdn_input_conv_resolve_plan"
-      },
-      "rule_today": "ProjectionEpilogueFused for 1, 2, 3, 5 and 6 columns, unless batch > 1, the small-T MMA or one-token MMA is taken, or the invariant profile is active; else materialized.",
-      "alternatives": [
-        "conv fused in the projection epilogue/kernel",
-        "materialized projection + conv"
-      ],
-      "priced": {
-        "status": "literal",
-        "by": "column bounds in the plan (not priced)",
-        "unpriced": "whole site"
-      },
-      "byte_promise": "OwnOrder",
-      "invariant_pin": "materialized (the plan checks invariant_routes_active())",
-      "parity_test": null,
-      "one_card_literal": false,
-      "evidence": [
-        "#617 analysis (GDN row)",
-        "src/ops/gdn_input_proj/q4_q5/q4_q5_gdn_input_plan.cpp"
-      ],
-      "oracle_test": "tests/ops/test_gdn_input_proj.cpp"
-    },
-    {
-      "id": "attn_input_proj",
-      "name": "fused attention input projection (Qwen 3.5 MTP and drafter)",
-      "layer": "attention",
-      "fuses": [
-        "packed Q/K/gate/V projection",
-        "split into q, gate, k, v"
-      ],
-      "decided_in": {
-        "file": "src/models/qwen3_5/execution/mtp.cpp",
-        "function": "fused"
-      },
-      "rule_today": "fused() in mtp.cpp is false when parameters.rows is set (a row-split layer). Otherwise ops::attn_input_proj_fused_supported (src/ops/wrapper/attn_input_proj.cpp): BF16, FP8_E4M3FN_ROW_BF16 and NVFP4 (when the native NVFP4 kernels are built) for the pair geometry 5120 / 6144 / 1024, and Q8_G32_FP16 for 2048 / 4096 / 512 only; any other weight takes the generic linear and the split. The drafter decides separately (drafter_attn_input, drafter_context_kv).",
-      "alternatives": [
-        "attn_input_proj fused Op",
-        "generic linear + split"
-      ],
-      "priced": {
-        "status": "fact",
-        "by": "format and geometry predicate",
-        "unpriced": "n/a"
-      },
-      "byte_promise": "Unreviewed",
-      "invariant_pin": "unreviewed",
-      "parity_test": null,
-      "one_card_literal": false,
-      "evidence": [
-        "src/models/qwen3_5/execution/mtp.cpp",
-        "src/models/qwen3_5/execution/draft.cpp"
-      ],
-      "oracle_test": "tests/ops/test_attn_input_proj.cpp"
-    },
-    {
-      "id": "sparse_moe_fused",
-      "name": "fused (sparse) MoE kernels vs the generic MoE",
-      "layer": "moe",
-      "fuses": [
-        "router",
-        "expert banks",
-        "combine"
-      ],
-      "decided_in": {
-        "file": "src/ops/route_pins.cpp",
-        "function": "moe_takes_fused"
-      },
-      "rule_today": "moe_takes_fused(fused_ready, why_not): Auto takes the fused kernels when the layer is ready for them; --moe-path generic or fused pins either (fused on a layer that cannot run it throws). Callers: qwen3_5 parameters.cpp, gemma4 load_target.cpp.",
-      "alternatives": [
-        "sparse/fused MoE kernels",
-        "generic MoE"
-      ],
-      "priced": {
-        "status": "fact",
-        "by": "fused_ready predicate and the --moe-path pin",
-        "unpriced": "n/a"
-      },
-      "byte_promise": "Unreviewed",
-      "invariant_pin": "unreviewed",
-      "parity_test": null,
-      "one_card_literal": false,
-      "evidence": [
-        "src/ops/route_pins.cpp"
-      ],
-      "oracle_test": "tests/ops/test_sparse_moe.cpp"
-    },
-    {
-      "id": "dgc_prepare",
-      "name": "rmsnorm + dynamic grouped conv prepare",
-      "layer": "gdn",
-      "fuses": [
-        "rmsnorm",
-        "kernel projection",
-        "dynamic grouped conv prepare"
-      ],
-      "decided_in": {
-        "file": "src/ops/wrapper/dynamic_grouped_conv.cpp",
-        "function": "fused_prepare"
-      },
-      "rule_today": "The fused prepare kernel runs only when the kernel projection is BF16; any other format takes the decomposed route (rmsnorm, projection, prepare).",
-      "alternatives": [
-        "rmsnorm_dynamic_grouped_conv_prepare fused kernel",
-        "decomposed rmsnorm + projection + prepare"
-      ],
-      "priced": {
-        "status": "fact",
-        "by": "format predicate (BF16)",
-        "unpriced": "n/a"
-      },
-      "byte_promise": "Unreviewed",
-      "invariant_pin": "unreviewed",
-      "parity_test": null,
-      "oracle_test": "tests/ops/test_dynamic_grouped_conv_prepare.cpp",
-      "one_card_literal": false,
-      "evidence": [
-        "src/ops/wrapper/dynamic_grouped_conv.cpp"
-      ]
-    },
-    {
-      "id": "dgc_add",
-      "name": "dynamic grouped conv + projection + residual add",
-      "layer": "gdn",
-      "fuses": [
-        "linear projection",
-        "dynamic grouped conv",
-        "residual add"
-      ],
-      "decided_in": {
-        "file": "src/ops/wrapper/dynamic_grouped_conv.cpp",
-        "function": "fused_add"
-      },
-      "rule_today": "The fused kernel runs only when the projection is Q8_G32_FP16; any other format takes the decomposed route.",
-      "alternatives": [
-        "linear_dynamic_grouped_conv_add fused kernel",
-        "decomposed projection + conv + add"
-      ],
-      "priced": {
-        "status": "fact",
-        "by": "format predicate (Q8_G32_FP16)",
-        "unpriced": "n/a"
-      },
-      "byte_promise": "Unreviewed",
-      "invariant_pin": "unreviewed",
-      "parity_test": null,
-      "oracle_test": "tests/ops/test_linear_dynamic_grouped_conv_add.cpp",
-      "one_card_literal": false,
-      "evidence": [
-        "src/ops/wrapper/dynamic_grouped_conv.cpp"
-      ]
-    },
-    {
-      "id": "dense_mlp_gate_up",
-      "name": "dense MLP gate/up chain (DensePass::dense_mlp)",
-      "layer": "mlp",
-      "fuses": [
-        "gate/up projection",
-        "SwiGLU / GeGLU / gelu_tanh_mul"
-      ],
-      "decided_in": {
-        "file": "src/models/dense/target.cu",
-        "function": "dense_mlp"
-      },
-      "rule_today": "DensePass::dense_mlp: a packed gate_up with SiLU takes linear_swiglu; a packed gate_up whose format linear_geglu_supports takes linear_geglu; another packed gate_up takes project + gelu_tanh_mul; an unpacked gate and up try segmented_swiglu_pair (the vec gated pair at decode and verify widths) and otherwise run two projections + silu_mul. The rule is structural, no price. Gemma 4 has its own paths (gemma4_target_geglu, gemma4_drafter_geglu).",
-      "alternatives": [
-        "linear_swiglu",
-        "linear_geglu",
-        "project + gelu_tanh_mul",
-        "segmented_swiglu_pair",
-        "two projections + silu_mul"
-      ],
-      "priced": {
-        "status": "none",
-        "by": "structural predicates and the pair function's own admission (see mmq_gated_pair)",
-        "unpriced": "whole site"
-      },
-      "byte_promise": "OwnOrder",
-      "invariant_pin": "unreviewed",
-      "parity_test": null,
-      "oracle_test": null,
-      "one_card_literal": false,
-      "evidence": [
-        "src/models/dense/target.cu"
-      ]
-    },
-    {
-      "id": "dense_mlp_down",
-      "name": "dense MLP down projection + residual (DensePass::dense_mlp)",
-      "layer": "mlp",
-      "fuses": [
-        "down projection",
-        "residual add"
-      ],
-      "decided_in": {
-        "file": "src/models/dense/target.cu",
-        "function": "dense_mlp"
-      },
-      "rule_today": "DensePass::dense_mlp: `add` takes linear_add (residual in the projection epilogue); otherwise project (or project_release_next, which lets the next call start under it).",
-      "alternatives": [
-        "linear_add",
-        "project (+ residual later)",
-        "project_release_next"
-      ],
-      "priced": {
-        "status": "none",
-        "by": "flag `add` set by the caller",
-        "unpriced": "whole site"
-      },
-      "byte_promise": "OwnOrder",
-      "invariant_pin": "unreviewed",
-      "parity_test": null,
-      "oracle_test": null,
-      "one_card_literal": false,
-      "evidence": [
-        "src/models/dense/target.cu"
-      ]
-    },
-    {
-      "id": "drafter_attn_input",
-      "name": "drafter fused Q8 attention input projection (Qwen 3.5 DFlash drafters)",
-      "layer": "attention",
-      "fuses": [
-        "packed query/key/value projection",
-        "split"
-      ],
-      "decided_in": {
-        "file": "src/models/qwen3_5/execution/draft.cpp",
-        "function": "fused_q8"
-      },
-      "rule_today": "fused_q8 (draft.cpp) is asked per layer in both the DFlash2 proposal path and propose_batch_impl's non-DFlash2 branch. It is true only for a Q8 row-split weight, and such a weight exists only if the load-time gate in src/models/qwen3_5/execution/parameters.cpp built it: Q/K/V are consecutive rows of one parent and ops::fused_attn_input_proj_geometry holds (the 9B 4096 width does not: it takes the segmented bank). The planning gate in src/models/qwen3_5/program/planning/startup.cpp makes the same check to size the bank scratch. Otherwise the generic bank (segmented projection) runs.",
-      "alternatives": [
-        "fused attn_input_proj op",
-        "generic segmented bank"
-      ],
-      "priced": {
-        "status": "fact",
-        "by": "format predicate (Q8 row-split)",
-        "unpriced": "n/a"
-      },
-      "byte_promise": "Unreviewed",
-      "invariant_pin": "unreviewed",
-      "parity_test": null,
-      "oracle_test": null,
-      "one_card_literal": false,
-      "evidence": [
-        "src/models/qwen3_5/execution/draft.cpp"
-      ]
-    },
-    {
-      "id": "drafter_context_kv",
-      "name": "drafter fused context K/V projection",
-      "layer": "attention",
-      "fuses": [
-        "context key projection",
-        "context value projection"
-      ],
-      "decided_in": {
-        "file": "src/models/qwen3_5/execution/draft.cpp",
-        "function": "fused_context"
-      },
-      "rule_today": "The fused context materialization runs only when config.dflash2, the ring is not int8, and fused_context holds (every layer's context key and value weights are Q8 row-split); otherwise each layer appends through its own projections (a DFlash1 drafter always takes the per-layer linear_pair, see q8_pair).",
-      "alternatives": [
-        "fused ContextKVMaterialize across the layers",
-        "per-layer linear_pair + key norm + RoPE + append"
-      ],
-      "priced": {
-        "status": "fact",
-        "by": "format predicate on all layers",
-        "unpriced": "n/a"
-      },
-      "byte_promise": "Unreviewed",
-      "invariant_pin": "unreviewed",
-      "parity_test": null,
-      "oracle_test": null,
-      "one_card_literal": false,
-      "evidence": [
-        "src/models/qwen3_5/execution/draft.cpp"
-      ]
-    },
-    {
-      "id": "vec_gated_pair",
-      "name": "GGUF gate/up pair at decode widths (ggml vec gated pair)",
-      "layer": "mlp",
-      "fuses": [
-        "gate projection",
-        "up projection",
-        "SwiGLU/GeGLU"
-      ],
-      "decided_in": {
-        "file": "src/ops/generic/generic_ggml.cpp",
-        "function": "ggml_vec_gated_pair"
-      },
-      "rule_today": "Tried by segmented_swiglu_pair for T <= kGgmlVecMaxTokens (8): each half must take the vec kernel as a call alone would (ggml_vec_takes_tuned, the tuner times the problem first) and the workspace must hold the pair. When it returns false the caller runs two projections + silu_mul (it does not fall through to MMQ: that band starts above T = 8, see mmq_gated_pair).",
-      "alternatives": [
-        "vec gated pair (one launch per half pair)",
-        "two projections + silu_mul"
-      ],
-      "priced": {
-        "status": "partial",
-        "by": "each half's tuned route choice; the pair against two projections is not priced",
-        "unpriced": "launches"
-      },
-      "byte_promise": "OwnOrder",
-      "invariant_pin": "unreviewed",
-      "parity_test": null,
-      "oracle_test": "tests/ops/linear/test_segmented_swiglu.cpp",
-      "one_card_literal": false,
-      "evidence": [
-        "src/ops/generic/generic_ggml.cpp"
-      ]
-    },
-    {
-      "id": "gemma4_target_geglu",
-      "name": "Gemma 4 target MLP gate/up GeGLU",
-      "layer": "mlp",
-      "fuses": [
-        "gate/up projection",
-        "GeGLU"
-      ],
-      "decided_in": {
-        "file": "src/models/gemma4/target.cu",
-        "function": "layers"
-      },
-      "rule_today": "TargetPass::layers: linear_geglu (GeGLU in the projection epilogue) when ops::linear_geglu_supports the gate_up weight; otherwise project + gelu_tanh_mul. Verify activations use the verify linear policy.",
-      "alternatives": [
-        "linear_geglu (epilogue)",
-        "project + gelu_tanh_mul"
-      ],
-      "priced": {
-        "status": "fact",
-        "by": "format predicate linear_geglu_supports",
-        "unpriced": "whole site"
-      },
-      "byte_promise": "OwnOrder",
-      "invariant_pin": "unreviewed",
-      "parity_test": null,
-      "oracle_test": null,
-      "one_card_literal": false,
-      "evidence": [
-        "src/models/gemma4/target.cu"
-      ]
-    },
-    {
-      "id": "gemma4_drafter_geglu",
-      "name": "Gemma 4 drafter MLP gate/up GeGLU",
-      "layer": "mlp",
-      "fuses": [
-        "gate/up projection",
-        "GeGLU"
-      ],
-      "decided_in": {
-        "file": "src/models/gemma4/mtp_round.cu",
-        "function": "step"
-      },
-      "rule_today": "DrafterPass::step: the same rule as the target: linear_geglu when linear_geglu_supports, else project + gelu_tanh_mul.",
-      "alternatives": [
-        "linear_geglu (epilogue)",
-        "project + gelu_tanh_mul"
-      ],
-      "priced": {
-        "status": "fact",
-        "by": "format predicate linear_geglu_supports",
-        "unpriced": "whole site"
-      },
-      "byte_promise": "OwnOrder",
-      "invariant_pin": "unreviewed",
-      "parity_test": null,
-      "oracle_test": null,
-      "one_card_literal": false,
-      "evidence": [
-        "src/models/gemma4/mtp_round.cu"
-      ]
-    },
-    {
-      "id": "projection_chain",
-      "name": "whole-chain selection of projection fusion alternatives (PR #603)",
-      "layer": "projection",
-      "fuses": [
-        "projection pair (gate/up, K/V)",
-        "SwiGLU epilogue vs projection + pointwise"
-      ],
-      "decided_in": {
-        "file": "src/ops/common/projection_chain.h",
-        "function": "select"
-      },
-      "rule_today": "chain::select over the alternatives a caller builds with pair_alternatives (fused, separate) or swiglu_alternatives (fused_epilogue, projection_then_pointwise). Each alternative is a list of steps, priced by price(): an alternative with an unpriced, non-finite or negative step, a step of no launch, or no steps is not selectable. Pass 1: the anchor is the lowest total (steps plus launches x launch_seconds) among the priced alternatives, the earliest on equal totals; a non-finite total is rejected. Pass 2: keep the anchor unless an alternative with ln(total / anchor) within `resolution` runs strictly fewer launches; among those, the fewest launches, then the earliest in the caller's order. None priced selects nothing and the caller keeps its rule. No production code calls it yet (steps E and F of #617 wire q8_pair, ffn_swiglu_epilogue and mmq_gated_pair to it).",
-      "alternatives": [
-        "fused",
-        "separate",
-        "fused_epilogue",
-        "projection_then_pointwise"
-      ],
-      "priced": {
-        "status": "priced",
-        "by": "whole-chain seconds from the caller's step prices (route_cost_seconds plus output write and pointwise read), launches x launch_seconds, the speed estimate's resolution",
-        "unpriced": "the constants a caller must pass: launch seconds (step B of #617) and the resolution"
-      },
-      "byte_promise": "NotApplicable",
-      "invariant_pin": "n/a (selection only; the sites it will serve pin their own)",
-      "parity_test": null,
-      "oracle_test": null,
-      "one_card_literal": false,
-      "evidence": [
-        "PR #603",
-        "#310",
-        "#617 step C (resolution), step B (launch constant)",
-        "src/ops/common/projection_chain.h"
-      ]
-    },
-    {
-      "id": "q4_linear_swiglu",
-      "name": "Q4 gate/up SwiGLU schedules (27B shape)",
-      "layer": "mlp",
-      "fuses": [
-        "gate/up projection",
-        "silu_mul"
-      ],
-      "decided_in": {
-        "file": "src/ops/linear_swiglu/q4/q4_linear_swiglu_plan.cpp",
-        "function": "q4_linear_swiglu_resolve_plan"
-      },
-      "rule_today": "A column-range table (kRoutes) for the registered [34816, 17408, 5120] shape picks per width a fused schedule (GemvPair at 1, SmallTTiled at 2..32, MmaSplitHalfPairR32C128 and its Tail variant at the listed ranges) or Materialized (linear + silu_mul) in the gaps 33..128, 169..224, 257..384 and 513..640 columns; device_schedule may substitute for the device.",
-      "alternatives": [
-        "fused gate/up + SwiGLU schedules",
-        "Materialized: linear then silu_mul"
-      ],
-      "priced": {
-        "status": "literal",
-        "by": "the column table kRoutes (ranges are constants, not prices), measured on one host (one card; the commit does not name it) in commit 5b4303c0e (the retune around the #261 linear routes)",
-        "unpriced": "whole site"
-      },
-      "byte_promise": "OwnOrder",
-      "invariant_pin": "unreviewed",
-      "parity_test": null,
-      "oracle_test": "tests/ops/linear_swiglu/test_q4_a16.cpp",
-      "one_card_literal": true,
-      "evidence": [
-        "src/ops/linear_swiglu/q4/q4_linear_swiglu_plan.cpp",
-        "commit 5b4303c0e: perf(ops): retune the Q4 34816x5120 LinearSwiGLU dispatch (second 128-column tile costs 226-290 us almost independently of live columns)"
-      ]
-    },
-    {
-      "id": "nvfp4_linear_swiglu",
-      "name": "NVFP4 gate/up SwiGLU routes",
-      "layer": "mlp",
-      "fuses": [
-        "gate/up projection",
-        "silu_mul"
-      ],
-      "decided_in": {
-        "file": "src/ops/linear_swiglu/nvfp4/nvfp4_linear_swiglu_plan.cpp",
-        "function": "resolve_route"
-      },
-      "rule_today": "ExactA16 under A16Only and for the exact verify band (2..8 tokens). With AllowA8 or no quantized-activation routes: DecodeFusedA16 at 1 token, SmallTFusedA16 to 16, else LinearA16Post (projection, then the SwiGLU pass). With quantized activations the fused A16 routes keep T <= 4 (DecodeFusedA16 at 1, SmallTFusedA16 to 4) unless a route probe forces the quantized route; wider calls, or the forced probe, take FusedA4 (the fused gate/up + SwiGLU A4 kernel) and from T >= 256 TmaFusedA4 (its TMA variant, with its own scale layout).",
-      "alternatives": [
-        "fused A16 routes (DecodeFusedA16, SmallTFusedA16)",
-        "ExactA16",
-        "LinearA16Post (projection + post pass)",
-        "FusedA4 (fused A4 gate/up + SwiGLU)",
-        "TmaFusedA4 (TMA variant, T >= 256)"
-      ],
-      "priced": {
-        "status": "literal",
-        "by": "token bounds in resolve_route (not priced); the 2..8 verify band comes from one RTX 5090 nsys census (Qwen3.8-27B NVFP4, MTP3 at 24K)",
-        "unpriced": "whole site"
-      },
-      "byte_promise": "OwnOrder",
-      "invariant_pin": "ExactA16 (A16Only and the exact verify widths)",
-      "parity_test": null,
-      "oracle_test": "tests/ops/linear_swiglu/test_nvfp4.cpp",
-      "one_card_literal": true,
-      "evidence": [
-        "src/ops/linear_swiglu/nvfp4/nvfp4_linear_swiglu_plan.cpp (comment on the verify band: RTX 5090 census, serve gains at T = 4 and 6, a 5 % loss at T = 16)"
-      ]
-    },
-    {
-      "id": "sparse_moe_prefill_route",
-      "name": "sparse MoE prefill: route selection, scan and index in one block",
-      "layer": "moe",
-      "fuses": [
-        "expert selection",
-        "tile scan",
-        "index"
-      ],
-      "decided_in": {
-        "file": "src/ops/sparse_moe/prefill/sparse_moe_prefill_kernels.cu",
-        "function": "sparse_moe_prefill_launch"
-      },
-      "rule_today": "fused_route = nvfp4 && tokens <= kSparseMoeRouteTileTokens, where tokens is the slice's (plan.slice_tokens), not the whole call's: one block carries selection, scan and index (the small route kernel, two graph nodes fewer per layer); otherwise the select/count, scan and index kernels run separately. Restricted to the NVFP4 profile on purpose (the Q4 route would take it on the ragged tail of a sliced call, a separate claim).",
-      "alternatives": [
-        "small_route kernel (one block)",
-        "select_count + scan + index kernels"
-      ],
-      "priced": {
-        "status": "fact",
-        "by": "profile and one-tile token bound",
-        "unpriced": "the saved launches"
-      },
-      "byte_promise": "Equal",
-      "invariant_pin": "unreviewed",
-      "parity_test": null,
-      "oracle_test": "tests/ops/test_sparse_moe.cpp",
-      "one_card_literal": false,
-      "evidence": [
-        "src/ops/sparse_moe/prefill/sparse_moe_prefill_kernels.cu"
-      ]
-    }
-  ],
-  "pending": [],
-  "excluded": [
-    {
-      "what": "context_kv_materialize Fused64 route (src/ops/context_kv_materialize/launch.h: context_kv_materialize_route)",
-      "reason": "a column-count table over the materialize schedules of one op, not a choice between fused and separate ops; revisit when step H adds regret lines per site"
-    },
-    {
-      "what": "linear_topk (src/ops/linear_topk/linear_topk.cpp)",
-      "reason": "the fused LM head + top-16 op itself, which the drafter always calls; there is no decision between alternatives, and its test checks a tolerance, not bytes"
-    }
-  ]
+    "schema": 1,
+    "about":
+        "Registry of the fusion sites found so far (#617 step A; the markers in the code enumerate it, and a site not yet found is not in it): places where two or more ops can run as one fused kernel or as separate launches, where it is decided today, the alternatives, and what prices it. Data only; nothing reads it at run time. Each site's deciding function carries a `// FUSION-SITE: <id>` line above its signature, and tests/test_fusion_sites.py fails when the code and this file disagree. byte_promise: Equal (every alternative gives the same bytes), OwnOrder (the alternatives sum in different orders, so the invariant profile must pin one), NotApplicable, Unreviewed. priced.status: priced (the generic route cost model prices the alternatives), partial (some alternative or term), fact (a hardware or format predicate decides, no price), literal (a constant measured on the cards named in the evidence), none (one form only, or a rule with no price). invariant_pin: which alternative the invariant route profile runs (unreviewed: not yet read from the code). parity_test: a test that runs the alternatives against each other (null: none known). oracle_test: a test that checks the site's output against an oracle or a tolerance (null: none known). The JSON is the source; a generated constexpr header is intended for steps B and D, as gpu_facts.json becomes board_registry.h.",
+    "sites":
+        [
+            {
+                "id": "q8_pair",
+                "name": "Q8 K/V pair (drafter)",
+                "layer": "projection",
+                "fuses": [
+                    "linear (K)",
+                    "linear (V)"
+                ],
+                "decided_in": {
+                    "file": "src/ops/wrapper/linear_pair.cpp",
+                    "function": "fused_pair"
+                },
+                "rule_today":
+                    "fused_pair = fused_domain() (registered Q8 G32 shapes, row views for K=2048) and chain_prefers_fused(). The #565 requested-bytes law (generic::route_traffic) can pick the two linear() calls only for the two-launch TwoSimtR8C4 schedule (K=5120, T<=85) and only where the shape table runs the call with a tile the device MMA takes natively; Volta and Turing keep the fused kernel (numeric contract), and so does the invariant route profile. One-launch fused schedules are unpriced.",
+                "alternatives": [
+                    "fused dual kernel (q8_pair_dispatch)",
+                    "two linear() calls"
+                ],
+                "priced": {
+                    "status": "partial",
+                    "by":
+                        "requested-bytes law of generic::route_traffic (not the route cost model)",
+                    "unpriced":
+                        "the native-MMA gate and the invariant profile are predicates, not prices; MMA tile efficiency, occupancy, split-K partials and launches are unpriced"
+                },
+                "byte_promise": "OwnOrder",
+                "one_card_literal": false,
+                "evidence": [
+                    "#565",
+                    "#310",
+                    "sweeps on 4060 Ti, 4090, 3060, 2080 Ti recorded in #565"
+                ],
+                "invariant_pin": "fused kernel (keeps it: unpriced under the profile)",
+                "parity_test": null,
+                "oracle_test": "tests/ops/linear_pair/test_q8_a16.cpp"
+            },
+            {
+                "id": "ffn_swiglu_epilogue",
+                "name": "gate/up SwiGLU epilogue (Qwen 3.5 dense FFN)",
+                "layer": "mlp",
+                "fuses": [
+                    "gate/up projection",
+                    "silu_mul"
+                ],
+                "decided_in": {
+                    "file": "src/models/qwen3_5/execution/ffn.cpp",
+                    "function": "ffn"
+                },
+                "rule_today":
+                    "linear_swiglu (Epilogue::SwiGlu in the generic Problem). A split gate/up weight (split_gate_up, ffn.cpp) takes segmented_swiglu even on the MTP path (see mmq_gated_pair); otherwise the MTP path (mtp flag) runs linear + silu_mul so its numerics equal the unfused chain. The unfused chain is never priced.",
+                "alternatives": [
+                    "linear_swiglu (epilogue)",
+                    "linear + silu_mul"
+                ],
+                "priced": {
+                    "status": "none",
+                    "by":
+                        "flag; the epilogue is part of the Problem and the unfused chain has no price",
+                    "unpriced": "whole site"
+                },
+                "byte_promise": "OwnOrder",
+                "one_card_literal": false,
+                "evidence": [
+                    "#617 analysis, section 1 and Q1 (MLP rows)"
+                ],
+                "invariant_pin": "unreviewed",
+                "parity_test": null,
+                "oracle_test": "tests/ops/linear_swiglu/test_q8_a16.cpp"
+            },
+            {
+                "id": "ffn_down_residual_epilogue",
+                "name": "down projection + residual add (Qwen 3.5 dense FFN)",
+                "layer": "mlp",
+                "fuses": [
+                    "down projection",
+                    "residual_add"
+                ],
+                "decided_in": {
+                    "file": "src/models/qwen3_5/execution/ffn.cpp",
+                    "function": "ffn"
+                },
+                "rule_today":
+                    "linear_add (Epilogue::AddResidual) except on the MTP path, which runs linear + residual_add. The add happens in the FP32 accumulator before the BF16 rounding, a different rounding from residual_add on a stored BF16 projection.",
+                "alternatives": [
+                    "linear_add (epilogue)",
+                    "linear + residual_add"
+                ],
+                "priced": {
+                    "status": "none",
+                    "by": "flag",
+                    "unpriced": "whole site"
+                },
+                "byte_promise": "OwnOrder",
+                "one_card_literal": false,
+                "evidence": [
+                    "#617 analysis, Q1 (attention and MLP rows)"
+                ],
+                "invariant_pin": "unreviewed",
+                "parity_test": null,
+                "oracle_test": "tests/ops/linear_add/test_q8_a16.cpp"
+            },
+            {
+                "id": "mmq_gated_pair",
+                "name": "GGUF gate/up pair (vec gated pair / MMQ plane + epilogue)",
+                "layer": "mlp",
+                "fuses": [
+                    "gate projection",
+                    "up projection",
+                    "SwiGLU/GeGLU"
+                ],
+                "decided_in": {
+                    "file": "src/ops/generic/generic_ggml.cpp",
+                    "function": "ggml_mmq_gated_pair"
+                },
+                "rule_today":
+                    "segmented_swiglu_pair (segmented_projection.cpp) tries the ggml vec gated pair for T <= kGgmlVecMaxTokens, else ggml_mmq_gated_pair. Each pair function is decided by its `takes` lambda: both halves must take the kernel as a call alone would (tuner timing up to kMmqMaxTokens, else select_route above kMmqMaxTokens (16) with rows a multiple of kRowMultiple), and the workspace must hold the pair. The MMQ pair is not one launch (FP32 plane, then generic_mmq_epilogue.cu reads it back). Otherwise two projections + silu_mul.",
+                "alternatives": [
+                    "vec gated pair (T <= kGgmlVecMaxTokens)",
+                    "MMQ plane + epilogue launch",
+                    "two projections + silu_mul",
+                    "(unbuilt, #617 step I) in-kernel MMQ epilogue"
+                ],
+                "priced": {
+                    "status": "partial",
+                    "by":
+                        "the halves' route choice (tuner timing or select_route); the pair against two projections + silu_mul is not priced",
+                    "unpriced": "plane read-back, launches"
+                },
+                "byte_promise": "OwnOrder",
+                "one_card_literal": false,
+                "evidence": [
+                    "#617 analysis, section 1 and Q5 item 1",
+                    "tests/ops/linear/test_segmented_swiglu.cpp per-token memcmp"
+                ],
+                "invariant_pin": "unreviewed",
+                "parity_test": null,
+                "oracle_test": "tests/ops/linear/test_segmented_swiglu.cpp"
+            },
+            {
+                "id": "vec_shared_quantize",
+                "name": "shared ggml vec activation quantize",
+                "layer": "quantization",
+                "fuses": [
+                    "q8_1 quantize of x",
+                    "two or more vec slice groups"
+                ],
+                "decided_in": {
+                    "file": "src/ops/generic/segmented_projection.cpp",
+                    "function": "project"
+                },
+                "rule_today":
+                    "x is quantized once when two or more parent groups take the vec kernel (a count), else each call quantizes itself.",
+                "alternatives": [
+                    "quantize once for all groups",
+                    "quantize per call"
+                ],
+                "priced": {
+                    "status": "fact",
+                    "by": "group count (vec_groups >= 2)",
+                    "unpriced": "n/a"
+                },
+                "byte_promise": "Equal",
+                "one_card_literal": false,
+                "evidence": [
+                    "#617 analysis, section 1"
+                ],
+                "invariant_pin": "unreviewed",
+                "parity_test": null,
+                "oracle_test": null
+            },
+            {
+                "id": "r8_prequantized",
+                "name": "R8 activation quantization: in-kernel vs pre-quantized planes",
+                "layer": "quantization",
+                "fuses": [
+                    "activation quantize",
+                    "R8 MMA projection"
+                ],
+                "decided_in": {
+                    "file": "src/ops/generic/generic_gemm.cpp",
+                    "function": "resolve_route"
+                },
+                "rule_today":
+                    "r8_prequantized = R8 family, 2 <= tokens <= kR8VerifyTokens, workspace large enough, format compiled for it. The pre-quantized form refuses PDL join, release and prefetch (see pdl_overlap).",
+                "alternatives": [
+                    "quantize inside the R8 kernel",
+                    "separate quantizer launch into workspace planes"
+                ],
+                "priced": {
+                    "status": "fact",
+                    "by":
+                        "predicate: 2 <= tokens <= kR8VerifyTokens, format compiled for it, workspace large enough",
+                    "unpriced": "the lost PDL overlap is not priced"
+                },
+                "byte_promise": "Equal",
+                "one_card_literal": false,
+                "evidence": [
+                    "#617 analysis, Q1 (quantization row)",
+                    "comments at the r8 verify widths in generic_gemm.cpp"
+                ],
+                "invariant_pin": "unreviewed",
+                "parity_test": null,
+                "oracle_test": null
+            },
+            {
+                "id": "activation_quantizer_launch",
+                "name": "W4A8 / I8 / MMQ activation quantizer launch",
+                "layer": "quantization",
+                "fuses": [
+                    "activation quantize",
+                    "A8 projection"
+                ],
+                "decided_in": {
+                    "file": "src/ops/generic/generic_cost.cpp",
+                    "function": "a8_candidates"
+                },
+                "rule_today":
+                    "The quantizer always runs as a separate launch; the cost model charges kQuantLaunchSeconds plus kQuantBytesPerValue per value to every A8 candidate (both Fitted in route_cost_constants.h).",
+                "alternatives": [
+                    "separate quantizer launch (the only form built)"
+                ],
+                "priced": {
+                    "status": "priced",
+                    "by": "route cost model: kQuantLaunchSeconds + kQuantBytesPerValue (Fitted)",
+                    "unpriced": "n/a"
+                },
+                "byte_promise": "NotApplicable",
+                "one_card_literal": false,
+                "evidence": [
+                    "#617 analysis, section 1",
+                    "src/ops/generic/route_cost_constants.h"
+                ],
+                "invariant_pin": "n/a (only one form)",
+                "parity_test": null,
+                "oracle_test": null
+            },
+            {
+                "id": "qk_norm_rope",
+                "name": "qk-norm + RoPE (Qwen 3.5 text attention)",
+                "layer": "attention",
+                "fuses": [
+                    "rmsnorm (q)",
+                    "rmsnorm (k)",
+                    "rope"
+                ],
+                "decided_in": {
+                    "file": "src/models/qwen3_5/execution/attention.cpp",
+                    "function": "fused_text_qk_norm_rope"
+                },
+                "rule_today":
+                    "rmsnorm_rope when tokens <= kFusedTextQkNormRopeMaximumTokens (256), theta 1e7, eps 1e-6, head_dim 256, rotary 64, no YaRN, one position axis; else two rmsnorms + rope. Both branches are the same arithmetic bit for bit.",
+                "alternatives": [
+                    "rmsnorm_rope (one launch)",
+                    "2 x rmsnorm + rope"
+                ],
+                "priced": {
+                    "status": "literal",
+                    "by":
+                        "the 256-token bound, measured on an RTX 5090 alone (fused +22..52 % through 256 tokens, -22 % at 1024)",
+                    "unpriced": "wave fill on every other card"
+                },
+                "byte_promise": "Equal",
+                "one_card_literal": true,
+                "evidence": [
+                    "#617 analysis, section 1 and step G",
+                    "comment above kFusedTextQkNormRopeMaximumTokens"
+                ],
+                "invariant_pin": "none needed (Equal)",
+                "parity_test": null,
+                "oracle_test": "tests/ops/test_rmsnorm_rope.cpp"
+            },
+            {
+                "id": "dense_qkv_prepare",
+                "name": "dense QKV prepare (bias + norm + RoPE + KV write)",
+                "layer": "attention",
+                "fuses": [
+                    "add_bias",
+                    "qk-norm",
+                    "rope",
+                    "KV write"
+                ],
+                "decided_in": {
+                    "file": "src/ops/dense_fused/dense_fused.cu",
+                    "function": "dense_qkv_prepare"
+                },
+                "rule_today":
+                    "Always fused for the dense family; no unfused alternative in the code.",
+                "alternatives": [
+                    "fused prepare (only form)"
+                ],
+                "priced": {
+                    "status": "none",
+                    "by": "always fused",
+                    "unpriced": "n/a"
+                },
+                "byte_promise": "Equal",
+                "one_card_literal": false,
+                "evidence": [
+                    "#617 analysis, section 1 and Q1 (attention rows)"
+                ],
+                "invariant_pin": "n/a (only one form)",
+                "parity_test": null,
+                "oracle_test": "tests/ops/test_dense_fused.cpp"
+            },
+            {
+                "id": "gemma4_qkv_prepare",
+                "name": "Gemma 4 QKV prepare (norm + RoPE + KV write)",
+                "layer": "attention",
+                "fuses": [
+                    "q/k/v norm",
+                    "rope",
+                    "KV write"
+                ],
+                "decided_in": {
+                    "file": "src/ops/gemma4_fused/gemma4_fused.cu",
+                    "function": "gemma4_qkv_prepare"
+                },
+                "rule_today":
+                    "Always fused for Gemma 4 (several overloads: dflash, q-only); no unfused alternative in the code.",
+                "alternatives": [
+                    "fused prepare (only form)"
+                ],
+                "priced": {
+                    "status": "none",
+                    "by": "always fused",
+                    "unpriced": "n/a"
+                },
+                "byte_promise": "Equal",
+                "one_card_literal": false,
+                "evidence": [
+                    "#617 analysis, section 1"
+                ],
+                "invariant_pin": "n/a (only one form)",
+                "parity_test": null,
+                "oracle_test": "tests/ops/test_gemma4_fused.cpp"
+            },
+            {
+                "id": "gdn_gated_norm_regroup",
+                "name": "GDN gated norm + head regroup",
+                "layer": "gdn",
+                "fuses": [
+                    "gated_rmsnorm",
+                    "regroup_bf16_heads"
+                ],
+                "decided_in": {
+                    "file": "src/ops/wrapper/rmsnorm.cpp",
+                    "function": "gated_rmsnorm_regroups"
+                },
+                "rule_today":
+                    "An alignment predicate (D 64..256 by 64, 4-byte aligned tensors, out apart from x and z) plus the tiled out_proj column order (text.cpp) selects gated_rmsnorm_regrouped over gated_rmsnorm + regroup_bf16_heads.",
+                "alternatives": [
+                    "gated_rmsnorm_regrouped",
+                    "gated_rmsnorm + regroup_bf16_heads"
+                ],
+                "priced": {
+                    "status": "fact",
+                    "by": "alignment and geometry predicate",
+                    "unpriced": "n/a"
+                },
+                "byte_promise": "Equal",
+                "one_card_literal": false,
+                "evidence": [
+                    "#617 analysis, section 1"
+                ],
+                "invariant_pin": "none needed (Equal)",
+                "parity_test": null,
+                "oracle_test": "tests/ops/test_gated_rmsnorm.cpp"
+            },
+            {
+                "id": "moe_select_plan",
+                "name": "MoE select + plan",
+                "layer": "moe",
+                "fuses": [
+                    "expert selection",
+                    "expert plan"
+                ],
+                "decided_in": {
+                    "file": "src/ops/moe/moe.cpp",
+                    "function": "run"
+                },
+                "rule_today":
+                    "Three alternatives in moe.cpp run(): the SIMT router last CTA selects and plans (moe_router_select_plan); else launch_select_plan, one CTA, when tokens <= kPlanWarps (16); else launch_select then launch_plan. This entry is the second against the third, a shared-memory fact.",
+                "alternatives": [
+                    "select_plan_kernel (one launch)",
+                    "select + plan (two launches)",
+                    "router last CTA does both (see moe_router_select_plan)"
+                ],
+                "priced": {
+                    "status": "fact",
+                    "by": "tokens <= kPlanWarps (shared-memory limit)",
+                    "unpriced": "the saved launch (#617 step K also moves the router in)"
+                },
+                "byte_promise": "Equal",
+                "one_card_literal": false,
+                "evidence": [
+                    "#617 analysis, section 1 and Q5 item 3",
+                    "src/ops/moe/moe_internal.h"
+                ],
+                "invariant_pin": "n/a (Equal)",
+                "parity_test": null,
+                "oracle_test": "tests/ops/test_moe.cpp"
+            },
+            {
+                "id": "kv_write_attention",
+                "name": "KV write inside causal softmax attention",
+                "layer": "attention",
+                "fuses": [
+                    "KV append",
+                    "causal softmax attention"
+                ],
+                "decided_in": {
+                    "file":
+                        "src/ops/softmax_attention/dense/causal_cache/causal_softmax_attention.cpp",
+                    "function": "causal_softmax_attention"
+                },
+                "rule_today":
+                    "The op always appends the current K/V before attending; no separate append alternative.",
+                "alternatives": [
+                    "fused append + attention (the only form)"
+                ],
+                "priced": {
+                    "status": "none",
+                    "by": "always fused",
+                    "unpriced": "n/a"
+                },
+                "byte_promise": "Equal",
+                "one_card_literal": false,
+                "evidence": [
+                    "#617 analysis, section 1 (KV write already fused)",
+                    "include/ninferno/ops/softmax_attention.h"
+                ],
+                "invariant_pin": "n/a (only one form)",
+                "parity_test": null,
+                "oracle_test": "tests/ops/softmax_attention/causal_cache.cpp"
+            },
+            {
+                "id": "pdl_overlap",
+                "name": "PDL join / release / prefetch between launches",
+                "layer": "launch",
+                "fuses": [
+                    "consecutive projection launches (overlap, not one kernel)"
+                ],
+                "decided_in": {
+                    "file": "src/ops/generic/generic_gemm.cpp",
+                    "function": "launch_overlap"
+                },
+                "rule_today":
+                    "Only a register-MMA or R8 Store launch joins or releases; a release also needs PDL (OverlapRefusal::NoPdl), a join does not; the pre-quantized R8 form refuses all three (OverlapRefusal::PrequantizedR8); prefetch for T <= kPdlPrefetchMaxTokens (16).",
+                "alternatives": [
+                    "overlap via programmatic dependent launch",
+                    "stream order"
+                ],
+                "priced": {
+                    "status": "fact",
+                    "by":
+                        "predicates: the device PDL feature (release), route family and epilogue; plus kPdlPrefetchMaxTokens = 16 (generic_gemm.h), a literal of unknown provenance",
+                    "unpriced": "the overlap saving is not priced"
+                },
+                "byte_promise": "NotApplicable",
+                "one_card_literal": false,
+                "evidence": [
+                    "#617 analysis, section 1 and Q4",
+                    "src/ops/generic/generic_gemm.h kPdlPrefetchMaxTokens",
+                    "src/core/pdl.cuh (the 3090 node cost is its reason to leave PDL off below sm_90, not a price)"
+                ],
+                "invariant_pin": "n/a (no arithmetic)",
+                "parity_test": null,
+                "oracle_test": "tests/ops/linear/test_launch_overlap.cpp"
+            },
+            {
+                "id": "dense_out_residual_norm",
+                "name": "dense output projection + residual + FFN norm",
+                "layer": "norm",
+                "fuses": [
+                    "output projection",
+                    "residual add",
+                    "rmsnorm"
+                ],
+                "decided_in": {
+                    "file": "src/models/dense/target.cu",
+                    "function": "forward"
+                },
+                "rule_today":
+                    "`fold` (pre-norm layer, no dump call, no post norms, residual multiplier 1, no output bias) runs linear_add (residual in the projection epilogue) + rmsnorm; otherwise project + residual_norm (the dense_fused launcher, which is only the second alternative). Gemma 4 and Qwen 3.5 choose their own chains and are not registered yet.",
+                "alternatives": [
+                    "linear_add + rmsnorm (fold)",
+                    "project + residual_norm (dense_fused)"
+                ],
+                "priced": {
+                    "status": "none",
+                    "by": "structural predicate `fold`",
+                    "unpriced": "whole site"
+                },
+                "byte_promise": "OwnOrder",
+                "one_card_literal": false,
+                "evidence": [
+                    "#617 analysis, section 1 and Q1 (norms and attention rows)",
+                    "review of PR 638"
+                ],
+                "invariant_pin": "unreviewed",
+                "parity_test": null,
+                "oracle_test": "tests/ops/test_dense_fused.cpp"
+            },
+            {
+                "id": "moe_router_select_plan",
+                "name": "MoE router + select + plan in the router last CTA",
+                "layer": "moe",
+                "fuses": [
+                    "router logits",
+                    "expert selection",
+                    "expert plan"
+                ],
+                "decided_in": {
+                    "file": "src/ops/moe/moe.cpp",
+                    "function": "run"
+                },
+                "rule_today":
+                    "route_in_router = router_simt && t <= kRouterSimtWarps && a <= 32 && !pdl: the SIMT router last CTA also selects and plans. Without PDL each launch is a gap (RTX 3090: Gemma 4 26B C=1 +1.3 %, C=4 +2.1 %, Qwen3.6-35B and Nemotron C=1 +1.2 / +1.4 %); with PDL the separate launch overlaps (RTX 5090: Qwen3.6-35B C=4 -3.3 %, Nemotron -2.3 %). router_simt is off under the invariant profile.",
+                "alternatives": [
+                    "router launch with select+plan in its last CTA",
+                    "router + select_plan / select + plan launches"
+                ],
+                "priced": {
+                    "status": "literal",
+                    "by":
+                        "two cards: RTX 3090 gains and RTX 5090 losses (comment in moe.cpp) as a PDL flag and a 32-assignment bound",
+                    "unpriced": "the launch saving per generation"
+                },
+                "byte_promise": "Equal",
+                "invariant_pin":
+                    "separate launches (router_simt is off under the invariant profile)",
+                "parity_test": null,
+                "one_card_literal": false,
+                "evidence": [
+                    "#617 analysis, Q5 item 3",
+                    "comment above route_in_router in moe.cpp"
+                ],
+                "oracle_test": "tests/ops/test_moe.cpp"
+            },
+            {
+                "id": "moe_combine_fused",
+                "name": "MoE combine in the R8 down epilogue",
+                "layer": "moe",
+                "fuses": [
+                    "down projection (R8)",
+                    "combine of the k experts"
+                ],
+                "decided_in": {
+                    "file": "src/ops/moe/moe.cpp",
+                    "function": "run"
+                },
+                "rule_today":
+                    "fused_combine when the down stage is R8 and there is no shared expert, no branch, fused_combine_enabled(), and the down grid has at most kCombineTickets blocks: the last CTAs combine. Otherwise the combine kernel runs after the shared expert.",
+                "alternatives": [
+                    "down R8 kernel whose last CTAs combine",
+                    "down kernel + launch_combine"
+                ],
+                "priced": {
+                    "status": "fact",
+                    "by":
+                        "predicate (no shared expert, no branch, enabled flag, block count <= kCombineTickets)",
+                    "unpriced": "the saved launch and the lost shared-expert overlap"
+                },
+                "byte_promise": "Equal",
+                "invariant_pin": "unreviewed",
+                "parity_test": "tests/ops/test_moe.cpp",
+                "one_card_literal": false,
+                "evidence": [
+                    "#617 analysis, Q1 (MoE rows)",
+                    "src/ops/moe/moe.cpp"
+                ],
+                "oracle_test": null
+            },
+            {
+                "id": "moe_router_quantize_x",
+                "name": "router quantizes x for an R8 gate/up",
+                "layer": "moe",
+                "fuses": [
+                    "activation quantize",
+                    "router"
+                ],
+                "decided_in": {
+                    "file": "src/ops/moe/moe.cpp",
+                    "function": "router_quantizes_x"
+                },
+                "rule_today":
+                    "The router CTAs quantize x for the R8 gate/up when gate_up_r8 >= 0, not W4A8, the bank input is the hidden state as is, and tokens <= kR8Tokens.",
+                "alternatives": [
+                    "router CTAs quantize x",
+                    "separate quantize"
+                ],
+                "priced": {
+                    "status": "fact",
+                    "by": "predicate (R8 gate/up, tokens <= kR8Tokens)",
+                    "unpriced": "the saved launch"
+                },
+                "byte_promise": "Equal",
+                "invariant_pin": "unreviewed",
+                "parity_test": null,
+                "one_card_literal": false,
+                "evidence": [
+                    "src/ops/moe/moe.cpp"
+                ],
+                "oracle_test": null
+            },
+            {
+                "id": "segmented_gdn_control",
+                "name": "segmented GDN norm + control projection",
+                "layer": "gdn",
+                "fuses": [
+                    "rmsnorm",
+                    "a/b projection",
+                    "gdn gating"
+                ],
+                "decided_in": {
+                    "file": "src/ops/generic/segmented_projection.cpp",
+                    "function": "segmented_gdn_norm_gating_proj"
+                },
+                "rule_today":
+                    "A call of at most kSegmentedFusedControlMaxTokens (16, include/ninferno/ops/segmented_projection.h) columns whose a and b are each one row block of one format (BF16 or Q8_G32_FP16 row-split) runs as one kernel (generic::launch_gdn_norm_gating_simt); otherwise rmsnorm + generic projection + gating. Never under the invariant profile. The fused form computes a and b from the unrounded normalized input in FP32, so it is OwnOrder.",
+                "alternatives": [
+                    "gdn_norm_gating SIMT kernel",
+                    "rmsnorm + projection + gating"
+                ],
+                "priced": {
+                    "status": "literal",
+                    "by": "token bound 16 and a format predicate",
+                    "unpriced": "whole site"
+                },
+                "byte_promise": "OwnOrder",
+                "invariant_pin": "separate chain (excluded under the invariant profile)",
+                "parity_test": null,
+                "one_card_literal": false,
+                "evidence": [
+                    "#617 analysis, Q1 (GDN row)",
+                    "include/ninferno/ops/segmented_projection.h"
+                ],
+                "oracle_test": "tests/ops/test_gdn_gating_proj.cpp"
+            },
+            {
+                "id": "bf16_gdn_control",
+                "name": "BF16 GDN norm + gating projection plan",
+                "layer": "gdn",
+                "fuses": [
+                    "rmsnorm",
+                    "a/b projection",
+                    "gdn gating"
+                ],
+                "decided_in": {
+                    "file": "src/ops/gdn_gating_proj/bf16/bf16_gdn_gating_proj_plan.cpp",
+                    "function": "bf16_gdn_norm_gating_resolve_plan"
+                },
+                "rule_today":
+                    "FusedSimt27 (the fused norm + gating SIMT kernel) for the 27B geometry up to fused_simt27_max_cols() (16 under the prefill route profile, 42 otherwise). The 35B geometry at <= 16 columns, unless the invariant profile is active or simt_35_decode holds, takes MmaCooperativeSplit32 (norm partials in 32 splits, MMA control projection); the other alternative is Composed (norm, then the control projection, then gating).",
+                "alternatives": [
+                    "FusedSimt27 / MmaCooperativeSplit32 (norm folded into the control kernel)",
+                    "Composed (norm, control projection, gating)"
+                ],
+                "priced": {
+                    "status": "literal",
+                    "by":
+                        "column bounds 16 / 42 (42 is the measured speed frontier of the 27B kernel)",
+                    "unpriced": "whole site"
+                },
+                "byte_promise": "OwnOrder",
+                "invariant_pin":
+                    "Composed / invariant routes (the 35B split is off under the invariant profile)",
+                "parity_test": null,
+                "one_card_literal": false,
+                "evidence": [
+                    "comments in bf16_gdn_gating_proj_plan.cpp"
+                ],
+                "oracle_test": "tests/ops/test_gdn_gating_proj.cpp"
+            },
+            {
+                "id": "gdn_conv_fp8",
+                "name": "GDN input projection + causal conv (FP8)",
+                "layer": "gdn",
+                "fuses": [
+                    "input projection",
+                    "causal conv"
+                ],
+                "decided_in": {
+                    "file": "src/ops/gdn_input_proj/fp8/fp8_gdn_conv_plan.cpp",
+                    "function": "fp8_gdn_snapshot_resolve_plan"
+                },
+                "rule_today":
+                    "A16Only (the exact contract) materializes every width through the A16 projection; batch 1 with an A8 policy materializes through A8 from width 17; otherwise b1_a16_plan fuses the projection and the causal conv for width <= 3 and materializes wider calls.",
+                "alternatives": [
+                    "conv fused in the projection epilogue/kernel",
+                    "materialized projection + conv"
+                ],
+                "priced": {
+                    "status": "literal",
+                    "by": "column bounds in the plan (not priced)",
+                    "unpriced": "whole site"
+                },
+                "byte_promise": "OwnOrder",
+                "invariant_pin": "materialized (A16Only materializes every width)",
+                "parity_test": null,
+                "one_card_literal": false,
+                "evidence": [
+                    "#617 analysis (GDN row)",
+                    "src/ops/gdn_input_proj/fp8/fp8_gdn_conv_plan.cpp"
+                ],
+                "oracle_test": "tests/ops/test_gdn_input_proj.cpp"
+            },
+            {
+                "id": "gdn_conv_q8",
+                "name": "GDN input projection + causal conv (Q8)",
+                "layer": "gdn",
+                "fuses": [
+                    "input projection",
+                    "causal conv"
+                ],
+                "decided_in": {
+                    "file": "src/ops/gdn_input_proj/q8/q8_gdn_input_plan.cpp",
+                    "function": "q8_gdn_input_conv_resolve_plan"
+                },
+                "rule_today":
+                    "batch > 1: materialized; 1 column: DecodeFused; <= 16 columns: SplitKMmaFused; else materialized.",
+                "alternatives": [
+                    "conv fused in the projection epilogue/kernel",
+                    "materialized projection + conv"
+                ],
+                "priced": {
+                    "status": "literal",
+                    "by": "column bounds in the plan (not priced)",
+                    "unpriced": "whole site"
+                },
+                "byte_promise": "OwnOrder",
+                "invariant_pin":
+                    "materialized (the caller, src/ops/wrapper/gdn_input_proj.cpp, skips the plan under invariant_routes_active())",
+                "parity_test": null,
+                "one_card_literal": false,
+                "evidence": [
+                    "#617 analysis (GDN row)",
+                    "src/ops/gdn_input_proj/q8/q8_gdn_input_plan.cpp"
+                ],
+                "oracle_test": "tests/ops/test_gdn_input_proj.cpp"
+            },
+            {
+                "id": "gdn_conv_nvfp4",
+                "name": "GDN input projection + causal conv (NVFP4)",
+                "layer": "gdn",
+                "fuses": [
+                    "input projection",
+                    "causal conv"
+                ],
+                "decided_in": {
+                    "file": "src/ops/gdn_input_proj/nvfp4/nvfp4_gdn_snapshot_plan.cpp",
+                    "function": "nvfp4_gdn_conv_resolve_plan"
+                },
+                "rule_today":
+                    "batch > 1 and A16Only materialize. Otherwise, when W4A4 is not allowed (AllowA8, or a route probe forcing 0), the fused A16 schedules run through 16 tokens (DecodeFusedA16 at 1, SmallTFusedA16 to 16) and wider calls materialize; a probe forcing 1 materializes every width; with W4A4 allowed, fused only up to 3 tokens.",
+                "alternatives": [
+                    "conv fused in the projection epilogue/kernel",
+                    "materialized projection + conv"
+                ],
+                "priced": {
+                    "status": "literal",
+                    "by": "column bounds in the plan (not priced)",
+                    "unpriced": "whole site"
+                },
+                "byte_promise": "OwnOrder",
+                "invariant_pin":
+                    "materialized (A16Only materializes every width, nvfp4_gdn_snapshot_plan.cpp)",
+                "parity_test": null,
+                "one_card_literal": false,
+                "evidence": [
+                    "#617 analysis (GDN row)",
+                    "src/ops/gdn_input_proj/nvfp4/nvfp4_gdn_snapshot_plan.cpp"
+                ],
+                "oracle_test": "tests/ops/test_gdn_input_proj.cpp"
+            },
+            {
+                "id": "gdn_conv_q4_q5",
+                "name": "GDN input projection + causal conv (Q4/Q5)",
+                "layer": "gdn",
+                "fuses": [
+                    "input projection",
+                    "causal conv"
+                ],
+                "decided_in": {
+                    "file": "src/ops/gdn_input_proj/q4_q5/q4_q5_gdn_input_plan.cpp",
+                    "function": "q4_q5_gdn_input_conv_resolve_plan"
+                },
+                "rule_today":
+                    "ProjectionEpilogueFused for 1, 2, 3, 5 and 6 columns, unless batch > 1, the small-T MMA or one-token MMA is taken, or the invariant profile is active; else materialized.",
+                "alternatives": [
+                    "conv fused in the projection epilogue/kernel",
+                    "materialized projection + conv"
+                ],
+                "priced": {
+                    "status": "literal",
+                    "by": "column bounds in the plan (not priced)",
+                    "unpriced": "whole site"
+                },
+                "byte_promise": "OwnOrder",
+                "invariant_pin": "materialized (the plan checks invariant_routes_active())",
+                "parity_test": null,
+                "one_card_literal": false,
+                "evidence": [
+                    "#617 analysis (GDN row)",
+                    "src/ops/gdn_input_proj/q4_q5/q4_q5_gdn_input_plan.cpp"
+                ],
+                "oracle_test": "tests/ops/test_gdn_input_proj.cpp"
+            },
+            {
+                "id": "attn_input_proj",
+                "name": "fused attention input projection (Qwen 3.5 MTP and drafter)",
+                "layer": "attention",
+                "fuses": [
+                    "packed Q/K/gate/V projection",
+                    "split into q, gate, k, v"
+                ],
+                "decided_in": {
+                    "file": "src/models/qwen3_5/execution/mtp.cpp",
+                    "function": "fused"
+                },
+                "rule_today":
+                    "fused() in mtp.cpp is false when parameters.rows is set (a row-split layer). Otherwise ops::attn_input_proj_fused_supported (src/ops/wrapper/attn_input_proj.cpp): BF16, FP8_E4M3FN_ROW_BF16 and NVFP4 (when the native NVFP4 kernels are built) for the pair geometry 5120 / 6144 / 1024, and Q8_G32_FP16 for 2048 / 4096 / 512 only; any other weight takes the generic linear and the split. The drafter decides separately (drafter_attn_input, drafter_context_kv).",
+                "alternatives": [
+                    "attn_input_proj fused Op",
+                    "generic linear + split"
+                ],
+                "priced": {
+                    "status": "fact",
+                    "by": "format and geometry predicate",
+                    "unpriced": "n/a"
+                },
+                "byte_promise": "Unreviewed",
+                "invariant_pin": "unreviewed",
+                "parity_test": null,
+                "one_card_literal": false,
+                "evidence": [
+                    "src/models/qwen3_5/execution/mtp.cpp",
+                    "src/models/qwen3_5/execution/draft.cpp"
+                ],
+                "oracle_test": "tests/ops/test_attn_input_proj.cpp"
+            },
+            {
+                "id": "sparse_moe_fused",
+                "name": "fused (sparse) MoE kernels vs the generic MoE",
+                "layer": "moe",
+                "fuses": [
+                    "router",
+                    "expert banks",
+                    "combine"
+                ],
+                "decided_in": {
+                    "file": "src/ops/route_pins.cpp",
+                    "function": "moe_takes_fused"
+                },
+                "rule_today":
+                    "moe_takes_fused(fused_ready, why_not): Auto takes the fused kernels when the layer is ready for them; --moe-path generic or fused pins either (fused on a layer that cannot run it throws). Callers: qwen3_5 parameters.cpp, gemma4 load_target.cpp.",
+                "alternatives": [
+                    "sparse/fused MoE kernels",
+                    "generic MoE"
+                ],
+                "priced": {
+                    "status": "fact",
+                    "by": "fused_ready predicate and the --moe-path pin",
+                    "unpriced": "n/a"
+                },
+                "byte_promise": "Unreviewed",
+                "invariant_pin": "unreviewed",
+                "parity_test": null,
+                "one_card_literal": false,
+                "evidence": [
+                    "src/ops/route_pins.cpp"
+                ],
+                "oracle_test": "tests/ops/test_sparse_moe.cpp"
+            },
+            {
+                "id": "dgc_prepare",
+                "name": "rmsnorm + dynamic grouped conv prepare",
+                "layer": "gdn",
+                "fuses": [
+                    "rmsnorm",
+                    "kernel projection",
+                    "dynamic grouped conv prepare"
+                ],
+                "decided_in": {
+                    "file": "src/ops/wrapper/dynamic_grouped_conv.cpp",
+                    "function": "fused_prepare"
+                },
+                "rule_today":
+                    "The fused prepare kernel runs only when the kernel projection is BF16; any other format takes the decomposed route (rmsnorm, projection, prepare).",
+                "alternatives": [
+                    "rmsnorm_dynamic_grouped_conv_prepare fused kernel",
+                    "decomposed rmsnorm + projection + prepare"
+                ],
+                "priced": {
+                    "status": "fact",
+                    "by": "format predicate (BF16)",
+                    "unpriced": "n/a"
+                },
+                "byte_promise": "Unreviewed",
+                "invariant_pin": "unreviewed",
+                "parity_test": null,
+                "oracle_test": "tests/ops/test_dynamic_grouped_conv_prepare.cpp",
+                "one_card_literal": false,
+                "evidence": [
+                    "src/ops/wrapper/dynamic_grouped_conv.cpp"
+                ]
+            },
+            {
+                "id": "dgc_add",
+                "name": "dynamic grouped conv + projection + residual add",
+                "layer": "gdn",
+                "fuses": [
+                    "linear projection",
+                    "dynamic grouped conv",
+                    "residual add"
+                ],
+                "decided_in": {
+                    "file": "src/ops/wrapper/dynamic_grouped_conv.cpp",
+                    "function": "fused_add"
+                },
+                "rule_today":
+                    "The fused kernel runs only when the projection is Q8_G32_FP16; any other format takes the decomposed route.",
+                "alternatives": [
+                    "linear_dynamic_grouped_conv_add fused kernel",
+                    "decomposed projection + conv + add"
+                ],
+                "priced": {
+                    "status": "fact",
+                    "by": "format predicate (Q8_G32_FP16)",
+                    "unpriced": "n/a"
+                },
+                "byte_promise": "Unreviewed",
+                "invariant_pin": "unreviewed",
+                "parity_test": null,
+                "oracle_test": "tests/ops/test_linear_dynamic_grouped_conv_add.cpp",
+                "one_card_literal": false,
+                "evidence": [
+                    "src/ops/wrapper/dynamic_grouped_conv.cpp"
+                ]
+            },
+            {
+                "id": "dense_mlp_gate_up",
+                "name": "dense MLP gate/up chain (DensePass::dense_mlp)",
+                "layer": "mlp",
+                "fuses": [
+                    "gate/up projection",
+                    "SwiGLU / GeGLU / gelu_tanh_mul"
+                ],
+                "decided_in": {
+                    "file": "src/models/dense/target.cu",
+                    "function": "dense_mlp"
+                },
+                "rule_today":
+                    "DensePass::dense_mlp: a packed gate_up with SiLU takes linear_swiglu; a packed gate_up whose format linear_geglu_supports takes linear_geglu; another packed gate_up takes project + gelu_tanh_mul; an unpacked gate and up try segmented_swiglu_pair (the vec gated pair at decode and verify widths) and otherwise run two projections + silu_mul. The rule is structural, no price. Gemma 4 has its own paths (gemma4_target_geglu, gemma4_drafter_geglu).",
+                "alternatives": [
+                    "linear_swiglu",
+                    "linear_geglu",
+                    "project + gelu_tanh_mul",
+                    "segmented_swiglu_pair",
+                    "two projections + silu_mul"
+                ],
+                "priced": {
+                    "status": "none",
+                    "by":
+                        "structural predicates and the pair function's own admission (see mmq_gated_pair)",
+                    "unpriced": "whole site"
+                },
+                "byte_promise": "OwnOrder",
+                "invariant_pin": "unreviewed",
+                "parity_test": null,
+                "oracle_test": null,
+                "one_card_literal": false,
+                "evidence": [
+                    "src/models/dense/target.cu"
+                ]
+            },
+            {
+                "id": "dense_mlp_down",
+                "name": "dense MLP down projection + residual (DensePass::dense_mlp)",
+                "layer": "mlp",
+                "fuses": [
+                    "down projection",
+                    "residual add"
+                ],
+                "decided_in": {
+                    "file": "src/models/dense/target.cu",
+                    "function": "dense_mlp"
+                },
+                "rule_today":
+                    "DensePass::dense_mlp: `add` takes linear_add (residual in the projection epilogue); otherwise project (or project_release_next, which lets the next call start under it).",
+                "alternatives": [
+                    "linear_add",
+                    "project (+ residual later)",
+                    "project_release_next"
+                ],
+                "priced": {
+                    "status": "none",
+                    "by": "flag `add` set by the caller",
+                    "unpriced": "whole site"
+                },
+                "byte_promise": "OwnOrder",
+                "invariant_pin": "unreviewed",
+                "parity_test": null,
+                "oracle_test": null,
+                "one_card_literal": false,
+                "evidence": [
+                    "src/models/dense/target.cu"
+                ]
+            },
+            {
+                "id": "drafter_attn_input",
+                "name": "drafter fused Q8 attention input projection (Qwen 3.5 DFlash drafters)",
+                "layer": "attention",
+                "fuses": [
+                    "packed query/key/value projection",
+                    "split"
+                ],
+                "decided_in": {
+                    "file": "src/models/qwen3_5/execution/draft.cpp",
+                    "function": "fused_q8"
+                },
+                "rule_today":
+                    "fused_q8 (draft.cpp) is asked per layer in both the DFlash2 proposal path and propose_batch_impl's non-DFlash2 branch. It is true only for a Q8 row-split weight, and such a weight exists only if the load-time gate in src/models/qwen3_5/execution/parameters.cpp built it: Q/K/V are consecutive rows of one parent and ops::fused_attn_input_proj_geometry holds (the 9B 4096 width does not: it takes the segmented bank). The planning gate in src/models/qwen3_5/program/planning/startup.cpp makes the same check to size the bank scratch. Otherwise the generic bank (segmented projection) runs.",
+                "alternatives": [
+                    "fused attn_input_proj op",
+                    "generic segmented bank"
+                ],
+                "priced": {
+                    "status": "fact",
+                    "by": "format predicate (Q8 row-split)",
+                    "unpriced": "n/a"
+                },
+                "byte_promise": "Unreviewed",
+                "invariant_pin": "unreviewed",
+                "parity_test": null,
+                "oracle_test": null,
+                "one_card_literal": false,
+                "evidence": [
+                    "src/models/qwen3_5/execution/draft.cpp"
+                ]
+            },
+            {
+                "id": "drafter_context_kv",
+                "name": "drafter fused context K/V projection",
+                "layer": "attention",
+                "fuses": [
+                    "context key projection",
+                    "context value projection"
+                ],
+                "decided_in": {
+                    "file": "src/models/qwen3_5/execution/draft.cpp",
+                    "function": "fused_context"
+                },
+                "rule_today":
+                    "The fused context materialization runs only when config.dflash2, the ring is not int8, and fused_context holds (every layer's context key and value weights are Q8 row-split); otherwise each layer appends through its own projections (a DFlash1 drafter always takes the per-layer linear_pair, see q8_pair).",
+                "alternatives": [
+                    "fused ContextKVMaterialize across the layers",
+                    "per-layer linear_pair + key norm + RoPE + append"
+                ],
+                "priced": {
+                    "status": "fact",
+                    "by": "format predicate on all layers",
+                    "unpriced": "n/a"
+                },
+                "byte_promise": "Unreviewed",
+                "invariant_pin": "unreviewed",
+                "parity_test": null,
+                "oracle_test": null,
+                "one_card_literal": false,
+                "evidence": [
+                    "src/models/qwen3_5/execution/draft.cpp"
+                ]
+            },
+            {
+                "id": "vec_gated_pair",
+                "name": "GGUF gate/up pair at decode widths (ggml vec gated pair)",
+                "layer": "mlp",
+                "fuses": [
+                    "gate projection",
+                    "up projection",
+                    "SwiGLU/GeGLU"
+                ],
+                "decided_in": {
+                    "file": "src/ops/generic/generic_ggml.cpp",
+                    "function": "ggml_vec_gated_pair"
+                },
+                "rule_today":
+                    "Tried by segmented_swiglu_pair for T <= kGgmlVecMaxTokens (8): each half must take the vec kernel as a call alone would (ggml_vec_takes_tuned, the tuner times the problem first) and the workspace must hold the pair. When it returns false the caller runs two projections + silu_mul (it does not fall through to MMQ: that band starts above T = 8, see mmq_gated_pair).",
+                "alternatives": [
+                    "vec gated pair (one launch per half pair)",
+                    "two projections + silu_mul"
+                ],
+                "priced": {
+                    "status": "partial",
+                    "by":
+                        "each half's tuned route choice; the pair against two projections is not priced",
+                    "unpriced": "launches"
+                },
+                "byte_promise": "OwnOrder",
+                "invariant_pin": "unreviewed",
+                "parity_test": null,
+                "oracle_test": "tests/ops/linear/test_segmented_swiglu.cpp",
+                "one_card_literal": false,
+                "evidence": [
+                    "src/ops/generic/generic_ggml.cpp"
+                ]
+            },
+            {
+                "id": "gemma4_target_geglu",
+                "name": "Gemma 4 target MLP gate/up GeGLU",
+                "layer": "mlp",
+                "fuses": [
+                    "gate/up projection",
+                    "GeGLU"
+                ],
+                "decided_in": {
+                    "file": "src/models/gemma4/target.cu",
+                    "function": "layers"
+                },
+                "rule_today":
+                    "TargetPass::layers: linear_geglu (GeGLU in the projection epilogue) when ops::linear_geglu_supports the gate_up weight; otherwise project + gelu_tanh_mul. Verify activations use the verify linear policy.",
+                "alternatives": [
+                    "linear_geglu (epilogue)",
+                    "project + gelu_tanh_mul"
+                ],
+                "priced": {
+                    "status": "fact",
+                    "by": "format predicate linear_geglu_supports",
+                    "unpriced": "whole site"
+                },
+                "byte_promise": "OwnOrder",
+                "invariant_pin": "unreviewed",
+                "parity_test": null,
+                "oracle_test": null,
+                "one_card_literal": false,
+                "evidence": [
+                    "src/models/gemma4/target.cu"
+                ]
+            },
+            {
+                "id": "gemma4_drafter_geglu",
+                "name": "Gemma 4 drafter MLP gate/up GeGLU",
+                "layer": "mlp",
+                "fuses": [
+                    "gate/up projection",
+                    "GeGLU"
+                ],
+                "decided_in": {
+                    "file": "src/models/gemma4/mtp_round.cu",
+                    "function": "step"
+                },
+                "rule_today":
+                    "DrafterPass::step: the same rule as the target: linear_geglu when linear_geglu_supports, else project + gelu_tanh_mul.",
+                "alternatives": [
+                    "linear_geglu (epilogue)",
+                    "project + gelu_tanh_mul"
+                ],
+                "priced": {
+                    "status": "fact",
+                    "by": "format predicate linear_geglu_supports",
+                    "unpriced": "whole site"
+                },
+                "byte_promise": "OwnOrder",
+                "invariant_pin": "unreviewed",
+                "parity_test": null,
+                "oracle_test": null,
+                "one_card_literal": false,
+                "evidence": [
+                    "src/models/gemma4/mtp_round.cu"
+                ]
+            },
+            {
+                "id": "projection_chain",
+                "name": "whole-chain selection of projection fusion alternatives (PR #603)",
+                "layer": "projection",
+                "fuses": [
+                    "projection pair (gate/up, K/V)",
+                    "SwiGLU epilogue vs projection + pointwise"
+                ],
+                "decided_in": {
+                    "file": "src/ops/common/projection_chain.h",
+                    "function": "select"
+                },
+                "rule_today":
+                    "chain::select over the alternatives a caller builds with pair_alternatives (fused, separate) or swiglu_alternatives (fused_epilogue, projection_then_pointwise). Each alternative is a list of steps, priced by price(): an alternative with an unpriced, non-finite or negative step, a step of no launch, or no steps is not selectable. Pass 1: the anchor is the lowest total (steps plus launches x launch_seconds) among the priced alternatives, the earliest on equal totals; a non-finite total is rejected. Pass 2: keep the anchor unless an alternative with ln(total / anchor) within `resolution` runs strictly fewer launches; among those, the fewest launches, then the earliest in the caller's order. None priced selects nothing and the caller keeps its rule. No production code calls it yet (steps E and F of #617 wire q8_pair, ffn_swiglu_epilogue and mmq_gated_pair to it).",
+                "alternatives": [
+                    "fused",
+                    "separate",
+                    "fused_epilogue",
+                    "projection_then_pointwise"
+                ],
+                "priced": {
+                    "status": "priced",
+                    "by":
+                        "whole-chain seconds from the caller's step prices (route_cost_seconds plus output write and pointwise read), launches x launch_seconds, the speed estimate's resolution",
+                    "unpriced":
+                        "the constants a caller must pass: launch seconds (step B of #617) and the resolution"
+                },
+                "byte_promise": "NotApplicable",
+                "invariant_pin": "n/a (selection only; the sites it will serve pin their own)",
+                "parity_test": null,
+                "oracle_test": null,
+                "one_card_literal": false,
+                "evidence": [
+                    "PR #603",
+                    "#310",
+                    "#617 step C (resolution), step B (launch constant)",
+                    "src/ops/common/projection_chain.h"
+                ]
+            },
+            {
+                "id": "q4_linear_swiglu",
+                "name": "Q4 gate/up SwiGLU schedules (27B shape)",
+                "layer": "mlp",
+                "fuses": [
+                    "gate/up projection",
+                    "silu_mul"
+                ],
+                "decided_in": {
+                    "file": "src/ops/linear_swiglu/q4/q4_linear_swiglu_plan.cpp",
+                    "function": "q4_linear_swiglu_resolve_plan"
+                },
+                "rule_today":
+                    "A column-range table (kRoutes) for the registered [34816, 17408, 5120] shape picks per width a fused schedule (GemvPair at 1, SmallTTiled at 2..32, MmaSplitHalfPairR32C128 and its Tail variant at the listed ranges) or Materialized (linear + silu_mul) in the gaps 33..128, 169..224, 257..384 and 513..640 columns; device_schedule may substitute for the device.",
+                "alternatives": [
+                    "fused gate/up + SwiGLU schedules",
+                    "Materialized: linear then silu_mul"
+                ],
+                "priced": {
+                    "status": "literal",
+                    "by":
+                        "the column table kRoutes (ranges are constants, not prices), measured on one host (one card; the commit does not name it) in commit 5b4303c0e (the retune around the #261 linear routes)",
+                    "unpriced": "whole site"
+                },
+                "byte_promise": "OwnOrder",
+                "invariant_pin": "unreviewed",
+                "parity_test": null,
+                "oracle_test": "tests/ops/linear_swiglu/test_q4_a16.cpp",
+                "one_card_literal": true,
+                "evidence": [
+                    "src/ops/linear_swiglu/q4/q4_linear_swiglu_plan.cpp",
+                    "commit 5b4303c0e: perf(ops): retune the Q4 34816x5120 LinearSwiGLU dispatch (second 128-column tile costs 226-290 us almost independently of live columns)"
+                ]
+            },
+            {
+                "id": "nvfp4_linear_swiglu",
+                "name": "NVFP4 gate/up SwiGLU routes",
+                "layer": "mlp",
+                "fuses": [
+                    "gate/up projection",
+                    "silu_mul"
+                ],
+                "decided_in": {
+                    "file": "src/ops/linear_swiglu/nvfp4/nvfp4_linear_swiglu_plan.cpp",
+                    "function": "resolve_route"
+                },
+                "rule_today":
+                    "ExactA16 under A16Only and for the exact verify band (2..8 tokens). With AllowA8 or no quantized-activation routes: DecodeFusedA16 at 1 token, SmallTFusedA16 to 16, else LinearA16Post (projection, then the SwiGLU pass). With quantized activations the fused A16 routes keep T <= 4 (DecodeFusedA16 at 1, SmallTFusedA16 to 4) unless a route probe forces the quantized route; wider calls, or the forced probe, take FusedA4 (the fused gate/up + SwiGLU A4 kernel) and from T >= 256 TmaFusedA4 (its TMA variant, with its own scale layout).",
+                "alternatives": [
+                    "fused A16 routes (DecodeFusedA16, SmallTFusedA16)",
+                    "ExactA16",
+                    "LinearA16Post (projection + post pass)",
+                    "FusedA4 (fused A4 gate/up + SwiGLU)",
+                    "TmaFusedA4 (TMA variant, T >= 256)"
+                ],
+                "priced": {
+                    "status": "literal",
+                    "by":
+                        "token bounds in resolve_route (not priced); the 2..8 verify band comes from one RTX 5090 nsys census (Qwen3.8-27B NVFP4, MTP3 at 24K)",
+                    "unpriced": "whole site"
+                },
+                "byte_promise": "OwnOrder",
+                "invariant_pin": "ExactA16 (A16Only and the exact verify widths)",
+                "parity_test": null,
+                "oracle_test": "tests/ops/linear_swiglu/test_nvfp4.cpp",
+                "one_card_literal": true,
+                "evidence": [
+                    "src/ops/linear_swiglu/nvfp4/nvfp4_linear_swiglu_plan.cpp (comment on the verify band: RTX 5090 census, serve gains at T = 4 and 6, a 5 % loss at T = 16)"
+                ]
+            },
+            {
+                "id": "sparse_moe_prefill_route",
+                "name": "sparse MoE prefill: route selection, scan and index in one block",
+                "layer": "moe",
+                "fuses": [
+                    "expert selection",
+                    "tile scan",
+                    "index"
+                ],
+                "decided_in": {
+                    "file": "src/ops/sparse_moe/prefill/sparse_moe_prefill_kernels.cu",
+                    "function": "sparse_moe_prefill_launch"
+                },
+                "rule_today":
+                    "fused_route = nvfp4 && tokens <= kSparseMoeRouteTileTokens, where tokens is the slice's (plan.slice_tokens), not the whole call's: one block carries selection, scan and index (the small route kernel, two graph nodes fewer per layer); otherwise the select/count, scan and index kernels run separately. Restricted to the NVFP4 profile on purpose (the Q4 route would take it on the ragged tail of a sliced call, a separate claim).",
+                "alternatives": [
+                    "small_route kernel (one block)",
+                    "select_count + scan + index kernels"
+                ],
+                "priced": {
+                    "status": "fact",
+                    "by": "profile and one-tile token bound",
+                    "unpriced": "the saved launches"
+                },
+                "byte_promise": "Equal",
+                "invariant_pin": "unreviewed",
+                "parity_test": null,
+                "oracle_test": "tests/ops/test_sparse_moe.cpp",
+                "one_card_literal": false,
+                "evidence": [
+                    "src/ops/sparse_moe/prefill/sparse_moe_prefill_kernels.cu"
+                ]
+            }
+        ],
+    "pending": [],
+    "excluded": [
+        {
+            "what":
+                "context_kv_materialize Fused64 route (src/ops/context_kv_materialize/launch.h: context_kv_materialize_route)",
+            "reason":
+                "a column-count table over the materialize schedules of one op, not a choice between fused and separate ops; revisit when step H adds regret lines per site"
+        },
+        {
+            "what": "linear_topk (src/ops/linear_topk/linear_topk.cpp)",
+            "reason":
+                "the fused LM head + top-16 op itself, which the drafter always calls; there is no decision between alternatives, and its test checks a tolerance, not bytes"
+        }
+    ]
 }
