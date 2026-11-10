@@ -45,8 +45,11 @@
 //                   3090, 0.05-0.15 on the RTX 5090; DECISIONS 74), a generation with a higher
 //                   MMA rate (ga100: s8 4096) has a smaller part in J and a larger fixed share, so
 //                   fewer widths pay. A generation joins by its own grid: Ada did (0.20, the RTX
-//                   4070 Ti and 4090); Turing was not run over the widths and keeps the fewest
-//                   tiles. A measured preference, not carried by a lent row.
+//                   4070 Ti and 4090). Turing joined by its grid (the RTX 2080 Ti, DECISIONS 77)
+//                   with a launch law instead of a fixed share (mmq_launch_law): on its 68 SMs the
+//                   width decides whether a launch runs a tile a CTA or stream-k with a fixup,
+//                   which the tile count does not see. A measured preference, not carried by a
+//                   lent row.
 
 //
 // What a lent row carries (#300): generation_row answers every compute capability, lending the
@@ -71,6 +74,24 @@
 
 namespace ninferno {
 
+// The launch law of ggml's matrix kernel, for a generation whose column tiles are priced by the
+// launch they run (core/mmq_columns.h launch_seconds; DECISIONS 77) instead of their tile count. A
+// launch takes its longest CTA's units times a unit's cost (a unit: one 128-row x J-column tile
+// over 256 K values), plus, where it splits tiles (stream-k with a fixup), the fixup's bytes at the
+// DRAM rate and one dependent launch.
+//   unit_clocks     a unit's SM-clocks at the board's reference clock, in a launch of a tile a CTA,
+//                   by J = 16, 32, 64, 80, 96, 128 (core/mmq_columns.h kTilesWork)
+//   stream_k_unit   a stream-k CTA's unit against a tile-a-CTA one at the same J
+//   launch_seconds  the fixup kernel's dependent launch (a generation without PDL)
+struct MmqLaunchLaw {
+    double unit_clocks[6] = {};
+    double stream_k_unit  = 1.0;
+    double launch_seconds = 0.0;
+};
+
+// TURING_LAW_PLACEHOLDER
+inline constexpr MmqLaunchLaw kTuringMmqLaw{{4805, 6535, 8899, 10321, 12561, 17180}, 1.13, 19.8e-6};
+
 struct GenerationRow {
     int major    = 0;
     int minor_lo = 0;
@@ -85,12 +106,15 @@ struct GenerationRow {
     bool attention_chain   = false;
     bool mmq_work_tiles    = false;
     double mmq_tile_fixed  = 0.43; // with mmq_work_tiles: the fixed share of a column tile's step
+    // With mmq_work_tiles: the launch law that prices the widths instead of mmq_tile_fixed (null:
+    // the tile law, ceil(columns / J) x step_share(J, mmq_tile_fixed)).
+    const MmqLaunchLaw* mmq_launch_law = nullptr;
 };
 
 inline constexpr GenerationRow kGenerations[] = {
     //  major minor     name       bf16    s8      full   w4a8  a16   mmq    chain
     {7, 0, 4, "volta", 1536.0, 0.0, false, 1.0, 1.11, true},
-    {7, 5, 9, "turing", 1536.0, 2048.0, false, 1.0, 1.11, true},
+    {7, 5, 9, "turing", 1536.0, 2048.0, false, 1.0, 1.11, true, false, true, 0.43, &kTuringMmqLaw},
     {8, 0, 0, "ga100", 2048.0, 4096.0, true, 0.46, 1.64, false},
     {8, 1, 8, "ga10x", 512.0, 2048.0, false, 1.0, 1.11, true, false, true, 0.20},
     {8, 9, 9, "ada", 512.0, 2048.0, false, 1.0, 1.11, true, false, true, 0.20},
@@ -165,6 +189,13 @@ struct FittedRouteScales {
 [[nodiscard]] constexpr double mmq_tile_fixed_of(int major, int minor) noexcept {
     return mmq_work_tiles_measured(major, minor) ? generation_row(major, minor).mmq_tile_fixed
                                                  : 0.43;
+}
+
+// The launch law the widths are priced by on that generation (mmq_launch_law), null where it takes
+// the tile law or keeps the fewest tiles: only on a generation of the table's own.
+[[nodiscard]] constexpr const MmqLaunchLaw* mmq_launch_law_of(int major, int minor) noexcept {
+    return mmq_work_tiles_measured(major, minor) ? generation_row(major, minor).mmq_launch_law
+                                                 : nullptr;
 }
 
 // The compute capabilities the generic selector's measured rules name (generic_gemm.cpp). A

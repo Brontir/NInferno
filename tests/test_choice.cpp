@@ -29,27 +29,42 @@
 namespace {
 
 // The kernel's column tile picks (core/mmq_columns.h): GA10x, Ada and GB20x take the least work of
-// their widths,
-// every other card the fewest tiles of 16, 32, 64, 128. Never wider than the fixup plane's bound
+// their widths, Turing the cheapest launch of the same widths (its launch law, DECISIONS 77), every
+// other card the fewest tiles of 16, 32, 64, 128. Never wider than the fixup plane's bound
 // (ggml_mmq fixup_bound: the column count rounded up to a power of two from 16, at most 128).
 namespace pins {
 using ninferno::mmq_columns::pick;
-static_assert(pick(144, 8, 6, true) == 80 && pick(160, 8, 6, true) == 80 &&
-              pick(192, 8, 6, true) == 96 && pick(224, 8, 6, true) == 128 &&
-              pick(256, 8, 6, true) == 128 && pick(16, 8, 6, true) == 16 &&
-              pick(8, 8, 6, true) == 16 && pick(1, 8, 6, true) == 16 &&
-              pick(320, 8, 6, true) == 80);
-static_assert(pick(144, 12, 0, true) == 80 && pick(192, 12, 0, true) == 96 &&
-              pick(224, 12, 0, true) == 80 && pick(256, 12, 0, true) == 128 &&
-              pick(16, 12, 0, true) == 16);
-// Ada takes the least work too (f 0.20, as GA10x); Turing keeps the fewest tiles.
-static_assert(pick(144, 8, 9, true) == 80 && pick(192, 8, 9, true) == 96 &&
-              pick(224, 8, 9, true) == 128 && pick(16, 8, 9, true) == 16 &&
-              pick(144, 7, 5, true) == 128);
+// A 4096 x 4096 product on the RTX 2080 Ti's facts (68 SMs, the 1545 MHz reference clock, 352 bits
+// at 14 Gbps): what the launch law reads; the tile law's generations do not read it.
+constexpr ninferno::mmq_columns::LaunchFacts k4096{4096, 4096, 68, 1545e6, 616e9};
+constexpr ninferno::mmq_columns::LaunchFacts k12288{12288, 4096, 68, 1545e6, 616e9};
+static_assert(pick(144, 8, 6, true, 128, k4096) == 80 && pick(160, 8, 6, true, 128, k4096) == 80 &&
+              pick(192, 8, 6, true, 128, k4096) == 96 && pick(224, 8, 6, true, 128, k4096) == 128 &&
+              pick(256, 8, 6, true, 128, k4096) == 128 && pick(16, 8, 6, true, 128, k4096) == 16 &&
+              pick(8, 8, 6, true, 128, k4096) == 16 && pick(1, 8, 6, true, 128, k4096) == 16 &&
+              pick(320, 8, 6, true, 128, k4096) == 80);
+static_assert(pick(144, 12, 0, true, 128, k4096) == 80 &&
+              pick(192, 12, 0, true, 128, k4096) == 96 &&
+              pick(224, 12, 0, true, 128, k4096) == 80 &&
+              pick(256, 12, 0, true, 128, k4096) == 128 && pick(16, 12, 0, true, 128, k4096) == 16);
+// Ada takes the least work too (f 0.20, as GA10x).
+static_assert(pick(144, 8, 9, true, 128, k4096) == 80 && pick(192, 8, 9, true, 128, k4096) == 96 &&
+              pick(224, 8, 9, true, 128, k4096) == 128 && pick(16, 8, 9, true, 128, k4096) == 16);
+// Turing takes the cheapest launch (DECISIONS 77): at 105 and 121 columns two 64-column tiles (64
+// CTAs, a tile a CTA on 68 SMs) where one 128-column tile runs stream-k with a fixup; then 80, 96
+// and 128 as their two tiles cover the columns, 80 and 96 again at three tiles of 313 and four of
+// 377 columns (a tile a CTA, where 128's three tiles run stream-k).
+static_assert(pick(105, 7, 5, true, 128, k4096) == 64 && pick(121, 7, 5, true, 128, k4096) == 64 &&
+              pick(137, 7, 5, true, 128, k4096) == 80 && pick(153, 7, 5, true, 128, k4096) == 80 &&
+              pick(169, 7, 5, true, 128, k4096) == 96 && pick(185, 7, 5, true, 128, k4096) == 96 &&
+              pick(201, 7, 5, true, 128, k4096) == 128 &&
+              pick(249, 7, 5, true, 128, k4096) == 128 && pick(313, 7, 5, true, 128, k4096) == 80 &&
+              pick(377, 7, 5, true, 128, k4096) == 96);
 // A format the grids did not run keeps the fewest tiles on every card
 // (mmq_columns::work_tiles_format).
-static_assert(pick(144, 8, 6, false) == 128 && pick(192, 12, 0, false) == 128 &&
-              pick(16, 8, 6, false) == 16);
+static_assert(pick(144, 8, 6, false, 128, k4096) == 128 &&
+              pick(192, 12, 0, false, 128, k4096) == 128 &&
+              pick(16, 8, 6, false, 128, k4096) == 16);
 static_assert(ninferno::mmq_columns::work_tiles_format(ninferno::QType::GGML_Q4_K) &&
               ninferno::mmq_columns::work_tiles_format(ninferno::QType::GGML_Q6_K) &&
               !ninferno::mmq_columns::work_tiles_format(ninferno::QType::GGML_Q4_0) &&
@@ -72,14 +87,15 @@ static_assert(std::min(128, ninferno::mmq_columns::widest_tile(ninferno::QType::
               64);
 // A Turing Q2_K product of 65..128 columns takes two 64-column tiles, not one of 128.
 static_assert(pick(100, 7, 5, false,
-                   ninferno::mmq_columns::widest_tile(ninferno::QType::GGML_Q2_K, 7, 5)) == 64);
+                   ninferno::mmq_columns::widest_tile(ninferno::QType::GGML_Q2_K, 7, 5),
+                   k4096) == 64);
 
 constexpr bool within_fixup_bound() {
     for (int c = 1; c <= 512; ++c) {
         int bound = 16;
         while (bound < c && bound < 128) bound *= 2;
         for (const int cc : {60, 70, 75, 80, 86, 89, 90, 120}) {
-            if (pick(c, cc / 10, cc % 10, true) > bound) return false;
+            if (pick(c, cc / 10, cc % 10, true, 128, k4096) > bound) return false;
         }
     }
     return true;

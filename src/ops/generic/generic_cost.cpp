@@ -126,12 +126,17 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         // efficiency was fitted on.
         // Never wider than the tile the device's shared memory holds for the format (Turing's
         // 64 KiB: Q2_K's 128-column tile does not fit, the kernel runs 64).
+        // The A8 routes are priced only where the MMA reads BF16 operands (sm_80 on: above), so a
+        // generation whose widths a launch law prices (Turing, DECISIONS 77) never reaches here;
+        // the facts are the product's grid on this card all the same.
         const bool format   = mmq_columns::work_tiles_format(problem.qtype);
         const int widest    = mmq_columns::widest_tile(problem.qtype, d.major, d.minor);
+        const mmq_columns::LaunchFacts facts{static_cast<int>(n), static_cast<int>(k), d.sms, clk,
+                                             bw};
         const double cols =
             mmq_columns::uses_work_table(d.major, d.minor, format)
-                ? static_cast<double>(
-                      mmq_columns::pick(static_cast<int>(tt), d.major, d.minor, true, widest))
+                ? static_cast<double>(mmq_columns::pick(static_cast<int>(tt), d.major, d.minor,
+                                                        true, widest, facts))
                 : std::min({rows_t, static_cast<double>(widest), cdiv(tt, step) * step});
         const double tiles  = cdiv(n * sets, rows_t) * cdiv(tt, cols);
         const double mem    = n * k * bpw / bw;
