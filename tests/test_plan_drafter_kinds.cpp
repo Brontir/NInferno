@@ -206,12 +206,21 @@ void test_gain_note_names_where_the_price_is_held_from() {
               over["note"].get<std::string>().find("a ceiling") != std::string::npos,
           "a scale above 1 is not reported as a price");
     // Priced at 2 (0.8) and at 3 (0.9): the gain at 3 is held from 2, and the note says this
-    // count is priced, higher, not that it is not priced.
-    const auto higher = note_at(3, {{.streams = 2, .scale = 0.8}, {.streams = 3, .scale = 0.9}});
-    check(higher["joint_priced_at_streams"] == 2 && higher["joint_verify_scale"] == 0.8 &&
-              higher["note"].get<std::string>().find("priced higher") != std::string::npos &&
-              higher["note"].get<std::string>().find("not priced") == std::string::npos,
-          "a count priced above the held price: the note says priced higher");
+    // count is priced, no lower, not that it is not priced. A tie (0.8 at both) is held from 2
+    // alike: "no lower" is true of both, "higher" would be false of the tie.
+    for (const double at_three : {0.9, 0.8}) {
+        const auto held =
+            note_at(3, {{.streams = 2, .scale = 0.8}, {.streams = 3, .scale = at_three}});
+        check(held["joint_priced_at_streams"] == 2 && held["joint_verify_scale"] == 0.8 &&
+                  held["note"].get<std::string>().find("held from the price at 2 streams") !=
+                      std::string::npos &&
+                  held["note"].get<std::string>().find("priced no lower") != std::string::npos &&
+                  held["note"].get<std::string>().find("not priced") == std::string::npos,
+              at_three > 0.8
+                  ? "a count priced above the held price: the note says priced no lower"
+                  : "a count priced equal to the held price: held from the smaller count, "
+                    "priced no lower");
+    }
     const auto unpriced_here = note_at(3);
     check(unpriced_here["note"].get<std::string>().find("this count is not priced") !=
               std::string::npos,

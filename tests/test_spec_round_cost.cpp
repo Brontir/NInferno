@@ -430,8 +430,8 @@ int main() {
                 ++compared;
             }
         }
-        expect(compared > 0 && apart > 0,
-               "the own board's price differs from the other record's board's");
+        expect(compared > 0 && apart == compared,
+               "every entry of the own board's price differs from the other record's board's");
         // No card named: the record the profile was selected on prices it, as before.
         const auto unnamed = sp::profile_for_target({&wide, &own}, "sm89");
         bool on_base       = !unnamed.joint_scale.empty();
@@ -443,6 +443,39 @@ int main() {
             }
         }
         expect(on_base, "with no card named the selected record's board prices the joint verify");
+        // An own record that cannot price prices nothing: without its facts, or without a board
+        // the rates are known for, the profile carries no price, not the other record's board's.
+        auto no_facts = own;
+        no_facts.round_facts.reset();
+        expect(sp::profile_for_target({&wide, &no_facts}, "sm89", {}, &rtx4090).joint_scale.empty(),
+               "an own record without facts prices no joint verify");
+        auto no_board      = own;
+        no_board.lab_board = 0;
+        expect(sp::profile_for_target({&wide, &no_board}, "sm89", {}, &rtx4090).joint_scale.empty(),
+               "an own record without a board prices no joint verify");
+        // The own record's launch counts are in its price too: with them kept (the other record's
+        // stay zeroed) an entry is priced apart from the same entry without them.
+        auto counted         = pair_of(kQ9, "ad104:60sm");
+        counted.tune.key.gpu = own.tune.key.gpu;
+        counted.lab_board    = own.lab_board;
+        if (dropped) {
+            std::erase_if(counted.tune.measurements,
+                          [&](const sp::Measurement& m) { return m.config == *dropped; });
+        }
+        const auto with_counts = sp::profile_for_target({&wide, &counted}, "sm89", {}, &rtx4090);
+        int shared = 0, moved = 0;
+        for (const auto& [label, by_streams] : asked.joint_scale) {
+            const auto other = with_counts.joint_scale.find(label);
+            if (other == with_counts.joint_scale.end()) { continue; }
+            for (const auto& [streams, scale] : by_streams) {
+                const auto at = other->second.find(streams);
+                if (at == other->second.end()) { continue; }
+                ++shared;
+                if (!near(scale, at->second, 1e-9)) { ++moved; }
+            }
+        }
+        expect(with_counts.overall.config == asked.overall.config && shared > 0 && moved > 0,
+               "the own record's launch counts are in the joint verify's price");
     }
     // The draft head over the rows an artifact's proposal head carries (#205: MTP reads its own
     // 57,344-row prefix of the 147,456 rows it read before, Qwen3.5-9B Q4_K_M, Q6_K head). The

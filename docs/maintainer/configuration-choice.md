@@ -191,9 +191,13 @@ table, so a registry target's profile speculates for one request only and no `/a
 changes for it today (`tests/test_spec_round_cost.cpp` pins this: the day a pair gets a load table
 the scan fails and the plans it prices are looked at). The price is taken at the asking card's
 own lab record where it has one (its board's rates, its facts and launch counts:
-`generation_median`), and only a profile selected at home carries one: with one lab card of the
-generation, a median the cards' choice does not survive, a transfer, or a profile priced by the
-facts, the gain under load stays a ceiling. Known gaps: (1) a card with no lab record of its own
+`generation_median`), and only a profile selected at home carries one. With one lab card of the
+generation, lab cards that do not choose alike, a median their choice does not survive, a transfer,
+or a profile priced by the facts, there is no price, and the profile's load table is plain decode
+from two streams, so there is no gain under load to price. A kept median whose cards' load tables
+differ, or are empty, carries a price and decodes plainly from two streams alike. An own record
+without facts, or without rates for its board, carries no price either. Known gaps: (1) a card
+with no lab record of its own
 that the facts do not price, and a profile asked with no card named, take the price on the record
 the profile was selected on, which is another card's board; (2) nothing holds the price against a
 measured loaded gain (the round cost test compares the profile's scale with `spec::load_gain`, so
