@@ -229,6 +229,11 @@ def decode_text(data):
     return data.decode("utf-8", errors="replace")
 
 
+# Listing entry of a source under an arch condition guard_arches() cannot narrow (OR, a range, NOT,
+# a bracket comment in the file): not "unguarded", and not one arch either.
+UNKNOWN_GUARD = object()
+
+
 class Repo:
     """Header graph of a source tree: which files a .cu file includes, transitively.
 
@@ -359,9 +364,12 @@ class Repo:
                     if cmd and NOT_SOURCE_COMMAND.match(cmd.group(1)):
                         continue
                     guards = [guard_arches(g) for g in stack]
-                    arches = None if opaque or any(g is None for g in guards) else set().union(*guards)
+                    if opaque or any(g is None for g in guards):
+                        arches = UNKNOWN_GUARD     # guarded by something this cannot narrow
+                    else:
+                        arches = set().union(*guards) or None   # None: no arch guard at all
                     for f in re.findall(r"[\w./${}-]+\.(?:cuh|cu|cpp|cc|hpp|h)\b", stmt):
-                        listing.setdefault(PurePosixPath(f).name, []).append(arches or None)
+                        listing.setdefault(PurePosixPath(f).name, []).append(arches)
             self._listing = listing
         return self._listing
 
@@ -375,16 +383,17 @@ class Repo:
             return None
         if sum(1 for f in self.files if PurePosixPath(f).name == name) > 1:
             return "all"
-        if any(e is None for e in entries):
+        if any(e is None or e is UNKNOWN_GUARD for e in entries):
             return "all"
         union = set().union(*entries)
         return next(iter(union)) if len(union) == 1 else "all"
 
     def arch_guarded(self, path):
-        """True when every cmake listing of the source is under an arch guard: some trees do not
-        build it."""
+        """True when some cmake listing of the source is under an arch guard (one this can narrow
+        or not): some trees may not build it. Listings are keyed by file name, so a name shared with
+        an unguarded unit elsewhere keeps the guarded status (only widens)."""
         entries = self.cmake_listing().get(PurePosixPath(path).name)
-        return bool(entries) and all(e is not None for e in entries)
+        return bool(entries) and any(e is not None for e in entries)
 
     def guarded_host_includer(self, path):
         """The first C++ translation unit that is `path` or includes it and is built only under an
@@ -567,7 +576,7 @@ def host_reads_device(p, repo, read, base):
     return None
 
 
-def classify(paths, repo, read=None, base=None, extra_all=None):
+def classify(paths, repo, read=None, base=None, extra_all=None, missing=()):
     """read(path) gives the text of a changed file; default: the repo's tree.
 
     `base` is the Repo of the other side of a diff: a change that REMOVES an arch macro or the last
@@ -581,6 +590,9 @@ def classify(paths, repo, read=None, base=None, extra_all=None):
     if base is not None:
         device |= base.headers_reached_from_cu()
     for p in sorted(set(paths)):
+        if p in missing:
+            v.add_all(p, "named file does not exist (a deletion): its old content is not read")
+            continue
         if p.startswith("../") or p.startswith("/") or re.match(r"[A-Za-z]:", p):
             v.add_all(p, "outside the source tree")
             continue
@@ -793,12 +805,19 @@ def main(argv=None):
     args = ap.parse_args(argv)
     base_repo = None
     extra_all = None
+    missing = ()
     if args.files:
         repo = Repo(args.root)
         paths = [normalise_path(f, args.root) for f in args.files]
+        # a code file that is not there was deleted: nothing here can say what it contained
+        missing = {p for p in paths if p.endswith(TEXT_CODE_EXT) and not (Path(args.root) / p).is_file()}
     elif args.ninja:
         repo = Repo(args.root)
         sources, extra_all = ninja_listing(run_ninja(args.ninja), repo)
+        if (git_run(args.root, "rev-parse", "--verify", args.head + "^{commit}").strip()
+                != git_run(args.root, "rev-parse", "HEAD").strip()):
+            # the objects and the uncommitted edits are those of the checkout, the diff is --head's
+            extra_all = extra_all or "--head is not the checked-out commit: the working tree is not that ref"
         paths = (sources + git_diff_paths(args.base, args.head, args.root)
                  + worktree_paths(args.root))
         base_repo = merge_base_repo(args.root, args.base, args.head)
@@ -808,7 +827,7 @@ def main(argv=None):
         # base (what `base...head` compares against), read the same way
         repo = Repo(args.root, ref=args.head)
         base_repo = merge_base_repo(args.root, args.base, args.head)
-    res = classify(paths, repo, base=base_repo, extra_all=extra_all)
+    res = classify(paths, repo, base=base_repo, extra_all=extra_all, missing=missing)
     print(json.dumps(res, indent=1) if args.json else render(res))
     return 0
 

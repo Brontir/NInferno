@@ -1017,6 +1017,48 @@ class Classify(unittest.TestCase):
         res = self.run_diff(["src/ops/volta_a.cu"], files)
         self.assertEqual(res["arches"], ["sm_70"])
 
+    def test_a_host_header_of_a_unit_under_an_unnarrowable_guard_is_all(self):
+        # OR / range / NOT guards cannot be narrowed to an arch, but the unit is still not built everywhere
+        for cond in ('NINFERNO_BUILD_ARCH STREQUAL "70" OR NINFERNO_BUILD_ARCH STREQUAL "75"',
+                     "NINFERNO_BUILD_ARCH GREATER 80", 'NOT NINFERNO_BUILD_ARCH STREQUAL "70"'):
+            with self.subTest(cond=cond):
+                files = {"src/chat/shared.h": "#pragma once\n",
+                         "src/ops/launch.cpp": '#include "../chat/shared.h"\n',
+                         "src/ops/sources.cmake": f"if({cond})\n src/ops/launch.cpp\nendif()\n"}
+                res = self.run_diff(["src/chat/shared.h"], files)
+                self.assertTrue(res["all"])
+                self.assertIn("src/ops/launch.cpp", res["reasons"]["src/chat/shared.h"])
+        # a bracket comment makes the file opaque: its listings count as guarded too
+        files = {"src/chat/shared.h": "#pragma once\n", "src/ops/launch.cpp": '#include "../chat/shared.h"\n',
+                 "src/ops/sources.cmake": "#[[ note ]]\nset(S src/ops/launch.cpp)\n"}
+        self.assertTrue(self.run_diff(["src/chat/shared.h"], files)["all"])
+
+    def test_a_basename_shared_with_an_unguarded_unit_keeps_the_guarded_status(self):
+        files = {"src/chat/shared.h": "#pragma once\n",
+                 "src/ops/launch.cpp": '#include "../chat/shared.h"\n', "src/convert/launch.cpp": "",
+                 "src/ops/sources.cmake": 'if(NINFERNO_BUILD_ARCH STREQUAL "70")\n src/ops/launch.cpp\nendif()\n'
+                                          "set(C src/convert/launch.cpp)\n"}
+        res = self.run_diff(["src/chat/shared.h"], files)
+        self.assertTrue(res["all"])
+
+    def test_a_named_code_file_that_is_missing_is_a_deletion_and_answers_all(self):
+        self.tree({"src/chat/other.cpp": "int o;\n"})
+        res = self.cli("--files", "src/chat/gone.cpp")
+        self.assertTrue(res["all"])
+        self.assertIn("deletion", res["reasons"]["src/chat/gone.cpp"])
+        self.assertFalse(self.cli("--files", "src/chat/other.cpp")["all"])
+        # a missing text file is not code: it keeps the host answer
+        self.assertFalse(self.cli("--files", "docs/gone.md")["all"])
+
+    def test_ninja_with_a_head_that_is_not_the_checkout_answers_all(self):
+        self.ninja_repo()
+        self.tree({"src/chat/c.cpp": "#if NINFERNO_BUILD_ARCH == 70\nint c;\n#endif\n"})
+        self.commit_all("adds an arch macro", "feature")
+        self.git("checkout", "-q", "base")
+        res = self.cli_ninja("ninja: no work to do.\n", "--head", "feature")
+        self.assertTrue(res["all"])
+        self.assertFalse(self.cli_ninja("ninja: no work to do.\n", "--head", "base")["all"])
+
 
 if __name__ == "__main__":
     unittest.main()
