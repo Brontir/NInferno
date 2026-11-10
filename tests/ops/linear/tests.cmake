@@ -145,6 +145,10 @@ target_compile_definitions(ninferno_selector_golden_test PRIVATE
 ninferno_add_test(ninferno_rmma_geometry_test NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_rmma_geometry.cpp")
 set_tests_properties(ninferno_rmma_geometry_test PROPERTIES LABELS host)
+# The full build's architectures (the NVFP4 kernels, so the cluster hand-over): the one list of
+# CMakeLists.txt, comma-joined, not parsed from its text.
+target_compile_definitions(ninferno_rmma_geometry_test PRIVATE
+  NINFERNO_FULL_CUDA_ARCHS="$<JOIN:${NINFERNO_FULL_CUDA_ARCHS},$<COMMA>>")
 
 # The kernel-facts snapshots the register-MMA price reads (ops/generic/kernel_facts.h, #612).
 # Three checks, from the data inwards:

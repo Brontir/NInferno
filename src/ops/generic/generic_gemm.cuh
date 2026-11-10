@@ -2210,6 +2210,11 @@ constexpr int TableWordsOf() {
     }
 }
 
+// A decoder that has a row in geometry::kDecoderGeometry (the reverse of the rows' check: a decoder
+// with a table, staging or a group tail but no row would price 0 bytes of shared memory).
+template <class D>
+struct HasGeometryRow : std::false_type {};
+
 template <class D>
 constexpr bool decoder_matches_geometry(std::string_view name) {
     const geometry::DecoderGeometry g = geometry::decoder_geometry(name);
@@ -2217,24 +2222,37 @@ constexpr bool decoder_matches_geometry(std::string_view name) {
            g.stage_acts == StageActsOf<D>::value && g.group_tail == GroupTailOf<D>::value;
 }
 
-static_assert(decoder_matches_geometry<GgmlIq1MDecoder>("GgmlIq1MDecoder"));
-static_assert(decoder_matches_geometry<GgmlIq1SDecoder>("GgmlIq1SDecoder"));
-static_assert(decoder_matches_geometry<GgmlIq2SDecoder>("GgmlIq2SDecoder"));
-static_assert(decoder_matches_geometry<GgmlIq2XsDecoder>("GgmlIq2XsDecoder"));
-static_assert(decoder_matches_geometry<GgmlIq2XxsDecoder>("GgmlIq2XxsDecoder"));
-static_assert(decoder_matches_geometry<GgmlIq3SDecoder>("GgmlIq3SDecoder"));
-static_assert(decoder_matches_geometry<GgmlIq3XxsDecoder>("GgmlIq3XxsDecoder"));
-static_assert(decoder_matches_geometry<GgmlQ3KDecoder>("GgmlQ3KDecoder"));
-static_assert(decoder_matches_geometry<GgmlQ6KDecoder>("GgmlQ6KDecoder"));
-static_assert(decoder_matches_geometry<GgmlQ6KWideDecoder>("GgmlQ6KWideDecoder"));
-static_assert(decoder_matches_geometry<GgmlQ45KQuadDecoder<4>>("GgmlQ45KQuadDecoder<4>"));
-static_assert(decoder_matches_geometry<GgmlQ45KQuadDecoder<5>>("GgmlQ45KQuadDecoder<5>"));
-static_assert(decoder_matches_geometry<Ggml32Decoder<Ggml32::Q4_0>>("Ggml32Decoder<0>"));
-static_assert(decoder_matches_geometry<Ggml32Decoder<Ggml32::Q4_1>>("Ggml32Decoder<1>"));
-static_assert(decoder_matches_geometry<Ggml32Decoder<Ggml32::Q5_0>>("Ggml32Decoder<2>"));
-static_assert(decoder_matches_geometry<Ggml32Decoder<Ggml32::Q5_1>>("Ggml32Decoder<3>"));
-static_assert(decoder_matches_geometry<Ggml32Decoder<Ggml32::IQ4_NL>>("Ggml32Decoder<4>"));
-static_assert(decoder_matches_geometry<Mxfp4SpreadDecoder>("Mxfp4SpreadDecoder"));
+// Pins the row `name` to the decoder (constants equal) and records that the decoder has one.
+#define NINFERNO_DECODER_GEOMETRY_ROW(name, ...)\
+    static_assert(decoder_matches_geometry<__VA_ARGS__>(name));\
+    template <>\
+    struct HasGeometryRow<__VA_ARGS__> : std::true_type {};
+
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlIq1MDecoder", GgmlIq1MDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlIq1SDecoder", GgmlIq1SDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlIq2SDecoder", GgmlIq2SDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlIq2XsDecoder", GgmlIq2XsDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlIq2XxsDecoder", GgmlIq2XxsDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlIq3SDecoder", GgmlIq3SDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlIq3XxsDecoder", GgmlIq3XxsDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlQ3KDecoder", GgmlQ3KDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlQ6KDecoder", GgmlQ6KDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlQ6KWideDecoder", GgmlQ6KWideDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlQ45KQuadDecoder<4>", GgmlQ45KQuadDecoder<4>)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlQ45KQuadDecoder<5>", GgmlQ45KQuadDecoder<5>)
+NINFERNO_DECODER_GEOMETRY_ROW("Ggml32Decoder<0>", Ggml32Decoder<Ggml32::Q4_0>)
+NINFERNO_DECODER_GEOMETRY_ROW("Ggml32Decoder<1>", Ggml32Decoder<Ggml32::Q4_1>)
+NINFERNO_DECODER_GEOMETRY_ROW("Ggml32Decoder<2>", Ggml32Decoder<Ggml32::Q5_0>)
+NINFERNO_DECODER_GEOMETRY_ROW("Ggml32Decoder<3>", Ggml32Decoder<Ggml32::Q5_1>)
+NINFERNO_DECODER_GEOMETRY_ROW("Ggml32Decoder<4>", Ggml32Decoder<Ggml32::IQ4_NL>)
+NINFERNO_DECODER_GEOMETRY_ROW("Mxfp4SpreadDecoder", Mxfp4SpreadDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlQ45KDecoder<4>", GgmlQ45KDecoder<4>)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlQ45KDecoder<5>", GgmlQ45KDecoder<5>)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlQ4KFragDecoder", GgmlQ4KFragDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlQ40FragDecoder", GgmlQ40FragDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlIq3XxsFragDecoder", GgmlIq3XxsFragDecoder)
+NINFERNO_DECODER_GEOMETRY_ROW("GgmlIq2SFragDecoder", GgmlIq2SFragDecoder)
+#undef NINFERNO_DECODER_GEOMETRY_ROW
 
 // A decoder with finish() (kFinish: the wide Q6_K) loads its runs in a raw form that finish()
 // completes with the whole warp once the loads have landed: mma_step finishes the step's runs in
@@ -3213,6 +3231,13 @@ __global__
 __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Latency>)) void
     rmma_kernel(
     GemmArgs a) {
+    // The shared-memory geometry (rmma_geometry.h) prices a decoder by its kDecoderGeometry row: one
+    // with a table, staging or a group tail and no row would be priced 0.
+    static_assert(HasGeometryRow<Decoder>::value ||
+                      !(TableOf<Decoder>::value || StageActsOf<Decoder>::value ||
+                        GroupTailOf<Decoder>::value),
+                  "a decoder with a table, staging or a group tail needs a row in "
+                  "geometry::kDecoderGeometry (rmma_geometry.h)");
     constexpr int R        = Decoder::kRun;
     constexpr int KStep    = 4 * R;
     constexpr int J        = R / 4; // MMAs per K step

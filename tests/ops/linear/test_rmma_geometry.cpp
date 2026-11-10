@@ -34,24 +34,19 @@ void fail(const std::string& message) {
     if (++failures <= 20) std::cerr << "FAIL: " << message << '\n';
 }
 
-// The architectures of the full build (the NVFP4 kernels and, with them, the cluster hand-over),
-// read from CMakeLists.txt's NINFERNO_FULL_CUDA_ARCHS: one list, not restated here.
+// The architectures of the full build (the NVFP4 kernels and, with them, the cluster hand-over):
+// CMakeLists.txt's NINFERNO_FULL_CUDA_ARCHS, comma-joined into a compile definition: one list, not
+// restated or parsed here.
 std::set<std::string> full_build_archs() {
-    std::ifstream in(std::filesystem::path(NINFERNO_SOURCE_DIR) / "CMakeLists.txt");
-    for (std::string line; std::getline(in, line);) {
-        const std::string key = "set(NINFERNO_FULL_CUDA_ARCHS";
-        if (line.rfind(key, 0) != 0) continue;
-        std::set<std::string> archs;
-        for (std::size_t at = line.find('"'); at != std::string::npos;
-             at             = line.find('"', at + 1)) {
-            const std::size_t end = line.find('"', at + 1);
-            if (end == std::string::npos) break;
-            archs.insert(line.substr(at + 1, end - at - 1));
-            at = end;
-        }
-        return archs;
+    std::set<std::string> archs;
+    const std::string list = NINFERNO_FULL_CUDA_ARCHS;
+    for (std::size_t at = 0; at <= list.size();) {
+        std::size_t end = list.find(',', at);
+        if (end == std::string::npos) end = list.size();
+        if (end > at) archs.insert(list.substr(at, end - at));
+        at = end + 1;
     }
-    return {};
+    return archs;
 }
 
 void check_file(const std::filesystem::path& path, const std::set<std::string>& full_archs) {
@@ -103,7 +98,7 @@ int main() {
     // The threads of a CTA are the warps' lanes.
     static_assert(geo::rmma_threads(1, 8) == 256 && geo::rmma_threads(4, 1) == 128);
     const std::set<std::string> full = full_build_archs();
-    if (full.count("120a") == 0) fail("CMakeLists.txt: NINFERNO_FULL_CUDA_ARCHS not read");
+    if (full.count("120a") == 0) fail("NINFERNO_FULL_CUDA_ARCHS does not name 120a");
     int files = 0;
     for (const auto& entry : std::filesystem::directory_iterator(
              std::filesystem::path(NINFERNO_SOURCE_DIR) / "src/ops/generic/data/kernel_facts")) {

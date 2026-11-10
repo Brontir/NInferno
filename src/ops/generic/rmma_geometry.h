@@ -90,7 +90,8 @@ struct DecoderGeometry {
     bool group_tail;       // kGroupTail: K of whole scale groups (never stages)
 };
 
-// The decoders with a table, staging or a group tail; every other decoder has none of the three.
+// Every decoder with a table, staging or a group tail has a row (rmma_kernel static_asserts it
+// through HasGeometryRow, generic_gemm.cuh); a decoder with none of the three has none.
 inline constexpr DecoderGeometry kDecoderGeometry[] = {
     {"GgmlIq1MDecoder", 32, 2048, false, false},    {"GgmlIq1SDecoder", 32, 2048, false, false},
     {"GgmlIq2SDecoder", 32, 2048, false, false},    {"GgmlIq2XsDecoder", 32, 1024, false, false},
@@ -101,6 +102,12 @@ inline constexpr DecoderGeometry kDecoderGeometry[] = {
     {"Ggml32Decoder<0>", 32, 0, false, true},       {"Ggml32Decoder<1>", 32, 0, false, true},
     {"Ggml32Decoder<2>", 32, 0, false, true},       {"Ggml32Decoder<3>", 32, 0, false, true},
     {"Ggml32Decoder<4>", 32, 0, false, true},       {"Mxfp4SpreadDecoder", 32, 0, false, true},
+    {"GgmlQ45KDecoder<4>", 32, 0, true, false},
+    {"GgmlQ45KDecoder<5>", 32, 0, true, false},
+    {"GgmlQ4KFragDecoder", 32, 0, true, false},
+    {"GgmlQ40FragDecoder", 32, 0, false, true},
+    {"GgmlIq3XxsFragDecoder", 32, 256, false, false},
+    {"GgmlIq2SFragDecoder", 32, 2048, false, false},
 };
 
 constexpr DecoderGeometry decoder_geometry(std::string_view name) noexcept {
