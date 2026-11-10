@@ -76,7 +76,7 @@ src, bld, br = sys.argv[1:4]; explicit = sys.argv[4:]
 MAXOBJ = int(os.environ.get("QC_MAX_OBJ", "60")); MAXCU = int(os.environ.get("QC_MAX_CU", "40"))
 MAXU = int(os.environ.get("QC_MAX_UNITS", "150"))
 def sh(*a):  # a failing git/ninja/ctest call fails the plan, it never reads as "empty"
-    return subprocess.run(a, capture_output=True, text=True, check=True).stdout
+    return subprocess.run(a, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True).stdout
 def note(*a): print(*a, file=sys.stderr)
 nskip = 0
 def out(*a):
@@ -288,11 +288,14 @@ else:
             if side == "old": return True   # a registration that is gone: nothing to run
             out("SKIP", f"cmake registers '{lit}' but ctest lists no test or executable of that name; not checked")
             return False
-        toks = {t for a in st[3] for t in re.findall(r"[A-Za-z0-9_.+-]+", a)} & names   # a variable-built name
-        for tok in toks:   # an executable runs every test built from it (a name like moe_random${share})
-            if tok in exe_of: add_exe_tests(tok)
-            elif tok in cmd_of: tests.add(tok)
-        return bool(toks)
+        # a variable-built name (moe_random${share}): accounted for only through the executable its
+        # COMMAND runs, whose every test then runs; other arguments naming a test or an exe prove nothing
+        a = st[3]
+        cmd_at = next((i for i, x in enumerate(a) if x.upper() == "COMMAND"), None)
+        exe = a[cmd_at + 1] if cmd_at is not None and cmd_at + 1 < len(a) else None
+        if exe is not None and exe in exe_of:
+            add_exe_tests(exe); return True
+        return False
     # every statement a line sits in (two statements may share one line)
     at = lambda sts, ln: [x for x in sts if x[0] <= ln <= x[1]]
     cm = sh("git", "-C", src, "diff", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-color", "-U0", rng, "--", "*.cmake", "*CMakeLists.txt")
@@ -354,7 +357,7 @@ else:
 # guard every test's executables (and the test objects/targets) against a large stale library build
 for n in sorted(tests):   # a test that reads the build tree's objects runs over whatever build_qc last built
     c = cmd_of.get(n, [])
-    if "--build" in c or any(a.endswith((".o", ".a", ".so")) for a in c):
+    if any(a.startswith("--build") for a in c) or any(a.endswith((".o", ".a", ".so")) for a in c):
         out("SKIP", f"test {n} reads the build tree's objects, which hold whatever build_qc last built; not verified for this branch")
 ok_tests = {}
 for n in sorted(tests):
