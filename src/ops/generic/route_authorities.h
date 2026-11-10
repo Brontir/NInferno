@@ -55,7 +55,7 @@ struct Ask {
     // The prefill band: the prefill profile's calls of 17 tokens or more, which take one route per
     // problem; below it the profile's calls route as the speed profile's.
     [[nodiscard]] bool prefill_band() const noexcept {
-        return profile == Profile::Prefill && tokens >= 17;
+        return profile == Profile::Prefill && tokens >= kPrefillBandMinTokens;
     }
 
     [[nodiscard]] bool prefill() const noexcept { return profile == Profile::Prefill; }

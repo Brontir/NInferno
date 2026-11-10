@@ -492,7 +492,7 @@ int route_tune_main(int argc, char** argv) {
                          r.family == generic::Family::StagedMma ||
                          r.family == generic::Family::Nvfp4TiledMma ||
                          r.family == generic::Family::TiledMma) &&
-                        t < 17) {
+                        t < generic::kPrefillBandMinTokens) {
                         continue;
                     }
                     // R8 serves decode and verify widths only.
@@ -511,7 +511,8 @@ int route_tune_main(int argc, char** argv) {
                         best       = us;
                         best_route = r;
                     }
-                } else if (a8_sweep && t >= 17 && p.n % ops::ggml_mmq::kRowMultiple == 0 &&
+                } else if (a8_sweep && t >= generic::kPrefillBandMinTokens &&
+                           p.n % ops::ggml_mmq::kRowMultiple == 0 &&
                            generic::ggml_mmq_admits(w.weight, ops::LinearPolicy::AllowA8)) {
                     time_route({generic::Family::GgmlMmq, 0}, t);
                 }
@@ -609,7 +610,8 @@ int route_tune_main(int argc, char** argv) {
                     width_winners.push_back({t, pick});
                 }
                 for (std::size_t i = 0; i < width_winners.size(); ++i) {
-                    const std::int32_t lo = i == 0 ? 17 : width_winners[i].first;
+                    const std::int32_t lo =
+                        i == 0 ? generic::kPrefillBandMinTokens : width_winners[i].first;
                     const std::int32_t hi =
                         i + 1 < width_winners.size() ? width_winners[i + 1].first - 1 : 1 << 24;
                     const generic::Route r = width_winners[i].second;
