@@ -3,6 +3,7 @@
 // the plan's choice stay in moe.cpp.
 #include "ninferno/ops/moe.h"
 
+#include "ops/common/native_nvfp4.h"
 #include "ops/moe/moe_internal.h"
 
 #include <algorithm>
