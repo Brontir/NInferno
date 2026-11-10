@@ -1,6 +1,7 @@
 // The register MMA's group-sums pre-pass (#619): the activation sums a min-term format's register
 // MMA reads (GemmArgs::group_sums), summed once per call instead of by an MMA with ones in every
 // warp and row tile. The twin of the W4A8 quantizer's sums plane (generic_w4a8.cu).
+#include "core/device.h"
 #include "ops/common/memory.cuh"
 #include "ops/generic/generic_gemm_internal.h"
 
