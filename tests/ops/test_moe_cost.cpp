@@ -548,7 +548,7 @@ void layer_checks() {
         // Mixed: R8 gate/up and a register MMA down stage (10 of the 75 replayed rows): the combine
         // is separate, the layer is unpriced because of its R8 stage.
         moe::MoePlan mixed;
-        mixed.gate_up_r8       = 0;
+        mixed.gate_up_r8 = 0;
         const auto mixed_price =
             moe::moe_layer_price(w, layer->config, mixed, ops::MoeEpilogue::Store, 4, board);
         check(mixed_price && !mixed_price->compute_priced && !mixed_price->compute_note.empty() &&
@@ -558,7 +558,7 @@ void layer_checks() {
         // The other way: a register MMA gate/up and an R8 down stage. Each stage takes its own
         // kernel: the R8 down stage leaves the layer unpriced and its CTAs fuse the combine.
         moe::MoePlan r8_down;
-        r8_down.down_r8       = 0;
+        r8_down.down_r8 = 0;
         const auto down_price =
             moe::moe_layer_price(w, layer->config, r8_down, ops::MoeEpilogue::Store, 4, board);
         check(down_price && !down_price->compute_priced && !down_price->compute_note.empty() &&
