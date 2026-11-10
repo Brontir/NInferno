@@ -81,12 +81,12 @@ DECISION_FILES = (
     "src/runtime/engine/kv_capacity.h",                      # the contexts a rung holds
     "src/models/qwen3_5/program/graphs.cpp",                 # the shortage auto answers shallower
     "src/ops/generic/generic_gemm.cpp",                      # the routes of the verify widths
-    "src/ops/generic/generic_select.cpp",                # the selector moved out of generic_gemm.cpp
-    "src/ops/generic/generic_routes.cpp",                # the route names and variant rules
-    "src/ops/generic/generic_select_detail.h",           # helpers the selector shares
-    "src/ops/generic/generic_schedule_tables.h",         # the schedule tables
-    "src/ops/generic/generic_i8_schedules.h",            # the I8 tiles
-    "src/ops/generic/generic_variant_rules.h",           # the variant rules
+    "src/ops/generic/generic_select.cpp",                    # the selector moved out of generic_gemm.cpp
+    "src/ops/generic/generic_routes.cpp",                    # the route names and variant rules
+    "src/ops/generic/generic_select_detail.h",               # helpers the selector shares
+    "src/ops/generic/generic_schedule_tables.h",             # the schedule tables
+    "src/ops/generic/generic_i8_schedules.h",                # the I8 tiles
+    "src/ops/generic/generic_variant_rules.h",               # the variant rules
     "src/ops/generic/generic_ggml.cpp",                      # the ggml kernels' admission by tuner
     "src/ops/generic/generic_ggml_internal.h",               # the ggml matrix kernel's token band
     "src/ops/generic/generic_select_internal.h",             # the W4A8 tiles' grid order

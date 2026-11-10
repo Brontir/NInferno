@@ -9,7 +9,7 @@
 // those families, and every R8 schedule where the heuristic takes R8 (decode and verify widths),
 // each call after an L2 flush, the median of its repetitions. Where the policy allows A8, ggml's
 // matrix kernel (Family::GgmlMmq, verify widths 5..16) competes with the A16 schedules: it wins on
-// one card and format and loses on another (generic_gemm.cpp, kMmqMinTokens); so does R8 at the
+// one card and format and loses on another (generic_gemm.h, kMmqMinTokens); so does R8 at the
 // verify widths 2..4 of a format that does not take it there by rule (r8_verify_tunable). A
 // schedule replaces the heuristic's only where it is kMargin faster, so noise keeps the heuristic.
 //

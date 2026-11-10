@@ -129,7 +129,7 @@ struct GateAnswer {
 }
 
 // Whether ggml's matrix kernel takes a prefill of the ggml block formats from 17 tokens on
-// (ops/generic generic_gemm.cpp mmq_prefill_wins, where the measurements stand): the nearest
+// (ops/generic generic_select.cpp mmq_prefill_wins, where the measurements stand): the nearest
 // measured board's answer of its instruction set, at any distance.
 inline constexpr Gate kMmqPrefillPays[] = {
     {kRtx5090, true},    {kRtx5060Ti, false}, {kRtx4090, true},
