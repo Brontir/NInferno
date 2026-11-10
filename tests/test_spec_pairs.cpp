@@ -228,6 +228,35 @@ int main() {
                    "named boards of one class stand beside a record naming none (" +
                        std::to_string(group.size()) + ")");
         }
+        // One chip under its two board names is one card (a card is its chip's facts, not the
+        // name): the RTX 3060 and its Lite Hash Rate board, the RTX 2080 Ti and its Rev. A board.
+        const auto named = [&](std::uint32_t board, const char* gpu, const char* generation) {
+            auto pair         = mtp_q4;
+            pair.tune.key.gpu = gpu;
+            pair.generation   = generation;
+            pair.lab_board    = board;
+            return pair;
+        };
+        for (const auto& twins :
+             {std::vector<sp::MeasuredPair>{named(0x2503, "ga106:28sm", "sm86"),
+                                            named(0x2504, "ga106:28sm", "sm86")},
+              std::vector<sp::MeasuredPair>{named(0x1E04, "tu102:68sm", "sm75"),
+                                            named(0x1E07, "tu102:68sm", "sm75")}}) {
+            expect(sp::pair_group(twins, "qwen3_5", "mtp", 4.9).empty(),
+                   "two board names of one chip are one card: no group of two cards");
+            // A second chip beside them: two cards, the twins' records one of them.
+            auto both = twins;
+            both.push_back(named(0x2684, "ad102:128sm", "sm89"));
+            expect(sp::pair_group(both, "qwen3_5", "mtp", 4.9).size() == 2,
+                   "the twin boards' record of a target once, beside another card's");
+        }
+        // Two cards of one class (the same chip and SM count, another memory configuration or
+        // rate) stand as two.
+        expect(sp::pair_group(
+                   {named(0x2782, "ad104:60sm", "sm89"), named(0x27B1, "ad104:60sm", "sm89")},
+                   "qwen3_5", "mtp", 4.9)
+                       .size() == 2,
+               "two different cards of one class count as two");
     }
     // Three cards, no depth all of them measured (one 1-3, one 3-5, one 1 and 5): each depth on
     // two cards stands, the group speculates (it decoded plainly for want of a common label).

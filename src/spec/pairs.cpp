@@ -3,6 +3,7 @@
 #include "artifact/reader.h"
 #include "core/ascii.h"
 #include "core/hub_revision.h"
+#include "core/machine_facts.h"
 #include "core/quant_label.h"
 #include "spec/engine_support.h"
 
@@ -374,20 +375,34 @@ std::map<std::string, double> profile_round_costs(const Profile& profile) {
 
 namespace {
 
-// A card: its GPU class id and the board its record names (two boards of one class are two cards,
-// each priced by its own rates; pool_cards).
+// A card: its GPU class id and the board's facts that decide a round's price: chip, SM count,
+// memory bus width and data rate, memory size (the facts table's row of the record's PCI product
+// id). Two board names of one chip with the same facts (the RTX 3060 and its Lite Hash Rate
+// board, the RTX 2080 Ti and its Rev. A board) are one card; boards that differ in any of them are
+// two cards, each priced by its own rates (pool_cards). A board the table has no row for stands
+// as its id; a record naming no board is the class's card ("0").
 std::string card_of(const MeasuredPair& pair) {
-    return pair.tune.key.gpu + "/" + std::to_string(pair.lab_board);
+    std::string board = "0";
+    if (pair.lab_board != 0) {
+        if (const GpuFactsRow* row = find_gpu_facts(pair.lab_board)) {
+            board = row->chip + "," + std::to_string(row->sms) + "sm," +
+                    std::to_string(row->bus_bits) + "bit," + std::to_string(row->gbps) + "gbps," +
+                    std::to_string(row->vram_gib) + "gib";
+        } else {
+            board = "id" + std::to_string(pair.lab_board);
+        }
+    }
+    return pair.tune.key.gpu + "/" + board;
 }
 
-// How many physical cards `pairs` were measured on: a named board is a card of its class; a record
-// naming no board is its class's card, a card of its own only where no record of its class names
-// one.
+// How many physical cards `pairs` were measured on: a named board is a card of its class (boards
+// of the same facts are one, card_of); a record naming no board is its class's card, a card of its
+// own only where no record of its class names one.
 std::size_t card_count(const std::vector<const MeasuredPair*>& pairs) {
-    std::map<std::string, std::set<std::uint32_t>> boards; // by class: the named boards
+    std::map<std::string, std::set<std::string>> boards; // by class: the named boards' cards
     for (const auto* p : pairs) { boards[p->tune.key.gpu]; }
     for (const auto* p : pairs) {
-        if (p->lab_board != 0) { boards[p->tune.key.gpu].insert(p->lab_board); }
+        if (p->lab_board != 0) { boards[p->tune.key.gpu].insert(card_of(*p)); }
     }
     std::size_t n = 0;
     for (const auto& [gpu, named] : boards) { n += std::max<std::size_t>(named.size(), 1); }
@@ -792,7 +807,7 @@ std::vector<const MeasuredPair*> pair_group(const std::vector<MeasuredPair>& pai
         const bool again = std::any_of(into.begin(), into.end(), [&](const MeasuredPair* p) {
             return p->target == pair.target && p->tune.key.gpu == pair.tune.key.gpu &&
                    p->generation == pair.generation &&
-                   (p->lab_board == 0 || pair.lab_board == 0 || p->lab_board == pair.lab_board);
+                   (p->lab_board == 0 || pair.lab_board == 0 || card_of(*p) == card_of(pair));
         });
         if (!again) { into.push_back(&pair); }
     }

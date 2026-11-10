@@ -204,7 +204,10 @@ struct PairChoice {
 // A fine-tune's drafts may be accepted less than its base model's: WaveCut's uncensored Qwen3.8-27B
 // fine-tune took 2.90 tokens a round with the base's DFlash2 drafter against the base's 4.5-4.6,
 // 0.535 of the drafts past the first. A group's choice must still pay at that acceptance.
-// A group's choice is a lab constant for targets nobody measured: fitted on this many cards or more.
+// A group's choice is a lab constant for targets nobody measured once it rests on this many
+// physical cards (card_of: chip, SM count, memory bus and rate, memory size; two board names of
+// one chip are one card). Chosen, not fitted: two is the least that tells a card's own trait from
+// the group's. A group resting on fewer cards gives no choice.
 inline constexpr std::size_t kGroupCards = 2;
 inline constexpr double kFineTuneAcceptance = 0.535;
 inline constexpr double kPreliminaryGain    = 1.05;
