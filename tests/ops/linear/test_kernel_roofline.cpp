@@ -40,6 +40,10 @@ struct Shape {
     std::int32_t n, k;
 };
 
+bool priceable(const DeviceClass& d) {
+    return d.sms > 0 && d.registers_per_sm > 0 && d.facts.has_roofline();
+}
+
 // ---- Check 1: golden prices from the formula before #613 PR-4 ----
 //
 // kernel_roofline_golden.inc holds, for a set of calls (board, format, shape, width, epilogue),
