@@ -1895,7 +1895,8 @@ std::size_t prefill_a8_workspace_bytes(const Problem& problem, std::int32_t min_
     // calls of 17 tokens or more, which the shape's own plan does not run.
     if (nvfp4_prefill_a8_policy(problem.qtype, problem.policy)) {
         if (max_tokens < kPrefillBandMinTokens) return 0;
-        return workspace_capacity_bytes(problem, nullptr, std::max(min_tokens, kPrefillBandMinTokens), max_tokens);
+        return workspace_capacity_bytes(problem, nullptr,
+                                        std::max(min_tokens, kPrefillBandMinTokens), max_tokens);
     }
     const LinearPolicy a8_policy = prefill_a8_policy(problem.qtype, problem.policy);
     if (!prefill_a8_format(problem.qtype) || !allows_a8(a8_policy) ||
@@ -2727,7 +2728,8 @@ Route heuristic_route(const Problem& problem, const Weight& weight, std::int32_t
         const Route r{Family::R8Mma, static_cast<std::uint8_t>(heuristic_r8(problem, tokens))};
         if (route_admits(r, weight, problem.policy)) return r;
     }
-    if (tokens >= kPrefillBandMinTokens && mmq_prefill_wins(problem, weight)) return Route{Family::GgmlMmq, 0};
+    if (tokens >= kPrefillBandMinTokens && mmq_prefill_wins(problem, weight))
+        return Route{Family::GgmlMmq, 0};
     if (tokens >= kPrefillBandMinTokens) {
         if (const auto r = i8_route(problem, weight, tokens)) return *r;
     }
@@ -2795,7 +2797,8 @@ std::optional<Route> volta_tiled_route(const Weight& weight, LinearPolicy policy
     // own mma.m8n8k4 (generic_tiled.cuh): a call of 17 tokens or more whose format has a tiled
     // codec takes it whatever the policy allows (f16 activations, not int8 ones). Decode and verify
     // (T <= 16) keep their routes, so the switch is at T = 17.
-    if (tokens < kPrefillBandMinTokens || current_features().mma_tensor || !supports(weight)) return std::nullopt;
+    if (tokens < kPrefillBandMinTokens || current_features().mma_tensor || !supports(weight))
+        return std::nullopt;
     if (volta_cutlass_only(codec_of(weight))) {
         // From 17 tokens, as the tiled formats: a prefill token's bytes do not depend on its call's
         // width (a narrower call on another route summed in another order).
@@ -2920,8 +2923,8 @@ Route auto_route(const Problem& problem, const Weight& weight, std::int32_t toke
     // test_linear_gemma4_token_invariance). An A16 call of 17 tokens or more takes one summation
     // order at every width; decode and verify (T <= 16) keep their routes. W4A4 and W4A8 sum each
     // token over its own activation whatever the tile, so A4/A8 calls keep their speed tiles.
-    if (problem.qtype == QType::NVFP4 && tokens >= kPrefillBandMinTokens && !allows_w4a4(weight, problem.policy) &&
-        !allows_w4a8(weight, problem.policy)) {
+    if (problem.qtype == QType::NVFP4 && tokens >= kPrefillBandMinTokens &&
+        !allows_w4a4(weight, problem.policy) && !allows_w4a8(weight, problem.policy)) {
         // A weight that fits half the L2 takes the invariant profile's register MMA (the decode
         // split of K, 16 rows per CTA): its 32-token columns re-read the weight from L2, where the
         // 128x128 prefill tile left a 1024-row projection eight CTAs (RTX 4090, Gemma 4 26B
@@ -3017,8 +3020,9 @@ std::optional<Route> prefill_family_route(PrefillRoute f, const Problem& p, cons
         return std::nullopt;
     case PrefillRoute::W4a4: {
         if (!allows_w4a4(w, p.policy)) return std::nullopt;
-        const Route r{Family::W4a4Mma, static_cast<std::uint8_t>(
-                                           heuristic_w4a4(p.n, tokens, prefill && tokens >= kPrefillBandMinTokens))};
+        const Route r{Family::W4a4Mma,
+                      static_cast<std::uint8_t>(
+                          heuristic_w4a4(p.n, tokens, prefill && tokens >= kPrefillBandMinTokens))};
         if (route_admits(r, w, p.policy)) return r;
         return std::nullopt;
     }

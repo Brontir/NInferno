@@ -188,7 +188,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
     // --- The widths where the speed profile's heuristic choices change (generic_gemm.h) ---
     {"kRmmaMidMinTokens", "generic_gemm.h",
      "inline constexpr std::int32_t kRmmaMidMinTokens     = 33;", 33,
-     "ga102:82sm, ad102:128sm, gb202:170sm, tu102:68sm, ga100:108sm (A10 and L4: class ids not named)",
+     "ga102:82sm, ad102:128sm, gb202:170sm, tu102:68sm, ga100:108sm (A10 and L4: class ids not "
+     "named)",
      "RTX 3090, RTX 4090, RTX 5090, RTX 2080 Ti, A10, L4, A100",
      "one rule for every board, fitted on six boards and scored on the seventh: 1.116 of the best "
      "(geomean) against 1.219 for the bands it replaced; a rule per board gained 1.1 % at most",
@@ -206,7 +207,9 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "inline constexpr std::int32_t kStagedSpeedMinTokens = 256;", 256, kUnknown, kUnknown,
      "none recorded", ""},
     {"kSpeedFill", "generic_gemm.h", "inline constexpr double kSpeedFill                  = 1.5;",
-     1.5, "ga102:82sm, ad102:128sm, gb202:170sm, tu102:68sm, ga100:108sm (A10 and L4: class ids not named)",
+     1.5,
+     "ga102:82sm, ad102:128sm, gb202:170sm, tu102:68sm, ga100:108sm (A10 and L4: class ids not "
+     "named)",
      "RTX 3090, RTX 4090, RTX 5090, RTX 2080 Ti, A10, L4, A100",
      "1.0..2.0 cost under 0.5 % (the header's comment); the same board-held-out fit as "
      "kRmmaMidMinTokens",
@@ -229,15 +232,15 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "one past the widest speculative verify (16 tokens: a 16-token draft's verify plus its "
      "anchor); a structural width, no margin recorded",
      ""},
-    {"kPrefillBandTokens", "generic_tune.cpp", "inline constexpr std::array<std::int32_t, 9> kPrefillBandTokens = {17, 32, 64, 127, 128,", 17, "unknown",
-     "unknown",
+    {"kPrefillBandTokens", "generic_tune.cpp",
+     "inline constexpr std::array<std::int32_t, 9> kPrefillBandTokens = {17, 32, 64, 127, 128,", 17,
+     "unknown", "unknown",
      "the widths whose band takes a tuned route; an untimed width takes the next band's: 17 is "
      "a 16-token draft's verify, 32, 64, 127 and 128 straddle the heuristics' switch widths "
      "(the register MMA's prefill column at 32 and 64, W4A8's 128x64 from 65 and its tiles from "
      "128); no margin recorded",
      ""},
-    {"kMargin", "generic_tune.cpp",
-     "constexpr double kMargin = 0.97;", 0.97, kUnknown, kUnknown,
+    {"kMargin", "generic_tune.cpp", "constexpr double kMargin = 0.97;", 0.97, kUnknown, kUnknown,
      "a tuned schedule replaces the heuristic's only where at most 97 % of its time, so noise "
      "keeps the heuristic; no measurement behind the 3 % is recorded",
      ""},
@@ -246,8 +249,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "the widest prefill band whose buffers stay within 64 MiB each is tuned (an output head of "
      "152K rows: T <= 128); wider bands keep the heuristic's route; none recorded",
      ""},
-    {"tune fits: FLOP bound", "generic_tune.cpp", "2.0 * model_call.rows * k * t <= 2.5e11",
-     2.5e11, kUnknown, kUnknown,
+    {"tune fits: FLOP bound", "generic_tune.cpp", "2.0 * model_call.rows * k * t <= 2.5e11", 2.5e11,
+     kUnknown, kUnknown,
      "the widest prefill band whose call is within 250 GFLOP is tuned; none recorded", ""},
     {"kRmmaWideSpillSlack", "generic_gemm_internal.h",
      "inline constexpr std::size_t kRmmaWideSpillSlack = 16;", 16, "ad102:128sm", "RTX 4090",
@@ -260,8 +263,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "without tensor mma.sync; no margin recorded",
      ""},
     {"heuristic_rmma: prefill column", "generic_gemm.cpp",
-     "tokens <= 32 || (tokens <= 64 && ctas < 2 * sm_count())", 32, "ad103:80sm, gb202:170sm, gb206:36sm",
-     "RTX 4080 SUPER, RTX 5090, RTX 5060 Ti",
+     "tokens <= 32 || (tokens <= 64 && ctas < 2 * sm_count())", 32,
+     "ad103:80sm, gb202:170sm, gb206:36sm", "RTX 4080 SUPER, RTX 5090, RTX 5060 Ti",
      "time of m1.n8 over the best: T = 17 and 32 1.48-3.21 on every problem (4080 SUPER); T = 64 "
      "1.20-1.58 below 160 CTAs, 1.00 at 272; 5090 Q6_K output head m1.n4 best at T = 17 (1.22) "
      "and 32 (1.54); 5060 Ti 1.60-2.14 at T = 17 and 32; in the product 4080 SUPER Qwen3.8-27B "
@@ -275,8 +278,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "7 GGUF formats at 27B/31B/35B shapes, time over the best of seven routes: at T = 17 32x128 "
      "1.05-1.45 against 64x64 1.14-1.57, better for every format at 17, 20, 24, 32",
      ""},
-    {"heuristic_w4a8: 33..64", "generic_gemm.cpp", "if (tokens <= 64) return k64x64;", 64,
-     kUnknown, kUnknown, "none recorded for the 64-token edge itself", ""},
+    {"heuristic_w4a8: 33..64", "generic_gemm.cpp", "if (tokens <= 64) return k64x64;", 64, kUnknown,
+     kUnknown, "none recorded for the 64-token edge itself", ""},
     {"invariant_rmma: token tiles", "generic_gemm.cpp", "const int n_tiles = tokens <= 8 ? 1 : 4;",
      8, kUnknown, kUnknown,
      "eight tokens per CTA through T = 8, where decode batches live; 32 above, so a prefill chunk "
@@ -298,7 +301,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "+0.1 % in the mean; a 4090 D or a 3090 Ti (0.17, 0.14) take their tables",
      ""},
     // --- w4a8_ws_wins and its neighbour ---
-    {"w4a8_ws_wins: ampere", "generic_gemm.cpp", "if (ampere) return true;", 0, "ga102:82sm", "RTX 3090",
+    {"w4a8_ws_wins: ampere", "generic_gemm.cpp", "if (ampere) return true;", 0, "ga102:82sm",
+     "RTX 3090",
      "no format lost; one 16K prompt, D WS WS D: Muse 30B Q4_K_M 1278 / 1273 -> 1398 / 1399 t/s, "
      "Qwen3.8 27B UD-Q4_K_XL 1290 / 1289 -> 1314, Gemma 4 31B 1071 -> 1081; measured on the "
      "RTX 3090 only, taken for sm_80 and sm_86 alike",
@@ -349,7 +353,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      ""},
     {"rules_r8: blackwell iq2 from N 5120", "generic_gemm.cpp", "if (iq2 && p.n >= 5120)", 5120,
      "gb206:36sm, gb203:84sm, gb202:170sm", "RTX 5060 Ti, RTX 5080, RTX 5090",
-     "IQ2_S 10240x5120 w4r2 29.9 -> w8r2 20.1 us (still gains at 170 SMs: the 5090); IQ2_XXS 10240x5120 43.5 -> 40.0, IQ2_XS "
+     "IQ2_S 10240x5120 w4r2 29.9 -> w8r2 20.1 us (still gains at 170 SMs: the 5090); IQ2_XXS "
+     "10240x5120 43.5 -> 40.0, IQ2_XS "
      "17408x5120 83.6 -> 79.4 (5060 Ti)",
      ""},
     {"rules_r8: blackwell sm count", "generic_gemm.cpp", "device_class().sms <= 96", 96,

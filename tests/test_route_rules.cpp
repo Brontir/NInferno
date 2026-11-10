@@ -59,7 +59,7 @@ std::string squeezed(const std::string& text) {
 std::size_t count_of(const std::string& haystack, const std::string& needle) {
     std::size_t n = 0;
     for (auto at = haystack.find(needle); at != std::string::npos;
-         at       = haystack.find(needle, at + needle.size())) {
+         at      = haystack.find(needle, at + needle.size())) {
         ++n;
     }
     return n;
