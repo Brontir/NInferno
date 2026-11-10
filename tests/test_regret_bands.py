@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import sys
 import tempfile
@@ -179,13 +181,71 @@ class Csv(unittest.TestCase):
                         "q4k,a16,store,64,64,40,rmma.b,10,40\n")
         sel = self.write("s.csv", SELECTED + "q4k,a16,store,64,64,40,rmma.a,rmma.a\n")
         out_json, out_md = self.root / "r.json", self.root / "r.md"
-        code = bands.main(["--routes", str(p1), "--selected", str(sel), "--board", "b",
+        code = bands.main(["--routes", str(p1), "--selected", str(sel), "--board", "b", "--qualified", "oracle tests",
                            "--json", str(out_json), "--md", str(out_md)])
         self.assertEqual(code, 0)
         rep = json.loads(out_json.read_text())
         self.assertAlmostEqual(rep["overall"]["wide"]["weighted_regret"], 1.0)
         self.assertIn("wide (n)", out_md.read_text())
-        self.assertEqual(bands.main(["--routes", str(p1), "--board", "b"]), 2)
+        self.assertEqual(bands.main(["--routes", str(p1), "--board", "b", "--qualified", "x"]), 2)
+
+
+class Cli(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.dir.name)
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def doc(self, name, revision, build):
+        d = document([case("q4k.a16.T40", "b1", "rmma.a", {"rmma.a": 2.0, "rmma.b": 1.0})])
+        d["selector_revision"], d["build_id"] = revision, build
+        path = self.root / name
+        path.write_text(json.dumps(d), encoding="utf-8")
+        return path
+
+    def run_main(self, argv):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            return bands.main(argv), err.getvalue()
+
+    def test_docs_of_different_provenance_are_refused(self):
+        a, b = self.doc("a.json", "r1", "b1"), self.doc("b.json", "r2", "b1")
+        code, err = self.run_main(["--doc", str(a), "--doc", str(b)])
+        self.assertEqual(code, 2)
+        self.assertIn("selector_revision", err)
+        self.assertNotIn("build_id", err.split("report them")[0].split("differ in")[1].split("(")[0])
+
+    def test_docs_of_equal_provenance_record_it(self):
+        a, b = self.doc("a.json", "r1", "b1"), self.doc("b.json", "r1", "b1")
+        out = self.root / "o.json"
+        code, _ = self.run_main(["--doc", str(a), "--doc", str(b), "--json", str(out)])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out.read_text())["provenance"],
+                         {"selector_revision": "r1", "build_id": "b1"})
+
+    def test_selected_pick_needs_one_selection_per_group(self):
+        p1 = self.root / "p1.csv"
+        p1.write_text(ROUTES + "q4k,a16,store,64,64,40,rmma.a,20,30\n", encoding="utf-8")
+        sel = self.root / "s.csv"
+        sel.write_text(SELECTED + "q4k,a16,store,64,64,40,rmma.a,rmma.a\n", encoding="utf-8")
+        argv = ["--routes", str(p1), "--routes", str(p1), "--board", "x", "--board", "y",
+                "--selected", str(sel), "--qualified", "oracle tests"]
+        code, err = self.run_main(argv)
+        self.assertEqual(code, 2)
+        self.assertIn("one --selected per --routes group", err)
+
+    def test_legacy_routes_need_a_qualification_statement(self):
+        p1 = self.root / "p1.csv"
+        p1.write_text(ROUTES + "q4k,a16,store,64,64,40,rmma.a,20,30\n", encoding="utf-8")
+        code, err = self.run_main(["--routes", str(p1), "--pick", "model", "--board", "b"])
+        self.assertEqual((code, "--qualified" in err), (2, True))
+        out = self.root / "o.json"
+        code, _ = self.run_main(["--routes", str(p1), "--pick", "model", "--board", "b",
+                                 "--qualified", "oracle tests", "--json", str(out)])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out.read_text())["legacy_qualification"], "oracle tests")
 
 
 if __name__ == "__main__":

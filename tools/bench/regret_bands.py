@@ -10,7 +10,9 @@ Inputs (repeatable, mixable):
                       route_tune --routes-out passes of one board and its --selected-out file. These
                       are accepted without the run/device columns regret_collect.py demands, because
                       the existing sweep archive predates them. Without those columns nothing tells
-                      two passes of different builds or boards apart: give passes of one run.
+                      two passes of different builds or boards apart: give passes of one run. route_tune checks no
+                      results, so --qualified TEXT must state what qualified the candidates.
+                      --doc inputs of different selector_revision/build_id are refused.
   --band-weights J    a mean of the band regrets with these weights (band -> weight); a group that
                       has no case in a weighted band gets no mean
   --pick model        with --routes: score the pick of the model price (lowest model_us; T >= 17,
@@ -80,6 +82,28 @@ def rows_from_document(document):
             "t": tokens_of(src), "selected": case["selected"], "best": case["best_observed"],
             "selected_ms": medians[case["selected"]], "best_ms": medians[case["best_observed"]]})
     return rows, skipped
+
+
+def provenance_of(document):
+    """The selector revision and build a regret document was measured with."""
+    return {k: document.get(k) for k in ("selector_revision", "build_id")}
+
+
+def merged_provenance(named):
+    """Provenance of the merged --doc inputs; inputs of different provenance are refused.
+
+    Rows of different selectors or builds averaged into one band metric could not be attributed or
+    reproduced, so the merge is rejected and the error says which field differs between which files.
+    """
+    first_name, first = named[0]
+    for name, prov in named[1:]:
+        diff = [k for k in first if prov[k] != first[k]]
+        if diff:
+            raise ValueError(
+                f"{name} and {first_name} differ in {', '.join(diff)} "
+                f"({', '.join(f'{k}: {prov[k]!r} vs {first[k]!r}' for k in diff)}); "
+                "report them one at a time, not merged")
+    return dict(first)
 
 
 def rows_from_csv(route_paths, selected_path, board, pick="selected"):
@@ -250,19 +274,30 @@ def main(argv=None):
     p.add_argument("--selected", type=Path, action="append", default=[],
                    help="selection CSV for the matching --routes group")
     p.add_argument("--board", action="append", default=[], help="board name for the matching --routes group")
+    p.add_argument("--qualified", default="",
+                   help="what qualified the --routes candidates for correctness (route_tune does "
+                        "not check results); required with --routes")
     p.add_argument("--pick", choices=("selected", "model"), default="selected")
     p.add_argument("--band-weights", help='JSON, e.g. {"decode":0.4,"verify":0.2}')
     p.add_argument("--json", type=Path, help="write the JSON report here")
     p.add_argument("--md", type=Path, help="write the markdown report here")
     args = p.parse_args(argv)
     try:
-        rows, skipped = [], 0
+        rows, skipped, named = [], 0, []
         for doc in args.doc:
-            r, s = rows_from_document(json.loads(doc.read_bytes(), object_pairs_hook=regret.unique_object))
+            loaded = json.loads(doc.read_bytes(), object_pairs_hook=regret.unique_object)
+            r, s = rows_from_document(loaded)
+            named.append((doc.name, provenance_of(loaded)))
             rows += r
             skipped += s
         if len(args.board) != len(args.routes) or len(args.selected) > len(args.routes):
             raise ValueError("one --board per --routes group")
+        if args.routes and not args.qualified.strip():
+            raise ValueError("--routes needs --qualified: route_tune does not check results, so "
+                             "state the correctness tests that qualified these candidates")
+        if args.routes and args.pick == "selected" and len(args.selected) != len(args.routes):
+            raise ValueError(f"--pick selected needs one --selected per --routes group "
+                             f"({len(args.selected)} selected, {len(args.routes)} groups)")
         for i, passes in enumerate(args.routes):
             sel = args.selected[i] if i < len(args.selected) else None
             r, s = rows_from_csv(passes, sel, args.board[i], args.pick)
@@ -272,6 +307,10 @@ def main(argv=None):
             raise ValueError("no scored cases")
         weights = json.loads(args.band_weights) if args.band_weights else None
         rep = report(rows, skipped, weights)
+        if named:
+            rep["provenance"] = merged_provenance(named)
+        if args.routes:
+            rep["legacy_qualification"] = args.qualified.strip()
     except (OSError, UnicodeError, ValueError, KeyError, OverflowError) as error:
         print(f"regret_bands: {error}", file=sys.stderr)
         return 2

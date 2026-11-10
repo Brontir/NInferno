@@ -162,15 +162,19 @@ its candidates, or (`--pick model`, T >= 17 only) when the model prices none of 
 
 ```bash
 python3 tools/bench/regret_bands.py --doc selection.json --doc other_board.json --md bands.md --json bands.json
-python3 tools/bench/regret_bands.py --routes p1.csv p2.csv --selected sel_p1.csv --board rtx5090
-python3 tools/bench/regret_bands.py --routes p1.csv p2.csv --pick model --board rtx5090   # the model price's own pick, needs model_us
+python3 tools/bench/regret_bands.py --routes p1.csv p2.csv --selected sel_p1.csv --board rtx5090 --qualified "oracle tests X passed"
+python3 tools/bench/regret_bands.py --routes p1.csv p2.csv --pick model --board rtx5090 --qualified "oracle tests X passed"   # the model price's own pick, needs model_us
 python3 -m unittest discover -s tests -p test_regret_bands.py
 ```
 
 `--doc` takes the `ninferno-selection-regret/1` documents `regret_collect.py` writes. `--routes`
 takes plain `route_tune` CSVs (medians over the passes given), because the existing sweeps predate
 the run/device columns `regret_collect.py` requires; the board is named by hand, and nothing then
-checks that the passes come from one build and board.
+checks that the passes come from one build and board. route_tune does not check results, so
+`--routes` also needs `--qualified TEXT` naming the correctness tests that qualified its candidates
+(recorded as `legacy_qualification` in the JSON report), and `--pick selected` needs one
+`--selected` per `--routes` group. `--doc` inputs with different `selector_revision` or `build_id`
+are refused rather than merged; equal provenance is recorded as `provenance` in the report.
 
 ## Published performance numbers
 
