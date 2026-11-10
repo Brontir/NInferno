@@ -180,8 +180,9 @@ family of the pick and reason under `skipped_cases`. A case is skipped, never sc
 its candidates, when no selection is recorded for it, when the pick is of another compute class
 than the case's key, when fewer than two candidates of its class were timed, or (`--pick model`,
 T >= 17 only) when the model prices none of them or prices the best candidates of two route families
-equally. A tie within one family takes the first row of the pass, which is the route production
-offers first (`cost_route` keeps the first on an equal price). `--pick model` ranks only within the
+equally. A tie within one family takes the route first in the family's schedule order, as the sweep's
+other widths of the same problem show it (`cost_route` keeps the first offered on an equal price); a tie they
+do not settle is skipped. `--pick model` ranks only within the
 case's compute class; production under AllowA8 also offers the a8 candidates.
 
 ```bash

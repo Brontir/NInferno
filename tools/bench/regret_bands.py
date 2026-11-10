@@ -58,6 +58,36 @@ def family_of(route):
     return route.split(".", 1)[0]
 
 
+def offer_family(route):
+    """The family the cost model offers a route in: `family_of`, but w4a8ws is a W4A8 schedule.
+
+    route_name (generic_gemm.cpp) spells the producer-warp W4A8 schedule `w4a8ws.128x64.p4`; it is
+    Family::W4a8Mma schedule index 5, offered after the five `w4a8.` schedules, so the two
+    prefixes are one family to the price's first-offered rule.
+    """
+    family = family_of(route)
+    return "w4a8" if family == "w4a8ws" else family
+
+
+def offer_order_votes(sequences, family):
+    """Pairwise votes (a, b) -> how many sequences write route a before route b, of one family."""
+    votes = {}
+    for seq in sequences:
+        own = [r for r in seq if offer_family(r) == family]
+        for i, a in enumerate(own):
+            for b in own[i + 1:]:
+                votes[(a, b)] = votes.get((a, b), 0) + 1
+    return votes
+
+
+def first_offered(tied, votes):
+    """The tied route that precedes every other tied route by a strict majority, else None."""
+    for a in tied:
+        if all(votes.get((a, b), 0) > votes.get((b, a), 0) for b in tied if b != a):
+            return a
+    return None
+
+
 def tokens_of(case):
     for text, pattern in ((case["id"], r"\.T(\d+)$"), (case.get("workload", ""), r"\bT=(\d+)")):
         found = re.search(pattern, text)
@@ -125,7 +155,8 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected"):
     if pick not in ("selected", "model"):
         raise ValueError("pick must be selected or model")
     timed, model = {}, {}  # (key, route) -> [us per pass]
-    for path in route_paths:
+    written = {}  # (pass, key) -> routes in the order the pass wrote them
+    for number, path in enumerate(route_paths):
         columns = collect.KEY + ("route", "median_us") + (("model_us",) if pick == "model" else ())
         seen = set()
         for row in collect.read_rows(path, columns):
@@ -133,6 +164,7 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected"):
             if at in seen:
                 raise ValueError(f"{path}: {collect.case_id(at[0])} {at[1]} timed twice in one pass")
             seen.add(at)
+            written.setdefault((number, at[0]), []).append(at[1])
             us = float(row["median_us"])
             if not (math.isfinite(us) and us > 0):
                 raise ValueError(f"{path}: {collect.case_id(at[0])} {at[1]}: median_us {us}")
@@ -186,16 +218,25 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected"):
                 skip(None, "the model prices none of the candidates")
                 continue
             low = min(priced.values())
-            tied = [r for r in routes[key] if r in priced and priced[r] == low]  # in row order
-            if len({family_of(r) for r in tied}) > 1:
+            tied = [r for r in routes[key] if r in priced and priced[r] == low]
+            if len({offer_family(r) for r in tied}) > 1:
                 # Production (generic_cost.cpp cost_route, a strict `<`) keeps the first route
-                # offered on an equal price. Within one family route_tune writes the rows in the
-                # order the price offers them (schedule index, route_tune_tool.cpp), so the first
-                # tied row is production's pick; across families the two orders differ (tiled and
-                # staged), so the pick is unknown and the case is skipped, not guessed.
+                # offered on an equal price. Across families the offer order is not in the file
+                # (tiled and staged are offered in other orders), so the pick is unknown and the
+                # case is skipped, not guessed.
                 skip(None, "the model prices the best candidates of two families equally")
                 continue
-            chosen = tied[0]
+            # Within one family the offer order is the schedule index, but the rows of one key are
+            # not always written in it: route_tune times the prefill route first at the band
+            # widths. So the order is read from the other widths of the same problem, where the
+            # pass wrote it by schedule index; a pair they do not settle is a skip.
+            votes = offer_order_votes(
+                [seq for (number, other), seq in written.items()
+                 if other[:5] == key[:5] and other != key], offer_family(tied[0]))
+            chosen = first_offered(tied, votes)
+            if chosen is None:
+                skip(None, "the pass wrote the tied rows out of offer order")
+                continue
         else:
             chosen = selected.get(key)
         if chosen is None:

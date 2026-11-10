@@ -211,16 +211,58 @@ class Csv(unittest.TestCase):
             self.assertEqual([r["reason"] for r in skipped],
                              ["fewer than two candidates of the case's compute class"])
 
-    def test_a_same_family_tie_keeps_the_first_row_of_the_pass(self):
-        # Production keeps the first route offered on an equal price, and within one family
-        # route_tune writes the rows in that order: the first tied row is the pick.
-        a = "q4k,a16,store,64,64,40,rmma.a,20,30\n"
-        b = "q4k,a16,store,64,64,40,rmma.b,10,30\n"
-        c = "q4k,a16,store,64,64,40,rmma.c,15,40\n"
-        for text, first in ((a + b + c, "rmma.a"), (b + a + c, "rmma.b"), (c + b + a, "rmma.b")):
-            p1 = self.write("p1.csv", ROUTES + text)
-            rows, skipped = bands.rows_from_csv([p1], None, "b", pick="model")
-            self.assertEqual((skipped, rows[0]["selected"]), ([], first))
+    def tied_pick(self, tied_rows, other_rows, fmt="q4k,a16"):
+        """The model pick of the T=40 key whose tied rows are written as given, beside other keys."""
+        def keyed(t, rows):
+            return "".join(f"{fmt},store,64,64,{t},{route},{us},{price}\n"
+                           for route, us, price in rows)
+        p1 = self.write("p1.csv", ROUTES + keyed(40, tied_rows) + "".join(
+            keyed(t, rows) for t, rows in other_rows))
+        rows, skipped = bands.rows_from_csv([p1], None, "b", pick="model")
+        at40 = [r for r in rows if r["t"] == 40]
+        return (at40[0]["selected"], None) if at40 else (
+            None, [r["reason"] for r in skipped if r["t"] == 40])
+
+    def test_a_same_family_tie_takes_the_route_the_problem_offers_first(self):
+        # Production keeps the first route offered on an equal price. The offer order is the one
+        # the other widths of the problem write (schedule index), not the order of the tied key,
+        # which route_tune writes with the prefill route first at the band widths.
+        a, b, c = ("rmma.a", 20, 30), ("rmma.b", 10, 30), ("rmma.c", 15, 40)
+        other = [(48, [a, b, c]), (64, [a, b, c])]
+        for tied, first in (([a, b, c], "rmma.a"), ([b, a, c], "rmma.a"), ([c, b, a], "rmma.a")):
+            self.assertEqual(self.tied_pick(tied, other), (first, None))
+        other = [(48, [b, a, c]), (64, [b, a, c])]
+        for tied in ([a, b, c], [b, a, c], [c, b, a]):
+            self.assertEqual(self.tied_pick(tied, other), ("rmma.b", None))
+
+    def test_a_tie_the_other_widths_do_not_settle_is_a_skip(self):
+        a, b, c = ("rmma.a", 20, 30), ("rmma.b", 10, 30), ("rmma.c", 15, 40)
+        out_of_order = ["the pass wrote the tied rows out of offer order"]
+        # No other key of the problem.
+        self.assertEqual(self.tied_pick([b, a, c], []), (None, out_of_order))
+        # The other keys do not hold both tied routes.
+        self.assertEqual(self.tied_pick([b, a, c], [(48, [a, c]), (64, [b, c])]),
+                         (None, out_of_order))
+        # The other keys disagree, one each.
+        self.assertEqual(self.tied_pick([b, a, c], [(48, [a, b, c]), (64, [b, a, c])]),
+                         (None, out_of_order))
+        # Another problem (n) is no vote.
+        p1 = self.write("p1.csv", ROUTES + "q4k,a16,store,64,64,40,rmma.b,10,30\n"
+                        "q4k,a16,store,64,64,40,rmma.a,20,30\n"
+                        "q4k,a16,store,128,64,48,rmma.a,20,30\n"
+                        "q4k,a16,store,128,64,48,rmma.b,10,30\n")
+        rows, skipped = bands.rows_from_csv([p1], None, "b", pick="model")
+        self.assertEqual([r["reason"] for r in skipped if r["t"] == 40], out_of_order)
+
+    def test_w4a8ws_is_one_family_with_w4a8(self):
+        # route_name spells the producer-warp W4A8 schedule w4a8ws; it is offered after the
+        # w4a8 schedules, so a tie of the two is settled by the order, not skipped as two families.
+        a, ws, c = ("w4a8.64x64", 20, 30), ("w4a8ws.128x64.p4", 10, 30), ("ggml_mmq.x", 15, 40)
+        other = [(48, [a, ws, c])]
+        self.assertEqual(self.tied_pick([ws, a, c], other, fmt="q4k,a8"), ("w4a8.64x64", None))
+        self.assertEqual(bands.offer_family("w4a8ws.128x64.p4"), "w4a8")
+        self.assertEqual(bands.offer_family("w4a8.64x64"), "w4a8")
+        self.assertEqual(bands.offer_family("rmma.m1.n8.w4x1"), "rmma")
 
     def test_a_tie_across_families_is_a_skip_whatever_the_row_order(self):
         # tiled and staged are written and offered in other orders: the pick is unknown.
