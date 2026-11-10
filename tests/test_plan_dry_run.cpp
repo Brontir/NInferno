@@ -1513,20 +1513,24 @@ void test_exact_reads_no_continuous_fact() {
             // subject that carries them): the drafter is an axis of the choice only then, and a
             // fact that leaked into it would move the drafter column of the signature.
             const bool with_drafters = std::string(family.name) == "qwen27b";
+            // The subject is resolved against the GPU key the plan runs on, as production does:
+            // a moved key gets its own subject, so a speculation profile that followed a moved
+            // fact would change the drafter axis, its default and its depths.
+            pr::PlanSourceFacts target     = facts;
+            target.shape.hidden_size       = 5120;
+            target.shape.num_hidden_layers = 64;
+            target.shape.vocab_size        = 248320;
+            target.shape.builtin_mtp       = true;
+            target.shape.active_params     = 27e9;
+            const auto subject_for         = [&](const ninferno::spec::GpuKey& gpu) {
+                return pr::planned_subject(pr::PlannedTarget{.repo  = "unsloth/Qwen3.8-27B-GGUF",
+                                                                     .facts = target,
+                                                                     .gguf  = true,
+                                                                     .with_drafters = true},
+                                                   gpu);
+            };
             std::optional<pr::SpeculationSubject> subject;
-            if (with_drafters) {
-                pr::PlanSourceFacts target     = facts;
-                target.shape.hidden_size       = 5120;
-                target.shape.num_hidden_layers = 64;
-                target.shape.vocab_size        = 248320;
-                target.shape.builtin_mtp       = true;
-                target.shape.active_params     = 27e9;
-                subject = pr::planned_subject(pr::PlannedTarget{.repo  = "unsloth/Qwen3.8-27B-GGUF",
-                                                                .facts = target,
-                                                                .gguf  = true,
-                                                                .with_drafters = true},
-                                              stock);
-            }
+            if (with_drafters) { subject = subject_for(stock); }
             for (const bool drafted : {false, true}) {
                 if (drafted && !with_drafters) { continue; }
                 for (const std::uint32_t context : {8192U, 65536U}) {
@@ -1565,6 +1569,11 @@ void test_exact_reads_no_continuous_fact() {
                             moved.gpu.sm_clock_khz = static_cast<int>(stock.sm_clock_khz * m.clock);
                             moved.gpu.dram_gbps    = stock.dram_gbps * m.bandwidth;
                             moved.gpu.l2_bytes     = stock.l2_bytes * m.l2;
+                            std::optional<pr::SpeculationSubject> moved_subject;
+                            if (drafted) {
+                                moved_subject = subject_for(moved.gpu);
+                                moved.subject = &*moved_subject;
+                            }
                             ++compared;
                             const std::string got = b1_signature(facts, moved);
                             check(got == base,
