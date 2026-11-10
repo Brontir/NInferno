@@ -124,16 +124,15 @@ void dump_layer(const Layer& l, std::map<std::string, std::string>& dumps) {
     void* const payload     = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
     const std::int32_t sets = l.relu2 ? 1 : 2;
     const std::string name  = layer_name(l);
-    std::optional<qw::PackedWeight> router, gate_up, down;
+    std::optional<qw::PackedWeight> gate_up, down;
     std::string unpacked;
     try {
-        qw::PatternedWeightOptions options;
         const auto options_for = [&](QType q) {
             qw::PatternedWeightOptions o;
             if (q == QType::NVFP4) o.weight_scale_divisor = o.input_scale_divisor = 1.0F;
             return o;
         };
-        router.emplace(qw::make_patterned_weight(QType::BF16, l.experts, l.hidden, 5U, options));
+
         gate_up.emplace(qw::make_patterned_weight(l.gate_up, l.experts * sets * l.inter, l.hidden,
                                                   7U, options_for(l.gate_up)));
         down.emplace(qw::make_patterned_weight(l.down, l.experts * l.hidden, l.inter, 9U,
@@ -145,14 +144,23 @@ void dump_layer(const Layer& l, std::map<std::string, std::string>& dumps) {
     config.top_k = l.top_k;
     if (l.relu2) config.activation = ops::MoeActivation::Relu2;
     ops::MoeWeights weights;
-    if (router) {
-        weights.router  = router->device_weight(payload);
-        weights.gate_up = gate_up->device_weight(payload);
-        weights.down    = down->device_weight(payload);
+    if (gate_up) {
+        // The BF16 router: a contiguous descriptor, as the op tests build it.
+        Weight r{};
+        r.qtype  = QType::BF16;
+        r.layout = QuantLayout::Contiguous;
+        r.qdata = r.payload = payload;
+        r.payload_bytes     = static_cast<std::size_t>(l.experts) * l.hidden * 2;
+        r.n = r.shape[0] = r.padded_shape[0] = l.experts;
+        r.k = r.shape[1] = r.padded_shape[1] = l.hidden;
+        r.ndim                               = 2;
+        weights.router                       = r;
+        weights.gate_up                      = gate_up->device_weight(payload);
+        weights.down                         = down->device_weight(payload);
     }
     for (const generic::FactsBoard& b : kBoards) {
         std::string& out = dumps[b.name];
-        if (!router) {
+        if (!gate_up) {
             out += unpacked;
             continue;
         }
