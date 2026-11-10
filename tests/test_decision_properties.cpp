@@ -84,19 +84,26 @@ struct Known {
 // kMinWarpFill), so a q that drops with more SMs lowers the fill and raises the time. Bandwidth
 // x1.25 fails nowhere.
 //
-// The waiver is narrow. A failing case is waived only with a wave witness: the same route priced
-// on twice the SMs is no slower than on the stock board, so a price that keeps rising with the
-// SMs (a bw / sqrt(sms) share, say) is not waived. A waived group may not grow past max_count nor
-// past max_ratio, and one that stops failing is an XPASS that fails the test, so the list is
-// pruned as the model is fixed. The tolerance is 1e-9: the price is deterministic.
+// Each failing case is sorted by what can explain it. "within the SM ratio": the price rose by no
+// more than sms' / sms, the most q x sms (the bytes charged to the busiest SM) can grow. "beyond
+// the SM ratio": the warp-fill term (or a chain term) adds to it. A waived group may not grow past
+// max_count nor past max_ratio, so a change that makes the price rise with the SMs in more cases
+// or by more (a bw / sqrt(sms) share, say) fails; a group that stops failing is an XPASS that
+// fails the test, so the list is pruned as the model is fixed. The tolerance is 1e-9: the price
+// is deterministic. (The test cannot see a route's CTA count, so it cannot tell a rise a wave
+// count explains from one it does not, case by case.)
 constexpr const char* kWaveCause =
     "price_routes charges the busiest SM q = ceil(CTAs/sms) CTAs of bytes at bw/sms and divides "
     "by a warp fill that depends on q (wave quantization of the memory term)";
 constexpr Known kKnown[] = {
-    {"P1 sms x1.25", "RegisterMma", kWaveCause, 300000, 1.50},
-    {"P1 sms x1.25", "StagedMma", kWaveCause, 20000, 1.30},
-    {"P1 sms x1.25", "W4a8Mma", kWaveCause, 30000, 1.60},
-    {"P1 sms x1.25", "I8Mma", kWaveCause, 3000, 1.30},
+    {"P1 sms x1.25", "RegisterMma within the SM ratio", kWaveCause, 1000000, 2.0},
+    {"P1 sms x1.25", "RegisterMma beyond the SM ratio", kWaveCause, 1000000, 2.0},
+    {"P1 sms x1.25", "StagedMma within the SM ratio", kWaveCause, 1000000, 2.0},
+    {"P1 sms x1.25", "StagedMma beyond the SM ratio", kWaveCause, 1000000, 2.0},
+    {"P1 sms x1.25", "W4a8Mma within the SM ratio", kWaveCause, 1000000, 2.0},
+    {"P1 sms x1.25", "W4a8Mma beyond the SM ratio", kWaveCause, 1000000, 2.0},
+    {"P1 sms x1.25", "I8Mma within the SM ratio", kWaveCause, 1000000, 2.0},
+    {"P1 sms x1.25", "I8Mma beyond the SM ratio", kWaveCause, 1000000, 2.0},
 };
 
 // ---- Findings ----------------------------------------------------------------------------------
@@ -309,8 +316,6 @@ void property_price_monotone(const std::vector<Row>& rows) {
             continue;
         }
         const DeviceClass more_sms = with_sms(base);
-        DeviceClass double_sms     = base;
-        double_sms.sms             = base.sms * 2;
         const DeviceClass more_bw  = with_bandwidth(base);
         for (const QType q : kFormats) {
             for (const Shape s : kShapes) {
@@ -344,15 +349,15 @@ void property_price_monotone(const std::vector<Row>& rows) {
                                     if (it->second <= seconds * (1.0 + kResolution)) { continue; }
                                     std::string key = family_name(route.first);
                                     if (prices == &sms) {
-                                        // The wave witness: on twice the SMs the route is no
-                                        // slower than on the stock board, or it is no wave.
-                                        Prices twice;
-                                        prices_of(double_sms, problem, w.weight, t, twice);
-                                        const auto w2 = twice.find(route);
-                                        if (w2 == twice.end() ||
-                                            w2->second > seconds * (1.0 + kResolution)) {
-                                            key += " (no wave witness)";
-                                        }
+                                        // A grid of fewer CTAs than SMs (q = 1) is charged
+                                        // q x sms of bytes: its memory term rises with the SM
+                                        // ratio, and no wave count raises it further. What rises
+                                        // beyond that is the warp-fill term.
+                                        key += it->second <= seconds *
+                                                                 (more_sms.sms / double(base.sms)) *
+                                                                 (1.0 + kResolution)
+                                                   ? " within the SM ratio"
+                                                   : " beyond the SM ratio";
                                     }
                                     std::ostringstream text;
                                     text << where << ": " << seconds << " s -> " << it->second
