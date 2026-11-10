@@ -1690,6 +1690,10 @@ int test_refusal_structural_tag() {
         failures += check(accepted && matcher.completed(),
                           "refusal tag may stop after: " + std::string(whole));
     }
+    {
+        ninferno::structured::ConstraintMatcher matcher(compiled);
+        failures += check(!matcher.accept_bytes("to="), "refusal tag refuses to= whole");
+    }
     return failures;
 }
 
