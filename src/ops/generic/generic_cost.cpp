@@ -194,8 +194,6 @@ void rmma_counted_law_for_test(std::optional<bool> law) noexcept {
     g_rmma_counted_law_override = law;
 }
 
-namespace {
-
 // The speed-profile route of a call of 17 tokens or more from a cost model of every tile the
 // build holds for the weight (register MMA, tiled, staged): a tile's time on the busiest SM is its
 // weight bytes over that SM's share of the DRAM bandwidth (or the whole matrix over the whole
