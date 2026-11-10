@@ -73,18 +73,13 @@ __host__ __device__ constexpr std::int64_t r8_smem_bytes(int nt, std::int64_t k,
 // (generic_gemm.cpp: no native BF16 MMA, sm_80 on has it).
 [[nodiscard]] bool r8_stage_grid();
 
-// The staged grid starts at the next 8-byte boundary after the activation (whose bytes are a
-// multiple of 4): at most this many bytes of padding.
-inline constexpr std::size_t r8_grid_pad = 4;
+// r8_grid_pad (the staged grid's alignment padding): ops/generic/codec_traits.h, shared with
+// r8_fits.
 
 // A codebook codec's grid words: those r8_kernel stages (GridWords / SharedGrid).
 template <class C>
 __host__ __device__ constexpr int r8_grid_words() {
-    if constexpr (requires { C::kGridWords; }) {
-        return C::kGridWords;
-    } else {
-        return 0;
-    }
+    return w4a8_grid_words<C>();
 }
 
 __device__ __forceinline__ int dp4a_words(const uint4& w, const uint4& x, int acc) {

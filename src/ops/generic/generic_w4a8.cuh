@@ -24,6 +24,7 @@
 #include "ops/common/arch_limits.h"
 #include "ops/common/memory.cuh"
 #include "ops/common/mma.cuh"
+#include "ops/generic/codec_traits.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_gemm.cuh"
 #include "ops/generic/generic_schedules.h"
@@ -212,6 +213,39 @@ __host__ __device__ constexpr bool w4a8_half_min() {
     } else {
         return false;
     }
+}
+
+// A codebook codec's grid words (kGridWords): r8_kernel stages them below sm_80 (r8_grid_words).
+template <class C>
+__host__ __device__ constexpr int w4a8_grid_words() {
+    if constexpr (requires { C::kGridWords; }) {
+        return C::kGridWords;
+    } else {
+        return 0;
+    }
+}
+
+// The whole kept block a codec reads (kBytes: the Q4_K / Q5_K superblock); 0 for a codec that
+// reads the ggml planes.
+template <class C>
+__host__ __device__ constexpr int w4a8_block_bytes() {
+    if constexpr (requires { C::kBytes; }) {
+        return C::kBytes;
+    } else {
+        return 0;
+    }
+}
+
+// The codec's constants as the host rules read them (codec_traits.h): one definition, the codec
+// struct's, for the kernel and for r8_fits / w4a8_fits / mmq_plane_bytes. generic_codec_traits.cu
+// tables this for every codec of the launch files.
+template <class C>
+constexpr CodecTraits codec_traits() {
+    return {.min         = C::kMin,
+            .half_min    = w4a8_half_min<C>(),
+            .span        = w4a8_span<C>(),
+            .grid_words  = w4a8_grid_words<C>(),
+            .block_bytes = w4a8_block_bytes<C>()};
 }
 
 template <Ggml32 F>

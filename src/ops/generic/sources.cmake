@@ -56,6 +56,7 @@ ninferno_target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/generic_scalar.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_volta_gemv.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_volta_hmma.cu"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_codec_traits.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_w4a8.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_w4a8_ggml32.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_w4a8_superblock.cu"

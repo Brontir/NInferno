@@ -113,6 +113,12 @@ ninferno_add_op_test(ninferno_format_traits_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_format_traits.cpp"
   LIBRARIES ninferno_linear_test_support)
 
+# The codec traits the kernels export (#615 F3) against the literals r8_fits, w4a8_fits and
+# mmq_plane_bytes carried before, for every QType; host only.
+ninferno_add_op_test(ninferno_codec_traits_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_codec_traits.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
 # ops::linear's candidates per call (#306): the owned Q8 kernel's launch and the generic route,
 # one selected as dispatch_linear runs.
 # The activation each generic route prepares and which preparations serve one another (#308).

@@ -12,6 +12,7 @@
 #include "core/layout.h"
 #include "ninferno/ops/prefill_routes.h"
 #include "ops/common/route_probe.h"
+#include "ops/generic/codec_traits.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_select_internal.h"
 #include "ops/generic/route_cost_constants.h"
@@ -363,22 +364,22 @@ bool r8_call(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
     return r8_call_refusal(w, policy, tokens) == R8CallRefusal::None;
 }
 
-// The bytes per block of each plane: the code plane (the whole block where blocks are unchanged),
-// the high and the scale plane (core/weight.h ggml_plane_bytes).
+// The bytes per block of each plane: the code plane (the whole block where the codec reads it
+// whole, codec_traits block_bytes: Q4_K / Q5_K), the high and the scale plane (core/weight.h
+// ggml_plane_bytes).
 struct MmqPlaneBytes {
     int codes, high, scales;
 };
 
 MmqPlaneBytes mmq_plane_bytes(QType q) {
-    if (q == QType::GGML_Q4_K) return {144, 0, 0};
-    if (q == QType::GGML_Q5_K) return {176, 0, 0};
+    if (const int whole = codec_traits(q).block_bytes; whole > 0) return {whole, 0, 0};
     const auto p = ggml_plane_bytes(q);
     return {static_cast<int>(p.code), static_cast<int>(p.high), static_cast<int>(p.scale)};
 }
 
 // The weight in the layout ggml's kernels read: whole blocks for Q4_K / Q5_K, the planes otherwise.
 bool ggml_layout_admits(const Weight& w) {
-    const bool planes = w.qtype != QType::GGML_Q4_K && w.qtype != QType::GGML_Q5_K;
+    const bool planes = codec_traits(w.qtype).block_bytes == 0;
     if (planes != (w.layout == QuantLayout::GgmlPlanes)) return false;
     const auto bytes = mmq_plane_bytes(w.qtype);
     if ((bytes.high > 0 && w.qhigh == nullptr) || (bytes.scales > 0 && w.scales == nullptr)) {
@@ -1419,10 +1420,10 @@ W4a8ScheduleInfo w4a8_schedule_info(int index) {
 bool w4a8_fits(int schedule, QType qtype) {
     const auto s = w4a8_schedule_info(schedule);
     // Two buffers of int8 codes and two floats per 32-value block for block_m + block_n rows, and
-    // Q2_K's two mins per block and weight row (W4a8BufferOf::kSmem); the producer ring is sized
-    // for 99 KiB.
+    // a half-min codec's (Q2_K) two mins per block and weight row (W4a8BufferOf::kSmem); the
+    // producer ring is sized for 99 KiB.
     if (s.producers > 0) return kMaxSharedBytesPerBlock >= 99 * 1024;
-    const int half_min = qtype == QType::GGML_Q2_K ? s.block_n * 32 : 0;
+    const int half_min = codec_traits(qtype).half_min ? s.block_n * 32 : 0;
     return 2 * ((s.block_m + s.block_n) * (128 + 32) + half_min) <=
            static_cast<int>(kMaxSharedBytesPerBlock);
 }
@@ -1445,32 +1446,14 @@ bool r8_fits(QType qtype, std::int32_t k, std::int32_t tokens) {
     if (tokens <= 0 || tokens > kR8MaxTokens || k <= 0) return false;
     std::int64_t slots = 1;
     while (slots < tokens) slots *= 2;
-    // A codec with a min also holds each block's sum (r8_smem_bytes).
-    const bool sums = qtype == QType::GGML_Q4_1 || qtype == QType::GGML_Q5_1 ||
-                      qtype == QType::GGML_Q4_K || qtype == QType::GGML_Q5_K;
-    // A codebook format's grid follows it where r8_kernel stages it (r8_stage_grid).
-    std::int64_t grid = 0;
-    if (r8_stage_grid()) switch (qtype) {
-        case QType::GGML_IQ3_XXS:
-            grid = 1024;
-            break;
-        case QType::GGML_IQ3_S:
-        case QType::GGML_IQ2_XXS:
-            grid = 2048;
-            break;
-        case QType::GGML_IQ2_XS:
-            grid = 4096;
-            break;
-        case QType::GGML_IQ2_S:
-        case QType::GGML_IQ1_S:
-        case QType::GGML_IQ1_M:
-            grid = 8192;
-            break;
-        default:
-            break;
-        }
-    if (grid > 0) grid += 4; // r8_grid_pad (generic_r8.cuh): the grid starts 8-byte aligned
-    return slots * (static_cast<std::int64_t>(k) / 32) * (sums ? 40 : 36) + grid <=
+    // The codec's constants as the kernel is compiled with them (codec_traits.h): a codec with a
+    // min also holds each block's sum (r8_smem_bytes), and a codebook codec's grid follows the
+    // activation where r8_kernel stages it (r8_stage_grid), 8-byte aligned (r8_grid_pad).
+    const auto codec = codec_traits(qtype);
+    std::int64_t grid =
+        r8_stage_grid() ? static_cast<std::int64_t>(sizeof(std::uint32_t)) * codec.grid_words : 0;
+    if (grid > 0) grid += static_cast<std::int64_t>(r8_grid_pad);
+    return slots * (static_cast<std::int64_t>(k) / 32) * (codec.min ? 40 : 36) + grid <=
            kStaticSharedBytesPerBlock;
 }
 
