@@ -121,6 +121,11 @@ void test_refusals() {
            "rope theta");
     expect(refused(edit([](json& c) { c["rope_scaling"] = {{"rope_type", "yarn"}}; })),
            "rope scaling");
+    expect(refused(edit([](json& c) { c["attention_bias"] = true; })), "attention bias");
+    expect(refused(edit([](json& c) { c["mlp_bias"] = true; })), "mlp bias");
+    expect(refused(edit([](json& c) { c["hidden_act"] = "gelu"; })), "another activation");
+    expect(refused(edit([](json& c) { c["rope_parameters"]["rope_type"] = "yarn"; })),
+           "another rope type");
     expect(refused(edit([](json& c) { c["block_size"] = 17; })), "block over 16");
     expect(refused(edit([](json& c) { c["architectures"] = {"DFlash2DraftModel"}; })),
            "architecture");

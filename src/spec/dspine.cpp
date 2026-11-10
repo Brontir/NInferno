@@ -109,6 +109,19 @@ DSpineConfig parse_dspine_config(const json& config) {
     if (number_or(config, "partial_rotary_factor", 1.0) != 1.0) {
         refuse("partial_rotary_factor != 1");
     }
+    // The backbone's math is fixed (a bias-free Qwen3 layer with SiLU and plain RoPE, as
+    // dspine_tensors inventories it): another one is refused, not run on the wrong contract.
+    if (bool_or(config, "attention_bias", false)) { refuse("attention_bias is not supported"); }
+    if (bool_or(config, "mlp_bias", false)) { refuse("mlp_bias is not supported"); }
+    if (const auto act = config.find("hidden_act");
+        act != config.end() && !act->is_null() && *act != "silu") {
+        refuse("hidden_act " + act->dump() + " is not silu");
+    }
+    if (const auto& rope = config.at("rope_parameters"); rope.contains("rope_type") &&
+                                                         !rope.at("rope_type").is_null() &&
+                                                         rope.at("rope_type") != "default") {
+        refuse("rope_parameters.rope_type " + rope.at("rope_type").dump() + " is not default");
+    }
     if (bool_or(config, "has_embed_tokens", false)) {
         refuse("has_embed_tokens: the target's embedding is used");
     }
