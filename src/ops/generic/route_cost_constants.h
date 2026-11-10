@@ -54,7 +54,9 @@ inline constexpr Holdout h_a16_refit = Holdout::checked(
     "1.137 "
     "without the chain and reduction terms; the worst case is not recorded",
     "generic_cost.cpp price_routes comment",
-    "one aggregate for the constants of the A16 model; the record gives no per-constant error");
+    "one aggregate for the constants of the A16 model; the record gives no per-constant error; "
+    "measured at 0.1.0 (54ef5203), before #499 re-priced the K-quant register MMA on sm_86 / "
+    "sm_120");
 // The same refit, for the two constants whose flatness was also scanned.
 inline constexpr Holdout h_a16_refit_flat = Holdout::checked(
     "ninferno_route_tune timings of seven boards (each tile in the engine, L2 flushed; BF16, Q4 "
@@ -67,11 +69,20 @@ inline constexpr Holdout h_a16_refit_flat = Holdout::checked(
     "without the chain and reduction terms; the worst case is not recorded",
     "generic_cost.cpp price_routes comment",
     "the optimum is flat: this constant at 0.5..1.5x (register-MMA step) or 0.5..2x (pipeline "
-    "stage) of its fit costs under 0.2 %");
-inline constexpr Holdout h_min_warp_fill = Holdout::none(
-    "the A16 refit of seven route_tune boards",
-    "no check of this floor on its own; the aggregate refit of generic_cost.cpp does not name it",
-    "generic_cost.cpp price_routes comment");
+    "stage) of its fit costs under 0.2 %; measured at 0.1.0 (54ef5203), before #499 re-priced the "
+    "K-quant register MMA on sm_86 / sm_120");
+// kMinWarpFill is used by the A16 model and by the W4A8 and I8 tiles, so it rests on both refits.
+// Like its siblings it is named by neither comment, only covered as one of "the constants".
+inline constexpr Holdout h_min_warp_fill = Holdout::checked(
+    "A16: ninferno_route_tune timings of seven boards (BF16, Q4, Q8, T >= 17); A8: --a8 timings of "
+    "RTX 4090, RTX 5090, RTX 4060 Ti, L4, A10, A100",
+    "each board in turn: the constants refit with that board held out (A100 in sample only)",
+    "A16: geomean time over the best tile; A8: time over the best route of either class",
+    "A16 1.095 of the best (4090 1.083, 5090 1.068); A8 1.06..1.09 on the consumer boards, A100 "
+    "1.13 in sample; no error for this floor on its own",
+    "generic_cost.cpp price_routes comment; generic_gemm.cpp route_tile comment",
+    "the A16 figures were measured at 0.1.0 (54ef5203), before #499 re-priced the K-quant register "
+    "MMA on sm_86 / sm_120");
 // The A8 tiles (W4A8, I8, ggml MMQ) and their activation quantizer.
 inline constexpr Holdout h_a8_refit = Holdout::checked(
     "ninferno_route_tune --a8 and --a8 --epilogue timings of RTX 4090, RTX 5090, RTX 4060 Ti, L4, "
@@ -107,7 +118,9 @@ inline constexpr Holdout h_l2_gb20x = Holdout::none(
     "the RTX 5070 Ti was held out for the first version of the terms only");
 inline constexpr Holdout h_spill_accesses = Holdout::none(
     "a modelling assumption (one store and one load of a spilled byte a step), not a fit to data",
-    "moving it changed the regret by under 0.5 % where it applies", "#499 Constants table");
+    "the spill term as a whole (with or without) moves the regret by under 0.5 % where it applies; "
+    "no scan of this value was run",
+    "#499 Constants table");
 
 // --- A16 tiles (price_routes) ---
 // Register MMA: the exposed load latency of one 16-K step per warp, in cycles.

@@ -127,7 +127,8 @@ struct RoundFacts {
 // constant rests on two lab cards of the generation or more (AGENTS.md); each card's rounds are
 // predicted from the generation's other cards' fit before a row is added (fit_eta.py, item 3):
 //   ada    0.148  RTX 4070 Ti and RTX 4090 (each card's rounds predicted from the other's fit:
-//                 hard50 within -3..+4 % and +1..+9 %; gpt-oss +16..19 %, its runs drafted BF16)
+//                 R measured / R facts within -3..+4 % and +1..+9 %, DECISIONS 53; gpt-oss +16..19
+//                 %, its runs drafted BF16)
 //   gb20x  0.165  RTX 5070 Ti and RTX 5090 (DECISIONS 56: held out, R within +4.3 % / +1.4 % on
 //                 average; the plan's pick on the other card's pairs is the held-out card's
 //                 measured best or within 1.5 % of it, gpt-oss 4 %; the 5070 Ti's 9B rounds of
@@ -135,8 +136,8 @@ struct RoundFacts {
 // Each other generation needs a second lab card's registry pairs before it gets a row; until then
 // it has no estimate, and its cards keep the lab-measured profiles (as before the facts). Their
 // one-card fits, for when the second card comes (DECISIONS 53): ga10x 0.197 (RTX 3060), turing
-// 0.099 (RTX 2080 Ti), volta 0.179 (Quadro GV100). The rounds are the registry's after #156 (Gemma 4
-// assistants and DFlash drafters attached q8): their q8 drafters' block passes are compute-bound
+// 0.099 (RTX 2080 Ti), volta 0.179 (Quadro GV100). The rounds are the registry's after #156 (Gemma
+// 4 assistants and DFlash drafters attached q8): their q8 drafters' block passes are compute-bound
 // enough that eta fell from 0.54 (Ada, BF16 drafters) to 0.15.
 struct SmallTEta {
     std::string_view generation;
@@ -154,10 +155,12 @@ inline constexpr SmallTEta kSmallTEta[] = {
          "RTX 4070 Ti from the 4090 -3..+4 %, RTX 4090 from the 4070 Ti +1..+9 % (DECISIONS 53); "
          "+0.1 % and +0.2 % on average, rms 3.7 % and 2.0 % (DECISIONS 56, for scale)",
          "DECISIONS 53 and 56",
-         "gpt-oss rounds run +16..19 % over their facts (its runs drafted BF16)")},
+         "gpt-oss rounds run +16..19 % over their facts, its runs drafted BF16 (round_cost.h "
+         "header comment, not DECISIONS 53 / 56)")},
     {"gb20x", 0.165, 2,
      Holdout::checked(
-         "registry spec-tune rounds of Qwen targets, k <= 7, RTX 5070 Ti and RTX 5090 together",
+         "registry spec-tune rounds of Qwen targets, k 4..7 (the held-out check covers k <= 7), "
+         "RTX 5070 Ti and RTX 5090 together",
          "each card's rounds predicted from the other card's eta alone (fit_eta.py item 3)",
          "R measured / R facts",
          "RTX 5070 Ti from the 5090 (0.184) +4.3 % on average, rms 8.4 %; RTX 5090 from the 5070 "

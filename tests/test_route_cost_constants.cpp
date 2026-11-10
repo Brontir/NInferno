@@ -124,6 +124,13 @@ int main(int argc, char** argv) {
                          static_cast<int>(c.name.size()), c.name.data(), v);
             ++failures;
         }
+        if (c.from != rc::Provenance::Fitted && c.holdout.kind != ninferno::HoldoutKind::Unset) {
+            std::fprintf(stderr,
+                         "%.*s: not Fitted but carries a Holdout"\n ",
+                         static_cast<int>(c.name.size()),
+                         c.name.data());
+            ++failures;
+        }
         if (c.from == rc::Provenance::Fitted) {
             ++fitted;
             if (c.holdout.kind == ninferno::HoldoutKind::Unset) {
@@ -137,6 +144,15 @@ int main(int argc, char** argv) {
                 ++failures;
             }
         }
+    }
+    constexpr std::size_t kExpectedFitted = 25;
+    if (fitted != kExpectedFitted) {
+        std::fprintf(stderr,
+                     "%zu Fitted constants found, expected %zu: if one was added or retagged, give "
+                     "it a Holdout and update kExpectedFitted"\n ",
+                     fitted,
+                     kExpectedFitted);
+        ++failures;
     }
     if (argc > 1 && std::string(argv[1]) == "--list") {
         for (auto want : {rc::Provenance::Fitted, rc::Provenance::Counted, rc::Provenance::Fact}) {

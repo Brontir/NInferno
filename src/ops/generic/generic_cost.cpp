@@ -182,22 +182,21 @@ std::optional<RmmaKept> rmma_kept(int schedule, const Weight& weight, Epilogue e
 // weight bytes over that SM's share of the DRAM bandwidth (or the whole matrix over the whole
 // bandwidth, whichever is longer) and its MMA work over the SM's tensor rate; the register MMA
 // runs them in series, the pipelined tiles (staged, tiled) overlap them at 0.9 / 0.8 of the
-// tensor rate; either is slowed in proportion when the SM holds fewer than 16 (register MMA) or 4
-// (pipelined) warps, and pays its warps' dependent chain of K steps per residency and the sum of
-// its split K (over a CTA's warps or a cluster). The device numbers come from its query (SMs,
-// threads, CTAs and shared memory per SM) and its facts (reference clock, bus width x memory clock:
-// DeviceClass::facts); the tensor rate per SM and clock from the
-// generation row (core/generation.h: 512 on the consumer and pro boards, 2048 on the full-rate HBM
-// parts, 1536 where the BF16 MMA is emulated, which also takes no pipelined tile and no 8-tile
-// token strip).
-// ninferno_route_tune's timings of seven boards (each tile in the engine, L2 flushed; BF16, Q4
-// and Q8, T >= 17), the constants refit with the board held out: 1.095 of the best (geomean;
-// RTX 4090 1.083, RTX 5090 1.068) against 1.110 for the F-lite rule (heuristic_rmma) and 1.137
-// without the chain and reduction terms; the optimum of every constant is flat (the register-MMA
-// step's and the pipeline stage's cycles, route_cost_constants.h, at 0.5..1.5x and 0.5..2x of
-// their fit cost under 0.2 %). nullopt where the facts have no roofline.
-// price_routes hands `take` every admitted route it prices with its time (the A16 scale applied);
-// false where the facts have no roofline (nothing priced).
+// tensor rate; either is slowed in proportion when the SM holds fewer than 11 (register MMA; 8 for
+// the K-quant and codebook decoders) or 4 (pipelined) warps, and pays its warps' dependent chain of
+// K steps per residency and the sum of its split K (over a CTA's warps or a cluster). The device
+// numbers come from its query (SMs, threads, CTAs and shared memory per SM) and its facts
+// (reference clock, bus width x memory clock: DeviceClass::facts); the tensor rate per SM and clock
+// from the generation row (core/generation.h: 512 on the consumer and pro boards, 2048 on the
+// full-rate HBM parts, 1536 where the BF16 MMA is emulated, which also takes no pipelined tile and
+// no 8-tile token strip). ninferno_route_tune's timings of seven boards (each tile in the engine,
+// L2 flushed; BF16, Q4 and Q8, T >= 17), the constants refit with the board held out: 1.095 of the
+// best (geomean; RTX 4090 1.083, RTX 5090 1.068) against 1.110 for the F-lite rule (heuristic_rmma)
+// and 1.137 without the chain and reduction terms; the optimum of every constant is flat (the
+// register-MMA step's and the pipeline stage's cycles, route_cost_constants.h, at 0.5..1.5x and
+// 0.5..2x of their fit cost under 0.2 %). nullopt where the facts have no roofline. price_routes
+// hands `take` every admitted route it prices with its time (the A16 scale applied); false where
+// the facts have no roofline (nothing priced).
 bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tokens,
                   const PricedRoute& take) {
     DeviceClass d;
