@@ -356,7 +356,11 @@ class Repo:
                         elif kw in ("elseif", "else") and stack:
                             # an else / elseif branch is where an earlier arch condition did not
                             # hold: if any condition of the chain names the arch, the branch is
-                            # arch-dependent too, and its guard cannot be narrowed (UNKNOWN)
+                            # arch-dependent too, and its guard cannot be narrowed (UNKNOWN). Once a
+                            # chain names the arch, every later elseif / else of it is UNKNOWN, even
+                            # an elseif that alone could be narrowed (this only widens). "ARCH" is
+                            # matched as a substring of the condition, as guard_arches() does, so
+                            # any variable with ARCH in its name counts (again only widens).
                             cond = m.group(2) if kw == "elseif" else ""
                             stack[-1][1] = stack[-1][1] or "ARCH" in cond
                             stack[-1][0] = "NOT ARCH_CHAIN" if stack[-1][1] else cond
