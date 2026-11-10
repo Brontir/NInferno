@@ -5,6 +5,7 @@
 #include "ops/common/native_nvfp4.h"
 
 #include "core/device_class.h"
+#include "core/format_facts.h"
 #include "core/generation.h"
 #include "core/measured_boards.h"
 #include "core/tensor.h"
@@ -1294,48 +1295,7 @@ int k_multiple(WeightCodec codec) {
 
 int i8_bits(QType q) { return q == QType::Q5_G64_FP16 ? 5 : q == QType::Q6_G64_FP16 ? 6 : 4; }
 
-std::optional<ggml_mmq::Type> mmq_type(const Weight& w) {
-    switch (w.qtype) {
-    case QType::GGML_Q4_K:
-        return ggml_mmq::Type::Q4_K;
-    case QType::GGML_Q5_K:
-        return ggml_mmq::Type::Q5_K;
-    case QType::GGML_Q6_K:
-        return ggml_mmq::Type::Q6_K;
-    case QType::GGML_IQ4_XS:
-        return ggml_mmq::Type::IQ4_XS;
-    case QType::GGML_IQ3_XXS:
-        return ggml_mmq::Type::IQ3_XXS;
-    case QType::GGML_IQ3_S:
-        return ggml_mmq::Type::IQ3_S;
-    case QType::GGML_Q4_0:
-        return ggml_mmq::Type::Q4_0;
-    case QType::GGML_Q4_1:
-        return ggml_mmq::Type::Q4_1;
-    case QType::GGML_Q5_0:
-        return ggml_mmq::Type::Q5_0;
-    case QType::GGML_Q5_1:
-        return ggml_mmq::Type::Q5_1;
-    case QType::GGML_IQ4_NL:
-        return ggml_mmq::Type::IQ4_NL;
-    case QType::GGML_Q2_K:
-        return ggml_mmq::Type::Q2_K;
-    case QType::GGML_Q3_K:
-        return ggml_mmq::Type::Q3_K;
-    case QType::GGML_IQ2_XXS:
-        return ggml_mmq::Type::IQ2_XXS;
-    case QType::GGML_IQ2_XS:
-        return ggml_mmq::Type::IQ2_XS;
-    case QType::GGML_IQ2_S:
-        return ggml_mmq::Type::IQ2_S;
-    case QType::GGML_IQ1_S:
-        return ggml_mmq::Type::IQ1_S;
-    case QType::GGML_IQ1_M:
-        return ggml_mmq::Type::IQ1_M;
-    default:
-        return std::nullopt;
-    }
-}
+std::optional<ggml_mmq::Type> mmq_type(const Weight& w) { return format_facts(w.qtype).mmq; }
 
 bool mmq_admits(const Weight& w, LinearPolicy policy) {
     const auto type = mmq_type(w);
@@ -1734,84 +1694,8 @@ std::optional<Route> parse_route(std::string_view name) {
 }
 
 WeightCodec codec_of(const Weight& weight) {
-    switch (weight.qtype) {
-    case QType::BF16:
-        return WeightCodec::Bf16;
-    case QType::FP8_E4M3FN_ROW_BF16:
-        return WeightCodec::Fp8;
-    case QType::NVFP4:
-        return WeightCodec::Nvfp4;
-    case QType::Q4_G64_FP16:
-        return WeightCodec::Q4;
-    case QType::Q5_G64_FP16:
-        return WeightCodec::Q5;
-    case QType::Q6_G64_FP16:
-        return WeightCodec::Q6;
-    case QType::Q8_G32_FP16:
-        return WeightCodec::Q8;
-    case QType::MXFP4:
-        return WeightCodec::Mxfp4;
-    case QType::FP8_E4M3FN_ROW_F32:
-        return WeightCodec::Fp8RowF32;
-    case QType::FP8_E4M3FN_B128_F32:
-        return WeightCodec::Fp8B128;
-    case QType::U4_G128_ZP_FP16:
-        return WeightCodec::U4Zp;
-    case QType::U4_G32_ZP_FP16:
-        return WeightCodec::U4ZpG32;
-    case QType::U4_G64_ZP_FP16:
-        return WeightCodec::U4ZpG64;
-    case QType::Q3_G128_FP16:
-        return WeightCodec::Q3G128;
-    case QType::Q3_G64_FP16:
-        return WeightCodec::Q3G64;
-    case QType::GGML_Q4_K:
-        return WeightCodec::GgmlQ4K;
-    case QType::GGML_Q5_K:
-        return WeightCodec::GgmlQ5K;
-    case QType::GGML_Q6_K:
-        return WeightCodec::GgmlQ6K;
-    case QType::GGML_Q3_K:
-        return WeightCodec::GgmlQ3K;
-    case QType::GGML_Q2_K:
-        return WeightCodec::GgmlQ2K;
-    case QType::GGML_IQ4_XS:
-        return WeightCodec::GgmlIq4Xs;
-    case QType::GGML_IQ3_XXS:
-        return WeightCodec::GgmlIq3Xxs;
-    case QType::GGML_IQ3_S:
-        return WeightCodec::GgmlIq3S;
-    case QType::GGML_Q4_0:
-        return WeightCodec::GgmlQ40;
-    case QType::GGML_Q4_1:
-        return WeightCodec::GgmlQ41;
-    case QType::GGML_Q5_0:
-        return WeightCodec::GgmlQ50;
-    case QType::GGML_Q5_1:
-        return WeightCodec::GgmlQ51;
-    case QType::GGML_IQ4_NL:
-        return WeightCodec::GgmlIq4Nl;
-    case QType::GGML_IQ2_XXS:
-        return WeightCodec::GgmlIq2Xxs;
-    case QType::GGML_IQ2_XS:
-        return WeightCodec::GgmlIq2Xs;
-    case QType::GGML_IQ2_S:
-        return WeightCodec::GgmlIq2S;
-    case QType::GGML_IQ1_S:
-        return WeightCodec::GgmlIq1S;
-    case QType::GGML_IQ1_M:
-        return WeightCodec::GgmlIq1M;
-    case QType::GGML_TQ1_0:
-        return WeightCodec::GgmlTq10;
-    case QType::GGML_TQ2_0:
-        return WeightCodec::GgmlTq20;
-    case QType::GGML_Q1_0:
-        return WeightCodec::GgmlQ10;
-    case QType::GGML_Q2_0:
-        return WeightCodec::GgmlQ20;
-    default:
-        throw std::invalid_argument("generic linear: unsupported weight format");
-    }
+    if (const auto codec = format_facts(weight.qtype).codec) return *codec;
+    throw std::invalid_argument("generic linear: unsupported weight format");
 }
 
 void refuse_frag(const Weight& w, const char* op) {
@@ -3059,8 +2943,30 @@ bool volta_copy_pays(std::int32_t tokens) {
 // Whether a TiledMma call of `tokens` runs on the decoded copy (and so needs its workspace): a
 // CUTLASS-only format's (`only`: it has no tile of its own) from the prefill band's 17 tokens, a
 // tiled format's where the copy pays.
+// Reads the CURRENT device class (volta_cutlass_takes: device_class(), cached per device), not a
+// device argument a description receives: describe_route / describe_call set it with
+// ScopedDeviceClass, and the first call on a device fixes the cached answer.
 bool volta_cutlass_runs(bool only, std::int32_t tokens) {
     return volta_cutlass_takes(tokens) && (only || volta_copy_pays(tokens));
+}
+
+// Whether a TiledMma call of a format with `codec` runs CUTLASS over the decoded copy: the band
+// takes it (volta_cutlass_runs), the build has the kernel, and the call has workspace that holds
+// a chunk. run_route asks it before launching and route_query's description after resolving, so
+// they cannot drift apart.
+bool volta_cutlass_call_runs(WeightCodec codec, std::int32_t n, std::int32_t k, std::int32_t tokens,
+                             bool swiglu, std::optional<std::size_t> workspace_free) {
+    return workspace_free.has_value() && volta_cutlass_compiled() &&
+           volta_cutlass_runs(volta_cutlass_only(codec), tokens) &&
+           volta_cutlass_chunk_bytes(n, k, tokens, swiglu, *workspace_free) != 0;
+}
+
+// A TiledMma call of a CUTLASS-only format (no tile of its own) that volta_cutlass_call_runs
+// refuses runs the scalar kernel: a demotion (other bytes and speed).
+bool volta_tiled_runs_scalar(WeightCodec codec, std::int32_t n, std::int32_t k, std::int32_t tokens,
+                             bool swiglu, std::optional<std::size_t> workspace_free) {
+    return volta_cutlass_only(codec) &&
+           !volta_cutlass_call_runs(codec, n, k, tokens, swiglu, workspace_free);
 }
 
 // GemmArgs::spread_smem. The eight-warp decode CTA (w1x8, one token tile, 72 registers) fits
@@ -3163,6 +3069,8 @@ std::string_view demotion_name(Demotion demotion) noexcept {
     case Demotion::GgmlLayout: return "ggml_layout";
     case Demotion::GgmlWorkspace: return "ggml_workspace";
     case Demotion::Workspace: return "workspace";
+    case Demotion::VoltaCopy:
+        return "volta_copy";
     }
     return "none";
 }
@@ -3732,11 +3640,17 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
         // The prefill band on Volta (kVoltaCutlassMinTokens): a CUTLASS-only format has no tile of
         // its own (V100, gpt-oss BF16 attention at T = 79 ran scalar, 7.3 ms a call, 360 -> 140
         // tok/s), and a tiled one's grid seldom fills the SMs' waves (volta_copy_pays).
-        if (workspace != nullptr && volta_cutlass_runs(volta_cutlass_only(codec), args.tokens) &&
-            launch_volta_cutlass(codec, call.epilogue, args, *workspace, stream)) {
-            return;
+        {
+            const auto cutlass_free = workspace_free(workspace);
+            if (volta_cutlass_call_runs(codec, call.rows, w.k, args.tokens,
+                                        call.epilogue == Epilogue::SwiGlu, cutlass_free) &&
+                launch_volta_cutlass(codec, call.epilogue, args, *workspace, *cutlass_free,
+                                     stream)) {
+                return;
+            }
         }
-        // A call the decoded copy does not fit runs scalar: a demotion (other bytes and speed).
+        // A call the decoded copy does not fit runs scalar: a demotion (other bytes and speed);
+        // volta_tiled_runs_scalar says it for a description.
         if (volta_cutlass_only(codec)) {
             note_demotion(route, Route{Family::Scalar, 0}, call.rows, args.tokens, w.k,
                           aligned_to(args.x, 16), args.ldx,

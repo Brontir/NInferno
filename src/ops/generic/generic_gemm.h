@@ -54,45 +54,9 @@ enum class Epilogue : std::uint8_t {
                  // gelu_gate: GELU's tanh form in place of SiLU, GeGLU)
 };
 
-enum class WeightCodec : std::uint8_t {
-    Bf16,
-    Fp8,
-    Nvfp4,
-    Q4,
-    Q5,
-    Q6,
-    Q8,
-    Mxfp4,
-    Fp8RowF32,
-    Fp8B128,
-    U4Zp,
-    GgmlQ4K,
-    GgmlQ5K,
-    GgmlQ6K,
-    GgmlQ3K,
-    GgmlQ2K,
-    GgmlIq4Xs,
-    GgmlIq3Xxs,
-    GgmlIq3S,
-    GgmlQ40,
-    GgmlQ41,
-    GgmlQ50,
-    GgmlQ51,
-    GgmlIq4Nl,
-    GgmlIq2Xxs,
-    GgmlIq2Xs,
-    GgmlIq2S,
-    GgmlIq1S,
-    GgmlIq1M,
-    GgmlTq10,
-    GgmlTq20,
-    GgmlQ10,
-    GgmlQ20,
-    U4ZpG32,
-    U4ZpG64,
-    Q3G128,
-    Q3G64,
-};
+// The codec that reads a format is a format fact (core/format_facts.h); the name stays here for
+// its readers.
+using ninferno::WeightCodec;
 
 // Device-visible arguments of one generic call. Plain data, passed by value.
 struct GemmArgs {
@@ -1160,6 +1124,7 @@ enum class Demotion : std::uint8_t {
     GgmlLayout,    // ggml's kernels: rows off the matrix kernel's multiple, or too many segments
     GgmlWorkspace, // ggml's kernels: no workspace, or less free than their planes take
     Workspace,     // W4A4, W4A8 or I8 given less workspace than their activation planes take
+    VoltaCopy,     // Volta: a CUTLASS-only format's tiled call with no room for a decoded chunk
 };
 [[nodiscard]] std::string_view demotion_name(Demotion demotion) noexcept;
 
