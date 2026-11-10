@@ -12,6 +12,7 @@
 #include "convert/gguf_resources.h"
 #include "core/device_class.h"
 #include "core/dflash_ring.h"
+#include "core/format_facts.h"
 #include "core/ggml_frag.h"
 #include "core/machine_facts.h"
 #include "spec/pairs.h"
@@ -483,23 +484,9 @@ Geometry geometry_of_gguf(const json& md, const std::function<bool(const std::st
 // the engine's, the float types as bf16 / fp32.
 std::string format_of_ggml(std::uint32_t type) {
     namespace g = convert::ggml;
-    switch (type) {
-    case g::F32:
-        return "fp32";
-    case g::F16:
-    case g::BF16:
-        return "bf16";
-    case g::Q8_0:
-        return "q8_g32_fp16";
-    case g::MXFP4:
-        return "mxfp4";
-    case g::NVFP4:
-        return "nvfp4";
-    case g::I32:
-        return "int32";
-    default:
-        return "ggml_" + g::type_name(type);
-    }
+    if (type == g::F16) { return "bf16"; }
+    if (const auto q = ggml_format(type)) { return std::string(format_facts(*q).name); }
+    return "ggml_" + g::type_name(type);
 }
 
 // The routed banks' prefill GEMM (runtime::ExpertPrefill), as ops/moe w4a8_bank_refusal decides it,
