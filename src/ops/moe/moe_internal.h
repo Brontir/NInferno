@@ -350,7 +350,7 @@ struct A8Route {
 struct A8RouteAnswer {
     A8Route route;
     measured::Disposition disposition = measured::Disposition::None;
-    double distance                        = 0;
+    double distance                   = 0;
     std::optional<Board> donor;
 };
 

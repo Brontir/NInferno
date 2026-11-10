@@ -1,10 +1,10 @@
 // What the measured value tables' answers rest on (#616 step 3), host only, no GPU: the generic MoE
 // op's class A8 route (moe::a8_route_answer) and the sparse MoE's Q4/Q5 groupwise prefill frontier
 // (sparse_moe_q4_groupwise_frontier_answer) for every target SKU of the reference table
-// (core/data/gpu_facts.json): Measured, Carried (donor, distance), Incomplete (the nearest entry has
-// a fact unknown) or None (the table's declared literal), in the vocabulary of the measured gates.
-// Compared with table_dispositions/dispositions.txt (keyed by PCI id; --update rewrites it, from
-// the code under test, so it only pins what the code does). Also checks that the disposition's
+// (core/data/gpu_facts.json): Measured, Carried (donor, distance), Incomplete (the nearest entry
+// has a fact unknown) or None (the table's declared literal), in the vocabulary of the measured
+// gates. Compared with table_dispositions/dispositions.txt (keyed by PCI id; --update rewrites it,
+// from the code under test, so it only pins what the code does). Also checks that the disposition's
 // value is the one the production lookup returns on the same board (the disposition never disagrees
 // with the answer), that the route's evidence kind follows the answer's disposition, that every
 // measured board answers Measured for itself, that a literal has no donor, the counts per
@@ -72,12 +72,21 @@ bool same_route(const moe::A8Route& a, const moe::A8Route& b) {
 // quotes (a change of either moves both, or this test fails).
 struct Counts {
     int measured = 0, carried = 0, incomplete = 0, none = 0;
+
     void add(Disposition d) {
         switch (d) {
-        case Disposition::Measured: ++measured; break;
-        case Disposition::Carried: ++carried; break;
-        case Disposition::Incomplete: ++incomplete; break;
-        default: ++none; break;
+        case Disposition::Measured:
+            ++measured;
+            break;
+        case Disposition::Carried:
+            ++carried;
+            break;
+        case Disposition::Incomplete:
+            ++incomplete;
+            break;
+        default:
+            ++none;
+            break;
         }
     }
 };
@@ -99,8 +108,8 @@ std::string dump(Counts& a8_counts, Counts& q4_counts) {
             << board_text(a8.donor) << ' ';
         std::snprintf(buf, sizeof buf, "%.2f", a8.distance);
         out << buf << ' ' << route_text(a8.route) << " | q4 "
-            << measured::disposition_name(frontier.disposition) << ' '
-            << board_text(frontier.donor) << ' ';
+            << measured::disposition_name(frontier.disposition) << ' ' << board_text(frontier.donor)
+            << ' ';
         std::snprintf(buf, sizeof buf, "%.2f", frontier.distance);
         out << buf << ' ' << frontier.min_tokens << '\n';
     }
@@ -240,8 +249,7 @@ void check_hand_written() {
             expect(std::abs(a8.distance - e.a8_distance) < 0.005, "a8 distance" + what);
         }
         if (e.q4_distance >= 0) {
-            expect(std::abs(frontier.distance - e.q4_distance) < 0.005,
-                   "frontier distance" + what);
+            expect(std::abs(frontier.distance - e.q4_distance) < 0.005, "frontier distance" + what);
         }
         if (e.a8 == I || e.q4 == I) {
             expect(row->l2_mib == 0, "an Incomplete row lacks its L2" + what);

@@ -1283,9 +1283,9 @@ Evidence a8_route_evidence() {
     if (answer.donor && (answer.disposition == D::Measured || answer.disposition == D::Carried)) {
         e.ranker   = Evidence::Ranker::None;
         e.distance = answer.distance;
-        e.kind     = answer.disposition == D::Measured ? Evidence::Kind::Measured
-                                                       : Evidence::Kind::Carried;
-        e.donor    = board_label(*answer.donor);
+        e.kind =
+            answer.disposition == D::Measured ? Evidence::Kind::Measured : Evidence::Kind::Carried;
+        e.donor = board_label(*answer.donor);
     } else {
         e.donor = "fallback-a8-route";
     }

@@ -15,11 +15,16 @@ enum class Disposition { Measured, Carried, Transferred, Incomplete, None };
 
 [[nodiscard]] constexpr const char* disposition_name(Disposition d) noexcept {
     switch (d) {
-    case Disposition::Measured: return "measured";
-    case Disposition::Carried: return "carried";
-    case Disposition::Transferred: return "transferred";
-    case Disposition::Incomplete: return "incomplete";
-    case Disposition::None: return "none";
+    case Disposition::Measured:
+        return "measured";
+    case Disposition::Carried:
+        return "carried";
+    case Disposition::Transferred:
+        return "transferred";
+    case Disposition::Incomplete:
+        return "incomplete";
+    case Disposition::None:
+        return "none";
     }
     return "none";
 }

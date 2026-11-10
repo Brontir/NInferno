@@ -155,16 +155,16 @@ inline constexpr Gate kMmqPrefillPays[] = {
 // quantity known). Carried: a measured board within the table's distance answers. Incomplete: no
 // entry with every quantity known is within the distance, but the nearest entry by plain distance
 // is, with a quantity unknown on either side (L2 or bandwidth), so it may be near in the facts that
-// were left out; the value is the default, as gate_answer's bounded gate takes it. None: no entry is
-// within the distance, and the value is the table's declared default (a literal, its provenance
+// were left out; the value is the default, as gate_answer's bounded gate takes it. None: no entry
+// is within the distance, and the value is the table's declared default (a literal, its provenance
 // named by the table's owner). The donor is chosen exactly as the lookups choose it
 // (nearest_known_measured), so the disposition never disagrees with the answer: a complete entry
 // that answers makes the answer Measured or Carried even where a nearer entry is Incomplete.
 template <class Entry>
 struct TableAnswer {
-    const Entry* entry      = nullptr; // the donor's entry, null on Incomplete and None
-    double distance         = 0;       // board_distance to the donor (0 without one)
-    BoardUnknowns unknown;             // Incomplete: what the nearest entry could not compare
+    const Entry* entry = nullptr; // the donor's entry, null on Incomplete and None
+    double distance    = 0;       // board_distance to the donor (0 without one)
+    BoardUnknowns unknown;        // Incomplete: what the nearest entry could not compare
     Disposition disposition = Disposition::None;
 };
 
