@@ -309,6 +309,11 @@ measured_boards_known(std::span<const Measured, Extent> measured) noexcept {
 // The current device's class, cached per ordinal. Throws std::runtime_error when CUDA cannot
 // report the device or the ordinal is invalid.
 [[nodiscard]] const DeviceClass& device_class();
+
+// The class of the device this thread runs on, probed once: what device_class() returns where no
+// class is substituted (ScopedDeviceClass). Throws where CUDA cannot report the device; a host-only
+// build (ninferno_core_host_nodevice) always throws.
+[[nodiscard]] const DeviceClass& current_device_class();
 [[nodiscard]] const DeviceClass& device_class(int device);
 
 // The identity of ordinal `device`: cudaDeviceGetPCIBusId and cudaGetDeviceProperties' uuid,

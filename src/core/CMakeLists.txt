@@ -24,6 +24,12 @@ target_include_directories(ninferno_core_host PRIVATE ${CMAKE_CURRENT_BINARY_DIR
 target_include_directories(ninferno_core_host PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/generated_public)
 target_link_libraries(ninferno_core_host PRIVATE ninferno::json)
 
+# current_device_class() of a build with no CUDA runtime: always throws. Linked by the host-only
+# tests, never beside ninferno_core, which defines the real one.
+add_library(ninferno_core_host_nodevice STATIC device_class_nodevice.cpp)
+ninferno_internal_includes(ninferno_core_host_nodevice)
+target_link_libraries(ninferno_core_host_nodevice PUBLIC ninferno_core_host)
+
 add_library(ninferno_core STATIC
   arena.cu
   device.cu
