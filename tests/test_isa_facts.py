@@ -3,8 +3,8 @@
 (src/core/data/isa_probe/) and the probe's parser (#613 PR-2): the schema is pinned (every row
 Measured with its source file, every fact present with a positive value in its unit, the card and
 tool named, the levels in order), the table equals its regeneration from the inputs, every row is
-from the checked-in probe version, a probe output round-trips into a row, and odd or incomplete
-outputs are refused. No GPU, no CUDA toolkit."""
+from the checked-in probe (its version and the sha256 of its source), a probe output round-trips
+into a row, and odd or incomplete outputs are refused. No GPU, no CUDA toolkit."""
 
 import argparse
 import contextlib
@@ -21,6 +21,7 @@ spec = importlib.util.spec_from_file_location(
     "isa_probe", os.path.join(ROOT, "tools", "bench", "isa_probe", "isa_probe.py"))
 ip = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ip)
+SC = ip._sass_counts()
 
 
 def generation_bf16_rate(cc):
@@ -36,12 +37,17 @@ def generation_bf16_rate(cc):
             best = (minor, rate)
     return best[1] if best else None
 
-# A run in the checked-in probe's format (its version read from isa_probe.cu).
-SAMPLE = "probe " + ip.checked_in_probe() + """
+# A run in the checked-in probe's format (its version and source hash read from isa_probe.cu), as
+# `run` writes it: its own header lines, then the probe's output, then its notes.
+SAMPLE = "source_sha256 " + ip.source_sha256() + """
+arch sm_89
+sass_per_mma 1
+probe """ + ip.checked_in_probe() + """
 card NVIDIA GeForce RTX 4090
 cc 89
 sms 128
 l2_bytes 75497472
+mem_clock_khz 10501000
 driver 13040
 runtime 13040
 nvcc 13.4.92
@@ -66,9 +72,43 @@ fact int32_cycles_per_warp_instruction 2.01 clk
     "fact sm_clock_mhz_chase 2520.0 mhz\nfact sm_clock_mhz_chase_held 1890.0 mhz\n" + \
     "fact sm_clock_mhz_mma 1900.0 mhz\nfact shared_latency 29.5 clk\n" + \
     "".join(f"fact lat_{op} {v:.1f} clk\n" for op, v in (
-        ("imad", 4.5), ("iadd", 4.0), ("lop3", 4.2), ("prmt", 4.4), ("shf", 4.5), ("hfma2", 5.0),
-        ("ffma", 4.1), ("shfl", 24.0), ("cvt_i2f_f2i", 6.0), ("cvt_f32_f16", 5.5))) + \
-    "note the SM clock ranged 2400..2535 MHz over the L2 / DRAM chases\nselfcheck ok\nend\n"
+        ("imad", 4.5), ("add_chain", 4.0), ("lop3", 4.2), ("prmt", 4.4), ("shf", 4.5),
+        ("hfma2", 5.0), ("ffma", 4.1), ("shfl", 24.0), ("cvt_i2f", 4.5), ("cvt_f2i", 12.0),
+        ("cvt_f32_to_f16", 6.5), ("cvt_f16_to_f32", 4.5))) + \
+    "note the SM clock ranged 2400..2535 MHz over the L2 / DRAM chases\nselfcheck ok\nend\n" + \
+    "note compute processes on the probe's GPU after the run: 0\n"
+
+
+def earlier_run(version):
+    """SAMPLE as a run of an earlier probe `version` would read: without the facts and the header
+    lines later versions added."""
+    keep = []
+    for line in SAMPLE.splitlines():
+        word = line.split()[0]
+        if word == "fact" and ip.first_probe(line.split()[1]) > version:
+            continue
+        if ip.HEADER_SINCE.get(word, 0) > version:
+            continue
+        keep.append(line)
+    return "\n".join(keep).replace("probe " + ip.checked_in_probe(),
+                                   f"probe isa_probe {version}") + "\n"
+
+
+# The SASS of isa_probe_mma_unit as `cuobjdump -sass` prints it for sm_70 (nvcc 12.8): one
+# mma.sync.m8n8k4 is four HMMA.884 STEPs.
+SASS_70 = """
+\t\tFunction : _Z18isa_probe_mma_unitPfjj
+\t.headerflags\t@"EF_CUDA_SM70 EF_CUDA_VIRTUAL_SM(EF_CUDA_SM70)"
+        /*0000*/                   IMAD.MOV.U32 R1, RZ, RZ, c[0x0][0x28] ; /* 0x00000a00ff017624 */
+        /*0010*/              @!PT SHFL.IDX PT, RZ, RZ, RZ, RZ ;     /* 0x000000fffffff389 */
+        /*0100*/                   HMMA.884.F32.F32.STEP0 R4, R12.reuse.ROW, R14.reuse.COL, R4 ;
+        /*0110*/                   HMMA.884.F32.F32.STEP1 R6, R12.reuse.ROW, R14.reuse.COL, R6 ;
+        /*0140*/                   HMMA.884.F32.F32.STEP2 R8, R12.reuse.ROW, R14.reuse.COL, R8 ;
+        /*0170*/                   HMMA.884.F32.F32.STEP3 R10, R12.ROW, R14.COL, R10 ;
+        /*0200*/                   EXIT ;
+\t\tFunction : _Z11mma_latencyv
+        /*0000*/                   HMMA.884.F32.F32.STEP0 R4, R12.reuse.ROW, R14.reuse.COL, R4 ;
+"""
 
 
 class IsaFacts(unittest.TestCase):
@@ -81,7 +121,12 @@ class IsaFacts(unittest.TestCase):
         self.assertEqual((row["cc"], row["sms"], row["mma_shape"], row["mma_flops"]),
                          (89, 128, "hmma_16816_f32_bf16", 4096))
         self.assertEqual(row["tool"]["nvcc"], "13.4.92")
-        self.assertEqual(row["notes"], ["the SM clock ranged 2400..2535 MHz over the L2 / DRAM chases"])
+        self.assertEqual((row["tool"]["arch"], row["tool"]["source_sha256"]),
+                         ("sm_89", ip.source_sha256()))
+        self.assertEqual((row["sass_per_mma"], row["mem_clock_khz"]), (1, 10501000))
+        self.assertEqual(row["notes"],
+                         ["the SM clock ranged 2400..2535 MHz over the L2 / DRAM chases",
+                          "compute processes on the probe's GPU after the run: 0"])
         self.assertAlmostEqual(row["facts"]["dram_latency_w8"]["value"], 584.0)
         # The tensor rate is derived from the parser's flops table over the measured cycles, not
         # read from the probe: a Volta run that printed 512 for m8n8k4 (four 8x8x4 products a
@@ -90,7 +135,8 @@ class IsaFacts(unittest.TestCase):
                                round(4096 / 8.012, 3))
         volta = SAMPLE.replace("shape hmma_16816_f32_bf16 4096", "shape hmma_884_f32_f16 512") \
             .replace("cc 89", "cc 70").replace("fact mma_cycles_per_sm 8.012 clk",
-                                               "fact mma_cycles_per_sm 2.014 clk")
+                                               "fact mma_cycles_per_sm 2.014 clk") \
+            .replace("arch sm_89", "arch sm_70").replace("sass_per_mma 1", "sass_per_mma 4")
         head, facts = ip.parse_run(volta)
         row = ip.row_of(head, facts, "isa_probe_70.txt")
         self.assertEqual(row["mma_flops"], 2048)
@@ -106,11 +152,17 @@ class IsaFacts(unittest.TestCase):
                                                   "sm_clock_mhz_mma")],
                          ["clk", "ns", "mhz", "clk", "flop", "ns", "clk", "mhz", "mhz"])
         # What probes up to 13 printed as resident_ctas_per_sm was the launch's own CTA count, no
-        # fact of the card: read past, never in a row.
-        head, facts = ip.parse_run(SAMPLE.replace(
-            "fact mma_cycles_per_sm 8.012 clk\n",
-            "fact resident_ctas_per_sm 4.000 count\nfact mma_cycles_per_sm 8.012 clk\n"))
-        self.assertNotIn("resident_ctas_per_sm", ip.row_of(head, facts, "x")["facts"])
+        # fact of the card, and what probes up to 16 printed as lat_iadd, lat_cvt_i2f_f2i and
+        # lat_cvt_f32_f16 were not the facts their names say: read past in a run of those
+        # probes, never in a row, refused in a later probe's run.
+        for legacy, last in ip.LEGACY_FACTS.items():
+            line = f"fact {legacy} 4.000 {'count' if legacy.startswith('resident') else 'clk'}\n"
+            run = earlier_run(last)
+            head, facts = ip.parse_run(run + line)
+            self.assertNotIn(legacy, ip.row_of(head, facts, "x")["facts"])
+            with self.assertRaises(ValueError, msg=legacy) as e:
+                ip.parse_run(SAMPLE + line)
+            self.assertIn("no longer prints", str(e.exception))
 
     def test_refused_values_and_headers(self):
         # merge is where a saved run enters the table: a value that is no positive finite number,
@@ -154,6 +206,43 @@ class IsaFacts(unittest.TestCase):
             self.assertIn(said, str(e.exception), bad)
         self.assertEqual([ip.shape_of(cc) for cc in (70, 75, 80, 86, 89, 120)],
                          ["hmma_884_f32_f16", "hmma_1688_f32_f16"] + ["hmma_16816_f32_bf16"] * 4)
+        # From probe 17 a run owes the lines `run` writes (the source's hash, the build's -arch,
+        # the SASS MMAs per mma.sync) and the rated memory clock; each must be well formed, and a
+        # build for another architecture than the card's (sm_80 code on a cc 8.9 card, sm_120
+        # without the accelerated set on Blackwell) is refused.
+        for field in ip.HEADER_SINCE:
+            line = next(l for l in SAMPLE.splitlines() if l.startswith(field + " ")) + "\n"
+            with self.assertRaises(ValueError, msg=field) as e:
+                ip.parse_run(SAMPLE.replace(line, ""))
+            self.assertIn(f"no {field} line", str(e.exception))
+        for line, bad, said in (
+                ("arch sm_89\n", "arch sm_80\n", "built for sm_80, not sm_89"),
+                ("sass_per_mma 1\n", "sass_per_mma 0\n", "no positive count"),
+                ("sass_per_mma 1\n", "sass_per_mma four\n", "no positive count"),
+                ("mem_clock_khz 10501000\n", "mem_clock_khz -1\n", "no positive count"),
+                ("source_sha256 " + ip.source_sha256() + "\n", "source_sha256 abc\n",
+                 "odd source_sha256")):
+            with self.assertRaises(ValueError, msg=bad) as e:
+                ip.parse_run(SAMPLE.replace(line, bad))
+            self.assertIn(said, str(e.exception), bad)
+        blackwell = SAMPLE.replace("cc 89", "cc 120").replace("arch sm_89", "arch sm_120")
+        with self.assertRaises(ValueError) as e:
+            ip.parse_run(blackwell)
+        self.assertIn("built for sm_120, not sm_120a", str(e.exception))
+        ip.parse_run(blackwell.replace("arch sm_120", "arch sm_120a"))
+
+    def test_sass_per_mma(self):
+        # One mma.sync of the build is the MMAs of isa_probe_mma_unit, read with sass_counts'
+        # parser and shapes; on sm_70 four HMMA.884 STEPs, whose 8x8x4 products are the
+        # m8n8k4's 2048 flops, as `run` checks before it calls the output a row.
+        mmas = ip.sass_mma_unit(SASS_70)
+        self.assertEqual(len(mmas), 4)
+        self.assertEqual(sum(2 * m * n * k for _, (m, n, k) in mmas),
+                         ip.SHAPE_FLOPS["hmma_884_f32_f16"])
+        for bad in (SASS_70.replace("isa_probe_mma_unit", "other"),
+                    SASS_70.replace("HMMA.884", "FFMA.884")):
+            with self.assertRaises(ValueError):
+                ip.sass_mma_unit(bad)
 
     def test_merge_refuses_without_writing(self):
         # A run merge cannot parse leaves the inputs directory and the table as they were, and the
@@ -209,15 +298,33 @@ class IsaFacts(unittest.TestCase):
     def test_rows_come_from_the_checked_in_probe(self):
         # A row is evidence for the probe that produced it. When the probe changes what it times
         # (which CTAs count, what a link is, which lines a chase reads), the rows of the earlier
-        # version no longer say what the checked-in method measures: rerun the probe on that
-        # architecture's card and merge. This fails until every row is from the checked-in probe.
+        # source no longer say what the checked-in method measures: rerun the probe on that
+        # architecture's card and merge. A row is from the checked-in probe when its version and
+        # the sha256 of the source it was built from (written by `run`) are the checked-in
+        # file's: a change of the .cu without a version bump makes every row stale too. This
+        # fails until every row is from the checked-in source, naming each stale row and the
+        # commands that re-take it.
         with open(ip.DEFAULT_TABLE) as f:
             table = json.load(f)
-        now = ip.checked_in_probe()
-        stale = {key: row["tool"]["probe"] for key, row in table["arches"].items()
-                 if row["tool"]["probe"] != now}
-        self.assertEqual(stale, {}, f"rows not measured by the checked-in probe ({now}): rerun "
-                                    "`isa_probe.py run` on a card of each and `merge` the output")
+        now, sha = ip.checked_in_probe(), ip.source_sha256()
+        stale = []
+        for key, row in table["arches"].items():
+            probe, theirs = row["tool"]["probe"], row["tool"].get("source_sha256")
+            if probe == now and theirs == sha:
+                continue
+            why = (f"{probe}, " if probe != now else "") + \
+                (f"source {theirs[:12]}" if theirs else "no source hash")
+            nvcc = "<the nvcc of CUDA 12.8>" if key == "70" else "<nvcc>"
+            stale.append(
+                f"  sm_{key} ({row['card']}; {why}): on an otherwise idle {row['card']}, run "
+                f"n = 1, 2, 3 and merge the first:\n"
+                f"    python3 tools/bench/isa_probe/isa_probe.py run --arch {key} --nvcc {nvcc} "
+                f"--out isa_probe_{key}_<n>.txt\n"
+                f"    python3 tools/bench/isa_probe/isa_probe.py merge --input "
+                f"isa_probe_{key}_1.txt")
+        if stale:
+            self.fail(f"rows not measured by the checked-in probe ({now}, isa_probe.cu sha256 "
+                      f"{sha[:12]}); re-take each:\n" + "\n".join(stale))
 
     def test_refusals(self):
         with self.assertRaises(ValueError):
@@ -250,11 +357,9 @@ class IsaFacts(unittest.TestCase):
             ip.parse_run(SAMPLE.replace(held, ""))
         self.assertIn("dram_held_latency_ns_w4", str(e.exception))
         for version in sorted({ip.first_probe(f) for f in ip.FACTS} - {0}):
-            earlier = "".join(
-                line + "\n" for line in SAMPLE.splitlines()
-                if not (line.startswith("fact ") and ip.first_probe(line.split()[1]) >= version))
-            earlier = earlier.replace("probe " + now, f"probe isa_probe {version - 1}")
-            head, facts = ip.parse_run(earlier)
+            # Without the facts and the header lines of `version` and later (a probe-16 run has
+            # no source hash, -arch, sass_per_mma or memory clock).
+            head, facts = ip.parse_run(earlier_run(version - 1))
             self.assertEqual(set(facts),
                              {f for f in ip.FACTS if ip.first_probe(f) < version}, version)
             # The same run with one fact of the next version is not that version's output.
@@ -311,6 +416,18 @@ class IsaFacts(unittest.TestCase):
                 self.assertGreater(row[field], 0, f"{key} {field}")
             for field in ("driver", "runtime"):
                 self.assertTrue(row["tool"][field].isdigit(), f"{key} tool {field}")
+            # From probe 17: the build's -arch is the row's architecture, the source hash is
+            # recorded, the rated memory clock is there, and the SASS MMAs of one mma.sync are
+            # the shape's flops by sass_counts' table (the unit the kernel facts count MMAs in):
+            # the row's MMA cycles over sass_per_mma are the price of one counted SASS MMA.
+            if probe >= 17:
+                self.assertEqual(row["tool"]["arch"], f"sm_{key}", key)
+                self.assertRegex(row["tool"]["source_sha256"], ip.SHA256, key)
+                self.assertGreater(row["mem_clock_khz"], 0, key)
+                token = row["mma_shape"].split("_")[1]
+                m, n, k = SC.MMA_SHAPES[token]
+                self.assertEqual(row["sass_per_mma"] * 2 * m * n * k, row["mma_flops"],
+                                 f"{key}: {row['sass_per_mma']} SASS {token} MMAs per mma.sync")
             # The measured tensor rate against the generation row's bf16 rate (core/generation.h)
             # where both are the same operation: the native BF16 m16n8k16 with FP32 accumulate,
             # cc 80 and up. Before that the row is a fitted aggregate of an emulated path (Volta's

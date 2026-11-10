@@ -57,7 +57,12 @@ TARGET = re.compile(r"0x([0-9a-f]+)\s*$")
 REGISTER = re.compile(r"^(U?R)(\d+)")
 
 MMA_OPCODES = ("HMMA", "IMMA", "QMMA", "OMMA", "DMMA", "BMMA")
-# m, n, k of an MMA shape as the opcode spells it (HMMA.16816.F32.BF16 is m16n8k16).
+# m, n, k of an MMA shape as the opcode spells it (HMMA.16816.F32.BF16 is m16n8k16). One SASS
+# instruction each: on sm_70 ptxas lowers one PTX mma.sync.m8n8k4 (four 8x8x4 products) to four
+# HMMA.884 STEPs, so each STEP counts once as an 8x8x4 product, and the `mma` count of a Volta loop
+# is four per mma.sync. The ISA facts' MMA cycles are per mma.sync (src/core/data/isa_facts.json);
+# a price of this count divides them by the row's `sass_per_mma`, which isa_probe.py run reads
+# from this table and checks against the shape's flops.
 MMA_SHAPES = {
     "16816": (16, 8, 16),
     "1688": (16, 8, 8),

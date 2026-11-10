@@ -8,7 +8,10 @@ facts table (src/core/data/isa_facts.json), one row per architecture, provenance
     isa_probe.py show       [--table ...]
 
 `run` compiles tools/bench/isa_probe/isa_probe.cu for sm_<arch> into a temporary directory, runs it
-(10 to 20 s, the GPU otherwise idle) and saves its output; `merge` copies that output into the
+(10 to 20 s, the GPU otherwise idle) and saves its output, headed by the source's sha256, the
+build's -arch and the SASS MMA instructions of one mma.sync in the build (cuobjdump), and followed
+by notes of the compute processes on the probe's GPU before and after and of the clocks
+nvidia-smi saw during the run; `merge` copies that output into the
 committed inputs directory as isa_probe_<arch>.txt (replacing an older run of the same
 architecture) and regenerates the table from every file there; `regenerate` alone rebuilds the
 table from the inputs. Adding an architecture is one file plus a regenerate. A row records its
@@ -17,10 +20,13 @@ row. No fact is reasoned here: the table holds what the card said.
 """
 
 import argparse
+import hashlib
+import importlib.util
 import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -32,11 +38,22 @@ DEFAULT_INPUTS = os.path.join(ROOT, "src", "core", "data", "isa_probe")
 SCHEMA = 1
 # Every fact a run reports, in SM clocks unless the unit says otherwise (test_isa_facts pins it).
 FACTS = (
+    # The tensor pipe, per PTX mma.sync of the row's mma_shape (one warp instruction of the PTX):
+    # on sm_70 one mma.sync.m8n8k4 is four SASS HMMA.884 STEPs, elsewhere one HMMA, as the row's
+    # sass_per_mma says (read from the build's SASS by `run`). A price per SASS MMA is these
+    # cycles over sass_per_mma; tensor_flops_per_sm_clock is the same in either unit.
     "mma_cycles_per_sm", "mma_cycles_per_partition", "tensor_flops_per_sm_clock",
     # The same tensor loop with one CTA of 4, 8, 16 warps on the SM (1, 2, 4 warps a scheduler
     # when the SM spreads them evenly, which the probe does not see).
     "mma_cycles_per_sm_w4", "mma_cycles_per_sm_w8", "mma_cycles_per_sm_w16",
-    "mma_dependent_latency", "fp32_cycles_per_warp_instruction",
+    # The period of a chain of mma.sync through the accumulators (on sm_70: of a group of four
+    # STEPs, each chaining to the same STEP of the next mma.sync, not one HMMA's latency).
+    "mma_dependent_latency",
+    # FP32: the span holds the loop's own instructions (counter, compare, branch: 3 to 5 to 256
+    # FFMAs from probe 17), which on sm_86 and later share a datapath with half the FP32 lanes:
+    # the figure is the floor (1 clk from Ampere on, 2 before) plus that loop overhead, not taken
+    # out.
+    "fp32_cycles_per_warp_instruction",
     "int32_cycles_per_warp_instruction", "l1_latency_w1", "l1_latency_w2", "l1_latency_w4",
     "l1_latency_w8", "l2_latency_w1", "l2_latency_w2", "l2_latency_w4", "l2_latency_w8",
     "dram_latency_w1", "dram_latency_w2", "dram_latency_w4", "dram_latency_w8",
@@ -49,11 +66,15 @@ FACTS = (
     "dram_tlbwarm_latency_w1", "dram_tlbwarm_latency_w2", "dram_tlbwarm_latency_w4",
     "dram_tlbwarm_latency_w8", "dram_tlbwarm_latency_ns_w1", "dram_tlbwarm_latency_ns_w2",
     "dram_tlbwarm_latency_ns_w4", "dram_tlbwarm_latency_ns_w8",
+    # shared_latency: a link is a bare LDS R, [R] on every architecture from probe 17 (up to 16 a
+    # node held an index, which sm_70 scaled with a shift before every LDS).
     "sm_clock_mhz_chase", "shared_latency",
-    # Dependent (issue-to-use) latencies of the decode chains' ops, one warp a chain; the
-    # conversion pairs per op.
-    "lat_imad", "lat_iadd", "lat_lop3", "lat_prmt", "lat_shf", "lat_hfma2", "lat_ffma", "lat_shfl",
-    "lat_cvt_i2f_f2i", "lat_cvt_f32_f16",
+    # Dependent (issue-to-use) latencies of the decode chains' ops, one warp a chain, one op a
+    # link. lat_add_chain is the add ptxas makes of a dependent doubling: IADD3 and IMAD.IADD
+    # alternating (the mean of the two) up to sm_89, IADD on sm_120a. The four conversions each
+    # alone (probe 17): int -> float, float -> int, f32 -> f16, f16 -> f32.
+    "lat_imad", "lat_add_chain", "lat_lop3", "lat_prmt", "lat_shf", "lat_hfma2", "lat_ffma",
+    "lat_shfl", "lat_cvt_i2f", "lat_cvt_f2i", "lat_cvt_f32_to_f16", "lat_cvt_f16_to_f32",
     # The SM clock under the tensor loop, once it has settled (clock64 over %globaltimer).
     "sm_clock_mhz_mma",
 )
@@ -73,12 +94,20 @@ FACTS += tuple(f"{lv}_held_latency_ns_w{w}" for lv in _BEYOND_L1 for w in _WARPS
 FACTS += ("sm_clock_mhz_chase_held",)
 
 
+# The facts probe 17 split or renamed: the four conversions alone (until then two pairs, each the
+# mean of two ops on different pipes) and the add chain under a name that is not IADD's.
+PROBE_17_FACTS = frozenset({"lat_add_chain", "lat_cvt_i2f", "lat_cvt_f2i", "lat_cvt_f32_to_f16",
+                            "lat_cvt_f16_to_f32"})
+
+
 def first_probe(name):
     """The probe version that first printed a fact (0: every version a row may come from). A run
     of probe N carries every fact of the versions up to N and none of a later one, so a row of an
     earlier probe still parses and a run that lost a fact of its own version does not. An earlier
     row is stale all the same: test_isa_facts fails while a row's probe is not the checked-in
     one."""
+    if name in PROBE_17_FACTS:
+        return 17
     if name.startswith("dram_lanes_half"):
         return 16
     if "_held" in name or name.startswith("dram_lanes") or name == "sm_clock_mhz_mma":
@@ -90,9 +119,13 @@ def first_probe(name):
     return 0
 
 
-# Facts earlier probes printed that are no facts of the card: read past, never in a row.
-# resident_ctas_per_sm (probes up to 13) was the launch's own CTA count per SM.
-LEGACY_FACTS = frozenset({"resident_ctas_per_sm"})
+# Facts earlier probes printed that are not facts of the card under their name, with the last
+# probe that printed each: read past in a run of that probe or an earlier one, never in a row,
+# refused in a later run. resident_ctas_per_sm (up to 13) was the launch's own CTA count per SM;
+# lat_iadd (up to 16) is the add chain, not IADD alone (lat_add_chain); lat_cvt_i2f_f2i and
+# lat_cvt_f32_f16 (up to 16) were each the mean of two conversions on different pipes.
+LEGACY_FACTS = {"resident_ctas_per_sm": 13, "lat_iadd": 16, "lat_cvt_i2f_f2i": 16,
+                "lat_cvt_f32_f16": 16}
 UNITS = {"tensor_flops_per_sm_clock": "flop"}
 
 
@@ -105,27 +138,43 @@ def unit_of(name):
 
 
 HEADER = ("probe", "card", "cc", "sms", "l2_bytes", "driver", "runtime", "nvcc", "shape")
+# Header fields from a probe version on, with that version: `mem_clock_khz` the probe prints (the
+# memory clock the card is rated at); `source_sha256` (of the isa_probe.cu the run built), `arch`
+# (the -arch it was built for) and `sass_per_mma` (SASS MMA instructions of one mma.sync in that
+# build) are written by `run` before the probe's output.
+HEADER_SINCE = {"mem_clock_khz": 17, "source_sha256": 17, "arch": 17, "sass_per_mma": 17}
 # Header fields that are positive integers.
-HEADER_COUNTS = ("cc", "sms", "l2_bytes", "driver", "runtime")
+HEADER_COUNTS = ("cc", "sms", "l2_bytes", "driver", "runtime", "mem_clock_khz", "sass_per_mma")
 PROBE_VALUE = re.compile(r"isa_probe (\d+)")
 PROBE_LINE = re.compile(r'printf\("probe (isa_probe \d+)\\n"\)')
+SHA256 = re.compile(r"[0-9a-f]{64}")
+SOURCE = os.path.join(HERE, "isa_probe.cu")
 
 
 def checked_in_probe():
     """The `probe` header value the checked-in isa_probe.cu prints (`isa_probe <version>`)."""
-    with open(os.path.join(HERE, "isa_probe.cu")) as f:
+    with open(SOURCE) as f:
         m = PROBE_LINE.search(f.read())
     if not m:
         raise ValueError("isa_probe.cu prints no probe version")
     return m.group(1)
 
 
+def source_sha256(path=SOURCE):
+    """The sha256 of a probe source as `run` records it: of its bytes with CRLF read as LF, so a
+    checkout's line endings do not change it."""
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read().replace(b"\r\n", b"\n")).hexdigest()
+
+
 def parse_run(text):
     """The header fields and the facts of one isa_probe output; ValueError when a line is odd, a
     fact of the run's probe version is missing, a fact is unknown, of a later version, given
-    twice, not a positive finite number or in another unit than its own, or a header field is
-    missing or no count."""
+    twice, not a positive finite number or in another unit than its own, a fact the version no
+    longer prints is there, a header field the version owes is missing or no count, the source
+    hash is no sha256, or the build's -arch is not the card's architecture."""
     head, facts, ended, failures, checked = {}, {}, False, [], False
+    legacy = []
     for line in text.splitlines():
         parts = line.split()
         if not parts:
@@ -135,6 +184,7 @@ def parse_run(text):
                 raise ValueError(f"odd fact line: {line!r}")
             name = parts[1]
             if name in LEGACY_FACTS:
+                legacy.append(name)
                 continue
             if name not in FACTS:
                 raise ValueError(f"unknown fact: {line!r}")
@@ -158,7 +208,7 @@ def parse_run(text):
         elif parts[0] == "note":
             # Information the probe adds (the SM clock's range over the chases): kept, not a fact.
             head.setdefault("notes", []).append(" ".join(parts[1:]))
-        elif parts[0] in HEADER:
+        elif parts[0] in HEADER or parts[0] in HEADER_SINCE:
             if parts[0] in head:
                 raise ValueError(f"{parts[0]} line given twice")
             head[parts[0]] = " ".join(parts[1:])
@@ -172,7 +222,7 @@ def parse_run(text):
         raise ValueError(f"incomplete run: missing {missing}, ended={ended}, selfcheck={checked}")
     if failures:
         raise ValueError("the probe's self-check failed: " + "; ".join(failures))
-    for k in HEADER:
+    for k in HEADER + tuple(k for k, since in HEADER_SINCE.items() if since <= owed):
         if not head.get(k):
             raise ValueError(f"no {k} line")
     if not version:
@@ -180,9 +230,14 @@ def parse_run(text):
     early = [f for f in facts if first_probe(f) > owed]
     if early:
         raise ValueError(f"facts of a later probe than {head['probe']}: {early}")
+    late = [f for f in legacy if LEGACY_FACTS[f] < owed]
+    if late:
+        raise ValueError(f"facts {head['probe']} no longer prints: {late}")
     for k in HEADER_COUNTS:
-        if not (head[k].isdigit() and int(head[k]) > 0):
+        if k in head and not (head[k].isdigit() and int(head[k]) > 0):
             raise ValueError(f"{k} is no positive count: {head[k]!r}")
+    if "source_sha256" in head and not SHA256.fullmatch(head["source_sha256"]):
+        raise ValueError(f"odd source_sha256 line: {head['source_sha256']!r}")
     shape = head["shape"].split()
     if len(shape) != 2 or not shape[1].isdigit():
         raise ValueError(f"odd shape line: {head['shape']!r}")
@@ -191,6 +246,13 @@ def parse_run(text):
     if shape[0] != shape_of(int(head["cc"])):
         raise ValueError(f"shape {shape[0]} is not the one of cc {head['cc']} "
                          f"({shape_of(int(head['cc']))})")
+    # The build's architecture is the card's own: a cubin of an earlier minor (sm_80 on a cc 8.6
+    # card) or Blackwell without its accelerated set (sm_120 for sm_120a) runs, but is not the
+    # code the row's facts claim to be of.
+    if "arch" in head:
+        own = "sm_" + arch_key(int(head["cc"]), head["shape"])
+        if head["arch"] != own:
+            raise ValueError(f"built for {head['arch']}, not {own} (cc {head['cc']})")
     return head, facts
 
 
@@ -218,7 +280,7 @@ def row_of(head, facts, source):
     facts = dict(facts)
     facts["tensor_flops_per_sm_clock"] = {
         "value": round(flops / facts["mma_cycles_per_sm"]["value"], 3), "unit": "flop"}
-    return {
+    row = {
         "provenance": "Measured",
         "source": source,
         "card": head["card"],
@@ -227,20 +289,34 @@ def row_of(head, facts, source):
         "l2_bytes": int(head["l2_bytes"]),
         "mma_shape": shape,
         "mma_flops": flops,
-        "tool": {"probe": head["probe"], "nvcc": head["nvcc"], "driver": head["driver"],
-                 "runtime": head["runtime"]},
-        "notes": head.get("notes", []),
-        "facts": {name: facts[name] for name in FACTS if name in facts},
     }
+    # From probe 17: SASS MMA instructions per mma.sync of mma_shape in the run's build (the unit
+    # of the MMA facts is the mma.sync), and the memory clock the card is rated at.
+    for k in ("sass_per_mma", "mem_clock_khz"):
+        if k in head:
+            row[k] = int(head[k])
+    row["tool"] = {"probe": head["probe"], "nvcc": head["nvcc"], "driver": head["driver"],
+                   "runtime": head["runtime"]}
+    for k in ("arch", "source_sha256"):
+        if k in head:
+            row["tool"][k] = head[k]
+    row["notes"] = head.get("notes", [])
+    row["facts"] = {name: facts[name] for name in FACTS if name in facts}
+    return row
 
 
 NOTE = ("ISA facts per architecture, regenerated by `tools/bench/isa_probe/isa_probe.py "
         "regenerate` from the committed probe outputs in src/core/data/isa_probe/ (one "
         "isa_probe_<arch>.txt per architecture, written by `isa_probe.py run` on one card of it; "
         "never edited by hand). In SM clocks unless the unit says otherwise: tensor pipe cycles "
-        "per MMA at the SM and per partition (and with one CTA of 4, 8, 16 warps on the SM), the "
-        "dependent MMA latency, INT32 / FP32 cycles per warp instruction, the dependent latencies "
-        "of the decode chains' ALU ops, dependent L1 / L2 / DRAM load latencies alone and under 2, "
+        "per MMA at the SM and per partition (and with one CTA of 4, 8, 16 warps on the SM) and "
+        "the dependent MMA latency, all per PTX mma.sync of the row's mma_shape (on sm_70 one "
+        "mma.sync.m8n8k4 is four SASS HMMA.884 STEPs, elsewhere one HMMA: the row's sass_per_mma, "
+        "read from the build's SASS, from probe 17), INT32 / FP32 cycles per warp instruction "
+        "(the FP32 figure with the loop's counter, compare and branch in it), the dependent "
+        "latencies of the decode chains' ALU ops (lat_add_chain the add ptxas makes of a doubling, "
+        "IADD3 and IMAD.IADD alternating up to sm_89; each conversion alone from probe 17), "
+        "dependent L1 / L2 / DRAM load latencies alone and under 2, "
         "4, 8 chasing warps per SM (the L2 and DRAM ones in wall ns too, with the SM clock of the "
         "chase; DRAM in a small range per warp, over the whole buffer, and with all 32 lanes of a "
         "warp chasing, on every SM and on half of them), shared-memory latency. The load "
@@ -248,11 +324,17 @@ NOTE = ("ISA facts per architecture, regenerated by `tools/bench/isa_probe/isa_p
         "runs nothing else, and beside one warp of FFMAs on every SM (`_held`), where the SM "
         "clock is the working one (sm_clock_mhz_chase_held; sm_clock_mhz_mma under the tensor "
         "loop). "
-        "Every row names its source file, the card, the probe version, nvcc, driver and runtime; "
-        "provenance is Measured for all. A row is what its own probe version measured: up to probe "
-        "13 a link of the L1 / L2 / DRAM chains carried the chain's index-to-address ops beside "
-        "the load. tests/test_isa_facts.py pins the schema, that the table equals its "
-        "regeneration, and that every row comes from the checked-in probe.")
+        "The DRAM ns figures step with the ~1 us %globaltimer over 512 (one lane) or 256 (32 "
+        "lanes) links: about 2 and 4 ns. "
+        "Every row names its source file, the card, the probe version, nvcc, driver and runtime, "
+        "and from probe 17 the sha256 of the isa_probe.cu it was built from, the build's -arch, "
+        "the memory clock the card is rated at and, in its notes, the compute processes on its "
+        "GPU before and after the run and the clocks nvidia-smi saw during it; provenance is "
+        "Measured for all. A row is what its own probe version measured: up to probe 13 a link of "
+        "the L1 / L2 / DRAM chains carried the chain's index-to-address ops beside the load, up "
+        "to probe 16 the sm_70 shared link a shift beside the LDS. tests/test_isa_facts.py pins "
+        "the schema, that the table equals its regeneration, and that every row comes from the "
+        "checked-in probe source.")
 
 
 def build_table(inputs_dir):
@@ -287,18 +369,132 @@ def save_table(path, table):
         f.write("\n")
 
 
+def _sass_counts():
+    """tools/kernel_facts/sass_counts.py, the SASS reader the kernel facts count MMAs with."""
+    path = os.path.join(ROOT, "tools", "kernel_facts", "sass_counts.py")
+    spec = importlib.util.spec_from_file_location("sass_counts", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+MMA_UNIT = "isa_probe_mma_unit"
+
+
+def sass_mma_unit(sass):
+    """[(opcode, (m, n, k) or None)] of the MMA instructions of isa_probe_mma_unit (one mma.sync of
+    the build's shape and nothing else of the tensor pipe) in `cuobjdump -sass` text, read with
+    sass_counts' own parser and shape table; ValueError without that kernel or an MMA in it."""
+    sc = _sass_counts()
+    bodies = [body for name, body in sc.iter_functions(sass.splitlines(), lambda n: MMA_UNIT in n)]
+    if len(bodies) != 1:
+        raise ValueError(f"{len(bodies)} {MMA_UNIT} kernels in the build's SASS")
+    mmas = [(op, sc.mma_shape(op)) for _, _, op, _ in bodies[0]
+            if sc.base_opcode(op) in sc.MMA_OPCODES]
+    if not mmas:
+        raise ValueError(f"no MMA in {MMA_UNIT}")
+    return mmas
+
+
+def _bus(text):
+    """A PCI bus id as CUDA (0000:01:00.0) and nvidia-smi (00000000:01:00.0) spell it, alike."""
+    parts = text.strip().lower().split(":")
+    if len(parts) != 3:
+        return text.strip().lower()
+    return f"{int(parts[0], 16):x}:{parts[1]}:{parts[2]}"
+
+
+def _smi(args):
+    """nvidia-smi's CSV lines (no header, no units), or the reason there are none."""
+    try:
+        r = subprocess.run(["nvidia-smi"] + args + ["--format=csv,noheader,nounits"],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as e:
+        return None, f"nvidia-smi failed: {type(e).__name__}"
+    if r.returncode != 0:
+        return None, f"nvidia-smi exited {r.returncode}"
+    return [[f.strip() for f in line.split(",")] for line in r.stdout.splitlines()
+            if line.strip()], None
+
+
+def _compute_apps():
+    return _smi(["--query-compute-apps=gpu_bus_id,pid"])
+
+
+def _apps_note(when, apps, bus):
+    """The note line of the compute processes on the probe's GPU (pids only: a process's name may
+    be a path of the machine it ran on)."""
+    rows, why = apps
+    if rows is None:
+        return f"note compute processes on the GPU {when} the run: not read ({why})"
+    mine = [r for r in rows if bus is None or _bus(r[0]) == bus]
+    where = "the probe's GPU" if bus is not None else "any GPU (the probe's not known)"
+    pids = ", ".join(r[1] for r in mine if len(r) > 1)
+    return f"note compute processes on {where} {when} the run: {len(mine)}" + \
+        (f" (pid {pids})" if mine else "")
+
+
 def cmd_run(a):
     arch = a.arch
+    src = SOURCE
+    # Lines `run` adds before the probe's output: which source the build was of, its -arch, and
+    # how many SASS MMA instructions one mma.sync is in it (the unit of the MMA facts).
+    head = [f"source_sha256 {source_sha256(src)}", f"arch sm_{arch}"]
     with tempfile.TemporaryDirectory() as tmp:
-        exe = os.path.join(tmp, "isa_probe")
-        src = os.path.join(HERE, "isa_probe.cu")
+        exe = os.path.join(tmp, "isa_probe.exe" if os.name == "nt" else "isa_probe")
         cmd = [a.nvcc, "-O3", "-std=c++17", f"-arch=sm_{arch}", "-o", exe, src]
         print("+", " ".join(cmd), file=sys.stderr)
         subprocess.run(cmd, check=True)
+        cuobjdump = a.cuobjdump
+        if cuobjdump is None:
+            # Beside the nvcc of the build where the toolkit has one, else from PATH.
+            nvcc = shutil.which(a.nvcc) or a.nvcc
+            near = os.path.join(os.path.dirname(nvcc), "cuobjdump" + (".exe" if os.name == "nt"
+                                                                     else ""))
+            cuobjdump = near if os.path.exists(near) else "cuobjdump"
+        sass = subprocess.run([cuobjdump, "-sass", exe], stdout=subprocess.PIPE, text=True,
+                              check=True).stdout
+        try:
+            mmas = sass_mma_unit(sass)
+        except ValueError as e:
+            print(f"isa_probe: {e}; no run", file=sys.stderr)
+            return 3
+        head.append(f"sass_per_mma {len(mmas)}")
+        before = _compute_apps()
+        # The clocks nvidia-smi sees while the probe runs (the memory clock is the P-state's,
+        # which the device API does not give), every 200 ms.
+        try:
+            sampler = subprocess.Popen(
+                ["nvidia-smi", "--query-gpu=pci.bus_id,pstate,clocks.sm,clocks.mem",
+                 "--format=csv,noheader,nounits", "-lms", "200"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        except OSError:
+            sampler = None
         # The probe's stderr (CUDA errors) passes through; its stdout is kept whole, so a failed
         # or refused run still shows what it measured before stopping.
         run = subprocess.run([exe], stdout=subprocess.PIPE, text=True)
-        out = run.stdout
+        samples = []
+        if sampler is not None:
+            sampler.terminate()
+            out_s, _ = sampler.communicate()
+            samples = [[f.strip() for f in line.split(",")] for line in out_s.splitlines()
+                       if line.count(",") == 3]
+        after = _compute_apps()
+    m = re.search(r"^note device 0 is the GPU at PCI (\S+)$", run.stdout, re.M)
+    bus = _bus(m.group(1)) if m else None
+    tail = [_apps_note("before", before, bus), _apps_note("after", after, bus)]
+    mine = [s for s in samples if bus is not None and _bus(s[0]) == bus]
+    if mine:
+        def span(col):
+            vals = sorted(int(s[col]) for s in mine if s[col].isdigit())
+            return f"{vals[0]}..{vals[-1]}" if vals else "not read"
+        tail.append(f"note nvidia-smi over the run ({len(mine)} samples): memory clock "
+                    f"{span(3)} MHz, SM clock {span(2)} MHz, P-state "
+                    f"{'/'.join(sorted({s[1] for s in mine}))}")
+    else:
+        tail.append("note nvidia-smi over the run: no clock sample of the probe's GPU")
+    body = run.stdout if run.stdout.endswith("\n") or not run.stdout else run.stdout + "\n"
+    out = "\n".join(head) + "\n" + body + "\n".join(tail) + "\n"
     path = a.out or f"isa_probe_{arch}.txt"
     with open(path, "w", newline="\n") as f:
         f.write(out)
@@ -308,9 +504,26 @@ def cmd_run(a):
               "to merge", file=sys.stderr)
         return run.returncode
     try:
-        parse_run(out)
+        parsed, _ = parse_run(out)
     except ValueError as e:
         print(f"isa_probe: {e}; {path} is not a row to merge", file=sys.stderr)
+        return 3
+    # Another compute process on the probe's GPU before or after the run (a time-sliced GPU
+    # stretches every clock64 span while the clock reads right): no row.
+    busy = [n for n in tail if n.startswith("note compute processes on the probe's GPU")
+            and not n.split(": ")[-1].startswith("0")]
+    if busy:
+        print(f"isa_probe: {'; '.join(n[5:] for n in busy)}; {path} is not a row to merge",
+              file=sys.stderr)
+        return 3
+    # The SASS MMAs of one mma.sync are its flops, by sass_counts' shape table: so a count of SASS
+    # MMAs priced at these facts over sass_per_mma is the same work.
+    shape = parsed["shape"].split()[0]
+    if any(s is None for _, s in mmas) or \
+            sum(2 * s[0] * s[1] * s[2] for _, s in mmas) != SHAPE_FLOPS[shape]:
+        print(f"isa_probe: the SASS of one {shape} ({', '.join(op for op, _ in mmas)}) is not its "
+              f"{SHAPE_FLOPS[shape]} flops by sass_counts' shapes; {path} is not a row to merge",
+              file=sys.stderr)
         return 3
     print(f"isa_probe: wrote {path}")
     return 0
@@ -391,6 +604,7 @@ def main():
     r = sub.add_parser("run")
     r.add_argument("--arch", required=True, help="sm_<arch> to compile for (70, 75, 86, 89, 120a)")
     r.add_argument("--nvcc", default="nvcc")
+    r.add_argument("--cuobjdump", help="default: the one beside --nvcc, else from PATH")
     r.add_argument("--out")
     r.set_defaults(fn=cmd_run)
     m = sub.add_parser("merge")

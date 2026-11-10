@@ -26,7 +26,10 @@
 // warp's lane 0 follows a dependent chain (acc = mma(acc) / p = *p / idx = s[idx]); a link of a
 // load chain is the load alone: a global node holds the address of the next (probe 14; the rows
 // of earlier probes carry the index-to-address ops of their chain in every l1 / l2 / DRAM link),
-// and the shared chain's index is the load's own scaled operand. Loaded latency: W warps per SM
+// and a shared node holds the shared-window address of the next, so a shared link is a bare
+// `LDS R, [R]` on every architecture (probe 17; until then the node held an index, which sm_75 and
+// sm_86 scale inside the load, `[R.X4]`, but sm_70 scales with a shift before every LDS, so the
+// sm_70 figure of probes up to 16 is LDS plus a shift). Loaded latency: W warps per SM
 // each chase a pseudo-random cycle of their own (the L2 and DRAM loads bypass the L1), each warp
 // timing its own links; on the DRAM levels a link is a 128-byte line of its own (four 32-byte
 // sectors) that no other link of the chip shares, whoever chases it (probe 14). A latency launch
@@ -76,7 +79,10 @@ constexpr int kThroughputN  = 4096; // iterations of the throughput loops
 constexpr int kUnroll       = 8;    // independent streams per thread
 constexpr int kLatencyLinks = 4096; // links of a dependent chain
 // Links of a DRAM chase, warm-up and timed alike on both DRAM levels: about 150 us of wall time
-// a chase, against a %globaltimer that steps by about 1 us.
+// a chase, against a %globaltimer that steps by about 1 us. The ns facts carry that step: a
+// one-lane DRAM figure is a whole number of 1 us steps over 512 links (the probe-16 rows read in
+// steps of about 2 ns), a dram_lanes figure over 256 links (about 4 ns), well inside the 3 % and
+// 5 % margins of the checks below.
 constexpr int kDramLinks = 512;
 // The 32-lane DRAM chase: a lane's segment of the 2^24-line cycle is 2^24 / (SMs x 256) positions
 // (385 on a 170-SM card), which holds these.
@@ -159,8 +165,28 @@ struct Shape {
 // Flops per warp instruction: 2 x m x n x k, and on Volta four of them, since one
 // mma.sync.m8n8k4 performs four independent 8x8x4 products, one per quad pair (PTX ISA, "the
 // warp performs four matrix multiply-accumulates"): 4 x 2 x 8 x 8 x 4 = 2048.
+// The MMA facts (cycles per MMA, the dependent latency) are per PTX mma.sync of this shape. ptxas
+// lowers one mma.sync.m8n8k4 on sm_70 to four SASS instructions (HMMA.884.F32.F32.STEP0..3, one
+// per 8x8x4 product), and one mma.sync elsewhere to one HMMA: how many SASS MMAs one mma.sync is
+// on the build is read from its SASS by `isa_probe.py run` (mma_unit below) and kept on the row
+// as `sass_per_mma`, so a price per SASS MMA is the fact over that count.
 constexpr Shape kShapes[] = {
     {"hmma_884_f32_f16", 2048}, {"hmma_1688_f32_f16", 2048}, {"hmma_16816_f32_bf16", 4096}};
+
+} // namespace
+
+// Exactly one mma.sync of the shape and nothing else of the tensor pipe: never launched, built only
+// so that `isa_probe.py run` can count the SASS MMA instructions of one mma.sync in this kernel
+// (cuobjdump -sass), whatever the unrolling of the timed loops. Outside the anonymous namespace:
+// a kernel of external linkage is kept in the cubin although nothing launches it.
+__global__ void isa_probe_mma_unit(float* out, unsigned a, unsigned b) {
+    float acc[kAcc];
+    for (int e = 0; e < kAcc; ++e) acc[e] = out[e];
+    mma_once(acc, a, a, a, a, b, b);
+    for (int e = 0; e < kAcc; ++e) out[e] = acc[e];
+}
+
+namespace {
 
 __global__ void mma_throughput(Span* spans, float* sink, unsigned a, unsigned b) {
     float acc[kUnroll][kAcc];
@@ -221,11 +247,18 @@ __global__ void spinner(volatile int* sm_of_cta, long long deadline_ns, float* s
 }
 
 // ---- INT32 and FP32 pipes ----
+// The span holds the loop's own instructions beside the FFMAs: counter, compare, branch, and on
+// sm_86 / sm_89 a reload of the multiplier and a predicated exit call, 3 to 5 per iteration in the
+// SASS of nvcc 12.8 / 13.2. Probe 17 unrolls the loop 32 times, 256 FFMAs an iteration against 128
+// before, when the sm_86 / sm_120a figure sat about 5 % above the one-clock floor of 32 FP32
+// lanes (the INT ops share a datapath with half of those lanes there). What is left of the loop
+// is in the fact, not taken out.
 __global__ void fp32_throughput(Span* spans, float* sink, float m, float c) {
     float x[kUnroll];
     for (int u = 0; u < kUnroll; ++u) x[u] = threadIdx.x * 1e-3f + u;
     __syncthreads();
     const long long t0 = clock64();
+#pragma unroll 32
     for (int i = 0; i < kThroughputN; ++i) {
 #pragma unroll
         for (int u = 0; u < kUnroll; ++u) x[u] = fmaf(x[u], m, c);
@@ -257,19 +290,25 @@ __global__ void int32_throughput(Span* spans, float* sink, unsigned m, unsigned 
 
 // ---- Dependent latencies of the ALU ops the decode chains use ----
 // One warp per SM runs a chain of kLatencyLinks dependent ops of one kind (each written in PTX
-// so ptxas keeps the op: IMAD, IADD3, LOP3, PRMT, SHF, HFMA2, FFMA, SHFL, and the conversion pairs
-// I2F+F2I and F2F f32->f16->f32, reported per op); cycles per link are the op's issue-to-use
-// latency. lat_iadd is the add ptxas makes of a dependent doubling, not IADD3 alone: in the sm_89
-// SASS the chain alternates IADD3 and IMAD.IADD, so the figure is the mean of the two forms. Each
-// is held against the published range of the Volta..Blackwell SM (ALU 2-16 clk, SHFL 10-60) by
-// the self-check.
-enum class Op { IMAD, IADD, LOP3, PRMT, SHF, HFMA2, FFMA, SHFL, CVT_I2F_F2I, CVT_F32_F16 };
+// so ptxas keeps the op: IMAD, the add chain, LOP3, PRMT, SHF, HFMA2, FFMA, SHFL, and each of the
+// four conversions alone); cycles per link are the op's issue-to-use latency. lat_add_chain is
+// the add ptxas makes of a dependent doubling, not IADD3 alone: in the sm_70, sm_75, sm_86 and
+// sm_89 SASS (nvcc 12.8 for sm_70, 13.2 for the others) the chain alternates IADD3 and IMAD.IADD
+// (half each), so the figure is the mean of the two forms; on sm_120a it is IADD alone (probes up
+// to 16 named it lat_iadd). A conversion link is the one conversion and a
+// reinterpretation of its result as the next link's source, which costs no SASS instruction (the
+// register is read as the other type, or one half of it is selected by the consumer's operand):
+// int -> float, float -> int, f32 -> f16 and f16 -> f32 each time their own pipe (probes up to 16
+// timed the pairs I2F + F2I and f32 -> f16 -> f32 and reported the mean of two ops on different
+// pipes). Each is held against the published range of the Volta..Blackwell SM (ALU 2-16 clk,
+// conversions 2-32, SHFL 10-60) by the self-check.
+enum class Op { IMAD, ADD, LOP3, PRMT, SHF, HFMA2, FFMA, SHFL, I2F, F2I, F32_TO_F16, F16_TO_F32 };
 
 template <Op op>
 __device__ __forceinline__ void dep_step(unsigned& x, unsigned k, unsigned m) {
     if constexpr (op == Op::IMAD) {
         asm volatile("mad.lo.u32 %0, %0, %1, %2;" : "+r"(x) : "r"(k), "r"(m));
-    } else if constexpr (op == Op::IADD) {
+    } else if constexpr (op == Op::ADD) {
         // x + x: two dependent adds of a loop-invariant k would pair into one IADD3 (x + k + k)
         // and read as half the latency; a doubling cannot pair (x + x + x is not 4x).
         asm volatile("add.u32 %0, %0, %0;" : "+r"(x));
@@ -293,15 +332,26 @@ __device__ __forceinline__ void dep_step(unsigned& x, unsigned k, unsigned m) {
         // + 1 the lanes' values settle within five links (the hop doubles each link, 32 hops are
         // none); the dependence of every SHFL on the one before stays, which is what is timed.
         asm volatile("shfl.sync.idx.b32 %0, %0, %0, 0x1f, 0xffffffff;" : "+r"(x));
-    } else if constexpr (op == Op::CVT_I2F_F2I) {
+    } else if constexpr (op == Op::I2F) {
+        // The float's bits are the next link's integer.
         float f;
         asm volatile("cvt.rn.f32.s32 %0, %1;" : "=f"(f) : "r"(x));
-        asm volatile("cvt.rzi.s32.f32 %0, %1;" : "=r"(x) : "f"(f));
-    } else {
+        x = __float_as_uint(f);
+    } else if constexpr (op == Op::F2I) {
+        // The integer's bits are the next link's float.
+        asm volatile("cvt.rzi.s32.f32 %0, %1;" : "=r"(x) : "f"(__uint_as_float(x)));
+    } else if constexpr (op == Op::F32_TO_F16) {
+        // The half's 16 bits, zero-extended, are the next link's float (the conversion writes the
+        // whole register). ptxas makes this F2F.F16.F32 on sm_70 to sm_120a; the packing form
+        // F2FP.PACK_AB, which sm_80 and later use where the half feeds a half op (the pair of
+        // probes up to 16 on sm_86+), is another instruction and not timed here.
         unsigned short h;
-        float f = __uint_as_float(x);
-        asm volatile("cvt.rn.f16.f32 %0, %1;" : "=h"(h) : "f"(f));
-        asm volatile("cvt.f32.f16 %0, %1;" : "=f"(f) : "h"(h));
+        asm volatile("cvt.rn.f16.f32 %0, %1;" : "=h"(h) : "f"(__uint_as_float(x)));
+        x = h;
+    } else {
+        // The low half of the float's bits is the next link's half (selected by the operand).
+        float f;
+        asm volatile("cvt.f32.f16 %0, %1;" : "=f"(f) : "h"(static_cast<unsigned short>(x)));
         x = __float_as_uint(f);
     }
 }
@@ -314,7 +364,10 @@ __global__ void dep_latency(Span* spans, unsigned* sink, unsigned k, unsigned m)
     for (int i = 0; i < kLatencyLinks; ++i) dep_step<op>(x, k, m);
     const long long t1 = clock64();
     if (threadIdx.x == 0) spans[blockIdx.x] = {t0, t1, smid()};
-    if (x == 0xffffffffu) sink[0] = x;
+    // Keeps the chain alive. A constant the chain's result provably cannot equal would not:
+    // f32 -> f16 leaves 16 bits, and against 0xffffffff ptxas dropped that whole chain. `m` is a
+    // launch argument, unknown to the compiler; a store on a chance match is harmless.
+    if (x == m) sink[0] = x;
 }
 
 // ---- Memory latencies ----
@@ -416,17 +469,23 @@ __global__ void chase(const Node* buf, unsigned bits, unsigned stride, Own own, 
     if (p == nullptr) sink[0] = 1u; // keeps the chain alive, never true
 }
 
+// A node of the shared chain holds the shared-window address (the byte offset in the shared state
+// space) of the next node, and the load takes that register as its address: a link is
+// `LDS R, [R]` and nothing else on every architecture (probe 17; with an index in the node sm_70
+// put a shift before every LDS).
 __global__ void chase_shared(Span* spans, unsigned* sink) {
     __shared__ unsigned s[4096];
-    for (int i = threadIdx.x; i < 4096; i += blockDim.x) s[i] = (i + 33u) & 4095u;
+    const unsigned base = static_cast<unsigned>(__cvta_generic_to_shared(s));
+    for (int i = threadIdx.x; i < 4096; i += blockDim.x) s[i] = base + ((i + 33u) & 4095u) * 4u;
     __syncthreads();
     if (threadIdx.x != 0) return;
-    unsigned idx       = 0;
+    unsigned a         = base;
     const long long t0 = clock64();
-    for (int i = 0; i < kLatencyLinks; ++i) idx = s[idx];
+    for (int i = 0; i < kLatencyLinks; ++i)
+        asm volatile("ld.shared.u32 %0, [%0];" : "+r"(a) : : "memory");
     const long long t1 = clock64();
     spans[blockIdx.x]  = {t0, t1, smid()};
-    if (idx == 0xffffffffu) sink[0] = idx;
+    if (a == 0xffffffffu) sink[0] = a;
 }
 
 // `count` cycles of 2^bits nodes, `stride` words a node, each cycle through all its nodes in
@@ -539,8 +598,10 @@ struct Probe {
 // the count is noted. Fewer than half the CTAs alone fails the self-check. `holders`, for the
 // `_held` launches: the FFMA CTAs on every SM; a CTA whose SM holds none or two of them ran
 // beside another load, and is left out as well. Beside the FFMA kernel the hardware places the
-// chasing CTAs less evenly (18 to 54 of 80 kept on an 80-SM card, by level, warp count and run),
-// and a kept CTA is at the stated load however many are kept: there the median needs 8 of them.
+// chasing CTAs less evenly (18 to 54 of 80 kept on an 80-SM card, by level, warp count and run;
+// in the probe-16 rows only the 2-warp held launches lost CTAs, on four cards of five and none
+// on the RTX 3090, which is read, not explained), and a kept CTA is at the stated load however many
+// are kept: there the median needs 8 of them.
 std::vector<char> alone(const std::vector<Span>& spans, int per_cta, const std::string& what,
                         const std::map<int, int>* holders = nullptr) {
     const int ctas = static_cast<int>(spans.size()) / per_cta;
@@ -594,15 +655,26 @@ int main() {
     CHECK(cudaDriverGetVersion(&driver));
     CHECK(cudaRuntimeGetVersion(&runtime));
     const int cc = p.major * 10 + p.minor;
-    std::printf("probe isa_probe 16\n");
+    // The memory clock the card is rated at (kHz; the attribute, which CUDA 13 keeps where it
+    // dropped the cudaDeviceProp field). The clock the memory ran at during the run is a P-state
+    // matter the device API does not give: `isa_probe.py run` samples it with nvidia-smi.
+    int mem_khz = 0;
+    CHECK(cudaDeviceGetAttribute(&mem_khz, cudaDevAttrMemoryClockRate, 0));
+    char pci[32] = {};
+    CHECK(cudaDeviceGetPCIBusId(pci, sizeof pci, 0));
+    std::printf("probe isa_probe 17\n");
     std::printf("card %s\n", p.name);
     std::printf("cc %d\n", cc);
     std::printf("sms %d\n", p.multiProcessorCount);
     std::printf("l2_bytes %zu\n", static_cast<size_t>(p.l2CacheSize));
+    std::printf("mem_clock_khz %d\n", mem_khz);
     std::printf("driver %d\n", driver);
     std::printf("runtime %d\n", runtime);
     std::printf("nvcc %d.%d.%d\n", __CUDACC_VER_MAJOR__, __CUDACC_VER_MINOR__,
                 __CUDACC_VER_BUILD__);
+    // Which GPU of the machine device 0 is, for `isa_probe.py run` to read that GPU's process
+    // list and clocks (nvidia-smi numbers the GPUs its own way).
+    std::printf("note device 0 is the GPU at PCI %s\n", pci);
 
     Probe pr;
     pr.sms = p.multiProcessorCount;
@@ -699,32 +771,32 @@ int main() {
     check(fp32 >= 0.97 * fp32_floor, "FP32 cycles per warp instruction under the lane floor");
     check(i32 >= 0.97 * 2.0, "INT32 cycles per warp instruction under the lane floor");
 
-    // Dependent latencies of the decode chain's ops, one warp per SM; the conversion pairs count
-    // two ops a link and are reported per op.
-    const auto dep = [&](auto launch, const char* name, double ops_per_link, double lo, double hi) {
+    // Dependent latencies of the decode chain's ops, one warp per SM, one op a link.
+    const auto dep = [&](auto launch, const char* name, double lo, double hi) {
         launch();
         LAUNCHED();
         launch();
         LAUNCHED();
-        const double clk_per_op =
-            latency_span(pr.collect(pr.sms), name) / kLatencyLinks / ops_per_link;
+        const double clk_per_op = latency_span(pr.collect(pr.sms), name) / kLatencyLinks;
         fact(name, clk_per_op, "clk");
         check(clk_per_op >= lo && clk_per_op <= hi,
               std::string(name) + " outside its published range");
     };
-#define ISA_PROBE_DEP(OP, NAME, OPS, LO, HI)                                                       \
+#define ISA_PROBE_DEP(OP, NAME, LO, HI)                                                            \
     dep([&] { dep_latency<Op::OP><<<pr.sms, 32>>>(pr.spans, pr.usink, 3u, 0x1234567u); }, NAME,    \
-        OPS, LO, HI)
-    ISA_PROBE_DEP(IMAD, "lat_imad", 1.0, 2.0, 16.0);
-    ISA_PROBE_DEP(IADD, "lat_iadd", 1.0, 2.0, 16.0);
-    ISA_PROBE_DEP(LOP3, "lat_lop3", 1.0, 2.0, 16.0);
-    ISA_PROBE_DEP(PRMT, "lat_prmt", 1.0, 2.0, 16.0);
-    ISA_PROBE_DEP(SHF, "lat_shf", 1.0, 2.0, 16.0);
-    ISA_PROBE_DEP(HFMA2, "lat_hfma2", 1.0, 2.0, 16.0);
-    ISA_PROBE_DEP(FFMA, "lat_ffma", 1.0, 2.0, 16.0);
-    ISA_PROBE_DEP(SHFL, "lat_shfl", 1.0, 10.0, 60.0);
-    ISA_PROBE_DEP(CVT_I2F_F2I, "lat_cvt_i2f_f2i", 2.0, 2.0, 32.0);
-    ISA_PROBE_DEP(CVT_F32_F16, "lat_cvt_f32_f16", 2.0, 2.0, 32.0);
+        LO, HI)
+    ISA_PROBE_DEP(IMAD, "lat_imad", 2.0, 16.0);
+    ISA_PROBE_DEP(ADD, "lat_add_chain", 2.0, 16.0);
+    ISA_PROBE_DEP(LOP3, "lat_lop3", 2.0, 16.0);
+    ISA_PROBE_DEP(PRMT, "lat_prmt", 2.0, 16.0);
+    ISA_PROBE_DEP(SHF, "lat_shf", 2.0, 16.0);
+    ISA_PROBE_DEP(HFMA2, "lat_hfma2", 2.0, 16.0);
+    ISA_PROBE_DEP(FFMA, "lat_ffma", 2.0, 16.0);
+    ISA_PROBE_DEP(SHFL, "lat_shfl", 10.0, 60.0);
+    ISA_PROBE_DEP(I2F, "lat_cvt_i2f", 2.0, 32.0);
+    ISA_PROBE_DEP(F2I, "lat_cvt_f2i", 2.0, 32.0);
+    ISA_PROBE_DEP(F32_TO_F16, "lat_cvt_f32_to_f16", 2.0, 32.0);
+    ISA_PROBE_DEP(F16_TO_F32, "lat_cvt_f16_to_f32", 2.0, 32.0);
 #undef ISA_PROBE_DEP
 
     // Memory latencies: W = 1, 2, 4, 8 chasing warps per SM, every warp on a pseudo-random cycle
