@@ -312,7 +312,7 @@ measured_boards_known(std::span<const Measured, Extent> measured) noexcept {
 
 // The class of the device this thread runs on, probed once: what device_class() returns where no
 // class is substituted (ScopedDeviceClass). Throws where CUDA cannot report the device; a host-only
-// build (ninferno_core_host_nodevice) always throws.
+// build (device_class_nodevice.cpp) always throws.
 [[nodiscard]] const DeviceClass& current_device_class();
 [[nodiscard]] const DeviceClass& device_class(int device);
 
