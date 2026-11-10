@@ -66,12 +66,21 @@ def cmake_commands(text):
 
 
 def reaches_at_top_level(text, command, arg_start):
-    """True when the file has `command(<arg_start>...)` outside every block and not commented out."""
+    """True when the file has `command(<arg_start>...)` outside every block and not commented out,
+    reached: no return() stands before it at any depth (conservative: a return() inside an if, a
+    loop, a block, or a macro / function that is called, would end the file or skip the link in some
+    configuration). An include must name the path exactly; other commands match by prefix."""
     for name, args, depth in cmake_commands(text):
-        if name == "return" and depth == 0:   # the rest of the file is never processed
+        if name == "return":
             return False
-        if name == command and depth == 0 and args.strip('"').startswith(arg_start):
-            return True
+        if name == command and depth == 0:
+            first = args.strip()
+            if first.startswith('"'):
+                first = first[1:].split('"')[0]
+            else:
+                first = (first.split() or [""])[0]
+            if first == arg_start if command == "include" else first.startswith(arg_start):
+                return True
     return False
 
 
@@ -444,7 +453,22 @@ class Completeness(unittest.TestCase):
         self.assertFalse(reaches_at_top_level("return()\n" + inc + "\n", "include", "ops/tests.cmake"))
         self.assertFalse(reaches_at_top_level("set(A 1)\nreturn ( )\n" + inc + "\n", "include", "ops/tests.cmake"))
         self.assertTrue(reaches_at_top_level(inc + "\nreturn()\n", "include", "ops/tests.cmake"))
-        self.assertTrue(reaches_at_top_level("if(A)\nreturn()\nendif()\n" + inc + "\n", "include", "ops/tests.cmake"))
+        # a return() at any depth before the link counts: in an if, a loop, a block, a macro or function
+        for pre in ("if(A)\nreturn()\nendif()\n", "foreach(x a)\nreturn()\nendforeach()\n",
+                    "while(A)\nreturn()\nendwhile()\n", "block()\nreturn()\nendblock()\n",
+                    "macro(stop)\nreturn()\nendmacro()\nstop()\n",
+                    "function(stop)\nreturn()\nendfunction()\nstop()\n"):
+            with self.subTest(pre=pre):
+                self.assertFalse(reaches_at_top_level(pre + inc + "\n", "include", "ops/tests.cmake"))
+        # an include names the path exactly, not by prefix; the target command matches by prefix
+        self.assertFalse(reaches_at_top_level("include(ops/tests.cmake.bak)\n", "include", "ops/tests.cmake"))
+        self.assertFalse(reaches_at_top_level("include(ops/tests.cmakeX OPTIONAL)\n", "include", "ops/tests.cmake"))
+        self.assertTrue(reaches_at_top_level('include("ops/tests.cmake" OPTIONAL)\n', "include", "ops/tests.cmake"))
+        self.assertTrue(reaches_at_top_level("ninferno_add_op_test(ninferno_selector_golden_test\n SOURCES x)\n",
+                                             "ninferno_add_op_test", "ninferno_selector_golden_test"))
+        # a `#` inside an argument list is a comment to the line end; the call goes on after it
+        self.assertTrue(reaches_at_top_level("set(A b # c )\n  d)\n" + inc + "\n", "include", "ops/tests.cmake"))
+        self.assertTrue(reaches_at_top_level("set(A b # return()\n  d)\n" + inc + "\n", "include", "ops/tests.cmake"))
         # a `#` inside a quoted argument is not a comment, and a block that was closed ends
         self.assertTrue(reaches_at_top_level('set(A "#x (")\n' + inc + "\n", "include", "ops/tests.cmake"))
 
