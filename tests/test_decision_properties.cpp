@@ -34,6 +34,7 @@
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_select_internal.h"
 #include "ops/generic/route_query.h"
+#include "ops/generic/route_table.h"
 #include "ops/generic/selector_facts.h"
 
 #include <algorithm>
@@ -280,7 +281,7 @@ void property_price_monotone(const std::vector<Row>& rows) {
                                 const generic::Route r{static_cast<generic::Family>(route.first),
                                                        static_cast<std::uint8_t>(route.second)};
                                 const std::string where =
-                                    row.name + " " + generic::qtype_name(q) + " " +
+                                    row.name + " " + ops::detail::generic::qtype_name(q) + " " +
                                     std::to_string(s.n) + "x" + std::to_string(s.k) + " e" +
                                     std::to_string(static_cast<int>(e)) + " p" +
                                     std::to_string(static_cast<int>(policy)) + " T" +

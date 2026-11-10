@@ -1520,8 +1520,7 @@ void test_exact_reads_no_continuous_fact() {
         }
     }
     std::cout << "B1 under exact: " << compared
-              << " perturbed plans compared
-                 ";
+              << " perturbed plans compared\n";
 }
 
 // One price for a quantization whichever facts carry it (product::quant_option_of): a hub row's
