@@ -153,6 +153,20 @@ class Rows(unittest.TestCase):
         facts = {"gpus": [dict(FACTS["gpus"][0], l2_mib=1)]}
         self.assertFalse(gm.rows_from_route_table(table(), "t", facts, self.gens, self.bits)[0]["l2_resident"])
 
+    def test_decode_regime_follows_the_long_flag(self):
+        doc = self.decode_doc()
+        doc["rows"].append(dict(doc["rows"][0], context=40000, long=True))
+        got = [r["regime"] for r in gm.rows_from_decode(doc, self.gens)]
+        self.assertEqual(got, ["short", "long"])
+
+    def test_decode_aggregates_keep_model_and_context_regime_apart(self):
+        mk = lambda model, regime, gap: dict(card="C", kind="decode", format="Q", band="T2", gap=gap,
+                                             law_us=50.0, measured_us=50.0 * gap, binds="dram",
+                                             model=model, regime=regime, why=None)
+        rows = [mk("A", "short", 1.1), mk("A", "long", 1.5), mk("B", "short", 1.3)]
+        groups = {(g["model"], g["regime"]): g["median_gap"] for g in gm.aggregate(rows, 5.0)}
+        self.assertEqual(groups, {("A", "short"): 1.1, ("A", "long"): 1.5, ("B", "short"): 1.3})
+
     def test_below_law_rows_are_flagged_and_left_out(self):
         rows = [dict(card="C", kind="linear", format="q4k", band="T1", gap=0.6, law_us=50.0,
                      measured_us=30.0, binds="dram", why=None),

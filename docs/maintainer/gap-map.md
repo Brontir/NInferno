@@ -88,10 +88,14 @@ Route-table evidence exists for two boards: RTX 3090 and RTX 5080 (the 5070 Ti's
   The tensor-bound rows carry the finding: 3.0 at T17-64 (median), 1.8 at T65-256, 1.4 at T257+.
   Worst: the shape-owned Q5 1024x5120 at T96-128 (53-61 us against 8.9-11.9 us, gap 4.5-6.0) and
   Q4 4096x5120 at T40-48 (72-74 us, gap 4.1-4.8).
-- **Whole decode step** (T = streams, short context): median 1.10 (4060 Ti) to 1.35 (2080 Ti);
-  Quadro GV100 2.0, worst 3.2 at 8 streams, taken on a hot board. At one stream the DRAM share is
-  0.92 (4060 Ti), 0.89 (4070 Ti), 0.88 (3060), 0.87 (5070 Ti), 0.84 (4090), 0.81 (2080 Ti), 0.77
-  (5090), 0.57 (GV100).
+- **Whole decode step, short context** (T = streams; rows decoding from a prompt of a few hundred
+  tokens; the per-card, per-model, per-quant groups of the table keep the long-context rows and the
+  two models apart): median over a card's short rows 1.15 (4060 Ti), 1.2 (4070 Ti, 3060, 5070 Ti),
+  1.29 (4090), 1.39 (5090), 1.46 (2080 Ti); Quadro GV100 2.0, worst 3.2 at 8 streams, taken on a hot
+  board. At one stream the DRAM share is 0.92 (4060 Ti), 0.89 (4070 Ti), 0.88 (3060), 0.87
+  (5070 Ti), 0.84 (4090), 0.80 (2080 Ti), 0.77 (5090), 0.57 (GV100).
+- **Whole decode step, long context** (7K to 82K tokens, 144 scored rows, grouped apart): median
+  1.10 (4060 Ti) to 1.31 (2080 Ti), 1.30 (5090); Quadro GV100 2.0 (9 rows).
 - **Whole prefill**: median 3.3 (5070 Ti) to 3.9 (5090) of the int8 rate on Ampere/Ada/Blackwell
   and 6.3 on the 2080 Ti (worst 14 at 82K tokens, attention included). This is the "one third of
   int8 peak" and "Turing at 2.5x Ada's clocks" regime of #619. GV100 prefill has no law.

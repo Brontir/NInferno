@@ -290,7 +290,10 @@ def rows_from_decode(doc: dict, gens: list[dict], facts: dict | None = None) -> 
         streams, ctx = r["concurrency"], r["context"]
         step_us = 1e6 / r["decode"]  # per-stream rate: one step serves every stream
         label = f"{r['model']} {r['quant']} ctx{ctx}"
-        base = dict(kind="decode", model=r["model"], quant=r["quant"])
+        # The fixture marks its long-context rows ("long": true); every other row decodes from a
+        # prompt of a few hundred tokens at most (context < 1000).
+        base = dict(kind="decode", model=r["model"], quant=r["quant"],
+                    regime="long" if r.get("long") else "short")
 
         def nolaw(why):
             return dict(make_row("decode_measured", card, r["quant"], label, streams, step_us,
@@ -334,7 +337,7 @@ def rows_from_prefill(doc: dict, gens: list[dict], facts: dict | None = None) ->
         gen = generation_of(gens, board["cc"])
         us = r["prompt"] / r["prefill"] * 1e6
         label = f"{r['model']} {r['quant']} prompt{r['prompt']}"
-        base = dict(kind="prefill", model=r["model"], quant=r["quant"])
+        base = dict(kind="prefill", model=r["model"], quant=r["quant"], regime="")
         q = m["quants"].get(r["quant"])
 
         def nolaw(why):
@@ -368,13 +371,17 @@ def in_l2(r: dict) -> bool:
 
 
 def aggregate(rows: list[dict], min_law_us: float) -> list[dict]:
-    """Per card x format x T band (decode/prefill whole-model rows by card x quant x kind)."""
+    """Per card x format x T band for linears; whole-model rows (decode, prefill) by card x kind x
+    model x quant, decode also by context regime (short or long): a median over two models or two
+    context regimes would describe neither."""
     groups: dict[tuple, list[dict]] = defaultdict(list)
     for r in rows:
-        key = (r["card"], r["kind"], r["format"], r["band"] if r["kind"] == "linear" else "")
+        whole = r["kind"] != "linear"
+        key = (r["card"], r["kind"], r["format"], r["band"] if not whole else "",
+               r["model"] if whole else "", r.get("regime", ""))
         groups[key].append(r)
     out = []
-    for (card, kind, fmt, band), g in sorted(groups.items()):
+    for (card, kind, fmt, band, model, regime), g in sorted(groups.items()):
         # A time under its law is a bug in the attribution or the byte count, never a result.
         l2 = [r for r in g if r["gap"] is not None and in_l2(r)]
         g_ = [r for r in g if r["gap"] is None or not in_l2(r)]
@@ -383,7 +390,7 @@ def aggregate(rows: list[dict], min_law_us: float) -> list[dict]:
         small = [r for r in g_ if r["gap"] is not None and r["gap"] >= 1.0 and r["law_us"] < min_law_us]
         nolaw = [r for r in g if r["gap"] is None]
         entry = {"card": card, "kind": kind, "format": fmt, "band": band or "-",
-                 "rows": len(g), "scored": len(scored), "below_floor": len(small),
+                 "model": model or "-", "regime": regime or "-", "rows": len(g), "scored": len(scored), "below_floor": len(small),
                  "below_law": len(below), "in_l2": len(l2),
                  "no_law": len(nolaw)}
         if scored:
@@ -437,17 +444,19 @@ def render_markdown(rep: dict) -> str:
                      f"{fmt_us(r['measured_us'])} | {fmt_us(r['law_us'])} | {r['binds']} | {r['gap']:.2f} |")
         L.append("")
     L += ["## Per card, format and T band", "",
-          "| card | kind | format | band | rows | scored | in L2 | no law | median gap | worst gap | binds |",
-          "|---|---|---|---|---:|---:|---:|---:|---:|---:|---|"]
+          "Whole-model rows (decode, prefill) are grouped by model as well, and decode by context "
+          "regime (`short`: prompts of a few hundred tokens; `long`: 7K to 82K).", "",
+          "| card | kind | model | regime | format | band | rows | scored | in L2 | no law | median gap | worst gap | binds |",
+          "|---|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---|"]
     for a in rep["groups"]:
         if a["scored"]:
-            L.append(f"| {a['card']} | {a['kind']} | {a['format']} | {a['band']} | {a['rows']} | {a['scored']} | "
+            L.append(f"| {a['card']} | {a['kind']} | {a['model']} | {a['regime']} | {a['format']} | {a['band']} | {a['rows']} | {a['scored']} | "
                      f"{a['in_l2']} | {a['no_law']} | {a['median_gap']:.2f} | {a['worst_gap']:.2f} | {a['binds']} |")
         else:
             why = a.get("no_law_why", f"{a['below_floor']} rows under the floor").removeprefix("no law: ")
-            L.append(f"| {a['card']} | {a['kind']} | {a['format']} | {a['band']} | {a['rows']} | 0 | {a['in_l2']} | {a['no_law']} | "
+            L.append(f"| {a['card']} | {a['kind']} | {a['model']} | {a['regime']} | {a['format']} | {a['band']} | {a['rows']} | 0 | {a['in_l2']} | {a['no_law']} | "
                      f"- | - | no law: {why} |" if a["no_law"] else
-                     f"| {a['card']} | {a['kind']} | {a['format']} | {a['band']} | {a['rows']} | 0 | {a['in_l2']} | 0 | - | - | "
+                     f"| {a['card']} | {a['kind']} | {a['model']} | {a['regime']} | {a['format']} | {a['band']} | {a['rows']} | 0 | {a['in_l2']} | 0 | - | - | "
                      f"{'in L2 / under floor' if a['in_l2'] else 'under floor'} |")
     L += ["", "## Below law (attribution or count bug)", ""]
     if not rep["below_law"]:
