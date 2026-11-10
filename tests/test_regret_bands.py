@@ -320,6 +320,27 @@ class Csv(unittest.TestCase):
         self.assertEqual({r["t"]: r["selected"] for r in rows if r["id"].startswith("q4k.a16.store.n64")},
                          {40: "rmma.a", 48: "rmma.a"})
 
+    def test_a_case_whose_i8_schedules_are_unswept_is_not_scored_by_the_model(self):
+        # cost_route prices the I8 tiles for an int8 q4 / q5 / q6 case with K a multiple of 512;
+        # route_tune sweeps none of them, so the model's pick may be a route the file lacks.
+        def key_rows(fmt, compute, k):
+            return "".join(f"{fmt},{compute},store,64,{k},40,{r},{us},{m}\n"
+                           for r, us, m in (("w4a8.a", 20, 30), ("w4a8.b", 10, 40)))
+        p1 = self.write("p1.csv", ROUTES + key_rows("q4", "a8", 512) + key_rows("q6", "a8", 1024)
+                        + key_rows("q5", "a8", 576) + key_rows("q4k", "a8", 512)
+                        + key_rows("q4", "a16", 512).replace("w4a8", "rmma"))
+        rows, skipped = self.model([p1])
+        reason = "the model also prices the I8 schedules, which route_tune does not sweep"
+        self.assertEqual(sorted((r["id"], r["reason"]) for r in skipped),
+                         [("q4.a8.store.n64.k512.T40", reason),
+                          ("q6.a8.store.n64.k1024.T40", reason)])
+        self.assertEqual(sorted(r["id"] for r in rows),
+                         ["q4.a16.store.n64.k512.T40", "q4k.a8.store.n64.k512.T40",
+                          "q5.a8.store.n64.k576.T40"])
+        # The recorded selection is still scored.
+        rows, skipped = bands.rows_from_csv([p1], self.selection_of([p1]), "b")
+        self.assertEqual((len(rows), skipped), (5, []))
+
     def test_nvfp4_is_not_scored_by_the_model(self):
         # route_authorities.cpp cost_model declines NVFP4; route_tune writes its model_us anyway.
         text = "".join(f"{fmt},a16,store,64,64,40,{r},{us},{m}\n" for fmt in ("nvfp4", "q4k")
@@ -674,10 +695,42 @@ class Cli(unittest.TestCase):
     def test_no_scored_case_is_refused(self):
         p1 = self.root / "p1.csv"
         p1.write_text(ROUTES + "q4k,a16,store,64,64,41,rmma.a,20,\n", encoding="utf-8")
+        out, md = self.root / "o.json", self.root / "o.md"
         code, err = self.run_main(["--routes", str(p1), "--pick", "model", "--board", "x",
-                                   "--selected", str(self.selection((41,))), "--qualified", "q"])
+                                   "--selected", str(self.selection((41,))), "--qualified", "q",
+                                   "--json", str(out), "--md", str(md)])
+        self.assertEqual(code, 2)
+        self.assertIn("no scored cases (1 skipped; the report lists them)", err)
+        # The report is still written: it is where the skipped cases and their reasons are.
+        rep = json.loads(out.read_text())
+        self.assertEqual((rep["cases"], rep["cases_skipped"]), (0, 1))
+        self.assertEqual(rep["skipped_cases"][0]["reason"], "the model prices none of the candidates")
+        self.assertIn("- (0 / 1)", md.read_text())
+
+    def test_every_document_case_skipped_still_writes_the_report(self):
+        bad = case("q4k.a16.store.n1.k1.T3", "b9", "rmma.a", {"rmma.a": 1, "rmma.b": 1})
+        bad["candidates"].append({"id": "rmma.c", "status": "unmeasured", "reason": "timeout"})
+        path = self.root / "d.json"
+        path.write_text(json.dumps(document([bad])), encoding="utf-8")
+        out = self.root / "o.json"
+        code, err = self.run_main(["--doc", str(path), "--json", str(out)])
         self.assertEqual(code, 2)
         self.assertIn("no scored cases", err)
+        self.assertEqual(json.loads(out.read_text())["skipped_cases"][0]["id"],
+                         "q4k.a16.store.n1.k1.T3")
+
+    def test_an_unwritable_report_is_an_error_not_a_traceback(self):
+        p1 = self.root / "p1.csv"
+        p1.write_text(ROUTES + "q4k,a16,store,64,64,40,rmma.a,20,30\n"
+                      "q4k,a16,store,64,64,40,rmma.b,10,40\n", encoding="utf-8")
+        argv = ["--routes", str(p1), "--selected", str(self.selection((40,))), "--board", "x",
+                "--qualified", "q"]
+        missing = self.root / "no such directory"
+        for flag in ("--json", "--md"):
+            code, err = self.run_main(argv + [flag, str(missing / "r")])
+            self.assertEqual(code, 2, flag)
+            self.assertIn("regret_bands: ", err)
+            self.assertIn("no such directory", err)
 
     def test_docs_of_equal_provenance_record_it(self):
         a, b = self.doc("a.json", "r1", "b1"), self.doc("b.json", "r1", "b1", board="b2")
@@ -685,7 +738,32 @@ class Cli(unittest.TestCase):
         code, _ = self.run_main(["--doc", str(a), "--doc", str(b), "--json", str(out)])
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(out.read_text())["provenance"],
-                         {"selector_revision": "r1", "build_id": "b1"})
+                         {"selector_revision": "r1", "build_id": "b1", "holdout": "board",
+                          "fit_boards": [], "fit_models": []})
+
+    def test_docs_of_another_evaluation_scope_are_refused(self):
+        # One selector_revision is one frozen selector with one fit inventory: documents that
+        # hold out another identity or name other fit boards or models are not one evaluation.
+        def scoped(name, board, **fields):
+            path = self.doc(name, "r1", "b1", board=board)
+            d = json.loads(path.read_text())
+            d.update(fields)
+            path.write_text(json.dumps(d), encoding="utf-8")
+            return path
+
+        a = scoped("a.json", "b1", fit_boards=["f1", "f2"], fit_models=["m0"])
+        for field, value in (("holdout", "both"), ("fit_boards", ["f1"]),
+                             ("fit_models", ["m0", "m9"])):
+            b = scoped("b.json", "b2", **{"fit_boards": ["f1", "f2"], "fit_models": ["m0"],
+                                          field: value})
+            code, err = self.run_main(["--doc", str(a), "--doc", str(b)])
+            self.assertEqual(code, 2, field)
+            self.assertEqual(err.split("differ in ")[1].split(" (")[0], field)
+        # The same sets in another order are the same scope.
+        b = scoped("b.json", "b2", fit_boards=["f2", "f1"], fit_models=["m0"])
+        out = self.root / "o.json"
+        self.assertEqual(self.run_main(["--doc", str(a), "--doc", str(b), "--json", str(out)])[0], 0)
+        self.assertEqual(json.loads(out.read_text())["provenance"]["fit_boards"], ["f1", "f2"])
 
     def test_selected_pick_needs_one_selection_per_group(self):
         p1 = self.root / "p1.csv"

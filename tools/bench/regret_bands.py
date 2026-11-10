@@ -13,13 +13,16 @@ carry no provenance to report next to the documents'):
                       the existing sweep archive predates them. Without those columns nothing tells
                       two passes of different builds or boards apart: give passes of one run. route_tune checks no
                       results, so --qualified TEXT must state what qualified the candidates.
-                      --doc inputs of different selector_revision/build_id are refused, and so is
-                      a case (board, model, id) that two inputs both hold.
+                      --doc inputs of different selector_revision, build_id, holdout or fit
+                      boards / models are refused, and so is a case (board, model, id) that two
+                      inputs both hold.
   --band-weights J    a mean of the band regrets with these weights (band -> weight); a group that
                       has no case in a weighted band gets no mean
   --pick model        with --routes only (not --doc): score the pick of the model price (lowest
-                      model_us; T >= 17, where the model ranks; not NVFP4, which it does not rank)
+                      model_us; T >= 17, where the model ranks; not NVFP4, which it does not rank,
+                      nor an int8 q4 / q5 / q6 case whose I8 tiles route_tune does not sweep)
                       instead of the recorded production selection. --selected is still needed.
+With every case skipped the report is still written (it lists them) and the exit status is 2.
 
 --routes-out also holds the prefill profile's rows (its widths from chunk/2 and its bands from 32)
 with no profile column. The speed loop writes one selection per problem and width and the prefill
@@ -58,6 +61,11 @@ MODEL_MIN_T = 17  # the cost model ranks routes only from this many tokens
 R8_MAX_TOKENS = 4
 WIDE_ONLY_FAMILIES = ("w4a4", "staged", "nvfp4t", "tiled")
 WIDE_FROM_T = 17
+# The I8 tiles: cost_route offers them (generic_cost.cpp) where allows_i8 holds (generic_gemm.cpp:
+# an int8 policy, a qx_g64 format of format_traits.h, q4 / q5 / q6 by their route names, K a
+# multiple of 512, aligned planes), but route_tune's route list has no I8 family.
+I8_FORMATS = ("q4", "q5", "q6")
+I8_K_MULTIPLE = 512
 
 
 def speed_loop_times(route, t, executed):
@@ -182,8 +190,14 @@ def refuse_repeated_cases(inputs):
 
 
 def provenance_of(document):
-    """The selector revision and build a regret document was measured with."""
-    return {k: document.get(k) for k in ("selector_revision", "build_id")}
+    """The selector revision and build a regret document was measured with, and its evaluation
+    scope: what is held out and the boards and models the selector was fit on (as sets). One
+    frozen selector has one fit inventory, so documents of one selector_revision that name
+    different ones, or hold out another identity, are not one evaluation."""
+    prov = {k: document.get(k) for k in ("selector_revision", "build_id", "holdout")}
+    for k in ("fit_boards", "fit_models"):
+        prov[k] = sorted(document.get(k) or [])
+    return prov
 
 
 def merged_provenance(named):
@@ -295,6 +309,13 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected", excluded=N
                 # route_authorities.cpp cost_model declines NVFP4: route_tune writes model_us for
                 # it as a diagnostic, but no production pick follows that price.
                 skip(None, "the model does not rank NVFP4 routes")
+                continue
+            if key[0] in I8_FORMATS and key[1] != "a16" and int(key[4]) % I8_K_MULTIPLE == 0:
+                # cost_route also prices the I8 schedules here (generic_cost.cpp, allows_i8), but
+                # route_tune's sweep holds none of them (only an executed one is timed): the
+                # model's pick among all its offers is not in the file.
+                skip(None, "the model also prices the I8 schedules, which route_tune does not "
+                           "sweep")
                 continue
             priced = {r: statistics.median(model[(key, r)]) for r in cands
                       if all(x is not None for x in model[(key, r)])}
@@ -517,8 +538,8 @@ def main(argv=None):
             rows += r
             skipped += s
         refuse_repeated_cases(inputs)
-        if not rows:
-            raise ValueError(f"no scored cases ({len(skipped)} skipped)")
+        if not rows and not skipped:
+            raise ValueError("no cases in the inputs")
         weights = json.loads(args.band_weights) if args.band_weights else None
         rep = report(rows, skipped, weights)
         if provenance is not None:
@@ -527,16 +548,22 @@ def main(argv=None):
             rep["legacy_qualification"] = args.qualified.strip()
             # Prefill-profile (case, route) pairs of the route CSVs, left out (rows_from_csv).
             rep["prefill_profile_rows_excluded"] = len(excluded)
+        # The report is written also when every case was skipped: it is where the skipped cases
+        # and their reasons are listed. The exit status then says nothing was scored.
+        text = json.dumps(rep, indent=2, sort_keys=True, allow_nan=False)
+        if args.json:
+            args.json.write_text(text + "\n", encoding="utf-8")
+        if args.md:
+            args.md.write_text(markdown(rep) + "\n", encoding="utf-8")
+        if not args.json and not args.md:
+            print(markdown(rep))
     except (OSError, UnicodeError, ValueError, KeyError, OverflowError) as error:
         print(f"regret_bands: {error}", file=sys.stderr)
         return 2
-    text = json.dumps(rep, indent=2, sort_keys=True, allow_nan=False)
-    if args.json:
-        args.json.write_text(text + "\n", encoding="utf-8")
-    if args.md:
-        args.md.write_text(markdown(rep) + "\n", encoding="utf-8")
-    if not args.json and not args.md:
-        print(markdown(rep))
+    if not rows:
+        print(f"regret_bands: no scored cases ({len(skipped)} skipped; the report lists them)",
+              file=sys.stderr)
+        return 2
     return 0
 
 
