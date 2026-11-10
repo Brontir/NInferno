@@ -80,6 +80,17 @@ std::optional<MoeStagePrice> price_moe_stage(const MoeStageShape& shape, MoeStag
     // The live values of x (the router's width, which a padded gate/up's K exceeds): what the W4A8
     // quantizer reads; the kernels read their activation over the K they walk.
     const double x_cols = static_cast<double>(shape.x_cols > 0 ? shape.x_cols : shape.cols);
+    // The W4A8 quantizer reads x in whole 32-value blocks (a block starting below the width is
+    // loaded whole: quantize_x_task, moe_mx8_quantize_kernel). A padded gate/up's x whose width is
+    // not whole blocks would overrun each row into the next (the last row past x), and production
+    // refuses the stage there (w4a8_bank_refusal, KGroup): no price either. Every x the stage
+    // admits is whole blocks, so x_cols is what the quantizer reads. (The bank's own K in whole
+    // blocks is a bank refusal, which this price, like the others, does not model.)
+    if (kind == MoeStageKernel::W4a8 && shape.stage == Stage::GateUp &&
+        x_cols < static_cast<double>(shape.cols) &&
+        static_cast<std::int32_t>(x_cols) % kQuantizeBlock != 0) {
+        return std::nullopt;
+    }
     // The W4A8 tier's activation planes are at K rounded up to 128 (moe_w4a8_ld, a zero tail): the
     // quantizer writes them whole and the kernel reads them whole. An R8 gate/up reads codes over
     // K.

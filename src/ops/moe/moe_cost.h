@@ -151,7 +151,8 @@ struct MoeStagePrice {
                                                                  const MoeBoardFacts& board);
 
 // The price of a stage of `shape` at `tokens` on `kind`; nullopt where the board has no rate the
-// kind needs (the int8 tier on Volta, a BF16 rate of zero) or the shape is empty.
+// kind needs (the int8 tier on Volta, a BF16 rate of zero), the shape is empty, or the kind is
+// W4A8 on a padded gate/up whose x is not whole 32-value blocks (refused: w4a8_bank_refusal).
 [[nodiscard]] std::optional<MoeStagePrice> price_moe_stage(const MoeStageShape& shape,
                                                            MoeStageKernel kind, std::int32_t tokens,
                                                            const MoeBoardFacts& board);

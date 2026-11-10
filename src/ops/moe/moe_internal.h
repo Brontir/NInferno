@@ -235,7 +235,8 @@ enum class BankRefusal {
     NativeBuild, // the build runs the format on its native kernels instead (NVFP4 on sm_120a)
     FragCodec,   // fragment order (ggml_frag_v1) without a fragment-order codec for the format
     KOrder,      // a permuted K the stage does not read
-    KGroup,      // K not in whole groups of the stage's loads (R8) or 32-value blocks (W4A8)
+    KGroup,      // K not in whole groups of the stage's loads (R8) or 32-value blocks (W4A8; also
+                 // a W4A8 gate/up's x width)
     Alignment,   // the bank does not start on a 16-byte boundary
     Nvfp4A4,     // NVFP4 under an A4 policy where the build has the W4A4 kernels
 };
@@ -244,7 +245,8 @@ enum class BankRefusal {
 // token limit and the quantized activation's shared memory.
 [[nodiscard]] BankRefusal r8_bank_refusal(const Weight& w);
 // The grouped W4A8 prefill: each stage whose own bank is admitted (MoePlan::w4a8_gate_up,
-// w4a8_down).
+// w4a8_down). `bank` is `weights.gate_up` or `weights.down` (the gate/up is also refused, KGroup,
+// where its x, the router's width, is padded and not whole 32-value blocks).
 [[nodiscard]] BankRefusal w4a8_bank_refusal(const MoeWeights& weights, const Weight& bank);
 // Lanes per row of an R8 warp on this bank (GemmArgs::r8_lanes); an R8 CTA covers
 // rows_per_cta() * 32 / r8_lanes rows.

@@ -763,6 +763,14 @@ BankRefusal w4a8_bank_refusal(const MoeWeights& w, const Weight& b) {
     if (!allows_a8(w.expert_policy)) { return BankRefusal::Policy; }
     if (!generic::w4a8_supports(b.qtype)) { return BankRefusal::Format; }
     if (b.k % 32 != 0) { return BankRefusal::KGroup; }
+    // The gate/up stage quantizes x itself, at the router's width (run: launch_moe_w4a8_quantize /
+    // launch_moe_mx8_quantize with k = g.hidden), and both quantizers load a block's 32 values
+    // whole once it starts below k (quantize_x_task, moe_mx8_quantize_kernel). A padded x (the
+    // bank's K above the router's) whose width is not whole 32-value blocks would put the next
+    // row's values, or for the last row the bytes past x, into its last block's codes, scale and
+    // sum: refused. (Unpadded, the bank's own K % 32 above already covers it; callers pass a bank
+    // of `w`.)
+    if (&b == &w.gate_up && w.router.k % 32 != 0) { return BankRefusal::KGroup; }
     if (b.qtype == QType::NVFP4 && !generic::nvfp4_prefill_a8_policy(b.qtype, w.expert_policy)) {
         return BankRefusal::Nvfp4A4;
     }

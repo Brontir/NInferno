@@ -871,6 +871,47 @@ void w4a8_admission_checks() {
                 vetoed == 0 ? " (no W4A4 kernels here: the veto itself is not exercised)" : "");
 }
 
+// The W4A8 quantizer loads x in whole 32-value blocks, so a padded gate/up whose x (the router's
+// width) is not whole blocks is refused by production (w4a8_bank_refusal, KGroup) and unpriced:
+// hidden 1000 (a multiple of 8, as validate asks, not of 32) padded to K 1024. The down bank of the
+// same layer stays admitted, and Nemotron's 2688 -> 2816 (whole blocks) stays admitted and priced.
+void w4a8_partial_block_checks() {
+    const DeviceClass d = generic::board_device_class(board_named("rtx4090"));
+    const ScopedDeviceClass scoped(d);
+    const moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0};
+    for (const std::int32_t hidden : {1000, 2688}) {
+        const bool whole = hidden % 32 == 0;
+        const auto layer = build(QType::Q8_G32_FP16, QType::Q8_G32_FP16, 8, 2, hidden, 256, false);
+        const auto& w    = layer->weights;
+        const std::string tag = " (hidden " + std::to_string(hidden) + ", gate/up K " +
+                                std::to_string(w.gate_up.k) + ")";
+        check(w.gate_up.k > w.router.k && w.gate_up.k % 32 == 0,
+              "the fixture pads the gate/up to whole blocks" + tag);
+        check(moe::w4a8_bank_refusal(w, w.gate_up) ==
+                  (whole ? moe::BankRefusal::None : moe::BankRefusal::KGroup),
+              "a padded x not in whole 32-value blocks refuses the W4A8 gate/up" + tag);
+        check(moe::w4a8_bank_refusal(w, w.down) == moe::BankRefusal::None,
+              "the down bank of the layer stays admitted" + tag);
+        const auto allowed = moe::with_w4a8(moe::MoePlan{}, w, true);
+        check(allowed.w4a8_gate_up == whole && allowed.w4a8_down,
+              "with_w4a8 keeps the gate/up off the tier only where x is not whole blocks" + tag);
+        for (const auto& c : moe::moe_candidates(w, layer->config, 64, true, moe::Stage::GateUp)) {
+            if (c.kernel != moe::MoeStageKernel::W4a8) continue;
+            check((c.status == moe::MoeCandidate::Status::Inadmissible) == !whole &&
+                      (whole || c.why == "k_group"),
+                  "the W4A8 gate/up candidate is inadmissible (k_group) exactly there" + tag);
+        }
+        const auto shape = moe::moe_stage_shape(w, layer->config, moe::Stage::GateUp);
+        check(shape && shape->x_cols == hidden, "the gate/up's x is the router's width" + tag);
+        if (!shape) continue;
+        check(moe::price_moe_stage(*shape, moe::MoeStageKernel::W4a8, 64, board).has_value() ==
+                  whole,
+              "the W4A8 gate/up has a price exactly where it is admitted" + tag);
+        check(moe::price_moe_stage(*shape, moe::MoeStageKernel::RegisterMma, 64, board).has_value(),
+              "the register MMA gate/up is priced either way" + tag);
+    }
+}
+
 // The thresholds of the header: the per-board recorded_min_ratio is a RECORDED BASELINE (see the
 // header), kMinConcordance a chosen margin. The upper checks (T = 1, strict bound) have no
 // tolerance.
@@ -1130,6 +1171,7 @@ int main() {
         format_min_binding_checks();
         candidate_checks();
         w4a8_admission_checks();
+        w4a8_partial_block_checks();
         coverage_binding_checks();
         replica(std::filesystem::path(NINFERNO_ROUTES_DIR));
     } catch (const std::exception& error) {
