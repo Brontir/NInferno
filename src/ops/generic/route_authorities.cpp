@@ -191,11 +191,8 @@ std::optional<RouteAnswer> route_table_entry(const Ask& ask, const Problem& prob
     if (a8_call(ask, problem, weight)) return std::nullopt;
     const auto hit = table_route_answer(problem, ask.tokens, ask.prefill());
     if (!hit) return std::nullopt;
-    const bool prefill_band = ask.prefill_band();
     if (!route_admits(hit->route, weight, problem.policy) ||
-        (prefill_band && !route_is_token_invariant(hit->route)) ||
-        (prefill_band && supports(weight) && tiled_supports(codec_of(weight)) &&
-         hit->route.family != Family::TiledMma)) {
+        !profile_admits(hit->route, ask, &weight)) {
         return std::nullopt;
     }
     Evidence e;
@@ -241,7 +238,8 @@ std::optional<RouteAnswer> dense_tune_prefill_band(const Ask& ask, const Problem
     const auto band = tuned_prefill_route(problem, ask.tokens, heuristic);
     if (!band || !route_admits(*band, weight, problem.policy)) return std::nullopt;
     if ((band->family == Family::W4a8Mma && heuristic.family == Family::W4a8Mma) ||
-        (ask.prefill() && band->family != Family::W4a8Mma && same_summation(*band, heuristic))) {
+        (ask.prefill() && band->family != Family::W4a8Mma &&
+         profile_admits_as(*band, ask, heuristic))) {
         return measured_here(*band, "dense-tune-prefill-band");
     }
     return std::nullopt;
@@ -475,6 +473,17 @@ constexpr NamedAuthority kRuleAuthorities[] = {
 };
 
 } // namespace
+
+bool profile_admits(Route route, const Ask& ask, const Weight* weight) {
+    if (!ask.prefill_band()) return true;
+    if (!route_is_token_invariant(route)) return false;
+    return !(weight != nullptr && supports(*weight) && tiled_supports(codec_of(*weight)) &&
+             route.family != Family::TiledMma);
+}
+
+bool profile_admits_as(Route route, const Ask& ask, Route reference) {
+    return !ask.prefill() || same_summation(route, reference);
+}
 
 Ask resolve_ask(std::int32_t tokens, bool prefill) {
     return Ask{invariant_routes_active() ? Profile::Invariant
