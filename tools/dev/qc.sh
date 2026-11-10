@@ -460,12 +460,15 @@ if [ ${#EXPECT[@]} -gt 0 ]; then
       name = line; sub(/^.*Test +#[0-9]+: /, "", name); sub(/ \.\.\..*/, "", name)
       if (line ~ /\*\*\*Skipped/) print "SKIP " name
       else if (line ~ /\*\*\*Failed/) print ((nodev[n] && !asrt[n]) ? "GPU " : "FAIL ") name
+      else if (line ~ /\*\*\*Not Run/ && line !~ /Disabled/) print "UNBUILT " name   # its executable was never built here
       else if (line ~ /\*\*\*(Exception|Timeout|Not Run)|Subprocess aborted/) print ((line ~ /Disabled/) ? "SKIP " : "FAIL ") name
       else if (line ~ /Passed/) { if (flag[n]) print "PSKIP " name }
       else print "FAIL " name }' "$CLOG")
   NFAIL=$(grep -c '^FAIL ' <<< "$CLASS" || true)
   GPUN=$(sed -n 's/^GPU //p' <<< "$CLASS" | tr '\n' ' '); SKIPN=$(sed -n 's/^SKIP //p' <<< "$CLASS" | tr '\n' ' ')
   PSKIPN=$(sed -n 's/^PSKIP //p' <<< "$CLASS" | tr '\n' ' ')
+  UNBUILTN=$(sed -n 's/^UNBUILT //p' <<< "$CLASS" | tr '\n' ' ')
+  [ -z "$UNBUILTN" ] || PARTIAL+=("tests whose executable this run did not build (a test qc did not map, or one behind the object cap): $UNBUILTN")
   [ -z "$GPUN" ] || PARTIAL+=("tests that stopped for lack of a GPU, not run: $GPUN")
   [ -z "$SKIPN" ] || PARTIAL+=("tests that skipped themselves (77): $SKIPN")
   [ -z "$PSKIPN" ] || PARTIAL+=("tests that passed but printed a skip / no-device marker (check the log $CLOG): $PSKIPN")
