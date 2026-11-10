@@ -879,28 +879,34 @@ int main() {
                         previous = *ratio;
                     }
                 }
-                // The asking card's draft head (SelectOptions::proposal_rows, what its artifact
-                // serves): the joint verify is priced with those rows, for every configuration
-                // (a start drafts through the head whatever the label), not the lab artifact's.
-                sp::SelectOptions with_head;
-                with_head.proposal_rows =
-                    sp::ProposalRows{{{std::string(sp::mode_name(config.mode)), 4096}}};
-                const sp::Profile headed =
-                    sp::profile_for_target({&lab}, "sm89", with_head, &small);
-                const auto at_head =
-                    sp::load_gain(*lab.round_facts, config, sp::card_rates(small).kappa(), 1.0, 2,
-                                  *with_head.proposal_rows);
-                const auto found = headed.joint_scale.find(config.label());
-                expect(at_head && found != headed.joint_scale.end() && found->second.contains(2) &&
-                           std::abs(found->second.at(2) - *at_head) < 1e-9,
-                       "R_1 / R_2 of " + config.label() + " with the asking card's head rows");
-                const auto unheaded = by_card[0].joint_scale.find(config.label());
-                expect(found != headed.joint_scale.end() && found->second.contains(2) &&
-                           unheaded != by_card[0].joint_scale.end() &&
-                           std::abs(found->second.at(2) - unheaded->second.at(2)) > 1e-6,
-                       "the head rows change the joint verify's price");
             }
         }
+        // The asking card's draft head (SelectOptions::proposal_rows, what its artifact serves):
+        // the joint verify is priced with those rows, for every configuration (a start drafts
+        // through the head whatever the label), not the lab artifact's. Qwen's MTP drafter reads
+        // a head in its round facts (Gemma's does not, so its price does not depend on the rows).
+        const auto qwen = no_counts(pair_of(std::string(kQ9), "ad104:60sm"));
+        sp::SelectOptions with_head;
+        with_head.proposal_rows    = sp::ProposalRows{{{"mtp", 4096}}};
+        const sp::Profile headed   = sp::profile_for_target({&qwen}, "sm89", with_head, &small);
+        const sp::Profile unheaded = sp::profile_for_target({&qwen}, "sm89", {}, &small);
+        std::string compared;
+        for (const auto& [label, by_streams] : headed.joint_scale) {
+            const sp::SpecConfig config = sp::SpecConfig::parse(label);
+            if (config.mode != sp::Mode::Mtp || !by_streams.contains(2)) { continue; }
+            const auto at_head =
+                sp::load_gain(*qwen.round_facts, config, sp::card_rates(small).kappa(), 1.0, 2,
+                              *with_head.proposal_rows);
+            expect(at_head && std::abs(by_streams.at(2) - *at_head) < 1e-9,
+                   "R_1 / R_2 of " + label + " with the asking card's head rows");
+            const auto other = unheaded.joint_scale.find(label);
+            expect(other != unheaded.joint_scale.end() && other->second.contains(2) &&
+                       std::abs(by_streams.at(2) - other->second.at(2)) > 1e-6,
+                   "the head rows change the joint verify's price of " + label);
+            compared = label;
+            break;
+        }
+        expect(!compared.empty(), "an MTP configuration of the Qwen pair is priced at two streams");
     }
     // facts_load on its own (synthetic tables): at each count the depth whose gain times
     // R_1 / R_C is above 1, plain decode where none is (a product of exactly 1 included), and the
