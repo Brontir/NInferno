@@ -131,7 +131,7 @@ constexpr NamedAuthority kSelectAuthorities[] = {
 // An NVFP4 A16 call of 17 tokens or more: the scope of the half-L2 rule, and the calls the rest of
 // the automatic selection treats as the prefill profile's (nvfp4_promoted).
 bool nvfp4_a16_wide(const Ask& ask, const Problem& problem, const Weight& weight) {
-    return problem.qtype == QType::NVFP4 && ask.tokens >= 17 &&
+    return problem.qtype == QType::NVFP4 && ask.tokens >= kPrefillBandMinTokens &&
            !allows_w4a4(weight, problem.policy) && !allows_w4a8(weight, problem.policy);
 }
 
@@ -174,7 +174,7 @@ Ask nvfp4_promoted(const Ask& ask, const Problem& problem, const Weight& weight)
 // W4A8 heuristic (route tables hold A16 schedules only: compute_class keys these formats as a16
 // whatever the policy), an R8 call likewise, and ggml's kernels stand in for the heuristic only.
 bool a8_wide_call(const Ask& ask, const Problem& problem, const Weight& weight) {
-    return ask.tokens >= 17 && allows_w4a8(weight, problem.policy);
+    return ask.tokens >= kPrefillBandMinTokens && allows_w4a8(weight, problem.policy);
 }
 
 bool a8_call(const Ask& ask, const Problem& problem, const Weight& weight) {
@@ -258,7 +258,8 @@ constexpr NamedAuthority kAutoAuthorities[] = {
 // A4 only where the policy allows it, and never at T <= 16, which is where decode and speculative
 // verify run.
 std::optional<RouteAnswer> w4a4_rule(const Ask& ask, const Problem& problem, const Weight& weight) {
-    if (ask.tokens < 17 || !allows_w4a4(weight, problem.policy)) return std::nullopt;
+    if (ask.tokens < kPrefillBandMinTokens || !allows_w4a4(weight, problem.policy))
+        return std::nullopt;
     const Route r{Family::W4a4Mma, static_cast<std::uint8_t>(
                                        heuristic_w4a4(problem.n, ask.tokens, ask.prefill_band()))};
     if (route_admits(r, weight, problem.policy)) return by_rule(r, "w4a4-rule");
@@ -283,7 +284,8 @@ std::optional<RouteAnswer> vec_kernel_rule(const Ask& ask, const Problem& proble
 // (cost_route, a8_candidates); the rules below where the device reports no clocks.
 std::optional<RouteAnswer> cost_model(const Ask& ask, const Problem& problem,
                                       const Weight& weight) {
-    if (ask.prefill_band() || ask.tokens < 17 || problem.qtype == QType::NVFP4) return std::nullopt;
+    if (ask.prefill_band() || ask.tokens < kPrefillBandMinTokens || problem.qtype == QType::NVFP4)
+        return std::nullopt;
     if (const auto r = cost_route(problem, weight, ask.tokens)) {
         return RouteAnswer{*r,
                            Evidence{Evidence::Kind::Ranker, Evidence::Ranker::Cost, "cost-model"}};
@@ -323,7 +325,8 @@ std::optional<RouteAnswer> r8_schedule(const Ask& ask, const Problem& problem,
 // distance).
 std::optional<RouteAnswer> mmq_prefill_gate(const Ask& ask, const Problem& problem,
                                             const Weight& weight) {
-    if (ask.tokens < 17 || !mmq_prefill_wins(problem, weight)) return std::nullopt;
+    if (ask.tokens < kPrefillBandMinTokens || !mmq_prefill_wins(problem, weight))
+        return std::nullopt;
     const measured::GateAnswer gate = mmq_prefill_device_gate();
     Evidence e;
     e.ranker   = Evidence::Ranker::None;
@@ -355,7 +358,7 @@ std::optional<RouteAnswer> mmq_prefill_gate(const Ask& ask, const Problem& probl
 
 // The I8 tile of a call from 17 tokens (i8_route: the cost rule over its tiles).
 std::optional<RouteAnswer> i8_rule(const Ask& ask, const Problem& problem, const Weight& weight) {
-    if (ask.tokens < 17) return std::nullopt;
+    if (ask.tokens < kPrefillBandMinTokens) return std::nullopt;
     if (const auto r = i8_route(problem, weight, ask.tokens)) return by_rule(*r, "i8-rule");
     return std::nullopt;
 }
@@ -363,7 +366,8 @@ std::optional<RouteAnswer> i8_rule(const Ask& ask, const Problem& problem, const
 // The W4A8 tile from 17 tokens where the policy allows it (w4a8_route: the W4A8 rules' tile, else
 // the first schedule that fits the build).
 std::optional<RouteAnswer> w4a8_rule(const Ask& ask, const Problem& problem, const Weight& weight) {
-    if (ask.tokens < 17 || !allows_w4a8(weight, problem.policy)) return std::nullopt;
+    if (ask.tokens < kPrefillBandMinTokens || !allows_w4a8(weight, problem.policy))
+        return std::nullopt;
     if (const auto r = w4a8_route(problem, weight, ask.tokens)) return by_rule(*r, "w4a8-rule");
     return std::nullopt;
 }

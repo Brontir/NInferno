@@ -12,6 +12,7 @@
 #include "ops/common/shape_routes.h"
 #include "ops/generic/route_table.h"
 #include "ops/moe/moe_internal.h"
+#include "ops/route_pins.h"
 
 #include <nlohmann/json.hpp>
 
@@ -53,7 +54,7 @@ using detail::generic::RouteEntry;
 using Json = nlohmann::json;
 
 // The first call width the prefill route profile makes token-invariant.
-constexpr std::int32_t kPrefillMinTokens = 17;
+constexpr std::int32_t kPrefillMinTokens = kPrefillPinMinTokens;
 
 std::uint64_t key_of(QType q, RouteCompute c, Epilogue e, std::int32_t n, std::int32_t k) {
     return (static_cast<std::uint64_t>(q) << 56) | (static_cast<std::uint64_t>(c) << 52) |

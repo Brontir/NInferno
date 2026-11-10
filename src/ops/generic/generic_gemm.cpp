@@ -1807,8 +1807,9 @@ std::size_t prefill_a8_workspace_bytes(const Problem& problem, std::int32_t min_
     // NVFP4 under a policy with A8 and without W4A4 (owned_prefill_w4a8): the W4A8 planes of its
     // calls of 17 tokens or more, which the shape's own plan does not run.
     if (nvfp4_prefill_a8_policy(problem.qtype, problem.policy)) {
-        if (max_tokens < 17) return 0;
-        return workspace_capacity_bytes(problem, nullptr, std::max(min_tokens, 17), max_tokens);
+        if (max_tokens < kPrefillBandMinTokens) return 0;
+        return workspace_capacity_bytes(problem, nullptr,
+                                        std::max(min_tokens, kPrefillBandMinTokens), max_tokens);
     }
     const LinearPolicy a8_policy = prefill_a8_policy(problem.qtype, problem.policy);
     if (!prefill_a8_format(problem.qtype) || !allows_a8(a8_policy) ||
@@ -2616,7 +2617,8 @@ std::optional<Route> volta_tiled_route(const Weight& weight, LinearPolicy policy
     // own mma.m8n8k4 (generic_tiled.cuh): a call of 17 tokens or more whose format has a tiled
     // codec takes it whatever the policy allows (f16 activations, not int8 ones). Decode and verify
     // (T <= 16) keep their routes, so the switch is at T = 17.
-    if (tokens < 17 || current_features().mma_tensor || !supports(weight)) return std::nullopt;
+    if (tokens < kPrefillBandMinTokens || current_features().mma_tensor || !supports(weight))
+        return std::nullopt;
     if (volta_cutlass_only(codec_of(weight))) {
         // From 17 tokens, as the tiled formats: a prefill token's bytes do not depend on its call's
         // width (a narrower call on another route summed in another order).
@@ -2706,8 +2708,9 @@ std::optional<Route> prefill_family_route(PrefillRoute f, const Problem& p, cons
         return std::nullopt;
     case PrefillRoute::W4a4: {
         if (!allows_w4a4(w, p.policy)) return std::nullopt;
-        const Route r{Family::W4a4Mma, static_cast<std::uint8_t>(
-                                           heuristic_w4a4(p.n, tokens, prefill && tokens >= 17))};
+        const Route r{Family::W4a4Mma,
+                      static_cast<std::uint8_t>(
+                          heuristic_w4a4(p.n, tokens, prefill && tokens >= kPrefillBandMinTokens))};
         if (route_admits(r, w, p.policy)) return r;
         return std::nullopt;
     }
@@ -2899,12 +2902,12 @@ std::uint64_t route_demotion_count() noexcept {
 }
 
 // Volta prefill (generic_volta_cutlass.cu): a tiled-route call of the prefill band (17 tokens on,
-// kPrefillMinTokens) decodes its weight once and multiplies on CUTLASS's sm_70 GEMM. The tiled
+// kPrefillBandMinTokens) decodes its weight once and multiplies on CUTLASS's sm_70 GEMM. The tiled
 // kernel (HMMA m8n8k4 on sm_70, generic_tiled.cuh) decodes a 128-row slice of the weight in each
 // CTA, once per 128-token block: ceil(N / 128) CTAs a block, in waves of the SMs, each wave as long
-// as one CTA's decode of 128 x K weights (0.37 .. 0.47 ms at K = 4096 on the V100). The decoded copy
-// spreads the same decode over every SM, then reads two FP16 bytes a weight into the GEMM, so it
-// costs in proportion to N and wins wherever the tile's grid leaves SMs idle or takes a second
+// as one CTA's decode of 128 x K weights (0.37 .. 0.47 ms at K = 4096 on the V100). The decoded
+// copy spreads the same decode over every SM, then reads two FP16 bytes a weight into the GEMM, so
+// it costs in proportion to N and wins wherever the tile's grid leaves SMs idle or takes a second
 // wave. V100 (ninferno_linear_bench, T = 32..240, the tile's time against the copy's): Q4_K 24576 x
 // 4096 (192 CTAs: 2.4 waves) 1.36..2.29 ms against 1.20..1.40, 4096 x 12288 (32 CTAs) 1.07..1.31
 // against 0.82..0.88, 4096 x 4096 0.36..0.44 against 0.27..0.28, Q5_K 4096 x 12288 1.13..1.37
@@ -2913,10 +2916,10 @@ std::uint64_t route_demotion_count() noexcept {
 // (0.82..0.93 against 0.52..0.54). A Qwen3.5 9B layer's four linears: 14 % less time at T = 64,
 // 35 % at T = 192.
 // The copy's narrowest margin above is 1.13 (24576 x 4096 below 129 tokens) at the V100's 870
-// GB/s, and its time is its bytes over the DRAM rate while the tile's is its waves on the SMs (80 on
-// every Volta part): a board under 870 / 1.13 GB/s (the Titan V's 653) or of unknown bandwidth
+// GB/s, and its time is its bytes over the DRAM rate while the tile's is its waves on the SMs (80
+// on every Volta part): a board under 870 / 1.13 GB/s (the Titan V's 653) or of unknown bandwidth
 // keeps the tile below kVoltaTileMaxTokens, where two token blocks already decode the weight twice.
-constexpr std::int32_t kVoltaCutlassMinTokens = 17;
+constexpr std::int32_t kVoltaCutlassMinTokens = kPrefillBandMinTokens;
 constexpr std::int32_t kVoltaTileMaxTokens    = 256;
 constexpr double kVoltaCopyMinDramGbps        = 870.0 / 1.13;
 
@@ -3163,11 +3166,11 @@ R8Coverage r8_coverage(const Problem& problem, const Weight& w, std::int32_t tok
 
 std::vector<FamilyAlternative> family_alternatives(const Problem& problem, const Weight& w,
                                                    std::int32_t tokens, bool prefill) {
-    const bool band = prefill && tokens >= 17;
+    const bool band = prefill && tokens >= kPrefillBandMinTokens;
     // The calls heuristic_route prices (cost_route): 17 tokens or more outside the prefill profile,
     // NVFP4 apart. The times are cost_route's own, so a priced alternative compares as it would.
     std::vector<std::pair<Route, double>> priced;
-    if (!band && tokens >= 17 && problem.qtype != QType::NVFP4) {
+    if (!band && tokens >= kPrefillBandMinTokens && problem.qtype != QType::NVFP4) {
         price_routes(problem, w, tokens,
                      [&](Route r, double time) { priced.emplace_back(r, time); });
     }

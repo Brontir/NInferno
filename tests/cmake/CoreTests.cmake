@@ -70,6 +70,11 @@ ninferno_add_test(ninferno_gate_atlas_test
 ninferno_add_test(ninferno_route_cost_constants_test NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_route_cost_constants.cpp")
 
+# The generic path's literal rules (ops/generic/route_rules.h: boards, cards, tolerance), held to
+# the sources they describe; `--list` prints them. No GPU.
+ninferno_add_test(ninferno_route_rules_test NEEDS_SOURCE_DIR
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_route_rules.cpp")
+
 ninferno_add_test(ninferno_decode_graph_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_decode_graph.cpp"
   LIBRARIES ninferno_core)
 
