@@ -1107,7 +1107,8 @@ void weighs_the_quantizations(const json& fixture) {
 
 // The chunk of an MoE: on Ada a 2048-token prompt fills a chunk of 2048 (4096 adds nothing for it,
 // and the tie goes to the narrower: more context), by speed alone (a chunk has no accuracy term, so
-// the accuracy gate does not hold it); on Blackwell (no reference card) the default.
+// the accuracy gate does not hold it); on Blackwell (no reference card) the default, with the chunk
+// the carried curve estimates; on a generation without such rows the default.
 void chooses_the_chunk(const json& fixture) {
     const json& m35 = fixture.at("models").at("Qwen3.6-35B-A3B");
     Bench b{model_of(m35), card_of(fixture.at("cards").at("RTX 4090")), {quant_of("UD-IQ3_XXS", m35.at("quants").at("UD-IQ3_XXS"))}};
@@ -1146,7 +1147,21 @@ void chooses_the_chunk(const json& fixture) {
     check(pinned.chosen && chosen(pinned).candidate.chunk == 4096 && !pinned.chunk_by_speed, "a pinned chunk stays");
     b.card = card_of(fixture.at("cards").at("RTX 5070 Ti"));
     const ch::Choice bw = ch::choose(b.model, b.card, b.quants[0], ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), {}, task, own);
-    check(bw.chosen && chosen(bw).candidate.chunk == 1024, "Blackwell: the default chunk");
+    // Blackwell has no measured chunk sweep: its own MoE prefill rate (two lab cards) with the
+    // curve's slope carried estimates the chunk, and the pick stays the default.
+    check(bw.chosen && !bw.chunk_by_speed && bw.chunk_basis == ch::ChunkBasis::CarriedCurve &&
+              chosen(bw).candidate.chunk == 1024 && bw.chunk_estimate == 2048,
+          "Blackwell: the default chunk, 2048 estimated for a 2048-token prompt");
+    check(ada.chunk_basis == ch::ChunkBasis::Own && ada.chunk_estimate == 0,
+          "Ada: the chunk rests on its own rows");
+    // A generation without an MoE prefill row of two cards keeps the default chunk.
+    b.card = card_of(fixture.at("cards").at("RTX 2080 Ti"));
+    const ch::Choice tu =
+        ch::choose(b.model, b.card, b.quants[0],
+                   ch::allowed_axes(b.model, KvCacheStorage::Int8Group64), {}, task, own);
+    check(tu.chosen && !tu.chunk_by_speed && tu.chunk_basis == ch::ChunkBasis::Transferred &&
+              chosen(tu).candidate.chunk == 1024,
+          "Turing: the default chunk (transferred)");
 }
 
 // The worth prices the benchmark's request mix (#507, DECISIONS 73): a 32K ask puts a 24K prompt
