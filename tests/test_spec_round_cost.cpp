@@ -989,10 +989,21 @@ int main() {
         p.joint_scale[one.label()] = {{2, 0.45}};
         expect(sp::load_label(sp::facts_load(p)) == "2:0",
                "no depth serves every choice: plain (" + sp::load_label(sp::facts_load(p)) + ")");
+        // Leximin, not the least gain alone: a thinking mtp:1 at x1.1 runs depth 1 under a bound
+        // of 1 and of 3 alike (1.1 x 0.95 = 1.045, the least under both), so it does not decide;
+        // the overall default gains more under 3 (2 x 0.6 = 1.2) than under 1 (1.2012 x 0.95 =
+        // 1.141), so the bound is 3, not the shallower of a tie on the least gain.
+        p.thinking.tok_s           = 1.1;
+        p.joint_scale[one.label()] = {{2, 0.95}};
+        expect(sp::load_label(sp::facts_load(p)) == "2:3,3:0",
+               "a choice indifferent to the depth does not decide: 3 (" +
+                   sp::load_label(sp::facts_load(p)) + ")");
         // The overall default alone, depth 1 best at two streams (1.2012 x 0.95 against
         // 2 x 0.55) and losing at three (x 0.5), while depth 3 would gain at three (2 x 0.6):
         // the bound in force at two streams holds, so three streams decode plainly rather than
-        // run depth 1 at a loss under a table that cannot rise again.
+        // run depth 1 at a loss under a table that cannot rise again. These R_1 / R_C are
+        // synthetic, chosen for the rule: R_1 / R_3 above R_1 / R_2 (a joint verify of three
+        // streams cheaper per round than of two) is not physical.
         p.thinking                              = {};
         p.joint_scale[one.label()]              = {{2, 0.95}, {3, 0.5}};
         p.joint_scale[p.overall.config.label()] = {{2, 0.55}, {3, 0.6}};
