@@ -633,6 +633,52 @@ int main() {
                 expect(plain != plain_home.joint_scale.end() && plain->second.contains(2) &&
                            without && near(plain->second.at(2), *without, 1e-12),
                        "without counts the scale is the no-launch ratio");
+                // Sections of other kernel counts: the scale is the sections' R_1 averaged over
+                // their R_C averaged, as the estimate averages a configuration's round, not the
+                // sections' own ratios averaged.
+                auto uneven             = lab;
+                const std::string first = uneven.tune.measurements.front().family;
+                std::set<std::string> drafted;
+                std::set<std::string> timed;
+                for (auto& m : uneven.tune.measurements) {
+                    if (m.config.enabled() && m.family != first) {
+                        m.graph_kernels += 4000 * m.graph_rounds;
+                    }
+                    if (m.config.enabled() && m.config.label() == chosen.label()) {
+                        drafted.insert(m.family);
+                    }
+                    if (!m.config.enabled() && m.tokens > 0 && m.seconds > 0) {
+                        timed.insert(m.family);
+                    }
+                }
+                auto uneven_second         = uneven;
+                uneven_second.tune.key.gpu = "ad102:128sm";
+                const auto uneven_home = sp::profile_for_target({&uneven, &uneven_second}, "sm89");
+                const auto mixed       = uneven_home.joint_scale.find(chosen.label());
+                double one             = 0;
+                double joint           = 0;
+                double ratios          = 0;
+                int sections           = 0;
+                for (const std::string& family : drafted) {
+                    if (!timed.contains(family)) { continue; }
+                    const sp::RoundLaunches section{.round = family == first ? 500.0 : 4500.0,
+                                                    .step  = 311};
+                    const auto r1 = sp::round_cost(*lab.round_facts, chosen, rates.kappa(), rows,
+                                                   rates.launch_bytes(), section, 1);
+                    const auto rc = sp::round_cost(*lab.round_facts, chosen, rates.kappa(), rows,
+                                                   rates.launch_bytes(), section, 2);
+                    if (!r1 || !rc) { continue; }
+                    one += *r1;
+                    joint += *rc;
+                    ratios += *r1 / *rc;
+                    ++sections;
+                }
+                expect(uneven_home.overall.config == chosen && sections >= 2 &&
+                           mixed != uneven_home.joint_scale.end() && mixed->second.contains(2) &&
+                           near(mixed->second.at(2), one / joint, 1e-12),
+                       "uneven sections: the averaged R_1 over the averaged R_C");
+                expect(sections >= 2 && std::abs(one / joint - ratios / sections) > 1e-9,
+                       "which the sections' ratios averaged would miss");
             }
         }
         // The lab's rows ride in its tune (spec-tune records them): they round-trip; zero rows are

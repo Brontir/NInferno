@@ -141,14 +141,14 @@ void test_gain_note_names_where_the_price_is_held_from() {
                   std::string::npos,
           "priced at exactly the streams: the priced note");
     const auto held = note_at(3);
-    check(held["joint_verify_scale"] == 0.45 && held["joint_priced_at_streams"] == 2 &&
+    check(held["joint_verify_scale"] == 0.45 && held.value("joint_priced_at_streams", 0) == 2 &&
               held["note"].get<std::string>().find("held from the price at 2 streams") !=
                   std::string::npos,
           "priced only at fewer streams: the note says it is held from that count");
     // Priced at 2 (0.5) and at 4 (0.9): the gain at 4 is held to 2's lower price, and the note
     // names 2, not the priced count 4.
     const auto least = note_at(4, {{.streams = 2, .scale = 0.5}, {.streams = 4, .scale = 0.9}});
-    check(least["joint_priced_at_streams"] == 2 &&
+    check(least.value("joint_priced_at_streams", 0) == 2 &&
               least["note"].get<std::string>().find("held from the price at 2 streams") !=
                   std::string::npos,
           "a count priced above a smaller count's price: the note names the smaller count");
@@ -198,7 +198,7 @@ void test_gain_note_names_where_the_price_is_held_from() {
                                     {{.streams = 2, .speedup = 1.5, .depth = 2, .bounded = true},
                                      {.streams = 4, .speedup = 1.2, .depth = 1, .bounded = true}});
     check(held_scale["at_concurrency"] == 0.75 && held_scale["joint_verify_scale"] == 0.5 &&
-              held_scale["joint_priced_at_streams"] == 2,
+              held_scale.value("joint_priced_at_streams", 0) == 2,
           "the scale of the count the gain is held from");
     // A scale above 1 is clamped: it is no price, and the JSON does not say it is one.
     const auto over = note_at(2, {{.streams = 2, .scale = 1.05}});
@@ -211,7 +211,7 @@ void test_gain_note_names_where_the_price_is_held_from() {
     for (const double at_three : {0.9, 0.8}) {
         const auto held =
             note_at(3, {{.streams = 2, .scale = 0.8}, {.streams = 3, .scale = at_three}});
-        check(held["joint_priced_at_streams"] == 2 && held["joint_verify_scale"] == 0.8 &&
+        check(held.value("joint_priced_at_streams", 0) == 2 && held["joint_verify_scale"] == 0.8 &&
                   held["note"].get<std::string>().find("held from the price at 2 streams") !=
                       std::string::npos &&
                   held["note"].get<std::string>().find("priced no lower") != std::string::npos &&

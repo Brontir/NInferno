@@ -275,8 +275,10 @@ void price_joint(Profile& p, const MeasuredPair& pair) {
             config.k = k;
             // The kernels a round's graphs launch are one round's whatever the streams (a joint
             // verify is wider, not longer in launches), so both R_1 and R_C carry the same launch
-            // term, priced as round_cost_estimate prices them (each section's counts, averaged;
-            // none for a depth the lab did not count).
+            // term, priced as round_cost_estimate prices them: a configuration's round is its
+            // sections' rounds averaged, each with its own counts (none for a depth the lab did
+            // not count), so the scale is the averaged R_1 over the averaged R_C, not the
+            // sections' ratios averaged.
             const auto counted = launches.find(config.label());
             const std::vector<RoundLaunches> sections =
                 counted != launches.end() && lab.launch_bytes() > 0
@@ -284,18 +286,23 @@ void price_joint(Profile& p, const MeasuredPair& pair) {
                     : std::vector<RoundLaunches>{RoundLaunches{}};
             auto& by_streams = p.joint_scale[config.label()];
             for (std::int32_t streams = 2; streams <= kPricedVerifyRows; ++streams) {
-                double sum  = 0;
-                bool priced = true;
+                double one   = 0;
+                double joint = 0;
+                bool priced  = true;
                 for (const RoundLaunches& section : sections) {
-                    const auto ratio = load_gain(*pair.round_facts, config, lab.kappa(), 1.0,
-                                                 streams, rows, lab.launch_bytes(), section);
-                    if (!ratio) {
+                    // load_gain holds the bounds of a priced joint round (the verify's rows, the
+                    // drafter's pass); where it prices one, both rounds below are priced.
+                    if (!load_gain(*pair.round_facts, config, lab.kappa(), 1.0, streams, rows,
+                                   lab.launch_bytes(), section)) {
                         priced = false;
                         break;
                     }
-                    sum += *ratio;
+                    one += *round_cost(*pair.round_facts, config, lab.kappa(), rows,
+                                       lab.launch_bytes(), section, 1);
+                    joint += *round_cost(*pair.round_facts, config, lab.kappa(), rows,
+                                         lab.launch_bytes(), section, streams);
                 }
-                if (priced) { by_streams[streams] = sum / static_cast<double>(sections.size()); }
+                if (priced) { by_streams[streams] = one / joint; }
             }
             if (by_streams.empty()) { p.joint_scale.erase(config.label()); }
         }
