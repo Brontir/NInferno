@@ -221,7 +221,7 @@ void replica(const std::filesystem::path& routes_dir) {
             const std::int32_t experts = e.at("experts"), top_k = e.at("top_k"),
                                hidden = e.at("hidden"), inter = e.at("inter");
             // Nemotron's mixer is the one non-gated (relu^2) layer of the tables.
-            const bool relu2           = hidden == 2688;
+            const bool relu2 = hidden == 2688;
             std::unique_ptr<Built> layer;
             try {
                 layer = build(*q, *dq, experts, top_k, hidden, inter, relu2);
