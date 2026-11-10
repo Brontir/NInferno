@@ -171,6 +171,14 @@ int route_tune_main(int argc, char** argv) {
         // device.id(), their UUIDs differ.
         const std::string device_id =
             device.id() + (uuid_known(device.identity) ? " " + uuid_text(device.identity) : "");
+        // The SKU, which the class does not name: an RTX 4070 Ti and an RTX 4500 Ada are both
+        // ad104:60sm with other DRAM rates and clocks (#684). Empty when the driver gave no id.
+        const std::string pci_id = [&] {
+            if (device.pci_device_id == 0) return std::string{};
+            char hex[11];
+            std::snprintf(hex, sizeof(hex), "0x%04x", static_cast<unsigned>(device.pci_device_id));
+            return std::string{hex};
+        }();
         // --describe runs no sweep and writes no rows: opening an output would truncate it.
         if (opt.count("--describe") && opt["--describe"] == "1" &&
             (opt.count("--routes-out") || opt.count("--selected-out"))) {
@@ -183,7 +191,7 @@ int route_tune_main(int argc, char** argv) {
             if (!routes_csv) throw std::runtime_error("cannot open " + opt["--routes-out"]);
             routes_csv << "format,compute,epilogue,n,k,T,route,median_us,model_us,registers,"
                           "local_bytes,weight_bytes,activation_bytes,output_bytes,run,device,"
-                          "protocol,calls,samples\n";
+                          "protocol,calls,samples,pci_device_id\n";
         }
         // The route the production path runs at each band point (#301): select_route's choice
         // with the tables this device loads, resolved for the contiguous call and this workspace,
@@ -193,7 +201,7 @@ int route_tune_main(int argc, char** argv) {
             selected_csv.open(opt["--selected-out"]);
             if (!selected_csv) throw std::runtime_error("cannot open " + opt["--selected-out"]);
             selected_csv << "format,compute,epilogue,n,k,T,asked,selected,select_ns,run,device,"
-                            "authority,evidence,ranker\n";
+                            "pci_device_id,authority,evidence,ranker\n";
         }
         const int select_reps = opt.count("--select-reps") ? std::stoi(opt["--select-reps"]) : 0;
         const bool a8_candidates = opt.count("--a8-candidates") && opt["--a8-candidates"] == "1";
@@ -463,7 +471,7 @@ int route_tune_main(int argc, char** argv) {
                                    : timer.flushes() ? "flushed"
                                                      : "warm")
                                << ',' << (rotated ? 1 + spare.size() : std::size_t{1}) << ','
-                               << samples << '\n';
+                               << samples << ',' << pci_id << '\n';
                 }
                 return us; // microseconds
             };
@@ -563,7 +571,8 @@ int route_tune_main(int argc, char** argv) {
                                  << generic::epilogue_name(p.epilogue) << ',' << p.n << ',' << p.k
                                  << ',' << t << ',' << generic::route_name(asked) << ','
                                  << generic::route_name(ran) << ',' << select_ns << ',' << run_id
-                                 << ',' << device_id << ',' << answer.evidence.source << ','
+                                 << ',' << device_id << ',' << pci_id << ','
+                                 << answer.evidence.source << ','
                                  << generic::evidence_kind_name(answer.evidence.kind) << ','
                                  << generic::route_name(ranker) << '\n';
                 }
