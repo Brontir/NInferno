@@ -471,12 +471,22 @@ struct Choice {
     // drafter whose gain no measurement gives).
     bool drafter_by_worth = false;
     // The speed estimate's resolution wherever a reference exists (#301; the chunk axis needs it
-    // where the worth does not decide): the reference card's generation's measured decode error (worth_band), the speed term's uncertainty in worth (-ln seconds) units;
-    // 0 without one. An alternative that loses by no more than the smaller of it and the two's
-    // speed difference is indistinguishable (explain: within_resolution); the point estimate still
-    // decides, deterministically.
+    // where the worth does not decide): the reference card's generation's measured decode error
+    // (worth_band), the speed term's uncertainty in worth (-ln seconds) units; 0 without one. An
+    // alternative that loses by no more than the smaller of it and the two's speed difference is
+    // indistinguishable (explain: within_resolution); the point estimate decides, unless a
+    // candidate that far from the best worth is strictly more accurate
+    // (resolved_within_resolution).
     double resolution = 0;
-    std::string why;                   // one line: what decided it
+    // The resolution moved the pick (#301, DECISIONS 75): among the candidates whose speed is
+    // inside `resolution` of the best worth's (the anchor), the one of strictly lower modelled KLD
+    // took it (resolve_within_resolution). False: the anchor stood. `anchor` indexes the best
+    // worth in `scored`; `anchor_worth` is its worth (the cross-quantization band's top and bound;
+    // a row is admitted by the worth it serves, so one allowance applies, not two).
+    bool resolved_within_resolution = false;
+    std::size_t anchor              = 0;
+    double anchor_worth             = 0;
+    std::string why; // "" when the factors decide, else why the family's defaults stand
 };
 
 // The axes' values the model and the card allow (a family's KV codecs, int8 activations only on
@@ -501,8 +511,21 @@ struct Alternative {
     std::string value;
     const Scored* scored = nullptr;
     std::string why_not;  // "" for the chosen value
-    std::string why_code; // "" (chosen), no_fit, lower_worth, within_resolution, tie_context, tie_order, default, unmeasured, coupled
+    std::string
+        why_code; // "" (chosen), no_fit, lower_worth, within_resolution, outside_resolution,
+                  // tie_context, tie_order, default, unmeasured, coupled
 };
 [[nodiscard]] std::vector<Alternative> explain(const Choice& choice);
+
+// The tie rule inside the speed estimate's resolution (#301, DECISIONS 75, the order of
+// DECISIONS 60's band between quantizations). `eligible` lists indices into `scored` (the
+// candidates that hold the asked context); `anchor` is the one with the best worth among them. A
+// candidate wins only if its modelled KLD is lower than the anchor's by more than kWorthTie and its
+// request time is longer by no more than `resolution` (worth units: ln of the time ratio). Among
+// the winners the lowest KLD, then the lowest index in `scored`; none: the anchor. Context beyond
+// what was asked is headroom (DECISIONS 73) and does not count. A resolution of 0 returns `anchor`.
+[[nodiscard]] std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
+                                                    const std::vector<std::size_t>& eligible,
+                                                    std::size_t anchor, double resolution) noexcept;
 
 } // namespace ninferno::product::choice

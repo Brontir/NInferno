@@ -5,6 +5,7 @@
 // generic_select_internal.h.
 #include "core/layout.h"
 #include "ops/common/route_probe.h"
+#include "ops/generic/format_traits.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_ggml_internal.h"
 #include "ops/generic/generic_select_internal.h"
@@ -64,6 +65,21 @@ std::size_t route_workspace_bytes(Route route, std::int32_t k, std::int32_t toke
     (void)layout.alloc_bytes(planes.scales, 256);
     if (planes.sums > 0) (void)layout.alloc_bytes(planes.sums, 256);
     return layout.peak_bytes(1);
+}
+
+std::size_t executed_workspace_bytes(Route route, bool r8_prequantized, std::int32_t k,
+                                     std::int32_t rows, Epilogue epilogue, std::int32_t tokens) {
+    switch (route.family) {
+    case Family::GgmlMmq:
+        return mmq_workspace_bytes(k, epilogue == Epilogue::SwiGlu ? 2 * rows : rows,
+                                   std::min(tokens, kMmqPrefillSlice));
+    case Family::GgmlVec:
+        return vec_workspace_bytes(k, std::min(tokens, ggml_mmq::kVecMaxColumns));
+    case Family::R8Mma:
+        return r8_prequantized ? route_workspace_bytes(route, k, tokens) : 0;
+    default:
+        return route_workspace_bytes(route, k, tokens);
+    }
 }
 
 std::size_t volta_prefill_workspace_bytes(QType qtype, std::int32_t rows, std::int32_t k,
@@ -162,8 +178,7 @@ std::size_t workspace_capacity_bytes(const Problem& problem, const Weight* weigh
     mmq = std::max(mmq, volta);
     if (!a8 && !r8_verify) return with_gather(mmq);
     const std::size_t i8 =
-        (problem.qtype == QType::Q4_G64_FP16 || problem.qtype == QType::Q5_G64_FP16 ||
-         problem.qtype == QType::Q6_G64_FP16)
+        format_traits(problem.qtype).qx_g64
             ? route_workspace_bytes(Route{Family::I8Mma, 0}, problem.k, max_tokens)
             : 0;
     return with_gather(std::max(

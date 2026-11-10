@@ -1206,6 +1206,8 @@ __device__ __forceinline__ unsigned pick_bytes(unsigned w0, unsigned w1, unsigne
 enum class Ggml32 { Q4_0, Q4_1, Q5_0, Q5_1, IQ4_NL };
 template <Ggml32 F>
 struct Ggml32Decoder {
+    // Its kernel-facts key (kernel_facts.h decoder_name).
+    static constexpr int kKeyArgument = static_cast<int>(F);
     static constexpr bool kF16       = kF16Operands && F != Ggml32::IQ4_NL;
     static constexpr bool kFive      = F == Ggml32::Q5_0 || F == Ggml32::Q5_1;
     static constexpr bool kWithMin   = F == Ggml32::Q4_1 || F == Ggml32::Q5_1;

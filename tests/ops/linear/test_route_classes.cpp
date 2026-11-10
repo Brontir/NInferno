@@ -619,8 +619,29 @@ int run_column_tiles() {
         {Type::IQ1_S, QType::GGML_IQ1_S}};
     for (const auto& [type, qtype] : formats) {
         const bool format = ninferno::mmq_columns::work_tiles_format(qtype);
-        // The widest tile the device holds for the format: a wide product launches it.
-        const int widest = ninferno::ops::ggml_mmq::column_tile(type, 4096, 512, 4096);
+        // The widest tile the device holds for the format: a wide product launches it, and the
+        // estimate takes it from the shared memory the format's layout needs (widest_tile).
+        const int launched = ninferno::ops::ggml_mmq::column_tile(type, 4096, 512, 4096);
+        const int widest   = ninferno::mmq_columns::widest_tile(qtype, d.major, d.minor);
+        ++checked;
+        if (launched != widest && failures++ < 10) {
+            std::cerr << "column tile: type " << static_cast<int>(type) << " widest " << widest
+                      << " by the layout, the launch takes " << launched << '\n';
+        }
+        // The layout's bytes are the kernel's (mmq_get_nbytes_shared) where the MMA layout runs.
+        if (d.major * 10 + d.minor >= 75) {
+            if (const auto layout = ninferno::mmq_columns::sram_layout_of(qtype)) {
+                for (const int j : {16, 32, 64, 80, 96, 128}) {
+                    const std::size_t kernel = ninferno::ops::ggml_mmq::tile_shared_bytes(type, j);
+                    const std::size_t host   = ninferno::mmq_columns::tile_shared_bytes(*layout, j);
+                    ++checked;
+                    if (kernel != 0 && kernel != host && failures++ < 10) {
+                        std::cerr << "column tile: type " << static_cast<int>(type) << " J " << j
+                                  << " kernel " << kernel << " bytes, the layout " << host << '\n';
+                    }
+                }
+            }
+        }
         for (int columns = 1; columns <= 512; ++columns) {
             const int picked =
                 ninferno::mmq_columns::pick(columns, d.major, d.minor, format, widest);
@@ -762,6 +783,30 @@ int run_resources(bool detail) {
                 if (!r) continue;
                 ++r8_described;
                 r8_pre += r->prequantized ? 1 : 0;
+                // The call's own rows (#298): a slice of half the rows launches half the CTAs.
+                if (const auto half =
+                        generic::r8_resources(i, w, generic::Epilogue::Store, t, shape.n / 2)) {
+                    const unsigned ctas_half = static_cast<unsigned>(
+                        (shape.n / 2 + info.warps * info.rows - 1) / (info.warps * info.rows));
+                    if (half->kernel.grid_x != ctas_half) {
+                        fail(at + ": slice of " + std::to_string(shape.n / 2) + " rows: grid " +
+                             std::to_string(half->kernel.grid_x) + ", expected " +
+                             std::to_string(ctas_half));
+                    }
+                }
+                // The variant asked for is the one described, never the other (#298).
+                if (const auto in_kernel =
+                        generic::r8_resources(i, w, generic::Epilogue::Store, t, 0, false)) {
+                    if (in_kernel->prequantized)
+                        fail(at + ": in-kernel variant described pre-quantized");
+                }
+                if (const auto pre =
+                        generic::r8_resources(i, w, generic::Epilogue::Store, t, 0, true)) {
+                    if (!pre->prequantized)
+                        fail(at + ": pre-quantized variant described in-kernel");
+                } else if (r->prequantized) {
+                    fail(at + ": pre-quantized variant asked for, not described");
+                }
                 const auto& k = r->kernel;
                 const unsigned ctas = static_cast<unsigned>(
                     (shape.n + info.warps * info.rows - 1) / (info.warps * info.rows));
