@@ -28,7 +28,8 @@
 
 namespace {
 
-// The kernel's column tile picks (core/mmq_columns.h): GA10x takes the least work of its widths,
+// The kernel's column tile picks (core/mmq_columns.h): GA10x, Ada and GB20x take the least work of
+// their widths,
 // every other card the fewest tiles of 16, 32, 64, 128. Never wider than the fixup plane's bound
 // (ggml_mmq fixup_bound: the column count rounded up to a power of two from 16, at most 128).
 namespace pins {
@@ -41,8 +42,10 @@ static_assert(pick(144, 8, 6, true) == 80 && pick(160, 8, 6, true) == 80 &&
 static_assert(pick(144, 12, 0, true) == 80 && pick(192, 12, 0, true) == 96 &&
               pick(224, 12, 0, true) == 80 && pick(256, 12, 0, true) == 128 &&
               pick(16, 12, 0, true) == 16);
-static_assert(pick(144, 8, 9, true) == 128 && pick(192, 8, 9, true) == 128 &&
-              pick(16, 8, 9, true) == 16 && pick(144, 7, 5, true) == 128);
+// Ada takes the least work too (f 0.20, as GA10x); Turing keeps the fewest tiles.
+static_assert(pick(144, 8, 9, true) == 80 && pick(192, 8, 9, true) == 96 &&
+              pick(224, 8, 9, true) == 128 && pick(16, 8, 9, true) == 16 &&
+              pick(144, 7, 5, true) == 128);
 // A format the grids did not run keeps the fewest tiles on every card
 // (mmq_columns::work_tiles_format).
 static_assert(pick(144, 8, 6, false) == 128 && pick(192, 12, 0, false) == 128 &&
@@ -616,19 +619,19 @@ void prefills_by_format(const json& fixture) {
         bool q41_transferred = false;
         const double q41_seconds = ch::prefill_linears_seconds(q41_model, ada, q41, 1024, &q41_transferred);
         const double q4k_seconds = ch::prefill_linears_seconds(q4k_model, ada, km, 1024);
-        // GA10x: a slice of 144 tokens takes two 80-column tiles (1.57 of a 128-column tile's
-        // steps), so it costs less than a slice of 256 (two 128-column tiles); Ada keeps the fewest
-        // tiles (its 144 and 256 are both two 128-column tiles, the cost of the tokens beyond
-        // aside).
+        // GA10x and Ada (#524, DECISIONS 74, f 0.20 on both): a slice of 144 tokens takes two
+        // 80-column tiles (1.57 of a 128-column tile's steps), so it costs less than a slice of 256
+        // (two 128-column tiles). Turing keeps the fewest tiles.
         const ch::CardFacts rtx3060 = card_of(fixture.at("cards").at("RTX 3060"));
         const double at_144         = ch::prefill_linears_seconds(q4k_model, rtx3060, km, 144);
         const double at_256         = ch::prefill_linears_seconds(q4k_model, rtx3060, km, 256);
         check(at_144 > 0 && at_144 < 0.9 * at_256,
               "GA10x: 144 tokens take narrower column tiles than 256 (two 80-column tiles against "
               "two 128)");
-        check(ch::prefill_linears_seconds(q4k_model, ada, km, 144) >
-                  0.85 * ch::prefill_linears_seconds(q4k_model, ada, km, 256),
-              "Ada: 144 tokens stay on two 128-column tiles");
+        const double ada_144 = ch::prefill_linears_seconds(q4k_model, ada, km, 144);
+        check(ada_144 > 0 && ada_144 < 0.9 * ch::prefill_linears_seconds(q4k_model, ada, km, 256),
+              "Ada: 144 tokens take narrower column tiles than 256 (two 80-column tiles against "
+              "two 128)");
         const ch::CardFacts turing = card_of(fixture.at("cards").at("RTX 2080 Ti"));
         check(q41_seconds > 0 && q41_transferred && std::abs(q41_seconds / q4k_seconds - 1) < 0.05 &&
                   ch::prefill_linears_seconds(q41_model, turing, q41, 1024) == 0,

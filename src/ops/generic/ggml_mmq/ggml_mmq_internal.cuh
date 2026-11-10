@@ -28,7 +28,7 @@
 // the generation table, so the one range it holds is spelled here and checked against the table.
 namespace ninferno::ops::ggml_mmq::detail {
 [[nodiscard]] __host__ __device__ constexpr bool work_tiles_arch(int cc) {
-    return (cc >= 810 && cc < 890) || (cc >= 1200 && cc < 1300);
+    return (cc >= 810 && cc < 900) || (cc >= 1200 && cc < 1300);
 }
 
 constexpr bool work_tiles_arch_matches_table() {
