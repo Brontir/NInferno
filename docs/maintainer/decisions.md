@@ -1702,4 +1702,4 @@ fewest tiles). On 68 SMs a 4096-row product (32 row tiles) fills 94 % of a wave 
 136..192 tokens turns into time more cleanly than on the 3090's 82 SMs. Predicted A/B at f 0.20:
 144..160 tokens -14..-19 %, 176..192 -9..-13 %, 208..256 within 0.5 %. The Turing row keeps the
 fewest tiles until `tools/bench/run_524_turing_grid.sh` (forced-width grid, then the A/B) has run
-on l2080 and the grid agrees. Nothing is changed by this note.
+on an RTX 2080 Ti and the grid agrees. Nothing is changed by this note.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # #524, DECISIONS 74: the forced-width grid and the A/B that qualify the RTX 2080 Ti (Turing, sm_75)
-# for the column tile of least work. Run it ON the stand (l2080), nothing else on the GPU.
+# for the column tile of least work. Run it ON the RTX 2080 Ti machine, nothing else on the GPU.
 #
 # PREDICTION (from architecture facts, written before any measurement; to verify):
 #   f = 0.20 for Turing, the best range 0.15-0.25; the grid decides.
@@ -36,7 +36,7 @@
 # The A/B is the same binary with NINFERNO_MMQ_MODE=old (fewest tiles) and =new (work table at
 # F_AB), old new old new old new, 4 requests a size per visit.
 #
-# Usage (from the checkout of perf/524-turing-grid on the stand):
+# Usage (from the checkout of perf/524-turing-grid on the RTX 2080 Ti machine):
 #   MODEL=/path/Qwen3-8B-Q4_K_M.gguf tools/bench/run_524_turing_grid.sh [all|build|grid|ab]
 # Env: MODEL (required), OUT (results dir, default profiles/524_turing), BUILD (default
 # build_524t), PORT (18524), F_AB (A/B f, default 0.20; set it to the grid's best), JOBS (8),
