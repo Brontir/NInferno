@@ -93,7 +93,7 @@ class Report(unittest.TestCase):
         # A weighted band the group has no case in: no mean, not a mean of the rest.
         rep = bands.report(rows, band_weights={"decode": 1, "batch129": 1})
         self.assertIsNone(rep["by_board"]["b1"]["weighted"])
-        for bad in ([1, 2], {"decode": "x"}, {"decode": float("nan")}):
+        for bad in ([1, 2], {"decode": "x"}, {"decode": float("nan")}, {}, {"decode": True}):
             with self.assertRaises(ValueError):
                 bands.report(rows, band_weights=bad)
 
@@ -148,6 +148,13 @@ class Csv(unittest.TestCase):
         p2 = self.write("p2.csv", ROUTES + "q4k,a16,store,64,64,4,rmma.a,20,30\n")
         sel = self.write("s.csv", SELECTED + "q4k,a16,store,64,64,4,rmma.a,rmma.a\n")
         self.assertEqual(bands.rows_from_csv([p1, p2], sel, "b"), ([], 1))
+
+    def test_a_selection_without_sweep_rows_is_skipped(self):
+        p1 = self.write("p1.csv", ROUTES + "q4k,a16,store,64,64,4,rmma.a,20,30" + chr(10))
+        sel = self.write("s.csv", SELECTED + "q4k,a16,store,64,64,4,rmma.a,rmma.a" + chr(10)
+                         + "q4k,a16,store,64,64,8,rmma.a,rmma.a" + chr(10))
+        rows, skipped = bands.rows_from_csv([p1], sel, "b")
+        self.assertEqual((len(rows), skipped), (1, 1))
 
     def test_bad_timings_and_duplicate_selections_are_refused(self):
         zero = self.write("z.csv", ROUTES + "q4k,a16,store,64,64,4,rmma.a,0,30\n")

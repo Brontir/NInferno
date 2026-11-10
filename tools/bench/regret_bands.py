@@ -120,6 +120,9 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected"):
     for key, route in timed:
         routes.setdefault(key, []).append(route)
     rows, skipped = [], 0
+    if selected is not None:
+        # A selection the sweep has no row for at all (a pass cut short) is skipped, not dropped.
+        skipped += len(set(selected) - set(routes))
     for key in sorted(routes, key=lambda k: (k[:5], int(k[5]))):
         eligible = [r for r in routes[key]
                     if not (key[1] == "a16" and collect.route_class(r) != "a16")]
@@ -185,17 +188,18 @@ def report(rows, skipped=0, band_weights=None):
     for dim in ("board", "format", "family"):
         out["by_" + dim] = {k: by_band([r for r in rows if r[dim] == k])
                             for k in sorted({r[dim] for r in rows})}
-    if band_weights:
+    if band_weights is not None:
         if not isinstance(band_weights, dict):
             raise ValueError("band weights must be a JSON object of band -> weight")
         unknown = set(band_weights) - set(BAND_NAMES)
-        if (not isinstance(band_weights, dict) or unknown
-                or not all(isinstance(w, (int, float)) and math.isfinite(w) and w >= 0
+        if (unknown
+                or not all(isinstance(w, (int, float)) and not isinstance(w, bool)
+                           and math.isfinite(w) and w >= 0
                            for w in band_weights.values())
                 or not any(band_weights.values())):
             raise ValueError(f"band weights must name {BAND_NAMES} and not all be zero")
         out["band_weights"] = band_weights
-    if not band_weights:
+    if band_weights is None:
         return out
     total = sum(band_weights.values())
     groups = [out["overall"]] + [g for k in out if k.startswith("by_") for g in out[k].values()]
@@ -257,7 +261,7 @@ def main(argv=None):
             r, s = rows_from_document(json.loads(doc.read_bytes(), object_pairs_hook=regret.unique_object))
             rows += r
             skipped += s
-        if len(args.board) != len(args.routes):
+        if len(args.board) != len(args.routes) or len(args.selected) > len(args.routes):
             raise ValueError("one --board per --routes group")
         for i, passes in enumerate(args.routes):
             sel = args.selected[i] if i < len(args.selected) else None
