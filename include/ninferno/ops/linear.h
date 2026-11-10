@@ -4,7 +4,7 @@
 #include "core/arena.h"
 #include "core/tensor.h"
 
-#include <cuda_runtime.h>
+#include "core/cuda_stream.h"
 
 #include <cstddef>
 #include <cstdint>
