@@ -2354,13 +2354,15 @@ void transferred_resolution(const json& fixture) {
         const json& m           = fixture.at("models").at(row.at("model").get<std::string>());
         const std::string q     = row.at("quant").get<std::string>();
         const ch::ModelFacts mf = model_at(m, q);
-        ch::CardFacts cf        = card_of(fixture.at("cards").at(row.at("card").get<std::string>()));
-        const std::string gen   = std::string(ch::generation_of(cf));
-        if (std::any_of(std::begin(ch::kDecodePredictionError), std::end(ch::kDecodePredictionError),
+        ch::CardFacts cf      = card_of(fixture.at("cards").at(row.at("card").get<std::string>()));
+        const std::string gen = std::string(ch::generation_of(cf));
+        if (std::any_of(std::begin(ch::kDecodePredictionError),
+                        std::end(ch::kDecodePredictionError),
                         [&](const ch::PredictionError& e) { return e.generation == gen; })) {
             continue; // its own rows state its error
         }
-        cf.major = lender_major, cf.minor = lender_minor; // carried: the lender's rows, this board's rates
+        cf.major                 = lender_major,
+        cf.minor                 = lender_minor; // carried: the lender's rows, this board's rates
         const ch::QuantOption qo = quant_of(q, m.at("quants").at(q));
         ch::Candidate c;
         c.kv    = kv_of(row.at("kv").get<std::string>());
@@ -2376,21 +2378,23 @@ void transferred_resolution(const json& fixture) {
     double worst = 0;
     for (const ch::TransferredError& t : ch::kTransferredDecodeError) {
         const auto it = by_target.find(std::string(t.target));
-        check(it != by_target.end() && it->second.second == 12, std::string(t.target) + ": 12 carried rows");
+        check(it != by_target.end() && it->second.second == 12,
+              std::string(t.target) + ": 12 carried rows");
         if (it == by_target.end()) { continue; }
         const double rms = std::sqrt(it->second.first / it->second.second);
         std::cout << "  carried " << ch::kTransferGeneration << " -> " << t.target << ": "
                   << it->second.second << " points, rms " << rms << " (stated " << t.rms << ")\n";
         check(std::abs(rms - t.rms) < 0.0015,
-              std::string(t.target) + ": the stated transferred resolution is the carried rows' rms");
+              std::string(t.target) +
+                  ": the stated transferred resolution is the carried rows' rms");
         worst = std::max(worst, rms);
     }
     check(by_target.size() == std::size(ch::kTransferredDecodeError),
           "every carried target has a stated row");
     check(std::abs(worst - ch::kCarriedForwardWorstCaseDecodeError) < 0.0015,
           "the carried-forward worst case is the largest measured transfer");
-    // The basis by board: Ada and Blackwell state their own rows' error; the other known generations
-    // their carried row; a compute capability with no generation row the worst case.
+    // The basis by board: Ada and Blackwell state their own rows' error; the other known
+    // generations their carried row; a compute capability with no generation row the worst case.
     for (const auto& [name, basis] : std::vector<std::pair<const char*, ch::ResolutionBasis>>{
              {"RTX 4090", ch::ResolutionBasis::Own},
              {"RTX 5090", ch::ResolutionBasis::Own},
@@ -2411,18 +2415,19 @@ void transferred_resolution(const json& fixture) {
         check(r.basis == basis && r.rms == want && want > 0,
               std::string(name) + ": the resolution's basis");
     }
-    ch::CardFacts lent = card_of(fixture.at("cards").at("RTX 5090"));
-    lent.major         = 13;
-    lent.minor         = 0;
+    ch::CardFacts lent           = card_of(fixture.at("cards").at("RTX 5090"));
+    lent.major                   = 13;
+    lent.minor                   = 0;
     const ch::Resolution carried = ch::resolution_of(lent);
     check(carried.basis == ch::ResolutionBasis::WorstCase &&
               carried.rms == ch::kCarriedForwardWorstCaseDecodeError,
           "a compute capability with no generation row: the worst case");
     // No reference, no estimate: the basis is None, not Own.
-    const Bench none           = nine_b(fixture, "RTX 3060");
-    const ch::Choice undecided = ch::choose(
-        none.model, none.card, none.quants[0],
-        ch::allowed_axes(none.model, KvCacheStorage::Int8Group64), {}, ch::Task{}, oracle(none, 20e9));
+    const Bench none = nine_b(fixture, "RTX 3060");
+    const ch::Choice undecided =
+        ch::choose(none.model, none.card, none.quants[0],
+                   ch::allowed_axes(none.model, KvCacheStorage::Int8Group64), {}, ch::Task{},
+                   oracle(none, 20e9));
     check(undecided.resolution_basis == ch::ResolutionBasis::None && undecided.resolution == 0,
           "a board with no reference card: basis none");
 }

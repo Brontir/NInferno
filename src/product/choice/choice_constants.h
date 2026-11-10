@@ -313,6 +313,7 @@ struct TransferredError {
     std::string_view target;
     double rms;
 };
+
 inline constexpr TransferredError kTransferredDecodeError[] = {
     {"ga10x", 0.0786}, {"turing", 0.2151}, {"volta", 0.5447}};
 
