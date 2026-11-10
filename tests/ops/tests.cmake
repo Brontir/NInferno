@@ -102,7 +102,7 @@ ninferno_add_test(ninferno_sm_wave_rules_test LABELS host
 
 # Whole-chain pricing and selection of a projection chain's fusion alternatives (#310,
 # ops/common/projection_chain.h): lowest seconds, then fewer launches, then canonical order. No GPU.
-ninferno_add_test(ninferno_projection_chain_test
+ninferno_add_test(ninferno_projection_chain_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_projection_chain.cpp"
   LIBRARIES ninferno_core)
 

@@ -173,6 +173,7 @@ add_test(NAME ninferno_kernel_facts_test
   COMMAND ${Python3_EXECUTABLE} -B ${PROJECT_SOURCE_DIR}/tools/kernel_facts/kernel_facts.py check
     --binary ${ninferno_kernel_facts_binary} --expected ${ninferno_kernel_facts_snapshot}
     --nvcc ${CMAKE_CUDA_COMPILER_VERSION} --cuda-bin ${ninferno_cuda_bin})
+ninferno_label_tests(ninferno_kernel_facts_test LABELS host)
 set_tests_properties(ninferno_kernel_facts_test PROPERTIES SKIP_RETURN_CODE 77)
 # `ninja ninferno_kernel_facts_update`: the snapshot of this build's architecture rewritten from
 # its binary into the source tree (then regenerate the selector goldens that move with it).

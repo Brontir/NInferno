@@ -51,7 +51,7 @@ ninferno_add_test(ninferno_machine_facts_test LABELS host
   LIBRARIES ninferno_core)
 # The constexpr board registry (core/board_registry.h) against the reference table, and the
 # measured boards against the figures they were spelled with before it. No GPU.
-ninferno_add_test(ninferno_board_registry_test
+ninferno_add_test(ninferno_board_registry_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_board_registry.cpp"
   LIBRARIES ninferno_core)
 # The MMQ prefill gate's decision atlas over that table (#373, core/gate_atlas.h); `--json` prints

@@ -58,7 +58,7 @@ ninferno_add_test(ninferno_spec_draft_head_test LABELS host NEEDS_SOURCE_DIR
 
 # DSpine (spec/dspine.h): the published config's refusals and tensor contract, the arithmetic's
 # invariants. No GPU.
-ninferno_add_test(ninferno_spec_dspine_test NEEDS_SOURCE_DIR
+ninferno_add_test(ninferno_spec_dspine_test LABELS host NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_spec_dspine.cpp"
   LIBRARIES ninferno_spec)
 
@@ -85,6 +85,7 @@ ninferno_label_tests(ninferno_regret_collect_test LABELS host)
 # tools/bench/mmq_transfer_audit.py: same-generation MMQ transfer by workload regime (#373), no GPU.
 add_test(NAME ninferno_mmq_transfer_audit_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_mmq_transfer_audit.py)
+ninferno_label_tests(ninferno_mmq_transfer_audit_test LABELS host)
 
 # Repository hygiene, no GPU: only scripts (a #! first line) may be committed executable.
 add_test(NAME ninferno_file_modes_test
