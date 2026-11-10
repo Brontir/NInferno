@@ -1,7 +1,7 @@
 {
     "schema": 1,
     "about":
-        "Registry of the fusion sites found so far (#617 step A; the markers in the code enumerate it, and a site not yet found is not in it): places where two or more ops can run as one fused kernel or as separate launches, where it is decided today, the alternatives, and what prices it. Data only; nothing reads it at run time. Each site's deciding function carries a `// FUSION-SITE: <id>` line above its signature, and tests/test_fusion_sites.py fails when the code and this file disagree. byte_promise: Equal (every alternative gives the same bytes), OwnOrder (the alternatives sum in different orders, so the invariant profile must pin one), NotApplicable, Unreviewed. priced.status: priced (the generic route cost model prices the alternatives), partial (some alternative or term), fact (a hardware or format predicate decides, no price), literal (a constant measured on the cards named in the evidence), none (one form only, or a rule with no price). invariant_pin: which alternative the invariant route profile runs (unreviewed: not yet read from the code). parity_test: a test that runs the alternatives against each other (null: none known). oracle_test: a test that checks the site's output against an oracle or a tolerance (null: none known). The JSON is the source; a generated constexpr header is intended for steps B and D, as gpu_facts.json becomes board_registry.h.",
+        "Registry of the fusion sites found so far (#617 step A; the markers in the code enumerate it, and a site not yet found is not in it): places where two or more ops can run as one fused kernel or as separate launches, where it is decided today, the alternatives, and what prices it. Data only; nothing reads it at run time. Each site's deciding function carries a `// FUSION-SITE: <id>` line above its signature, and tests/test_fusion_sites.py fails when the code and this file disagree. byte_promise: Equal (every alternative gives the same bytes), OwnOrder (the alternatives sum in different orders, so the invariant profile must pin one), NotApplicable, Unreviewed. priced.status: priced (the generic route cost model prices the alternatives), partial (some alternative or term), fact (a hardware or format predicate decides, no price), literal (a constant measured on the cards named in the evidence), none (one form only, or a rule with no price). invariant_pin: which alternative the invariant route profile runs (unreviewed: not yet read from the code). parity_test: a test that runs the alternatives against each other (null: none known). oracle_test: a test that runs the whole production site (the public op or function that makes the decision, every alternative it can choose) against an independent oracle or a tolerance (null: none known; a test that exercises only one component or one alternative, or only restates the rule, does not qualify). The JSON is the source; a generated constexpr header is intended for steps B and D, as gpu_facts.json becomes board_registry.h.",
     "sites":
         [
             {
@@ -71,7 +71,7 @@
                 ],
                 "invariant_pin": "unreviewed",
                 "parity_test": null,
-                "oracle_test": "tests/ops/linear_swiglu/test_q8_a16.cpp"
+                "oracle_test": null
             },
             {
                 "id": "ffn_down_residual_epilogue",
@@ -103,7 +103,7 @@
                 ],
                 "invariant_pin": "unreviewed",
                 "parity_test": null,
-                "oracle_test": "tests/ops/linear_add/test_q8_a16.cpp"
+                "oracle_test": null
             },
             {
                 "id": "mmq_gated_pair",
@@ -272,8 +272,8 @@
                     "comment above kFusedTextQkNormRopeMaximumTokens"
                 ],
                 "invariant_pin": "none needed (Equal)",
-                "parity_test": null,
-                "oracle_test": "tests/ops/test_rmsnorm_rope.cpp"
+                "parity_test": "tests/ops/test_rmsnorm_rope.cpp",
+                "oracle_test": null
             },
             {
                 "id": "dense_qkv_prepare",
@@ -369,8 +369,8 @@
                     "#617 analysis, section 1"
                 ],
                 "invariant_pin": "none needed (Equal)",
-                "parity_test": null,
-                "oracle_test": "tests/ops/test_gated_rmsnorm.cpp"
+                "parity_test": "tests/ops/test_gated_rmsnorm.cpp",
+                "oracle_test": null
             },
             {
                 "id": "moe_select_plan",
@@ -471,7 +471,7 @@
                 ],
                 "invariant_pin": "n/a (no arithmetic)",
                 "parity_test": null,
-                "oracle_test": "tests/ops/linear/test_launch_overlap.cpp"
+                "oracle_test": null
             },
             {
                 "id": "dense_out_residual_norm",
@@ -505,7 +505,7 @@
                 ],
                 "invariant_pin": "unreviewed",
                 "parity_test": null,
-                "oracle_test": "tests/ops/test_dense_fused.cpp"
+                "oracle_test": null
             },
             {
                 "id": "moe_router_select_plan",
@@ -876,7 +876,7 @@
                 "evidence": [
                     "src/ops/route_pins.cpp"
                 ],
-                "oracle_test": "tests/ops/test_sparse_moe.cpp"
+                "oracle_test": null
             },
             {
                 "id": "dgc_prepare",
@@ -905,7 +905,7 @@
                 "byte_promise": "Unreviewed",
                 "invariant_pin": "unreviewed",
                 "parity_test": null,
-                "oracle_test": "tests/ops/test_dynamic_grouped_conv_prepare.cpp",
+                "oracle_test": null,
                 "one_card_literal": false,
                 "evidence": [
                     "src/ops/wrapper/dynamic_grouped_conv.cpp"
@@ -938,7 +938,7 @@
                 "byte_promise": "Unreviewed",
                 "invariant_pin": "unreviewed",
                 "parity_test": null,
-                "oracle_test": "tests/ops/test_linear_dynamic_grouped_conv_add.cpp",
+                "oracle_test": null,
                 "one_card_literal": false,
                 "evidence": [
                     "src/ops/wrapper/dynamic_grouped_conv.cpp"
