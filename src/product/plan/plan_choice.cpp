@@ -97,8 +97,13 @@ DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk
         // The gain of the default thinking flag's choice. Per request with that choice plain
         // and the other flag's drafting (served_speculation seeds the menu with it), the gain
         // is only the other flag's requests': not weighed, so the profile's choice stands.
-        const spec::Choice& own   = spec::pick(p, ask.thinking);
-        const spec::Choice& other = spec::pick(p, !ask.thinking);
+        // The choice is the one the Engine runs (served_choices, as served_speculation picks it):
+        // where the profile's default is one the Engine cannot run, the served choice's speeds,
+        // depth and joint price describe the option, never the rejected default's; a served
+        // choice published without its speeds is not measured.
+        const spec::Profile runs  = served_choices(p);
+        const spec::Choice& own   = spec::pick(runs, ask.thinking);
+        const spec::Choice& other = spec::pick(runs, !ask.thinking);
         const bool split = per_request && !own.config.enabled() && other.config.enabled();
         const spec::Choice& c = split ? other : own;
         choice::DrafterOption option;

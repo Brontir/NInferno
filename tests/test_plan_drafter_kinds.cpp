@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -32,6 +33,14 @@ void check(bool ok, const std::string& what) {
 
 bool drafts_with(const spec::Profile& profile, spec::Mode mode) {
     return spec::drafting_modes(profile).contains(mode);
+}
+
+// The drafter axis's MTP option; nullopt when it offers none.
+std::optional<pr::choice::DrafterOption> mtp_option_of(const pr::DrafterAxis& axis) {
+    for (const auto& o : axis.options) {
+        if (o.label.rfind("mtp:", 0) == 0) { return o; }
+    }
+    return std::nullopt;
 }
 
 void test_every_kind_carried() {
@@ -100,6 +109,53 @@ void test_every_kind_carried() {
                     joint[2].scale == 0.2,
                 "the scale of each streams count is its depth in force's: 1 at two, k from three");
         }
+    }
+    // A default the Engine cannot run: here it runs MTP one draft shallower than the pair's
+    // choice, so the profile's served choice replaces it (Profile::served). The option is what
+    // runs: its gain, its load bound's depth and gain and its joint price are the served
+    // configuration's, never the rejected default's; a served choice published without its
+    // speeds is not measured (and not priced), whatever the rejected default measured.
+    {
+        pr::SpeculationSubject restricted     = subject;
+        spec::Profile& profile                = restricted.resolved->profile;
+        const spec::SpecConfig rejected       = spec::pick(profile, true).config;
+        restricted.support.mtp_depth          = rejected.k - 1;
+        const pr::SpeculationSubject mtp_only = pr::subject_of_mode(restricted, spec::Mode::Mtp);
+        const spec::Choice served =
+            spec::pick(pr::served_choices(mtp_only.resolved->profile), true);
+        check(served.config.mode == spec::Mode::Mtp && served.config.k >= 1 &&
+                  served.config.k < rejected.k && served.tok_s > 0 && served.plain_tok_s > 0,
+              "the Engine's MTP window below the pair's choice serves a measured shallower one (" +
+                  served.config.label() + " for " + rejected.label() + ")");
+        profile.load = {spec::LoadBound{.lanes = 2, .depth = rejected.k}};
+        profile.joint_scale.clear();
+        profile.joint_scale[rejected.label()]      = {{2, 0.3}};
+        profile.joint_scale[served.config.label()] = {{2, 0.6}};
+        const auto option = mtp_option_of(pr::drafter_axis(restricted, pr::SpeculationAsk{}));
+        check(option && option->label == served.config.label(),
+              "the option names the served configuration");
+        if (option) {
+            check(option->measured && option->speedup == std::max(1.0, served.speedup()),
+                  "the option's gain is the served configuration's (" +
+                      std::to_string(option->speedup) + " for " + std::to_string(served.speedup()) +
+                      ")");
+            check(option->load.size() == 1 && option->load[0].streams == 2 &&
+                      option->load[0].depth == static_cast<std::uint32_t>(served.config.k) &&
+                      !option->load[0].bounded && option->load[0].speedup == option->speedup,
+                  "a bound at the rejected default's depth runs the served depth, at its gain");
+            check(option->joint.size() == 1 && option->joint[0].streams == 2 &&
+                      option->joint[0].scale == 0.6,
+                  "the joint price is the served configuration's, not the rejected default's");
+        }
+        // Published without measurements: the served choice carries no speeds.
+        spec::Choice unmeasured = served;
+        unmeasured.tok_s = unmeasured.plain_tok_s = 0;
+        profile.measurements.clear();
+        profile.served       = spec::ServedChoices{unmeasured, unmeasured, unmeasured};
+        const auto published = mtp_option_of(pr::drafter_axis(restricted, pr::SpeculationAsk{}));
+        check(published && published->label == served.config.label() && !published->measured &&
+                  published->speedup == 1.0 && published->joint.empty(),
+              "a served choice without speeds: not measured, not priced, no borrowed gain");
     }
     const pr::SpeculationSubject chosen = pr::subject_of_mode(subject, spec::Mode::DFlash2);
     check(chosen.resolved && drafts_with(chosen.resolved->profile, spec::Mode::DFlash2) &&
