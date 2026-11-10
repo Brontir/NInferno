@@ -34,6 +34,7 @@ python3 tools/bench/run_ninferno_bench_matrix.py --preset core             # run
 | `selection_regret.py` | Offline regret of recorded production choices against qualified, matched alternatives on held-out boards or models ([below](#offline-selection-regret)). |
 | `regret_collect.py` | The lab collector for `selection_regret.py`: `ninferno_route_tune --selected-out` (the route the production path runs per problem and width) and one `--routes-out` sweep per pass into its input ([below](#offline-selection-regret)). |
 | `gap_map.py` | Where measured kernel times sit against the counted DRAM and tensor laws, per card, format and T band; host only ([doc](../../docs/maintainer/gap-map.md)). |
+| `mmq_transfer_audit.py` | Offline audit of how the MMQ choice transfers between same-generation cards (#373): route-table agreement and gate-label regret by workload regime, from `routes/*.json` and `data/mmq_paired_prefill.json`; no GPU ([report](../../docs/maintainer/mmq-transfer-audit.md)). |
 | `quality_rows.py` | Perplexity and KL divergence of each `--activations` mode against `exact` on the fixed corpus, appended as `docs/performance/` rows. |
 
 ## Offline selection regret

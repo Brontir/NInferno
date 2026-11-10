@@ -3,6 +3,11 @@ ninferno_embed_text(${CMAKE_CURRENT_SOURCE_DIR}/data/gpu_facts.json NINFERNO_FAC
   NINFERNO_GPU_FACTS_JSON)
 configure_file(embedded_gpu_facts.h.in
   ${CMAKE_CURRENT_BINARY_DIR}/generated/core/embedded_gpu_facts.h @ONLY)
+# The same table as constexpr rows (core/board_registry.h), for the data that is keyed by a board
+# at compile time (core/measured_boards.h). The directory is public: the header reaches every
+# target that includes it.
+ninferno_generate_board_registry(${CMAKE_CURRENT_SOURCE_DIR}/data/gpu_facts.json
+  ${CMAKE_CURRENT_BINARY_DIR}/generated_public/core/board_registry_rows.inc)
 
 add_library(ninferno_core STATIC
   arena.cu
@@ -10,6 +15,7 @@ add_library(ninferno_core STATIC
   device_class.cpp
   device_traits.cpp
   machine_facts.cpp
+  kernel_occupancy.cpp
   gate_atlas.cpp
   device_image_probe.cu
   tune_timer.cu
@@ -32,6 +38,7 @@ add_library(ninferno_core STATIC
 )
 ninferno_internal_includes(ninferno_core)
 target_include_directories(ninferno_core PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
+target_include_directories(ninferno_core PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/generated_public)
 ninferno_cuda_archive(ninferno_core)
 target_link_libraries(ninferno_core PUBLIC ninferno::cudart CUDA::nvtx3 Threads::Threads
   PRIVATE ninferno::json)
