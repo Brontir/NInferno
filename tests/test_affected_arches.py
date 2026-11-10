@@ -506,15 +506,15 @@ class Classify(unittest.TestCase):
         files = {"tests/ops/t.cu": '#include "q.h"\n',
                  "tests/ops/q.h": '#include "convert/tables.inc"\n#include "convert/table.txt"\n',
                  "src/convert/tables.inc": "int t[1];\n", "src/convert/table.txt": "1\n",
-                 "src/convert/other.txt": "2\n"}
+                 "tests/convert/other.txt": "2\n"}
         for path in ("src/convert/tables.inc", "src/convert/table.txt"):
             with self.subTest(path=path):
                 res = self.run_diff([path], files)
                 self.assertTrue(res["all"])
                 self.assertIn("included by a .cu", res["reasons"][path])
         # host text that no .cu reaches stays host
-        self.assertTrue(self.run_diff(["src/convert/other.txt"])["host"])
-        self.assertFalse(self.run_diff(["src/convert/other.txt"])["all"])
+        self.assertTrue(self.run_diff(["tests/convert/other.txt"])["host"])
+        self.assertFalse(self.run_diff(["tests/convert/other.txt"])["all"])
 
     def test_include_graph_of_a_git_ref_holds_every_extension(self):
         self.git("init", "-q")
@@ -758,6 +758,92 @@ class Classify(unittest.TestCase):
         files = {"src/ops/sources.cmake": 'if(NINFERNO_BUILD_ARCH STREQUAL "70")\n volta_tiles.h\nendif()\n',
                  "src/ops/volta_tiles.h": "", "src/ops/k.cu": '#include "volta_tiles.h"\n'}
         self.assertTrue(self.run_diff(["src/ops/volta_tiles.h"], files)["all"])
+
+    # ---- review round 3 (P2-1 .. P2-3, P3): every fix only widens an answer toward "all"
+
+    def test_host_cpp_reaching_an_arch_macro_header_is_all(self):  # N5
+        files = {"src/core/feat.h": "#pragma once\n#if NINFERNO_BUILD_ARCH >= 89\n#endif\n",
+                 "src/core/mid.h": '#include "feat.h"\n',
+                 "src/chat/chat.cpp": '#include "../core/mid.h"\nint chat() { return 1; }\n'}
+        res = self.run_diff(["src/chat/chat.cpp"], files)
+        self.assertTrue(res["all"])
+        self.assertIn("src/core/feat.h", res["reasons"]["src/chat/chat.cpp"])
+        # the same file with a clean closure stays host
+        files["src/core/feat.h"] = "#pragma once\n"
+        res = self.run_diff(["src/chat/chat.cpp"], files)
+        self.assertTrue(res["host"] and not res["all"])
+
+    def test_host_cpp_gaining_a_device_facts_read_is_all(self):  # N4, N16
+        for text in ('#include "../core/device_class.h"\nint f() { return device_class(); }\n',
+                     "#include <cuda_runtime.h>\nint f() { int v; "
+                     "cudaDeviceGetAttribute(&v, cudaDevAttrComputeCapabilityMajor, 0); return v; }\n",
+                     "int f() { cudaGetDeviceProperties(0, 0); }\n", "DeviceFeatures x;\n",
+                     "// gpu_facts\n", "int kernel_facts();\n"):
+            with self.subTest(text=text):
+                res = self.run_diff(["src/chat/chat.cpp"], {"src/chat/chat.cpp": text})
+                self.assertTrue(res["all"])
+                self.assertIn("device-facts API", res["reasons"]["src/chat/chat.cpp"])
+
+    def test_host_cpp_that_dropped_its_device_read_is_still_all(self):
+        self.git("init", "-q")
+        self.tree({"src/chat/chat.cpp": "int f() { return device_class(); }\n"})
+        self.commit_all("base", "base")
+        self.tree({"src/chat/chat.cpp": "int f() { return 1; }\n"})
+        self.commit_all("head", "head")
+        head = aa.Repo(self.root, ref="HEAD")
+        base = aa.Repo(self.root, ref="base")
+        self.assertTrue(aa.classify(["src/chat/chat.cpp"], head, base=base)["all"])
+        self.assertTrue(aa.classify(["src/chat/chat.cpp"], head)["host"])
+
+    def test_bracket_comment_hides_no_guard(self):  # N1
+        for opener, closer in (("#[[", "]]"), ("#[=[", "]=]")):
+            with self.subTest(opener=opener):
+                cmake = (f'{opener}\nif(NINFERNO_BUILD_ARCH STREQUAL "70")\n{closer}\n'
+                         "target_sources(ops PRIVATE volta_k.cu)\n")
+                res = self.run_diff(["src/ops/volta_k.cu"],
+                                    {"src/ops/sources.cmake": cmake, "src/ops/volta_k.cu": ""})
+                self.assertEqual(res["arches"], ALL)
+        # a real guard after a comment still narrows
+        cmake = '#[[ note ]]\nif(NINFERNO_BUILD_ARCH STREQUAL "70")\n volta_k.cu\nendif()\n'
+        res = self.run_diff(["src/ops/volta_k.cu"],
+                            {"src/ops/sources.cmake": cmake, "src/ops/volta_k.cu": ""})
+        self.assertEqual(res["arches"], ["sm_70"])
+
+    def test_guarded_header_is_not_a_translation_unit(self):  # N2, N2b
+        guarded = 'if(NINFERNO_BUILD_ARCH STREQUAL "70")\n  volta_tiles.h\nendif()\n'
+        for includer, text in (("src/ops/b.cpp", '#include "volta_tiles.h"\n'),
+                               ("src/chat/chat.cpp", '#include "../ops/volta_tiles.h"\n'),
+                               (None, "")):
+            with self.subTest(includer=includer):
+                files = {"src/ops/sources.cmake": guarded, "src/ops/volta_tiles.h": "int t();\n"}
+                if includer:
+                    files[includer] = text
+                self.assertTrue(self.run_diff(["src/ops/volta_tiles.h"], files)["all"])
+        for ext in (".hpp", ".inl", ".cuh"):
+            with self.subTest(ext=ext):
+                files = {"src/ops/sources.cmake": guarded.replace("tiles.h", "tiles" + ext),
+                         f"src/ops/volta_tiles{ext}": ""}
+                self.assertTrue(self.run_diff([f"src/ops/volta_tiles{ext}"], files)["all"])
+        files = {"src/ops/sources.cmake": guarded.replace("volta_tiles.h", "volta_t.cpp"),
+                 "src/ops/volta_t.cpp": ""}
+        self.assertEqual(self.run_diff(["src/ops/volta_t.cpp"], files)["arches"], ["sm_70"])
+
+    def test_text_files_under_src_are_not_host(self):  # N6, N11
+        for path in ("src/text/tab.txt", "src/chat/data/conv.json", "src/convert/gen.py",
+                     "src/connect/x.yml", "apps/convert/x.json"):
+            with self.subTest(path=path):
+                self.assertTrue(self.run_diff([path])["all"])
+        for path in ("docs/data/x.json", ".github/workflows/ci.yml", "tests/convert/fixtures/q.json",
+                     "tests/convert_native/gen.py", "docs/a.txt", "src/chat/a.cpp", "src/text/readme.md"):
+            with self.subTest(path=path):
+                res = self.run_diff([path])
+                self.assertTrue(res["host"] and not res["all"])
+
+    def test_nested_tracked_build_directory_takes_part_in_the_working_tree(self):  # M7g
+        guarded = 'if(NINFERNO_BUILD_ARCH STREQUAL "70")\n volta_a.cu\nendif()\n'
+        files = {"src/ops/volta_a.cu": "", "src/ops/build/sources.cmake": guarded}
+        res = self.run_diff(["src/ops/volta_a.cu"], files)
+        self.assertEqual(res["arches"], ["sm_70"])
 
 
 if __name__ == "__main__":

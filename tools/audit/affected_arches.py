@@ -106,7 +106,14 @@ HOST_PREFIXES = (
 )
 # Inside a host directory only these file types are host code or text. Anything else (a .h.in
 # template configured into a header, a .def, a script run by add_custom_command, data) answers "all".
-HOST_CODE_EXT = (".cpp", ".cc", ".h", ".hpp", ".inl", ".md", ".txt", ".json", ".py", ".yml", ".yaml")
+# This list is a CHOICE of the maintainers, not derived from a fact of the build: the code types are
+# host everywhere in the host directories; the text types (.md .txt .json .py .yml .yaml) only outside
+# src/ and apps/, where a data file can be consumed by a device source at build or run time (a .txt
+# generator input, an embedded .json). Under docs/, .github/ and tests/ they are read by tools and
+# host tests only. A text file under src/ answers "all".
+HOST_CODE_EXT = (".cpp", ".cc", ".h", ".hpp", ".inl")
+HOST_TEXT_EXT = (".md", ".txt", ".json", ".py", ".yml", ".yaml")
+HOST_TEXT_EXCLUDED_PREFIXES = ("src/", "apps/")
 # Arch-keyed allowlists of the SASS audits are data of device code.
 ALL_PATTERNS_EXTRA = [r"(^|/)pdl_[a-z_]*\.txt$", r"^tools/pdl_"]
 HOST_FILE = re.compile(
@@ -117,6 +124,14 @@ ARCH_MACROS = re.compile(
     r"NINFERNO_ARCH_FAMILY_SPECIFIC|NINFERNO_FULL_CUDA_ARCHS")
 DEVICE_EXT = (".cu", ".cuh")
 SOURCE_EXT = (".cu", ".cuh", ".h", ".hpp", ".cpp", ".cc", ".inl")
+# Translation units: only these can be built on one arch's tree alone. A header listed under a guard
+# is still read by every unguarded file that includes it.
+TU_EXT = (".cu", ".cpp", ".cc")
+# A host file that names the device-facts API reads the card (or the arch it was built for) at run
+# time, whatever its includes say: it answers "all". Checked on the changed file itself.
+DEVICE_API = re.compile(
+    r"cuda_runtime|cudaDeviceGetAttribute|cudaGetDeviceProperties|device_class|DeviceFeatures|"
+    r"gpu_facts|kernel_facts")
 # Text files that hold code without being compiled by themselves: scanned for arch macros.
 TEXT_CODE_EXT = SOURCE_EXT + (".inc", ".def", ".ipp", ".hh", ".hxx", ".in")
 # `#include MACRO`: the file that is included is chosen by a macro (often an arch-derived one).
@@ -333,6 +348,30 @@ class Repo:
         union = set().union(*entries)
         return next(iter(union)) if len(union) == 1 else "all"
 
+    def include_closure(self, path):
+        """Every file `path` includes, transitively (not `path` itself unless it includes itself)."""
+        memo = self.__dict__.setdefault("_closure", {})
+        if path not in memo:
+            seen = set()
+            stack = [path]
+            while stack:
+                f = stack.pop()
+                for name in INCLUDE.findall(self.read(f)):
+                    for h in self.resolve(f, name):
+                        if h not in seen:
+                            seen.add(h)
+                            stack.append(h)
+            memo[path] = seen
+        return memo[path]
+
+    def arch_user_in_closure(self, path):
+        """The first file of the include closure of `path` that uses an arch macro or a computed
+        include, else None."""
+        for h in sorted(self.include_closure(path)):
+            if h.endswith(TEXT_CODE_EXT) and uses_arch(self.read(h)):
+                return h
+        return None
+
     def headers_reached_from_cu(self):
         if self.device_headers is None:
             seen = set()
@@ -352,6 +391,8 @@ def cmake_statements(text):
     """The commands of a CMake file as one string each, comments removed, a call that spans lines
     joined (so `if(A` / `OR B)` is one condition)."""
     out, buf, depth = [], [], 0
+    # bracket comments (#[[ ... ]], #[=[ ... ]=]) hold no commands: an `if()` inside one opens no guard
+    text = re.sub(r"#\[(=*)\[.*?\]\1\]", "", text, flags=re.S)
     for line in text.splitlines():
         code = line.split("#")[0]
         if not buf and not code.strip():
@@ -368,6 +409,31 @@ def cmake_statements(text):
 
 def uses_arch(text):
     return bool(ARCH_MACROS.search(text) or COMPUTED_INCLUDE.search(text))
+
+
+def is_host_path(p):
+    """True when the path is host code or text by its directory and type alone."""
+    if p.startswith(HOST_PREFIXES):
+        if p.endswith(HOST_CODE_EXT):
+            return True
+        if p.endswith(HOST_TEXT_EXT) and not p.startswith(HOST_TEXT_EXCLUDED_PREFIXES):
+            return True
+    return bool(HOST_FILE.match(p)) or p.endswith(HOST_EXT)
+
+
+def host_reads_device(p, repo, read, base):
+    """Why a host source file is not host after all (None if it is): it names the device-facts API,
+    or a file of its include closure uses an arch macro or a computed include. Both sides of a diff
+    are judged. Only widens the answer."""
+    for side_read, side in ((read, repo), (base.read if base is not None else None, base)):
+        if side_read is None:
+            continue
+        if DEVICE_API.search(side_read(p) or ""):
+            return "reads the device-facts API (cuda_runtime, device_class, gpu_facts, ...)"
+        hit = side.arch_user_in_closure(p)
+        if hit:
+            return f"includes {hit}, which uses an arch macro or a computed include"
+    return None
 
 
 def classify(paths, repo, read=None, base=None, extra_all=None):
@@ -405,14 +471,18 @@ def classify(paths, repo, read=None, base=None, extra_all=None):
             v.add_all(p, "file included by a .cu file")
             continue
         named = [a for a, pat in ARCH_NAME_PATTERNS if re.search(pat, name)]
-        if len(named) == 1 and p.endswith(SOURCE_EXT) and repo.built_on(p) == named[0]:
+        if len(named) == 1 and p.endswith(TU_EXT) and repo.built_on(p) == named[0]:
             v.add_arch(p, named[0], "built on that arch's tree alone (cmake guard)")
             continue
         if p.endswith(DEVICE_EXT):
             v.add_all(p, "device source")
             continue
-        if ((p.startswith(HOST_PREFIXES) and p.endswith(HOST_CODE_EXT)) or HOST_FILE.match(p)
-                or p.endswith(HOST_EXT)):
+        if is_host_path(p):
+            if p.endswith(SOURCE_EXT):
+                why = host_reads_device(p, repo, read, base)
+                if why:
+                    v.add_all(p, why)
+                    continue
             v.add_host(p, "host-only code or docs")
             continue
         v.add_all(p, "no rule: conservative")

@@ -198,15 +198,46 @@ The rules, in the order they are tried:
    (`NINFERNO_BUILD_ARCH`, `WITHOUT_NVFP4`, `__CUDA_ARCH__`, ...) before or after the change; chips
    outside the lab set; any file a `.cu` includes, transitively and whatever its extension;
    every `.cu`/`.cuh`.
-2. One arch: a source that CMake lists only under that arch's `NINFERNO_BUILD_ARCH` guard and
-   whose name says the same arch. A chip name in a data file name never narrows the answer: the
-   name says whose board the file describes, not which build set reads it.
+2. One arch: a translation unit (`.cu`, `.cpp`, `.cc`) that CMake lists only under that arch's
+   `NINFERNO_BUILD_ARCH` guard and whose name says the same arch. A header listed under a guard
+   does not narrow: any unguarded file may include it. A chip name in a data file name never
+   narrows the answer: the name says whose board the file describes, not which build set reads it.
 3. "host": only `src/chat`, `src/connect`, `src/media`, `src/text`, `src/structured`,
    `src/convert`, `apps/connect`, `apps/convert`, `tests/chat`, `tests/convert*`,
-   `tests/release`, `docs`, `.github`, and only for C++, Python, JSON, text, Markdown and YAML
-   files; `.md` anywhere.
+   `tests/release`, `docs`, `.github`, and only for C++ files (`.cpp .cc .h .hpp .inl`) and, outside
+   `src/` and `apps/`, for Python, JSON, text and YAML files; `.md` anywhere. This list of types is
+   a choice, not a fact derived from the build. A C++ file is host only when it does not name the
+   device-facts API (`cuda_runtime`, `cudaDeviceGetAttribute`, `cudaGetDeviceProperties`,
+   `device_class`, `DeviceFeatures`, `gpu_facts`, `kernel_facts`) and no file of its include
+   closure (before or after the change) uses an arch macro or a computed include.
 4. Everything else, including `tools/`, `tests/fixtures/`, `src/artifact/`, `src/ui/`,
    `src/serve/`: "all". Several of these run, or are read by, device tests.
+
+### Not seen by the tool
+
+The tool reads names, includes and CMake guards, not behaviour. It does not see:
+
+- a symlink retargeted to a header that holds an arch macro;
+- `set_source_files_properties` under a guard for a source that CMake globs;
+- an arch-derived macro that is not on its list (`ARCH_MACROS`);
+- a `.cu` that includes a header through a macro (`#include MACRO` in a `.cu` is read as an
+  arch use, but the file the macro names is not followed);
+- a new device-facts read or arch-macro include in a host directory that the grep above does not
+  name (a wrapper with another name), and a data file under `docs/`, `.github/` or `tests/` that a
+  device source or test reads;
+- a CMake guard written in a form `guard_arches` does not parse (it then answers "all", which is
+  safe), or hidden from the parser in another way than a `#[[ ]]` bracket comment;
+- a header that only a guarded translation unit includes (it answers "all", which is wider than
+  needed, never narrower).
+
+When the change adds a CMake guard construct, includes a core or device header from chat, connect,
+media, text, structured or convert, or adds a data file that device code reads, ignore "host" and
+run every arch. When in doubt, run every arch.
+
+The machine named by `any_one` should be the fullest build (sm_120a): a host-only convert change
+still runs `ninferno_artifact_poisoned_upload_test` (`tests/convert_native/tests.cmake`), whose
+converter output is uploaded by the GPU materialization test, and a narrower card exercises less of
+it.
 
 The ctest line is always the full suite: which tests carry which label is not read here, so the
 tool never names a label filter. A scan of every tracked file runs in
