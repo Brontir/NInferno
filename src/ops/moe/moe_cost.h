@@ -56,10 +56,11 @@
 //     own rate rows (#668 measures Volta's) before the law can price them.
 // Also absent from every price: launch and fixed overheads, the kernel's DRAM efficiency below
 // the peak bandwidth, tile and wave effects (fitted quantities elsewhere, route_cost_constants.h),
-// the R8 gate/up's code write by the router's CTAs, the shared expert, and the combine fused into
-// an R8 down stage (a separate one is priced by moe_layer_price). A candidate list never ranks a
-// kind against another by a price that has no compute term (status Unpriced), and two kinds of
-// equal price are Tied, not one dominated.
+// the R8 gate/up's code write by the router's CTAs, the shared expert, and the slot reads and the
+// output write of the combine fused into an R8 down stage (a separate combine is priced by
+// moe_layer_price, and so is the residual read of an AddResidual call, fused or not). A candidate
+// list never ranks a kind against another by a price that has no compute term (status Unpriced),
+// and two kinds of equal price are Tied, not one dominated.
 
 #include "core/device_class.h"
 #include "core/weight.h"
@@ -201,11 +202,12 @@ rank_against_selected(const std::optional<MoeStagePrice>& price,
 // router's bytes (its weights, the activation, the logits) and, where the down stage does not fuse
 // the combine (an R8 down stage's last CTAs do, unless the layer has a shared expert or the row
 // grid exceeds the ticket array: moe_r8_down_fuses_combine), the separate combine (reads T x k x H
-// BF16, writes T x H). A stage
-// without its compute term stands at its DRAM floor: `compute_priced` false says the number is a
-// floor in that case, not a full price.
+// BF16, writes T x H), and on `epilogue` AddResidual the read of the T x H BF16 destination, which
+// the combine that writes it reads first (the separate combine and the R8 down stage's fused tail
+// alike; a Store call has no such read). A stage without its compute term stands at its DRAM
+// floor: `compute_priced` false says the number is a floor in that case, not a full price.
 struct MoeLayerPrice {
-    double seconds      = 0;     // stages' max(DRAM, compute) + router + combine
+    double seconds      = 0;     // stages' max(DRAM, compute) + router + combine + residual
     double dram_seconds = 0;     // the same with every stage at its DRAM time
     bool compute_priced = true;  // every stage has its compute term
     bool compute_binds  = false; // some stage's compute time exceeds its DRAM time
@@ -213,9 +215,8 @@ struct MoeLayerPrice {
 };
 
 // nullopt where a stage has no price.
-[[nodiscard]] std::optional<MoeLayerPrice> moe_layer_price(const MoeWeights& weights,
-                                                           const MoeConfig& config,
-                                                           const MoePlan& plan, std::int32_t tokens,
-                                                           const MoeBoardFacts& board);
+[[nodiscard]] std::optional<MoeLayerPrice>
+moe_layer_price(const MoeWeights& weights, const MoeConfig& config, const MoePlan& plan,
+                MoeEpilogue epilogue, std::int32_t tokens, const MoeBoardFacts& board);
 
 } // namespace ninferno::ops::detail::moe

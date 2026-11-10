@@ -498,8 +498,8 @@ void layer_checks() {
         // (At T = 32 this board's compute passes its DRAM time: priced, not bandwidth-bound.)
         for (const std::int32_t tokens : {1, 2, 4, 32}) {
             const bool narrow = tokens <= 4;
-            const auto price =
-                moe::moe_layer_price(w, layer->config, moe::MoePlan{}, tokens, board);
+            const auto price  = moe::moe_layer_price(w, layer->config, moe::MoePlan{},
+                                                     ops::MoeEpilogue::Store, tokens, board);
             check(price && price->compute_priced && price->compute_binds == !narrow &&
                       price->compute_note.empty(),
                   "a register MMA layer is fully priced, bandwidth-bound while narrow, T = " +
@@ -519,12 +519,14 @@ void layer_checks() {
         }
 
         // A rate so low that compute binds: priced, binds, and seconds exceed the DRAM seconds.
-        const auto slow = moe::moe_layer_price(w, layer->config, moe::MoePlan{}, 32, tiny_rate);
+        const auto slow = moe::moe_layer_price(w, layer->config, moe::MoePlan{},
+                                               ops::MoeEpilogue::Store, 32, tiny_rate);
         check(slow && slow->compute_priced && slow->compute_binds &&
                   slow->seconds > slow->dram_seconds,
               "a layer whose compute exceeds its DRAM time says so" + tag);
         // A lent generation row: not priced, with the reason.
-        const auto lent_price = moe::moe_layer_price(w, layer->config, moe::MoePlan{}, 2, lent);
+        const auto lent_price = moe::moe_layer_price(w, layer->config, moe::MoePlan{},
+                                                     ops::MoeEpilogue::Store, 2, lent);
         check(lent_price && !lent_price->compute_priced && !lent_price->compute_note.empty() &&
                   !lent_price->compute_binds &&
                   matches(lent_price->seconds, lent_price->dram_seconds),
@@ -534,7 +536,8 @@ void layer_checks() {
         // stage the BF16 intermediate, and no separate combine (the R8 down CTAs combine).
         moe::MoePlan r8;
         r8.gate_up_r8 = r8.down_r8 = 0;
-        const auto r8_price        = moe::moe_layer_price(w, layer->config, r8, 2, board);
+        const auto r8_price =
+            moe::moe_layer_price(w, layer->config, r8, ops::MoeEpilogue::Store, 2, board);
         check(r8_price && !r8_price->compute_priced && !r8_price->compute_note.empty() &&
                   !r8_price->compute_binds && matches(r8_price->seconds, r8_price->dram_seconds),
               "an R8 layer is unpriced: its DRAM figure alone, with a note" + tag);
@@ -546,7 +549,8 @@ void layer_checks() {
         // is separate, the layer is unpriced because of its R8 stage.
         moe::MoePlan mixed;
         mixed.gate_up_r8       = 0;
-        const auto mixed_price = moe::moe_layer_price(w, layer->config, mixed, 4, board);
+        const auto mixed_price =
+            moe::moe_layer_price(w, layer->config, mixed, ops::MoeEpilogue::Store, 4, board);
         check(mixed_price && !mixed_price->compute_priced && !mixed_price->compute_note.empty() &&
                   matches(mixed_price->dram_seconds * board.dram_bytes_per_s,
                           layer_bytes_by_hand(w, experts, top_k, 4, relu2, true, true)),
@@ -555,7 +559,8 @@ void layer_checks() {
         // kernel: the R8 down stage leaves the layer unpriced and its CTAs fuse the combine.
         moe::MoePlan r8_down;
         r8_down.down_r8       = 0;
-        const auto down_price = moe::moe_layer_price(w, layer->config, r8_down, 4, board);
+        const auto down_price =
+            moe::moe_layer_price(w, layer->config, r8_down, ops::MoeEpilogue::Store, 4, board);
         check(down_price && !down_price->compute_priced && !down_price->compute_note.empty() &&
                   matches(down_price->dram_seconds * board.dram_bytes_per_s,
                           layer_bytes_by_hand(w, experts, top_k, 4, relu2, false, false)),
@@ -581,7 +586,8 @@ void combine_fusion_checks() {
               "an R8 down stage fuses the combine at hidden 2048 and not past the ticket array, "
               "hidden " +
                   std::to_string(hidden));
-        const auto price = moe::moe_layer_price(layer->weights, layer->config, r8, 2, board);
+        const auto price = moe::moe_layer_price(layer->weights, layer->config, r8,
+                                                ops::MoeEpilogue::Store, 2, board);
         check(price && std::abs(price->dram_seconds * board.dram_bytes_per_s -
                                 layer_bytes_by_hand(layer->weights, experts, top_k, 2, false, true,
                                                     !fuses)) <=
@@ -589,6 +595,62 @@ void combine_fusion_checks() {
               "the separate combine is priced exactly where the R8 down stage does not fuse it, "
               "hidden " +
                   std::to_string(hidden));
+    }
+}
+
+// An AddResidual call reads the T x H BF16 destination before the combine writes it, in the
+// separate combine (the register MMA down stage; an R8 down stage past the ticket array) and in
+// the R8 down stage's fused tail alike: its price is the Store call's plus exactly T x H x 2 bytes
+// at the board's bandwidth, on the DRAM figure and on the price, with the flags unchanged.
+void epilogue_checks() {
+    const DeviceClass scoped_class = generic::board_device_class(board_named("rtx4090"));
+    const ScopedDeviceClass scoped(scoped_class);
+    const moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0};
+    moe::MoePlan r8;
+    r8.gate_up_r8 = r8.down_r8 = 0;
+    const std::int32_t experts = 8, top_k = 2;
+
+    struct Case {
+        const char* name;
+        std::int32_t hidden;
+        moe::MoePlan plan;
+        bool fused; // the R8 down stage combines in its tail
+    };
+
+    for (const Case& c :
+         {Case{"separate combine, register MMA down", 2048, moe::MoePlan{}, false},
+          Case{"fused R8 combine tail", 2048, r8, true},
+          Case{"separate combine, R8 down past the ticket array", 1 << 20, r8, false}}) {
+        const auto layer =
+            build(QType::Q8_G32_FP16, QType::Q8_G32_FP16, experts, top_k, c.hidden, 256, false);
+        const bool r8_down = c.plan.down_r8 >= 0;
+        check(!r8_down || moe::moe_r8_down_fuses_combine(layer->weights, layer->config,
+                                                         c.plan.down_r8) == c.fused,
+              std::string("the case's combine is the one it names: ") + c.name);
+        for (const std::int32_t tokens : {1, 2, 32}) {
+            const std::string tag =
+                std::string(" (") + c.name + ", T = " + std::to_string(tokens) + ")";
+            const auto store = moe::moe_layer_price(layer->weights, layer->config, c.plan,
+                                                    ops::MoeEpilogue::Store, tokens, board);
+            const auto add   = moe::moe_layer_price(layer->weights, layer->config, c.plan,
+                                                    ops::MoeEpilogue::AddResidual, tokens, board);
+            check(store && add, "both epilogues are priced" + tag);
+            if (!store || !add) continue;
+            const double read_bytes = static_cast<double>(tokens) * c.hidden * 2;
+            const double got_bytes =
+                (add->dram_seconds - store->dram_seconds) * board.dram_bytes_per_s;
+            check(std::abs(got_bytes - read_bytes) <=
+                      1e-9 * add->dram_seconds * board.dram_bytes_per_s,
+                  "AddResidual adds the destination read, T x H x 2 bytes" + tag + ": " +
+                      std::to_string(got_bytes) + " vs " + std::to_string(read_bytes));
+            check(std::abs((add->seconds - store->seconds) * board.dram_bytes_per_s - read_bytes) <=
+                      1e-9 * add->seconds * board.dram_bytes_per_s,
+                  "the price moves by the same read" + tag);
+            check(add->compute_priced == store->compute_priced &&
+                      add->compute_binds == store->compute_binds &&
+                      add->compute_note == store->compute_note,
+                  "the epilogue changes no flag" + tag);
+        }
     }
 }
 
@@ -615,7 +677,8 @@ void strict_floor_checks() {
             board.dram_bytes_per_s;
         check(floor && std::abs(*floor - want) <= 1e-9 * want,
               "the strict bound by hand, T = " + std::to_string(tokens));
-        const auto price = moe::moe_layer_price(w, layer->config, moe::MoePlan{}, tokens, board);
+        const auto price = moe::moe_layer_price(w, layer->config, moe::MoePlan{},
+                                                ops::MoeEpilogue::Store, tokens, board);
         check(floor && price && *floor <= price->dram_seconds,
               "the strict bound is below the expected-coverage price, T = " +
                   std::to_string(tokens));
@@ -926,8 +989,9 @@ void replica(const std::filesystem::path& routes_dir) {
                         ++skipped["no table plan at that T"];
                         continue;
                     }
-                    const auto price =
-                        moe::moe_layer_price(layer->weights, layer->config, *plan, t, *facts);
+                    // Both sweeps time Store calls (bench/ops/moe_bench.cu, moe_tune.cpp).
+                    const auto price = moe::moe_layer_price(layer->weights, layer->config, *plan,
+                                                            ops::MoeEpilogue::Store, t, *facts);
                     if (!price) {
                         ++skipped["no price"];
                         continue;
@@ -1062,6 +1126,7 @@ int main() {
         layer_checks();
         strict_floor_checks();
         combine_fusion_checks();
+        epilogue_checks();
         format_min_binding_checks();
         candidate_checks();
         w4a8_admission_checks();

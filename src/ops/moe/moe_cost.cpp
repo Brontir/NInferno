@@ -355,8 +355,8 @@ std::vector<MoeCandidate> moe_candidates(const MoeWeights& weights, const MoeCon
 }
 
 std::optional<MoeLayerPrice> moe_layer_price(const MoeWeights& weights, const MoeConfig& config,
-                                             const MoePlan& plan, std::int32_t tokens,
-                                             const MoeBoardFacts& board) {
+                                             const MoePlan& plan, MoeEpilogue epilogue,
+                                             std::int32_t tokens, const MoeBoardFacts& board) {
     const MoeStageRoutes routes = stage_routes(weights, plan);
     MoeLayerPrice out;
     std::int32_t hidden = 0;
@@ -387,6 +387,14 @@ std::optional<MoeLayerPrice> moe_layer_price(const MoeWeights& weights, const Mo
         !moe_r8_down_fuses_combine(weights, config, plan.down_r8)) {
         extra_bytes +=
             (static_cast<double>(tokens) * config.top_k + tokens) * hidden * kBf16BytesPerValue;
+    }
+    // An AddResidual call (out += MoE(x), out holding the residual on entry) reads the T x H BF16
+    // destination before the combine writes it, whichever combine runs: the separate one
+    // (moe_route.cu combine_kernel, `residual = *(out + h)` under CombineArgs::add_residual) and
+    // the R8 down stage's fused tail (moe_r8.cuh fused_combine_tail, `acc += *out`) alike. A Store
+    // call only writes it.
+    if (epilogue == MoeEpilogue::AddResidual) {
+        extra_bytes += static_cast<double>(tokens) * hidden * kBf16BytesPerValue;
     }
     out.seconds += extra_bytes / board.dram_bytes_per_s;
     out.dram_seconds += extra_bytes / board.dram_bytes_per_s;
