@@ -22,6 +22,13 @@ struct Snapshot {
     std::unordered_map<std::string, KernelFacts> rows; // by row_key
 };
 
+// The columns of a schema 2 snapshot (tools/kernel_facts/kernel_facts.py COLUMNS), the order
+// parse() reads the loop's counts in.
+constexpr std::string_view kColumns =
+    "family decoder warps_m warps_k m_tiles n_tiles cluster epilogue latency add_sums registers "
+    "stack local shared loops k_iter mma mma_ones mma_shape ldg ldg_bytes ld ld_bytes ldgsts "
+    "ldgsts_bytes lds lds_bytes sts sts_bytes local local_bytes shfl int fp uniform other total";
+
 // One string per key: the row's spelling without the family column.
 std::string row_key(const RmmaKernelKey& k) {
     std::string s = k.decoder;
@@ -61,6 +68,9 @@ Snapshot parse(std::string_view text) {
                     l.lds_bytes >> l.sts >> l.sts_bytes >> l.local >> l.local_bytes >> l.shfl >>
                     l.int_alu >> l.fp_alu >> l.uniform >> l.other >> l.total;
                 if (!fields) throw std::runtime_error("kernel facts: malformed loop: " + line);
+                if (fields >> std::ws; !fields.eof()) {
+                    throw std::runtime_error("kernel facts: fields past the loop's: " + line);
+                }
                 f.loop = std::move(l);
             }
             k.latency  = latency != 0;
@@ -80,6 +90,10 @@ Snapshot parse(std::string_view text) {
                 s.header.source = rest;
             else if (first == "kernels")
                 s.header.kernels = std::stoul(rest);
+            else if (first == "columns" && rest.find(" loops ") != std::string::npos &&
+                     rest != kColumns)
+                // The loop columns are read by position: the file must spell the order read here.
+                throw std::runtime_error("kernel facts: unexpected columns: " + rest);
         }
     }
     if (s.header.arch.empty() || s.header.kernels != s.rows.size()) {

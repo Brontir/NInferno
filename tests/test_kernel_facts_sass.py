@@ -116,13 +116,34 @@ class LoopFinder(unittest.TestCase):
         self.assertEqual(c.total, 6 + 3 + 1 + 1 + 1 + 1 + 1 + 1 + 8 + 6)
 
     def test_plain_version_when_it_is_heavier(self):
-        # The plain version made heavier than the tail one: it is the path counted, SHFL included.
+        # Without its check the tail version is 3 instructions (HMMA, HMMA, BRA) against the plain
+        # one's 4 (HMMA, HMMA, SHFL, NOP): the plain path is counted, SHFL included.
         lines = [l for l in KERNEL if l[0] not in (0x240, 0x250)]
-        lines = [(o, t) if o != 0x230 else (o, "HMMA.16816.F32.BF16 R36, R8, R16, R36 ;")
-                 for o in [x[0] for x in lines] for t in [dict(lines)[o]]]
         c = sc.loop_counts(body_of(lines), tiles=2)
         self.assertEqual(c.shfl, 1)
         self.assertEqual(c.mma, 6)
+
+    def test_dead_code_takes_no_part(self):
+        # A block the entry never reaches that branches into the loop body (a callee would):
+        # neither a loop of its own nor a member of the K loop.
+        dead = [(0x530, "HMMA.16816.F32.BF16 R36, R8, R16, R36 ;"), (0x540, "BRA 0x160 ;")]
+        self.assertEqual(sc.loop_counts(body_of(KERNEL + dead), tiles=2),
+                         sc.loop_counts(body_of(KERNEL), tiles=2))
+
+    def test_branch_forms(self):
+        # BRA.U on a uniform predicate and BRA.DIV fall through; PT is unconditional; !PT is never
+        # taken; the uniform indirect branch is unknown flow; a target outside the function too.
+        body = body_of(KERNEL)
+        self.assertEqual(sc.branch_edges(False, "BRA.U", "!UP0, 0x530"), (True, True))
+        self.assertEqual(sc.branch_edges(False, "BRA.DIV", "~URZ, 0x530"), (True, True))
+        self.assertEqual(sc.branch_edges(False, "BRA.U", "UPT, 0x530"), (True, False))
+        self.assertEqual(sc.branch_edges(False, "BRA", "!PT, 0x530"), (False, True))
+        self.assertEqual(sc.branch_edges(True, "BRA", "0x530"), (True, True))
+        self.assertEqual(sc.branch_edges(False, "BRA", "0x530"), (True, False))
+        succ = sc.successors(body)
+        self.assertEqual(succ[7], [8])  # BRA 0x100 at index 7: the loop header, index 8
+        self.assertIsNone(sc.successors(body + [(0x530, False, "BRXU", "UR4 -0x530")]))
+        self.assertIsNone(sc.successors(body + [(0x530, False, "BRA", "0x9000")]))
 
     def test_no_loop_and_unknown_flow(self):
         straight = [l for l in KERNEL if l[0] not in (0x2f0, 0x300)]

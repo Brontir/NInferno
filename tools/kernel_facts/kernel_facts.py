@@ -243,8 +243,12 @@ def sass_lines(binary, cuda_bin, arch, sass_dump=None):
         proc = subprocess.Popen([cuda_tool("cuobjdump", cuda_bin), "-sass", "-arch", arch, binary],
                                 stdout=subprocess.PIPE, stderr=errors, text=True, errors="replace",
                                 bufsize=1 << 20)
-        yield from proc.stdout
-        code = proc.wait()
+        try:
+            yield from proc.stdout
+        finally:
+            if proc.poll() is None:  # the consumer stopped early: do not leave the dump running
+                proc.kill()
+            code = proc.wait()
         errors.seek(0)
         if code != 0:
             fail(f"cuobjdump -sass failed on {binary}: {errors.read().strip()[:400]}")
@@ -335,6 +339,8 @@ def row_line(key, value):
 
 
 def render(arch, rows, nvcc, flags, source):
+    with_loops = any(v[4] is not None for v in rows.values())
+    columns = COLUMNS if with_loops else COLUMNS.split(" loops ")[0]
     lines = [
         f"# NInferno kernel facts, schema {SCHEMA}: what ptxas made of the register-MMA kernels of",
         f"# the sm_{arch} build, read off the linked binary with cuobjdump. Per kernel: the registers",
@@ -357,7 +363,7 @@ def render(arch, rows, nvcc, flags, source):
         f"flags {flags}",
         f"source {source}",
         f"kernels {len(rows)}",
-        f"columns {COLUMNS}",
+        f"columns {columns}",
     ]
     lines += [row_line(k, rows[k]) for k in sorted(rows)]
     return "\n".join(lines) + "\n"
@@ -375,9 +381,12 @@ def parse_snapshot(text):
         if fields[0] == FAMILY:
             if len(fields) not in (14, 14 + sass_fields):
                 fail(f"malformed row: {line}")
-            key = (fields[1], *(int(v) for v in fields[2:10]))
-            counts = sass_counts.LoopCounts.from_row(fields[14:]) if len(fields) > 14 else None
-            rows[key] = (*(int(v) for v in fields[10:14]), counts)
+            try:
+                key = (fields[1], *(int(v) for v in fields[2:10]))
+                counts = sass_counts.LoopCounts.from_row(fields[14:]) if len(fields) > 14 else None
+                rows[key] = (*(int(v) for v in fields[10:14]), counts)
+            except ValueError as error:
+                fail(f"malformed row ({error}): {line}")
         else:
             header[fields[0]] = line[len(fields[0]) + 1:] if len(fields) > 1 else ""
     for want in ("arch", "nvcc", "kernels"):
@@ -401,7 +410,8 @@ def cmd_extract(args):
                         not args.no_sass)
     if not rows:
         fail("no rmma_kernel in the binary")
-    for line in loop_audit(rows):
+    audit = loop_audit(rows)
+    for line in audit:
         print(f"kernel_facts: {line}", file=sys.stderr)
     source = args.source or (source_hash(args.source_root) if args.source_root else "unknown")
     text = render(args.arch, rows, args.nvcc or "unknown", args.flags or "unknown", source)
@@ -411,6 +421,11 @@ def cmd_extract(args):
         print(f"kernel_facts: wrote {len(rows)} kernels of sm_{args.arch} to {args.output}")
     else:
         sys.stdout.write(text)
+    if audit:
+        # Written for inspection, but not a snapshot to commit: the loop finder did not settle.
+        print(f"kernel_facts: {len(audit)} loop audit findings (above): the counts are not "
+              "settled, do not commit them", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -423,14 +438,16 @@ def cmd_check(args):
     with open(args.expected) as f:
         header, expected = parse_snapshot(f.read())
     arch = header["arch"]
-    # A snapshot without loop columns is checked on its resources alone.
-    with_sass = not args.no_sass and any(v[4] is not None for v in expected.values())
+    other_nvcc = bool(args.nvcc) and args.nvcc != header["nvcc"]
+    # A snapshot without loop columns is checked on its resources alone; under another nvcc the
+    # kernel set is all that is compared, so the SASS pass (minutes) is not run.
+    with_sass = not args.no_sass and not other_nvcc and \
+        any(v[4] is not None for v in expected.values())
     got = extract_rows(args.binary, args.cuda_bin, arch, args.dump, args.sass_dump, with_sass)
     if not with_sass:
         expected = {k: (*v[:4], None) for k, v in expected.items()}
     missing = sorted(k for k in expected if k not in got)
     extra = sorted(k for k in got if k not in expected)
-    other_nvcc = args.nvcc and args.nvcc != header["nvcc"]
     if other_nvcc and not (missing or extra):
         # The set of kernels does not depend on the compiler; their registers and schedules do.
         print(f"kernel_facts: SKIPPED the resources and loop counts: this build's nvcc "
@@ -496,6 +513,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.command != "hash" and not (args.binary or args.dump):
         parser.error("--binary or --dump is required")
+    if args.command != "hash" and not (args.binary or args.sass_dump or args.no_sass):
+        parser.error("the SASS pass needs --binary or --sass-dump (or --no-sass)")
     if args.command == "hash":
         print(source_hash(args.source_root))
         return 0
