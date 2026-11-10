@@ -1660,6 +1660,8 @@ int test_refusal_structural_tag() {
              "t",
              "to",
              " to",
+             " <b>bold</b>",
+             "\n<x> after a newline",
          }) {
         failures += check(admits(ok), "refusal tag admits: " + std::string(ok));
     }

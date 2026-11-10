@@ -2540,7 +2540,7 @@ public:
              literal(kMessage), text()});
         const OrderedJson plain = sequence(
             {OrderedJson{{"type", "regex"},
-                         {"pattern", "([ \\t\\r\\n]*)([^ \\t\\r\\n<t]|t[^o]|to[^=])|<[^|<]"}},
+                         {"pattern", "[ \\t\\r\\n]*([^ \\t\\r\\n<t]|t[^o]|to[^=]|<[^|<])"}},
              text()});
         // An answer that is empty, only whitespace, or that whitespace and then only "t", "to" or
         // "<": the prefixes `plain` needs one more byte to tell from "to=" or a structural token,
