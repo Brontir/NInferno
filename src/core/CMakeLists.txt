@@ -18,6 +18,9 @@ add_library(ninferno_core_host STATIC
   device_class_host.cpp
   machine_facts.cpp
   gate_atlas.cpp
+  layout.cpp
+  weight_view.cpp
+  ggml_frag.cpp
 )
 ninferno_internal_includes(ninferno_core_host)
 target_include_directories(ninferno_core_host PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
@@ -43,10 +46,7 @@ add_library(ninferno_core STATIC
   host_memory.cpp
   paged_kv_cache.cpp
   linear_attention_state.cpp
-  layout.cpp
   tensor.cpp
-  weight_view.cpp
-  ggml_frag.cpp
   decode_graph.cpp
   debug_poison.cpp
   sha256.cpp
