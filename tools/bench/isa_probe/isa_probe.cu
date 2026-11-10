@@ -233,17 +233,40 @@ __global__ void chase_shared(Span* spans, unsigned* sink) {
     if (idx == 0xffffffffu) sink[0] = idx;
 }
 
-// Eight sub-buffers of `m` elements (m a power of two), each one cycle through all its elements:
-// buf[w * m + i] = (a_w * i + c_w) mod m with a_w = 1 mod 4 and c_w odd is a full-period LCG step,
-// a permutation of a single cycle (Hull-Dobell), whose successive links land on unrelated lines.
-// The multipliers differ per sub-buffer so no two cycles share their order.
-__global__ void fill_cycle(unsigned* buf, unsigned m) {
-    const size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+// A bijection of the `bits`-bit indices (bits even): a four-round balanced Feistel network whose
+// round function is a multiplicative hash, so the images of neighbouring indices sit anywhere in
+// the sub-buffer. Seeded per sub-buffer.
+__device__ __forceinline__ unsigned feistel(unsigned x, unsigned bits, unsigned seed) {
+    const unsigned half = bits / 2, mask = (1u << half) - 1u;
+    unsigned lo = x & mask, hi = x >> half;
+    for (unsigned r = 0; r < 4; ++r) {
+        unsigned f = (hi ^ (seed + r * 0x9E3779B9u)) * 0x85EBCA6Bu;
+        f ^= f >> 13;
+        f *= 0xC2B2AE35u;
+        f ^= f >> 16;
+        const unsigned nlo = hi, nhi = (lo ^ f) & mask;
+        lo = nlo;
+        hi = nhi;
+    }
+    return (hi << half) | lo;
+}
+
+// Eight sub-buffers of 2^bits elements, each one cycle through all its elements: x -> a_w x + c_w
+// mod 2^bits with a_w = 1 mod 4 and c_w odd is a full-period LCG step (Hull-Dobell), i.e. a single
+// cycle; the cycle is then conjugated by the Feistel bijection (buf[P(x)] = P(next(x))), so its
+// successive links are far apart in the address space for every warp (an LCG's own low bits
+// cycle with short periods, which could put consecutive links in one DRAM row). The multipliers
+// and seeds differ per sub-buffer, so no two cycles share their order.
+__global__ void fill_cycle(unsigned* buf, unsigned bits) {
+    const unsigned m = 1u << bits;
+    const size_t i   = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= static_cast<size_t>(m) * 8) return;
     const unsigned w = static_cast<unsigned>(i / m), x = static_cast<unsigned>(i % m);
-    const unsigned a = 1664525u + 4u * 1000003u * w; // 1 mod 4 for every w
-    const unsigned c = 1013904223u + 2u * 7919u * w; // odd for every w
-    buf[i]           = (a * x + c) & (m - 1u);
+    const unsigned a    = 1664525u + 4u * 1000003u * w; // 1 mod 4 for every w
+    const unsigned c    = 1013904223u + 2u * 7919u * w; // odd for every w
+    const unsigned seed = 0x1234567u + 0x9E3779B9u * w;
+    buf[static_cast<size_t>(w) * m + feistel(x, bits, seed)] =
+        feistel((a * x + c) & (m - 1u), bits, seed);
 }
 
 double median(std::vector<double> d) {
@@ -317,7 +340,7 @@ int main() {
     CHECK(cudaDriverGetVersion(&driver));
     CHECK(cudaRuntimeGetVersion(&runtime));
     const int cc = p.major * 10 + p.minor;
-    std::printf("probe isa_probe 4\n");
+    std::printf("probe isa_probe 5\n");
     std::printf("card %s\n", p.name);
     std::printf("cc %d\n", cc);
     std::printf("sms %d\n", p.multiProcessorCount);
@@ -380,14 +403,19 @@ int main() {
     // at 8 warps, inside every L2), loads that bypass the L1. DRAM: 128 MB a warp (1 GB at 8
     // warps; a warp's cycle alone outstrips the largest L2), loads that bypass the L1, the timed
     // links on lines no warp has touched. Loaded: 1, 2, 4, 8 warps per SM, each on its own chain.
+    // Sub-buffer sizes are 2^bits elements a warp, bits even for the Feistel halves. dram_tlbwarm:
+    // 16 MB a warp (8 pages of 2 MB: inside the SM's TLB after the warm-up, the lines still
+    // untouched), dram: 256 MB a warp (128 pages a warp, 1024 at 8 warps: past the TLB too), so
+    // the two tell the DRAM latency from the TLB miss on top of it.
     struct Level {
         const char* name;
-        unsigned m; // elements a warp
+        unsigned bits;
         bool cg;
-    } levels[] = {{"l1", 1u << 10, false}, {"l2", 1u << 15, true}, {"dram", 1u << 25, true}};
+    } levels[] = {
+        {"l1", 10, false}, {"l2", 14, true}, {"dram_tlbwarm", 22, true}, {"dram", 26, true}};
 
     unsigned* buf = nullptr;
-    CHECK(cudaMalloc(&buf, (size_t{1} << 25) * 8 * sizeof(unsigned)));
+    CHECK(cudaMalloc(&buf, (size_t{1} << 26) * 8 * sizeof(unsigned)));
     std::map<std::string, double> lat;
     std::vector<double> mhz; // the SM clock seen by each L2 / DRAM chase
 
@@ -408,14 +436,15 @@ int main() {
         return Chase{c / kLatencyLinks, n / kLatencyLinks, n > 0 ? c / n * 1e3 : 0.0};
     };
     for (const Level& lv : levels) {
-        const size_t total = static_cast<size_t>(lv.m) * 8;
-        fill_cycle<<<static_cast<unsigned>((total + 255) / 256), 256>>>(buf, lv.m);
+        const unsigned m   = 1u << lv.bits;
+        const size_t total = static_cast<size_t>(m) * 8;
+        fill_cycle<<<static_cast<unsigned>((total + 255) / 256), 256>>>(buf, lv.bits);
         CHECK(cudaDeviceSynchronize());
         for (int warps : {1, 2, 4, 8}) {
             if (lv.cg) {
-                chase<true><<<pr.sms, 32 * warps>>>(buf, lv.m, pr.spans, pr.usink);
+                chase<true><<<pr.sms, 32 * warps>>>(buf, m, pr.spans, pr.usink);
             } else {
-                chase<false><<<pr.sms, 32 * warps>>>(buf, lv.m, pr.spans, pr.usink);
+                chase<false><<<pr.sms, 32 * warps>>>(buf, m, pr.spans, pr.usink);
             }
             const Chase c = chase_clocks(warps);
             char name[64];
@@ -434,8 +463,8 @@ int main() {
         }
     }
     fact("sm_clock_mhz_chase", median(mhz), "mhz");
-    check(mhz.size() == 8 && *std::max_element(mhz.begin(), mhz.end()) <=
-                                 1.05 * *std::min_element(mhz.begin(), mhz.end()),
+    check(mhz.size() == 12 && *std::max_element(mhz.begin(), mhz.end()) <=
+                                  1.05 * *std::min_element(mhz.begin(), mhz.end()),
           "the SM clock moved by over 5 % between the L2 / DRAM chases (lock the clocks: "
           "nvidia-smi -lgc)");
     chase_shared<<<pr.sms, 128>>>(pr.spans, pr.usink);
@@ -449,11 +478,12 @@ int main() {
     for (int w : {1, 2, 4, 8}) {
         const std::string ws = "_latency_w" + std::to_string(w);
         const std::string ns = "_latency_ns_w" + std::to_string(w);
-        check(lat["dram" + ns] > 1.2 * lat["l2" + ns],
-              "DRAM latency not above 1.2x L2 at w" + std::to_string(w));
+        for (const char* lv : {"dram_tlbwarm", "dram"})
+            check(lat[lv + ns] > 1.2 * lat["l2" + ns],
+                  std::string(lv) + " latency not above 1.2x L2 at w" + std::to_string(w));
         check(lat["l1" + ws] >= 0.95 * lat["l1_latency_w1"],
               "l1 latency falls under the lone warp's at w" + std::to_string(w));
-        for (const char* lv : {"l2", "dram"})
+        for (const char* lv : {"l2", "dram_tlbwarm", "dram"})
             check(lat[lv + ns] >= 0.95 * lat[std::string(lv) + "_latency_ns_w1"],
                   std::string(lv) + " latency falls under the lone warp's at w" +
                       std::to_string(w));

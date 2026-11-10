@@ -37,6 +37,11 @@ FACTS = (
     # the chases ran at (so a clock that moved shows as such, not as a latency change).
     "l2_latency_ns_w1", "l2_latency_ns_w2", "l2_latency_ns_w4", "l2_latency_ns_w8",
     "dram_latency_ns_w1", "dram_latency_ns_w2", "dram_latency_ns_w4", "dram_latency_ns_w8",
+    # DRAM with the TLB warm (16 MB a warp: the lines untouched, the pages mapped), against the
+    # `dram` figures whose 256 MB a warp miss the TLB too.
+    "dram_tlbwarm_latency_w1", "dram_tlbwarm_latency_w2", "dram_tlbwarm_latency_w4",
+    "dram_tlbwarm_latency_w8", "dram_tlbwarm_latency_ns_w1", "dram_tlbwarm_latency_ns_w2",
+    "dram_tlbwarm_latency_ns_w4", "dram_tlbwarm_latency_ns_w8",
     "sm_clock_mhz_chase", "shared_latency",
 )
 UNITS = {"tensor_flops_per_sm_clock": "flop", "resident_ctas_per_sm": "count",

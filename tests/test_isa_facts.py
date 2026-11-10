@@ -32,9 +32,11 @@ fact mma_dependent_latency 33.1 clk
 fact fp32_cycles_per_warp_instruction 1.004 clk
 fact int32_cycles_per_warp_instruction 2.01 clk
 """ + "".join(f"fact {lv}_latency_w{w} {v + 3 * w:.1f} clk\n"
-              for lv, v in (("l1", 34.0), ("l2", 260.0), ("dram", 560.0)) for w in (1, 2, 4, 8)) + \
+              for lv, v in (("l1", 34.0), ("l2", 260.0), ("dram", 560.0), ("dram_tlbwarm", 520.0))
+              for w in (1, 2, 4, 8)) + \
     "".join(f"fact {lv}_latency_ns_w{w} {(v + 3 * w) / 2.52:.1f} ns\n"
-            for lv, v in (("l2", 260.0), ("dram", 560.0)) for w in (1, 2, 4, 8)) + \
+            for lv, v in (("l2", 260.0), ("dram", 560.0), ("dram_tlbwarm", 520.0))
+            for w in (1, 2, 4, 8)) + \
     "fact sm_clock_mhz_chase 2520.0 mhz\nfact shared_latency 29.5 clk\nselfcheck ok\nend\n"
 
 
