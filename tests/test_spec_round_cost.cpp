@@ -639,6 +639,16 @@ int main() {
             // one that pays the most: its gain over plain (one-request gain at that depth times
             // R_1 / R_C) above 1, and no other depth the choice measured above it.
             const sp::Choice& c = p.overall;
+            for (const sp::Choice* each : {&p.overall, &p.thinking, &p.non_thinking}) {
+                std::printf("  choice %s", each->config.label().c_str());
+                for (std::int32_t d = 1; d <= each->config.k; ++d) {
+                    sp::SpecConfig at = each->config;
+                    at.k              = d;
+                    const auto g      = sp::measured_gain(p, at, each == &p.thinking);
+                    std::printf(" d%d=%s", d, g ? std::to_string(*g).c_str() : "none");
+                }
+                std::printf("\n");
+            }
             std::printf("%s %s, load %s:", name, c.config.label().c_str(),
                         sp::load_label(p.load).c_str());
             for (std::int32_t streams = 2; streams <= sp::kPricedVerifyRows; ++streams) {
