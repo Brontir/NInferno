@@ -203,20 +203,27 @@ class Compare(unittest.TestCase):
 
     def test_boost_windows(self):
         # Within 1.5 % a match; a partner board up to 7 % over and an OEM one up to 3 % under are
-        # information; anything farther is a wrong row.
-        for ratio, want in ((1.014, "match"), (0.986, "match"), (1.016, "info"), (0.984, "info"),
-                            (1.069, "info"), (1.071, "mismatch"), (0.971, "info"),
-                            (0.969, "mismatch")):
+        # information; anything farther is a wrong row. A GeForce row records the reference
+        # boost only, so a driver clock of any height above it is a partner board's (info); a
+        # non-GeForce row keeps the 7 % ceiling; below the window is a mismatch on both.
+        pro = row_of(0x2684, segment="pro")
+        for ratio, row, want in ((1.014, None, "match"), (0.986, None, "match"),
+                                 (1.016, None, "info"), (0.984, None, "info"),
+                                 (1.069, None, "info"), (1.10, None, "info"),
+                                 (1.20, None, "info"), (0.971, None, "info"),
+                                 (0.969, None, "mismatch"), (1.069, pro, "info"),
+                                 (1.071, pro, "mismatch"), (0.969, pro, "mismatch")):
             d = device_4090()
             d["queried"]["sm_clock_khz"] = int(2_520_000 * ratio)
-            self.assertEqual(statuses(d)[("table", "boost_clock_khz")], want, ratio)
+            self.assertEqual(statuses(d, row or "table")[("table", "boost_clock_khz")], want,
+                             (ratio, row and "pro"))
 
     def test_vram_windows(self):
         # GDDR ECC keeps 1/16 on a professional board; a GeForce board reports nearly all.
         pro = row_of(0x2684, segment="pro")
         for gib_share, row, want in ((0.928, pro, "match"), (0.91, pro, "mismatch"),
                                      (0.928, None, "mismatch"), (0.98, None, "match"),
-                                     (0.96, None, "mismatch")):
+                                     (0.96, None, "match"), (0.94, None, "mismatch")):
             d = device_4090()
             d["queried"]["global_bytes"] = int(24 * GIB * gib_share)
             self.assertEqual(statuses(d, row or "table")[("table", "vram_gib")], want, gib_share)
@@ -1294,28 +1301,57 @@ class RecordedProbe(unittest.TestCase):
 
 
 RECORDINGS = ROOT / "tests" / "data" / "facts_probe"
-# Recordings whose comparison still ends in 1, and why (the audit's findings, #612 step 2): the
-# probe's driver values are real; what differs is a chosen comparison window (an overclocked
-# partner board's peak SM clock, Turing's reserved memory) or the Volta synthetic class (see
-# synthetic_device_class). Every other recording must compare clean.
-KNOWN_OPEN = {"rtx2080ti", "rtx3090", "quadro_gv100"}
+# Mismatches a recording still holds, by field (#612 step 2). Every other recording compares with
+# none. The Quadro GV100 file was recorded before the synthetic Volta class stopped overriding the
+# architecture row (#698): its "synthetic" block is the old one, so these four fields differ from
+# the driver. They go when that card is probed again with a build that has #698; remove the entry
+# then.
+EXPECTED_MISMATCHES = {
+    "quadro_gv100": {("arch", "smem_per_block_optin"), ("arch", "smem_per_sm"),
+                     ("arch", "max_threads_per_sm"),
+                     ("arch", "synthetic_smem_optin_plus_reserved_is_per_sm")},
+}
+
+
+def recorded_mismatches(path):
+    """(source, field) of every mismatch the audit finds in one recording, by the CLI."""
+    done = subprocess.run([sys.executable, "-B", TOOL, "--probe-json", str(path)],
+                          capture_output=True, text=True)
+    summary = json.loads(done.stdout[done.stdout.index("\n{") + 1:])
+    found = {(m["source"], m["field"]) for dev in summary["devices"] for m in dev["mismatches"]}
+    return done, found
 
 
 @unittest.skipUnless(RECORDINGS.is_dir(), "no per-card recordings")
 class RecordedProbes(unittest.TestCase):
     """One real ninferno-facts-probe output per lab card, recorded on that card."""
 
-    def test_every_recording_is_valid_and_the_clean_ones_stay_clean(self):
+    def test_every_recording_is_valid_and_only_the_named_mismatches_remain(self):
         files = sorted(RECORDINGS.glob("*.json"))
         self.assertTrue(files)
         for path in files:
             with self.subTest(card=path.stem):
-                done = subprocess.run(
-                    [sys.executable, "-B", TOOL, "--probe-json", str(path)],
-                    capture_output=True, text=True)
+                done, found = recorded_mismatches(path)
                 self.assertIn(done.returncode, (0, 1), done.stdout + done.stderr)
-                if path.stem not in KNOWN_OPEN:
-                    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assertEqual(found, EXPECTED_MISMATCHES.get(path.stem, set()), done.stdout)
+                self.assertEqual(done.returncode, 1 if found else 0)
+
+    def test_a_clock_or_memory_below_the_window_still_fails_on_a_recording(self):
+        # The RTX 3090 and RTX 2080 Ti compare clean (a partner board's clock, a driver-reserved
+        # slice of memory); a board below the reference clock window or short of memory does not.
+        for card, change in (("rtx3090", {"sm_clock_khz": 1_600_000}),
+                             ("rtx2080ti", {"sm_clock_khz": 1_400_000}),
+                             ("rtx2080ti", {"global_bytes": int(11 * GIB * 0.94)})):
+            with self.subTest(card=card, change=change):
+                recording = json.loads((RECORDINGS / f"{card}.json").read_text(encoding="utf-8"))
+                recording["devices"][0]["queried"].update(change)
+                with tempfile.TemporaryDirectory() as tmp:
+                    path = Path(tmp) / "changed.json"
+                    path.write_text(json.dumps(recording), encoding="utf-8")
+                    done, found = recorded_mismatches(path)
+                self.assertEqual(done.returncode, 1, done.stdout)
+                self.assertTrue(found & {("table", "boost_clock_khz"), ("table", "vram_gib")},
+                                found)
 
 
 if __name__ == "__main__":
