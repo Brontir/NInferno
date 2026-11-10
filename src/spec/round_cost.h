@@ -147,10 +147,11 @@ inline constexpr SmallTEta kSmallTEta[] = {
     {"gb20x", 0.165, 2},
 };
 
-// A kernel's launch time inside a graph replay (t0) and the DRAM rate a decode kernel's bytes reach
+// A kernel's launch time inside a graph replay (t0: ninferno::launch_node_seconds, the one launch
+// constant) and the DRAM rate a decode kernel's bytes reach
 // (eta_dram), by generation: a kernel of B bytes takes B / (eta_dram x BW) + t0 (the Ada census,
 // Qwen3.5-9B Q4_K_M plain decode on the RTX 4090, 4070 Ti and 4060 Ti, every kernel within 2 %:
-// t0 1.5 us without PDL, eta_dram 0.946). A round pays
+// t0 as launch_node_seconds("ada") without PDL, eta_dram 0.946). A round pays
 // t0 for each kernel its graphs launch (Measurement::graph_kernels, counted from the captured
 // graphs), a plain step for each of its own: R(k) adds them, in bytes at eta_dram x BW (the
 // bytes term's convention; kappa converts operations at the full BW, ~5 % apart, immaterial here).
@@ -159,16 +160,15 @@ inline constexpr SmallTEta kSmallTEta[] = {
 // their graph gaps were measured (RTX 2080 Ti 0.38 us a kernel, RTX 3060 ~0) but no intercept was
 // fitted, and each has one lab card (a generation constant rests on two, as kSmallTEta does).
 // gb20x has none either: PDL chains its launches (t0 about 0.5 us), but no intercept was fitted
-// there, and its two lab cards' counted spec-tunes (RTX 5070 Ti, 5090) cannot tell 0.5 from
-// 1.5 us (R within +-1.5 % either way, the verify routes dominating the residuals).
+// there, and its two lab cards' counted spec-tunes (RTX 5070 Ti, 5090) cannot tell 0.5 us from
+// the Ada node (R within +-1.5 % either way, the verify routes dominating the residuals).
 struct LaunchTime {
     std::string_view generation;
-    double seconds;
     double eta_dram;
 };
 
 inline constexpr LaunchTime kLaunchTime[] = {
-    {"ada", launch_node_seconds("ada"), 0.946},
+    {"ada", 0.946},
 };
 
 // The kernels a round's graphs launch and a plain step's (0: not counted, no launch term).

@@ -29,16 +29,19 @@ int main() {
     for (const char* g : {"ga10x", "turing", "volta", "gb20x", "", "hopper"}) {
         expect(ninferno::launch_node_seconds(g) == 0.0, std::string("no node for ") + g);
     }
-    expect(ninferno::kLaunchNode[0].basis == ninferno::LaunchNodeBasis::Fitted &&
-               !ninferno::kLaunchNode[0].holdout.empty(),
-           "the row records its basis and holdout");
+    expect(ninferno::kLaunchNode[0].cards == 3, "the row records its three Ada cards");
+    expect(rc::kLaunchNodeAda.from == rc::Provenance::Fitted &&
+               rc::kLaunchNodeAda.value() == ninferno::launch_node_seconds("ada"),
+           "provenance is in the route cost registry; no Holdout record until #635");
 
     // Use site 1: the speculation round cost reads it.
-    expect(sp::kLaunchTime[0].generation == "ada" && sp::kLaunchTime[0].seconds == 1.5e-6 &&
-               sp::kLaunchTime[0].eta_dram == 0.946,
-           "kLaunchTime is Ada's node and its DRAM share");
-    expect(sp::kLaunchTime[0].seconds == ninferno::launch_node_seconds("ada"),
-           "kLaunchTime reads the one constant");
+    expect(sp::kLaunchTime[0].generation == "ada" && sp::kLaunchTime[0].eta_dram == 0.946,
+           "kLaunchTime keeps Ada's DRAM share only");
+    const auto ada = sp::card_rates_of_board(0x2782);
+    expect(ada.launch_seconds == 1.5e-6 && ada.eta_dram == 0.946, "an Ada card reads 1.5e-6 s");
+    expect(sp::card_rates_of_board(0x2503).launch_seconds == 0.0 &&
+               sp::card_rates_of_board(0x2C05).launch_seconds == 0.0,
+           "Ampere and gb20x have no node");
 
     // Use site 2: the route model's quantizer kernel is its own fact, not the node.
     expect(rc::kQuantLaunchSeconds.value() == 1.7e-6, "quantizer launch stays 1.7e-6");

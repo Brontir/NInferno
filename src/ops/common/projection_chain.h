@@ -19,8 +19,9 @@
 // L2 beside it).
 //
 // Launches: a launch node has one measured cost per generation, ninferno::launch_node_seconds
-// (core/cost_constants.h; 1.5e-6 s on Ada, a per-launch t0 inside graph replay): that is the number
-// to pass as `launch_seconds`, 0 for a generation without one. kKernelCost
+// (core/cost_constants.h; Ada only for now, a per-launch t0 inside graph replay; the pdl axis and
+// the choice's own copy in kKernelCost are still open, #617 B): that is the number to pass as
+// `launch_seconds`, 0 for a generation without one. kKernelCost
 // (src/product/choice/choice_constants.h) is not a launch cost: it is a kernel's residual beyond
 // its bytes per generation, ramp and epilogue included; do not pass it. select() adds
 // `launch_seconds` to every launch of a chain; 0 (the default) prices no launch, and the launch

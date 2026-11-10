@@ -26,19 +26,19 @@ inline constexpr double kDp4aOpsPerSmClock = 512;
 //   - core/pdl.cuh: a captured node with the programmatic attribute takes 1.3-1.5 us against
 //     0.84-0.96 us without it (RTX 3090); a comment, read by no model.
 // A generation without a row is unknown (0): launches then only break a tie.
-enum class LaunchNodeBasis { Counted, Fitted };
-
+// Provenance (Fact / Counted / Fitted) is recorded in the route cost model's registry:
+// route_cost::kLaunchNodeAda (ops/generic/route_cost_constants.h, listed there). The row is the
+// per-launch t0 fitted from the Ada census, three cards (RTX 4060 Ti, 4070 Ti, 4090), without
+// PDL. Not yet carried: a pdl axis, the compiled-kernel hash, a card count in the row, and a
+// holdout record (PR #635's Holdout is not on master).
 struct LaunchNode {
     std::string_view generation;
     double seconds;
-    LaunchNodeBasis basis;
-    // Holdout: none recorded (the record type of PR #635 is not on master). The row was fitted
-    // from the Ada census (RTX 4060 Ti, 4070 Ti, 4090) as the per-launch t0 inside graph replay.
-    std::string_view holdout;
+    int cards;
 };
 
 inline constexpr LaunchNode kLaunchNode[] = {
-    {"ada", 1.5e-6, LaunchNodeBasis::Fitted, "none recorded"},
+    {"ada", 1.5e-6, 3},
 };
 
 [[nodiscard]] constexpr double launch_node_seconds(std::string_view generation) noexcept {
