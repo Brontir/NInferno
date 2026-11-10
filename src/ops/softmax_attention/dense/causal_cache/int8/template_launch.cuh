@@ -4,6 +4,7 @@
 #include "core/device.h"
 #include "ops/softmax_attention/dense/causal_cache/int8/grouped_mma.cuh"
 #include "ops/softmax_attention/dense/causal_cache/int8/prompt_fast.cuh"
+#include "ops/softmax_attention/dense/causal_cache/int8/prompt_fast_cost.h"
 #include "ops/softmax_attention/dense/causal_cache/int8/tiled_mma.cuh"
 #include "ops/softmax_attention/common/causal_merge.cuh"
 #include <algorithm>
@@ -84,8 +85,9 @@ void launch_int8_kv_tiled_mma(const CausalAttentionOperands& p, Int8KvReadView c
 }
 
 // Both prompt-fast shapes run one CTA per SM and every CTA of a launch sweeps a similar key range.
-// A four-warp CTA, or an eight-warp CTA owning only 64 rows, sweeps in about 0.72 of a full
-// eight-warp CTA's time (ninfer-all, RTX 5090 at 64K context) but covers half the rows.
+// A four-warp CTA, or an eight-warp CTA owning only 64 rows, sweeps in kInt8PromptHalfCtaPercent
+// (int8/prompt_fast_cost.h, the one definition the choice's estimate reads too) of a full
+// eight-warp CTA's time but covers half the rows.
 struct Int8PromptFastLayout {
     bool narrow      = false; // four-warp CTAs throughout
     int narrow_slots = 0;     // eight-warp launch: leading 64-row slots run as half-height CTAs
@@ -94,8 +96,8 @@ struct Int8PromptFastLayout {
 // Makespan of an eight-warp launch, in percent of one full CTA's sweep: wide CTAs issue first,
 // then the half-height ones, each to the SM that frees first.
 inline long long int8_prompt_fast_makespan(int wide, int narrow, int multiprocessors) {
-    constexpr int kHalfCostPercent = 72;
-    const int full_waves = wide / multiprocessors;
+    constexpr int kHalfCostPercent = ::ninferno::ops::kInt8PromptHalfCtaPercent;
+    const int full_waves           = wide / multiprocessors;
     const int partial    = wide % multiprocessors;
     std::vector<long long> free_at(multiprocessors, 100LL * full_waves);
     for (int sm = 0; sm < partial; ++sm) free_at[sm] += 100;
@@ -128,7 +130,8 @@ inline Int8PromptFastLayout int8_prompt_fast_layout(int width, int query_heads,
         }
     }
     const long long narrow_cost =
-        72LL * div_up(div_up(width, kHalf) * query_heads, multiprocessors);
+        static_cast<long long>(::ninferno::ops::kInt8PromptHalfCtaPercent) *
+        div_up(div_up(width, kHalf) * query_heads, multiprocessors);
     if (narrow_cost <= best_cost) return {true, 0};
     return best;
 }

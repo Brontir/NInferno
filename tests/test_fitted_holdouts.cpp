@@ -1,7 +1,12 @@
-// The holdout records (core/fitted_holdouts.h) of every fitted constant, one side table for the
-// whole code base. The checks:
-//   - every record is complete (a Checked or an explicit None with the fields its kind needs; an
-//     Unset one was forgotten) and appears once;
+// The holdout records (core/fitted_holdouts.h) of the fitted constants, one side table. What it
+// covers: the tagged constants (Provenance in route_cost_constants.h, Basis in route_rules.h), read
+// from the compiled tables; every definition of the files listed in specs() below with a
+// deny-by-default mode; and the untagged kernel and dispatch constants a manual sweep of src/
+// found (Mode::RecordedOnly: only their keys are checked). An untagged fitted constant in any
+// other file is not found by this test. The checks:
+//   - every record is complete (an explicit None, or a Checked whose source names a script under
+//     tools/fits/ that exists, with the fields its kind needs; an Unset one was forgotten) and
+//     appears once;
 //   - every key matches its DEFINITION in its file (a definition, a struct field or a function,
 //     read from the file's text, not a substring of it): a renamed or removed constant fails;
 //   - every constant a covered file marks or behaves as fitted has a record, or sits on that file's
@@ -15,11 +20,10 @@
 //     definition carries its name, and every record there names a Fitted entry; every row of
 //     route_rules::kRouteRules whose basis is Basis::Fitted or Basis::ScaledFromOneBoard has a
 //     record keyed by its name, and every record there names such a row;
-//   - the Provenance::Fitted and Basis::Fitted / ScaledFromOneBoard tags are found by a scan of the
-//     whole source tree: a file that uses one and is not covered here fails, so a tagged constant
-//     cannot sit outside the audit;
-//   - a few kernels' own fitted launch constants, untagged, have records whose keys are definitions
-//     in their files (those files' other definitions are not audited);
+//   - the Provenance and Basis tags are found by a scan of the whole source tree (any spacing
+//     around `::`, and `using enum` of either enum): a file outside their home headers that uses
+//     one fails, so a tagged constant cannot sit outside the compiled checks;
+//   - definitions are read from the code with its comments (line and block) removed;
 //   - the total is pinned, so adding or dropping a record is a decision.
 // No GPU.
 
@@ -44,7 +48,7 @@ namespace {
 
 namespace fit = ninferno::fitted;
 
-constexpr std::size_t kExpectedRecords = 84;
+constexpr std::size_t kExpectedRecords = 97;
 
 int failures = 0;
 
@@ -59,14 +63,31 @@ std::string read_file(std::string_view relative) {
     return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
 }
 
-// The text without its line comments (a `//` to the end of its line): a tag named in a comment is
-// not a tag.
+// The text without its comments: a `//` to the end of its line, and a `/* ... */` block (its
+// newlines kept, so a line stays a line). A tag or a definition inside a comment is neither. String
+// and character literals are copied as they are, so a "//" or "/*" inside one is not a comment.
 std::string code_of(const std::string& text) {
     std::string out;
-    std::istringstream lines(text);
-    for (std::string line; std::getline(lines, line);) {
-        out += line.substr(0, line.find("//"));
-        out += '\n';
+    out.reserve(text.size());
+    for (std::size_t i = 0; i < text.size();) {
+        const char c = text[i];
+        if (c == '"' || c == '\'') {
+            const std::size_t start = i++;
+            while (i < text.size() && text[i] != c && text[i] != '\n') i += text[i] == '\\' ? 2 : 1;
+            i = std::min(i + 1, text.size());
+            out.append(text, start, i - start);
+        } else if (text.compare(i, 2, "//") == 0) {
+            while (i < text.size() && text[i] != '\n') ++i;
+        } else if (text.compare(i, 2, "/*") == 0) {
+            const std::size_t end  = text.find("*/", i + 2);
+            const std::size_t stop = end == std::string::npos ? text.size() : end + 2;
+            for (; i < stop; ++i) {
+                if (text[i] == '\n') out += '\n';
+            }
+        } else {
+            out += c;
+            ++i;
+        }
     }
     return out;
 }
@@ -165,6 +186,9 @@ const std::vector<Spec>& specs() {
              "kVoltaCutlassMinTokens",
              "kVoltaCopyMinTokens",
              "kExpertJobSlots",
+             // derived: the INT8 prompt kernel's kInt8PromptHalfCtaPercent / 100, whose record
+             // (int8/prompt_fast_cost.h) holds the holdout
+             "kAttentionHalfCta",
              "kFp8AttentionTiledMinWidth",
              "kFp8AttentionMaxSplits",
              "kFp8AttentionSplitKeys",
@@ -207,12 +231,20 @@ const std::vector<Spec>& specs() {
         {fit::kMoeShare, Mode::Definitions, {}},
         {fit::kWave, Mode::Definitions, {"fp8_split_tail"}}, // a rule over its parameters
         // Kernels' own fitted launch constants: only the recorded keys are held to definitions.
-        {fit::kInt8PromptLaunch, Mode::RecordedOnly, {}},
+        {fit::kInt8PromptCost, Mode::RecordedOnly, {}},
         {fit::kRope, Mode::RecordedOnly, {}},
         {fit::kRmsNorm, Mode::RecordedOnly, {}},
         {fit::kMoePrefill, Mode::RecordedOnly, {}},
         {fit::kGdnGating, Mode::RecordedOnly, {}},
         {fit::kRmsNormRope, Mode::RecordedOnly, {}},
+        {fit::kGemma4Attention, Mode::RecordedOnly, {}},
+        {fit::kQ5LinearAdd, Mode::RecordedOnly, {}},
+        {fit::kGdnConv, Mode::RecordedOnly, {}},
+        {fit::kQwenAttention, Mode::RecordedOnly, {}},
+        {fit::kAttnInputPlan, Mode::RecordedOnly, {}},
+        {fit::kW4a8, Mode::RecordedOnly, {}},
+        {fit::kSparseMoePrefill, Mode::RecordedOnly, {}},
+        {fit::kQwenDecode, Mode::RecordedOnly, {}},
     };
     return all;
 }
@@ -252,7 +284,7 @@ void check_compiled_tags(const std::vector<const fit::FittedHoldout*>& records,
         if (it == route_cost_definitions.end()) continue; // reported by the text check
         bool fitted = false;
         for (const std::string& name : fitted_names) {
-            if (it->second.text.find('"' + name + '"') != std::string::npos) {
+            if (code_of(it->second.text).find('"' + name + '"') != std::string::npos) {
                 ++covered[name];
                 fitted = true;
             }
@@ -298,6 +330,35 @@ void check_compiled_tags(const std::vector<const fit::FittedHoldout*>& records,
     }
 }
 
+// The reader itself: a definition or a tag inside a comment is not one, a "//" inside a string
+// literal starts no comment, and lines stay lines.
+void check_comment_stripping() {
+    const std::string text = "constexpr int kKept = 1; // constexpr int kLine = 2;\n"
+                             "/* constexpr int kBlock = 3;\n"
+                             "   constexpr int kBlockToo = 4; */ constexpr int kAfter = 5;\n"
+                             "    constexpr int kIndented = 6;\n"
+                             "constexpr std::string_view kUrl = \"http://x\";\n"
+                             "// Provenance::Fitted\n";
+    const std::string code = code_of(text);
+    if (std::count(code.begin(), code.end(), '\n') != std::count(text.begin(), text.end(), '\n')) {
+        fail("code_of: a comment changed the line count");
+    }
+    if (code.find("Provenance") != std::string::npos) fail("code_of: kept a line comment");
+    if (code.find("\"http://x\"") == std::string::npos) fail("code_of: cut a string literal");
+    const auto margin   = definitions_of(code, Mode::Definitions);
+    const auto indented = definitions_of(code, Mode::RecordedOnly);
+    for (const char* hidden : {"kLine", "kBlock", "kBlockToo"}) {
+        if (margin.count(hidden) || indented.count(hidden)) {
+            fail(std::string("definitions_of: read ") + hidden + " inside a comment");
+        }
+    }
+    for (const char* seen : {"kKept", "kUrl"}) {
+        if (!margin.count(seen)) fail(std::string("definitions_of: missed ") + seen);
+    }
+    if (!indented.count("kIndented")) fail("definitions_of (RecordedOnly): missed kIndented");
+    if (margin.count("kIndented")) fail("definitions_of (Definitions): read an indented line");
+}
+
 } // namespace
 
 int main() {
@@ -319,7 +380,22 @@ int main() {
         } else if (!r->holdout.complete()) {
             fail(name + ": its Holdout leaves a required field empty");
         }
+        // A Checked record reproduces its held-out score: its source names a script under
+        // tools/fits/ that exists (a score quoted from a fit whose data is not in the repository
+        // is a None record).
+        if (r->holdout.kind == ninferno::HoldoutKind::Checked) {
+            const std::string source(r->holdout.source);
+            const std::regex script(R"(tools/fits/[\w./-]+\.py)");
+            std::smatch m;
+            if (!std::regex_search(source, m, script)) {
+                fail(name + ": Checked, but its source names no script under tools/fits/");
+            } else if (read_file(m.str()).empty()) {
+                fail(name + ": Checked, but its script " + m.str() + " is not in the repository");
+            }
+        }
     }
+
+    check_comment_stripping();
 
     std::map<std::string, Definition> route_cost_definitions;
     for (const Spec& spec : specs()) {
@@ -328,7 +404,7 @@ int main() {
             fail(std::string(spec.file) + ": cannot read");
             continue;
         }
-        const auto defined = definitions_of(text, spec.mode);
+        const auto defined = definitions_of(code_of(text), spec.mode);
         if (defined.empty()) fail(std::string(spec.file) + ": no definitions found");
         if (spec.file == fit::kRouteCost) route_cost_definitions = defined;
 
@@ -467,16 +543,28 @@ int main() {
         ++scanned;
         const std::string relative = entry.path().lexically_relative(root).generic_string();
         const std::string code     = code_of(read_file(relative));
-        if (code.find("Provenance::Fitted") != std::string::npos && !tagged_files.count(relative)) {
-            fail(relative + ": tags a constant Provenance::Fitted but is not covered by this test "
-                            "(add it to specs() with Mode::TaggedScalars and give its constants "
-                            "records)");
+        // Any spelling of the tags: spaces around `::`, or the enum's values brought in by a
+        // `using enum` (after which a bare `Fitted` tags a constant). Their home headers are read
+        // through the compiled tables instead.
+        static const std::regex provenance_tag(R"(\bProvenance\s*::\s*Fitted\b)");
+        static const std::regex provenance_using(R"(\busing\s+enum\s+[\w:\s]*\bProvenance\b)");
+        static const std::regex basis_tag(R"(\bBasis\s*::\s*(Fitted|ScaledFromOneBoard)\b)");
+        static const std::regex basis_using(R"(\busing\s+enum\s+[\w:\s]*\bBasis\b)");
+        const bool provenance = code.find("Provenance") != std::string::npos;
+        const bool basis      = code.find("Basis") != std::string::npos;
+        if (provenance &&
+            (std::regex_search(code, provenance_tag) ||
+             std::regex_search(code, provenance_using)) &&
+            !tagged_files.count(relative)) {
+            fail(relative + ": tags a constant Provenance::Fitted (or brings Provenance in by "
+                            "`using enum`) but is not covered by this test (add it to specs() "
+                            "with Mode::TaggedScalars and give its constants records)");
         }
-        if ((code.find("Basis::Fitted") != std::string::npos ||
-             code.find("Basis::ScaledFromOneBoard") != std::string::npos) &&
+        if (basis && (std::regex_search(code, basis_tag) || std::regex_search(code, basis_using)) &&
             relative != fit::kRouteRules) {
-            fail(relative + ": tags a rule Basis::Fitted or ScaledFromOneBoard outside "
-                            "route_rules.h, which this test does not read");
+            fail(relative +
+                 ": tags a rule Basis::Fitted or ScaledFromOneBoard (or brings Basis in "
+                 "by `using enum`) outside route_rules.h, which this test does not read");
         }
     }
     if (scanned == 0) fail("no source file found under src/");

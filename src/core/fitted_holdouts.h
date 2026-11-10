@@ -1,23 +1,25 @@
 #pragma once
 
-// The holdout records (core/holdout.h) of every fitted constant, in one place: the route cost model
+// The holdout records (core/holdout.h) of the fitted constants, in one place: the route cost model
 // (ops/generic/route_cost_constants.h), the choice's speed model (product/choice/
 // choice_constants.h), the generation row's fitted scales and measured preferences
-// (core/generation.h), the speculation round cost (spec/round_cost.h, spec/moe_routed_share.h)
-// and the one fitted SM-wave rule (ops/common/sm_wave_rules.h), the generic path's literal rules
-// tagged Basis::Fitted or ScaledFromOneBoard (ops/generic/route_rules.h) and a few kernels' own
-// fitted launch constants. A record per constant or per
-// table of one fit: the table's rows
-// are one fit over the same data, so one record says what it was fitted on and what, if anything,
-// was left out; the per-row card counts stay in the tables (`cards`).
+// (core/generation.h), the speculation round cost (spec/round_cost.h, spec/moe_routed_share.h),
+// the one fitted SM-wave rule (ops/common/sm_wave_rules.h), the generic path's literal rules
+// tagged Basis::Fitted or ScaledFromOneBoard (ops/generic/route_rules.h), and the kernels' and
+// dispatch's untagged launch constants a sweep of src/ found (kKernelHoldouts: a constexpr literal
+// whose comment says measured, tuned, optimum, fastest, swept or fitted; the sweep is not a test,
+// and untagged constants it missed have no record). A record per constant or per table of one
+// fit: the table's rows are one fit over the same data, so one record says what it was fitted on
+// and what, if anything, was left out; the per-row card counts stay in the tables (`cards`).
+//
+// Checked only where a script and data in the repository reproduce the held-out score of the
+// shipped value (none today: a held-out score quoted from a fit whose data is not in the
+// repository is a None record that quotes it).
 //
 // The records are a side table keyed by the name of the definition in its file, never a field of
 // the constant: values are not touched here, the records say where each value comes from, so that
 // a fitted constant without a held-out check is declared so, not forgotten.
-// tests/test_fitted_holdouts.cpp matches every key to its definition in the file (not a substring),
-// requires every Fitted-marked definition of the covered files to have a record or to sit on its
-// not-fitted list, fails on an Unset or incomplete record, fails on a Provenance::Fitted tag in a
-// file it does not cover (a scan of src/), and pins one total count.
+// tests/test_fitted_holdouts.cpp says what it checks.
 // Sources are the comments at the constants and the DECISIONS (docs/maintainer/decisions.md) they
 // name.
 
@@ -43,12 +45,22 @@ inline constexpr std::string_view kCostConstants = "src/core/cost_constants.h";
 inline constexpr std::string_view kMoeShare      = "src/spec/moe_routed_share.h";
 inline constexpr std::string_view kWave          = "src/ops/common/sm_wave_rules.h";
 inline constexpr std::string_view kRouteRules    = "src/ops/generic/route_rules.h";
-// Kernels' own fitted launch constants (no tag in their files; the test checks each key is a
-// definition there, it does not audit the files' other definitions).
-inline constexpr std::string_view kInt8PromptLaunch =
-    "src/ops/softmax_attention/dense/causal_cache/int8/template_launch.cuh";
-inline constexpr std::string_view kRope    = "src/ops/launcher/rope.cu";
-inline constexpr std::string_view kRmsNorm = "src/ops/launcher/rmsnorm.cu";
+// Kernels' and dispatch's own fitted launch constants (no tag in their files; the test checks each
+// key is a definition there, it does not audit the files' other definitions).
+inline constexpr std::string_view kInt8PromptCost =
+    "src/ops/softmax_attention/dense/causal_cache/int8/prompt_fast_cost.h";
+inline constexpr std::string_view kGemma4Attention = "src/ops/softmax_attention/gemma4/launch.cu";
+inline constexpr std::string_view kQ5LinearAdd     = "src/ops/linear_add/q5/q5_linear_add_plan.cpp";
+inline constexpr std::string_view kGdnConv         = "src/ops/gdn_input_proj/gdn_projected_conv.cu";
+inline constexpr std::string_view kQwenAttention   = "src/models/qwen3_5/execution/attention.cpp";
+inline constexpr std::string_view kAttnInputPlan =
+    "src/ops/attn_input_proj/bf16/bf16_attn_input_plan.h";
+inline constexpr std::string_view kW4a8 = "src/ops/generic/generic_w4a8.cuh";
+inline constexpr std::string_view kSparseMoePrefill =
+    "src/ops/sparse_moe/prefill/sparse_moe_prefill.h";
+inline constexpr std::string_view kQwenDecode = "src/models/qwen3_5/program/decode.cpp";
+inline constexpr std::string_view kRope       = "src/ops/launcher/rope.cu";
+inline constexpr std::string_view kRmsNorm    = "src/ops/launcher/rmsnorm.cu";
 inline constexpr std::string_view kMoePrefill =
     "src/ops/sparse_moe/prefill/sparse_moe_prefill_kernels.cu";
 inline constexpr std::string_view kGdnGating =
@@ -57,19 +69,17 @@ inline constexpr std::string_view kRmsNormRope = "src/ops/rmsnorm_rope/launch.cu
 
 // --- route_cost_constants.h: the A16 / A8 refits and the per-generation modelling constants ---
 // The A16 tiles: one leave-one-board-out refit of the model's constants.
-inline constexpr Holdout h_a16_refit = Holdout::checked(
+inline constexpr Holdout h_a16_refit = Holdout::none(
     "ninferno_route_tune timings of seven boards (each tile in the engine, L2 flushed; BF16, Q4 "
-    "and "
-    "Q8, T >= 17); the record does not name all seven",
-    "each of the seven boards in turn: the constants refit with that board held out",
-    "geomean time over the best tile",
-    "1.095 of the best (RTX 4090 1.083, RTX 5090 1.068) against 1.110 for the F-lite rule and "
-    "1.137 "
-    "without the chain and reduction terms; the worst case is not recorded",
+    "and Q8, T >= 17); the record does not name all seven",
+    "a held-out score quoted from the original fit, whose timings and refit are not in the "
+    "repository: each board held out in turn, geomean time over the best tile 1.095 of the best "
+    "(RTX 4090 1.083, RTX 5090 1.068) against 1.110 for the F-lite rule and 1.137 without the "
+    "chain "
+    "and reduction terms",
     "generic_cost.cpp price_routes comment",
-    "one aggregate for the constants of the A16 model; the record gives no per-constant error; "
-    "measured at 0.1.0 (54ef5203), before #499 re-priced the K-quant register MMA on sm_86 / "
-    "sm_120");
+    "one aggregate for the constants of the A16 model, no per-constant error; measured at 0.1.0 "
+    "(54ef5203), before #499 re-priced the K-quant register MMA on sm_86 / sm_120");
 // The same refit, for the two constants whose flatness was also scanned: the record of h_a16_refit
 // with its own note.
 inline constexpr Holdout h_a16_refit_flat = [] {
@@ -81,25 +91,23 @@ inline constexpr Holdout h_a16_refit_flat = [] {
 }();
 // kMinWarpFill is used by the A16 model and by the W4A8 and I8 tiles, so it rests on both refits.
 // Like its siblings it is named by neither comment, only covered as one of "the constants".
-inline constexpr Holdout h_min_warp_fill = Holdout::checked(
+inline constexpr Holdout h_min_warp_fill = Holdout::none(
     "A16: ninferno_route_tune timings of seven boards (BF16, Q4, Q8, T >= 17); A8: --a8 timings of "
     "RTX 4090, RTX 5090, RTX 4060 Ti, L4, A10, A100",
-    "each board in turn: the constants refit with that board held out (A100 in sample only)",
-    "A16: geomean time over the best tile; A8: time over the best route of either class",
-    "A16 1.095 of the best (4090 1.083, 5090 1.068); A8 1.06..1.09 on the consumer boards, A100 "
-    "1.13 in sample; no error for this floor on its own",
+    "held-out scores quoted from the two original fits, whose timings and refits are not in the "
+    "repository: each board held out in turn, A16 1.095 of the best (4090 1.083, 5090 1.068), A8 "
+    "1.06..1.09 on the consumer boards (A100 1.13 in sample only); no error for this floor alone",
     "generic_cost.cpp price_routes comment; generic_gemm.cpp route_tile comment",
     "the A16 figures were measured at 0.1.0 (54ef5203), before #499 re-priced the K-quant register "
     "MMA on sm_86 / sm_120");
 // The A8 tiles (W4A8, I8, ggml MMQ) and their activation quantizer.
-inline constexpr Holdout h_a8_refit = Holdout::checked(
+inline constexpr Holdout h_a8_refit = Holdout::none(
     "ninferno_route_tune --a8 and --a8 --epilogue timings of RTX 4090, RTX 5090, RTX 4060 Ti, L4, "
     "A10, A100 (six formats, n 48..28672, T 17..2048, quantizer in the sample; SwiGLU and "
     "AddResidual on the A100)",
-    "each board in turn: the constants refit with that board held out (the minor-0 row, A100, has "
-    "one board and no held-out value)",
-    "time over the best route of either class (A16 or A8)",
-    "1.06..1.09 of the best on the consumer boards; A100 1.13 in sample only",
+    "a held-out score quoted from the original fit, whose timings and refit are not in the "
+    "repository: each board held out in turn, time over the best route of either class 1.06..1.09 "
+    "on the consumer boards (the A100, the minor-0 row's one board, 1.13 in sample only)",
     "generic_gemm.cpp route_tile comment",
     "one aggregate for the A8 constants; the record gives no per-constant error");
 // The register MMA of the K-quant and codebook decoders (#499, #301).
@@ -241,18 +249,18 @@ inline constexpr FittedHoldout kChoiceHoldouts[] = {
          "census reads them (one for most): a one-card row prices only its boards' estimate",
          "DECISIONS 66")},
     {kChoice, "kMmqTileCost",
-     Holdout::checked(
+     Holdout::none(
          "Qwen3.5 9B's Q3_K_M, Q4_K_M (the MTP file), Q5_K_M and Q6_K 7K-token prompts (nsys, the "
          "calls by format and grid), each generation's cards together: Ada RTX 4060 Ti and 4070 "
-         "Ti, "
-         "Ampere RTX 3060, Turing RTX 2080 Ti, Blackwell RTX 5090",
-         "Q4_K_S, which the rows were not read on: another format on the same cards, so a holdout "
-         "of the format, not of a card; and Q4_1 on Gemma 4 31B's 2013-token prefill (RTX 4090, "
-         "RTX 3090), predicted beforehand within 10 % of Q4_K's",
-         "predicted against measured kernel time per call",
-         "Q4_K_S: Ada -3 .. +8 %, Ampere 0 %, Turing -2 .. +2 %, Blackwell -5 .. +7 % (in sample "
-         "-8 .. +7 %); Q4_1 at Q4_K's step x0.98 (RTX 4090) and x1.02 (RTX 3090) of the census",
+         "Ti, Ampere RTX 3060, Turing RTX 2080 Ti, Blackwell RTX 5090",
+         "a held-out score quoted from the census, whose per-call kernel times are not in the "
+         "repository: Q4_K_S (a format the rows were not read on) predicted against measured "
+         "kernel time per call Ada -3 .. +8 %, Ampere 0 %, Turing -2 .. +2 %, Blackwell -5 .. +7 % "
+         "(in sample -8 .. +7 %); Q4_1 on Gemma 4 31B's 2013-token prefill at Q4_K's step x0.98 "
+         "(RTX 4090) and x1.02 (RTX 3090)",
          "DECISIONS 69; choice_constants.h at MmqTileCost",
+         "tests/test_choice.cpp prefills_by_format holds the whole-prompt estimate against "
+         "tests/fixtures/choice/prefill_measured.json, Q4_K_S rows included (a different metric); "
          "Q3_K is read as Q6_K where no row of its own exists; the IQ formats have kMmqIqStep")},
     {kChoice, "kMmqIqStep",
      Holdout::none(
@@ -304,14 +312,6 @@ inline constexpr FittedHoldout kChoiceHoldouts[] = {
          "none left out: the fit's own residuals (gb20x -1 .. +2 %, Ada -8 .. +9 %, Ampere -0.4 .. "
          "+0.8 %); the 5070 Ti's first chunk shows the CTA's own cost",
          "DECISIONS 68")},
-    {kChoice, "kAttentionHalfCta",
-     Holdout::none(
-         "one RTX 5090 timing at 64K context: a four-warp CTA, or an eight-warp CTA of 64 rows, "
-         "sweeps in about 0.72 of a full eight-warp CTA's time",
-         "one card: none left out; every other board takes the figure as a transfer",
-         "ops/softmax_attention/dense/causal_cache/int8/template_launch.cuh at "
-         "Int8PromptFastLayout",
-         "the kernel's layout reads the same figure (kHalfCostPercent there, outside this table)")},
     {kChoice, "kFp8AttentionTileCost",
      Holdout::none(
          "the census of 7K and 21K prompts (1024-token chunks), each generation's cards together: "
@@ -320,12 +320,11 @@ inline constexpr FittedHoldout kChoiceHoldouts[] = {
          "+3 %)",
          "DECISIONS 68")},
     {kChoice, "kBf16AttentionTileCost",
-     Holdout::checked(
+     Holdout::none(
          "the census of a 7K-token prompt (1024-token chunks): RTX 5090, RTX 4060 Ti, RTX 3060",
-         "the RTX 5070 Ti, which the row was not read on",
-         "predicted against measured attention time",
-         "0 .. +1 % on the RTX 5070 Ti (in sample: RTX 5090 -1 .. +2 %, 4060 Ti -2 .. +1 %, 3060 0 "
-         "%)",
+         "a held-out score quoted from the census, whose attention times are not in the "
+         "repository: the RTX 5070 Ti (not read for the row), predicted against measured attention "
+         "time 0 .. +1 % (in sample: RTX 5090 -1 .. +2 %, 4060 Ti -2 .. +1 %, 3060 0 %)",
          "DECISIONS 68; choice_constants.h at kBf16AttentionTileCost")},
     {kChoice, "kAttentionMergeDramShare",
      Holdout::none("the 21K census's merge kernels where their bytes outgrow the L2: 0.85 .. 1.04 "
@@ -446,28 +445,26 @@ inline constexpr FittedHoldout kGenerationHoldouts[] = {
 
 inline constexpr FittedHoldout kSmallTEtaHoldouts[] = {
     {kRoundCost, "kSmallTEta",
-     Holdout::checked(
+     Holdout::none(
          "registry spec-tune rounds of Qwen targets, k 4..7, RTX 4070 Ti and RTX 4090 together",
-         "each card's rounds predicted from the other card's eta alone (fit_eta.py item 3)",
-         "R measured / R facts",
-         "RTX 4070 Ti from the 4090 -3..+4 %, RTX 4090 from the 4070 Ti +1..+9 % (DECISIONS 53); "
-         "+0.1 % and +0.2 % on average, rms 3.7 % and 2.0 % (DECISIONS 56, for scale)",
-         "DECISIONS 53 and 56",
-         "gpt-oss rounds run +16..19 % over their facts, its runs drafted BF16 (round_cost.h "
-         "header comment, not DECISIONS 53 / 56)"),
+         "a held-out score of the shipped 0.148 quoted from DECISIONS 53 (each card's rounds "
+         "predicted from the other card's eta, R measured / R facts: RTX 4070 Ti -3..+4 %, RTX "
+         "4090 +1..+9 %); the registry has changed since, so the repository does not reproduce it",
+         "DECISIONS 53 and 56; tools/fits/round_cost/fit_eta.py",
+         "fit_eta.py item 3 reruns the card hold-out on today's registry at its refit eta (0.160 "
+         "over three Ada cards, not the shipped 0.148): held-out RTX 4090 +1.2 % (rms 2.8 %), 4070 "
+         "Ti +2.0 % (4.6 %), 4060 Ti -3.9 % (5.6 %); gpt-oss rounds run +16..19 % over their facts "
+         "(round_cost.h header comment)"),
      "ada"},
     {kRoundCost, "kSmallTEta",
-     Holdout::checked(
-         "registry spec-tune rounds of Qwen targets, k 4..7 (the held-out check covers k <= 7), "
-         "RTX 5070 Ti and RTX 5090 together",
-         "each card's rounds predicted from the other card's eta alone (fit_eta.py item 3)",
-         "R measured / R facts",
-         "RTX 5070 Ti from the 5090 (0.184) +4.3 % on average, rms 8.4 %; RTX 5090 from the 5070 "
-         "Ti "
-         "(0.162) +1.4 %, rms 4.4 %",
-         "DECISIONS 56",
-         "the plan's pick on the other card's pairs equals the held-out card's measured best or is "
-         "within 1.5 % of it (gpt-oss 4 %)"),
+     Holdout::none(
+         "registry spec-tune rounds of Qwen targets, k 4..7, RTX 5070 Ti and RTX 5090 together",
+         "a held-out score of the shipped 0.165 quoted from DECISIONS 56 (each card predicted from "
+         "the other card's eta, R measured / R facts: RTX 5070 Ti +4.3 %, rms 8.4 %; RTX 5090 +1.4 "
+         "%, rms 4.4 %); the registry has changed since, so the repository does not reproduce it",
+         "DECISIONS 56; tools/fits/round_cost/fit_eta.py",
+         "fit_eta.py item 3 reruns the card hold-out on today's registry at its refit eta (0.160, "
+         "not the shipped 0.165): held-out RTX 5090 +3.8 % (rms 7.1 %), 5070 Ti +3.2 % (8.3 %)"),
      "gb20x"},
 };
 
@@ -490,36 +487,35 @@ inline constexpr FittedHoldout kSpecHoldouts[] = {
 
 inline constexpr FittedHoldout kWaveHoldouts[] = {
     {kWave, "grid_passes_wave",
-     Holdout::checked(
+     Holdout::none(
          "the RTX 5090 (170 SMs): Gemma 4's NVFP4 2048x5376 A4 prefill, where the TMA route's grid "
          "(16 row tiles) stays under one wave and loses to the 128-token MMA tile until T > 1280",
-         "the RTX 5070 Ti (70 SMs), which the rule was not fitted on",
-         "TMA against MMA tile prefill time by T",
-         "TMA from T = 641 on the 70 SMs, 28 % faster there, equal from 768; other boards are "
-         "extrapolated until measured",
-         "ops/common/sm_wave_rules.h comment; ninferno_sm_wave_rules_test")},
+         "a held-out check quoted from the comment, whose timings are not in the repository: the "
+         "RTX 5070 Ti (70 SMs, not fitted on), TMA ahead from T = 641, 28 % faster there, equal "
+         "from 768; other boards are extrapolated until measured",
+         "ops/common/sm_wave_rules.h comment",
+         "ninferno_sm_wave_rules_test holds the rule's arithmetic, not the timings")},
 };
 
 // --- route_rules.h: the rows tagged Basis::Fitted or Basis::ScaledFromOneBoard, keyed by the
 // row's name. The boards are the row's (kSpeedFitBoards: the speed profile's seven-board fit).
 // The speed rule's held-out score (one rule for every board, fitted on six boards and scored on the
-// seventh), which the rows of kRmmaMidMinTokens and kSpeedFill state.
-inline constexpr Holdout h_speed_rule = Holdout::checked(
+// seventh), which the rows of kRmmaMidMinTokens and kSpeedFill state: quoted, not reproducible.
+inline constexpr Holdout h_speed_rule = Holdout::none(
     "BF16 timings of the speed profile's seven boards (RTX 3090, RTX 4090, RTX 5090, RTX 2080 Ti, "
     "A100, A10, L4)",
-    "each board in turn: the rule fitted on six boards and scored on the seventh",
-    "geomean time over the best route",
-    "1.116 of the best against 1.219 for the bands it replaced; a rule per board gained 1.1 % at "
-    "most",
-    "route_rules.h at kRmmaMidMinTokens; generic_gemm.h");
+    "a held-out score quoted from the original fit, whose timings are not in the repository: each "
+    "board in turn left out of the fit and scored, geomean time over the best route 1.116 of the "
+    "best against 1.219 for the bands it replaced; a rule per board gained 1.1 % at most",
+    "route_rules.h at kRmmaMidMinTokens; generic_gemm.h; generic_gemm.cpp");
 // The other edges of the same rule: the comment fits the rule as a whole and breaks out no error
 // for them.
 inline constexpr Holdout h_speed_rule_edge = Holdout::none(
     "inside the speed rule's seven-board fit (RTX 3090, RTX 4090, RTX 5090, RTX 2080 Ti, A100, "
     "A10, "
     "L4)",
-    "the record scores the rule as a whole (1.116 of the best, board held out: kRmmaMidMinTokens's "
-    "record) and does not break out this edge: no held-out error of its own",
+    "the record scores the rule as a whole (a quoted 1.116 of the best, board held out: "
+    "kRmmaMidMinTokens's record) and does not break out this edge: no held-out error of its own",
     "route_rules.h at the row");
 inline constexpr Holdout h_volta_copy_bound = Holdout::none(
     "the V100 (870 GB/s): the decoded copy's narrowest margin, 1.13 (24576 x 4096 below 129 "
@@ -533,12 +529,12 @@ inline constexpr FittedHoldout kRouteRuleHoldouts[] = {
     {kRouteRules, "volta_copy_pays: the two comparisons", h_volta_copy_bound},
     {kRouteRules, "kRmmaMidMinTokens", h_speed_rule},
     {kRouteRules, "kSpeedFill",
-     Holdout::checked(
+     Holdout::none(
          "BF16 timings of the speed profile's seven boards (RTX 3090, RTX 4090, RTX 5090, RTX 2080 "
          "Ti, A100, A10, L4)",
-         "each board in turn: the rule fitted on six boards and scored on the seventh",
-         "geomean time over the best route",
-         "the rule's 1.116 of the best (kRmmaMidMinTokens's fit); 1.0..2.0 cost under 0.5 %",
+         "the rule's held-out 1.116 of the best is quoted from the original fit, whose timings are "
+         "not in the repository; the fill's own figure (1.0..2.0 cost under 0.5 %) is an in-sample "
+         "sensitivity, not a held-out error",
          "route_rules.h at kSpeedFill; generic_gemm.h")},
     {kRouteRules, "heuristic_rmma: speed rule token tiles", h_speed_rule_edge},
     {kRouteRules, "heuristic_rmma: sixteen warps from 72 K steps", h_speed_rule_edge},
@@ -562,14 +558,13 @@ inline constexpr FittedHoldout kRouteRuleHoldouts[] = {
 
 // --- Kernels' own launch constants, fitted on lab boards.
 inline constexpr FittedHoldout kKernelHoldouts[] = {
-    {kInt8PromptLaunch, "kHalfCostPercent",
+    {kInt8PromptCost, "kInt8PromptHalfCtaPercent",
      Holdout::none(
          "one RTX 5090 timing at 64K context: a four-warp CTA, or an eight-warp CTA of 64 "
          "rows, sweeps in about 0.72 of a full eight-warp CTA's time",
-         "one card: none left out; every board takes the figure",
-         "template_launch.cuh at Int8PromptFastLayout",
-         "the same figure as choice_constants.h kAttentionHalfCta; "
-         "int8_prompt_fast_layout spells it a second time (72LL)")},
+         "one card: none left out; every board takes the figure", "int8/prompt_fast_cost.h",
+         "the one definition: the kernel's layout (template_launch.cuh) and the choice's estimate "
+         "(choice.cpp, choice_constants.h kAttentionHalfCta) read it")},
     {kRope, "kLargeBlockMaxTokens",
      Holdout::none("the RTX 5090 (its wave, 170 SMs x six CTAs: 1020) and the RTX 5080 (the "
                    "256-thread block equal or faster through 1020 tokens)",
@@ -599,6 +594,81 @@ inline constexpr FittedHoldout kKernelHoldouts[] = {
                    "two to nine",
                    "one board: none left out; every board takes the value",
                    "rmsnorm_rope/launch.cu at kTextHeadsPerBlock")},
+    {kGemma4Attention, "kDecodeMaxWarpRowsD128",
+     Holdout::none("Gemma 4 drafter decode at T = 16, 32K keys: four warp rows 2-5 % faster than "
+                   "two on the 64-head drafter, equal on the 32-head one, eight no faster",
+                   "the comment names no board: none left out; every board takes the count",
+                   "gemma4/launch.cu at kDecodeMaxWarpRowsD128")},
+    {kGemma4Attention, "kDecodeMinSplitKeysD128",
+     Holdout::none("the RTX 5090: the 64-key floor of a D <= 128 decode split",
+                   "one board: none left out; every board takes the floor",
+                   "gemma4/launch.cu at kDecodeMinSplitKeysD128")},
+    {kGemma4Attention, "kDecodeSplitsPerGroupD128",
+     Holdout::none("gpt-oss-20b plain decode at 69K keys: RTX 5090 177.6 -> 221.6 tok/s against "
+                   "16 splits; +8 % long on the RTX 4090 and 5080",
+                   "fitted on the three boards: none left out; every board takes the count",
+                   "gemma4/launch.cu at the D<=128 splits comment")},
+    {kRmsNorm, "kBlock",
+     Holdout::none("the plain per-head D128 path's four rows a CTA (128 threads): the measured "
+                   "lower envelope from T = 1 through the 1024-token prefill point",
+                   "the comment names no board: none left out; every board takes the block",
+                   "rmsnorm.cu at the D128 plain path",
+                   "the file's other kBlock (512) is not "
+                   "recorded")},
+    {kQ5LinearAdd, "kNarrowTailCols",
+     Holdout::none("the measured narrow schedules of a short remainder past whole 512-token waves "
+                   "of the collective MMA route",
+                   "the comment names no board or margin: none left out",
+                   "q5_linear_add_plan.cpp at kNarrowTailCols")},
+    {kGdnConv, "kNarrowThreads",
+     Holdout::none("the compiled Qwen3.6 35B-A3B instance it replaced: at T = 4, 160 blocks of 64 "
+                   "threads faster than 40 of 256 on 170 SMs (the RTX 5090)",
+                   "one board and one width: the rule (wide_blocks < SMs -> 64 threads) extends "
+                   "it to every width and geometry unmeasured",
+                   "gdn_projected_conv.cu at launch")},
+    {kQwenAttention, "kFusedTextQkNormRopeMaximumTokens",
+     Holdout::none("the RTX 5090: the fused form wins by 22 to 52 % through 256 tokens and loses "
+                   "by up to 22 % at 1024; the bound a doubling below the crossover",
+                   "one board: none left out; every board takes the bound",
+                   "qwen3_5/execution/attention.cpp at kFusedTextQkNormRopeMaximumTokens")},
+    {kAttnInputPlan, "kBf16AttnInputSmallTMinTokens",
+     Holdout::none("the attention epilogue's own measured crossover (with "
+                   "kBf16AttnInputSmallTMaxTokens)",
+                   "the comment names no board or margin: none left out",
+                   "bf16_attn_input_plan.h")},
+    {kAttnInputPlan, "kBf16AttnInputSmallTMaxTokens",
+     Holdout::none("the attention epilogue's own measured crossover (with "
+                   "kBf16AttnInputSmallTMinTokens)",
+                   "the comment names no board or margin: none left out",
+                   "bf16_attn_input_plan.h")},
+    {kGdnGating, "kFusedSimt27SpeedMaxCols",
+     Holdout::none("the fused 27B norm + gating SIMT kernel's measured speed frontier (42 columns)",
+                   "the comment names no board or margin: none left out",
+                   "bf16_gdn_gating_proj_plan.cpp at kFusedSimt27SpeedMaxCols")},
+    {kW4a8, "kW4a8Scales4",
+     Holdout::none("the W4A8 micro-bench per tile, IQ3_XXS / IQ3_S / Q4_K / Q6_K (+ IQ4_XS, Q4_0, "
+                   "Q8) at Qwen3.6-27B and Muse 30B shapes: RTX 5080 and RTX 4090",
+                   "the two boards are the A/B: none left out",
+                   "generic_w4a8.cuh at the classic kernel's schedule choices",
+                   "covers kW4a8DecodeMid, defined on the same line")},
+    {kSparseMoePrefill, "kSparseMoePrefillNvfp4Min",
+     Holdout::none("a cold sweep of T over [2, 46] through the operator benchmark: small-T ahead "
+                   "through T = 8, at most 4.5 % behind to T = 12, the prefill route +9 % at T = "
+                   "16",
+                   "the comment names no board: none left out",
+                   "sparse_moe_prefill.h at kSparseMoePrefillNvfp4Min")},
+    {kMoePrefill, "kGateUpDeepJobsNum",
+     Holdout::none("server prefill swept over the threshold 1.5, 1.5625, 1.625, 1.75 and 2.0: "
+                   "fastest at 7/4 (0.10 to 0.17 points against 2/1 below the wide-plan bound)",
+                   "the comment names no board: none left out",
+                   "sparse_moe_prefill_kernels.cu at kGateUpDeepJobsNum",
+                   "covers kGateUpDeepJobsDen (the ratio's denominator)")},
+    {kQwenDecode, "kRideColumns",
+     Holdout::none("measured verify costs: Qwen3.8 27B T = 16 at 1.25x a decode step, Qwen3.6 "
+                   "35B-A3B T = 4 at 1.46x",
+                   "the budget follows from those two costs; riding against latching plain is "
+                   "not measured: none left out",
+                   "qwen3_5/program/decode.cpp at kRideColumns")},
 };
 
 } // namespace ninferno::fitted
