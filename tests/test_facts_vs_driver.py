@@ -74,6 +74,7 @@ def row_of(pci_id, **change):
 # llround(snap_to_fact_grid(x)) of src/core/machine_facts.cpp, worked out by hand from
 # 2^(round(16 log2 x) / 16): the clock the engine writes for a driver reading of x kHz.
 SNAP_9_000_000 = 9_147_842
+SNAP_1_800_000 = 1_763_488  # a laptop's driver boost clock, 1 800 000 kHz, on the grid
 SNAP_10_001_000 = 9_975_792  # the RTX 4070 GDDR6 board's driver reading, 10 001 000 kHz
 
 
@@ -339,8 +340,8 @@ class Compare(unittest.TestCase):
         # driver's bus and clock are information, the engine reads them (source 2).
         d = device_4090()
         d["queried"].update(memory_bus_bits=256, memory_clock_khz=9_000_000)
-        d["engine_table_facts"].update(source=2, memory_bus_bits=256, memory_clock_khz=SNAP_9_000_000,
-                                       driver_read=True)
+        d["engine_table_facts"].update(source=2, memory_bus_bits=256,
+                                       memory_clock_khz=SNAP_9_000_000, driver_read=True)
         row = row_of(0x2684, variants=[{"bus_bits": 256, "gbps": 18.0}])
         s = no_mismatch(self, statuses(d, row))
         self.assertEqual(s[("table", "engine_memory_bus_bits")], "match")
@@ -442,7 +443,8 @@ class Compare(unittest.TestCase):
         slow_row = row_of(0x2684, variants=[{"gbps": 18.0}])
         slow = device_4090()
         slow["queried"]["memory_clock_khz"] = 9_000_000
-        slow["engine_table_facts"].update(memory_clock_khz=SNAP_9_000_000, source=2, driver_read=True)
+        slow["engine_table_facts"].update(memory_clock_khz=SNAP_9_000_000, source=2,
+                                          driver_read=True)
         self.assertEqual(self.driver_read_of(slow, slow_row), "match")
         slow["engine_table_facts"]["driver_read"] = False
         self.assertEqual(self.driver_read_of(slow, slow_row), "mismatch")
@@ -484,13 +486,29 @@ class Compare(unittest.TestCase):
         row = row_of(0x2C18)
         del row["boost_min_mhz"]
         d = device_laptop()
-        d["engine_table_facts"].update(driver_read=True, reference_clock_khz=1_800_000)
+        d["engine_table_facts"].update(driver_read=True, reference_clock_khz=SNAP_1_800_000)
         d["engine_row_facts"].update(driver_read=True, reference_clock_khz=2_160_000)
         s = statuses(d, row)
         self.assertEqual(s[("table", "engine_driver_read")], "match")
         self.assertEqual(s[("table", "engine_row_driver_read")], "match")
         d["engine_row_facts"]["driver_read"] = False
         self.assertEqual(statuses(d, row)[("table", "engine_row_driver_read")], "mismatch")
+
+    def test_a_laptop_without_a_range_is_priced_at_the_lower_of_its_top_and_the_drivers_clock(self):
+        row = row_of(0x2C18)
+        del row["boost_min_mhz"]
+        top = row["boost_mhz"] * 1000
+        for sm_khz, want in ((1_800_000, SNAP_1_800_000), (3_000_000, top), (0, top),
+                             (-1, top)):
+            d = device_laptop()
+            d["queried"]["sm_clock_khz"] = sm_khz
+            d["engine_table_facts"].update(driver_read=True, reference_clock_khz=want)
+            d["engine_row_facts"].update(driver_read=True, reference_clock_khz=top)
+            key = ("table", "engine_reference_clock_khz")
+            self.assertEqual(statuses(d, row)[key], "match", sm_khz)
+            for wrong in (1, want - 1, want + 1):  # a stored 1 passed the old loose bound
+                d["engine_table_facts"]["reference_clock_khz"] = wrong
+                self.assertEqual(statuses(d, row)[key], "mismatch", (sm_khz, wrong))
 
     def test_source_of_a_slice_is_extrapolated(self):
         sliced = device_a100()
@@ -1012,6 +1030,11 @@ class EngineRule(unittest.TestCase):
         self.assertIn("const bool whole_board = row->form != FormFactor::Laptop && "
                       "(driver.sms <= 0 || driver.sms == row->sms);", text)
         self.assertIn("if (row->boost_min_mhz > 0) {", text)
+        # The grid: engine_snapped_khz is a port of these lines, so a change of the grid fails here.
+        self.assertIn("const double k = std::floor(16.0 * std::log2(x) + 0.5);", text)
+        self.assertIn("return std::exp2(k / 16.0);", text)
+        self.assertIn("f.memory_clock_khz = static_cast<int>(std::llround(snap_to_fact_grid("
+                      "driver.memory_clock_khz)));", text)
 
     def test_every_engine_field_follows_the_engine_over_a_grid_of_driver_values(self):
         no_range = row_of(0x2C18)
