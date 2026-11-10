@@ -399,12 +399,14 @@ void layer_checks() {
         const std::string tag    = std::string(" (relu2 ") + (relu2 ? "yes" : "no") + ")";
 
         // The default plan: both stages on the register MMA, the combine is separate.
-        for (const std::int32_t tokens : {1, 2, 32}) {
+        // (At T = 32 this board's compute passes its DRAM time: priced, not bandwidth-bound.)
+        for (const std::int32_t tokens : {1, 2, 4, 32}) {
+            const bool narrow = tokens <= 4;
             const auto price =
                 moe::moe_layer_price(w, layer->config, moe::MoePlan{}, tokens, board);
-            check(price && price->compute_priced && !price->compute_binds &&
+            check(price && price->compute_priced && price->compute_binds == !narrow &&
                       price->compute_note.empty(),
-                  "a register MMA layer is fully priced and bandwidth-bound, T = " +
+                  "a register MMA layer is fully priced, bandwidth-bound while narrow, T = " +
                       std::to_string(tokens) + tag);
             if (!price) continue;
             const double expected =
@@ -413,8 +415,11 @@ void layer_checks() {
                   "the layer's bytes by hand, T = " + std::to_string(tokens) + tag + ": " +
                       std::to_string(price->dram_seconds * board.dram_bytes_per_s) + " vs " +
                       std::to_string(expected));
-            check(matches(price->seconds, price->dram_seconds),
-                  "bandwidth-bound: seconds = DRAM seconds, T = " + std::to_string(tokens) + tag);
+            check(narrow ? matches(price->seconds, price->dram_seconds)
+                         : price->seconds > price->dram_seconds,
+                  "seconds are the DRAM seconds while bandwidth-bound, more once compute binds, T "
+                  "= " +
+                      std::to_string(tokens) + tag);
         }
 
         // A rate so low that compute binds: priced, binds, and seconds exceed the DRAM seconds.
@@ -880,6 +885,9 @@ void replica(const std::filesystem::path& routes_dir) {
         std::printf("%-10s T = 1 rows: %zu, max predicted / measured %.3f; strict bound / measured "
                     "max %.3f\n",
                     source.board, t1_rows, hi_t1, hi_strict);
+        std::printf("%-10s strict bound / measured per row (T: ratio):", source.board);
+        for (const Row& r : rows) std::printf(" %d:%.3f", r.tokens, r.strict / r.measured);
+        std::printf("\n");
         check(t1_rows >= 1, std::string(source.board) + ": the table has a T = 1 row");
         check(hi_t1 <= 1.0, std::string(source.board) +
                                 ": a T = 1 row's predicted time exceeds its measured "
