@@ -228,18 +228,22 @@ __device__ __forceinline__ unsigned load_link(const unsigned* p) {
 
 template <bool Cg>
 // `per_sm`: every (CTA, warp) pair owns its sub-buffer (CTA x 8 + warp); otherwise the 8
-// sub-buffers are shared by the CTAs and CTA b enters warp w's cycle at the index b x m /
-// gridDim.x (through the same bijection), a segment of its own as long as m / gridDim.x exceeds
-// 2 x links: no two CTAs then read a line in common, so a link's first touch is the CTA's own.
+// sub-buffers are shared by the CTAs and CTA b walks warp w's cycle from position b x m /
+// gridDim.x, a segment of its own as long as m / gridDim.x exceeds 8 x links (four runs of 2 x
+// links): no two CTAs then read a line in common, so a link's first touch is the CTA's own.
 __global__ void chase(const unsigned* __restrict__ buf, unsigned bits, bool per_sm, int links,
-                      Span* spans, unsigned* sink) {
+                      unsigned run, Span* spans, unsigned* sink) {
     const int warp = threadIdx.x / 32;
     if (threadIdx.x % 32 != 0) return;
     const unsigned m     = 1u << bits;
     const unsigned sub   = per_sm ? blockIdx.x * 8 + warp : warp;
     const unsigned* mine = buf + static_cast<size_t>(sub) * m;
-    unsigned idx =
-        per_sm ? 0u : feistel((blockIdx.x * (m / gridDim.x)) & (m - 1u), bits, cycle_seed(sub));
+    // The cycle runs through the positions x = 0, 1, 2, ... (fill_cycle), so segments are plain
+    // index ranges: this CTA's segment of a shared sub-buffer begins at b x m / grid, and the
+    // `run`-th chase of the level (one per warp count) begins 2 x links further on than the
+    // previous one, so no chase walks the lines an earlier chase pulled into the L2.
+    const unsigned x0 = (per_sm ? 0u : blockIdx.x * (m / gridDim.x)) + run * 2u * links;
+    unsigned idx      = feistel(x0 & (m - 1u), bits, cycle_seed(sub));
     for (int i = 0; i < links; ++i) idx = load_link<Cg>(mine + idx);
     const long long n0 = globaltimer_ns();
     const long long t0 = clock64();
@@ -263,22 +267,22 @@ __global__ void chase_shared(Span* spans, unsigned* sink) {
     if (idx == 0xffffffffu) sink[0] = idx;
 }
 
-// `count` sub-buffers of 2^bits elements, each one cycle through all its elements: x -> a_w x +
-// c_w mod 2^bits with a_w = 1 mod 4 and c_w odd is a full-period LCG step (Hull-Dobell), i.e. a
-// single cycle; the cycle is then conjugated by the Feistel bijection (buf[P(x)] = P(next(x))),
-// so its successive links are far apart in the address space for every warp (an LCG's own low
-// bits cycle with short periods, which could put consecutive links in one DRAM row). The
-// multipliers and seeds differ per sub-buffer, so no two cycles share their order.
+// `count` sub-buffers of 2^bits elements, each one cycle through all its elements in a
+// pseudo-random order: the successor cycle conjugated by the Feistel bijection, seeded per
+// sub-buffer so no two cycles share their order. (An LCG cycle was tried first: its own low bits
+// repeat with short periods and its orbit order is not an index order, so segments of it could
+// neither be kept apart from a DRAM row nor from one another.)
 __global__ void fill_cycle(unsigned* buf, unsigned bits, unsigned count) {
     const unsigned m = 1u << bits;
     const size_t i   = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= static_cast<size_t>(m) * count) return;
     const unsigned w = static_cast<unsigned>(i / m), x = static_cast<unsigned>(i % m);
-    const unsigned a    = 1664525u + 4u * 1000003u * w; // 1 mod 4 for every w
-    const unsigned c    = 1013904223u + 2u * 7919u * w; // odd for every w
     const unsigned seed = cycle_seed(w);
+    // The successor cycle x -> x + 1 mod m, conjugated by the bijection: buf[P(x)] = P(x + 1).
+    // Position k of the cycle is P(k), so a segment of the cycle is a plain range of k, and the
+    // addresses of successive links are unrelated.
     buf[static_cast<size_t>(w) * m + feistel(x, bits, seed)] =
-        feistel((a * x + c) & (m - 1u), bits, seed);
+        feistel((x + 1u) & (m - 1u), bits, seed);
 }
 
 double median(std::vector<double> d) {
@@ -352,7 +356,7 @@ int main() {
     CHECK(cudaDriverGetVersion(&driver));
     CHECK(cudaRuntimeGetVersion(&runtime));
     const int cc = p.major * 10 + p.minor;
-    std::printf("probe isa_probe 6\n");
+    std::printf("probe isa_probe 7\n");
     std::printf("card %s\n", p.name);
     std::printf("cc %d\n", cc);
     std::printf("sms %d\n", p.multiProcessorCount);
@@ -462,14 +466,16 @@ int main() {
         const size_t total   = static_cast<size_t>(m) * count;
         fill_cycle<<<static_cast<unsigned>((total + 255) / 256), 256>>>(buf, lv.bits, count);
         CHECK(cudaDeviceSynchronize());
+        unsigned run = 0;
         for (int warps : {1, 2, 4, 8}) {
             if (lv.cg) {
-                chase<true>
-                    <<<pr.sms, 32 * warps>>>(buf, lv.bits, lv.per_sm, lv.links, pr.spans, pr.usink);
+                chase<true><<<pr.sms, 32 * warps>>>(buf, lv.bits, lv.per_sm, lv.links, run,
+                                                    pr.spans, pr.usink);
             } else {
-                chase<false>
-                    <<<pr.sms, 32 * warps>>>(buf, lv.bits, lv.per_sm, lv.links, pr.spans, pr.usink);
+                chase<false><<<pr.sms, 32 * warps>>>(buf, lv.bits, lv.per_sm, lv.links, run,
+                                                     pr.spans, pr.usink);
             }
+            ++run;
             const Chase c = chase_clocks(warps, lv.links);
             char name[64];
             std::snprintf(name, sizeof name, "%s_latency_w%d", lv.name, warps);
