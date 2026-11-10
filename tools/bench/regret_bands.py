@@ -69,6 +69,16 @@ def offer_family(route):
     return "w4a8" if family == "w4a8ws" else family
 
 
+def significant_digits(text):
+    """Digits of a number's mantissa as written, without leading and trailing zeros."""
+    mantissa = text.strip().lstrip("+-").lower().split("e")[0].replace(".", "")
+    return len(mantissa.strip("0"))
+
+
+# route_tune wrote model_us with the stream's default six significant digits until it printed 17.
+LEGACY_MODEL_DIGITS = 6
+
+
 def offer_order_votes(sequences, family):
     """Pairwise votes (a, b) -> how many sequences write route a before route b, of one family."""
     votes = {}
@@ -156,6 +166,7 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected"):
         raise ValueError("pick must be selected or model")
     timed, model = {}, {}  # (key, route) -> [us per pass]
     written = {}  # (pass, key) -> routes in the order the pass wrote them
+    digits = {}  # pass -> most significant digits of any model_us it wrote
     for number, path in enumerate(route_paths):
         columns = collect.KEY + ("route", "median_us") + (("model_us",) if pick == "model" else ())
         seen = set()
@@ -172,6 +183,7 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected"):
             if pick == "model":
                 # Empty where the model prices no route (route_tune leaves the cell blank).
                 text = (row.get("model_us") or "").strip()
+                digits[number] = max(digits.get(number, 0), significant_digits(text))
                 price = float(text) if text else None
                 model.setdefault(at, []).append(
                     price if price is not None and math.isfinite(price) and price > 0 else None)
@@ -225,6 +237,13 @@ def rows_from_csv(route_paths, selected_path, board, pick="selected"):
                 # (tiled and staged are offered in other orders), so the pick is unknown and the
                 # case is skipped, not guessed.
                 skip(None, "the model prices the best candidates of two families equally")
+                continue
+            if len(tied) > 1 and any(digits.get(n, 0) <= LEGACY_MODEL_DIGITS
+                                       for n in range(passes)):
+                # A pass written with six digits (before route_tune printed 17) cannot tell a
+                # tie from two prices that differ in the seventh digit, where production takes
+                # the cheaper: no value of its model_us is as long as a 17-digit one.
+                skip(None, "model_us has six significant digits: an equal price may be a rounding")
                 continue
             # Within one family the offer order is the schedule index, but the rows of one key are
             # not always written in it: route_tune times the prefill route first at the band

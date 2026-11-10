@@ -211,13 +211,15 @@ class Csv(unittest.TestCase):
             self.assertEqual([r["reason"] for r in skipped],
                              ["fewer than two candidates of the case's compute class"])
 
-    def tied_pick(self, tied_rows, other_rows, fmt="q4k,a16"):
+    def tied_pick(self, tied_rows, other_rows, fmt="q4k,a16", long=True):
         """The model pick of the T=40 key whose tied rows are written as given, beside other keys."""
         def keyed(t, rows):
             return "".join(f"{fmt},store,64,64,{t},{route},{us},{price}\n"
                            for route, us, price in rows)
+        # A row of another problem whose price has the digits route_tune writes now (17).
+        long_price = "q4k,a16,store,65,64,50,rmma.z,10,1.2345678901234567\n"
         p1 = self.write("p1.csv", ROUTES + keyed(40, tied_rows) + "".join(
-            keyed(t, rows) for t, rows in other_rows))
+            keyed(t, rows) for t, rows in other_rows) + (long_price if long else ""))
         rows, skipped = bands.rows_from_csv([p1], None, "b", pick="model")
         at40 = [r for r in rows if r["t"] == 40]
         return (at40[0]["selected"], None) if at40 else (
@@ -246,13 +248,29 @@ class Csv(unittest.TestCase):
         # The other keys disagree, one each.
         self.assertEqual(self.tied_pick([b, a, c], [(48, [a, b, c]), (64, [b, a, c])]),
                          (None, out_of_order))
-        # Another problem (n) is no vote.
+        # Another problem (n or k) is no vote.
         p1 = self.write("p1.csv", ROUTES + "q4k,a16,store,64,64,40,rmma.b,10,30\n"
                         "q4k,a16,store,64,64,40,rmma.a,20,30\n"
                         "q4k,a16,store,128,64,48,rmma.a,20,30\n"
-                        "q4k,a16,store,128,64,48,rmma.b,10,30\n")
+                        "q4k,a16,store,128,64,48,rmma.b,10,30\n"
+                        "q4k,a16,store,64,128,48,rmma.a,20,30\n"
+                        "q4k,a16,store,64,128,48,rmma.b,10,30\n"
+                        "q4k,a16,store,65,64,50,rmma.z,10,1.2345678901234567\n")
         rows, skipped = bands.rows_from_csv([p1], None, "b", pick="model")
         self.assertEqual([r["reason"] for r in skipped if r["t"] == 40], out_of_order)
+
+    def test_a_tie_in_a_six_digit_model_us_is_a_skip(self):
+        # Before route_tune printed 17 digits, prices that differ in the seventh digit read as a
+        # tie, and production takes the cheaper: the tool cannot tell the two, so it skips.
+        a, b, c = ("rmma.a", 20, 30), ("rmma.b", 10, 30), ("rmma.c", 15, 40)
+        other = [(48, [a, b, c])]
+        self.assertEqual(self.tied_pick([b, a, c], other, long=False),
+                         (None, ["model_us has six significant digits: an equal price may be a "
+                                 "rounding"]))
+        self.assertEqual(self.tied_pick([b, a, c], other), ("rmma.a", None))
+        self.assertEqual([bands.significant_digits(t) for t in ("30", "0.012300", "1.5e+06",
+                                                                 "12.345678", "-4.2")],
+                         [1, 3, 2, 8, 2])
 
     def test_w4a8ws_is_one_family_with_w4a8(self):
         # route_name spells the producer-warp W4A8 schedule w4a8ws; it is offered after the

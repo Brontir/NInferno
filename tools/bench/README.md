@@ -182,7 +182,11 @@ than the case's key, when fewer than two candidates of its class were timed, or 
 T >= 17 only) when the model prices none of them or prices the best candidates of two route families
 equally. A tie within one family takes the route first in the family's schedule order, as the sweep's
 other widths of the same problem show it (`cost_route` keeps the first offered on an equal price); a tie they
-do not settle is skipped. `--pick model` ranks only within the
+do not settle is skipped. The order is a write-order majority, so a
+non-default run (custom `--points`, `--prefill-only 1`, or a chunk of 4096 or more) that wrote more widths prefill-first could settle a tie
+the wrong way; default archives are in offer order. A tie is also skipped when the file's `model_us` has no value of more
+than six significant digits (a pass from before `route_tune` printed 17): there an equal price may be two prices that differ in the seventh digit,
+where production takes the cheaper. `--pick model` ranks only within the
 case's compute class; production under AllowA8 also offers the a8 candidates.
 
 ```bash
