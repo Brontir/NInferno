@@ -31,6 +31,24 @@ static_assert(arch_registry::find(7, 5).smem_per_block_optin == 64 * 1024);
 static_assert(arch_registry::find(7, 5).max_threads_per_sm == 1024);
 static_assert(arch_registry::find(7, 5).max_blocks_per_sm == 16);
 static_assert(arch_registry::find(7, 0).smem_per_block_optin == 96 * 1024);
+// The rows read from the driver (cudaDeviceGetAttribute): Quadro GV100 (cc 7.0), RTX 5090 and
+// RTX 5070 Ti (cc 12.0).
+static_assert(arch_registry::find(7, 0).smem_per_sm == 96 * 1024);
+static_assert(arch_registry::find(7, 0).max_threads_per_sm == 2048);
+static_assert(arch_registry::find(7, 0).max_blocks_per_sm == 32);
+static_assert(arch_registry::find(12, 0).max_blocks_per_sm == 24);
+// The rows from the published figures, no card read (the CUDA programming guide's table and the
+// toolkit's cuda::arch_traits and occupancy calculator): Orin, sm_107, Thor; the rest of
+// sm_90..sm_119 keeps 2048 threads and 32 blocks.
+static_assert(arch_registry::find(8, 7).max_blocks_per_sm == 16);
+static_assert(arch_registry::find(10, 7).max_blocks_per_sm == 16);
+static_assert(arch_registry::find(10, 7).max_threads_per_sm == 1024);
+static_assert(arch_registry::find(11, 0).max_blocks_per_sm == 24);
+static_assert(arch_registry::find(11, 0).max_threads_per_sm == 1536);
+static_assert(arch_registry::find(11, 0).smem_per_block_optin == 227 * 1024);
+static_assert(arch_registry::find(10, 3).max_threads_per_sm == 2048);
+static_assert(arch_registry::find(10, 8).max_blocks_per_sm == 32);
+static_assert(arch_registry::find(11, 1).max_blocks_per_sm == 32);
 static_assert(arch_registry::find(9, 0).smem_per_block_optin == 227 * 1024);
 static_assert(arch_registry::find(9, 0).smem_per_sm == 228 * 1024);
 static_assert(arch_registry::find(12, 0).registers_per_sm == 64 * 1024);
@@ -149,10 +167,38 @@ void the_synthetic_class_keeps_its_value() {
             "synthetic " + std::to_string(major) + "." + std::to_string(minor) + ": ";
         const DeviceClass d =
             synthetic_device_class(0, major, minor, 40, std::size_t{8} << 20, std::size_t{8} << 30);
+        // The class carries its capability's row, nothing of its own.
+        const auto& row = arch_registry::find(cc);
+        expect(d.smem_per_block_optin == row.smem_per_block_optin &&
+                   d.smem_per_sm == row.smem_per_sm &&
+                   d.max_threads_per_sm == row.max_threads_per_sm &&
+                   d.max_blocks_per_sm == row.max_blocks_per_sm &&
+                   d.registers_per_sm == row.registers_per_sm,
+               at + "the row's limits");
         legacy::Synthetic old = legacy::synthetic(major, minor);
-        // Volta's synthetic class has always read the unlisted row's shared memory and threads
-        // (99 and 100 KiB, 1536) for the capabilities of major 7 below 7.5; they stay so (see
-        // synthetic_device_class); real Volta is 96 KiB, 96 KiB, 2048.
+        // The corrections of #662, to the driver's figures (cudaDeviceGetAttribute): a Volta SM
+        // (cc 7.0, Quadro GV100) holds 96 KiB a block and a SM and 2048 threads, where the old
+        // class wrote the unlisted row's 99 KiB, 100 KiB and 1536 (Xavier, cc 7.2, has the same
+        // row and no card read); a consumer Blackwell SM (cc 12.0, RTX 5090 and RTX 5070 Ti)
+        // holds 24 blocks, not 32.
+        if (cc == 70 || cc == 72) {
+            old.block   = 96 * 1024;
+            old.sm      = 96 * 1024;
+            old.threads = 2048;
+        }
+        if (cc == 120) old.blocks = 24;
+        // And to the published figures, no card read (#648: the CUDA programming guide's table,
+        // the toolkit's cuda::arch_traits and occupancy calculator): Orin (cc 8.7) holds 16 blocks
+        // a SM, cc 10.7 16 blocks and 1024 threads, Thor (cc 11.0) 24 blocks and 1536 threads.
+        if (cc == 87) old.blocks = 16;
+        if (cc == 107) {
+            old.blocks  = 16;
+            old.threads = 1024;
+        }
+        if (cc == 110) {
+            old.blocks  = 24;
+            old.threads = 1536;
+        }
         expect(d.smem_per_block_optin == old.block, at + "shared per block");
         expect(d.smem_per_sm == old.sm, at + "shared per SM");
         expect(d.max_threads_per_sm == old.threads, at + "threads per SM");
