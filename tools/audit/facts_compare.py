@@ -12,7 +12,8 @@ board's row of src/core/data/gpu_facts.json. Output: one result per field.
          registers per SM) and the reserved-shared invariant of the queried class.
 
 status: match, mismatch (fails the run), unavailable (the driver gave no value: not a failure),
-info (a difference that is not a failure: a feature the build lacks, the persisting-L2 cap).
+info (a difference that is not a failure: a feature the build lacks, the persisting-L2 cap, a
+board the row records under its id in `variants`).
 """
 import math
 
@@ -69,9 +70,41 @@ def is_laptop(row):
     return row.get("form") == "laptop"
 
 
-def row_memory_khz(row):
+def memory_khz(gbps):
     # The driver spells half the data rate in kHz: 28 Gbps is 14 000 000.
-    return row["gbps"] * 1.0e6 / 2.0
+    return gbps * 1.0e6 / 2.0
+
+
+def row_memory_khz(row):
+    return memory_khz(row["gbps"])
+
+
+# A row's `variants`: the other boards sold under its PCI id, each by the values in which it
+# differs from the row (an 8 GB RTX 5060 Ti under the 16 GB board's id, a GDDR6 GTX 1650 under
+# the GDDR5 board's). A driver value that is such a board's is information; any other value off
+# the row (an overclock, a wrong row) stays a mismatch.
+VARIANT_KEYS = ("vram_gib", "gbps", "boost_mhz")
+
+
+def check_variants(row):
+    """Raises ValueError unless the row's `variants` (if any) are boards that differ from it."""
+    variants = row.get("variants", [])
+    where = f"{row.get('id')}: variants"
+    if not isinstance(variants, list) or ("variants" in row and not variants):
+        raise ValueError(f"{where}: expected a nonempty list")
+    for v in variants:
+        if not isinstance(v, dict) or not v or set(v) - set(VARIANT_KEYS):
+            raise ValueError(f"{where}: each is an object of {', '.join(VARIANT_KEYS)}")
+        for key, value in v.items():
+            if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{where}: {key} is not a positive number")
+        if all(v[key] == row[key] for key in v):
+            raise ValueError(f"{where}: a variant that does not differ from the row")
+
+
+def variant_has(row, key, is_the_drivers):
+    """True when a board recorded under the row's id has `key` at the driver's value."""
+    return any(key in v and is_the_drivers(v[key]) for v in row.get("variants", []))
 
 
 def engine_expected(q, row):
@@ -158,6 +191,11 @@ def compare_device(device, row):
             out.append(result("table", "memory_clock_khz", want_khz, mem, "info",
                               "a slower memory variant under the row's id: the engine reads the "
                               "driver's clock"))
+        elif variant_has(row, "gbps",
+                         lambda gbps: close(memory_khz(gbps), mem, MEMORY_CLOCK_TOLERANCE)):
+            out.append(result("table", "memory_clock_khz", want_khz, mem, "info",
+                              "the memory of a board the table records under the row's id: the "
+                              "engine prices the row's rate, never a faster one"))
         else:
             out.append(result("table", "memory_clock_khz", want_khz, mem, "mismatch",
                               f"gbps {row['gbps']} (half the data rate)"))
@@ -171,6 +209,11 @@ def compare_device(device, row):
         elif is_laptop(row) and low * (1 - BOOST_TOLERANCE) <= boost < want_boost:
             out.append(result("table", "boost_clock_khz", want_boost, boost, "info",
                               "a laptop's power limit inside the published boost range"))
+        elif variant_has(row, "boost_mhz",
+                         lambda mhz: close(mhz * 1000, boost, BOOST_TOLERANCE)):
+            out.append(result("table", "boost_clock_khz", want_boost, boost, "info",
+                              "the reference clock of a board the table records under the row's "
+                              "id: the engine prices the row's"))
         elif close(want_boost, boost, BOOST_VENDOR):
             out.append(result("table", "boost_clock_khz", want_boost, boost, "info",
                               "a vendor's boost over or under the reference clock (a factory "
@@ -184,6 +227,10 @@ def compare_device(device, row):
             vram_status, vram_note = "match", ""
         elif slice_part and 0 < ratio < VRAM_LOW:
             vram_status, vram_note = "info", part_note
+        elif variant_has(row, "vram_gib",
+                         lambda gib: VRAM_LOW <= q["global_bytes"] / (gib * GIB) <= VRAM_HIGH):
+            vram_status, vram_note = "info", ("the memory size of a board the table records "
+                                              "under the row's id")
         else:
             vram_status, vram_note = "mismatch", "marketed capacity against the driver's total"
         out.append(result("table", "vram_gib", row["vram_gib"], round(q["global_bytes"] / GIB, 3),

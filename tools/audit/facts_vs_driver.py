@@ -26,6 +26,8 @@ FACTS = ROOT / "src" / "core" / "data" / "gpu_facts.json"
 def load_rows(path):
     with open(path, encoding="utf-8") as f:
         gpus = json.load(f)["gpus"]
+    for g in gpus:
+        facts_compare.check_variants(g)
     return {int(g["id"], 16): g for g in gpus}
 
 

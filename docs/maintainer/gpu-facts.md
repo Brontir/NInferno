@@ -27,6 +27,7 @@ Each row is one SKU, keyed by its PCI product id:
 | `mma_slow` | only when true: `mma.sync` without tensor cores (TU116, TU117 and the GTX 16 boards of TU106) |
 | `target` | only when false: listed for identification, not a target (H100, H200, B200) |
 | `sources` | the datasheet or product page, a database page, and the pci-ids entry of the id |
+| `variants` | only where another board is sold under the id: one object per board, with the values in which it differs from the row (`vram_gib`, `gbps`, `boost_mhz`). The facts-vs-driver audit reads it; `machine_facts` does not |
 | `note` | caveats: an id shared by two memory sizes, values from secondary sources |
 
 The reference clock is the published boost clock of NVIDIA's reference board. It is the value the

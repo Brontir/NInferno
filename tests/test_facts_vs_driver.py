@@ -147,6 +147,63 @@ class Compare(unittest.TestCase):
         d["engine_table_facts"]["memory_bus_bits"] = 384  # the engine kept the row: wrong
         self.assertEqual(statuses(d)[("table", "engine_memory_bus_bits")], "mismatch")
 
+    @staticmethod
+    def device_of_row(pci_id, **driver):
+        """A whole board as its row states it, with the driver's values given."""
+        row = ROWS[pci_id]
+        d = device_4090()
+        d["queried"].update(pci_device_id=pci_id, name="NVIDIA " + row["name"],
+                            major=row["cc"] // 10, minor=row["cc"] % 10, sms=row["sms"],
+                            l2_bytes=row["l2_mib"] * MIB,
+                            global_bytes=int(row["vram_gib"] * 1024 * MIB * 0.98),
+                            memory_bus_bits=row["bus_bits"],
+                            memory_clock_khz=round(facts_compare.row_memory_khz(row)),
+                            sm_clock_khz=row["boost_mhz"] * 1000)
+        d["queried"].update(driver)
+        d["engine_table_facts"].update(sku=row["name"], reference_clock_khz=row["boost_mhz"] * 1000,
+                                       memory_bus_bits=row["bus_bits"],
+                                       memory_clock_khz=round(facts_compare.row_memory_khz(row)),
+                                       l2_mib=float(row["l2_mib"]))
+        return d
+
+    def test_a_recorded_memory_size_under_the_id_is_information(self):
+        # RTX 5060 Ti (0x2D04): the row is the 16 GB board, and the 8 GB one shares the id.
+        self.assertEqual(self.assert_no_mismatch(self.device_of_row(0x2D04))[("table", "vram_gib")],
+                         "match")
+        eight = self.device_of_row(0x2D04, global_bytes=int(8 * 1024 * MIB * 0.98))
+        self.assertEqual(self.assert_no_mismatch(eight)[("table", "vram_gib")], "info")
+        # A size the row does not record stays a failure, and so does 8 GB under another id.
+        twelve = self.device_of_row(0x2D04, global_bytes=int(12 * 1024 * MIB * 0.98))
+        self.assertEqual(statuses(twelve)[("table", "vram_gib")], "mismatch")
+        d = device_4090()
+        d["queried"]["global_bytes"] = int(8 * 1024 * MIB * 0.98)
+        self.assertEqual(statuses(d)[("table", "vram_gib")], "mismatch")
+
+    def test_a_recorded_faster_memory_under_the_id_is_information(self):
+        # GTX 1650 (0x1F82): the row is the GDDR5 board (8 Gbps, 1665 MHz), and a GDDR6 one
+        # (12 Gbps, 1590 MHz) shares the id. The engine keeps the row's rate: a faster clock is
+        # never read from the driver.
+        gddr6 = self.device_of_row(0x1F82, memory_clock_khz=6_000_000, sm_clock_khz=1_590_000)
+        s = self.assert_no_mismatch(gddr6)
+        self.assertEqual(s[("table", "memory_clock_khz")], "info")
+        self.assertEqual(s[("table", "boost_clock_khz")], "info")
+        self.assertEqual(s[("table", "engine_memory_clock_khz")], "match")
+        self.assertEqual(s[("table", "engine_source")], "match")
+        # An overclock of the row's own memory is not that board: still a failure.
+        for khz in (5_000_000, 6_100_000, 7_000_000):
+            d = self.device_of_row(0x1F82, memory_clock_khz=khz)
+            self.assertEqual(statuses(d)[("table", "memory_clock_khz")], "mismatch", khz)
+
+    def test_variants_are_boards_that_differ_from_the_row(self):
+        recorded = {i: r["variants"] for i, r in ROWS.items() if "variants" in r}
+        self.assertEqual(recorded, {0x2D04: [{"vram_gib": 8}],
+                                    0x1F82: [{"gbps": 12.0, "boost_mhz": 1590}]})
+        row = ROWS[0x2D04]
+        for bad in ([], {"vram_gib": 8}, [{}], [{"vram_gib": 16}], [{"vram_gib": 0}],
+                    [{"vram_gib": "8"}], [{"sms": 30}], [{"vram_gib": True}]):
+            with self.assertRaises(ValueError, msg=bad):
+                facts_compare.check_variants(dict(row, variants=bad))
+
     def test_laptop_is_priced_at_the_bottom_of_its_range(self):
         # RTX 5090 Laptop (0x2C18): boost 1597 to 2160 MHz by the OEM's power limit.
         d = device_4090()
