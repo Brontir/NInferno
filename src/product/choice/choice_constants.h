@@ -516,7 +516,8 @@ inline constexpr double kW4a8KquantRows   = 64;
 inline constexpr double kW4a8Q3kTile     = 64;
 inline constexpr double kW4a8Q3kResident = 2;
 inline constexpr double kMmqSliceTokens = 512; // generic_ggml_internal.h kMmqPrefillSlice
-inline constexpr double kMmqMinTokens   = 17;  // generic_select.cpp: MMQ from the prefill band (vector / R8 below)
+inline constexpr double kMmqMinTokens =
+    17; // generic_select.cpp: MMQ from the prefill band (vector / R8 below)
 inline constexpr double kMmqTile        = 128;
 // Beside the tiles, every grid quantizes its input to q8_1 (a 16-bit element read, 1.125 bytes
 // written: a gated pair's two grids each, the census's quantize calls one a grid) and the epilogue
