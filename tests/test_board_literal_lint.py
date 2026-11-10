@@ -78,6 +78,12 @@ FLAGGED = {
                             " return {}; }",
     # A template argument with a call in it.
     "std_array_call_size": "std::array<Board, board_count()> a = {{{kMajor, 0, 170, 96, kBw}}};",
+    # Qualified constants and the spellings of an alias.
+    "qualified_constant": "Board b{facts::kMajor, 0, 170, 96, kBw};",
+    "globally_qualified_constant": "Board b{::ns::facts::kMajor, 0, 170, 96, kBw};",
+    "typedef_global_qualified": "typedef ::ninferno::Board B; B b{kMajor, 0, 170, 96, kBw};",
+    "using_const_alias": "using B = const Board; B b{kMajor, 0, 170, 96, kBw};",
+    "typedef_const_after": "typedef Board const B; B b{kMajor, 0, 170, 96, kBw};",
     "std_array_short_rows": "std::array<Board, 2> a{{{8, 6, 82}, {8, 9, 128}}};",
     "std_array_designated": "std::array<Board, 1> a{{{.major = 8, .minor = 6, .sms = 82}}};",
     "std_array_size_name": "std::array<Board, kN> a = {{{8, 6, 82}}};",
@@ -113,6 +119,9 @@ CLEAN = {
     "sizes_trailing_comma": "for (int t : {4, 2, 16, 64, 256,}) {",
     "return_from_fields": "Board f(int cc) { return {cc / 10, cc % 10, 3}; }",
     "return_of_another_type": "int h() { return {kA, 1}; }",
+    "alias_of_another_type": "using B = chess::Board; B b{kMajor, 0, 1, 2, 3};",
+    "list_of_qualified_boards": "std::vector<Board> v = {measured::kA, measured::kB,"
+                                " measured::kC};",
     "comment_line": "// was Board{12, 0, 170, 96, 1792}",
     "comment_block": "/* Board{12, 0, 170}\n still */ int x;",
     "comment_block_tuple": "/* {12, 0, 170, 96, 1792}\n */ int x;",

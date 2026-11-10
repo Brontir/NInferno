@@ -30,6 +30,9 @@ Not flagged: conversions from fields (`Board{cc / 10, cc % 10, sms}`, `Board{row
 `struct Board {` and other declarations, a same-named type of another namespace (`chess::Board`),
 words that only start with Board (`BoardRow`, `BoardCount`).
 
+A qualified constant as the first field (`facts::kMajor`) counts only when a plain number follows
+in the group: without one it is a list of registry boards.
+
 Not seen (known limits): a row that starts with a name or an id (`{"rtx3090", 8, 6, 82, ...}`,
 `{0x2204, 8, 6, ...}`), a helper call (`make_board(8, 6, 82, 6, 936)`, `emplace_back(...)`), a
 board written field by field (`b.sms = 82;`), a typed literal whose first field is a lower-case
@@ -134,8 +137,10 @@ NUM = r"[-+]?(?:0[xX][0-9a-fA-F']+|\d[\d']*(?:\.\d*)?(?:[eE][-+]?\d+)?|\.\d+)[fF
 TUPLE = re.compile(r"\{\s*(%s)\s*,\s*(%s)\s*,\s*(%s)\s*,\s*(%s)\s*,\s*(%s)\s*"
                    r"(?:,\s*(?:true|false)\s*)?,?\s*\}" % ((NUM,) * 5))
 DOT_BOARD = re.compile(r"\.board\s*=\s*\{")
-ALIAS = re.compile(r"\busing\s+(\w+)\s*=\s*(?:::)?(?:ninferno\s*::\s*)?Board\s*;"
-                   r"|\btypedef\s+(?:ninferno\s*::\s*)?Board\s+(\w+)\s*;")
+ALIAS = re.compile(r"\busing\s+(\w+)\s*=\s*(?:const\b\s*)?(?:::\s*)?"
+                   r"(?:ninferno\s*::\s*)?Board\b\s*(?:const\b\s*)?;"
+                   r"|\btypedef\s+(?:const\b\s*)?(?:::\s*)?"
+                   r"(?:ninferno\s*::\s*)?Board\b\s*(?:const\b\s*)?(\w+)\s*;")
 NUMTOK = re.compile(
     r"0[xX][0-9a-fA-F']+[uUlL]*|\d[\d']*(?:\.\d*)?(?:[eE][-+]?\d+)?[fFuUlL]*|\.\d+[fF]?")
 RAW = re.compile(r'R"([^()\\ ]{0,16})\(')
@@ -235,9 +240,25 @@ def split(code, a, b):
 def constant(arg):
     """True when `arg` is made of numbers, `kName` constants, parentheses and operators only."""
     arg = re.sub(r"^\.\w+\s*=\s*", "", arg)
-    arg = re.sub(r"\bk[A-Z]\w*\b", "0", arg)
+    # A qualified constant (`facts::kMajor`, `::ns::kSms`) is one constant too.
+    arg = re.sub(r"(?:(?:\b\w+)?\s*::\s*)*\bk[A-Z]\w*\b", "0", arg)
     arg = NUMTOK.sub("0", arg)
     return bool(arg.strip()) and re.fullmatch(r"[\s0()+\-*/%<>|&~^]*", arg) is not None
+
+
+def is_fields(code, parts):
+    """True when the arguments `parts` (spans) read as the fields of a board: at least two, the
+    first a constant. A first argument that is a qualified name (`measured::kRtx5090`) is also the
+    spelling of a registry board in a list of boards, so it counts only when a plain number
+    follows among the arguments."""
+    if len(parts) < 2:
+        return False
+    first = code[parts[0][0]:parts[0][1]]
+    if not constant(first):
+        return False
+    if "::" not in first:
+        return True
+    return any(NUMTOK.fullmatch(code[s:e].strip()) for s, e in parts[1:])
 
 
 def number(tok):
@@ -273,7 +294,7 @@ def rows(code, a, b):
             continue
         if code[inner[0][0]] == "{":
             out += rows(code, s + 1, e - 1)
-        elif len(inner) >= 2 and constant(code[inner[0][0]:inner[0][1]]):
+        elif is_fields(code, inner):
             out.append((s, e))
     return out
 
@@ -289,7 +310,7 @@ def initialiser(code, start, bracket):
         return []
     if code[parts[0][0]] == "{":
         return rows(code, bracket + 1, end)
-    if len(parts) >= 2 and constant(code[parts[0][0]:parts[0][1]]):
+    if is_fields(code, parts):
         return [(start, end + 1)]
     return []
 
