@@ -29,8 +29,12 @@
 // (kMmqPrefillSlice in generic_ggml_internal.h is one), an enumerator, a template parameter, and a
 // threshold written as a bare literal in an expression are found only where a descriptor's literal
 // names them; the scanner reads text, not the preprocessor, so two definitions under #if / #else
-// count as two (and fail for a described name). `--list` prints the descriptors, `--unlisted` the
-// guard's findings in kNotRules' form. No GPU.
+// count as two (and fail for a described name). The selector's sources are generic_gemm.h,
+// generic_gemm.cpp and route_authorities.cpp (the authority cascade and the NVFP4 half-the-L2
+// rule live there): a descriptor of a literal in any of them names its file. Not held by this
+// test: the comparators at uses of a named constant and the order of the three authority arrays
+// (the selector goldens hold the order; docs/maintainer/route-rules.md lists the rest).
+// `--list` prints the descriptors, `--unlisted` the guard's findings in kNotRules' form. No GPU.
 
 #include "ops/generic/route_rules.h"
 
@@ -885,9 +889,6 @@ const std::map<std::string_view, std::string_view>& structural_roots() {
          "the one definition of the widest speculative verify (a design width): "
          "kPrefillPinMinTokens is defined from it and held to 17 by a static_assert in "
          "route_pins.h"},
-        {"kVoltaTileMaxTokens",
-         "twice the tiled kernel's 128-token block: from 256 tokens two token blocks already "
-         "decode the weight twice (generic_gemm.cpp)"},
         {"kVoltaHmmaMinTokens",
          "a byte-consistency contract: a one-token call must run the kernel a wider call runs "
          "(test_moe)"},

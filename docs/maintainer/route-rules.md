@@ -8,8 +8,10 @@ branch's gate and its rules, the Turing and Volta rules), `w4a8_ws_wins` and its
 (`kRmmaMidMinTokens`, `kTiledSpeedMinTokens`, `kStagedSpeedMinTokens`, `kW4a8WideMinTokens`,
 `kSpeedFill`), the literals inside `heuristic_rmma` (its speed ladder included),
 `rmma_k_split_fit`, `rmma_wide_rule`, `heuristic_w4a8`, `heuristic_w4a4`, `staged_speed_route`,
-`tiled_speed_pays`, `nvfp4_tiled_route`, `auto_route`'s half-the-L2 rule for
-NVFP4 and `spread_smem` with its table of measured boards, the verify widths (`kR8VerifyTokens`,
+`tiled_speed_pays`, `nvfp4_tiled_route`, the half-the-L2 rule for NVFP4 (`nvfp4_half_l2` in
+`route_authorities.cpp`, with its weight-bytes factor) and, in the same file, the R8 table's
+one-token gate, the narrow register-MMA fallback tiles and the source of the lane count,
+`spread_smem` with its table of measured boards, the verify widths (`kR8VerifyTokens`,
 `kMmqMinTokens`, `kMmqVerifyMinTokens`), Volta's routes and the byte thresholds of the register
 MMA. Each entry says what the rule is (its literal, as written in the source), what it rests on
 (a basis class and the boards and cards it was measured on, as device class ids and products) and
@@ -22,16 +24,23 @@ The basis is a typed field (`Basis`, as `route_cost_constants.h` types its `Prov
 the source comments, `decisions.md` and `deterministic-decisions.md` by a person, and `Unknown`
 where they do not say. `Structural`: follows from a kernel's shape, a contract, the hardware's
 layout or another constant, not from a timing. `Measured`: a timing or product run in the record
-names the value or the margin it was held to, on the boards the entry names. `PlacedBetweenMeasured`:
-the record has measured points on both sides and the value was put between them, so the line
+names the value or the margin it was held to, on the boards the entry names.
+`PlacedBetweenMeasured`: the record has measured points on both sides and the value was put
+between them, so the line
 itself has no measurement. `Fitted`: chosen to make a rule match timings of several boards, not
 derived from a fact; the entry names those boards. `ScaledFromOneBoard`: one board's measured
 margin carried to other boards by a stated model, no second board measured
 (`kVoltaCopyMinDramGbps`). `Unknown`: the record does not say what the edge rests on (the rule's
 action may still be measured); a choice nobody timed is `Unknown`, not `Structural`. The class is
 judgement and the test cannot check it is right: where an edge is only the widest speculative
-verify (16 tokens) while the timings sit inside it, the tolerance says so. A step that holds fitted
-or placed constants out of a derivation reads this field, not the prose; `--list` prints it and
+verify (16 tokens) while the timings sit inside it, the tolerance says so. A `Measured` rule may
+rest on one board and still apply to every board: 22 of the 38 `Measured` entries name a single
+card (count them from `--list`), and for example `kR8MaxTokens` and `kR8DecodeTokens` (RTX 5080),
+the single-sequence rule of mmq verify (RTX 5070 Ti), the narrow-through-16 rule (RTX 5090) and
+`w4a8_ws_wins: ampere` (RTX 3090, taken for sm_80 and sm_86) decide on every card. The class says
+what the timing was, not how far the rule reaches; the `boards` field is where to look. A step
+that holds fitted or placed constants out of a derivation reads this field, not the prose;
+`--list` prints it and
 the test prints the count per class.
 
 It is a record, not a mechanism. The code keeps its own literals and nothing reads the descriptor
@@ -63,8 +72,9 @@ at run time. `ninferno_route_rules_test` (`--list` prints the table) holds the t
 - every definition under `src/ops/generic` (subdirectories; `.h`, `.hpp`, `.hh`, `.cpp`, `.cc`,
   `.cxx`, `.inc`, `.inl`, `.ipp`, `.tpp`, `.cu`, `.cuh`), in the files directly in `src/ops` (route
   pins, route table, prefill routes, a selector header put there) and in
-  `src/core/measured_boards.h` of a name `kX` that says it bounds something (`Min`, `Max`, `Tokens`, `Fill`, `Distance`,
-  `Values`, `Bytes`, `Gbps`, `Margin`, `Slack`, `Columns`, `Rows`, `Limit`, `Measured`,
+  `src/core/measured_boards.h` of a name `kX` that says it bounds something (`Min`, `Max`,
+  `Tokens`, `Fill`, `Distance`, `Values`, `Bytes`, `Gbps`, `Margin`, `Slack`, `Columns`, `Rows`,
+  `Limit`, `Measured`,
   `Threshold`), as a `const`, `constexpr`, `static` or `inline` variable or array (initialised by
   `=`, braces or parentheses, later declarators of one declaration included) or a `#define`, has a
   descriptor or an entry of the test's list of non-rules, keyed by file and name, with the reason
@@ -72,8 +82,19 @@ at run time. `ninferno_route_rules_test` (`--list` prints the table) holds the t
 
 ## What is not covered
 
-The guard is a text scan, and the list is not every literal comparison in `generic_gemm.cpp`. Left
-out knowingly:
+The guard is a text scan, and the list is not every literal comparison in `generic_gemm.cpp` or
+in `route_authorities.cpp` (the authority cascade: `nvfp4_half_l2`, `r8_schedule`,
+`rmma_narrow_fallback` and the rest). Left out knowingly:
+
+- the comparators at the uses of a named constant: the constant's value is held, but whether a
+  site writes `>=` or `<=` against it, or a bare 17 or 33 in its place, is not: for example the
+  prefill-band sites in `route_authorities.cpp` and `route_authorities.h` (`kPrefillBandMinTokens`,
+  `kPrefillPinMinTokens`), `<= measured::kCarryDistance` and `kStagedSpeedMinTokens` there;
+- the order of the three authority arrays in `route_authorities.cpp` (`kSelectAuthorities`,
+  `kAutoAuthorities`, `kRuleAuthorities`): the first authority that answers wins, so swapping two
+  entries changes decisions, and only the selector goldens (`test_selector_golden`) hold the
+  order, not this record;
+- a rule switched off by an early return, and a new bare-literal gate added inside an authority;
 
 - names that are not camel-case `kX` constants or carry none of the words above (snake_case
   variables, `kMmqPrefillSlice` in `generic_ggml_internal.h`), enumerators and template
@@ -85,7 +106,9 @@ out knowingly:
   K-split rule; the `tokens >= 2` and `max_tokens >= 2` edges in `generic_workspace.cpp`, which
   mirror the verify edge described for `r8_verify_tunable` (its descriptor says so); the shape
   tables' own bands, which are data (`routes/`); other literal `17`s outside the generic path's
-  selection (the shape-owned linear plans, the Qwen prefill planner's own `kPrefillMinTokens`,
+  selection (the bare prefill-band 17s in `src/ops/moe/moe.cpp`, `src/ops/wrapper/linear_swiglu.cpp`
+  and `gdn_input_proj.cpp`, `src/ops/sparse_moe/prefill/sparse_moe_prefill.h` and the NVFP4 and FP8
+  input plans, the shape-owned linear plans, the Qwen prefill planner's own `kPrefillMinTokens`,
   `PREFILL_MIN` in `tools/bench/mmq_transfer_audit.py`) and `kVoltaCutlassMinTokens` in
   `src/product/choice` (a model's copy of Volta's rule): they are not defined from the one
   constant and equal it today;
@@ -121,7 +144,8 @@ follows from how the test reads text):
   starts mid-expression;
 - a use of a named constant: the constants' values are held, and the use sites are held only where
   a descriptor's literal contains the use (`volta_copy_pays`, the uses of `kRmmaMidMinTokens` and
-  `kSpeedFill` inside the `heuristic_rmma` literals). A comparison changed at any other use (`>=` to `<=`), a use scaled or replaced by a bare
+  `kSpeedFill` inside the `heuristic_rmma` literals). A comparison changed at any other use (`>=` to
+  `<=`), a use scaled or replaced by a bare
   literal, or a wrapper function of the constant changed, passes. A variable shadowed or changed
   before a described condition passes;
 - a described statement moved, or an enclosing gate changed, where the descriptor's literal does
@@ -164,8 +188,9 @@ the first candidate for a derivation or a re-measurement, because nothing can be
 it, and a `Fitted` one is a fit, not a derivation; a `PlacedBetweenMeasured` one is the same
 question about a line nobody measured.
 
-Where the provenance of a rule was found: the comments at its use in `generic_gemm.cpp` and
-`generic_gemm.h` (quoted in the tolerance where they state a margin), `decisions.md` 58 for the
-verify widths, and `deterministic-decisions.md` for the rules that rest on few boards (the R8 rule's
+Where the provenance of a rule was found: the comments at its use in `generic_gemm.cpp`,
+`generic_gemm.h` and `route_authorities.cpp` (quoted in the tolerance where they state a margin),
+`decisions.md` 58 for the verify widths, and `deterministic-decisions.md` for the rules that rest
+on few boards (the R8 rule's
 SM-count edge, placed between the two measured boards, 84 and 170 SMs). The history before the
 0.1.0 squash is not in the repository.

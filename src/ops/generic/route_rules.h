@@ -1,6 +1,7 @@
 #pragma once
 
-// The literal rules of the generic path's route selection (generic_gemm.h, generic_gemm.cpp): the
+// The literal rules of the generic path's route selection (generic_gemm.h, generic_gemm.cpp and
+// route_authorities.cpp, which holds the authority cascade and the NVFP4 half-the-L2 rule): the
 // thresholds a rule compares a call's shape, width or card against, each with what the source says
 // it rests on: a timing on named boards, a point placed between timings, a fit, a structural fact,
 // or nothing recorded (#614, PR-F4). This header declares what each rule IS (its literal) and what
@@ -20,9 +21,12 @@
 //
 // What the list covers: the named constants that bound a route, the threshold comparisons of
 // rules_r8, w4a8_ws_wins, heuristic_rmma, heuristic_w4a8, heuristic_w4a4, staged_speed_route,
-// tiled_speed_pays, nvfp4_tiled_route, auto_route's NVFP4 rule, the vector and R8 verify edges and
-// spread_smem, and the table of boards that decides spread_smem. What it does not: see
-// docs/maintainer/route-rules.md, which names the literals knowingly left out.
+// tiled_speed_pays, nvfp4_tiled_route, the NVFP4 half-the-L2 rule (nvfp4_half_l2 and its weight
+// bytes, route_authorities.cpp), the R8 table's one-token gate and the narrow register-MMA
+// fallback tiles (route_authorities.cpp), the vector and R8 verify edges and spread_smem, and the
+// table of boards that decides spread_smem. What it does not: see docs/maintainer/route-rules.md,
+// which names the literals knowingly left out (among them the comparators at uses of named
+// constants and the order of the three authority arrays, held by the selector goldens only).
 //
 // Fields:
 //   name       the rule as the code names it (`symbol` or a short name for a literal inside one);
@@ -33,7 +37,8 @@
 //              for a file beside them);
 //   literal    the text of the literal as written: a constant's WHOLE definition (to its `;`, an
 //              array with every element), or a comparison with its action where the action matters;
-//   value      the number of a constant (computed as C++ computes it, from the source's definition)
+//   value      the number of a constant (the test evaluates the constant's initialiser itself,
+//              integers staying integers, and holds it to this number)
 //              or of a condition with ONE numeric cutoff that is written in the literal; 0 for an
 //              array, a condition with several cutoffs and a condition that compares against a
 //              card's own quantity (all cutoffs are then in the literal);
@@ -47,7 +52,8 @@
 //              (kernel_facts.h Facts::source, tools/kernel_facts), not per kernel, and no rule
 //              records which tree it was timed on; a rule re-measured later should fill this.
 // Where the record is silent a field says "unknown". The source of a number is the comment at its
-// use (quoted in the tolerance where it states a margin), DECISIONS.md and docs/maintainer.
+// use (quoted in the tolerance where it states a margin), docs/maintainer/decisions.md and
+// docs/maintainer/deterministic-decisions.md.
 
 #include <array>
 #include <cstddef>
@@ -204,6 +210,20 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "(RTX 5070 Ti C1 117.0 -> 115.2 tok/s, all of it in the copy rounds), while the C4 verify "
      "gains (233.5 -> 249.3)",
      ""},
+    // Where `lanes` comes from: the one-argument overload reads the engine's round width at the
+    // call; route_authorities.cpp's two Ask builders do the same, so a constant there would turn
+    // the lane rule on or off for every call.
+    {"mmq_verify_rule: lanes at the call", Basis::Measured, "generic_gemm.cpp",
+     "return mmq_verify_rule(w, policy, rows, tokens, ops::round_lanes());", 0, "gb203:70sm",
+     "RTX 5070 Ti",
+     "the lane count of the single-sequence rule above is the engine's own round width "
+     "(ops::round_lanes()), not a constant: the same record as that descriptor",
+     ""},
+    {"Ask: lanes at the builders", Basis::Measured, "route_authorities.cpp",
+     "tokens, ops::round_lanes()};", 0, "gb203:70sm", "RTX 5070 Ti",
+     "resolve_ask and ask_below_profiles read the lane count from ops::round_lanes() (the rule "
+     "above reads it from the Ask); the same record as mmq_verify_rule's single-sequence rule",
+     "", 2},
     // The prefill band's edge: ONE definition (ops/route_pins.h), the widest speculative verify
     // plus one; the others below are defined from it, because their comments call the same width.
     {"kDecodePinMaxTokens", Basis::Structural, "../route_pins.h",
@@ -322,10 +342,14 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "12288 1.13..1.37 against 0.90..0.94; the one shape whose grid is a whole wave, 10240 x "
      "4096, keeps the tile ahead below 129 tokens (0.37..0.47 ms against 0.50)",
      ""},
-    {"kVoltaTileMaxTokens", Basis::Structural, "generic_gemm.cpp",
+    {"kVoltaTileMaxTokens", Basis::Unknown, "generic_gemm.cpp",
      "constexpr std::int32_t kVoltaTileMaxTokens = 256;", 256, "gv100:80sm",
      "V100 (the rule, for boards under the copy's bandwidth bound, is not measured on them)",
-     "none recorded: two token blocks already decode the weight twice from 256", ""},
+     "none recorded: no timing places 256 (on the V100 the copy's bandwidth bound already passes, "
+     "so the edge decides only on boards nobody measured); the comment's reason, that two token "
+     "blocks decode the weight twice, holds from 129 tokens with 128-token blocks and so does not "
+     "place the edge at 256 either",
+     ""},
     {"kVoltaCopyMinDramGbps", Basis::ScaledFromOneBoard, "generic_gemm.cpp",
      "constexpr double kVoltaCopyMinDramGbps = 870.0 / 1.13;", 870.0 / 1.13, "gv100:80sm",
      "V100 (870 GB/s); the Titan V (653) is under the bound, not measured",
@@ -380,10 +404,11 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      ""},
     // The widest call the vector kernel reads: eight columns, sixteen tokens (two passes) where the
     // BF16 MMA is emulated.
-    {"vec_max_tokens: two passes without tensor MMA", Basis::Measured, "generic_gemm.cpp",
+    {"vec_max_tokens: two passes without tensor MMA", Basis::Unknown, "generic_gemm.cpp",
      "return f.mma_tensor && !f.mma_slow ? ggml_mmq::kVecMaxColumns : 2 * "
      "ggml_mmq::kVecMaxColumns;",
      2, "gv100:80sm", "V100",
+     "the basis is Unknown because the one timing is at a draft window of about ten tokens: "
      "without tensor mma.sync (Volta) a call of 9..16 tokens runs the vector kernel eight columns "
      "at a time: V100, Gemma 4 31B Q4_K_XL MTP, draft window 10: the emulated register-MMA tiles "
      "1.0..2.6 ms a call, 67 % of the run; the timing is at one draft window (about ten tokens), "
@@ -490,13 +515,16 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "ninferno_route_tune measured across the recorded problems (Qwen3.5 0.8B in four formats); "
      "no margin recorded. invariant_rmma repeats the K edges (below)",
      ""},
-    {"invariant_rmma: K split edges", Basis::Measured, "generic_gemm.cpp",
+    {"invariant_rmma: K split edges", Basis::Unknown, "generic_gemm.cpp",
      "if (k >= 1024) return rmma_index(1, 8, 1, n_tiles); if (k >= 512) return rmma_index(1, 4, "
      "1, n_tiles);",
-     0, "gb202:170sm", "RTX 5090",
-     "the decode split of K for every T (the invariant profile's comment): the same edges as "
-     "heuristic_rmma's K split, written again as literals, so the record is that descriptor's "
-     "(ninferno_route_tune on the RTX 5090); no record of its own",
+     0, "unknown (the same edges in heuristic_rmma were measured on gb202:170sm)",
+     "unknown (the same edges in heuristic_rmma: RTX 5090)",
+     "the decode split of K for every T (the invariant profile's comment: the order depends on "
+     "WarpsK alone, so a token's bytes are the same at every width): the same edges as "
+     "heuristic_rmma's K split, written again as literals; the invariant profile's own comment "
+     "names no timing that places them, and nothing ties the two sets of edges to each other, so "
+     "this descriptor has no record of its own",
      ""},
     {"heuristic_rmma: nine to sixteen tokens", Basis::Measured, "generic_gemm.cpp",
      "} else if (tokens <= 16) {", 16, "gb203:84sm", "RTX 5080",
@@ -581,14 +609,15 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "one-wave line (170 and 128 CTAs) sits at or above the last measured win and below the first "
      "measured loss on both boards",
      ""},
-    {"heuristic_rmma: one wave at verify widths", Basis::Measured, "generic_gemm.cpp",
+    {"heuristic_rmma: one wave at verify widths", Basis::Unknown, "generic_gemm.cpp",
      "const std::int64_t sms = sm_count(); if (ctas <= sms) return one_wave_split(ctas, sms); "
      "return rmma_index(1, 4, 1, 2);",
      0,
      "unknown (nine cards of the dense tuner, sm_70 to sm_120, not named; the RTX 5090 for the "
      "CTA pair: gb202:170sm)",
      "unknown (nine cards; RTX 5090)",
-     "T = 9..16: a call of at most one CTA per SM takes the decode split of K: the dense tuner's "
+     "the basis is Unknown because the record names no board for the one-wave line itself. T = "
+     "9..16: a call of at most one CTA per SM takes the decode split of K: the dense tuner's "
      "timings of nine cards had the four-warp tiles lose such calls (n = 48..2048 rows) by "
      "x1.4..2.1 (median per card) to the sixteen-warp split; on the RTX 5090 the CTA pair or "
      "cluster of eight was 0..17 % faster still (n = 48 and 1024, T = 12 and 16: 8..20 us "
@@ -604,7 +633,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "fewer the ring never refills (Q4_K K = 4096 on sixteen warps streamed DRAM at 57..70 % of "
      "peak against 71..74 % for the best split); K = 2560 on eight warps keeps up (RTX 4070 Ti "
      "19.6 against 21.1 us, RTX 3060 32.4 against 32.9; the 5070 Ti and 2080 Ti ran four warps "
-     "faster there, DECISIONS 61)",
+     "faster there, decisions.md 61)",
      ""},
     {"kSlotWarps", Basis::Structural, "generic_gemm.cpp",
      "constexpr std::int64_t kSlotWarps = 65536 / (32 * 128);", 16, kUnknown, kUnknown,
@@ -622,7 +651,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "RTX 5070 "
      "Ti (1.8 CTAs a SM) 20-37 % slower, RTX 5090 (0.75) 18-38 %, RTX 4070 Ti (2.1) within 3 %; "
      "the RTX 4060 Ti (3.8) ran four warps 2-16 % faster, which this leaves on eight; the "
-     "last, partly filled round of resident CTAs is open (DECISIONS)",
+     "last, partly filled round of resident CTAs is open (decisions.md 61)",
      ""},
     {"heuristic_w4a8: 17..32", Basis::Measured, "generic_gemm.cpp",
      "if (tokens <= 32) return k32x128;", 32, "gb203:84sm", "RTX 5080",
@@ -729,6 +758,39 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "16384x5376, 43008x5376, 5376x21504: 0.3-0.8x the speed bands from 32 tokens); measured on "
      "one board, no weight size between the two sets is recorded, so the half-L2 line itself has "
      "no measurement behind it",
+     ""},
+    // The other literals of route_authorities.cpp's rules. The bare 1 of the R8 table's gate and
+    // the 9 / 16 below are NOT renamed to kR8DecodeTokens or a format constant: heuristic_r8 in
+    // generic_gemm.cpp writes the same bare 1 without r8_call's tokens > 0 guard, so the spelling
+    // `<= kR8DecodeTokens` would differ for a call of no tokens, and the table's width is the
+    // table's own, not the decode rule's (the two are equal today).
+    {"nvfp4_half_l2: weight bytes", Basis::Structural, "route_authorities.cpp",
+     "static_cast<std::size_t>(problem.n) * static_cast<std::size_t>(problem.k) * 9 / 16;", 0,
+     kUnknown, kUnknown,
+     "the bytes of an NVFP4 weight of n x k values: nine sixteenths of a byte a value, four bits "
+     "of the value plus one FP8 scale byte over sixteen (the format's layout), the left side of "
+     "the half-L2 line; the layout is a fact of the format, no timing places it",
+     ""},
+    {"r8_schedule: the decode table's width", Basis::Structural, "route_authorities.cpp",
+     "const auto hit = ask.tokens == 1 ? tuned_r8(problem) : std::nullopt;", 1, "gb203:84sm",
+     "RTX 5080",
+     "the nearest measured board's decode table is consulted at one token only: its entries are "
+     "T = 1 timings (kR8DecodeTokens' record) and none exist for other widths; the same bare 1 is "
+     "written in heuristic_r8 (generic_gemm.cpp, the next descriptor)",
+     ""},
+    {"heuristic_r8: the decode table's width", Basis::Structural, "generic_gemm.cpp",
+     "if (tokens == 1) { if (const auto tuned = tuned_r8(p)) return tuned->schedule; }", 1,
+     "gb203:84sm", "RTX 5080",
+     "the same one-token gate as r8_schedule's, written again in the heuristic's own path; the "
+     "table has T = 1 entries only",
+     ""},
+    {"rmma_narrow_fallback: narrow tiles", Basis::Measured, "route_authorities.cpp",
+     "for (const int n_tiles : {2, 1}) { const int index = rmma_index(4, 1, 1, n_tiles);", 0,
+     "gv100:80sm, tu102:68sm", "V100, RTX 2080 Ti",
+     "the narrower register-MMA tiles the dense tuner picks where the BF16 MMA is emulated (m1.n2 "
+     "then m1.n1 of four row warps), taken when the build does not hold the speed profile's tile: "
+     "V100 and RTX 2080 Ti, BF16 N 1536 K 2048, T 17..2048; one shape on two boards, no margin "
+     "recorded, and the order (n2 before n1) is not timed",
      ""},
     {"kR8CarryDistance", Basis::Unknown, "generic_gemm.cpp",
      "constexpr double kR8CarryDistance = 0.5;", 0.5, "ad102:128sm, ad103:80sm",
