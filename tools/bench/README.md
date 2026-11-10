@@ -33,7 +33,9 @@ python3 tools/bench/run_ninferno_bench_matrix.py --preset core             # run
 | `hard_set.py` | One serving configuration through the hard question set ([eval/corpora/hard50](../../eval/corpora/hard50/README.md)): answers graded against the references, decode rate and, at a fixed speculative depth, tokens per round. |
 | `selection_regret.py` | Offline regret of recorded production choices against qualified, matched alternatives on held-out boards or models ([below](#offline-selection-regret)). |
 | `regret_collect.py` | The lab collector for `selection_regret.py`: `ninferno_route_tune --selected-out` (the route the production path runs per problem and width) and one `--routes-out` sweep per pass into its input ([below](#offline-selection-regret)). |
+| `mmq_transfer_audit.py` | Offline audit of how the MMQ choice transfers between same-generation cards (#373): route-table agreement and gate-label regret by workload regime, from `routes/*.json` and `data/mmq_paired_prefill.json`; no GPU ([report](../../docs/maintainer/mmq-transfer-audit.md)). |
 | `quality_rows.py` | Perplexity and KL divergence of each `--activations` mode against `exact` on the fixed corpus, appended as `docs/performance/` rows. |
+| `isa_probe/` | The ISA facts of one card for the register-MMA price (#613 PR-2): `isa_probe.cu` measures tensor pipe cycles per MMA, the dependent MMA latency, INT32 / FP32 cycles per warp instruction and the L1 / L2 / DRAM / shared load latencies alone and under 2-8 chasing warps, in SM clocks; `isa_probe.py run --arch 89` builds and runs it (about a minute, the GPU idle), `merge` copies the run into `src/core/data/isa_probe/isa_probe_<arch>.txt` and regenerates `src/core/data/isa_facts.json` from every file there (provenance Measured, source file, card, nvcc, driver; `regenerate` alone rebuilds it; the test pins table = regeneration); `isa_probe_ncu.sh` cross-checks the tensor figure with Nsight Compute. |
 
 ## Offline selection regret
 

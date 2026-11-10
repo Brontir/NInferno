@@ -3,6 +3,8 @@
 // repositories that the plan without weights accepted before (2026-10-25).
 
 #include "convert/fetch.h"
+#include "convert/gemma4.h"
+#include "convert/gguf_model.h"
 #include "convert/ggml_quants.h"
 #include "convert/support.h"
 #include "gguf_writer.h"
@@ -236,6 +238,88 @@ int main(int argc, char** argv) {
         expect(cv::local_support_facts(dir / "f64.gguf").chat_template == true,
                "a GGUF with a chat_template.jinja beside it ships that template");
         std::filesystem::remove_all(dir);
+    }
+    // A DSpine drafter is a DFlash draft by architecture name (and as a GGUF), not by arithmetic:
+    // reported unsupported by every route, never converted as a plain DFlash draft.
+    {
+        namespace gg   = ninferno::convert::ggml;
+        const auto dir = std::filesystem::temp_directory_path() / "ninferno_model_support_dspine";
+        std::filesystem::remove_all(dir);
+        std::filesystem::create_directories(dir);
+        const auto write = [&](const std::string& name, bool dspine) {
+            ninferno::convert::testing::GgufWriter w;
+            w.kv_str("general.architecture", "dflash");
+            w.tensor("fc.weight", {4, 2}, gg::F32, std::vector<std::uint8_t>(32, 0));
+            if (dspine) {
+                w.tensor("dspine_codebook.weight", {4, 2}, gg::F32,
+                         std::vector<std::uint8_t>(32, 0));
+            }
+            const auto bytes = w.finish();
+            std::ofstream(dir / name, std::ios::binary)
+                .write(reinterpret_cast<const char*>(bytes.data()),
+                       static_cast<std::streamsize>(bytes.size()));
+            return bytes;
+        };
+        write("plain.gguf", false);
+        const auto bytes = write("dspine.gguf", true);
+        const auto plain = cv::local_support_facts(dir / "plain.gguf");
+        expect(!plain.dspine && of(plain).verdict == Verdict::Supported &&
+                   of(plain).role == "drafter",
+               "a DFlash GGUF drafter is supported");
+        const auto facts = cv::local_support_facts(dir / "dspine.gguf");
+        expect(facts.dspine && says(of(facts), Verdict::Unsupported, "DSpine") &&
+                   of(facts).role == "drafter",
+               "a DSpine GGUF drafter is not supported yet");
+        // The mapper refuses it by name, whatever the metadata (the head-only read falls
+        // through to a whole download otherwise).
+        const auto file = cv::parse_gguf_head(reinterpret_cast<const std::byte*>(bytes.data()),
+                                              bytes.size(), bytes.size(), "dspine.gguf");
+        std::map<std::string, cv::TensorInfo> stored;
+        for (const auto& tensor : file.tensors) {
+            cv::TensorInfo info;
+            info.name  = tensor.name;
+            info.shape = tensor.shape();
+            stored.emplace(tensor.name, std::move(info));
+        }
+        bool refused = false;
+        try {
+            (void)cv::map_gguf_model(
+                file,
+                [&](const std::string& name) -> const cv::TensorInfo* {
+                    const auto it = stored.find(name);
+                    return it == stored.end() ? nullptr : &it->second;
+                },
+                [](const cv::TensorInfo&, std::uint64_t, std::uint64_t, void*) {}, "dspine.gguf");
+        } catch (const std::exception& error) {
+            refused = std::string(error.what()).find("DSpine") != std::string::npos;
+        }
+        expect(refused, "the GGUF mapper refuses a DSpine file by name");
+        std::filesystem::remove_all(dir);
+
+        // The hub's tag and a config with the bridge.
+        const auto tagged = cv::search_support_facts(
+            Json{{"pipeline_tag", "text-generation"}, {"tags", Json::array({"dspine"})}});
+        expect(tagged.dspine, "the hub's dspine tag");
+        auto config = chat("DFlashDraftModel");
+        expect(of(config).verdict != Verdict::Unsupported ||
+                   of(config).reason.find("DSpine") == std::string::npos,
+               "a DFlash config is no DSpine");
+        config.config["dflash_config"] = Json{{"selected_prefix_code_bridge", Json::object()}};
+        expect(says(of(config), Verdict::Unsupported, "DSpine"), "a config with the bridge");
+
+        // Converting a DSpine config, Tencent's real ones (full-attention Qwen3-8B, which the
+        // block-DFlash adapter would take, and the sliding 27B), is refused.
+        for (const char* name : {"config_qwen3_8b.json", "config.json"}) {
+            std::ifstream in(std::string(argv[1]) + "/tests/fixtures/dspine/" + name);
+            const auto source = ninferno::convert::OJson::parse(in);
+            bool converted    = true;
+            try {
+                (void)cv::default_recipe(source);
+            } catch (const std::exception& error) {
+                converted = std::string(error.what()).find("DSpine") == std::string::npos;
+            }
+            expect(!converted, std::string("converting ") + name + " is refused as DSpine");
+        }
     }
     // A checkpoint folder on disk: its config.json and its template files.
     {

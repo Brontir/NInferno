@@ -1,0 +1,39 @@
+{
+  "schema": "ninferno-mmq-paired-prefill/1",
+  "source": "Brontir/NInferno issue #373, comments 'Step 5, first paired set' (master c22f1c60) and 'second paired set' (master 11cdf8a1); recorded by hand from the tables there, no re-measurement",
+  "protocol": "ninferno <model> --prompt ... --max-new 1 --prefill-route auto|mmq|w4a8|a16, whole prefill phase, 3 runs per arm, first dropped, mean of the other two; prefill tok/s",
+  "sets": {
+    "q4km-9k": {"prompt_tokens": 9000, "max_context": 16384},
+    "q6k-iq4xs-24k": {"prompt_tokens": 24000, "max_context": 32768}
+  },
+  "rows": [
+    {"set": "q4km-9k", "model": "Qwen3.5-9B", "format": "Q4_K_M", "card": "rtx2080ti", "mmq": 2305, "w4a8": 2130},
+    {"set": "q4km-9k", "model": "Gemma4-12B", "format": "Q4_K_M", "card": "rtx2080ti", "mmq": 1380, "w4a8": 1280},
+    {"set": "q4km-9k", "model": "Qwen3.5-9B", "format": "Q4_K_M", "card": "rtx3060", "mmq": 1990, "w4a8": 1870},
+    {"set": "q4km-9k", "model": "Gemma4-12B", "format": "Q4_K_M", "card": "rtx3060", "mmq": 1200, "w4a8": 1160},
+    {"set": "q4km-9k", "model": "Qwen3.5-9B", "format": "Q4_K_M", "card": "rtx4060ti", "mmq": 3370, "w4a8": 3090},
+    {"set": "q4km-9k", "model": "Gemma4-12B", "format": "Q4_K_M", "card": "rtx4060ti", "mmq": 1950, "w4a8": 1830},
+    {"set": "q4km-9k", "model": "Qwen3.5-9B", "format": "Q4_K_M", "card": "rtx4070ti", "mmq": 5605, "w4a8": 5050},
+    {"set": "q4km-9k", "model": "Gemma4-12B", "format": "Q4_K_M", "card": "rtx4070ti", "mmq": 3530, "w4a8": 3230},
+    {"set": "q4km-9k", "model": "Qwen3.5-9B", "format": "Q4_K_M", "card": "rtx4090", "mmq": 11200, "w4a8": 9890},
+    {"set": "q4km-9k", "model": "Gemma4-12B", "format": "Q4_K_M", "card": "rtx4090", "mmq": 6805, "w4a8": 6240},
+    {"set": "q4km-9k", "model": "Qwen3.5-9B", "format": "Q4_K_M", "card": "rtx5070ti", "mmq": 6400, "w4a8": 6555},
+    {"set": "q4km-9k", "model": "Gemma4-12B", "format": "Q4_K_M", "card": "rtx5070ti", "mmq": 4070, "w4a8": 4265},
+    {"set": "q4km-9k", "model": "Qwen3.5-9B", "format": "Q4_K_M", "card": "rtx5090", "mmq": 12600, "w4a8": 11900},
+    {"set": "q4km-9k", "model": "Gemma4-12B", "format": "Q4_K_M", "card": "rtx5090", "mmq": 8315, "w4a8": 8165},
+    {"set": "q6k-iq4xs-24k", "model": "Qwen3.5-9B", "format": "Q6_K", "card": "rtx2080ti", "mmq": 2040, "w4a8": 1730},
+    {"set": "q6k-iq4xs-24k", "model": "Qwen3.5-9B", "format": "IQ4_XS", "card": "rtx2080ti", "mmq": 2450, "w4a8": 2220},
+    {"set": "q6k-iq4xs-24k", "model": "Qwen3.5-9B", "format": "Q6_K", "card": "rtx3060", "mmq": 1745, "w4a8": 1540},
+    {"set": "q6k-iq4xs-24k", "model": "Qwen3.5-9B", "format": "IQ4_XS", "card": "rtx3060", "mmq": 2110, "w4a8": 1890},
+    {"set": "q6k-iq4xs-24k", "model": "Qwen3.5-9B", "format": "Q6_K", "card": "rtx4060ti", "mmq": 2810, "w4a8": 2520},
+    {"set": "q6k-iq4xs-24k", "model": "Qwen3.5-9B", "format": "IQ4_XS", "card": "rtx4060ti", "mmq": 3450, "w4a8": 3260},
+    {"set": "q6k-iq4xs-24k", "model": "Qwen3.5-9B", "format": "Q6_K", "card": "rtx4070ti", "mmq": 4920, "w4a8": 4505},
+    {"set": "q6k-iq4xs-24k", "model": "Qwen3.5-9B", "format": "IQ4_XS", "card": "rtx4070ti", "mmq": 6020, "w4a8": 5590},
+    {"set": "q6k-iq4xs-24k", "model": "Qwen3.5-9B", "format": "Q6_K", "card": "rtx4090", "mmq": 10100, "w4a8": 8920},
+    {"set": "q6k-iq4xs-24k", "model": "Qwen3.5-9B", "format": "IQ4_XS", "card": "rtx4090", "mmq": 11650, "w4a8": 10300},
+    {"set": "q6k-iq4xs-24k", "model": "Qwen3.5-9B", "format": "Q6_K", "card": "rtx5070ti", "mmq": 5475, "w4a8": 5860},
+    {"set": "q6k-iq4xs-24k", "model": "Qwen3.5-9B", "format": "IQ4_XS", "card": "rtx5070ti", "mmq": 7200, "w4a8": 7075},
+    {"set": "q6k-iq4xs-24k", "model": "Qwen3.5-9B", "format": "Q6_K", "card": "rtx5090", "mmq": 11500, "w4a8": 11100},
+    {"set": "q6k-iq4xs-24k", "model": "Qwen3.5-9B", "format": "IQ4_XS", "card": "rtx5090", "mmq": 14500, "w4a8": 13300}
+  ]
+}
