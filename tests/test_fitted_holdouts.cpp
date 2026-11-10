@@ -6,9 +6,12 @@
 //     read from the file's text, not a substring of it): a renamed or removed constant fails;
 //   - every constant a covered file marks or behaves as fitted has a record, or sits on that file's
 //     not-fitted list below with the reason it is none: route_cost_constants.h (every definition
-//     tagged Provenance::Fitted), choice_constants.h (every definition), core/generation.h (the
-//     double fields of the row), core/cost_constants.h, spec/round_cost.h, spec/moe_routed_share.h
-//     and ops/common/sm_wave_rules.h (every definition);
+//     tagged Provenance::Fitted), choice_constants.h (every definition), core/generation.h (every
+//     field of the row, and every field its own kind table names `fitted` or `preference` has a
+//     record), core/cost_constants.h, spec/round_cost.h, spec/moe_routed_share.h and
+//     ops/common/sm_wave_rules.h (every definition);
+//   - the Provenance::Fitted tag is found by a scan of the whole source tree: a file that uses it
+//     and is not covered here fails, so a tagged constant cannot sit outside the audit;
 //   - the total is pinned, so adding or dropping a record is a decision.
 // No GPU.
 
@@ -31,7 +34,7 @@ namespace {
 
 namespace fit = ninferno::fitted;
 
-constexpr std::size_t kExpectedRecords = 61;
+constexpr std::size_t kExpectedRecords = 66;
 
 int failures = 0;
 
@@ -50,7 +53,7 @@ std::string read_file(std::string_view relative) {
 enum class Mode {
     TaggedScalars, // `inline constexpr Scalar|Constant<N> kName{...};`, with their Provenance
     Definitions,   // every `[inline] constexpr <type> name[ [ ( = {` at the left margin
-    RowFields,     // the `double` fields of struct GenerationRow
+    RowFields,     // every field of struct GenerationRow
 };
 
 struct Definition {
@@ -65,9 +68,13 @@ std::map<std::string, Definition> definitions_of(const std::string& text, Mode m
         // The struct's closing brace stands at column 0; a "};" inside a field's initializer
         // does not end it.
         const std::size_t end = text.find("\n};", at);
+        if (at == std::string::npos || end == std::string::npos) return out;
         std::istringstream lines(text.substr(at, end - at));
-        const std::regex field(R"(^\s*double\s+(\w+))");
-        for (std::string line; std::getline(lines, line);) {
+        // A field of any type (`int major = 0;`, `const char* name = "";`, `bool x = false;`).
+        const std::regex field(R"(^\s*(?:const\s+)?[\w:<>]+\s*\*?\s+(\w+)\s*[=;\{])");
+        std::string line;
+        std::getline(lines, line); // the `struct GenerationRow {` line itself
+        for (; std::getline(lines, line);) {
             std::smatch m;
             if (std::regex_search(line, m, field)) out[m[1]] = {m[1], line};
         }
@@ -116,6 +123,7 @@ const std::vector<Spec>& specs() {
              // a policy
              "kTransferGeneration",
              "kMoeChunkTwoCards",
+             "kMoeChunkCurveGeneration", // the generation kMoeChunkShare (recorded) was read on
              "kDefaultChunk",
              "kMoeChunks",
              // the kernels' own geometry and thresholds, read off their source
@@ -132,9 +140,7 @@ const std::vector<Spec>& specs() {
              "kVoltaChunkBytes",
              "kVoltaCutlassMinTokens",
              "kVoltaCopyMinTokens",
-             "kVoltaCopyMinDramBps",
              "kExpertJobSlots",
-             "kAttentionHalfCta",
              "kFp8AttentionTiledMinWidth",
              "kFp8AttentionMaxSplits",
              "kFp8AttentionSplitKeys",
@@ -167,8 +173,11 @@ const std::vector<Spec>& specs() {
              "route_name",
              "axis_name",
          }},
-        // the rates are whitepaper facts except the emulated BF16 aggregate (recorded)
-        {fit::kGeneration, Mode::RowFields, {"s8"}},
+        // The row's identity; the rates are whitepaper facts except the emulated BF16 aggregate
+        // (recorded); the tensor core's kind (full-rate FP32-accumulate HMMA) is a chip fact.
+        {fit::kGeneration,
+         Mode::RowFields,
+         {"major", "minor_lo", "minor_hi", "name", "s8", "fp32acc_full_rate"}},
         {fit::kCostConstants, Mode::Definitions, {"kDp4aOpsPerSmClock"}}, // a chip fact
         {fit::kRoundCost, Mode::Definitions, {"kPricedVerifyRows"}},      // a bound, not a fit
         {fit::kMoeShare, Mode::Definitions, {}},
@@ -239,6 +248,24 @@ int main() {
             }
             if (spec.not_fitted.count(name)) fail(name + ": recorded and listed as not fitted");
         }
+        if (spec.mode == Mode::TaggedScalars) {
+            // Every tag in the file belongs to a definition read above: a Fitted constant written
+            // in a form the definition pattern misses still fails.
+            std::size_t tags = 0;
+            for (std::size_t at = text.find("Provenance::Fitted"); at != std::string::npos;
+                 at             = text.find("Provenance::Fitted", at + 1)) {
+                ++tags;
+            }
+            std::size_t tagged = 0;
+            for (const auto& [name, def] : defined) {
+                if (def.text.find("Provenance::Fitted") != std::string::npos) ++tagged;
+            }
+            if (tags != tagged) {
+                fail(std::string(spec.file) + ": " + std::to_string(tags) +
+                     " Provenance::Fitted tags but " + std::to_string(tagged) +
+                     " tagged definitions read (a definition the pattern does not see?)");
+            }
+        }
         for (const auto& [name, def] : defined) {
             if (spec.mode == Mode::TaggedScalars) {
                 // Only the Fitted-tagged definitions are covered; the others carry no record.
@@ -250,6 +277,35 @@ int main() {
             if (!recorded.count(name) && !spec.not_fitted.count(name)) {
                 fail(name + ": defined in " + std::string(spec.file) +
                      " but neither recorded in core/fitted_holdouts.h nor listed not fitted here");
+            }
+        }
+        if (spec.mode == Mode::RowFields) {
+            // The row's own kind table ("What a lent row carries") names its fitted and measured
+            // fields: each of them has a record, whatever the not-fitted list says.
+            const std::regex kind_line(R"(^//\s+(fitted|preference)\s+([\w,\s]+?):)");
+            std::istringstream lines(text);
+            std::set<std::string> kinds;
+            for (std::string line; std::getline(lines, line);) {
+                std::smatch m;
+                if (!std::regex_search(line, m, kind_line)) continue;
+                kinds.insert(m[1]);
+                std::istringstream names(m[2].str());
+                for (std::string field; std::getline(names, field, ',');) {
+                    field.erase(0, field.find_first_not_of(" \t"));
+                    field.erase(field.find_last_not_of(" \t") + 1);
+                    if (field.empty()) continue;
+                    if (!defined.count(field)) {
+                        fail(field + ": named " + m[1].str() + " in " + std::string(spec.file) +
+                             "'s kind table, but not a field of the row");
+                    } else if (!recorded.count(field)) {
+                        fail(field + ": named " + m[1].str() + " in " + std::string(spec.file) +
+                             "'s kind table, but without a record");
+                    }
+                }
+            }
+            if (kinds.size() != 2) {
+                fail(std::string(spec.file) + ": the kind table's fitted and preference lines "
+                                              "are not found (moved or reworded? update the test)");
             }
         }
         if (spec.mode != Mode::TaggedScalars) {
@@ -280,6 +336,33 @@ int main() {
             if (count != rows.size()) fail(name + ": records and rows differ in number");
         }
     }
+
+    // The Provenance::Fitted tag, wherever it is used in the source tree: every file that tags a
+    // constant Fitted is one this test reads with Mode::TaggedScalars, so its Fitted constants are
+    // held to their records above. A tag in any other file fails here.
+    std::set<std::string> tagged_files;
+    for (const Spec& spec : specs()) {
+        if (spec.mode == Mode::TaggedScalars) tagged_files.insert(std::string(spec.file));
+    }
+    const std::filesystem::path root(NINFERNO_SOURCE_DIR);
+    std::size_t scanned = 0;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(root / "src")) {
+        if (!entry.is_regular_file()) continue;
+        const std::string ext = entry.path().extension().string();
+        if (ext != ".h" && ext != ".hpp" && ext != ".cpp" && ext != ".cu" && ext != ".cuh" &&
+            ext != ".inc") {
+            continue;
+        }
+        ++scanned;
+        const std::string relative = entry.path().lexically_relative(root).generic_string();
+        const std::string text     = read_file(relative);
+        if (text.find("Provenance::Fitted") != std::string::npos && !tagged_files.count(relative)) {
+            fail(relative + ": tags a constant Provenance::Fitted but is not covered by this test "
+                            "(add it to specs() with Mode::TaggedScalars and give its constants "
+                            "records)");
+        }
+    }
+    if (scanned == 0) fail("no source file found under src/");
 
     if (failures != 0) {
         std::fprintf(stderr, "%d failure(s)\n", failures);

@@ -2,9 +2,10 @@
 
 // The holdout records (core/holdout.h) of every fitted constant, in one place: the route cost model
 // (ops/generic/route_cost_constants.h), the choice's speed model (product/choice/
-// choice_constants.h), the generation row's fitted scales (core/generation.h), the speculation
-// round cost (spec/round_cost.h, spec/moe_routed_share.h) and the one fitted SM-wave rule
-// (ops/common/sm_wave_rules.h). A record per constant or per table of one fit: the table's rows
+// choice_constants.h), the generation row's fitted scales and measured preferences
+// (core/generation.h), the speculation round cost (spec/round_cost.h, spec/moe_routed_share.h)
+// and the one fitted SM-wave rule (ops/common/sm_wave_rules.h). A record per constant or per
+// table of one fit: the table's rows
 // are one fit over the same data, so one record says what it was fitted on and what, if anything,
 // was left out; the per-row card counts stay in the tables (`cards`).
 //
@@ -13,7 +14,8 @@
 // a fitted constant without a held-out check is declared so, not forgotten.
 // tests/test_fitted_holdouts.cpp matches every key to its definition in the file (not a substring),
 // requires every Fitted-marked definition of the covered files to have a record or to sit on its
-// not-fitted list, fails on an Unset or incomplete record, and pins one total count.
+// not-fitted list, fails on an Unset or incomplete record, fails on a Provenance::Fitted tag in a
+// file it does not cover (a scan of src/), and pins one total count.
 // Sources are the comments at the constants and the DECISIONS (docs/maintainer/decisions.md) they
 // name.
 
@@ -273,6 +275,14 @@ inline constexpr FittedHoldout kChoiceHoldouts[] = {
          "52.4, decodes 0.69 / 0.99 / 1.11 / 0.94 SM-clocks",
          "one card (the GEMM's calls -4 .. 0 %, the decodes -2 .. +1 %): transferred",
          "DECISIONS 70")},
+    {kChoice, "kVoltaCopyMinDramBps",
+     Holdout::none(
+         "ninferno_linear_bench on the V100 (T = 32..240, the Q4_K and Q5_K tile against the "
+         "decoded copy): the copy's narrowest margin, 1.13 (24576 x 4096 below 129 tokens), at the "
+         "board's 870 GB/s; the bound is that rate over the margin",
+         "one board: none left out; a Volta part under the bound (the Titan V's 653 GB/s) keeps "
+         "the tile without a measurement of its own",
+         "generic_gemm.cpp at kVoltaCopyMinDramGbps (the same bound, the device side)")},
     {kChoice, "kAttentionTileCost",
      Holdout::none(
          "the census of a 21K-token prompt in 21 1024-token chunks (nsys), each generation's cards "
@@ -280,6 +290,14 @@ inline constexpr FittedHoldout kChoiceHoldouts[] = {
          "none left out: the fit's own residuals (gb20x -1 .. +2 %, Ada -8 .. +9 %, Ampere -0.4 .. "
          "+0.8 %); the 5070 Ti's first chunk shows the CTA's own cost",
          "DECISIONS 68")},
+    {kChoice, "kAttentionHalfCta",
+     Holdout::none(
+         "one RTX 5090 timing at 64K context: a four-warp CTA, or an eight-warp CTA of 64 rows, "
+         "sweeps in about 0.72 of a full eight-warp CTA's time",
+         "one card: none left out; every other board takes the figure as a transfer",
+         "ops/softmax_attention/dense/causal_cache/int8/template_launch.cuh at "
+         "Int8PromptFastLayout",
+         "the kernel's layout reads the same figure (kHalfCostPercent there, outside this table)")},
     {kChoice, "kFp8AttentionTileCost",
      Holdout::none(
          "the census of 7K and 21K prompts (1024-token chunks), each generation's cards together: "
@@ -382,6 +400,34 @@ inline constexpr FittedHoldout kGenerationHoldouts[] = {
          "a measured preference per generation, each over the boards that ran its grid; Turing was "
          "not run over the widths; not carried by a lent row",
          "DECISIONS 74; core/generation.h at mmq_work_tiles")},
+    // The measured preferences: a yes or no per row, each set by an A/B on the row's boards.
+    {kGeneration, "mmq_candidate",
+     Holdout::none(
+         "the full-rate rows (ga100, hopper, gb100) off, where ggml's matrix kernel's "
+         "microbenchmark win and the 24K prefill A/B (-15 %) disagree; the other rows keep the "
+         "kernel a candidate the cost model prices",
+         "the A/B that turned it off is its only check, on the full-rate rows' one board (the "
+         "A100); none left out; not carried by a lent row (mmq_candidate_measured)",
+         "core/generation.h at mmq_candidate")},
+    {kGeneration, "attention_chain",
+     Holdout::none(
+         "gb20x: RTX 5090 (31B, T = 4096, -2.2 %) and RTX 5080 (26B, T = 1024 at 16K keys, +5.5 "
+         "%); Ada off: the chained tile 25-35 % slower even in whole waves (RTX 4090, RTX 4080 "
+         "SUPER)",
+         "the A/Bs that set the values are their only check, none left out; the other "
+         "generations are unmeasured and keep the plain launch (attention_chain_measured)",
+         "core/generation.h at attention_chain; ops/softmax_attention/gemma4/launch.cu at "
+         "chain_pays")},
+    {kGeneration, "mmq_work_tiles",
+     Holdout::none(
+         "DECISIONS 74's forced-J grids and A B A B runs: GA10x (RTX 3060, 3090), Ada (RTX 4070 "
+         "Ti, 4090), GB20x (RTX 5090); Turing was not run over the widths and keeps the fewest "
+         "tiles",
+         "the grids and A/Bs that set the rows are their check; no board left out; not carried "
+         "by a lent row (mmq_work_tiles_measured)",
+         "DECISIONS 74; core/generation.h at mmq_work_tiles",
+         "the RTX 3060's mix was predicted before it was measured (-7.8 %, measured -8.2 %, at f "
+         "0.43), the RTX 4070 Ti's (-5.9 %, measured -4.4 %)")},
 };
 
 inline constexpr FittedHoldout kSmallTEtaHoldouts[] = {
