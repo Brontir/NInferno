@@ -797,6 +797,19 @@ class Classify(unittest.TestCase):
               "src/ops/sources.cmake": 'if(NINFERNO_BUILD_ARCH STREQUAL "70")\n src/ops/volta_launch.cc\nendif()\n'}
         self.assertTrue(self.run_diff(["src/chat/shared.h"], cc)["all"])
 
+    def test_a_cu_include_with_comments_or_outside_the_source_dirs_is_an_edge(self):
+        # A comment is whitespace in a directive; a header under docs/ (or any directory) that a
+        # .cu file includes is device code.
+        for spelling in ('# /* c */ include "../chat/shared.h"\n', '#include /* c */ "../chat/shared.h"\n'):
+            with self.subTest(spelling=spelling):
+                files = {"src/chat/shared.h": "#pragma once\n", "src/ops/k.cu": spelling}
+                self.assertTrue(self.run_diff(["src/chat/shared.h"], files)["all"])
+        files = {"docs/generated.h": "#pragma once\n",
+                 "src/ops/k2.cu": '#include "../../docs/generated.h"\n'}
+        res = self.run_diff(["docs/generated.h"], files)
+        self.assertTrue(res["all"])
+        self.assertIn("included by a .cu file", res["reasons"]["docs/generated.h"])
+
     def test_a_guard_on_a_same_named_file_does_not_narrow_another(self):
         # Listings are keyed by file name: an unlisted src/a/volta_impl.cpp is not the guarded
         # src/b/volta_impl.cpp, so it is not narrowed to sm_70.

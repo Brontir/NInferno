@@ -204,7 +204,6 @@ class Verdict:
 # CMakeCache.txt. In a git ref only tracked files exist and nothing is excluded.
 BUILD_DIR = re.compile(r"^(?:build|build-.*|cmake-build-.*)$")
 CMAKE_NAME = re.compile(r"(?:^|/)CMakeLists\.txt$|\.cmake$")
-TOP_DIRS = ("src", "apps", "tests", "third_party", "include")
 
 
 def git_run(root, *args):
@@ -225,7 +224,7 @@ class Repo:
     """Header graph of a source tree: which files a .cu file includes, transitively.
 
     With ref=None the tree is the working directory; with a git ref every file name and content is
-    read from that commit, whatever is checked out. Nodes are all files under TOP_DIRS, whatever
+    read from that commit, whatever is checked out. Nodes are all files of the tree, whatever
     their extension (an .inc or .def a header includes is part of the graph)."""
 
     def __init__(self, root, files=None, ref=None):
@@ -236,8 +235,9 @@ class Repo:
         if ref is not None:
             self._all = [n for n in git_run(root, "ls-tree", "-r", "--name-only", "-z", ref)
                          .decode("utf-8", errors="replace").split("\0") if n]
-        self.files = files if files is not None else [
-            n for n in self.all_files() if n.split("/")[0] in TOP_DIRS]
+        # Every file of the tree is a node: a .cu file may include a header anywhere (docs/,
+        # tools/, a generated file), and a node only widens the answer.
+        self.files = files if files is not None else list(self.all_files())
         self.fileset = set(self.files)
         self.by_suffix = {}
         for f in self.files:
@@ -247,7 +247,7 @@ class Repo:
         self.device_headers = None
         if ref is not None:
             self._preload([f for f in self._all
-                           if (f.endswith(TEXT_CODE_EXT) and f.split("/")[0] in TOP_DIRS)
+                           if f.endswith(TEXT_CODE_EXT)
                            or CMAKE_NAME.search(f)])
 
     def all_files(self):
@@ -382,7 +382,7 @@ class Repo:
             stack = [path]
             while stack:
                 f = stack.pop()
-                for name in INCLUDE.findall(self.read(f)):
+                for name in include_names(self.read(f)):
                     for h in self.resolve(f, name):
                         if h not in seen:
                             seen.add(h)
@@ -404,7 +404,7 @@ class Repo:
             stack = [f for f in self.files if f.endswith(".cu")]
             while stack:
                 f = stack.pop()
-                for name in INCLUDE.findall(self.read(f)):
+                for name in include_names(self.read(f)):
                     for h in self.resolve(f, name):
                         if h not in seen:
                             seen.add(h)
@@ -433,8 +433,22 @@ def cmake_statements(text):
     return out
 
 
+def without_comments(text):
+    """The text with each block comment replaced by its line breaks and a blank (the preprocessor
+    reads a comment as whitespace): `# /* c */ include "x.h"` is an include. A comment that ends
+    in the middle of a line may let a following `#` start a line here though it does not in C:
+    that only adds include edges, which only widens the answer."""
+    return re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n") + " ", text, flags=re.S)
+
+
+def include_names(text):
+    """The names of the `#include "..."` and `#include <...>` lines of a source."""
+    return INCLUDE.findall(without_comments(text))
+
+
 def uses_arch(text):
-    return bool(ARCH_MACROS.search(text) or COMPUTED_INCLUDE.search(text))
+    return bool(ARCH_MACROS.search(text) or COMPUTED_INCLUDE.search(text)
+                or COMPUTED_INCLUDE.search(without_comments(text)))
 
 
 def is_host_path(p):
