@@ -286,8 +286,9 @@ int main(int argc, char** argv) {
                 file << now;
                 file.flush();
                 if (!file.good()) {
-                    std::cerr << b.name << ": cannot write " << path.string() << '
-'; ++failed; continue;
+                    std::cerr << b.name << ": cannot write " << path.string() << "\n";
+                    ++failed;
+                    continue;
                 }
                 std::cout << b.name << ": wrote " << path.string() << '\n';
                 continue;
