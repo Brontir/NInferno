@@ -15,16 +15,19 @@ ninferno_generate_board_registry(${CMAKE_CURRENT_SOURCE_DIR}/data/gpu_facts.json
 # built and run on a machine with no toolkit (tests/cmake/ProductTests.cmake asserts the closure).
 add_library(ninferno_core_host STATIC
   dtype.cpp
+  device_class_host.cpp
+  machine_facts.cpp
 )
 ninferno_internal_includes(ninferno_core_host)
+target_include_directories(ninferno_core_host PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 target_include_directories(ninferno_core_host PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/generated_public)
+target_link_libraries(ninferno_core_host PRIVATE ninferno::json)
 
 add_library(ninferno_core STATIC
   arena.cu
   device.cu
   device_class.cpp
   device_traits.cpp
-  machine_facts.cpp
   kernel_occupancy.cpp
   gate_atlas.cpp
   device_image_probe.cu
