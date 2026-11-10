@@ -401,6 +401,16 @@ class SelectionRegretTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             regret.evaluate(data)
 
+    def test_the_measured_device_reaches_the_report(self):
+        # regret_collect's `device` (route_tune's class id and UUID), for route_table_prune.py
+        data = document()
+        self.assertNotIn("device", regret.evaluate(data))
+        data["device"] = "ga106:28sm GPU-0"
+        self.assertEqual(regret.evaluate(data)["device"], "ga106:28sm GPU-0")
+        data["device"] = ""
+        with self.assertRaises(ValueError):
+            regret.evaluate(data)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,10 +8,16 @@ at every width the override covers, the override earns nothing and is deleted, a
 reviewer can read.
 
 Input: the selection_regret.py report (ninferno-selection-regret-report/1) of one board, whose
-cases carry `authority`, `evidence`, `t`, `ranker` (the route the ranker alone picks) and
+cases carry `authority`, `evidence`, `t`, `selected` (the route the case measured), `ranker` (the
+route the rules list alone gives: route_tune's --selected-out column, heuristic_route) and
 `ranker_vs_selected` (its median time over the selected route's, minus one; it must be a finite
 number). Only cases whose authority is `route-table` or `dense-tune` with `measured` evidence speak
-for an entry; a case's width is its `t`. The campaign runs the speed profile, so a case measures a
+for an entry; a case's width is its `t`, and it speaks only if its `selected` is the route the
+entry names at that width (a report collected before the entry changed timed another route, and
+keeps the entry). The ranker is what the call runs once neither the route table nor the dense
+tuner answers it: with --dense-tune, a table entry whose problem the tuner routes for the class is
+kept (pruning it would hand the call to the tuner, not the ranker); give --dense-tune wherever the
+class has dense problems, since without it the tool cannot see them. The campaign runs the speed profile, so a case measures a
 prefill override only if it says so (`profile: "prefill"`, which no run writes yet). An entry is
 kept, whatever the speed cases say, when
   - it holds a prefill override (`prefill`, `prefill_bands`, `prefill_tuned_on`; a dense problem
@@ -24,7 +30,9 @@ kept, whatever the speed cases say, when
     (it may borrow this one's: the nearest holder lends, and distances across generations are not
     mirrored here). Dense problems are keyed by exact class id and lend nothing.
 An entry is pruned only when every segment of every range it has routes in (`bands` and
-`r8_bands`) has at least one case in its T range and every case there has `ranker_vs_selected` <=
+`r8_bands`; a dense problem's every non-null `routes` width, each a range of its own since the
+runtime takes them by the exact width, and each prefill band of generic_tune.cpp's
+kPrefillBandTokens that holds a route) has at least one case in its T range and every case there has `ranker_vs_selected` <=
 the resolution. A range is cut into segments at the regime edges (decode T<=4, verify 5..16) and at
 the board's ridge T* (the report's own, `by_board_regime_authority`), so a range that spans a
 regime needs a case in each part. A range that reaches 17 or more with no ridge in the report
@@ -40,16 +48,21 @@ thresholds describe the same size of effect to within a quarter of a percent, no
         [--dense-tune routes/tuner/dense_tune.json --class ad102:128sm] [--resolution 0.05]
         [--allow-borrowers] [--apply]
 
-The report's board must be the table's class: equal ids, or a full `chip:Nsm` id for a table of the
-bare chip whose `gpu.board.sms` is N (the RTX 5080's `gb203` is not the 70-SM `gb203:70sm`). --class
-must be a full class id (the dense keys carry it whole: a bare chip matches none) equal to the
-report's board. Default is a dry run: the plan is printed with the board and nothing is written.
+The report must be one board's and name the device it measured (`device`, route_tune's class id
+of every row, which regret_collect.py keeps and selection_regret.py passes on; the board label is
+free text). That device must be the table's class: equal ids, or a full `chip:Nsm` id for a table
+of the bare chip whose `gpu.board.sms` is N (the RTX 5080's `gb203` is not the 70-SM
+`gb203:70sm`). --class must be a full class id (the dense keys carry it whole: a bare chip matches
+none) equal to the measured device. Default is a dry run: the plan is printed with the board and nothing is written.
 --apply rewrites the files (both or neither: temp files, then renames), which must be in the
 canonical form (json.dumps(indent=1) plus a newline) so that the diff is only the deleted entries;
 otherwise it refuses.
 
 Also the evidence check of the tables (evidence_gaps): every measured entry (one with `tuned_on`)
 should record `evidence_us`, rows [T, default us, chosen us], with a gain above the resolution.
+`--gaps routes [--gaps-out tests/route_evidence_gaps.json]` prints (writes) the gaps of every
+table, the list the CTest holds the tables to; regenerate it whenever a change to routes/ changes a
+gap (a merge of master included).
 """
 import argparse
 import json
@@ -109,9 +122,10 @@ def segments(lo, hi, ridge):
 
 
 def evidence_by_entry(report):
-    """{(authority, entry key): {"speed": [(T, slowdown or None)], "prefill": [...]}}: the speaking
-    cases of the report, at their `t`. A slowdown that is not a finite number, or of a case that is
-    not complete, is None (it keeps the entry)."""
+    """{(authority, entry key): {"speed": [(T, slowdown or None, selected)], "prefill": [...]}}: the
+    speaking cases of the report, at their `t`, with the route each measured (`selected`). A
+    slowdown that is not a finite number, or of a case that is not complete, is None (it keeps the
+    entry)."""
     out = {}
     for case in report["cases"]:
         if case.get("authority") not in TABLE_AUTHORITIES or case.get("evidence") != "measured":
@@ -126,38 +140,52 @@ def evidence_by_entry(report):
             slowdown = None
         profile = "prefill" if case.get("profile") == PREFILL_PROFILE else "speed"
         out.setdefault((case["authority"], key), {"speed": [], "prefill": []})[profile].append(
-            (t, slowdown))
+            (t, slowdown, case.get("selected")))
     return out
 
 
 def judge(cases, label, resolution):
-    """Reasons a set of (T, slowdown) cases does not clear `label`'s range; empty: cleared."""
+    """Reasons a set of (T, slowdown, selected) cases does not clear `label`'s range; empty:
+    cleared."""
     if not cases:
         return [f"{label}: no case"]
-    if any(s is None for _, s in cases):
+    if any(s is None for _, s, _ in cases):
         return [f"{label}: a case without a ranker time"]
-    worst = max(s for _, s in cases)
+    worst = max(s for _, s, _ in cases)
     if worst > resolution:
         return [f"{label}: ranker {100 * worst:.1f} % slower somewhere"]
     return []
 
 
+def route_at(ranges, t):
+    """The route the override names at width t: the first of `ranges` [(lo, hi, route)] holding t
+    (a table's bands before its r8_bands, its prefill bands before its prefill route), or None."""
+    return next((route for lo, hi, route in ranges if lo <= t <= hi), None)
+
+
 def cover(cases, ranges, ridge, resolution):
-    """Reasons the cases of one profile do not clear every segment of `ranges`."""
+    """Reasons the cases of one profile do not clear every segment of `ranges` [(lo, hi, route)].
+    A case speaks for the override only if it measured the route the override names at its width
+    (`selected`): a report collected before the entry changed timed another route, and keeps it."""
     reasons = []
-    for lo, hi in ranges:
+    for t, _, selected in sorted(cases, key=lambda c: c[0]):
+        route = route_at(ranges, t)
+        if route is not None and selected != route:
+            reasons.append(f"T {t}: the case measured {selected}, the entry routes {route} there")
+    for lo, hi, _ in ranges:
         if ridge is None and hi > VERIFY_MAX:
             reasons.append(f"T {max(lo, VERIFY_MAX + 1)}..: no ridge in the report, a wide range "
                            "cannot be split")
         for a, b in segments(lo, hi, ridge):
-            inside = [(t, s) for t, s in cases if a <= t <= b]
+            inside = [c for c in cases if a <= c[0] <= b]
             reasons += judge(inside, f"T {a}..{b}", resolution)
     return reasons
 
 
 def verdict(evidence, ranges, prefill_ranges, ridge, resolution):
-    """(prune, reasons) of an entry: `ranges` its speed ranges [(lo, hi)] (bands and r8_bands),
-    `prefill_ranges` those of its prefill override, `evidence` its cases (speed and prefill)."""
+    """(prune, reasons) of an entry: `ranges` its speed ranges [(lo, hi, route)] (bands and
+    r8_bands), `prefill_ranges` those of its prefill override, `evidence` its cases (speed and
+    prefill)."""
     reasons = []
     if not ranges and not prefill_ranges:
         reasons.append("no band")
@@ -173,13 +201,14 @@ def verdict(evidence, ranges, prefill_ranges, ridge, resolution):
 
 
 def entry_ranges(entry):
-    """(speed ranges, prefill ranges) of a table entry: its bands and r8_bands, and the ranges of
-    its prefill override (each prefill band; 17.. where a `prefill` route stands)."""
-    speed = [(lo, hi) for lo, hi, *_ in entry.get("bands", []) + entry.get("r8_bands", [])]
-    prefill = [(lo, hi) for lo, hi, *_ in entry.get("prefill_bands", [])]
+    """(speed ranges, prefill ranges) of a table entry, [(lo, hi, route)]: its bands and r8_bands,
+    and the ranges of its prefill override (each prefill band, then 17.. where a `prefill` route
+    stands: the prefill route answers where no prefill band does, route_at)."""
+    speed = [(lo, hi, r) for lo, hi, r in entry.get("bands", []) + entry.get("r8_bands", [])]
+    prefill = [(lo, hi, r) for lo, hi, r in entry.get("prefill_bands", [])]
     if entry.get("prefill") or "prefill_tuned_on" in entry:
         if not prefill or entry.get("prefill"):
-            prefill.append((VERIFY_MAX + 1, INF))
+            prefill.append((VERIFY_MAX + 1, INF, entry.get("prefill")))
     return speed, prefill
 
 
@@ -194,9 +223,10 @@ def lending(others, key):
     return holders, lackers
 
 
-def plan_table(report, table, resolution, others=None, allow_borrowers=False):
+def plan_table(report, table, resolution, others=None, allow_borrowers=False, tuned=()):
     """[(entry index, key, prune, reasons)] over the table's measured entries. `others`: the other
-    tables of the routes directory {name: doc}, for the lending rules."""
+    tables of the routes directory {name: doc}, for the lending rules; `tuned`: the keys the dense
+    tuner routes for the board (dense_routed), which take the call once the entry is gone."""
     seen = evidence_by_entry(report)
     ridge = ridge_of(report)
     out = []
@@ -212,6 +242,9 @@ def plan_table(report, table, resolution, others=None, allow_borrowers=False):
         _, reasons = verdict(evidence, speed, prefill, ridge, resolution)
         if entry.get("claim"):
             reasons.append("the entry claims its problem (a measured claim the ranker does not make)")
+        if key in tuned:
+            reasons.append("the dense tuner routes this problem too: pruning hands the call to it, "
+                           "not the ranker")
         if others:
             holders, lackers = lending(others, key)
             if holders:
@@ -250,31 +283,44 @@ def plan_dense(report, dense, device_class, resolution):
         parsed.append((text, key, problem))
     out = []
     for text, key, problem in parsed:
-        times = sorted(int(t) for t, route in problem.get("routes", {}).items() if route is not None)
-        prefill_times = sorted(int(t) for t, r in problem.get("prefill", {}).items()
-                               if r is not None)
-        if not times and not prefill_times:
+        speed, prefill = dense_ranges(problem)
+        if not speed and not prefill:
             continue
         evidence = seen.get(("dense-tune", key))
         if evidence is None:
             out.append((text, key, False, ["no case"]))
             continue
-        # the segments (regime edges, ridge) that hold a width the tuner routed need a case
-        prefill_ranges = _segment_ranges(prefill_times, ridge) if prefill_times else []
-        prune, reasons = verdict(evidence, _segment_ranges(times, ridge), prefill_ranges, ridge,
-                                 resolution)
+        prune, reasons = verdict(evidence, speed, prefill, ridge, resolution)
         out.append((text, key, prune, reasons))
     return out
 
 
-def _segment_ranges(times, ridge):
-    """The segments (regime edges and ridge) that hold a routed width: the ranges to cover."""
-    out = []
-    for t in times:
-        for a, b in segments(1, INF, ridge):
-            if a <= t <= b and (a, b) not in out:
-                out.append((a, b))
-    return out
+# generic_tune.cpp kPrefillBandTokens: prefill band b takes the widths above band b-1's up to its
+# own, and the last band every width past it too (prefill_band).
+DENSE_PREFILL_BANDS = (17, 32, 64, 127, 128, 256, 512, 1024, 2048)
+
+
+def dense_routed(dense, device_class):
+    """The keys of the class's dense problems that hold a route (dense_ranges)."""
+    return {key for text, problem in dense["problems"].items()
+            for cls, key in [dense_key(text)]
+            if cls == device_class and any(dense_ranges(problem))}
+
+
+def dense_ranges(problem):
+    """(speed ranges, prefill ranges) [(lo, hi, route)] of a dense problem's non-null routes. The
+    runtime takes `routes` by the exact width (tuned_dense_route), so each routed width is a range
+    of its own and needs a case at that width; a prefill route covers its band's widths."""
+    speed = sorted((int(t), int(t), r) for t, r in problem.get("routes", {}).items()
+                   if r is not None)
+    prefill, lo = [], VERIFY_MAX + 1
+    for i, top in enumerate(DENSE_PREFILL_BANDS):
+        hi = INF if i == len(DENSE_PREFILL_BANDS) - 1 else top
+        route = problem.get("prefill", {}).get(str(top))
+        if route is not None:
+            prefill.append((lo, hi, route))
+        lo = top + 1
+    return speed, prefill
 
 
 def chip_of(class_id):
@@ -319,6 +365,26 @@ def evidence_gaps(table, resolution=RESOLUTION):
     return gaps
 
 
+GAPS_SCHEMA = "ninferno-route-evidence-gaps/1"
+GAPS_NOTE = ("Measured route table entries (tuned_on) that record no evidence_us, or none with a "
+             "gain above the resolution (tools/bench/route_table_prune.py). Generated from the "
+             "tables by `route_table_prune.py --gaps routes`; regenerate it whenever a change to "
+             "routes/ changes a gap. No new entry may join it: close a gap by recording evidence "
+             "(route_tune) and regenerate.")
+
+
+def gaps_document(routes_dir, resolution=RESOLUTION):
+    """The evidence gaps of every route table of `routes_dir`, as tests/route_evidence_gaps.json
+    holds them: {"<table file>:<entry label>": "missing" | "weak"}, sorted."""
+    found = {}
+    for path in sorted(Path(routes_dir).glob("*.json")):
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(doc, dict) and "entries" in doc:
+            for key, kind in evidence_gaps(doc, resolution).items():
+                found[f"{path.name}:{label(key)}"] = kind
+    return {"schema": GAPS_SCHEMA, "note": GAPS_NOTE, "gaps": dict(sorted(found.items()))}
+
+
 def label(key):
     fmt, compute, epilogue, n, k = key
     return f"{fmt}.{compute}.{epilogue}.n{n}.k{k}"
@@ -353,7 +419,13 @@ def write_both(writes):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("report", type=Path, help="selection_regret.py report of one board")
+    parser.add_argument("report", type=Path, nargs="?",
+                        help="selection_regret.py report of one board")
+    parser.add_argument("--gaps", type=Path, metavar="ROUTES_DIR",
+                        help="print the evidence gaps of the directory's tables "
+                             "(tests/route_evidence_gaps.json) and exit")
+    parser.add_argument("--gaps-out", type=Path, metavar="FILE",
+                        help="with --gaps: write them to FILE (LF line ends) instead")
     parser.add_argument("--table", type=Path, help="routes/<class>.json of that board")
     parser.add_argument("--routes-dir", type=Path,
                         help="the routes directory whose other tables lend and borrow (default: "
@@ -369,6 +441,21 @@ def main(argv=None):
     parser.add_argument("--apply", action="store_true", help="write the pruned files (default: dry run)")
     args = parser.parse_args(argv)
     try:
+        if args.gaps:
+            if args.report or args.table or args.dense_tune or args.apply:
+                raise ValueError("--gaps takes no report, table or --apply")
+            text = canonical(gaps_document(args.gaps, args.resolution))
+            if args.gaps_out:
+                with open(args.gaps_out, "w", encoding="utf-8", newline="") as f:
+                    f.write(text)
+                print(f"wrote {args.gaps_out}")
+            else:
+                sys.stdout.write(text)
+            return 0
+        if args.gaps_out:
+            raise ValueError("--gaps-out needs --gaps")
+        if args.report is None:
+            raise ValueError("no report (or --gaps ROUTES_DIR)")
         if not (args.table or args.dense_tune):
             raise ValueError("nothing to prune: give --table and/or --dense-tune")
         if args.dense_tune and not args.device_class:
@@ -383,22 +470,31 @@ def main(argv=None):
         if len(boards) != 1:
             raise ValueError("the report must be one board's, it has " + ", ".join(sorted(boards)))
         board = boards.pop()
+        # The measured device, as route_tune named it in every row (regret_collect keeps it,
+        # selection_regret passes it on): the board label is the user's, the device is not.
+        device = report.get("device")
+        if not isinstance(device, str) or not device.split():
+            raise ValueError("the report names no measured device (regret_collect.py writes it, "
+                             "selection_regret.py keeps it): which board it measured is unknown")
+        measured = device.split()[0]
         table_doc = None
         if args.table:
             table_doc = json.loads(args.table.read_text(encoding="utf-8"))
             table_class = table_doc.get("gpu", {}).get("class")
             if not table_class:
                 raise ValueError(f"{args.table}: no gpu.class")
-            if not board_matches_table(board, table_doc):
-                raise ValueError(f"the report is of board {board}, which is not the table's board "
+            if not board_matches_table(measured, table_doc):
+                raise ValueError(f"the report measured {measured}, which is not the table's board "
                                  f"(class {table_class}, {table_doc['gpu'].get('board', {}).get('sms')} SMs)")
         if args.device_class:
             if class_sms(args.device_class) is None:
                 raise ValueError(f"--class {args.device_class} is not a full class id (chip:Nsm): "
                                  "the dense keys carry it whole and a bare chip matches none")
-            if args.device_class != board:
-                raise ValueError(f"--class {args.device_class} differs from the report's board {board}")
-        print(f"board {board}" + (f", table class {table_doc['gpu']['class']}" if table_doc else "")
+            if args.device_class != measured:
+                raise ValueError(f"--class {args.device_class} differs from the report's device "
+                                 f"{measured}")
+        print(f"board {board}, device {measured}"
+              + (f", table class {table_doc['gpu']['class']}" if table_doc else "")
               + (f", dense class {args.device_class}" if args.dense_tune else ""))
         others = None
         if args.table:
@@ -418,7 +514,12 @@ def main(argv=None):
                 text = f.read()
             doc = json.loads(text)
             if kind == "table":
-                plan = plan_table(report, doc, args.resolution, others, args.allow_borrowers)
+                tuned = set()
+                if args.dense_tune:
+                    tuned = dense_routed(json.loads(args.dense_tune.read_text(encoding="utf-8")),
+                                         args.device_class)
+                plan = plan_table(report, doc, args.resolution, others, args.allow_borrowers,
+                                  tuned)
                 drop = {i for i, _, prune, _ in plan if prune}
                 doc["entries"] = [e for i, e in enumerate(doc["entries"]) if i not in drop]
             else:

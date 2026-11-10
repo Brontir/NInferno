@@ -112,7 +112,8 @@ def describe(protocol):
 def read_selections(paths, authorities=None):
     """{(problem, T): the selected route} of the passes, which must agree. `authorities`, a dict,
     is filled with {(problem, T): (authority, evidence, ranker)} from the optional columns of the
-    same names (`ranker`, the route the ranker alone picks, "" where absent) ("unknown" where a file has none or a row leaves one empty)."""
+    same names: authority and evidence "unknown" where a file has none or a row leaves one empty,
+    `ranker` (the route the rules list alone gives, route_tune's column) "" where absent."""
     selected = None
     for path in paths:
         run = {}
@@ -236,7 +237,7 @@ def collect(selected_csvs, pass_csvs, board, model, revision, build_id, holdout,
             "selected": selected[key], "candidates": candidates, "t": int(t),
             "authority": authorities[key][0], "evidence": authorities[key][1],
         })
-        if authorities[key][2]:  # the route the ranker alone picks (route_tune, where it prices)
+        if authorities[key][2]:  # the rules list's own route (route_tune's ranker column)
             cases[-1]["ranker"] = authorities[key][2]
     if not cases:
         raise ValueError("no selections")

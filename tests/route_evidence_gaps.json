@@ -1,6 +1,6 @@
 {
  "schema": "ninferno-route-evidence-gaps/1",
- "note": "Measured route table entries (tuned_on) that record no evidence_us, or none with a gain above the resolution (tools/bench/route_table_prune.py). Generated from the tables; it may only shrink: close a gap by recording evidence (route_tune) and delete its line.",
+ "note": "Measured route table entries (tuned_on) that record no evidence_us, or none with a gain above the resolution (tools/bench/route_table_prune.py). Generated from the tables by `route_table_prune.py --gaps routes`; regenerate it whenever a change to routes/ changes a gap. No new entry may join it: close a gap by recording evidence (route_tune) and regenerate.",
  "gaps": {
   "ga102.json:bf16.a16.store.n16384.k1024": "weak",
   "ga102.json:iq4xs.a16.add.n5120.k6144": "weak",
@@ -13,8 +13,6 @@
   "ga102.json:q8.a16.store.n2880.k4096": "weak",
   "ga102.json:q8.a16.store.n3712.k2688": "weak",
   "ga102.json:q8.a16.store.n4608.k2688": "weak",
-  "ga106.json:iq4xs.a16.swiglu.n17408.k5120": "weak",
-  "ga106.json:q40.a16.store.n5376.k8192": "weak",
   "gb202.json:bf16.a16.add.n2048.k2048": "missing",
   "gb202.json:bf16.a16.add.n2048.k6144": "missing",
   "gb202.json:bf16.a16.add.n2560.k4096": "missing",
