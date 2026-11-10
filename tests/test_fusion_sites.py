@@ -78,6 +78,7 @@ def names_function(line, name):
     """The line begins a declaration of `name`: only a return type, qualifiers and template
     arguments before it (no `(`, `=`, `[` or control keyword), so a call in a condition or a lambda
     body does not count."""
+    line = re.sub(r"\[\[[^\]]*\]\]", "", line)  # [[nodiscard]] and other attributes
     m = re.match(r"^([\w:<>,*&\s~]*)\b" + re.escape(name) + r"\s*\(", line)
     return bool(m) and not (set(re.findall(r"\w+", m.group(1))) & KEYWORDS)
 

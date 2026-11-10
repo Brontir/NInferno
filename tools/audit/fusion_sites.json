@@ -1120,30 +1120,45 @@
       "evidence": [
         "src/models/gemma4/mtp_round.cu"
       ]
-    }
-  ],
-  "pending": [
+    },
     {
-      "pr": 603,
-      "branch": "feat/310-fusion-chain-cost",
-      "file": "src/ops/common/projection_chain.h",
-      "note": "Whole-chain pricing algebra (price, select, pair_alternatives, swiglu_alternatives). Not wired to any site yet; when it lands, the sites below are priced by it (steps E and F of #617). It is not a site itself and carries no marker. When its file appears in the tree this entry must move into the sites it prices.",
-      "prices": [
-        {
-          "function": "pair_alternatives",
-          "site": "q8_pair"
-        },
-        {
-          "function": "swiglu_alternatives",
-          "site": "ffn_swiglu_epilogue"
-        },
-        {
-          "function": "swiglu_alternatives",
-          "site": "mmq_gated_pair"
-        }
+      "id": "projection_chain",
+      "name": "whole-chain selection of projection fusion alternatives (PR #603)",
+      "layer": "projection",
+      "fuses": [
+        "projection pair (gate/up, K/V)",
+        "SwiGLU epilogue vs projection + pointwise"
+      ],
+      "decided_in": {
+        "file": "src/ops/common/projection_chain.h",
+        "function": "select"
+      },
+      "rule_today": "chain::select over the alternatives a caller builds with pair_alternatives (fused, separate) or swiglu_alternatives (fused_epilogue, projection_then_pointwise). Each alternative is a list of steps, priced by price(): an alternative with an unpriced, non-finite or negative step, a step of no launch, or no steps is not selectable. Pass 1: the anchor is the lowest total (steps plus launches x launch_seconds) among the priced alternatives, the earliest on equal totals; a non-finite total is rejected. Pass 2: keep the anchor unless an alternative with ln(total / anchor) within `resolution` runs strictly fewer launches; among those, the fewest launches, then the earliest in the caller's order. None priced selects nothing and the caller keeps its rule. No production code calls it yet (steps E and F of #617 wire q8_pair, ffn_swiglu_epilogue and mmq_gated_pair to it).",
+      "alternatives": [
+        "fused",
+        "separate",
+        "fused_epilogue",
+        "projection_then_pointwise"
+      ],
+      "priced": {
+        "status": "priced",
+        "by": "whole-chain seconds from the caller's step prices (route_cost_seconds plus output write and pointwise read), launches x launch_seconds, the speed estimate's resolution",
+        "unpriced": "the constants a caller must pass: launch seconds (step B of #617) and the resolution"
+      },
+      "byte_promise": "NotApplicable",
+      "invariant_pin": "n/a (selection only; the sites it will serve pin their own)",
+      "parity_test": null,
+      "oracle_test": "tests/ops/test_projection_chain.cpp",
+      "one_card_literal": false,
+      "evidence": [
+        "PR #603",
+        "#310",
+        "#617 step C (resolution), step B (launch constant)",
+        "src/ops/common/projection_chain.h"
       ]
     }
   ],
+  "pending": [],
   "excluded": [
     {
       "what": "context_kv_materialize Fused64 route (src/ops/context_kv_materialize/launch.h: context_kv_materialize_route)",
