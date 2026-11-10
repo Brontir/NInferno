@@ -7,13 +7,15 @@
 //
 //   ninferno-facts-probe [--device N]
 //
-// Output: {"devices": [{"index", "pci_bus_id", "queried": {...}, "synthetic": {...}, "raw": {...},
-// "engine_occupancy_limits": {...}, "engine_table_facts": {...}, "engine_row_facts": {...}}, ...]}.
-// A device the probe cannot read is {"index", "error"}; the others are still printed.
+// Output: {"devices": [{"index", "pci_bus_id", "mig_mode", "queried": {...}, "synthetic": {...},
+// "raw": {...}, "engine_occupancy_limits": {...}, "engine_table_facts": {...}, "engine_row_facts":
+// {...}}, ...]}. A device the probe cannot read is {"index", "error"}; the others are still
+// printed.
 #include "core/device_class.h"
 #include "core/kernel_occupancy.h"
 #include "core/machine_facts.h"
 #include "core/per_device.h"
+#include "core/sys.h"
 
 #include <cuda_runtime.h>
 
@@ -105,6 +107,38 @@ std::string pci_bus_id(int device) {
     return text;
 }
 
+// The MIG mode of the board at a PCI bus id, through NVML: 1 enabled (the CUDA device may be one
+// instance of it), 0 disabled, -1 unknown (no NVML, a driver without MIG calls, a board without
+// MIG, an unreadable id).
+int mig_mode(const std::string& bus_id) {
+    if (bus_id.empty()) { return -1; }
+    void* nvml = ninferno::sys::load_library("libnvidia-ml.so.1", "nvml.dll");
+    if (nvml == nullptr) { return -1; }
+    using Init      = int (*)();
+    using Handle    = int (*)(const char*, void**);
+    using Mode      = int (*)(void*, unsigned*, unsigned*);
+    using Shutdown  = int (*)();
+    const auto init = reinterpret_cast<Init>(ninferno::sys::symbol(nvml, "nvmlInit_v2"));
+    const auto by_bus_id =
+        reinterpret_cast<Handle>(ninferno::sys::symbol(nvml, "nvmlDeviceGetHandleByPciBusId_v2"));
+    const auto mode_of =
+        reinterpret_cast<Mode>(ninferno::sys::symbol(nvml, "nvmlDeviceGetMigMode"));
+    const auto shutdown = reinterpret_cast<Shutdown>(ninferno::sys::symbol(nvml, "nvmlShutdown"));
+    int result          = -1;
+    if (init != nullptr && by_bus_id != nullptr && mode_of != nullptr && shutdown != nullptr &&
+        init() == 0) {
+        void* board      = nullptr;
+        unsigned current = 0;
+        unsigned pending = 0;
+        if (by_bus_id(bus_id.c_str(), &board) == 0 && mode_of(board, &current, &pending) == 0) {
+            result = current == 1 ? 1 : 0; // NVML_DEVICE_MIG_ENABLE
+        }
+        shutdown();
+    }
+    ninferno::sys::free_library(nvml);
+    return result;
+}
+
 // One device's entry. The queried class is the engine's own; everything else is read beside it.
 Json device_entry(int device) {
     const ninferno::DeviceClass& q        = ninferno::device_class(device);
@@ -125,8 +159,10 @@ Json device_entry(int device) {
                    {"warp_size", ninferno::kAssumedWarpSize}};
     // What the query stored: runtime code reads q.facts, so a query that does not wire it shows
     // here instead of being recomputed from the same inputs.
+    const std::string bus_id = pci_bus_id(device);
     return Json{{"index", device},
-                {"pci_bus_id", pci_bus_id(device)},
+                {"pci_bus_id", bus_id},
+                {"mig_mode", mig_mode(bus_id)},
                 {"queried", class_of(q)},
                 {"synthetic", class_of(synthetic)},
                 {"raw", std::move(raw)},

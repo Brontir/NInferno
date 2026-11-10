@@ -50,7 +50,8 @@ def device_4090():
                  "registers_per_sm": 65536, "persisting_l2_max_bytes": 54 * MIB,
                  "memory_bus_bits": 384, "memory_clock_khz": 10_501_000, "sm_clock_khz": 2_520_000,
                  "features": dict(FEATURES)}
-    return {"index": 0, "pci_bus_id": "0000:01:00.0", "queried": queried, "synthetic": synthetic,
+    return {"index": 0, "pci_bus_id": "0000:01:00.0", "mig_mode": 0, "queried": queried,
+            "synthetic": synthetic,
             "raw": {"reserved_shared_per_block": 1024, "shared_per_block_default": 49152,
                     "registers_per_block": 65536, "max_threads_per_block": 1024, "warp_size": 32},
             "engine_occupancy_limits": {"reserved_shared_per_block": 1024,
@@ -426,6 +427,7 @@ class Compare(unittest.TestCase):
     def test_slice_keeps_the_rows_values(self):
         # A MIG slice reports fewer SMs; the engine prices its share and keeps the row's values.
         d = device_a100()
+        d["mig_mode"] = 1
         d["queried"]["sms"] = 42
         d["queried"]["global_bytes"] = 40_000_000_000
         d["engine_table_facts"]["source"] = 2
@@ -439,6 +441,7 @@ class Compare(unittest.TestCase):
         # whole board reporting the same smaller values fails, as does a GeForce board with
         # fewer SMs than its row (no GeForce board partitions) and a larger count anywhere.
         d = device_a100()
+        d["mig_mode"] = 1
         d["queried"].update(sms=42, l2_bytes=20 * MIB, global_bytes=40_000_000_000,
                             memory_bus_bits=2560)
         d["engine_table_facts"]["source"] = 2
@@ -457,6 +460,24 @@ class Compare(unittest.TestCase):
         d = device_a100()
         d["queried"]["sms"] = 120  # more SMs than the row, a wrong row
         self.assertEqual(statuses(d)[("table", "sms")], "mismatch")
+
+    def test_mig_mode_decides_a_full_memory_slice(self):
+        # A 7g profile of an A100: 98 SMs and the board's whole memory and L2. With MIG enabled
+        # that is the slice (information); with MIG disabled it is a wrong row or a wrong count.
+        def seven_g(mig_mode):
+            d = device_a100()
+            d["mig_mode"] = mig_mode
+            d["queried"]["sms"] = 98
+            d["engine_table_facts"]["source"] = 2
+            return d
+        self.assertEqual(no_mismatch(self, statuses(seven_g(1)))[("table", "sms")], "info")
+        self.assertEqual(statuses(seven_g(0))[("table", "sms")], "mismatch")
+        # NVML did not say: the whole memory cannot be told from a wrong row, so unverified, not
+        # information; a reduced memory shows the slice itself.
+        self.assertEqual(statuses(seven_g(-1))[("table", "sms")], "unavailable")
+        d = seven_g(-1)
+        d["queried"]["global_bytes"] = 40_000_000_000
+        self.assertEqual(statuses(d)[("table", "sms")], "info")
 
     def test_mig_by_chip_and_segment(self):
         # GB202 partitions on its professional boards, not on the GeForce 5090; L40 (AD102) and
@@ -591,6 +612,10 @@ class Cli(unittest.TestCase):
                 ("a feature that is not a bool",
                  mutate(lambda d: d["queried"]["features"].update(pdl=1))),
                 ("index null", mutate(lambda d: d.update(index=None))),
+                ("no mig mode", mutate(lambda d: d.pop("mig_mode"))),
+                ("mig mode 2", mutate(lambda d: d.update(mig_mode=2))),
+                ("mig mode a bool", mutate(lambda d: d.update(mig_mode=True))),
+                ("mig mode null", mutate(lambda d: d.update(mig_mode=None))),
                 ("pci bus id not text", mutate(lambda d: d.update(pci_bus_id=7))),
                 ("no index", mutate(lambda d: d.pop("index")))):
             done, summary = self.run_cli({"devices": [d]})
@@ -748,7 +773,7 @@ class ProbeSource(unittest.TestCase):
 
     def test_the_device_entry_prints_every_part(self):
         entry = self.keys_after('return Json{{"index", device}', "\n}\n")
-        self.assertLessEqual({"index", "pci_bus_id"} | set(facts_compare.DEVICE_PARTS), entry)
+        self.assertLessEqual({"index", "pci_bus_id", "mig_mode"} | set(facts_compare.DEVICE_PARTS), entry)
         self.assertIn('{"error", error.what()}', self.SOURCE)
 
     def test_the_occupancy_values_are_the_engines_constants(self):

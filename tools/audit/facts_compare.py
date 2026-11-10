@@ -10,7 +10,8 @@ validate_probe rejects a document with a key missing or of the wrong type before
   table  the gpu_facts.json row against the driver: chip, cc, SMs, L2, bus width, memory data
          rate, boost clock, memory size. A value off the row passes as information only where the
          row records that board in its `variants` (bus_bits, gbps, boost_mhz, vram_gib), or as a
-         MIG slice (a MIG-capable chip reporting fewer SMs and less memory), a laptop's range or a
+         MIG slice (a MIG-capable chip reporting fewer SMs with MIG enabled per NVML; MIG mode
+         unknown: unverified, or a slice where the memory is reduced too), a laptop's range or a
          vendor's boost window; anything else is a mismatch. The engine's reading of the row
          alone (engine_row_facts) against the JSON, exactly; the facts the query stored
          (engine_table_facts) against that reading.
@@ -222,6 +223,9 @@ def validate_probe(probe_output):
                                  "is missing or not a boolean")
         if "pci_bus_id" in device and not isinstance(device["pci_bus_id"], str):
             raise ValueError(f"invalid probe output: device {position}: pci_bus_id is not text")
+        if device.get("mig_mode") not in (-1, 0, 1) or type(device.get("mig_mode")) is not int:
+            raise ValueError(f"invalid probe output: device {position}: mig_mode is missing or not "
+                             "-1 (unknown), 0 or 1")
         queried, synthetic = device["queried"].get("features"), device["synthetic"].get("features")
         for part, features in (("queried", queried), ("synthetic", synthetic)):
             if not isinstance(features, dict) or \
@@ -234,7 +238,7 @@ def validate_probe(probe_output):
                              "not cover the synthetic ones, or a feature is not a boolean")
 
 
-def compare_row(q, row):
+def compare_row(q, row, mig_mode):
     """The table results of a board against its gpu_facts.json row, and the statuses by field."""
     out = []
 
@@ -245,20 +249,27 @@ def compare_row(q, row):
         "the PCI-ID block table's chip against the row's")
     cc = q["major"] * 10 + q["minor"]
     add("cc", row["cc"], cc, "match" if row["cc"] == cc else "mismatch")
-    # A MIG slice reports its part of the SMs, the L2, the memory and the bus; the engine prices
-    # the board's row at the slice's share of the SMs, so a smaller value is the slice's, not a
-    # wrong row. A whole board reports its memory whole, so fewer SMs there is a wrong row, and
-    # so is a chip that does not partition.
+    # A MIG slice reports its part of the SMs (and, but for a full-memory profile, of the L2, the
+    # memory and the bus); the engine prices the row at the slice's share of the SMs, so fewer SMs
+    # on a MIG-capable chip with MIG enabled is the slice's, not a wrong row. With MIG disabled it
+    # is a wrong row, and so it is on a chip that does not partition. Where NVML did not say (mig
+    # mode -1), a slice shows by its memory being reduced too; fewer SMs with the memory whole
+    # cannot be told from a wrong row, so the field is unverified.
     vram = row["vram_gib"] * GIB
     ratio = q["global_bytes"] / vram
     vram_low = VRAM_LOW_GEFORCE if row.get("segment") == "geforce" else VRAM_LOW_ECC
-    slice_part = mig_capable(row) and 0 < q["sms"] < row["sms"] and 0 < ratio < vram_low
+    fewer = mig_capable(row) and 0 < q["sms"] < row["sms"]
+    shrunk = 0 < ratio < vram_low
+    slice_part = fewer and (mig_mode == 1 or (mig_mode == -1 and shrunk))
     part_note = "a slice's part of the board's (MIG): the engine prices the row at its share"
     if row["sms"] == q["sms"]:
         add("sms", row["sms"], q["sms"], "match")
     elif slice_part:
         add("sms", row["sms"], q["sms"], "info", "a slice of the board (MIG): the engine prices "
             "its share")
+    elif fewer and mig_mode == -1:
+        add("sms", row["sms"], q["sms"], "unavailable",
+            "fewer SMs on a MIG-capable chip and NVML did not say whether MIG is on")
     else:
         add("sms", row["sms"], q["sms"], "mismatch")
     l2 = row.get("l2_mib")
@@ -370,8 +381,8 @@ def compare_engine(device, row, table_results):
         "match" if stored["mma_slow"] == want_slow else "mismatch",
         "the engine's mma_slow (a board fact the driver cannot answer) against the row")
     by_field = {r["field"]: r["status"] for r in table_results}
-    deviated = laptop or any(by_field.get(f) == "info" for f in ("sms", "bus_bits",
-                                                                 "memory_clock_khz"))
+    deviated = laptop or by_field.get("sms") in ("info", "unavailable") or any(
+        by_field.get(f) == "info" for f in ("bus_bits", "memory_clock_khz"))
     if not deviated:
         same("engine_source", alone["source"], stored["source"], stored_note)
         for field in ("reference_clock_khz", "memory_bus_bits", "memory_clock_khz"):
@@ -411,7 +422,7 @@ def compare_device(device, row):
                           "mismatch", "no row for this PCI product id: the engine runs it on the "
                           "driver's values alone"))
     else:
-        table, _ = compare_row(q, row)
+        table, _ = compare_row(q, row, device["mig_mode"])
         out += table
         out += compare_engine(device, row, table)
 
