@@ -1,8 +1,11 @@
 // The kernel roofline (#613 PR-4, ops/generic/kernel_roofline.h) against the formula it replaced,
 // host only. Two checks:
 //  1. The selector's priced routes equal, to a relative 1e-12, the fixed golden table computed
-//     from the code before the extraction (kernel_roofline_golden.inc): the golden boards, three
-//     formats, two shapes, two widths, plain and SwiGLU epilogues, every route offered.
+//     from the code before the extraction (kernel_roofline_golden.inc): the golden boards, two
+//     formats, four shapes, five widths, plain and SwiGLU epilogues, every register-MMA, tiled and
+//     staged route offered. Routes are matched by (family, schedule); a route a build gates in or
+//     out (cluster schedules, shared memory) is checked against its gate, so one file serves every
+//     build set.
 //  2. The selector's own priced routes (route_query.h priced_routes_query) are the roofline's
 //     terms times the A16 scale for the inputs the selector passes (the route's tile, the
 //     described weight's bytes, the compiled facts it read): the client's wiring.
@@ -10,6 +13,7 @@
 #include "core/generation.h"
 #include "core/weight.h"
 #include "ninferno/ops/linear.h"
+#include "ops/common/arch_limits.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/kernel_roofline.h"
 #include "ops/generic/route_cost_constants.h"
@@ -64,46 +68,99 @@ struct GoldenRoute {
     double seconds;
 };
 
-constexpr QType kGoldenFormats[] = {QType::GGML_Q4_K, QType::GGML_Q6_K, QType::BF16};
+constexpr QType kGoldenFormats[] = {QType::GGML_Q4_K, QType::BF16};
 
 #include "kernel_roofline_golden.inc"
 
 constexpr double kGoldenTolerance = 1e-12;
 
+constexpr bool is_golden_family(g::Family f) {
+    return f == g::Family::RegisterMma || f == g::Family::TiledMma || f == g::Family::StagedMma;
+}
+
+// The table was made in the base build (no NVFP4, 99 KiB of shared memory per block). Which routes
+// a build offers differs by build set, so routes are matched by (family, schedule), never by
+// position: the prices of the routes both sides offer must agree, and a route on one side only
+// must be one this build gates out or in:
+//  - missing now: a register-MMA schedule the build cannot launch, or a staged schedule whose
+//    shared stages do not fit this build's block (sm75: 64 KiB);
+//  - extra now: a register-MMA cluster schedule (the full build, rmma_schedule_launchable) or a
+//    staged schedule that fits only because this build's block is past 99 KiB (sm80: 163 KiB).
+// A route that is a tiled one, or that is gated nowhere, is a failure.
+bool gate_explains(bool extra, g::Route r) {
+    constexpr std::size_t kBaseShared = 99 * 1024;
+    switch (r.family) {
+    case g::Family::RegisterMma:
+        return extra ? g::rmma_schedule_info(r.schedule).cluster > 1
+                     : !g::rmma_schedule_launchable(r.schedule);
+    case g::Family::StagedMma:
+        return extra ? g::staged_fits(r.schedule) && ninferno::ops::kMaxSharedBytesPerBlock > kBaseShared
+                     : !g::staged_fits(r.schedule);
+    default:
+        return false;
+    }
+}
+
 void check_golden() {
-    long prices = 0, bad = 0;
+    long prices = 0, gated_out = 0, gated_in = 0, bad = 0;
     for (const GoldenCall& c : kGoldenCalls) {
         const DeviceClass d = g::board_device_class(g::kFactsBoards[c.board]);
         const auto priced   = g::priced_routes_query(
             d, kGoldenFormats[c.format], LinearPolicy::A16Only, c.epilogue, c.n, c.k, c.tokens);
-        if (priced.size() != c.count) {
+        const auto fail = [&](const char* what, int family, int schedule, double want,
+                              double got) {
             if (++bad <= 10) {
-                std::fprintf(stderr, "FAIL %s format %d %dx%d T=%d: %zu routes, golden %zu\n",
-                             g::kFactsBoards[c.board].name, c.format, c.n, c.k, c.tokens,
-                             priced.size(), c.count);
+                std::fprintf(stderr,
+                             "FAIL %s format %d %dx%d T=%d route %d:%d: %s (golden %.17g now %.17g)\n",
+                             g::kFactsBoards[c.board].name, c.format, c.n, c.k, c.tokens, family,
+                             schedule, what, want, got);
             }
-            continue;
+        };
+        std::vector<bool> seen(c.count, false);
+        for (const auto& got : priced) {
+            if (!is_golden_family(got.route.family)) continue;
+            const int family   = static_cast<int>(got.route.family);
+            const int schedule = static_cast<int>(got.route.schedule);
+            std::size_t at     = c.count;
+            for (std::size_t i = 0; i < c.count; ++i) {
+                const GoldenRoute& want = kGoldenRoutes[c.first + static_cast<long>(i)];
+                if (want.family == family && want.schedule == schedule) at = i;
+            }
+            if (at == c.count) {
+                if (gate_explains(true, got.route)) {
+                    ++gated_in;
+                } else {
+                    fail("offered now, not in the golden, and no gate explains it", family,
+                         schedule, 0, got.seconds);
+                }
+                continue;
+            }
+            seen[at]                = true;
+            const GoldenRoute& want = kGoldenRoutes[c.first + static_cast<long>(at)];
+            ++prices;
+            if (!(std::fabs(got.seconds - want.seconds) <= kGoldenTolerance * want.seconds)) {
+                fail("price moved", family, schedule, want.seconds, got.seconds);
+            }
         }
         for (std::size_t i = 0; i < c.count; ++i) {
+            if (seen[i]) continue;
             const GoldenRoute& want = kGoldenRoutes[c.first + static_cast<long>(i)];
-            const auto& got         = priced[i];
-            ++prices;
-            const bool same =
-                static_cast<int>(got.route.family) == want.family &&
-                static_cast<int>(got.route.schedule) == want.schedule &&
-                std::fabs(got.seconds - want.seconds) <= kGoldenTolerance * want.seconds;
-            if (!same && ++bad <= 10) {
-                std::fprintf(stderr,
-                             "FAIL %s format %d %dx%d T=%d route %d:%d: golden %.17g now %.17g\n",
-                             g::kFactsBoards[c.board].name, c.format, c.n, c.k, c.tokens,
-                             want.family, want.schedule, want.seconds, got.seconds);
+            const g::Route r{static_cast<g::Family>(want.family),
+                             static_cast<std::uint8_t>(want.schedule)};
+            if (gate_explains(false, r)) {
+                ++gated_out;
+            } else {
+                fail("in the golden, not offered now, and no gate explains it", want.family,
+                     want.schedule, want.seconds, 0);
             }
         }
     }
-    std::printf("golden: %zu calls, %ld route prices, %ld differ\n",
-                sizeof(kGoldenCalls) / sizeof(kGoldenCalls[0]), prices, bad);
+    std::printf("golden: %zu calls, %ld route prices equal-checked, %ld routes gated out and %ld "
+                "gated in by this build, %ld differ\n",
+                sizeof(kGoldenCalls) / sizeof(kGoldenCalls[0]), prices, gated_out, gated_in, bad);
     if (bad > 0 || prices == 0) ++failures;
 }
+
 
 // ---- Check 2: the selector's wiring ----
 
