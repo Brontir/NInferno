@@ -56,6 +56,7 @@ ninferno_add_test(ninferno_gate_atlas_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_gate_atlas.cpp"
   LIBRARIES ninferno_core_host ninferno::json)
 # Host-only: no CUDA runtime in its link closure (#620 step 11).
+target_sources(ninferno_gate_atlas_test PRIVATE ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp)
 cmake_language(DEFER CALL ninferno_assert_host_only ninferno_gate_atlas_test)
 
 # The route cost model's constants, each tagged fact / counted / fitted
