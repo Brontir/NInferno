@@ -1,11 +1,16 @@
-probe isa_probe 16
+source_sha256 cde151411d78b687c618a444a700b23561ccc123cb64e112f6a258fa828bdefd
+arch sm_89
+sass_per_mma 1
+probe isa_probe 17
 card NVIDIA GeForce RTX 4090
 cc 89
 sms 128
 l2_bytes 75497472
+mem_clock_khz 10501000
 driver 13040
 runtime 13040
 nvcc 13.4.92
+note device 0 is the GPU at PCI 0000:01:00.0
 shape hmma_16816_f32_bf16 4096
 note mma_cycles_per_sm: 128 of 128 SMs ran 4 CTA(s) of 4 warps at once; every SM counts
 fact mma_cycles_per_sm 8.001 clk
@@ -17,117 +22,124 @@ note mma_cycles_per_sm_w8: 128 of 128 SMs ran 1 CTA(s) of 8 warps at once, the o
 fact mma_cycles_per_sm_w8 8.002 clk
 note mma_cycles_per_sm_w16: 128 of 128 SMs ran 1 CTA(s) of 16 warps at once, the others are left out
 fact mma_cycles_per_sm_w16 8.001 clk
-fact mma_dependent_latency 32.895 clk
-fact sm_clock_mhz_mma 2759.879 mhz
-note the SM clock under the MMA loop: 2536 MHz at the first of 637 launches, 2759..2761 over the last quarter
+fact mma_dependent_latency 32.893 clk
+fact sm_clock_mhz_mma 2770.961 mhz
+note the SM clock under the MMA loop: 2534 MHz at the first of 636 launches, 2771..2774 over the last quarter
 note fp32_cycles_per_warp_instruction: 128 of 128 SMs ran 4 CTA(s) of 4 warps at once; every SM counts
 note int32_cycles_per_warp_instruction: 128 of 128 SMs ran 4 CTA(s) of 4 warps at once; every SM counts
-fact fp32_cycles_per_warp_instruction 1.055 clk
+fact fp32_cycles_per_warp_instruction 1.033 clk
 fact int32_cycles_per_warp_instruction 2.021 clk
 fact lat_imad 4.033 clk
-fact lat_iadd 5.029 clk
+fact lat_add_chain 5.029 clk
 fact lat_lop3 4.033 clk
 fact lat_prmt 4.053 clk
 fact lat_shf 4.033 clk
 fact lat_hfma2 4.110 clk
 fact lat_ffma 4.033 clk
 fact lat_shfl 27.002 clk
-fact lat_cvt_i2f_f2i 11.500 clk
-fact lat_cvt_f32_f16 5.047 clk
+fact lat_cvt_i2f 4.033 clk
+fact lat_cvt_f2i 17.002 clk
+fact lat_cvt_f32_to_f16 17.001 clk
+fact lat_cvt_f16_to_f32 5.029 clk
 fact l1_latency_w1 34.034 clk
 fact l1_latency_w2 34.034 clk
-fact l1_latency_w4 35.029 clk
+fact l1_latency_w4 35.028 clk
 fact l1_latency_w8 35.034 clk
-fact l2_latency_w1 261.463 clk
-fact l2_latency_ns_w1 94.750 ns
-fact l2_latency_w2 261.537 clk
-fact l2_latency_ns_w2 94.750 ns
-fact l2_latency_w4 261.169 clk
-fact l2_latency_ns_w4 94.500 ns
-fact l2_latency_w8 260.887 clk
-fact l2_latency_ns_w8 94.500 ns
-fact dram_tlbwarm_latency_w1 648.781 clk
-fact dram_tlbwarm_latency_ns_w1 236.000 ns
-fact dram_tlbwarm_latency_w2 648.465 clk
-fact dram_tlbwarm_latency_ns_w2 236.000 ns
-fact dram_tlbwarm_latency_w4 680.047 clk
+fact l2_latency_w1 261.365 clk
+fact l2_latency_ns_w1 94.250 ns
+fact l2_latency_w2 261.408 clk
+fact l2_latency_ns_w2 94.250 ns
+fact l2_latency_w4 260.968 clk
+fact l2_latency_ns_w4 94.250 ns
+fact l2_latency_w8 260.658 clk
+fact l2_latency_ns_w8 94.000 ns
+fact dram_tlbwarm_latency_w1 651.783 clk
+fact dram_tlbwarm_latency_ns_w1 234.000 ns
+fact dram_tlbwarm_latency_w2 650.291 clk
+fact dram_tlbwarm_latency_ns_w2 234.000 ns
+fact dram_tlbwarm_latency_w4 681.775 clk
 fact dram_tlbwarm_latency_ns_w4 246.000 ns
-fact dram_tlbwarm_latency_w8 679.330 clk
+fact dram_tlbwarm_latency_w8 681.654 clk
 fact dram_tlbwarm_latency_ns_w8 246.000 ns
-fact dram_latency_w1 654.508 clk
-fact dram_latency_ns_w1 238.000 ns
-fact dram_latency_w2 657.357 clk
+fact dram_latency_w1 656.969 clk
+fact dram_latency_ns_w1 236.000 ns
+fact dram_latency_w2 658.893 clk
 fact dram_latency_ns_w2 238.000 ns
-fact dram_latency_w4 686.582 clk
+fact dram_latency_w4 687.844 clk
 fact dram_latency_ns_w4 248.000 ns
-fact dram_latency_w8 687.775 clk
-fact dram_latency_ns_w8 250.000 ns
-fact dram_lanes_latency_w1 2368.258 clk
+fact dram_latency_w8 689.613 clk
+fact dram_latency_ns_w8 248.000 ns
+fact dram_lanes_latency_w1 2378.867 clk
 fact dram_lanes_latency_ns_w1 860.000 ns
-fact dram_lanes_latency_w2 3360.668 clk
+fact dram_lanes_latency_w2 3381.852 clk
 fact dram_lanes_latency_ns_w2 1220.000 ns
-fact dram_lanes_latency_w4 5989.816 clk
-fact dram_lanes_latency_ns_w4 2172.000 ns
-fact dram_lanes_latency_w8 11345.562 clk
+fact dram_lanes_latency_w4 5993.984 clk
+fact dram_lanes_latency_ns_w4 2160.000 ns
+fact dram_lanes_latency_w8 11393.875 clk
 fact dram_lanes_latency_ns_w8 4112.000 ns
-fact dram_lanes_half_latency_w1 1658.402 clk
+fact dram_lanes_half_latency_w1 1662.211 clk
 fact dram_lanes_half_latency_ns_w1 600.000 ns
-fact dram_lanes_half_latency_w2 2374.312 clk
+fact dram_lanes_half_latency_w2 2382.500 clk
 fact dram_lanes_half_latency_ns_w2 860.000 ns
-fact dram_lanes_half_latency_w4 3379.914 clk
+fact dram_lanes_half_latency_w4 3389.656 clk
 fact dram_lanes_half_latency_ns_w4 1224.000 ns
-fact dram_lanes_half_latency_w8 5969.141 clk
-fact dram_lanes_half_latency_ns_w8 2164.000 ns
-fact sm_clock_mhz_chase 2760.284 mhz
+fact dram_lanes_half_latency_w8 6025.320 clk
+fact dram_lanes_half_latency_ns_w8 2172.000 ns
+fact sm_clock_mhz_chase 2772.954 mhz
 fact l1_held_latency_w1 34.034 clk
 fact l1_held_latency_w2 34.034 clk
-fact l1_held_latency_w4 35.030 clk
-fact l1_held_latency_w8 35.081 clk
-fact l2_held_latency_w1 261.480 clk
-fact l2_held_latency_ns_w1 94.500 ns
+fact l1_held_latency_w4 35.031 clk
+fact l1_held_latency_w8 35.082 clk
+fact l2_held_latency_w1 261.343 clk
+fact l2_held_latency_ns_w1 94.250 ns
 note l2_held_latency_w2: 112 of 128 CTAs had an SM to themselves and one FFMA warp, the others are left out
-fact l2_held_latency_w2 261.545 clk
-fact l2_held_latency_ns_w2 94.750 ns
-fact l2_held_latency_w4 261.192 clk
-fact l2_held_latency_ns_w4 94.500 ns
-fact l2_held_latency_w8 260.964 clk
-fact l2_held_latency_ns_w8 94.500 ns
-fact dram_tlbwarm_held_latency_w1 647.373 clk
+fact l2_held_latency_w2 261.467 clk
+fact l2_held_latency_ns_w2 94.250 ns
+fact l2_held_latency_w4 261.027 clk
+fact l2_held_latency_ns_w4 94.000 ns
+fact l2_held_latency_w8 260.799 clk
+fact l2_held_latency_ns_w8 94.000 ns
+fact dram_tlbwarm_held_latency_w1 647.637 clk
 fact dram_tlbwarm_held_latency_ns_w1 234.000 ns
-note dram_tlbwarm_held_latency_w2: 68 of 128 CTAs had an SM to themselves and one FFMA warp, the others are left out
-fact dram_tlbwarm_held_latency_w2 648.447 clk
-fact dram_tlbwarm_held_latency_ns_w2 236.000 ns
-fact dram_tlbwarm_held_latency_w4 680.225 clk
+note dram_tlbwarm_held_latency_w2: 70 of 128 CTAs had an SM to themselves and one FFMA warp, the others are left out
+fact dram_tlbwarm_held_latency_w2 650.666 clk
+fact dram_tlbwarm_held_latency_ns_w2 234.000 ns
+fact dram_tlbwarm_held_latency_w4 682.422 clk
 fact dram_tlbwarm_held_latency_ns_w4 246.000 ns
-fact dram_tlbwarm_held_latency_w8 679.203 clk
+fact dram_tlbwarm_held_latency_w8 681.271 clk
 fact dram_tlbwarm_held_latency_ns_w8 246.000 ns
-fact dram_held_latency_w1 655.631 clk
-fact dram_held_latency_ns_w1 238.000 ns
-note dram_held_latency_w2: 60 of 128 CTAs had an SM to themselves and one FFMA warp, the others are left out
-fact dram_held_latency_w2 657.857 clk
+fact dram_held_latency_w1 656.533 clk
+fact dram_held_latency_ns_w1 236.000 ns
+note dram_held_latency_w2: 66 of 128 CTAs had an SM to themselves and one FFMA warp, the others are left out
+fact dram_held_latency_w2 659.508 clk
 fact dram_held_latency_ns_w2 238.000 ns
-fact dram_held_latency_w4 686.307 clk
+fact dram_held_latency_w4 688.822 clk
 fact dram_held_latency_ns_w4 248.000 ns
-fact dram_held_latency_w8 688.238 clk
-fact dram_held_latency_ns_w8 250.000 ns
-fact dram_lanes_held_latency_w1 2368.941 clk
+fact dram_held_latency_w8 689.123 clk
+fact dram_held_latency_ns_w8 248.000 ns
+fact dram_lanes_held_latency_w1 2384.195 clk
 fact dram_lanes_held_latency_ns_w1 860.000 ns
-note dram_lanes_held_latency_w2: 76 of 128 CTAs had an SM to themselves and one FFMA warp, the others are left out
-fact dram_lanes_held_latency_w2 3371.559 clk
-fact dram_lanes_held_latency_ns_w2 1224.000 ns
-fact dram_lanes_held_latency_w4 5952.457 clk
-fact dram_lanes_held_latency_ns_w4 2156.000 ns
-fact dram_lanes_held_latency_w8 11326.801 clk
-fact dram_lanes_held_latency_ns_w8 4104.000 ns
-fact dram_lanes_half_held_latency_w1 1659.719 clk
+note dram_lanes_held_latency_w2: 62 of 128 CTAs had an SM to themselves and one FFMA warp, the others are left out
+fact dram_lanes_held_latency_w2 3379.469 clk
+fact dram_lanes_held_latency_ns_w2 1220.000 ns
+fact dram_lanes_held_latency_w4 6016.855 clk
+fact dram_lanes_held_latency_ns_w4 2172.000 ns
+fact dram_lanes_held_latency_w8 11403.426 clk
+fact dram_lanes_held_latency_ns_w8 4116.000 ns
+fact dram_lanes_half_held_latency_w1 1665.492 clk
 fact dram_lanes_half_held_latency_ns_w1 600.000 ns
-fact dram_lanes_half_held_latency_w2 2369.219 clk
+note dram_lanes_half_held_latency_w2: 62 of 64 CTAs had an SM to themselves and one FFMA warp, the others are left out
+fact dram_lanes_half_held_latency_w2 2381.645 clk
 fact dram_lanes_half_held_latency_ns_w2 860.000 ns
-fact dram_lanes_half_held_latency_w4 3383.691 clk
-fact dram_lanes_half_held_latency_ns_w4 1228.000 ns
-fact dram_lanes_half_held_latency_w8 5987.172 clk
+fact dram_lanes_half_held_latency_w4 3388.375 clk
+fact dram_lanes_half_held_latency_ns_w4 1224.000 ns
+fact dram_lanes_half_held_latency_w8 6008.059 clk
 fact dram_lanes_half_held_latency_ns_w8 2168.000 ns
-fact sm_clock_mhz_chase_held 2760.988 mhz
-fact shared_latency 24.127 clk
+fact sm_clock_mhz_chase_held 2772.873 mhz
+fact shared_latency 24.129 clk
 selfcheck ok
 end
+note compute processes on the probe's GPU before the run: 0
+note compute processes on the probe's GPU after the run: 0
+note compute processes on the probe's GPU during the run besides the probe (nvidia-smi every 200 ms): 0
+note nvidia-smi over the run (17 samples): memory clock 405..10251 MHz, SM clock 210..2775 MHz, P-state P0/P2
