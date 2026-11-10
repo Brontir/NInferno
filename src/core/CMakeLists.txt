@@ -17,6 +17,7 @@ add_library(ninferno_core_host STATIC
   dtype.cpp
   device_class_host.cpp
   machine_facts.cpp
+  gate_atlas.cpp
 )
 ninferno_internal_includes(ninferno_core_host)
 target_include_directories(ninferno_core_host PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
@@ -29,7 +30,6 @@ add_library(ninferno_core STATIC
   device_class.cpp
   device_traits.cpp
   kernel_occupancy.cpp
-  gate_atlas.cpp
   device_image_probe.cu
   tune_timer.cu
   host_worker_pool.cpp
