@@ -267,23 +267,6 @@ void launch_epilogue(Epilogue epilogue, const GemmArgs& args, cudaStream_t strea
 } // namespace
 
 
-bool volta_hmma_takes(WeightCodec codec, const GemmArgs& args) {
-    // A join (Call::join_previous) needs programmatic dependent launch, which sm_70 does not have;
-    // the segmented chain asks for one only after a call that released, so a later part of a
-    // segmented projection takes this kernel (and the lane-local GEMV, which refuses a join) as a
-    // separate call does.
-    if (args.lane_local == 0 || args.tokens < kVoltaHmmaMinTokens ||
-        args.tokens > kVoltaHmmaMaxTokens) {
-        return false;
-    }
-    // Whole superblocks, or for Q8 G32 whole pairs of groups (gpt-oss's K = 2880: its LM head ran
-    // the register-MMA tile on FP32 FMAs, 1.9 ms a token on the GV100); the staging reads four
-    // bf16 values at a time.
-    return volta_hmma_codec(codec) && (args.k % volta_hmma_k_multiple(codec)) == 0 &&
-           (args.ldx % 4) == 0 &&
-           (reinterpret_cast<std::uintptr_t>(args.x) % 8) == 0;
-}
-
 void launch_volta_hmma(WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
                        cudaStream_t stream) {
     switch (codec) {

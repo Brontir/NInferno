@@ -31,6 +31,7 @@ add_library(ninferno_ops_host STATIC
   "${CMAKE_CURRENT_LIST_DIR}/generic_routes.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_select.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_rmma_describe.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_gates.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_cost.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_workspace.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/route_query.cpp"
