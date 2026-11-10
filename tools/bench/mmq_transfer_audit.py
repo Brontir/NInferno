@@ -85,14 +85,15 @@ def measured_boards(path, facts=None):
         if m[7] == "true":
             raise ValueError(f"{m[1]}: mma_slow boards are not mirrored")
         consts[m[1]] = (int(m[2]) * 10 + int(m[3]), int(m[4]), float(m[5]), float(m[6]))
-    for m in re.finditer(r"constexpr Board (k\w+)\s*=\s*board_registry::board\(\s*(0x[0-9A-Fa-f]+)"
-                         r"\s*(?:,\s*([\d.]+)\s*)?\)", text):
+    for m in re.finditer(r"constexpr\s+Board\s+(k\w+)\s*=\s*board_registry::board\("
+                         r"\s*(0x[0-9A-Fa-f]+)[uU]?\s*(?:,\s*([\d.]+)\s*)?\)", text):
         row = rows.get(int(m[2], 16))
         if row is None:
             raise ValueError(f"{m[1]}: PCI id {m[2]} is not in {facts}")
         if row.get("mma_slow", False):
             raise ValueError(f"{m[1]}: mma_slow boards are not mirrored")
-        dram = float(m[3]) if m[3] else row["bus_bits"] * row["gbps"] / 8.0
+        # an override of 0 names none, as board()'s default argument does
+        dram = float(m[3]) if m[3] and float(m[3]) != 0 else row["bus_bits"] * row["gbps"] / 8.0
         consts[m[1]] = (int(row["cc"]), int(row["sms"]), float(row.get("l2_mib", 0)), dram)
     table = re.search(r"kMmqPrefillPays\[\] = \{(.*?)\};", text, re.S)
     out = []
