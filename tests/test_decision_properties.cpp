@@ -181,36 +181,36 @@ constexpr Known kKnown[] = {
      "charge (a): removed alone the group falls from 35.0 % to 2.6 % of the family's cases, with "
      "all "
      "three removed to 0.99 % (issue #690)",
-     {0.350, 0.351, 0, 0},
-     {0.350, 0.351, 0, 0}},
+     {0.341, 0.351, 0, 0},
+     {0.3337, 0.344, 0, 0}},
     {"P1 sms x1.25",
      "rmma beyond the SM ratio",
      "charge (c) with (a): removing (c) alone leaves 20 of the 675 cases (x1.336), removing (a) "
      "alone grows the group to 13 156 (x1.90): the two charges change together (issue #690)",
-     {0.0008, 0.001, 1.42, 1.43},
-     {0.0008, 0.001, 1.42, 1.43}},
+     {0.0007, 0.001, 1.4, 1.43},
+     {0.0007, 0.001, 1.4, 1.43}},
     {"P1 sms x1.25",
      "staged within the SM ratio",
      "charge (a): removed alone the group disappears (issue #690)",
-     {0.435, 0.436, 0, 0},
-     {0.435, 0.436, 0, 0}},
+     {0.4184, 0.436, 0, 0},
+     {0.4184, 0.436, 0, 0}},
     {"P1 sms x1.25",
      "w4a8 within the SM ratio",
      "charges (a) and (b): removing (b) alone leaves 14.0 % of the family's cases, all three none "
      "(issue #690)",
-     {0.238, 0.239, 0, 0},
-     {0.238, 0.239, 0, 0}},
+     {0.2282, 0.239, 0, 0},
+     {0.2287, 0.239, 0, 0}},
     {"P1 sms x1.25",
      "w4a8 beyond the SM ratio",
      "charges (a) and (b) together: removing either alone makes the group disappear (issue #690)",
-     {0.024, 0.025, 1.52, 1.53},
-     {0.024, 0.025, 1.52, 1.53}},
+     {0.0223, 0.025, 1.52, 1.53},
+     {0.0226, 0.025, 1.52, 1.53}},
     {"P1 sms x1.25",
      "i8 within the SM ratio",
      "charge (b): removed alone the group falls from 39.1 % to 0.72 % of the family's cases "
      "(issue #690)",
-     {0.390, 0.391, 0, 0},
-     {0.390, 0.391, 0, 0}},
+     {0.3781, 0.391, 0, 0},
+     {0.3781, 0.391, 0, 0}},
 };
 
 // ---- Findings ----------------------------------------------------------------------------------
