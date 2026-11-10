@@ -19,7 +19,8 @@
 //     which quantizes in the kernel); int8 with a block scale, and a block sum for a format with a
 //     min, on an R8 gate/up of an unpadded x (the router's CTAs wrote the codes) and on the W4A8
 //     tier, whose stage first runs a quantize pass that reads the BF16 activation and writes the
-//     codes, scales and sums (40 bytes a 32-value block over K rounded up; both priced). A gate and
+//     codes, scales and sums (40 bytes a 32-value block) of a plane at K rounded up to 128, which
+//     the kernel then reads whole (both priced). A gate and
 //     up stage reads the T rows of x once (the k assignments of a token share its row), a down
 //     stage the T x k rows of the activation; and writes the stage's output rows once. These are
 //     the expected DRAM bytes of a call that reads each byte once from DRAM, under uniform routing:
@@ -188,8 +189,10 @@ rank_against_selected(const std::optional<MoeStagePrice>& price,
                                                        bool prefill, Stage stage);
 
 // The layer's price on a plan: its two grouped stages (each stage's kernel from stage_routes), the
-// router's bytes (its weights, the activation, the logits) and, where the down stage is not R8
-// (whose last CTAs combine), the separate combine (reads T x k x H BF16, writes T x H). A stage
+// router's bytes (its weights, the activation, the logits) and, where the down stage does not fuse
+// the combine (an R8 down stage's last CTAs do, unless the layer has a shared expert or the row
+// grid exceeds the ticket array: moe_r8_down_fuses_combine), the separate combine (reads T x k x H
+// BF16, writes T x H). A stage
 // without its compute term stands at its DRAM floor: `compute_priced` false says the number is a
 // floor in that case, not a full price.
 struct MoeLayerPrice {

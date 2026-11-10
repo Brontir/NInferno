@@ -205,20 +205,21 @@ void law_checks() {
     const auto a8_plain   = moe::price_moe_stage(s, moe::MoeStageKernel::W4a8, 1, board);
     const auto a8_min     = moe::price_moe_stage(k4, moe::MoeStageKernel::W4a8, 1, board);
     // The W4A8 stage first quantizes (reads the BF16 row, writes codes + scale + sum: 40 bytes a
-    // 32-value block whatever the format, over K rounded up to whole blocks: 1000 values are 32
-    // blocks) and then reads the codes (36 bytes a 32 values, 40 with a block sum).
+    // 32-value block whatever the format, of the plane at K rounded up to 128: 1000 values are a
+    // plane of 1024, 32 blocks) and then reads the whole plane (36 bytes a 32 values, 40 with a
+    // block sum).
     const double quantize_bytes = 1000 * 2.0 + 32 * 40.0;
-    check(a8_plain && a8_min && close(a8_min->bytes - a8_plain->bytes, 1000 * 4.0 / 32.0),
+    check(a8_plain && a8_min && close(a8_min->bytes - a8_plain->bytes, 1024 * 4.0 / 32.0),
           "a format with a min adds the block sum to the codes the kernel reads, not to the write");
     const double out_bytes = 10 * 500 * 2.0;
-    check(a8_plain && close(a8_plain->bytes, 1e8 + quantize_bytes + 1000 * 36.0 / 32.0 + out_bytes),
+    check(a8_plain && close(a8_plain->bytes, 1e8 + quantize_bytes + 1024 * 36.0 / 32.0 + out_bytes),
           "W4A8 bytes at T = 1: experts + quantize pass (BF16 in, 40-byte blocks out) + codes + "
           "outputs");
     check(a8_plain && close(a8_plain->quantize_bytes, quantize_bytes) && a8_min &&
               close(a8_min->quantize_bytes, quantize_bytes),
           "the quantize pass is read BF16 + written blocks, once per x row, the same for every "
           "format");
-    check(a8_min && close(a8_min->bytes, 1e8 + quantize_bytes + 1000 * 40.0 / 32.0 + out_bytes),
+    check(a8_min && close(a8_min->bytes, 1e8 + quantize_bytes + 1024 * 40.0 / 32.0 + out_bytes),
           "W4A8 bytes with a min at T = 1: the codes are read at 40/32 bytes a value");
     // R8: the gate/up reads the codes the router wrote, the down stage reads the BF16 intermediate.
     const auto r8_gate_up = moe::price_moe_stage(s, moe::MoeStageKernel::R8, 1, board);
@@ -241,10 +242,18 @@ void law_checks() {
     check(rmma_padded && close(rmma_padded->bytes, 1e8 + 800 * 2.0 + out_bytes),
           "the register MMA reads BF16 x of the router's width");
     const auto w4_padded = moe::price_moe_stage(padded, moe::MoeStageKernel::W4a8, 1, board);
-    check(
-        w4_padded && close(w4_padded->quantize_bytes, 800 * 2.0 + 25 * 40.0) &&
-            close(w4_padded->bytes, 1e8 + 800 * 2.0 + 25 * 40.0 + 1000 * 36.0 / 32.0 + out_bytes),
-        "the W4A8 quantize pass walks the router's width, the kernel reads codes over the bank K");
+    check(w4_padded && close(w4_padded->quantize_bytes, 800 * 2.0 + 32 * 40.0) &&
+              close(w4_padded->bytes, 1e8 + 800 * 2.0 + 32 * 40.0 + 1024 * 36.0 / 32.0 + out_bytes),
+          "the W4A8 quantize pass reads the router's width, writes and the kernel reads the plane "
+          "of the bank K rounded up to 128");
+    // A down stage of K = 704 (Gemma 4 26B) runs on a plane of 768: 24 blocks, written and read.
+    moe::MoeStageShape gemma = down;
+    gemma.cols               = 704;
+    const auto w4_gemma      = moe::price_moe_stage(gemma, moe::MoeStageKernel::W4a8, 1, board);
+    check(w4_gemma && close(w4_gemma->quantize_bytes, 10 * (704 * 2.0 + 24 * 40.0)) &&
+              close(w4_gemma->bytes,
+                    1e8 + 10 * (704 * 2.0 + 24 * 40.0) + 10 * 768 * 36.0 / 32.0 + out_bytes),
+          "a K = 704 W4A8 down stage quantizes and reads a plane of 768 values per assignment");
     // Past T = 1 a gate/up stage still reads each token's row of x once (not once in all, not once
     // per assignment): T rows; a down stage one row per assignment.
     const auto two_gate_up = moe::price_moe_stage(s, moe::MoeStageKernel::RegisterMma, 2, board);
@@ -441,6 +450,35 @@ void layer_checks() {
                   matches(mixed_price->dram_seconds * board.dram_bytes_per_s,
                           layer_bytes_by_hand(w, experts, top_k, 4, relu2, true, true)),
               "a mixed layer (R8 gate/up, register MMA down) carries the combine, unpriced" + tag);
+    }
+}
+
+// The R8 down stage fuses the combine only while its row grid fits the ticket array (and the layer
+// has no shared expert); past that the separate combine runs and is priced. A hidden size of 2^20
+// has a grid of rows (hidden / rows per CTA) well past 1024 tickets.
+void combine_fusion_checks() {
+    const DeviceClass scoped_class = generic::board_device_class(board_named("rtx4090"));
+    const ScopedDeviceClass scoped(scoped_class);
+    const moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0};
+    moe::MoePlan r8;
+    r8.gate_up_r8 = r8.down_r8 = 0;
+    const std::int32_t experts = 8, top_k = 2;
+    for (const std::int32_t hidden : {2048, 1 << 20}) {
+        const auto layer =
+            build(QType::Q8_G32_FP16, QType::Q8_G32_FP16, experts, top_k, hidden, 256, false);
+        const bool fuses = moe::moe_r8_down_fuses_combine(layer->weights, layer->config, 0);
+        check(fuses == (hidden == 2048),
+              "an R8 down stage fuses the combine at hidden 2048 and not past the ticket array, "
+              "hidden " +
+                  std::to_string(hidden));
+        const auto price = moe::moe_layer_price(layer->weights, layer->config, r8, 2, board);
+        check(price && std::abs(price->dram_seconds * board.dram_bytes_per_s -
+                                layer_bytes_by_hand(layer->weights, experts, top_k, 2, false, true,
+                                                    !fuses)) <=
+                           1e-9 * price->dram_seconds * board.dram_bytes_per_s,
+              "the separate combine is priced exactly where the R8 down stage does not fuse it, "
+              "hidden " +
+                  std::to_string(hidden));
     }
 }
 
@@ -840,10 +878,8 @@ void replica(const std::filesystem::path& routes_dir) {
             hi_strict = std::max(hi_strict, r.strict / r.measured);
         }
         std::printf("%-10s T = 1 rows: %zu, max predicted / measured %.3f; strict bound / measured "
-                    "max %.3f
-                    ",
-                    source.board,
-                    t1_rows, hi_t1, hi_strict);
+                    "max %.3f\n",
+                    source.board, t1_rows, hi_t1, hi_strict);
         check(t1_rows >= 1, std::string(source.board) + ": the table has a T = 1 row");
         check(hi_t1 <= 1.0, std::string(source.board) +
                                 ": a T = 1 row's predicted time exceeds its measured "
@@ -871,6 +907,7 @@ int main() {
         shape_checks();
         layer_checks();
         strict_floor_checks();
+        combine_fusion_checks();
         format_min_binding_checks();
         candidate_checks();
         w4a8_admission_checks();

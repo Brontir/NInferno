@@ -1492,6 +1492,14 @@ SharedBranch& shared_branch() {
 // kernel, which the test compares it with in one process (read at every call).
 bool fused_combine_enabled() { return g_fused_combine.load(std::memory_order_relaxed); }
 
+// Whether an R8 down stage of this layer can combine in its epilogue: not with a shared expert (its
+// branch joins after the down stage), and only while the row grid fits the ticket array.
+bool r8_down_fuses_combine(const MoeWeights& w, const Geometry& g, int down_r8) {
+    if (g.shared) { return false; }
+    const int rows = r8_schedule_info(down_r8).rows_per_cta() * (32 / r8_lanes(w.down));
+    return blocks(g.hidden, rows) <= kCombineTickets;
+}
+
 CombineArgs combine_args(const Workspace& ws, const Geometry& g, const MoeConfig& c,
                          MoeEpilogue epilogue, Tensor& out, std::int32_t t, bool pdl) {
     CombineArgs args;
@@ -1849,8 +1857,8 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         } else if (p.down_r8 >= 0) {
             args.r8_lanes  = r8_lanes(w.down);
             const int rows = r8_schedule_info(p.down_r8).rows_per_cta() * (32 / args.r8_lanes);
-            if (!g.shared && branch == nullptr && fused_combine_enabled() &&
-                blocks(g.hidden, rows) <= kCombineTickets) {
+            if (branch == nullptr && fused_combine_enabled() &&
+                r8_down_fuses_combine(w, g, p.down_r8)) {
                 args.combine_tickets = combine_tickets();
                 args.combine         = combine_args(ws, g, c, epilogue, out, t, false);
                 fused_combine        = true;
@@ -1882,6 +1890,10 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
 }
 
 } // namespace
+
+bool moe_r8_down_fuses_combine(const MoeWeights& weights, const MoeConfig& config, int down_r8) {
+    return r8_down_fuses_combine(weights, validate(weights, config), down_r8);
+}
 
 void set_mx8(bool enabled) { g_mx8.store(enabled, std::memory_order_relaxed); }
 

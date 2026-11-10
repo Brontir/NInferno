@@ -15,7 +15,7 @@ namespace {
 // scale a 32-value block (36 bytes), 40 with the block's sum for a format with a min
 // (moe_format_has_min, the definition r8_admits' shared-memory bound reads); BF16 otherwise. The
 // quantizer itself writes all three (codes, FP32 scale, FP32 sum: 40 bytes a block) whatever the
-// format (kQuantizedBlockBytes), over K rounded up to its 32-value blocks.
+// format (kQuantizedBlockBytes).
 constexpr double kInt8ActivationBytesPerValue       = 36.0 / 32.0;
 constexpr double kInt8SummedActivationBytesPerValue = 40.0 / 32.0;
 constexpr double kQuantizedBlockBytes               = 40.0;
@@ -76,17 +76,23 @@ std::optional<MoeStagePrice> price_moe_stage(const MoeStageShape& shape, MoeStag
     // The values of a BF16 activation row (x has the router's width, which a padded gate/up's K
     // exceeds); the codes the kernel reads are over the K it walks.
     const double x_cols = static_cast<double>(shape.x_cols > 0 ? shape.x_cols : shape.cols);
+    // The W4A8 tier's activation planes are at K rounded up to 128 (moe_w4a8_ld, a zero tail): the
+    // quantizer writes them whole and the kernel reads them whole. An R8 gate/up reads codes over
+    // K.
+    const double code_cols = kind == MoeStageKernel::W4a8
+                                 ? static_cast<double>(moe_w4a8_ld(shape.cols))
+                                 : static_cast<double>(shape.cols);
     const double act_read =
-        int8 ? shape.cols * int8_read_bytes_per_value(shape) : x_cols * kBf16BytesPerValue;
+        int8 ? code_cols * int8_read_bytes_per_value(shape) : x_cols * kBf16BytesPerValue;
     // A gate and up stage reads the T rows of x, which a token's k assignments share; a down stage
     // reads the T x k rows of the activation.
     const double act_rows =
         shape.stage == Stage::GateUp ? static_cast<double>(tokens) : assignments;
     MoeStagePrice out;
     // The W4A8 stage first quantizes its activation: reads the BF16 rows, writes the codes, scales
-    // and sums over K rounded up to the block grid (the kernel then reads the codes: act_read).
+    // and sums of the whole plane (the kernel then reads the codes: act_read).
     if (kind == MoeStageKernel::W4a8) {
-        const double blocks = std::ceil(x_cols / kQuantizeBlock);
+        const double blocks = code_cols / kQuantizeBlock;
         out.quantize_bytes =
             act_rows * (x_cols * kBf16BytesPerValue + blocks * kQuantizedBlockBytes);
     }
@@ -342,10 +348,11 @@ std::optional<MoeLayerPrice> moe_layer_price(const MoeWeights& weights, const Mo
     double extra_bytes = static_cast<double>(weights.router.payload_bytes) +
                          static_cast<double>(tokens) * weights.router.k * kBf16BytesPerValue +
                          static_cast<double>(tokens) * weights.router.n * kFp32BytesPerValue;
-    // The separate combine where the down stage is not R8 (an R8 down stage's last CTAs combine in
-    // its epilogue; the conditions of that fusion, such as a shared expert or a wide hidden size,
-    // are not modelled): reads the T x k slot rows of BF16 and writes T rows.
-    if (routes.down.kernel != MoeStageKernel::R8) {
+    // The separate combine where the down stage does not fuse it (an R8 down stage's last CTAs
+    // combine in its epilogue unless the layer has a shared expert or the row grid exceeds the
+    // ticket array: the production predicate): reads the T x k slot rows of BF16 and writes T rows.
+    if (routes.down.kernel != MoeStageKernel::R8 ||
+        !moe_r8_down_fuses_combine(weights, config, plan.down_r8)) {
         extra_bytes +=
             (static_cast<double>(tokens) * config.top_k + tokens) * hidden * kBf16BytesPerValue;
     }
