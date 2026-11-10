@@ -11,7 +11,9 @@ facts table (src/core/data/isa_facts.json), one row per architecture, provenance
 (10 to 20 s, the GPU otherwise idle) and saves its output, headed by the source's sha256, the
 build's -arch and the SASS MMA instructions of one mma.sync in the build (cuobjdump), and followed
 by notes of the compute processes on the probe's GPU before, during and after (a run with another
-one is no row) and of the clocks nvidia-smi saw during the run; `merge` copies that output into the
+one is no row) and of the clocks nvidia-smi saw during the run; a refused run's output goes to
+<out>.refused instead, which `merge` does not take, and from probe 17 `merge` refuses a run whose
+notes do not show its GPU idle wherever the file came from; `merge` copies that output into the
 committed inputs directory as isa_probe_<arch>.txt (replacing an older run of the same
 architecture) and regenerates the table from every file there; `regenerate` alone rebuilds the
 table from the inputs. Adding an architecture is one file plus a regenerate. A row records its
@@ -143,8 +145,17 @@ HEADER = ("probe", "card", "cc", "sms", "l2_bytes", "driver", "runtime", "nvcc",
 # (the -arch it was built for) and `sass_per_mma` (SASS MMA instructions of one mma.sync in that
 # build) are written by `run` before the probe's output.
 HEADER_SINCE = {"mem_clock_khz": 17, "source_sha256": 17, "arch": 17, "sass_per_mma": 17}
-# Header fields that are positive integers.
-HEADER_COUNTS = ("cc", "sms", "l2_bytes", "driver", "runtime", "mem_clock_khz", "sass_per_mma")
+# Header fields that are positive integers. mem_clock_khz is a count too, but 0 is the device's
+# way of not giving it (some virtualised setups): the row then says so in a note.
+HEADER_COUNTS = ("cc", "sms", "l2_bytes", "driver", "runtime", "sass_per_mma")
+MEM_CLOCK_NOT_GIVEN = "the rated memory clock is not given (the device attribute reads 0)"
+# The notes `run` writes of the compute processes on the probe's GPU before, during and after the
+# run (from probe 17 a row owes all three, each once): a count, or "not read" with the reason.
+PROCESS_NOTE = re.compile(r"compute processes on (the probe's GPU|the GPU|any GPU \(the probe's "
+                          r"not known\)) (before|during|after) the run(?: besides the probe "
+                          r"\(nvidia-smi every 200 ms\))?: (.+)")
+PROCESS_COUNT = re.compile(r"(\d+)(?: \(pid [^)]*\))?")
+WAIVED = "the idle check was waived (--idle-unchecked)"
 PROBE_VALUE = re.compile(r"isa_probe (\d+)")
 PROBE_LINE = re.compile(r'printf\("probe (isa_probe \d+)\\n"\)')
 SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -240,6 +251,15 @@ def parse_run(text):
     for k in HEADER_COUNTS:
         if k in head and not (head[k].isdigit() and int(head[k]) > 0):
             raise ValueError(f"{k} is no positive count: {head[k]!r}")
+    if "mem_clock_khz" in head and not head["mem_clock_khz"].isdigit():
+        raise ValueError(f"mem_clock_khz is no count (kHz, 0 for not given): "
+                         f"{head['mem_clock_khz']!r}")
+    # From probe 17 a row is a run shown idle: the three process notes are there and none saw
+    # another process, so a refused run's file merged by hand is still no row.
+    if owed >= 17:
+        refusal = idle_refusal(head.get("notes", []))
+        if refusal:
+            raise ValueError(refusal)
     if "source_sha256" in head and not SHA256.fullmatch(head["source_sha256"]):
         raise ValueError(f"odd source_sha256 line: {head['source_sha256']!r}")
     shape = head["shape"].split()
@@ -258,6 +278,40 @@ def parse_run(text):
         if head["arch"] != own:
             raise ValueError(f"built for {head['arch']}, not {own} (cc {head['cc']})")
     return head, facts
+
+
+def idle_refusal(notes):
+    """Why the process notes of a run (its `note` lines without the word) do not show its GPU
+    idle, or None: each of before, during and after is noted once; a count other than 0 is
+    another process there (never waived); a list not read needs the --idle-unchecked note, and
+    that note needs a list not read (`run` writes it only then)."""
+    seen, unread = {}, []
+    for n in notes:
+        m = PROCESS_NOTE.fullmatch(n)
+        if not m:
+            continue
+        where, when, value = m.groups()
+        if when in seen:
+            return f"the compute processes {when} the run are noted twice"
+        seen[when] = value
+        if value.startswith("not read") or where.startswith("any GPU"):
+            unread.append(f"{when}: {value}")
+            continue
+        count = PROCESS_COUNT.fullmatch(value)
+        if not count:
+            return f"odd compute-process note: {n!r}"
+        if int(count.group(1)) != 0:
+            return f"another compute process on the probe's GPU {when} the run: {value}"
+    missing = [w for w in ("before", "during", "after") if w not in seen]
+    if missing:
+        return f"no note of the compute processes {' / '.join(missing)} the run"
+    waived = any(n.startswith(WAIVED) for n in notes)
+    if unread and not waived:
+        return (f"the compute processes were not read ({'; '.join(unread)}); `run "
+                "--idle-unchecked` accepts an unread list and says so in the row")
+    if waived and not unread:
+        return "the idle check is noted as waived, yet every process list was read"
+    return None
 
 
 # Flops per warp instruction of each MMA shape the probe issues: 2 x m x n x k, and on Volta four
@@ -295,16 +349,22 @@ def row_of(head, facts, source):
         "mma_flops": flops,
     }
     # From probe 17: SASS MMA instructions per mma.sync of mma_shape in the run's build (the unit
-    # of the MMA facts is the mma.sync), and the memory clock the card is rated at.
-    for k in ("sass_per_mma", "mem_clock_khz"):
-        if k in head:
-            row[k] = int(head[k])
+    # of the MMA facts is the mma.sync), and the memory clock the card is rated at (a note where
+    # the device does not give it).
+    notes = list(head.get("notes", []))
+    if "sass_per_mma" in head:
+        row["sass_per_mma"] = int(head["sass_per_mma"])
+    if "mem_clock_khz" in head:
+        if int(head["mem_clock_khz"]) > 0:
+            row["mem_clock_khz"] = int(head["mem_clock_khz"])
+        else:
+            notes.append(MEM_CLOCK_NOT_GIVEN)
     row["tool"] = {"probe": head["probe"], "nvcc": head["nvcc"], "driver": head["driver"],
                    "runtime": head["runtime"]}
     for k in ("arch", "source_sha256"):
         if k in head:
             row["tool"][k] = head[k]
-    row["notes"] = head.get("notes", [])
+    row["notes"] = notes
     row["facts"] = {name: facts[name] for name in FACTS if name in facts}
     return row
 
@@ -332,8 +392,10 @@ NOTE = ("ISA facts per architecture, regenerated by `tools/bench/isa_probe/isa_p
         "lanes) links: about 2 and 4 ns. "
         "Every row names its source file, the card, the probe version, nvcc, driver and runtime, "
         "and from probe 17 the sha256 of the isa_probe.cu it was built from, the build's -arch, "
-        "the memory clock the card is rated at and, in its notes, the compute processes on its "
-        "GPU before, during and after the run and the clocks nvidia-smi saw during it; "
+        "the memory clock the card is rated at (a note where the device does not give it) and, "
+        "in its notes, the compute processes on its GPU before, during and after the run (none "
+        "besides the probe, or not read and the check waived) and the clocks nvidia-smi saw "
+        "during it; "
         "provenance is Measured for all. A row is what its own probe version measured: up to probe 13 a link of "
         "the L1 / L2 / DRAM chains carried the chain's index-to-address ops beside the load, up "
         "to probe 16 the sm_70 shared link a shift beside the LDS. tests/test_isa_facts.py pins "
@@ -438,6 +500,32 @@ def _apps_note(when, apps, bus):
         (f" (pid {pids})" if mine else "")
 
 
+def _during_note(during, bus, own):
+    """The note line of the compute processes nvidia-smi listed on the probe's GPU while the probe
+    (pid `own`) ran. The probe is one of them itself, so a list that never shows its pid was not
+    read (the sampler gave nothing in time, or this nvidia-smi does not show this process's
+    pids), and a pid printed as `[N/A]` is a process the list cannot name, which may be the
+    probe: not read either, never another process."""
+    head = "note compute processes on the probe's GPU during the run"
+    if during is None:
+        return f"{head}: not read (nvidia-smi not run)"
+    if bus is None:
+        return f"{head}: not read (the probe's GPU not known)"
+    pids = {r[1] for r in during if _bus(r[0]) == bus}
+    if own not in pids:
+        return f"{head}: not read (no sample listed the probe itself)"
+    unnamed = sorted(p for p in pids if not p.isdigit())
+    if unnamed:
+        return f"{head}: not read (a pid given as {unnamed[0]})"
+    others = sorted(p for p in pids if p != own)
+    return (f"{head} besides the probe (nvidia-smi every 200 ms): {len(others)}"
+            + (f" (pid {', '.join(others)})" if others else ""))
+
+
+# The suffix of a refused run's file: never an isa_probe_<arch>.txt, so never merged as a row.
+REFUSED = ".refused"
+
+
 def cmd_run(a):
     arch = a.arch
     src = SOURCE
@@ -497,16 +585,8 @@ def cmd_run(a):
         after = _compute_apps()
     m = re.search(r"^note device 0 is the GPU at PCI (\S+)$", run.stdout, re.M)
     bus = _bus(m.group(1)) if m else None
-    tail = [_apps_note("before", before, bus), _apps_note("after", after, bus)]
-    # During the run the probe is a compute process of its GPU itself; any other pid there is not.
-    others = None
-    if during is not None and bus is not None:
-        others = sorted({r[1] for r in during if _bus(r[0]) == bus and r[1] != str(probe.pid)})
-        tail.append(f"note compute processes on the probe's GPU during the run besides the probe "
-                    f"(nvidia-smi every 200 ms): {len(others)}"
-                    + (f" (pid {', '.join(others)})" if others else ""))
-    else:
-        tail.append("note compute processes on the probe's GPU during the run: not read")
+    tail = [_apps_note("before", before, bus), _apps_note("after", after, bus),
+            _during_note(during, bus, str(probe.pid))]
     mine = [s for s in samples if bus is not None and _bus(s[0]) == bus]
     if mine:
         def span(col):
@@ -517,45 +597,44 @@ def cmd_run(a):
                     f"{'/'.join(sorted({s[1] for s in mine}))}")
     else:
         tail.append("note nvidia-smi over the run: no clock sample of the probe's GPU")
-    if a.idle_unchecked:
-        tail.append("note the idle check was waived (--idle-unchecked)")
+    # Another compute process on the probe's GPU before, during or after the run (a time-sliced
+    # GPU stretches every clock64 span while the clock reads right), or a run whose GPU could not
+    # be shown idle at all three: no row (parse_run's idle_refusal). --idle-unchecked accepts a
+    # run whose process list could not be read (and the row says so), never one where another
+    # process was seen; the note is written only when it is used.
+    if a.idle_unchecked and any(
+            m and (m.group(3).startswith("not read") or m.group(1).startswith("any GPU"))
+            for m in (PROCESS_NOTE.fullmatch(n[5:]) for n in tail)):
+        tail.append("note " + WAIVED)
     body = run.stdout if run.stdout.endswith("\n") or not run.stdout else run.stdout + "\n"
     out = "\n".join(head) + "\n" + body + "\n".join(tail) + "\n"
+    refusal = None
+    if run.returncode != 0:
+        refusal = f"the probe exited {run.returncode}"
+    else:
+        try:
+            parsed, _ = parse_run(out)
+        except ValueError as e:
+            refusal = str(e)
+        else:
+            # The SASS MMAs of one mma.sync are its flops, by sass_counts' shape table: so a
+            # count of SASS MMAs priced at these facts over sass_per_mma is the same work.
+            shape = parsed["shape"].split()[0]
+            if any(s is None for _, s in mmas) or \
+                    sum(2 * s[0] * s[1] * s[2] for _, s in mmas) != SHAPE_FLOPS[shape]:
+                refusal = (f"the SASS of one {shape} ({', '.join(op for op, _ in mmas)}) is not "
+                           f"its {SHAPE_FLOPS[shape]} flops by sass_counts' shapes")
+    # A refused run is kept for its numbers, under a name that is no row's: `--out` is written
+    # only by a run that is one, so "merge the first run" can never pick up a refused one.
     path = a.out or f"isa_probe_{arch}.txt"
+    if refusal:
+        path += REFUSED
     with open(path, "w", newline="\n") as f:
         f.write(out)
     sys.stdout.write(out)
-    if run.returncode != 0:
-        print(f"isa_probe: the probe exited {run.returncode}; {path} holds its output, not a row "
-              "to merge", file=sys.stderr)
-        return run.returncode
-    try:
-        parsed, _ = parse_run(out)
-    except ValueError as e:
-        print(f"isa_probe: {e}; {path} is not a row to merge", file=sys.stderr)
-        return 3
-    # Another compute process on the probe's GPU before, during or after the run (a time-sliced
-    # GPU stretches every clock64 span while the clock reads right), or a run whose GPU could not
-    # be shown idle at all three: no row. --idle-unchecked accepts a run whose process list could
-    # not be read (and the row says so), never one where another process was seen.
-    unread = [n[5:] for n in tail if n.startswith("note compute processes")
-              and ("not read" in n or "any GPU" in n)]
-    busy = [n[5:] for n in tail if n.startswith("note compute processes on the probe's GPU")
-            and "not read" not in n and not n.split(": ")[-1].startswith("0")]
-    if busy or (unread and not a.idle_unchecked):
-        print(f"isa_probe: {'; '.join(busy + unread)}; {path} is not a row to merge"
-              + ("" if busy else " (--idle-unchecked accepts an unread process list and says so "
-                                 "in the row)"), file=sys.stderr)
-        return 3
-    # The SASS MMAs of one mma.sync are its flops, by sass_counts' shape table: so a count of SASS
-    # MMAs priced at these facts over sass_per_mma is the same work.
-    shape = parsed["shape"].split()[0]
-    if any(s is None for _, s in mmas) or \
-            sum(2 * s[0] * s[1] * s[2] for _, s in mmas) != SHAPE_FLOPS[shape]:
-        print(f"isa_probe: the SASS of one {shape} ({', '.join(op for op, _ in mmas)}) is not its "
-              f"{SHAPE_FLOPS[shape]} flops by sass_counts' shapes; {path} is not a row to merge",
-              file=sys.stderr)
-        return 3
+    if refusal:
+        print(f"isa_probe: {refusal}; wrote {path}, which is no row to merge", file=sys.stderr)
+        return run.returncode or 3
     print(f"isa_probe: wrote {path}")
     return 0
 
@@ -578,6 +657,9 @@ def cmd_merge(a):
     regenerated from all of them. A merge the table cannot be built from (another input is
     malformed, or gives the same architecture under another name) changes nothing: the
     destination is put back as it was."""
+    if a.input.endswith(REFUSED):
+        print(f"isa_probe: {a.input} is a refused run's output; nothing merged", file=sys.stderr)
+        return 1
     # Read whole before the destination opens: the input may be the destination itself.
     with open(a.input) as f:
         text = f.read()
@@ -636,7 +718,8 @@ def main():
     r.add_argument("--arch", required=True, help="sm_<arch> to compile for (70, 75, 86, 89, 120a)")
     r.add_argument("--nvcc", default="nvcc")
     r.add_argument("--cuobjdump", help="default: the one beside --nvcc, else from PATH")
-    r.add_argument("--out")
+    r.add_argument("--out", help="the run's output when it is a row; a refused run's goes to "
+                   "<out>" + REFUSED)
     r.add_argument("--idle-unchecked", action="store_true",
                    help="accept a run whose compute-process list nvidia-smi could not give")
     r.set_defaults(fn=cmd_run)
