@@ -84,14 +84,14 @@ DSpineConfig parse_dspine_config(const json& config) {
     out.head_dim          = dimension(config, "head_dim");
     out.vocab_size        = dimension(config, "vocab_size");
     out.block_size        = dimension(config, "block_size");
-    if (!draft.contains("mask_token_id") || !draft.at("mask_token_id").is_number_unsigned()) {
-        refuse("dflash_config.mask_token_id is missing");
+    if (!draft.contains("mask_token_id") || !draft.at("mask_token_id").is_number_integer() ||
+        json_unsigned(draft, "mask_token_id") >= out.vocab_size) {
+        refuse("dflash_config.mask_token_id is missing or outside the vocabulary");
     }
     out.mask_token_id = static_cast<std::uint32_t>(json_unsigned(draft, "mask_token_id"));
     out.rms_norm_eps  = positive_float(config, "rms_norm_eps");
     if (out.heads % out.kv_heads || out.head_dim % 2) { refuse("invalid attention geometry"); }
     if (out.block_size < 2 || out.block_size > 16) { refuse("block_size outside [2, 16]"); }
-    if (out.mask_token_id >= out.vocab_size) { refuse("mask_token_id outside the vocabulary"); }
     if (const auto* rope =
             config.contains("rope_parameters") ? &config.at("rope_parameters") : nullptr;
         rope && rope->is_object()) {
@@ -112,8 +112,6 @@ DSpineConfig parse_dspine_config(const json& config) {
     if (number_or(config, "partial_rotary_factor", 1.0) != 1.0) {
         refuse("partial_rotary_factor != 1");
     }
-    // The backbone's math is fixed (a bias-free Qwen3 layer with SiLU and plain RoPE, as
-    // dspine_tensors inventories it): another one is refused, not run on the wrong contract.
     if (const auto it = draft.find("selected_prefix_decode_mode");
         it != draft.end() && !it->is_null() && *it != "serial") {
         refuse("dflash_config.selected_prefix_decode_mode " + it->dump() + " is not serial");
@@ -123,6 +121,8 @@ DSpineConfig parse_dspine_config(const json& config) {
         it != config.end() && !it->is_null() && *it != out.vocab_size) {
         refuse("draft_vocab_size " + it->dump() + " differs from vocab_size");
     }
+    // The backbone's math is fixed (a bias-free Qwen3 layer with SiLU and plain RoPE, as
+    // dspine_tensors inventories it): another one is refused, not run on the wrong contract.
     if (bool_or(config, "attention_bias", false)) { refuse("attention_bias is not supported"); }
     if (bool_or(config, "mlp_bias", false)) { refuse("mlp_bias is not supported"); }
     if (const auto act = config.find("hidden_act");
