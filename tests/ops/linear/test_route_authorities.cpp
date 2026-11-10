@@ -185,7 +185,7 @@ void check_known() {
     constexpr QType q4k        = QType::GGML_Q4_K;
     constexpr QType q6k        = QType::GGML_Q6_K;
     constexpr LinearPolicy a16 = LinearPolicy::A16Only;
-    const KnownCase cases[] = {
+    const KnownCase cases[]    = {
         // invariant profile, a pin of either band, a route probe
         {"rtx4090", q8, big, a16, 64, true, 1, "invariant-profile"},
         {"rtx4090", q8, big, a16, 4, false, 2, "route-probe"},
@@ -198,7 +198,8 @@ void check_known() {
         {"rtx4090", q8, big, a16, 1, false, 0, "rmma-rule"},
         {"rtx4090", q6k, big, a16, 24, true, 0, "rmma-rule"},
         {"rtx4090", q6k, big, LinearPolicy::AllowA8, 24, true, 0, "mmq-prefill-gate"},
-        {"rtx4090", QType::GGML_IQ3_S, big, LinearPolicy::AllowA8, 512, true, 0, "mmq-prefill-gate"},
+        {"rtx4090", QType::GGML_IQ3_S, big, LinearPolicy::AllowA8, 512, true, 0,
+            "mmq-prefill-gate"},
     };
     for (const KnownCase& c : cases) {
         const std::string got = known_source(c);
