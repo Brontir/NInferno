@@ -14,7 +14,9 @@
 #include <iostream>
 #include <set>
 #include <stdexcept>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifndef NINFERNO_SOURCE_DIR
