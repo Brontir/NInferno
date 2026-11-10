@@ -61,13 +61,17 @@ choices follow the registers nvcc compiles for the register-MMA kernels. Those r
 committed per architecture as kernel-facts snapshots, written from the release toolchain's binaries
 with `cuobjdump` (`tools/kernel_facts/kernel_facts.py`, no GPU), and the engine prices from the
 snapshot, never from the kernels of the machine it runs on: a build with another nvcc decides as
-the release does. `package.sh` (and `package-native.ps1`) check it twice: the nvcc version against
+the release does. Beside the registers a snapshot holds each kernel's K loop counted off its SASS
+(the MMAs, the loads by space and bytes, the ALU work per loop iteration;
+`tools/kernel_facts/sass_counts.py` says how the loop is found), the facts the counted cost model
+reads (#613). `package.sh` (and `package-native.ps1`) check it twice: the nvcc version against
 the snapshots, and each engine's kernels against its snapshot (`kernel_facts.py check` on the
-linked binary; on a GPU of the generation also `ninferno-serve selector-facts`, the running
-kernels' attributes against it). A mismatch (another flag, source or compiler build) stops the
-release. After a kernel change, regenerate the snapshot of each architecture from a build of it
-(`ninja ninferno_kernel_facts_update` in a test tree, or `kernel_facts.py extract` on the release
-binary), then the selector goldens that move with it (`ninferno_selector_golden_test --update`).
+linked binary, the SASS pass included: minutes per engine; on a GPU of the generation also
+`ninferno-serve selector-facts`, the running kernels' attributes against it). A mismatch (another
+flag, source or compiler build) stops the release. After a kernel change, regenerate the snapshot
+of each architecture from a build of it (`ninja ninferno_kernel_facts_update` in a test tree, or
+`kernel_facts.py extract` on the release binary), then the selector goldens that move with it
+(`ninferno_selector_golden_test --update`).
 A build label with no snapshot of its own (`121a`, `120f`, or an architecture added before its
 snapshot) prices its register-MMA kernels by threads alone and never takes their latency or wide
 variants; `ninferno_kernel_facts_test` fails on such a build until its snapshot is committed.
