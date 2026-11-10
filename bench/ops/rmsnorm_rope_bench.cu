@@ -422,12 +422,15 @@ void run_crossover(const Options& options, cudaStream_t stream) {
     // compiled kernel's occupancy (registers and shared memory too): a mismatch is printed.
     const int law_ctas = ops::detail::sm_rules::resident_ctas_per_sm(
         device.max_blocks_per_sm, device.max_threads_per_sm, ops::detail::kTextHeadsPerBlock * 32);
-    const int kernel_ctas     = ops::detail::text_kernel_resident_ctas();
     const double warps_per_sm = static_cast<double>(law_ctas) * ops::detail::kTextHeadsPerBlock;
-    if (law_ctas != kernel_ctas) {
-        std::printf("# WARNING: resident blocks an SM: law %d, cudaOccupancy %d (the law reads the "
-                    "device's thread and slot limits only)\n",
-                    law_ctas, kernel_ctas);
+    for (const auto& [qh, kh] : options.geometries) {
+        const int kernel_ctas = ops::detail::text_kernel_resident_ctas(qh, kh);
+        if (kernel_ctas != 0 && law_ctas != kernel_ctas) {
+            std::printf(
+                "# WARNING: %d+%d: resident blocks an SM: law %d, cudaOccupancy %d (the law "
+                "reads the device's thread and slot limits only)\n",
+                qh, kh, law_ctas, kernel_ctas);
+        }
     }
     const double clock_hz = machine_facts_of(device).reference_clock_khz * 1.0e3;
     std::printf("# device=%s generation=%s sms=%d warps_per_sm=%.0f clock_mhz=%.0f dram_gbps=%.1f "
