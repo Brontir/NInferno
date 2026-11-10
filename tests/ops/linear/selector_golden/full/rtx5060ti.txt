@@ -1,5 +1,4 @@
 # rtx5060ti gb206:36sm sm120
-# facts 9632b1590253
 bf16 256x2048 not packed: row-split test packer: unsupported qtype
 bf16 1024x4096 not packed: row-split test packer: unsupported qtype
 bf16 2048x1024 not packed: row-split test packer: unsupported qtype
