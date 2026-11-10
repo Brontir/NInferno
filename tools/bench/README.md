@@ -32,6 +32,7 @@ python3 tools/bench/run_ninferno_bench_matrix.py --preset core             # run
 | `r8_decode_table.py` | Generate `src/ops/generic/r8_decode_table.h` from R8 schedule sweeps. |
 | `hard_set.py` | One serving configuration through the hard question set ([eval/corpora/hard50](../../eval/corpora/hard50/README.md)): answers graded against the references, decode rate and, at a fixed speculative depth, tokens per round. |
 | `selection_regret.py` | Offline regret of recorded production choices against qualified, matched alternatives on held-out boards or models ([below](#offline-selection-regret)). |
+| `regret_bands.py` | Regret weighted by T band, per board, format and route family, from regret documents or plain route_tune CSVs ([below](#regret-by-t-band-and-the-sweep-archive)). |
 | `regret_collect.py` | The lab collector for `selection_regret.py`: `ninferno_route_tune --selected-out` (the route the production path runs per problem and width) and one `--routes-out` sweep per pass into its input ([below](#offline-selection-regret)). |
 | `quality_rows.py` | Perplexity and KL divergence of each `--activations` mode against `exact` on the fixed corpus, appended as `docs/performance/` rows. |
 
@@ -140,6 +141,36 @@ python3 tools/bench/regret_collect.py --selected sel_p1.csv sel_p2.csv sel_p3.cs
 
 The report preserves selector/build identity and a SHA-256
 of the exact input bytes. This is an offline evaluation aid for #301, not runtime autotuning.
+
+## Regret by T band and the sweep archive
+
+One geomean over all cases hides where a selector loses: a change can cost 10% at T 17-32 and win
+at T 48+. `regret_bands.py` reports the extra time of the recorded picks over the best observed
+route, **summed over the cases of a band** (time-weighted: a long GEMM counts for what it costs, a
+tiny one barely), for the bands decode (T 1-8), verify (9-16), narrow (17-32), wide (33-128) and
+prefill (129+), by board, format and route family (the part of the route name before the first dot).
+No workload mix is frozen, so the default report has one number per band and no cross-band average;
+`--band-weights` adds a weighted mean once a mix is chosen. A pick the sweep did not time, or that
+is not an a16 route in an a16 case, is counted as skipped, never as zero regret.
+
+```bash
+python3 tools/bench/regret_bands.py --doc selection.json --doc other_board.json --md bands.md --json bands.json
+python3 tools/bench/regret_bands.py --routes p1.csv p2.csv --selected sel_p1.csv --board rtx5090
+python3 tools/bench/regret_bands.py --routes p1.csv p2.csv --pick model --board rtx5090   # the model price's own pick, needs model_us
+python3 -m unittest discover -s tests -p test_regret_bands.py
+```
+
+`--doc` takes the `ninferno-selection-regret/1` documents `regret_collect.py` writes. `--routes`
+takes plain `route_tune` CSVs (medians over the passes given), because **none of the archived
+sweeps carries the run/device columns** `regret_collect.py` requires; the board is named by hand.
+
+[`data/sweep_archive.json`](data/sweep_archive.json) lists what exists where: for each stand
+(`/root/claude`, listed read-only on 2026-11-10) every directory holding route sweeps
+(`route_sweeps`, `route_tune --routes-out`), selections (`selected`, `--selected-out`) or regret
+documents (`regret_docs`), with the count, bytes, date range, whether the CSVs are stamped
+(`stamped` / `unstamped`) and any device named. Nothing is copied into the repository; the files
+stay on the stands. `regret_bands.py --archive data/sweep_archive.json` prints per-stand totals.
+Stand directories are scratch and may be cleaned, so refresh the manifest when a sweep is used.
 
 ## Published performance numbers
 
