@@ -502,14 +502,15 @@ int main() {
                            std::abs(scale - *without) > 1e-9,
                        "the launch term moves the scale off the no-launch ratio");
                 // The no-launch scale is the same pair without counts (the earlier block's value).
-                auto second_plain = base_lab;
-                std::erase_if(second_plain.tune.measurements, [](const auto& m) {
-                    return m.config.enabled() &&
-                           (m.config.mode != sp::Mode::Mtp || m.config.k != 3);
-                });
+                auto first_plain = lab; // the same filtered pair, its kernel counts erased
+                for (auto& m : first_plain.tune.measurements) {
+                    m.graph_kernels = m.graph_rounds = 0;
+                }
+                auto second_plain         = first_plain;
                 second_plain.tune.key.gpu = "ad102:128sm";
-                const auto plain_home = sp::profile_for_target({&base_lab, &second_plain}, "sm89");
-                const auto plain      = plain_home.joint_scale.find(chosen.label());
+                const auto plain_home =
+                    sp::profile_for_target({&first_plain, &second_plain}, "sm89");
+                const auto plain = plain_home.joint_scale.find(chosen.label());
                 expect(plain != plain_home.joint_scale.end() && plain->second.contains(2) &&
                            without && near(plain->second.at(2), *without, 1e-12),
                        "without counts the scale is the no-launch ratio");
