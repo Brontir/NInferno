@@ -1,7 +1,7 @@
 // The route cost model (refactor B1): price_routes prices every admitted route of a call of 17
 // tokens or more by the roofline of its tiles on the device's facts (the A16 tiles here, the A8
 // ones in a8_candidates), cost_route takes the cheapest. Its constants and their provenance:
-// route_cost_constants.h.
+// route_cost_constants.h. A slice of a fused parent is priced by its own rows (bytes_per_weight).
 #include "core/mmq_columns.h"
 #include "core/device_class.h"
 #include "core/generation.h"
@@ -21,8 +21,16 @@
 
 namespace ninferno::ops::detail::generic {
 
+double bytes_per_weight(const Weight& weight, const Problem& problem) {
+    const double sets = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
+    // The rows the payload holds: the weight's own, never fewer than the call reads.
+    const double stored = std::max(static_cast<double>(weight.n), sets * problem.n);
+    return static_cast<double>(weight.payload_bytes) / (stored * problem.k) * sets;
+}
+
 namespace {
 
+// FUSION-SITE: activation_quantizer_launch
 template <class Offer>
 void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t tokens,
                    const DeviceClass& d, const Offer& offer) {
@@ -41,7 +49,7 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
     const double bw      = d.facts.dram_bytes_per_s();
     const double sms     = d.sms;
     const double n = problem.n, k = problem.k, t = tokens;
-    const double bpw     = static_cast<double>(weight.payload_bytes) / (n * k);
+    const double bpw     = bytes_per_weight(weight, problem);
     const double peak_sm = g.s8 * clk;
     const double scale   = fitted->w4a8_eff;
     const double bw_sm   = bw / sms;
@@ -127,7 +135,7 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         // Never wider than the tile the device's shared memory holds for the format (Turing's
         // 64 KiB: Q2_K's 128-column tile does not fit, the kernel runs 64).
         // The A8 routes are priced only where the MMA reads BF16 operands (sm_80 on: above), so a
-        // generation whose widths a launch law prices (Turing, DECISIONS 77) never reaches here;
+        // generation whose widths a launch law prices (Turing, DECISIONS 78) never reaches here;
         // the facts are the product's grid on this card all the same.
         const bool format   = mmq_columns::work_tiles_format(problem.qtype);
         const int widest    = mmq_columns::widest_tile(problem.qtype, d.major, d.minor);
@@ -230,13 +238,13 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
                              .value() *
                          clk;
     const double n = problem.n, k = problem.k;
-    const double bpw     = static_cast<double>(weight.payload_bytes) / (n * k);
+    const double bpw     = bytes_per_weight(weight, problem);
     const double max_thr = std::max(d.max_threads_per_sm, 1);
     const double max_cta = std::max(d.max_blocks_per_sm, 1);
     const double smem_sm = static_cast<double>(d.smem_per_sm);
     const auto cdiv      = [](double a, double b) { return std::ceil(a / b); };
-    // SwiGLU: the weight has 2 n rows (gate and up), every output row multiplies both; `bpw` is the
-    // payload over the n output rows, so the bytes of a CTA stay rows x K x bpw.
+    // SwiGLU: every output row multiplies its gate and its up row; `bpw` (bytes_per_weight) holds
+    // both rows' bytes, so the bytes of a CTA stay rows x K x bpw.
     const double sets = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
     // The register-MMA terms below are verified for the decoders with per-sub-block scales (the
     // K-quants and the codebook i-quants, has_subblock_scales) on the generations where two or

@@ -1,4 +1,4 @@
-// Microbench of one product of ggml's matrix kernel (Q4_K) for the launch law (DECISIONS 77, #524):
+// Microbench of one product of ggml's matrix kernel (Q4_K) for the launch law (DECISIONS 78, #524):
 // the per-call time of rows x k x columns through ggml_mmq::product, the launch forced by the grid
 // hook's environment (tools/bench/524_grid_hook.patch: NINFERNO_MMQ_J, NINFERNO_MMQ_BLOCKS,
 // NINFERNO_MMQ_TILE_MODE, NINFERNO_MMQ_PRINT). Calls run back to back on one stream, so a call's

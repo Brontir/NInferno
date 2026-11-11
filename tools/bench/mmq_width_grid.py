@@ -32,7 +32,7 @@ grid     reads the per-width files of `measure` (label "J<w>"; one file per visi
          the regret per bucket and at f 0.20 (a report), and the verdict of the criteria that were
          fixed before the run (CRITERIA below). The script measures every width twice, 16..128 then
          128..16, so a drift in time does not line up with J. Last, the grid read with the launch
-         law of DECISIONS 77 (THE LAUNCH LAW below): with the tree's constants (no refit) and
+         law of DECISIONS 78 (THE LAUNCH LAW below): with the tree's constants (no refit) and
          refitted, the law's pick per size beside the measured best, with each linear's launch mode.
 ab       reads files labelled old/new (the same sizes, the same number of visits at every size, the
          whole mix) and prints the per-size change (medians with the range of the visits) beside the
@@ -637,7 +637,7 @@ def same_sizes(data: Data, labels: list[str]) -> list[int]:
     return sorted(union)
 
 
-# --- THE LAUNCH LAW (DECISIONS 77) ---------------------------------------------------------------
+# --- THE LAUNCH LAW (DECISIONS 78) ---------------------------------------------------------------
 # The Turing row's law the tree ranks the widths by (core/mmq_columns.h launch_of / launch_seconds,
 # core/generation.h kTuringMmqLaw; tests/test_mmq_width_grid.py holds these to the tree): a product's
 # time is its longest CTA's units times a unit's cost, plus the stream-k fixup (its partial tiles'
@@ -753,7 +753,7 @@ def fit_offsets_and(y: list[float], xs: list[list[float]], w: list[float], size:
 
 def launch_law_report(d, data, sizes: list[int], cols: list[int], med: dict, best: dict) -> dict:
     """The grid read with the launch law (no refit, then refitted) and the launch modes of its picks."""
-    print("\nLAUNCH LAW (DECISIONS 77; core/mmq_columns.h): a product's time = its longest CTA's units x a unit's "
+    print("\nLAUNCH LAW (DECISIONS 78; core/mmq_columns.h): a product's time = its longest CTA's units x a unit's "
           f"cost + the stream-k fixup; Qwen3-8B's linears on {LAW_SMS} SMs (the RTX 2080 Ti's modes and constants)")
     cells, size, run, within = [], [], [], []
     for j in WIDTHS:

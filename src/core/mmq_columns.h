@@ -14,7 +14,7 @@
 // GA10x on the RTX 3060 and 3090, Ada on the RTX 4070 Ti and 4090, GB20x on the RTX 5090: the grids
 // of DECISIONS 74) and the weight format is one those grids ran (work_tiles_format): J = 16, 32,
 // 64, 80, 96, 128 and the least work ceil(columns / J) x step_share(J, the row's mmq_tile_fixed).
-// Where the row also carries a launch law (Turing, the RTX 2080 Ti's grid: DECISIONS 77) the same
+// Where the row also carries a launch law (Turing, the RTX 2080 Ti's grid: DECISIONS 78) the same
 // widths are priced by the launch each runs (launch_seconds): its longest CTA's units times a
 // unit's cost, plus the stream-k fixup where the launch splits tiles. No other generation or format
 // has been run over the widths: a generation joins by its row, a format by its grid.
@@ -73,7 +73,7 @@ inline constexpr double kTileFixed      = 0.43;
     return work_table ? tile_count(columns, j) * step_share(j, fixed) : tile_count(columns, j);
 }
 
-// --- The launch law (core/generation.h mmq_launch_law; DECISIONS 77) ---
+// --- The launch law (core/generation.h mmq_launch_law; DECISIONS 78) ---
 //
 // What ggml's matrix kernel launches for a product of `rows` x `columns` over k (select_launch
 // takes its partition from launch_of): tiles of 128 rows x j columns over the whole K, one CTA a
@@ -186,7 +186,7 @@ struct LaunchFacts {
 // seconds where the generation has one and the facts price it, else launch_cost (the least work on
 // the work table, the fewest tiles elsewhere). A board of a launch-law generation whose facts give
 // no roofline (an unknown id without the driver's clocks) keeps the fewest tiles of 16, 32, 64 and
-// 128, the choice before DECISIONS 77: the law cannot be priced there, and no other measurement
+// 128, the choice before DECISIONS 78: the law cannot be priced there, and no other measurement
 // stands for it.
 [[nodiscard]] constexpr double width_cost(int columns, int j, int major, int minor, bool format,
                                           const LaunchFacts& f) noexcept {

@@ -278,7 +278,7 @@ inline constexpr R8IssueRate kR8IssueRate[] = {
 // of the DRAM rate (C = 1: kDramEta; linear in log2 C between points; beyond the last, the last's):
 // the MoE step rows of speed_measured.json (the server's windows of exactly C rows, eight different
 // tasks) less every other term of the step, the mean over the generation's cards and quantizations
-// (lab/speed_model/fit_moe_decode.py). A generation without rows takes Ada's (transferred).
+// (tools/fits/speed_model/fit_moe_decode.py). A generation without rows takes Ada's (transferred).
 struct MoeRoutedEta {
     std::string_view generation;
     double rows;
@@ -302,8 +302,8 @@ struct PredictionError {
 };
 inline constexpr PredictionError kDecodePredictionError[] = {{"ada", 0.0226}, {"gb20x", 0.0170}};
 
-// kDp4aOpsPerSmClock (a generation without an int8 MMA decodes its int8 route at it, choice.cpp
-// decode_int8_peak): core/cost_constants.h, a chip fact shared with spec/round_cost.h.
+// kDp4aOpsPerSmClock (a generation without an int8 MMA decodes its int8 route at it,
+// spec/round_cost.cpp): core/cost_constants.h, a chip fact.
 
 // A row per generation (core/generation.h's names) and kind; a generation without its own row
 // takes kTransferGeneration's, marked as a transfer (its prefill: a generation's with the same BF16
@@ -443,7 +443,7 @@ inline constexpr TileCost kTileCost[] = {
 // Ada: RTX 4070 Ti and 4090, GB20x: RTX 5090) 16, 32, 64, 80, 96 or 128 with the least work. A J-column tile's K step is
 // mmq_columns::step_share(J, mmq_tile_fixed) = f + (1 - f) J / 128 of a 128-column one: f = 0.43
 // (the RTX 4060 Ti's 64-column Q4_K tiles: 0.716) where the row has none of its own, 0.20 on GA10x
-// and Ada, 0.10 on GB20x (DECISIONS 74). On Turing (the RTX 2080 Ti's grid, DECISIONS 77) the
+// and Ada, 0.10 on GB20x (DECISIONS 74). On Turing (the RTX 2080 Ti's grid, DECISIONS 78) the
 // same widths take the launch they run: the longest CTA's units at the 128-column K step x the
 // law's unit share (mmq_columns::unit_share), and where the launch splits tiles the fixup's bytes
 // and its launch (the c1 above stay the census's).

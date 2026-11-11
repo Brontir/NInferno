@@ -262,6 +262,8 @@ bool DensePass::project_side_by_side(DeviceArena& work_, const Tensor& x,
                                      device_.stream);
 }
 
+// FUSION-SITE: dense_mlp_gate_up
+// FUSION-SITE: dense_mlp_down
 bool DensePass::dense_mlp(DeviceArena& work_, const Layer& layer, const Tensor& mlp_input,
                           Tensor& branch, std::int32_t t, Activations activations, bool add,
                           bool release) const {
@@ -355,6 +357,7 @@ void Target::draft_embedding(const Tensor& ids, Tensor& out) {
     ops::embedding(ids, model_.weights().token_embedding, out, device_.stream);
 }
 
+// FUSION-SITE: dense_out_residual_norm
 Tensor DensePass::forward(DeviceArena& work_, const Tensor& ids, const Tensor& pos, KvBindings kv,
                           std::int32_t session_context, ops::Gemma4AttentionEnvelope envelope,
                           Activations activations, const FeatureTap* tap) const {

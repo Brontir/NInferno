@@ -45,7 +45,7 @@
 //                   3090, 0.05-0.15 on the RTX 5090; DECISIONS 74), a generation with a higher
 //                   MMA rate (ga100: s8 4096) has a smaller part in J and a larger fixed share, so
 //                   fewer widths pay. A generation joins by its own grid: Ada did (0.20, the RTX
-//                   4070 Ti and 4090). Turing joined by its grid (the RTX 2080 Ti, DECISIONS 77)
+//                   4070 Ti and 4090). Turing joined by its grid (the RTX 2080 Ti, DECISIONS 78)
 //                   with a launch law instead of a fixed share (mmq_launch_law): on its 68 SMs the
 //                   width decides whether a launch runs a tile a CTA or stream-k with a fixup,
 //                   which the tile count does not see. A measured preference, not carried by a
@@ -75,7 +75,7 @@
 namespace ninferno {
 
 // The launch law of ggml's matrix kernel, for a generation whose column tiles are priced by the
-// launch they run (core/mmq_columns.h launch_seconds; DECISIONS 77) instead of their tile count. A
+// launch they run (core/mmq_columns.h launch_seconds; DECISIONS 78) instead of their tile count. A
 // launch takes its longest CTA's units times a unit's cost (a unit: one 128-row x J-column tile
 // over 256 K values), plus, where it splits tiles (stream-k with a fixup), the fixup's bytes at the
 // DRAM rate and one dependent launch.
@@ -91,7 +91,7 @@ struct MmqLaunchLaw {
 };
 
 // Turing: MEASURED on one card, the RTX 2080 Ti (68 SMs), and carried to the generation as a
-// transfer: no second Turing card is measured (DECISIONS 77). tools/bench/mmq_launch_microbench.cu,
+// transfer: no second Turing card is measured (DECISIONS 78). tools/bench/mmq_launch_microbench.cu,
 // 11.11, Q4_K, 4096 x 4096 and 4096 x 8192 products, the medians of two passes of 9 x 1000 calls.
 // unit_clocks: the time of 16 more units in a launch of a tile a CTA on 64 CTAs (two
 // column tiles, the 4096-row products' launch from 65 columns on), 3.40 4.56 6.28 7.23 8.50 11.60

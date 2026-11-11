@@ -125,16 +125,23 @@ struct RoundFacts {
 // choose; tools/fits/round_cost/fit_eta.py), as kappa = BW / (eta peak). A generation
 // constant rests on two lab cards of the generation or more (AGENTS.md); each card's rounds are
 // predicted from the generation's other cards' fit before a row is added (fit_eta.py, item 3):
-//   ada    0.148  RTX 4070 Ti and RTX 4090 (each card's rounds predicted from the other's fit:
-//                 hard50 within -3..+4 % and +1..+9 %; gpt-oss +16..19 %, its runs drafted BF16)
-//   gb20x  0.165  RTX 5070 Ti and RTX 5090 (DECISIONS 56: held out, R within +4.3 % / +1.4 % on
-//                 average; the plan's pick on the other card's pairs is the held-out card's
-//                 measured best or within 1.5 % of it, gpt-oss 4 %; the 5070 Ti's 9B rounds of
-//                 6-8 verify rows cost 7-12 % less than their facts, its speedup predicted low)
+//   ada    0.160  RTX 4060 Ti, RTX 4070 Ti and RTX 4090 (each card's rounds predicted from the
+//                 other two's fit, R measured / R facts on average: -3.9 %, +2.0 %, +1.2 %; the
+//                 plan's pick on another card's pairs is the held-out card's measured best or
+//                 within 2.2 % of it)
+//   gb20x  0.160  RTX 5070 Ti and RTX 5090 (each card's rounds predicted from the other's fit:
+//                 +3.2 % and +3.8 % on average; the plan's pick on the other card's pairs is the
+//                 held-out card's measured best or within 2.7 % of it)
+// The two rows follow the registry's pairs as of #244 (fresh Qwen3.5 9B and Gemma 4 12B pairs and
+// the RTX 4060 Ti's): they were 0.148 (RTX 4070 Ti and RTX 4090) and 0.165 before. DECISIONS 53
+// and 56 hold the older hold-out figures of those rows. fit_eta.py prints the rows, and
+// tests/test_round_cost_eta_fit.py fails when they differ from this table.
 // Each other generation needs a second lab card's registry pairs before it gets a row; until then
 // it has no estimate, and its cards keep the lab-measured profiles (as before the facts). Their
-// one-card fits, for when the second card comes (DECISIONS 53): ga10x 0.197 (RTX 3060), turing
-// 0.099 (RTX 2080 Ti), volta 0.179 (Quadro GV100). The rounds are the registry's after #156 (Gemma 4
+// one-card fits, for when the second card comes (DECISIONS 53 had ga10x 0.197, turing 0.099, volta
+// 0.179; on the registry as of #244, fit_eta.py prints): ga10x 0.269 (RTX 3060; its table names two
+// boards of the one ga106 chip), turing 0.135 (RTX 2080 Ti; likewise two boards of tu102), volta
+// 0.534 (Quadro GV100). The rounds are the registry's after #156 (Gemma 4
 // assistants and DFlash drafters attached q8): their q8 drafters' block passes are compute-bound
 // enough that eta fell from 0.54 (Ada, BF16 drafters) to 0.15.
 struct SmallTEta {
@@ -142,9 +149,10 @@ struct SmallTEta {
     double eta;
     std::int32_t cards; // lab cards the row rests on (two or more)
 };
+
 inline constexpr SmallTEta kSmallTEta[] = {
-    {"ada", 0.148, 2},
-    {"gb20x", 0.165, 2},
+    {"ada", 0.160, 3},
+    {"gb20x", 0.160, 2},
 };
 
 // A kernel's launch time inside a graph replay (t0) and the DRAM rate a decode kernel's bytes reach

@@ -924,7 +924,7 @@ class Readers(Base):
 
 
 class LaunchLaw(Base):
-    """The launch law the grid reader prices the cells with (DECISIONS 77): the tree's constants and rule."""
+    """The launch law the grid reader prices the cells with (DECISIONS 78): the tree's constants and rule."""
 
     def test_the_law_constants_are_the_trees(self):
         src = (Path(__file__).resolve().parents[1] / "src" / "core" / "generation.h").read_text()
@@ -971,7 +971,7 @@ class LaunchLaw(Base):
     def test_the_grid_reads_an_exact_law_with_no_residual_and_its_picks(self):
         rc, out, err = self.run_main("grid", *self.law_cells())
         self.assertEqual(rc, 0, err)
-        self.assertIn("LAUNCH LAW (DECISIONS 77", out)
+        self.assertIn("LAUNCH LAW (DECISIONS 78", out)
         self.assertRegex(out, r"no refit \(the tree's constants; C_N and D_r fitted\): residual rms 0\.00 %")
         self.assertIn("126 of 126 size x width medians within 1 %", out)
         self.assertIn("21 of 21 sizes at the measured best, mean regret 0.00 %", out)

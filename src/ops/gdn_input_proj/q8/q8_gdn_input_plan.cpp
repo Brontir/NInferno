@@ -55,6 +55,7 @@ Q8GdnInputPlan q8_gdn_input_resolve_plan(const Q8GdnInputProblem& problem) {
     return prefill_routes_active() ? resolve_from(kPrefillRoutes) : resolve_from(kRoutes);
 }
 
+// FUSION-SITE: gdn_conv_q8
 Q8GdnInputConvPlan q8_gdn_input_conv_resolve_plan(const Q8GdnInputProblem& problem,
                                                   std::int32_t batch_size) {
     if (!q8_gdn_input_admits(problem) || batch_size <= 0 || batch_size > 8) {
