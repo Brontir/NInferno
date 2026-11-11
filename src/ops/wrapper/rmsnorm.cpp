@@ -86,7 +86,6 @@ void gated_rmsnorm(const Tensor& x, const Tensor& weight, const Tensor& z, float
     rmsnorm_impl(x, weight, eps, false, &z, out, execution.multiprocessor_count, execution.stream);
 }
 
-// FUSION-SITE: gdn_gated_norm_regroup
 bool gated_rmsnorm_regroups(const Tensor& x, const Tensor& weight, const Tensor& z,
                             const Tensor& out) {
     const std::int64_t d = x.ne[0];

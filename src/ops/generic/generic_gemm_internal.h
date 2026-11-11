@@ -217,8 +217,14 @@ void launch_tiled(int schedule, WeightCodec codec, Epilogue epilogue, const Gemm
 bool volta_cutlass_compiled() noexcept;
 std::size_t volta_cutlass_workspace_bytes(std::int32_t n, std::int32_t k, std::int32_t tokens,
                                           bool swiglu);
+// The bytes of the chunk launch_volta_cutlass takes from `free_bytes` of workspace (halved until
+// it fits); 0 when it would launch nothing for want of room.
+std::size_t volta_cutlass_chunk_bytes(std::int32_t n, std::int32_t k, std::int32_t tokens,
+                                      bool swiglu, std::size_t free_bytes);
+// `free_bytes`: the workspace the chunk is sized to (the call's aligned free space, as
+// volta_cutlass_chunk_bytes takes it).
 bool launch_volta_cutlass(WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
-                          WorkspaceArena& workspace, cudaStream_t stream);
+                          WorkspaceArena& workspace, std::size_t free_bytes, cudaStream_t stream);
 
 // Staged register MMA (generic_staged.cu): BF16 weights only.
 void launch_staged(int schedule, Epilogue epilogue, const GemmArgs& args, cudaStream_t stream);

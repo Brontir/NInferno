@@ -9,7 +9,6 @@
 #include "core/cost_constants.h"
 #include "core/device_class.h"
 #include "core/generation.h"
-#include "ops/common/sm_wave_rules.h"
 #include "ops/rmsnorm_rope/launch.h"
 
 #include "ninferno/ops/rmsnorm.h"
@@ -58,10 +57,10 @@ struct Options {
     Execution execution = Execution::Graph;
     std::vector<int> batches{1, 2, 3, 4, 5, 6, 7, 8};
     std::vector<int> tokens{1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 128, 1024, 2048};
-    int warmup   = 20;
-    int repeat   = 200;
-    bool profile = false;
-    Route route  = Route::Fused;
+    int warmup     = 20;
+    int repeat     = 200;
+    bool profile   = false;
+    Route route    = Route::Fused;
     bool crossover = false;
     std::vector<std::pair<int, int>> geometries{{32, 2}, {16, 4}};
     int graph_reps = 32;
@@ -180,6 +179,13 @@ Options parse_options(int argc, char** argv) {
                              (options.batches.size() != 1 || options.widths.size() != 1)) ||
                             (options.form == Form::Single && options.tokens.size() != 1))) {
         usage("--profile requires one selected extent");
+    }
+    // The crossover scan and the slopes read adjacent widths as increasing: an unsorted list
+    // would bracket the wrong sign change, and a repeated last width divides by zero.
+    if (options.crossover &&
+        std::adjacent_find(options.tokens.begin(), options.tokens.end(),
+                           [](int a, int b) { return b <= a; }) != options.tokens.end()) {
+        usage("--crossover requires --tokens in strictly increasing order");
     }
     return options;
 }
@@ -401,10 +407,10 @@ double text_route_us(const Options& options, Route route, int query_heads, int k
     return best / options.graph_reps;
 }
 
-// Both routes over the widths; the crossover is where fused - split turns positive (log-T
-// interpolation between the two widths). Two readings of the per-token time the fused route loses
-// (sm_wave_rules.h launch_amortized_tokens; they predict the same on boards of one generation
-// whose DRAM rate per SM is alike, so run a pair that differs):
+// Both routes over the widths; the crossover is where fused - split turns positive (linear
+// interpolation in T between the two widths: the law is affine in T). Two readings of the per-token
+// time the fused route loses (sm_wave_rules.h launch_amortized_tokens; they predict the same on
+// boards of one generation whose DRAM rate per SM is alike, so run a pair that differs):
 //   latency:  T* = 2 L x SMs x warps_per_SM x clock / (excess_cycles x heads)  [the law in the
 //   code] DRAM:     T* = 2 L x DRAM_rate / (excess x bytes_per_token)                [the
 //   alternative]
@@ -419,28 +425,19 @@ void run_crossover(const Options& options, cudaStream_t stream) {
     const std::string generation(generation_known(device.major, device.minor)
                                      ? generation_row(device.major, device.minor).name
                                      : "");
-    const double node_l = launch_node_seconds(generation);
-    const int sms       = device.sms;
-    // The law's resident-warp count (the thread and slot limits; sm_wave_rules.h) against the
-    // compiled kernel's occupancy (registers and shared memory too): a mismatch is printed.
-    const int law_ctas = ops::detail::sm_rules::resident_ctas_per_sm(
-        device.max_blocks_per_sm, device.max_threads_per_sm, ops::detail::kTextHeadsPerBlock * 32);
-    const double warps_per_sm = static_cast<double>(law_ctas) * ops::detail::kTextHeadsPerBlock;
-    for (const auto& [qh, kh] : options.geometries) {
-        const int kernel_ctas = ops::detail::text_kernel_resident_ctas(qh, kh);
-        if (kernel_ctas != 0 && law_ctas != kernel_ctas) {
-            std::printf(
-                "# WARNING: %d+%d: resident blocks an SM: law %d, cudaOccupancy %d (the law "
-                "reads the device's thread and slot limits only)\n",
-                qh, kh, law_ctas, kernel_ctas);
-        }
-    }
+    const double node_l   = launch_node_seconds(generation);
+    const int sms         = device.sms;
     const double clock_hz = machine_facts_of(device).reference_clock_khz * 1.0e3;
-    std::printf("# device=%s generation=%s sms=%d warps_per_sm=%.0f clock_mhz=%.0f dram_gbps=%.1f "
+    std::printf("# device=%s generation=%s sms=%d clock_mhz=%.0f dram_gbps=%.1f "
                 "launch_node_us=%s graph_reps=%d min_of=%d\n",
-                device.name.c_str(), generation.c_str(), sms, warps_per_sm, clock_hz / 1.0e6,
-                bw / 1.0e9, node_l > 0.0 ? std::to_string(node_l * 1.0e6).c_str() : "none",
-                options.graph_reps, kMinOfPasses);
+                device.name.c_str(), generation.c_str(), sms, clock_hz / 1.0e6, bw / 1.0e9,
+                node_l > 0.0 ? std::to_string(node_l * 1.0e6).c_str() : "none", options.graph_reps,
+                kMinOfPasses);
+    // The resident blocks the law reads (the geometry's committed kernel facts through the
+    // occupancy calculator, ops/rmsnorm_rope/launch.h; 0 where the snapshots carry none and the law
+    // refuses) against the running GPU's occupancy of the compiled kernel: a mismatch is printed.
+    // The implied constants below use the law's value, the live one where no facts are committed.
+    std::vector<double> warps_of_geometry;
     for (const auto& [qh, kh] : options.geometries) {
         if (ops::rmsnorm_rope_text_heads(qh, kh)) {
             std::printf("# dispatch_bound %d+%d=%d\n", qh, kh,
@@ -450,8 +447,27 @@ void run_crossover(const Options& options, cudaStream_t stream) {
                         kh);
         }
     }
-    std::printf("geometry,T,fused_us,split_us,fused_minus_split_us\n");
     for (const auto& [qh, kh] : options.geometries) {
+        const auto facts = ops::detail::text_kernel_facts(device, qh, kh);
+        const int law_ctas =
+            facts ? ops::detail::text_kernel_facts_resident_ctas(device, *facts) : 0;
+        const int live_ctas = ops::detail::text_kernel_resident_ctas(qh, kh);
+        if (law_ctas != live_ctas) {
+            std::printf("# WARNING: %d+%d: resident blocks an SM: law %d (%s), cudaOccupancy %d\n",
+                        qh, kh, law_ctas,
+                        facts ? "committed facts" : "no committed facts: the law refuses",
+                        live_ctas);
+        }
+        const int ctas = law_ctas > 0 ? law_ctas : live_ctas;
+        std::printf("# %d+%d: warps_per_sm=%d (%s)\n", qh, kh,
+                    ctas * ops::detail::kTextHeadsPerBlock,
+                    law_ctas > 0 ? "law" : "live occupancy");
+        warps_of_geometry.push_back(static_cast<double>(ctas) * ops::detail::kTextHeadsPerBlock);
+    }
+    std::printf("geometry,T,fused_us,split_us,fused_minus_split_us\n");
+    std::size_t geometry_index = 0;
+    for (const auto& [qh, kh] : options.geometries) {
+        const double warps_per_sm = warps_of_geometry[geometry_index++];
         std::vector<int> ts;
         std::vector<double> diff;
         std::vector<double> fused_us;
@@ -473,16 +489,20 @@ void run_crossover(const Options& options, cudaStream_t stream) {
         double crossover = -1.0; // -1: the fused route wins at every width measured
         for (std::size_t i = 1; i < ts.size(); ++i) {
             if (diff[i - 1] <= 0.0 && diff[i] > 0.0) {
-                const double t0 = std::log(static_cast<double>(ts[i - 1]));
-                const double t1 = std::log(static_cast<double>(ts[i]));
+                // The model is affine in T (fused - split = -2 L + T x delta), so the zero is
+                // interpolated in tokens, not in log T.
+                const double t0 = static_cast<double>(ts[i - 1]);
+                const double t1 = static_cast<double>(ts[i]);
                 const double w  = -diff[i - 1] / (diff[i] - diff[i - 1]);
-                crossover       = std::exp(t0 + w * (t1 - t0));
+                crossover       = t0 + w * (t1 - t0);
                 break;
             }
         }
         if (diff.front() > 0.0) { crossover = 0.0; } // fused already loses at the narrowest
         const double bytes_token = (qh + kh) * 256.0 * 2.0 * 2.0;
-        const double heads       = qh + kh;
+        // the launched warp slots a token, as the dispatch's law prices them (rmsnorm_rope.cpp)
+        const int per_block = ops::detail::kTextHeadsPerBlock;
+        const double heads = static_cast<double>((qh + kh + per_block - 1) / per_block * per_block);
         // The slope difference of the two widest points (seconds a token) and the launch from the
         // narrowest: fused - split at T0 is -2 L + T0 x delta, so L = (-diff0 + T0 x delta) / 2.
         double delta   = 0.0;

@@ -136,7 +136,7 @@
                 "one_card_literal": false,
                 "evidence": [
                     "#617 analysis, section 1 and Q5 item 1",
-                    "tests/ops/linear/test_segmented_swiglu.cpp per-token memcmp"
+                    "tests/ops/linear/test_segmented_swiglu.cpp runs segmented_swiglu on the device against the FP64 oracle at 1-8, 9/12/16 and 520 tokens, whichever route the build picks; it asserts that the vec gated pair ran (at least one width per format pair), the per-token memcmp of the pair at two widths, and the oracle on every call. It does not assert that the MMQ pair ran: where the tuner rejects the pair at 9/12/16 tokens (a count is printed, not checked) or the prefill slices do not qualify, those widths run the two-projection fallback and still pass, so the MMQ pair is oracle-checked only on a GPU whose tuner takes it"
                 ],
                 "invariant_pin": "unreviewed",
                 "parity_test": null,
@@ -254,7 +254,7 @@
                     "function": "fused_text_qk_norm_rope"
                 },
                 "rule_today":
-                    "rmsnorm_rope when tokens <= kFusedTextQkNormRopeMaximumTokens (256), theta 1e7, eps 1e-6, head_dim 256, rotary 64, no YaRN, one position axis; else two rmsnorms + rope. Both branches are the same arithmetic bit for bit.",
+                    "rmsnorm_rope when tokens <= ops::rmsnorm_rope_text_fused_max_tokens (the launch-amortisation law of #661; 256, kFusedTextQkNormRopeDefaultMaximumTokens, until its excess and the kernel facts are committed), theta 1e7, eps 1e-6, head_dim 256, rotary 64, no YaRN, one position axis; else two rmsnorms + rope. Both branches are the same arithmetic bit for bit.",
                 "alternatives": [
                     "rmsnorm_rope (one launch)",
                     "2 x rmsnorm + rope"
@@ -273,7 +273,7 @@
                 "one_card_literal": true,
                 "evidence": [
                     "#617 analysis, section 1 and step G",
-                    "comment above kFusedTextQkNormRopeMaximumTokens"
+                    "comment above kFusedTextQkNormRopeDefaultMaximumTokens"
                 ],
                 "invariant_pin": "none needed (Equal)",
                 "parity_test": "tests/ops/test_rmsnorm_rope.cpp",
@@ -353,11 +353,11 @@
                     "regroup_bf16_heads"
                 ],
                 "decided_in": {
-                    "file": "src/ops/wrapper/rmsnorm.cpp",
-                    "function": "gated_rmsnorm_regroups"
+                    "file": "src/models/qwen3_5/execution/text.cpp",
+                    "function": "gdn_mix"
                 },
                 "rule_today":
-                    "An alignment predicate (D 64..256 by 64, 4-byte aligned tensors, out apart from x and z) plus the tiled out_proj column order (text.cpp) selects gated_rmsnorm_regrouped over gated_rmsnorm + regroup_bf16_heads.",
+                    "gdn_mix picks the fused gated_rmsnorm_regrouped only when the out_proj is in the tiled column order (output_heads_tiled) and the alignment predicate ops::gated_rmsnorm_regroups holds (D 64..256 by 64, 4-byte aligned tensors, out apart from x and z). Otherwise it runs gated_rmsnorm, then regroup_bf16_heads when the order is tiled.",
                 "alternatives": [
                     "gated_rmsnorm_regrouped",
                     "gated_rmsnorm + regroup_bf16_heads"
@@ -533,7 +533,7 @@
                 "priced": {
                     "status": "literal",
                     "by":
-                        "two cards: RTX 3090 gains and RTX 5090 losses (comment in moe.cpp) as a PDL flag and a 32-assignment bound",
+                        "two cards, RTX 3090 (gains) and RTX 5090 (losses), measured end to end per model (comment above route_in_router in moe.cpp); the PDL flag and the 32-assignment bound are the rule",
                     "unpriced": "the launch saving per generation"
                 },
                 "byte_promise": "Equal",
@@ -634,7 +634,7 @@
                 ],
                 "priced": {
                     "status": "literal",
-                    "by": "token bound 16 and a format predicate",
+                    "by": "token bound 16 is a rule (the decode/verify widths) and a format predicate; the fused kernel's gain was timed in commit a1c5371f5 (#167): Qwen3.5-9B Q4_K_M plain decode at T = 1, nsys node trace, median of 255 steps, predicted against measured per GDN layer, RTX 4090 (+3.6 %), RTX 4070 Ti (+1.8 %), RTX 4060 Ti (+1.0 %)",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
@@ -669,7 +669,7 @@
                 "priced": {
                     "status": "literal",
                     "by":
-                        "column bounds 16 / 42 (42 is the measured speed frontier of the 27B kernel)",
+                        "column bounds 16 / 42 (42 is the measured speed frontier of the 27B kernel, bf16_gdn_gating_proj_plan.cpp); card: not recorded (origin commit 02be37cbc, subject only)",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
@@ -702,7 +702,7 @@
                 ],
                 "priced": {
                     "status": "literal",
-                    "by": "column bounds in the plan (not priced)",
+                    "by": "column bounds in the plan (not priced); the >= 17 A8 bound is the A8 quantization rule from facts (segmented_projection.h:11), not a run; card: not recorded, method: not recorded (origin commit 935c44a5b, subject only)",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
@@ -713,7 +713,7 @@
                     "#617 analysis (GDN row)",
                     "src/ops/gdn_input_proj/fp8/fp8_gdn_conv_plan.cpp"
                 ],
-                "oracle_test": "tests/ops/test_gdn_input_proj.cpp"
+                "oracle_test": null
             },
             {
                 "id": "gdn_conv_q8",
@@ -735,7 +735,7 @@
                 ],
                 "priced": {
                     "status": "literal",
-                    "by": "column bounds in the plan (not priced)",
+                    "by": "column bounds in the plan (not priced); card: not recorded, method: not recorded (no comment in the plan file names a run)",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
@@ -747,7 +747,7 @@
                     "#617 analysis (GDN row)",
                     "src/ops/gdn_input_proj/q8/q8_gdn_input_plan.cpp"
                 ],
-                "oracle_test": "tests/ops/test_gdn_input_proj.cpp"
+                "oracle_test": "tests/ops/test_gdn_input_proj_conv_snapshot.cpp"
             },
             {
                 "id": "gdn_conv_nvfp4",
@@ -769,7 +769,7 @@
                 ],
                 "priced": {
                     "status": "literal",
-                    "by": "column bounds in the plan (not priced)",
+                    "by": "column bounds in the plan (not priced); card: not recorded, method: not recorded (origin commit 0ba16ed9c, subject only)",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
@@ -781,7 +781,7 @@
                     "#617 analysis (GDN row)",
                     "src/ops/gdn_input_proj/nvfp4/nvfp4_gdn_snapshot_plan.cpp"
                 ],
-                "oracle_test": "tests/ops/test_gdn_input_proj.cpp"
+                "oracle_test": "tests/ops/test_gdn_input_proj_conv_snapshot.cpp"
             },
             {
                 "id": "gdn_conv_q4_q5",
@@ -803,7 +803,7 @@
                 ],
                 "priced": {
                     "status": "literal",
-                    "by": "column bounds in the plan (not priced)",
+                    "by": "column bounds in the plan (not priced); the 2..32 materialize rule and the per-chip small-T MMA bands are recorded in q4_q5_gdn_input_plan.cpp: per-layer timing (27B DFlash2 verify at T = 6 on an RTX 5090: 56.8 + 22.0 us a layer; a Volta build, which the plan writes as the V100 (gv100): 864 + 217 us a layer at T = 5; lines 79-83) and ninferno_gdn_input_proj_bench, 27B form, warm graph, on RTX 5090, RTX 4090 and RTX 3090 (lines 89-94, table kMmaMeasured); the one-token rule comes from the RTX 3090 decode census at 19.5K (59.1 + 24.6 us a layer against 55.0 + 17.1) and RTX 4080 SUPER 81.1 against 85.0 us (lines 102-107); the fused case 1, 2, 3, 5, 6 list itself has no recorded source (pre-public commit bdb0b27d6, no body)",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
@@ -814,7 +814,7 @@
                     "#617 analysis (GDN row)",
                     "src/ops/gdn_input_proj/q4_q5/q4_q5_gdn_input_plan.cpp"
                 ],
-                "oracle_test": "tests/ops/test_gdn_input_proj.cpp"
+                "oracle_test": "tests/ops/test_gdn_input_proj_conv_snapshot.cpp"
             },
             {
                 "id": "attn_input_proj",
@@ -847,7 +847,7 @@
                     "src/models/qwen3_5/execution/mtp.cpp",
                     "src/models/qwen3_5/execution/draft.cpp"
                 ],
-                "oracle_test": "tests/ops/test_attn_input_proj.cpp"
+                "oracle_test": null
             },
             {
                 "id": "sparse_moe_fused",
@@ -1239,14 +1239,14 @@
                 "priced": {
                     "status": "literal",
                     "by":
-                        "the column table kRoutes (ranges are constants, not prices), measured on one host (one card; the commit does not name it) in commit 5b4303c0e (the retune around the #261 linear routes)",
+                        "the column table kRoutes (ranges are constants, not prices), measured on the public op, cold L2, median of three sessions in commit 5b4303c0e (the retune around the #261 linear routes); card: not recorded (one host, the commit does not name the card)",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
                 "invariant_pin": "unreviewed",
                 "parity_test": null,
                 "oracle_test": "tests/ops/linear_swiglu/test_q4_a16.cpp",
-                "one_card_literal": true,
+                "one_card_literal": false,
                 "evidence": [
                     "src/ops/linear_swiglu/q4/q4_linear_swiglu_plan.cpp",
                     "commit 5b4303c0e: perf(ops): retune the Q4 34816x5120 LinearSwiGLU dispatch (second 128-column tile costs 226-290 us almost independently of live columns)"

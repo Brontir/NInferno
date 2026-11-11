@@ -12,11 +12,14 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstdint>
 #include <functional>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -1620,6 +1623,523 @@ int test_codec() {
     return failures;
 }
 
+// The harmony conventions a gpt-oss output is presented under (conventions.json): the analysis
+// channel's markers and the final channel's headers, as Frontend::grammar_vocabulary sets them.
+ninferno::chat::ReasoningMarkup harmony_reasoning() {
+    const auto harmony = ninferno::chat::resolve_conventions(
+        "<|start|>system<|message|>x<|end|><|start|>assistant<|channel|>analysis<|message|>t"
+        "<|end|><|start|>assistant<|channel|>final<|message|>a<|end|><|start|>assistant to="
+        "{{ name }}<|channel|>commentary json<|message|>{}<|call|>");
+    return harmony.reasoning.value_or(ninferno::chat::ReasoningMarkup{});
+}
+
+// The tool_choice none steer compiled as the serve layer compiles it (reads_answer_header).
+std::shared_ptr<const ninferno::structured::CompiledConstraint>
+compile_refusal_tag(const ninferno::structured::ConstraintCompiler& compiler, bool visible) {
+    ninferno::OutputConstraintSpec spec;
+    spec.kind                   = ninferno::OutputConstraintKind::StructuralTag;
+    spec.special_tokens_visible = visible;
+    spec.reads_answer_header    = true;
+    spec.definition =
+        ninferno::chat::tool_call_syntax(ToolCallFormat::Harmony).refusal_structural_tag();
+    return compiler.compile(spec);
+}
+
+// The request constraint as the Engine builds it for a gpt-oss prompt that ends at
+// "<|start|>assistant": the model may open its analysis at the first token, the output is
+// presented (not raw).
+ninferno::structured::RequestConstraint
+steered_request(const std::shared_ptr<const ninferno::structured::CompiledConstraint>& compiled) {
+    return ninferno::structured::RequestConstraint(compiled, false, true, true);
+}
+
+// tool_choice none steer (#578): harmony spells the headers of an output that is at most one
+// analysis and then the final message; the other syntaxes need no header constraint (their tags
+// stay empty, so their requests are not constrained). Fed byte by byte here; the real tokens are
+// test_refusal_tag_gpt_oss_tokens'.
+int test_refusal_structural_tag() {
+    int failures = 0;
+    for (const auto format :
+         {ToolCallFormat::QwenXml, ToolCallFormat::HermesJson, ToolCallFormat::Gemma4,
+          ToolCallFormat::MistralJson, ToolCallFormat::Llama3Json, ToolCallFormat::Pythonic,
+          ToolCallFormat::GraniteJson, ToolCallFormat::Atem}) {
+        failures += check(ninferno::chat::tool_call_syntax(format).refusal_structural_tag().empty(),
+                          "no refusal tag outside harmony");
+    }
+    const ninferno::chat::ReasoningMarkup reasoning = harmony_reasoning();
+    failures += check(reasoning.open == "<|channel|>analysis<|message|>" &&
+                          reasoning.close == "<|end|>" && reasoning.content_open.size() == 2,
+                      "harmony conventions for the refusal tag");
+    ninferno::structured::GrammarVocabulary vocabulary = byte_vocabulary();
+    vocabulary.reasoning_open                          = reasoning.open;
+    vocabulary.reasoning_close                         = reasoning.close;
+    vocabulary.content_open                            = reasoning.content_open;
+    const ninferno::structured::ConstraintCompiler compiler(vocabulary);
+    const auto compiled = compile_refusal_tag(compiler, true);
+    failures += check(ninferno::structured::reads_answer_header(*compiled),
+                      "the steer is compiled to read the answer header");
+    const auto feed = [&](ninferno::structured::RequestConstraint& request, std::string_view text) {
+        std::vector<ninferno::TokenId> tokens;
+        for (const char c : text) { tokens.push_back(static_cast<unsigned char>(c)); }
+        request.commit(tokens);
+    };
+    // The prompt ends at "<|start|>assistant": the output begins with the channel. A sequence
+    // the constraint admits (prefixes of an output included) or refuses before its end.
+    const auto admits = [&](std::string_view text) {
+        auto request = steered_request(compiled);
+        feed(request, text);
+        return !request.violated();
+    };
+    const std::string analysis     = "<|channel|>analysis<|message|>a<|end|>";
+    const std::string final_header = "<|start|>assistant<|channel|>final<|message|>";
+    for (const std::string& ok : {
+             // The analysis is free: markup in it is its own text.
+             "<|channel|>analysis<|message|>think to=x <|channel|>commentary to=python<|end|>" +
+                 final_header + "It is sunny; set x to=3, a commentary.",
+             std::string("<|channel|>final<|message|>It is sunny; set x to=3, a commentary."),
+             std::string("<|channel|>final<|message|>to=functions.x is prose here"),
+             std::string("<|channel|>final<|message|>"),
+             analysis + final_header + "b",
+             analysis + "\n" + final_header + "b",
+             // Prefixes of an output: the constraint has not refused them yet.
+             std::string(""),
+             std::string("<|channel|>"),
+             std::string("<|channel|>analysis"),
+             std::string("<|channel|>analysis<|message|>still thinking"),
+             analysis,
+             analysis + "<|start|>assistant",
+         }) {
+        failures += check(admits(ok), "refusal tag admits: " + ok);
+    }
+    for (const std::string& bad : {
+             // Before any header: no prose, no recipient, no role, no second channel.
+             std::string("Hello there"),
+             std::string("t"),
+             std::string(" to=functions.x<|channel|>commentary"),
+             std::string(" to"),
+             std::string("\n<|channel|>final<|message|>b"),
+             std::string("<|start|>assistant<|channel|>final<|message|>b"),
+             std::string("<tool_call> as text"),
+             // The channel: analysis or final, then <|message|> at once.
+             std::string("<|channel|>commentary to=functions.x"),
+             std::string("<|channel|>analysis to=python<|message|>"),
+             std::string("<|channel|>analysis<|constrain|>json"),
+             std::string("<|channel|>final <|constrain|>json<|message|>{}"),
+             std::string("<|channel|>final<|constrain|>json"),
+             std::string("<|channel|>final to=functions.x<|message|>"),
+             std::string("<|channel|>analysisx<|message|>"),
+             // After the analysis: only the final message, behind its exact header.
+             analysis + "Hello",
+             analysis + "<|channel|>final<|message|>b",
+             analysis + "<|start|>assistant to=functions.x<|channel|>commentary",
+             analysis + "<|start|>assistant<|channel|>commentary to=functions.x",
+             analysis + "<|start|>assistant<|channel|>analysis<|message|>more thought",
+             analysis + "<|start|>assistantx to=python<|channel|>analysis<|message|>",
+             analysis + "<|start|>assistant<|message|> to=python",
+             analysis + "<|start|>assistant<|channel|>final<|constrain|>json",
+             // The final text holds no markup: the final message ends the output.
+             std::string("<|channel|>final<|message|>b<|end|>"),
+             std::string("<|channel|>final<|message|>b<|start|>assistant<|channel|>commentary"),
+             std::string("<|channel|>final<|message|>b to=python<|channel|>analysis<|message|>c"),
+             std::string("<|channel|>final<|message|>b<|message|>"),
+             std::string("<|channel|>final<|message|>b<|constrain|>json"),
+             // #665: a recipient in prose before an analysis header.
+             std::string("x to=python<|channel|>analysis<|message|>code"),
+         }) {
+        failures += check(!admits(bad), "refusal tag refuses: " + bad);
+    }
+    // Where the output may end (the stop token, 256, is admitted) and where it may not.
+    const auto may_stop = [&](std::string_view text) {
+        auto request = steered_request(compiled);
+        feed(request, text);
+        std::vector<std::uint32_t> row(request.mask_words());
+        request.fill_round({}, row.data(), row.size());
+        return !request.violated() && ((row[256U >> 5U] >> (256U & 31U)) & 1U) != 0U;
+    };
+    for (const std::string& whole :
+         {std::string("<|channel|>final<|message|>"),
+          std::string("<|channel|>final<|message|>It is 3."), analysis + final_header + "b"}) {
+        failures += check(may_stop(whole), "refusal tag may stop after: " + whole);
+    }
+    for (const std::string& partial :
+         {std::string(""), std::string("<|channel|>"), std::string("<|channel|>final"),
+          std::string("<|channel|>analysis<|message|>a"), analysis, analysis + "<|start|>",
+          analysis + "<|start|>assistant<|channel|>final"}) {
+        failures += check(!may_stop(partial), "refusal tag may not stop after: " + partial);
+    }
+    return failures;
+}
+
+// gpt-oss-20b's own token ids (openai/gpt-oss-20b at the revision
+// tests/chat/hf_chat_template_parity.py pins, read from its tokenizer.json with a byte-level BPE
+// over the o200k split; nothing guessed). The harmony special tokens are added tokens; the words
+// are what the tokenizer makes of them ("commentary" is "comment" "ary", "
+// to=functions.get_weather" is " to" "=" "functions" ".get" "_weather"). o200k's 256 byte tokens
+// are its first ids, in GPT-2's byte order ('!' is 0, '=' 28, '\n' 198, ' ' 220).
+namespace oss {
+using ninferno::TokenId;
+constexpr TokenId kEndOfText       = 199999; // <|endoftext|>, a stop
+constexpr TokenId kReturn          = 200002; // <|return|>, the eos
+constexpr TokenId kConstrain       = 200003; // <|constrain|>
+constexpr TokenId kChannel         = 200005; // <|channel|>
+constexpr TokenId kStart           = 200006; // <|start|>
+constexpr TokenId kEnd             = 200007; // <|end|>
+constexpr TokenId kMessage         = 200008; // <|message|>
+constexpr TokenId kCall            = 200012; // <|call|>, a stop
+constexpr TokenId kAssistant       = 173781;
+constexpr TokenId kAnalysis        = 35644;
+constexpr TokenId kFinal           = 17196;
+constexpr TokenId kComment         = 12606; // "comment" (of "commentary")
+constexpr TokenId kAry             = 815;   // "ary"
+constexpr TokenId kSpaceCommentary = 49159; // " commentary"
+constexpr TokenId kTo              = 316;   // " to"
+constexpr TokenId kFunctions       = 44580;
+constexpr TokenId kDotGet          = 775;    // ".get"
+constexpr TokenId kWeather         = 170154; // "_weather"
+constexpr TokenId kJson            = 4108;
+constexpr TokenId kPython          = 29010;
+constexpr TokenId kIt              = 3206;  // "It"
+constexpr TokenId kIs              = 382;   // " is"
+constexpr TokenId kSunny           = 46726; // " sunny"
+constexpr TokenId kNo              = 3160;  // "No"
+constexpr TokenId kTool            = 4584;  // " tool"
+constexpr TokenId kGtNewline       = 523;   // ">\n" ('>' and a newline, one token)
+// Ids 0..200018: the last added token is 200018.
+constexpr std::uint32_t kDomain = 200019;
+
+// A byte's token: GPT-2's bytes_to_unicode order, the printable bytes first.
+constexpr TokenId byte(unsigned char value) {
+    if (value >= '!' && value <= '~') { return value - '!'; }
+    if (value >= 0xA1 && value <= 0xAC) { return 94 + (value - 0xA1); }
+    if (value >= 0xAE) { return 106 + (value - 0xAE); }
+    if (value <= ' ') { return 188 + value; }
+    if (value <= 0xA0) { return 221 + (value - 0x7F); }
+    return 255; // 0xAD
+}
+
+static_assert(byte('=') == 28 && byte('.') == 13 && byte('x') == 87 && byte(' ') == 220 &&
+              byte('\n') == 198 && byte('\t') == 197);
+
+} // namespace oss
+
+// The grammar vocabulary a gpt-oss Frontend builds, restricted to the tokens the sequences below
+// use: every byte, the header and call words, a few words of prose. The harmony markers are
+// structural, so not special (the grammar reads them); <|return|> and <|endoftext|> are special.
+// The ids no fixture word takes are left out (empty, never admitted).
+ninferno::structured::GrammarVocabulary gpt_oss_vocabulary() {
+    ninferno::structured::GrammarVocabulary out;
+    out.token_domain = oss::kDomain;
+    out.token_bytes.resize(out.token_domain);
+    out.special.assign(out.token_domain, true);
+    const auto set = [&](ninferno::TokenId id, std::string bytes, bool special) {
+        out.token_bytes[static_cast<std::size_t>(id)] = std::move(bytes);
+        out.special[static_cast<std::size_t>(id)]     = special;
+    };
+    for (int value = 0; value < 256; ++value) {
+        set(oss::byte(static_cast<unsigned char>(value)), std::string(1, static_cast<char>(value)),
+            false);
+    }
+    const std::vector<std::pair<ninferno::TokenId, std::string>> words = {
+        {oss::kAssistant, "assistant"},
+        {oss::kAnalysis, "analysis"},
+        {oss::kFinal, "final"},
+        {oss::kComment, "comment"},
+        {oss::kAry, "ary"},
+        {oss::kSpaceCommentary, " commentary"},
+        {oss::kTo, " to"},
+        {oss::kFunctions, "functions"},
+        {oss::kDotGet, ".get"},
+        {oss::kWeather, "_weather"},
+        {oss::kJson, "json"},
+        {oss::kPython, "python"},
+        {oss::kIt, "It"},
+        {oss::kIs, " is"},
+        {oss::kSunny, " sunny"},
+        {oss::kNo, "No"},
+        {oss::kTool, " tool"},
+        {oss::kGtNewline, ">\n"},
+        {oss::kConstrain, "<|constrain|>"},
+        {oss::kChannel, "<|channel|>"},
+        {oss::kStart, "<|start|>"},
+        {oss::kEnd, "<|end|>"},
+        {oss::kMessage, "<|message|>"},
+        {oss::kCall, "<|call|>"},
+    };
+    for (const auto& [id, bytes] : words) { set(id, bytes, false); }
+    set(oss::kReturn, "<|return|>", true);
+    set(oss::kEndOfText, "<|endoftext|>", true);
+    out.stop_token_ids                              = {oss::kReturn, oss::kCall, oss::kEndOfText};
+    const ninferno::chat::ReasoningMarkup reasoning = harmony_reasoning();
+    out.reasoning_open                              = reasoning.open;
+    out.reasoning_close                             = reasoning.close;
+    out.content_open                                = reasoning.content_open;
+    return out;
+}
+
+// The tokens one mask row admits, as a sorted list.
+std::vector<ninferno::TokenId> admitted(const std::vector<std::uint32_t>& row,
+                                        std::size_t offset = 0, std::size_t words = 0) {
+    if (words == 0) { words = row.size() - offset; }
+    std::vector<ninferno::TokenId> out;
+    for (std::size_t word = 0; word < words; ++word) {
+        for (std::uint32_t bit = 0; bit < 32U; ++bit) {
+            if (((row[offset + word] >> bit) & 1U) != 0U) {
+                out.push_back(static_cast<ninferno::TokenId>(word * 32U + bit));
+            }
+        }
+    }
+    return out;
+}
+
+// tool_choice none on gpt-oss (#578), token by token with the model's own ids: the rows the
+// Engine applies at each position of recorded outputs (the channel form without an analysis,
+// an analysis and then the final message, the thinking-budget control injected into the
+// analysis, refused headers), and speculative rounds with DFlash drafts the mask refuses. Both
+// special-token visibilities: the harmony markers are structural, so the rows are the same.
+int test_refusal_tag_gpt_oss_tokens() {
+    using ninferno::TokenId;
+    using Tokens = std::vector<TokenId>;
+    int failures = 0;
+    const ninferno::structured::ConstraintCompiler compiler(gpt_oss_vocabulary());
+    const auto sorted = [](Tokens tokens) {
+        std::sort(tokens.begin(), tokens.end());
+        return tokens;
+    };
+    // The rows past a header's first bytes: the special token and the byte that begins it.
+    const Tokens channel    = sorted({oss::kChannel, oss::byte('<')});
+    const Tokens message    = sorted({oss::kMessage, oss::byte('<')});
+    const Tokens a_channel  = sorted({oss::kAnalysis, oss::kFinal, oss::byte('a'), oss::byte('f')});
+    const Tokens role       = sorted({oss::kAssistant, oss::byte('a')});
+    const Tokens final_only = sorted({oss::kFinal, oss::byte('f')});
+    // After the analysis's <|end|>: the next message's <|start|>, or a short blank run first.
+    const Tokens after_end = sorted({oss::kStart, oss::byte('<'), oss::byte(' '), oss::byte('\t'),
+                                     oss::byte('\n'), oss::byte('\r')});
+    const Tokens stops     = {oss::kEndOfText, oss::kReturn, oss::kCall};
+    const Tokens sunny     = {oss::kIt, oss::kIs, oss::kSunny, oss::byte('.')};
+    for (const bool visible : {false, true}) {
+        const std::string label = visible ? " (special tokens visible)" : "";
+        const auto compiled     = compile_refusal_tag(compiler, visible);
+        const std::size_t words = ninferno::structured::vocabulary_view(*compiled).mask_words;
+        std::vector<std::uint32_t> row(words);
+        const auto next = [&](ninferno::structured::RequestConstraint& request) {
+            std::fill(row.begin(), row.end(), 0U);
+            request.fill_round({}, row.data(), words);
+            return admitted(row);
+        };
+        const auto has = [&](TokenId token) {
+            return ((row[static_cast<std::size_t>(token) >> 5U] >> (token & 31)) & 1U) != 0U;
+        };
+        // Inside the analysis the row is every token but the stops (the output cannot end there).
+        const auto reasoning_row = [&] {
+            return std::all_of(stops.begin(), stops.end(), [&](TokenId t) { return !has(t); }) &&
+                   admitted(row).size() == oss::kDomain - stops.size();
+        };
+        const auto commit = [](ninferno::structured::RequestConstraint& request, Tokens tokens) {
+            request.commit(tokens);
+            return !request.violated();
+        };
+
+        // 1. The channel form, no analysis: <|channel|>final<|message|>It is sunny.<|return|>
+        {
+            auto request = steered_request(compiled);
+            failures += check(next(request) == channel,
+                              "position 0 admits only <|channel|> (not ' to', <|start|>, prose, a "
+                              "stop)" +
+                                  label);
+            failures += check(commit(request, {oss::kChannel}) && next(request) == a_channel,
+                              "after <|channel|> only analysis or final (not commentary)" + label);
+            failures += check(commit(request, {oss::kFinal}) && next(request) == message,
+                              "after final only <|message|> (not <|constrain|>, ' ')" + label);
+            failures += check(commit(request, {oss::kMessage}), "the final header" + label);
+            next(request);
+            failures +=
+                check(has(oss::kIt) && has(oss::kTo) && has(oss::kComment) && has(oss::kReturn) &&
+                          !has(oss::kEnd) && !has(oss::kStart) && !has(oss::kChannel) &&
+                          !has(oss::kMessage) && !has(oss::kConstrain),
+                      "the final text: prose and the end, no harmony markup" + label);
+            failures += check(commit(request, sunny), "the final text" + label);
+            next(request);
+            failures += check(has(oss::kReturn) && has(oss::byte(' ')) && !has(oss::kEnd),
+                              "after the final text: more prose or <|return|>" + label);
+            failures += check(commit(request, {oss::kReturn}) && request.stats().complete,
+                              "the channel form completes at <|return|>" + label);
+        }
+        // 2. An analysis, then the final message.
+        {
+            auto request = steered_request(compiled);
+            failures += check(commit(request, {oss::kChannel, oss::kAnalysis, oss::kMessage}),
+                              "the analysis header" + label);
+            next(request);
+            failures += check(reasoning_row(), "inside the analysis: free, no stop" + label);
+            // A call the model only thinks about, markup and all, is the analysis's text.
+            failures += check(commit(request, {oss::kIt, oss::kTo, oss::byte('='), oss::kPython,
+                                               oss::byte(' '), oss::kConstrain, oss::kJson,
+                                               oss::kChannel, oss::kComment, oss::kAry}),
+                              "the analysis takes markup as its text" + label);
+            next(request);
+            failures += check(reasoning_row(), "the analysis stays free" + label);
+            failures += check(commit(request, {oss::kEnd}) && next(request) == after_end,
+                              "after <|end|> only <|start|> (or blanks)" + label);
+            failures += check(commit(request, {oss::kStart}) && next(request) == role,
+                              "after <|start|> only assistant" + label);
+            failures += check(commit(request, {oss::kAssistant}) && next(request) == channel,
+                              "after the role only <|channel|> (not ' to')" + label);
+            failures += check(commit(request, {oss::kChannel}) && next(request) == final_only,
+                              "after the analysis only final (not analysis, commentary)" + label);
+            failures += check(commit(request, {oss::kFinal}) && next(request) == message,
+                              "after final only <|message|>" + label);
+            failures += check(commit(request, {oss::kMessage, oss::kNo, oss::kTool, oss::byte('.'),
+                                               oss::kReturn}) &&
+                                  request.stats().complete,
+                              "analysis then final completes at <|return|>" + label);
+        }
+        // 3. Refused, each at its last token.
+        const Tokens analysis = {oss::kChannel, oss::kAnalysis, oss::kMessage, oss::kIt, oss::kEnd};
+        const auto then       = [&](Tokens head, Tokens tail) {
+            head.insert(head.end(), tail.begin(), tail.end());
+            return head;
+        };
+        for (const Tokens& refused : std::vector<Tokens>{
+                 {oss::kTo},
+                 {oss::kStart},
+                 {oss::kIt},
+                 {oss::kChannel, oss::kComment},
+                 {oss::kChannel, oss::kSpaceCommentary},
+                 {oss::kChannel, oss::kAnalysis, oss::kTo},
+                 {oss::kChannel, oss::kAnalysis, oss::byte(' ')},
+                 {oss::kChannel, oss::kAnalysis, oss::kConstrain},
+                 {oss::kChannel, oss::kFinal, oss::kConstrain},
+                 {oss::kChannel, oss::kFinal, oss::byte(' ')},
+                 then(analysis, {oss::kIt}),
+                 then(analysis, {oss::kChannel}),
+                 then(analysis, {oss::kStart, oss::kAssistant, oss::kTo}),
+                 then(analysis, {oss::kStart, oss::kAssistant, oss::kChannel, oss::kAnalysis}),
+                 then(analysis, {oss::kStart, oss::kAssistant, oss::kChannel, oss::kComment}),
+                 {oss::kChannel, oss::kFinal, oss::kMessage, oss::kIt, oss::kEnd},
+                 {oss::kChannel, oss::kFinal, oss::kMessage, oss::kIt, oss::kStart},
+                 {oss::kChannel, oss::kFinal, oss::kMessage, oss::kIt, oss::kChannel},
+             }) {
+            auto request = steered_request(compiled);
+            const Tokens head(refused.begin(), refused.end() - 1);
+            const bool taken   = commit(request, head);
+            const bool refuses = !commit(request, {refused.back()});
+            failures +=
+                check(taken && refuses, "refused at token " + std::to_string(refused.back()) +
+                                            " after " + std::to_string(head.size()) + label);
+        }
+        // 4. The thinking-budget control injected into the analysis (committed like a sampled
+        // token): the analysis closes, the final header follows, the answer is open.
+        {
+            auto request = steered_request(compiled);
+            failures += check(commit(request, {oss::kChannel, oss::kAnalysis, oss::kMessage,
+                                               oss::kIt, oss::kEnd, oss::kStart, oss::kAssistant,
+                                               oss::kChannel, oss::kFinal, oss::kMessage}) &&
+                                  request.stats().complete,
+                              "the injected close and final header" + label);
+            next(request);
+            failures += check(has(oss::kNo) && has(oss::kReturn) && !has(oss::kEnd),
+                              "the answer is open after the injected header" + label);
+        }
+        // 5. Speculative rounds (DFlash drafts): row j follows drafts[0..j); a draft the mask
+        // refuses ends what acceptance can take, the rows after it repeat the last valid one, and
+        // the committed state is left as it was.
+        {
+            auto request        = steered_request(compiled);
+            const Tokens drafts = {oss::kChannel, oss::kAnalysis, oss::kMessage, oss::kIt};
+            std::vector<std::uint32_t> rows((drafts.size() + 1) * words);
+            request.fill_round(drafts, rows.data(), words);
+            const auto at = [&](std::size_t index) { return admitted(rows, index * words, words); };
+            failures += check(at(0) == channel && at(1) == a_channel && at(2) == message,
+                              "draft rows through the analysis header" + label);
+            const auto free_row = [&](std::size_t index) {
+                const Tokens tokens = at(index);
+                return tokens.size() == oss::kDomain - stops.size() &&
+                       !std::binary_search(tokens.begin(), tokens.end(), oss::kReturn);
+            };
+            failures += check(free_row(3) && free_row(4), "draft rows inside the analysis" + label);
+            failures += check(next(request) == channel, "the round left the start" + label);
+
+            const Tokens refused = {oss::kChannel, oss::kComment, oss::kAry};
+            std::vector<std::uint32_t> refused_rows((refused.size() + 1) * words);
+            request.fill_round(refused, refused_rows.data(), words);
+            const auto refused_at = [&](std::size_t index) {
+                return admitted(refused_rows, index * words, words);
+            };
+            failures += check(refused_at(1) == a_channel && refused_at(2) == a_channel &&
+                                  refused_at(3) == a_channel,
+                              "a refused draft (commentary): its row and the next repeat the last "
+                              "valid one" +
+                                  label);
+            failures += check(!request.violated() && commit(request, {oss::kChannel}) &&
+                                  next(request) == a_channel,
+                              "the accepted prefix commits after a refused draft" + label);
+
+            // Through the analysis's end: <|end|> <|start|> assistant, then a recipient.
+            auto thought = steered_request(compiled);
+            failures +=
+                check(commit(thought, {oss::kChannel, oss::kAnalysis, oss::kMessage, oss::kIt}),
+                      "the analysis before the window" + label);
+            const Tokens window = {oss::kEnd, oss::kStart, oss::kAssistant, oss::kTo,
+                                   oss::byte('=')};
+            std::vector<std::uint32_t> window_rows((window.size() + 1) * words);
+            thought.fill_round(window, window_rows.data(), words);
+            const auto window_at = [&](std::size_t index) {
+                return admitted(window_rows, index * words, words);
+            };
+            failures += check(window_at(1) == after_end && window_at(2) == role &&
+                                  window_at(3) == channel && window_at(4) == channel &&
+                                  window_at(5) == channel,
+                              "a window through <|end|><|start|>assistant: ' to' refused" + label);
+            failures += check(commit(thought, {oss::kEnd, oss::kStart, oss::kAssistant}) &&
+                                  next(thought) == channel,
+                              "the accepted prefix of the window commits" + label);
+        }
+        // 6. The open marker spelled in bytes up to "<|message|", then ">\n" completes it and
+        // goes on: the grammar reads the marker's bytes only (the newline is the analysis's) and,
+        // after <|end|>, goes on from the marker, committed and through one speculative window.
+        {
+            Tokens spelled = {oss::kChannel, oss::kAnalysis};
+            for (const char c : std::string_view("<|message|")) {
+                spelled.push_back(oss::byte(static_cast<unsigned char>(c)));
+            }
+            const Tokens last_byte = sorted({oss::byte('>'), oss::kGtNewline});
+            auto request           = steered_request(compiled);
+            failures += check(commit(request, spelled) && next(request) == last_byte,
+                              "the marker's last byte: '>' or '>\\n'" + label);
+            failures += check(commit(request, {oss::kGtNewline}),
+                              "'>\\n' completes the marker and opens the analysis" + label);
+            next(request);
+            failures += check(reasoning_row(), "after '>\\n': the analysis, free" + label);
+            failures += check(commit(request, {oss::kIt, oss::kEnd}) && next(request) == after_end,
+                              "after a spelled marker and <|end|>: only <|start|>" + label);
+            failures +=
+                check(commit(request, {oss::kStart, oss::kAssistant, oss::kChannel, oss::kFinal,
+                                       oss::kMessage, oss::kNo, oss::kReturn}) &&
+                          request.stats().complete,
+                      "the final message completes after a spelled marker" + label);
+
+            auto fresh    = steered_request(compiled);
+            Tokens window = spelled;
+            window.insert(window.end(), {oss::kGtNewline, oss::kIt, oss::kEnd, oss::kStart});
+            std::vector<std::uint32_t> rows((window.size() + 1) * words);
+            fresh.fill_round(window, rows.data(), words);
+            const auto at = [&](std::size_t index) { return admitted(rows, index * words, words); };
+            const std::size_t gt = spelled.size(); // the row ">\n" is drafted at
+            const auto free_row  = [&](std::size_t index) {
+                const Tokens tokens = at(index);
+                return tokens.size() == oss::kDomain - stops.size() &&
+                       !std::binary_search(tokens.begin(), tokens.end(), oss::kReturn);
+            };
+            failures += check(at(gt) == last_byte && free_row(gt + 1) && free_row(gt + 2) &&
+                                  at(gt + 3) == after_end && at(gt + 4) == role,
+                              "a window through a spelled marker and <|end|>" + label);
+            failures += check(!fresh.violated() && next(fresh) == channel,
+                              "the window left the committed state at the start" + label);
+        }
+    }
+    return failures;
+}
+
 } // namespace
 
 int main() {
@@ -1627,6 +2147,8 @@ int main() {
     failures += test_conventions();
     failures += test_bare_json_call_dropped();
     failures += test_harmony_any_recipient_under_none();
+    failures += test_refusal_structural_tag();
+    failures += test_refusal_tag_gpt_oss_tokens();
     failures += test_parsers();
     failures += test_streaming_decoder();
     failures += test_forced_stop_cut();

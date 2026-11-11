@@ -26,12 +26,50 @@ REQUIRED = ("id", "name", "layer", "fuses", "decided_in", "rule_today", "alterna
             "evidence")
 # Any slash-separated path with a source or doc extension, in any directory (not only src/).
 PATH_IN_TEXT = re.compile(
-    r"(?<![\w/.-])((?:[\w+-]+/)+[\w+-]+\.(?:cpp|cc|cu|cuh|h|hpp|inl|md|json|py|cmake|sh))\b")
+    r"(?<![\w/.-])((?:[\w+.-]+/)+[\w+.-]+\.(?:cpp|cc|cu|cuh|h|hpp|inl|md|json|py|cmake|sh|txt))\b")
 
 
 def load():
     with REGISTRY.open(encoding="utf-8") as f:
         return json.load(f)
+
+
+GPU_FACTS = ROOT / "src" / "core" / "data" / "gpu_facts.json"
+CARD_UNRECORDED = "card: not recorded"
+METHOD_UNRECORDED = "method: not recorded"
+# A method word, not negated: "not measured", "no measurement", "never profiled" do not count.
+METHOD = re.compile(
+    r"(?<!not )(?<!no )(?<!never )(?<!un)\b(measur\w*|a/b|nsys|ncu|census|sweep\w*|bench\w*|profil\w*)\b",
+    re.I)
+
+
+def board_names():
+    """{alias: canonical lower-case name} from the board registry (no hand list). Aliases: the full
+    product name, without a leading NVIDIA/GeForce, and for RTX/GTX boards the bare model number."""
+    with GPU_FACTS.open(encoding="utf-8") as f:
+        gpus = json.load(f)["gpus"]
+    out = {}
+    for g in gpus:
+        full = re.sub(r"^(NVIDIA )?(GeForce )?", "", g["name"]).strip()
+        canon = full.lower()
+        out[canon] = canon
+        m = re.match(r"^(RTX|GTX) (\d{4}.*)$", full)
+        if m:
+            out[m.group(2).lower()] = canon
+    return out
+
+
+def cards_named(text, names):
+    """Canonical names of the boards the text names, longest alias first so `RTX 3090 Ti` is not
+    also `RTX 3090`."""
+    low = text.lower()
+    found = set()
+    for alias in sorted(names, key=len, reverse=True):
+        pat = r"(?<![\w.$])" + re.escape(alias) + r"(?!\w|\.\d)"
+        if re.search(pat, low):
+            found.add(names[alias])
+            low = re.sub(pat, " ", low)
+    return found
 
 
 BAD = []  # lines that mention FUSION-SITE but are not a well-formed marker
@@ -135,10 +173,6 @@ class FusionSites(unittest.TestCase):
             self.assertIn(s["byte_promise"], PROMISES, s["id"])
             self.assertIsInstance(s["one_card_literal"], bool, s["id"])
             self.assertEqual(sorted(s["decided_in"]), ["file", "function"], s["id"])
-            # A site that has a literal from one card says so, and the reverse.
-            if s["priced"]["status"] == "literal" and s["one_card_literal"]:
-                self.assertTrue(any("5090" in e or "3090" in e or "card" in e for e in
-                                    [s["priced"]["by"]] + s["evidence"]), s["id"])
 
     def test_no_malformed_marker(self):
         markers()
@@ -188,6 +222,55 @@ class FusionSites(unittest.TestCase):
                 if rel in not_yet:
                     continue
                 self.assertTrue((ROOT / rel).exists(), f"{rel} does not exist (in: {text[:60]}...)")
+
+    def test_path_regex_accepts_dotted_basenames(self):
+        self.assertEqual(PATH_IN_TEXT.findall("see docs/v0.1.0.md and a/b/c.cu."),
+                         ["docs/v0.1.0.md", "a/b/c.cu"])
+        self.assertEqual(PATH_IN_TEXT.findall("docs/qwen3.5/perf.md and tests/CMakeLists.txt"),
+                         ["docs/qwen3.5/perf.md", "tests/CMakeLists.txt"])
+
+    def test_every_literal_names_its_cards_and_method(self):
+        """Every number carries its source: a literal site names the card(s) it was measured on (a
+        name the board registry knows) and the method, or says explicitly that the record is
+        missing. one_card_literal is true iff exactly one card is named."""
+        names = board_names()
+        unrecorded = []
+        for s in self.sites:
+            literal = s["priced"]["status"] == "literal"
+            if not literal:
+                self.assertFalse(s["one_card_literal"], f"{s['id']}: one_card_literal on a non-literal")
+                continue
+            text = " ".join([s["priced"]["by"]] + s["evidence"])
+            cards = cards_named(text, names)
+            if CARD_UNRECORDED in text:
+                self.assertEqual(cards, set(), f"{s['id']}: says the card is not recorded and names one")
+                unrecorded.append(f"{s['id']}: card")
+            else:
+                self.assertTrue(cards, f"{s['id']}: names no card the board registry knows "
+                                f"(or write '{CARD_UNRECORDED}')")
+            if METHOD_UNRECORDED in text:
+                self.assertIsNone(METHOD.search(text), f"{s['id']}: says the method is not recorded "
+                                  "but names a method word")
+                unrecorded.append(f"{s['id']}: method")
+            else:
+                self.assertRegex(text, METHOD, f"{s['id']}: names no method (measured, A/B, nsys, "
+                                 f"sweep, census, bench, profile, or write '{METHOD_UNRECORDED}')")
+            self.assertEqual(s["one_card_literal"], len(cards) == 1,
+                             f"{s['id']}: one_card_literal is {s['one_card_literal']}, cards named: "
+                             f"{sorted(cards)}")
+        print("literal sources explicitly not recorded:", unrecorded, file=sys.stderr)
+
+    def test_card_and_method_checks_reject_what_they_should(self):
+        names = board_names()
+        self.assertEqual(cards_named("measured on an RTX 5090 alone", names), {"rtx 5090"})
+        self.assertEqual(cards_named("RTX 3090 gains, RTX 5090 loses", names), {"rtx 3090", "rtx 5090"})
+        self.assertEqual(cards_named("RTX 4060 Ti and 4090", names), {"rtx 4060 ti", "rtx 4090"})
+        self.assertEqual(cards_named("one card, unnamed; 5000 tokens", names), set())
+        self.assertEqual(cards_named("took 5090.5 us, cost $5090, id 15090", names), set())
+        self.assertIsNone(re.search(METHOD, "a column table"))
+        for negated in ("not measured", "no measurement", "never profiled", "unmeasured"):
+            self.assertIsNone(METHOD.search(negated), negated)
+        self.assertIsNotNone(METHOD.search("measured on one card"))
 
     def test_invariant_pin_and_parity_test(self):
         for s in self.sites:

@@ -32,14 +32,6 @@ double peak(const CardFacts& card, Route route) noexcept {
     return card.sms * card.clock_hz * rate;
 }
 
-// A decode step's int8 compute rate: the int8 MMA's; a generation without one (Volta) takes its
-// prefill through the tiled f16 MMA (peak) but decodes on dp4a, 4 int8 multiply-adds a lane each
-// clock on its 64 lanes per SM: 512 operations a SM-clock.
-double decode_int8_peak(const CardFacts& card) noexcept {
-    const GenerationRow& row = generation_row(card.major, card.minor);
-    return row.s8 > 0 ? peak(card, Route::Int8) : card.sms * card.clock_hz * kDp4aOpsPerSmClock;
-}
-
 // The generation's own row of a per-generation table, else kTransferGeneration's (`transferred`).
 template <class Row, std::size_t N>
 const Row* generation_row_of(const Row (&rows)[N], std::string_view generation, bool& transferred) noexcept {
@@ -1547,6 +1539,24 @@ std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates)
     return std::nullopt;
 }
 
+ChunkBasis chunk_basis_of(const ModelFacts& model, const CardFacts& card, const Gates& gates) {
+    if (!gates.moe_chunk || !model.moe()) { return ChunkBasis::None; }
+    const std::string_view gen = generation_of(card);
+    // The generation the shares were measured on, with its reference card: they decide.
+    if (const auto ref = reference_of(card, gates);
+        ref && ref->chunk_decides && gen == kMoeChunkCurveGeneration) {
+        return ChunkBasis::Own;
+    }
+    if (!generation_known(card.major, card.minor)) { return ChunkBasis::Transferred; }
+    // Another generation whose own MoE prefill rate rests on two lab cards: its saturated rate
+    // times the measured shares' slope, carried unchanged, estimates the chunk but never decides
+    // it (#300: another generation's rows estimate, they do not decide).
+    for (const PrefillEta& row : kPrefillEta) {
+        if (row.moe && row.generation == gen && row.cards >= 2) { return ChunkBasis::CarriedCurve; }
+    }
+    return ChunkBasis::Transferred;
+}
+
 bool decides_switches(const ModelFacts& model, const CardFacts& card, const Gates& gates) {
     const auto ref = reference_of(card, gates);
     // A gate opens the terms a family has; it never lends another family's.
@@ -1699,7 +1709,8 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     const std::optional<Reference> ref = reference_of(card, gates);
     out.by_worth       = decides_switches(model, card, gates);
     out.resolution     = ref ? worth_band(ref->card) : 0;
-    out.chunk_by_speed = ref && ref->chunk_decides && model.moe() && !pins.chunk;
+    out.chunk_basis                    = chunk_basis_of(model, card, gates);
+    out.chunk_by_speed                 = out.chunk_basis == ChunkBasis::Own && !pins.chunk;
     // The enumeration order breaks exact ties (better()): one canonical order of each axis's
     // values (allowed_axes'), never the order a caller listed them in (#301).
     std::vector<KvCacheStorage> kvs = pins.kv ? std::vector<KvCacheStorage>{*pins.kv} : allowed.kv;
@@ -1827,6 +1838,26 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     out.anchor_worth               = out.scored[anchor].worth;
     for (Scored& s : out.scored) { s.fits = s.own_context >= settled; }
     const Scored& c = out.scored[*chosen];
+    // The chunk a carried curve predicts (an estimate to verify, never a pick): the widest-chunk
+    // candidates of the chosen configuration that hold the settled context, on the board's own
+    // rates; a wider chunk must be faster by more than the tie to displace the narrower.
+    if (out.chunk_basis == ChunkBasis::CarriedCurve && !pins.chunk) {
+        double best        = request_seconds(model, card, quant, c.candidate, priced);
+        out.chunk_estimate = c.candidate.chunk;
+        for (const std::uint32_t chunk : kMoeChunks) {
+            Candidate v = c.candidate;
+            v.chunk     = chunk;
+            if (chunk == c.candidate.chunk || (own_context && own_context(v) < settled)) {
+                continue;
+            }
+            const double seconds = request_seconds(model, card, quant, v, priced);
+            if ((chunk < out.chunk_estimate && seconds <= best * (1 + kWorthTie)) ||
+                seconds < best * (1 - kWorthTie)) {
+                best               = seconds;
+                out.chunk_estimate = chunk;
+            }
+        }
+    }
     out.why =
         quant.label + ": every stream holds " + std::to_string(settled) + " tokens; KV " +
         std::string(kv_cache_storage_name(c.candidate.kv)) + ", activations " +

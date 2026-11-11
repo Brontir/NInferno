@@ -47,14 +47,6 @@ constexpr bool grid_passes_wave(std::int32_t tokens, int sms, int row_tiles, int
     return token_tiles * row_tiles > static_cast<std::int64_t>(sms) * ctas_per_sm;
 }
 
-// CTAs of `threads` threads one SM holds at once, from the device's two per-SM limits (the thread
-// count and the CTA slots: DeviceClass::max_threads_per_sm, max_blocks_per_sm). Registers and
-// shared memory are the compiled kernel's; this is the upper bound.
-constexpr int resident_ctas_per_sm(int max_blocks, int max_threads, int threads) {
-    if (max_blocks <= 0 || max_threads <= 0 || threads <= 0) return 0;
-    return std::min(max_blocks, max_threads / threads);
-}
-
 // The width (tokens) up to which fusing launches pays. A fusion that replaces `saved_launches`
 // launches by one kernel wins while the launches it saves outweigh the per-token time it loses:
 //
