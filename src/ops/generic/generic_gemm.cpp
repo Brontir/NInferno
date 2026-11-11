@@ -2006,8 +2006,9 @@ ScheduleRefusal ggml_refusal(Family family, int index, const Weight& w, LinearPo
     if (!type || !(matrix ? ggml_mmq::matrix_supported(*type) : ggml_mmq::vec_supported(*type))) {
         return ScheduleRefusal::Format;
     }
-    // ggml_layout_admits: Q4_K / Q5_K as blocks, the others as planes, each plane it reads there.
-    const bool planes = w.qtype != QType::GGML_Q4_K && w.qtype != QType::GGML_Q5_K;
+    // ggml_layout_admits: whole blocks where the codec reads them (codec_traits block_bytes: Q4_K /
+    // Q5_K), the others as planes, each plane it reads there.
+    const bool planes = codec_traits(w.qtype).block_bytes == 0;
     const auto bytes  = mmq_plane_bytes(w.qtype);
     if (planes != (w.layout == QuantLayout::GgmlPlanes) || (bytes.high > 0 && w.qhigh == nullptr) ||
         (bytes.scales > 0 && w.scales == nullptr)) {

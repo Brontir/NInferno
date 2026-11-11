@@ -36,7 +36,7 @@ int mmq_whole_block_bytes(QType q) {
 // generic_gemm.cpp ggml_layout_admits: the formats read as planes.
 bool ggml_planes(QType q) { return q != QType::GGML_Q4_K && q != QType::GGML_Q5_K; }
 
-// generic_gemm.cpp w4a8_fits.
+// generic_routes.cpp w4a8_fits.
 bool w4a8_fits(int schedule, QType qtype) {
     const auto s = generic::w4a8_schedule_info(schedule);
     if (s.producers > 0) return kMaxSharedBytesPerBlock >= 99 * 1024;

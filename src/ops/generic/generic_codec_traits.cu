@@ -22,7 +22,7 @@ constexpr WeightCodec proven() {
     return W;
 }
 
-// One line per codec struct the launch files instantiate (generic_w4a8_*.cu, generic_r8*.cu).
+// One line per codec a format runs as in the launch files (generic_w4a8_*.cu, generic_r8*.cu).
 constexpr std::array kRows{
     proven<W4a8Q8, WeightCodec::Q8>(),
     proven<W4a8G64<4>, WeightCodec::Q4>(),
