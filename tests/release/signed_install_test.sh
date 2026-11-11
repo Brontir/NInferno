@@ -61,6 +61,7 @@ release() {
   case $broken in
     driver) printf '#!/bin/sh\necho "ninferno-serve: libcuda.so.1: cannot open shared object file" >&2\nexit 127\n' ;;
     glibc) printf '#!/bin/sh\necho "ninferno-serve: libc.so.6: version GLIBC_2.40 not found" >&2\nexit 1\n' ;;
+    slow) printf '#!/bin/sh\nsleep 2\necho "ninferno %s"\n' "$v" ;;
     *) printf '#!/bin/sh\necho "ninferno %s"\n' "$v" ;;
   esac > "$stage/$top/bin/ninferno-serve"
   chmod +x "$stage/$top/bin/ninferno-serve"
@@ -81,12 +82,14 @@ release 0.3.0 driver
 release 0.4.0 glibc
 release 0.5.0-rc1
 release 0.5.0
+release 0.6.0 slow
 d1=$work/dist-0.1.0
 d2=$work/dist-0.2.0
 d3=$work/dist-0.3.0
 d4=$work/dist-0.4.0
 drc=$work/dist-0.5.0-rc1
 d5=$work/dist-0.5.0
+d6=$work/dist-0.6.0
 
 expect "a signed manifest verifies" 0 sh "$work/install.sh" --verify "$d1/latest.json"
 cp "$d1/latest.json" "$work/tampered.json" && cp "$d1/latest.json.sig" "$work/tampered.json.sig"
@@ -132,6 +135,7 @@ expect "an archive the manifest does not name is refused" 1 "${I[@]}" NINFERNO_M
 expect "a release that does not start is not installed" 1 "${I[@]}" NINFERNO_MANIFEST="$d3/latest.json" \
   NINFERNO_ARCHIVE="$d3/ninferno-linux-x86_64.tar.gz" sh "$work/install.sh"
 [ ! -e "$home/current" ] && [ ! -e "$bin/ninferno-serve" ] || fail "a release that does not start was switched in"
+mkdir -p "$home/.install.stale" && echo x > "$home/.install.stale/big"  # a killed install's leftover
 expect "the signed release installs (glibc 2.38 is enough)" 0 "${I[@]}" FAKE_GLIBC=2.38 NINFERNO_MANIFEST="$d1/latest.json" \
   NINFERNO_ARCHIVE="$d1/ninferno-linux-x86_64.tar.gz" sh "$work/install.sh"
 serves "install 0.1.0" 0.1.0
@@ -147,7 +151,22 @@ said "glibc (2.39) is older than the release needs"
 serves "after the failed 0.4.0" 0.1.0
 [ ! -e "$home/ninferno-0.3.0-linux-x86_64" ] && [ ! -e "$home/ninferno-0.4.0-linux-x86_64" ] ||
   fail "a failed release was left in $home"
-[ -z "$(find "$home" -maxdepth 1 -name '.install.*')" ] || fail "a staging directory was left in $home"
+[ -z "$(find "$home" -maxdepth 1 -name '.install.*')" ] ||
+  fail "a staging directory was left in $home (or an old one not removed)"
+
+# An install stopped by a signal removes its staging copy (dash runs no EXIT trap on a signal).
+"${I[@]}" NINFERNO_MANIFEST="$d6/latest.json" NINFERNO_ARCHIVE="$d6/ninferno-linux-x86_64.tar.gz" \
+  sh "$work/install.sh" > "$work/killed.txt" 2>&1 < /dev/null &
+pid=$!
+for _ in $(seq 100); do
+  [ -n "$(find "$home" -maxdepth 1 -name '.install.*')" ] && break
+  sleep 0.1
+done
+kill -TERM "$pid"
+got=0; wait "$pid" || got=$?
+[ "$got" = 143 ] || { fail "a stopped install exits $got, not 143"; sed 's/^/  /' "$work/killed.txt"; }
+[ -z "$(find "$home" -maxdepth 1 -name '.install.*')" ] || fail "a stopped install left its staging copy"
+serves "after the stopped install" 0.1.0
 
 # ninferno-kit through its link in the bin directory finds the kit beside the real file.
 expect "ninferno-kit through its link" 0 "${I[@]}" "$bin/ninferno-kit" --budget-minutes 5
@@ -177,6 +196,13 @@ serves "after the refused rollback" 0.2.0
 cp "$work/serve-0.1.0" "$old_serve"
 expect "rollback" 0 "${I[@]}" "$bin/ninferno-update" --rollback
 serves "after the rollback" 0.1.0
+# The same version again: switched by renames, `current` stays a link.
+expect "0.1.0 installs over itself" 0 "${I[@]}" NINFERNO_MANIFEST="$d1/latest.json" \
+  NINFERNO_ARCHIVE="$d1/ninferno-linux-x86_64.tar.gz" sh "$work/install.sh"
+serves "after installing 0.1.0 again" 0.1.0
+[ -L "$home/current" ] && [ "$(readlink "$home/current")" = "$home/ninferno-0.1.0-linux-x86_64" ] ||
+  fail "current is not the link to 0.1.0"
+[ -z "$(find "$home" -maxdepth 1 -name '.install.*')" ] || fail "the reinstall left its staging copy"
 
 # The version order is update_check.cpp's (tests/test_update_check.cpp has the same cases).
 eval "$(sed -n '/^version_newer() {$/,/^}$/p' "$REPO/tools/release/ninferno-update")"
@@ -198,6 +224,7 @@ order 0.2.0-beta 0.2.0-rc1 "<"
 order 0.2.0-rc2 0.2.0-rc1 ">"
 order 0.2.0-rc1 0.1.5 ">"
 order 0.2.0-rc.1 0.2.0-rc.1.1 "<"
+order 0.1.0-10000000000 0.1.0-9999999999 "<"  # 10+ digits compare as text, as in C++
 order dev 0.1.0 bad
 order 0.1.0-12-g5c50953 0.1.0 bad
 order 1 0.1.0 bad
@@ -219,6 +246,11 @@ expect "the final release sees no update in its rc" 1 "${J[@]}" NINFERNO_UPDATE_
 # Uninstall: what install.sh placed goes, nothing else; it asks unless --yes.
 ln -s /bin/true "$bin/not-ninferno"
 echo keep > "$bin/notes.txt"
+# A custom home such as ~/.local holds other programs: a pipx-like tool with its link in the bin
+# directory stays, and so does the home itself.
+mkdir -p "$home/share/pipx/venvs/black/bin"
+printf '#!/bin/sh\n' > "$home/share/pipx/venvs/black/bin/black"
+ln -s "$home/share/pipx/venvs/black/bin/black" "$bin/black"
 if command -v setsid > /dev/null; then
   expect "uninstall without a terminal and without --yes" 1 "${I[@]}" setsid -w sh "$work/install.sh" --uninstall
   said "--uninstall --yes"
@@ -226,9 +258,33 @@ if command -v setsid > /dev/null; then
 fi
 expect "uninstall with an argument it does not know" 1 "${I[@]}" sh "$work/install.sh" --uninstall --bogus
 expect "uninstall --yes" 0 "${I[@]}" sh "$work/install.sh" --uninstall --yes
-[ ! -e "$home" ] || fail "uninstall left $home: $(ls -A "$home")"
+said "$home stays"
+! grep -q rmdir "$work/out.txt" || fail "uninstall printed rmdir's complaint"
+[ "$(ls -A "$home")" = share ] || fail "uninstall left or removed the wrong things in $home: $(ls -A "$home")"
 for f in "$bin"/ninferno-*; do [ ! -e "$f" ] && [ ! -L "$f" ] || fail "uninstall left $f"; done
 [ -L "$bin/not-ninferno" ] && [ -f "$bin/notes.txt" ] || fail "uninstall removed a file it did not install"
+[ -L "$bin/black" ] && [ -f "$home/share/pipx/venvs/black/bin/black" ] ||
+  fail "uninstall removed a foreign link into the home or its target"
+rm -rf "$home"
 expect "uninstall when nothing is installed" 1 "${I[@]}" sh "$work/install.sh" --uninstall --yes
+
+# A home such as ~ with a directory of the user's own named current: kept.
+home4=$work/home-user
+mkdir -p "$home4/current" && echo mine > "$home4/current/notes"
+expect "uninstall beside a real current directory" 0 env NINFERNO_HOME="$home4" NINFERNO_BIN="$work/bin4" \
+  sh "$work/install.sh" --uninstall --yes
+[ -f "$home4/current/notes" ] || fail "uninstall removed a current directory it did not make"
+
+# Links through the resolved home (ninferno-update passes it) go too.
+realh=$work/home-real; homel=$work/home-link; bin3=$work/userbin-link
+mkdir -p "$realh" && ln -s "$realh" "$homel"
+K=(env NINFERNO_HOME="$homel" NINFERNO_BIN="$bin3")
+expect "install through a linked home" 0 "${K[@]}" NINFERNO_MANIFEST="$d1/latest.json" \
+  NINFERNO_ARCHIVE="$d1/ninferno-linux-x86_64.tar.gz" sh "$work/install.sh"
+ln -sf "$realh/current/bin/ninferno-serve" "$bin3/ninferno-serve"
+ln -s "$realh/ninferno-0.1.0-linux-x86_64/bin/ninferno-update" "$bin3/ninferno-update-old"
+expect "uninstall through a linked home" 0 "${K[@]}" sh "$work/install.sh" --uninstall --yes
+[ -z "$(ls -A "$bin3")" ] || fail "uninstall left links through the resolved home: $(ls -A "$bin3")"
+[ -z "$(ls -A "$realh")" ] || fail "uninstall left $realh: $(ls -A "$realh")"
 
 [ "$failures" = 0 ] && echo "signed install: ok" || { echo "$failures failure(s)"; exit 1; }

@@ -41,9 +41,15 @@ said "no CUDA 12.8 for the Volta engine" "the default list"
 expect "Volta left out goes on" 1 "${P[@]}" NINFERNO_ARCHS="89" bash "$REPO/tools/release/package.sh" "$work/dist"
 not_said "Volta" "Volta left out"
 said "nvcc not found" "Volta left out"
-mkdir -p "$work/dist/ninferno-9.9.9-linux-x86_64/bin"
-printf '#!/bin/sh\n' > "$work/dist/ninferno-9.9.9-linux-x86_64/bin/ninferno-serve-sm70"
-chmod +x "$work/dist/ninferno-9.9.9-linux-x86_64/bin/ninferno-serve-sm70"
+# A resumed run goes on only where the build loop resumes too: the engine and the dispatcher staged.
+staged=$work/dist/ninferno-9.9.9-linux-x86_64/bin
+mkdir -p "$staged"
+printf '#!/bin/sh\n' > "$staged/ninferno-serve-sm70"
+chmod +x "$staged/ninferno-serve-sm70"
+expect "a resumed run with the Volta engine but no dispatcher stops" 1 "${P[@]}" NINFERNO_ARCHS="89 70" \
+  NINFERNO_PACKAGE_RESUME=1 bash "$REPO/tools/release/package.sh" "$work/dist"
+said "no CUDA 12.8 for the Volta engine" "resumed without the dispatcher"
+printf '#!/bin/sh\n' > "$staged/ninferno-serve.dispatch"
 expect "a resumed run that holds the Volta engine goes on" 1 "${P[@]}" NINFERNO_ARCHS="89 70" NINFERNO_PACKAGE_RESUME=1 \
   bash "$REPO/tools/release/package.sh" "$work/dist"
 not_said "Volta" "resumed with the Volta engine"

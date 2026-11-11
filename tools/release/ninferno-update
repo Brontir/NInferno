@@ -55,7 +55,7 @@ version_newer() {
     # One dot-separated part of a pre-release label: its word W and trailing number N (-1: none).
     function part(s) {
       if (match(s, /[0-9]+$/) && RLENGTH <= 9) { W = substr(s, 1, RSTART - 1); N = substr(s, RSTART) + 0 }
-      else { W = s; N = -1 }
+      else { W = s ""; N = -1 }  # text, also when s is all digits (10 or more: C++ compares them as a word)
     }
     function prerelease(x, y,   px, py, nx, ny, i, wx, vx) {
       nx = split(x, px, "."); ny = split(y, py, ".")

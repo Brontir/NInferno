@@ -17,8 +17,8 @@
 #
 # NINFERNO_ARCHS lists the generations (default "120a 100 90 89 86 80 75 70"); each builds in its own
 # tree (NINFERNO_BUILD_ROOT/build-release-<arch>). Volta needs CUDA 12.8 (CUDA 13 dropped it):
-# NINFERNO_CUDA70=/usr/local/cuda-12.8; without it package.sh stops, unless 70 is left out of
-# NINFERNO_ARCHS on purpose. release.json lists the engines built. NINFERNO_PACKAGE_CLEAN=1
+# NINFERNO_CUDA70 names it (default /usr/local/cuda-12.8 when that exists); with neither,
+# package.sh stops, unless 70 is left out of NINFERNO_ARCHS on purpose. release.json lists the engines built. NINFERNO_PACKAGE_CLEAN=1
 # removes each tree once its engine is copied (six trees at once outgrow a small disk);
 # NINFERNO_PACKAGE_RESUME=1 keeps the engines an interrupted run already put in OUT_DIR; NINFERNO_JOBS
 # caps the compile jobs (nvcc on sm_75's largest kernels needs memory). NINFERNO_VERSION overrides
@@ -44,7 +44,9 @@ CUDA70=${NINFERNO_CUDA70:-$(ls -d /usr/local/cuda-12.8 2>/dev/null || true)}
 # already hold it.
 for arch in $ARCHS; do
   [ "$arch" = 70 ] && [ -z "$CUDA70" ] || continue
-  [ "${NINFERNO_PACKAGE_RESUME:-0}" = 1 ] && [ -x "$STAGE/bin/ninferno-serve-sm70" ] && continue
+  # The build loop's own resume condition, for sm_70.
+  if [ "${NINFERNO_PACKAGE_RESUME:-0}" = 1 ] && [ -x "$STAGE/bin/ninferno-serve-sm70" ] &&
+    [ -f "$STAGE/bin/ninferno-serve.dispatch" ]; then continue; fi
   echo "package.sh: no CUDA 12.8 for the Volta engine (NINFERNO_CUDA70); to build without Volta, leave 70 out of NINFERNO_ARCHS" >&2
   exit 1
 done

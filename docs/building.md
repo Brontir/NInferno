@@ -48,7 +48,8 @@ holds `ninferno` and `ninferno-serve` with their route tables and drafter rankin
 `tools/release/package.sh [OUT_DIR]` builds the architectures `NINFERNO_ARCHS` lists (default
 every generation; `NINFERNO_ARCHS=89` for one) the way the releases are built (no `-lineinfo`,
 the CUDA runtime linked statically; `70` with CUDA 12.8, since CUDA 13 no longer compiles for
-Volta: without `NINFERNO_CUDA70` it stops, unless `70` is left out of `NINFERNO_ARCHS`) and packs
+Volta; `NINFERNO_CUDA70` names that toolkit, default `/usr/local/cuda-12.8`; with no CUDA 12.8
+found it stops, unless `70` is left out of `NINFERNO_ARCHS`) and packs
 one self-contained archive: the
 binaries (`ninferno-ui` among them), the shared libraries they load (found beside them), the route
 tables, the drafter rankings, the page's chat window and the model list `ninferno-start` offers.

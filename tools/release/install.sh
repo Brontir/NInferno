@@ -75,9 +75,13 @@ usage() {
   say "Through a pipe: curl -fsSL .../install.sh | sh -s -- --uninstall"
 }
 
-# uninstall yes|ask: the releases, `current` and the command links install.sh placed; downloaded
-# models and settings live elsewhere and stay.
+# uninstall yes|ask: only what install.sh and ninferno-update make, so a custom NINFERNO_HOME
+# (even ~/.local or ~) loses nothing else: the release directories (each holds
+# share/ninferno/release.json), `current` when it is a link to one of them, staging leftovers,
+# and the links in BIN_DIR to a release's bin/. A link may name the home as given or resolved
+# (ninferno-update passes the resolved one). Downloaded models and settings live elsewhere.
 uninstall() {
+  real=$(readlink -f "$HOME_DIR" 2> /dev/null || printf '%s' "$HOME_DIR")
   [ -d "$HOME_DIR" ] || die "nothing is installed in $HOME_DIR"
   say "This removes NInferno from $HOME_DIR and its commands from $BIN_DIR (downloaded models stay)."
   if [ "$1" != yes ]; then
@@ -87,11 +91,28 @@ uninstall() {
   fi
   for link in "$BIN_DIR"/*; do
     [ -L "$link" ] || continue
-    case $(readlink "$link") in "$HOME_DIR"/*) rm -f "$link" ;; esac
+    case $(readlink "$link") in
+      "$HOME_DIR"/current/bin/* | "$HOME_DIR"/ninferno-*-linux-x86_64*/bin/* | \
+        "$real"/current/bin/* | "$real"/ninferno-*-linux-x86_64*/bin/*) rm -f "$link" ;;
+    esac
   done
-  rm -rf "$HOME_DIR"/ninferno-*-linux-x86_64* "$HOME_DIR/current" "$HOME_DIR"/.install.*
-  rmdir "$HOME_DIR" 2> /dev/null || true
-  say "NInferno is removed."
+  if [ -L "$HOME_DIR/current" ]; then
+    case $(readlink "$HOME_DIR/current") in
+      "$HOME_DIR"/ninferno-*-linux-x86_64* | "$real"/ninferno-*-linux-x86_64*) rm -f "$HOME_DIR/current" ;;
+    esac
+  fi
+  for dir in "$HOME_DIR"/ninferno-*-linux-x86_64* "$HOME_DIR"/.install.*; do
+    [ -d "$dir" ] && [ ! -L "$dir" ] || continue
+    case $dir in
+      */.install.*) rm -rf "$dir" ;;
+      *) if [ -f "$dir/share/ninferno/release.json" ]; then rm -rf "$dir"; fi ;;
+    esac
+  done
+  if rmdir "$HOME_DIR" 2> /dev/null; then
+    say "NInferno is removed."
+  else
+    say "NInferno is removed; $HOME_DIR stays, it holds files NInferno did not put there."
+  fi
 }
 
 case ${1:-} in
@@ -156,7 +177,12 @@ major=${driver%%.*}
 archive=ninferno-linux-x86_64.tar.gz
 tmp=$(mktemp -d)
 stage=""  # the unpacked release before it is switched in, inside HOME_DIR (a move, not a copy)
-trap 'rm -rf "$tmp" ${stage:+"$stage"}' EXIT
+cleanup() { rm -rf "$tmp" ${stage:+"$stage"}; }
+# dash runs no EXIT trap when a signal kills it: a stopped install would leave its staging copy.
+trap cleanup EXIT
+trap 'cleanup; trap - EXIT; exit 129' HUP
+trap 'cleanup; trap - EXIT; exit 130' INT
+trap 'cleanup; trap - EXIT; exit 143' TERM
 if [ -n "${NINFERNO_MANIFEST:-}" ]; then
   cp "$NINFERNO_MANIFEST" "$tmp/latest.json" && cp "$NINFERNO_MANIFEST.sig" "$tmp/latest.json.sig" ||
     die "no $NINFERNO_MANIFEST with its .sig"
@@ -187,6 +213,10 @@ top=$(tar -tzf "$tmp/$archive" | head -1 | cut -d/ -f1)
 case $top in "" | . | .. | .install.*) die "not a NInferno archive: $archive" ;; esac
 # Unpacked and run beside the installed versions first: `current` and the commands move only to a
 # release that starts here, so a failed install leaves the one before in place.
+# A staging copy an earlier install left (killed hard) is up to 3 GB: remove it first.
+for old in "$HOME_DIR"/.install.*; do
+  if [ -d "$old" ] && [ ! -L "$old" ]; then rm -rf "$old"; fi
+done
 stage=$(mktemp -d "$HOME_DIR/.install.XXXXXX")
 tar -xzf "$tmp/$archive" -C "$stage" || die "cannot unpack $archive: nothing installed"
 if ! version=$("$stage/$top/bin/ninferno-serve" --version 2>&1); then
@@ -197,9 +227,13 @@ if ! version=$("$stage/$top/bin/ninferno-serve" --version 2>&1); then
   die "the release cannot run on this machine (see above), so nothing was installed; a newer NVIDIA driver usually fixes it"
 fi
 say "$version"
-rm -rf "${HOME_DIR:?}/$top"
+# The switch is two renames: the same version installed again is moved aside into the staging
+# directory (removed on exit) rather than deleted before the new copy is in place, and `current`
+# is made under another name and renamed over the old link (GNU mv -T: no window without it).
+if [ -e "$HOME_DIR/$top" ] || [ -L "$HOME_DIR/$top" ]; then mv "$HOME_DIR/$top" "$stage/replaced"; fi
 mv "$stage/$top" "$HOME_DIR/$top"
-ln -sfn "$HOME_DIR/$top" "$HOME_DIR/current"
+ln -sfn "$HOME_DIR/$top" "$stage/current"
+mv -fT "$stage/current" "$HOME_DIR/current"
 # The commands (the engines, bin/*-sm<tag>, are started by ninferno-serve itself).
 for exe in "$HOME_DIR/current/bin/"*; do
   case $(basename "$exe") in *-sm[0-9]*) continue ;; esac
