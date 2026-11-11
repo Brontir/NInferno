@@ -260,7 +260,11 @@ class IsaFacts(unittest.TestCase):
                 ("mem_clock_khz 10501000\n", "mem_clock_khz -1\n", "mem_clock_khz is no count"),
                 ("mem_clock_khz 10501000\n", "mem_clock_khz fast\n", "mem_clock_khz is no count"),
                 ("source_sha256 " + ip.source_sha256() + "\n", "source_sha256 abc\n",
-                 "odd source_sha256")):
+                 "odd source_sha256"),
+                # a run of the checked-in version built from another source (an edit that kept
+                # the version) is refused at parse time, so `merge` cannot take it
+                ("source_sha256 " + ip.source_sha256() + "\n", "source_sha256 " + "0" * 64 + "\n",
+                 "is not the checked-in isa_probe.cu's")):
             with self.assertRaises(ValueError, msg=bad) as e:
                 ip.parse_run(SAMPLE.replace(line, bad))
             self.assertIn(said, str(e.exception), bad)
