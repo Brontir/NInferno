@@ -2,6 +2,7 @@
 
 #include "core/cost_constants.h"
 #include "core/generation.h"
+#include "core/kernel_occupancy.h"
 #include "ops/common/sm_wave_rules.h"
 #include "ops/generic/route_cost_constants.h"
 #include "ops/rmsnorm_rope/launch.h"
@@ -9,6 +10,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -117,18 +119,40 @@ constexpr std::int32_t kFusedTextDefaultMaximumTokens = 256;
 
 namespace detail {
 
+std::optional<generic::kernel_facts::KernelFacts> text_kernel_facts(const DeviceClass& /*device*/,
+                                                                    std::int32_t /*query_heads*/,
+                                                                    std::int32_t /*key_heads*/) {
+    // No snapshot carries the text kernel (the snapshots' one family is rmma): no engine has its
+    // facts, so none is invented from the device's limits.
+    return std::nullopt;
+}
+
+int text_kernel_facts_resident_ctas(const DeviceClass& device,
+                                    const generic::kernel_facts::KernelFacts& facts) {
+    return ninferno::resident_ctas_per_sm(
+        device,
+        KernelShape{facts.registers, facts.static_shared_bytes, kTextHeadsPerBlock * 32, 0});
+}
+
 std::int32_t text_fused_max_tokens_with_excess(const DeviceClass& device, std::int32_t query_heads,
                                                std::int32_t key_heads, double excess_cycles) {
+    const auto facts = text_kernel_facts(device, query_heads, key_heads);
+    if (!facts) return 0;
+    return text_fused_max_tokens_with_facts(device, query_heads, key_heads, *facts, excess_cycles);
+}
+
+std::int32_t text_fused_max_tokens_with_facts(const DeviceClass& device, std::int32_t query_heads,
+                                              std::int32_t key_heads,
+                                              const generic::kernel_facts::KernelFacts& facts,
+                                              double excess_cycles) {
     if (!rmsnorm_rope_text_heads(query_heads, key_heads)) return 0;
     const std::string_view generation = generation_known(device.major, device.minor)
                                             ? generation_row(device.major, device.minor).name
                                             : std::string_view{};
     const double launch               = launch_node_seconds(generation);
     if (!(launch > 0.0)) return 0;
-    const int warps_per_sm =
-        ninferno::ops::detail::sm_rules::resident_ctas_per_sm(
-            device.max_blocks_per_sm, device.max_threads_per_sm, kTextHeadsPerBlock * 32) *
-        kTextHeadsPerBlock;
+    // Resident warps an SM from the kernel's facts (threads, CTA slots, registers, shared memory).
+    const int warps_per_sm = text_kernel_facts_resident_ctas(device, facts) * kTextHeadsPerBlock;
     // A token launches ceil((Q + K) / 3) CTAs of three warps (launch.cu); the idle warps of a last,
     // partial group hold their CTA's slot all the same, so a token takes the launched warp slots.
     const int launched_heads = (query_heads + key_heads + kTextHeadsPerBlock - 1) /

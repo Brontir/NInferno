@@ -113,11 +113,6 @@ void check_launch_amortized() {
            "law: twice the heads a token, half the width");
     expect(launch_amortized_tokens(2, 3.0e-6, 34, 48, 2.5e9, 34.0, 2000.0) >= 2 * t - 1,
            "law: twice the launch, twice the width");
-    expect(sm_rules::resident_ctas_per_sm(24, 1536, 96) == 16 &&
-               sm_rules::resident_ctas_per_sm(16, 1024, 96) == 10 &&
-               sm_rules::resident_ctas_per_sm(32, 2048, 96) == 21 &&
-               sm_rules::resident_ctas_per_sm(0, 1536, 96) == 0,
-           "resident CTAs: the thread and slot limits");
     expect(launch_amortized_tokens(0, 1.5e-6, 34, 48, 2.5e9, 34.0, 2000.0) == 0 &&
                launch_amortized_tokens(2, 0.0, 34, 48, 2.5e9, 34.0, 2000.0) == 0 &&
                launch_amortized_tokens(2, 1.5e-6, 0, 48, 2.5e9, 34.0, 2000.0) == 0 &&

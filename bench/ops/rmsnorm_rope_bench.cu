@@ -9,7 +9,6 @@
 #include "core/cost_constants.h"
 #include "core/device_class.h"
 #include "core/generation.h"
-#include "ops/common/sm_wave_rules.h"
 #include "ops/rmsnorm_rope/launch.h"
 
 #include "ninferno/ops/rmsnorm.h"
@@ -423,30 +422,39 @@ void run_crossover(const Options& options, cudaStream_t stream) {
     const std::string generation(generation_known(device.major, device.minor)
                                      ? generation_row(device.major, device.minor).name
                                      : "");
-    const double node_l = launch_node_seconds(generation);
-    const int sms       = device.sms;
-    // The law's resident-warp count (the thread and slot limits; sm_wave_rules.h) against the
-    // compiled kernel's occupancy (registers and shared memory too): a mismatch is printed.
-    const int law_ctas = ops::detail::sm_rules::resident_ctas_per_sm(
-        device.max_blocks_per_sm, device.max_threads_per_sm, ops::detail::kTextHeadsPerBlock * 32);
-    const double warps_per_sm = static_cast<double>(law_ctas) * ops::detail::kTextHeadsPerBlock;
-    for (const auto& [qh, kh] : options.geometries) {
-        const int kernel_ctas = ops::detail::text_kernel_resident_ctas(qh, kh);
-        if (kernel_ctas != 0 && law_ctas != kernel_ctas) {
-            std::printf(
-                "# WARNING: %d+%d: resident blocks an SM: law %d, cudaOccupancy %d (the law "
-                "reads the device's thread and slot limits only)\n",
-                qh, kh, law_ctas, kernel_ctas);
-        }
-    }
+    const double node_l   = launch_node_seconds(generation);
+    const int sms         = device.sms;
     const double clock_hz = machine_facts_of(device).reference_clock_khz * 1.0e3;
-    std::printf("# device=%s generation=%s sms=%d warps_per_sm=%.0f clock_mhz=%.0f dram_gbps=%.1f "
+    std::printf("# device=%s generation=%s sms=%d clock_mhz=%.0f dram_gbps=%.1f "
                 "launch_node_us=%s graph_reps=%d\n",
-                device.name.c_str(), generation.c_str(), sms, warps_per_sm, clock_hz / 1.0e6,
-                bw / 1.0e9, node_l > 0.0 ? std::to_string(node_l * 1.0e6).c_str() : "none",
-                options.graph_reps);
-    std::printf("geometry,T,fused_us,split_us,fused_minus_split_us\n");
+                device.name.c_str(), generation.c_str(), sms, clock_hz / 1.0e6, bw / 1.0e9,
+                node_l > 0.0 ? std::to_string(node_l * 1.0e6).c_str() : "none", options.graph_reps);
+    // The resident blocks the law reads (the geometry's committed kernel facts through the
+    // occupancy calculator, ops/rmsnorm_rope/launch.h; 0 where the snapshots carry none and the law
+    // refuses) against the running GPU's occupancy of the compiled kernel: a mismatch is printed.
+    // The implied constants below use the law's value, the live one where no facts are committed.
+    std::vector<double> warps_of_geometry;
     for (const auto& [qh, kh] : options.geometries) {
+        const auto facts = ops::detail::text_kernel_facts(device, qh, kh);
+        const int law_ctas =
+            facts ? ops::detail::text_kernel_facts_resident_ctas(device, *facts) : 0;
+        const int live_ctas = ops::detail::text_kernel_resident_ctas(qh, kh);
+        if (law_ctas != live_ctas) {
+            std::printf("# WARNING: %d+%d: resident blocks an SM: law %d (%s), cudaOccupancy %d\n",
+                        qh, kh, law_ctas,
+                        facts ? "committed facts" : "no committed facts: the law refuses",
+                        live_ctas);
+        }
+        const int ctas = law_ctas > 0 ? law_ctas : live_ctas;
+        std::printf("# %d+%d: warps_per_sm=%d (%s)\n", qh, kh,
+                    ctas * ops::detail::kTextHeadsPerBlock,
+                    law_ctas > 0 ? "law" : "live occupancy");
+        warps_of_geometry.push_back(static_cast<double>(ctas) * ops::detail::kTextHeadsPerBlock);
+    }
+    std::printf("geometry,T,fused_us,split_us,fused_minus_split_us\n");
+    std::size_t geometry_index = 0;
+    for (const auto& [qh, kh] : options.geometries) {
+        const double warps_per_sm = warps_of_geometry[geometry_index++];
         std::vector<int> ts;
         std::vector<double> diff;
         std::vector<double> fused_us;
