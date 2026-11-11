@@ -96,7 +96,8 @@ std::set<std::string_view> listed_sources() {
 // a reader of the older files by position still finds every column it knew.
 void check_selected_header() {
     const std::string header = generic::kSelectedCsvHeader;
-    const std::string old    = "format,compute,epilogue,n,k,T,asked,selected,select_ns,run,device";
+    const std::string old =
+        "format,compute,epilogue,n,k,T,asked,selected,select_ns,run,device,pci_device_id";
     if (!header.starts_with(old + ",")) fail("--selected-out header lost an old column: " + header);
     if (!header.ends_with(",authority,evidence")) fail("--selected-out header: " + header);
     if (header != old + ",authority,evidence") fail("--selected-out header has more: " + header);

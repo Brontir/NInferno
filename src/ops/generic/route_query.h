@@ -83,8 +83,8 @@ struct RouteDescription {
     std::optional<RouteTile> tile;
     std::optional<RouteTraffic> traffic;
     std::optional<PreparedRule> prepared;
-    // cost_route's time where it prices the route, over the call's share of the weight. For a
-    // slice of a fused parent this is not the selector's number: select_route prices the parent.
+    // cost_route's time where it prices the route, over the call's share of the weight: the
+    // selector's own number for a slice of a fused parent too (bytes_per_weight, #640).
     std::optional<double> cost_seconds;
     std::optional<KernelResources> kernel;
     // The authority and evidence of the route the call asked for (`resolved.asked`), from the
@@ -122,10 +122,11 @@ describe_call(const DeviceClass& device, QType qtype, LinearPolicy policy, Epilo
 // route; the fields before it are unchanged.
 [[nodiscard]] std::string describe_text(const RouteDescription& description);
 
-// The header of the route tuner's --selected-out CSV: the columns of every version before, then
-// "authority,evidence" at the end (evidence_columns), which tools/bench/regret_collect.py
-// reads by name.
+// The header of the route tuner's --selected-out CSV: the columns of every version before
+// (pci_device_id last among them, #684), then "authority,evidence" at the end
+// (evidence_columns), which tools/bench/regret_collect.py reads by name.
 inline constexpr const char* kSelectedCsvHeader =
-    "format,compute,epilogue,n,k,T,asked,selected,select_ns,run,device,authority,evidence";
+    "format,compute,epilogue,n,k,T,asked,selected,select_ns,run,device,pci_device_id,"
+    "authority,evidence";
 
 } // namespace ninferno::ops::detail::generic
