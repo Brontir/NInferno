@@ -83,9 +83,6 @@ constexpr bool build_limits_are_the_device_limits() {
 }
 
 static_assert(build_limits_are_the_device_limits());
-// What the raise admits on 9.0 to 11.x (#648): the I8 256x128 tile's fourth stage, 102400 B, over
-// the 101376 B of the 99 KiB builds and within 227 KiB.
-static_assert(102400 > 99 * 1024 && 102400 <= 227 * 1024);
 
 // The old code, verbatim.
 namespace legacy {
