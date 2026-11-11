@@ -704,6 +704,7 @@ Json choice_json(const ServedChoice& served) {
                 {"resolution_basis",
                  std::string(choice::resolution_basis_name(served.choice.resolution_basis))},
                 {"resolution_decides", served.choice.resolution_decides},
+                {"resolution_floor", round_to(served.choice.resolution_floor, 4)},
                 {"chunk_by_speed", served.choice.chunk_by_speed},
                 {"chunk_basis", std::string(choice::chunk_basis_name(served.choice.chunk_basis))}};
     // The activation modes the model runs (a choice the user may pin: --activations), whatever

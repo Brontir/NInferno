@@ -1721,11 +1721,13 @@ Ada's three cards, Blackwell's two). The carries onto GA10x, Turing and Volta ar
 residuals of one lab card (RTX 3060, RTX 2080 Ti, Quadro GV100), and the largest carry stands in,
 assumed, where nothing was measured. Such a band is never narrower than the own one it widens, but
 widening is not conservative here: a wider band lets a more accurate and slower candidate displace
-the best worth, up to 72 % slower at the largest carry. So each comparison the rule weighs, the
-best worth against a candidate, takes the band of the wider basis of the two estimates: where either
-is not own (on Ada: an unmeasured weight class, the exact route's prefill or the BF16-KV prompt
-kernel, rows of one Ada card), the band does not decide and the best worth stands against that
-candidate. The worth itself still ranks by point estimates (their error per basis is the cost
+the best worth, up to 72 % slower at the largest carry. Nor is falling back to the best worth: the
+estimates are indistinguishable at least within the own band, so a pick below it would rest on a
+one-card point estimate. So each comparison the rule weighs, the best worth against a candidate,
+takes the band of the wider basis of the two estimates: where either is not own (on Ada: an
+unmeasured weight class, the exact route's prefill or the BF16-KV prompt kernel, rows of one Ada
+card), the band does not decide and the comparison is resolved at its own floor (2.26 % on Ada),
+never beyond. A moved pick is never dominated on both axes by an eligible candidate. The worth itself still ranks by point estimates (their error per basis is the cost
 model's work, #613). With `Gates::typed_resolution` closed, the old single number weighs every
 comparison as before (#618).
 

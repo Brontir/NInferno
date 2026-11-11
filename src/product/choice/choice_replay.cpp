@@ -484,6 +484,7 @@ json choice_summary(const Choice& c) {
                           {"seconds", s.seconds},
                           {"decision_seconds", s.decision_seconds},
                           {"decision_basis", std::string(speed_basis_name(s.decision_basis))},
+                          {"weighed_at", s.weighed_at},
                           {"kld", s.accuracy.kld},
                           {"variant", s.variant},
                           {"drafter", s.drafter}});
@@ -498,6 +499,7 @@ json choice_summary(const Choice& c) {
                 {"resolution", c.resolution},
                 {"resolution_basis", std::string(resolution_basis_name(c.resolution_basis))},
                 {"resolution_decides", c.resolution_decides},
+                {"resolution_floor", c.resolution_floor},
                 {"why", c.why}};
 }
 

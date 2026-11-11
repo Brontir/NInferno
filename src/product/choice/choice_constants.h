@@ -324,10 +324,12 @@ inline constexpr PredictionError kDecodePredictionError[] = {
 // route_rules.h Basis::ScaledFromOneBoard rule: one board's measured residual stands for its
 // generation's other boards, no second board was measured. So no row here decides: a one-card
 // resolution only widens the band (resolution_of takes it no narrower than the Own band its
-// estimates are carried from) and never moves a pick: a comparison that rests on it leaves the best
-// worth standing (Resolution::decides, resolve_within_resolution). Widening alone would not be
-// conservative: a wider band lets a slower, more accurate candidate displace the best worth. A row
-// decides once it rests on two cards of the target.
+// estimates are carried from) and never widens a decision: a comparison that rests on it is
+// resolved at that Own floor only (Resolution::decides and floor, resolve_within_resolution).
+// Widening alone would not be conservative: a wider band lets a slower, more accurate candidate
+// displace the best worth. Nor would falling back to the best worth: the estimates are
+// indistinguishable at least within the Own floor, and a pick below it would rest on a one-card
+// point estimate. A row decides once it rests on two cards of the target.
 struct TransferredError {
     std::string_view target;
     double rms;

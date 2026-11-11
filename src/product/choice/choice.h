@@ -62,7 +62,10 @@ struct CardFacts {
 struct DrafterOption {
     std::string label;     // the configuration, as --spec-config takes it ("mtp:4", "dflash:7")
     std::string drafter;   // the drafter's name in the artifact or manifest
-    double speedup = 1;    // decode of one stream against plain decode's (the tune's choice)
+    // Decode of one stream against plain decode's (the tune's choice). It carries no SpeedBasis:
+    // a request's basis (request_seconds) types the plain-decode estimate the gain multiplies, not
+    // the gain, whose evidence is `basis` and `measured` below (a known gap, #618).
+    double speedup = 1;
     // From this many streams a round of every stream decodes plainly (the load table's first
     // bound at depth 0); 0: any number speculates.
     std::uint32_t plain_from_streams = 0;
@@ -240,12 +243,22 @@ enum class ResolutionBasis : std::uint8_t { None, Own, Transferred, Unmeasured }
 struct Resolution {
     ResolutionBasis basis = ResolutionBasis::None;
     double rms            = 0; // ln(predicted / measured), root mean square
-    // The band may decide: its row rests on two or more lab cards (an Own row today; no transfer
-    // row does). False: however wide or narrow the number, it never moves a pick: the resolution
-    // rule does not weigh a comparison that rests on it, the best worth stands against it
-    // (resolve_within_resolution).
+    // The band may decide at its full width: its row rests on two or more lab cards (an Own row
+    // today; no transfer row does). False: a one-card or assumed number, which never widens a
+    // decision: a comparison resting on it is resolved at `floor` only.
     bool decides = false;
+    // The Own band of two or more lab cards it widens (the board generation's
+    // kDecodePredictionError, else kTransferGeneration's): the estimates are indistinguishable at
+    // least within it, so a comparison resting on a band that does not decide is still resolved
+    // within it, never beyond. 0: no such row. Equal to `rms` for an Own band that decides.
+    double floor = 0;
 };
+
+// The width a comparison resting on `r` is resolved at: its full width where it decides, else its
+// Own floor.
+[[nodiscard]] constexpr double resolution_width(const Resolution& r) noexcept {
+    return r.decides ? r.rms : r.floor;
+}
 
 // What the user asks: the context each stream holds of its own (the contexts in turn: a pinned
 // one, or Auto's targets runtime::quant_own_targets gives), the streams, the request shape. The
@@ -329,9 +342,9 @@ enum class SpeedBasis { Own, Transferred, LentGeneration };
 // The resolution of a comparison on `board` between estimates whose widest basis is `estimates`
 // (ResolutionBasis). Never narrower than the Own band the estimates rest on or are carried from
 // (the board's generation's kDecodePredictionError, else kTransferGeneration's): a one-card or
-// assumed row only widens it, and it never decides (Resolution::decides). The one function choose()
-// types the resolution rule's comparisons and Choice::resolution with; the plan JSON and the replay
-// report what it set.
+// assumed row only widens the number, never the decision (Resolution::decides false: the
+// comparison is resolved at that Own floor). The one function choose() types the resolution rule's
+// comparisons and Choice::resolution with; the plan JSON and the replay report what it set.
 [[nodiscard]] Resolution resolution_of(const CardFacts& board, SpeedBasis estimates) noexcept;
 
 // The resolution of a comparison by the widest basis of its two estimates, indexed by SpeedBasis.
@@ -540,10 +553,9 @@ struct Scored {
     double seconds = 0;            // request_seconds on the board (an estimate to show)
     double decision_seconds = 0;   // request_seconds on the reference card (0: none)
     SpeedBasis decision_basis = SpeedBasis::Own; // what decision_seconds rests on (request_seconds)
-    // The resolution rule weighed it against the best worth: their comparison's band decides
-    // (resolution_of over the wider of the two bases, Resolution::decides). False: not held, or a
-    // Transferred or lent estimate on either side (the best worth stands against it).
-    bool resolvable     = false;
+    // The width the resolution rule weighed it at against the best worth: resolution_width of the
+    // band of the wider of the two bases (Choice::resolutions). 0: not held, or no reference.
+    double weighed_at   = 0;
     double worth = 0;              // -ln(decision_seconds) - lambda kld (0 without a reference)
     bool variant = false;          // a coupled storage's other value beside the chosen (not eligible)
     std::string drafter = "plain"; // its drafter's configuration (DrafterOption::label)
@@ -578,9 +590,13 @@ struct Choice {
     // every comparison the resolution rule weighed (a comparison with a wider estimate rests on a
     // band that does not decide): the board's generation's own rows, a transfer, or an assumption.
     ResolutionBasis resolution_basis = ResolutionBasis::None;
-    // That band decides (Resolution::decides). False (a one-card or assumed row): the resolution
-    // rule moved nothing, the best worth stood.
+    // That band decides at its full width (Resolution::decides). False (a one-card or assumed
+    // row): the rule weighed the best worth's comparisons at `resolution_floor` only.
     bool resolution_decides = false;
+    double resolution_floor = 0; // Resolution::floor of that band
+    // The band of a comparison by the wider basis of its two estimates (resolution_of), as the
+    // rule and explain() weigh it; all None without a reference.
+    Resolutions resolutions{};
     // The resolution moved the pick (#301, DECISIONS 75): among the candidates whose speed is
     // inside `resolution` of the best worth's (the anchor), the one of strictly lower modelled KLD
     // took it (resolve_within_resolution). False: the anchor stood. `anchor` indexes the best
@@ -625,15 +641,16 @@ struct Alternative {
 // candidates that hold the asked context); `anchor` is the one with the best worth among them. A
 // candidate wins only if its modelled KLD is lower than the anchor's by more than kWorthTie and its
 // request time is longer by no more than the resolution of the two's comparison (worth units: ln
-// of the time ratio): `bands` by the wider of their decision_basis (#618), a band that does not
-// decide (Resolution::decides) never moves the pick. Among the winners the lowest KLD, then the
-// lowest index in `scored`; none: the anchor. Context beyond what was asked is headroom (DECISIONS
-// 73) and does not count. A resolution of 0 returns `anchor`.
+// of the time ratio): `bands` by the wider of their decision_basis (#618), at resolution_width (a
+// band that does not decide: its Own floor, never beyond). Among the winners the lowest KLD, then
+// the lowest index in `scored`; none: the anchor. Context beyond what was asked is headroom
+// (DECISIONS 73) and does not count. A resolution of 0 returns `anchor`.
 [[nodiscard]] std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
                                                     const std::vector<std::size_t>& eligible,
                                                     std::size_t anchor,
                                                     const Resolutions& bands) noexcept;
 // One deciding band for every comparison, whatever its estimates rest on (the rule before #618).
+// A resolution of 0 returns `anchor`.
 [[nodiscard]] std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
                                                     const std::vector<std::size_t>& eligible,
                                                     std::size_t anchor, double resolution) noexcept;
