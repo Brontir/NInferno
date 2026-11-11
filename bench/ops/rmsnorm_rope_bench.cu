@@ -404,8 +404,8 @@ double text_route_us(const Options& options, Route route, int query_heads, int k
     return best / options.graph_reps;
 }
 
-// Both routes over the widths; the crossover is where fused - split turns positive (log-T
-// interpolation between the two widths). Two readings of the per-token time the fused route loses
+// Both routes over the widths; the crossover is where fused - split turns positive (linear
+// interpolation in T between the two widths: the law is affine in T). Two readings of the per-token time the fused route loses
 // (sm_wave_rules.h launch_amortized_tokens; they predict the same on boards of one generation
 // whose DRAM rate per SM is alike, so run a pair that differs):
 //   latency:  T* = 2 L x SMs x warps_per_SM x clock / (excess_cycles x heads)  [the law in the
