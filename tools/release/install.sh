@@ -314,7 +314,7 @@ printf '%s  %s\n' "$sha" "$tmp/$archive" | sha256sum -c - > /dev/null 2>&1 ||
 
 mkdir -p "$HOME_DIR" "$BIN_DIR"
 # As an absolute path: it is recorded for later updates, which run from another directory.
-BIN_DIR=$(cd "$BIN_DIR" && pwd)
+BIN_DIR=$(CDPATH= cd -- "$BIN_DIR" && pwd)
 top=$(tar -tzf "$tmp/$archive" | head -1 | cut -d/ -f1)
 # An unreadable archive lists nothing (sh has no pipefail): never remove the install home itself.
 case $top in "" | . | .. | .install.*) die "not a NInferno archive: $archive" ;; esac
