@@ -422,7 +422,9 @@ CellAnswer answer_cell(const CellContext& c, const Weight& w, const generic::Pro
     // Volta's HMMA and GEMV kernels are not the route's own schedule: the manifest lists neither.
     const auto take = [&](Route route, Kind kind, const std::string& how) {
         const bool own_kernel = how.rfind("volta_hmma", 0) == 0 || how.rfind("volta_gemv", 0) == 0;
-        if (kind == Kind::Native && !own_kernel &&
+        // Native or emulated, a route the build does not hold runs nothing: an emulated one would
+        // otherwise satisfy an entry that pins it.
+        if ((kind == Kind::Native || kind == Kind::Emulated) && !own_kernel &&
             !manifest_holds(c.manifest, route, problem.qtype, problem.k)) {
             if (++c.manifest_failures <= 10) {
                 c.err << "  " << generic::qtype_name(problem.qtype) << " T=" << tokens << ": "
