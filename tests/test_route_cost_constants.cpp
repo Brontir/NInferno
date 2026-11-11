@@ -4,9 +4,8 @@
 // prints them, the fitted ones first: the numbers the model still takes from route_tune timings
 // instead of deriving them. The header's own text is read too: every constant it defines must be
 // in the descriptor and every listed one defined, so a new one cannot bypass the checks by being
-// left out. Every Fitted constant must also carry a complete Holdout (core/holdout.h): boards or
-// models left out of its fit with the metric and the error seen, or an explicit "none" with the
-// reason; an Unset one (forgotten) fails. The other provenances need none. No GPU.
+// left out. The Holdout record of each Fitted constant is in core/fitted_holdouts.h and checked by
+// ninferno_fitted_holdouts_test. No GPU.
 
 #include "ops/generic/route_cost_constants.h"
 
@@ -124,30 +123,14 @@ int main(int argc, char** argv) {
                          static_cast<int>(c.name.size()), c.name.data(), v);
             ++failures;
         }
-        if (c.from != rc::Provenance::Fitted && c.holdout.kind != ninferno::HoldoutKind::Unset) {
-            std::fprintf(stderr, "%.*s: not Fitted but carries a Holdout\n",
-                         static_cast<int>(c.name.size()), c.name.data());
-            ++failures;
-        }
-        if (c.from == rc::Provenance::Fitted) {
-            ++fitted;
-            if (c.holdout.kind == ninferno::HoldoutKind::Unset) {
-                std::fprintf(stderr,
-                             "%.*s: Fitted with no Holdout (forgotten, not declared none)\n",
-                             static_cast<int>(c.name.size()), c.name.data());
-                ++failures;
-            } else if (!c.holdout.complete()) {
-                std::fprintf(stderr, "%.*s: its Holdout leaves a required field empty\n",
-                             static_cast<int>(c.name.size()), c.name.data());
-                ++failures;
-            }
-        }
+        fitted += c.from == rc::Provenance::Fitted;
     }
     constexpr std::size_t kExpectedFitted = 25;
     if (fitted != kExpectedFitted) {
         std::fprintf(stderr,
                      "%zu Fitted constants found, expected %zu: if one was added or retagged, give "
-                     "it a Holdout and update kExpectedFitted\n",
+                     "it a record in core/fitted_holdouts.h (ninferno_fitted_holdouts_test) and "
+                     "update kExpectedFitted\n",
                      fitted, kExpectedFitted);
         ++failures;
     }
@@ -158,12 +141,6 @@ int main(int argc, char** argv) {
                 std::printf("%-8s %-32.*s", provenance_name(c.from),
                             static_cast<int>(c.name.size()), c.name.data());
                 for (const double v : c.values) std::printf(" %g", v);
-                if (c.from == rc::Provenance::Fitted) {
-                    std::printf("  [holdout %s]",
-                                c.holdout.kind == ninferno::HoldoutKind::Checked ? "checked"
-                                : c.holdout.kind == ninferno::HoldoutKind::None  ? "none"
-                                                                                 : "UNSET");
-                }
                 std::printf("\n");
             }
         }

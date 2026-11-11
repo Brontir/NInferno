@@ -6,7 +6,10 @@
 // whose holdout is declared absent from one that was forgotten:
 //   Unset    nothing was written (the default: a fitted constant with it fails its test);
 //   Checked  boards or models left out of the fit, a metric and the error seen on them;
-//   None     the constant was fitted and checked on the same data, said plainly with the reason.
+//   None     no held-out check the repository can reproduce, said plainly with the reason: either
+//            the constant was fitted and checked on the same data (Holdout::none), or it was
+//            held out once but that check's data is not in the repository (Holdout::quoted,
+//            which quotes the score).
 // `source` names the record (a DECISIONS entry, an issue, the comment at the constant's use).
 
 #include <string_view>
@@ -39,6 +42,19 @@ struct Holdout {
                 fitted_on,
                 "none: fitted and checked on the same data",
                 why,
+                {},
+                source,
+                note};
+    }
+
+    // Held out once, but the check's data (timings, census) is not in the repository, so it cannot
+    // be reproduced: `quoted` is the held-out score as its record states it.
+    static constexpr Holdout quoted(std::string_view fitted_on, std::string_view quoted,
+                                    std::string_view source, std::string_view note = {}) {
+        return {HoldoutKind::None,
+                fitted_on,
+                "none reproducible: held out once, its data is not in the repository",
+                quoted,
                 {},
                 source,
                 note};

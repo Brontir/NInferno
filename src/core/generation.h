@@ -59,8 +59,9 @@
 //   kind         fp32acc_full_rate: which measured kind of tensor core the generation is; a lent
 //                row has none (fp32acc_full_rate_of: nullopt), and what rests on the kind (int8
 //                prefill pays, i8 replaces the q4a8 kernels, board distances) is not carried
-//   fitted       w4a8_eff_scale, a16_cost_scale: route_tune fits of the boards above; not carried
-//                (fitted_route_scales: nullopt), the comparisons they price not made
+//   fitted       w4a8_eff_scale, a16_cost_scale, mmq_tile_fixed: route_tune fits of the boards
+//                above (mmq_tile_fixed: DECISIONS 74's grids); not carried (fitted_route_scales:
+//                nullopt, the comparisons they price not made; mmq_tile_fixed_of: 0.43)
 //   preference   mmq_candidate, attention_chain, mmq_work_tiles: a measured A/B; not carried
 //                (mmq_candidate_measured, attention_chain_measured)
 // A generation newer than the table therefore runs the routes every board runs (A16 prefill, the
