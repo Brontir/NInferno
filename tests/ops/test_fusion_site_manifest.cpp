@@ -88,8 +88,20 @@ int main() {
                "site pdl_overlap decided stream_order route=" + rmma_name +
                    " join=not_asked release=no_pdl prefetch=no_pdl pdl=0 tokens=4",
            "no PDL: stream order");
+    // A join asked without PDL keeps the kernel's no-op flag: still stream order.
+    q.release_asked = false;
+    q.join_asked    = true;
+    expect(text("pdl_overlap", q) ==
+               "site pdl_overlap decided stream_order route=" + rmma_name +
+                   " join=no_pdl release=not_asked prefetch=joined pdl=0 tokens=4",
+           "no PDL: a join is no overlap");
     q.device = &blackwell;
-    q.tokens = 64;
+    expect(text("pdl_overlap", q).find("decided overlap") != std::string::npos &&
+               text("pdl_overlap", q).find("join=none") != std::string::npos,
+           "PDL: a join overlaps");
+    q.join_asked    = false;
+    q.release_asked = true;
+    q.tokens        = 64;
     expect(text("pdl_overlap", q).find("prefetch=wide") != std::string::npos,
            "a call wider than the prefetch's band does not prefetch");
     q.route      = generic::Route{generic::Family::GgmlMmq, 0};

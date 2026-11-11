@@ -107,17 +107,23 @@ inline bool emit_evaluated(std::string_view id, const SiteQuery& q, SiteLine& ou
         generic::ResolvedRoute resolved{.asked = *q.route, .executed = *q.route};
         resolved.r8_prequantized = r8 && generic::r8_prequantized_takes(*q.route, *q.qtype, q.k,
                                                                         q.tokens, q.workspace_free);
+        const bool pdl           = q.device->features.pdl;
         const generic::LaunchOverlap overlap = generic::launch_overlap(
-            resolved, q.epilogue, q.tokens, q.join_asked, q.release_asked, q.device->features.pdl);
+            resolved, q.epilogue, q.tokens, q.join_asked, q.release_asked, pdl);
+        // Without PDL a join keeps the kernel's flag (launch_overlap leaves it, test_scratch_
+        // lifetime.cpp), a no-op there: the call still runs in stream order.
+        const generic::OverlapRefusal join =
+            overlap.joins() && !pdl ? generic::OverlapRefusal::NoPdl : overlap.join;
+        const bool overlaps =
+            join == generic::OverlapRefusal::None || overlap.releases() || overlap.prefetches();
         out = {std::string(id),
                "decided",
-               overlap.joins() || overlap.releases() || overlap.prefetches() ? "overlap"
-                                                                             : "stream_order",
+               overlaps ? "overlap" : "stream_order",
                {{"route", std::string(generic::route_name(*q.route))},
-                {"join", std::string(generic::overlap_refusal_name(overlap.join))},
+                {"join", std::string(generic::overlap_refusal_name(join))},
                 {"release", std::string(generic::overlap_refusal_name(overlap.release))},
                 {"prefetch", std::string(generic::overlap_refusal_name(overlap.prefetch))},
-                {"pdl", q.device->features.pdl ? "1" : "0"},
+                {"pdl", pdl ? "1" : "0"},
                 {"tokens", tokens}}};
         return true;
     }
