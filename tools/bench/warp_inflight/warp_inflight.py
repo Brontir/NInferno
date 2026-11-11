@@ -47,7 +47,6 @@ import re
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -239,21 +238,7 @@ def warm_until_settled(probe_lines, clock_rows, send, now_ns, sleep, alive,
     return None, ENDED_IN_WARM_UP
 
 
-class Lines:
-    """The lines of a text stream, read on a thread of their own as they come."""
-
-    def __init__(self, stream):
-        self.lines = []
-        self.thread = threading.Thread(target=self._read, args=(stream,), daemon=True)
-        self.thread.start()
-
-    def _read(self, stream):
-        for line in iter(stream.readline, ""):
-            self.lines.append(line.rstrip("\n"))
-
-    def rows(self, fields):
-        return [[x.strip() for x in line.split(",")] for line in list(self.lines)
-                if line.count(",") == fields - 1]
+Lines = IP.Lines  # a stream read on a thread of its own (the probe's stdout, nvidia-smi's)
 
 
 def clock_refusal(notes, rated_khz):
@@ -788,26 +773,11 @@ def cmd_run(a):
         head.append("sass_ldg128 " + " ".join(f"{v}:{loads[v]}" for v in VARIANTS))
         before = IP._compute_apps()
 
-        def sampler(query, ms):
-            try:
-                return subprocess.Popen(
-                    ["nvidia-smi", query, "--format=csv,noheader,nounits", "-lms", str(ms)],
-                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-            except OSError:
-                return None
-
-        def rows_of(proc, fields):
-            if proc is None:
-                return None
-            proc.terminate()
-            out, _ = proc.communicate()
-            return [[x.strip() for x in line.split(",")] for line in out.splitlines()
-                    if line.count(",") == fields - 1]
-
-        clocks = sampler("--query-gpu=timestamp,pci.bus_id,pstate,clocks.sm,clocks.mem",
-                         CLOCK_PERIOD_MS)
-        clock_lines = Lines(clocks.stdout) if clocks else None
-        apps = sampler("--query-compute-apps=timestamp,gpu_bus_id,pid", 200)
+        # Both nvidia-smi streams drained as they come (IP.Sampler, #741).
+        clocks = IP.sampler("--query-gpu=timestamp,pci.bus_id,pstate,clocks.sm,clocks.mem",
+                            CLOCK_PERIOD_MS)
+        clock_lines = clocks.lines if clocks else None
+        apps = IP.sampler("--query-compute-apps=timestamp,gpu_bus_id,pid", 200)
         # The probe streams in its warm-up until told the memory clock has settled.
         probe = subprocess.Popen([exe, "--wait-go"], stdin=subprocess.PIPE,
                                  stdout=subprocess.PIPE, text=True)
@@ -826,12 +796,8 @@ def cmd_run(a):
         probe.wait()
         probe_lines.thread.join()
         stdout = "".join(line + "\n" for line in probe_lines.lines)
-        if clocks is not None:
-            clocks.terminate()
-            clocks.wait()
-            clock_lines.thread.join()
-        samples = clock_lines.rows(5) if clock_lines else []
-        during = rows_of(apps, 3)
+        samples = clocks.rows(5) if clocks else []
+        during = apps.rows(3) if apps else None
         after = IP._compute_apps()
     m = re.search(r"^note device 0 is the GPU at PCI (\S+)$", stdout, re.M)
     bus = IP._bus(m.group(1)) if m else None

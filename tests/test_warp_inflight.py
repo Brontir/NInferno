@@ -474,6 +474,25 @@ class WarpInflight(unittest.TestCase):
             with open(os.path.join(inputs, "warp_inflight_89.txt")) as f:
                 self.assertEqual(f.read(), SAMPLE)
 
+    def test_sampler_drains_as_it_goes(self):
+        # A sampler that writes far more than a pipe holds (about 4 KB on Windows, 64 KB on Linux)
+        # and then waits, as nvidia-smi -lms does: drained as it writes, every row is read and
+        # stopping it does not hang (#741).
+        import sys
+        import time
+        chatty = ("import sys, time\n"
+                  "for i in range(20000):\n"
+                  "    sys.stdout.write('2026/11/11 12:00:00.000, 00000000:01:00.0, %d' % i + chr(10))\n"
+                  "sys.stdout.flush()\n"
+                  "time.sleep(60)\n")
+        s = wi.IP.Sampler(None, None, argv=[sys.executable, "-c", chatty])
+        deadline = time.time() + 20
+        while len(s.lines.lines) < 20000 and time.time() < deadline:
+            time.sleep(0.05)
+        rows = s.rows(3)
+        self.assertEqual(len(rows), 20000)
+        self.assertEqual(rows[-1][2], "19999")
+
 
 if __name__ == "__main__":
     unittest.main()
