@@ -383,7 +383,8 @@ def type_name(table):
 
 
 # An attribute (`[[maybe_unused]]`), which may stand before or after a declarator's name.
-ATTR = r"\[\[[^\]]*\]\]\s*"
+# Its arguments may hold one level of brackets (`[[gnu::aligned(sizeof(v[0]))]]`).
+ATTR = r"\[\[(?:[^\[\]]|\[[^\[\]]*\])*\]\]\s*"
 
 
 def typed_pattern(table):
