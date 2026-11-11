@@ -922,7 +922,7 @@ int r8_index(int warps, int rows) {
 // us): they keep the shape-class rules.
 //
 // The K >= 5120 rule holds on the sm_12x family, not on one board: the RTX 5060 Ti (gb206:36sm,
-// u3r, ninferno_r8_schedule_bench on the IQ3 16 GB artifacts' 63 problems) is fastest with eight
+// ninferno_r8_schedule_bench on the IQ3 16 GB artifacts' 63 problems) is fastest with eight
 // warps of two rows on every IQ2_*/IQ3_S store and add from N = 5120 (IQ2_XXS 10240x5120 w4r2
 // 43.5 -> w8r2 40.0 us, IQ2_XS 17408x5120 83.6 -> 79.4, IQ3_S 16384x5120 w4r1 100.6 -> 94.5) and
 // IQ3_XXS two rows per warp from N = 5120 (16384x5120 92.8 -> 82.5, 6144x5120 36.0 -> 34.0), so
@@ -2605,7 +2605,7 @@ std::optional<RouteTraffic> route_traffic(Route route, const Weight& weight,
     // activation slice itself (the shared-memory tiles stage it once for the CTA).
     const double x_readers =
         route.family == Family::RegisterMma ? rmma_schedule_info(route.schedule).warps_m : 1.0;
-    const double bpw = static_cast<double>(weight.payload_bytes) / (n * k);
+    const double bpw = bytes_per_weight(weight, problem);
     return RouteTraffic{n * k * bpw * weight_reads,
                         x_t * x_k * x_bytes * cdiv(n, tile->out_rows) * x_readers, n * t * 2.0};
 }
@@ -3092,6 +3092,7 @@ std::string_view overlap_refusal_name(OverlapRefusal why) noexcept {
     return "none";
 }
 
+// FUSION-SITE: pdl_overlap
 LaunchOverlap launch_overlap(const ResolvedRoute& resolved, Epilogue epilogue, int tokens,
                              bool join_asked, bool release_asked, bool pdl) {
     const Family family = resolved.executed.family;
@@ -3227,6 +3228,7 @@ std::optional<double> route_cost_seconds(const Problem& problem, const Weight& w
     return out;
 }
 
+// FUSION-SITE: r8_prequantized
 ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call) {
     ResolvedRoute out{.asked = asked, .executed = asked};
     Route& route      = out.executed;

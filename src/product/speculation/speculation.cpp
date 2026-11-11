@@ -4,6 +4,7 @@
 #include "spec/fingerprint.h"
 #include "spec/gpu_identity.h"
 #include "spec/manifest.h"
+#include "spec/pairs.h"
 #include "spec/registry.h"
 
 #include <algorithm>
@@ -353,6 +354,7 @@ ServedSpeculation served_of(const spec::Profile& profile, const spec::Choice& pr
         }
     }
     out.engine.load = engine_load(profile.load, speculative_window(out.engine));
+    out.load_basis              = profile.load_basis;
     out.engine.context_limit = profile.context_limit;
     out.engine.decision_sources = decision_sources_of(resolved);
     for (std::string& note : fit_draft_widths(out.engine, can)) {
@@ -431,10 +433,16 @@ SpeculationSubject subject_of_mode(SpeculationSubject subject, spec::Mode mode) 
         options.served          = subject.support; // the choices the Engine runs
         spec::select(p, options);
     }
+    // A table derived from the facts (a pair priced for this card) is derived again for the
+    // choices of this mode: the old one bounded the choices before the reselection, which may run
+    // a depth it never checked, and the joint price already covers every measured configuration.
     // A load table was measured with the default's drafter: another kind's is not known, so one
     // request speculates and two or more decode plainly (as for a pair measured elsewhere).
-    if (tuned != mode && !p.load.empty()) {
-        p.load = {spec::LoadBound{.lanes = 2, .depth = 0}};
+    if (p.load_basis == "facts") {
+        p.load = spec::facts_load(p);
+    } else if (tuned != mode && !p.load.empty()) {
+        p.load       = {spec::LoadBound{.lanes = 2, .depth = 0}};
+        p.load_basis = "literal";
     }
     return subject;
 }
