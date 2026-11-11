@@ -19,15 +19,15 @@
 //   planner, not the converter: its nvfp4 and round-plain modes can still write an NVFP4 artifact
 //   for a card below sm_100, which this lint does not sample. FP32 and INT32 have no codec.
 // - modes: the policy a site records (convert kept_policy, with and without an NVFP4 activation
-//   divisor; head_policy for an output head; A16Only, the recipe default a site keeps where
-//   neither rule reaches, such as a GGUF output head kept as published, convert.cpp) as each
+//   divisor; head_policy for an output head; A16Only, the recipe default a format kept as
+//   published keeps where neither rule reaches, such as a GGUF output head, convert.cpp) as each
 //   --activations mode runs it (models::effective_policy): Fast keeps it; Int8 allows eight bits
 //   on every linear but an A16Only head or embedding, which keeps BF16 (convert.cpp: the
 //   engine's test of the name); Exact keeps BF16 activations under the invariant route profile
 //   (ScopedInvariantRoutes, as the engine plans it). Under that profile one route answers a call
-//   (the invariant-profile authority:
-//   the register MMA with the problem's K split, NVFP4's tiled form of it, or scalar), and
-//   run_route clears GemmArgs::lane_local, so Volta's lane-local, HMMA and GEMV forms do not run.
+//   (the invariant-profile authority: the register MMA with the problem's K split, NVFP4's tiled
+//   form of it, or scalar), and run_route clears GemmArgs::lane_local, so Volta's lane-local,
+//   HMMA and GEMV forms do not run.
 // - widths: decode (1), the verify bands 2..4, 5..8 and 9..16, the prefill band 17..256 and past
 //   it, each sampled at its ends and inside. From 17 tokens a call is sampled under the prefill
 //   profile and under the speed profile (a batched decode or verify that wide); a prompt shorter
@@ -140,12 +140,12 @@ const std::vector<Allowed>& allowed_holes() {
     // GEMV) and prefill are covered. Market weight: one board class, at verify widths only.
     static const std::vector<std::string_view> kVerify = {"5-8", "9-16"};
     static const std::vector<Allowed> kAllowed         = {
-        // BF16, the FP8 rows and MXFP4 (an output head, a BF16 checkpoint's projections, a site
-        // left at the recipe's A16Only), and the ternary and 1/2-bit block formats, which a site
-        // keeps at A16 (kept_block_policy).
+        // BF16 and the FP8 rows (an output head, a BF16 checkpoint's projections), and the
+        // ternary and 1/2-bit block formats, which a site keeps at A16 (kept_block_policy). Not
+        // MXFP4: no converter path records it A16Only (served_modes).
         {70,
                  kA16,
-                 {Q::BF16, Q::FP8_E4M3FN_ROW_BF16, Q::FP8_E4M3FN_ROW_F32, Q::FP8_E4M3FN_B128_F32, Q::MXFP4,
+                 {Q::BF16, Q::FP8_E4M3FN_ROW_BF16, Q::FP8_E4M3FN_ROW_F32, Q::FP8_E4M3FN_B128_F32,
                   Q::GGML_TQ1_0, Q::GGML_TQ2_0, Q::GGML_Q1_0, Q::GGML_Q2_0},
                  kVerify,
                  Kind::Emulated,
@@ -241,28 +241,32 @@ LinearPolicy linear_policy(artifact::ActivationPolicy p) {
 }
 
 // The modes a linear of the format is served under: each policy a site records (convert's
-// kept_policy and head_policy, with and without an activation divisor) under each
-// --activations mode (models::effective_policy; Exact also under the invariant profile).
+// kept_policy and head_policy, with and without an activation divisor; and the recipe's default
+// A16Only where a format is kept as published, kept_where_decoded) under each --activations mode
+// (models::effective_policy; Exact also under the invariant profile).
 std::vector<Mode> served_modes(QType q) {
     std::vector<Mode> out;
     const auto add = [&](Mode m) {
         if (std::find(out.begin(), out.end(), m) == out.end()) out.push_back(m);
     };
+    std::vector<artifact::ActivationPolicy> recorded;
     for (const bool divisor : {true, false}) {
         const convert::KeptEncoding site{q, divisor};
-        // A16Only: the recipe's default, which a site keeps where neither rule sets its policy
-        // (a GGUF output head kept as published, convert.cpp).
-        for (const artifact::ActivationPolicy recorded :
-             {convert::kept_policy(site), convert::head_policy(site),
-              artifact::ActivationPolicy::A16Only}) {
-            const LinearPolicy r = linear_policy(recorded);
-            add({models::effective_policy(r, ActivationMode::Fast), false});
-            add({models::effective_policy(r, ActivationMode::Int8), false});
-            // Under Int8 an A16Only head or embedding keeps BF16 (convert.cpp, the engine's test of
-            // the parameter's name).
-            if (r == LinearPolicy::A16Only) add({LinearPolicy::A16Only, false});
-            add({models::effective_policy(r, ActivationMode::Exact), true});
-        }
+        recorded.push_back(convert::kept_policy(site));
+        recorded.push_back(convert::head_policy(site));
+    }
+    // A format kept as published (GGUF Q8_0 and block formats, the u4 and 3-bit groupwise words)
+    // keeps the recipe's default A16Only where convert.cpp sets no policy: a GGUF output head, a
+    // Q8 grouped-absmax site (dense.cpp). MXFP4 is not such a format: it is written for expert
+    // banks only, at kept_block_policy (AllowA8), and an MXFP4 head is kept as NVFP4.
+    if (convert::kept_where_decoded(q)) recorded.push_back(artifact::ActivationPolicy::A16Only);
+    for (const artifact::ActivationPolicy policy : recorded) {
+        const LinearPolicy r = linear_policy(policy);
+        add({models::effective_policy(r, ActivationMode::Fast), false});
+        // Int8 runs every linear at AllowA8 but an A16Only head or embedding, which keeps BF16
+        // (convert.cpp, the engine's test of the parameter's name): that one is Fast's row above.
+        add({models::effective_policy(r, ActivationMode::Int8), false});
+        add({models::effective_policy(r, ActivationMode::Exact), true});
     }
     std::sort(out.begin(), out.end(), [](Mode a, Mode b) {
         return std::tie(a.invariant, a.policy) < std::tie(b.invariant, b.policy);
@@ -662,7 +666,8 @@ int run(bool table_always, bool cells_always, std::string_view only) {
                 table << '\n';
             }
         }
-        // An entry naming a format this build does not serve on the board is stale too.
+        // An entry naming a format this build does not serve on the board (NVFP4 below sm_100), or
+        // a mode its sites are not served under (MXFP4 or Q4 G64 at A16), is stale too.
         for (const Allowed& a : allowed) {
             if (a.capability != capability) continue;
             for (const QType q : a.formats) {
