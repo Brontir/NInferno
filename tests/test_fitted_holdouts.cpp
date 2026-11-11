@@ -32,6 +32,7 @@
 #include "ops/generic/route_rules.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -65,19 +66,61 @@ std::string read_file(std::string_view relative) {
 
 // The text without its comments: a `//` to the end of its line, and a `/* ... */` block (its
 // newlines kept, so a line stays a line). A tag or a definition inside a comment is neither. String
-// and character literals are copied as they are, so a "//" or "/*" inside one is not a comment.
+// and character literals are copied as they are, so a "//" or "/*" inside one is not a comment. As
+// g++ -fpreprocessed reads them: a raw string R"d(...)d" is one literal to its closing delimiter
+// (newlines, quotes and comment markers inside it included), a ' between the digits of a number is
+// a digit separator, not a character literal, and a line comment that ends in a backslash goes on
+// to the next line (whose newline is kept).
 std::string code_of(const std::string& text) {
+    const auto word = [](char ch) {
+        return std::isalnum(static_cast<unsigned char>(ch)) != 0 || ch == '_';
+    };
+    // The start of the identifier or number that ends just before `at`.
+    const auto token_start = [&](std::size_t at) {
+        while (at > 0 && (word(text[at - 1]) || text[at - 1] == '\'' || text[at - 1] == '.')) --at;
+        return at;
+    };
     std::string out;
     out.reserve(text.size());
     for (std::size_t i = 0; i < text.size();) {
         const char c = text[i];
-        if (c == '"' || c == '\'') {
+        if (c == '"' && i > 0 && text[i - 1] == 'R') {
+            // R, u8R, uR, UR or LR right before the quote, as a prefix and not an identifier's end.
+            const std::size_t prefix = token_start(i);
+            const std::string_view p(text.data() + prefix, i - prefix);
+            if (p == "R" || p == "u8R" || p == "uR" || p == "UR" || p == "LR") {
+                const std::size_t open = text.find('(', i + 1);
+                if (open != std::string::npos) {
+                    const std::string close = ")" + text.substr(i + 1, open - i - 1) + "\"";
+                    const std::size_t end   = text.find(close, open + 1);
+                    const std::size_t stop =
+                        end == std::string::npos ? text.size() : end + close.size();
+                    out.append(text, i, stop - i);
+                    i = stop;
+                    continue;
+                }
+            }
+        }
+        if (c == '\'' && i > 0 && word(text[i - 1]) &&
+            std::isdigit(static_cast<unsigned char>(text[token_start(i)])) != 0) {
+            out += c; // a digit separator: 1'000, 0xFF'FF
+            ++i;
+        } else if (c == '"' || c == '\'') {
             const std::size_t start = i++;
             while (i < text.size() && text[i] != c && text[i] != '\n') i += text[i] == '\\' ? 2 : 1;
             i = std::min(i + 1, text.size());
             out.append(text, start, i - start);
         } else if (text.compare(i, 2, "//") == 0) {
             while (i < text.size() && text[i] != '\n') ++i;
+            // A backslash at the end of the line (before \n or \r\n) splices the next line in.
+            while (i < text.size()) {
+                std::size_t last = i;
+                if (last > 0 && text[last - 1] == '\r') --last;
+                if (last == 0 || text[last - 1] != '\\') break;
+                out += '\n';
+                ++i;
+                while (i < text.size() && text[i] != '\n') ++i;
+            }
         } else if (text.compare(i, 2, "/*") == 0) {
             const std::size_t end  = text.find("*/", i + 2);
             const std::size_t stop = end == std::string::npos ? text.size() : end + 2;
@@ -378,6 +421,40 @@ void check_comment_stripping() {
     }
     if (!indented.count("kIndented")) fail("definitions_of (RecordedOnly): missed kIndented");
     if (margin.count("kIndented")) fail("definitions_of (Definitions): read an indented line");
+
+    // The four edge cases of #715, as g++ -fpreprocessed reads them: a raw string is one literal
+    // (newlines, quotes and comment markers inside it included), a digit separator is no character
+    // literal, and a line comment ending in a backslash goes on to the next line.
+    const std::string edges     = "constexpr auto kRaw = R\"x(a\n"
+                                  "/* not a comment\n"
+                                  ")x\";\n"
+                                  "constexpr int kAfterRaw = 7;\n"
+                                  "constexpr auto kQuote = R\"(a\"b /* x)\";\n"
+                                  "constexpr int kAfterQuote = 8;\n"
+                                  "constexpr int kSep = 1'000; // constexpr int kSepHidden = 9;\n"
+                                  "constexpr int kHexSep = 0xFF'FF; // constexpr int kHexHidden = 9;\n"
+                                  "constexpr char kChar = 'a'; // constexpr int kCharHidden = 9;\n"
+                                  "// a comment that goes on \\\n"
+                                  "constexpr int kContinued = 10;\n"
+                                  "constexpr int kAfterContinued = 11;\n";
+    const std::string edge_code = code_of(edges);
+    if (std::count(edge_code.begin(), edge_code.end(), '\n') !=
+        std::count(edges.begin(), edges.end(), '\n')) {
+        fail("code_of: an edge case changed the line count");
+    }
+    const auto edge_defs = definitions_of(edge_code, Mode::Definitions);
+    for (const char* seen : {"kRaw", "kAfterRaw", "kQuote", "kAfterQuote", "kSep", "kHexSep",
+                             "kChar", "kAfterContinued"}) {
+        if (!edge_defs.count(seen)) fail(std::string("code_of edge cases: missed ") + seen);
+    }
+    for (const char* hidden : {"kSepHidden", "kHexHidden", "kCharHidden", "kContinued"}) {
+        if (edge_defs.count(hidden)) {
+            fail(std::string("code_of edge cases: read ") + hidden + " inside a comment");
+        }
+    }
+    if (edge_code.find("/* not a comment") == std::string::npos) {
+        fail("code_of: cut a raw string literal");
+    }
 }
 
 } // namespace
