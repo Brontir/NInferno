@@ -11,7 +11,8 @@ set -euo pipefail
 REPO=$(cd "${1:?usage: signed_install_test.sh REPO}" && pwd)
 command -v openssl > /dev/null && command -v python3 > /dev/null || exit 77
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+alive=""  # a background process standing in for a running install (shared-home case below)
+trap 'if [ -n "$alive" ]; then kill "$alive" 2> /dev/null || true; fi; rm -rf "$work"' EXIT
 failures=0
 fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
 expect() { # what  status-wanted  command...
@@ -135,7 +136,9 @@ expect "an archive the manifest does not name is refused" 1 "${I[@]}" NINFERNO_M
 expect "a release that does not start is not installed" 1 "${I[@]}" NINFERNO_MANIFEST="$d3/latest.json" \
   NINFERNO_ARCHIVE="$d3/ninferno-linux-x86_64.tar.gz" sh "$work/install.sh"
 [ ! -e "$home/current" ] && [ ! -e "$bin/ninferno-serve" ] || fail "a release that does not start was switched in"
-mkdir -p "$home/.install.stale" && echo x > "$home/.install.stale/big"  # a killed install's leftover
+# A killed install's leftover: marked with the PID of an install that is gone.
+sh -c 'exit 0' & dead=$!; wait "$dead"
+mkdir -p "$home/.install.stale" && echo x > "$home/.install.stale/big" && echo "$dead" > "$home/.install.stale/.ninferno-staging"
 expect "the signed release installs (glibc 2.38 is enough)" 0 "${I[@]}" FAKE_GLIBC=2.38 NINFERNO_MANIFEST="$d1/latest.json" \
   NINFERNO_ARCHIVE="$d1/ninferno-linux-x86_64.tar.gz" sh "$work/install.sh"
 serves "install 0.1.0" 0.1.0
@@ -203,6 +206,16 @@ serves "after installing 0.1.0 again" 0.1.0
 [ -L "$home/current" ] && [ "$(readlink "$home/current")" = "$home/ninferno-0.1.0-linux-x86_64" ] ||
   fail "current is not the link to 0.1.0"
 [ -z "$(find "$home" -maxdepth 1 -name '.install.*')" ] || fail "the reinstall left its staging copy"
+# Stopped between its two renames (the old copy moved aside, the new one not yet in place): the
+# old copy goes back. A stand-in mv sends the install TERM at that rename.
+mkdir -p "$work/mvkill"
+printf '#!/bin/sh\ncase $1 in */.install.*/ninferno-*) kill -TERM $PPID; sleep 1; exit 1 ;; esac\nexec %s "$@"\n' \
+  "$(command -v mv)" > "$work/mvkill/mv"
+chmod +x "$work/mvkill/mv"
+expect "a reinstall stopped between its renames" 1 "${I[@]}" PATH="$work/mvkill:$PATH" \
+  NINFERNO_MANIFEST="$d1/latest.json" NINFERNO_ARCHIVE="$d1/ninferno-linux-x86_64.tar.gz" sh "$work/install.sh"
+serves "after the reinstall stopped between its renames" 0.1.0
+[ -z "$(find "$home" -maxdepth 1 -name '.install.*')" ] || fail "the stopped reinstall left its staging copy"
 
 # The version order is update_check.cpp's (tests/test_update_check.cpp has the same cases).
 eval "$(sed -n '/^version_newer() {$/,/^}$/p' "$REPO/tools/release/ninferno-update")"
@@ -274,6 +287,50 @@ mkdir -p "$home4/current" && echo mine > "$home4/current/notes"
 expect "uninstall beside a real current directory" 0 env NINFERNO_HOME="$home4" NINFERNO_BIN="$work/bin4" \
   sh "$work/install.sh" --uninstall --yes
 [ -f "$home4/current/notes" ] || fail "uninstall removed a current directory it did not make"
+expect "an install beside a real current directory stops plainly" 1 env NINFERNO_HOME="$home4" \
+  NINFERNO_BIN="$work/bin4" NINFERNO_MANIFEST="$d1/latest.json" NINFERNO_ARCHIVE="$d1/ninferno-linux-x86_64.tar.gz" \
+  sh "$work/install.sh"
+said "current is not NInferno's link"
+! grep -q "^mv:" "$work/out.txt" || fail "the install stopped on mv's own error"
+[ -f "$home4/current/notes" ] && [ ! -e "$home4/ninferno-0.1.0-linux-x86_64" ] ||
+  fail "an install beside a real current directory changed something"
+
+# Staging directories in a shared home: only marked ones whose install is gone are removed.
+home5=$work/home-shared; bin5=$work/userbin-shared
+L=(env NINFERNO_HOME="$home5" NINFERNO_BIN="$bin5")
+sleep 60 & alive=$!
+sh -c 'exit 0' & dead=$!; wait "$dead"
+staging() { # name mark [age]: a .install.<name> directory with that mark ("" = no mark file)
+  mkdir -p "$home5/.install.$1" && echo data > "$home5/.install.$1/big"
+  if [ -n "$2" ]; then
+    printf '%s\n' "$2" > "$home5/.install.$1/.ninferno-staging"
+    [ -z "${3:-}" ] || touch -d "$3" "$home5/.install.$1/.ninferno-staging"
+  fi
+}
+make_staging() {
+  staging user ""                     # the user's own: no mark
+  staging live "$alive"               # another install, still running
+  staging dead "$dead"                # an install that is gone
+  staging nopid-new x                 # a mark without a PID, recent
+  staging nopid-old x '7 hours ago'   # ... and old
+  staging reused "$alive" '2 days ago'  # a PID used again
+}
+kept() { # what  names...: exactly these .install.* stay
+  local what=$1 got want
+  shift
+  got=$(cd "$home5" && { ls -1d .install.* 2> /dev/null || true; } | sort | tr '\n' ' ')
+  want=$(printf '.install.%s\n' "$@" | sort | tr '\n' ' ')
+  [ "$got" = "$want" ] || fail "$what: staging left '$got', expected '$want'"
+}
+make_staging
+expect "install in a shared home" 0 "${L[@]}" NINFERNO_MANIFEST="$d1/latest.json" \
+  NINFERNO_ARCHIVE="$d1/ninferno-linux-x86_64.tar.gz" sh "$work/install.sh"
+kept "install" user live nopid-new
+make_staging
+expect "uninstall in a shared home" 0 "${L[@]}" sh "$work/install.sh" --uninstall --yes
+kept "uninstall" user live nopid-new
+said "$home5 stays"
+kill "$alive" 2> /dev/null || true; alive=""
 
 # Links through the resolved home (ninferno-update passes it) go too.
 realh=$work/home-real; homel=$work/home-link; bin3=$work/userbin-link

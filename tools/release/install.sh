@@ -75,10 +75,30 @@ usage() {
   say "Through a pipe: curl -fsSL .../install.sh | sh -s -- --uninstall"
 }
 
+# Staging directories (HOME_DIR/.install.XXXXXX) carry STAGING_MARK with the PID of the install
+# that made them. remove_stale_staging removes those whose install is gone: the PID is not alive,
+# or the mark is a day old (a PID used again; no install takes that long), or, when the mark holds
+# no PID, six hours old. An unmarked .install.* is not ours, and a live one is another install's
+# (ninferno-ui's Update and a manual run at once): both stay.
+STAGING_MARK=.ninferno-staging
+remove_stale_staging() {
+  for old in "$HOME_DIR"/.install.*; do
+    [ -d "$old" ] && [ ! -L "$old" ] && [ -f "$old/$STAGING_MARK" ] || continue
+    pid=$(head -n 1 "$old/$STAGING_MARK" 2> /dev/null || true)
+    case $pid in
+      '' | *[!0-9]*) age=360 ;;
+      *) if kill -0 "$pid" 2> /dev/null; then age=1440; else age=0; fi ;;
+    esac
+    if [ "$age" = 0 ] || [ -n "$(find "$old/$STAGING_MARK" -mmin +"$age" 2> /dev/null)" ]; then
+      rm -rf "$old"
+    fi
+  done
+}
+
 # uninstall yes|ask: only what install.sh and ninferno-update make, so a custom NINFERNO_HOME
 # (even ~/.local or ~) loses nothing else: the release directories (each holds
-# share/ninferno/release.json), `current` when it is a link to one of them, staging leftovers,
-# and the links in BIN_DIR to a release's bin/. A link may name the home as given or resolved
+# share/ninferno/release.json), `current` when it is a link to one of them, staging copies left
+# by an install that is gone, and the links in BIN_DIR to a release's bin/. A link may name the home as given or resolved
 # (ninferno-update passes the resolved one). Downloaded models and settings live elsewhere.
 uninstall() {
   real=$(readlink -f "$HOME_DIR" 2> /dev/null || printf '%s' "$HOME_DIR")
@@ -101,13 +121,11 @@ uninstall() {
       "$HOME_DIR"/ninferno-*-linux-x86_64* | "$real"/ninferno-*-linux-x86_64*) rm -f "$HOME_DIR/current" ;;
     esac
   fi
-  for dir in "$HOME_DIR"/ninferno-*-linux-x86_64* "$HOME_DIR"/.install.*; do
+  for dir in "$HOME_DIR"/ninferno-*-linux-x86_64*; do
     [ -d "$dir" ] && [ ! -L "$dir" ] || continue
-    case $dir in
-      */.install.*) rm -rf "$dir" ;;
-      *) if [ -f "$dir/share/ninferno/release.json" ]; then rm -rf "$dir"; fi ;;
-    esac
+    if [ -f "$dir/share/ninferno/release.json" ]; then rm -rf "$dir"; fi
   done
+  remove_stale_staging
   if rmdir "$HOME_DIR" 2> /dev/null; then
     say "NInferno is removed."
   else
@@ -177,7 +195,15 @@ major=${driver%%.*}
 archive=ninferno-linux-x86_64.tar.gz
 tmp=$(mktemp -d)
 stage=""  # the unpacked release before it is switched in, inside HOME_DIR (a move, not a copy)
-cleanup() { rm -rf "$tmp" ${stage:+"$stage"}; }
+top=""
+# A same-version copy moved aside (below) goes back when the new one never got its place.
+cleanup() {
+  if [ -n "$stage" ] && [ -n "$top" ] && { [ -e "$stage/replaced" ] || [ -L "$stage/replaced" ]; } &&
+    [ ! -e "$HOME_DIR/$top" ] && [ ! -L "$HOME_DIR/$top" ]; then
+    mv "$stage/replaced" "$HOME_DIR/$top" || true
+  fi
+  rm -rf "$tmp" ${stage:+"$stage"}
+}
 # dash runs no EXIT trap when a signal kills it: a stopped install would leave its staging copy.
 trap cleanup EXIT
 trap 'cleanup; trap - EXIT; exit 129' HUP
@@ -213,11 +239,10 @@ top=$(tar -tzf "$tmp/$archive" | head -1 | cut -d/ -f1)
 case $top in "" | . | .. | .install.*) die "not a NInferno archive: $archive" ;; esac
 # Unpacked and run beside the installed versions first: `current` and the commands move only to a
 # release that starts here, so a failed install leaves the one before in place.
-# A staging copy an earlier install left (killed hard) is up to 3 GB: remove it first.
-for old in "$HOME_DIR"/.install.*; do
-  if [ -d "$old" ] && [ ! -L "$old" ]; then rm -rf "$old"; fi
-done
+# A staging copy an install killed hard left is up to 3 GB: removed first, when its install is gone.
+remove_stale_staging
 stage=$(mktemp -d "$HOME_DIR/.install.XXXXXX")
+printf '%s\n' "$$" > "$stage/$STAGING_MARK"
 tar -xzf "$tmp/$archive" -C "$stage" || die "cannot unpack $archive: nothing installed"
 if ! version=$("$stage/$top/bin/ninferno-serve" --version 2>&1); then
   printf '%s\n' "$version" >&2
@@ -227,6 +252,9 @@ if ! version=$("$stage/$top/bin/ninferno-serve" --version 2>&1); then
   die "the release cannot run on this machine (see above), so nothing was installed; a newer NVIDIA driver usually fixes it"
 fi
 say "$version"
+if [ -e "$HOME_DIR/current" ] && [ ! -L "$HOME_DIR/current" ]; then
+  die "$HOME_DIR/current is not NInferno's link (a file or directory of its own): move it away or set NINFERNO_HOME; nothing installed"
+fi
 # The switch is two renames: the same version installed again is moved aside into the staging
 # directory (removed on exit) rather than deleted before the new copy is in place, and `current`
 # is made under another name and renamed over the old link (GNU mv -T: no window without it).
