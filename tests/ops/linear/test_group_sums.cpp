@@ -8,16 +8,20 @@
 // where the call takes the plane and the MMA with ones' elsewhere (the kernel-facts key's `sums`).
 #include "ops/quantized_weight.h"
 
+#include "core/arena.h"
 #include "core/device_class.h"
+#include "core/tensor.h"
 #include "core/weight.h"
 #include "ninferno/ops/prefill_routes.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/kernel_facts.h"
+#include "ops/generic/route_table.h"
 #include "ops/generic/selector_facts.h"
 
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -240,6 +244,101 @@ int prepass_case(int k, int tokens, int values, int spread, std::uint32_t seed, 
     return bad != 0 ? 1 : 0;
 }
 
+// A verify-width call (T = 24, 32: speed profile, the plane) captured into a CUDA graph with its
+// pre-pass and replayed twice gives the eager call's bytes; the plane's workspace scope gives the
+// pre-pass the same address at every replay. Q4_K and Q2_K, a one-tile and a four-tile route.
+int graph_capture() {
+    int bad = 0;
+    for (const QType q : {QType::GGML_Q4_K, QType::GGML_Q2_K}) {
+        const auto host = packed(q, 512, 1024);
+        if (!host) return bad + 1;
+        void* dw = nullptr;
+        if (cudaMalloc(&dw, host->payload.size()) != cudaSuccess) return bad + 1;
+        cudaMemcpy(dw, host->payload.data(), host->payload.size(), cudaMemcpyHostToDevice);
+        const Weight w = host->device_weight(dw);
+        for (const int tokens : {24, 32}) {
+            std::vector<std::uint16_t> xh(static_cast<std::size_t>(1024) * tokens);
+            std::mt19937 rng(static_cast<unsigned>(tokens) + 5U);
+            std::uniform_int_distribution<int> mant(0, 127), expo(120, 128), sign(0, 1);
+            for (auto& v : xh)
+                v = static_cast<std::uint16_t>((sign(rng) << 15) | (expo(rng) << 7) | mant(rng));
+            void *dx = nullptr, *dy = nullptr;
+            const std::size_t ybytes = static_cast<std::size_t>(512) * tokens * 2;
+            cudaMalloc(&dx, xh.size() * 2);
+            cudaMalloc(&dy, ybytes);
+            cudaMemcpy(dx, xh.data(), xh.size() * 2, cudaMemcpyHostToDevice);
+            Tensor tx(dx, DType::BF16, {1024, tokens});
+            Tensor ty(dy, DType::BF16, {512, tokens});
+            DeviceArena workspace(std::max<std::size_t>(
+                generic::rmma_group_sums_bytes(generic::codec_of(w), 1024, tokens), 256));
+            generic::Call call;
+            call.x               = &tx;
+            call.weight          = &w;
+            call.rows            = 512;
+            call.out[0]          = &ty;
+            call.segment_rows[0] = 512;
+            const ops::ScopedPrefillRoutes speed(false);
+            int four = 0; // m1.n4.w4x1
+            for (int i = 0; i < generic::rmma_schedule_count(); ++i) {
+                const auto si = generic::rmma_schedule_info(i);
+                if (si.warps_m == 4 && si.warps_k == 1 && si.m_tiles == 1 && si.n_tiles == 4 &&
+                    si.cluster == 1)
+                    four = i;
+            }
+            for (const int schedule : {0, four}) {
+                const generic::Route r{generic::Family::RegisterMma,
+                                       static_cast<std::uint8_t>(schedule)};
+                const std::string label = std::string(generic::qtype_name(q)) + " T " +
+                                          std::to_string(tokens) + " " + generic::route_name(r);
+                cudaStream_t s = nullptr;
+                cudaStreamCreateWithFlags(&s, cudaStreamNonBlocking);
+                std::vector<std::uint16_t> eager(ybytes / 2), replay(ybytes / 2);
+                cudaMemsetAsync(dy, 0, ybytes, s);
+                generic::run_route(r, call, &workspace, s);
+                cudaStreamSynchronize(s);
+                cudaMemcpy(eager.data(), dy, ybytes, cudaMemcpyDeviceToHost);
+                cudaGraph_t graph    = nullptr;
+                cudaGraphExec_t exec = nullptr;
+                bool ok =
+                    cudaStreamBeginCapture(s, cudaStreamCaptureModeThreadLocal) == cudaSuccess;
+                if (ok) {
+                    generic::run_route(r, call, &workspace, s);
+                    ok = cudaStreamEndCapture(s, &graph) == cudaSuccess &&
+                         cudaGraphInstantiate(&exec, graph, 0) == cudaSuccess;
+                }
+                std::size_t nodes = 0;
+                if (ok) cudaGraphGetNodes(graph, nullptr, &nodes);
+                for (int rep = 0; ok && rep < 2; ++rep) {
+                    cudaMemsetAsync(dy, 0xff, ybytes, s);
+                    ok = cudaGraphLaunch(exec, s) == cudaSuccess &&
+                         cudaStreamSynchronize(s) == cudaSuccess;
+                    cudaMemcpy(replay.data(), dy, ybytes, cudaMemcpyDeviceToHost);
+                    if (ok && replay != eager) {
+                        std::cerr << label << ": replay " << rep
+                                  << " differs from the eager call\n";
+                        ++bad;
+                    }
+                }
+                if (!ok) {
+                    std::cerr << label << ": capture or replay failed\n";
+                    ++bad;
+                }
+                // The pre-pass and the kernel: two kernel nodes.
+                check(!ok || nodes == 2, label + ": the graph holds the pre-pass and the kernel");
+                if (exec != nullptr) cudaGraphExecDestroy(exec);
+                if (graph != nullptr) cudaGraphDestroy(graph);
+                cudaStreamDestroy(s);
+            }
+            cudaFree(dx);
+            cudaFree(dy);
+        }
+        cudaFree(dw);
+    }
+    if (bad == 0)
+        std::cout << "graph capture: the pre-pass and the plane's kernel replay as run eagerly\n";
+    return bad;
+}
+
 int gpu_checks() {
     int bad            = 0;
     std::uint32_t seed = 1;
@@ -315,6 +414,7 @@ int gpu_checks() {
             check(exact && *exact == 0, "the invariant profile describes the MMA with ones" + at);
         }
     }
+    bad += graph_capture();
     return bad;
 }
 
