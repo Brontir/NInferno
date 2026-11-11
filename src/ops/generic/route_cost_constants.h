@@ -102,6 +102,14 @@ inline constexpr Scalar kMaxTileSharedBytes{
     {99.0 * 1024.0}, Provenance::Counted, "max_tile_shared_bytes"};
 // Every tile: the floor of the warp slowdown factor (a lone warp runs at most 20x slow).
 inline constexpr Scalar kMinWarpFill{{0.05}, Provenance::Fitted, "min_warp_fill"};
+// Every tile's DRAM rate (kernel_roofline.h dram_time, issue #690): the bytes one warp keeps in
+// flight, b_w in min(P, W x b_w / L0). Counted: one warp-wide 16-byte load, 32 lanes x 16 B, the
+// widest global load the tiles issue (LDG.E.128 in the register-MMA K loops, ldg_bytes / ldg up to
+// 512 in the kernel-facts snapshots; the 16-byte cp.async of the pipelined and A8 tiles). That a
+// warp keeps one such load in flight is the law's assumption, not a measurement: the rate probe
+// of #690 (a streaming kernel and small-n route-tune sweeps per architecture) is to measure b_w,
+// and the warp fills fitted before #690 imply 180-470 B on the boards fitted, below this bound.
+inline constexpr Scalar kWarpBytesInFlight{{512.0}, Provenance::Counted, "warp_bytes_in_flight"};
 
 // --- A8 tiles (a8_candidates) ---
 // The activation quantizer: its launch (a kernel with its scale and sum planes, not the bare graph
@@ -182,6 +190,7 @@ inline constexpr Listed kRouteCostConstants[] = {
     listed(kPipelinedStageBytesPerRow, Kind::Bytes),
     listed(kMaxTileSharedBytes, Kind::Bytes),
     listed(kMinWarpFill, Kind::Fraction),
+    listed(kWarpBytesInFlight, Kind::Bytes),
     listed(kLaunchNodeAda, Kind::Seconds),
     listed(kQuantLaunchSeconds, Kind::Seconds),
     listed(kQuantBytesPerValue, Kind::Bytes),

@@ -75,8 +75,8 @@ ninferno_add_op_test(ninferno_decision_routes_test
 
 # Property tests of the selector's decisions over the rows of gpu_facts.json (roadmap #620 step 6):
 # labels and non-fact fields move no route, the driver's clocks move none, and the price does not
-# rise with the bandwidth (it does rise with the SM count in a third of the cases: waived and
-# recorded in the test, issue #690). Substituted boards, no GPU needed.
+# rise with the bandwidth or the SM count (issue #690; the boards of an architecture without an
+# ISA row keep the legacy DRAM law and are counted, not compared). Substituted boards, no GPU needed.
 ninferno_add_op_test(ninferno_decision_properties_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_decision_properties.cpp"
   LIBRARIES ninferno_ops ninferno_core)

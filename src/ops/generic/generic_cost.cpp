@@ -62,7 +62,14 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
     const double max_cta = std::max(d.max_blocks_per_sm, 1);
     const double smem_sm = static_cast<double>(d.smem_per_sm);
     const auto cdiv      = [](double a, double b) { return std::ceil(a / b); };
-    const auto quant     = [&](double cols) {
+    // The DRAM time of a tile grid (kernel_roofline.h dram_time, issue #690): the shared bus or the
+    // busiest SM's rounds at the rate its own warps reach; on an architecture without an ISA row
+    // the legacy law, the busiest SM's share of the bus under a fleet-wide fill.
+    namespace kr              = kernel_roofline;
+    const kr::ChipFacts chip  = kr::chip_facts_of(d);
+    const kr::Calibration cal = kr::calibration_of(d.major, d.minor);
+    const bool legacy         = kr::legacy_dram(chip);
+    const auto quant          = [&](double cols) {
         return route_cost::kQuantLaunchSeconds.value() +
                cols * k * route_cost::kQuantBytesPerValue.value() / bw;
     };
@@ -82,20 +89,28 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
                                 route_cost::kW4a8StageBytesPerRow.value();
             const double occ     = std::max(
                 1.0, std::min({std::floor(max_thr / threads), max_cta, std::floor(smem_sm / smem)}));
-            const double ctas  = cdiv(n, rows_o) * cdiv(t, cols);
-            const double q     = std::ceil(ctas / sms);
-            const double warps = std::min(1.0, ctas / sms) * std::min(q, occ) * threads / 32;
-            const double mem   = std::max(q * rows_o * k * bpw / bw_sm, n * k * bpw / bw);
-            const double mma   = q * 2.0 * rows_w * cols * k / peak_sm;
-            const double cap   = s.producers > 0 ? route_cost::kW4a8ProducerStepCycles.value()
-                                                 : route_cost::kW4a8StepCycles.value();
+            const double ctas = cdiv(n, rows_o) * cdiv(t, cols);
+            const double q    = std::ceil(ctas / sms);
+            const double mma  = q * 2.0 * rows_w * cols * k / peak_sm;
+            const double cap  = s.producers > 0 ? route_cost::kW4a8ProducerStepCycles.value()
+                                                : route_cost::kW4a8StepCycles.value();
             const double chain =
                 std::ceil(q / occ) * std::ceil(k / route_cost::kW4a8StepK.value()) * cap / clk;
-            const double eff   = kW4a8Eff[std::min(i, 5)] * scale;
-            offer(r, quant(t) +
-                         std::max(mem, mma / eff) /
-                             std::clamp(warps, route_cost::kMinWarpFill.value(), 1.0) +
-                         chain);
+            const double eff = kW4a8Eff[std::min(i, 5)] * scale;
+            if (legacy) {
+                const double warps = std::min(1.0, ctas / sms) * std::min(q, occ) * threads / 32;
+                const double mem   = std::max(q * rows_o * k * bpw / bw_sm, n * k * bpw / bw);
+                offer(r, quant(t) +
+                             std::max(mem, mma / eff) /
+                                 std::clamp(warps, route_cost::kMinWarpFill.value(), 1.0) +
+                             chain);
+                continue;
+            }
+            // The fill reads the busy SM's own warps (no fleet-wide factor) and slows the MMA only.
+            const double fill =
+                std::clamp(std::min(q, occ) * threads / 32, route_cost::kMinWarpFill.value(), 1.0);
+            const double mem = kr::dram_time(chip, cal, ctas, occ, threads / 32, rows_o * k * bpw);
+            offer(r, quant(t) + std::max(mem, mma / eff / fill) + chain);
         }
     }
     // The I8 tiles (generic_i8.cu): one activation scale per 64 values and the code as the MMA's
@@ -114,17 +129,26 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
                                                            std::floor(smem_sm / s.smem_bytes)}));
             const double ctas    = cdiv(n, rows_o) * cdiv(t, cols);
             const double q       = std::ceil(ctas / sms);
-            const double warps   = std::min(1.0, ctas / sms) * std::min(q, occ) * s.threads / 32;
-            const double mem     = std::max(q * rows_o * k * bpw / bw_sm, n * k * bpw / bw);
             const double mma     = q * 2.0 * rows_w * cols * k / peak_sm;
             const double chain = std::ceil(q / occ) * std::ceil(k / route_cost::kI8StageK.value()) *
                                  route_cost::kI8StageCycles.value() / clk;
             const double eff     = route_cost::kI8Efficiency[i] * scale;
-            offer(r, quant(tp) +
-                         std::max(mem, mma / eff) /
-                             std::clamp(warps / route_cost::kI8SaturatingWarps.value(),
-                                        route_cost::kMinWarpFill.value(), 1.0) +
-                         chain);
+            if (legacy) {
+                const double warps = std::min(1.0, ctas / sms) * std::min(q, occ) * s.threads / 32;
+                const double mem   = std::max(q * rows_o * k * bpw / bw_sm, n * k * bpw / bw);
+                offer(r, quant(tp) +
+                             std::max(mem, mma / eff) /
+                                 std::clamp(warps / route_cost::kI8SaturatingWarps.value(),
+                                            route_cost::kMinWarpFill.value(), 1.0) +
+                             chain);
+                continue;
+            }
+            const double fill = std::clamp(std::min(q, occ) * s.threads / 32 /
+                                               route_cost::kI8SaturatingWarps.value(),
+                                           route_cost::kMinWarpFill.value(), 1.0);
+            const double mem =
+                kr::dram_time(chip, cal, ctas, occ, s.threads / 32.0, rows_o * k * bpw);
+            offer(r, quant(tp) + std::max(mem, mma / eff / fill) + chain);
         }
     }
     if (mmq_candidate_measured(d.major, d.minor) && ggml_mmq_format(problem.qtype) &&

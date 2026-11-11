@@ -299,8 +299,10 @@ void print_register_mma(const kr::RegisterMmaTerms& t, bool heavy, double a16,
                 us(t.reduce_warps), us(t.reduce));
     std::printf("  chain %.2f us\n", us(t.chain));
     const double scaled = t.total * a16;
-    std::printf("  total (bytes + mma + reduce) / fill + chain = %.2f us, x a16 scale %.2f = %.2f "
-                "us; selector %s%s\n",
+    const char* law     = t.legacy ? "(bytes + mma + reduce) / fill + chain (legacy DRAM law)"
+                          : heavy  ? "dram + (l2 + spill + mma) / fill + reduce + chain"
+                                   : "mem + mma / fill + reduce + chain";
+    std::printf("  total %s = %.2f us, x a16 scale %.2f = %.2f us; selector %s%s\n", law,
                 us(t.total), a16, us(scaled),
                 sel ? (std::to_string(us(*sel)) + " us ").c_str() : "", agreement(sel, scaled));
 }
@@ -309,8 +311,9 @@ void print_pipelined(const kr::PipelinedTerms& t, double a16, std::optional<doub
     print_grid(t.grid);
     std::printf("  mem %.2f us, mma %.2f us, chain %.2f us\n", us(t.mem), us(t.mma), us(t.chain));
     const double scaled = t.total * a16;
-    std::printf("  total max(mem, mma) / fill + chain = %.2f us, x a16 scale %.2f = %.2f us; "
-                "selector %s%s\n",
+    std::printf("  total %s = %.2f us, x a16 scale %.2f = %.2f us; selector %s%s\n",
+                t.legacy ? "max(mem, mma) / fill + chain (legacy DRAM law)"
+                         : "max(mem, mma / fill) + chain",
                 us(t.total), a16, us(scaled),
                 sel ? (std::to_string(us(*sel)) + " us ").c_str() : "", agreement(sel, scaled));
 }

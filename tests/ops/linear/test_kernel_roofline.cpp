@@ -5,7 +5,8 @@
 //     formats, four shapes, five widths, plain and SwiGLU epilogues, every register-MMA, tiled and
 //     staged route offered. Routes are matched by (family, schedule); a route a build gates in or
 //     out (cluster schedules, shared memory) is checked against its gate, so one file serves every
-//     build set.
+//     build set. On a board the DRAM law of #690 prices (its architecture has an ISA row), the
+//     roofline's legacy law is compared instead (check 1's comment).
 //  2. The selector's own priced routes (route_query.h priced_routes_query) are the roofline's
 //     terms times the A16 scale for the inputs the selector passes (the route's tile, the
 //     described weight's bytes, the compiled facts it read): the client's wiring.
@@ -23,6 +24,7 @@
 #include "ops/generic/selector_facts.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -59,6 +61,74 @@ struct Shape {
 
 bool priceable(const DeviceClass& d) {
     return d.sms > 0 && d.registers_per_sm > 0 && d.facts.has_roofline();
+}
+
+// The roofline's price of an A16 route of the call on `chip` (the device's facts, or a variant of
+// them), times the board's A16 scale, from the inputs the selector passes: the route's tile, the
+// described weight's bytes, and the compiled facts the selector read for the route (`reads`, the
+// last read wins as the price's own lookup did; none where it read none). nullopt for an A8
+// route (a8_candidates prices those, not the roofline's tiles) or a shape the format's layout
+// does not take.
+std::optional<double> roofline_price(const DeviceClass& d, const kr::ChipFacts& chip, QType q,
+                                     g::Epilogue e, std::int32_t n_rows, std::int32_t k_cols,
+                                     std::int32_t t, g::Route r,
+                                     const std::vector<g::RmmaFactRead>& reads) {
+    const kr::Calibration cal = kr::calibration_of(d.major, d.minor);
+    const double a16          = ninferno::fitted_route_scales(d.major, d.minor)
+                           .value_or(ninferno::FittedRouteScales{})
+                           .a16_cost;
+    const bool heavy =
+        ninferno::has_subblock_scales(q) && ninferno::rmma_terms_measured(d.major, d.minor);
+    std::uint64_t payload = 0;
+    try {
+        payload = g::described_weight_bytes(q, e, n_rows, k_cols);
+    } catch (const std::exception&) { return std::nullopt; }
+    const double n = n_rows, k = k_cols;
+    const kr::Call call{n, k, static_cast<double>(t), e == g::Epilogue::SwiGlu ? 2.0 : 1.0,
+                        static_cast<double>(payload) / (n * k)};
+    const auto tile = g::route_tile(r, e, t);
+    if (r.family == g::Family::RegisterMma) {
+        const auto s = g::rmma_schedule_info(r.schedule);
+        kr::RegisterMmaKernel kernel;
+        kernel.rows    = tile->out_rows;
+        kernel.cols    = tile->tokens;
+        kernel.cluster = tile->k_split;
+        kernel.threads = 32.0 * s.warps_m * s.warps_k;
+        kernel.warps_k = s.warps_k;
+        kernel.heavy   = heavy;
+        for (const auto& read : reads) {
+            if (read.schedule == r.schedule && read.qtype == q && read.epilogue == e) {
+                kernel.registers   = read.facts.registers;
+                kernel.local_bytes = static_cast<double>(read.facts.local_bytes);
+            }
+        }
+        return kr::price_register_mma(chip, cal, call, kernel).total * a16;
+    }
+    if (r.family == g::Family::TiledMma) {
+        const auto s = g::tiled_schedule_info(r.schedule);
+        kr::PipelinedKernel kernel;
+        kernel.rows            = tile->out_rows;
+        kernel.cols            = tile->tokens;
+        kernel.threads         = 256;
+        kernel.stages          = 3;
+        kernel.stage_rows      = s.block_n;
+        kernel.stage_cols      = s.block_m;
+        kernel.tensor_fraction = g::route_cost::kTiledTensorFraction.value();
+        return kr::price_pipelined(chip, cal, call, kernel).total * a16;
+    }
+    if (r.family == g::Family::StagedMma) {
+        const auto s = g::staged_schedule_info(r.schedule);
+        kr::PipelinedKernel kernel;
+        kernel.rows            = tile->out_rows;
+        kernel.cols            = tile->tokens;
+        kernel.threads         = 32.0 * s.warps_m * s.warps_n;
+        kernel.stages          = s.stages;
+        kernel.stage_rows      = s.rows;
+        kernel.stage_cols      = s.tokens;
+        kernel.tensor_fraction = g::route_cost::kStagedTensorFraction.value();
+        return kr::price_pipelined(chip, cal, call, kernel).total * a16;
+    }
+    return std::nullopt;
 }
 
 // ---- Check 1: golden prices from the formula before #613 PR-4 ----
@@ -138,11 +208,25 @@ void check_golden() {
             return;
         }
     }
-    long prices = 0, gated_out = 0, bad = 0;
+    long prices = 0, gated_out = 0, bad = 0, legacy_law = 0;
     for (const GoldenCall& c : kGoldenCalls) {
         const DeviceClass d = g::board_device_class(g::kFactsBoards[c.board]);
-        const auto priced   = g::priced_routes_query(
-            d, kGoldenFormats[c.format], LinearPolicy::A16Only, c.epilogue, c.n, c.k, c.tokens);
+        const QType q       = kGoldenFormats[c.format];
+        std::vector<g::RmmaFactRead> reads;
+        std::vector<g::PricedRouteQuery> priced;
+        {
+            const g::ScopedRmmaFactsSink sink(reads);
+            priced =
+                g::priced_routes_query(d, q, LinearPolicy::A16Only, c.epilogue, c.n, c.k, c.tokens);
+        }
+        // A board whose architecture has an ISA row is priced by the DRAM law of #690, which the
+        // golden predates: its routes are held to the golden through the roofline with the
+        // legacy law (the chip facts without the DRAM latency, kernel_roofline.h legacy_dram),
+        // whose wiring to the selector check 2 holds. Every other board's selector price is the
+        // golden's itself.
+        kr::ChipFacts legacy_chip    = kr::chip_facts_of(d);
+        const bool priced_by_new_law = !kr::legacy_dram(legacy_chip);
+        legacy_chip.dram_latency_s.reset();
         const auto fail = [&](const char* what, int family, int schedule, double want, double got) {
             if (++bad <= 10) {
                 std::fprintf(
@@ -170,8 +254,16 @@ void check_golden() {
             seen[at]                = true;
             const GoldenRoute& want = kGoldenRoutes[c.first + static_cast<long>(at)];
             ++prices;
-            if (got.seconds != want.seconds) {
-                fail("price moved", family, schedule, want.seconds, got.seconds);
+            double seconds = got.seconds;
+            if (priced_by_new_law) {
+                ++legacy_law;
+                seconds = roofline_price(d, legacy_chip, q, c.epilogue, c.n, c.k, c.tokens,
+                                         got.route, reads)
+                              .value_or(0.0);
+            }
+            if (seconds != want.seconds) {
+                fail(priced_by_new_law ? "legacy-law price moved" : "price moved", family, schedule,
+                     want.seconds, seconds);
             }
         }
         for (std::size_t i = 0; i < c.count; ++i) {
@@ -187,10 +279,12 @@ void check_golden() {
             }
         }
     }
-    std::printf("golden: %zu calls, %ld route prices compared, %ld routes gated out by this build, "
+    std::printf("golden: %zu calls, %ld route prices compared (%ld of them through the legacy "
+                "law of a board the #690 law prices), %ld routes gated out by this build, "
                 "%ld differ\n",
-                sizeof(kGoldenCalls) / sizeof(kGoldenCalls[0]), prices, gated_out, bad);
-    if (bad > 0 || prices == 0) ++failures;
+                sizeof(kGoldenCalls) / sizeof(kGoldenCalls[0]), prices, legacy_law, gated_out, bad);
+    // Both laws must be compared: a board of each kind is in the golden.
+    if (bad > 0 || prices == 0 || legacy_law == 0 || legacy_law == prices) ++failures;
 }
 
 // ---- Check 2: the selector's wiring ----
@@ -206,24 +300,15 @@ void check_wiring() {
     for (const auto& board : g::kFactsBoards) {
         const DeviceClass d = g::board_device_class(board);
         if (!priceable(d)) continue;
-        const kr::ChipFacts chip  = kr::chip_facts_of(d);
-        const kr::Calibration cal = kr::calibration_of(d.major, d.minor);
-        const double a16          = ninferno::fitted_route_scales(d.major, d.minor)
-                               .value_or(ninferno::FittedRouteScales{})
-                               .a16_cost;
+        const kr::ChipFacts chip = kr::chip_facts_of(d);
         for (const QType q : kFormats) {
-            const bool heavy =
-                ninferno::has_subblock_scales(q) && ninferno::rmma_terms_measured(d.major, d.minor);
             for (const Shape shape : kWiringShapes) {
                 for (const g::Epilogue e : {g::Epilogue::Store, g::Epilogue::SwiGlu}) {
-                    const double sets     = e == g::Epilogue::SwiGlu ? 2.0 : 1.0;
-                    std::uint64_t payload = 0;
                     try {
-                        payload = g::described_weight_bytes(q, e, shape.n, shape.k);
+                        (void)g::described_weight_bytes(q, e, shape.n, shape.k);
                     } catch (const std::exception&) {
                         continue; // a shape the format's layout does not take
                     }
-                    const double n = shape.n, k = shape.k;
                     for (const std::int32_t t : kWiringTokens) {
                         std::vector<g::RmmaFactRead> reads;
                         std::vector<g::PricedRouteQuery> priced;
@@ -234,62 +319,13 @@ void check_wiring() {
                         } catch (const std::exception&) {
                             continue; // a call the selector refuses on this board
                         }
-                        const kr::Call call{n, k, static_cast<double>(t), sets,
-                                            static_cast<double>(payload) / (n * k)};
                         for (const auto& p : priced) {
                             const g::Route r = p.route;
-                            const auto tile  = g::route_tile(r, e, t);
-                            double want      = 0;
-                            if (r.family == g::Family::RegisterMma) {
-                                const auto s = g::rmma_schedule_info(r.schedule);
-                                kr::RegisterMmaKernel kernel;
-                                kernel.rows    = tile->out_rows;
-                                kernel.cols    = tile->tokens;
-                                kernel.cluster = tile->k_split;
-                                kernel.threads = 32.0 * s.warps_m * s.warps_k;
-                                kernel.warps_k = s.warps_k;
-                                kernel.heavy   = heavy;
-                                // The facts the selector read for this schedule (the last read
-                                // wins, as the price's own lookup did): none where it read none.
-                                for (const auto& read : reads) {
-                                    if (read.schedule == r.schedule && read.qtype == q &&
-                                        read.epilogue == e) {
-                                        kernel.registers = read.facts.registers;
-                                        kernel.local_bytes =
-                                            static_cast<double>(read.facts.local_bytes);
-                                    }
-                                }
-                                want = kr::price_register_mma(chip, cal, call, kernel).total * a16;
-                                ++priced_rmma;
-                            } else if (r.family == g::Family::TiledMma) {
-                                const auto s = g::tiled_schedule_info(r.schedule);
-                                kr::PipelinedKernel kernel;
-                                kernel.rows       = tile->out_rows;
-                                kernel.cols       = tile->tokens;
-                                kernel.threads    = 256;
-                                kernel.stages     = 3;
-                                kernel.stage_rows = s.block_n;
-                                kernel.stage_cols = s.block_m;
-                                kernel.tensor_fraction =
-                                    g::route_cost::kTiledTensorFraction.value();
-                                want = kr::price_pipelined(chip, cal, call, kernel).total * a16;
-                                ++priced_pipelined;
-                            } else if (r.family == g::Family::StagedMma) {
-                                const auto s = g::staged_schedule_info(r.schedule);
-                                kr::PipelinedKernel kernel;
-                                kernel.rows       = tile->out_rows;
-                                kernel.cols       = tile->tokens;
-                                kernel.threads    = 32.0 * s.warps_m * s.warps_n;
-                                kernel.stages     = s.stages;
-                                kernel.stage_rows = s.rows;
-                                kernel.stage_cols = s.tokens;
-                                kernel.tensor_fraction =
-                                    g::route_cost::kStagedTensorFraction.value();
-                                want = kr::price_pipelined(chip, cal, call, kernel).total * a16;
-                                ++priced_pipelined;
-                            } else {
-                                continue; // the A8 tiles are not moved yet
-                            }
+                            const auto priced_here =
+                                roofline_price(d, chip, q, e, shape.n, shape.k, t, r, reads);
+                            if (!priced_here) continue; // the A8 tiles are not moved yet
+                            const double want = *priced_here;
+                            ++(r.family == g::Family::RegisterMma ? priced_rmma : priced_pipelined);
                             if (p.seconds != want) {
                                 if (++bad <= 10) {
                                     std::fprintf(stderr,
@@ -625,9 +661,73 @@ void check_price_a8_rows() {
     if (bad > 0 || a8 == 0) ++failures;
 }
 
+// ---- Check 7: the DRAM time of #690 (dram_time) ----
+// Over a grid of CTA counts, occupancies, warps and SM counts on an RTX 3090's facts with its
+// ISA row: (a) the time never rises with the SM count; (b) a grid of fewer CTAs than SMs costs
+// the same on any larger chip (idle SMs are not billed: the charge of #690); (c) the time is at
+// least every CTA's bytes over the bus; (d) a round of one CTA moves at its warps' rate,
+// W x b_w / L0, while that is under the L1 path. Revert check: the legacy law (the busiest SM's
+// share bw / SMs) fails (a) and (b) on the same grid, so the check does not pass vacuously.
+void check_dram_time() {
+    long bad = 0, legacy_rises = 0, cases = 0;
+    const auto it =
+        std::find_if(std::begin(g::kFactsBoards), std::end(g::kFactsBoards),
+                     [](const g::FactsBoard& b) { return std::strcmp(b.name, "rtx3090") == 0; });
+    if (it == std::end(g::kFactsBoards)) {
+        std::fprintf(stderr, "FAIL: dram_time: no rtx3090 board\n");
+        ++failures;
+        return;
+    }
+    const DeviceClass d       = g::board_device_class(*it);
+    const kr::ChipFacts base  = kr::chip_facts_of(d);
+    const kr::Calibration cal = kr::calibration_of(d.major, d.minor);
+    if (kr::legacy_dram(base)) {
+        std::fprintf(stderr, "FAIL: dram_time: the RTX 3090 has no DRAM latency (ISA row sm_86)\n");
+        ++failures;
+        return;
+    }
+    const double bytes   = 64.0 * 4096 * 0.5625; // a 64-row CTA of a 4.5-bit weight, K 4096
+    const auto legacy_of = [&](const kr::ChipFacts& c, double ctas) {
+        return std::ceil(ctas / c.sms) * bytes / (c.dram_bytes_per_s / c.sms);
+    };
+    for (const double ctas : {1.0, 7.0, 40.0, 82.0, 100.0, 164.0, 300.0, 1000.0, 5000.0}) {
+        for (const double occ : {1.0, 2.0, 4.0, 12.0}) {
+            for (const double wpc : {1.0, 4.0, 8.0}) {
+                kr::ChipFacts less = base;
+                for (const double sms : {41.0, 82.0, 103.0, 170.0}) {
+                    kr::ChipFacts more = base;
+                    more.sms           = sms;
+                    if (more.sms <= less.sms) continue;
+                    ++cases;
+                    const double a = kr::dram_time(less, cal, ctas, occ, wpc, bytes);
+                    const double b = kr::dram_time(more, cal, ctas, occ, wpc, bytes);
+                    if (b > a * (1 + 1e-12)) ++bad;
+                    if (ctas <= less.sms && b != a) ++bad;
+                    if (b < ctas * bytes / more.dram_bytes_per_s) ++bad;
+                    if (legacy_of(more, ctas) > legacy_of(less, ctas) * (1 + 1e-12)) {
+                        ++legacy_rises;
+                    }
+                    less = more;
+                }
+            }
+        }
+    }
+    // (d): one CTA of 4 warps on the 3090: 4 x 512 B in flight over the measured latency.
+    const double rate = 4.0 * cal.warp_bytes_in_flight / *base.dram_latency_s;
+    const double one  = kr::dram_time(base, cal, 1.0, 1.0, 4.0, bytes);
+    if (rate < cal.l1_bytes_per_sm_clock * base.clock_hz &&
+        std::abs(one - std::max(bytes / rate, bytes / base.dram_bytes_per_s)) > one * 1e-12) {
+        ++bad;
+    }
+    std::printf("dram_time: %ld cases, %ld differ; the legacy law rises in %ld of them\n", cases,
+                bad, legacy_rises);
+    if (bad > 0 || cases == 0 || legacy_rises == 0) ++failures;
+}
+
 int main() {
     check_golden();
     check_wiring();
+    check_dram_time();
     check_price_formats();
     check_price_admitted();
     check_price_arguments();
