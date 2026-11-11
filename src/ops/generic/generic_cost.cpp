@@ -24,11 +24,12 @@ namespace ninferno::ops::detail::generic {
 
 double bytes_per_weight(const Weight& weight, const Problem& problem) {
     const double sets = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
-    // The rows the payload holds (a row view's are its parent's), never fewer than the call reads.
-    const double held   = weight.payload_rows > 0 ? static_cast<double>(weight.payload_rows)
-                                                  : static_cast<double>(weight.n);
-    const double stored = std::max(held, static_cast<double>(call_weight_rows(problem)));
-    return static_cast<double>(weight.payload_bytes) / (stored * problem.k) * sets;
+    // A row view's bytes are a standalone weight's of its shape, every other weight's its payload,
+    // over the rows the weight holds and never fewer than the call reads.
+    const std::uint64_t bytes = weight.priced_bytes ? weight.priced_bytes : weight.payload_bytes;
+    const double stored =
+        std::max(static_cast<double>(weight.n), static_cast<double>(call_weight_rows(problem)));
+    return static_cast<double>(bytes) / (stored * problem.k) * sets;
 }
 
 namespace {

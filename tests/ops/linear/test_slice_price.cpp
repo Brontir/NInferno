@@ -10,7 +10,10 @@
 //
 // The same rule for a row view (#704; native_weight of part of a parent: its own rows in n, the
 // parent's payload) and for the R8 verify gate, which asks the call's own rows: a Q4_0 slice below
-// the gate's bound of a parent above it answers as its own shape at T = 2..4.
+// the gate's bound of a parent above it answers as its own shape at T = 2..4. A row view is priced
+// by the bytes of a standalone weight of its shape, its planes' 256-byte padding included, to the
+// bit: the price and the route the decision manifest's replay of the recorded call gives
+// (route_query with the view's rows and layout), small padded views included.
 //
 // Complementary to the whole-weight identity in test_route_traffic.cpp: this test compares a slice
 // with its own shape through the same bytes_per_weight, so a factor applied to both sides alike
@@ -115,12 +118,13 @@ struct Described {
     WeightView view;
     Weight weight;
 
-    Described(QType qtype, std::uint64_t parent_rows, std::uint64_t begin, std::uint64_t rows) {
+    Described(QType qtype, std::uint64_t parent_rows, std::uint64_t begin, std::uint64_t rows,
+              std::uint64_t k = kK) {
         parent.data                  = reinterpret_cast<const std::byte*>(std::uintptr_t{1} << 32);
-        const std::uint64_t shape[2] = {parent_rows, static_cast<std::uint64_t>(kK)};
+        const std::uint64_t shape[2] = {parent_rows, k};
         parent.geometry              = weight_geometry(qtype, default_weight_layout(qtype), shape);
-        view.shape                   = {rows, static_cast<std::uint64_t>(kK)};
-        view.parts                   = {WeightRegion{&parent, begin * kK, (begin + rows) * kK}};
+        view.shape                   = {rows, k};
+        view.parts                   = {WeightRegion{&parent, begin * k, (begin + rows) * k}};
         weight                       = native_weight(view);
     }
 
@@ -165,8 +169,9 @@ void check_row_views() {
                     const std::string call = std::string(board.name) + " " + fmt + " view p" +
                                              std::to_string(static_cast<int>(policy)) + " " +
                                              generic::epilogue_name(epilogue);
-                    check(near(generic::bytes_per_weight(own->weight, p),
-                               generic::bytes_per_weight(view->weight, p)),
+                    // To the bit: the view's bytes are its own shape's (Weight::priced_bytes).
+                    check(generic::bytes_per_weight(own->weight, p) ==
+                              generic::bytes_per_weight(view->weight, p),
                           call + ": bytes per weight " +
                               std::to_string(generic::bytes_per_weight(view->weight, p)) +
                               ", its own shape's " +
@@ -217,6 +222,94 @@ void check_row_views() {
 }
 
 int gate_differs = 0;
+
+int replay_differs = 0;
+
+// Small row views of formats whose planes are padded to 256 bytes (#704): the parent's padding is
+// not spread over the view. A view is priced by the bytes of a standalone weight of its shape, to
+// the bit, which is what the decision manifest's replay prices: the run records the call with the
+// view's rows and layout (record_problem: Problem, w.n, w.layout), and replay describes that shape
+// (route_query, described_bytes_per_weight). The selector's answer on the live view and the
+// replay's agree at every priced width, in the speed profile and the prefill band.
+void check_padded_view_replay() {
+    struct Case {
+        QType qtype;
+        std::uint64_t k, parent_rows, begin, rows;
+    };
+
+    constexpr Case kCases[] = {
+        {QType::Q4_G64_FP16, 128, 3, 0, 1}, // one row: 260 bytes; its parent of three, 268
+        {QType::Q4_G64_FP16, 128, 3, 1, 1},     {QType::Q8_G32_FP16, 128, 5, 2, 2},
+        {QType::U4_G128_ZP_FP16, 128, 3, 0, 1}, {QType::MXFP4, 128, 3, 1, 2},
+        {QType::GGML_Q6_K, 256, 3, 0, 1},       {QType::GGML_Q4_0, 128, 3, 2, 1},
+        {QType::GGML_IQ4_XS, 256, 4, 1, 2},     {QType::BF16, 128, 3, 1, 1},
+        {QType::Q4_G64_FP16, 4096, 48, 16, 16}, {QType::GGML_Q6_K, 4096, 40, 0, 24},
+    };
+    for (const Case& c : kCases) {
+        const std::string fmt = std::string(generic::qtype_name(c.qtype)) + " " +
+                                std::to_string(c.rows) + "x" + std::to_string(c.k) + " of " +
+                                std::to_string(c.parent_rows) + " from " + std::to_string(c.begin);
+        const Described view(c.qtype, c.parent_rows, c.begin, c.rows, c.k);
+        const Described own(c.qtype, c.rows, 0, c.rows, c.k);
+        const Weight& w               = view.weight;
+        const std::uint64_t shape[2]  = {c.rows, c.k};
+        const std::uint64_t own_bytes = weight_geometry(c.qtype, w.layout, shape).bytes;
+        check(w.n == static_cast<std::int32_t>(c.rows) &&
+                  w.payload_bytes == view.parent.geometry.bytes && w.priced_bytes == own_bytes &&
+                  own.weight.priced_bytes == 0 && own.weight.payload_bytes == own_bytes,
+              fmt + ": the view keeps its parent's payload and prices its own shape's " +
+                  std::to_string(own_bytes) + " bytes, not " + std::to_string(w.priced_bytes));
+        const bool routed = generic::supports(w) && generic::supports(own.weight);
+        if (!routed) std::cout << fmt << ": not read by the generic path (bytes only)\n";
+        for (const LinearPolicy policy : {LinearPolicy::A16Only, LinearPolicy::AllowA8}) {
+            for (const generic::Epilogue epilogue :
+                 {generic::Epilogue::Store, generic::Epilogue::SwiGlu}) {
+                const bool swiglu = epilogue == generic::Epilogue::SwiGlu;
+                if (swiglu && c.rows % 2) continue;
+                const auto rows = static_cast<std::int32_t>(swiglu ? c.rows / 2 : c.rows);
+                const auto k    = static_cast<std::int32_t>(c.k);
+                const generic::Problem p{c.qtype, policy, rows, k, epilogue};
+                const std::string call = fmt + " p" + std::to_string(static_cast<int>(policy)) +
+                                         " " + generic::epilogue_name(epilogue);
+                const double live   = generic::bytes_per_weight(w, p);
+                const double replay = generic::described_bytes_per_weight(c.qtype, policy, epilogue,
+                                                                          rows, k, w.n, w.layout);
+                check(live == replay && live == generic::bytes_per_weight(own.weight, p),
+                      call + ": bytes per weight " + std::to_string(live) + ", replayed " +
+                          std::to_string(replay) + ", its own shape's " +
+                          std::to_string(generic::bytes_per_weight(own.weight, p)));
+                if (c.qtype == QType::Q4_G64_FP16 && c.k == 128 && c.rows == 1 && !swiglu) {
+                    check(live == 260.0 / 128.0,
+                          call + ": bytes per weight " + std::to_string(live) + ", not 260/128");
+                }
+                if (!routed) continue;
+                for (const generic::FactsBoard& board : generic::kFactsBoards) {
+                    const DeviceClass d = generic::board_device_class(board);
+                    const ScopedDeviceClass scoped(d);
+                    for (const std::int32_t t : kPricedTokens) {
+                        for (const bool prefill : {false, true}) {
+                            const std::string at = std::string(board.name) + " " + call +
+                                                   " T=" + std::to_string(t) +
+                                                   (prefill ? " prefill" : " speed");
+                            const std::string s = selected(p, w, t, prefill);
+                            std::optional<generic::Route> q;
+                            const bool q_threw = throws([&] {
+                                q = generic::route_query(d, c.qtype, policy, epilogue, rows, k, t,
+                                                         prefill, w.n, w.layout);
+                            });
+                            if (!both_answer(q_threw, s.starts_with("threw"), at + " replay")) {
+                                continue;
+                            }
+                            if (text(q) != s) ++replay_differs;
+                            check(text(q) == s, at + ": the view takes " + s +
+                                                    ", the replay of its line " + text(q));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 // The R8 verify gate (Q4_0 takes R8 at T = 2..4 only on a matrix of kR8VerifyQ40MinValues values
 // or more, 24M) asks the call's own rows (#704): a slice answers as a standalone weight of its
@@ -409,13 +502,15 @@ int main() {
         }
     }
     check_row_views();
+    check_padded_view_replay();
     check_r8_verify_gate();
     const bool device = !cuda_unavailable();
     check(moved == 0, std::to_string(moved) +
                           " selections where the slice takes another route than its own shape");
     std::cout << "row views: " << view_moved
-              << " selections where a view takes another route than its own shape; R8 verify "
-                 "gate: "
+              << " selections where a view takes another route than its own shape; padded views: "
+              << replay_differs
+              << " selections where the replay answers otherwise than the view; R8 verify gate: "
               << gate_differs << " calls where a slice answers otherwise than its own shape\n";
     // With a device every pair answers; without one the MMQ-or-register-MMA pairs need it.
     if (device) {

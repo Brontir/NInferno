@@ -192,14 +192,16 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
 std::optional<Route> cost_route(const Problem& problem, const Weight& weight, std::int32_t tokens);
 
 // The bytes a weight value of the call's matrix takes, as price_routes, a8_candidates and
-// route_traffic read them (#640, #704): the payload over the rows it holds (Weight::payload_rows,
-// else Weight::n), never fewer than the call reads (call_weight_rows), so a call reads its rows'
-// share of the payload. One rule for a slice of a fused parent (segmented_projection: the whole
-// parent with the call's rows in Problem::n) and a row view (native_weight of part of a parent:
-// its own rows in n, its parent's payload and rows). Under SwiGLU each output row reads its gate
-// and its up row: the value holds both (x2). A whole weight keeps payload_bytes / (n K), to the
-// bit. The share is proportional to rows: exact where the layout stores rows whole, within a
-// 128-row scale tile for NVFP4 and the FP8 128x128 scales (neither has row views).
+// route_traffic read them (#640, #704): the weight's bytes over the rows it holds (Weight::n),
+// never fewer than the call reads (call_weight_rows), so a slice of a fused parent
+// (segmented_projection: the whole parent with the call's rows in Problem::n) reads its rows'
+// share of the payload. A row view (native_weight of part of a parent: its own rows in n, its
+// parent's payload) is priced by Weight::priced_bytes, the bytes a standalone weight of its shape
+// takes with its planes' padding: what the decision manifest's replay of the shape prices
+// (route_query). Under SwiGLU each output row reads its gate and its up row: the value holds both
+// (x2). A whole weight keeps payload_bytes / (n K), to the bit. A slice's share is proportional
+// to rows: exact where the layout stores rows whole up to the planes' padding, within a 128-row
+// scale tile for NVFP4 and the FP8 128x128 scales.
 double bytes_per_weight(const Weight& weight, const Problem& problem);
 
 // The weight-side admission of the A8 and A4 tiles and of R8 (generic_gemm.cpp; their refusals
