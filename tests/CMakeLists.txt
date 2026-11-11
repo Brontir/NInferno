@@ -178,3 +178,12 @@ if(UNIX)
   add_test(NAME ninferno_decision_inputs_test
     COMMAND bash "${PROJECT_SOURCE_DIR}/tools/audit/decision_inputs.sh")
 endif()
+
+# The shared test tree's link modes on the built binaries (NINFERNO_SHARED_OP_TESTS, a Linux-only
+# option): every test, app and bench as the configure decided, no second copy of a member archive
+# or of the CUDA runtime beside the shared library. No GPU.
+if(NINFERNO_SHARED_OP_TESTS)
+  add_test(NAME ninferno_link_mode_test
+    COMMAND bash "${PROJECT_SOURCE_DIR}/tools/audit/link_mode.sh" "${CMAKE_BINARY_DIR}")
+  set_tests_properties(ninferno_link_mode_test PROPERTIES LABELS host)
+endif()
