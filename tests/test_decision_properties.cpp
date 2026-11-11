@@ -14,9 +14,10 @@
 //       price (price_routes), not the choice. Three kinds of SM-scale case are told apart by a
 //       predicate and printed with their counts, not failed (explain_rmma_rise for the last two):
 //         - a board whose architecture has no SM rate row (core/sm_rate_facts.h: sm_80, sm_90,
-//           sm_100 today) keeps the legacy DRAM law (kernel_roofline.h legacy_dram), which bills
-//           idle SMs (issue #690) until the bytes-in-flight probe measures the architecture: its
-//           SM scale is skipped;
+//           sm_100 today), or a row another card of it refutes (sm_120a), keeps the legacy DRAM
+//           law (kernel_roofline.h legacy_dram), which bills idle SMs (issue #690) until a probe
+//           row that holds exists for the architecture: its SM scale is not compared, its rises
+//           are counted and printed;
 //         - a register-MMA route of the heavy form whose rise is the shared activation read alone:
 //           the CTAs one SM runs at once read a token tile once for all of them, and with more
 //           SMs the busiest one holds fewer of them, so that read is spread over fewer warps (the
@@ -275,6 +276,9 @@ int sms_cases_fell = 0, sms_cases_equal = 0; // the price fell / stayed (to 1e-9
 // (compared, the rise explained), with the worst such rises.
 int sms_cases_legacy = 0, sms_cases_shared_read = 0, sms_cases_instance = 0;
 double shared_read_worst = 1, instance_worst = 1;
+// The legacy boards' SM-scale cases are counted, not compared: how many rose, and the worst.
+int sms_cases_legacy_rose = 0;
+double legacy_worst       = 1;
 std::vector<std::string> legacy_rows;
 
 using Prices = std::map<std::pair<int, int>, double>; // (family, schedule) -> seconds
@@ -330,13 +334,18 @@ std::optional<RmmaPriced> rmma_terms(const DeviceClass& d, const generic::Proble
     kernel.threads = 32.0 * s.warps_m * s.warps_k;
     kernel.warps_k = s.warps_k;
     kernel.m_tiles = s.m_tiles;
+    kernel.k_step  = static_cast<double>(generic::rmma_step_values(problem.qtype, problem.k));
     kernel.heavy   = has_subblock_scales(problem.qtype) && rmma_terms_measured(d.major, d.minor);
+    kernel.shared_bytes = kr::register_mma_schedule_shared_bytes(
+        s.warps_m, s.warps_k, problem.epilogue == Epilogue::SwiGlu ? 2 : 1, s.m_tiles, s.n_tiles,
+        s.cluster);
     if (kernel.heavy) {
         try {
             if (const auto kept = generic::rmma_resources(schedule, weight, problem.epilogue,
                                                           tokens, problem.n)) {
-                kernel.registers   = kept->registers;
-                kernel.local_bytes = static_cast<double>(kept->local_bytes);
+                kernel.registers    = kept->registers;
+                kernel.local_bytes  = static_cast<double>(kept->local_bytes);
+                kernel.shared_bytes = static_cast<double>(kept->static_smem);
             }
         } catch (const std::exception&) {}
     }
@@ -432,6 +441,11 @@ void property_price_monotone(const std::vector<Row>& rows) {
                                     }
                                     if (prices == &sms && legacy) {
                                         ++sms_cases_legacy;
+                                        if (it->second > seconds * (1.0 + kResolution)) {
+                                            ++sms_cases_legacy_rose;
+                                            legacy_worst =
+                                                std::max(legacy_worst, it->second / seconds);
+                                        }
                                         continue;
                                     }
                                     ++cases_checked;
@@ -493,8 +507,10 @@ void property_price_monotone(const std::vector<Row>& rows) {
               << sms_cases_instance << " by another compiled instance on the larger board (worst x"
               << instance_worst << ")\n";
     std::cout << "    SM scale not compared on " << legacy_rows.size()
-              << " rows of an architecture without an SM rate row (the legacy DRAM law, #690): "
-              << sms_cases_legacy << " cases";
+              << " rows of the legacy DRAM law (no SM rate row, or one another card refutes; "
+                 "#690): "
+              << sms_cases_legacy << " cases, the price rose in " << sms_cases_legacy_rose
+              << " (worst x" << legacy_worst << "): counted, not failed";
     for (const std::string& name : legacy_rows) { std::cout << "\n    legacy DRAM law: " << name; }
     std::cout << '\n';
     if (sms_cases_priced == 0) {

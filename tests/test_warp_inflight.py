@@ -392,10 +392,22 @@ class WarpInflight(unittest.TestCase):
             for name, fact in row["facts"].items():
                 self.assertEqual(fact["unit"], wi.FACT_UNITS[name], f"{key} {name}")
                 self.assertGreater(fact["value"], 0, f"{key} {name}")
+            # b_w_max is the largest lone-warp b_w of the row's variants.
+            self.assertGreaterEqual(row["facts"]["max_warp_bytes_in_flight"]["value"],
+                                    row["facts"]["ring4_b_w_w1_free"]["value"], key)
+            # The transfer checks: other cards of the architecture, by their card's file name,
+            # and the verdict is the bounds' over their ratios.
+            for c in row["transfer"]["runs"]:
+                self.assertEqual(c["source"], f"warp_inflight_{key}_{wi.card_slug(c['card'])}.txt")
+                self.assertNotEqual(c["card"], row["card"], key)
+                self.assertEqual(c["tool"]["source_sha256"], wi.source_sha256(), key)
+            self.assertEqual(row["transfer"]["refuted"],
+                             any(not c["within_bounds"] for c in row["transfer"]["runs"]), key)
             for mode in wi.MODES:
-                ws = [w for w, _ in row["ring2_rows"][mode]]
-                self.assertEqual(ws, sorted(set(ws)), f"{key} {mode}")
-                self.assertEqual(ws[0], 1, f"{key} {mode}")
+                for rings in ("ring2_rows", "ring4_rows"):
+                    ws = [w for w, _, _ in row[rings][mode]]
+                    self.assertEqual(ws, sorted(set(ws)), f"{key} {mode}")
+                    self.assertEqual(ws[0], 1, f"{key} {mode}")
                 # P is per SM clock: the rate over the clock it was read at.
                 f = row["facts"]
                 self.assertAlmostEqual(
@@ -415,9 +427,46 @@ class WarpInflight(unittest.TestCase):
                                delta=0.01)
         # The made-up card follows the law: ring2 keeps its counted 2048 B at W = 1.
         self.assertAlmostEqual(f["ring2_b_w_w1_free"]["value"], 2048, delta=2)
-        self.assertEqual([w for w, _ in row["ring2_rows"]["free"]],
+        self.assertEqual([w for w, _, _ in row["ring2_rows"]["free"]],
                          [w for w in wi.W_GRID if w <= 32])
+        # The 4-load ring keeps its 4096 B too: that is the most a warp of this card holds.
+        self.assertAlmostEqual(f["max_warp_bytes_in_flight"]["value"], 4096, delta=4)
+        # The law of the row against its own ring rows: the made-up card follows it exactly.
+        ratios = wi.law_ratios(row, {v: row[f"{v}_rows"] for v in wi.CHECKED_RINGS})
+        self.assertTrue(all(abs(r - 1) < 1e-3 for *_, r in ratios), ratios[:3])
         json.dumps(row, allow_nan=False)
+
+    def test_transfer_checks(self):
+        # Another card of the architecture under its card's name is a check of the row: one that
+        # follows the law is within the bounds, one 20 % faster refutes the row.
+        faster = re.sub(r"^(row \S+ \d+ \S+ \d+ \d+) (\S+) (\S+) (\S+)",
+                        lambda m: m.group(1) + " " + " ".join(f"{float(x) * 1.2:.4f}"
+                                                               for x in m.groups()[1:]),
+                        SAMPLE, flags=re.M)
+        for text, refuted in ((SAMPLE, False), (faster, True)):
+            with tempfile.TemporaryDirectory() as d:
+                with open(os.path.join(d, "warp_inflight_89.txt"), "w", newline="\n") as f:
+                    f.write(SAMPLE)
+                other = text.replace("card NVIDIA GeForce RTX 4070 Ti",
+                                     "card NVIDIA GeForce RTX 4060 Ti")
+                with open(os.path.join(d, "warp_inflight_89_rtx4060ti.txt"), "w",
+                          newline="\n") as f:
+                    f.write(other)
+                table, refused = wi.build_facts(d)
+                self.assertEqual(refused, [])
+                t = table["arches"]["89"]["transfer"]
+                self.assertEqual([c["card"] for c in t["runs"]], ["NVIDIA GeForce RTX 4060 Ti"])
+                self.assertIs(t["refuted"], refuted)
+                if refuted:
+                    self.assertAlmostEqual(t["runs"][0]["law_over_measured"]["lowest"], 1 / 1.2,
+                                           delta=1e-3)
+                # Under another card's name, or the reference card's own, the run is refused.
+                os.rename(os.path.join(d, "warp_inflight_89_rtx4060ti.txt"),
+                          os.path.join(d, "warp_inflight_89_rtx4090.txt"))
+                with self.assertRaises(ValueError):
+                    wi.build_facts(d)
+        self.assertEqual(wi.card_slug("NVIDIA GeForce RTX 5070 Ti"), "rtx5070ti")
+        self.assertEqual(wi.card_slug("Quadro GV100"), "gv100")
 
     def test_regenerate_names_a_refused_run_and_leaves_its_arch_out(self):
         with tempfile.TemporaryDirectory() as d:

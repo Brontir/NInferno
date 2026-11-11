@@ -2,9 +2,10 @@
 // src/core/data/sm_rate_facts.json is read and equals the file field by field (the facts through
 // this test's own list of names, units and members, so a fact the reader stops taking, or takes
 // into another member, fails here); the list of facts the reader takes is this test's list; the
-// ring2 rows are the file's; every architecture of the ISA facts table has a row (a missing one
-// keeps the legacy DRAM law: a re-probe is owed); an architecture without a row is unknown; and a
-// malformed table is refused.
+// ring rows and the transfer checks are the file's, and a row is refuted exactly when one of its
+// checks is outside the bounds; every architecture of the ISA facts table has a row (a missing
+// one keeps the legacy DRAM law: a re-probe is owed); the architectures without a row are named
+// and unknown; and a malformed table is refused.
 #include "core/isa_facts.h"
 #include "core/sm_rate_facts.h"
 
@@ -53,6 +54,7 @@ const std::vector<Expected>& expected_facts() {
         {"sm_mhz_free", "MHz", &SmRateRow::sm_mhz_free},
         {"sm_mhz_placed", "MHz", &SmRateRow::sm_mhz_placed},
         {"dram_stream_latency_ns", "ns", &SmRateRow::dram_stream_latency_ns},
+        {"max_warp_bytes_in_flight", "B", &SmRateRow::max_warp_bytes_in_flight},
         {"ring2_b_w_w1_free", "B", &SmRateRow::ring2_b_w_w1_free},
         {"ring2_b_w_w1_placed", "B", &SmRateRow::ring2_b_w_w1_placed},
         {"ring2_linear_to_w_free", "warps", &SmRateRow::ring2_linear_to_w_free},
@@ -79,6 +81,25 @@ void names_are_the_tests() {
     expect(got == want, "the reader takes exactly this test's facts");
 }
 
+void rings_equal(const SmRateRings& got, const Json& j, const std::string& where) {
+    const std::pair<const char*, const std::vector<SmRateRingRow>*> all[] = {
+        {"ring2_rows free", &got.ring2_free},
+        {"ring2_rows placed", &got.ring2_placed},
+        {"ring4_rows free", &got.ring4_free},
+        {"ring4_rows placed", &got.ring4_placed}};
+    for (const auto& [name, rows] : all) {
+        const std::string n(name);
+        const Json& want = j.at(n.substr(0, n.find(' '))).at(n.substr(n.find(' ') + 1));
+        expect(rows->size() == want.size(), where + ": " + n + " rows");
+        for (std::size_t i = 0; i < std::min(rows->size(), want.size()); ++i) {
+            expect((*rows)[i].w == want[i][0].get<double>() &&
+                       (*rows)[i].gbps == want[i][1].get<double>() &&
+                       (*rows)[i].sm_mhz == want[i][2].get<double>(),
+                   where + ": " + n + " row " + std::to_string(i));
+        }
+    }
+}
+
 void rows_equal_the_file(const Json& file) {
     const auto table   = sm_rate_facts_table();
     const Json& arches = file.at("arches");
@@ -102,19 +123,31 @@ void rows_equal_the_file(const Json& file) {
             expect(f.at("unit").get<std::string>() == e.unit, where + ": " + e.name + " unit");
             expect((*row).*e.member == f.at("value").get<double>(), where + ": " + e.name);
         }
-        for (const auto& [mode, got] :
-             {std::pair{"free", &row->ring2_free}, std::pair{"placed", &row->ring2_placed}}) {
-            const Json& want = j.at("ring2_rows").at(mode);
-            expect(got->size() == want.size(), where + ": ring2 " + mode + " rows");
-            for (std::size_t i = 0; i < std::min(got->size(), want.size()); ++i) {
-                expect((*got)[i].first == want[i][0].get<double>() &&
-                           (*got)[i].second == want[i][1].get<double>(),
-                       where + ": ring2 " + mode + " row " + std::to_string(i));
-            }
+        rings_equal(row->rings, j, where);
+        const Json& transfer = j.at("transfer");
+        expect(row->transfer_refuted == transfer.at("refuted").get<bool>(), where + ": refuted");
+        const Json& runs = transfer.at("runs");
+        expect(row->transfers.size() == runs.size(), where + ": transfer runs");
+        bool outside = false;
+        for (std::size_t i = 0; i < std::min(row->transfers.size(), runs.size()); ++i) {
+            const SmRateTransfer& got = row->transfers[i];
+            const Json& want          = runs[i];
+            const std::string at      = where + " transfer " + got.card;
+            expect(got.card == want.at("card").get<std::string>(), at + ": card");
+            expect(got.source == want.at("source").get<std::string>(), at + ": source");
+            expect(got.sms == want.at("sms").get<int>(), at + ": sms");
+            expect(got.dram_stream_latency_ns == want.at("dram_stream_latency_ns").get<double>(),
+                   at + ": L0");
+            expect(got.within_bounds == want.at("within_bounds").get<bool>(), at + ": verdict");
+            rings_equal(got.rings, want, at);
+            outside = outside || !got.within_bounds;
         }
+        expect(row->transfer_refuted == outside, where + ": refuted is the runs' verdict");
         std::cout << where << " (" << row->card << "): P " << row->bytes_per_clock_free << " / "
                   << row->bytes_per_clock_placed << " B/clk, L0 " << row->dram_stream_latency_ns
-                  << " ns, ring2 b_w at W = 1 " << row->ring2_b_w_w1_free << " B\n";
+                  << " ns, b_w_max " << row->max_warp_bytes_in_flight << " B, "
+                  << row->transfers.size() << " transfer check(s)"
+                  << (row->transfer_refuted ? ", refuted" : "") << '\n';
     }
 }
 
@@ -128,15 +161,20 @@ void every_isa_architecture() {
     }
 }
 
+// The architectures the probe has not measured are unknown: sm_80 (A100), sm_90 (H100), sm_100
+// (B300), sm_121 (GB10), and anything else; a row is found by its own cc only. Written out, not
+// filtered by the table: a row for one of these is a decision (and its boards leave the legacy
+// DRAM law, test_kernel_roofline.cpp check 8 names them), so this list moves with it.
 void unknown_architectures() {
-    std::set<int> known;
-    for (const SmRateRow& r : sm_rate_facts_table()) known.insert(r.major * 10 + r.minor);
-    for (const auto& [major, minor] :
-         std::vector<std::pair<int, int>>{{8, 0}, {9, 0}, {10, 0}, {12, 1}, {6, 1}, {0, 0}}) {
-        if (known.count(major * 10 + minor) != 0) continue;
+    for (const auto& [major, minor] : std::vector<std::pair<int, int>>{
+             {8, 0}, {9, 0}, {10, 0}, {10, 3}, {12, 1}, {8, 7}, {6, 1}, {0, 0}, {-1, 7}}) {
         expect(!sm_rate_row(major, minor).has_value(),
                "sm_" + std::to_string(major) + std::to_string(minor) + " has no row: unknown");
     }
+    std::set<int> known;
+    for (const SmRateRow& r : sm_rate_facts_table()) known.insert(r.major * 10 + r.minor);
+    expect(known == std::set<int>{70, 75, 86, 89, 120},
+           "the architectures with a row are sm_70, sm_75, sm_86, sm_89, sm_120");
 }
 
 void parse_rules(const Json& file) {
@@ -181,8 +219,29 @@ void parse_rules(const Json& file) {
     }
     {
         Json row                    = base;
-        row["ring2_rows"]["placed"] = Json::array();
+        row["ring4_rows"]["placed"] = Json::array();
         refused(table_of(row), "no ring rows");
+    }
+    {
+        Json row = base;
+        row["ring2_rows"]["free"][0].erase(2);
+        refused(table_of(row), "a ring row without its clock");
+    }
+    {
+        // The verdict must be its runs': a refuted flag over runs within the bounds is refused,
+        // and a run outside them must refute.
+        Json row                   = file.at("arches").at("89");
+        const auto rows89          = parse_sm_rate_facts(table_of(row, "89"));
+        row["transfer"]["refuted"] = true;
+        expect(rows89.size() == 1 && !rows89[0].transfer_refuted && !rows89[0].transfers.empty(),
+               "the sm_89 row has transfer checks, none refuting");
+        refused(table_of(row, "89"), "refuted over runs within the bounds");
+        row["transfer"]["refuted"]                  = false;
+        row["transfer"]["runs"][0]["within_bounds"] = false;
+        refused(table_of(row, "89"), "a run outside the bounds that does not refute");
+        row["transfer"]["refuted"] = true;
+        const auto refuted         = parse_sm_rate_facts(table_of(row, "89"));
+        expect(refuted.size() == 1 && refuted[0].transfer_refuted, "a refuting run is read");
     }
     refused(table_of(base, "89"), "a key that is not the row's cc");
     {

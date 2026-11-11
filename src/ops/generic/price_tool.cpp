@@ -3,6 +3,7 @@
 #include "core/device_class.h"
 #include "core/generation.h"
 #include "core/machine_facts.h"
+#include "core/sm_rate_facts.h"
 #include "core/units.h"
 #include "core/weight.h"
 #include "ninferno/ops/linear.h"
@@ -287,10 +288,10 @@ void print_grid(const kr::Grid& g) {
 // The DRAM law of #690 (kernel_roofline.h dram_terms): P, b_w, the busiest SM's first-round rate
 // R_sm(W) = min(P, W x b_w / L0), and which bound held.
 void print_dram_law(const kr::DramTerms& d) {
-    std::printf("  dram law: P %.1f GB/s an SM, b_w %.0f B a warp, R_sm %.1f GB/s; bus %.2f us, "
-                "busiest SM %.2f us: the %s bound\n",
-                d.peak / 1e9, d.warp_bytes, d.round_rate / 1e9, us(d.bus), us(d.sm),
-                d.bus_bound ? "bus" : "per-SM");
+    std::printf("  dram law: P %.1f GB/s an SM (%s carve-out), b_w %.0f B a warp (counted %.0f), "
+                "R_sm %.1f GB/s; bus %.2f us, busiest SM %.2f us: the %s bound\n",
+                d.peak / 1e9, d.shared_carved ? "shared-largest" : "L1-largest", d.warp_bytes,
+                d.counted, d.round_rate / 1e9, us(d.bus), us(d.sm), d.bus_bound ? "bus" : "per-SM");
 }
 
 void print_register_mma(const kr::RegisterMmaTerms& t, bool heavy, double a16,
@@ -365,14 +366,14 @@ int run(const Options& o) {
         chip.max_ctas_per_sm, chip.registers_per_sm, chip.smem_per_sm / 1024.0,
         emulated ? " (BF16 MMA emulated: no pipelined tile)" : "");
     if (kr::legacy_dram(chip)) {
-        std::printf("sm rate facts: no row for sm_%d%d (core/sm_rate_facts.h): the legacy DRAM "
-                    "law\n",
-                    d.major, d.minor);
+        const auto row = sm_rate_row(d.major, d.minor);
+        std::printf("sm rate facts: %s sm_%d%d (core/sm_rate_facts.h): the legacy DRAM law\n",
+                    row ? "another card refutes the row of" : "no row for", d.major, d.minor);
     } else {
         std::printf("sm rate facts (core/sm_rate_facts.h): L0 %.1f ns, P %.2f B/clk free, %.2f "
-                    "B/clk placed\n",
+                    "B/clk placed, b_w_max %.0f B\n",
                     *chip.dram_latency_s * 1e9, *chip.sm_dram_bytes_per_clock_free,
-                    *chip.sm_dram_bytes_per_clock_placed);
+                    *chip.sm_dram_bytes_per_clock_placed, *chip.sm_max_warp_bytes);
     }
     std::printf("call %s %dx%d T=%d %s: payload %llu bytes, %.4f bytes/value, sets %.0f; "
                 "register-MMA terms: %s; a16 scale %.2f\n",
@@ -471,7 +472,12 @@ int run(const Options& o) {
         kernel.threads = 32.0 * s.warps_m * s.warps_k;
         kernel.warps_k = s.warps_k;
         kernel.m_tiles = s.m_tiles;
+        kernel.k_step  = static_cast<double>(generic::rmma_step_values(qtype, o.k));
         kernel.heavy   = heavy;
+        // The schedule's own shared memory; the selector reads the compiled whole where it reads
+        // the kernel's facts (the heavy form), which this replica is not given.
+        kernel.shared_bytes = kr::register_mma_schedule_shared_bytes(
+            s.warps_m, s.warps_k, static_cast<int>(call.sets), s.m_tiles, s.n_tiles, s.cluster);
         if (heavy) { // the price reads compiled facts only in the heavy form, as price_routes does
             kernel.registers   = o.registers;
             kernel.local_bytes = o.local_bytes;

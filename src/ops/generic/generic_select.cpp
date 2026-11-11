@@ -482,6 +482,8 @@ int rmma_k_split_fit(int index, const Problem& problem, std::int64_t ctas, std::
 
 } // namespace
 
+std::int64_t rmma_step_values(QType qtype, std::int32_t k) { return rmma_k_step(qtype, k); }
+
 // Outside the prefill profile a tiled codec's 128x128 kernel pays once its tiles fill kSpeedFill
 // waves of the SMs (from 33 tokens, on a native BF16 MMA): below that the register MMA's
 // narrower tiles fill them (Q4_K n = 1024 at T 64..128: the tiled kernel 5..7x on every board).

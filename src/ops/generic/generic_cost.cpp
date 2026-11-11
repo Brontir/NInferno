@@ -214,6 +214,7 @@ namespace {
 struct RmmaKept {
     int registers;
     double local_bytes;
+    double static_smem;
 };
 
 std::optional<RmmaKept> rmma_kept(int schedule, const Weight& weight, Epilogue epilogue,
@@ -224,7 +225,8 @@ std::optional<RmmaKept> rmma_kept(int schedule, const Weight& weight, Epilogue e
     } catch (const std::exception&) {}
     if (!r) return std::nullopt;
     note_rmma_fact_read(RmmaFactRead{weight.qtype, schedule, epilogue, *r}); // never throws
-    return RmmaKept{r->registers, static_cast<double>(r->local_bytes)};
+    return RmmaKept{r->registers, static_cast<double>(r->local_bytes),
+                    static_cast<double>(r->static_smem)};
 }
 
 } // namespace
@@ -324,11 +326,15 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         kernel.cluster = tile.k_split;
         kernel.threads = 32.0 * s.warps_m * s.warps_k;
         kernel.warps_k = s.warps_k;
-        kernel.m_tiles = s.m_tiles;
+        kernel.m_tiles      = s.m_tiles;
+        kernel.k_step       = static_cast<double>(rmma_step_values(problem.qtype, problem.k));
         kernel.heavy   = heavy_decoder;
+        kernel.shared_bytes = kr::register_mma_schedule_shared_bytes(
+            s.warps_m, s.warps_k, static_cast<int>(call.sets), s.m_tiles, s.n_tiles, s.cluster);
         if (kept) {
-            kernel.registers   = kept->registers;
-            kernel.local_bytes = kept->local_bytes;
+            kernel.registers    = kept->registers;
+            kernel.local_bytes  = kept->local_bytes;
+            kernel.shared_bytes = kept->static_smem;
         }
         offer(r, kr::price_register_mma(chip, cal, call, kernel).total);
     }

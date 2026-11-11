@@ -32,6 +32,7 @@
 #include <exception>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -90,17 +91,21 @@ std::optional<double> roofline_price(const DeviceClass& d, const kr::ChipFacts& 
     if (r.family == g::Family::RegisterMma) {
         const auto s = g::rmma_schedule_info(r.schedule);
         kr::RegisterMmaKernel kernel;
-        kernel.rows    = tile->out_rows;
-        kernel.cols    = tile->tokens;
-        kernel.cluster = tile->k_split;
-        kernel.threads = 32.0 * s.warps_m * s.warps_k;
-        kernel.warps_k = s.warps_k;
-        kernel.m_tiles = s.m_tiles;
-        kernel.heavy   = heavy;
+        kernel.rows         = tile->out_rows;
+        kernel.cols         = tile->tokens;
+        kernel.cluster      = tile->k_split;
+        kernel.threads      = 32.0 * s.warps_m * s.warps_k;
+        kernel.warps_k      = s.warps_k;
+        kernel.m_tiles      = s.m_tiles;
+        kernel.k_step       = static_cast<double>(g::rmma_step_values(q, k_cols));
+        kernel.heavy        = heavy;
+        kernel.shared_bytes = kr::register_mma_schedule_shared_bytes(
+            s.warps_m, s.warps_k, static_cast<int>(call.sets), s.m_tiles, s.n_tiles, s.cluster);
         for (const auto& read : reads) {
             if (read.schedule == r.schedule && read.qtype == q && read.epilogue == e) {
-                kernel.registers   = read.facts.registers;
-                kernel.local_bytes = static_cast<double>(read.facts.local_bytes);
+                kernel.registers    = read.facts.registers;
+                kernel.local_bytes  = static_cast<double>(read.facts.local_bytes);
+                kernel.shared_bytes = static_cast<double>(read.facts.static_smem);
             }
         }
         return kr::price_register_mma(chip, cal, call, kernel).total * a16;
@@ -664,6 +669,10 @@ void check_price_a8_rows() {
     if (bad > 0 || a8 == 0) ++failures;
 }
 
+// The bytes a warp of the probe's two-slot rings keeps in flight by count: 2 slots x 2 (ring2) or
+// 4 (ring4) 16-byte loads a lane x 32 lanes.
+constexpr double kRing2Bytes = 2 * 2 * 32 * 16, kRing4Bytes = 2 * 4 * 32 * 16;
+
 // ---- Check 7: the DRAM time of #690 (dram_time) ----
 // Over a grid of CTA counts, occupancies, warps and SM counts on an RTX 3090's facts with its
 // SM rate row: (a) the time never rises with the SM count; (b) a grid of fewer CTAs than SMs costs
@@ -689,7 +698,7 @@ void check_dram_time() {
         return;
     }
     const double bytes   = 64.0 * 4096 * 0.5625; // a 64-row CTA of a 4.5-bit weight, K 4096
-    const double b_w     = 4.0 * g::route_cost::kWarpLoadBytes.value(); // an m1 Store ring
+    const double b_w     = kRing2Bytes; // a BF16 m1 Store call's ring (under the 3090's b_w_max)
     const auto legacy_of = [&](const kr::ChipFacts& c, double ctas) {
         return std::ceil(ctas / c.sms) * bytes / (c.dram_bytes_per_s / c.sms);
     };
@@ -740,57 +749,135 @@ void check_dram_time() {
 
 // ---- Check 8: the law against the probe's own rows ----
 // For every architecture of core/sm_rate_facts.h, dram_time prices one CTA of W warps on one SM,
-// each warp keeping the counted 2048 B of the decode kernels' two-slot ring in flight (2 slots x
-// 2 loads a lane x kWarpLoadBytes), and that rate is held to the probe's measured ring2 rows of
-// the same row (both carve-outs, every W). P and L0 come from the table the rows sit in, so the
-// check is about b_w and the law's form: the counted b_w is not read from the rows. The law is
-// Little's with the unloaded L0 and a hard corner at P, an upper bound of the rate, so:
-//  - it is never below a measured row (to 1 %);
-//  - at W = 1 it is at most kAtOneWarp above it: the counted 2048 B against the 1767-1907 B the
-//    rows give (x1.07-1.16 on the five rows); a b_w counted twice over or a P in another unit
-//    fails here;
-//  - on every row at most kOnTheCurve above it: the measured curve rounds off into P where the law
-//    has a corner (worst x1.16-1.34, at W = 8-16, on the five rows).
-// The bounds are this check's tolerances, read off the rows, not constants of the price. A card
-// whose ring2 rows are 0.71 of the count (the RTX 5070 Ti, whose lone-warp fetch is 19 % shorter
-// than its fetch from W = 2 on) would fail the first bound: it is not the sm_120a row.
-void check_law_against_probe() {
-    constexpr double kAtOneWarp = 1.20, kOnTheCurve = 1.40;
-    const double b_w = 4.0 * g::route_cost::kWarpLoadBytes.value();
-    long rows = 0, bad = 0;
-    for (const ninferno::SmRateRow& row : ninferno::sm_rate_facts_table()) {
-        double worst = 0, at_one = 0;
-        for (const bool placed : {false, true}) {
-            kr::ChipFacts chip;
-            kr::fill_sm_rate_facts(chip, row.major, row.minor);
-            if (kr::legacy_dram(chip)) {
-                std::fprintf(stderr, "FAIL: sm_%s: no SM rate facts read\n", row.arch.c_str());
-                ++failures;
-                return;
-            }
-            chip.sms      = row.sms;
-            chip.clock_hz = (placed ? row.sm_mhz_placed : row.sm_mhz_free) * 1e6;
-            // One CTA on one SM: the bus is not the bound the probe measured.
-            chip.dram_bytes_per_s = 1e18;
-            const double bytes    = 1 << 20;
-            for (const auto& [w, gbps] : placed ? row.ring2_placed : row.ring2_free) {
-                ++rows;
-                const double law   = bytes / kr::dram_time(chip, 1.0, 1.0, w, bytes, b_w, placed);
-                const double ratio = law / (gbps * 1e9);
-                worst              = std::max(worst, ratio);
-                if (w == 1) at_one = std::max(at_one, ratio);
-                if (ratio < 0.99 || ratio > kOnTheCurve || (w == 1 && ratio > kAtOneWarp)) {
-                    ++bad;
-                    std::fprintf(
-                        stderr, "FAIL: sm_%s %s W=%g: the law %.2f GB/s, the probe %.2f (x%.3f)\n",
-                        row.arch.c_str(), placed ? "placed" : "free", w, law / 1e9, gbps, ratio);
+// each warp keeping the counted bytes of one of the probe's two-slot rings in flight (ring2: 2048
+// B, ring4: 4096 B, both under the row's b_w_max), and that rate is held to the probe's measured
+// ring rows (both carve-outs, every W, at each row's own SM clock). P, L0 and b_w_max come from
+// the table the rows sit in, so the check is about the counted b_w and the law's form (ring4 at
+// W = 1 equals the row where its b_w_max is ring4's own reading: sm_75, sm_86, sm_89, and nearly on
+// sm_70 and sm_120a). The law is Little's with the unloaded L0 and a hard corner at P, an upper
+// bound of the rate, so:
+//  - it is never below a measured row (to 1 %, kNeverBelow);
+//  - at W = 1 it is at most kAtOneWarp above it: ring2's counted 2048 B against the 1767-1907 B the
+//    rows give (x1.07-1.16); a b_w counted twice over or a P in another unit fails here;
+//  - on every row at most kOnTheCurve above it. The worst reading, x1.16-1.34 at W = 8-16, is a gap
+//    of the model, not noise: the measured curve rounds off into P (a knee of queueing near the
+//    port's limit) where the law has a corner. It is recorded on #690; the law is optimistic there.
+// The bounds are this check's tolerances, the same as warp_inflight.py's (LAW_*), not constants of
+// the price. The other cards' runs of an architecture (its transfer checks) are held to the same
+// bounds under the row's facts and their own SM clocks: the verdict must be the table's
+// (`within_bounds`, `refuted`), and a refuted row gives no SM rate facts (fill_sm_rate_facts). The
+// RTX 5070 Ti refutes the sm_120a row: the law is x0.88-0.89 of its rows at W = 1 (its warps fetch
+// 12 % faster than the RTX 5090's) and x0.92 at its placed P (23.8 B/clk against 21.9).
+// Last, the boards of each law, written out: the legacy law on sm_80, sm_90, sm_100, sm_121 (no
+// row) and on sm_120a (refuted), the law of #690 on sm_70, sm_75, sm_86, sm_89.
+constexpr double kNeverBelow = 0.99, kAtOneWarp = 1.20, kOnTheCurve = 1.40;
+
+struct LawOverRows {
+    long rows = 0, outside = 0;
+    double lowest = 1e9, at_one = 0, highest = 0;
+};
+
+// The law of `row` over `rings`, both rings, both carve-outs. `report`: name each row outside the
+// bounds (a reference card's rows must all be inside; a transfer check's may refute).
+LawOverRows law_over(const ninferno::SmRateRow& row, const ninferno::SmRateRings& rings,
+                     const char* who, bool report) {
+    LawOverRows out;
+    kr::ChipFacts chip;
+    chip.sms                            = row.sms;
+    chip.dram_latency_s                 = row.dram_stream_latency_ns * 1e-9;
+    chip.sm_dram_bytes_per_clock_free   = row.bytes_per_clock_free;
+    chip.sm_dram_bytes_per_clock_placed = row.bytes_per_clock_placed;
+    chip.sm_max_warp_bytes              = row.max_warp_bytes_in_flight;
+    // One CTA on one SM: the bus is not the bound the probe measured.
+    chip.dram_bytes_per_s = 1e18;
+    const double bytes    = 1 << 20;
+    const std::tuple<const char*, double, bool, const std::vector<ninferno::SmRateRingRow>*> all[] =
+        {{"ring2", kRing2Bytes, false, &rings.ring2_free},
+         {"ring2", kRing2Bytes, true, &rings.ring2_placed},
+         {"ring4", kRing4Bytes, false, &rings.ring4_free},
+         {"ring4", kRing4Bytes, true, &rings.ring4_placed}};
+    for (const auto& [variant, counted, placed, measured] : all) {
+        for (const ninferno::SmRateRingRow& r : *measured) {
+            ++out.rows;
+            chip.clock_hz      = r.sm_mhz * 1e6;
+            const double law   = bytes / kr::dram_time(chip, 1.0, 1.0, r.w, bytes, counted, placed);
+            const double ratio = law / (r.gbps * 1e9);
+            out.lowest         = std::min(out.lowest, ratio);
+            out.highest        = std::max(out.highest, ratio);
+            if (r.w == 1) out.at_one = std::max(out.at_one, ratio);
+            if (ratio < kNeverBelow || ratio > kOnTheCurve || (r.w == 1 && ratio > kAtOneWarp)) {
+                ++out.outside;
+                if (report) {
+                    std::fprintf(stderr,
+                                 "FAIL: sm_%s %s %s %s W=%g: the law %.2f GB/s, the probe %.2f "
+                                 "(x%.3f)\n",
+                                 row.arch.c_str(), who, variant, placed ? "placed" : "free", r.w,
+                                 law / 1e9, r.gbps, ratio);
                 }
             }
         }
-        std::printf("law vs probe: sm_%s (%s): x%.3f at W = 1, worst x%.3f\n", row.arch.c_str(),
-                    row.card.c_str(), at_one, worst);
     }
-    std::printf("law vs probe: %ld ring2 rows, %ld outside the bounds\n", rows, bad);
+    return out;
+}
+
+void check_law_against_probe() {
+    long rows = 0, bad = 0;
+    for (const ninferno::SmRateRow& row : ninferno::sm_rate_facts_table()) {
+        const LawOverRows own = law_over(row, row.rings, row.card.c_str(), true);
+        rows += own.rows;
+        bad += own.outside;
+        std::printf("law vs probe: sm_%s (%s, b_w_max %.0f B): x%.3f..%.3f, x%.3f at W = 1\n",
+                    row.arch.c_str(), row.card.c_str(), row.max_warp_bytes_in_flight, own.lowest,
+                    own.highest, own.at_one);
+        bool outside = false;
+        for (const ninferno::SmRateTransfer& t : row.transfers) {
+            const LawOverRows other = law_over(row, t.rings, t.card.c_str(), false);
+            const bool within       = other.outside == 0;
+            outside                 = outside || !within;
+            std::printf("law vs probe: sm_%s row against %s: x%.3f..%.3f, x%.3f at W = 1: %s\n",
+                        row.arch.c_str(), t.card.c_str(), other.lowest, other.highest, other.at_one,
+                        within ? "within the bounds" : "outside: refutes the row");
+            if (within != t.within_bounds) {
+                std::fprintf(stderr, "FAIL: sm_%s against %s: the table's verdict differs\n",
+                             row.arch.c_str(), t.card.c_str());
+                ++bad;
+            }
+        }
+        kr::ChipFacts filled;
+        kr::fill_sm_rate_facts(filled, row.major, row.minor);
+        if (outside != row.transfer_refuted || kr::legacy_dram(filled) != row.transfer_refuted) {
+            std::fprintf(stderr, "FAIL: sm_%s: refuted %d, the checks say %d, facts %s\n",
+                         row.arch.c_str(), row.transfer_refuted, outside,
+                         kr::legacy_dram(filled) ? "absent" : "filled");
+            ++bad;
+        }
+    }
+    // The boards of each law.
+    const std::pair<const char*, bool> boards[] = {
+        {"a100", true},       {"h100-sxm", true},   {"b300", true},
+        {"gb10-spark", true}, {"rtx5090", true},    {"rtx5080", true},
+        {"rtx5070ti", true},  {"rtx5060ti", true},  {"unknown-sm120-48sm", true},
+        {"v100", false},      {"rtx2080ti", false}, {"rtx3090", false},
+        {"a10", false},       {"rtx4090", false},   {"rtx4060ti", false},
+        {"l4", false}};
+    for (const auto& [name, legacy] : boards) {
+        const auto it =
+            std::find_if(std::begin(g::kFactsBoards), std::end(g::kFactsBoards),
+                         [&](const g::FactsBoard& b) { return std::strcmp(b.name, name) == 0; });
+        if (it == std::end(g::kFactsBoards)) {
+            std::fprintf(stderr, "FAIL: no %s board\n", name);
+            ++bad;
+            continue;
+        }
+        if (kr::legacy_dram(kr::chip_facts_of(g::board_device_class(*it))) != legacy) {
+            std::fprintf(stderr, "FAIL: %s is priced by the %s DRAM law, not the %s one\n", name,
+                         legacy ? "#690" : "legacy", legacy ? "legacy" : "#690");
+            ++bad;
+        }
+    }
+    std::printf("law vs probe: %ld rows of the reference cards, %ld outside the bounds or "
+                "miscalled\n",
+                rows, bad);
     if (bad > 0 || rows == 0) ++failures;
 }
 

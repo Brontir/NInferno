@@ -8,6 +8,7 @@
 #include <cmath>
 #include <stdexcept>
 #include <unordered_set>
+#include <utility>
 
 namespace ninferno {
 
@@ -31,6 +32,7 @@ const std::vector<Field>& fields() {
         {"sm_mhz_free", "MHz", &SmRateRow::sm_mhz_free},
         {"sm_mhz_placed", "MHz", &SmRateRow::sm_mhz_placed},
         {"dram_stream_latency_ns", "ns", &SmRateRow::dram_stream_latency_ns},
+        {"max_warp_bytes_in_flight", "B", &SmRateRow::max_warp_bytes_in_flight},
         {"ring2_b_w_w1_free", "B", &SmRateRow::ring2_b_w_w1_free},
         {"ring2_b_w_w1_placed", "B", &SmRateRow::ring2_b_w_w1_placed},
         {"ring2_linear_to_w_free", "warps", &SmRateRow::ring2_linear_to_w_free},
@@ -63,19 +65,35 @@ double positive(const Json& v, const std::string& where) {
     return x;
 }
 
-std::vector<std::pair<double, double>> ring_rows(const Json& j, const char* mode) {
-    std::vector<std::pair<double, double>> out;
-    const std::string where = std::string("ring2_rows ") + mode;
-    for (const Json& r : j.at(mode)) {
-        if (!r.is_array() || r.size() != 2) throw std::runtime_error(where + ": not a (W, GB/s)");
-        const double w = positive(r.at(0), where + " W");
-        if (!out.empty() && w <= out.back().first) {
-            throw std::runtime_error(where + ": W does not rise");
+std::vector<SmRateRingRow> ring_rows(const Json& j, const char* variant, const char* mode) {
+    std::vector<SmRateRingRow> out;
+    const std::string where = std::string(variant) + " " + mode;
+    for (const Json& r : j.at(variant).at(mode)) {
+        if (!r.is_array() || r.size() != 3) {
+            throw std::runtime_error(where + ": not a (W, GB/s, MHz)");
         }
-        out.emplace_back(w, positive(r.at(1), where + " GB/s"));
+        const double w = positive(r.at(0), where + " W");
+        if (!out.empty() && w <= out.back().w)
+            throw std::runtime_error(where + ": W does not rise");
+        out.push_back({w, positive(r.at(1), where + " GB/s"), positive(r.at(2), where + " MHz")});
     }
     if (out.empty()) throw std::runtime_error(where + " is empty");
     return out;
+}
+
+SmRateRings rings_of(const Json& j) {
+    SmRateRings r;
+    r.ring2_free   = ring_rows(j, "ring2_rows", "free");
+    r.ring2_placed = ring_rows(j, "ring2_rows", "placed");
+    r.ring4_free   = ring_rows(j, "ring4_rows", "free");
+    r.ring4_placed = ring_rows(j, "ring4_rows", "placed");
+    return r;
+}
+
+bool boolean(const Json& j, const char* what) {
+    const Json& v = j.at(what);
+    if (!v.is_boolean()) throw std::runtime_error(std::string(what) + " is not a boolean");
+    return v.get<bool>();
 }
 
 SmRateRow parse_row(const std::string& key, const Json& j) {
@@ -104,9 +122,25 @@ SmRateRow parse_row(const std::string& key, const Json& j) {
         }
         r.*f.member = positive(it->at("value"), where);
     }
-    const Json& rings = j.at("ring2_rows");
-    r.ring2_free      = ring_rows(rings, "free");
-    r.ring2_placed    = ring_rows(rings, "placed");
+    r.rings              = rings_of(j);
+    const Json& transfer = j.at("transfer");
+    bool any_outside     = false;
+    for (const Json& t : transfer.at("runs")) {
+        SmRateTransfer run;
+        run.card                   = text(t, "card");
+        run.source                 = text(t, "source");
+        run.sms                    = positive_int(t, "sms");
+        run.dram_stream_latency_ns = positive(t.at("dram_stream_latency_ns"), "transfer L0");
+        run.rings                  = rings_of(t);
+        run.within_bounds          = boolean(t, "within_bounds");
+        if (run.card == r.card) throw std::runtime_error("a transfer check of its own card");
+        any_outside = any_outside || !run.within_bounds;
+        r.transfers.push_back(std::move(run));
+    }
+    r.transfer_refuted = boolean(transfer, "refuted");
+    if (r.transfer_refuted != any_outside) {
+        throw std::runtime_error("transfer: refuted is not the verdict of its runs");
+    }
     return r;
 }
 
