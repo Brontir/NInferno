@@ -38,6 +38,7 @@
 // A failure outside kKnown fails the test; a kKnown entry that no longer fails is reported
 // (XPASS) and should be removed. Every group prints its count and its worst case.
 
+#include "core/arch_registry.h"
 #include "core/device_class.h"
 #include "core/machine_facts.h"
 #include "core/units.h"
@@ -78,16 +79,22 @@ using generic::Epilogue;
 // test's output (the "record" line it prints for every waived group), none is fitted.
 //
 // On the recorded table the price is deterministic, so the group is held exactly: where the
-// table's fingerprint (table_fingerprint below: a hash of every board row the test runs over,
-// its label and facts) equals the recorded one on the build recorded (its label), the family's
-// SM-scale cases F, the group's cases c and its worst ratio must all equal the recorded ones (the
-// ratio to 1e-9). The table is identified by its rows, never by F, so a change of the law that
-// moves F (a route admitted on more boards, a schedule added) is caught as well: any change of the
-// law that moves the group or its family fails there, an improvement as well as a regression, and
-// two that cancel in the share do not cancel in the counts.
+// table's fingerprint (table_fingerprint below: a hash of the facts of core/data/gpu_facts.json the
+// cases read, every board row the test runs over with its label and facts, and every row of the
+// "archs" array, the SM limits per compute capability that the synthetic device class and the
+// occupancy of the price read) equals the recorded one on the build recorded (its label), the
+// family's SM-scale cases F, the group's cases c and its worst ratio must all equal the recorded
+// ones (the ratio to 1e-9). The table is identified by its facts, never by F, so a change of the
+// law that moves F (a route admitted on more boards, a schedule added) is caught as well: any
+// change of the law that moves the group or its family fails there, an improvement as well as a
+// regression, and two that cancel in the share do not cancel in the counts. The cases also read
+// inputs the fingerprint leaves out on purpose: the committed kernel-facts snapshots (registers
+// and spill of the compiled kernels), the route tables and the cost constants. Those are inputs
+// of the law, so a change of them that moves a group is a change of the law, and the exact
+// failure is the right answer (re-record kKnown).
 //
-// On another table (a row added, removed or edited: the fingerprint differs) the share is held to
-// a window instead, so that a table change alone does not fail every waiver:
+// On another table (a board or archs row added, removed or edited: the fingerprint differs) the
+// share is held to a window instead, so that a table change alone does not fail every waiver:
 //   max_share  the share measured, rounded up to a tenth of a percent; growing past it fails.
 //   min_share  the one-row floor measured, rounded down to a hundredth of a percent: the lowest
 //              share one edit of one board row can leave, (c - c_max) / (F - c_max + F_max),
@@ -112,7 +119,7 @@ struct Window {
     const char* build_label; // NINFERNO_BUILD_ARCH_LABEL of the build recorded
     int cases;               // c
     int family_cases;        // F
-    std::uint64_t table;     // table_fingerprint of the board rows the test ran over
+    std::uint64_t table;     // table_fingerprint of the facts the test ran over
     double worst;            // the worst price ratio
     double min_share;
     double max_share;
@@ -300,9 +307,10 @@ std::vector<Row> rows_of_table() {
 
 // The identity of the table the waivers were recorded on: FNV-1a (64 bit) over every row the test
 // runs over, in order, its label and every fact of the row (all fields of GpuFactsRow but the
-// sources and the note, which are text), the floating ones printed to 17 digits. A row added,
-// removed, reordered or with any fact edited changes it; what the price law does with the rows
-// does not.
+// sources and the note, which are text), the floating ones printed to 17 digits, then every field
+// of every row of the archs table (core/arch_registry.h, generated from the same file's "archs"
+// array; its names and note are text and left out). A row of either added, removed, reordered or
+// with any fact edited changes it; what the price law does with the rows does not.
 std::uint64_t table_fingerprint(const std::vector<Row>& rows) {
     std::ostringstream text;
     text.precision(17);
@@ -313,6 +321,12 @@ std::uint64_t table_fingerprint(const std::vector<Row>& rows) {
              << '|' << r.boost_mhz << '|' << r.boost_min_mhz << '|' << r.bus_bits << '|' << r.gbps
              << '|' << r.tdp_w << '|' << r.vram_gib << '|' << r.pcie_gen << '|' << r.mma_slow << '|'
              << r.l2_mib << '|' << r.target << ';';
+    }
+    for (const arch_registry::ArchRow& a : arch_registry::kRows) {
+        text << "arch " << a.cc << '|' << a.cc_to << '|' << a.smem_per_block_optin << '|'
+             << a.smem_per_sm << '|' << a.build_smem_per_block_optin << '|' << a.build_smem_per_sm
+             << '|' << a.smem_reserved_per_block << '|' << a.max_threads_per_sm << '|'
+             << a.max_blocks_per_sm << '|' << a.registers_per_sm << ';';
     }
     std::uint64_t h = 14695981039346656037ULL;
     for (const char c : text.str()) {
