@@ -12,8 +12,8 @@ the measurements then said.
    boards. Cite the gap-map rows or committed measurements that show the gap.
 2. **Law.** The counted law that explains the current kernel's time in that regime: which term
    binds (DRAM bytes, tensor-pipe cycles, issue, latency, launch), counted from the kernel-facts
-   snapshots (`src/ops/generic/data/kernel_facts/`) and the chip facts (`src/core/data/gpu_facts.json`,
-   `src/core/data/isa_facts.json`). A gap no counted law explains yet is no proposal yet: the entry
+   snapshots (`src/ops/generic/data/kernel_facts/`) and the chip facts
+   (`src/core/data/gpu_facts.json`, `src/core/data/isa_facts.json`). A gap no counted law explains yet is no proposal yet: the entry
    records the law that is missing, and the variant waits for it.
 3. **Prediction, frozen.** The variant's time per regime cell, from the same facts. Write it as a
    range with its sources, before the micro-bench or A/B, and do not change it after a run.
@@ -34,17 +34,27 @@ the measurements then said.
 ```
 ### <id>. <name> (#issue, #PR)
 - Regime: <op, format, T band, tile, boards; gap-map rows>
-- Weight: <its share of the benchmark mix>
+- Weight: <its share of the benchmark mix, where the mix is known for it>
 - Law: <the binding term of today's kernel and its count, with the facts it reads; its residual>
 - Variant: <what changes in the kernel>
 - Prediction (frozen <date>): <time change per cell and arch, with sources>
 - Prototype: <the cheap first measurement, as a command>
-- Cost: <the tests and goldens a new route costs (the conformance point, test_route_classes,
-  invariance, the selector goldens, --build-manifest, decision_inputs)>
+- Cost: <what this variant costs beyond the cost every new route has (below)>
 - Acceptance / refutation (frozen): <bounds>
 - A/B: <boards, protocol, predicted vs measured, or "not run">
 - Decision: <kept / narrowed / removed / open>
 ```
+
+Every new route, whatever its family, costs (#619 section 4):
+- a conformance point in `test_generic_linear` or the family's `test_*_a16`;
+- a `test_route_classes` summation class, and `same_summation` / `route_is_token_invariant`
+  entries where the arithmetic differs by tile;
+- the selector goldens, regenerated on three stands per arch set;
+- `--build-manifest` and `test_prepared_rules`;
+- `decision_inputs` where it reads a device fact.
+
+A new family also costs a `Family` enum entry, which every route table parses, and a
+`route_resources` branch.
 
 ## Register
 
@@ -56,7 +66,7 @@ prediction so far.
   are those codec_traits marks `min` (Q4_K, Q5_K, Q4_1, Q5_1) or `half_min` (Q2_K).
 - Law: the ones-MMA doubles an m1 tile's tensor work: 16.7 against 8.4 cycles per counted MMA on
   the RTX 5090 (#501).
-- Variant: a plane of T x K/32 FP32 sums, written once per call by an activation pass (as the W4A8
+- Variant: a plane of T x K/G FP32 sums (G the format's group: 32, and 16 for Q2_K), written once per call by an activation pass (as the W4A8
   quantizer is). Every tile reads the plane in place of the ones-MMA, which keeps one summation
   order at every T and tile.
 - Prediction (frozen in #709's body before any run):
@@ -73,8 +83,8 @@ prediction so far.
 - Decision: open. 5a (#709, open) would take the plane only in the prefill profile's admitted cells.
 
 ### B. Blackwell MoE expert kernel at 4-8 rows (#619 step 11)
-- Regime: the routed experts on GB20x at 4 and 8 rows. Their share of DRAM time is 0.74 and 0.63,
-  against Ada's 0.91 and 0.81 (DECISIONS 65). The 5070 Ti IQ3_XXS estimate is 7-13 % slow at 2-6
+- Regime: the routed experts on GB20x at 4 and 8 rows. They run at 0.74 and 0.63 of the DRAM-bound
+  speed, against Ada's 0.91 and 0.81 (DECISIONS 65). The 5070 Ti IQ3_XXS estimate is 7-13 % slow at 2-6
   rows.
 - Law: none yet. The gap map lists MoE under "No law yet". The loss may come from the expert grid
   or from the GB20x tensor rate rather than from the kernel.
@@ -105,7 +115,7 @@ prediction so far.
   SMSP, with DRAM at 28-50 % and tensor at 25-63 %.
 - Law: the bytes one SM keeps in flight against its DRAM latency (Little's law, #690). The
   per-architecture rate and bytes-in-flight facts that `tools/bench/warp_inflight` measures count
-  it; #735 wires them in.
+  it. #735 (open, draft) is to wire them into the price.
 - Risk: the winning schedules sit at 245-255 registers, so a deeper ring spills.
 - Prototype: `rmma_kernel` m2.n4.w4x1 with ring depth 3, `route_tune --rotate` on the 4090 and
   3060 at T 24 and 32.
@@ -113,6 +123,9 @@ prediction so far.
 
 ### F. Gated gate/up twin at T = 3-4 (vec kernel)
 - Regime: gated launches at C = 4. The 3060 still loses 3-4 % there; the 5060 Ti is at parity.
+- Law: the vec kernel's bounded twin excludes gated launches (`kVecHasBoundedTwin`): they spill
+  under 72 registers. A twin needs the gate and up rows on separate warps. The gain is small, on one
+  class (SMs x clock / bandwidth ~0.17).
 - Prototype: `tools/bench/run_521_gateup.sh` (#606, not run).
 - Decision: run the kit first. Build only if the loss is above 3 % and #606's rule holds on the
   3090.
