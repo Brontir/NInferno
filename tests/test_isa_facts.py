@@ -376,9 +376,16 @@ class IsaFacts(unittest.TestCase):
         class Proc:
             def __init__(self, text, rc, pid):
                 self.text, self.returncode, self.pid = text, rc, pid
+                self.stdout = io.StringIO(text)  # read as it comes (isa_probe.Sampler)
 
             def terminate(self):
                 pass
+
+            def poll(self):
+                return self.returncode
+
+            def wait(self):
+                return self.returncode
 
             def communicate(self):
                 return self.text, None

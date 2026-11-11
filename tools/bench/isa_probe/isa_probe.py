@@ -32,9 +32,56 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
+
+
+class Lines:
+    """The lines of a text stream, read on a thread of their own as they come."""
+
+    def __init__(self, stream):
+        self.lines = []
+        self.thread = threading.Thread(target=self._read, args=(stream,), daemon=True)
+        self.thread.start()
+
+    def _read(self, stream):
+        for line in iter(stream.readline, ""):
+            self.lines.append(line.rstrip("\n"))
+
+    def rows(self, fields):
+        return [[x.strip() for x in line.split(",")] for line in list(self.lines)
+                if line.count(",") == fields - 1]
+
+
+class Sampler:
+    """`nvidia-smi QUERY -lms MS` while a run goes on, its output drained as it is written: a
+    pipe read only at the end fills (about 4 KB on Windows) and stops nvidia-smi after a few
+    samples (#741). rows() stops it and gives its rows of `fields` fields."""
+
+    def __init__(self, query, ms, argv=None):
+        self.proc = subprocess.Popen(
+            argv or ["nvidia-smi", query, "--format=csv,noheader,nounits", "-lms", str(ms)],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        self.lines = Lines(self.proc.stdout)
+
+    def rows(self, fields):
+        if self.proc.poll() is None:
+            self.proc.terminate()
+        self.proc.wait()
+        self.lines.thread.join()
+        return self.lines.rows(fields)
+
+
+def sampler(query, ms):
+    """A Sampler, or None where nvidia-smi does not start."""
+    try:
+        return Sampler(query, ms)
+    except OSError:
+        return None
+
+
 DEFAULT_TABLE = os.path.join(ROOT, "src", "core", "data", "isa_facts.json")
 DEFAULT_INPUTS = os.path.join(ROOT, "src", "core", "data", "isa_probe")
 SCHEMA = 1
@@ -678,27 +725,13 @@ def cmd_run(a):
         head.append(f"sass_per_mma {len(mmas)}")
         before = _compute_apps()
 
-        def sampler(query):
-            # nvidia-smi every 200 ms while the probe runs, or None without it.
-            try:
-                return subprocess.Popen(
-                    ["nvidia-smi", query, "--format=csv,noheader,nounits", "-lms", "200"],
-                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-            except OSError:
-                return None
-
-        def rows_of(proc, fields):
-            if proc is None:
-                return None
-            proc.terminate()
-            text, _ = proc.communicate()
-            return [[f.strip() for f in line.split(",")] for line in text.splitlines()
-                    if line.count(",") == fields - 1]
+        def rows_of(s, fields):
+            return None if s is None else s.rows(fields)
 
         # The clocks (the memory clock is the P-state's, which the device API does not give) and
-        # the compute processes, sampled through the run.
-        clocks = sampler("--query-gpu=pci.bus_id,pstate,clocks.sm,clocks.mem")
-        apps = sampler("--query-compute-apps=timestamp,gpu_bus_id,pid")
+        # the compute processes, nvidia-smi every 200 ms through the run.
+        clocks = sampler("--query-gpu=pci.bus_id,pstate,clocks.sm,clocks.mem", 200)
+        apps = sampler("--query-compute-apps=timestamp,gpu_bus_id,pid", 200)
         # The probe's stderr (CUDA errors) passes through; its stdout is kept whole, so a failed
         # or refused run still shows what it measured before stopping.
         probe = subprocess.Popen([exe], stdout=subprocess.PIPE, text=True)
