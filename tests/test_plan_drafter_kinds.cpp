@@ -93,6 +93,9 @@ void test_every_kind_carried() {
         shallow.k                = 1;
         profile.load             = {spec::LoadBound{.lanes = 2, .depth = 1},
                                     spec::LoadBound{.lanes = 3, .depth = config.k}};
+        // A table given as measured: one derived from the facts would be derived again for the
+        // mode (subject_of_mode), from the scales below.
+        profile.load_basis = "measured";
         profile.joint_scale.clear();
         profile.joint_scale[shallow.label()] = {{2, 0.5}, {3, 0.7}};
         profile.joint_scale[config.label()]  = {{2, 0.9}, {3, 0.25}, {4, 0.2}};
@@ -127,7 +130,8 @@ void test_every_kind_carried() {
                   served.config.k < rejected.k && served.tok_s > 0 && served.plain_tok_s > 0,
               "the Engine's MTP window below the pair's choice serves a measured shallower one (" +
                   served.config.label() + " for " + rejected.label() + ")");
-        profile.load = {spec::LoadBound{.lanes = 2, .depth = rejected.k}};
+        profile.load       = {spec::LoadBound{.lanes = 2, .depth = rejected.k}};
+        profile.load_basis = "measured"; // given, not derived again for the mode
         profile.joint_scale.clear();
         profile.joint_scale[rejected.label()]      = {{2, 0.3}};
         profile.joint_scale[served.config.label()] = {{2, 0.6}};

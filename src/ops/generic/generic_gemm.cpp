@@ -17,6 +17,8 @@
 #include "ops/generic/route_cost_constants.h"
 #include "ops/generic/generic_ggml_internal.h"
 #include "ops/generic/generic_schedules.h"
+#include "ops/generic/generic_i8_schedules.h"
+#include "ops/generic/generic_schedule_tables.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
 #include "ops/generic/r8_decode_table.h"
 #include "ops/generic/route_table.h"
@@ -112,66 +114,6 @@ GemmArgs weight_args(const Weight& w) {
 }
 
 namespace {
-
-// The host tables, from the lists the CUDA files instantiate (generic_schedules.h): one source,
-// so a schedule cannot be listed here and missing there, or listed in another order (#307).
-template <std::size_t N>
-constexpr bool indexed_in_order(const int (&index)[N]) {
-    for (std::size_t i = 0; i < N; ++i) {
-        if (index[i] != static_cast<int>(i)) { return false; }
-    }
-    return true;
-}
-#define NINFERNO_SCHEDULE_INDEX(i, ...) i,
-static_assert(indexed_in_order({NINFERNO_GENERIC_RMMA_SCHEDULES(NINFERNO_SCHEDULE_INDEX)}));
-static_assert(indexed_in_order({NINFERNO_GENERIC_W4A4_SCHEDULES(NINFERNO_SCHEDULE_INDEX)}));
-static_assert(indexed_in_order({NINFERNO_GENERIC_W4A8_SCHEDULES(NINFERNO_SCHEDULE_INDEX)}));
-static_assert(indexed_in_order({NINFERNO_GENERIC_R8_SCHEDULES(NINFERNO_SCHEDULE_INDEX)}));
-static_assert(indexed_in_order({NINFERNO_GENERIC_TILED_SCHEDULES(NINFERNO_SCHEDULE_INDEX)}));
-static_assert(indexed_in_order({NINFERNO_GENERIC_STAGED_SCHEDULES(NINFERNO_SCHEDULE_INDEX)}));
-#undef NINFERNO_SCHEDULE_INDEX
-
-// warps_m, warps_k, m_tiles, n_tiles, cluster.
-#define NINFERNO_RMMA_INFO(i, wm, wk, mt, nt, cl) RmmaScheduleInfo{wm, wk, mt, nt, cl},
-constexpr std::array kRmmaSchedules{NINFERNO_GENERIC_RMMA_SCHEDULES(NINFERNO_RMMA_INFO)};
-#undef NINFERNO_RMMA_INFO
-
-// block_m, block_n.
-#define NINFERNO_W4A4_INFO(i, bm, bn, wm, wn, st) W4a4ScheduleInfo{bm, bn},
-constexpr std::array kW4a4Schedules{NINFERNO_GENERIC_W4A4_SCHEDULES(NINFERNO_W4A4_INFO)};
-#undef NINFERNO_W4A4_INFO
-
-// block_m (tokens), block_n (rows), producer warps (0: every warp loads and multiplies).
-#define NINFERNO_W4A8_INFO(i, bm, bn, wm, wn, pr) W4a8ScheduleInfo{bm, bn, pr},
-constexpr std::array kW4a8Schedules{NINFERNO_GENERIC_W4A8_SCHEDULES(NINFERNO_W4A8_INFO)};
-#undef NINFERNO_W4A8_INFO
-
-// Warps per CTA, rows per warp.
-#define NINFERNO_R8_INFO(i, w, r) R8ScheduleInfo{w, r},
-constexpr std::array kR8Schedules{NINFERNO_GENERIC_R8_SCHEDULES(NINFERNO_R8_INFO)};
-#undef NINFERNO_R8_INFO
-
-// block_m (tokens), block_n (rows).
-#define NINFERNO_TILED_INFO(i, bm, bn, wm, wn, st) TiledScheduleInfo{bm, bn},
-constexpr std::array kTiledSchedules{NINFERNO_GENERIC_TILED_SCHEDULES(NINFERNO_TILED_INFO)};
-#undef NINFERNO_TILED_INFO
-
-// Rows, tokens, warps_m, warps_n, stages. 6 (48 KiB) runs two CTAs per SM, for grids of fewer
-// tiles than twice the SMs; 9 (64 KiB) two where an SM holds 128 KiB; 10-12 (144-160 KiB) only
-// where one block holds them (GA100, Orin).
-#define NINFERNO_STAGED_INFO(i, r, t, wm, wn, st) StagedScheduleInfo{r, t, wm, wn, st},
-constexpr std::array kStagedSchedules{NINFERNO_GENERIC_STAGED_SCHEDULES(NINFERNO_STAGED_INFO)};
-#undef NINFERNO_STAGED_INFO
-static_assert(kRmmaSchedules.size() == 20 && kW4a4Schedules.size() == 4 && kW4a8Schedules.size() == 6 &&
-              kR8Schedules.size() == 4 && kTiledSchedules.size() == 3 && kStagedSchedules.size() == 13);
-
-// The NVFP4 tiled schedules (generic_nvfp4_tiled.cu dispatches by classes, no list of its own):
-// classes (the register MMA's WarpsK whose order it reproduces), block_m (tokens), block_n (rows).
-constexpr std::array<Nvfp4TiledScheduleInfo, 3> kNvfp4TiledSchedules{{
-    {1, 64, 128},
-    {4, 64, 128},
-    {8, 64, 128},
-}};
 
 int run_values(WeightCodec codec) {
     switch (codec) {
@@ -1293,7 +1235,6 @@ int k_multiple(WeightCodec codec) {
     }
 }
 
-int i8_bits(QType q) { return q == QType::Q5_G64_FP16 ? 5 : q == QType::Q6_G64_FP16 ? 6 : 4; }
 
 std::optional<ggml_mmq::Type> mmq_type(const Weight& w) { return format_facts(w.qtype).mmq; }
 
@@ -1396,75 +1337,6 @@ double dram_bytes_per_sm_cycle() {
     });
 }
 
-bool rmma_variant_occupancy_rule(std::int64_t grid_ctas, int sms, int variant_ctas,
-                                 int plain_ctas) {
-    if (variant_ctas <= 0 || plain_ctas <= 0 || sms <= 0) return false;
-    if (variant_ctas >= plain_ctas) return true;
-    const auto waves = [&](int resident) {
-        const std::int64_t wave = static_cast<std::int64_t>(resident) * sms;
-        return (grid_ctas + wave - 1) / wave;
-    };
-    return waves(variant_ctas) <= waves(plain_ctas);
-}
-
-bool rmma_wide_rule(double bytes_per_sm_cycle, int compute_capability, bool occupancy,
-                    std::size_t wide_local_bytes, std::size_t plain_local_bytes) {
-    return bytes_per_sm_cycle > 0.0 && bytes_per_sm_cycle < kRmmaWideBytes &&
-           compute_capability >= 75 && occupancy &&
-           wide_local_bytes <= plain_local_bytes + kRmmaWideSpillSlack;
-}
-
-bool operator==(Route a, Route b) { return a.family == b.family && a.schedule == b.schedule; }
-
-int rmma_schedule_count() { return static_cast<int>(kRmmaSchedules.size()); }
-RmmaScheduleInfo rmma_schedule_info(int index) {
-    return kRmmaSchedules.at(static_cast<std::size_t>(index));
-}
-bool rmma_schedule_launchable(int index) {
-#ifdef NINFERNO_WITHOUT_NVFP4
-    return rmma_schedule_info(index).cluster == 1;
-#else
-    return index >= 0 && index < rmma_schedule_count();
-#endif
-}
-int w4a4_schedule_count() {
-#ifdef NINFERNO_WITHOUT_NVFP4
-    // Below sm_120a the W4A4 kernel TU is not compiled (kind::mxf4nvf4 is Blackwell-only), so no
-    // W4A4 route is offered, admitted or run; NVFP4 weights take the register-MMA A16 path. The
-    // names still parse (parse_route), so one route table serves every build.
-    return 0;
-#else
-    return static_cast<int>(kW4a4Schedules.size());
-#endif
-}
-
-int w4a4_schedule_names() { return static_cast<int>(kW4a4Schedules.size()); }
-W4a4ScheduleInfo w4a4_schedule_info(int index) {
-    return kW4a4Schedules.at(static_cast<std::size_t>(index));
-}
-int w4a8_schedule_count() { return static_cast<int>(kW4a8Schedules.size()); }
-W4a8ScheduleInfo w4a8_schedule_info(int index) {
-    return kW4a8Schedules.at(static_cast<std::size_t>(index));
-}
-
-bool w4a8_fits(int schedule, QType qtype) {
-    const auto s = w4a8_schedule_info(schedule);
-    // Two buffers of int8 codes and two floats per 32-value block for block_m + block_n rows, and
-    // Q2_K's two mins per block and weight row (W4a8BufferOf::kSmem); the producer ring is sized
-    // for 99 KiB.
-    if (s.producers > 0) return kMaxSharedBytesPerBlock >= 99 * 1024;
-    const int half_min = qtype == QType::GGML_Q2_K ? s.block_n * 32 : 0;
-    return 2 * ((s.block_m + s.block_n) * (128 + 32) + half_min) <=
-           static_cast<int>(kMaxSharedBytesPerBlock);
-}
-int r8_schedule_count() { return static_cast<int>(kR8Schedules.size()); }
-R8ScheduleInfo r8_schedule_info(int index) {
-    return kR8Schedules.at(static_cast<std::size_t>(index));
-}
-
-bool r8_supports(QType qtype) { return admits(format_traits(qtype).r8, kNativeNvfp4); }
-
-std::int32_t r8_k_values(QType qtype) { return format_traits(qtype).r8_k_values; }
 
 bool r8_stage_grid() {
     try {
@@ -1505,15 +1377,6 @@ bool r8_fits(QType qtype, std::int32_t k, std::int32_t tokens) {
            kStaticSharedBytesPerBlock;
 }
 
-bool r8_verify_supports(QType qtype) { return format_traits(qtype).r8_verify; }
-
-std::int32_t r8_verify_widest(QType qtype) {
-    return qtype == QType::Q8_G32_FP16 ? kR8VerifyTokens : 4;
-}
-
-bool r8_verify_compiled(QType qtype) {
-    return r8_supports(qtype) && format_traits(qtype).r8_prequant;
-}
 
 // Q4_0 at the verify widths (T = 2..4): R8 pays on a large matrix and loses on a small one
 // (A B B A, C = 4: Gemma 4 31B QAT, every dense matrix >= 44M values, RTX 4090 +15.7 %,
@@ -1546,27 +1409,7 @@ bool r8_verify_takes(QType qtype) {
     } catch (const std::exception&) { return false; }
 }
 
-// K for the W4A8 tiles: whole 128-value tiles, or for a format of 32-value blocks any whole number
-// of blocks, the last tile's blocks past K zero (weights not loaded, activation quantized as
-// zeros). Gemma 4 26B's shared MLP down (K 2112) ran the BF16 register MMA before: RTX 5090 nsys,
-// chunk 1024, 114 us a call against 102 us for the twice-as-large gate/up on W4A8.
-bool w4a8_k_admits(QType qtype, std::int32_t k) {
-    if (k <= 0) return false;
-    if (k % 128 == 0) return true;
-    const std::int32_t tail = format_traits(qtype).w4a8_tail_k;
-    return tail != 0 && k % tail == 0;
-}
 
-bool w4a8_supports(QType qtype) { return admits(format_traits(qtype).w4a8, kNativeNvfp4); }
-int nvfp4_tiled_schedule_count() { return static_cast<int>(kNvfp4TiledSchedules.size()); }
-Nvfp4TiledScheduleInfo nvfp4_tiled_schedule_info(int index) {
-    return kNvfp4TiledSchedules.at(static_cast<std::size_t>(index));
-}
-int tiled_schedule_count() { return static_cast<int>(kTiledSchedules.size()); }
-TiledScheduleInfo tiled_schedule_info(int index) {
-    return kTiledSchedules.at(static_cast<std::size_t>(index));
-}
-int staged_schedule_count() { return static_cast<int>(kStagedSchedules.size()); }
 // The build admits a tile its architecture holds; an sm_80 build run on a later 99 KiB part
 // (forward-compatible SASS) must still turn the 144-160 KiB tiles away, so the device decides too.
 bool staged_device_fits(int schedule) {
@@ -1580,118 +1423,7 @@ bool staged_device_fits(int schedule) {
     }
     return limit == 0 || bytes <= limit;
 }
-StagedScheduleInfo staged_schedule_info(int index) {
-    return kStagedSchedules.at(static_cast<std::size_t>(index));
-}
 
-std::string route_name(Route route) {
-    switch (route.family) {
-    case Family::Scalar:
-        return "scalar";
-    case Family::RegisterMma: {
-        const auto s = rmma_schedule_info(route.schedule);
-        return "rmma.m" + std::to_string(s.m_tiles) + ".n" + std::to_string(s.n_tiles) + ".w" +
-               std::to_string(s.warps_m) + "x" + std::to_string(s.warps_k) +
-               (s.cluster > 1 ? ".c" + std::to_string(s.cluster) : std::string());
-    }
-    case Family::W4a4Mma: {
-        const auto s = w4a4_schedule_info(route.schedule);
-        return "w4a4." + std::to_string(s.block_m) + "x" + std::to_string(s.block_n);
-    }
-    case Family::TiledMma: {
-        const auto s = tiled_schedule_info(route.schedule);
-        return "tiled." + std::to_string(s.block_m) + "x" + std::to_string(s.block_n);
-    }
-    case Family::W4a8Mma: {
-        const auto s = w4a8_schedule_info(route.schedule);
-        return (s.producers > 0 ? "w4a8ws." : "w4a8.") + std::to_string(s.block_m) + "x" +
-               std::to_string(s.block_n) +
-               (s.producers > 0 ? ".p" + std::to_string(s.producers) : std::string());
-    }
-    case Family::StagedMma: {
-        const auto s = staged_schedule_info(route.schedule);
-        return "staged." + std::to_string(s.rows) + "x" + std::to_string(s.tokens) + ".w" +
-               std::to_string(s.warps_m) + "x" + std::to_string(s.warps_n) + ".s" +
-               std::to_string(s.stages);
-    }
-    case Family::Nvfp4TiledMma: {
-        const auto s = nvfp4_tiled_schedule_info(route.schedule);
-        return "nvfp4t.c" + std::to_string(s.classes) + "." + std::to_string(s.block_m) + "x" +
-               std::to_string(s.block_n);
-    }
-    case Family::R8Mma: {
-        const auto s = r8_schedule_info(route.schedule);
-        return "r8.w" + std::to_string(s.warps) + "r" + std::to_string(s.rows);
-    }
-    case Family::GgmlMmq:
-        return "ggml_mmq";
-    case Family::GgmlVec:
-        return "ggml_vec";
-    case Family::I8Mma: {
-        const auto s = i8_schedule_info(route.schedule);
-        return "i8." + std::to_string(s.block_m) + "x" + std::to_string(s.block_n);
-    }
-    }
-    return "unknown";
-}
-
-std::string_view family_name(Family family) noexcept {
-    switch (family) {
-    case Family::RegisterMma: return "rmma";
-    case Family::Scalar: return "scalar";
-    case Family::W4a4Mma: return "w4a4";
-    case Family::TiledMma: return "tiled";
-    case Family::W4a8Mma: return "w4a8";
-    case Family::StagedMma: return "staged";
-    case Family::Nvfp4TiledMma: return "nvfp4t";
-    case Family::R8Mma: return "r8";
-    case Family::GgmlMmq: return "ggml_mmq";
-    case Family::GgmlVec: return "ggml_vec";
-    case Family::I8Mma: return "i8";
-    }
-    return "unknown";
-}
-
-std::optional<Route> parse_route(std::string_view name) {
-    if (name == "scalar") return Route{Family::Scalar, 0};
-    if (name == "ggml_mmq") return Route{Family::GgmlMmq, 0};
-    if (name == "ggml_vec") return Route{Family::GgmlVec, 0};
-    for (int i = 0; i < rmma_schedule_count(); ++i) {
-        const Route r{Family::RegisterMma, static_cast<std::uint8_t>(i)};
-        if (route_name(r) == name) return r;
-    }
-    // Every W4A4 name, compiled or not: a shipped Blackwell table names them, and route_admits
-    // refuses them on a build without the kernels.
-    for (int i = 0; i < w4a4_schedule_names(); ++i) {
-        const Route r{Family::W4a4Mma, static_cast<std::uint8_t>(i)};
-        if (route_name(r) == name) return r;
-    }
-    for (int i = 0; i < tiled_schedule_count(); ++i) {
-        const Route r{Family::TiledMma, static_cast<std::uint8_t>(i)};
-        if (route_name(r) == name) return r;
-    }
-    for (int i = 0; i < w4a8_schedule_count(); ++i) {
-        const Route r{Family::W4a8Mma, static_cast<std::uint8_t>(i)};
-        if (route_name(r) == name) return r;
-    }
-    for (int i = 0; i < staged_schedule_count(); ++i) {
-        const Route r{Family::StagedMma, static_cast<std::uint8_t>(i)};
-        if (route_name(r) == name) return r;
-    }
-    for (int i = 0; i < nvfp4_tiled_schedule_count(); ++i) {
-        const Route r{Family::Nvfp4TiledMma, static_cast<std::uint8_t>(i)};
-        if (route_name(r) == name) return r;
-    }
-    for (int i = 0; i < r8_schedule_count(); ++i) {
-        const Route r{Family::R8Mma, static_cast<std::uint8_t>(i)};
-        if (route_name(r) == name) return r;
-    }
-    for (int i = 0; i < i8_schedule_count(); ++i) {
-        const Route r{Family::I8Mma, static_cast<std::uint8_t>(i)};
-        if (route_name(r) == name) return r;
-    }
-    return std::nullopt;
-}
 
 WeightCodec codec_of(const Weight& weight) {
     if (const auto codec = format_facts(weight.qtype).codec) return *codec;
@@ -2437,35 +2169,6 @@ Route r8_rules_route(const Problem& problem, std::int32_t tokens) {
     return Route{Family::R8Mma, static_cast<std::uint8_t>(rules_r8(problem, tokens))};
 }
 
-// The I8 tiles (generic_i8.cu): 256x128 (8 warps), 128x128 and 128x64 (4 and 2 warps), four
-// stages each. All give the same bytes.
-constexpr I8ScheduleInfo kI8Schedules[] = {
-    {256, 128, 256, 4, 4 * (256 * 64 + 128 * 32 + 256 * 8) + 2 * 128 * 16},
-    {128, 128, 128, 4, 4 * (128 * 64 + 128 * 32 + 128 * 8) + 2 * 128 * 16},
-    {128, 64, 64, 4, 4 * (128 * 64 + 64 * 32 + 128 * 8) + 2 * 64 * 16},
-};
-int i8_schedule_count() { return static_cast<int>(std::size(kI8Schedules)); }
-
-// Each I8 tile's fraction of the int8 peak at a full grid (stage-1 probe, RTX 3090, 4090 and
-// 5070 Ti, 27B shapes): 256x128 0.53, 128x128 0.46, 128x64 0.42.
-constexpr auto kI8Eff = route_cost::kI8Efficiency;
-static_assert(kI8Eff.values.size() == std::size(kI8Schedules));
-bool i8_fits(int schedule, QType qtype) {
-    // The high plane takes 0 / 8 / 16 bytes a group and weight row in every stage; a tile runs
-    // three stages where four do not fit (generic_i8.cu kI8Stages).
-    const auto s       = i8_schedule_info(schedule);
-    const int high     = i8_bits(qtype) == 4 ? 0 : i8_bits(qtype) == 5 ? 8 : 16;
-    const auto ring    = static_cast<std::size_t>(2 * s.block_n * 16);
-    const auto stage   = (s.smem_bytes - ring) / static_cast<std::size_t>(s.stages) +
-                       static_cast<std::size_t>(s.block_n) * high;
-    return 3 * stage + ring <= kMaxSharedBytesPerBlock;
-}
-I8ScheduleInfo i8_schedule_info(int index) {
-    if (index < 0 || index >= i8_schedule_count()) {
-        throw std::out_of_range("generic I8: schedule index");
-    }
-    return kI8Schedules[index];
-}
 
 int i8_pick(const Problem& problem, QType qtype, std::int32_t tokens) {
     const double sets = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;

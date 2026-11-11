@@ -157,7 +157,7 @@ struct SpeculationReport {
     std::string basis = "none";
     std::vector<std::int32_t> depths;  // the depths the engine captures
     std::vector<spec::LoadBound> load; // the profile's load table (after the stand-in cap)
-    std::string load_basis;            // measured | none
+    std::string load_basis;            // measured | facts | literal | none
     // The depth a step of C lanes runs at under the load table (0: plain), C the asked concurrency.
     std::int32_t depth_at_concurrency = 0;
     std::vector<SpeculationFallbackStep> fallbacks;
