@@ -83,11 +83,11 @@ constexpr bool same_board_facts(const Board& a, const Board& b) {
 // A device's board against its id's registry row: where they agree, a route table names the board
 // by its id (route_table.cpp write_route_table; the shipped-boards test asks the same). The DRAM
 // bandwidth reaches the two sides by different arithmetic (board_of from the memory clock in kHz
-// of half the data rate, the row from bus * rate / 8), which differs in the last bit on four rows (the A100 PCIe
-// 80GB, the H100 NVL, the A30, the A800 PCIe 80GB), so it and the L2 are compared to a part in
-// 10^4; a twin on other memory differs by percents (the RTX 4070 with GDDR6: 20 against 21 Gbps).
-// A row that gives no L2 (0) agrees only with a device that reports none, so a real card of such a
-// row (the H100 NVL, the A30) is written by its facts until its row gives the L2.
+// of half the data rate, the row from bus * rate / 8), which differs in the last bit on four rows
+// (the A100 PCIe 80GB, the H100 NVL, the A30, the A800 PCIe 80GB), so it and the L2 are compared to
+// a part in 10^4; a twin on other memory differs by percents (the RTX 4070 with GDDR6: 20 against
+// 21 Gbps). A row that gives no L2 (0) agrees only with a device that reports none, so a real card
+// of such a row (the H100 NVL, the A30) is written by its facts until its row gives the L2.
 constexpr bool row_board_facts(const Board& a, const Board& b) {
     const auto close = [](double x, double y) {
         return (x > y ? x - y : y - x) <= 1e-4 * (x > y ? x : y);
