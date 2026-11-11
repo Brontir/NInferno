@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <cstdio>
 #include <cstdlib>
 #include <iterator>
 #include <mutex>
@@ -857,6 +858,32 @@ PreparedRequest GenerationService::prepare_impl(const GenerationRequest& request
             biases.push_back(
                 ninferno::LogitBias{.token = banned, .bias = -ninferno::kLogitBiasLimit});
         }
+        // tool_choice none on a format whose call is a message of its own: the header of that
+        // message is closed by a constraint (a bias cannot, " to" is a word). A request with a
+        // constraint of its own keeps it (#546). Under ignore_eos it is not installed: a
+        // constrained output stops at the checkpoint's stop tokens (Engine::submit), which
+        // ignore_eos asks not to do; the cut alone answers there.
+        if (!prompt.summary().refusal_tag.empty() && !request.output_constraint &&
+            !request.ignore_eos) {
+            OutputConstraintRequest steer;
+            steer.kind       = ninferno::OutputConstraintKind::StructuralTag;
+            steer.definition = prompt.summary().refusal_tag;
+            steer.param      = "tool_choice";
+            // The tag spells the header the output begins with (#578): the matcher reads it
+            // instead of dropping it, so a recipient is refused at its first token.
+            steer.reads_answer_header = true;
+            try {
+                request_options.constraint.compiled = compile_output_constraint(
+                    steer, prompt.summary().starts_in_reasoning,
+                    request_options.output.raw || request_options.output.preserve_special_tokens);
+                prepared.steer_constraint = request_options.constraint.compiled != nullptr;
+            } catch (const ApiException& exception) {
+                // A plain none request never fails for its steer: the cut alone answers.
+                std::fprintf(stderr, "[serve] tool_choice none steer not applied: %s\n",
+                             exception.what());
+            }
+            check_preparation_control(prepared.lifetime->deadline, is_cancelled);
+        }
         // A budget applies where the output thinks: from the prompt's start, or from the opener
         // the model writes itself (Gemma 4). --default-thinking-budget applies where the template
         // can end thinking early; a budget the request itself gives on a template that cannot is
@@ -1006,6 +1033,7 @@ GenerationService::compile_output_constraint(const OutputConstraintRequest& cons
     spec.answer_schema          = constraint.answer_schema;
     spec.follows_reasoning      = follows_reasoning;
     spec.special_tokens_visible = special_tokens_visible;
+    spec.reads_answer_header    = constraint.reads_answer_header;
     try {
         return engine_->compile_output_constraint(spec);
     } catch (const ninferno::OutputConstraintError& exception) {
@@ -1089,7 +1117,12 @@ GenerationOutcome GenerationService::run(PreparedRequest& prepared, const Stream
         error.message += numerical_failure_context(load_summary());
         throw ApiException(std::move(error));
     }
-    if (result.constraint.violated) {
+    if (result.constraint.violated && prepared.steer_constraint) {
+        // The header steer is the server's, not the client's: the output stands, and a call the
+        // model wrote past it is cut as without the steer.
+        std::fprintf(stderr, "[serve] tool_choice none steer not enforced: %s\n",
+                     result.constraint.violation.c_str());
+    } else if (result.constraint.violated) {
         // Never present unenforced output as conforming.
         ApiError error;
         error.status  = 500;
