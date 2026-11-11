@@ -23,9 +23,21 @@ configure_file("${CMAKE_CURRENT_LIST_DIR}/embedded_kernel_facts.h.in"
   "${CMAKE_CURRENT_BINARY_DIR}/generated/ops/generic/embedded_kernel_facts.h" @ONLY)
 target_include_directories(ninferno_ops PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
+# The host part of the selector, with no CUDA runtime (#620 step 11): the kernel-facts snapshots'
+# reader and the route names, schedule accessors and format admission that read no device. ninferno_ops
+# links it PUBLIC; the shared-ops test library takes it whole (tests/cmake/NInfernoTests.cmake).
+add_library(ninferno_ops_host STATIC
+  "${CMAKE_CURRENT_LIST_DIR}/kernel_facts.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_routes.cpp")
+ninferno_internal_includes(ninferno_ops_host)
+target_include_directories(ninferno_ops_host PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_compile_definitions(ninferno_ops_host PRIVATE NINFERNO_HOST_ONLY)
+target_link_libraries(ninferno_ops_host PUBLIC ninferno_core_host)
+target_link_libraries(ninferno_ops PUBLIC ninferno_ops_host)
+
 ninferno_target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/generic_gemm.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/kernel_facts.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/kernel_facts_device.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_coverage.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_workspace.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_cost.cpp"
@@ -37,6 +49,7 @@ ninferno_target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/route_authorities.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/route_tune_tool.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/selector_facts.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/price_tool.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_i8.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_gemm_bf16.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_gemm_fp8.cu"
@@ -104,6 +117,17 @@ set_source_files_properties("${CMAKE_CURRENT_LIST_DIR}/build_manifest.cpp"
   TARGET_DIRECTORY ninferno_ops
   PROPERTIES COMPILE_DEFINITIONS
     "NINFERNO_CUDA_COMPILER=\"${CMAKE_CUDA_COMPILER_ID} ${CMAKE_CUDA_COMPILER_VERSION}\";NINFERNO_CXX_COMPILER=\"${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}\";NINFERNO_MANIFEST_CUDA_ARCHITECTURES=\"${ninferno_manifest_archs}\"")
+
+# The files that compute the kernel roofline's price on the host (kernel_roofline.h: the selector's
+# generic_cost.cpp and the price tool): no multiply-add is fused there, so the price is the same
+# bits on every host and build set, which the golden test (test_kernel_roofline.cpp) compares
+# exactly. (The baseline x86-64 target has no FMA; this keeps it so under -march or on aarch64.)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  set_property(SOURCE "${CMAKE_CURRENT_LIST_DIR}/generic_cost.cpp"
+                      "${CMAKE_CURRENT_LIST_DIR}/price_tool.cpp"
+    TARGET_DIRECTORY ninferno_ops
+    APPEND PROPERTY COMPILE_OPTIONS "-ffp-contract=off")
+endif()
 
 # CUTLASS's headers for the Volta prefill GEMM, on the sm_70 tree alone (CMakeLists.txt).
 if(NINFERNO_CUTLASS_INCLUDE)

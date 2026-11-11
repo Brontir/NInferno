@@ -773,7 +773,7 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
                               : format == &formats[3] ? QType::GGML_Q6_K
                               : format == &formats[4] ? QType::GGML_IQ4_XS
                                                       : QType::GGML_Q4_1;
-    double clocks = 0, bytes = 0;
+    double clocks = 0, bytes = 0, launch_s = 0;
     // A linear of a format not read takes the share (the dense int8 prefill rate on its flops) beside
     // the read ones' tiles: one such tensor no longer drops the whole file's tiles for the share
     // (Qwen3.8 27B UD-Q6_K, two IQ4_NL ffn_gate of 400 linears: 3975 tokens/s on the RTX 4090 against
@@ -835,28 +835,50 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         // format: its tile's, Q3_K .. Q4_1 of `formats`).
         const int widest = mmq_columns::widest_tile(
             l.format.empty() ? label_qtype : qtype_of_name(l.format), card.major, card.minor);
+        // One grid's shape on this card: what a generation with a launch law prices the widths by
+        // (core/mmq_columns.h width_cost, the kernel's own ranking).
+        const mmq_columns::LaunchFacts facts{static_cast<int>(n), static_cast<int>(l.k), card.sms,
+                                             card.clock_hz, card.dram_bytes_per_s};
+        const MmqLaunchLaw* law = mmq_columns::launch_law(card.major, card.minor, measured_format);
         for (double done = 0; done < tokens; done += kMmqSliceTokens) {
             const double t = std::min(kMmqSliceTokens, tokens - done);
             // The column tile the kernel's table takes (core/mmq_columns.h).
             const int width      = mmq_columns::pick(static_cast<int>(t), card.major, card.minor,
-                                                     measured_format, widest);
+                                                     measured_format, widest, facts);
             const double columns = width;
-            const double tiles = std::ceil(n / kMmqTile) * std::ceil(t / columns);
-            const double waves = std::ceil(tiles / sms);
-            const double k_step =
-                l.k * step *
-                mmq_columns::step_share(
-                    width, mmq_columns::tile_fixed(card.major, card.minor, measured_format));
-            if (100 * tiles >= 90 * sms * waves) {
-                clocks += grids * l.per_token * waves * (cost->c0 + k_step);
-            } else { // stream-k: the SMs share the tiles' K steps; the fixup adds the split tiles
-                clocks += grids * l.per_token * (cost->c0 + tiles * k_step / sms);
-                bytes += grids * l.per_token * sms * kMmqTile * columns * 4 * 2;
+            if (law != nullptr && mmq_columns::priced(facts)) {
+                // The launch the kernel runs (DECISIONS 78): its longest CTA's units at the
+                // format's 128-column step scaled by the law's unit share, the fixup's bytes and
+                // its launch where it splits tiles.
+                const mmq_columns::ColumnLaunch launch = mmq_columns::launch_of(
+                    facts.rows, facts.k, static_cast<int>(t), width, card.sms);
+                const double waves = launch.split ? 1.0 : std::ceil(launch.tiles / sms);
+                clocks += grids * l.per_token *
+                          (cost->c0 * waves + launch.units * mmq_columns::kUnitK * step *
+                                                  mmq_columns::unit_share(launch, *law));
+                if (launch.fixup) {
+                    bytes += grids * l.per_token * mmq_columns::fixup_bytes(launch);
+                    launch_s += grids * l.per_token * law->launch_seconds;
+                }
+            } else {
+                const double tiles = std::ceil(n / kMmqTile) * std::ceil(t / columns);
+                const double waves = std::ceil(tiles / sms);
+                const double k_step =
+                    l.k * step *
+                    mmq_columns::step_share(
+                        width, mmq_columns::tile_fixed(card.major, card.minor, measured_format));
+                if (100 * tiles >= 90 * sms * waves) {
+                    clocks += grids * l.per_token * waves * (cost->c0 + k_step);
+                } else { // stream-k: the SMs share the tiles' K steps; the fixup adds the split
+                         // tiles
+                    clocks += grids * l.per_token * (cost->c0 + tiles * k_step / sms);
+                    bytes += grids * l.per_token * sms * kMmqTile * columns * 4 * 2;
+                }
             }
             bytes += l.per_token * t * (grids * l.k * kMmqInputBytes + l.n * kMmqOutputBytes + n * kMmqWrittenBytes);
         }
     }
-    return with_unread(clocks / card.clock_hz + bytes / card.dram_bytes_per_s);
+    return with_unread(clocks / card.clock_hz + bytes / card.dram_bytes_per_s + launch_s);
 }
 
 } // namespace

@@ -2,7 +2,7 @@ add_library(ninferno_linear_add_test_support STATIC
   "${CMAKE_CURRENT_LIST_DIR}/linear_add_test_common.cpp")
 ninferno_test_includes(ninferno_linear_add_test_support)
 ninferno_op_oracle_options(ninferno_linear_add_test_support)
-ninferno_link_ops(ninferno_linear_add_test_support PUBLIC)
+target_link_libraries(ninferno_linear_add_test_support PUBLIC ninferno::ops)
 
 ninferno_add_op_test(ninferno_linear_add_q4_a16_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_q4_a16.cpp"

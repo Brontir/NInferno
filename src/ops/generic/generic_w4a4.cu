@@ -12,7 +12,7 @@ namespace ninferno::ops::detail::generic {
 namespace {
 
 // NINFERNO_GENERIC_W4A4_SCHEDULES: ops/generic/generic_schedules.h (one list for the
-// instantiations here and the host table in generic_gemm.cpp).
+// instantiations here and the host table in generic_schedule_tables.h).
 
 template <class S, Epilogue E>
 void launch_schedule(const GemmArgs& args, W4a4Activation act, cudaStream_t stream) {
