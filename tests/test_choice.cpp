@@ -52,14 +52,20 @@ static_assert(pick(144, 8, 9, true, 128, k4096) == 80 && pick(192, 8, 9, true, 1
               pick(224, 8, 9, true, 128, k4096) == 128 && pick(16, 8, 9, true, 128, k4096) == 16);
 // Turing takes the cheapest launch (DECISIONS 77): at 105 and 121 columns two 64-column tiles (64
 // CTAs, a tile a CTA on 68 SMs) where one 128-column tile runs stream-k with a fixup; then 80, 96
-// and 128 as their two tiles cover the columns, 80 and 96 again at three tiles of 313 and four of
-// 377 columns (a tile a CTA, where 128's three tiles run stream-k).
+// and 128 as their two tiles cover the columns, 80 and 96 again at four tiles of 313 and 377
+// columns (128 CTAs, 94 % of two waves, where 128's three tiles, 96 CTAs, run stream-k).
 static_assert(pick(105, 7, 5, true, 128, k4096) == 64 && pick(121, 7, 5, true, 128, k4096) == 64 &&
               pick(137, 7, 5, true, 128, k4096) == 80 && pick(153, 7, 5, true, 128, k4096) == 80 &&
               pick(169, 7, 5, true, 128, k4096) == 96 && pick(185, 7, 5, true, 128, k4096) == 96 &&
               pick(201, 7, 5, true, 128, k4096) == 128 &&
               pick(249, 7, 5, true, 128, k4096) == 128 && pick(313, 7, 5, true, 128, k4096) == 80 &&
               pick(377, 7, 5, true, 128, k4096) == 96);
+// The 12288-row linears the same at 121 and 201 columns (192 CTAs, 94 % of three waves, against 96
+// stream-k ones); at 441 columns 64 (seven tiles, 672 CTAs in ten waves, 99 %).
+static_assert(pick(121, 7, 5, true, 128, k12288) == 64 &&
+              pick(201, 7, 5, true, 128, k12288) == 128 &&
+              pick(441, 7, 5, true, 128, k12288) == 64);
+static_assert(pick(121, 7, 5, false, 128, k4096) == 128);
 // A format the grids did not run keeps the fewest tiles on every card
 // (mmq_columns::work_tiles_format).
 static_assert(pick(144, 8, 6, false, 128, k4096) == 128 &&

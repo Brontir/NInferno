@@ -31,7 +31,9 @@ grid     reads the per-width files of `measure` (label "J<w>"; one file per visi
          (information), the f buckets (one table of picks each, with the sizes that decide each edge),
          the regret per bucket and at f 0.20 (a report), and the verdict of the criteria that were
          fixed before the run (CRITERIA below). The script measures every width twice, 16..128 then
-         128..16, so a drift in time does not line up with J.
+         128..16, so a drift in time does not line up with J. Last, the grid read with the launch
+         law of DECISIONS 77 (THE LAUNCH LAW below): with the tree's constants (no refit) and
+         refitted, the law's pick per size beside the measured best, with each linear's launch mode.
 ab       reads files labelled old/new (the same sizes, the same number of visits at every size, the
          whole mix) and prints the per-size change (medians with the range of the visits) beside the
          predicted range, the mismatch count, and the mix change beside its predicted range (the
@@ -652,9 +654,9 @@ LAW_DRAM_BYTES_PER_S = 616e9
 LAW_LINEARS = [(5120, 4096), (1024, 4096), (4096, 4096), (12288, 4096), (12288, 4096), (4096, 12288)]
 LAW_LAYERS = 36
 # kTuringMmqLaw (MEASURED; core/generation.h names the source of each value)
-LAW_UNIT_CLOCKS = {16: 0.0, 32: 0.0, 64: 0.0, 80: 0.0, 96: 0.0, 128: 0.0}
-LAW_STREAM_K_UNIT = 1.0
-LAW_LAUNCH_S = 0.0
+LAW_UNIT_CLOCKS = {16: 5256.0, 32: 7047.0, 64: 9698.0, 80: 11170.0, 96: 13134.0, 128: 17920.0}
+LAW_STREAM_K_UNIT = 1.18
+LAW_LAUNCH_S = 3.3e-6
 LAW_CELL_TOL = 1.0  # percent, a priori: a cell predicted within this of its median (the run drift is 0-0.9 %)
 
 
@@ -666,12 +668,13 @@ def launch_of(rows: int, k: int, cols: int, j: int, sms: int = LAW_SMS) -> dict:
     waves = -(-tiles // sms)
     if 100 * tiles // (sms * waves) >= 90:
         return {"tiles": tiles, "blocks": tiles, "units": waves * steps, "split": False, "fixup": False,
-                "partials": 0}
+                "partials": 0, "split_tiles": 0}
     work = tiles * steps
     blocks = min(sms, work)
-    partials = sum(1 for b in range(1, blocks) if b * work // blocks % steps)
+    ends = [b * work // blocks for b in range(1, blocks)]
+    inside = [e for e in ends if e % steps]
     return {"tiles": tiles, "blocks": blocks, "units": -(-work // blocks), "split": True,
-            "fixup": tiles % blocks != 0, "partials": partials}
+            "fixup": tiles % blocks != 0, "partials": len(inside), "split_tiles": len({e // steps for e in inside})}
 
 
 def law_seconds(rows: int, k: int, cols: int, j: int) -> float | None:
@@ -682,7 +685,7 @@ def law_seconds(rows: int, k: int, cols: int, j: int) -> float | None:
     unit = LAW_UNIT_CLOCKS[j] * (LAW_STREAM_K_UNIT if lo["split"] else 1.0) / LAW_CLOCK_HZ
     s = lo["units"] * unit
     if lo["fixup"]:
-        s += 4.0 * lo["partials"] * 128 * j * 4 / LAW_DRAM_BYTES_PER_S + LAW_LAUNCH_S
+        s += (lo["partials"] + 2.0 * lo["split_tiles"]) * 128 * j * 4 / LAW_DRAM_BYTES_PER_S + LAW_LAUNCH_S
     return s
 
 

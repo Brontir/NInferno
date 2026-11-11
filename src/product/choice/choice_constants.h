@@ -443,7 +443,10 @@ inline constexpr TileCost kTileCost[] = {
 // Ada: RTX 4070 Ti and 4090, GB20x: RTX 5090) 16, 32, 64, 80, 96 or 128 with the least work. A J-column tile's K step is
 // mmq_columns::step_share(J, mmq_tile_fixed) = f + (1 - f) J / 128 of a 128-column one: f = 0.43
 // (the RTX 4060 Ti's 64-column Q4_K tiles: 0.716) where the row has none of its own, 0.20 on GA10x
-// and Ada, 0.10 on GB20x (DECISIONS 74).
+// and Ada, 0.10 on GB20x (DECISIONS 74). On Turing (the RTX 2080 Ti's grid, DECISIONS 77) the
+// same widths take the launch they run: the longest CTA's units at the 128-column K step x the
+// law's unit share (mmq_columns::unit_share), and where the launch splits tiles the fixup's bytes
+// and its launch (the c1 above stay the census's).
 // clang-format on
 struct MmqTileCost {
     std::string_view generation;

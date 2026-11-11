@@ -85,13 +85,14 @@ inline constexpr double kTileFixed      = 0.43;
 inline constexpr int kUnitK = 256;
 
 struct ColumnLaunch {
-    int j        = 0;
-    int tiles    = 0;
-    int blocks   = 0;     // CTAs
-    int units    = 0;     // on the longest CTA
-    bool split   = false; // stream-k: the CTAs share the tiles' units (else a tile a CTA)
-    bool fixup   = false; // the fixup kernel runs (the CTAs do not divide the tiles)
-    int partials = 0;     // CTAs whose range ends inside a tile: the partial tiles it adds
+    int j           = 0;
+    int tiles       = 0;
+    int blocks      = 0;     // CTAs
+    int units       = 0;     // on the longest CTA
+    bool split      = false; // stream-k: the CTAs share the tiles' units (else a tile a CTA)
+    bool fixup      = false; // the fixup kernel runs (the CTAs do not divide the tiles)
+    int partials    = 0;     // CTAs whose range ends inside a tile: the partial tiles it adds
+    int split_tiles = 0;     // the tiles those ranges end in: the output tiles it adds them to
 };
 
 // ggml's partition: CTA b takes units [b W / B, (b + 1) W / B) of the W units, rounded down to the
@@ -115,16 +116,24 @@ struct ColumnLaunch {
     l.units              = static_cast<int>((work + l.blocks - 1) / l.blocks);
     l.split              = true;
     l.fixup              = l.tiles % l.blocks != 0;
+    long long last       = -1;
     for (long long b = 1; b < l.blocks; ++b) {
-        if (b * work / l.blocks % steps != 0) { ++l.partials; }
+        const long long end = b * work / l.blocks; // CTA b - 1's
+        if (end % steps == 0) { continue; }
+        ++l.partials;
+        if (end / steps != last) {
+            ++l.split_tiles;
+            last = end / steps;
+        }
     }
     return l;
 }
 
-// The fixup's DRAM bytes: each partial tile (128 x j FP32) written by its CTA and read back by the
-// fixup kernel, and the output tile it is added to read and written again.
+// The fixup kernel's DRAM bytes: it reads every partial tile (128 x j FP32) and reads and writes
+// the output tile each is added to. (A CTA's write of its partial is the tile kernel's: it is in
+// the stream-k unit's cost, the law's stream_k_unit.)
 [[nodiscard]] constexpr double fixup_bytes(const ColumnLaunch& l) noexcept {
-    return 4.0 * l.partials * kTile * l.j * 4.0;
+    return (l.partials + 2.0 * l.split_tiles) * kTile * l.j * 4.0;
 }
 
 // What a launch law prices a product with: its shape and the card's (the reference clock and the

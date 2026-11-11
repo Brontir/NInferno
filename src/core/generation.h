@@ -82,15 +82,25 @@ namespace ninferno {
 //   unit_clocks     a unit's SM-clocks at the board's reference clock, in a launch of a tile a CTA,
 //                   by J = 16, 32, 64, 80, 96, 128 (core/mmq_columns.h kTilesWork)
 //   stream_k_unit   a stream-k CTA's unit against a tile-a-CTA one at the same J
-//   launch_seconds  the fixup kernel's dependent launch (a generation without PDL)
+//   launch_seconds  what the fixup costs beyond its bytes at the DRAM rate: its kernel's fixed time
+//                   and its dependent launch (a generation without PDL)
 struct MmqLaunchLaw {
     double unit_clocks[6] = {};
     double stream_k_unit  = 1.0;
     double launch_seconds = 0.0;
 };
 
-// TURING_LAW_PLACEHOLDER
-inline constexpr MmqLaunchLaw kTuringMmqLaw{{4805, 6535, 8899, 10321, 12561, 17180}, 1.13, 19.8e-6};
+// Turing: MEASURED on the RTX 2080 Ti (68 SMs; tools/bench/mmq_launch_microbench.cu, 11.11, Q4_K,
+// 4096 x 4096 and 4096 x 8192 products, the medians of two passes of 9 x 1000 calls; DECISIONS 77).
+// unit_clocks: the time of 16 more units in a launch of a tile a CTA on 64 CTAs (two column tiles,
+// the 4096-row products' launch from 65 columns on), 3.40 4.56 6.28 7.23 8.50 11.60 us, at the
+// 1545 MHz reference clock. stream_k_unit: the same on 68 stream-k CTAs over one column tile, the
+// mean ratio over the six widths, 1.18 (1.10 .. 1.25). launch_seconds: nsys, the fixup kernel's
+// time beyond its bytes at 616 GB/s and the launch gap it adds, 5.0 us (J 128) and 1.6 us (J 64 at
+// 121 columns), their mean. Not derived: the SASS issue counts of a unit are linear in J (IMMA 4 J,
+// I2F 4 J + 10 a thread on sm_75), the measured unit about three times their issue bound (2.8 at
+// J 128 to 3.5 at J 16, at the 1.95 GHz the board ran).
+inline constexpr MmqLaunchLaw kTuringMmqLaw{{5256, 7047, 9698, 11170, 13134, 17920}, 1.18, 3.3e-6};
 
 struct GenerationRow {
     int major    = 0;

@@ -923,5 +923,75 @@ class Readers(Base):
         self.assertRegex(out, r"N= 96   56 J64 ->J64  ")
 
 
+class LaunchLaw(Base):
+    """The launch law the grid reader prices the cells with (DECISIONS 77): the tree's constants and rule."""
+
+    def test_the_law_constants_are_the_trees(self):
+        src = (Path(__file__).resolve().parents[1] / "src" / "core" / "generation.h").read_text()
+        m = re.search(r"kTuringMmqLaw\{\{([^}]*)\},\s*([0-9.e+-]+),\s*([0-9.e+-]+)\}", src)
+        self.assertIsNotNone(m)
+        units = [float(x) for x in m.group(1).split(",")]
+        self.assertEqual(units, [g.LAW_UNIT_CLOCKS[j] for j in (16, 32, 64, 80, 96, 128)])
+        self.assertEqual(float(m.group(2)), g.LAW_STREAM_K_UNIT)
+        self.assertEqual(float(m.group(3)), g.LAW_LAUNCH_S)
+        self.assertEqual(sorted(g.LAW_UNIT_CLOCKS), sorted(g.PRODUCTION))
+
+    def test_launch_of_is_the_kernels_rule(self):
+        # 4096 x 4096 at 121 columns on 68 SMs: one 128-column tile is 32 CTAs (47 %): stream-k over 68
+        # CTAs, 8 units the longest (512 / 68 = 7.5), a fixup; two 64-column tiles are 64 CTAs (94 %): a
+        # tile a CTA, 16 units, none
+        lo = g.launch_of(4096, 4096, 121, 128)
+        self.assertEqual((lo["blocks"], lo["units"], lo["split"], lo["fixup"]), (68, 8, True, True))
+        self.assertEqual(lo["partials"], 60)  # 8 of the 68 CTAs end on a tile's edge
+        lo = g.launch_of(4096, 4096, 121, 64)
+        self.assertEqual((lo["blocks"], lo["units"], lo["split"], lo["fixup"]), (64, 16, False, False))
+        # 12288 rows: 96 tiles (70 %) stream-k, 192 tiles (94 % of three waves) a tile a CTA
+        self.assertTrue(g.launch_of(12288, 4096, 121, 128)["split"])
+        lo = g.launch_of(12288, 4096, 121, 64)
+        self.assertEqual((lo["blocks"], lo["units"], lo["split"]), (192, 48, False))
+        # the CTAs divide the tiles: stream-k without a fixup
+        lo = g.launch_of(128 * 136, 256, 1, 16)
+        self.assertEqual((lo["split"], lo["fixup"]), (False, False))
+
+    def law_cells(self, sizes=None, k=7, base=30.0):
+        """Times that follow the law exactly at the six production widths (C_N = base + N / 10); J 48 and
+        J 112 at the dearer of their neighbours plus 5 ms (never the best)."""
+        files = []
+        for j in g.WIDTHS:
+            rows = []
+            for n in sizes or g.SIZES:
+                c = n - k
+                t = g.law_ms(c, j)
+                if t is None:
+                    t = max(g.law_ms(c, 32 if j == 48 else 96), g.law_ms(c, 64 if j == 48 else 128)) + 5
+                rows.append(row(f"J{j}", n, [base + n / 10 + t] * 4, k=k))
+            files.append(self.write(f"grid_J{j}.jsonl", rows))
+        return files
+
+    def test_the_grid_reads_an_exact_law_with_no_residual_and_its_picks(self):
+        rc, out, err = self.run_main("grid", *self.law_cells())
+        self.assertEqual(rc, 0, err)
+        self.assertIn("LAUNCH LAW (DECISIONS 77", out)
+        self.assertRegex(out, r"no refit \(the tree's constants; C_N and D_r fitted\): residual rms 0\.00 %")
+        self.assertIn("126 of 126 size x width medians within 1 %", out)
+        self.assertIn("21 of 21 sizes at the measured best, mean regret 0.00 %", out)
+        # the launch modes of the picks are named per linear (q+k, v, o, gate, up, down)
+        self.assertRegex(out, r"(tile|sk\+fix|sk)(/(tile|sk\+fix|sk)){5}")
+
+    def test_a_cell_off_the_law_shows_in_its_size_and_count(self):
+        files = self.law_cells()
+        # one size's J 64 visit 30 % slow: the law's pick there (J 64 at 121 columns) is no longer the best
+        path = Path(files[g.WIDTHS.index(64)])
+        rows = [json.loads(s) for s in path.read_text().splitlines()]
+        for r in rows:
+            if r["n"] == 128:
+                r["ms"] = [x * 1.3 for x in r["ms"]]
+        path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        rc, out, err = self.run_main("grid", *files)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("20 of 21 sizes at the measured best", out)
+        self.assertNotIn("126 of 126", out)
+
+
 if __name__ == "__main__":
     unittest.main()
