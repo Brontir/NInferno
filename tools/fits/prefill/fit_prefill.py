@@ -67,7 +67,7 @@ def main():
         etas = "  ".join(f"eta_lin[{'moe' if k else 'dense'}] {1 / coef[i]:.3f}" for i, k in enumerate(kinds))
         print(f"{gen} ({', '.join(on)}): {etas}  eta_att {1 / coef[len(kinds)]:.3f}")
         for r, t, tail in zip(rs, A @ coef + tails, tails):
-            print(f"   {r['card']:7s} {r['model']:36s} n {r['n']:6d}  measured {r['prefill']:7.0f}"
+            print(f"   {r['card']:12s} {r['model']:36s} n {r['n']:6d}  measured {r['prefill']:7.0f}"
                   f"  model {100 * (r['n'] / t / r['prefill'] - 1):+5.1f} %  (tail {1e3 * tail:4.1f} ms)")
 
 
