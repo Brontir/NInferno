@@ -110,6 +110,13 @@ add_test(NAME ninferno_isa_facts_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_isa_facts.py)
 set_tests_properties(ninferno_isa_facts_test PROPERTIES LABELS host)
 
+# tools/bench/warp_inflight/warp_inflight.py (Refs #690, #735): the per-SM DRAM bytes-in-flight
+# probe's parser and its b_w / P derivation; the probe source and the parser agree on variants,
+# grid and columns, and odd, incomplete or busy runs are refused. No GPU, no CUDA toolkit.
+add_test(NAME ninferno_warp_inflight_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_warp_inflight.py)
+set_tests_properties(ninferno_warp_inflight_test PROPERTIES LABELS host)
+
 # tools/bench/gap_map.py: measured times against the counted DRAM and tensor laws (#619), on
 # synthetic inputs, no GPU.
 add_test(NAME ninferno_gap_map_test
