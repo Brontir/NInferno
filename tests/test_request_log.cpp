@@ -170,6 +170,10 @@ int main() {
     failures += check(kRequestLogSchemaVersion >= 33 &&
                           server.at("environment").at("gpu_pci_bus_id") == "0000:01:00.0",
                       "schema 33: the GPU's PCI bus id missing");
+    // Schema 34: decision.route_evidence beside decision.routes.
+    failures += check(kRequestLogSchemaVersion >= 34 &&
+                          server.at("decision").contains("route_evidence"),
+                      "schema 34: decision.route_evidence missing");
     failures += check(server.at("event") == "server_start", "server event mismatch");
     failures += check(server.at("server").at("public_model_id") == "deployment-alias",
                       "resolved public model id missing");
