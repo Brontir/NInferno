@@ -1895,7 +1895,7 @@ __global__ __launch_bounds__(S::kThreads + 32 * Producers) void w4a8_ws_kernel(G
 // ---------------------------------------------------------------------------------------------
 
 // NINFERNO_GENERIC_W4A8_SCHEDULES: ops/generic/generic_schedules.h (one list for the
-// instantiations here and the host table in generic_gemm.cpp).
+// instantiations here and the host table in generic_schedule_tables.h).
 
 inline constexpr int kW4a8MaxDynamicSmem = 99 * 1024;
 

@@ -8,7 +8,8 @@
 #
 # Every option goes to tools/kit/measure.py (python3 3.9+, standard library only).
 set -eu
-here=$(cd "$(dirname "$0")" && pwd)
+# Through the link in ~/.local/bin as well: the kit is beside the real file.
+here=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 kit="$here/../share/ninferno/kit/tools/kit/measure.py"
 [ -f "$kit" ] || { echo "ninferno-kit: $kit not found (a release archive carries it)" >&2; exit 1; }
 command -v python3 > /dev/null || { echo "ninferno-kit: python3 is needed (3.9 or newer)" >&2; exit 1; }

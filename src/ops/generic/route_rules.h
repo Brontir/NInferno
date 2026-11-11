@@ -287,7 +287,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "values, C = 4: RTX 4090 +15.7 %, RTX 3090 +26 %) and loses on a small one (Gemma 4 26B QAT, "
      "at most 12M: -0.7 %, -2.7 %, its MTP verify -1.1 %); nothing between 12M and 44M measured",
      ""},
-    {"r8_verify_widest: four tokens", Basis::Measured, "generic_gemm.cpp",
+    {"r8_verify_widest: four tokens", Basis::Measured, "generic_routes.cpp",
      "return qtype == QType::Q8_G32_FP16 ? kR8VerifyTokens : 4;", 4, "gb202:170sm, gb203:84sm",
      "RTX 5090, RTX 5080",
      "the verify form takes four tokens for every R8 format but Q8 (kR8VerifyTokens for Q8): past "
@@ -335,7 +335,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "2080 Ti the variant with neither left Q4_K SwiGLU 7-8 % slower, with the ring w1x4 took "
      "168.9 -> 122.3 us at T = 8",
      ""},
-    {"kRmmaWideBytes", Basis::PlacedBetweenMeasured, "generic_gemm_internal.h",
+    {"kRmmaWideBytes", Basis::PlacedBetweenMeasured, "generic_variant_rules.h",
      "inline constexpr double kRmmaWideBytes = 5.5;", 5.5, "ad102:128sm, gb203:70sm, ga106:28sm",
      "RTX 4090, RTX 5070 Ti, RTX 3060",
      "A/B, T = 1..8: RTX 4090 (3.1 bytes a SM cycle) add 71 -> 59 us, 5070 Ti (5.2) every problem "
@@ -491,7 +491,7 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
     {"tune fits: FLOP bound", Basis::Unknown, "generic_tune.cpp",
      "2.0 * model_call.rows * k * t <= 2.5e11", 2.5e11, kUnknown, kUnknown,
      "the widest prefill band whose call is within 250 GFLOP is tuned; none recorded", ""},
-    {"kRmmaWideSpillSlack", Basis::PlacedBetweenMeasured, "generic_gemm_internal.h",
+    {"kRmmaWideSpillSlack", Basis::PlacedBetweenMeasured, "generic_variant_rules.h",
      "inline constexpr std::size_t kRmmaWideSpillSlack = 16;", 16, "ad102:128sm", "RTX 4090",
      "sm_89's one-row-set tiles keep 8 bytes of loop-invariant state in local memory (admitted); "
      "SwiGLU's 128-register tiles spill 160 bytes in the loop (RTX 4090 w1x16 at T = 6: 100.3 -> "
@@ -713,10 +713,10 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "Q6_K 1.17-1.20 from 6144 rows; 5060 Ti IQ2_S, IQ2_XS, IQ3_S, IQ3_XXS 1.08-1.29 at every row "
      "count; Q4_0 and the rest keep 64x64",
      ""},
-    {"rmma_wide_rule: capability floor", Basis::Structural, "generic_gemm.cpp",
+    {"rmma_wide_rule: capability floor", Basis::Structural, "generic_routes.cpp",
      "compute_capability >= 75 && occupancy &&", 75, kUnknown, kUnknown,
      "the wide-load Q6_K variant is taken from compute capability 7.5 (sm_75) up: 'not before "
-     "sm_75 (Volta's register MMA is FMA-emulated, compute-bound)' (generic_gemm_internal.h); no "
+     "sm_75 (Volta's register MMA is FMA-emulated, compute-bound)' (generic_variant_rules.h); no "
      "timing of its own (the bytes bound is kRmmaWideBytes)",
      ""},
     {"r8_prequantized: lower edge", Basis::Structural, "generic_gemm.cpp",

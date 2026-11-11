@@ -1,9 +1,9 @@
 #pragma once
 
 // The schedules of the generic GEMM families, one X-macro list each: X(index, ...). The CUDA
-// files instantiate and dispatch from these lists, and generic_gemm.cpp builds its host tables
-// (the schedule infos the selectors read) from the same ones, so the two cannot drift (#307).
-// Plain macros only: included by host and device code alike.
+// files instantiate and dispatch from these lists, and generic_schedule_tables.h builds its host
+// tables (the schedule infos the selectors read) from the same ones, so the two cannot drift
+// (#307). Plain macros only: included by host and device code alike.
 
 // Register MMA (generic_gemm_launch.cuh): index, warps_m, warps_k, m_tiles, n_tiles, cluster (K
 // split over a thread-block cluster of that many CTAs). 18: K over a CTA pair, for decode calls of

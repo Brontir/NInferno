@@ -12,8 +12,8 @@
 namespace ninferno::ops::detail::generic {
 namespace {
 
-// Keep in the order of kNvfp4TiledSchedules in generic_gemm.cpp: four warps of two m16 tiles by
-// 64 tokens, three activation steps in flight.
+// Keep in the order of kNvfp4TiledSchedules in generic_schedule_tables.h: four warps of two m16
+// tiles by 64 tokens, three activation steps in flight.
 template <int Classes>
 using Nvfp4TiledSchedule = Nvfp4A16TiledSchedule<4, 1, 2, 8, 3, 1, Classes, 8>;
 
