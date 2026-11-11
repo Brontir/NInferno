@@ -549,8 +549,9 @@ def sass_mma_unit(sass):
     bodies = [body for name, body in sc.iter_functions(sass.splitlines(), lambda n: MMA_UNIT in n)]
     if len(bodies) != 1:
         raise ValueError(f"{len(bodies)} {MMA_UNIT} kernels in the build's SASS")
-    mmas = [(op, sc.mma_shape(op)) for _, _, op, _ in bodies[0]
-            if sc.base_opcode(op) in sc.MMA_OPCODES]
+    # A body row is (offset, guarded, opcode, operands, high word): read the opcode by position.
+    mmas = [(row[2], sc.mma_shape(row[2])) for row in bodies[0]
+            if sc.base_opcode(row[2]) in sc.MMA_OPCODES]
     if not mmas:
         raise ValueError(f"no MMA in {MMA_UNIT}")
     return mmas
