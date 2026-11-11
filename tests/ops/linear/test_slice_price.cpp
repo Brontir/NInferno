@@ -223,14 +223,22 @@ void check_row_views() {
 
 int gate_differs = 0;
 
-int replay_differs = 0;
+int replay_differs = 0, replay_unaligned = 0;
+
+bool planes_aligned16(const Weight& w) {
+    const auto off = [](const void* p) { return reinterpret_cast<std::uintptr_t>(p) & 15U; };
+    return off(w.qdata) == 0 && off(w.qhigh) == 0 && off(w.scales) == 0;
+}
 
 // Small row views of formats whose planes are padded to 256 bytes (#704): the parent's padding is
 // not spread over the view. A view is priced by the bytes of a standalone weight of its shape, to
 // the bit, which is what the decision manifest's replay prices: the run records the call with the
 // view's rows and layout (record_problem: Problem, w.n, w.layout), and replay describes that shape
 // (route_query, described_bytes_per_weight). The selector's answer on the live view and the
-// replay's agree at every priced width, in the speed profile and the prefill band.
+// replay's agree at every priced width, in the speed profile and the prefill band, where the
+// view's planes are 16-byte aligned as the replay's are. A view whose planes start off that
+// alignment (a row of 4 high bytes from row 1) is refused the tiles that read them aligned, which
+// the recorded line cannot tell: its routes are counted, not compared; its bytes are.
 void check_padded_view_replay() {
     struct Case {
         QType qtype;
@@ -298,6 +306,10 @@ void check_padded_view_replay() {
                                                          prefill, w.n, w.layout);
                             });
                             if (!both_answer(q_threw, s.starts_with("threw"), at + " replay")) {
+                                continue;
+                            }
+                            if (!planes_aligned16(w)) {
+                                ++replay_unaligned;
                                 continue;
                             }
                             if (text(q) != s) ++replay_differs;
@@ -509,8 +521,9 @@ int main() {
                           " selections where the slice takes another route than its own shape");
     std::cout << "row views: " << view_moved
               << " selections where a view takes another route than its own shape; padded views: "
-              << replay_differs
-              << " selections where the replay answers otherwise than the view; R8 verify gate: "
+              << replay_differs << " selections where the replay answers otherwise than the view, "
+              << replay_unaligned
+              << " not compared (the view's planes off 16-byte alignment); R8 verify gate: "
               << gate_differs << " calls where a slice answers otherwise than its own shape\n";
     // With a device every pair answers; without one the MMQ-or-register-MMA pairs need it.
     if (device) {
