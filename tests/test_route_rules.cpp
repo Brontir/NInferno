@@ -804,6 +804,8 @@ struct NotRule {
 
 const std::vector<NotRule>& not_rules() {
     static const std::vector<NotRule> v = {
+        {"generic_codec_traits.cu", "kRows", 1,
+         "the table of codec trait rows the launch files instantiate (a registry, no bound)"},
         {"generic_gemm.cuh", "kBlockBytes", 1, "a codec's block size (a layout fact)"},
         {"generic_gemm.cuh", "kGroupBytes", 1, "a codec's group size (a layout fact)"},
         {"generic_gemm.cuh", "kIq1MinusHigh", 1, "an IQ1 codebook offset (a format fact)"},

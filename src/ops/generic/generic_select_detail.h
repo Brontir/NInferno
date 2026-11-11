@@ -12,8 +12,9 @@
 
 namespace ninferno::ops::detail::generic {
 
-// The bytes per block of each plane: the code plane (the whole block where blocks are unchanged),
-// the high and the scale plane (core/weight.h ggml_plane_bytes).
+// The bytes per block of each plane: the code plane (the whole block where the codec reads it
+// whole, codec_traits block_bytes: Q4_K / Q5_K), the high and the scale plane (core/weight.h
+// ggml_plane_bytes).
 struct MmqPlaneBytes {
     int codes, high, scales;
 };

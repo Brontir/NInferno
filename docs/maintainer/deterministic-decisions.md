@@ -594,6 +594,30 @@ again from the text alone, on a CPU against a board's class and a release's tabl
 or the lines that moved. They are in the startup log at debug level after the canonical text, and in
 the request log's server-start record (`decision.routes`).
 
+The `route_evidence` section (#614) has the same keys and a line of the same runs, each run naming
+beside the route the authority that answered and the evidence it rests on:
+`<route> authority=<name> evidence=<kind>`, and for an answer taken from another board
+`donor=<board or class> d=<distance>`. A line carries a `one lane` or
+`several lanes` clause where that round's runs (route and evidence) differ from the width-alone
+runs.
+Kinds: `pin`, `measured` (this board's own), `ranker` (the cost model, or a rule: a derivation from
+the card's facts, or a literal fitted on one or more measured cards and applied to every board;
+the evidence does not tell the two apart, and names no donor), `carried` (a board within the carry
+distance), `transferred` (a donor beyond it, or a board with a quantity its driver did not report,
+such as L2 or bandwidth: that quantity drops out of the distance, so the distance can read 0 and the
+answer is still a transfer), `borrowed`. Each section asks the same deterministic selector, so the
+two name the same route at every width; `replay_route_evidence` asks again from the text like
+`replay_routes`. It is in the manifest text (the startup log at debug level, the server-start
+record's `decision.route_evidence`) and in no hash: not in the fingerprint and not in the
+manifest's `nm1-` id, so every earlier fingerprint and manifest id holds. The same fields end a
+`describe_call` description (`ninferno_route_tune --describe 1`:
+` authority=<name> evidence=<kind>[ donor=<board> d=<distance>]` after the kernel fields; a
+described explicit route has none), and they name the route the call asked for: for a call without
+workspace that takes the A16 heuristic's route, that heuristic's authority. `ninferno_route_tune
+--selected-out` rows end with the `authority,evidence` columns, which describe the asked route
+(the `selected` column is the route that ran after resolve_route), and `ranker`, the route the call
+takes without a table or tuner entry.
+
 ## What will be promised
 
 - Same fingerprint: same decisions.
