@@ -340,7 +340,8 @@ def rows(code, a, b, direct=True):
         if not inner:
             continue
         if code[inner[0][0]] == "{":
-            out += rows(code, s + 1, e - 1, direct)
+            # One brace level more (`std::array<Board, 1> a = {{{...}}}`) is a Board element.
+            out += rows(code, s + 1, e - 1, True)
         elif is_fields(code, inner, direct):
             out.append((s, e))
     return out
