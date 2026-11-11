@@ -224,8 +224,11 @@ int shipped_boards() {
         std::smatch named;
         const std::regex name_re("\"class\": \"([^\"]*)\",\\s*\"name\": \"([^\"]*)\"");
         const ninferno::DeviceClass on = substitute(id);
-        if (std::regex_search(text, named, name_re) &&
-            named[2].str() != named[1].str().substr(0, named[1].str().find(':'))) {
+        if (!std::regex_search(text, named, name_re)) {
+            // The check reads gpu.class and gpu.name side by side, as write_route_table writes
+            // them: a table that has them apart is a failure, not a table left unchecked.
+            failures += check(false, name + " has gpu.class and gpu.name side by side");
+        } else if (named[2].str() != named[1].str().substr(0, named[1].str().find(':'))) {
             const std::string row = normal(on.facts.sku), card = normal(named[2].str());
             const std::regex omitted(R"( ([0-9]+GB|Lite Hash Rate|Rev\. A))");
             failures += check(row.rfind(card, 0) == 0 &&
