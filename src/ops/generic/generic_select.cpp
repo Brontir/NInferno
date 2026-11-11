@@ -167,8 +167,8 @@ bool allows_r8(const Weight& w, LinearPolicy policy) {
 
 // Whether a call of T tokens takes R8 (decode, T <= kR8DecodeTokens, and the activation fits):
 // r8_call_refusal names why not.
-bool r8_call(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
-    return r8_call_refusal(w, policy, tokens) == R8CallRefusal::None;
+bool r8_call(const Problem& problem, const Weight& w, std::int32_t tokens) {
+    return r8_call_refusal(problem, w, tokens) == R8CallRefusal::None;
 }
 
 MmqPlaneBytes mmq_plane_bytes(QType q) {
@@ -1254,14 +1254,16 @@ bool volta_cutlass_only(WeightCodec codec) {
     return !tiled_takes(codec) && !current_features().mma_tensor;
 }
 
-R8CallRefusal r8_call_refusal(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
-    if (!allows_r8(w, policy)) return R8CallRefusal::NotAdmitted;
+R8CallRefusal r8_call_refusal(const Problem& problem, const Weight& w, std::int32_t tokens) {
+    if (!allows_r8(w, problem.policy)) return R8CallRefusal::NotAdmitted;
     if (tokens <= kR8DecodeTokens) {
         return r8_fits(w.qtype, w.k, tokens) ? R8CallRefusal::None : R8CallRefusal::DecodeFit;
     }
     if (tokens > r8_verify_widest(w.qtype)) return R8CallRefusal::VerifyWidth;
-    return r8_verify_takes_shape(w.qtype, w.n, w.k) ? R8CallRefusal::None
-                                                    : R8CallRefusal::VerifyShape;
+    // The matrix the call reads: a slice of a fused parent is its own rows, not the parent's.
+    return r8_verify_takes_shape(w.qtype, call_weight_rows(problem), w.k)
+               ? R8CallRefusal::None
+               : R8CallRefusal::VerifyShape;
 }
 
 ScheduleRefusal r8_refusal(int index, const Weight& w, LinearPolicy policy) {
@@ -1709,7 +1711,7 @@ std::optional<Route> volta_hmma_route(const Problem& problem, const Weight& weig
         return std::nullopt;
     }
     if (tokens <= kVecRuleMaxTokens &&
-        (vec_call(weight, problem.policy, tokens) || r8_call(weight, problem.policy, tokens))) {
+        (vec_call(weight, problem.policy, tokens) || r8_call(problem, weight, tokens))) {
         return std::nullopt;
     }
     const Route r{Family::RegisterMma,
@@ -1776,7 +1778,7 @@ std::optional<Route> decode_family_route(DecodeRoute f, const Problem& p, const 
     case DecodeRoute::R8: {
         // Decode where the activation fits a CTA; the verify widths on the pre-quantized form of
         // every format that has it (the dense tuner's R8 candidates, r8_verify_tunable).
-        const bool runs = tokens <= kR8DecodeTokens ? r8_call(w, p.policy, tokens)
+        const bool runs = tokens <= kR8DecodeTokens ? r8_call(p, w, tokens)
                                                     : r8_verify_tunable(w, p.policy, tokens);
         if (!runs) return std::nullopt;
         const Route r{Family::R8Mma, static_cast<std::uint8_t>(heuristic_r8(p, tokens))};

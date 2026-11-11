@@ -407,7 +407,7 @@ Tuned time_problem(const Problem& problem, const Call& model_call, cudaStream_t 
             }
             // R8 at a width the format does not take it at by rule: a token's bytes are then R8
             // decode's, which greedy speculation reproduces.
-            if (base.family != Family::R8Mma && r8_tunable(weight, problem.policy, t)) {
+            if (base.family != Family::R8Mma && r8_tunable(problem, weight, t)) {
                 routes.insert(routes.end(), r8.begin(), r8.end());
             }
             for (const Route r : routes) {

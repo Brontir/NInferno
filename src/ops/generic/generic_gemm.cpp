@@ -390,13 +390,15 @@ bool owned_tables_a16(QType qtype) {
 
 } // namespace
 
+// These two ask about the whole weight: the call reads all its rows.
 bool r8_takes_block(const Weight& weight) {
-    return supports(weight) && r8_call(weight, LinearPolicy::AllowA8, kR8VerifyTokens);
+    const Problem whole{weight.qtype, LinearPolicy::AllowA8, weight.n, weight.k, Epilogue::Store};
+    return supports(weight) && r8_call(whole, weight, kR8VerifyTokens);
 }
 
 bool owned_decode_r8(const Weight& weight, LinearPolicy policy, std::int32_t tokens) {
-    const bool r8 =
-        tokens <= kR8DecodeTokens && supports(weight) && r8_call(weight, policy, tokens);
+    const Problem whole{weight.qtype, policy, weight.n, weight.k, Epilogue::Store};
+    const bool r8 = tokens <= kR8DecodeTokens && supports(weight) && r8_call(whole, weight, tokens);
     // --decode-route: R8 keeps the rule (a registered shape hands R8 only the decode calls its
     // workspace query covers; the generic path notes the call); any other pin keeps the call on
     // the shape's own kernel, which reads BF16 activations.
@@ -770,9 +772,9 @@ bool pin_family_on_device(DecodeRoute family) {
     return false;
 }
 
-bool r8_tunable(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
-    return r8_verify_tunable(w, policy, tokens) ||
-           (vec_rule(w, policy, tokens) && r8_call(w, policy, tokens));
+bool r8_tunable(const Problem& problem, const Weight& w, std::int32_t tokens) {
+    return r8_verify_tunable(w, problem.policy, tokens) ||
+           (vec_rule(w, problem.policy, tokens) && r8_call(problem, w, tokens));
 }
 
 std::optional<PreparedRule> prepared_rule(const ResolvedRoute& route, const Weight& weight) {
@@ -1018,7 +1020,7 @@ R8Coverage r8_coverage(const Problem& problem, const Weight& w, std::int32_t tok
     }
     c.heuristic             = heuristic_r8(problem, tokens);
     c.heuristic_refusal     = r8_refusal(c.heuristic, w, problem.policy);
-    r.call                  = r8_call_refusal(w, problem.policy, tokens);
+    r.call                  = r8_call_refusal(problem, w, tokens);
     r.prequantized_compiled = r8_verify_compiled(w.qtype);
     return r;
 }
