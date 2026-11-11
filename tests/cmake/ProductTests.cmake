@@ -120,11 +120,19 @@ ninferno_add_test(ninferno_update_check_test LABELS host
 target_include_directories(ninferno_update_check_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(ninferno_update_check_test PRIVATE NINFERNO_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
-# The installer and the updater act only on a release manifest the release key signed.
+# The installer and the updater act only on a release manifest the release key signed, never
+# switch in a release that does not start, and order versions as update_check.cpp does.
 add_test(NAME ninferno_signed_install_test
   COMMAND bash ${PROJECT_SOURCE_DIR}/tests/release/signed_install_test.sh ${PROJECT_SOURCE_DIR})
 ninferno_label_tests(ninferno_signed_install_test LABELS host)
 set_tests_properties(ninferno_signed_install_test PROPERTIES SKIP_RETURN_CODE 77)
+
+set_tests_properties(ninferno_signed_install_test PROPERTIES SKIP_RETURN_CODE 77 LABELS host)
+# The release packer's checks before it builds (Volta's toolkit, glibc) and its reading of the
+# live kernel check's exit (no NVIDIA driver = no GPU). Nothing is built.
+add_test(NAME ninferno_package_checks_test
+  COMMAND bash ${PROJECT_SOURCE_DIR}/tests/release/package_checks_test.sh ${PROJECT_SOURCE_DIR})
+set_tests_properties(ninferno_package_checks_test PROPERTIES LABELS host)
 
 ninferno_add_test(ninferno_tool_maintainer_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_tool_maintainer.cpp"
