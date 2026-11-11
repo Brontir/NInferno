@@ -200,7 +200,7 @@ top=""
 cleanup() {
   if [ -n "$stage" ] && [ -n "$top" ] && { [ -e "$stage/replaced" ] || [ -L "$stage/replaced" ]; } &&
     [ ! -e "$HOME_DIR/$top" ] && [ ! -L "$HOME_DIR/$top" ]; then
-    mv "$stage/replaced" "$HOME_DIR/$top" || true
+    mv -T "$stage/replaced" "$HOME_DIR/$top" || true
   fi
   rm -rf "$tmp" ${stage:+"$stage"}
 }
@@ -259,7 +259,9 @@ fi
 # directory (removed on exit) rather than deleted before the new copy is in place, and `current`
 # is made under another name and renamed over the old link (GNU mv -T: no window without it).
 if [ -e "$HOME_DIR/$top" ] || [ -L "$HOME_DIR/$top" ]; then mv "$HOME_DIR/$top" "$stage/replaced"; fi
-mv "$stage/$top" "$HOME_DIR/$top"
+# -T: never into a directory another install of this version made meanwhile; that one stands.
+mv -T "$stage/$top" "$HOME_DIR/$top" ||
+  die "another install of $top finished while this one ran; it stays, nothing switched"
 ln -sfn "$HOME_DIR/$top" "$stage/current"
 mv -fT "$stage/current" "$HOME_DIR/current"
 # The commands (the engines, bin/*-sm<tag>, are started by ninferno-serve itself).

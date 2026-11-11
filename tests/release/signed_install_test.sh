@@ -209,13 +209,29 @@ serves "after installing 0.1.0 again" 0.1.0
 # Stopped between its two renames (the old copy moved aside, the new one not yet in place): the
 # old copy goes back. A stand-in mv sends the install TERM at that rename.
 mkdir -p "$work/mvkill"
-printf '#!/bin/sh\ncase $1 in */.install.*/ninferno-*) kill -TERM $PPID; sleep 1; exit 1 ;; esac\nexec %s "$@"\n' \
+printf '#!/bin/sh\nfor a; do case $a in */.install.*/ninferno-*) kill -TERM $PPID; sleep 1; exit 1 ;; esac; done\nexec %s "$@"\n' \
   "$(command -v mv)" > "$work/mvkill/mv"
 chmod +x "$work/mvkill/mv"
 expect "a reinstall stopped between its renames" 1 "${I[@]}" PATH="$work/mvkill:$PATH" \
   NINFERNO_MANIFEST="$d1/latest.json" NINFERNO_ARCHIVE="$d1/ninferno-linux-x86_64.tar.gz" sh "$work/install.sh"
 serves "after the reinstall stopped between its renames" 0.1.0
 [ -z "$(find "$home" -maxdepth 1 -name '.install.*')" ] || fail "the stopped reinstall left its staging copy"
+# Another install of the same version finishes between this one's two renames: this one stops and
+# leaves that copy as it is, never moving its own copy inside it.
+mkdir -p "$work/mvrace"
+printf '#!/bin/sh\nfor a; do case $a in */.install.*/ninferno-*) mkdir -p "%s" && : > "%s/other";; esac; done\nexec %s "$@"\n' \
+  "$home/ninferno-0.1.0-linux-x86_64" "$home/ninferno-0.1.0-linux-x86_64" "$(command -v mv)" > "$work/mvrace/mv"
+chmod +x "$work/mvrace/mv"
+expect "a reinstall raced by another of the same version" 1 "${I[@]}" PATH="$work/mvrace:$PATH" \
+  NINFERNO_MANIFEST="$d1/latest.json" NINFERNO_ARCHIVE="$d1/ninferno-linux-x86_64.tar.gz" sh "$work/install.sh"
+said "another install of ninferno-0.1.0-linux-x86_64"
+[ -e "$home/ninferno-0.1.0-linux-x86_64/other" ] || fail "the raced reinstall replaced the other copy"
+[ ! -e "$home/ninferno-0.1.0-linux-x86_64/ninferno-0.1.0-linux-x86_64" ] ||
+  fail "the raced reinstall moved its copy inside the other one"
+rm -rf "$home/ninferno-0.1.0-linux-x86_64"
+expect "0.1.0 installs again after the race" 0 "${I[@]}" NINFERNO_MANIFEST="$d1/latest.json" \
+  NINFERNO_ARCHIVE="$d1/ninferno-linux-x86_64.tar.gz" sh "$work/install.sh"
+serves "after the raced reinstall" 0.1.0
 
 # The version order is update_check.cpp's (tests/test_update_check.cpp has the same cases).
 eval "$(sed -n '/^version_newer() {$/,/^}$/p' "$REPO/tools/release/ninferno-update")"
