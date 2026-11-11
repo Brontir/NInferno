@@ -594,8 +594,8 @@ void property_price_monotone(const std::vector<Row>& rows) {
 // field (mma_slow, the facts) follows from the edited inputs, none is edited on a built class.
 //
 // Every variant also takes a slot of its own in anything the selector caches per device class
-// (the per-class gates select_route asks, in generic_gemm.cpp, are computed once per class key, and
-// the key does not
+// (the per-class gates select_route asks, in generic_select.cpp, are computed once per class key,
+// and the key does not
 // hold a name, an ordinal, a PCI address, a UUID or the table row): `slot` changes the reported
 // memory size, the one key field this test pins as neutral (the "reported memory size" variant),
 // by a different amount for each variant. Without it a read of a label made inside a cached gate

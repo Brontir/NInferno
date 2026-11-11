@@ -79,7 +79,7 @@ This page states the rule and its target. The engine does not meet all of it yet
 - SM-count rules rest on few boards: the literals that were the RTX 5090's 170 SMs and decided a
   grid (the FP8 TMA split wave, the NVFP4 2048x5376 TMA route) are rules over the device's SM
   count (`src/ops/common/sm_wave_rules.h`), the NVFP4 crossing fitted on the RTX 5090 and checked
-  on the RTX 5070 Ti only; the generic R8 rule's IQ3 edge at 96 SMs (`generic_gemm.cpp`,
+  on the RTX 5070 Ti only; the generic R8 rule's IQ3 edge at 96 SMs (`generic_select.cpp`,
   `rules_r8`) is a bound placed between the two measured boards (84 and 170);
 - the Gemma 4 Q8 5376x16384 projection keeps a literal tuned on the RTX 5090 that no device fact
   explains: the 256-token tile at T a multiple of 1024, on every board

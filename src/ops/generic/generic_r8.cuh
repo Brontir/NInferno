@@ -70,7 +70,7 @@ __host__ __device__ constexpr std::int64_t r8_smem_bytes(int nt, std::int64_t k,
 #endif
 
 // The host's side of the same rule: whether this device's R8 launches stage the grid
-// (generic_gemm.cpp: no native BF16 MMA, sm_80 on has it).
+// (generic_select.cpp: no native BF16 MMA, sm_80 on has it).
 [[nodiscard]] bool r8_stage_grid();
 
 // r8_grid_pad (the staged grid's alignment padding): ops/generic/codec_traits.h, shared with

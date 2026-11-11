@@ -912,7 +912,7 @@ double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, c
     };
     // The banks' GEMM (product/plan expert_prefill_of): MXFP4 takes the block-scaled MMA on
     // Blackwell, Ada converts it to int8. The linears beside them take the classic int8 tiles when
-    // their weights are Q8_0; a K-quant's take a tile by format and card (generic_gemm.cpp
+    // their weights are Q8_0; a K-quant's take a tile by format and card (generic_select.cpp
     // w4a8_ws_wins: Q6_K on Blackwell the 128 x 64 producer-warp tile), not yet priced.
     // A dense model's linears likewise: the int8 tiles for Q8_0 weights (q8_prefill_a8).
     TileKernel banks = TileKernel::Int8;

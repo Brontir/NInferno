@@ -429,7 +429,7 @@ shape-class rule, beats it by at least `--min-gain` in the median and in every s
 schedules produced identical bytes. Each table records the board its sweeps ran on (the bench's
 `board` line: compute capability, SMs, L2, DRAM bandwidth; `--merge` keeps a header's), and a
 device takes the table of the nearest board within a variant's distance of it (`board_distance`,
-`kR8CarryDistance` in `generic_gemm.cpp`).
+`kR8CarryDistance` in `generic_select.cpp`).
 
 | Option | Default | Meaning |
 |---|---|---|

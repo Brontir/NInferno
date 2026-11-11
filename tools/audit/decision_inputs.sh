@@ -40,6 +40,12 @@ decision_patterns=(
   src/runtime/engine/plan_ladder.h
   src/ops/generic/generic_gemm.cpp
   src/ops/generic/generic_gemm.h
+  src/ops/generic/generic_i8_schedules.h
+  src/ops/generic/generic_routes.cpp
+  src/ops/generic/generic_schedule_tables.h
+  src/ops/generic/generic_select.cpp
+  src/ops/generic/generic_select_detail.h
+  src/ops/generic/generic_variant_rules.h
   src/ops/generic/generic_ggml.cpp
   src/ops/generic/generic_ggml_internal.h
   src/ops/generic/generic_select_internal.h
