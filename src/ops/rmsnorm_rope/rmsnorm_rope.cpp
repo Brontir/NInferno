@@ -158,7 +158,7 @@ std::int32_t text_fused_max_tokens_with_facts(const DeviceClass& device, std::in
     const int launched_heads = (query_heads + key_heads + kTextHeadsPerBlock - 1) /
                                kTextHeadsPerBlock * kTextHeadsPerBlock;
     return ninferno::ops::detail::sm_rules::launch_amortized_tokens(
-        2, launch, device.sms, warps_per_sm, machine_facts_of(device).reference_clock_khz * 1.0e3,
+        2, launch, device.sms, warps_per_sm, device.facts.reference_clock_hz(),
         launched_heads, excess_cycles);
 }
 

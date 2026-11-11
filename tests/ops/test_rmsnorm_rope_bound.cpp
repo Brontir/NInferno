@@ -104,6 +104,13 @@ int main() {
         (128.0 / 34.0) * (machine_facts_of(rtx4090).reference_clock_khz /
                           static_cast<double>(machine_facts_of(rtx4060ti).reference_clock_khz));
     expect(ratio > 0.97 * want && ratio < 1.03 * want, "the width composes SMs and clock");
+    // The clock is the canonical one the device class carries (device.facts), as in the other cost
+    // models and the decision fingerprint, not one rebuilt from the raw driver fields.
+    DeviceClass canonical = rtx4090;
+    canonical.facts.reference_clock_khz *= 2;
+    const auto w_canonical = d::text_fused_max_tokens_with_facts(canonical, 32, 2, light, excess);
+    expect(std::abs(static_cast<double>(w_canonical) / w4090 - 2.0) < 0.03,
+           "the law reads device.facts' reference clock (twice the clock, twice the width)");
     // The facts' occupancy is the law's: a register-limited kernel (5 CTAs against 16) and a
     // shared-memory-limited one (4) fuse proportionally narrower.
     const auto w_registers = d::text_fused_max_tokens_with_facts(rtx4090, 32, 2, registers, excess);
