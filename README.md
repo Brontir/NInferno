@@ -46,7 +46,8 @@ So you do not find out after the download:
 - **One to eight concurrent requests**, fixed at startup. It is built for a person or a small team,
   not for serving hundreds of users.
 - **NVIDIA only**, on Linux and Windows (a native engine, or WSL 2). No AMD, Apple, Intel or CPU-only
-  backend. GTX 10 and GTX 16 cards are not supported.
+  backend. GTX 10 and GTX 16 cards are not supported: GTX 16 chips have no tensor cores, and the
+  Linux installer asks before it installs for one.
 - **No `/v1/completions`, `/v1/embeddings` or LoRA adapters.** Raw-text completion (used by
   fill-in-the-middle code completion) is planned; embedding models and adapters loaded at run time are
   not.

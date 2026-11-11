@@ -1,5 +1,6 @@
 #include "product/choice/choice.h"
 
+#include "core/device_class.h"
 #include "core/generation.h"
 #include "core/measured_boards.h"
 #include "core/mmq_columns.h"
@@ -19,6 +20,18 @@ namespace ninferno::product::choice {
 
 std::string_view generation_of(const CardFacts& card) noexcept {
     return generation_row(card.major, card.minor).name;
+}
+
+CardFacts card_facts_of(const DeviceClass& device) {
+    CardFacts out;
+    out.major            = device.major;
+    out.minor            = device.minor;
+    out.sms              = device.sms;
+    out.clock_hz         = device.facts.reference_clock_khz * 1e3;
+    out.dram_bytes_per_s = device.facts.dram_bytes_per_s();
+    out.l2_bytes         = device.facts.l2_mib * (1 << 20);
+    out.fp4              = device.features.mma_mxf4nvf4;
+    return out;
 }
 
 namespace {
@@ -1062,6 +1075,10 @@ struct Int8PromptLayout {
     int slots = 0;
 };
 
+// The layout and the CTA cost read the kernel's one half-CTA figure (int8/prompt_fast_cost.h).
+static_assert(kAttentionHalfCta == ::ninferno::ops::kInt8PromptHalfCtaPercent / 100.0,
+              "the estimate's half-CTA share is the INT8 prompt kernel's");
+
 // The makespan the kernel weighs a layout by, in hundredths of a 128-row CTA (int8_prompt_fast_makespan).
 long long int8_prompt_makespan(int wide, int narrow, int sms) {
     std::vector<long long> free(static_cast<std::size_t>(sms), 100LL * (wide / sms));
@@ -1069,7 +1086,7 @@ long long int8_prompt_makespan(int wide, int narrow, int sms) {
     long long end = *std::max_element(free.begin(), free.end());
     for (int i = 0; i < narrow; ++i) {
         const auto sm = std::min_element(free.begin(), free.end());
-        *sm += 72;
+        *sm += ::ninferno::ops::kInt8PromptHalfCtaPercent;
         end = std::max(end, *sm);
     }
     return end;
@@ -1087,7 +1104,8 @@ Int8PromptLayout int8_prompt_layout(int width, int heads, int sms) {
             best.slots = slots;
         }
     }
-    if (72LL * up(up(width, 64) * heads, sms) <= best_cost) { return {true, 0}; }
+    const long long half = ::ninferno::ops::kInt8PromptHalfCtaPercent;
+    if (half * up(up(width, 64) * heads, sms) <= best_cost) { return {true, 0}; }
     return best;
 }
 
