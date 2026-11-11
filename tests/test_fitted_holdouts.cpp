@@ -444,9 +444,10 @@ int main() {
                     if (at == std::string::npos || is == std::string::npos) continue;
                     std::string rest = block.substr(is + 1);
                     rest.erase(0, rest.find_first_not_of(" \t"));
+                    // The value is the whole initializer: `kBlock = 128 * 2` is not `= 128`.
+                    const std::size_t tail = rest.find_first_not_of(" \t", value.size());
                     if (rest.compare(0, value.size(), value) == 0 &&
-                        (rest.size() == value.size() || rest[value.size()] == ';' ||
-                         rest[value.size()] == ' ')) {
+                        (tail == std::string::npos || rest[tail] == ';')) {
                         found = true;
                     }
                 }
