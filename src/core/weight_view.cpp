@@ -59,6 +59,15 @@ DType direct_dtype(QType format) {
     }
 }
 
+// The bytes a standalone weight of a view's own shape takes in its parent's format and layout
+// (Weight::priced_bytes): its planes padded as the converter pads them, as the decision manifest's
+// replay of the shape lays it out (route_query). 0 for the complete weight, its payload its own.
+// Only an NVFP4 plane carries several divisors, and it has no row views: one divisor here.
+std::uint64_t standalone_bytes(const WeightView& view, const WeightGeometry& parent) {
+    if (is_complete_weight(view)) return 0;
+    return weight_geometry(parent.format, parent.layout, view.shape).bytes;
+}
+
 void validate_region(const WeightRegion& region) {
     if (!region.parent || region.begin >= region.end ||
         region.end > region.parent->geometry.elements) {
@@ -436,7 +445,8 @@ Weight native_weight(const WeightView& view, float input_divisor) {
     out.n = out.shape[0] = out.padded_shape[0] = dimension(view.shape[0]);
     out.k = out.shape[1] = out.padded_shape[1] = dimension(view.shape[1]);
     if (g.layout == QuantLayout::Contiguous) {
-        out.qdata = region.parent->data + mul(region.begin, word_bytes(g.format));
+        out.qdata        = region.parent->data + mul(region.begin, word_bytes(g.format));
+        out.priced_bytes = standalone_bytes(view, g);
         return out;
     }
     if (g.shape.size() != 2 || view.shape[1] != g.shape[1]) {
@@ -449,6 +459,7 @@ Weight native_weight(const WeightView& view, float input_divisor) {
         throw std::invalid_argument(
             "this native Weight input requires a complete FP8/NVFP4 parent");
     }
+    out.priced_bytes         = standalone_bytes(view, g);
     out.padded_shape[1]      = dimension(g.padded_columns);
     out.qdata                = planes.codes;
     out.qhigh                = planes.high;

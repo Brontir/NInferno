@@ -4,10 +4,14 @@
 # Nothing is compiled.
 #
 #   curl -fsSL https://raw.githubusercontent.com/Brontir/NInferno/master/tools/release/install.sh | sh
-#   sh install.sh                      install the newest release
+#   sh install.sh                      install the newest release (on a GPU NInferno does not
+#                                      support, such as the GTX 16 series, it asks first)
+#   sh install.sh --yes                the same without asking (ninferno-update)
 #   sh install.sh --uninstall [--yes]  remove what it installed (asks first unless --yes)
 #   sh install.sh --verify MANIFEST    exit 0 when MANIFEST (MANIFEST.sig beside it) is signed
 #                                      by the release key (ninferno-update asks this)
+#   sh install.sh --gpu-check ID CAP   exit 0 when NInferno supports the GPU of that PCI product
+#                                      id and compute capability, else say why (ninferno-start)
 #   sh install.sh --help               this text
 #
 # The release needs x86-64 Linux with glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39 and
@@ -66,11 +70,44 @@ asset_field() {
     on && index($0, key) { sub(/^[^:]*: *"/, ""); sub(/".*$/, ""); print; exit }' "$3"
 }
 
+# no_tensor_cores PCI_ID CAP: 0 when the GPU's chip has no tensor cores, by its PCI product id
+# (nvidia-smi's pci.device_id, 0xDDDDVVVV: device, then vendor 10DE) and compute capability, as
+# the engine's GPU facts say: TU117 (0x1F80-0x1FFF) and TU116 (0x2180-0x21FF) at 7.5
+# (chip_mma_slow, core/device_class_host.cpp), and the GTX 16 boards on TU106 (0x1F09, 0x1F0A),
+# whose rows in core/data/gpu_facts.json carry mma_slow. This script runs before anything is
+# downloaded, so it holds the ids itself; tests/release/signed_install_test.sh checks them against
+# both sources.
+no_tensor_cores() {
+  [ "$2" = 7.5 ] || return 1
+  case $(printf '%s' "$1" | tr a-fx A-FX) in
+    0X1F[89A-F][0-9A-F]10DE | 0X21[89A-F][0-9A-F]10DE | 0X1F0910DE | 0X1F0A10DE) return 0 ;;
+  esac
+  return 1
+}
+NO_TENSOR_CORES="its chip has no tensor cores (the GTX 16 series: TU116, TU117)"
+
+# gpu_unsupported PCI_ID CAP: 0, printing why, when NInferno does not support that GPU.
+gpu_unsupported() {
+  case $2 in
+    [0-9].[0-9] | [0-9][0-9].[0-9]) ;;
+    *) say "its compute capability is unknown ($2)"; return 0 ;;
+  esac
+  if [ "${2%%.*}" -lt 7 ]; then
+    say "compute capability $2 is older than NInferno supports (7.0 and newer)"; return 0
+  fi
+  if no_tensor_cores "$1" "$2"; then
+    say "$NO_TENSOR_CORES; NInferno may not run on it, or may run slowly"; return 0
+  fi
+  return 1
+}
+
 usage() {
   say "NInferno installer for Linux and WSL 2."
   say "  install.sh                      install the newest release"
+  say "  install.sh --yes                the same, without asking on a GPU NInferno does not support"
   say "  install.sh --uninstall [--yes]  remove what it installed from $HOME_DIR and $BIN_DIR"
   say "  install.sh --verify MANIFEST    exit 0 when MANIFEST.sig is the release key's signature"
+  say "  install.sh --gpu-check ID CAP   exit 0 when NInferno supports that GPU, else say why"
   say "  install.sh --help               this text"
   say "Through a pipe: curl -fsSL .../install.sh | sh -s -- --uninstall"
 }
@@ -133,15 +170,21 @@ uninstall() {
   fi
 }
 
+assume_yes=no
 case ${1:-} in
   --verify)
     [ $# = 2 ] && [ -f "$2" ] || die "usage: install.sh --verify MANIFEST"
     verify_manifest "$2" || die "$2 is not signed by the NInferno release key"
     exit 0 ;;
+  --gpu-check)
+    [ $# = 3 ] || die "usage: install.sh --gpu-check PCI_DEVICE_ID COMPUTE_CAP"
+    if gpu_unsupported "$2" "$3"; then exit 1; fi
+    exit 0 ;;
   -h | --help) [ $# = 1 ] || die "--help takes no arguments"; usage; exit 0 ;;
   --uninstall)
     case $#:${2:-} in 1:) uninstall ask ;; 2:--yes | 2:-y) uninstall yes ;; *) die "usage: install.sh --uninstall [--yes]" ;; esac
     exit 0 ;;
+  --yes | -y) [ $# = 1 ] || die "usage: install.sh [--yes]"; assume_yes=yes ;;
   '') [ $# = 0 ] || die "unknown argument '' (see --help)" ;;
   *) die "unknown argument $1 (see --help)" ;;
 esac
@@ -162,29 +205,46 @@ command -v nvidia-smi > /dev/null 2>&1 ||
   die "nvidia-smi not found: install the NVIDIA driver (on WSL 2, the Windows driver provides it)"
 
 # Every GPU; the release runs on each from compute capability 7.0 (an engine per generation, PTX
-# for later ones): at least one must qualify.
-gpus=$(nvidia-smi --query-gpu=index,name,compute_cap,memory.total,driver_version \
+# for later ones): at least one must qualify. A chip without tensor cores (GTX 16) is not
+# supported either: when no other GPU qualifies, the user is asked whether to install anyway.
+gpus=$(nvidia-smi --query-gpu=index,name,compute_cap,memory.total,driver_version,pci.device_id \
   --format=csv,noheader,nounits) || die "nvidia-smi cannot read the GPUs"
-usable=0; min_driver=0; driver=""
-while IFS=, read -r index name cap mem drv; do
+usable=0; no_tc=0; min_driver=0; driver=""
+while IFS=, read -r index name cap mem drv pci; do
   name=$(printf '%s' "$name" | sed 's/^ *//; s/ *$//'); cap=$(printf '%s' "$cap" | tr -d ' ')
   mem=$(printf '%s' "$mem" | tr -d ' '); driver=$(printf '%s' "$drv" | tr -d ' ')
+  pci=$(printf '%s' "$pci" | tr -d ' ')
   major_cc=${cap%%.*}; minor_cc=${cap#*.}
   case $major_cc$minor_cc in
     '' | *[!0-9]*) say "GPU$index: $name: compute capability unknown ($cap), skipped"; continue ;;
   esac
   if [ "$major_cc" -ge 7 ]; then
-    usable=$((usable + 1))
     # CUDA 13 (driver 580) for every engine but Volta's, CUDA 12.8 (570).
     if [ "$major_cc" = 7 ] && [ "$minor_cc" -lt 5 ]; then need=570; else need=580; fi
     [ "$need" -gt "$min_driver" ] && min_driver=$need
-    say "GPU$index: $name, compute capability $cap, $((mem / 1024)) GB"
+    if no_tensor_cores "$pci" "$cap"; then
+      no_tc=$((no_tc + 1))
+      say "GPU$index: $name, compute capability $cap, $((mem / 1024)) GB: NOT SUPPORTED, $NO_TENSOR_CORES"
+    else
+      usable=$((usable + 1))
+      say "GPU$index: $name, compute capability $cap, $((mem / 1024)) GB"
+    fi
   else
     say "GPU$index: $name, compute capability $cap: older than NInferno supports (7.0 and newer)"
   fi
 done <<EOF
 $gpus
 EOF
+if [ "$usable" = 0 ] && [ "$no_tc" -gt 0 ]; then
+  say "WARNING: NInferno does not support a GPU without tensor cores: it may not run, or may run slowly."
+  if [ "$assume_yes" != yes ]; then
+    printf 'Install it anyway? [y/N] '
+    { read -r answer < /dev/tty; } 2> /dev/null ||
+      die "no terminal to ask: run it with --yes to install on this GPU anyway (curl ... | sh -s -- --yes)"
+    case $answer in [yY]*) ;; *) say "Nothing installed."; exit 0 ;; esac
+  fi
+  usable=$no_tc
+fi
 [ "$usable" -gt 0 ] || die "no GPU here is supported (compute capability 7.0 and newer: RTX 20 series, V100 and later)"
 major=${driver%%.*}
 # A CUDA runtime does not run on a driver of an older major release (minor-version compatibility

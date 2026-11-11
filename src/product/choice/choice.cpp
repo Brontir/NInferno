@@ -1,5 +1,6 @@
 #include "product/choice/choice.h"
 
+#include "core/device_class.h"
 #include "core/generation.h"
 #include "core/measured_boards.h"
 #include "core/mmq_columns.h"
@@ -19,6 +20,18 @@ namespace ninferno::product::choice {
 
 std::string_view generation_of(const CardFacts& card) noexcept {
     return generation_row(card.major, card.minor).name;
+}
+
+CardFacts card_facts_of(const DeviceClass& device) {
+    CardFacts out;
+    out.major            = device.major;
+    out.minor            = device.minor;
+    out.sms              = device.sms;
+    out.clock_hz         = device.facts.reference_clock_khz * 1e3;
+    out.dram_bytes_per_s = device.facts.dram_bytes_per_s();
+    out.l2_bytes         = device.facts.l2_mib * (1 << 20);
+    out.fp4              = device.features.mma_mxf4nvf4;
+    return out;
 }
 
 namespace {
