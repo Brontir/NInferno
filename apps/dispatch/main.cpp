@@ -290,10 +290,16 @@ int run(const fs::path& engine, char** argv) {
 
 } // namespace
 
-// --help or -h for the engine's own options, which it answers before it touches a GPU; not inside a
-// subcommand (route-tune, spec-tune ...), which reads its own arguments and then the device.
+// --help or -h anywhere, which the engine's options answer before it touches a GPU (also after the
+// artifact: `ninferno-serve model.ninferno --help`); not for the measurement subcommands of
+// apps/serve/main.cpp that read their own arguments and then the device (route-tune, spec-tune,
+// spec-reselect), which a GPU no engine supports cannot run.
 static bool engine_help_requested(int argc, char** argv) {
-    return argc >= 2 && argv[1][0] == '-' && ninferno::help_requested(argc, argv);
+    if (argc >= 2) {
+        const std::string_view first = argv[1];
+        if (first == "route-tune" || first == "spec-tune" || first == "spec-reselect") { return false; }
+    }
+    return ninferno::help_requested(argc, argv);
 }
 
 int main(int argc, char** argv) {
