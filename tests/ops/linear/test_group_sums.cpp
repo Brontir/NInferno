@@ -254,6 +254,13 @@ void host_rules(const std::string& board) {
                     const auto described = generic::rmma_resources(i, w, e, t, rows);
                     check(!described || described->sums != 2,
                           ri + ": the price describes the instance with the MMA with ones");
+                    // A call that reads the plane is described by the instance it launches.
+                    if (expected) {
+                        const auto ran =
+                            generic::route_resources(r, w, e, t, rows, std::nullopt, true);
+                        check(ran && ran->sums == 2,
+                              ri + ": route_resources describes the plane instance the call runs");
+                    }
                 }
                 const std::size_t need = generic::rmma_group_sums_bytes(c, 4096, 32);
                 const auto resolved =

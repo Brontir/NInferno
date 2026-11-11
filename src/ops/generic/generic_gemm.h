@@ -755,9 +755,12 @@ r8_resources(int schedule, const Weight& weight, Epilogue epilogue, std::int32_t
 // not described. nullopt where resolve_route takes the call off `route`, on Volta's CUTLASS band of
 // a tiled call, and for the scalar route. `rows` and `r8_prequantized` as r8_resources'; `rows` of
 // any family: the call's output rows, where the weight is a fused parent the call reads a slice of.
+// `group_sums`: a register-MMA call that reads the group-sums plane (ResolvedRoute::group_sums)
+// is described by the plane instance it launches, not the price's (rmma_resources).
 [[nodiscard]] std::optional<KernelResources>
 route_resources(Route route, const Weight& weight, Epilogue epilogue, std::int32_t tokens,
-                std::int32_t rows = 0, std::optional<bool> r8_prequantized = std::nullopt);
+                std::int32_t rows = 0, std::optional<bool> r8_prequantized = std::nullopt,
+                bool group_sums = false);
 
 // The output tile one CTA of `route` computes for a `tokens`-token call (#298), as the cost model
 // prices it (price_routes, a8_candidates read this): output rows (under SwiGLU each reads its gate

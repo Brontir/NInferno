@@ -191,7 +191,8 @@ RouteDescription describe_resolved(const DescribedWeight& described, const Probl
             out.kernel = route_resources(ran, w, problem.epilogue, tokens, problem.n,
                                          ran.family == Family::R8Mma
                                              ? std::optional<bool>(resolved.r8_prequantized)
-                                             : std::nullopt);
+                                             : std::nullopt,
+                                         resolved.group_sums);
         } catch (const std::exception&) {} // no CUDA device to read the binary from
     }
     return out;

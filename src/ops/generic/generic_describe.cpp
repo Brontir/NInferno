@@ -200,10 +200,11 @@ std::optional<KernelResources> ggml_resources(Route route, const Weight& w, Epil
 
 std::optional<KernelResources> route_resources(Route route, const Weight& w, Epilogue epilogue,
                                                std::int32_t tokens, std::int32_t rows_asked,
-                                               std::optional<bool> r8_prequantized) {
+                                               std::optional<bool> r8_prequantized,
+                                               bool group_sums) {
     switch (route.family) {
     case Family::RegisterMma:
-        return rmma_resources(route.schedule, w, epilogue, tokens, rows_asked);
+        return rmma_described(route.schedule, w, epilogue, tokens, rows_asked, group_sums);
     case Family::R8Mma: {
         const auto r8 =
             r8_resources(route.schedule, w, epilogue, tokens, rows_asked, r8_prequantized);
