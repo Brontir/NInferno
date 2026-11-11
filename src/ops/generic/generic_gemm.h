@@ -768,6 +768,11 @@ struct RouteTile {
 // warp keeps in flight from it (kernel_roofline.h price_register_mma).
 [[nodiscard]] std::int64_t rmma_step_values(QType qtype, std::int32_t k);
 
+// The register-MMA decoder of the format by its geometry row's spelling (rmma_geometry.h
+// kDecoderGeometry), for the static shared memory it adds (a codebook, staged activations);
+// empty for a format whose decoder adds none.
+[[nodiscard]] std::string_view rmma_geometry_decoder(QType qtype);
+
 // Whether price_routes prices this A16 route on a device (generic_cost.cpp), a pricing rule and
 // not admission (route_admits): every route, except where the BF16 MMA is emulated (Turing,
 // Volta), which gets no pipelined tile (tiled, staged) and no 8-tile register-MMA token strip.

@@ -522,6 +522,57 @@ class WarpInflight(unittest.TestCase):
                 self.assertEqual(wi.cmd_merge(args), 1)
             with open(os.path.join(inputs, "warp_inflight_89.txt")) as f:
                 self.assertEqual(f.read(), SAMPLE)
+            # Another card's run under the reference name is refused: it is a transfer check
+            # (--transfer) or, on purpose, the new reference (--new-reference).
+            other = os.path.join(d, "other.txt")
+            other_text = SAMPLE.replace("card NVIDIA GeForce RTX 4070 Ti",
+                                        "card NVIDIA GeForce RTX 4060 Ti")
+            with open(other, "w", newline="\n") as f:
+                f.write(other_text)
+            args.input = other
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(wi.cmd_merge(args), 1)
+            self.assertIn("--transfer", err.getvalue())
+            with open(os.path.join(inputs, "warp_inflight_89.txt")) as f:
+                self.assertEqual(f.read(), SAMPLE)
+            args.transfer = True
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(wi.cmd_merge(args), 0)
+            self.assertEqual(sorted(os.listdir(inputs)),
+                             ["warp_inflight_89.txt", "warp_inflight_89_rtx4060ti.txt"])
+            with open(args.table) as f:
+                t = json.load(f)["arches"]["89"]["transfer"]["runs"]
+            self.assertEqual([c["card"] for c in t], ["NVIDIA GeForce RTX 4060 Ti"])
+            # The new reference may not also be a transfer check of itself.
+            args.transfer, args.new_reference = False, True
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(wi.cmd_merge(args), 1)
+            os.remove(os.path.join(inputs, "warp_inflight_89_rtx4060ti.txt"))
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(wi.cmd_merge(args), 0)
+            with open(os.path.join(inputs, "warp_inflight_89.txt")) as f:
+                self.assertEqual(f.read(), other_text)
+
+    def test_warp_saturation(self):
+        # The made-up card's 4-load ring doubles the 2-load ring's b_w (it follows its count): no
+        # cap. A card whose 4-load ring reads what its 2-load ring does saturates, and b_w_max then
+        # caps the law's ring4 bytes.
+        head, rows = wi.parse_run(SAMPLE)
+        row = wi.facts_row(head, rows, "warp_inflight_89.txt")
+        self.assertFalse(row["warp_bytes_saturated"])
+        self.assertAlmostEqual(row["ring4_over_ring2_w1"], 2.0, delta=0.01)
+        capped = re.sub(r"^row (\S+ \d+) ring4 8 (\d+) .*$",
+                        lambda m: row_line(m.group(1).split()[0], int(m.group(1).split()[1]),
+                                           "ring2", int(m.group(2))).replace(" ring2 4 ",
+                                                                             " ring4 8 ").strip(),
+                        SAMPLE, flags=re.M)
+        head, rows = wi.parse_run(capped)
+        row = wi.facts_row(head, rows, "warp_inflight_89.txt")
+        self.assertTrue(row["warp_bytes_saturated"])
+        self.assertAlmostEqual(row["facts"]["max_warp_bytes_in_flight"]["value"], 2048, delta=4)
+        ratios = wi.law_ratios(row, {v: row[f"{v}_rows"] for v in wi.CHECKED_RINGS})
+        self.assertTrue(all(abs(r - 1) < 1e-3 for *_, r in ratios), ratios[:3])
 
     def test_sampler_drains_as_it_goes(self):
         # A sampler that writes far more than a pipe holds (about 4 KB on Windows, 64 KB on Linux)

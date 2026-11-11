@@ -329,8 +329,9 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         kernel.m_tiles      = s.m_tiles;
         kernel.k_step       = static_cast<double>(rmma_step_values(problem.qtype, problem.k));
         kernel.heavy   = heavy_decoder;
-        kernel.shared_bytes = kr::register_mma_schedule_shared_bytes(
-            s.warps_m, s.warps_k, static_cast<int>(call.sets), s.m_tiles, s.n_tiles, s.cluster);
+        kernel.shared_bytes = kr::register_mma_static_shared_bytes(
+            rmma_geometry_decoder(problem.qtype), s.warps_m, s.warps_k, s.m_tiles, s.n_tiles,
+            s.cluster, problem.epilogue == Epilogue::SwiGlu, d.major * 10 + d.minor);
         if (kept) {
             kernel.registers    = kept->registers;
             kernel.local_bytes  = kept->local_bytes;

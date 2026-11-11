@@ -336,9 +336,9 @@ std::optional<RmmaPriced> rmma_terms(const DeviceClass& d, const generic::Proble
     kernel.m_tiles = s.m_tiles;
     kernel.k_step  = static_cast<double>(generic::rmma_step_values(problem.qtype, problem.k));
     kernel.heavy   = has_subblock_scales(problem.qtype) && rmma_terms_measured(d.major, d.minor);
-    kernel.shared_bytes = kr::register_mma_schedule_shared_bytes(
-        s.warps_m, s.warps_k, problem.epilogue == Epilogue::SwiGlu ? 2 : 1, s.m_tiles, s.n_tiles,
-        s.cluster);
+    kernel.shared_bytes = kr::register_mma_static_shared_bytes(
+        generic::rmma_geometry_decoder(problem.qtype), s.warps_m, s.warps_k, s.m_tiles, s.n_tiles,
+        s.cluster, problem.epilogue == Epilogue::SwiGlu, d.major * 10 + d.minor);
     if (kernel.heavy) {
         try {
             if (const auto kept = generic::rmma_resources(schedule, weight, problem.epilogue,

@@ -124,6 +124,13 @@ void rows_equal_the_file(const Json& file) {
             expect((*row).*e.member == f.at("value").get<double>(), where + ": " + e.name);
         }
         rings_equal(row->rings, j, where);
+        expect(row->warp_bytes_saturated == j.at("warp_bytes_saturated").get<bool>() &&
+                   row->ring4_over_ring2_w1 == j.at("ring4_over_ring2_w1").get<double>(),
+               where + ": warp saturation");
+        // The rule (warp_inflight.py SATURATION_GAIN): the 4-load ring keeps under x1.5 of the
+        // 2-load ring's b_w at W = 1, the midpoint between no gain and its count's doubling.
+        expect(row->warp_bytes_saturated == (row->ring4_b_w_w1_free / row->ring2_b_w_w1_free < 1.5),
+               where + ": saturated is the rule over its readings");
         const Json& transfer = j.at("transfer");
         expect(row->transfer_refuted == transfer.at("refuted").get<bool>(), where + ": refuted");
         const Json& runs = transfer.at("runs");
@@ -145,9 +152,10 @@ void rows_equal_the_file(const Json& file) {
         expect(row->transfer_refuted == outside, where + ": refuted is the runs' verdict");
         std::cout << where << " (" << row->card << "): P " << row->bytes_per_clock_free << " / "
                   << row->bytes_per_clock_placed << " B/clk, L0 " << row->dram_stream_latency_ns
-                  << " ns, b_w_max " << row->max_warp_bytes_in_flight << " B, "
-                  << row->transfers.size() << " transfer check(s)"
-                  << (row->transfer_refuted ? ", refuted" : "") << '\n';
+                  << " ns, b_w_max " << row->max_warp_bytes_in_flight << " B ("
+                  << (row->warp_bytes_saturated ? "a cap" : "no cap") << ", ring4 / ring2 x"
+                  << row->ring4_over_ring2_w1 << "), " << row->transfers.size()
+                  << " transfer check(s)" << (row->transfer_refuted ? ", refuted" : "") << '\n';
     }
 }
 

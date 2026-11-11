@@ -484,6 +484,44 @@ int rmma_k_split_fit(int index, const Problem& problem, std::int64_t ctas, std::
 
 std::int64_t rmma_step_values(QType qtype, std::int32_t k) { return rmma_k_step(qtype, k); }
 
+std::string_view rmma_geometry_decoder(QType qtype) {
+    Weight weight;
+    weight.qtype = qtype;
+    WeightCodec codec{};
+    try {
+        codec = codec_of(weight);
+    } catch (const std::invalid_argument&) { return {}; }
+    // The decoder each codec's launch file instantiates (generic_gemm_<format>.cu), where it has
+    // a codebook or stages its activations; the Q6_K wide decoder the launcher may take has the
+    // same row. The ggml 32-blocks and MXFP4 have rows for their group tail, which adds none.
+    switch (codec) {
+    case WeightCodec::GgmlIq1M:
+        return "GgmlIq1MDecoder";
+    case WeightCodec::GgmlIq1S:
+        return "GgmlIq1SDecoder";
+    case WeightCodec::GgmlIq2S:
+        return "GgmlIq2SDecoder";
+    case WeightCodec::GgmlIq2Xs:
+        return "GgmlIq2XsDecoder";
+    case WeightCodec::GgmlIq2Xxs:
+        return "GgmlIq2XxsDecoder";
+    case WeightCodec::GgmlIq3S:
+        return "GgmlIq3SDecoder";
+    case WeightCodec::GgmlIq3Xxs:
+        return "GgmlIq3XxsDecoder";
+    case WeightCodec::GgmlQ3K:
+        return "GgmlQ3KDecoder";
+    case WeightCodec::GgmlQ6K:
+        return "GgmlQ6KDecoder";
+    case WeightCodec::GgmlQ4K:
+        return "GgmlQ45KQuadDecoder<4>";
+    case WeightCodec::GgmlQ5K:
+        return "GgmlQ45KQuadDecoder<5>";
+    default:
+        return {};
+    }
+}
+
 // Outside the prefill profile a tiled codec's 128x128 kernel pays once its tiles fill kSpeedFill
 // waves of the SMs (from 33 tokens, on a native BF16 MMA): below that the register MMA's
 // narrower tiles fill them (Q4_K n = 1024 at T 64..128: the tiled kernel 5..7x on every board).

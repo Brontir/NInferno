@@ -65,8 +65,13 @@ struct SmRateRow {
     double sm_mhz_free = 0, sm_mhz_placed = 0; // MHz, the SM clock of those rows
     // L0: one warp alone on one SM, one 16-byte load a lane in flight, its fetch time (ns).
     double dram_stream_latency_ns = 0;
-    // b_w_max: the most bytes one warp alone kept in flight, over every variant (B).
+    // b_w_max: the most bytes one warp alone kept in flight, over every variant (B). A cap of the
+    // bytes the law counts only where the warp saturates (`warp_bytes_saturated`: the 4-load ring
+    // keeps less than x1.5 of the 2-load ring's b_w at W = 1, `ring4_over_ring2_w1`); elsewhere a
+    // lower bound of the warp's limit that caps nothing.
     double max_warp_bytes_in_flight = 0;
+    bool warp_bytes_saturated       = false;
+    double ring4_over_ring2_w1      = 0;
     // The two-slot ring (2048 B a warp by count): b_w at W = 1 (B) and the largest W up to which
     // every row keeps 0.9 of it; 4 loads a lane in one chain, and the 4-load ring, at W = 1.
     double ring2_b_w_w1_free = 0, ring2_b_w_w1_placed = 0;

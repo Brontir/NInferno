@@ -122,9 +122,11 @@ SmRateRow parse_row(const std::string& key, const Json& j) {
         }
         r.*f.member = positive(it->at("value"), where);
     }
-    r.rings              = rings_of(j);
-    const Json& transfer = j.at("transfer");
-    bool any_outside     = false;
+    r.warp_bytes_saturated = boolean(j, "warp_bytes_saturated");
+    r.ring4_over_ring2_w1  = positive(j.at("ring4_over_ring2_w1"), "ring4_over_ring2_w1");
+    r.rings                = rings_of(j);
+    const Json& transfer   = j.at("transfer");
+    bool any_outside       = false;
     for (const Json& t : transfer.at("runs")) {
         SmRateTransfer run;
         run.card                   = text(t, "card");

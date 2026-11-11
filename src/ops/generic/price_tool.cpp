@@ -474,10 +474,12 @@ int run(const Options& o) {
         kernel.m_tiles = s.m_tiles;
         kernel.k_step  = static_cast<double>(generic::rmma_step_values(qtype, o.k));
         kernel.heavy   = heavy;
-        // The schedule's own shared memory; the selector reads the compiled whole where it reads
-        // the kernel's facts (the heavy form), which this replica is not given.
-        kernel.shared_bytes = kr::register_mma_schedule_shared_bytes(
-            s.warps_m, s.warps_k, static_cast<int>(call.sets), s.m_tiles, s.n_tiles, s.cluster);
+        // The instance's static shared memory by the geometry rule; the selector reads the
+        // compiled whole where it reads the kernel's facts (the heavy form), which this replica is
+        // not given.
+        kernel.shared_bytes = kr::register_mma_static_shared_bytes(
+            generic::rmma_geometry_decoder(qtype), s.warps_m, s.warps_k, s.m_tiles, s.n_tiles,
+            s.cluster, o.epilogue == Epilogue::SwiGlu, d.major * 10 + d.minor);
         if (heavy) { // the price reads compiled facts only in the heavy form, as price_routes does
             kernel.registers   = o.registers;
             kernel.local_bytes = o.local_bytes;

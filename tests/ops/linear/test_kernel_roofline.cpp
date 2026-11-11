@@ -99,8 +99,9 @@ std::optional<double> roofline_price(const DeviceClass& d, const kr::ChipFacts& 
         kernel.m_tiles      = s.m_tiles;
         kernel.k_step       = static_cast<double>(g::rmma_step_values(q, k_cols));
         kernel.heavy        = heavy;
-        kernel.shared_bytes = kr::register_mma_schedule_shared_bytes(
-            s.warps_m, s.warps_k, static_cast<int>(call.sets), s.m_tiles, s.n_tiles, s.cluster);
+        kernel.shared_bytes = kr::register_mma_static_shared_bytes(
+            g::rmma_geometry_decoder(q), s.warps_m, s.warps_k, s.m_tiles, s.n_tiles, s.cluster,
+            e == g::Epilogue::SwiGlu, d.major * 10 + d.minor);
         for (const auto& read : reads) {
             if (read.schedule == r.schedule && read.qtype == q && read.epilogue == e) {
                 kernel.registers    = read.facts.registers;
@@ -750,16 +751,17 @@ void check_dram_time() {
 // ---- Check 8: the law against the probe's own rows ----
 // For every architecture of core/sm_rate_facts.h, dram_time prices one CTA of W warps on one SM,
 // each warp keeping the counted bytes of one of the probe's two-slot rings in flight (ring2: 2048
-// B, ring4: 4096 B, both under the row's b_w_max), and that rate is held to the probe's measured
-// ring rows (both carve-outs, every W, at each row's own SM clock). P, L0 and b_w_max come from
-// the table the rows sit in, so the check is about the counted b_w and the law's form (ring4 at
-// W = 1 equals the row where its b_w_max is ring4's own reading: sm_75, sm_86, sm_89, and nearly on
-// sm_70 and sm_120a). The law is Little's with the unloaded L0 and a hard corner at P, an upper
-// bound of the rate, so:
+// B, ring4: 4096 B, under the row's b_w_max where its warp saturates: sm_70, sm_120a), and that
+// rate is held to the probe's measured ring rows (both carve-outs, every W, at each row's own SM
+// clock). P, L0 and the cap come from the table the rows sit in, so the check is about the
+// counted b_w and the law's form (ring4 at W = 1 equals the row where the cap is ring4's own
+// reading, sm_70). The law is Little's with the unloaded L0, the counted bytes and a hard corner
+// at P, an upper bound of the rate, so:
 //  - it is never below a measured row (to 1 %, kNeverBelow);
-//  - at W = 1 it is at most kAtOneWarp above it: ring2's counted 2048 B against the 1767-1907 B the
-//    rows give (x1.07-1.16); a b_w counted twice over or a P in another unit fails here;
-//  - on every row at most kOnTheCurve above it. The worst reading, x1.16-1.34 at W = 8-16, is a gap
+//  - at W = 1 it is at most kAtOneWarp above it: the count against what a warp keeps in flight,
+//    ring2's 2048 B against 1767-1907 B (x1.07-1.16), ring4's 4096 B uncapped against 3340-3448 B
+//    (x1.19-1.23); a b_w counted twice over or a P in another unit fails here;
+//  - on every row at most kOnTheCurve above it. The worst reading, x1.16-1.37 at W = 6-16, is a gap
 //    of the model, not noise: the measured curve rounds off into P (a knee of queueing near the
 //    port's limit) where the law has a corner. It is recorded on #690; the law is optimistic there.
 // The bounds are this check's tolerances, the same as warp_inflight.py's (LAW_*), not constants of
@@ -770,7 +772,7 @@ void check_dram_time() {
 // 12 % faster than the RTX 5090's) and x0.92 at its placed P (23.8 B/clk against 21.9).
 // Last, the boards of each law, written out: the legacy law on sm_80, sm_90, sm_100, sm_121 (no
 // row) and on sm_120a (refuted), the law of #690 on sm_70, sm_75, sm_86, sm_89.
-constexpr double kNeverBelow = 0.99, kAtOneWarp = 1.20, kOnTheCurve = 1.40;
+constexpr double kNeverBelow = 0.99, kAtOneWarp = 1.25, kOnTheCurve = 1.40;
 
 struct LawOverRows {
     long rows = 0, outside = 0;
@@ -787,7 +789,7 @@ LawOverRows law_over(const ninferno::SmRateRow& row, const ninferno::SmRateRings
     chip.dram_latency_s                 = row.dram_stream_latency_ns * 1e-9;
     chip.sm_dram_bytes_per_clock_free   = row.bytes_per_clock_free;
     chip.sm_dram_bytes_per_clock_placed = row.bytes_per_clock_placed;
-    chip.sm_max_warp_bytes              = row.max_warp_bytes_in_flight;
+    if (row.warp_bytes_saturated) chip.sm_max_warp_bytes = row.max_warp_bytes_in_flight;
     // One CTA on one SM: the bus is not the bound the probe measured.
     chip.dram_bytes_per_s = 1e18;
     const double bytes    = 1 << 20;
@@ -826,9 +828,10 @@ void check_law_against_probe() {
         const LawOverRows own = law_over(row, row.rings, row.card.c_str(), true);
         rows += own.rows;
         bad += own.outside;
-        std::printf("law vs probe: sm_%s (%s, b_w_max %.0f B): x%.3f..%.3f, x%.3f at W = 1\n",
-                    row.arch.c_str(), row.card.c_str(), row.max_warp_bytes_in_flight, own.lowest,
-                    own.highest, own.at_one);
+        std::printf("law vs probe: sm_%s (%s, b_w_max %.0f B, %s): x%.3f..%.3f, x%.3f at W = 1\n",
+                    row.arch.c_str(), row.card.c_str(), row.max_warp_bytes_in_flight,
+                    row.warp_bytes_saturated ? "a cap" : "no cap", own.lowest, own.highest,
+                    own.at_one);
         bool outside = false;
         for (const ninferno::SmRateTransfer& t : row.transfers) {
             const LawOverRows other = law_over(row, t.rings, t.card.c_str(), false);
@@ -881,11 +884,116 @@ void check_law_against_probe() {
     if (bad > 0 || rows == 0) ++failures;
 }
 
+// ---- Check 9: the register MMA's count of bytes in flight and its carve-out ----
+// The count of price_register_mma written out: 2 ring slots x m_tiles x 16 rows x the decoder's
+// K step x bpw. BF16 m1 Store is 2048 B, Q4_K m1 Store 2304 B; a Q6_K SwiGLU m2 schedule counts
+// 2 x 2 x 16 x 128 x 2 x 210 / 256 B, cut to b_w_max where the warp saturates (the V100's sm_70
+// row) and kept where it does not (the RTX 4090's sm_89 row). A kernel with static shared memory
+// takes the placed P, one without the free P; the IQ codebook and the K warps' partials are
+// shared memory by the geometry rule. A kernel without its K step is refused.
+void check_rmma_count() {
+    long bad        = 0;
+    const auto fail = [&](const std::string& what) {
+        std::fprintf(stderr, "FAIL: register-MMA count: %s\n", what.c_str());
+        ++bad;
+    };
+    const auto chip_of = [&](const char* name) -> std::optional<kr::ChipFacts> {
+        const auto it =
+            std::find_if(std::begin(g::kFactsBoards), std::end(g::kFactsBoards),
+                         [&](const g::FactsBoard& b) { return std::strcmp(b.name, name) == 0; });
+        if (it == std::end(g::kFactsBoards)) return std::nullopt;
+        return kr::chip_facts_of(g::board_device_class(*it));
+    };
+    const auto ada = chip_of("rtx4090"), volta = chip_of("v100");
+    if (!ada || !volta || kr::legacy_dram(*ada) || kr::legacy_dram(*volta)) {
+        fail("the rtx4090 and v100 boards with SM rate facts");
+        ++failures;
+        return;
+    }
+    if (ada->sm_max_warp_bytes || !volta->sm_max_warp_bytes) {
+        fail("a cap on sm_70 (its warp saturates) and none on sm_89");
+    }
+    const kr::Calibration cal = kr::calibration_of(8, 9);
+    const auto counted = [&](const kr::ChipFacts& chip, QType q, g::Epilogue e, double m_tiles,
+                             double shared) {
+        const std::int32_t n = 4096, k = 4096;
+        const kr::Call call{double(n), double(k), 32.0, e == g::Epilogue::SwiGlu ? 2.0 : 1.0,
+                            double(g::described_weight_bytes(q, e, n, k)) / (double(n) * k)};
+        kr::RegisterMmaKernel kernel;
+        kernel.rows         = 16 * m_tiles;
+        kernel.cols         = 8;
+        kernel.threads      = 32;
+        kernel.m_tiles      = m_tiles;
+        kernel.k_step       = double(g::rmma_step_values(q, k));
+        kernel.shared_bytes = shared;
+        return kr::price_register_mma(chip, cal, call, kernel).dram_law;
+    };
+    const auto near          = [](double a, double b) { return std::abs(a - b) <= 1e-9 * b; };
+    const kr::DramTerms bf16 = counted(*ada, QType::BF16, g::Epilogue::Store, 1, 0);
+    if (!near(bf16.counted, 2048) || !near(bf16.warp_bytes, 2048)) fail("BF16 m1 Store 2048 B");
+    const kr::DramTerms q4k = counted(*ada, QType::GGML_Q4_K, g::Epilogue::Store, 1, 0);
+    if (!near(q4k.counted, 2304))
+        fail("Q4_K m1 Store 2304 B, counted " + std::to_string(q4k.counted));
+    const double q6k_swiglu      = 2.0 * 2 * 16 * 128 * 2 * 210.0 / 256;
+    const kr::DramTerms on_ada   = counted(*ada, QType::GGML_Q6_K, g::Epilogue::SwiGlu, 2, 0);
+    const kr::DramTerms on_volta = counted(*volta, QType::GGML_Q6_K, g::Epilogue::SwiGlu, 2, 0);
+    if (!near(on_ada.counted, q6k_swiglu) || !near(on_ada.warp_bytes, q6k_swiglu)) {
+        fail("Q6_K SwiGLU m2 on sm_89: counted " + std::to_string(on_ada.counted) + ", no cap");
+    }
+    if (!near(on_volta.counted, q6k_swiglu) ||
+        !near(on_volta.warp_bytes, *volta->sm_max_warp_bytes)) {
+        fail("Q6_K SwiGLU m2 on sm_70: cut to b_w_max");
+    }
+    // The carve-out: P of the free one without shared memory, of the placed one with some.
+    if (bf16.shared_carved ||
+        !near(bf16.peak, *ada->sm_dram_bytes_per_clock_free * ada->clock_hz)) {
+        fail("no shared memory: the free P");
+    }
+    const kr::DramTerms shared = counted(*ada, QType::BF16, g::Epilogue::Store, 1, 1024);
+    if (!shared.shared_carved ||
+        !near(shared.peak, *ada->sm_dram_bytes_per_clock_placed * ada->clock_hz)) {
+        fail("shared memory: the placed P");
+    }
+    // The geometry rule: a codebook decoder and the K warps' partials declare shared memory, a
+    // BF16 one-warp-K instance none; every decoder named is a geometry row.
+    if (kr::register_mma_static_shared_bytes(g::rmma_geometry_decoder(QType::GGML_IQ2_S), 1, 1, 1,
+                                             1, 1, false, 89) <= 0) {
+        fail("an IQ2_S instance has its codebook in shared memory");
+    }
+    if (kr::register_mma_static_shared_bytes(g::rmma_geometry_decoder(QType::BF16), 1, 1, 1, 1, 1,
+                                             false, 89) != 0 ||
+        kr::register_mma_static_shared_bytes(g::rmma_geometry_decoder(QType::BF16), 1, 4, 1, 1, 1,
+                                             false, 89) <= 0) {
+        fail("BF16: no shared memory with one K warp, the partials with four");
+    }
+    for (const QType q :
+         {QType::GGML_IQ1_M, QType::GGML_IQ1_S, QType::GGML_IQ2_S, QType::GGML_IQ2_XS,
+          QType::GGML_IQ2_XXS, QType::GGML_IQ3_S, QType::GGML_IQ3_XXS, QType::GGML_Q3_K,
+          QType::GGML_Q4_K, QType::GGML_Q5_K, QType::GGML_Q6_K}) {
+        const std::string_view name = g::rmma_geometry_decoder(q);
+        if (name.empty() || g::geometry::decoder_geometry(name).run == 0) {
+            fail(std::string(g::qtype_name(q)) + ": no geometry row named " + std::string(name));
+        }
+    }
+    bool threw = false;
+    try {
+        kr::RegisterMmaKernel kernel;
+        kernel.rows = 16, kernel.cols = 8, kernel.threads = 32;
+        (void)kr::price_register_mma(*ada, cal, kr::Call{4096, 4096, 32, 1, 2}, kernel);
+    } catch (const std::invalid_argument&) { threw = true; }
+    if (!threw) fail("a kernel without its K step is refused");
+    std::printf("register-MMA count: BF16 %.0f B, Q4_K %.0f B, Q6_K SwiGLU m2 %.0f B (sm_70 %.0f "
+                "B), %ld wrong\n",
+                bf16.counted, q4k.counted, on_ada.counted, on_volta.warp_bytes, bad);
+    if (bad > 0) ++failures;
+}
+
 int main() {
     check_golden();
     check_wiring();
     check_dram_time();
     check_law_against_probe();
+    check_rmma_count();
     check_price_formats();
     check_price_admitted();
     check_price_arguments();
