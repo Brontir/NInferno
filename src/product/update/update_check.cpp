@@ -265,9 +265,21 @@ std::optional<Release> check(const CheckOptions& options) {
         }
     }
     try {
-        const auto text      = fetch(url, options.current, options.timeout);
-        const auto signature = fetch(url + ".sig", options.current, options.timeout);
-        if (!verify_signature(text, signature, key)) { return std::nullopt; }
+        const auto text = fetch(url, options.current, options.timeout);
+        const auto say  = [&](const std::string& why) {
+            if (options.refused) { options.refused(url + " " + why + ": no update check"); }
+        };
+        std::string signature;
+        try {
+            signature = fetch(url + ".sig", options.current, options.timeout);
+        } catch (const std::exception&) {
+            say("has no signature (" + url + ".sig)");
+            return std::nullopt;
+        }
+        if (!verify_signature(text, signature, key)) {
+            say("is not signed by the NInferno release key");
+            return std::nullopt;
+        }
         const auto release = parse_manifest(text, options.current);
         if (!cache.empty()) {
             // Best effort: a cache that cannot be written only means asking the server again.
