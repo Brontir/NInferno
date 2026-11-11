@@ -230,8 +230,9 @@ void test_check() {
     body            = R"({"version":"7.0.0"})"; // served, but the signature is still 0.6.0's
     options.max_age = std::chrono::seconds(0);
     check(!check(options), "a manifest its signature does not match: no release");
-    check(refusals.size() == 1 && refusals.back().find("is not signed by the NInferno release key") !=
-                                      std::string::npos,
+    check(refusals.size() == 1 &&
+              refusals.back().find("is not signed by the NInferno release key") !=
+                  std::string::npos,
           "a manifest its signature does not match: refused out loud");
     options.max_age    = std::chrono::hours(24);
     options.public_key = release_key();
