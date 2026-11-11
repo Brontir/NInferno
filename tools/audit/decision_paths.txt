@@ -41,6 +41,7 @@ src/ops/generic/data/kernel_facts/**
 # their include closure is listed here or named there as not deciding)
 src/core/mmq_columns.h
 src/core/measured_boards.h
+src/core/measured_disposition.h
 src/core/board_registry.h
 src/core/device_identity.h
 src/core/machine_facts.h

@@ -73,6 +73,12 @@ add_test(NAME ninferno_qc_sh_test
 add_test(NAME ninferno_kit_validate_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_kit_validate.py)
 
+# tools/audit/fusion_sites.json against the FUSION-SITE markers in the code: a fusion site missing from
+# the registry, or an entry whose site is gone, fails (#617 step A), no GPU.
+add_test(NAME ninferno_fusion_sites_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_fusion_sites.py)
+set_tests_properties(ninferno_fusion_sites_test PROPERTIES LABELS host)
+
 # The facts-vs-driver comparison (tools/audit/facts_vs_driver.py) on canned driver output (#612
 # step 2), no GPU.
 add_test(NAME ninferno_facts_vs_driver_test
@@ -93,6 +99,18 @@ add_test(NAME ninferno_kernel_facts_sass_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_kernel_facts_sass.py)
 set_tests_properties(ninferno_kernel_facts_sass_test PROPERTIES LABELS host)
 
+# tools/bench/gap_map.py: measured times against the counted DRAM and tensor laws (#619), on
+# synthetic inputs, no GPU.
+add_test(NAME ninferno_gap_map_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_gap_map.py)
+set_tests_properties(ninferno_gap_map_test PROPERTIES LABELS host)
+
+# tools/bench/regret_bands.py: regret weighted by T band, per board, format and route family
+# (#613), no GPU.
+add_test(NAME ninferno_regret_bands_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_regret_bands.py)
+set_tests_properties(ninferno_regret_bands_test PROPERTIES LABELS host)
+
 # tools/audit/diff_lint.py: broken string literals, duplicated added blocks, removed definitions
 # still called and removed includes still needed, on planted diffs (#611), no GPU.
 add_test(NAME ninferno_diff_lint_test
@@ -109,6 +127,7 @@ set_tests_properties(ninferno_affected_arches_test PROPERTIES LABELS host)
 add_test(NAME ninferno_route_table_evidence_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_route_table_evidence.py)
 set_tests_properties(ninferno_route_table_evidence_test PROPERTIES LABELS host)
+
 # tools/bench/mmq_transfer_audit.py: same-generation MMQ transfer by workload regime (#373), no GPU.
 add_test(NAME ninferno_mmq_transfer_audit_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_mmq_transfer_audit.py)
