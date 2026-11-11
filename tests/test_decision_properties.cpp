@@ -13,9 +13,10 @@
 //       the SMs, or 1.25x the DRAM bandwidth, all else equal, prices it no slower (to 1e-9). The
 //       price (price_routes), not the choice. Three kinds of SM-scale case are told apart by a
 //       predicate and printed with their counts, not failed (explain_rmma_rise for the last two):
-//         - a board whose architecture has no ISA row (core/isa_facts.h: sm_80, sm_90, sm_100
-//           today) keeps the legacy DRAM law (kernel_roofline.h legacy_dram), which bills idle SMs
-//           (issue #690) until the ISA probe measures the architecture: its SM scale is skipped;
+//         - a board whose architecture has no SM rate row (core/sm_rate_facts.h: sm_80, sm_90,
+//           sm_100 today) keeps the legacy DRAM law (kernel_roofline.h legacy_dram), which bills
+//           idle SMs (issue #690) until the bytes-in-flight probe measures the architecture: its
+//           SM scale is skipped;
 //         - a register-MMA route of the heavy form whose rise is the shared activation read alone:
 //           the CTAs one SM runs at once read a token tile once for all of them, and with more
 //           SMs the busiest one holds fewer of them, so that read is spread over fewer warps (the
@@ -328,6 +329,7 @@ std::optional<RmmaPriced> rmma_terms(const DeviceClass& d, const generic::Proble
     kernel.cluster = tile->k_split;
     kernel.threads = 32.0 * s.warps_m * s.warps_k;
     kernel.warps_k = s.warps_k;
+    kernel.m_tiles = s.m_tiles;
     kernel.heavy   = has_subblock_scales(problem.qtype) && rmma_terms_measured(d.major, d.minor);
     if (kernel.heavy) {
         try {
@@ -491,7 +493,7 @@ void property_price_monotone(const std::vector<Row>& rows) {
               << sms_cases_instance << " by another compiled instance on the larger board (worst x"
               << instance_worst << ")\n";
     std::cout << "    SM scale not compared on " << legacy_rows.size()
-              << " rows of an architecture without an ISA row (the legacy DRAM law, issue #690): "
+              << " rows of an architecture without an SM rate row (the legacy DRAM law, #690): "
               << sms_cases_legacy << " cases";
     for (const std::string& name : legacy_rows) { std::cout << "\n    legacy DRAM law: " << name; }
     std::cout << '\n';

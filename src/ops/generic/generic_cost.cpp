@@ -63,13 +63,15 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
     const double smem_sm = static_cast<double>(d.smem_per_sm);
     const auto cdiv      = [](double a, double b) { return std::ceil(a / b); };
     // The DRAM time of a tile grid (kernel_roofline.h dram_time, issue #690): the shared bus or the
-    // busiest SM's rounds at the rate its own warps reach; on an architecture without an ISA row
-    // the legacy law, the busiest SM's share of the bus under a fleet-wide fill.
-    namespace kr              = kernel_roofline;
-    const kr::ChipFacts chip  = kr::chip_facts_of(d);
-    const kr::Calibration cal = kr::calibration_of(d.major, d.minor);
-    const bool legacy         = kr::legacy_dram(chip);
-    const auto quant          = [&](double cols) {
+    // busiest SM's rounds at the rate its own warps reach, with the shared-largest carve-out (the
+    // A8 tiles stage through shared memory); on an architecture without an SM rate row the legacy
+    // law, the busiest SM's share of the bus under a fleet-wide fill. b_w: the cp.async ring keeps
+    // stages - 1 K steps of the CTA's weight rows in flight while it multiplies one, over its
+    // warps.
+    namespace kr             = kernel_roofline;
+    const kr::ChipFacts chip = kr::chip_facts_of(d);
+    const bool legacy        = kr::legacy_dram(chip);
+    const auto quant         = [&](double cols) {
         return route_cost::kQuantLaunchSeconds.value() +
                cols * k * route_cost::kQuantBytesPerValue.value() / bw;
     };
@@ -85,8 +87,10 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             const double rows_o  = tile.out_rows;
             const double threads =
                 s.producers > 0 ? 384.0 : rows_w == 64.0 && cols == 64.0 ? 128.0 : 256.0;
-            const double smem = (s.producers > 0 ? 3.0 : 2.0) * (rows_w + cols) *
-                                route_cost::kW4a8StageBytesPerRow.value();
+            // Two stages, three with producer warps (generic_w4a8.cuh kStages).
+            const double stages = s.producers > 0 ? 3.0 : 2.0;
+            const double smem =
+                stages * (rows_w + cols) * route_cost::kW4a8StageBytesPerRow.value();
             const double occ     = std::max(
                 1.0, std::min({std::floor(max_thr / threads), max_cta, std::floor(smem_sm / smem)}));
             const double ctas = cdiv(n, rows_o) * cdiv(t, cols);
@@ -109,7 +113,10 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             // The fill reads the busy SM's own warps (no fleet-wide factor) and slows the MMA only.
             const double fill =
                 std::clamp(std::min(q, occ) * threads / 32, route_cost::kMinWarpFill.value(), 1.0);
-            const double mem = kr::dram_time(chip, cal, ctas, occ, threads / 32, rows_o * k * bpw);
+            const double in_flight =
+                (stages - 1.0) * rows_o * route_cost::kW4a8StepK.value() * bpw / (threads / 32);
+            const double mem =
+                kr::dram_time(chip, ctas, occ, threads / 32, rows_o * k * bpw, in_flight, true);
             offer(r, quant(t) + std::max(mem, mma / eff / fill) + chain);
         }
     }
@@ -143,11 +150,13 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
                              chain);
                 continue;
             }
-            const double fill = std::clamp(std::min(q, occ) * s.threads / 32 /
-                                               route_cost::kI8SaturatingWarps.value(),
-                                           route_cost::kMinWarpFill.value(), 1.0);
+            const double fill      = std::clamp(std::min(q, occ) * s.threads / 32 /
+                                                    route_cost::kI8SaturatingWarps.value(),
+                                                route_cost::kMinWarpFill.value(), 1.0);
+            const double in_flight = (s.stages - 1.0) * rows_o * route_cost::kI8StageK.value() *
+                                     bpw / (s.threads / 32.0);
             const double mem =
-                kr::dram_time(chip, cal, ctas, occ, s.threads / 32.0, rows_o * k * bpw);
+                kr::dram_time(chip, ctas, occ, s.threads / 32.0, rows_o * k * bpw, in_flight, true);
             offer(r, quant(tp) + std::max(mem, mma / eff / fill) + chain);
         }
     }
@@ -315,6 +324,7 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         kernel.cluster = tile.k_split;
         kernel.threads = 32.0 * s.warps_m * s.warps_k;
         kernel.warps_k = s.warps_k;
+        kernel.m_tiles = s.m_tiles;
         kernel.heavy   = heavy_decoder;
         if (kept) {
             kernel.registers   = kept->registers;

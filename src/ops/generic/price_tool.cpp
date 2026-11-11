@@ -284,9 +284,19 @@ void print_grid(const kr::Grid& g) {
                 g.ctas, g.waves, g.occupancy, g.rounds, g.warps, g.fill);
 }
 
+// The DRAM law of #690 (kernel_roofline.h dram_terms): P, b_w, the busiest SM's first-round rate
+// R_sm(W) = min(P, W x b_w / L0), and which bound held.
+void print_dram_law(const kr::DramTerms& d) {
+    std::printf("  dram law: P %.1f GB/s an SM, b_w %.0f B a warp, R_sm %.1f GB/s; bus %.2f us, "
+                "busiest SM %.2f us: the %s bound\n",
+                d.peak / 1e9, d.warp_bytes, d.round_rate / 1e9, us(d.bus), us(d.sm),
+                d.bus_bound ? "bus" : "per-SM");
+}
+
 void print_register_mma(const kr::RegisterMmaTerms& t, bool heavy, double a16,
                         std::optional<double> sel) {
     print_grid(t.grid);
+    if (!t.legacy) print_dram_law(t.dram_law);
     if (!heavy) {
         std::printf("  bytes (plain form): mem %.2f us\n", us(t.mem));
     } else {
@@ -309,6 +319,7 @@ void print_register_mma(const kr::RegisterMmaTerms& t, bool heavy, double a16,
 
 void print_pipelined(const kr::PipelinedTerms& t, double a16, std::optional<double> sel) {
     print_grid(t.grid);
+    if (!t.legacy) print_dram_law(t.dram_law);
     std::printf("  mem %.2f us, mma %.2f us, chain %.2f us\n", us(t.mem), us(t.mma), us(t.chain));
     const double scaled = t.total * a16;
     std::printf("  total %s = %.2f us, x a16 scale %.2f = %.2f us; selector %s%s\n",
@@ -353,6 +364,16 @@ int run(const Options& o) {
         chip.clock_hz / 1e6, chip.dram_bytes_per_s / 1e9, chip.tensor_rate, chip.max_threads_per_sm,
         chip.max_ctas_per_sm, chip.registers_per_sm, chip.smem_per_sm / 1024.0,
         emulated ? " (BF16 MMA emulated: no pipelined tile)" : "");
+    if (kr::legacy_dram(chip)) {
+        std::printf("sm rate facts: no row for sm_%d%d (core/sm_rate_facts.h): the legacy DRAM "
+                    "law\n",
+                    d.major, d.minor);
+    } else {
+        std::printf("sm rate facts (core/sm_rate_facts.h): L0 %.1f ns, P %.2f B/clk free, %.2f "
+                    "B/clk placed\n",
+                    *chip.dram_latency_s * 1e9, *chip.sm_dram_bytes_per_clock_free,
+                    *chip.sm_dram_bytes_per_clock_placed);
+    }
     std::printf("call %s %dx%d T=%d %s: payload %llu bytes, %.4f bytes/value, sets %.0f; "
                 "register-MMA terms: %s; a16 scale %.2f\n",
                 generic::qtype_name(qtype), o.n, o.k, o.t, generic::epilogue_name(o.epilogue),
@@ -449,6 +470,7 @@ int run(const Options& o) {
         kernel.cluster = tile.k_split;
         kernel.threads = 32.0 * s.warps_m * s.warps_k;
         kernel.warps_k = s.warps_k;
+        kernel.m_tiles = s.m_tiles;
         kernel.heavy   = heavy;
         if (heavy) { // the price reads compiled facts only in the heavy form, as price_routes does
             kernel.registers   = o.registers;

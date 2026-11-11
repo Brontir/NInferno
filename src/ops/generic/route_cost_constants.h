@@ -104,14 +104,14 @@ inline constexpr Scalar kMaxTileSharedBytes{
     {99.0 * 1024.0}, Provenance::Counted, "max_tile_shared_bytes"};
 // Every tile: the floor of the warp slowdown factor (a lone warp runs at most 20x slow).
 inline constexpr Scalar kMinWarpFill{{0.05}, Provenance::Fitted, "min_warp_fill"};
-// Every tile's DRAM rate (kernel_roofline.h dram_time, issue #690): the bytes one warp keeps in
-// flight, b_w in min(P, W x b_w / L0). Counted: one warp-wide 16-byte load, 32 lanes x 16 B, the
-// widest global load the tiles issue (LDG.E.128 in the register-MMA K loops, ldg_bytes / ldg up to
-// 512 in the kernel-facts snapshots; the 16-byte cp.async of the pipelined and A8 tiles). That a
-// warp keeps one such load in flight is the law's assumption, not a measurement: the rate probe
-// of #690 (a streaming kernel and small-n route-tune sweeps per architecture) is to measure b_w,
-// and the warp fills fitted before #690 imply 180-470 B on the boards fitted, below this bound.
-inline constexpr Scalar kWarpBytesInFlight{{512.0}, Provenance::Counted, "warp_bytes_in_flight"};
+// Register MMA: the bytes of one warp-wide 16-byte load, 32 lanes x 16 B (ld_stream_v4 in the K
+// loop, LDG.E.128). The DRAM rate of #690 (kernel_roofline.h dram_time) counts the bytes a warp
+// keeps in flight, b_w in min(P, W x b_w / L0), as these loads times the loads a lane has issued
+// and not consumed: the K loop's two-slot ring fetches the next step's weight runs before it
+// computes this one's (generic_gemm.cuh), 2 x sets x m_tiles x 2 loads a lane (an m1 Store call:
+// 4 loads, 2048 B a warp). The bytes-in-flight probe's ring2 rows measure 1767-1907 B at W = 1 for
+// those 2048 on its five architectures (core/data/sm_rate_facts.json).
+inline constexpr Scalar kWarpLoadBytes{{512.0}, Provenance::Counted, "warp_load_bytes"};
 
 // --- A8 tiles (a8_candidates) ---
 // The activation quantizer: its launch (a kernel with its scale and sum planes, not the bare graph
@@ -192,7 +192,7 @@ inline constexpr Listed kRouteCostConstants[] = {
     listed(kPipelinedStageBytesPerRow, Kind::Bytes),
     listed(kMaxTileSharedBytes, Kind::Bytes),
     listed(kMinWarpFill, Kind::Fraction),
-    listed(kWarpBytesInFlight, Kind::Bytes),
+    listed(kWarpLoadBytes, Kind::Bytes),
     listed(kLaunchNodeAda, Kind::Seconds),
     listed(kQuantLaunchSeconds, Kind::Seconds),
     listed(kQuantBytesPerValue, Kind::Bytes),

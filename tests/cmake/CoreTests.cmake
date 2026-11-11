@@ -52,6 +52,12 @@ ninferno_add_test(ninferno_isa_facts_reader_test NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_isa_facts.cpp"
   LIBRARIES ninferno_core ninferno::json)
 set_tests_properties(ninferno_isa_facts_reader_test PROPERTIES LABELS host)
+# The SM DRAM rate facts reader (core/sm_rate_facts.h) against src/core/data/sm_rate_facts.json,
+# field by field (#690). No GPU.
+ninferno_add_test(ninferno_sm_rate_facts_reader_test NEEDS_SOURCE_DIR
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_sm_rate_facts.cpp"
+  LIBRARIES ninferno_core ninferno::json)
+set_tests_properties(ninferno_sm_rate_facts_reader_test PROPERTIES LABELS host)
 # The constexpr board registry (core/board_registry.h) against the reference table, and the
 # measured boards against the figures they were spelled with before it. No GPU.
 ninferno_add_test(ninferno_board_registry_test
