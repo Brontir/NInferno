@@ -106,6 +106,12 @@ add_test(NAME ninferno_isa_facts_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_isa_facts.py)
 set_tests_properties(ninferno_isa_facts_test PROPERTIES LABELS host)
 
+# tools/bench/gap_map.py: measured times against the counted DRAM and tensor laws (#619), on
+# synthetic inputs, no GPU.
+add_test(NAME ninferno_gap_map_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_gap_map.py)
+set_tests_properties(ninferno_gap_map_test PROPERTIES LABELS host)
+
 # tools/bench/regret_bands.py: regret weighted by T band, per board, format and route family
 # (#613), no GPU.
 add_test(NAME ninferno_regret_bands_test
@@ -132,6 +138,12 @@ set_tests_properties(ninferno_route_table_evidence_test PROPERTIES LABELS host)
 # tools/bench/mmq_transfer_audit.py: same-generation MMQ transfer by workload regime (#373), no GPU.
 add_test(NAME ninferno_mmq_transfer_audit_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_mmq_transfer_audit.py)
+
+# src/spec/round_cost.h kSmallTEta against tools/fits/round_cost/fit_eta.py's fit of the shipped
+# registry, no GPU.
+add_test(NAME ninferno_round_cost_eta_fit_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_round_cost_eta_fit.py)
+set_tests_properties(ninferno_round_cost_eta_fit_test PROPERTIES LABELS host)
 
 # tools/audit/board_literal_lint.py: no hand-written `ninferno::Board` literal or bare five-number
 # board tuple outside the registry (roadmap #612 step 9), and the tree is clean. What it does not
