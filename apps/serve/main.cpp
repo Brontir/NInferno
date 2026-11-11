@@ -400,7 +400,11 @@ int main(int argc, char** argv) {
         // nothing but this thread's few seconds).
         std::thread([logger] {
             try {
-                const auto release = ninferno::update::check({.current = NINFERNO_VERSION_STRING});
+                const auto release =
+                    ninferno::update::check({.current = NINFERNO_VERSION_STRING,
+                                             .refused = [&logger](const std::string& why) {
+                                                 logger->warn("update | {}", why);
+                                             }});
                 if (!release) { return; }
                 if (const auto line = ninferno::update::notice(*release); !line.empty()) {
                     logger->warn("update | {}", line);

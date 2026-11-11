@@ -655,8 +655,14 @@ App::App(UiOptions options, std::unique_ptr<GpuSource> gpus)
     if (!options_.offline && update::checks_enabled() &&
         update::is_release_version(options_.version)) {
         update_thread_ = std::thread([this] {
+            bool said = false;
             while (!stopping_) {
-                if (auto release = update::check({.current = options_.version})) {
+                // A refusal said once per run: the check repeats every 6 hours.
+                if (auto release = update::check(
+                        {.current = options_.version, .refused = [&said](const std::string& why) {
+                             if (!said) { std::cerr << "ninferno-ui: " << why << std::endl; }
+                             said = true;
+                         }})) {
                     std::lock_guard lock(update_mutex_);
                     release_ = std::move(release);
                 }

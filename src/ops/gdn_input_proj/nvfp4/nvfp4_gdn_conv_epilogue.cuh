@@ -4,7 +4,9 @@
 namespace ninferno::ops::detail {
 template <int Tokens>
 struct Nvfp4GdnConvEpilogue {
-    [[maybe_unused]] static constexpr int kRowTokens = Tokens;
+    static constexpr int kRowTokens = Tokens;
+    // Read here too: nvcc counts a member only `requires` asks for as unreferenced (#177).
+    static_assert(kRowTokens >= 1);
 
     template <class Output>
     __device__ __forceinline__ void apply_row(Output output, int row, int,

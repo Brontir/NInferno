@@ -5,6 +5,7 @@
 # ninferno_add_refusal_test(<name> <target> "<expected regex>" <argument>...)
 function(ninferno_add_refusal_test name target expected)
   add_test(NAME ${name} COMMAND $<TARGET_FILE:${target}> ${ARGN})
+  ninferno_label_tests(${name} LABELS host)
   set_tests_properties(${name} PROPERTIES PASS_REGULAR_EXPRESSION "${expected}")
 endfunction()
 
@@ -82,6 +83,7 @@ set_tests_properties(ninferno_removed_environment_warning_test PROPERTIES
 foreach(program ninferno ninferno-serve ninferno-ui ninferno-convert ninferno-perplexity)
   string(REPLACE "-" "_" test_name "${program}_version_test")
   add_test(NAME ${test_name} COMMAND $<TARGET_FILE:${program}> --version)
+  ninferno_label_tests(${test_name} LABELS host)
   set_tests_properties(${test_name} PROPERTIES PASS_REGULAR_EXPRESSION "^NInferno ")
 endforeach()
 # The lab tuners time kernels on the machine: ninferno and ninferno-serve refuse them, the

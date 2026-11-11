@@ -122,10 +122,13 @@ check_kernel_facts() {
 }
 # The same with the compiler named: a resumed Volta engine was built by CUDA 12.8 (the only
 # compiler the build path takes for it), and any toolkit's cuobjdump reads its sm_70 binary.
+# A passed check leaves a stamp in OUT_DIR (no .sha256: never published): a resumed run checks an
+# engine again only when the engine, its snapshot, the nvcc named or the checker changed, instead
+# of the SASS pass's minutes per engine.
 check_kernel_facts_as() {
   local arch=$1 bin=$2 version=$3 cuda_bin=$4
   python3 -B "$ROOT/tools/kernel_facts/kernel_facts.py" check --binary "$bin" --expected "$FACTS/sm_$arch.txt" \
-    --nvcc "$version" --cuda-bin "$cuda_bin" \
+    --nvcc "$version" --cuda-bin "$cuda_bin" --stamp "$OUT/.kernel-facts-checked/sm_$arch" \
     || { echo "package.sh: the sm_$arch kernels differ from their snapshot (kernel-facts snapshots, #612)" >&2; exit 1; }
 }
 check_selector_facts() {
@@ -179,7 +182,8 @@ for arch in $ARCHS; do
   specific=false; [[ $arch =~ [af]$ ]] && specific=true
   if [ "${NINFERNO_PACKAGE_RESUME:-0}" = 1 ] && [ -x "$STAGE/bin/ninferno-serve-sm$arch" ] && [ -f "$STAGE/bin/ninferno-serve.dispatch" ]; then
     echo "package.sh: sm_$arch already packed (resume)"
-    # Its facts again: the tree, a flag or the index may have changed since it was staged.
+    # Its facts again: the index or the checker may have changed since it was staged (the stamp
+    # skips the SASS pass where nothing did, check_kernel_facts_as).
     if [ "$arch" = 70 ] && [ -z "$CUDA70" ]; then
       check_kernel_facts_as 70 "$STAGE/bin/ninferno-serve-sm70" \
         "$(sed -n 's/^nvcc \(.*\)$/\1/p' "$FACTS/sm_70.txt")" "$(dirname "$NVCC")"

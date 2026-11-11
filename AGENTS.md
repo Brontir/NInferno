@@ -13,6 +13,11 @@ Guide for AI coding agents working in this repository. Human contributors: see
 - Report favorable and unfavorable findings together: regressions, costs, failed or skipped checks,
   unverified claims. Never narrow the scope or change the acceptance criteria after seeing
   unfavorable results. State the baseline, workload, GPU and method behind any performance claim.
+- Predict before you build a kernel. A new kernel or kernel variant starts as an entry in
+  [`docs/maintainer/kernel-proposals.md`](docs/maintainer/kernel-proposals.md). The entry names
+  the gap-map regime and the counted law that explains the current kernel's time there. It also
+  gives the gain predicted from facts, frozen before any micro-bench together with its acceptance.
+  The A/B then reports predicted against measured. A gap no law explains gets no kernel.
 - Keep stable requirements in their existing page. Do not add parallel `final`/`v2`/`new` documents
   or permanent planning files.
 

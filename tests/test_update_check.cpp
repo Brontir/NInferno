@@ -22,6 +22,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -182,15 +183,22 @@ void test_check() {
     server.Get("/unsigned.json", [&](const httplib::Request&, httplib::Response& res) {
         res.set_content(body, "application/json");
     });
+    server.Get("/flaky.json", [&](const httplib::Request&, httplib::Response& res) {
+        res.set_content(body, "application/json");
+    });
+    server.Get("/flaky.json.sig",
+               [&](const httplib::Request&, httplib::Response& res) { res.status = 503; });
     const int port = server.bind_to_any_port("127.0.0.1");
     std::thread thread([&] { server.listen_after_bind(); });
     server.wait_until_ready();
     const std::string url = "http://127.0.0.1:" + std::to_string(port) + "/latest.json";
 
+    std::vector<std::string> refusals;
     CheckOptions options{.current      = "0.4.0",
                          .manifest_url = url,
                          .cache_file   = dir / "update.json",
-                         .public_key   = kTestPublic};
+                         .public_key   = kTestPublic,
+                         .refused      = [&](const std::string& why) { refusals.push_back(why); }};
     auto first = check(options);
     check(first && first->newer && first->latest == "0.5.0", "read from the server");
     auto second = check(options);
@@ -226,23 +234,39 @@ void test_check() {
 
     body            = R"({"version":"7.0.0"})"; // served, but the signature is still 0.6.0's
     options.max_age = std::chrono::seconds(0);
-    check(!check(options), "a manifest its signature does not match: nothing said");
+    check(!check(options), "a manifest its signature does not match: no release");
+    check(refusals.size() == 1 &&
+              refusals.back().find("is not signed by the NInferno release key") !=
+                  std::string::npos,
+          "a manifest its signature does not match: refused out loud");
     options.max_age    = std::chrono::hours(24);
     options.public_key = release_key();
     body               = R"({"version":"0.6.0"})";
     signature          = sign(body);
     options.max_age    = std::chrono::seconds(0);
-    check(!check(options), "signed by another key: nothing said");
+    check(!check(options), "signed by another key: no release");
+    check(refusals.size() == 2 &&
+              refusals.back().find("is not signed by the NInferno release key") !=
+                  std::string::npos,
+          "signed by another key: refused out loud");
     options.public_key = kTestPublic;
     options.max_age    = std::chrono::hours(24);
 
     options.manifest_url = "http://127.0.0.1:" + std::to_string(port) + "/unsigned.json";
     options.cache_file   = dir / "unsigned.json";
-    check(!check(options), "a manifest without a signature: nothing said");
+    check(!check(options), "a manifest without a signature: no release");
+    check(refusals.size() == 3 && refusals.back().find("has no signature") != std::string::npos,
+          "a manifest without a signature: refused out loud");
+
+    options.manifest_url = "http://127.0.0.1:" + std::to_string(port) + "/flaky.json";
+    options.cache_file   = dir / "flaky.json";
+    check(!check(options), "a signature the server fails to give (503): no release");
+    check(refusals.size() == 3, "a signature the server fails to give (503): no refusal (no news)");
 
     options.manifest_url = "http://127.0.0.1:" + std::to_string(port) + "/missing.json";
     options.cache_file   = dir / "other.json";
     check(!check(options), "a manifest that is not there: nothing said");
+    check(refusals.size() == 3, "a manifest that is not there: no refusal (no news)");
 
     server.stop();
     thread.join();

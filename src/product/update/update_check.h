@@ -23,6 +23,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -43,6 +44,10 @@ struct CheckOptions {
     std::chrono::seconds max_age{24 * 3600}; // a cached answer younger than this is used as is
     std::chrono::seconds timeout{8};     // the whole request
     std::string public_key;              // PEM; release_key() when empty
+    // Told why when the server answers with a manifest it then cannot count: no signature, or
+    // one the key does not verify (a changed server, or NINFERNO_UPDATE_URL naming another
+    // one's). A server that cannot be reached is no news: nothing is said.
+    std::function<void(const std::string&)> refused;
 };
 
 // The release key, PEM (tools/release/signing.pub.pem).
@@ -73,7 +78,8 @@ struct CheckOptions {
 
 // The answer for options.current: the cached one while younger than max_age, else the manifest
 // read now (and cached). nullopt when checks are off, the version is not a release, or the
-// manifest cannot be read or is not signed by the key (no network: nothing is said).
+// manifest cannot be read or is not signed by the key (no network: nothing is said; a manifest
+// read but not signed: options.refused).
 [[nodiscard]] std::optional<Release> check(const CheckOptions& options);
 
 // The one line ninferno-serve logs for a release, "" when there is nothing to say.
