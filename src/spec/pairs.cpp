@@ -249,21 +249,32 @@ void price_by_facts(Profile& p, const RoundCostEstimate& estimate) {
 
 std::map<std::string, std::vector<RoundLaunches>> round_launches(const Profile& tune);
 
-// The price of the requests' joint verify (#303), for a profile at home: for every configuration a
-// choice can name and every depth up to it, R_1 / R_C at C = 2..kPricedVerifyRows streams where the
-// round cost prices it (load_gain at a gain of 1), on the lab board's rates and the lab artifact's
-// draft head (the one the load table was measured on). Nothing without the pair's facts or the
-// board's rates. The configurations are the three choices, the served and portable ones, the fit
-// fallback and every measured one: a later reselection (the plan's per-mode drafter axis, an
-// engine that runs only the served choices) picks among these, and a choice the table does not
-// price keeps the one-request gain as a ceiling at concurrency. The load table's depths are among
-// these: a bound runs that depth. `pair` is the record the profile was selected on, or the asking
-// card's own record (generation_median).
-void price_joint(Profile& p, const MeasuredPair& pair) {
+// The price of the requests' joint verify (#303), on `lab` rates for a profile at home: for every
+// configuration a choice can name and every depth up to it, R_1 / R_C at C = 2..kPricedVerifyRows
+// streams where the round cost prices it (load_gain at a gain of 1), on the lab board's rates and
+// the lab artifact's draft head (the one the load table was measured on). Nothing without the
+// pair's facts or the board's rates. The configurations are the three choices, the served and
+// portable ones, the fit fallback and every measured one: a later reselection (the plan's per-mode
+// drafter axis, an engine that runs only the served choices) picks among these, and a choice the
+// table does not price keeps the one-request gain as a ceiling at concurrency. The load table's
+// depths are among these: a bound runs that depth. `pair` is the record the profile was selected
+// on, or the asking card's own record (generation_median).
+//
+// On another card (`head_rows` the artifact's proposal head there, as round_cost_estimate takes
+// it) the same function at that card's rates: the table the load bound is derived from
+// (facts_load).
+//
+// A pair's round on another card is priced by the bytes (price_by_facts) and then raised by the
+// lab card's measured excess over its bytes (round_cost_estimate: cost *= excess), while R_1 / R_C
+// here is the bytes' ratio alone. Their product is the joint verify's gain only if that excess
+// scales R_1 and R_C alike (a share of every round's cost, which cancels in the ratio). If it is a
+// fixed cost per round (launches, a sync) it weighs more on the one-stream round than on a joint
+// one of the same launches, R_1 / R_C is then too low and the table errs towards plain decode (the
+// launch term of round_launches is added to both where counted, which is the part of it known).
+void price_joint(Profile& p, const MeasuredPair& pair, const CardRates& lab,
+                 const ProposalRows* head_rows = nullptr) {
     p.joint_scale.clear();
-    if (!pair.round_facts) { return; }
-    const CardRates lab = card_rates_of_board(pair.lab_board);
-    if (!lab.known()) { return; }
+    if (!pair.round_facts || !lab.known()) { return; }
     std::vector<SpecConfig> configs;
     std::set<std::string> seen;
     const auto add = [&](const SpecConfig& config) {
@@ -281,7 +292,9 @@ void price_joint(Profile& p, const MeasuredPair& pair) {
     for (const Measurement& m : p.measurements) { add(m.config); }
     const auto launches = round_launches(pair.tune);
     for (SpecConfig config : configs) {
-        const ProposalRows rows = config.proposal_head ? pair.tune.proposal_rows : ProposalRows{};
+        const ProposalRows rows    = head_rows != nullptr   ? *head_rows
+                                     : config.proposal_head ? pair.tune.proposal_rows
+                                                            : ProposalRows{};
         const std::int32_t deepest = config.k;
         for (std::int32_t k = 1; k <= deepest; ++k) {
             config.k = k;
@@ -290,7 +303,12 @@ void price_joint(Profile& p, const MeasuredPair& pair) {
             // term, priced as round_cost_estimate prices them: a configuration's round is its
             // sections' rounds averaged, each with its own counts (none for a depth the lab did
             // not count), so the scale is the averaged R_1 over the averaged R_C, not the
-            // sections' ratios averaged.
+            // sections' ratios averaged. The launches count where `lab` (the card both rounds are
+            // priced on) has a launch time, whatever the measuring card's: round_cost_estimate
+            // needs both cards' because it raises the bytes by the measuring card's measured
+            // excess, which holds the launches where that card has no launch time (counting them
+            // again would count them twice); this ratio is of two rounds priced on one card and
+            // carries no measured excess, so its launches are counted on that card or not at all.
             const auto counted = launches.find(config.label());
             const std::vector<RoundLaunches> sections =
                 counted != launches.end() && lab.launch_bytes() > 0
@@ -354,7 +372,8 @@ Profile selected(const MeasuredPair& pair, bool home, const SelectOptions& optio
     if (!home) {
         std::erase_if(p.measurements,
                       [](const Measurement& m) { return m.config.k > kPortableDepth; });
-        p.load = {LoadBound{.lanes = 2, .depth = 0}};
+        p.load       = {LoadBound{.lanes = 2, .depth = 0}};
+        p.load_basis = "literal";
         if (p.fit_fallback && p.fit_fallback->config.k > kPortableDepth) {
             p.fit_fallback.reset();
         }
@@ -364,7 +383,10 @@ Profile selected(const MeasuredPair& pair, bool home, const SelectOptions& optio
     SelectOptions select_options    = options;
     select_options.portable_within = 0;
     select(p, select_options);
-    if (home) { price_joint(p, pair); }
+    if (home) {
+        if (!p.load.empty()) { p.load_basis = "measured"; }
+        price_joint(p, pair, card_rates_of_board(pair.lab_board));
+    }
     return p;
 }
 
@@ -730,8 +752,15 @@ std::optional<Profile> priced_by_facts_for(const std::vector<const MeasuredPair*
     const ProposalRows* rows = options.proposal_rows ? &*options.proposal_rows : nullptr;
     for (const auto* pair : order) {
         if (const auto estimate = round_cost_estimate(*pair, gpu, rows); estimate.known) {
-            if (note != nullptr) { *note = estimate.note; }
-            return selected(*pair, false, options, {}, &estimate);
+            Profile p = selected(*pair, false, options, {}, &estimate);
+            price_joint(p, *pair, here, rows);
+            p.load       = facts_load(p);
+            p.load_basis = "facts";
+            if (note != nullptr) {
+                *note = estimate.note + "; load bounds " + load_label(p.load) +
+                        " from the joint verify's price on this card";
+            }
+            return p;
         }
     }
     return std::nullopt;
@@ -776,13 +805,18 @@ Profile generation_median(const std::vector<const MeasuredPair*>& home,
             const bool loads = std::all_of(each.begin(), each.end(), [&](const Profile& p) {
                 return p.load == each.front().load;
             });
-            if (!loads || out.load.empty()) { out.load = {LoadBound{.lanes = 2, .depth = 0}}; }
+            if (!loads || out.load.empty()) {
+                out.load       = {LoadBound{.lanes = 2, .depth = 0}};
+                out.load_basis = "literal";
+            }
             // The joint verify is priced on the asking card's own record where it has one (its
             // board's rates, its facts and launch counts), not on the base record's board: the
             // base is the record that measured the most configurations, which may be another
             // card's. An own record that cannot price (no facts, no rates for its board) prices
             // nothing: the gain stays a ceiling there, not another board's price.
-            if (own_pair != nullptr && own_pair != &base) { price_joint(out, *own_pair); }
+            if (own_pair != nullptr && own_pair != &base) {
+                price_joint(out, *own_pair, card_rates_of_board(own_pair->lab_board));
+            }
             return out;
         }
     }
@@ -809,6 +843,111 @@ Profile transferred(const std::vector<const MeasuredPair*>& current, const GpuKe
 }
 
 } // namespace
+
+std::vector<LoadBound> clipped_load(const std::vector<std::int32_t>& depths) {
+    std::vector<LoadBound> out;
+    std::int32_t previous = std::numeric_limits<std::int32_t>::max();
+    for (std::size_t i = 0; i < depths.size(); ++i) {
+        if (depths[i] < previous) {
+            out.push_back(LoadBound{.lanes = static_cast<std::int32_t>(i) + 2, .depth = depths[i]});
+        }
+        previous = std::min(previous, depths[i]);
+    }
+    return out;
+}
+
+// The load bounds of a profile priced for another card, from the round cost on that card's rates
+// (Profile::joint_scale). A bound serves every choice at once: under a bound of d at C streams a
+// choice runs min(d, its own depth), at that depth's one-request gain times R_1 / R_C there. So
+// the bound at C is the depth d at which every enabled choice gains (each product above 1, each
+// depth priced and its gain known), and among those the one whose gains, sorted, are greatest
+// least first (leximin: the least gain over the choices, then the next least, ...), the shallower
+// only where every gain ties: the bound is judged by the choice it serves worst, then by the next
+// (a choice that runs its own depth under both of two bounds does not decide between them), which
+// with one choice is that choice's best depth. Plain decode where no depth serves them all. The
+// cost of serving every choice: one that loses, even slightly, at every depth makes the count
+// decode plainly for all of them, forgoing another choice's gain however large. The counts are
+// taken in order, each within the bound in force at the count before (a table never rises:
+// clipped_load), so a depth is run only at counts where it was shown to serve every choice. The
+// cost of that greedy order: a deeper depth that would gain at a higher count is never run there
+// once a shallower one was best at the count before.
+// Past kPricedVerifyRows (a joint verify of more rows than the rounds were measured at) or
+// where a depth is not priced it is not run; plain decode from the first stream count nothing is
+// priced for. Replaces stand_in_load's ceil(SMs / 10): the compute term of a joint verify
+// overtakes the weight bytes at a row count that grows with SMs x clock x int8 rate over DRAM
+// rate, which is what the price carries. A choice's gain at a shallower depth is over its own
+// sections, as its own gain at its depth is: every section for the overall default (nullopt), the
+// thinking or the other sections for the thinking and non-thinking ones. That gain is over the mix
+// of those sections, without select's rule that a default loses to plain decode on none of them:
+// the bound governs throughput over the mix, so a depth may pass here while one section loses.
+std::vector<LoadBound> facts_load(const Profile& p) {
+    // The choices the table bounds are those the Engine runs: the served ones where the profile
+    // has them (engine_choices: the Engine cannot run its own), and the fit fallback, which runs
+    // as every choice where the default does not fit (over the whole mix, as the overall one).
+    // One table serves both, so a fallback that loses at a depth keeps the default from it too,
+    // though the fallback runs only where the default does not fit.
+    const ServedChoices& runs =
+        p.served ? *p.served : ServedChoices{p.overall, p.thinking, p.non_thinking};
+    std::vector<std::pair<const Choice*, std::optional<bool>>> choices;
+    for (const auto& [c, thinking] :
+         {std::pair<const Choice*, std::optional<bool>>{&runs.overall, std::nullopt},
+          std::pair<const Choice*, std::optional<bool>>{&runs.thinking, true},
+          std::pair<const Choice*, std::optional<bool>>{&runs.non_thinking, false},
+          std::pair<const Choice*, std::optional<bool>>{p.fit_fallback ? &*p.fit_fallback : nullptr,
+                                                        std::nullopt}}) {
+        if (c == nullptr || !c->config.enabled()) { continue; }
+        // A configuration entered twice over the same sections (the fit fallback equal to the
+        // overall choice) is one choice: twice, its gain would count twice in the leximin order.
+        const bool seen = std::any_of(choices.begin(), choices.end(), [&](const auto& other) {
+            return other.first->config.label() == c->config.label() && other.second == thinking;
+        });
+        if (!seen) { choices.emplace_back(c, thinking); }
+    }
+    // A choice's gain at C streams under a bound of `bound`: it runs min(bound, its own depth), at
+    // that depth's one-request gain times R_1 / R_C there; nullopt where either is unknown.
+    const auto gain_under = [&](const Choice& c, std::optional<bool> thinking, std::int32_t bound,
+                                std::int32_t streams) -> std::optional<double> {
+        SpecConfig at     = c.config;
+        at.k              = std::min(bound, c.config.k);
+        const auto priced = p.joint_scale.find(at.label());
+        if (priced == p.joint_scale.end()) { return std::nullopt; }
+        const auto scale = priced->second.find(streams);
+        if (scale == priced->second.end()) { return std::nullopt; }
+        const auto gain = at.k == c.config.k ? std::optional<double>(c.speedup())
+                                             : measured_gain(p, at, thinking);
+        if (!gain) { return std::nullopt; }
+        return *gain * scale->second;
+    };
+    std::int32_t deepest = 0;
+    for (const auto& [c, thinking] : choices) { deepest = std::max(deepest, c->config.k); }
+    std::vector<std::int32_t> depths; // from 2 streams on, up to the first plain
+    std::int32_t previous = deepest;
+    for (std::int32_t streams = 2; streams <= kPricedVerifyRows + 1 && previous > 0; ++streams) {
+        std::int32_t depth = 0;
+        std::vector<double> served; // the choices' gains at `depth`, ascending (empty: plain)
+        for (std::int32_t d = 1; d <= previous; ++d) {
+            std::vector<double> gains;
+            for (const auto& [c, thinking] : choices) {
+                const auto gain = gain_under(*c, thinking, d, streams);
+                if (!gain || *gain <= 1.0) {
+                    gains.clear();
+                    break;
+                }
+                gains.push_back(*gain);
+            }
+            if (gains.empty()) { continue; }
+            std::sort(gains.begin(), gains.end());
+            // Leximin: the least gain first, then the next least, ...; the shallower on a tie.
+            if (served.empty() || served < gains) {
+                served = std::move(gains);
+                depth  = d;
+            }
+        }
+        depths.push_back(depth);
+        previous = depth;
+    }
+    return clipped_load(depths);
+}
 
 // The steps in order: the card's own record (own_lab_pair), else another card's priced by the facts
 // (priced_by_facts_for), else this generation's lab cards (generation_median, or the one there is),
@@ -984,7 +1123,8 @@ std::optional<Profile> profile_for_group(const std::vector<const MeasuredPair*>&
         choice.acceptance             = acceptance;
         choice.floor_tokens_per_round = floor;
     }
-    out.load = {LoadBound{.lanes = 2, .depth = 0}};
+    out.load       = {LoadBound{.lanes = 2, .depth = 0}};
+    out.load_basis = "literal";
     return out;
 }
 
