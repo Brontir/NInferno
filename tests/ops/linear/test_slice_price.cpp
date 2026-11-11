@@ -223,7 +223,7 @@ void check_row_views() {
 
 int gate_differs = 0;
 
-int replay_differs = 0, replay_unaligned = 0;
+int replay_differs = 0, replay_unaligned = 0, replay_compared = 0;
 
 bool planes_aligned16(const Weight& w) {
     const auto off = [](const void* p) { return reinterpret_cast<std::uintptr_t>(p) & 15U; };
@@ -269,6 +269,7 @@ void check_padded_view_replay() {
                   std::to_string(own_bytes) + " bytes, not " + std::to_string(w.priced_bytes));
         const bool routed = generic::supports(w) && generic::supports(own.weight);
         if (!routed) std::cout << fmt << ": not read by the generic path (bytes only)\n";
+        const int compared_before = replay_compared;
         for (const LinearPolicy policy : {LinearPolicy::A16Only, LinearPolicy::AllowA8}) {
             for (const generic::Epilogue epilogue :
                  {generic::Epilogue::Store, generic::Epilogue::SwiGlu}) {
@@ -312,6 +313,7 @@ void check_padded_view_replay() {
                                 ++replay_unaligned;
                                 continue;
                             }
+                            ++replay_compared;
                             if (text(q) != s) ++replay_differs;
                             check(text(q) == s, at + ": the view takes " + s +
                                                     ", the replay of its line " + text(q));
@@ -319,6 +321,12 @@ void check_padded_view_replay() {
                     }
                 }
             }
+        }
+        // Not vacuous (#724): with a device every routed view whose planes are aligned has its
+        // routes compared, so a case that stopped comparing (unrouted, misaligned, every query
+        // throwing) fails here instead of passing with nothing checked.
+        if (routed && planes_aligned16(w) && !cuda_unavailable()) {
+            check(replay_compared > compared_before, fmt + ": no route of the view compared");
         }
     }
 }
@@ -522,7 +530,7 @@ int main() {
     std::cout << "row views: " << view_moved
               << " selections where a view takes another route than its own shape; padded views: "
               << replay_differs << " selections where the replay answers otherwise than the view, "
-              << replay_unaligned
+              << replay_compared << " compared, " << replay_unaligned
               << " not compared (the view's planes off 16-byte alignment); R8 verify gate: "
               << gate_differs << " calls where a slice answers otherwise than its own shape\n";
     // With a device every pair answers; without one the MMQ-or-register-MMA pairs need it.
