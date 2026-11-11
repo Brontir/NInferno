@@ -34,8 +34,13 @@ the measurements then said.
 ```
 ### <id>. <name> (#issue, #PR)
 - Regime: <op, format, T band, tile, boards; gap-map rows>
-- Law: <the binding term and its count, with the facts it reads>
-- Prediction (frozen <date>): <time change per cell, with sources>
+- Weight: <its share of the benchmark mix>
+- Law: <the binding term of today's kernel and its count, with the facts it reads; its residual>
+- Variant: <what changes in the kernel>
+- Prediction (frozen <date>): <time change per cell and arch, with sources>
+- Prototype: <the cheap first measurement, as a command>
+- Cost: <the tests and goldens a new route costs (the conformance point, test_route_classes,
+  invariance, the selector goldens, --build-manifest, decision_inputs)>
 - Acceptance / refutation (frozen): <bounds>
 - A/B: <boards, protocol, predicted vs measured, or "not run">
 - Decision: <kept / narrowed / removed / open>
@@ -43,41 +48,77 @@ the measurements then said.
 
 ## Register
 
-### P1. Pre-summed activation group plane for the min-term formats (#619 steps 5-6, #709)
-- Regime: the register MMA on min-term formats (Q4_K, Q5_K, Q4_1 and Q5_1 rows), prefill, T 17-256.
-  Today each tile adds the activation group sums with the MMA with ones.
-- Law: the ones-MMA costs as many tensor-pipe cycles as the tile's own MMAs at MT = 1 (kernel-facts
-  `mma` / `mma_ones`). Where the tensor pipe binds, the plane removes that term. A pre-pass per call
-  writes the sums.
-- Prediction (frozen in #709's body, before any run):
+The entries below come from the candidates table of #619 (section 4). Only A has a frozen
+prediction so far.
+
+### A. Pre-summed activation groups for the min-term formats (#619 steps 5-6, #709)
+- Regime: the register MMA on the min-term formats (Q4_K, Q5_K, Q2_K, Q4_1, Q5_1), T >= 17;
+  Gemma heads and SwiGLU.
+- Law: the ones-MMA doubles an m1 tile's tensor work: 16.7 against 8.4 cycles per counted MMA on
+  the RTX 5090 (#501).
+- Variant: a plane of T x K/32 FP32 sums, written once per call by an activation pass (as the W4A8
+  quantizer is). Every tile reads the plane in place of the ones-MMA, which keeps one summation order
+  at every T and tile.
+- Prediction (frozen in #709's body before any run):
   - prefill, narrow tiles at T 24-191: −5..−30 % by board;
   - heads and SwiGLU tiles at T 32-256: −10..−50 %;
   - the pre-pass costs +1.7-2.5 µs per call;
   - the speed profile and `exact` are unchanged.
+
+  An earlier ABBA with all-ALU sums measured −5..−12 % (heads) and −8..−18 % (SwiGLU) at T 17-256.
+  All-ALU sums lost at T <= 16 (+4..23 %).
+- Prototype: `ninferno_route_tune` ABBA on the 5090 and 3060, Gemma head and SwiGLU at T 17-64.
 - Acceptance / refutation (frozen): #709's body, items 1-5.
-- A/B: not run; it belongs to step 6 with the plane's price. The −5..−18 % in #619 is the earlier
-  micro-bench of the kernel.
+- A/B: not run. It belongs to step 6, together with the plane's price.
 - Decision: open. 5a (#709) takes the plane only in the prefill profile's admitted cells.
 
-### P2. Turing int8 tile (#619 steps 7-8)
-- Regime: int8 prefill tiles on sm_75, at about a third of the int8 peak (#619).
-- Law, prediction: not written yet. The study (step 7) writes them before the kernel (step 8).
-- Decision: open.
+### B. Blackwell MoE expert kernel at 4-8 rows (#619 step 11)
+- Regime: the routed experts on GB20x at 4 and 8 rows. Their share of DRAM time is 0.74 and 0.63,
+  against Ada's 0.91 and 0.81 (DECISIONS 65). The 5070 Ti IQ3_XXS estimate is 7-13 % slow at 2-6
+  rows.
+- Law: none yet. The gap map lists MoE under "No law yet". The loss may come from the expert grid
+  or from the GB20x tensor rate rather than from the kernel.
+- Prototype: `moe_bench` (`r8vs.sh`) and nsys on the 5090 and 5070 Ti at C = 4 and 8.
+- Decision: law first, then decide.
 
-### P3. Gemma 4 int8 KV plane for sm_75/80/86 (#619 steps 9-10)
-- Regime: Gemma 4 attention below sm_89, where the KV stays BF16.
-- Law, prediction: not written yet.
-- Decision: open.
+### C. Turing int8 tile: dense `w4a8_kernel` and MoE `moe_w4a8` (#619 steps 7-8)
+- Regime: int8 prefill on sm_75: 30-34 SM clocks per K, against 12 on Ada. MMQ Q4_K reaches 22 % of
+  peak there, against 37 % on Ada.
+- Law (partial): Turing's int8 MMA is m8n8k16 only, half the shape of sm_80's m16n8k32, so the facts
+  predict about 2x the MMA issues. The measured 2.5-2.8x leaves 30-40 % unexplained.
+- Prototype: ncu of `w4a8_kernel` at K 4096 on the 2080 Ti (stalls, issue, ldmatrix count).
+- Decision: open. The study (step 7) writes a counted-instruction prediction before the kernel
+  (step 8).
 
-### P4. MoE expert-call law, plus R8 against the register MMA per format (#619 step 11)
-- Regime: Blackwell MoE at 4-8 rows (0.74 and 0.63 of DRAM, #619), on the 5070 Ti, 3060 and 2080 Ti.
-- Law: not counted yet. The gap map lists MoE under "No law yet": it needs the gating, the
-  distinct experts a batch touches and the down format.
-- Decision: open.
+### D. Gemma 4 int8 KV plane for sm_75/80/86 (#619 steps 9-10)
+- Regime: Gemma 4 attention below sm_89 (`kGemma4Fp8Hardware = arch >= 89`). The KV stays BF16
+  there, which means twice the bytes and half the context.
+- Law: long-context decode is bytes-bound on Ampere (1.0-1.16 of DRAM time). On Turing it is
+  SM-bound, so the gain there is capacity, not speed.
+- Variant: an int8 plane through the FP8 plane's "codes widened in registers" mechanism
+  (`fp8_row.cuh`).
+- Prototype: `gemma4_attention_bench` on the 3060 at 24K, then `mdecl.sh`.
+- Decision: open. It is a B1 byte class, so the choice must be a fact of the arch.
 
-### P5. Ring-depth prototype for the narrow-T register MMA (#619 step 12)
-- Regime: the register MMA at narrow T, on the 4090 and 3060.
-- Law: the bytes one SM keeps in flight against its DRAM latency (Little's law, #690, #735). The
-  per-architecture rate and bytes-in-flight facts measured by `tools/bench/warp_inflight` count it.
-- Prediction: not written yet. It waits for #735's facts.
-- Decision: open.
+### E. Narrow-T (17-64) register-MMA load chain: a deeper ring or split loads (#619 step 12)
+- Regime: the register MMA at T 17-64. On four cards the winner is latency-bound at 2-4 warps per
+  SMSP, with DRAM at 28-50 % and tensor at 25-63 %.
+- Law: the bytes one SM keeps in flight against its DRAM latency (Little's law, #690). The
+  per-architecture rate and bytes-in-flight facts that `tools/bench/warp_inflight` measures count
+  it; #735 wires them in.
+- Risk: the winning schedules sit at 245-255 registers, so a deeper ring spills.
+- Prototype: `rmma_kernel` m2.n4.w4x1 with ring depth 3, `route_tune --rotate` on the 4090 and
+  3060 at T 24 and 32.
+- Decision: prototype after A; adopt only with the law.
+
+### F. Gated gate/up twin at T = 3-4 (vec kernel)
+- Regime: gated launches at C = 4. The 3060 still loses 3-4 % there; the 5060 Ti is at parity.
+- Prototype: `tools/bench/run_521_gateup.sh` (#606, not run).
+- Decision: run the kit first. Build only if the loss is above 3 % and #606's rule holds on the
+  3090.
+
+### M. MMQ column widths per arch and format (#619 step 13, DECISIONS 74)
+- Regime: MMQ on short prompts. Ada and Turing are done (#597, #717). Q2_K and the IQ formats still
+  keep the fewest tiles.
+- Prototype: the forced-J grid on the 4090 and 2080 Ti.
+- Decision: open. These are data rows.
