@@ -720,8 +720,8 @@ inline constexpr auto kRouteRules = std::to_array<RouteRule>({
      "timing of its own (the bytes bound is kRmmaWideBytes)",
      ""},
     {"r8_prequantized: lower edge", Basis::Structural, "generic_gemm.cpp",
-     "route.family == Family::R8Mma && tokens >= 2 && tokens <= kR8VerifyTokens &&", 2,
-     kUnknown, kUnknown,
+     "route.family == Family::R8Mma && tokens >= 2 && tokens <= kR8VerifyTokens &&", 2, kUnknown,
+     kUnknown,
      "the verify band of R8 again (r8_verify_tunable's two tokens to kR8VerifyTokens): the "
      "pre-quantized verify form; T = 1 is the decode rule (kR8DecodeTokens; the 2 is a bare "
      "literal, the complement of that rule, not defined from it); no board or margin recorded",
