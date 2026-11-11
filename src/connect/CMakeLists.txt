@@ -4,10 +4,10 @@
 if(WIN32)
   return()
 endif()
-pkg_check_modules(NGHTTP2 IMPORTED_TARGET GLOBAL libnghttp2>=1.60)
+pkg_check_modules(NGHTTP2 IMPORTED_TARGET GLOBAL libnghttp2>=1.59)
 find_package(OpenSSL 3)
 if(NOT NGHTTP2_FOUND OR NOT OpenSSL_FOUND)
-  message(STATUS "ninferno-connect: not built (it needs libnghttp2 >= 1.60 and OpenSSL 3)")
+  message(STATUS "ninferno-connect: not built (it needs libnghttp2 >= 1.59 and OpenSSL 3)")
   return()
 endif()
 # Seen by the tests too (a stand-in router's TLS).

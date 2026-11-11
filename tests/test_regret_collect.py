@@ -215,6 +215,30 @@ class Collect(unittest.TestCase):
         self.assertEqual((case["authority"], case["evidence"], case["t"]),
                          ("route-table", "measured", 1))
 
+    def test_the_tuners_header_ends_with_the_new_columns_and_reads(self):
+        """The header route_tune writes (kSelectedCsvHeader, route_query.h, #614 A3): the old
+        columns in their old order, then authority,evidence,ranker; a row of it reaches the cases."""
+        text = (Path(__file__).resolve().parents[1] / "src" / "ops" / "generic"
+                / "route_query.h").read_text(encoding="utf-8")
+        start = text.index("kSelectedCsvHeader")
+        # the literal may be split into adjacent pieces, which C++ joins
+        header = "".join(re.findall(r'"([^"]*)"', text[start:text.index(";", start)]))
+        columns = header.split(",")
+        self.assertEqual(columns[:-3], ("format,compute,epilogue,n,k,T,asked,selected,select_ns,"
+                                        "run,device,pci_device_id").split(","))
+        self.assertEqual(columns[-3:], ["authority", "evidence", "ranker"])
+        for needed in collect.SELECTED_COLUMNS:
+            self.assertIn(needed, columns)
+        sweep = "q8,a16,store,64,64,1,rmma.a,10\nq8,a16,store,64,64,1,rmma.b,12\n"
+        sel = self.write("sel.csv", header + "\n"
+                         + "q8,a16,store,64,64,1,rmma.a,rmma.a,0,r1,ga106:28sm,,route-table,"
+                           "carried,rmma.a\n")
+        routes = [self.write("p1.csv", HEAD + stamp(sweep, "r1", True))]
+        doc = collect.collect([sel], routes, "held-board", "held-model", "rev", "build", "both",
+                              [], [], "tests")
+        (case,) = doc["cases"]
+        self.assertEqual((case["authority"], case["evidence"]), ("route-table", "carried"))
+
     def test_old_selected_files_read_unknown(self):
         doc = self.collect_with_authority([], ["", ""])
         (case,) = doc["cases"]
@@ -312,11 +336,13 @@ class Collect(unittest.TestCase):
     def test_route_tunes_own_selected_header_is_read_by_name(self):
         # the header ninferno_route_tune --selected-out writes (route_tune_tool.cpp), whatever the
         # order its columns come in: every column the collector and the prune tool read is there
-        source = (Path(__file__).resolve().parents[1] / "src/ops/generic/route_tune_tool.cpp"
-                  ).read_text(encoding="utf-8")
-        found = re.search(r'selected_csv << ((?:"[^"]*"\s*)+);', source)
-        self.assertIsNotNone(found)
-        header = "".join(re.findall(r'"([^"]*)"', found[1])).replace("\\n", "")
+        generic = Path(__file__).resolve().parents[1] / "src/ops/generic"
+        source = (generic / "route_tune_tool.cpp").read_text(encoding="utf-8")
+        # the tool writes the header constant of route_query.h (#614 A3)
+        self.assertIn("selected_csv << generic::kSelectedCsvHeader", source)
+        query = (generic / "route_query.h").read_text(encoding="utf-8")
+        start = query.index("kSelectedCsvHeader =")
+        header = "".join(re.findall(r'"([^"]*)"', query[start:query.index(";", start)]))
         columns = header.split(",")
         for need in collect.SELECTED_COLUMNS + ("pci_device_id", "authority", "evidence",
                                                 "ranker"):

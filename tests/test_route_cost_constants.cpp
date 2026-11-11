@@ -4,7 +4,8 @@
 // prints them, the fitted ones first: the numbers the model still takes from route_tune timings
 // instead of deriving them. The header's own text is read too: every constant it defines must be
 // in the descriptor and every listed one defined, so a new one cannot bypass the checks by being
-// left out. No GPU.
+// left out. The Holdout record of each Fitted constant is in core/fitted_holdouts.h and checked by
+// ninferno_fitted_holdouts_test. No GPU.
 
 #include "ops/generic/route_cost_constants.h"
 
@@ -59,7 +60,9 @@ HeaderNames header_names() {
     text = std::regex_replace(text, std::regex(R"(//[^\n]*)"), "");
     const std::regex definition(R"(\b(?:constexpr|const)\b[^;{}=()]*?\b(k[A-Z]\w*)\s*[{(=\[])");
     for (std::sregex_iterator it(text.begin(), text.end(), definition), end; it != end; ++it) {
-        if ((*it)[1] != "kRouteCostConstants") out.defined.insert((*it)[1].str());
+        if ((*it)[1] != "kRouteCostConstants" && (*it)[1] != "kPendingFits") {
+            out.defined.insert((*it)[1].str());
+        }
     }
     const std::string::size_type start = text.find("kRouteCostConstants[]");
     if (start == std::string::npos) {
@@ -103,6 +106,17 @@ int main(int argc, char** argv) {
                      header.listed.size(), std::size(rc::kRouteCostConstants));
         ++failures;
     }
+    for (const auto& pending : rc::kPendingFits) {
+        if (pending.from != rc::Provenance::Fitted || pending.value.has_value() ||
+            pending.name.empty()) {
+            std::fprintf(
+                stderr,
+                "pending fit '%.*s' must be Fitted, named and empty (a calibrated one moves "
+                "into kRouteCostConstants with its Holdout)\n",
+                static_cast<int>(pending.name.size()), pending.name.data());
+            ++failures;
+        }
+    }
     std::set<std::string_view> names;
     std::size_t fitted = 0;
     for (const auto& c : rc::kRouteCostConstants) {
@@ -123,6 +137,15 @@ int main(int argc, char** argv) {
             ++failures;
         }
         fitted += c.from == rc::Provenance::Fitted;
+    }
+    constexpr std::size_t kExpectedFitted = 26;
+    if (fitted != kExpectedFitted) {
+        std::fprintf(stderr,
+                     "%zu Fitted constants found, expected %zu: if one was added or retagged, give "
+                     "it a record in core/fitted_holdouts.h (ninferno_fitted_holdouts_test) and "
+                     "update kExpectedFitted\n",
+                     fitted, kExpectedFitted);
+        ++failures;
     }
     if (argc > 1 && std::string(argv[1]) == "--list") {
         for (auto want : {rc::Provenance::Fitted, rc::Provenance::Counted, rc::Provenance::Fact}) {

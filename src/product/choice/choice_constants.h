@@ -52,6 +52,7 @@
 
 #include "core/cost_constants.h"
 #include "ninferno/types.h"
+#include "ops/softmax_attention/dense/causal_cache/int8/prompt_fast_cost.h"
 
 #include <cstdint>
 #include <string_view>
@@ -665,7 +666,9 @@ struct AttentionTileCost {
 };
 inline constexpr AttentionTileCost kAttentionTileCost[] = {
     {"ada", 328, 188, 2}, {"ga10x", 378, 190, 1}, {"gb20x", 195, 152, 2, 20800}};
-inline constexpr double kAttentionHalfCta = 0.72; // a 64-row CTA against a 128-row one
+// A 64-row CTA against a 128-row one: the kernel's own figure, from its one definition
+// (int8/prompt_fast_cost.h, which int8_prompt_fast_layout reads too).
+inline constexpr double kAttentionHalfCta = ::ninferno::ops::kInt8PromptHalfCtaPercent / 100.0;
 // The FP8-KV prompt kernel (ops/softmax_attention common/mxfp8_tiled_mma.cuh, `--kv-dtype fp8`, a
 // call wider than kFp8AttentionTiledMinWidth): a CTA of 128 query rows of one head and one split of
 // the call's keys (99 KiB, one a SM), the grid row tiles x heads x splits in launch order. The

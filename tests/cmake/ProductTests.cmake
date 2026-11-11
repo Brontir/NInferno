@@ -1,6 +1,6 @@
 ninferno_add_test(ninferno_media_decode_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_media_decode.cpp"
-  LIBRARIES ninferno_media_decode)
+  LIBRARIES ninferno_media_decode PkgConfig::FFMPEG)
 
 ninferno_add_test(ninferno_pdf_text_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_pdf_text.cpp"

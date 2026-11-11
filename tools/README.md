@@ -35,7 +35,7 @@ python3 -m tools.smoke.serve_contract --base-url http://127.0.0.1:8080 --model q
 | Maintain the drafter registry and speculation corpus | [`spec/`](#maintainer-tools) |
 | Generate or check documentation | [`docs/`](#maintainer-tools) |
 | Audit the source tree | [`audit/`, `check_file_modes.sh`, `specializations.sh`, `pdl_sass_audit.py`](#maintainer-tools) |
-| Build and publish a release (archives, installer, WSL root file system, update manifest) | `release/`: `package.sh`, `install.sh`, `ninferno-update`, `ninferno-start`, `pdfium.sh`, `manifest.py`, `recommend.py`, `windows/` (`build.sh`, `package-native.ps1`, `make_rootfs.sh`), `server/` ([README](release/server/README.md)) |
+| Build and publish a release (archives, installer, WSL root file system, update manifest) | `release/`: `package.sh`, `install.sh`, `ninferno-update`, `ninferno-start`, `pdfium.sh`, `ffmpeg.sh` (with `ffmpeg_check.py`), `manifest.py`, `recommend.py`, `windows/` (`build.sh`, `package-native.ps1`, `make_rootfs.sh`), `server/` ([README](release/server/README.md)) |
 | Talk to a running server from Python | `ninferno_serve/` (public-protocol clients), `streaming_http/` (timestamped HTTP and SSE) |
 | Regenerate the dense RoPE test fixture from transformers | `convert/dense_rope_fixture.py <fixture.json> <name> <config.json>` |
 

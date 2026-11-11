@@ -50,6 +50,7 @@ ninferno_add_test(ninferno_spec_pairs_test LABELS host NEEDS_SOURCE_DIR
 ninferno_add_test(ninferno_spec_round_cost_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_spec_round_cost.cpp"
   LIBRARIES ninferno_spec)
+set_tests_properties(ninferno_spec_round_cost_test PROPERTIES LABELS host)
 
 # The rows a restricted draft head keeps (spec/draft_head.h) on the Qwen ranking: no GPU.
 ninferno_add_test(ninferno_spec_draft_head_test LABELS host NEEDS_SOURCE_DIR

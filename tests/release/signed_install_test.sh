@@ -5,7 +5,9 @@
 # repository); nvidia-smi and getconf are stand-ins and the archives are fakes whose ninferno-serve
 # prints a version. Also: a release that does not start is never switched in (install, update,
 # rollback), the glibc minimum, the version order (a pre-release below its release, as
-# update_check.cpp), --help / --uninstall / unknown arguments, and ninferno-kit through its link.
+# update_check.cpp), --help / --uninstall / unknown arguments, ninferno-kit through its link, and a
+# GPU NInferno does not support (a GTX 16 card: install.sh asks, --yes goes on; ninferno-start
+# --list says so), known by the ids the engine's GPU facts give its chip.
 # Needs openssl and python3; skipped (77) without them.
 set -euo pipefail
 REPO=$(cd "${1:?usage: signed_install_test.sh REPO}" && pwd)
@@ -39,9 +41,21 @@ open(sys.argv[3], "w").write(new)
 PY
 
 mkdir -p "$work/bin"
+# One GPU, FAKE_GPU "name|compute_cap|memory MiB|driver|pci.device_id" (default an AD102 board),
+# answering the fields --query-gpu asks for, in its order.
 cat > "$work/bin/nvidia-smi" << 'EOF'
 #!/bin/sh
-echo "0, Test GPU, 8.9, 24564, 580.95.05"
+for a; do case $a in --query-gpu=*) query=${a#--query-gpu=} ;; esac; done
+IFS='|'; set -- ${FAKE_GPU:-Test GPU|8.9|24564|580.95.05|0x268410DE}; IFS=' '
+out=""
+for field in $(printf '%s' "${query:?}" | tr ',' ' '); do
+  case $field in
+    index) v=0 ;; name) v=$1 ;; compute_cap) v=$2 ;; memory.total) v=$3 ;;
+    driver_version) v=$4 ;; pci.device_id) v=$5 ;; *) echo "no field $field" >&2; exit 2 ;;
+  esac
+  out="${out:+$out, }$v"
+done
+printf '%s\n' "$out"
 EOF
 # The C library's version: FAKE_GLIBC, "none" for a system without glibc.
 cat > "$work/bin/getconf" << 'EOF'
@@ -199,6 +213,14 @@ serves "after the refused rollback" 0.2.0
 cp "$work/serve-0.1.0" "$old_serve"
 expect "rollback" 0 "${I[@]}" "$bin/ninferno-update" --rollback
 serves "after the rollback" 0.1.0
+# Asked with no terminal (a new session has none): it says so and installs nothing.
+if command -v setsid > /dev/null; then
+  expect "the updater with no terminal to ask on" 0 "${I[@]}" NINFERNO_UPDATE_URL="file://$d2/latest.json" \
+    NINFERNO_ARCHIVE="$d2/ninferno-linux-x86_64.tar.gz" setsid -w "$bin/ninferno-update"
+  said "No terminal to ask on: not installed"
+  ! grep -q "/dev/tty" "$work/out.txt" || fail "the updater printed the shell's /dev/tty error"
+  serves "after the update with no terminal" 0.1.0
+fi
 # The same version again: switched by renames, `current` stays a link.
 expect "0.1.0 installs over itself" 0 "${I[@]}" NINFERNO_MANIFEST="$d1/latest.json" \
   NINFERNO_ARCHIVE="$d1/ninferno-linux-x86_64.tar.gz" sh "$work/install.sh"
@@ -359,5 +381,81 @@ ln -s "$realh/ninferno-0.1.0-linux-x86_64/bin/ninferno-update" "$bin3/ninferno-u
 expect "uninstall through a linked home" 0 "${K[@]}" sh "$work/install.sh" --uninstall --yes
 [ -z "$(ls -A "$bin3")" ] || fail "uninstall left links through the resolved home: $(ls -A "$bin3")"
 [ -z "$(ls -A "$realh")" ] || fail "uninstall left $realh: $(ls -A "$realh")"
+
+# A GPU without tensor cores is known by its chip's facts: install.sh's ids against the engine's
+# (the TU116 / TU117 PCI blocks of core/device_class_host.cpp at 7.5, and every board row of
+# core/data/gpu_facts.json from 7.0 on, by its mma_slow), the blocks' edges included.
+python3 - "$REPO/src/core/device_class_host.cpp" "$REPO/src/core/data/gpu_facts.json" > "$work/gpu_cases.txt" << 'PY'
+import json, re, sys
+blocks = re.findall(r'\{0x([0-9A-Fa-f]+), 0x([0-9A-Fa-f]+), "(tu11[67])"\}', open(sys.argv[1]).read())
+assert len(blocks) == 2, blocks
+rows = {int(r["id"], 16): r for r in json.load(open(sys.argv[2]))["gpus"]}
+def case(dev, cc, slow): print(f"0x{dev:04X}10DE {cc // 10}.{cc % 10} {'no' if slow else 'yes'}")
+for first, last, _ in blocks:
+    first, last = int(first, 16), int(last, 16)
+    for dev in (first, (first + last) // 2, last):
+        case(dev, 75, True)
+        case(dev, 86, False)  # a block names its chip only at that chip's compute capability
+    for dev in (first - 1, last + 1):
+        case(dev, 75, rows.get(dev, {}).get("mma_slow", False))
+for dev, r in rows.items():
+    if r["cc"] >= 70:
+        case(dev, r["cc"], r.get("mma_slow", False))
+PY
+while read -r pci cap want; do
+  got=yes; sh "$work/install.sh" --gpu-check "$pci" "$cap" > "$work/out.txt" 2>&1 || got=no
+  [ "$got" = "$want" ] || fail "--gpu-check $pci $cap: supported '$got', the GPU facts say '$want'"
+done < "$work/gpu_cases.txt"
+[ "$(wc -l < "$work/gpu_cases.txt")" -gt 100 ] || fail "the GPU facts gave only $(wc -l < "$work/gpu_cases.txt") cases"
+expect "--gpu-check on a TU116 board" 1 sh "$work/install.sh" --gpu-check 0x218210de 7.5
+said "no tensor cores"
+expect "--gpu-check on a Pascal board" 1 sh "$work/install.sh" --gpu-check 0x1B0610DE 6.1
+said "older than NInferno supports"
+
+# A GTX 16 card (a TU116 board): the installer warns and asks; with no terminal it refuses unless
+# --yes, which installs; ninferno-update goes on without asking (the card was accepted).
+gtx16="GeForce GTX 1660 Ti|7.5|6144|580.95.05|0x218210DE"
+home6=$work/home-gtx16; bin6=$work/userbin-gtx16
+G=(env FAKE_GPU="$gtx16" NINFERNO_HOME="$home6" NINFERNO_BIN="$bin6")
+if command -v setsid > /dev/null; then
+  expect "a GTX 16 card without a terminal and without --yes" 1 "${G[@]}" NINFERNO_MANIFEST="$d1/latest.json" \
+    NINFERNO_ARCHIVE="$d1/ninferno-linux-x86_64.tar.gz" setsid -w sh "$work/install.sh"
+  said "NOT SUPPORTED, its chip has no tensor cores (the GTX 16 series: TU116, TU117)"
+  said "run it with --yes"
+  [ ! -e "$home6/current" ] || fail "a GTX 16 card was installed for without an answer"
+fi
+expect "a GTX 16 card with --yes" 0 "${G[@]}" NINFERNO_MANIFEST="$d1/latest.json" \
+  NINFERNO_ARCHIVE="$d1/ninferno-linux-x86_64.tar.gz" sh "$work/install.sh" --yes
+said "WARNING: NInferno does not support a GPU without tensor cores"
+[ "$("$bin6/ninferno-serve")" = "ninferno 0.1.0" ] || fail "--yes on a GTX 16 card did not install 0.1.0"
+expect "--yes takes nothing after it" 1 "${G[@]}" sh "$work/install.sh" --yes --bogus
+if command -v setsid > /dev/null; then
+  expect "the updater on a GTX 16 card" 0 "${G[@]}" NINFERNO_UPDATE_URL="file://$d2/latest.json" \
+    NINFERNO_ARCHIVE="$d2/ninferno-linux-x86_64.tar.gz" setsid -w "$bin6/ninferno-update" --yes
+  [ "$("$bin6/ninferno-serve")" = "ninferno 0.2.0" ] || fail "the updater on a GTX 16 card did not install 0.2.0"
+fi
+# A Turing chip with tensor cores (TU102) installs without asking.
+detach=(); if command -v setsid > /dev/null; then detach=(setsid -w); fi
+expect "an RTX 2080 Ti" 0 env FAKE_GPU="GeForce RTX 2080 Ti|7.5|11264|580.95.05|0x1E0710DE" \
+  NINFERNO_HOME="$work/home-rtx" NINFERNO_BIN="$work/userbin-rtx" NINFERNO_MANIFEST="$d1/latest.json" \
+  NINFERNO_ARCHIVE="$d1/ninferno-linux-x86_64.tar.gz" "${detach[@]}" sh "$work/install.sh"
+! grep -q "NOT SUPPORTED\|WARNING" "$work/out.txt" || fail "an RTX 2080 Ti was warned about"
+
+# ninferno-start --list: an unsupported GPU is said to be one (with the reason), not given the
+# numbers of a measured card of its architecture.
+start=$work/start-root
+mkdir -p "$start/bin" "$start/share/ninferno"
+install -m 0755 "$REPO/tools/release/ninferno-start" "$start/bin/ninferno-start"
+install -m 0644 "$work/install.sh" "$start/share/ninferno/install.sh"
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  rtx2080ti "RTX 2080 Ti" "GeForce RTX 2080 Ti" 75 11 "Qwen3 8B" 100 300 8 "ninferno-serve m" - \
+  rtx4090 "RTX 4090" "Test GPU" 89 24 "Qwen3 32B" 50 200 8 "ninferno-serve m" - > "$start/share/ninferno/recommend.tsv"
+expect "ninferno-start --list on a GTX 16 card" 1 env FAKE_GPU="$gtx16" "$start/bin/ninferno-start" --list
+said "GeForce GTX 1660 Ti is not supported: its chip has no tensor cores"
+expect "ninferno-start --list on a Pascal card" 1 env FAKE_GPU="GeForce GTX 1080 Ti|6.1|11264|580.95.05|0x1B0610DE" \
+  "$start/bin/ninferno-start" --list
+said "is not supported: compute capability 6.1 is older"
+expect "ninferno-start --list on a supported card" 0 "$start/bin/ninferno-start" --list
+said "Qwen3 32B"
 
 [ "$failures" = 0 ] && echo "signed install: ok" || { echo "$failures failure(s)"; exit 1; }
