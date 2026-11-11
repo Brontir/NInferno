@@ -1781,7 +1781,9 @@ holds the rule (`launch_of`, `fixup_bytes`, `launch_seconds`, `width_cost`); `se
 by it and takes its CTA count and fixup from `launch_of`, and the estimate (`mmq_linears_seconds`)
 prices the same launch, the format's 128-column K step (`kMmqTileCost`) scaled by the law's unit
 share. `test_route_classes` holds the kernel's width to the table's on 4096- and 12288-row
-products of 1..512 columns, `test_choice` pins the Turing picks. GA10x, Ada and GB20x keep the
+products of 1..512 columns, `test_choice` pins the Turing picks. A Turing board whose facts give no
+roofline (an unknown id without the driver's clocks) cannot price the law and keeps the fewest
+tiles of 16, 32, 64 and 128, as before. GA10x, Ada and GB20x keep the
 tile law of DECISIONS 74 (their grids fit it); the generic cost model's MMQ term is computed only
 where the MMA reads BF16 (sm_80 on), so it never prices a Turing call and is unchanged.
 

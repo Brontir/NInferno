@@ -66,6 +66,9 @@ static_assert(pick(121, 7, 5, true, 128, k12288) == 64 &&
               pick(201, 7, 5, true, 128, k12288) == 128 &&
               pick(441, 7, 5, true, 128, k12288) == 64);
 static_assert(pick(121, 7, 5, false, 128, k4096) == 128);
+// A Turing board whose facts give no roofline keeps the fewest tiles of 16, 32, 64, 128.
+static_assert(pick(70, 7, 5, true, 128, {}) == 128 && pick(121, 7, 5, true, 128, {}) == 128 &&
+              pick(150, 7, 5, true, 128, {}) == 128 && pick(40, 7, 5, true, 128, {}) == 64);
 // A format the grids did not run keeps the fewest tiles on every card
 // (mmq_columns::work_tiles_format).
 static_assert(pick(144, 8, 6, false, 128, k4096) == 128 &&

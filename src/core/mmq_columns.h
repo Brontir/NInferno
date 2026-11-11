@@ -184,11 +184,20 @@ struct LaunchFacts {
 
 // The cost the launch choice ranks the widths by (select_launch and pick alike): the launch law's
 // seconds where the generation has one and the facts price it, else launch_cost (the least work on
-// the work table, the fewest tiles elsewhere).
+// the work table, the fewest tiles elsewhere). A board of a launch-law generation whose facts give
+// no roofline (an unknown id without the driver's clocks) keeps the fewest tiles of 16, 32, 64 and
+// 128, the choice before DECISIONS 77: the law cannot be priced there, and no other measurement
+// stands for it.
 [[nodiscard]] constexpr double width_cost(int columns, int j, int major, int minor, bool format,
                                           const LaunchFacts& f) noexcept {
-    if (const MmqLaunchLaw* law = launch_law(major, minor, format); law != nullptr && priced(f)) {
-        return launch_seconds(launch_of(f.rows, f.k, columns, j, f.sms), *law, f);
+    if (const MmqLaunchLaw* law = launch_law(major, minor, format); law != nullptr) {
+        if (priced(f)) {
+            return launch_seconds(launch_of(f.rows, f.k, columns, j, f.sms), *law, f);
+        }
+        for (const int everywhere : kTilesEverywhere) {
+            if (j == everywhere) { return tile_count(columns, j); }
+        }
+        return 1e300;
     }
     return launch_cost(columns, j, uses_work_table(major, minor, format),
                        tile_fixed(major, minor, format));
