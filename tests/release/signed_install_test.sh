@@ -300,8 +300,10 @@ expect "the final release sees no update in its rc" 1 "${J[@]}" NINFERNO_UPDATE_
 home7=$work/home-bin; bin7=$work/custom-bin; fakehome=$work/fake-home
 mkdir -p "$fakehome"
 H=(env HOME="$fakehome" NINFERNO_HOME="$home7")
-expect "0.1.0 into a custom commands directory" 0 "${H[@]}" NINFERNO_BIN="$bin7" NINFERNO_MANIFEST="$d1/latest.json" \
-  NINFERNO_ARCHIVE="$d1/ninferno-linux-x86_64.tar.gz" sh "$work/install.sh"
+# Given relative (from $work): recorded as the absolute path.
+expect "0.1.0 into a custom commands directory" 0 "${H[@]}" NINFERNO_BIN="custom-bin" NINFERNO_MANIFEST="$d1/latest.json" \
+  NINFERNO_ARCHIVE="$d1/ninferno-linux-x86_64.tar.gz" sh -c 'cd "$1" && sh "$1/install.sh"' sh "$work"
+[ "$(cat "$home7/.bin-dir")" = "$bin7" ] || fail "the recorded commands directory is '$(cat "$home7/.bin-dir")', not $bin7"
 for d in "$d2" "$d5"; do
   expect "$(basename "$d") over it without NINFERNO_BIN" 0 "${H[@]}" NINFERNO_MANIFEST="$d/latest.json" \
     NINFERNO_ARCHIVE="$d/ninferno-linux-x86_64.tar.gz" sh "$work/install.sh"
@@ -310,12 +312,19 @@ done
 [ ! -e "$fakehome/.local/bin" ] || fail "an install without NINFERNO_BIN linked into HOME's default"
 touch -d '2000-01-01' "$home7/ninferno-0.2.0-linux-x86_64" "$home7/ninferno-0.5.0-linux-x86_64"
 touch "$home7/ninferno-0.1.0-linux-x86_64"
-expect "rollback by version" 0 "${H[@]}" "$bin7/ninferno-update" --rollback
+# A kept directory with no version is neither a rollback target nor removed.
+mkdir -p "$home7/ninferno-x-linux-x86_64/share/ninferno"
+echo '{}' > "$home7/ninferno-x-linux-x86_64/share/ninferno/release.json"
+# The commands directory was removed meanwhile: rollback makes it again.
+rm -rf "$bin7"
+expect "rollback by version" 0 "${H[@]}" "$home7/current/bin/ninferno-update" --rollback
 [ "$("$bin7/ninferno-serve")" = "ninferno 0.2.0" ] || fail "rollback from 0.5.0 did not go to 0.2.0"
 expect "an update after the rollback" 0 "${H[@]}" NINFERNO_UPDATE_URL="file://$d6/latest.json" \
   NINFERNO_ARCHIVE="$d6/ninferno-linux-x86_64.tar.gz" "$bin7/ninferno-update" --yes
 [ "$("$bin7/ninferno-serve")" = "ninferno 0.6.0" ] || fail "the update after the rollback did not link 0.6.0"
-kept=$(cd "$home7" && ls -d ninferno-*-linux-x86_64 | tr '\n' ' ')
+kept=$(cd "$home7" && ls -d ninferno-*-linux-x86_64 | grep -v '^ninferno-x-' | tr '\n' ' ')
+[ -d "$home7/ninferno-x-linux-x86_64" ] || fail "the update removed a kept directory with no version"
+rm -rf "$home7/ninferno-x-linux-x86_64"
 # 0.5.0 for --rollback, 0.2.0 the update ran from; 0.1.0 goes.
 [ "$kept" = "ninferno-0.2.0-linux-x86_64 ninferno-0.5.0-linux-x86_64 ninferno-0.6.0-linux-x86_64 " ] ||
   fail "after the update the home keeps '$kept', not 0.2.0, 0.5.0 and 0.6.0"

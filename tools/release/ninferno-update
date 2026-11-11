@@ -86,7 +86,9 @@ kept_versions() {
   for dir in "$home"/ninferno-*-linux-x86_64*; do
     [ -d "$dir" ] && [ "$(readlink -f "$dir")" != "$version_dir" ] || continue
     [ -f "$dir/share/ninferno/release.json" ] || continue
-    printf '%s %s\n' "$(field version "$dir/share/ninferno/release.json")" "$dir"
+    v=$(field version "$dir/share/ninferno/release.json")
+    [ -n "$v" ] || continue  # no version to order it by: left as it is
+    printf '%s %s\n' "$v" "$dir"
   done
 }
 
@@ -120,9 +122,10 @@ if [ "$mode" = rollback ]; then
   # Switched to only when it starts here, as install.sh does for a new release.
   "$previous/bin/ninferno-serve" --version > /dev/null 2>&1 ||
     die "$(basename "$previous") does not start on this machine: nothing changed"
-  ln -sfn "$previous" "$home/current"
   recorded_bin=$(sed -n 1p "$home/.bin-dir" 2> /dev/null || true)
   bin=${NINFERNO_BIN:-${recorded_bin:-$HOME/.local/bin}}
+  mkdir -p "$bin" || die "cannot make the commands directory $bin: nothing changed"
+  ln -sfn "$previous" "$home/current"
   for exe in "$home/current/bin/"*; do
     case $(basename "$exe") in *-sm[0-9]*) continue ;; esac  # the engines: ninferno-serve starts them
     ln -sf "$exe" "$bin/$(basename "$exe")"
