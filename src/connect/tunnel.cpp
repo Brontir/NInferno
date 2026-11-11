@@ -1,9 +1,9 @@
 #include "connect/tunnel.h"
 
+#include "connect/nghttp2_compat.h"
 #include "connect/stream_buffer.h"
 
 #include <httplib.h>
-#include <nghttp2/nghttp2.h>
 
 #include <fcntl.h>
 #include <poll.h>
@@ -298,7 +298,7 @@ public:
 
 private:
     bool receive(const std::uint8_t* data, std::size_t size) {
-        const nghttp2_ssize n = nghttp2_session_mem_recv2(session_, data, size);
+        const h2::ssize n = h2::mem_recv(session_, data, size);
         return n >= 0 && static_cast<std::size_t>(n) == size;
     }
 
@@ -306,7 +306,7 @@ private:
     bool send() {
         while (out_.size() < (1u << 20)) {
             const std::uint8_t* data = nullptr;
-            const nghttp2_ssize n    = nghttp2_session_mem_send2(session_, &data);
+            const h2::ssize n        = h2::mem_send(session_, &data);
             if (n < 0) {
                 protocol_error_ = true;
                 return true;
@@ -373,18 +373,18 @@ private:
         // 8.1), with no DATA frame after it.
         const int code = std::atoi(status.c_str());
         if (s.method == "HEAD" || (code >= 100 && code < 200) || code == 204 || code == 304) {
-            nghttp2_submit_response2(session_, s.id, nva.data(), nva.size(), nullptr);
+            h2::submit_response(session_, s.id, nva.data(), nva.size(), nullptr);
             return;
         }
-        nghttp2_data_provider2 provider{};
+        h2::DataProvider provider{};
         provider.source.ptr     = &s;
         provider.read_callback  = &Session::read_body;
-        nghttp2_submit_response2(session_, s.id, nva.data(), nva.size(), &provider);
+        h2::submit_response(session_, s.id, nva.data(), nva.size(), &provider);
     }
 
-    static nghttp2_ssize read_body(nghttp2_session*, std::int32_t, std::uint8_t* buf,
-                                   std::size_t length, std::uint32_t* flags,
-                                   nghttp2_data_source* source, void*) {
+    static h2::ssize read_body(nghttp2_session*, std::int32_t, std::uint8_t* buf,
+                               std::size_t length, std::uint32_t* flags,
+                               nghttp2_data_source* source, void*) {
         auto& s = *static_cast<Stream*>(source->ptr);
         std::lock_guard lock(s.mu);
         const std::size_t available = s.buffered();
@@ -402,7 +402,7 @@ private:
             if (s.upstream_done && !s.upstream_failed) { *flags |= NGHTTP2_DATA_FLAG_EOF; }
         }
         s.room.notify_all();
-        return static_cast<nghttp2_ssize>(n);
+        return static_cast<h2::ssize>(n);
     }
 
     void start(const std::shared_ptr<Stream>& s) {
