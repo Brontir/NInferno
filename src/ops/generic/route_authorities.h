@@ -172,5 +172,11 @@ struct NamedAuthority {
 [[nodiscard]] RouteAnswer auto_answer(const Ask& ask, const Problem& problem, const Weight& weight);
 [[nodiscard]] RouteAnswer heuristic_answer(const Ask& ask, const Problem& problem,
                                            const Weight& weight);
+// The ranker's answer: what auto_answer gives where neither the route table nor the dense tuner
+// answers (the NVFP4 half-L2 rule, then the rules), under the Ask the call's rules see (an NVFP4
+// A16 call of 17 tokens or more as the prefill profile's, nvfp4_promoted). The route a measured
+// override would hand the call back to: tools/bench/route_table_prune.py compares the two.
+[[nodiscard]] RouteAnswer ranker_answer(const Ask& ask, const Problem& problem,
+                                        const Weight& weight);
 
 } // namespace ninferno::ops::detail::generic

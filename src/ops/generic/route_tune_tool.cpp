@@ -32,9 +32,13 @@
 // outside the prefill profile, applied here at every T) and a register-MMA kernel's registers and
 // local memory (spills or stack arrays) beside the timing.
 // --selected-out writes, per problem and band point, the route the production path runs there
-// (select_route resolved for the call), which is timed too: tools/bench/regret_collect.py. Its rows
-// end with authority,evidence: the authority that answered and the kind of evidence it rests on
-// (route_authorities.h, #614).
+// (select_route resolved for the call), which is timed too: tools/bench/regret_collect.py. Its
+// rows also name the authority that answered and its evidence (select_answer, #614) and `ranker`,
+// the route the call takes without a table or tuner entry (ranker_answer: the cost model where it
+// prices, else the rules, under the Ask the call's rules see), resolved and timed the same way:
+// what tools/bench/route_table_prune.py compares a measured override with. The selection reads
+// the release's dense tuner entries as the engine's does (the tuner on in mode Off: nothing is
+// timed or written), so a dense tuner override answers there as it does in a served model.
 // --select-reps N adds select_ns, the host time of one select_route of that call (the mean of N,
 // after a first one that fills the selection's caches): an eager call selects its route on the
 // host, so the selection is a share of a host-bound decode step.
@@ -199,6 +203,11 @@ int route_tune_main(int argc, char** argv) {
             selected_csv.open(opt["--selected-out"]);
             if (!selected_csv) throw std::runtime_error("cannot open " + opt["--selected-out"]);
             selected_csv << generic::kSelectedCsvHeader << '\n';
+            // The selection reads the release's dense tuner entries as the engine's does: the
+            // tuner on, in mode Off (read the release's routes/tuner/dense_tune.json, time and
+            // write nothing; the user's own tuning cache is not read either).
+            generic::set_dense_tune(ninferno::TuneMode::Off, {});
+            generic::enable_dense_tune(true);
         }
         const int select_reps = opt.count("--select-reps") ? std::stoi(opt["--select-reps"]) : 0;
         const bool a8_candidates = opt.count("--a8-candidates") && opt["--a8-candidates"] == "1";
@@ -436,7 +445,12 @@ int route_tune_main(int argc, char** argv) {
                     // where the model prices no such route or the route is no register MMA.
                     const generic::Problem gp{p.qtype, policy, p.n, p.k, p.epilogue};
                     if (const auto s = generic::route_cost_seconds(gp, w.weight, r, t)) {
+                        // 17 digits round-trip a double: two routes the model prices equally
+                        // (cost_route keeps the first offered) read equal here, and two it
+                        // prices apart do not, which six digits would not keep.
+                        const auto digits = routes_csv.precision(17);
                         routes_csv << *s * 1e6;
+                        routes_csv.precision(digits);
                     }
                     routes_csv << ',';
                     const auto res = r.family == generic::Family::RegisterMma
@@ -530,13 +544,27 @@ int route_tune_main(int argc, char** argv) {
                 winners.push_back({t, best_route});
                 if (selected_csv) {
                     const generic::Problem gp{p.qtype, policy, p.n, p.k, p.epilogue};
-                    // The one selection: its route is timed, its authority and evidence are the
-                    // row's last columns. They describe `asked`; regret_collect.py keys regret on
-                    // `selected` (the route that ran after resolve_route), which can differ.
+                    {
+                        // The release's dense tuner entry of the problem, as the engine's
+                        // selection reads it (routes/tuner/dense_tune.json, keyed by this class
+                        // and build). The tuner is in its default mode, Off: it reads the release's
+                        // file only and never times or writes (generic_tune.cpp tune_dense).
+                        Tensor tx(x.p, DType::BF16, {p.k, t});
+                        Tensor ty(y.p, DType::BF16, {p.n, t});
+                        generic::Call call;
+                        call.x               = &tx;
+                        call.weight          = &w.weight;
+                        call.rows            = p.n;
+                        call.up_offset       = swiglu ? p.n : 0;
+                        call.epilogue        = p.epilogue;
+                        call.out[0]          = &ty;
+                        call.segment_rows[0] = p.n;
+                        generic::tune_dense(gp, call, nullptr);
+                    }
                     const generic::RouteAnswer answer =
                         generic::select_answer(gp, w.weight, t, ops::prefill_routes_active());
                     const generic::Route asked = answer.route;
-                    double select_ns = 0;
+                    double select_ns           = 0;
                     if (select_reps > 0) {
                         int sink      = 0;
                         const auto t0 = std::chrono::steady_clock::now();
@@ -560,12 +588,24 @@ int route_tune_main(int argc, char** argv) {
                     const generic::Route ran =
                         generic::resolve_route(asked, w.weight, layout).executed;
                     time_route(ran, t);
+                    // The ranker's route (no pin, table or tuner entry: ranker_answer, under the
+                    // Ask the call's rules see), as it would run.
+                    const generic::Route ranker =
+                        generic::resolve_route(
+                            generic::ranker_answer(
+                                generic::ask_below_profiles(t, ops::prefill_routes_active()), gp,
+                                w.weight)
+                                .route,
+                            w.weight, layout)
+                            .executed;
+                    time_route(ranker, t);
                     selected_csv << generic::qtype_name(p.qtype) << ',' << row_compute << ','
                                  << generic::epilogue_name(p.epilogue) << ',' << p.n << ',' << p.k
                                  << ',' << t << ',' << generic::route_name(asked) << ','
                                  << generic::route_name(ran) << ',' << select_ns << ',' << run_id
                                  << ',' << device_id << ',' << pci_id << ','
-                                 << generic::evidence_columns(answer.evidence) << '\n';
+                                 << generic::evidence_columns(answer.evidence) << ','
+                                 << generic::route_name(ranker) << '\n';
                 }
                 std::printf("%s %s %s n=%d k=%d T=%d best=%s %.2f us\n",
                             generic::qtype_name(p.qtype), generic::compute_class_name(p.compute),
@@ -609,7 +649,20 @@ int route_tune_main(int argc, char** argv) {
                 std::vector<std::pair<std::int32_t, generic::Route>> width_winners;
                 for (const auto t : band_points) {
                     const generic::Ask band_ask = generic::ask_below_profiles(t, true);
-                    const double base   = time_route(*entry.prefill, t);
+                    // The routes the profile filter admits are timed in `routes` order with the
+                    // prefill route in its place: a pass writes the rows of one family in the
+                    // order the cost model offers them (cost_route keeps the first offered on an
+                    // equal price), which a reader of the CSV takes to break a model tie. The pick
+                    // below reads these timings back and times nothing new.
+                    double base = 0;
+                    for (const auto r : routes) {
+                        if (r == *entry.prefill) {
+                            base = time_route(r, t);
+                        } else if (tabled(r) &&
+                                   generic::profile_admits_as(r, band_ask, *entry.prefill)) {
+                            time_route(r, t);
+                        }
+                    }
                     double best         = base;
                     generic::Route pick = *entry.prefill;
                     for (const auto r : routes) {

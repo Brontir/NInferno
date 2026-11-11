@@ -32,10 +32,11 @@ add_test(NAME ninferno_device_sync_invalid_test COMMAND ninferno_device_test --i
 add_test(NAME ninferno_device_sync_empty_test COMMAND ninferno_device_test --invalid-sync "")
 
 # A build with a library that has no image for the device is refused at startup. The
-# stand-in library is one kernel compiled for sm_90 SASS only.
+# stand-in library is one kernel compiled for sm_90 SASS only. STATIC_LINK: the refusal is the
+# product's, so the test keeps the product's link.
 add_library(ninferno_device_image_probe_sm90 OBJECT "${CMAKE_CURRENT_LIST_DIR}/../device_image_sm90.cu")
 set_target_properties(ninferno_device_image_probe_sm90 PROPERTIES CUDA_ARCHITECTURES 90-real)
-ninferno_add_test(ninferno_device_image_negative_test
+ninferno_add_test(ninferno_device_image_negative_test STATIC_LINK
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_device_image_negative.cpp"
           $<TARGET_OBJECTS:ninferno_device_image_probe_sm90>
   LIBRARIES ninferno_core)
@@ -45,6 +46,12 @@ set_tests_properties(ninferno_device_image_negative_test PROPERTIES SKIP_RETURN_
 ninferno_add_test(ninferno_machine_facts_test NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_machine_facts.cpp"
   LIBRARIES ninferno_core)
+# The ISA facts reader (core/isa_facts.h) against src/core/data/isa_facts.json, field by field
+# (#613). No GPU.
+ninferno_add_test(ninferno_isa_facts_reader_test NEEDS_SOURCE_DIR
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_isa_facts.cpp"
+  LIBRARIES ninferno_core ninferno::json)
+set_tests_properties(ninferno_isa_facts_reader_test PROPERTIES LABELS host)
 # The constexpr board registry (core/board_registry.h) against the reference table, and the
 # measured boards against the figures they were spelled with before it. No GPU.
 ninferno_add_test(ninferno_board_registry_test
@@ -61,16 +68,22 @@ ninferno_add_test(ninferno_arch_registry_test
   LIBRARIES ninferno_core)
 # The MMQ prefill gate's decision atlas over that table (#373, core/gate_atlas.h); `--json` prints
 # it. No GPU.
-ninferno_add_test(ninferno_gate_atlas_test
+ninferno_add_test(ninferno_gate_atlas_test STATIC_LINK
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_gate_atlas.cpp"
   LIBRARIES ninferno_core_host ninferno::json)
-# Host-only: no CUDA runtime in its link closure (#620 step 11).
+# Host-only: no CUDA runtime in its link closure (#620 step 11), so the static archive of
+# ninferno_core_host in the shared test tree too (STATIC_LINK).
 cmake_language(DEFER CALL ninferno_assert_host_only ninferno_gate_atlas_test)
 
 # The route cost model's constants, each tagged fact / counted / fitted
 # (ops/generic/route_cost_constants.h); `--list` prints them. No GPU.
 ninferno_add_test(ninferno_route_cost_constants_test NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_route_cost_constants.cpp")
+
+# The launch node cost and the launch-like numbers pinned at each use site (#617 B). No GPU.
+ninferno_add_test(ninferno_launch_node_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_launch_node.cpp"
+  LIBRARIES ninferno_spec)
 
 # The generic path's literal rules (ops/generic/route_rules.h: boards, cards, tolerance), held to
 # the sources they describe; `--list` prints them. No GPU.
@@ -187,3 +200,12 @@ set_tests_properties(ninferno_tool_grammar_budget_test PROPERTIES SKIP_RETURN_CO
 # YaRN rotary frequencies (core/yarn.h, the converter and --rope-yarn-factor), no GPU.
 ninferno_add_test(ninferno_yarn_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_yarn.cpp"
   LIBRARIES ninferno_core)
+
+# The host part of the generic selector (ops/generic/generic_routes.cpp, kernel_facts.cpp): route
+# names, the register-MMA variant rules, the kernel-facts snapshots; no CUDA runtime, no GPU
+# (#620 step 11).
+ninferno_add_test(ninferno_generic_routes_host_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_generic_routes_host.cpp"
+  LIBRARIES ninferno_ops_host)
+target_compile_definitions(ninferno_generic_routes_host_test PRIVATE NINFERNO_HOST_ONLY)
+cmake_language(DEFER CALL ninferno_assert_host_only ninferno_generic_routes_host_test)

@@ -92,15 +92,17 @@ std::set<std::string_view> listed_sources() {
     return names;
 }
 
-// The tuner's --selected-out header: its old columns in their old order, then the two new ones, so
-// a reader of the older files by position still finds every column it knew.
+// The tuner's --selected-out header: its old columns in their old order, then authority,evidence
+// and ranker (#681), so a reader of the older files by position still finds every column it knew.
 void check_selected_header() {
     const std::string header = generic::kSelectedCsvHeader;
     const std::string old =
         "format,compute,epilogue,n,k,T,asked,selected,select_ns,run,device,pci_device_id";
     if (!header.starts_with(old + ",")) fail("--selected-out header lost an old column: " + header);
-    if (!header.ends_with(",authority,evidence")) fail("--selected-out header: " + header);
-    if (header != old + ",authority,evidence") fail("--selected-out header has more: " + header);
+    if (!header.ends_with(",authority,evidence,ranker")) fail("--selected-out header: " + header);
+    if (header != old + ",authority,evidence,ranker") {
+        fail("--selected-out header has more: " + header);
+    }
 }
 
 int check_lists() {

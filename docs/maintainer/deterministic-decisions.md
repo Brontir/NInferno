@@ -615,7 +615,8 @@ manifest's `nm1-` id, so every earlier fingerprint and manifest id holds. The sa
 described explicit route has none), and they name the route the call asked for: for a call without
 workspace that takes the A16 heuristic's route, that heuristic's authority. `ninferno_route_tune
 --selected-out` rows end with the `authority,evidence` columns, which describe the asked route
-(the `selected` column is the route that ran after resolve_route).
+(the `selected` column is the route that ran after resolve_route), and `ranker`, the route the call
+takes without a table or tuner entry.
 
 ## What will be promised
 
