@@ -12,11 +12,11 @@ the measurements then said.
    boards. Cite the gap-map rows or committed measurements that show the gap.
 2. **Law.** The counted law that explains the current kernel's time in that regime: which term
    binds (DRAM bytes, tensor-pipe cycles, issue, latency, launch), counted from the kernel-facts
-   snapshots (`src/ops/generic/data/kernel_facts/`) and the chip facts (`core/data/gpu_facts.json`,
-   `core/data/isa_facts.json`). A gap no law explains is no proposal yet. It goes under "No law yet"
-   in the gap map.
+   snapshots (`src/ops/generic/data/kernel_facts/`) and the chip facts (`src/core/data/gpu_facts.json`,
+   `src/core/data/isa_facts.json`). A gap no counted law explains yet is no proposal yet: the entry
+   records the law that is missing, and the variant waits for it.
 3. **Prediction, frozen.** The variant's time per regime cell, from the same facts. Write it as a
-   range with its sources, before the variant is built, and do not change it after a run.
+   range with its sources, before the micro-bench or A/B, and do not change it after a run.
 4. **Acceptance and refutation, frozen.** These are fixed before the A/B:
    - what counts as the predicted gain (for example, at least half of the lower edge);
    - what refutes it;
@@ -52,25 +52,25 @@ The entries below come from the candidates table of #619 (section 4). Only A has
 prediction so far.
 
 ### A. Pre-summed activation groups for the min-term formats (#619 steps 5-6, #709)
-- Regime: the register MMA on the min-term formats (Q4_K, Q5_K, Q2_K, Q4_1, Q5_1), T >= 17;
-  Gemma heads and SwiGLU.
+- Regime: the register MMA on the min-term formats, T >= 17; Gemma heads and SwiGLU. The formats
+  are those codec_traits marks `min` (Q4_K, Q5_K, Q4_1, Q5_1) or `half_min` (Q2_K).
 - Law: the ones-MMA doubles an m1 tile's tensor work: 16.7 against 8.4 cycles per counted MMA on
   the RTX 5090 (#501).
 - Variant: a plane of T x K/32 FP32 sums, written once per call by an activation pass (as the W4A8
-  quantizer is). Every tile reads the plane in place of the ones-MMA, which keeps one summation order
-  at every T and tile.
+  quantizer is). Every tile reads the plane in place of the ones-MMA, which keeps one summation
+  order at every T and tile.
 - Prediction (frozen in #709's body before any run):
   - prefill, narrow tiles at T 24-191: −5..−30 % by board;
   - heads and SwiGLU tiles at T 32-256: −10..−50 %;
   - the pre-pass costs +1.7-2.5 µs per call;
   - the speed profile and `exact` are unchanged.
 
-  An earlier ABBA with all-ALU sums measured −5..−12 % (heads) and −8..−18 % (SwiGLU) at T 17-256.
-  All-ALU sums lost at T <= 16 (+4..23 %).
+  A different variant, all-ALU sums, measured −5..−12 % (heads) and −8..−18 % (SwiGLU) at
+  T 17-256 in an earlier ABBA, and lost at T <= 16 (+4..23 %).
 - Prototype: `ninferno_route_tune` ABBA on the 5090 and 3060, Gemma head and SwiGLU at T 17-64.
 - Acceptance / refutation (frozen): #709's body, items 1-5.
 - A/B: not run. It belongs to step 6, together with the plane's price.
-- Decision: open. 5a (#709) takes the plane only in the prefill profile's admitted cells.
+- Decision: open. 5a (#709, open) would take the plane only in the prefill profile's admitted cells.
 
 ### B. Blackwell MoE expert kernel at 4-8 rows (#619 step 11)
 - Regime: the routed experts on GB20x at 4 and 8 rows. Their share of DRAM time is 0.74 and 0.63,
