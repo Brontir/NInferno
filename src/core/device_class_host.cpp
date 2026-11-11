@@ -458,7 +458,7 @@ DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int m
     d.max_threads_per_sm               = arch.max_threads_per_sm;
     d.max_blocks_per_sm                = arch.max_blocks_per_sm;
     d.registers_per_sm                 = arch.registers_per_sm;
-    d.persisting_l2_max_bytes = l2_bytes * 3 / 4;
+    d.persisting_l2_max_bytes          = l2_bytes * 3 / 4;
     return d;
 }
 
