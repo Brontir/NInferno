@@ -102,6 +102,7 @@ ninferno_label_tests(ninferno_regret_collect_test LABELS host)
 # tools/bench/mmq_width_grid.py (#524): the measurement against a fake server, the grid and A/B readers' refusals, no GPU.
 add_test(NAME ninferno_mmq_width_grid_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_mmq_width_grid.py)
+ninferno_label_tests(ninferno_mmq_width_grid_test LABELS host)
 # tools/kernel_facts/sass_counts.py and the loop columns of kernel_facts.py (#613): the K loop
 # found from a small SASS text's control flow, its counts, the snapshot round trip and the check's
 # verdicts. No GPU, no CUDA toolkit.
