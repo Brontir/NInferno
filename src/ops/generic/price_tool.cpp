@@ -535,6 +535,21 @@ int run(const Options& o) {
         kernel.tensor_fraction = generic::route_cost::kStagedTensorFraction.value();
         pipelined(r, kernel);
     }
+    // The selector's other priced routes (under --policy a8: the W4A8, I8 and MMQ tiles of
+    // a8_candidates), so the table holds every route it offered and its cheapest. Their terms are
+    // not in kernel_roofline.h yet (#613 PR-5 / PR-6): the row is the selector's price alone.
+    if (!one) {
+        for (const auto& p : priced) {
+            if (p.route.family == Family::RegisterMma || p.route.family == Family::TiledMma ||
+                p.route.family == Family::StagedMma) {
+                continue;
+            }
+            std::printf("%-10s %-9s %6s %5s %4s %6s %5s | %9s %9s %9s %9s | %9s %9.2f (a8 "
+                        "candidate: the selector's price, no roofline terms)\n",
+                        generic::route_name(p.route).c_str(), "", "", "", "", "", "", "", "", "",
+                        "", "", us(p.seconds));
+        }
+    }
     return 0;
 }
 
