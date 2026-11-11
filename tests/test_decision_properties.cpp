@@ -11,15 +11,18 @@
 //
 //   P1  price monotone: for every priced route of a call of 17 tokens or more, a board with 1.25x
 //       the SMs, or 1.25x the DRAM bandwidth, all else equal, prices it no slower (to 1e-9). The
-//       price (price_routes), not the choice. Two kinds of SM-scale case are told apart by a
-//       predicate and printed with their counts, not failed:
+//       price (price_routes), not the choice. Three kinds of SM-scale case are told apart by a
+//       predicate and printed with their counts, not failed (explain_rmma_rise for the last two):
 //         - a board whose architecture has no ISA row (core/isa_facts.h: sm_80, sm_90, sm_100
 //           today) keeps the legacy DRAM law (kernel_roofline.h legacy_dram), which bills idle SMs
 //           (issue #690) until the ISA probe measures the architecture: its SM scale is skipped;
 //         - a register-MMA route of the heavy form whose rise is the shared activation read alone:
 //           the CTAs one SM runs at once read a token tile once for all of them, and with more
 //           SMs the busiest one holds fewer of them, so that read is spread over fewer warps (the
-//           price without that term does not rise: shared_read_explains).
+//           price without that term does not rise);
+//         - a register-MMA route of the heavy form whose larger board runs another compiled
+//           instance of the schedule (the launcher's latency and wide variants are chosen by the
+//           board's DRAM bytes per SM and cycle): two kernels, not one priced twice.
 //   P3  fields the selector does not read: the board's labels (names, PCI address, UUID, ordinal),
 //       the table row's name, sources and note, and (each on its own) its TDP, nominal VRAM, PCIe
 //       generation and segment, and the memory size the driver reports, move no route. Every
@@ -267,10 +270,10 @@ std::map<std::string, int> sms_cases_by_family;
 int sms_cases_priced = 0, routes_skipped_unpriced = 0;
 int sms_cases_fell = 0, sms_cases_equal = 0; // the price fell / stayed (to 1e-9) with the SMs
 // The SM-scale cases the predicates of the header tell apart: on a board of the legacy DRAM law
-// (not compared), and the shared activation reads (compared, the rise explained), with the worst
-// such rise.
-int sms_cases_legacy = 0, sms_cases_shared_read = 0;
-double shared_read_worst = 1;
+// (not compared), another compiled instance on the larger board and the shared activation reads
+// (compared, the rise explained), with the worst such rises.
+int sms_cases_legacy = 0, sms_cases_shared_read = 0, sms_cases_instance = 0;
+double shared_read_worst = 1, instance_worst = 1;
 std::vector<std::string> legacy_rows;
 
 using Prices = std::map<std::pair<int, int>, double>; // (family, schedule) -> seconds
@@ -306,10 +309,14 @@ namespace kr = generic::kernel_roofline;
 // route's tile, the weight's bytes, the compiled facts of the heavy decoders); nullopt where their
 // total with the A16 scale differs from `selector`, the price P1 compared (to 1e-12), so that a
 // predicate over the terms is never about another price.
-std::optional<kr::RegisterMmaTerms> rmma_terms(const DeviceClass& d,
-                                               const generic::Problem& problem,
-                                               const Weight& weight, std::int32_t tokens,
-                                               int schedule, double selector) {
+struct RmmaPriced {
+    kr::RegisterMmaTerms terms;
+    kr::RegisterMmaKernel kernel; // with the compiled facts the price read
+};
+
+std::optional<RmmaPriced> rmma_terms(const DeviceClass& d, const generic::Problem& problem,
+                                     const Weight& weight, std::int32_t tokens, int schedule,
+                                     double selector) {
     const ScopedDeviceClass scoped(d);
     const generic::Route r{generic::Family::RegisterMma, static_cast<std::uint8_t>(schedule)};
     const auto tile = generic::route_tile(r, problem.epilogue, tokens);
@@ -339,25 +346,40 @@ std::optional<kr::RegisterMmaTerms> rmma_terms(const DeviceClass& d,
                                               kr::calibration_of(d.major, d.minor), call, kernel);
     const double a16 = fitted_route_scales(d.major, d.minor).value_or(FittedRouteScales{}).a16_cost;
     if (std::abs(terms.total * a16 - selector) > selector * 1e-12) { return std::nullopt; }
-    return terms;
+    return RmmaPriced{terms, kernel};
 }
 
-// Whether a register-MMA route's rise on the board with more SMs is the shared activation read
-// alone (the header's second predicate): the heavy form on both boards, that term (under the
-// fill) larger on the board with more SMs, and the price without it no higher there.
-bool shared_read_explains(const DeviceClass& base, const DeviceClass& more,
-                          const generic::Problem& problem, const Weight& weight,
-                          std::int32_t tokens, int schedule, double stock, double scaled) {
+// What explains a register-MMA route's rise on the board with more SMs (the header's predicates),
+// on the heavy form only: None, or
+//  - Instance: the launcher runs another compiled instance of the schedule on the larger board
+//    (its registers or spill differ: the latency and wide variants are chosen by the board's DRAM
+//    bytes per SM and cycle, generic_gemm_launch.cuh), so the two prices are of two kernels;
+//  - SharedRead: the same instance, the shared activation read (under the fill) larger on the
+//    board with more SMs, and the price without it no higher there.
+enum class Explained { None, Instance, SharedRead };
+
+Explained explain_rmma_rise(const DeviceClass& base, const DeviceClass& more,
+                            const generic::Problem& problem, const Weight& weight,
+                            std::int32_t tokens, int schedule, double stock, double scaled) {
+    if (!has_subblock_scales(problem.qtype) || !rmma_terms_measured(base.major, base.minor)) {
+        return Explained::None; // the plain form
+    }
     const auto a = rmma_terms(base, problem, weight, tokens, schedule, stock);
     const auto b = rmma_terms(more, problem, weight, tokens, schedule, scaled);
-    if (!has_subblock_scales(problem.qtype) || !rmma_terms_measured(base.major, base.minor)) {
-        return false; // the plain form reads no shared activation term
+    if (!a || !b || a->terms.legacy || b->terms.legacy || a->terms.total <= 0) {
+        return Explained::None;
     }
-    if (!a || !b || a->legacy || b->legacy || a->total <= 0) { return false; }
-    const double read_a = a->l2_activation / a->grid.fill;
-    const double read_b = b->l2_activation / b->grid.fill;
+    if (a->kernel.registers != b->kernel.registers ||
+        a->kernel.local_bytes != b->kernel.local_bytes) {
+        return Explained::Instance;
+    }
+    const double read_a = a->terms.l2_activation / a->terms.grid.fill;
+    const double read_b = b->terms.l2_activation / b->terms.grid.fill;
     // Both totals carry the same A16 scale: compare the roofline's own totals.
-    return read_b > read_a && b->total - read_b <= (a->total - read_a) * (1.0 + kResolution);
+    return read_b > read_a &&
+                   b->terms.total - read_b <= (a->terms.total - read_a) * (1.0 + kResolution)
+               ? Explained::SharedRead
+               : Explained::None;
 }
 
 void property_price_monotone(const std::vector<Row>& rows) {
@@ -421,13 +443,17 @@ void property_price_monotone(const std::vector<Row>& rows) {
                                         }
                                     }
                                     if (it->second <= seconds * (1.0 + kResolution)) { continue; }
-                                    if (prices == &sms &&
-                                        r.family == generic::Family::RegisterMma &&
-                                        shared_read_explains(base, more_sms, problem, w.weight, t,
-                                                             route.second, seconds, it->second)) {
-                                        ++sms_cases_shared_read;
-                                        shared_read_worst =
-                                            std::max(shared_read_worst, it->second / seconds);
+                                    const Explained why =
+                                        prices == &sms && r.family == generic::Family::RegisterMma
+                                            ? explain_rmma_rise(base, more_sms, problem, w.weight,
+                                                                t, route.second, seconds,
+                                                                it->second)
+                                            : Explained::None;
+                                    if (why != Explained::None) {
+                                        const bool read = why == Explained::SharedRead;
+                                        ++(read ? sms_cases_shared_read : sms_cases_instance);
+                                        double& worst = read ? shared_read_worst : instance_worst;
+                                        worst         = std::max(worst, it->second / seconds);
                                         continue;
                                     }
                                     std::string key = family_name(route.first);
@@ -461,7 +487,9 @@ void property_price_monotone(const std::vector<Row>& rows) {
     std::cout << "    SM-scale cases: price fell " << sms_cases_fell << ", unchanged "
               << sms_cases_equal << ", rose " << sms_cases_priced - sms_cases_fell - sms_cases_equal
               << ", of them " << sms_cases_shared_read
-              << " by the shared activation read alone (worst x" << shared_read_worst << ")\n";
+              << " by the shared activation read alone (worst x" << shared_read_worst << ") and "
+              << sms_cases_instance << " by another compiled instance on the larger board (worst x"
+              << instance_worst << ")\n";
     std::cout << "    SM scale not compared on " << legacy_rows.size()
               << " rows of an architecture without an ISA row (the legacy DRAM law, issue #690): "
               << sms_cases_legacy << " cases";
