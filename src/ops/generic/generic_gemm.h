@@ -1146,6 +1146,7 @@ enum class Demotion : std::uint8_t {
     GgmlWorkspace, // ggml's kernels: no workspace, or less free than their planes take
     Workspace,     // W4A4, W4A8 or I8 given less workspace than their activation planes take
     VoltaCopy,     // Volta: a CUTLASS-only format's tiled call with no room for a decoded chunk
+    KStep,         // the register MMA asked with K off its kernel's step: the scalar kernel
 };
 [[nodiscard]] std::string_view demotion_name(Demotion demotion) noexcept;
 

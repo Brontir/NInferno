@@ -220,6 +220,33 @@ int main() {
         }
     }
 
+    // The register MMA asked with K off its kernel's step (#693): resolve_route takes it to the
+    // scalar kernel and says why, so the launch and the description read one rule. The selector
+    // never asks it (route_admits refuses the K); a forced route can.
+    {
+        const auto host = quantized_weight::make_patterned_weight(QType::Q8_G32_FP16, n, k, 7U, {});
+        const Weight on = host.device_weight(payload);
+        Weight off      = on;
+        off.k           = k + 1; // off every step: resolve_route reads only the format and K
+        const generic::Route rmma{generic::Family::RegisterMma, 0};
+        const generic::CallLayout layout{.x_aligned16    = true,
+                                         .ldx            = k,
+                                         .tokens         = 8,
+                                         .rows           = n,
+                                         .segments       = 1,
+                                         .epilogue       = generic::Epilogue::Store,
+                                         .workspace_free = std::nullopt};
+        const auto kept = generic::resolve_route(rmma, on, layout);
+        check(kept.executed == rmma && kept.reason == generic::Demotion::None,
+              "K on the step: the register MMA runs");
+        const auto took = generic::resolve_route(rmma, off, layout);
+        check(took.executed.family == generic::Family::Scalar &&
+                  took.reason == generic::Demotion::KStep,
+              "K off the step: the scalar kernel, said as a k_step demotion");
+        check(std::string(generic::demotion_name(generic::Demotion::KStep)) == "k_step",
+              "the demotion's name");
+    }
+
     if (failures == 0) std::cout << "route description: all checks passed\n";
     return failures == 0 ? 0 : 1;
 }
