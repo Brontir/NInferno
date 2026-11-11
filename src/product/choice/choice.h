@@ -71,11 +71,12 @@ struct DrafterOption {
     // the drafter axis is not weighed and the profile's choice stands (never plain decode for a
     // gain of 1 nobody measured).
     bool measured = true;
+
     // Where the load table bounds the configuration's depth (#303): from `streams` streams on, the
     // gain one request measured at the bounded depth (1 where that depth was not measured: a gain
-    // no measurement gives is not counted). A ceiling: the verify of the streams' rows together
-    // costs more than one request's, and that is not priced. Ascending by streams; empty: `speedup`
-    // wherever it speculates.
+    // no measurement gives is not counted). One request's gain: the verify of the streams' rows
+    // together costs more than one request's, which `joint` prices where it can. Ascending by
+    // streams; empty: `speedup` wherever it speculates.
     struct LoadGain {
         std::uint32_t streams = 0;
         double speedup        = 1;
@@ -85,9 +86,19 @@ struct DrafterOption {
     };
     std::vector<LoadGain> load;
 
-    // The gain at `streams` streams: plain decode's 1 from plain_from_streams on, else the load
-    // table's at its last bound below, else `speedup`.
-    [[nodiscard]] double speedup_at(std::uint32_t streams) const noexcept {
+    // The joint verify's price at `streams` streams (#303): R_1(k) / R_C(k) at the depth in force
+    // there (spec::load_gain), by which the one-request gain at that depth is scaled. Ascending
+    // by streams; a count of streams not listed is not priced (see speedup_at).
+    struct JointScale {
+        std::uint32_t streams = 0;
+        double scale          = 1;
+    };
+
+    std::vector<JointScale> joint;
+
+    // The load table's gain at `streams` streams, before the joint price: plain decode's 1 from
+    // plain_from_streams on, else the table's at its last bound below, else `speedup`.
+    [[nodiscard]] double base_gain_at(std::uint32_t streams) const noexcept {
         if (plain_from_streams != 0 && streams >= plain_from_streams) { return 1; }
         double gain = speedup;
         for (const LoadGain& g : load) {
@@ -96,11 +107,56 @@ struct DrafterOption {
         }
         return gain;
     }
-    // Whether a measurement gives the gain at `streams` streams: `measured`, and the load table's
-    // bound in force there measured at its depth (a published profile lists no depths but its
-    // choice's). Plain decode's from plain_from_streams on is no gain to measure.
-    [[nodiscard]] bool measured_at(std::uint32_t streams) const noexcept {
-        if (!measured) { return false; }
+
+    // The count whose joint price supplies the gain at `streams` streams, with that entry's scale;
+    // `streams` 0: no price does, the gain is base_gain_at (a ceiling). The hold rule, once: the
+    // gain at a count is base_gain_at scaled by the joint verify's price at that count, and never
+    // more than the least gain priced at a smaller count (the gain does not climb back as the load
+    // grows, priced there or not). Nothing is priced where the drafter is not counted: at a count
+    // whose own bound is unmeasured (`measured_at` is false there, the estimate counts x1, so no
+    // smaller count's price is held to it), and from an entry whose bound is unmeasured (it holds
+    // a placeholder gain). A scale above 1 supplies nothing, at its own count or held to a larger
+    // one: a joint verify never costs less than one request's, so such a scale is not a price.
+    struct PriceSource {
+        std::uint32_t streams = 0;
+        double scale          = 1;
+        double gain           = 0; // the gain counted at the asked streams
+    };
+
+    [[nodiscard]] PriceSource price_source_at(std::uint32_t streams) const noexcept {
+        PriceSource out;
+        out.gain = base_gain_at(streams);
+        if (plain_from_streams != 0 && streams >= plain_from_streams) {
+            out.gain = 1;
+            return out;
+        }
+        // A gain nobody measured is not priced: the drafter's, or the bound's in force here.
+        if (!measured || !bound_measured_at(streams)) { return out; }
+        for (const JointScale& j : joint) {
+            if (j.streams > streams) { break; }
+            if (!bound_measured_at(j.streams) || j.scale > 1) { continue; }
+            const double priced = base_gain_at(j.streams) * j.scale;
+            if (priced < out.gain) { out = {j.streams, j.scale, priced}; }
+        }
+        return out;
+    }
+
+    // The gain at `streams` streams (price_source_at): below 1 where the round at that load no
+    // longer pays, so the choice weighs plain decode. Before any count is priced it is the
+    // one-request ceiling.
+    [[nodiscard]] double speedup_at(std::uint32_t streams) const noexcept {
+        return price_source_at(streams).gain;
+    }
+
+    // Whether the gain at `streams` streams rests on a joint verify's price (priced there or held
+    // from a smaller count), not on a one-request ceiling.
+    [[nodiscard]] bool joint_priced_at(std::uint32_t streams) const noexcept {
+        return price_source_at(streams).streams != 0;
+    }
+
+    // Whether the load table's bound in force at `streams` streams was measured at its depth
+    // (true before any bound and from plain_from_streams on).
+    [[nodiscard]] bool bound_measured_at(std::uint32_t streams) const noexcept {
         if (plain_from_streams != 0 && streams >= plain_from_streams) { return true; }
         bool known = true;
         for (const LoadGain& g : load) {
@@ -108,6 +164,13 @@ struct DrafterOption {
             known = g.measured;
         }
         return known;
+    }
+
+    // Whether a measurement gives the gain at `streams` streams: `measured`, and the load table's
+    // bound in force there measured at its depth (a published profile lists no depths but its
+    // choice's). Plain decode's from plain_from_streams on is no gain to measure.
+    [[nodiscard]] bool measured_at(std::uint32_t streams) const noexcept {
+        return measured && bound_measured_at(streams);
     }
 };
 
