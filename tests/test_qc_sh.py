@@ -13,15 +13,12 @@ STATE = (".ninja_deps", ".ninja_log", "keepme", "CMakeFiles/x.dir/CXX.dd", "CMak
          "CMakeFiles/x.dir/CXXDependInfo.json", "CMakeFiles/x.dir/a.o")
 
 
-def text():
-    with open(QC, encoding="utf-8") as f:
+RECOVER = os.path.join(os.path.dirname(QC), "qc_recover.sh")
+
+
+def text(path=QC):
+    with open(path, encoding="utf-8") as f:
         return f.read()
-
-
-def recover_block():
-    m = re.search(r"^# --- qc recover begin.*?^# --- qc recover end$", text(), re.M | re.S)
-    assert m, "recover block markers missing"
-    return m.group(0)
 
 
 class QcShTest(unittest.TestCase):
@@ -38,24 +35,6 @@ class QcShTest(unittest.TestCase):
                     "'CMakeFiles/foo.dir/CXX.dd'"):
             self.assertIsNotNone(pat.search(msg), msg)
         self.assertIsNone(pat.search("ninja: error: unknown target 'foo'"))
-
-    def test_abort_pattern(self):
-        m = re.search(r"^QC_ABORT_RE='([^']+)'", text(), re.M)
-        self.assertIsNotNone(m)
-        pat = re.compile(m.group(1), re.M)
-        for msg in ("ninja: build.cc:435: void Plan::NodeFinished(): Assertion `edge && !edge->outputs_ready()' failed.",
-                    "ninja: ../src/build.cc:900: void Plan::RefreshDyndepDependents(DependencyScan*, Node*): "
-                    "Assertion `edge' failed."):
-            self.assertIsNotNone(pat.search(msg), msg)
-        for msg in ("In member function 'void GrammarBuilder::UpdateLookaheadAssertion(int)':",
-                    "x.cc:3:1: error: static assertion failed: size",
-                    "FAILED: foo.o error: expected ';'"):
-            self.assertIsNone(pat.search(msg), msg)
-
-    def test_reset_steps_name_the_files(self):
-        blk = recover_block()
-        for name in (".ninja_deps", ".ninja_log", "*.dd", "*.ddi", "CXXDependInfo.json", "mv ", "pgrep"):
-            self.assertIn(name, blk)
 
 
 def find_bash():
@@ -106,10 +85,11 @@ class QcRecoverTest(unittest.TestCase):
                 os.makedirs(os.path.dirname(f"{b}/{rel}"), exist_ok=True)
                 open(f"{b}/{rel}", "w").close()
             open(root + "/outside", "w").close()
+            RECOVER_SH = RECOVER.replace(chr(92), "/")
             script = NL.join(["set -Eeuo pipefail",
                               f"ROOT={root}; B={b}; W={root}/wt_qc; L={root}/logs; ARCH=89; JOBS=1",
                               f'LOW=""; TARGETS="t"; LOG=$L/ninja.log; export B QC_TRACE={d}/trace',
-                              recover_block(), "qc_build", 'echo "RC=$RC"', ""])
+                              f'. "{RECOVER_SH}"', "qc_build", 'echo "RC=$RC"', ""])
             with open(d + "/run.sh", "w", newline=NL) as f:   # a file, not bash -c: no argv quoting layer
                 f.write(script)
             env = dict(os.environ, PATH=bindir + os.pathsep + os.environ["PATH"], QC_PROC=d + "/proc")
@@ -124,6 +104,26 @@ class QcRecoverTest(unittest.TestCase):
             left = {rel: os.path.exists(f"{b}/{rel}") for rel in STATE}
             self.assertEqual([n for n in os.listdir(root) if ".del." in n], [])   # no half-removed dir left behind
             return r.stdout + r.stderr, trace, left, os.path.exists(root + "/outside")
+
+    def test_abort_detection(self):
+        """qc_aborted: ninja's own assert line or rc >= 128 only; compiler text with the word does not count."""
+        cases = [(1, "ninja: build.cc:435: void Plan::NodeFinished(): Assertion `edge && !edge->outputs_ready()' failed.", True),
+                 (1, "ninja: ../src/build.cc:900: void Plan::RefreshDyndepDependents(DependencyScan*, Node*): "
+                     "Assertion `edge' failed.", True),
+                 (134, "anything", True), (139, "", True),
+                 (1, "In member function 'void GrammarBuilder::UpdateLookaheadAssertion(int)':", False),
+                 (1, "x.cc:3:1: error: static assertion failed: size", False),
+                 (1, "FAILED: foo.o error: expected ';'", False),
+                 (0, "ninja: x: Assertion `y' failed.", False)]
+        with tempfile.TemporaryDirectory() as d:
+            d = d.replace(chr(92), "/")
+            for i, (rc, log, want) in enumerate(cases):
+                with open(f"{d}/log{i}", "w", newline=NL) as f:
+                    f.write(log + NL)
+                with open(f"{d}/run.sh", "w", newline=NL) as f:
+                    f.write(NL.join([". " + RECOVER.replace(chr(92), "/"), f"qc_aborted {rc} {d}/log{i}", ""]))
+                r = subprocess.run([BASH, d + "/run.sh"], capture_output=True, text=True)
+                self.assertEqual(r.returncode == 0, want, (rc, log))
 
     @staticmethod
     def ninja(*lines):
