@@ -48,7 +48,7 @@ namespace {
 
 namespace fit = ninferno::fitted;
 
-constexpr std::size_t kExpectedRecords = 97;
+constexpr std::size_t kExpectedRecords = 103;
 
 int failures = 0;
 
@@ -102,7 +102,8 @@ enum class Mode {
 
 struct Definition {
     std::string name;
-    std::string text; // from the definition to its end (for the rows of a table)
+    std::string text; // from the definition to its end (for the rows of a table); the last one
+    std::vector<std::string> blocks; // every definition of the name in the file (one, mostly)
 };
 
 std::map<std::string, Definition> definitions_of(const std::string& text, Mode mode) {
@@ -126,7 +127,7 @@ std::map<std::string, Definition> definitions_of(const std::string& text, Mode m
     }
     const std::regex tagged(R"(inline constexpr\s+(?:Scalar|Constant<\d+>)\s+(k\w+)\{)");
     const std::regex any(
-        std::string(mode == Mode::RecordedOnly ? R"(^\s*)" : "^") +
+        std::string(mode == Mode::RecordedOnly ? R"(^\s*(?:static\s+)?)" : "^") +
         R"((?:\[\[nodiscard\]\]\s*)?(?:inline\s+)?constexpr\s+[\w:<>,\s]+?\s(\w+)\s*[\[\(=\{;])");
     std::istringstream lines(text);
     std::vector<std::string> all;
@@ -145,7 +146,10 @@ std::map<std::string, Definition> definitions_of(const std::string& text, Mode m
                block.find(");") == std::string::npos && block.back() != ';') {
             block += "\n" + all[++j];
         }
-        out[name] = {name, block};
+        Definition& d = out[name];
+        d.name        = name;
+        d.text        = block;
+        d.blocks.push_back(block);
     }
     return out;
 }
@@ -245,6 +249,12 @@ const std::vector<Spec>& specs() {
         {fit::kW4a8, Mode::RecordedOnly, {}},
         {fit::kSparseMoePrefill, Mode::RecordedOnly, {}},
         {fit::kQwenDecode, Mode::RecordedOnly, {}},
+        {fit::kGemma4Kernel, Mode::RecordedOnly, {}},
+        {fit::kBf16Vector, Mode::RecordedOnly, {}},
+        {fit::kQ8LinearAdd, Mode::RecordedOnly, {}},
+        {fit::kCapturePlanner, Mode::RecordedOnly, {}},
+        {fit::kMoeInternal, Mode::RecordedOnly, {}},
+        {fit::kQ4LinearSwiglu, Mode::RecordedOnly, {}},
     };
     return all;
 }
@@ -420,6 +430,34 @@ int main() {
                 continue;
             }
             recorded.insert(name);
+            // A name defined more than once in its file (two kBlock in rmsnorm.cu) is keyed
+            // `name = value`, and that definition must stand: renaming it or changing its value
+            // fails, and a bare key of a repeated name is ambiguous.
+            const std::string key(r->constant);
+            const std::size_t eq = key.find(" = ");
+            if (eq != std::string::npos) {
+                const std::string value = key.substr(eq + 3);
+                bool found              = false;
+                for (const std::string& block : it->second.blocks) {
+                    const std::size_t at = block.find(name);
+                    const std::size_t is = block.find('=', at);
+                    if (at == std::string::npos || is == std::string::npos) continue;
+                    std::string rest = block.substr(is + 1);
+                    rest.erase(0, rest.find_first_not_of(" \t"));
+                    if (rest.compare(0, value.size(), value) == 0 &&
+                        (rest.size() == value.size() || rest[value.size()] == ';' ||
+                         rest[value.size()] == ' ')) {
+                        found = true;
+                    }
+                }
+                if (!found) {
+                    fail(key + ": no definition of " + name + " with that value in " +
+                         std::string(spec.file));
+                }
+            } else if (spec.mode == Mode::RecordedOnly && it->second.blocks.size() > 1) {
+                fail(key + ": defined " + std::to_string(it->second.blocks.size()) + " times in " +
+                     std::string(spec.file) + "; key the record `" + name + " = <value>`");
+            }
             if (!r->row.empty() &&
                 !std::regex_search(it->second.text,
                                    std::regex(R"(\{\s*\")" + std::string(r->row) + R"(\")"))) {
@@ -543,28 +581,32 @@ int main() {
         ++scanned;
         const std::string relative = entry.path().lexically_relative(root).generic_string();
         const std::string code     = code_of(read_file(relative));
-        // Any spelling of the tags: spaces around `::`, or the enum's values brought in by a
-        // `using enum` (after which a bare `Fitted` tags a constant). Their home headers are read
-        // through the compiled tables instead.
+        // The spellings caught: the tag with any spaces around `::`, and any way to reach the
+        // enum under another spelling: `using enum` (after which a bare `Fitted` tags a
+        // constant), a `using Alias = ...` or a `typedef` of it. Not caught: a macro or a
+        // decltype that names it. Their home headers are read through the compiled tables
+        // instead.
         static const std::regex provenance_tag(R"(\bProvenance\s*::\s*Fitted\b)");
-        static const std::regex provenance_using(R"(\busing\s+enum\s+[\w:\s]*\bProvenance\b)");
+        static const std::regex provenance_using(
+            R"(\b(?:using\s+enum\s+|using\s+\w+\s*=\s*|typedef\s+)[\w:\s]*\bProvenance\b)");
         static const std::regex basis_tag(R"(\bBasis\s*::\s*(Fitted|ScaledFromOneBoard)\b)");
-        static const std::regex basis_using(R"(\busing\s+enum\s+[\w:\s]*\bBasis\b)");
+        static const std::regex basis_using(
+            R"(\b(?:using\s+enum\s+|using\s+\w+\s*=\s*|typedef\s+)[\w:\s]*\bBasis\b)");
         const bool provenance = code.find("Provenance") != std::string::npos;
         const bool basis      = code.find("Basis") != std::string::npos;
         if (provenance &&
             (std::regex_search(code, provenance_tag) ||
              std::regex_search(code, provenance_using)) &&
             !tagged_files.count(relative)) {
-            fail(relative + ": tags a constant Provenance::Fitted (or brings Provenance in by "
-                            "`using enum`) but is not covered by this test (add it to specs() "
-                            "with Mode::TaggedScalars and give its constants records)");
+            fail(relative + ": tags a constant Provenance::Fitted (or aliases Provenance) but is "
+                            "not covered by this test (add it to specs() with "
+                            "Mode::TaggedScalars and give its constants records)");
         }
         if (basis && (std::regex_search(code, basis_tag) || std::regex_search(code, basis_using)) &&
             relative != fit::kRouteRules) {
             fail(relative +
-                 ": tags a rule Basis::Fitted or ScaledFromOneBoard (or brings Basis in "
-                 "by `using enum`) outside route_rules.h, which this test does not read");
+                 ": tags a rule Basis::Fitted or ScaledFromOneBoard (or aliases Basis) outside "
+                 "route_rules.h, which this test does not read");
         }
     }
     if (scanned == 0) fail("no source file found under src/");
