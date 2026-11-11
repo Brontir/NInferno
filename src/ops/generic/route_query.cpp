@@ -87,6 +87,9 @@ std::optional<RouteAnswer> route_answer_query(const DeviceClass& device, QType q
                                               std::optional<QuantLayout> layout) {
     if (n <= 0 || k <= 0 || tokens <= 0 || parent_rows < 0) return std::nullopt;
     const ScopedDeviceClass scoped(device);
+    // The asked profile, not the caller's: the selection reads it too (the group-sums plane's
+    // resources, rmma_group_sums), as resolved_route_query and describe_call do.
+    const ops::ScopedPrefillRoutes profile(prefill);
     DescribedWeight described;
     describe_weight(described, qtype, epilogue, n, k, parent_rows, layout);
     if (!supports(described.weight)) return std::nullopt;

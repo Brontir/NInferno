@@ -184,6 +184,30 @@ void host_rules(const std::string& board) {
         }
     }
 
+    // route_query answers the profile it is asked, whatever profile its caller is in (codex on
+    // #709: the plane's resources differ from the MMA with ones', so an ambient prefill scope could
+    // move a speed query's route).
+    try {
+        const DeviceClass d = device_class();
+        for (const QType q : {QType::GGML_Q4_K, QType::GGML_Q5_K, QType::GGML_Q4_1}) {
+            for (const std::int32_t t : {17, 64, 128}) {
+                for (const bool prefill : {false, true}) {
+                    const auto plain =
+                        generic::route_query(d, q, ops::LinearPolicy::A16Only,
+                                             generic::Epilogue::Store, 4096, 4096, t, prefill);
+                    const ops::ScopedPrefillRoutes ambient(!prefill);
+                    const auto inside =
+                        generic::route_query(d, q, ops::LinearPolicy::A16Only,
+                                             generic::Epilogue::Store, 4096, 4096, t, prefill);
+                    check(plain == inside,
+                          board + ": route_query takes the asked profile, not the caller's");
+                }
+            }
+        }
+    } catch (const std::exception&) {
+        // Without a device the MMQ gate throws: nothing to compare there.
+    }
+
     // rmma_plane_taken and resolve_route against the snapshot rows: one answer per format and
     // epilogue for every schedule and width, and only where this build compiled the plane; the
     // plane where the call's workspace holds it, else the MMA with ones said as a demotion; the
