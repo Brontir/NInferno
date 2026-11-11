@@ -60,18 +60,6 @@ void launch_epilogue(int schedule, const GemmArgs& args, cudaStream_t stream) {
 
 } // namespace
 
-std::size_t staged_shared_bytes(int schedule) {
-    switch (schedule) {
-#define NINFERNO_GENERIC_BYTES(I, R, T, WM, WN, ST)                                                \
-    case I:                                                                                        \
-        return sizeof(StagedShared<StagedSchedule<R, T, WM, WN, ST>, ST>);
-        NINFERNO_GENERIC_STAGED_SCHEDULES(NINFERNO_GENERIC_BYTES)
-#undef NINFERNO_GENERIC_BYTES
-    default:
-        return 0;
-    }
-}
-
 bool staged_fits(int schedule) {
     switch (schedule) {
 #define NINFERNO_GENERIC_FITS(I, R, T, WM, WN, ST)                                                 \

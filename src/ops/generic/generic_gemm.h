@@ -326,9 +326,6 @@ inline constexpr std::int32_t kMmqMinTokens = 5;
 [[nodiscard]] bool tiled_fits(int schedule, WeightCodec codec);
 // The staged schedule's shared stages fit one block of this build (generic_staged.cu).
 [[nodiscard]] bool staged_fits(int schedule);
-// The staged schedule's shared bytes per block (0 for an unknown schedule), whatever this build's
-// ceiling.
-[[nodiscard]] std::size_t staged_shared_bytes(int schedule);
 [[nodiscard]] bool staged_device_fits(int schedule);
 // The W4A8 schedule's buffers for the format fit one block of this build (the producer ring needs
 // 99 KiB).
