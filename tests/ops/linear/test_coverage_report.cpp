@@ -1,69 +1,81 @@
 // The generic projection path's coverage as a lint (#619 step 2, K2): on every board this build
-// serves, for every format a served model is stored in, under each activation policy it is served
+// serves, for every format a served model is stored in, under each activation mode it is served
 // with and at every width band, at least one family takes the call on the device's own
 // instructions. A cell whose only families are the scalar kernel or a tile whose MMA the device
-// emulates is a hole. The known holes are listed below (kAllowed), each with its reason; a hole
-// not listed fails, and so does a listed one that is now covered (the entry is stale). No GPU and
-// no product change: the boards are substituted DeviceClasses and the weights are described by
-// format and shape, their bytes never read.
+// emulates is a hole. The known holes are listed below (allowed_holes), each pinned to its bands
+// and to what the cells fall to, with its reason. A hole not listed fails; so does a listed band
+// where any sampled cell is covered or falls to another kind (the entry no longer describes it).
+// No GPU: the boards are substituted DeviceClasses and the weights are described by format and
+// shape, their bytes never read.
 //
-// What is served, read from the tables that already say it:
+// What is served, read from the rules that decide it:
 // - boards: the golden boards (selector_facts.h kFactsBoards) of this build's compute capability,
 //   the boards `ninferno-serve selector-facts` checks this build's kernels for
 //   (selector_facts_main). A build of an architecture the release does not ship
 //   (NINFERNO_CUDA_ARCHS, CMakeLists.txt) or that no golden board has skips (77).
-// - formats: every row of the format table (core/format_facts.h) with a generic codec: an artifact
-//   stores each one (the converter keeps the GGUF block formats as published and writes the
-//   engine's own); FP32 and INT32 have none.
-// - policies: A16Only for every format (--activations exact; an output head); AllowA8 where the
-//   format's codes widen to int8 (FormatFacts::int8_input, what the converter's kept_block_policy
-//   reads) and for NVFP4 (a site without its activation divisor runs AllowA8,
-//   ops/weight_input.cpp); AllowA4 for NVFP4 (with the divisor, convert kept_policy).
+// - formats: every row of the format table (core/format_facts.h) with a generic codec, an artifact
+//   storing each (the converter keeps the GGUF block formats as published and writes the engine's
+//   own); NVFP4 only where the planner offers it (product/plan/nvfp4_card.h). FP32 and INT32 have
+//   no codec.
+// - modes: the policy a site records (convert kept_policy, with and without an NVFP4 activation
+//   divisor, and head_policy for an output head) as each --activations mode runs it
+//   (models::effective_policy): Fast keeps it, Int8 allows eight bits on every linear, Exact keeps
+//   BF16 activations under the invariant route profile (ScopedInvariantRoutes, as the engine
+//   plans it). Under that profile one route answers a call (the invariant-profile authority:
+//   the register MMA with the problem's K split, NVFP4's tiled form of it, or scalar), and
+//   run_route clears GemmArgs::lane_local, so Volta's lane-local, HMMA and GEMV forms do not run.
 // - widths: decode (1), the verify bands 2..4, 5..8 and 9..16, the prefill band 17..256 and past
-//   it, each sampled at its ends and inside (17 tokens and more as the prefill profile runs them);
-//   four model projections (selector_facts_probe's shapes), as a Store and as a SwiGLU.
+//   it, each sampled at its ends and inside. From 17 tokens a call is sampled under the prefill
+//   profile and under the speed profile (a batched decode or verify that wide); a prompt shorter
+//   than 17 tokens routes as the speed profile's calls of its width, which the bands below 17 are.
+//   Four model projections (selector_facts_probe's shapes), each as a Store, an AddResidual and a
+//   SwiGLU. A (board, format, mode, band) with no sampled cell fails.
 //
-// Which families take a cell: family_alternatives (generic_gemm.h: each family's route, or why it
-// has none), each route resolved as the engine's call runs it (describe_route: resolve_route in
-// the workspace the plan reserves, workspace_capacity_bytes, and Volta's CUTLASS copy or its
-// scalar demotion), counted only where the build manifest (build_manifest) holds the route's
-// kernel for the format. A route is emulated where the device has no tensor mma.sync
-// (DeviceFeatures::mma_tensor false, Volta; or mma_slow, TU116 / TU117) and its family builds the
-// MMA fragments from FP32 FMAs and dp4a over warp shuffles (ops/common/mma.cuh): the register MMA,
-// except where Volta's own kernels take the call (the HMMA verify kernel, the decode GEMV, and a
-// one-tile call of at most four tokens, which sums lane by lane: GemmArgs::lane_local), W4A8,
-// W4A4, the staged MMA, I8 and the NVFP4 tiles. The tiled family (mma.m8n8k4, and CUTLASS over a
-// decoded copy, on Volta), R8 and ggml's vector kernel (dp4a) and ggml's matrix kernel run the
-// device's own instructions. Coverage is not speed: a covered cell may still pick a slow route.
+// Which families take a cell outside the invariant profile: family_alternatives (generic_gemm.h:
+// each family's route, or why it has none), each route resolved as the engine's call runs it
+// (describe_route: resolve_route in the workspace the plan reserves, workspace_capacity_bytes, and
+// Volta's CUTLASS copy or its scalar demotion), counted only where the build manifest
+// (build_manifest) holds the route's kernel for the format. A route is emulated where the device
+// has no tensor mma.sync (DeviceFeatures::mma_tensor false, Volta; or mma_slow, TU116 / TU117) and
+// its family builds the MMA fragments from FP32 FMAs and dp4a over warp shuffles
+// (ops/common/mma.cuh): the register MMA, except where Volta's own kernels take the call (the HMMA
+// verify kernel, the decode GEMV, and a one-tile call of at most four tokens, which sums lane by
+// lane), W4A8, W4A4, the staged MMA, I8 and the NVFP4 tiles. The tiled family (mma.m8n8k4, and
+// CUTLASS over a decoded copy, on Volta), R8 and ggml's vector kernel (dp4a) and ggml's matrix
+// kernel run the device's own instructions. Coverage is not speed: a covered cell may still pick
+// a slow route.
 //
 // On failure the test prints the coverage table of each board with a new hole: a line per format
-// and policy, a column per band ('.' covered, 'E' emulated only, 'S' scalar only; lower case where
-// the hole is listed), and for each new hole the families of its first cell. --table prints every
+// and mode, a column per band ('.' covered, 'E' emulated only, 'S' scalar only; lower case where
+// the band is listed), and for each new hole the families of its first cell. --table prints every
 // board's table, --cells every cell's families, --board <name> one golden board of another class
 // under this build's kernels (a maintainer's look, not what the release runs there).
+#include "convert/formats.h"
 #include "core/device_class.h"
 #include "core/format_facts.h"
 #include "core/weight.h"
 #include "core/weight_view.h"
+#include "models/common/weight_use.h"
+#include "ninferno/ops/prefill_routes.h"
 #include "ops/generic/build_manifest.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
 #include "ops/generic/selector_facts.h"
+#include "product/plan/nvfp4_card.h"
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <iostream>
-#include <map>
 #include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -75,66 +87,86 @@ using generic::Family;
 using generic::Route;
 using ops::LinearPolicy;
 
+enum class Kind : std::uint8_t { None, Scalar, Emulated, Native }; // ordered: the best wins
+
+// A served activation mode of a linear: the policy its call runs under, and whether the invariant
+// route profile is active (--activations exact).
+struct Mode {
+    LinearPolicy policy;
+    bool invariant;
+
+    bool operator==(const Mode&) const = default;
+};
+
+std::string mode_name(Mode m) {
+    if (m.invariant) return "exact";
+    return m.policy == LinearPolicy::A16Only   ? "a16"
+           : m.policy == LinearPolicy::AllowA8 ? "a8"
+                                               : "a4";
+}
+
+constexpr Mode kA16{LinearPolicy::A16Only, false};
+constexpr Mode kA8{LinearPolicy::AllowA8, false};
+constexpr Mode kExact{LinearPolicy::A16Only, true};
+
 // ---------------------------------------------------------------------------------------------
-// The known holes. Each entry: the boards' compute capability (major * 10 + minor), the policy,
-// the widths, the formats, and why the hole is accepted. Checked only in a build that serves a
-// board of that capability; an entry with a format no longer a hole there fails as stale.
+// The known holes. Each entry: the boards' compute capability (major * 10 + minor), the mode, the
+// formats (empty: every served format, for a hole the mode makes whatever the format), the bands
+// (by name), what every sampled cell of those bands falls to, and why the hole is accepted. A
+// cell is listed only where it falls to that kind; a listed band any of whose cells is covered or
+// falls otherwise fails. Checked only in a build that serves a board of that capability.
 struct Allowed {
     int capability;
-    LinearPolicy policy;
-    std::int32_t min_tokens, max_tokens;
+    Mode mode;
     std::vector<QType> formats;
+    std::vector<std::string_view> bands;
+    Kind kind;
     const char* reason;
 };
 
 const std::vector<Allowed>& allowed_holes() {
-    using Q                                    = QType;
-    static const std::vector<Allowed> kAllowed = {
-        // Volta (GV100, sm_70: no tensor mma.sync), the verify widths 5..16 with BF16 activations.
-        // A format without a tiled tile of its own (tiled_supports; Q8 has one on Volta) reaches
-        // the tensor cores through CUTLASS over a decoded copy, which starts at the prefill band
-        // (kVoltaCutlassMinTokens = 17, so that a prefill token's bytes do not depend on its
-        // call's width; below it a CUTLASS-only tiled call runs scalar, volta_tiled_runs_scalar,
-        // and the selection keeps the register MMA); Volta's HMMA verify kernel reads Q4_K / Q5_K /
-        // Q6_K / Q8 only (volta_hmma_codec). These calls run the register MMA's FMA-emulated
-        // fragments: decode (1..4 tokens, lane by lane) and prefill are covered. Market weight:
-        // one board class, and only an A16 call of a speculative verify: under the default policy
-        // the ggml block formats take ggml's vector kernel through 16 tokens on Volta
-        // (vec_max_tokens); A16 there is --activations exact or a model's output head.
+    using Q = QType;
+    // The verify widths 5..16 on Volta (GV100, sm_70: no tensor mma.sync). A format without a
+    // tiled tile of its own (tiled_supports; Q8 has one on Volta) reaches the tensor cores through
+    // CUTLASS over a decoded copy, which starts at the prefill band (kVoltaCutlassMinTokens = 17,
+    // so that a prefill token's bytes do not depend on its call's width; below it a CUTLASS-only
+    // tiled call runs scalar, volta_tiled_runs_scalar, and the selection keeps the register MMA);
+    // Volta's HMMA verify kernel reads Q4_K / Q5_K / Q6_K / Q8 only (volta_hmma_codec). These calls
+    // run the register MMA's FMA-emulated fragments; decode (1..4 tokens: lane by lane, or the
+    // GEMV) and prefill are covered. Market weight: one board class, at verify widths only.
+    static const std::vector<std::string_view> kVerify = {"5-8", "9-16"};
+    static const std::vector<Allowed> kAllowed         = {
+        // BF16 and the FP8 rows (an output head, or a BF16 checkpoint's projections), and the
+        // ternary and 1/2-bit block formats, which a site keeps at A16 (kept_block_policy).
         {70,
-         LinearPolicy::A16Only,
-         5,
-         16,
-         {Q::GGML_Q3_K, Q::GGML_Q2_K, Q::GGML_IQ4_XS, Q::GGML_IQ3_XXS, Q::GGML_IQ3_S, Q::GGML_Q4_0,
-          Q::GGML_Q4_1, Q::GGML_Q5_0, Q::GGML_Q5_1, Q::GGML_IQ4_NL, Q::GGML_IQ2_XXS, Q::GGML_IQ2_XS,
-          Q::GGML_IQ2_S, Q::GGML_IQ1_S, Q::GGML_IQ1_M},
-         "Volta, A16 verify of a ggml block format: no own tile, no HMMA codec; the default "
-         "AllowA8 takes ggml's vector kernel"},
-        // The same widths for the formats whose every served policy is A16 there or whose int8
-        // routes stop at decode: BF16 and the FP8 rows (no int8 family reads them), the ternary
-        // and 1/2-bit block formats (TQ1_0, TQ2_0, Q1_0, Q2_0: kept A16Only, no int8 decoder),
-        // and the FP4 formats (R8 takes them at decode only; W4A8 and W4A4 are emulated on
-        // Volta). Market weight: one board class at verify widths; a BF16 projection there is an
-        // unquantized checkpoint's or gpt-oss's attention, whose prefill CUTLASS takes.
+                 kA16,
+                 {Q::BF16, Q::FP8_E4M3FN_ROW_BF16, Q::FP8_E4M3FN_ROW_F32, Q::FP8_E4M3FN_B128_F32,
+                  Q::GGML_TQ1_0, Q::GGML_TQ2_0, Q::GGML_Q1_0, Q::GGML_Q2_0},
+                 kVerify,
+                 Kind::Emulated,
+                 "Volta A16 verify: no own tile, no HMMA codec, CUTLASS from 17 tokens"},
+        // The same under eight-bit activations (Fast for the FP8 rows and MXFP4, Int8 for every
+        // format): no int8 family reads BF16, the FP8 rows or the ternary and 1/2-bit formats, and
+        // MXFP4's int8 routes are R8 at decode only and W4A8, emulated on Volta. The other int8
+        // formats are covered: ggml's vector kernel through 16 tokens (vec_max_tokens), the tiles.
         {70,
-         LinearPolicy::A16Only,
-         5,
-         16,
-         {Q::BF16, Q::FP8_E4M3FN_ROW_BF16, Q::FP8_E4M3FN_ROW_F32, Q::FP8_E4M3FN_B128_F32, Q::NVFP4,
-          Q::MXFP4, Q::GGML_TQ1_0, Q::GGML_TQ2_0, Q::GGML_Q1_0, Q::GGML_Q2_0},
-         "Volta, A16 verify of a format without own tile or HMMA codec (CUTLASS from 17 tokens)"},
+                 kA8,
+                 {Q::BF16, Q::FP8_E4M3FN_ROW_BF16, Q::FP8_E4M3FN_ROW_F32, Q::FP8_E4M3FN_B128_F32, Q::MXFP4,
+                  Q::GGML_TQ1_0, Q::GGML_TQ2_0, Q::GGML_Q1_0, Q::GGML_Q2_0},
+                 kVerify,
+                 Kind::Emulated,
+                 "Volta A8 verify: no int8 route past decode, no own tile, CUTLASS from 17 tokens"},
+        // --activations exact on Volta: the invariant profile answers before Volta's tiled and HMMA
+        // authorities, with the register MMA at every width, and run_route clears lane_local
+        // under it, so neither the lane-local sum, the GEMV nor the HMMA kernel takes the call:
+        // every exact projection runs the FMA-emulated fragments, whatever its format. Market
+        // weight: exact mode is opt-in (spec exact), on one board class.
         {70,
-         LinearPolicy::AllowA8,
-         5,
-         16,
-         {Q::NVFP4, Q::MXFP4},
-         "Volta, int8 verify of an FP4 format: R8 at decode only, W4A8 emulated"},
-        {70,
-         LinearPolicy::AllowA4,
-         5,
-         16,
-         {Q::NVFP4},
-         "Volta, FP4 verify of NVFP4: W4A4 not built outside sm_120a, W4A8 emulated"},
+                 kExact,
+                 {},
+                 {"1", "2-4", "5-8", "9-16", "17-256", "257+"},
+                 Kind::Emulated,
+                 "Volta exact: the invariant profile's register MMA, lane_local cleared"},
     };
     return kAllowed;
 }
@@ -143,19 +175,18 @@ const std::vector<Allowed>& allowed_holes() {
 // The served cells.
 
 struct Band {
-    const char* name;
-    std::int32_t lo, hi;
+    std::string_view name;
     std::vector<std::int32_t> tokens; // the widths sampled
 };
 
 const std::vector<Band>& bands() {
     static const std::vector<Band> kBands = {
-        {"1", 1, 1, {1}},
-        {"2-4", 2, 4, {2, 3, 4}},
-        {"5-8", 5, 8, {5, 6, 8}},
-        {"9-16", 9, 16, {9, 12, 16}},
-        {"17-256", 17, 256, {17, 32, 64, 256}},
-        {"257+", 257, 1 << 20, {512, 2048}},
+        {"1", {1}},
+        {"2-4", {2, 3, 4}},
+        {"5-8", {5, 6, 8}},
+        {"9-16", {9, 12, 16}},
+        {"17-256", {17, 32, 64, 256}},
+        {"257+", {512, 2048}},
     };
     return kBands;
 }
@@ -164,27 +195,56 @@ struct Shape {
     std::int32_t n, k;
 };
 
-// selector_facts_probe's projections (selector_facts.cpp): a GQA k/v, a square, a gate/up and a
-// down of the 27B..32B models; a SwiGLU call reads half of the rows as its gate.
+// selector_facts_probe's projections and epilogues (selector_facts.cpp): a GQA k/v, a square, a
+// gate/up and a down of the 27B..32B models; a SwiGLU call reads half of the rows as its gate.
 constexpr Shape kShapes[] = {{1024, 4096}, {4096, 4096}, {17408, 5120}, {5120, 17408}};
+constexpr generic::Epilogue kEpilogues[] = {
+    generic::Epilogue::Store, generic::Epilogue::AddResidual, generic::Epilogue::SwiGlu};
 
-std::vector<QType> served_formats() {
+std::vector<QType> served_formats(int capability) {
     std::vector<QType> out;
     for (const FormatFacts& f : kFormatFacts) {
-        if (f.codec) out.push_back(f.q);
+        if (!f.codec) continue;
+        if (f.q == QType::NVFP4 && !product::nvfp4_planned_on(capability)) continue;
+        out.push_back(f.q);
     }
     return out;
 }
 
-std::vector<LinearPolicy> served_policies(QType q) {
-    std::vector<LinearPolicy> out{LinearPolicy::A16Only};
-    if (format_facts(q).int8_input || q == QType::NVFP4) out.push_back(LinearPolicy::AllowA8);
-    if (q == QType::NVFP4) out.push_back(LinearPolicy::AllowA4);
-    return out;
+LinearPolicy linear_policy(artifact::ActivationPolicy p) {
+    switch (p) {
+    case artifact::ActivationPolicy::A16Only:
+        return LinearPolicy::A16Only;
+    case artifact::ActivationPolicy::AllowA8:
+        return LinearPolicy::AllowA8;
+    case artifact::ActivationPolicy::AllowA4:
+        return LinearPolicy::AllowA4;
+    }
+    return LinearPolicy::A16Only;
 }
 
-const char* policy_name(LinearPolicy p) {
-    return p == LinearPolicy::A16Only ? "a16" : p == LinearPolicy::AllowA8 ? "a8" : "a4";
+// The modes a linear of the format is served under: each policy a site records (convert's
+// kept_policy and head_policy, with and without an activation divisor) under each
+// --activations mode (models::effective_policy; Exact also under the invariant profile).
+std::vector<Mode> served_modes(QType q) {
+    std::vector<Mode> out;
+    const auto add = [&](Mode m) {
+        if (std::find(out.begin(), out.end(), m) == out.end()) out.push_back(m);
+    };
+    for (const bool divisor : {true, false}) {
+        const convert::KeptEncoding site{q, divisor};
+        for (const artifact::ActivationPolicy recorded :
+             {convert::kept_policy(site), convert::head_policy(site)}) {
+            const LinearPolicy r = linear_policy(recorded);
+            add({models::effective_policy(r, ActivationMode::Fast), false});
+            add({models::effective_policy(r, ActivationMode::Int8), false});
+            add({models::effective_policy(r, ActivationMode::Exact), true});
+        }
+    }
+    std::sort(out.begin(), out.end(), [](Mode a, Mode b) {
+        return std::tie(a.invariant, a.policy) < std::tie(b.invariant, b.policy);
+    });
+    return out;
 }
 
 // Whether the release ships this build's architecture (NINFERNO_CUDA_ARCHS).
@@ -227,14 +287,9 @@ struct DescribedWeight {
     DescribedWeight& operator=(const DescribedWeight&) = delete;
 };
 
-enum class Kind : std::uint8_t { None, Scalar, Emulated, Native }; // ordered: the best wins
-
-char kind_mark(Kind k, bool allowed) {
-    const char c = k == Kind::Native     ? '.'
-                   : k == Kind::Emulated ? 'E'
-                   : k == Kind::Scalar   ? 'S'
-                                         : '-';
-    return allowed && c != '.' ? static_cast<char>(c - 'A' + 'a') : c;
+char kind_mark(Kind k, bool listed) {
+    const char c = k == Kind::Native ? '.' : k == Kind::Emulated ? 'E' : 'S';
+    return listed && c != '.' ? static_cast<char>(c - 'A' + 'a') : c;
 }
 
 const char* kind_name(Kind k) {
@@ -262,9 +317,11 @@ bool manifest_holds(const generic::BuildManifest& m, Route route, QType q, std::
 }
 
 // The instructions a route that runs (`executed`) multiplies on, on this device, for a call of
-// `tokens` tokens of `w` (aligned and contiguous, as the engine passes it). `how` names Volta's
-// own kernels where they take a register-MMA call.
-Kind classify(Route executed, const Weight& w, std::int32_t tokens, std::string& how) {
+// `tokens` tokens of `w` (aligned and contiguous, as the engine passes it); `invariant`: under the
+// invariant profile, where run_route clears lane_local. `how` names Volta's own kernels where
+// they take a register-MMA call.
+Kind classify(Route executed, const Weight& w, std::int32_t tokens, bool invariant,
+              std::string& how) {
     const DeviceFeatures& f = device_class().features;
     const bool emulating    = !f.mma_tensor || f.mma_slow;
     switch (executed.family) {
@@ -282,24 +339,26 @@ Kind classify(Route executed, const Weight& w, std::int32_t tokens, std::string&
     case Family::RegisterMma: {
         if (!emulating) return Kind::Native;
         if (f.mma_slow) return Kind::Emulated;
-        // run_route's order on Volta: the HMMA kernel, the GEMV, then the register MMA, lane by
-        // lane for a one-tile call of at most four tokens (generic_gemm.cuh: kLocal).
+        // run_route's order without tensor mma.sync: the HMMA kernel, the GEMV, then the register
+        // MMA, lane by lane for a one-tile call of at most four tokens (generic_gemm.cuh kLocal),
+        // each only where lane_local is set (outside the invariant profile).
         generic::GemmArgs args{};
         args.x                  = reinterpret_cast<const void*>(std::uintptr_t{1} << 32);
         args.ldx                = w.k;
         args.k                  = w.k;
         args.tokens             = tokens;
-        args.lane_local         = 1;
+        args.lane_local         = invariant ? 0 : 1;
         const WeightCodec codec = generic::codec_of(w);
         if (generic::volta_hmma_takes(codec, args)) {
             how = "volta_hmma";
             return Kind::Native;
         }
-        if (generic::volta_gemv_takes(codec, args) && (args.ldx % 8) == 0) {
+        if (generic::volta_gemv_takes(codec, args)) {
             how = "volta_gemv";
             return Kind::Native;
         }
-        if (tokens <= 4 && generic::rmma_schedule_info(executed.schedule).n_tiles == 1) {
+        if (args.lane_local != 0 && tokens <= 4 &&
+            generic::rmma_schedule_info(executed.schedule).n_tiles == 1) {
             how = "lane_local";
             return Kind::Native;
         }
@@ -315,94 +374,109 @@ Kind classify(Route executed, const Weight& w, std::int32_t tokens, std::string&
     return Kind::None;
 }
 
-// What one call (format, policy, shape, epilogue, width) is covered by, and how each family fares.
+// What one call (format, mode, shape, epilogue, width, profile) is covered by, and how each family
+// fares.
 struct CellAnswer {
     Kind kind = Kind::None;
     std::string families; // "<family>=<kind or refusal>" each
 };
 
-CellAnswer answer_cell(const DeviceClass& d, const generic::BuildManifest& manifest,
-                       const Weight& w, const generic::Problem& problem, std::int32_t tokens,
-                       int& manifest_failures, std::ostream& err) {
+struct CellContext {
+    const DeviceClass& device;
+    const generic::BuildManifest& manifest;
+    int& manifest_failures;
+    std::ostream& err;
+};
+
+CellAnswer answer_cell(const CellContext& c, const Weight& w, const generic::Problem& problem,
+                       std::int32_t tokens, bool prefill, bool invariant) {
     CellAnswer out;
-    const bool prefill          = tokens >= generic::kPrefillBandMinTokens;
     const std::size_t workspace = generic::workspace_capacity_bytes(problem, &w, tokens, tokens);
     std::ostringstream families;
     const auto note = [&](Family family, const std::string& what) {
         families << " " << generic::family_name(family) << "=" << what;
     };
     // Volta's HMMA and GEMV kernels are not the route's own schedule: the manifest lists neither.
-    const auto take = [&](Route route, Kind kind, const std::string& how, Family family) {
+    const auto take = [&](Route route, Kind kind, const std::string& how) {
         const bool own_kernel = how.rfind("volta_hmma", 0) == 0 || how.rfind("volta_gemv", 0) == 0;
         if (kind == Kind::Native && !own_kernel &&
-            !manifest_holds(manifest, route, problem.qtype, problem.k)) {
-            if (++manifest_failures <= 10) {
-                err << "  " << generic::qtype_name(problem.qtype) << " T=" << tokens << ": "
-                    << generic::route_name(route)
-                    << " is admitted, but the build manifest does not hold its kernel\n";
+            !manifest_holds(c.manifest, route, problem.qtype, problem.k)) {
+            if (++c.manifest_failures <= 10) {
+                c.err << "  " << generic::qtype_name(problem.qtype) << " T=" << tokens << ": "
+                      << generic::route_name(route)
+                      << " is admitted, but the build manifest does not hold its kernel\n";
             }
             kind = Kind::None;
         }
-        note(family, std::string(kind_name(kind)) + (how.empty() ? "" : "(" + how + ")"));
+        note(route.family, std::string(kind_name(kind)) + (how.empty() ? "" : "(" + how + ")"));
         out.kind = std::max(out.kind, kind);
     };
-    for (const generic::FamilyAlternative& a :
-         generic::family_alternatives(problem, w, tokens, prefill)) {
-        if (!a.route) {
-            note(a.family, a.call != generic::R8CallRefusal::None
-                               ? std::string(generic::r8_call_refusal_name(a.call))
-                               : std::string(generic::schedule_refusal_name(a.refusal)));
-            continue;
+    // The route as the engine's call runs it: a demoted route counts as what it runs.
+    const auto take_resolved = [&](Route asked) {
+        const auto described =
+            generic::describe_route(c.device, asked, problem.qtype, problem.policy,
+                                    problem.epilogue, problem.n, problem.k, tokens, workspace);
+        if (!described) {
+            note(asked.family, "undescribed");
+            return;
         }
-        if (a.family == Family::RegisterMma) {
-            // Every legal schedule: a one-tile one runs lane by lane on Volta where a wider pick
-            // would emulate.
-            const auto c = generic::rmma_coverage(problem, w, tokens, prefill);
-            Kind best    = Kind::None;
+        const Route ran = described->resolved.executed;
+        std::string how;
+        const Kind k = classify(ran, w, tokens, invariant, how);
+        if (described->resolved.reason != generic::Demotion::None &&
+            described->resolved.reason != generic::Demotion::W4a8Admission) {
+            how += (how.empty() ? "" : ", ") +
+                   std::string(generic::demotion_name(described->resolved.reason)) + " from " +
+                   generic::route_name(asked);
+        }
+        take(ran, k, how);
+    };
+    if (invariant) {
+        // The invariant profile admits the one route its authority answers (invariant_profile).
+        take_resolved(generic::select_route(problem, w, tokens, prefill));
+    } else {
+        for (const generic::FamilyAlternative& a :
+             generic::family_alternatives(problem, w, tokens, prefill)) {
+            if (!a.route) {
+                note(a.family, a.call != generic::R8CallRefusal::None
+                                   ? std::string(generic::r8_call_refusal_name(a.call))
+                                   : std::string(generic::schedule_refusal_name(a.refusal)));
+                continue;
+            }
+            if (a.family != Family::RegisterMma) {
+                take_resolved(*a.route);
+                continue;
+            }
+            // Every legal register-MMA schedule: a one-tile one runs lane by lane on Volta where
+            // a wider pick would emulate.
+            const auto coverage = generic::rmma_coverage(problem, w, tokens, prefill);
+            Kind best           = Kind::None;
             std::string best_how;
             Route best_route = *a.route;
-            for (const generic::ScheduleCoverage& s : c.schedules) {
+            for (const generic::ScheduleCoverage& s : coverage.schedules) {
                 if (s.refusal != generic::ScheduleRefusal::None) continue;
                 const Route r{Family::RegisterMma, static_cast<std::uint8_t>(s.schedule)};
                 std::string how;
-                const Kind k = classify(r, w, tokens, how);
+                const Kind k = classify(r, w, tokens, false, how);
                 if (k > best) {
                     best       = k;
                     best_how   = how;
                     best_route = r;
                 }
             }
-            take(best_route, best, best_how, a.family);
-            continue;
+            take(best_route, best, best_how);
         }
-        const auto described =
-            generic::describe_route(d, *a.route, problem.qtype, problem.policy, problem.epilogue,
-                                    problem.n, problem.k, tokens, workspace);
-        if (!described) {
-            note(a.family, "undescribed");
-            continue;
-        }
-        // A demoted route counts as what it runs (the manifest is asked of that route).
-        const Route ran = described->resolved.executed;
-        std::string how;
-        const Kind k = classify(ran, w, tokens, how);
-        if (described->resolved.reason != generic::Demotion::None &&
-            described->resolved.reason != generic::Demotion::W4a8Admission) {
-            how += (how.empty() ? "" : ", ") +
-                   std::string(generic::demotion_name(described->resolved.reason)) + " to " +
-                   generic::route_name(ran);
-        }
-        take(ran, k, how, a.family);
     }
     if (out.kind == Kind::None) out.kind = Kind::Scalar; // the scalar kernel takes what none does
     out.families = families.str();
     return out;
 }
 
-// One band of one (format, policy) on one board: the worst of its cells, and the first hole.
+// One band of one (format, mode) on one board.
 struct BandAnswer {
-    Kind kind = Kind::Native;
-    std::string first_hole; // where and what, for the report
+    Kind kind         = Kind::Native; // the worst of its cells
+    std::size_t cells = 0, listed = 0;
+    std::string first_hole; // the first hole not listed: where and what, for the report
 };
 
 // `table_always`: print every board's table, not only those with a new hole; `cells_always`: every
@@ -425,28 +499,23 @@ int run(bool table_always, bool cells_always, std::string_view only) {
         return 77;
     }
     const auto& allowed = allowed_holes();
-    // (entry, format) -> whether a served board of the entry's capability shows the hole.
-    std::map<std::pair<std::size_t, QType>, bool> allowed_seen;
-    std::map<int, bool> capability_served;
-    for (const auto* b : boards) capability_served[b->major * 10 + b->minor] = true;
-    const auto allowed_entry = [&](int capability, QType q, LinearPolicy p,
-                                   std::int32_t t) -> std::optional<std::size_t> {
-        for (std::size_t i = 0; i < allowed.size(); ++i) {
-            const Allowed& a = allowed[i];
-            if (a.capability == capability && a.policy == p && t >= a.min_tokens &&
-                t <= a.max_tokens &&
-                std::find(a.formats.begin(), a.formats.end(), q) != a.formats.end()) {
-                return i;
+    const auto listed   = [&](int capability, QType q, Mode m,
+                            std::string_view band) -> const Allowed* {
+        for (const Allowed& a : allowed) {
+            if (a.capability == capability && a.mode == m &&
+                std::find(a.bands.begin(), a.bands.end(), band) != a.bands.end() &&
+                (a.formats.empty() ||
+                 std::find(a.formats.begin(), a.formats.end(), q) != a.formats.end())) {
+                return &a;
             }
         }
-        return std::nullopt;
+        return nullptr;
     };
 
     int failures = 0, manifest_failures = 0;
-    std::size_t cells = 0, holes = 0, allowed_holes_seen = 0;
+    std::size_t cells = 0, holes = 0, listed_holes = 0;
     const auto started = std::chrono::steady_clock::now();
-    std::ostringstream tables;
-    std::ostringstream detail;
+    std::ostringstream tables, detail;
     for (const generic::FactsBoard* board : boards) {
         const DeviceClass d = generic::board_device_class(*board);
         const ScopedDeviceClass scoped(d);
@@ -458,81 +527,117 @@ int run(bool table_always, bool cells_always, std::string_view only) {
                       << NINFERNO_BUILD_ARCH << '\n';
             ++failures;
         }
+        const CellContext context{d, manifest, manifest_failures, detail};
         std::ostringstream table;
         table << board->name << " (" << d.id() << ", sm_" << capability
-              << (f.mma_tensor && !f.mma_slow ? "" : ", MMA emulated") << ")\n  format     pol ";
+              << (f.mma_tensor && !f.mma_slow ? "" : ", MMA emulated") << ")\n  format     mode ";
         for (const Band& band : bands()) table << " " << band.name;
         table << '\n';
         bool board_has_new = false;
-        for (const QType q : served_formats()) {
-            for (const LinearPolicy policy : served_policies(q)) {
+        const auto served  = served_formats(capability);
+        for (const QType q : served) {
+            for (const Mode mode : served_modes(q)) {
+                std::optional<ops::ScopedInvariantRoutes> invariant;
+                if (mode.invariant) invariant.emplace();
+                std::string head = "  " + std::string(generic::qtype_name(q));
+                head.resize(13, ' ');
+                head += mode_name(mode);
+                head.resize(18, ' ');
+                table << head;
                 std::vector<BandAnswer> answers(bands().size());
-                std::vector<bool> band_allowed(bands().size(), false);
                 for (std::size_t bi = 0; bi < bands().size(); ++bi) {
-                    const Band& band = bands()[bi];
+                    const Band& band     = bands()[bi];
+                    const Allowed* entry = listed(capability, q, mode, band.name);
+                    BandAnswer& answer   = answers[bi];
                     for (const std::int32_t t : band.tokens) {
-                        for (const Shape shape : kShapes) {
-                            for (const generic::Epilogue epilogue :
-                                 {generic::Epilogue::Store, generic::Epilogue::SwiGlu}) {
-                                const std::int32_t rows =
-                                    epilogue == generic::Epilogue::SwiGlu ? shape.n / 2 : shape.n;
-                                std::optional<DescribedWeight> w;
-                                try {
-                                    w.emplace(q, epilogue, rows, shape.k);
-                                } catch (const std::exception&) {
-                                    continue; // a shape the format cannot hold
+                        for (const bool prefill : {false, true}) {
+                            if (prefill && t < generic::kPrefillBandMinTokens) continue;
+                            for (const Shape shape : kShapes) {
+                                for (const generic::Epilogue epilogue : kEpilogues) {
+                                    const std::int32_t rows = epilogue == generic::Epilogue::SwiGlu
+                                                                  ? shape.n / 2
+                                                                  : shape.n;
+                                    std::optional<DescribedWeight> w;
+                                    try {
+                                        w.emplace(q, epilogue, rows, shape.k);
+                                    } catch (const std::exception&) {
+                                        continue; // a shape the format cannot hold
+                                    }
+                                    if (!generic::supports(w->weight)) continue;
+                                    const generic::Problem problem{q, mode.policy, rows, shape.k,
+                                                                   epilogue};
+                                    const CellAnswer a = answer_cell(context, w->weight, problem, t,
+                                                                     prefill, mode.invariant);
+                                    ++cells;
+                                    ++answer.cells;
+                                    if (cells_always) {
+                                        std::cout << board->name << " " << generic::qtype_name(q)
+                                                  << " " << mode_name(mode) << " T=" << t
+                                                  << (prefill ? " prefill " : " speed ") << rows
+                                                  << "x" << shape.k << " "
+                                                  << generic::epilogue_name(epilogue) << " "
+                                                  << kind_name(a.kind) << ":" << a.families << '\n';
+                                    }
+                                    answer.kind = std::min(answer.kind, a.kind);
+                                    if (a.kind == Kind::Native) continue;
+                                    ++holes;
+                                    if (entry != nullptr && a.kind == entry->kind) {
+                                        ++listed_holes;
+                                        ++answer.listed;
+                                    } else if (answer.first_hole.empty()) {
+                                        std::ostringstream where;
+                                        where << board->name << " " << generic::qtype_name(q) << " "
+                                              << mode_name(mode) << " T=" << t
+                                              << (prefill ? " prefill " : " ") << rows << "x"
+                                              << shape.k << " " << generic::epilogue_name(epilogue)
+                                              << " " << kind_name(a.kind) << ":" << a.families;
+                                        answer.first_hole = where.str();
+                                    }
                                 }
-                                if (!generic::supports(w->weight)) continue;
-                                const generic::Problem problem{q, policy, rows, shape.k, epilogue};
-                                const CellAnswer a = answer_cell(d, manifest, w->weight, problem, t,
-                                                                 manifest_failures, detail);
-                                ++cells;
-                                if (cells_always) {
-                                    std::cout << board->name << " " << generic::qtype_name(q) << " "
-                                              << policy_name(policy) << " T=" << t << " " << rows
-                                              << "x" << shape.k << " "
-                                              << generic::epilogue_name(epilogue) << " "
-                                              << kind_name(a.kind) << ":" << a.families << '\n';
-                                }
-                                if (a.kind == Kind::Native) continue;
-                                ++holes;
-                                const auto entry = allowed_entry(capability, q, policy, t);
-                                if (entry) {
-                                    ++allowed_holes_seen;
-                                    allowed_seen[{*entry, q}] = true;
-                                    band_allowed[bi]          = true;
-                                } else if (answers[bi].first_hole.empty()) {
-                                    std::ostringstream where;
-                                    where << board->name << " " << generic::qtype_name(q) << " "
-                                          << policy_name(policy) << " T=" << t << " " << rows << "x"
-                                          << shape.k << " " << generic::epilogue_name(epilogue)
-                                          << ":" << a.families;
-                                    answers[bi].first_hole = where.str();
-                                }
-                                answers[bi].kind = std::min(answers[bi].kind, a.kind);
                             }
                         }
                     }
-                }
-                std::string line = "  " + std::string(generic::qtype_name(q));
-                line.resize(13, ' ');
-                line += policy_name(policy);
-                line.resize(17, ' ');
-                for (std::size_t bi = 0; bi < bands().size(); ++bi) {
-                    std::string cell(1,
-                                     kind_mark(answers[bi].kind,
-                                               band_allowed[bi] && answers[bi].first_hole.empty()));
-                    cell.resize(std::string_view(bands()[bi].name).size(), ' ');
-                    line += " " + cell;
-                    if (!answers[bi].first_hole.empty()) {
+                    std::string mark(
+                        1, kind_mark(answer.kind, entry != nullptr && answer.first_hole.empty()));
+                    if (answer.cells == 0) {
                         ++failures;
                         board_has_new = true;
-                        if (failures <= 40) {
-                            detail << "new hole: " << answers[bi].first_hole << '\n';
-                        }
+                        mark          = "0";
+                        detail << "no sampled cell: " << board->name << " "
+                               << generic::qtype_name(q) << " " << mode_name(mode) << " T "
+                               << band.name << '\n';
+                    } else if (!answer.first_hole.empty()) {
+                        ++failures;
+                        board_has_new = true;
+                        if (failures <= 40) detail << "new hole: " << answer.first_hole << '\n';
+                    } else if (entry != nullptr && answer.listed != answer.cells) {
+                        // The entry pins every sampled cell of its band to its kind.
+                        ++failures;
+                        board_has_new = true;
+                        detail << "listed band no longer a whole hole: " << board->name << " "
+                               << generic::qtype_name(q) << " " << mode_name(mode) << " T "
+                               << band.name << ": " << answer.listed << " of " << answer.cells
+                               << " cells " << kind_name(entry->kind) << " (\"" << entry->reason
+                               << "\"): narrow or remove the entry\n";
                     }
+                    mark.resize(band.name.size(), ' ');
+                    table << " " << mark;
                 }
-                table << line << '\n';
+                table << '\n';
+            }
+        }
+        // An entry naming a format this build does not serve on the board is stale too.
+        for (const Allowed& a : allowed) {
+            if (a.capability != capability) continue;
+            for (const QType q : a.formats) {
+                const auto modes = served_modes(q);
+                if (std::find(served.begin(), served.end(), q) == served.end() ||
+                    std::find(modes.begin(), modes.end(), a.mode) == modes.end()) {
+                    ++failures;
+                    detail << "stale allowlist entry: sm_" << a.capability << " "
+                           << generic::qtype_name(q) << " " << mode_name(a.mode)
+                           << " is not served (\"" << a.reason << "\"): remove it\n";
+                }
             }
         }
         if (board_has_new) tables << table.str();
@@ -540,27 +645,16 @@ int run(bool table_always, bool cells_always, std::string_view only) {
         std::cout << board->name << ": checked\n";
     }
     failures += manifest_failures;
-    for (std::size_t i = 0; i < allowed.size(); ++i) {
-        const Allowed& a = allowed[i];
-        if (!capability_served[a.capability]) continue;
-        for (const QType q : a.formats) {
-            if (allowed_seen[{i, q}]) continue;
-            ++failures;
-            detail << "stale allowlist entry: sm_" << a.capability << " " << generic::qtype_name(q)
-                   << " " << policy_name(a.policy) << " T=" << a.min_tokens << ".." << a.max_tokens
-                   << " is covered now (\"" << a.reason << "\"): remove it\n";
-        }
-    }
     const double seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     if (failures != 0) {
         std::cerr << tables.str() << detail.str();
         std::cerr << "coverage report: " << failures << " failures (" << cells << " cells, "
-                  << holes << " holes, " << allowed_holes_seen << " of them listed)\n";
+                  << holes << " holes, " << listed_holes << " of them listed)\n";
         return 1;
     }
     std::cout << "coverage report: PASS, " << boards.size() << " boards, " << cells << " cells, "
-              << allowed_holes_seen << " listed holes, " << seconds << " s\n";
+              << listed_holes << " listed holes, " << seconds << " s\n";
     return 0;
 }
 

@@ -137,12 +137,14 @@ ninferno_add_op_test(ninferno_route_classes_test
   LIBRARIES ninferno_linear_test_support)
 
 # The generic path's coverage lint (#619 K2): on the golden boards of this build's architecture,
-# every served format, policy and width band has a family on the device's own instructions, not
-# only the scalar kernel or an emulated MMA; the known holes are listed in the test with their
-# reasons. No GPU; skips (77) on an architecture the release does not ship.
+# every served format, activation mode and width band has a family on the device's own
+# instructions, not only the scalar kernel or an emulated MMA; the known holes are listed in the
+# test with their reasons. The served modes are convert's kept_policy / head_policy under each
+# --activations mode (ninferno_convert). No GPU; skips (77) on an architecture the release does
+# not ship.
 ninferno_add_op_test(ninferno_coverage_report_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_coverage_report.cpp"
-  LIBRARIES ninferno_linear_test_support)
+  LIBRARIES ninferno_linear_test_support ninferno_convert)
 target_compile_definitions(ninferno_coverage_report_test PRIVATE
   NINFERNO_RELEASE_CUDA_ARCHS="$<JOIN:${NINFERNO_CUDA_ARCHS},$<COMMA>>")
 set_tests_properties(ninferno_coverage_report_test PROPERTIES LABELS host)
