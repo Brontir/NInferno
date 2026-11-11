@@ -321,7 +321,8 @@ int main(int argc, char** argv) {
         if (device >= 0 && device < static_cast<int>(gpus.size()) &&
             gpus[static_cast<std::size_t>(device)].cc != 0) {
             engine = choose(engines, gpus[static_cast<std::size_t>(device)].cc);
-            if (!engine) {
+            // --help needs no GPU: on one this release does not support it still shows the help.
+            if (!engine && !ninferno::help_requested(argc, argv)) {
                 std::cerr << program << ": GPU " << device << " (" << gpus[static_cast<std::size_t>(device)].name
                           << ", sm_" << gpus[static_cast<std::size_t>(device)].cc
                           << ") is older than this release supports (engines: " << engines_text(engines) << ")\n";
@@ -332,8 +333,9 @@ int main(int argc, char** argv) {
     if (!engine) { engine = *fallback; }
     // A GPU no engine names runs the PTX one: the driver compiles its kernels at the first start
     // (minutes) and keeps them in its cache, whose default 256 MiB an engine outgrows; without
-    // room every start compiles again. The user's own setting stays.
-    if (engine->ptx && have_driver) {
+    // room every start compiles again. The user's own setting stays. --help compiles nothing (and
+    // may run here on a GPU older than every engine): no note.
+    if (engine->ptx && have_driver && !ninferno::help_requested(argc, argv)) {
         const auto gpus  = driver.gpus();
         const int device = device_argument(argc, argv, gpus);
         if (device >= 0 && device < static_cast<int>(gpus.size()) &&
