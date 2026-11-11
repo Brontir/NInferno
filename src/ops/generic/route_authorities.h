@@ -13,7 +13,9 @@
 // Evidence kinds. Pin: a maintainer's choice (a route pin, a route probe). Measured: timed on this
 // board (a route table measured here, the dense tuner's entry of this class and build, the R8
 // decode table of this board). Ranker: the cost model where it prices the call, else a rule (a
-// derivation from the card's facts, or a literal of one or more measured cards). Carried: a
+// derivation from the card's facts, or a literal of one or more measured cards, fitted there and
+// applied to every board). The printed kind does not tell these apart and names no donor; the cost
+// model and a rule differ in Evidence::ranker, which is not printed. Carried: a
 // measurement of a board within kCarryDistance (core/measured_boards.h), every quantity compared.
 // Transferred: a measurement of a farther board, carried by the authority's own rule. Borrowed: an
 // exact-key entry taken from a farther table because the nearest lacked it (route_table.cpp
@@ -132,6 +134,14 @@ struct RouteAnswer {
     Route route;
     Evidence evidence;
 };
+
+// The evidence as the places a person or a tool reads a decision print it (#614, A3): "authority=
+// <source> evidence=<kind>", and for an answer that names a donor " donor=<board or class>
+// d=<distance>" (three decimals, locale independent). One function for the description line
+// (describe_text), the decision manifest's route_evidence section and the route tuner's CSV.
+[[nodiscard]] std::string evidence_text(const Evidence& evidence);
+// The two columns the route tuner's --selected-out ends its rows with: "<source>,<kind>".
+[[nodiscard]] std::string evidence_columns(const Evidence& evidence);
 
 // An authority: the first of a list to answer decides the call. nullopt: it abstains (its scope
 // does not hold the call, or nothing it names is admitted).

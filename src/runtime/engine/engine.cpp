@@ -201,6 +201,9 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
         const auto seen = ops::detail::generic::seen_problems();
         in.routes       = runtime::routes_of(device_class(resolved.device), seen, memory.prefill_chunk,
                                              resolved.activations == ActivationMode::Exact);
+        in.route_evidence =
+            runtime::route_evidence_of(device_class(resolved.device), seen, memory.prefill_chunk,
+                                       resolved.activations == ActivationMode::Exact);
     }
     in.observed = runtime::observed_of(memory);
     in.observed.merge(runtime::observed_of(device_class(resolved.device)));
@@ -213,6 +216,7 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
     load.decision_canonical                        = fingerprint.canonical;
     load.decision_observed                         = fingerprint.observed;
     load.decision_routes                           = fingerprint.routes;
+    load.decision_route_evidence                   = fingerprint.route_evidence;
     load.metadata.decision_fingerprint             = fingerprint.value;
     load.metadata.decision_manifest                = fingerprint.manifest;
     load.decision_taint.clear();
@@ -246,6 +250,7 @@ void fingerprint_decisions(LoadSummary& load, const EngineOptions& requested,
     load.decision_canonical.clear();
     load.decision_observed.clear();
     load.decision_routes.clear();
+    load.decision_route_evidence.clear();
     load.decision_taint = {"fingerprint=unreadable: " + why};
 }
 
