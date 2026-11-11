@@ -131,8 +131,17 @@ say "NInferno $latest is available (this is $current)."
 [ -n "$notes" ] && say "What changed: $notes"
 [ "$mode" = check ] && exit 0
 if [ "$mode" = ask ]; then
+  # No terminal to ask on (cron, a service, ssh without -t): say so instead of the shell's raw
+  # "cannot open /dev/tty", and install nothing. Tried in a subshell first: a failed redirection
+  # of `exec` ends a POSIX shell.
+  if ! (exec 3< /dev/tty) 2> /dev/null; then
+    say "No terminal to ask on: not installed (ninferno-update --yes installs without asking)."
+    exit 0
+  fi
+  exec 3< /dev/tty
   printf 'Install it now? [Y/n] '
-  read -r answer < /dev/tty || answer=n
+  read -r answer <&3 || answer=n
+  exec 3<&-
   case $answer in [nN]*) say "Not installed."; exit 0 ;; esac
 fi
 

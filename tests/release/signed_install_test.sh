@@ -213,6 +213,14 @@ serves "after the refused rollback" 0.2.0
 cp "$work/serve-0.1.0" "$old_serve"
 expect "rollback" 0 "${I[@]}" "$bin/ninferno-update" --rollback
 serves "after the rollback" 0.1.0
+# Asked with no terminal (a new session has none): it says so and installs nothing.
+if command -v setsid > /dev/null; then
+  expect "the updater with no terminal to ask on" 0 "${I[@]}" NINFERNO_UPDATE_URL="file://$d2/latest.json" \
+    NINFERNO_ARCHIVE="$d2/ninferno-linux-x86_64.tar.gz" setsid -w "$bin/ninferno-update"
+  said "No terminal to ask on: not installed"
+  ! grep -q "/dev/tty" "$work/out.txt" || fail "the updater printed the shell's /dev/tty error"
+  serves "after the update with no terminal" 0.1.0
+fi
 # The same version again: switched by renames, `current` stays a link.
 expect "0.1.0 installs over itself" 0 "${I[@]}" NINFERNO_MANIFEST="$d1/latest.json" \
   NINFERNO_ARCHIVE="$d1/ninferno-linux-x86_64.tar.gz" sh "$work/install.sh"
