@@ -326,10 +326,12 @@ def board_shaped(m):
             and 1 <= sms <= 400 and sms == int(sms) and 0 <= l2 <= 512 and bw >= 100)
 
 
-def rows(code, a, b):
+def rows(code, a, b, direct=True):
     """Spans of the board-literal rows of the table code[a:b]: each `{...}` part with at least two
     arguments and a constant first one; a part whose first argument is `{` is a table again. A
-    braced row initialises one Board, so its fields may all be qualified constants (direct)."""
+    braced row of `Board k[]` initialises one Board, so its fields may all be qualified constants
+    (direct); under a template (`std::array<Board, 2> k = {{...}}`) the inner braces may be the
+    container's own, so a row of qualified names needs a plain number too (`direct` False)."""
     out = []
     for s, e in split(code, a, b):
         if code[s] != "{":
@@ -338,16 +340,16 @@ def rows(code, a, b):
         if not inner:
             continue
         if code[inner[0][0]] == "{":
-            out += rows(code, s + 1, e - 1)
-        elif is_fields(code, inner, direct=True):
+            out += rows(code, s + 1, e - 1, direct)
+        elif is_fields(code, inner, direct):
             out.append((s, e))
     return out
 
 
-def initialiser(code, start, bracket, direct=False):
+def initialiser(code, start, bracket, direct=False, rows_direct=True):
     """Spans of the board literals of the initialiser whose bracket is code[bracket]; `start` is
     where the literal begins (the type or the designator); `direct` when the group initialises a
-    single Board (see is_fields)."""
+    single Board (see is_fields); `rows_direct` when a braced row of it does (see rows)."""
     end = close(code, bracket)
     if end is None:
         return []
@@ -355,7 +357,7 @@ def initialiser(code, start, bracket, direct=False):
     if not parts:
         return []
     if code[parts[0][0]] == "{":
-        return rows(code, bracket + 1, end)
+        return rows(code, bracket + 1, end, rows_direct)
     if is_fields(code, parts, direct):
         return [(start, end + 1)]
     return []
@@ -386,7 +388,9 @@ ATTR = r"\[\[[^\]]*\]\]\s*"
 
 def typed_pattern(table):
     ty = type_name(table)
-    tail = (r"(?:%s)*(?:\w+\s*)?(?:%s)*(?:\[(?!\[)[^\]]*\]\s*)?(?:%s)*=?\s*([{(])"
+    # Each run of attributes has one place to go (before the name, after it, after the bounds),
+    # so a long run is read in linear time.
+    tail = (r"(?:%s)*(?:\w+\s*(?:%s)*)?(?:\[(?!\[)[^\]]*\]\s*(?:%s)*)?=?\s*([{(])"
             % (ATTR, ATTR, ATTR))
     plain = ty + r"(?!\s*::)\s*(?:const\b\s*)?[&*]*\s*(?:const\b\s*)?" + tail
     templ = r"<\s*" + ty + r"\s*(?:,[^<>;{}]*)?>\s*(?:const\b\s*)?[&*]*\s*" + tail
@@ -582,7 +586,8 @@ def literals(text):
         # a list of boards, where `{measured::kA, measured::kB}` is registry names.
         spans += initialiser(code, m.start(), m.end() - 1,
                              direct=not m.group().startswith("<")
-                             and "[" not in re.sub(ATTR, "", m.group()))
+                             and "[" not in re.sub(ATTR, "", m.group()),
+                             rows_direct=not m.group().startswith("<"))
     for m in returns(table).finditer(code):
         body = body_brace(code, m)
         if body is None:

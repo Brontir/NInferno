@@ -204,6 +204,8 @@ CLEAN = {
     "conversion": "table->board = Board{cc / 10, cc % 10, sms};",
     "registry_list_qualified": "std::vector<Board> v = {measured::kRtx5090, measured::kRtx4090};",
     "registry_table_qualified": "const Board k[] = {measured::kRtx5090, measured::kRtx4090};",
+    "registry_std_array_double_brace": "std::array<Board, 2> k = {{measured::kRtx5090, measured::kRtx4090}};",
+    "registry_vector_double_brace": "std::vector<Board> v{{measured::kA, measured::kB}};",
     "conversion_operator_fields": "operator Board() const { return {major, minor, sms}; }",
     "row_fields": "return Board{row->major, row->minor};",
     "name_prefix": "FactsBoard{1, 2}",
@@ -283,7 +285,8 @@ class Violations(unittest.TestCase):
                  "Board f(T) requires " + "C<T> && " * 1250 + ";",
                  "Board f(T) const " + "& " * 5000,
                  "Board f(T) requires (" * 500,
-                 "using B = Board; " + "using C = B; " * 800]
+                 "using B = Board; " + "using C = B; " * 800,
+                 "Board b " + "[[a]] " * 8000]
         for code in heads:
             start = time.monotonic()
             lint.violations(code)
