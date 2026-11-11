@@ -48,6 +48,12 @@ TAG=$(echo "$BR" | tr / _)
 PLAN=$(mktemp); trap 'rm -f "$PLAN" "$PLAN.py" "$B/qc_dry.ninja"' EXIT
 PARTIAL=()   # everything the run did not verify
 
+# ninja-abort recovery (functions qc_aborted qc_busy qc_regen qc_reset qc_try qc_build): next to qc.sh, else in the checkout
+QC_DIR=$(dirname "$(realpath "${BASH_SOURCE[0]}")")
+[ -f "$QC_DIR/qc_recover.sh" ] || QC_DIR=$REPO/tools/dev
+[ -f "$QC_DIR/qc_recover.sh" ] || { echo "qc.sh: qc_recover.sh not found next to qc.sh or in $REPO/tools/dev; copy it beside qc.sh"; exit 3; }
+. "$QC_DIR/qc_recover.sh"
+
 # 0. disk
 FREE=$(df -BG --output=avail "$ROOT" | tail -1 | tr -dc 0-9)
 [ "$FREE" -ge "${QC_MIN_FREE_GB:-15}" ] || { echo "only $FREE GB free on $ROOT (< ${QC_MIN_FREE_GB:-15}); clean up first"; exit 3; }
@@ -68,14 +74,20 @@ GB=$(du -s --block-size=1G "$B" 2>/dev/null | cut -f1 || true); GB=${GB:-0}
 
 # 2. configure once (Release, tests on, ccache launchers); later branch switches re-run cmake through ninja
 if [ ! -f "$B/build.ninja" ]; then
-  cmake -S "$W" -B "$B" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=$ARCH \
-    -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache -DBUILD_TESTING=ON \
-    > "$L/qc_cmake.log" 2>&1 9>&- || { tail -15 "$L/qc_cmake.log"; echo "CONFIGURE FAILED"; exit 1; }
+  qc_configure || { tail -15 "$L/qc_cmake.log"; echo "CONFIGURE FAILED"; exit 1; }
   tick configured
 fi
 HOMEDIR=$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "$B/CMakeCache.txt")
 [ "$(realpath "$HOMEDIR")" = "$(realpath "$W")" ] || { echo "$B was configured for '$HOMEDIR', not $W; remove it (rm -rf $B) and rerun"; exit 3; }
-( cd "$B" && $LOW ninja -j"$JOBS" build.ninja > "$L/qc_regen.log" 2>&1 9>&- ) || { tail -15 "$L/qc_regen.log"; echo "CMAKE REGENERATE FAILED (cmake error on this branch)"; exit 1; }
+RGRC=0; qc_regen || RGRC=$?
+if [ $RGRC -eq 2 ]; then   # the regenerate step itself hit the ninja abort: same escalation as the build
+  for step in 1 2 3; do
+    echo "  ninja aborted while regenerating, recovery step $step"
+    RGRC=0; qc_reset $step || RGRC=$?
+    [ $RGRC -eq 2 ] || break
+  done
+fi
+[ $RGRC -eq 0 ] || { [ $RGRC -ne 2 ] || tail -15 "$L/qc_regen.log"; echo "CMAKE REGENERATE FAILED (cmake error on this branch, or ninja aborted after a fresh build dir)"; exit 1; }
 
 # 3. plan. Lines: TEST<TAB>ctest name<TAB>exe targets (comma) | OBJ<TAB>target | SKIP<TAB>text | NOOP<TAB>text
 cat > "$PLAN.py" <<'PY'
@@ -471,14 +483,7 @@ tick "$NT ninja targets"
 LOG=$L/qc_ninja_$TAG.log
 RC=0; BSTART=$(date +%s)
 if [ "$NT" -gt 0 ]; then
-  ( cd "$B" && $LOW ninja -k 0 -j"$JOBS" $TARGETS > "$LOG" 2>&1 9>&- ) || RC=$?
-  if [ $RC -ge 128 ]; then   # ninja itself aborted (a dyndep assertion in ninja 1.13 seen): one retry
-    echo "  ninja aborted (rc=$RC), retrying once"; tail -2 "$LOG" | cut -c1-200
-    BUSY=0   # we hold the lock; compact the logs only when no other ninja works in this build dir
-    for p in $(pgrep -x ninja || true); do if [ "$(readlink /proc/$p/cwd 2>/dev/null)" = "$B" ]; then BUSY=1; fi; done
-    [ $BUSY -ne 0 ] || ( cd "$B" && ninja -t recompact > /dev/null 2>&1 9>&- ) || true
-    RC=0; ( cd "$B" && $LOW ninja -k 0 -j"$JOBS" $TARGETS > "$LOG" 2>&1 9>&- ) || RC=$?
-  fi
+  qc_build   # on a ninja abort: dependency-state reset + retry, then (only if that aborts too) fresh build dir
   tick "build rc=$RC"
   echo "$(grep -cE '^\[[0-9]+/[0-9]+\] (Building|Linking)' "$LOG" || true) steps run"
 fi
