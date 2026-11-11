@@ -6,6 +6,7 @@
 #   - 70 in NINFERNO_ARCHS without CUDA 12.8 stops the run (unless a resumed run holds the engine);
 #     leaving 70 out is the way to build without Volta.
 #   - A build machine whose glibc is newer than install.sh's GLIBC_MIN stops the run.
+#   - A CUDA 12.8 whose math header carries a newer glibc's noexcept patch stops a Volta build.
 #   - `selector-facts` exiting 127 because libcuda.so.1 is missing (no NVIDIA driver) counts as
 #     "no GPU", like exit 2; any other failure stops the run.
 set -euo pipefail
@@ -28,7 +29,7 @@ not_said() { ! grep -qF -- "$1" "$work/out.txt" || { fail "$2: the output says '
 mkdir -p "$work/bin"
 cat > "$work/bin/getconf" << 'EOF'
 #!/bin/sh
-echo "glibc ${FAKE_GLIBC:-2.38}"
+echo "glibc ${FAKE_GLIBC:-2.39}"
 EOF
 printf '#!/bin/sh\nexit 0\n' > "$work/bin/patchelf"
 chmod +x "$work/bin/getconf" "$work/bin/patchelf"
@@ -55,9 +56,29 @@ expect "a resumed run that holds the Volta engine goes on" 1 "${P[@]}" NINFERNO_
 not_said "Volta" "resumed with the Volta engine"
 said "nvcc not found" "resumed with the Volta engine"
 
+# A CUDA 12.8 whose math header carries a glibc 2.41 system's noexcept patch stops a Volta build on
+# an older glibc; NVIDIA's header, or a build without Volta, goes on.
+c128=$work/cuda-12.8
+mkdir -p "$c128/bin" "$c128/targets/x86_64-linux/include/crt"
+printf '#!/bin/sh\necho "Cuda compilation tools, release 12.8, V12.8.93"\n' > "$c128/bin/nvcc"
+chmod +x "$c128/bin/nvcc"
+math=$c128/targets/x86_64-linux/include/crt/math_functions.h
+echo 'extern __DEVICE_FUNCTIONS_DECL__ __device_builtin__ double                 sinpi(double x) noexcept (true);' > "$math"
+expect "a noexcept-patched CUDA 12.8 stops" 1 "${P[@]}" NINFERNO_CUDA70="$c128" NINFERNO_ARCHS="89 70" \
+  bash "$REPO/tools/release/package.sh" "$work/dist"
+said "declares sinpi noexcept" "a noexcept-patched CUDA 12.8"
+expect "the same CUDA 12.8 without Volta goes on" 1 "${P[@]}" NINFERNO_CUDA70="$c128" NINFERNO_ARCHS="89" \
+  bash "$REPO/tools/release/package.sh" "$work/dist"
+not_said "noexcept" "a noexcept-patched CUDA 12.8 without Volta"
+echo 'extern __DEVICE_FUNCTIONS_DECL__ __device_builtin__ double                 sinpi(double x);' > "$math"
+expect "NVIDIA's CUDA 12.8 goes on" 1 "${P[@]}" NINFERNO_CUDA70="$c128" NINFERNO_ARCHS="89 70" \
+  bash "$REPO/tools/release/package.sh" "$work/dist"
+not_said "noexcept" "NVIDIA's CUDA 12.8"
+said "nvcc not found" "NVIDIA's CUDA 12.8"
+
 expect "a newer glibc than install.sh checks stops" 1 "${P[@]}" FAKE_GLIBC=2.41 NINFERNO_ARCHS="89" \
   bash "$REPO/tools/release/package.sh" "$work/dist"
-said "glibc 2.41, newer than the 2.38" "a newer glibc"
+said "glibc 2.41, newer than the 2.39" "a newer glibc"
 expect "an older glibc goes on" 1 "${P[@]}" FAKE_GLIBC=2.36 NINFERNO_ARCHS="89" \
   bash "$REPO/tools/release/package.sh" "$work/dist"
 said "nvcc not found" "an older glibc"
