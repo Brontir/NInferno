@@ -130,6 +130,7 @@ projection_step_seconds(std::optional<double> route_seconds, double output_bytes
 // The index of the selected alternative, nullopt when none is priced. `resolution` is in ln time
 // units (0, negative or non-finite: exact comparison); `launch_seconds` is added per launch (0,
 // negative or non-finite: launches are no price). Where a caller gets them: the header comment.
+// FUSION-SITE: projection_chain
 [[nodiscard]] inline std::optional<std::size_t> select(const std::vector<Alternative>& alternatives,
                                                        double resolution     = 0.0,
                                                        double launch_seconds = 0.0) {

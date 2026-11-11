@@ -242,6 +242,21 @@ class CliTest(unittest.TestCase):
             code, out, _ = run(f"{d}/a", f"{d}/b", "--fail-on-change")
             self.assertEqual(code, 1)
             self.assertIn("base/a10: 1 decisions changed", out)
+            self.assertTrue(out.rstrip("\n").splitlines()[-1].startswith("total: 1 decisions changed"))
+
+    def test_an_info_line_alone_still_ends_with_no_golden_changes(self):
+        # The CI gate takes exit 0 as equal goldens only with this line: a facts digest that moved
+        # with no decision change must not read as a tool failure.
+        index = "release 13.4.92\nbase/a10 c180c3754514 7b7cafcde150 13.4.92\n"
+        with tempfile.TemporaryDirectory() as d:
+            tree(d, {"a/facts_index.txt": index, "b/facts_index.txt": index,
+                     "a/base/a10.7b7cafcde150.txt": "# a10 x y\n# facts aaa\n" + NEW_A,
+                     "b/base/a10.7b7cafcde150.txt": "# a10 x y\n# facts bbb\n" + NEW_A})
+            code, out, _ = run(f"{d}/a", f"{d}/b", "--fail-on-change")
+            self.assertEqual(code, 0)
+            lines = out.rstrip("\n").splitlines()
+            self.assertIn("no decision changes (facts digest: aaa -> bbb)", out)
+            self.assertEqual(lines[-1], "no golden changes")
 
 
 if __name__ == "__main__":

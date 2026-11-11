@@ -73,6 +73,16 @@ function(ninferno_target_sources target)
   target_sources(${target} PRIVATE ${filtered})
 endfunction()
 
+# Warnings for every target created in the calling directory and below, when NINFERNO_WARNINGS is
+# ON. Designated and partial aggregate initializers are the code base's style, so
+# -Wmissing-field-initializers is off. Host C++ only: nvcc's CUDA translation units do not get
+# these flags. -Wunused stays a warning.
+function(ninferno_directory_warnings)
+  if(NINFERNO_WARNINGS AND NOT MSVC)
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wunused;-Wno-missing-field-initializers;-Werror=return-type;-Werror=unused-function>")
+  endif()
+endfunction()
+
 # Fails the configure when `target` reaches the CUDA runtime through its link closure: the host-only
 # targets (ninferno_core_host and what links only it) must build and run on a machine with no
 # toolkit (#620 step 11). Call it deferred, once every target exists.

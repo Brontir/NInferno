@@ -129,6 +129,11 @@ struct ConstraintVocabularyView {
 [[nodiscard]] bool declares_free_grammar(const OutputConstraintSpec& spec);
 [[nodiscard]] bool declares_free_grammar(const CompiledConstraint& compiled) noexcept;
 
+// The grammar spells the answer header and the reasoning open marker itself
+// (OutputConstraintSpec::reads_answer_header): a request's matcher neither drops the header nor
+// restarts the grammar after a reasoning section the model opened.
+[[nodiscard]] bool reads_answer_header(const CompiledConstraint& compiled) noexcept;
+
 // Host memory of the compiled grammar, as the compile cache counts it.
 [[nodiscard]] std::size_t memory_bytes(const CompiledConstraint& compiled) noexcept;
 
