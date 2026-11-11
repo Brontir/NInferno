@@ -1354,6 +1354,58 @@ void moe_family(const json& fixture) {
     if (choice.chosen) { std::cout << choice.why << '\n'; }
 }
 
+// The MoE step reads the op's route (#616 step 7, ModelFacts::moe_routes): the pair its
+// kMoeRoutedEta rows were measured on (R8 gate/up over the register-MMA down) prices and types the
+// step as not asking does; another pair (the register MMA on both stages, as the op runs gpt-oss's
+// MXFP4 banks from five rows) has no measured rows: the same price, transferred past one row; a
+// share of the bytes on an unknown pair marks it too. One row reads at kDramEta whatever the pair.
+void moe_step_reads_the_route(const json& fixture) {
+    const json& m35 = fixture.at("models").at("Qwen3.6-35B-A3B");
+    int lifts       = 0; // the steps an unmeasured pair turned from Own to Transferred
+    for (const char* card_name : {"RTX 4090", "RTX 5090"}) {
+        const ch::CardFacts card = card_of(fixture.at("cards").at(card_name));
+        const ch::QuantOption q  = quant_of("UD-Q3_K_S", m35.at("quants").at("UD-Q3_K_S"));
+        ch::Candidate c;
+        c.kv = KvCacheStorage::Int8Group64;
+        // The fixture's model without its layers is a transferred estimate whatever the route: the
+        // trunk's 40 layers make it the measured generations' own.
+        ch::ModelFacts plain = model_at(m35, "UD-Q3_K_S");
+        plain.layers         = 40;
+        const auto with      = [&](std::vector<ch::MoeStepRoute> routes) {
+            ch::ModelFacts m = plain;
+            m.moe_routes     = [routes](std::uint32_t, ActivationMode) { return routes; };
+            return m;
+        };
+        const ch::ModelFacts measured =
+            with({{ch::ExpertKernel::R8, ch::ExpertKernel::RegisterMma, 1}});
+        const ch::ModelFacts rmma =
+            with({{ch::ExpertKernel::RegisterMma, ch::ExpertKernel::RegisterMma, 1}});
+        const ch::ModelFacts mixed =
+            with({{ch::ExpertKernel::R8, ch::ExpertKernel::RegisterMma, 3},
+                  {ch::ExpertKernel::Unknown, ch::ExpertKernel::Unknown, 1}});
+        for (const std::uint32_t rows : {1U, 2U, 4U, 8U}) {
+            const ch::Speed a    = ch::speed_of(plain, card, q, c, rows, 1536, 0);
+            const ch::Speed b    = ch::speed_of(measured, card, q, c, rows, 1536, 0);
+            const ch::Speed r    = ch::speed_of(rmma, card, q, c, rows, 1536, 0);
+            const ch::Speed x    = ch::speed_of(mixed, card, q, c, rows, 1536, 0);
+            const std::string at = std::string(card_name) + " x" + std::to_string(rows);
+            check(b.decode_per_stream == a.decode_per_stream && b.basis == a.basis,
+                  "MoE step: the measured pair is the price of not asking (" + at + ")");
+            check(std::abs(r.decode_per_stream / a.decode_per_stream - 1) < 1e-12 &&
+                      std::abs(x.decode_per_stream / a.decode_per_stream - 1) < 1e-12,
+                  "MoE step: an unmeasured pair keeps the measured pair's share (" + at + ")");
+            const bool lifted = rows > 1 && a.basis == ch::SpeedBasis::Own;
+            lifts += lifted ? 1 : 0;
+            check(!lifted || (r.basis == ch::SpeedBasis::Transferred &&
+                              x.basis == ch::SpeedBasis::Transferred),
+                  "MoE step: an unmeasured pair past one row is transferred (" + at + ")");
+            check(rows > 1 || (r.basis == a.basis && x.basis == a.basis),
+                  "MoE step: one row reads at kDramEta on every pair (" + at + ")");
+        }
+    }
+    check(lifts >= 3, "MoE step: the Own steps of several rows are the measured pair's alone");
+}
+
 // Contradictory pins say so instead of "nothing fits".
 // An MoE's prefill linears by their tiles (DECISIONS 66): Qwen3.6-35B-A3B UD-Q4_K_M on the RTX 4090,
 // one 1819-token chunk; the census (nsys, no PDL) put the experts at 50.5 ms, the int8 calls beside
@@ -3424,6 +3476,7 @@ int main() {
     contradictory_pins(fixture);
     activations_by_generation(fixture);
     moe_family(fixture);
+    moe_step_reads_the_route(fixture);
     prices_moe_prefill_tiles();
     prices_dense_prefill_tiles();
     prices_prefill_small_kernels();

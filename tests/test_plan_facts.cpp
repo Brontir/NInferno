@@ -234,6 +234,43 @@ int gguf_qwen35() {
     failures += check(pr::plan_facts_of_gguf(file, 999999).model.expert_prefill == rt::ExpertPrefill::Unknown,
                       "a dense model: no route");
 
+    // The routed layers by kind, as the MoE op's route query is asked for them (#616 step 7): two
+    // layers of Q4_K gate and up over a Q6_K down are one kind; a layer whose gate and up are two
+    // formats is a kind with no formats (not read whole); the MTP layer's banks are not the
+    // trunk's.
+    GgufFile kinds = file;
+    for (const int block : {0, 1, 2}) {
+        const std::string b = "blk." + std::to_string(block) + ".";
+        kinds.tensors.push_back(tensor(b + "ffn_gate_exps.weight", {5120, 512, 64},
+                                       ninferno::convert::ggml::Q4_K, 100));
+        kinds.tensors.push_back(tensor(
+            b + "ffn_up_exps.weight", {5120, 512, 64},
+            block == 2 ? ninferno::convert::ggml::IQ3_XXS : ninferno::convert::ggml::Q4_K, 100));
+        kinds.tensors.push_back(tensor(b + "ffn_down_exps.weight", {512, 5120, 64},
+                                       ninferno::convert::ggml::Q6_K, 120));
+    }
+    kinds.tensors.push_back(
+        tensor("blk.64.ffn_down_exps.weight", {512, 5120, 64}, ninferno::convert::ggml::Q6_K, 70));
+    const auto layers = pr::plan_facts_of_gguf(kinds, 999999).model.expert_layers;
+    const auto read = std::find_if(layers.begin(), layers.end(), [](const rt::PlanExpertLayers& l) {
+        return !l.gate_up_format.empty();
+    });
+    const auto unread =
+        std::find_if(layers.begin(), layers.end(),
+                     [](const rt::PlanExpertLayers& l) { return l.gate_up_format.empty(); });
+    failures += check(layers.size() == 2 && read != layers.end() && unread != layers.end(),
+                      "routed layers: two kinds");
+    if (read != layers.end() && unread != layers.end()) {
+        failures += check(read->gate_up_format == "ggml_q4_k" && read->down_format == "ggml_q6_k" &&
+                              !read->gate_up_layout.empty() && !read->down_layout.empty() &&
+                              read->gate_up_k == 5120 && read->down_k == 512 && read->gated &&
+                              read->a8 && read->layers == 2 && read->bytes == 640,
+                          "routed layers: Q4_K gate/up over Q6_K down, two layers");
+        failures +=
+            check(unread->layers == 1 && unread->bytes == 320 && unread->down_format.empty(),
+                  "routed layers: gate and up of two formats are not read whole");
+    }
+
     // The metadata alone (ninferno-ui): FileSize.
     const auto meta = pr::plan_facts_of_gguf_metadata(file.metadata, 16000000000ULL);
     failures += check(meta.model.weight_basis == rt::WeightBasis::FileSize, "metadata basis");

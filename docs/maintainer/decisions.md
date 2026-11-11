@@ -2044,3 +2044,62 @@ Turing board as a transfer, as `kMmqTileCost`'s Turing row and GB20x's `mmq_tile
 row does not meet it. What depends on the board is taken from its facts: the launch mode and the
 fixup follow its SM count and DRAM rate (`launch_of`, `fixup_bytes`); the measured part is the
 unit's cost on the SM (the same TU10x SM on every Turing board).
+
+## 79. The MoE decode step reads the op's route; kMoeRoutedEta keyed by the kernel pair (#616 step 7, 12.11, rule; no new measurement)
+
+**Decision.** The configuration choice's MoE decode step asks the MoE op which kernels its two
+grouped stages run at the step's rows, on the planned board: `moe_route_query`
+(`ops/moe/moe_route_query.h`) is `moe()`'s own decision as a pure query (the cascade of
+`moe_plan_query`: the route tables, the class's A8 route, the R8 token limits; and Volta's split
+of a wide call, now one function, `moe_split_tokens`, that `moe()` calls too) over descriptor
+banks on the board's class. The plan facts keep the trunk's routed layers by kind
+(`PlanModelFacts::expert_layers`: each bank's format, stored layout and K); the engine registers
+the query for the plan (`runtime::register_plan_moe_route_query`, as it registers the workspace
+queries); `product::with_moe_routes` asks it per kind and rows and hands the choice the routed
+bytes by kernel pair (`ModelFacts::moe_routes`). `kMoeRoutedEta`'s rows are keyed by the pair their
+steps ran: R8 on the gate/up bank over the register MMA on the down bank. A step whose layers the op
+runs on another pair takes its generation's measured pair's share, transferred past one row; one
+row reads at kDramEta whatever the pair (as before).
+
+**Why not a share per kernel kind.** Every MoE step row of `speed_measured.json` ran one pair: the
+query's answer for those layers at 2-8 rows on the RTX 4090, 4060 Ti, 5070 Ti and 5090 (plan
+goldens, `decode-r8`; the 5070 Ti's IQ2_S layers of UD-IQ3_XXS take the gb206 table's R8 gate/up
+over the register-MMA down from T = 2; UD-Q3_K_S's bank formats are not in the repository, only
+its bytes). So the rows give no second pair to tell apart, and within the one pair the share still
+falls with the rows (Ada 0.926 / 0.909 / 0.803, Blackwell 0.918 / 0.740 / 0.634 at 2 / 4 / 8): the
+kernel kind does not replace the rows key, it is added to it. The register-MMA pair (both stages:
+the op's route above the R8 limit, for FP4-element banks from five rows, and under --activations
+exact) would need a step measured on it: gpt-oss-20b's MXFP4 steps at 5-8 rows are that pair, but
+their windows are not on disk (DECISIONS 65 keeps only "3-26 % slow"), and their expert reads are
+ten times Qwen3.6's, so a share read off them would mix the kernel with the read size. The stage
+price (`price_moe_stage`, step 4) has no compute term for R8 (dp4a issue), so a calibration per
+kind against it is not derivable either. No value is set for a pair no step measured.
+
+**What it changes.** No speed estimate moves (every pair takes the measured pair's share); the
+basis does where the op runs another pair past one row: on Ada and Blackwell, gpt-oss's MXFP4
+banks at 2 rows on the RTX 4090 and 4060 Ti (their route-table band: R8 on both stages) and from 5
+rows (the register MMA on both), any MoE above 8 rows, the IQ2_S layers the tables put on R8 on both stages at 2-4
+rows, every MoE under --activations exact; elsewhere the estimate was transferred already.
+`ninferno-serve --plan --no-load --json` on five local MoE GGUFs (gpt-oss-20b Q4_K_M, Qwen3.6
+35B-A3B MXFP4_MOE and UD-IQ2_XXS, Gemma 4 26B-A4B UD-IQ2_M, Nemotron 3.5 Lightning UD-Q4_K_XL)
+on the RTX 4090, 5090, 5070 Ti, 3090 and 4060 Ti at 1, 2, 4, 6 and 8 streams, before and after: 125
+plans, 64 with a choice, one changed: gpt-oss-20b on the RTX 4090 at 2 streams, its estimate
+Transferred (was Own), resolution 0.5447 (was 0.0226, no longer deciding); its choice (FP8 KV,
+fast activations) and its estimate (228.6 tok/s a stream) the same.
+
+**Verification.** `ninferno_moe_plan_golden_test`: the query equals the cascade (plan, authority,
+stage kernels, evidence kind, the call moe() runs) at every board, layer, policy, profile and width
+of the goldens, on its own descriptors. `ninferno_choice_test`: MoE decode 33 points rms 4.48 %,
+worst 13.5 %; the long steps 22 points rms 4.85 %, worst 13.2 % (the same numbers: an unasked step
+and one on the measured pair price alike, `moe_step_reads_the_route`). The RTX 5090's UD-Q4_K_M
+long steps at 4 and 8 rows (-11, -13 %) run the measured pair (R8 on the Q4_K / Q5_K gate/up over
+the register-MMA down there): the kernel pair does not explain them; Blackwell's share, read on
+IQ3_XXS and Q3_K banks only, stays the open cause. `ninferno_plan_dry_run_test`: gpt-oss's MXFP4
+banks on the RTX 4090 through the registered query: R8 gate/up over the register-MMA down at four
+rows, the register MMA on both stages at eight, the invariant profile's under exact activations.
+
+**Open.** A step on the register-MMA pair (gpt-oss-20b, or Qwen3.6 at 16 rows) on two cards of a
+generation would give that pair its own share; the gpt-oss step rows as regression rows once their
+windows are re-measured; ninferno-ui links no Ops and does not register the query (its plans keep
+the measured pair, as before); a hub row priced from another quantization's header has no layers
+of its own (the measured pair, as before).

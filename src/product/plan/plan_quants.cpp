@@ -758,6 +758,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         // The speed of a typical request at the storages this row's plan serves with.
         const PlanSourceFacts facts = row_facts(shape, row);
         choice::ModelFacts model     = choice_model_of(facts);
+        with_moe_routes(model, facts, inputs.device);
         const choice::CardFacts card = choice_card_of(inputs.gpu);
         // The quantization as the choice prices it (product::quant_option_of: one rule for a
         // hub row, the CLI's plan and a start's artifact).

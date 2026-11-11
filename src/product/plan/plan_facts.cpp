@@ -16,6 +16,7 @@
 #include "core/ggml_frag.h"
 #include "core/machine_facts.h"
 #include "core/moe_w4a8_blocks.h"
+#include "core/weight_view.h"
 #include "spec/pairs.h"
 
 #include <cuda_runtime.h>
@@ -501,10 +502,14 @@ std::string format_of_ggml(std::uint32_t type) {
 // register MMA; a layer of MXFP4 banks is its own route for its banks in whole blocks (the same
 // rule), A16 for the others. The trunk takes the route of the most of its banks' bytes. The banks'
 // 16-bit and float tensors (biases) do not decide.
+// It also keeps each layer's banks as stored (`layers`, #616 step 7): the gate/up bank's format,
+// layout and K, the down bank's, for the MoE op's route query (runtime::PlanExpertLayers).
 class ExpertRoutes {
 public:
-    void add(const std::string& layer, const std::string& format, const std::string& layout,
-             std::uint64_t k, std::uint64_t x_width, std::uint64_t bytes) {
+    // `down`: the layer's down bank (else its gate, up or fused gate/up bank).
+    void add(const std::string& layer, bool down, const std::string& format,
+             const std::string& layout, std::uint64_t k, std::uint64_t x_width,
+             std::uint64_t bytes) {
         if (format == "bf16" || format == "fp32" || format == "fp16" || format == "int32") { return; }
         Layer& l = layers_[layer];
         l.bytes += bytes;
@@ -514,6 +519,20 @@ public:
                 layout.empty() ? convert::expert_bank_layout(q, k, convert::ExpertLayout::Auto,
                                                              ggml_published_layout(q))
                                : artifact::parse_layout(layout);
+            // The bank as stored: a GGUF's ggml block bank in the layout above, any other format
+            // in the converter's (MXFP4's block scales, Q8_0 as q8_g32_fp16); a gate and an up bank
+            // of one layer are one gate/up bank only where they agree.
+            Bank& b = down ? l.down : l.gate_up;
+            const QuantLayout kept =
+                !layout.empty() || is_ggml_block(q) ? at : default_weight_layout(q);
+            const std::string stored = std::string(artifact::layout_name(kept));
+            if (b.seen && (b.format != format || b.layout != stored || b.k != k)) {
+                b.whole = false;
+            }
+            b.seen           = true;
+            b.format         = format;
+            b.layout         = stored;
+            b.k              = k;
             const bool frag = at == QuantLayout::GgmlFrag;
             l.mxfp4 = l.mxfp4 && q == QType::MXFP4;
             const bool a8 = convert::kept_block_policy(q) == artifact::ActivationPolicy::AllowA8;
@@ -550,11 +569,48 @@ public:
                              : runtime::ExpertPrefill::Unknown;
     }
 
+    // The layers by kind (runtime::PlanExpertLayers), `gated` the model's; a layer whose banks are
+    // not read whole (a format not parsed, a bank missing, gate and up of two formats) is one kind
+    // with empty formats.
+    [[nodiscard]] std::vector<runtime::PlanExpertLayers> layers(bool gated) const {
+        std::vector<runtime::PlanExpertLayers> out;
+        for (const auto& [name, l] : layers_) {
+            runtime::PlanExpertLayers kind;
+            kind.gated = gated;
+            if (l.known && l.gate_up.seen && l.down.seen && l.gate_up.whole && l.down.whole) {
+                kind.gate_up_format = l.gate_up.format;
+                kind.gate_up_layout = l.gate_up.layout;
+                kind.gate_up_k      = l.gate_up.k;
+                kind.down_format    = l.down.format;
+                kind.down_layout    = l.down.layout;
+                kind.down_k         = l.down.k;
+                kind.a8             = l.a8;
+            }
+            const auto same = [&](const runtime::PlanExpertLayers& o) {
+                return o.gate_up_format == kind.gate_up_format &&
+                       o.gate_up_layout == kind.gate_up_layout && o.gate_up_k == kind.gate_up_k &&
+                       o.down_format == kind.down_format && o.down_layout == kind.down_layout &&
+                       o.down_k == kind.down_k && o.a8 == kind.a8;
+            };
+            auto it = std::find_if(out.begin(), out.end(), same);
+            if (it == out.end()) { it = out.insert(out.end(), kind); }
+            it->layers += 1;
+            it->bytes += l.bytes;
+        }
+        return out;
+    }
+
 private:
+    struct Bank {
+        std::string format, layout;
+        std::uint64_t k = 0;
+        bool seen = false, whole = true;
+    };
     struct Layer {
         std::uint64_t bytes = 0, int8_bytes = 0;
         std::uint64_t mxfp4_bytes = 0; // of an MXFP4 layer: its banks in whole blocks
         bool known = true, mxfp4 = true, a8 = true;
+        Bank gate_up, down;
     };
     std::map<std::string, Layer> layers_;
 };
@@ -1047,7 +1103,7 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
             if (!mtp && !t.ne.empty()) {
                 // A gate or up bank reads x at the hidden width; a down bank its own K.
                 const bool down = t.name.find("ffn_down_exps.") != std::string::npos;
-                expert_routes.add(std::to_string(*block), format_of_ggml(t.type), "", t.ne[0],
+                expert_routes.add(std::to_string(*block), down, format_of_ggml(t.type), "", t.ne[0],
                                   down ? t.ne[0] : g.hidden, t.bytes);
             }
             // The banks' weights only: a bank's per-expert scale (Gemma 4's ffn_down_exps.scale,
@@ -1112,6 +1168,8 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     out.model.token_table_bytes = embedding_bytes;
     out.model.routed_expert_bytes     = whole ? routed : 0;
     out.model.expert_prefill          = expert_routes.route();
+    // A split part's table lists its own layers only.
+    if (whole) { out.model.expert_layers = expert_routes.layers(g.ffn_matrices != 2); }
     out.model.mtp_routed_expert_bytes = whole ? mtp_routed : 0;
     out.model.gguf_data_offset = head.data_offset;
     // A split part's table lists its own tensors only: the elements of the whole are not known.
@@ -1315,7 +1373,7 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
             routed_bytes += tensor->bytes;
             if (!tensor->shape.empty()) {
                 const std::uint64_t k = tensor->shape.back();
-                expert_routes.add(*routed[i], tensor->format, tensor->layout, k,
+                expert_routes.add(*routed[i], reads_x[i] == 0, tensor->format, tensor->layout, k,
                                   reads_x[i] ? hidden : k, tensor->bytes);
             }
         }
@@ -1329,13 +1387,14 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
             elements += n;
         }
     }
-    auto out =
-        finish(geometry_of_config(text->second.config), bytes, runtime::WeightBasis::Artifact);
+    const auto artifact_geometry = geometry_of_config(text->second.config);
+    auto out                     = finish(artifact_geometry, bytes, runtime::WeightBasis::Artifact);
     out.model.vision_bytes      = vision_bytes;
     out.model.mtp_bytes         = mtp_bytes;
     out.model.own_drafter_bytes = drafter_bytes;
     out.model.routed_expert_bytes = routed_bytes;
     out.model.expert_prefill      = expert_routes.route();
+    out.model.expert_layers       = expert_routes.layers(artifact_geometry.ffn_matrices != 2);
     out.shape.input_table_bytes = input_table_bytes;
     out.model.weight_elements   = elements;
     // The source quantization the converter recorded (a GGUF file name's label), where the
@@ -1414,6 +1473,7 @@ PlanSourceFacts with_weights(PlanSourceFacts facts, std::uint64_t bytes,
         facts.shape.layer_formats.clear();
         facts.shape.rest_layer_formats.clear();
         facts.model.expert_prefill = runtime::ExpertPrefill::Unknown;
+        facts.model.expert_layers.clear();
     }
     facts.model.weight_bytes      = bytes;
     facts.model.weight_basis      = basis;

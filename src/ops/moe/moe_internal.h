@@ -293,6 +293,12 @@ struct MoePlan {
 // tuner, benches and tests); the explicit route's workspace need.
 [[nodiscard]] MoePlan select_plan(const MoeWeights& weights, const MoeConfig& config,
                                   std::int32_t tokens, bool prefill);
+// The width of the calls moe() runs a call of `tokens` as, 0 where it runs whole: on a build
+// without tensor mma.sync (Volta's), a call wider than the gate/up bank's R8 limit and below the
+// prefill band, outside the prefill and invariant profiles (the thread's), whose R8-wide call takes
+// R8, runs as calls of at most that limit, each on its own plan. moe() and moe_route_query read it.
+[[nodiscard]] std::int32_t moe_split_tokens(const MoeWeights& weights, const MoeConfig& config,
+                                            std::int32_t tokens);
 void moe_with_plan(const Tensor& x, const MoeWeights& weights, const MoeConfig& config,
                    MoeEpilogue epilogue, Tensor& out, WorkspaceArena& workspace,
                    cudaStream_t stream, const MoePlan& plan, const Tensor* router_input = nullptr);

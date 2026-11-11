@@ -4,7 +4,10 @@
 // family table agrees with the Engine's, ninferno-ui's launch options are ninferno-serve's, and
 // the speculation report follows the start's order. CPU, no network, no GPU.
 
+#include "artifact/formats.h"
 #include "convert/drafters.h"
+#include "core/device_class.h"
+#include "core/weight_view.h"
 #include "product/plan/plan_cached.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_facts.h"
@@ -13,6 +16,7 @@
 #include "runtime/engine/family_registry.h"
 #include "runtime/engine/kv_capacity.h"
 #include "runtime/engine/plan_dry_run.h"
+#include "runtime/engine/plan_moe_routes.h"
 #include "runtime/engine/quant_rule.h"
 #include "runtime/engine/plan_ladder.h"
 #include "serve/generation_service.h"
@@ -2116,6 +2120,72 @@ void test_plan_now() {
           "the start's own context counted");
 }
 
+// The MoE step's routes on a planned board (#616 step 7): the registered query is the op's own
+// (ops/moe moe_route_query on the board's class), asked per routed kind and rows, the answers by
+// the kinds' bytes. gpt-oss-20b's MXFP4 banks (E32 k4 H2880 F2880) on the RTX 4090: R8 on the
+// gate/up over the register-MMA down at four rows, both stages on the register MMA from five
+// (the FP4-element banks keep R8 to four tokens: moe.cpp r8_fp4_elements), and the invariant
+// profile's register MMA under --activations exact; a kind not read whole has no answer.
+void test_moe_routes() {
+    rt::register_plan_moe_route_query();
+    pr::PlanSourceFacts f;
+    f.model.experts              = 32;
+    f.model.experts_used         = 4;
+    f.model.hidden               = 2880;
+    f.shape.experts              = 32;
+    f.shape.experts_per_token    = 4;
+    f.shape.routed_expert_params = 19e9;
+    f.model.params               = 21e9;
+    const std::string mx_layout  = std::string(
+        ninferno::artifact::layout_name(ninferno::default_weight_layout(ninferno::QType::MXFP4)));
+    rt::PlanExpertLayers mx;
+    mx.gate_up_format = mx.down_format = "mxfp4";
+    mx.gate_up_layout = mx.down_layout = mx_layout;
+    mx.gate_up_k = mx.down_k = 2880;
+    mx.a8                    = true;
+    mx.layers                = 24;
+    mx.bytes                 = 3000;
+    rt::PlanExpertLayers unread;
+    unread.layers         = 1;
+    unread.bytes          = 1000;
+    f.model.expert_layers = {mx, unread};
+    rt::PlanDeviceFacts device;
+    device.name                                 = "RTX 4090";
+    device.compute_capability                   = 89;
+    device.pci_device_id                        = 0x2684;
+    device.sms                                  = 128;
+    device.total_bytes                          = 24 * kGiB;
+    ninferno::product::choice::ModelFacts model = pr::choice_model_of(f);
+    pr::with_moe_routes(model, f, device);
+    check(static_cast<bool>(model.moe_routes), "MoE routes: asked where a query is registered");
+    if (model.moe_routes) {
+        using K        = ninferno::product::choice::ExpertKernel;
+        const auto has = [&](std::uint32_t rows, ninferno::ActivationMode a, K gate_up, K down,
+                             double share) {
+            for (const auto& r : model.moe_routes(rows, a)) {
+                if (r.gate_up == gate_up && r.down == down && r.share == share) { return true; }
+            }
+            return false;
+        };
+        const auto fast  = ninferno::ActivationMode::Fast;
+        const auto exact = ninferno::ActivationMode::Exact;
+        check(has(4, fast, K::Unknown, K::Unknown, 1000), "MoE routes: a kind not read whole");
+        // A build without tensor mma.sync (Volta's) runs other kernels (moe_split_tokens).
+        if (ninferno::build_features().mma_tensor) {
+            check(has(4, fast, K::R8, K::RegisterMma, 3000),
+                  "MoE routes: MXFP4 at four rows, R8 on the gate/up");
+            check(has(8, fast, K::RegisterMma, K::RegisterMma, 3000),
+                  "MoE routes: MXFP4 at eight rows, the register MMA");
+            check(has(2, exact, K::RegisterMma, K::RegisterMma, 3000),
+                  "MoE routes: exact activations, the invariant profile");
+        }
+    }
+    rt::set_plan_moe_route_query({});
+    ninferno::product::choice::ModelFacts unasked = pr::choice_model_of(f);
+    pr::with_moe_routes(unasked, f, device);
+    check(!unasked.moe_routes, "MoE routes: not asked without a query");
+}
+
 int main() {
     // The plan's mechanics on the published profiles: the registry without the lab's measured
     // pairs (test_spec_pairs tests those), so a campaign's new pairs move none of these checks
@@ -2144,6 +2214,7 @@ int main() {
     test_cached_quants();
     test_kv_options();
     test_plan_now();
+    test_moe_routes();
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;
