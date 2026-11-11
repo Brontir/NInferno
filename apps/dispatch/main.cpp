@@ -290,6 +290,12 @@ int run(const fs::path& engine, char** argv) {
 
 } // namespace
 
+// --help or -h for the engine's own options, which it answers before it touches a GPU; not inside a
+// subcommand (route-tune, spec-tune ...), which reads its own arguments and then the device.
+static bool engine_help_requested(int argc, char** argv) {
+    return argc >= 2 && argv[1][0] == '-' && ninferno::help_requested(argc, argv);
+}
+
 int main(int argc, char** argv) {
     const fs::path self = ninferno::sys::self_exe();
     if (self.empty()) {
@@ -322,7 +328,7 @@ int main(int argc, char** argv) {
             gpus[static_cast<std::size_t>(device)].cc != 0) {
             engine = choose(engines, gpus[static_cast<std::size_t>(device)].cc);
             // --help needs no GPU: on one this release does not support it still shows the help.
-            if (!engine && !ninferno::help_requested(argc, argv)) {
+            if (!engine && !engine_help_requested(argc, argv)) {
                 std::cerr << program << ": GPU " << device << " (" << gpus[static_cast<std::size_t>(device)].name
                           << ", sm_" << gpus[static_cast<std::size_t>(device)].cc
                           << ") is older than this release supports (engines: " << engines_text(engines) << ")\n";
@@ -335,7 +341,7 @@ int main(int argc, char** argv) {
     // (minutes) and keeps them in its cache, whose default 256 MiB an engine outgrows; without
     // room every start compiles again. The user's own setting stays. --help compiles nothing (and
     // may run here on a GPU older than every engine): no note.
-    if (engine->ptx && have_driver && !ninferno::help_requested(argc, argv)) {
+    if (engine->ptx && have_driver && !engine_help_requested(argc, argv)) {
         const auto gpus  = driver.gpus();
         const int device = device_argument(argc, argv, gpus);
         if (device >= 0 && device < static_cast<int>(gpus.size()) &&
