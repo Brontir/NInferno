@@ -1701,6 +1701,42 @@ Q6_K (the Q4_0 and IQ decodes give other fixed shares: they keep the fewest tile
 on the W4A8 tiles, not this kernel, which steps the same way (RTX 5060 Ti 104 -> 107 ms from 144 to
 256 tokens): its 64 x 64 against 128 x 64 tile steps need their own grid.
 
+**Turing, predicted, to verify (#524).** RTX 2080 Ti (sm_75, 68 SMs, 64 KiB of shared memory): f 0.20,
+best range 0.15-0.25. This is an assumption, not a derivation: 0.20 is a value measured on other cards,
+assumed for Turing because its int8 tensor rate per SM is theirs (2048 ops a clock, `s8` 2048 on both
+rows) and the K-quant decode runs on the same 64 int32 lanes. The measured ones split two against two:
+RTX 3090 and RTX 4070 Ti are best at 0.15-0.20 (0.28 and 0.07 pp less regret than at 0.25-0.30), RTX
+3060 and RTX 4090 are best at 0.25-0.30 (0.21 and 0.17 pp less than at 0.15-0.20), so the neighbouring
+buckets around 0.20 differ by 0.07-0.28 pp of mean regret and the regret of one visit cannot separate
+them. The two facts do not fix f either: GB20x has the same `s8` and the same Q4_K / Q6_K tile
+configuration and was best at 0.10 alone (0.06 % against 0.31 % at 0.05 and 0.45 % at 0.15-0.20). The
+grid therefore MEASURES f: a least-squares fit of the work law, T = C_N + a x tiles x (1 - J / 128) +
+b x tiles x J / 128 with one constant per size, over all its cells gives f = a / b with a bootstrap
+interval over the width runs (every width is measured twice, 16..128 then 128..16, so a drift in time
+does not line up with J), printed beside the predicted range 0.15-0.25: an interval wholly outside it
+refutes 0.20, wholly inside it stands, across an edge it is undecided, and a lack-of-fit ratio (the
+residual, after one fitted offset per server run that takes the drift between the runs, against the
+cells' own request noise) above 3 means the law does not describe the card and gives no verdict on f.
+These criteria are fixed in the kit's header before the run (`tools/bench/mmq_width_grid.py`,
+`CRITERIA`). The regret per bucket of the table of picks is printed
+as a report only: on the kit's own sizes it cannot tell 0.10 from 0.30, and the regret is taken
+against the six widths the table picks from (J 48 and J 112 are measured too, and shown apart: they
+win some sizes by padding whatever f is). Turing holds one block per SM at every width where
+sm_86's 100 KiB holds two up to J 64 (shared memory only; registers per thread are not checked),
+which can raise the fixed share of the narrow tiles. The Q4_K / Q6_K tile is 42 048 B (J 16) to
+57 856 B (J 128), 38 912 B of weight rows plus the y tile and ids (`tile_shared_bytes`; the J 128
+values are pinned in `tests/test_choice.cpp`): all eight widths fit 64 KiB (Q2_K's 128-column tile,
+70 144 B, does not: `widest_tile` 64, it keeps the fewest tiles). On 68 SMs a 4096-row product (32 row
+tiles) with two column tiles is 64 CTAs, 94 % of one wave, for 2 x 128 and for 2 x 80 / 96 alike, so
+at 129..192 columns the saving is padding, not waves. The grid's sizes are prompt tokens and the
+kernel sees tokens - k columns (k assumed 7, to be measured by the kit's `kprobe`); the older grids'
+N were columns. The predicted A/B below is in columns, the bracket of the measured cards, not a
+derivation: 144..160 columns -14..-19 %, 176..192 -9..-13 %, 208..256 within 0.5 %. The A/B's new arm
+does not move the host cost model: route choice stays on the production table. The Turing row keeps
+the fewest tiles until `tools/bench/run_524_turing_grid.sh` (forced-width grid, then the A/B; the
+widths come from a bench-only patch that is never merged into the kernel) has run on an RTX 2080 Ti
+and the grid agrees. Nothing is changed by this note.
+
 ## 75. Inside the speed estimate's resolution the more accurate candidate wins (#301, 09.11, rule; not yet run on the stands)
 
 **Decision.** `choose()` finds the best worth (the anchor). A candidate whose request time on the

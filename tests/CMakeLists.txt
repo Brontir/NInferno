@@ -92,6 +92,9 @@ add_test(NAME ninferno_selection_regret_test
 # tools/bench/regret_collect.py: route sweeps and the production selection into its input, no GPU.
 add_test(NAME ninferno_regret_collect_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_regret_collect.py)
+# tools/bench/mmq_width_grid.py (#524): the measurement against a fake server, the grid and A/B readers' refusals, no GPU.
+add_test(NAME ninferno_mmq_width_grid_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_mmq_width_grid.py)
 # tools/kernel_facts/sass_counts.py and the loop columns of kernel_facts.py (#613): the K loop
 # found from a small SASS text's control flow, its counts, the snapshot round trip and the check's
 # verdicts. No GPU, no CUDA toolkit.
