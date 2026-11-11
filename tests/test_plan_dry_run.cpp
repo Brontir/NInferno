@@ -1521,6 +1521,11 @@ std::string b1_signature(const pr::PlanSourceFacts& facts, const pr::DryRunInput
             << ninferno::kv_cache_storage_name(c.ring) << " state "
             << ninferno::recurrent_state_storage_name(c.state) << " act "
             << static_cast<int>(c.activations) << " chunk " << c.chunk << " drafter " << c.drafter;
+        // Which gate decided each axis: a fact reaching a gate shows here even where the default
+        // equals the worth or speed winner.
+        out << " by_worth " << served->choice.by_worth << " chunk_by_speed "
+            << served->choice.chunk_by_speed << " drafter_by_worth "
+            << served->choice.drafter_by_worth;
         // What the decision priced, bit for bit (hex floats): on the reference card, not the board.
         out << std::hexfloat << " resolution " << served->choice.resolution;
         for (const auto& s : served->choice.scored) {
