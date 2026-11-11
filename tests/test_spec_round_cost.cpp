@@ -319,6 +319,204 @@ int main() {
             }
         }
     }
+    // The joint verify's price in a profile at home (#303): two Ada lab cards that choose alike
+    // give the profile R_1 / R_C of its choice at every depth up to it and every priced stream
+    // count, the round cost's own (load_gain at a gain of 1) on the lab board's rates. A priced
+    // scale is what a plan's estimate multiplies the one-request gain by.
+    {
+        // The registry's rows carry kernel counts, which add the launch term (the block below);
+        // without them the scale is the round cost's own ratio.
+        auto lab = pair_of(kQ9, "ad104:60sm");
+        for (auto& m : lab.tune.measurements) { m.graph_kernels = m.graph_rounds = 0; }
+        // A measured configuration no choice names and too slow to be one (the shallowest MTP row,
+        // which the round cost prices, with the other draft head, at ten times its decode time):
+        // a reselection can still name it, so it is priced too.
+        {
+            const sp::Measurement* shallowest = nullptr;
+            for (const auto& m : lab.tune.measurements) {
+                if (m.config.mode == sp::Mode::Mtp &&
+                    (!shallowest || m.config.k < shallowest->config.k)) {
+                    shallowest = &m;
+                }
+            }
+            expect(shallowest != nullptr, "the pair measured MTP");
+            if (shallowest) {
+                sp::Measurement slow      = *shallowest;
+                slow.config.proposal_head = !slow.config.proposal_head;
+                slow.seconds *= 10;
+                lab.tune.measurements.push_back(slow);
+            }
+        }
+        auto second         = lab; // the same measurement on a second Ada card
+        second.tune.key.gpu = "ad102:128sm";
+        const auto home     = sp::profile_for_target({&lab, &second}, "sm89");
+        const double kappa  = sp::card_rates_of_board(lab.lab_board).kappa();
+        expect(!home.joint_scale.empty(), "a home profile prices its joint verify");
+        const auto direct_at = [&](const sp::SpecConfig& at, std::int32_t streams) {
+            return sp::load_gain(*lab.round_facts, at, kappa, 1.0, streams,
+                                 at.proposal_head ? lab.tune.proposal_rows : sp::ProposalRows{});
+        };
+        // Every priced entry is load_gain's.
+        int compared = 0;
+        for (const auto& [label, by_streams] : home.joint_scale) {
+            const auto at = sp::SpecConfig::parse(label);
+            for (const auto& [streams, scale] : by_streams) {
+                const auto direct = direct_at(at, streams);
+                expect(direct && near(scale, *direct, 1e-12) && scale > 0 && std::isfinite(scale),
+                       "the joint scale is load_gain's at " + label + " x" +
+                           std::to_string(streams));
+                ++compared;
+            }
+        }
+        // And every depth up to the non-thinking choice (mtp:3+head on this pair) is priced
+        // wherever the round cost prices it.
+        const sp::SpecConfig chosen = home.non_thinking.config;
+        expect(chosen.enabled() && chosen.mode == sp::Mode::Mtp,
+               "the non-thinking choice drafts with MTP on this pair");
+        for (std::int32_t k = 1; k <= chosen.k; ++k) {
+            sp::SpecConfig at = chosen;
+            at.k              = k;
+            const auto found  = home.joint_scale.find(at.label());
+            for (std::int32_t streams = 2; streams <= sp::kPricedVerifyRows; ++streams) {
+                const bool listed =
+                    found != home.joint_scale.end() && found->second.contains(streams);
+                expect(listed == direct_at(at, streams).has_value(),
+                       "priced exactly where the round cost prices " + at.label() + " x" +
+                           std::to_string(streams));
+            }
+        }
+        expect(compared > 0, "the joint scale was compared with load_gain");
+        // Not only the choices: every measured configuration is priced (a reselection, the plan's
+        // per-mode drafter axis or an engine that runs only the served choices, picks among them).
+        std::set<std::string> by_choice; // what pricing the choices' depths alone would cover
+        for (const sp::Choice* c : {&home.overall, &home.thinking, &home.non_thinking}) {
+            for (std::int32_t k = 1; c->config.enabled() && k <= c->config.k; ++k) {
+                sp::SpecConfig at = c->config;
+                at.k              = k;
+                by_choice.insert(at.label());
+            }
+        }
+        int unchosen = 0;
+        for (const auto& m : home.measurements) {
+            if (!m.config.enabled()) { continue; }
+            if (!by_choice.contains(m.config.label()) && direct_at(m.config, 2)) { ++unchosen; }
+            const auto found = home.joint_scale.find(m.config.label());
+            expect((found != home.joint_scale.end() && found->second.contains(2)) ==
+                       direct_at(m.config, 2).has_value(),
+                   "a measured configuration is priced where the round cost prices it: " +
+                       m.config.label());
+        }
+        expect(unchosen > 0, "the pair has a measured configuration that no choice names");
+        // One card of the generation is no home (the portable choice): the joint verify is
+        // priced only for a profile at home.
+        expect(sp::profile_for_target({&lab}, "sm89").joint_scale.empty(),
+               "a profile that is not at home prices no joint verify");
+    }
+    // Under the generation median the profile is selected on the record that measured the most
+    // configurations, which may be another card's. A card with a lab record of its own takes the
+    // joint verify's price on its own board's rates: here an RTX 4090 asks, its record measured
+    // one configuration fewer than the RTX 4070 Ti's, and every priced entry is load_gain's at
+    // the RTX 4090's rates, not the RTX 4070 Ti's.
+    {
+        auto wide = pair_of(kQ9, "ad104:60sm");
+        for (auto& m : wide.tune.measurements) { m.graph_kernels = m.graph_rounds = 0; }
+        auto own         = wide;
+        own.tune.key.gpu = "ad102:128sm";
+        own.lab_board    = 0x2684;
+        // A measured configuration no choice runs (the deepest such): without it the own record
+        // covers one configuration fewer, so the profile is selected on the other card's record.
+        const auto both = sp::profile_for_target({&wide, &own}, "sm89");
+        const auto runs = [&](const sp::SpecConfig& c) {
+            return c == both.overall.config || c == both.thinking.config ||
+                   c == both.non_thinking.config ||
+                   (both.fit_fallback && c == both.fit_fallback->config);
+        };
+        std::optional<sp::SpecConfig> dropped;
+        for (const auto& m : own.tune.measurements) {
+            if (m.config.enabled() && m.rounds > 0 && !runs(m.config) &&
+                (!dropped || m.config.k > dropped->k)) {
+                dropped = m.config;
+            }
+        }
+        expect(dropped.has_value(), "the pair measured a configuration no choice runs");
+        if (dropped) {
+            std::erase_if(own.tune.measurements,
+                          [&](const sp::Measurement& m) { return m.config == *dropped; });
+        }
+        const sp::GpuKey rtx4090 = card("ad102:128sm", "ad102", "sm89", 89, 128, 2520, 1008);
+        const auto asked         = sp::profile_for_target({&wide, &own}, "sm89", {}, &rtx4090);
+        const double kappa_own   = sp::card_rates_of_board(own.lab_board).kappa();
+        const double kappa_wide  = sp::card_rates_of_board(wide.lab_board).kappa();
+        expect(kappa_own > 0 && kappa_wide > 0 && !near(kappa_own, kappa_wide, 0.01),
+               "the two boards' rates differ");
+        expect(asked.non_thinking.config == both.non_thinking.config &&
+                   asked.thinking.config == both.thinking.config &&
+                   asked.overall.config == both.overall.config && !asked.joint_scale.empty(),
+               "the median keeps the cards' choice and prices its joint verify");
+        const auto at_kappa = [&](const sp::SpecConfig& at, std::int32_t streams, double kappa) {
+            return sp::load_gain(*own.round_facts, at, kappa, 1.0, streams,
+                                 at.proposal_head ? own.tune.proposal_rows : sp::ProposalRows{});
+        };
+        int compared = 0, apart = 0;
+        for (const auto& [label, by_streams] : asked.joint_scale) {
+            const auto at = sp::SpecConfig::parse(label);
+            for (const auto& [streams, scale] : by_streams) {
+                const auto here  = at_kappa(at, streams, kappa_own);
+                const auto there = at_kappa(at, streams, kappa_wide);
+                expect(here && near(scale, *here, 1e-12),
+                       "the joint scale is priced on the asking card's own board at " + label +
+                           " x" + std::to_string(streams));
+                if (there && !near(scale, *there, 1e-9)) { ++apart; }
+                ++compared;
+            }
+        }
+        expect(compared > 0 && apart == compared,
+               "every entry of the own board's price differs from the other record's board's");
+        // No card named: the record the profile was selected on prices it, as before.
+        const auto unnamed = sp::profile_for_target({&wide, &own}, "sm89");
+        bool on_base       = !unnamed.joint_scale.empty();
+        for (const auto& [label, by_streams] : unnamed.joint_scale) {
+            const auto at = sp::SpecConfig::parse(label);
+            for (const auto& [streams, scale] : by_streams) {
+                const auto there = at_kappa(at, streams, kappa_wide);
+                on_base          = on_base && there && near(scale, *there, 1e-12);
+            }
+        }
+        expect(on_base, "with no card named the selected record's board prices the joint verify");
+        // An own record that cannot price prices nothing: without its facts, or without a board
+        // the rates are known for, the profile carries no price, not the other record's board's.
+        auto no_facts = own;
+        no_facts.round_facts.reset();
+        expect(sp::profile_for_target({&wide, &no_facts}, "sm89", {}, &rtx4090).joint_scale.empty(),
+               "an own record without facts prices no joint verify");
+        auto no_board      = own;
+        no_board.lab_board = 0;
+        expect(sp::profile_for_target({&wide, &no_board}, "sm89", {}, &rtx4090).joint_scale.empty(),
+               "an own record without a board prices no joint verify");
+        // The own record's launch counts are in its price too: with them kept (the other record's
+        // stay zeroed) an entry is priced apart from the same entry without them.
+        auto counted         = pair_of(kQ9, "ad104:60sm");
+        counted.tune.key.gpu = own.tune.key.gpu;
+        counted.lab_board    = own.lab_board;
+        if (dropped) {
+            std::erase_if(counted.tune.measurements,
+                          [&](const sp::Measurement& m) { return m.config == *dropped; });
+        }
+        const auto with_counts = sp::profile_for_target({&wide, &counted}, "sm89", {}, &rtx4090);
+        int shared = 0, moved = 0;
+        for (const auto& [label, by_streams] : asked.joint_scale) {
+            const auto other = with_counts.joint_scale.find(label);
+            if (other == with_counts.joint_scale.end()) { continue; }
+            for (const auto& [streams, scale] : by_streams) {
+                const auto at = other->second.find(streams);
+                if (at == other->second.end()) { continue; }
+                ++shared;
+                if (!near(scale, at->second, 1e-9)) { ++moved; }
+            }
+        }
+        expect(with_counts.overall.config == asked.overall.config && shared > 0 && moved > 0,
+               "the own record's launch counts are in the joint verify's price");
+    }
     // The draft head over the rows an artifact's proposal head carries (#205: MTP reads its own
     // 57,344-row prefix of the 147,456 rows it read before, Qwen3.5-9B Q4_K_M, Q6_K head). The
     // rounds/s gain R(147,456) / R(57,344) - 1 against hard50's on the RTX 4060 Ti:
@@ -420,6 +618,108 @@ int main() {
                                [&](const auto& m) { return m.family != first; }) &&
                        a.known && b.known && near(a.cost.at(mtp3), b.cost.at(mtp3), 1e-12),
                    "launch counts average over the sections, not their rounds");
+        }
+        // price_joint's launch path (#303): with the lab's kernel counts, the joint scale is
+        // load_gain's with the same launch term on R_1 and R_C, (verify_C + draft_C + L n_round) /
+        // (plain_C + L n_step) over the one-stream's, not the no-launch ratio.
+        {
+            const auto& base_lab = pair_of(kQ9, "ad104:60sm");
+            auto lab             = base_lab;
+            // Only mtp:3 (with or without the head) drafts (4 rows a stream: priced at two
+            // streams); the registry's own choice may be a DFlash block or a depth past the priced
+            // rows, which has no scale.
+            std::erase_if(lab.tune.measurements, [](const auto& m) {
+                return m.config.enabled() && (m.config.mode != sp::Mode::Mtp || m.config.k != 3);
+            });
+            for (auto& m : lab.tune.measurements) {
+                m.graph_rounds =
+                    std::max<std::int64_t>(m.config.enabled() ? m.rounds : m.tokens, 1);
+                m.graph_kernels = (m.config.enabled() ? 500 : 311) * m.graph_rounds;
+            }
+            auto second         = lab;
+            second.tune.key.gpu = "ad102:128sm";
+            const auto home     = sp::profile_for_target({&lab, &second}, "sm89");
+            const auto chosen   = home.overall.config;
+            const auto rates    = sp::card_rates_of_board(lab.lab_board);
+            const auto found    = home.joint_scale.find(chosen.label());
+            expect(chosen.enabled() && rates.launch_bytes() > 0 &&
+                       found != home.joint_scale.end() && found->second.contains(2),
+                   "a counted lab prices its choice's joint verify at two streams");
+            if (chosen.enabled() && rates.launch_bytes() > 0 && found != home.joint_scale.end() &&
+                found->second.contains(2)) {
+                const sp::ProposalRows rows =
+                    chosen.proposal_head ? lab.tune.proposal_rows : sp::ProposalRows{};
+                const sp::RoundLaunches counted{.round = 500, .step = 311};
+                const auto with = sp::load_gain(*lab.round_facts, chosen, rates.kappa(), 1.0, 2,
+                                                rows, rates.launch_bytes(), counted);
+                const auto without =
+                    sp::load_gain(*lab.round_facts, chosen, rates.kappa(), 1.0, 2, rows);
+                const double scale = found->second.at(2);
+                expect(with && without && near(scale, *with, 1e-12),
+                       "the joint scale carries the lab's kernel launches");
+                expect(with && without && std::abs(*with - *without) > 1e-9 &&
+                           std::abs(scale - *without) > 1e-9,
+                       "the launch term moves the scale off the no-launch ratio");
+                // The no-launch scale is the same pair without counts (the earlier block's value).
+                auto first_plain = lab; // the same filtered pair, its kernel counts erased
+                for (auto& m : first_plain.tune.measurements) {
+                    m.graph_kernels = m.graph_rounds = 0;
+                }
+                auto second_plain         = first_plain;
+                second_plain.tune.key.gpu = "ad102:128sm";
+                const auto plain_home =
+                    sp::profile_for_target({&first_plain, &second_plain}, "sm89");
+                const auto plain = plain_home.joint_scale.find(chosen.label());
+                expect(plain != plain_home.joint_scale.end() && plain->second.contains(2) &&
+                           without && near(plain->second.at(2), *without, 1e-12),
+                       "without counts the scale is the no-launch ratio");
+                // Sections of other kernel counts: the scale is the sections' R_1 averaged over
+                // their R_C averaged, as the estimate averages a configuration's round, not the
+                // sections' own ratios averaged.
+                auto uneven             = lab;
+                const std::string first = uneven.tune.measurements.front().family;
+                std::set<std::string> drafted;
+                std::set<std::string> timed;
+                for (auto& m : uneven.tune.measurements) {
+                    if (m.config.enabled() && m.family != first) {
+                        m.graph_kernels += 4000 * m.graph_rounds;
+                    }
+                    if (m.config.enabled() && m.config.label() == chosen.label()) {
+                        drafted.insert(m.family);
+                    }
+                    if (!m.config.enabled() && m.tokens > 0 && m.seconds > 0) {
+                        timed.insert(m.family);
+                    }
+                }
+                auto uneven_second         = uneven;
+                uneven_second.tune.key.gpu = "ad102:128sm";
+                const auto uneven_home = sp::profile_for_target({&uneven, &uneven_second}, "sm89");
+                const auto mixed       = uneven_home.joint_scale.find(chosen.label());
+                double one             = 0;
+                double joint           = 0;
+                double ratios          = 0;
+                int sections           = 0;
+                for (const std::string& family : drafted) {
+                    if (!timed.contains(family)) { continue; }
+                    const sp::RoundLaunches section{.round = family == first ? 500.0 : 4500.0,
+                                                    .step  = 311};
+                    const auto r1 = sp::round_cost(*lab.round_facts, chosen, rates.kappa(), rows,
+                                                   rates.launch_bytes(), section, 1);
+                    const auto rc = sp::round_cost(*lab.round_facts, chosen, rates.kappa(), rows,
+                                                   rates.launch_bytes(), section, 2);
+                    if (!r1 || !rc) { continue; }
+                    one += *r1;
+                    joint += *rc;
+                    ratios += *r1 / *rc;
+                    ++sections;
+                }
+                expect(uneven_home.overall.config == chosen && sections >= 2 &&
+                           mixed != uneven_home.joint_scale.end() && mixed->second.contains(2) &&
+                           near(mixed->second.at(2), one / joint, 1e-12),
+                       "uneven sections: the averaged R_1 over the averaged R_C");
+                expect(sections >= 2 && std::abs(one / joint - ratios / sections) > 1e-9,
+                       "which the sections' ratios averaged would miss");
+            }
         }
         // The lab's rows ride in its tune (spec-tune records them): they round-trip; zero rows are
         // refused.
@@ -808,6 +1108,40 @@ int main() {
                            h.gpu);
             }
         }
+    }
+    // What the shipped registry's plans can price today (#303): the plan weighs the joint verify's
+    // price only at a count of streams the load table lets speculate. No measured pair of the
+    // registry carries a load table, and a profile without one speculates from no count above one
+    // request (plain from two streams), at home or not, so no plan of a registry target carries a
+    // joint price. The day a pair gets a load table this fails: the change is then seen and this
+    // is updated with the plans it now prices.
+    {
+        const auto& registry = sp::Registry::builtin();
+        std::size_t scanned  = 0;
+        std::set<std::string> targets;
+        for (const auto& p : registry.pairs()) {
+            expect(p.tune.load.empty(), "a registry pair carries no load table: " + p.target_repo);
+            targets.insert(p.target);
+        }
+        for (const std::string& target : targets) {
+            const auto group = registry.measured(target);
+            std::set<std::string> generations;
+            for (const auto* p : group) { generations.insert(p->generation); }
+            for (const std::string& generation : generations) {
+                const auto profile = sp::profile_for_target(group, generation);
+                ++scanned;
+                const bool plain_from_two = profile.load.size() == 1 &&
+                                            profile.load.front().lanes <= 2 &&
+                                            profile.load.front().depth == 0;
+                expect(plain_from_two || profile.disabled.has_value() ||
+                           !(profile.overall.config.enabled() ||
+                             profile.thinking.config.enabled() ||
+                             profile.non_thinking.config.enabled()),
+                       "a registry target's profile speculates for one request only: " + target +
+                           " on " + generation);
+            }
+        }
+        expect(scanned > 0, "the registry scan covered its targets");
     }
     if (failures == 0) { std::cout << "round cost: all passed\n"; }
     return failures == 0 ? 0 : 1;
