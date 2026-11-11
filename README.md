@@ -172,8 +172,9 @@ run it. It needs no administrator rights, installs the native engine, and adds N
 menu; it updates itself. [Windows](docs/windows.md) has the details.
 
 **Linux** (or WSL 2): x86-64 with glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39 and
-later); the installer refuses an older one. It needs `curl` and `openssl` (Ubuntu and Debian:
-`sudo apt install curl openssl`).
+later); the installer refuses an older one. It needs `openssl`, and `curl` for its downloads
+(Ubuntu and Debian: `sudo apt install curl openssl`; an offline install with `NINFERNO_MANIFEST` and
+`NINFERNO_ARCHIVE` downloads nothing).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Brontir/NInferno/master/tools/release/install.sh | sh
