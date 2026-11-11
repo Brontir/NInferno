@@ -33,6 +33,16 @@
 #include <utility>
 #include <vector>
 
+#ifdef _WIN32
+#    include <io.h>
+#    define dup    _dup
+#    define dup2   _dup2
+#    define close  _close
+#    define fileno _fileno
+#else
+#    include <unistd.h>
+#endif
+
 namespace g  = ninferno::ops::detail::generic;
 namespace kr = g::kernel_roofline;
 using ninferno::DeviceClass;
@@ -385,6 +395,7 @@ void check_price_admitted() {
             ++bad;
         }
         ++(admitted ? priced : refused);
+        return rc;
     };
     // Admitted by the selector and priced by price_routes on the board (a16_route_priced: where
     // the BF16 MMA is emulated, no pipelined tile and no 8-tile strip; the golden check holds
@@ -404,9 +415,15 @@ void check_price_admitted() {
         ++failures;
         return;
     }
-    // Every route of the three families, against the selector's own rules.
+    // Every route of the three families, against the selector's own rules; and, independent of
+    // both predicates, the routes the tool prices at this width (64 tokens: the selector's
+    // pricing domain) are exactly the A16 routes the selector itself priced (priced_routes_query).
+    long set_differ = 0;
     for (const g::FactsBoard* board : {ada, gb202, hopper, turing}) {
         for (const QType q : {QType::BF16, QType::GGML_Q4_K}) {
+            const auto selector =
+                g::priced_routes_query(g::board_device_class(*board), q, LinearPolicy::A16Only,
+                                       g::Epilogue::Store, 4096, 4096, 64);
             const std::pair<g::Family, int> families[] = {
                 {g::Family::RegisterMma, g::rmma_schedule_count()},
                 {g::Family::TiledMma, g::tiled_schedule_count()},
@@ -414,11 +431,24 @@ void check_price_admitted() {
             for (const auto& [family, count] : families) {
                 for (int i = 0; i < count; ++i) {
                     const g::Route r{family, static_cast<std::uint8_t>(i)};
-                    expect(*board, q, 4096, r, query(*board, q, 4096, r), "route_admitted_query");
+                    const int rc = expect(*board, q, 4096, r, query(*board, q, 4096, r),
+                                          "route_admitted_query");
+                    const bool offered =
+                        std::any_of(selector.begin(), selector.end(),
+                                    [&](const g::PricedRouteQuery& p) { return p.route == r; });
+                    if (offered != (rc == 0)) {
+                        std::fprintf(
+                            stderr, "FAIL: %s %s %s:%d: the tool %s it, the selector %s it\n",
+                            board->name, g::qtype_name(q),
+                            std::string(g::family_name(r.family)).c_str(), i,
+                            rc == 0 ? "prices" : "refuses", offered ? "priced" : "did not price");
+                        ++set_differ;
+                    }
                 }
             }
         }
     }
+    bad += set_differ;
     // The refusals by name (each priced and exited 0 before the tool read the selector's rule).
     const auto pin = [&](const g::FactsBoard& board, QType q, std::int32_t k, g::Route r,
                          bool admitted, const char* why) {
@@ -532,12 +562,76 @@ void check_price_arguments() {
     if (bad > 0) ++failures;
 }
 
+// ---- Check 6: under --policy a8 the table holds every route the selector priced ----
+// The A8 tiles (a8_candidates) have no roofline terms yet; their rows carry the selector's price,
+// so its cheapest route is never hidden. The table's text is read back from the tool's stdout.
+std::string price_stdout(std::vector<std::string> args, int& rc) {
+    std::fflush(stdout);
+    std::FILE* sink = std::tmpfile();
+    if (sink == nullptr) return {};
+    const int out   = fileno(stdout);
+    const int saved = dup(out);
+    dup2(fileno(sink), out);
+    rc = price_args(std::move(args));
+    std::fflush(stdout);
+    dup2(saved, out);
+    close(saved);
+    std::string text;
+    std::rewind(sink);
+    char buf[4096];
+    for (std::size_t got; (got = std::fread(buf, 1, sizeof buf, sink)) > 0;) text.append(buf, got);
+    std::fclose(sink);
+    return text;
+}
+
+void check_price_a8_rows() {
+    long bad = 0, a8 = 0, rows = 0;
+    const g::FactsBoard* board = facts_board("rtx4090");
+    if (board == nullptr) {
+        std::fprintf(stderr, "FAIL: no facts board rtx4090\n");
+        ++failures;
+        return;
+    }
+    const auto selector =
+        g::priced_routes_query(g::board_device_class(*board), QType::GGML_Q4_K,
+                               LinearPolicy::AllowA8, g::Epilogue::Store, 4096, 4096, 64);
+    int rc                 = -1;
+    const std::string text = price_stdout({"--board", board_id(*board), "--format", "q4_k", "--n",
+                                           "4096", "--k", "4096", "--t", "64", "--policy", "a8"},
+                                          rc);
+    if (rc != 0) {
+        std::fprintf(stderr, "FAIL: price --policy a8 exits %d\n", rc);
+        ++bad;
+    }
+    for (const auto& p : selector) {
+        const bool a16 = p.route.family == g::Family::RegisterMma ||
+                         p.route.family == g::Family::TiledMma ||
+                         p.route.family == g::Family::StagedMma;
+        if (!a16) ++a8;
+        const std::string label = a16 ? std::string(g::family_name(p.route.family)) + ":" +
+                                            std::to_string(static_cast<int>(p.route.schedule))
+                                      : g::route_name(p.route);
+        if (text.find("\n" + label + " ") == std::string::npos) {
+            std::fprintf(stderr, "FAIL: price --policy a8 prints no row for %s\n", label.c_str());
+            ++bad;
+        } else {
+            ++rows;
+        }
+    }
+    std::printf("price a8 rows: %zu routes priced by the selector (%ld A8), %ld printed, %ld "
+                "differ\n",
+                selector.size(), a8, rows, bad);
+    // An A8 board with no A8 candidate tests nothing.
+    if (bad > 0 || a8 == 0) ++failures;
+}
+
 int main() {
     check_golden();
     check_wiring();
     check_price_formats();
     check_price_admitted();
     check_price_arguments();
+    check_price_a8_rows();
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;
