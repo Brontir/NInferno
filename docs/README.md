@@ -40,6 +40,7 @@ reference; the others own narrower contracts:
 | [Deterministic decisions](maintainer/deterministic-decisions.md) | the pillar: decisions from chip facts, the artifact and options; tiers B1/B2/S, the fingerprint, what is promised and forbidden |
 | [Configuration choice](maintainer/configuration-choice.md) | the KV codec, activations and quantization the engine picks when left automatic: memory, speed and accuracy from facts, the trade, what a decision reads, the explanation |
 | [GPU facts table](maintainer/gpu-facts.md) | the PCI-ID reference table: fields, the reference clock, how facts are derived, adding a SKU |
+| [Gap map](maintainer/gap-map.md) | measured kernel times against the counted DRAM and tensor laws: what `tools/bench/gap_map.py` computes and what it finds |
 | [Engine architecture](maintainer/engine-architecture.md) | model/config/weight ownership, loading-to-execution flow, requests, scheduling, transactions and graphs |
 | [Build system](maintainer/build-system.md) | CMake targets, source ownership, CUDA compilation boundaries, presets and developer configuration |
 | [Artifact container](maintainer/artifact-container.md) | the `.ninferno` directory, objects, logical bindings, uses, resources and file framing |
@@ -56,3 +57,4 @@ reference; the others own narrower contracts:
 | [Maintainer options and environment variables](maintainer/environment.md) | route tables, lab tuners and debug options; the output-only variables for numerics dumps and fault injection |
 | [Linear benchmark](maintainer/linear-benchmark.md) | pure Linear measurement, metrics and suites |
 | [Linear tuning and reports](maintainer/linear-tuning.md) | tuning ranges, priority points, dispatch trade-offs and report format |
+| [Route rules](maintainer/route-rules.md) | the literal thresholds of the generic path's route selection: what each rule is, what it rests on and its margin |

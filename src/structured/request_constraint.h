@@ -88,7 +88,9 @@ public:
     // prompt allows it and the output is presented, not raw), as the output session splits it.
     // strips_headers: the output presentation drops an answer header (GrammarVocabulary::
     // content_open) the answer begins with, so the grammar starts after one; a raw output keeps
-    // it, and the grammar reads it.
+    // it, and the grammar reads it. A grammar that spells the header itself
+    // (reads_answer_header) reads it either way, and goes on across a reasoning section the model
+    // opens from the open marker it read, instead of restarting after the terminator.
     RequestConstraint(std::shared_ptr<const CompiledConstraint> compiled, bool starts_in_reasoning,
                       bool may_open_reasoning = false, bool strips_headers = true);
 
@@ -166,9 +168,11 @@ private:
     std::optional<ConstraintMatcher> scratch_;
     ConstraintVocabularyView view_;
     ConstraintGate gate_;
-    // The answer may begin with a header the gate steps through (strips_headers and a format
-    // that has them).
-    bool headers_  = false;
+    // The answer may begin with a header the gate steps through (strips_headers, a format that
+    // has them, and a grammar that does not spell them itself).
+    bool headers_ = false;
+    // The grammar spells the answer header and the reasoning open marker (reads_answer_header).
+    bool reads_header_ = false;
     bool violated_ = false;
     std::string violation_;
     std::uint64_t masked_positions_ = 0;

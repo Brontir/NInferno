@@ -81,6 +81,7 @@ void launch_projection(const Tensor& x, const Weight& weight, Tensor& projected,
     throw std::logic_error("fp8 GDN materialized projection received a fused plan");
 }
 
+// FUSION-SITE: gdn_conv_fp8
 Fp8GdnConvPlan fp8_gdn_snapshot_resolve_plan(LinearPolicy policy, std::int32_t width,
                                              std::int32_t batch_size) {
     require_policy(policy, "fp8 GDN snapshot");
