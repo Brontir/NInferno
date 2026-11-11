@@ -11,7 +11,8 @@
 #             (installs a newer release, share/ninferno/install.sh)
 #     lib/    the shared libraries the binaries link (FFmpeg, curl, OpenSSL, ...), found through
 #             the binaries' $ORIGIN/../lib run path; the CUDA runtime is linked statically;
-#             libpdfium.so, which ninferno-serve loads for PDF documents
+#             FFmpeg is our LGPL, decoders-only build (tools/release/ffmpeg.sh), not the build
+#             machine's; libpdfium.so, which ninferno-serve loads for PDF documents
 #     share/ninferno/   engines.json (which engine runs where), route tables, drafter rankings,
 #                       the page's chat window (llama-ui), the recommendations ninferno-start shows
 #
@@ -23,7 +24,9 @@
 # NINFERNO_PACKAGE_RESUME=1 keeps the engines an interrupted run already put in OUT_DIR; NINFERNO_JOBS
 # caps the compile jobs (nvcc on sm_75's largest kernels needs memory). NINFERNO_VERSION overrides
 # the version (default `git describe`, without a leading v), NINFERNO_CMAKE_ARGS adds configure
-# arguments and NINFERNO_PACKAGE_TARGETS more targets for the first tree. The C library, the
+# arguments and NINFERNO_PACKAGE_TARGETS more targets for the first tree. NINFERNO_FFMPEG_PREFIX is
+# where ffmpeg.sh builds FFmpeg (default NINFERNO_BUILD_ROOT/build-release-ffmpeg; it needs nasm,
+# meson and ninja). The C library, the
 # dynamic loader and the NVIDIA driver libraries stay the user's; build on the oldest
 # distribution the archive should support (the glibc it needs is the build machine's, and it must
 # not be newer than the GLIBC_MIN install.sh checks).
@@ -119,6 +122,18 @@ check_selector_facts() {
   [ "$status" = 0 ] || { echo "$out" >&2; echo "package.sh: 'ninferno-serve selector-facts' failed for sm_$arch (exit $status)" >&2; exit 1; }
 }
 
+# FFmpeg is our own LGPL build with decoders only (tools/release/ffmpeg.sh), never the build
+# machine's (a distribution's FFmpeg is GPL and brings x264, x265 and xvid): every tree finds it
+# through pkg-config, and lib/ carries it. Built once (a few minutes) and reused while ffmpeg.pin
+# and the script stay the same.
+FFMPEG=$(realpath -m "${NINFERNO_FFMPEG_PREFIX:-$BUILD_ROOT/build-release-ffmpeg}")
+bash "$ROOT/tools/release/ffmpeg.sh" "$FFMPEG"
+if grep -q -- '--disable-x86asm' "$FFMPEG/share/licenses/ffmpeg/BUILD.txt"; then
+  echo "package.sh: $FFMPEG was built without assembly (NINFERNO_FFMPEG_NO_ASM), too slow for a release" >&2
+  exit 1
+fi
+export PKG_CONFIG_PATH="$FFMPEG/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+
 first=""
 engines=""
 built=""  # the engines this archive holds, for release.json
@@ -150,7 +165,9 @@ for arch in $ARCHS; do
   fi
   # Ada's engine carries its PTX too: the driver compiles it, once, for a GPU no engine names.
   build=$BUILD_ROOT/build-release-$arch
+  # pkg-config's answer is cached: a tree configured before against another FFmpeg asks again.
   cmake -S "$ROOT" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+    -U__pkg_config_checked_FFMPEG -U'pkgcfg_lib_FFMPEG_*' \
     -DCMAKE_CUDA_ARCHITECTURES="$arch" -DNINFERNO_CUDA_EMBED_PTX=$([ $ptx = true ] && echo ON || echo OFF) \
     -DNINFERNO_CUDA_LINEINFO=OFF -DNINFERNO_BUILD_APPS=ON -DBUILD_TESTING=OFF \
     -DNINFERNO_BUILD_BENCHMARKS=OFF -DNINFERNO_SOURCE_TREE_PATHS=OFF -DCMAKE_INSTALL_LIBDIR=lib -DNINFERNO_VERSION_STRING="$VERSION" \
@@ -193,11 +210,18 @@ echo "{\"engines\": [$engines]}" > "$STAGE/share/ninferno/engines.json"
 system_lib='^(linux-vdso|ld-linux|libc|libm|libdl|librt|libpthread|libresolv|libutil|libcuda|libnvidia)[.-]'
 mkdir -p "$STAGE/lib"
 for exe in "$STAGE"/bin/*; do
-  ldd "$exe" 2> /dev/null | awk '$2 == "=>" && $3 ~ /^\// {print $3}'
+  LD_LIBRARY_PATH="$FFMPEG/lib" ldd "$exe" 2> /dev/null | awk '$2 == "=>" && $3 ~ /^\// {print $3}'
 done | sort -u | while read -r lib; do
   base=$(basename "$lib")
   [[ $base =~ $system_lib ]] && continue
   cp -L "$lib" "$STAGE/lib/$base"
+done
+# Every FFmpeg library in lib/ is the one ffmpeg.sh built (a binary linked against another
+# FFmpeg would bring that one's), checked before the run paths below change the files.
+for lib in "$STAGE"/lib/libav*.so* "$STAGE"/lib/libsw*.so* "$STAGE"/lib/libpostproc*.so*; do
+  [ -e "$lib" ] || continue
+  cmp -s "$lib" "$FFMPEG/lib/$(basename "$lib")" ||
+    { echo "package.sh: lib/$(basename "$lib") is not the FFmpeg tools/release/ffmpeg.sh built in $FFMPEG" >&2; exit 1; }
 done
 for exe in "$STAGE"/bin/ninferno-serve-sm*; do
   if ldd "$exe" | grep -q 'libcudart'; then
@@ -209,6 +233,13 @@ done
 bash "$ROOT/tools/release/pdfium.sh" linux-x64 "$STAGE/lib" "$STAGE/share/licenses/pdfium"
 # The bundled libraries resolve each other from lib/ as well.
 for lib in "$STAGE"/lib/*.so*; do patchelf --set-rpath '$ORIGIN' "$lib"; done
+# FFmpeg's licence notes and sources (ffmpeg.sh), and the check of the libraries as bundled: each
+# reports an LGPL licence, the configure line has no --enable-gpl or --enable-nonfree, there is no
+# encoder, muxer or protocol, and no GPL codec library (x264, x265, xvid) sits beside them.
+mkdir -p "$STAGE/share/licenses"
+cp -r "$FFMPEG/share/licenses/ffmpeg" "$STAGE/share/licenses/"
+python3 -B "$ROOT/tools/release/ffmpeg_check.py" "$STAGE/lib" > "$STAGE/share/licenses/ffmpeg/BUILD.txt" ||
+  { echo "package.sh: the FFmpeg in lib/ is not the LGPL, decoders-only build a release may carry" >&2; exit 1; }
 # Their licenses, from the distribution's packages (Debian and Ubuntu: /usr/share/doc/<package>).
 for lib in "$STAGE"/lib/*.so*; do
   package=$(dpkg -S "$(basename "$lib")" 2> /dev/null | head -n 1 | cut -d: -f1) || true

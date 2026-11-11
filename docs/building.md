@@ -28,6 +28,9 @@ cmake --build build -j
 The binaries run from `build/apps/`. `cmake --install build --prefix ~/.local` installs them
 with the per-GPU route tables and drafter rankings they read from `share/ninferno/`. PDF documents
 need pdfium beside them (`tools/release/pdfium.sh`, or `NINFERNO_PDFIUM`; the releases carry it).
+Image and video input reads what the FFmpeg the build found can decode. The Linux release carries
+its own (below); to build against it, run `tools/release/ffmpeg.sh ~/ffmpeg-ninferno` and configure
+with `PKG_CONFIG_PATH=~/ffmpeg-ninferno/lib/pkgconfig`.
 
 ## Docker image
 
@@ -54,10 +57,25 @@ one self-contained archive: the
 binaries (`ninferno-ui` among them), the shared libraries they load (found beside them), the route
 tables, the drafter rankings, the page's chat window and the model list `ninferno-start` offers.
 It needs `patchelf` (it points the bundled libraries' run path at their own directory) and network
-access (PDFium and the chat page are downloaded). The archive needs the build machine's glibc, so
-`package.sh` stops when that is newer than the `GLIBC_MIN` that `install.sh` checks (2.38, Ubuntu
+access (PDFium, the FFmpeg and dav1d sources and the chat page are downloaded). The archive
+needs the build machine's glibc, so `package.sh` stops when that is newer than the `GLIBC_MIN` that `install.sh` checks (2.38, Ubuntu
 24.04). `tools/release/install.sh` installs such an
 archive (`NINFERNO_ARCHIVE=FILE`) or downloads the one for the GPU it finds.
+
+The archive's FFmpeg is not the distribution's, which is GPL and carries encoders (x264, x265,
+xvid): `tools/release/ffmpeg.sh` builds FFmpeg 9.0.2 with dav1d 1.5.4 from the tarballs
+`tools/release/ffmpeg.pin` pins by SHA-256, under the LGPL 2.1 or later, with decoders, demuxers
+and parsers only (MP4/MOV/3GP, MKV/WebM, GIF and the JPEG, PNG and WebP images; H.264, HEVC, VP8,
+VP9, AV1 through dav1d, MPEG-4 Part 2, Motion JPEG, PNG, WebP, GIF), no encoder, muxer, protocol,
+hardware decoding or audio. It needs nasm, meson and ninja, and takes a few minutes; package.sh
+builds it once into `NINFERNO_FFMPEG_PREFIX` (default `build-release-ffmpeg`) and points every
+tree at it. Offline, `NINFERNO_FFMPEG_ARCHIVE` and `NINFERNO_DAV1D_ARCHIVE` name the tarballs.
+package.sh stops when a library in `lib/` is not that build, or when
+`tools/release/ffmpeg_check.py` finds a licence other than LGPL, `--enable-gpl` or
+`--enable-nonfree` in the configure line, an encoder, a muxer, a protocol, or a GPL codec
+library beside them. The archive's `share/licenses/ffmpeg` carries the licence texts, the check's
+report (`BUILD.txt`: the configure line, the decoders and demuxers) and the source tarballs with
+the build scripts.
 
 The release toolkit is pinned to its patch level (the `nvcc` line of
 `src/ops/generic/data/kernel_facts/sm_<arch>.txt`), because on sm_86 and sm_120 the selector's
