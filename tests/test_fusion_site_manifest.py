@@ -120,6 +120,15 @@ class SiteRegret(unittest.TestCase):
             bare.write_text("geometry,T,fused_us,split_us\n32+2,128,4.0,5.0\n", encoding="utf-8")
             with self.assertRaises(ValueError):
                 site_regret.from_rope_crossover(bare, "b", "r")
+            # a row cut short, one with a field too many, a time that is no number: refused
+            for name, row in (("short", "32+2,128,4.0\n"), ("long", "32+2,128,4.0,5.0,1.0,9\n"),
+                              ("nan", "32+2,128,x,5.0,1.0\n")):
+                bad = Path(tmp) / f"{name}.csv"
+                bad.write_text("# graph_reps=8 min_of=3\n# dispatch_bound 32+2=256\n"
+                               "geometry,T,fused_us,split_us,fused_minus_split_us\n" + row,
+                               encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    site_regret.from_rope_crossover(bad, "b", "r")
             nobound = Path(tmp) / "nobound.csv"
             nobound.write_text("# graph_reps=8 min_of=3\ngeometry,T,fused_us,split_us\n32+2,128,4.0,5.0\n",
                                encoding="utf-8")

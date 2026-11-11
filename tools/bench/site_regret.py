@@ -141,16 +141,23 @@ def from_rope_crossover(csv_path, board, run, bound=None):
     if graph_reps is None or min_of is None:
         raise ValueError(f"{csv_path}: no graph_reps= and min_of= in the header (not a --crossover CSV)")
     rows = []
-    for r in csv.DictReader(ln for ln in raw if not ln.startswith("#")):
-        t = int(r["T"])
+    for n, r in enumerate(csv.DictReader(ln for ln in raw if not ln.startswith("#")), 1):
+        # A row cut short (an interrupted run) or carrying extra fields is no measurement.
+        if None in r or any(r.get(k) in (None, "") for k in ("geometry", "T", "fused_us", "split_us")):
+            raise ValueError(f"{csv_path}: data row {n} does not have the header's columns")
+        try:
+            t = int(r["T"])
+            fused, split = float(r["fused_us"]), float(r["split_us"])
+        except ValueError as error:
+            raise ValueError(f"{csv_path}: data row {n}: {error}") from None
         limit = bound if bound is not None else bounds.get(r["geometry"])
         if limit is None:
             raise ValueError(f"{csv_path}: no dispatch_bound for {r['geometry']} and no --bound")
         rows.append({
             "site": "qk_norm_rope", "case": r["geometry"], "T": t,
             "decided": "fused" if t <= limit else "decomposed",
-            "candidates": [{"branch": "fused", "median_us": float(r["fused_us"])},
-                           {"branch": "decomposed", "median_us": float(r["split_us"])}]})
+            "candidates": [{"branch": "fused", "median_us": fused},
+                           {"branch": "decomposed", "median_us": split}]})
     return {"schema": SCHEMA, "board": board, "run": run,
             "protocol": f"graph_reps{graph_reps}_min{min_of}", "rows": rows}
 
