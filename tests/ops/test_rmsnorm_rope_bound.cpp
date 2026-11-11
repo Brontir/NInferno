@@ -40,17 +40,23 @@ KernelFacts facts(int registers, std::size_t static_shared_bytes) {
     return f;
 }
 
+// A board as the query builds it, with the table's facts (synthetic_device_class leaves them
+// empty; the law reads the canonical clock from them, as the other cost models do).
+DeviceClass board(std::uint32_t pci_device_id, int major, int minor, int sms, std::size_t l2_bytes,
+                  std::size_t global_bytes) {
+    DeviceClass d =
+        synthetic_device_class(pci_device_id, major, minor, sms, l2_bytes, global_bytes);
+    d.facts = machine_facts_of(d);
+    return d;
+}
+
 } // namespace
 
 int main() {
-    const DeviceClass rtx5090 =
-        synthetic_device_class(0x2B85, 12, 0, 170, 96 * kMiB, 32ULL * 1024 * kMiB);
-    const DeviceClass rtx4090 =
-        synthetic_device_class(0x2684, 8, 9, 128, 72 * kMiB, 24ULL * 1024 * kMiB);
-    const DeviceClass rtx4060ti =
-        synthetic_device_class(0x2803, 8, 9, 34, 32 * kMiB, 16ULL * 1024 * kMiB);
-    const DeviceClass rtx2080ti =
-        synthetic_device_class(0x1E04, 7, 5, 68, 6 * kMiB, 11ULL * 1024 * kMiB);
+    const DeviceClass rtx5090   = board(0x2B85, 12, 0, 170, 96 * kMiB, 32ULL * 1024 * kMiB);
+    const DeviceClass rtx4090   = board(0x2684, 8, 9, 128, 72 * kMiB, 24ULL * 1024 * kMiB);
+    const DeviceClass rtx4060ti = board(0x2803, 8, 9, 34, 32 * kMiB, 16ULL * 1024 * kMiB);
+    const DeviceClass rtx2080ti = board(0x1E04, 7, 5, 68, 6 * kMiB, 11ULL * 1024 * kMiB);
 
     // Uncalibrated: 256 everywhere, at every geometry; an uninstantiated geometry too.
     for (const DeviceClass* d : {&rtx5090, &rtx4090, &rtx4060ti, &rtx2080ti}) {
