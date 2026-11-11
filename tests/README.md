@@ -25,6 +25,35 @@ cmake --build build --parallel --target ninferno_sampling_test
 ctest --test-dir build -R ninferno_sampling_test --output-on-failure
 ```
 
+## Labels
+
+Every test carries labels, and `tools/audit/ctest_labels.sh build` (the `ninferno_ctest_labels_test`
+test) fails on a test without one. A test added with `ninferno_add_test(<name> LABELS ...)` or
+`ninferno_add_op_test` (labeled `gpu` unless it says otherwise) gets them there; a test added with a
+bare `add_test()` calls `ninferno_label_tests(<name> LABELS ...)` next to it. With a multi-config
+generator pass the configuration: `tools/audit/ctest_labels.sh build Release` (or `CTEST_CONFIG`).
+Choose `host` only when no path of the test needs a device: a CUDA runtime call whose failure is not
+handled, a device allocation or a kernel launch (a test may probe for a device and skip its device
+sections without one). A test that runs under a substituted device class and never touches the
+device is `host`, one whose rows reach the device's properties is `gpu`. A test added with
+`ninferno_add_op_test` and no `LABELS` is `gpu`; a host-capable op test says `LABELS host`.
+
+| Label | Meaning |
+|---|---|
+| `host` | Runs and passes with no visible device: `CUDA_VISIBLE_DEVICES= ctest -L host` (checked with the driver installed; many host tests link the CUDA driver library, so a machine without one is not covered). Never combined with `gpu` or `real`. The tests that need an optional Python package (`torch`, `gguf`) or a build for sm_90+ still exit 77 where it is missing, and `ninferno_kernel_facts_test` (`host`, `slow`) fails without the CUDA toolkit's `cuobjdump`. |
+| `gpu` | Needs a CUDA device; exits 77 (skipped) or fails without one. |
+| `real` | Needs a model artifact, tokenizer fixtures or another input the checkout does not carry, and skips (77) without it. A real test that also runs the engine is `real` and `gpu`; a `real` test without `gpu` (a tokenizer or chat-template parity test) is in neither `-L host` nor `-L gpu`. |
+| `golden` | Compares against a committed golden: the decision fingerprint, selector, choice and plan goldens (including the MoE plan). |
+| `slow` | Over 60 s on one development GPU board. Add it to other labels: `ctest -L host -LE slow`. |
+
+```bash
+ctest --test-dir build -L host -N                         # list what runs without a GPU
+CUDA_VISIBLE_DEVICES= ctest --test-dir build -L host -j8  # run it
+ctest --test-dir build -LE slow                           # everything but the slow ones
+```
+
+Plain `ctest` still runs every test.
+
 ## Build options
 
 | Option | Default | Meaning |

@@ -290,6 +290,21 @@ int run(const fs::path& engine, char** argv) {
 
 } // namespace
 
+// --help or -h anywhere, which the engine's options answer before it touches a GPU (also after the
+// artifact: `ninferno-serve model.ninferno --help`); not for the measurement subcommands of
+// apps/serve/main.cpp that read their own arguments and then the device (route-tune,
+// selector-facts, spec-tune, spec-reselect), which a GPU no engine supports cannot run.
+static bool engine_help_requested(int argc, char** argv) {
+    if (argc >= 2) {
+        const std::string_view first = argv[1];
+        if (first == "route-tune" || first == "selector-facts" || first == "spec-tune" ||
+            first == "spec-reselect") {
+            return false;
+        }
+    }
+    return ninferno::help_requested(argc, argv);
+}
+
 int main(int argc, char** argv) {
     const fs::path self = ninferno::sys::self_exe();
     if (self.empty()) {
@@ -321,7 +336,8 @@ int main(int argc, char** argv) {
         if (device >= 0 && device < static_cast<int>(gpus.size()) &&
             gpus[static_cast<std::size_t>(device)].cc != 0) {
             engine = choose(engines, gpus[static_cast<std::size_t>(device)].cc);
-            if (!engine) {
+            // --help needs no GPU: on one this release does not support it still shows the help.
+            if (!engine && !engine_help_requested(argc, argv)) {
                 std::cerr << program << ": GPU " << device << " (" << gpus[static_cast<std::size_t>(device)].name
                           << ", sm_" << gpus[static_cast<std::size_t>(device)].cc
                           << ") is older than this release supports (engines: " << engines_text(engines) << ")\n";
@@ -332,8 +348,9 @@ int main(int argc, char** argv) {
     if (!engine) { engine = *fallback; }
     // A GPU no engine names runs the PTX one: the driver compiles its kernels at the first start
     // (minutes) and keeps them in its cache, whose default 256 MiB an engine outgrows; without
-    // room every start compiles again. The user's own setting stays.
-    if (engine->ptx && have_driver) {
+    // room every start compiles again. The user's own setting stays. --help compiles nothing (and
+    // may run here on a GPU older than every engine): no note.
+    if (engine->ptx && have_driver && !engine_help_requested(argc, argv)) {
         const auto gpus  = driver.gpus();
         const int device = device_argument(argc, argv, gpus);
         if (device >= 0 && device < static_cast<int>(gpus.size()) &&

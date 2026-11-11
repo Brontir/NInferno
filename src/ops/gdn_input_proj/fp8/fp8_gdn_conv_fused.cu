@@ -18,7 +18,9 @@ namespace {
 
 template <int Tokens, class Publish>
 struct Fp8GdnConvEpilogue {
-    [[maybe_unused]] static constexpr int kRowTokens = Tokens;
+    static constexpr int kRowTokens = Tokens;
+    // Read here too: nvcc counts a member only `requires` asks for as unreferenced (#177).
+    static_assert(kRowTokens >= 1);
 
     template <class Output>
     __device__ __forceinline__ void apply_row(const Output& output, int row, int,

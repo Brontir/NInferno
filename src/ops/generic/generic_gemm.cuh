@@ -2474,9 +2474,9 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                 // wait (RTX 3060 at T <= 8: +15-23 % with the adds). So do f16 operands (F16Of,
                 // Turing's: act_operands converted act to f16 in place, which the BF16 unpack below
                 // cannot read; the adds lost there anyway, rmma_add_sums).
-                const bool add =
+                [[maybe_unused]] const bool add =
                     NINFERNO_FMA_MMA || (!F16Of<Decoder>::value && NT >= 4 && add_sums);
-                float sums[NT][4];
+                [[maybe_unused]] float sums[NT][4]; // read under MinTermOf only
                 if constexpr (MinTermOf<Decoder>::value) {
                     if (add) {
 #pragma unroll
@@ -3402,7 +3402,7 @@ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Late
         // schedules better there (Q5_K store 8192x4096 w1x4 at T = 8: 81.9 us against 92.9 in
         // place; Q4_K even).
         constexpr bool kCopy = kRaw && !kSwiGlu;
-        Run unpacked[kCopy ? kSets : 1][kCopy ? MT : 1][2];
+        [[maybe_unused]] Run unpacked[kCopy ? kSets : 1][kCopy ? MT : 1][2]; // read under kRaw only
         if constexpr (kRaw) {
 #pragma unroll
             for (int s = 0; s < kSets; ++s)

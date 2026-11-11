@@ -38,6 +38,8 @@ using Output                           = LinearBf16SegmentedOutput<8192, 4096>;
 template <int Tokens, class Publish>
 struct Q8GdnSplitKConvEpilogue {
     static constexpr int kWholeRowTokens = Tokens;
+    // Read here too: nvcc counts a member only `requires` asks for as unreferenced (#177).
+    static_assert(kWholeRowTokens >= 1);
     GdnConvEpilogue<Publish> conv;
     __nv_bfloat16* z;
 

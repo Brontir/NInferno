@@ -5,6 +5,7 @@ and derivation. A run in the checked-in probe's format round-trips into rows wit
 and the columns; odd, incomplete, foreign or busy runs are refused. No GPU, no CUDA toolkit."""
 
 import contextlib
+import datetime
 import importlib.util
 import io
 import json
@@ -57,6 +58,10 @@ SAMPLE = (
 # The clocks over the measured span: steady, P0, at the rated 10501 MHz.
 CLOCKS = ("note clocks over the measured span (38 samples, nvidia-smi every 100 ms): memory "
           "10501..10501 MHz, SM 2805..2820 MHz, P-state P0\n")
+# The warm-up held the probe until that memory clock settled.
+SETTLE = ("note warm-up: the memory clock held {mhz} MHz for 1.0 s before the measured span "
+          "(settled 2.4 s into the warm-up)\n")
+SAMPLE += SETTLE.format(mhz=10501)
 SAMPLE += CLOCKS
 
 
@@ -153,10 +158,106 @@ class WarpInflight(unittest.TestCase):
         # A moved clock is never waived; a steady P2 is, with the waiver noted, and only then.
         self.refused(with_clocks(head.format(n=30, lo=405, hi=10251, p="P2"), waived), "moved")
         self.refused(SAMPLE + waived, "noted as waived")
-        head, rows = wi.parse_run(with_clocks(steady_p2, waived))
+        p2 = with_clocks(steady_p2, waived).replace(SETTLE.format(mhz=10501),
+                                                    SETTLE.format(mhz=10251))
+        head, rows = wi.parse_run(p2)
         self.assertIs(wi.run_of(head, rows, "x.txt", wi.DEFAULT_ISA_TABLE)["clocks_waived"], True)
         self.refused(SAMPLE.replace("span_ns 1762862400000000000 1762862404000000000",
                                     "span_ns 5 4"), "span_ns")
+
+    def test_settle_note_is_owed(self):
+        self.refused(SAMPLE.replace(SETTLE.format(mhz=10501), ""), "settled before the measured")
+        # Settled at one clock, measured at another: the span is not the settled one.
+        self.refused(SAMPLE.replace(SETTLE.format(mhz=10501), SETTLE.format(mhz=10251)),
+                     "settled at 10251 MHz")
+
+    def ramp(self, t0, points, period_ms=100, bus="00000000:01:00.0"):
+        """A fake `nvidia-smi --query-gpu=timestamp,pci.bus_id,pstate,clocks.sm,clocks.mem -lms
+        100` stream: (until ms, memory MHz) steps from t0, one row every period_ms, in P8 at the
+        idle 405 MHz (an idle clock that holds is no settled one) and P2 above it."""
+        rows, t, i = [], 0, 0
+        while i < len(points):
+            if t >= points[i][0]:
+                i += 1
+                continue
+            stamp = datetime.datetime.fromtimestamp((t0 + t * 1_000_000) / 1e9)
+            rows.append((t0 + t * 1_000_000, [stamp.strftime("%Y/%m/%d %H:%M:%S.%f")[:-3], bus,
+                                              "P8" if points[i][1] == 405 else "P2", "2805",
+                                              str(points[i][1])]))
+            t += period_ms
+        return rows
+
+    def warm(self, stream, t0, begins_ms=300, timeout_ns=wi.SETTLE_TIMEOUT_NS):
+        """warm_until_settled on a fake clock: the probe prints its warm-up line at begins_ms."""
+        now = [t0]
+        sent = []
+        probe = ["note device 0 is the GPU at PCI 0000:01:00.0"]
+
+        def lines():
+            if now[0] >= t0 + begins_ms * 1_000_000 and probe[-1] != "note warm-up: begins":
+                probe.append("note warm-up: begins")
+            return probe
+
+        def sleep(s):
+            now[0] += int(s * 1e9)
+
+        note, why = wi.warm_until_settled(
+            lines, lambda: [r for t, r in stream if t <= now[0]], sent.append, lambda: now[0],
+            sleep, lambda: not sent, timeout_ns)
+        return note, why, sent, (now[0] - t0) / 1e9
+
+    def test_warm_up_waits_for_the_ramp(self):
+        t0 = wi.smi_time_ns("2026/11/11 12:00:00.000")
+        # Idle 405 MHz for 1.5 s (the 0.3 s warm-up of probe 2 measured inside it), then a step
+        # at 5001 for 0.6 s, then 10251 for good.
+        stream = self.ramp(t0, [(1500, 405), (2100, 5001), (20000, 10251)])
+        note, why, sent, at = self.warm(stream, t0)
+        self.assertIsNone(why)
+        self.assertEqual(sent, ["go"])
+        # Not before 10251 has held for 1 s (from 2.1 s): go at about 3.1 s, never in the ramp.
+        self.assertGreaterEqual(at, 3.1)
+        self.assertLess(at, 3.3)
+        m = wi.SETTLE_NOTE.fullmatch(note[5:])
+        self.assertTrue(m)
+        self.assertEqual(m.group(1), "10251")
+        # The note is the one parse_run owes.
+        wi.parse_run(SAMPLE.replace(SETTLE.format(mhz=10501), note.replace("10251", "10501") +
+                                    "\n"))
+
+    def test_hold_begins_in_a_performance_pstate(self):
+        t0 = wi.smi_time_ns("2026/11/11 12:00:00.000")
+        bus = wi.IP._bus("0:01:00.0")
+        # The memory clock reads 10251 MHz in P8 for 2 s, then the same value in P2: the hold
+        # counts from the P2 rows only.
+        rows = [r for _, r in self.ramp(t0, [(4000, 10251)])]
+        for r in rows[:20]:
+            r[2] = "P8"
+        self.assertIsNone(wi.settled(rows[:25], bus, t0))  # 0.4 s in P2
+        s = wi.settled(rows, bus, t0)
+        self.assertIsNotNone(s)
+        self.assertEqual(s[0], 10251)
+        self.assertAlmostEqual(s[1] / 1e9, 1.9, places=6)
+        # Still in P8 at the end: not settled, whatever the hold.
+        self.assertIsNone(wi.settled(rows[:20], bus, t0))
+
+    def test_warm_up_refuses_a_clock_that_never_settles(self):
+        t0 = wi.smi_time_ns("2026/11/11 12:00:00.000")
+        # 405 and 10251 alternating every 0.5 s: never 1 s at one value.
+        steps = [(500 * (i + 1), 405 if i % 2 else 10251) for i in range(40)]
+        note, why, sent, at = self.warm(self.ramp(t0, steps), t0)
+        self.assertIsNone(note)
+        self.assertEqual(sent, ["stop"])
+        self.assertIn("did not settle (its peak held 1 s, or a lower clock 3 s) within 10 s", why)
+        self.assertIn("405..10251 MHz", why)
+        self.assertLess(at, 10.6)
+        # A clock that dropped from its peak has not settled either, until it held there
+        # SETTLE_LOWER_HOLD_NS (a power-limited board).
+        bus = wi.IP._bus("0:01:00.0")
+        self.assertIsNone(wi.settled([r for _, r in self.ramp(t0, [(1000, 10251), (3000, 9501)])],
+                                     bus, t0))
+        lower = wi.settled([r for _, r in self.ramp(t0, [(1000, 10251), (4200, 9501)])], bus, t0)
+        self.assertIsNotNone(lower)
+        self.assertEqual(lower[0], 9501)
 
     def test_clock_note_keeps_the_span(self):
         t0 = wi.smi_time_ns("2026/11/11 12:00:00.000")
@@ -256,6 +357,25 @@ class WarpInflight(unittest.TestCase):
             with contextlib.redirect_stderr(err):
                 self.assertEqual(wi.cmd_rows(args), 1)
             self.assertIn("bad.txt", err.getvalue())
+
+    def test_sampler_drains_as_it_goes(self):
+        # A sampler that writes far more than a pipe holds (about 4 KB on Windows, 64 KB on Linux)
+        # and then waits, as nvidia-smi -lms does: drained as it writes, every row is read and
+        # stopping it does not hang (#741).
+        import sys
+        import time
+        chatty = ("import sys, time\n"
+                  "for i in range(20000):\n"
+                  "    sys.stdout.write('2026/11/11 12:00:00.000, 00000000:01:00.0, %d' % i + chr(10))\n"
+                  "sys.stdout.flush()\n"
+                  "time.sleep(60)\n")
+        s = wi.IP.Sampler(None, None, argv=[sys.executable, "-c", chatty])
+        deadline = time.time() + 20
+        while len(s.lines.lines) < 20000 and time.time() < deadline:
+            time.sleep(0.05)
+        rows = s.rows(3)
+        self.assertEqual(len(rows), 20000)
+        self.assertEqual(rows[-1][2], "19999")
 
 
 if __name__ == "__main__":

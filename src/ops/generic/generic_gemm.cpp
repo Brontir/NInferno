@@ -988,14 +988,7 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
         launch_scalar(codec, call.epilogue, args, stream);
         return;
     case Family::RegisterMma:
-        if ((w.k % k_multiple(codec)) != 0) {
-            // K off the register kernel's step runs scalar: a demotion (other bytes and speed).
-            note_demotion(route, Route{Family::Scalar, 0}, call.rows, args.tokens, w.k,
-                          aligned_to(args.x, 16), args.ldx,
-                          workspace != nullptr ? workspace->capacity() : 0);
-            launch_scalar(codec, call.epilogue, args, stream);
-            return;
-        }
+        // K is on the kernel's step here: resolve_route took a call off it to Scalar (KStep).
         args.lane_local = invariant_routes_active() ? 0 : 1;
         args.add_sums   = rmma_add_sums() ? 1 : 0;
         if (!current_features().mma_tensor && volta_hmma_takes(codec, args)) {

@@ -21,6 +21,7 @@ if(NINFERNO_BUILD_APPS)
   add_test(NAME ninferno_ui_moved_update_test
     COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/ui_moved_update_test.py
             $<TARGET_FILE:ninferno-ui> ${CMAKE_CURRENT_LIST_DIR}/convert_native)
+  ninferno_label_tests(ninferno_ui_moved_update_test LABELS host)
   set_tests_properties(ninferno_ui_moved_update_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
@@ -30,55 +31,64 @@ endif()
 # with a replacement while the old session drains, a refused key, the router's certificate checked.
 # No GPU.
 if(TARGET ninferno_connect)
-  ninferno_add_test(ninferno_connect_test
+  ninferno_add_test(ninferno_connect_test LABELS host
     SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_connect.cpp"
     LIBRARIES ninferno_connect PkgConfig::NGHTTP2 OpenSSL::SSL OpenSSL::Crypto)
 endif()
 
 # Speculation support (registry, corpus, fingerprints, profiles, watchdog, manifests): no GPU.
-ninferno_add_test(ninferno_spec_test
+ninferno_add_test(ninferno_spec_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_spec.cpp"
   LIBRARIES ninferno_spec)
 
 # Speculation per measured pair (spec/pairs.h) on the lab's spec-tune measurements: no GPU.
-ninferno_add_test(ninferno_spec_pairs_test NEEDS_SOURCE_DIR
+ninferno_add_test(ninferno_spec_pairs_test LABELS host NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_spec_pairs.cpp"
   LIBRARIES ninferno_spec)
 
 # A speculation round's cost from facts (spec/round_cost.h) on the registry's pairs: no GPU.
-ninferno_add_test(ninferno_spec_round_cost_test
+ninferno_add_test(ninferno_spec_round_cost_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_spec_round_cost.cpp"
   LIBRARIES ninferno_spec)
 set_tests_properties(ninferno_spec_round_cost_test PROPERTIES LABELS host)
 
 # The rows a restricted draft head keeps (spec/draft_head.h) on the Qwen ranking: no GPU.
-ninferno_add_test(ninferno_spec_draft_head_test NEEDS_SOURCE_DIR
+ninferno_add_test(ninferno_spec_draft_head_test LABELS host NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_spec_draft_head.cpp"
   LIBRARIES ninferno_spec)
 
 # DSpine (spec/dspine.h): the published config's refusals and tensor contract, the arithmetic's
 # invariants. No GPU.
-ninferno_add_test(ninferno_spec_dspine_test NEEDS_SOURCE_DIR
+ninferno_add_test(ninferno_spec_dspine_test LABELS host NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_spec_dspine.cpp"
   LIBRARIES ninferno_spec)
 
 # tools/spec/registry_add.py: the "*" fallback and the load table warnings, no GPU.
 add_test(NAME ninferno_registry_add_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_registry_add.py)
+ninferno_label_tests(ninferno_registry_add_test LABELS host)
 
 # tools/dev/qc.sh: the dyndep early-stop pattern is a real regex.
 add_test(NAME ninferno_qc_sh_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_qc_sh.py)
+ninferno_label_tests(ninferno_qc_sh_test LABELS host)
 
 # tools/kit/validate.py: the user measurement kit's rejection rules and verdicts, no GPU.
 add_test(NAME ninferno_kit_validate_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_kit_validate.py)
+ninferno_label_tests(ninferno_kit_validate_test LABELS host)
 
 # tools/audit/fusion_sites.json against the FUSION-SITE markers in the code: a fusion site missing from
 # the registry, or an entry whose site is gone, fails (#617 step A), no GPU.
 add_test(NAME ninferno_fusion_sites_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_fusion_sites.py)
 set_tests_properties(ninferno_fusion_sites_test PROPERTIES LABELS host)
+
+# The fusion sites' generated manifest table is current, every registry site has a row, and
+# tools/bench/site_regret.py validates the regret document against the registry (#617 step H), no GPU.
+add_test(NAME ninferno_fusion_site_manifest_py_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_fusion_site_manifest.py)
+set_tests_properties(ninferno_fusion_site_manifest_py_test PROPERTIES LABELS host)
 
 # The facts-vs-driver comparison (tools/audit/facts_vs_driver.py) on canned driver output (#612
 # step 2), no GPU.
@@ -90,18 +100,22 @@ set_tests_properties(ninferno_facts_vs_driver_test PROPERTIES LABELS host)
 # (#301), no GPU.
 add_test(NAME ninferno_selection_regret_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_selection_regret.py)
+ninferno_label_tests(ninferno_selection_regret_test LABELS host)
 # tools/bench/regret_collect.py: route sweeps and the production selection into its input, no GPU.
 add_test(NAME ninferno_regret_collect_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_regret_collect.py)
+ninferno_label_tests(ninferno_regret_collect_test LABELS host)
+
 # tools/bench/mmq_width_grid.py (#524): the measurement against a fake server, the grid and A/B readers' refusals, no GPU.
 add_test(NAME ninferno_mmq_width_grid_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_mmq_width_grid.py)
+ninferno_label_tests(ninferno_mmq_width_grid_test LABELS host)
 # tools/kernel_facts/sass_counts.py and the loop columns of kernel_facts.py (#613): the K loop
 # found from a small SASS text's control flow, its counts, the snapshot round trip and the check's
 # verdicts. No GPU, no CUDA toolkit.
 add_test(NAME ninferno_kernel_facts_sass_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_kernel_facts_sass.py)
-set_tests_properties(ninferno_kernel_facts_sass_test PROPERTIES LABELS host)
+ninferno_label_tests(ninferno_kernel_facts_sass_test LABELS host)
 
 # src/core/data/isa_facts.json and tools/bench/isa_probe/isa_probe.py (#613 PR-2): the ISA facts
 # table's schema (every row Measured, every fact present and positive, card and tool named) and the
@@ -144,11 +158,12 @@ set_tests_properties(ninferno_affected_arches_test PROPERTIES LABELS host)
 # routes/*.json: evidence_us / tuned_on provenance (#634), no GPU.
 add_test(NAME ninferno_route_table_evidence_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_route_table_evidence.py)
-set_tests_properties(ninferno_route_table_evidence_test PROPERTIES LABELS host)
+ninferno_label_tests(ninferno_route_table_evidence_test LABELS host)
 
 # tools/bench/mmq_transfer_audit.py: same-generation MMQ transfer by workload regime (#373), no GPU.
 add_test(NAME ninferno_mmq_transfer_audit_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_mmq_transfer_audit.py)
+ninferno_label_tests(ninferno_mmq_transfer_audit_test LABELS host)
 
 # src/spec/round_cost.h kSmallTEta against tools/fits/round_cost/fit_eta.py's fit of the shipped
 # registry, no GPU.
@@ -176,15 +191,29 @@ set_tests_properties(ninferno_golden_gate_test PROPERTIES LABELS host)
 # Repository hygiene, no GPU: only scripts (a #! first line) may be committed executable.
 add_test(NAME ninferno_file_modes_test
   COMMAND bash "${PROJECT_SOURCE_DIR}/tools/check_file_modes.sh")
+ninferno_label_tests(ninferno_file_modes_test LABELS host)
 set_tests_properties(ninferno_file_modes_test PROPERTIES SKIP_RETURN_CODE 77)
 
 # Determinism, no GPU: decision code reads no clock, event timer or NVML (the monitor is
 # write-only; docs/maintainer/deterministic-decisions.md, principle 3). A POSIX shell check: on
 # native Windows `bash` may be WSL's, which cannot take the Windows source path, so it is
-# registered only on UNIX hosts (the Linux builds and CI run it).
+# registered only on UNIX hosts (the Linux builds run it; no CI workflow does).
 if(UNIX)
   add_test(NAME ninferno_decision_inputs_test
     COMMAND bash "${PROJECT_SOURCE_DIR}/tools/audit/decision_inputs.sh")
+  ninferno_label_tests(ninferno_decision_inputs_test LABELS host)
+endif()
+
+# Every test carries a label (host, gpu, real, golden, slow). Reads the build's own test list; needs
+# python3, ctest and a POSIX shell, so it is registered on UNIX hosts only. It runs with a Linux
+# build's ctest; no CI workflow configures a build, so CI does not run it. The build type goes
+# along (a multi-config generator lists no test without ctest -C <config>).
+if(UNIX)
+  add_test(NAME ninferno_ctest_labels_test
+    COMMAND bash "${PROJECT_SOURCE_DIR}/tools/audit/ctest_labels.sh" "${PROJECT_BINARY_DIR}" "$<CONFIG>")
+  set_tests_properties(ninferno_ctest_labels_test PROPERTIES
+    ENVIRONMENT "CTEST=${CMAKE_CTEST_COMMAND};PYTHON=${Python3_EXECUTABLE}")
+  ninferno_label_tests(ninferno_ctest_labels_test LABELS host)
 endif()
 
 # tools/bench/route_table_prune.py: the exit tooling for measured route overrides (#614), on
@@ -192,6 +221,7 @@ endif()
 # route_evidence_gaps.json, which may only shrink), no GPU.
 add_test(NAME ninferno_route_table_prune_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_route_table_prune.py)
+ninferno_label_tests(ninferno_route_table_prune_test LABELS host)
 
 # The shared test tree's link modes on the built binaries (NINFERNO_SHARED_OP_TESTS, a Linux-only
 # option): every test, app and bench as the configure decided, no second copy of a member archive

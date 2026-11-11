@@ -54,17 +54,26 @@
 // Clocks (probe 2). The measured part is bracketed by a `span_ns <begin> <end>` line in host wall
 // time (system_clock, ns since the epoch): warp_inflight.py keeps the nvidia-smi clock samples
 // inside it and refuses a run whose memory clock or P-state moved there.
+//
+// Warm-up (probe 3). Every SM streams until the memory clock has settled: with `--wait-go` (what
+// warp_inflight.py passes) the probe prints `note warm-up: begins`, keeps streaming and reads its
+// stdin, where the driver writes `go` once nvidia-smi has shown one memory clock for 1 s (or
+// `stop` when none settled within 10 s, and the probe then measures nothing). Without the flag the
+// warm-up is 0.3 s, which leaves some cards' memory at its idle clock (RTX 4090, RTX 3090).
 
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <iostream>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 #define CHECK(x)                                                                                   \
@@ -341,7 +350,8 @@ __global__ void discover(int* sm_of_cta) {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    const bool wait_go = argc > 1 && std::string(argv[1]) == "--wait-go";
     cudaDeviceProp p{};
     CHECK(cudaGetDeviceProperties(&p, 0));
     int driver = 0, runtime = 0, mem_khz = 0, threads_sm = 0, smem_sm = 0, smem_optin = 0,
@@ -356,7 +366,7 @@ int main() {
     const int cc = p.major * 10 + p.minor;
     char pci[32] = {};
     CHECK(cudaDeviceGetPCIBusId(pci, sizeof pci, 0));
-    std::printf("probe warp_inflight 2\n");
+    std::printf("probe warp_inflight 3\n");
     std::printf("card %s\n", p.name);
     std::printf("cc %d\n", cc);
     std::printf("sms %d\n", p.multiProcessorCount);
@@ -417,16 +427,31 @@ int main() {
         check(pr.sm_ids.back() < kMaxSmId, "an SM id past the probe's table");
     }
 
-    // Warm-up: every SM streams for about 0.3 s, so the clocks and the memory's P-state have risen
-    // before the first measurement (the measured launches then follow back to back).
+    // Warm-up: every SM streams for at least 0.3 s and, under --wait-go, until the driver says the
+    // memory clock has settled (`go`), so the clocks and the memory's P-state have risen before
+    // the first measurement (the measured launches then follow back to back). The driver's word
+    // is read on a thread of its own; 15 s without one ends the run.
     {
+        // 0: none yet, 1: go, 2: stop or end of input. Static: the detached reader outlives the
+        // block when no word comes.
+        static std::atomic<int> word{0};
+        word = wait_go ? 0 : 1;
+        if (wait_go) {
+            std::printf("note warm-up: begins\n");
+            std::fflush(stdout);
+            std::thread([] {
+                std::string line;
+                const bool got = static_cast<bool>(std::getline(std::cin, line));
+                word           = got && line == "go" ? 1 : 2;
+            }).detach();
+        }
         const Variant& v = kVariants[2];
         cudaEvent_t e0, e1;
         CHECK(cudaEventCreate(&e0));
         CHECK(cudaEventCreate(&e1));
         CHECK(cudaEventRecord(e0));
         float ms = 0.0F;
-        for (int i = 0; i < 2000 && ms < 300.0F; ++i) {
+        for (; ms < 300.0F || (word == 0 && ms < 15000.0F);) {
             CHECK(cudaMemset(pr.rank, 0, sizeof(unsigned)));
             const size_t per_warp = kRunBudget / (static_cast<size_t>(pr.sms) * 32);
             const size_t quantum  = static_cast<size_t>(2) * v.f * kWarpLoad;
@@ -440,6 +465,14 @@ int main() {
             CHECK(cudaEventElapsedTime(&ms, e0, e1));
         }
         std::printf("note warm-up: %.0f ms of every SM streaming\n", ms);
+        if (word != 1) {
+            std::printf("selfcheck FAIL warm-up: %s; nothing measured\n",
+                        word == 0 ? "no word from the driver within 15 s"
+                                  : "the driver saw no settled memory clock (stop)");
+            std::printf("end\n");
+            std::fflush(stdout);
+            std::_Exit(3); // the reading thread may still wait on stdin
+        }
     }
 
     const int w_list[] = {1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64};
