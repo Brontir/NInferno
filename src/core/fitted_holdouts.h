@@ -12,9 +12,9 @@
 // function is invisible to the test: the measured ones of the plans swept in #718 are named
 // constants with records, and the literals left there are coverage bounds (a compiled tile's width,
 // a kernel's range, the prefill class's first width) or carry no stated measurement (the #718 PR
-// lists them). A record per constant or per table of one
-// fit: the table's rows are one fit over the same data, so one record says what it was fitted on
-// and what, if anything, was left out; the per-row card counts stay in the tables (`cards`).
+// lists them). A record per constant or per table of one fit: the table's rows are one fit over
+// the same data, so one record says what it was fitted on and what, if anything, was left out; the
+// per-row card counts stay in the tables (`cards`).
 //
 // Checked only where a script and data in the repository reproduce the held-out score of the
 // shipped value (none today: a held-out score quoted from a fit whose data is not in the
@@ -793,8 +793,9 @@ inline constexpr FittedHoldout kKernelHoldouts[] = {
                    "then the column route",
                    "one board: none left out", "q4_q5_gdn_input_plan.cpp at the sliced-K comment")},
     {kQ4Q5GdnInput, "kFallbackBands",
-     Holdout::none("the bands every measured native-BF16 board gains on (R16 W8 for T = 9..24), "
-                   "from the five boards above",
+     Holdout::none("the bands every measured native-BF16 board gains on (R16 W8 for T = 9..24): "
+                   "the RTX 5090, 4090, 4070 Ti SUPER and 3090, not the RTX 2080 Ti (emulated "
+                   "BF16 MMA, bands of its own)",
                    "a card of an unmeasured architecture takes them unmeasured: none left out",
                    "q4_q5_gdn_input_plan.cpp at the sliced-K comment")},
     {kQ4Q5GdnInput, "kMmaGb202Bands",
@@ -832,8 +833,12 @@ inline constexpr FittedHoldout kKernelHoldouts[] = {
                    "q4_q5_attn_input_plan.cpp at the sliced-K comment")},
     {kQ4Q5AttnInput, "kGb203Bands",
      Holdout::none("the RTX 5080: variant 4 53 us at T = 2..8 (the column route 61..78), variant 5 "
-                   "59..63 us at 10..16, R16 W4 S2 to 28 (x1.26), R32 W8 at 32 (x1.32)",
-                   "one board: none left out", "q4_q5_attn_input_plan.cpp at kGb203Bands")},
+                   "59..63 us at 10..16, R16 W4 S2 (variant 2) at 17..24",
+                   "one board: none left out",
+                   "q4_q5_attn_input_plan.cpp at kGb203Bands and the sliced-K comment",
+                   "the table differs from its comment past 24: it runs R32 W8 (variant 4) at "
+                   "T = 25..32, where the comment has R16 W4 S2 to 28 (x1.26) and R32 W8 at 32 "
+                   "(x1.32); the rows at 25..28 rest on no stated timing")},
     {kQ4Q5AttnInput, "kAd103Bands",
      Holdout::none("the RTX 4080 SUPER: variant 5 69..77 us at T = 2..16 against 75..82 (variant "
                    "1); the RTX 4070 Ti SUPER (AD103): R16 W8 from T = 5 (1.20 / 1.41 / 2.36 / "
@@ -922,9 +927,8 @@ inline constexpr FittedHoldout kKernelHoldouts[] = {
                    "one board: none left out; every board takes half its SMs",
                    "causal_cache/bf16/plan.cpp at kLongCtaSmDivisor")},
     {kBf16CausalPlan, "kSmallQueryMaxWaves",
-     Holdout::none("the same upstream tuning on the RTX 5090 (small-query partitions up to six "
-                   "waves)",
-                   "the comment gives no figure for the cap: none left out",
+     Holdout::none("the plan's cap on small-query partitions: up to six waves",
+                   "the comment names no board or timing for the cap: none left out",
                    "causal_cache/bf16/plan.cpp at kLongCtaSmDivisor")},
     {kInt8CausalPlan, "kTwoCtasPerSmMaxWidth",
      Holdout::none("the wave rules, measured on four and two KV heads",
@@ -944,8 +948,8 @@ inline constexpr FittedHoldout kKernelHoldouts[] = {
                    "one board: none left out; every board takes the band",
                    "nvfp4_linear_add_plan.cpp at nvfp4_verify_exact")},
     {kNvfp4LinearAdd, "kNvfp4AddFirstA4TokensK6144",
-     Holdout::none("the measured NVFP4 activation routes' commit set 7; the edge moved to 17 "
-                   "with no stated timing",
+     Holdout::none("the commit that chose the measured NVFP4 activation routes (0ba16ed) set it "
+                   "at 7; the edge moved to 17 in 54ef520 with no stated timing",
                    "no timing or board in the repository: none left out",
                    "nvfp4_linear_add_plan.cpp at kNvfp4AddFirstA4Tokens")},
     {kNvfp4LinearAdd, "kNvfp4AddFirstA4Tokens",
