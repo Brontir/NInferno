@@ -78,13 +78,16 @@ using generic::Epilogue;
 // test's output (the "record" line it prints for every waived group), none is fitted.
 //
 // On the recorded table the price is deterministic, so the group is held exactly: where the
-// family's SM-scale cases F and the table's board rows equal the recorded ones on the build
-// recorded (its label), the group's cases c must equal the recorded count and its worst ratio the
-// recorded one (to 1e-9). Any change of the law that moves the group fails there, an improvement
-// as well as a regression, and two that cancel in the share do not cancel in the count.
+// table's fingerprint (table_fingerprint below: a hash of every board row the test runs over,
+// its label and facts) equals the recorded one on the build recorded (its label), the family's
+// SM-scale cases F, the group's cases c and its worst ratio must all equal the recorded ones (the
+// ratio to 1e-9). The table is identified by its rows, never by F, so a change of the law that
+// moves F (a route admitted on more boards, a schedule added) is caught as well: any change of the
+// law that moves the group or its family fails there, an improvement as well as a regression, and
+// two that cancel in the share do not cancel in the counts.
 //
-// On another table (a row added, removed or edited: F or the row count differ) the share is held
-// to a window instead, so that a table change alone does not fail every waiver:
+// On another table (a row added, removed or edited: the fingerprint differs) the share is held to
+// a window instead, so that a table change alone does not fail every waiver:
 //   max_share  the share measured, rounded up to a tenth of a percent; growing past it fails.
 //   min_share  the one-row floor measured, rounded down to a hundredth of a percent: the lowest
 //              share one edit of one board row can leave, (c - c_max) / (F - c_max + F_max),
@@ -109,7 +112,7 @@ struct Window {
     const char* build_label; // NINFERNO_BUILD_ARCH_LABEL of the build recorded
     int cases;               // c
     int family_cases;        // F
-    int table_rows;          // the board rows of gpu_facts.json the test ran over
+    std::uint64_t table;     // table_fingerprint of the board rows the test ran over
     double worst;            // the worst price ratio
     double min_share;
     double max_share;
@@ -182,52 +185,52 @@ const Window* window_of(const Known& k) {
 //
 // Each failing case is sorted by what can explain it. "within the SM ratio": the price rose by no
 // more than sms' / sms, the most q x sms (the bytes charged to the busiest SM) can grow. "beyond
-// the SM ratio": the warp-fill term adds to it. On the recorded table and build a waived group
-// must keep its recorded count and worst ratio exactly; on another table it may not grow past
-// max_share of the family's cases nor past max_ratio, nor fall below its one-row floors min_share
-// / min_ratio (`Window`); a group that stops failing is an XPASS that fails the test. So any
-// change of the law that moves a group fails on the recorded table (a bw / sqrt(sms) share, say,
-// or a fix), and the waiver is then re-recorded from the "record" line the test prints. Bandwidth
-// x1.25
-// fails nowhere. The tolerance is 1e-9: the price is deterministic. (The test cannot see a route's
-// CTA count, so it cannot tell a rise a wave count explains from one it does not, case by case,
-// and the shares cannot be replaced by a predicate.)
+// the SM ratio": the warp-fill term adds to it. On the recorded table (by its fingerprint) and
+// build a waived group must keep its recorded count, its family's count and its worst ratio
+// exactly; on another table it may not grow past max_share of the family's cases nor past
+// max_ratio, nor fall below its one-row floors min_share / min_ratio (`Window`); a group that
+// stops failing is an XPASS that fails the test. So any change of the law that moves a group or
+// its family fails on the recorded table (a bw / sqrt(sms) share, say, or a fix, or a route priced
+// on more boards), and the waiver is then re-recorded from the "record" line the test prints.
+// Bandwidth x1.25 fails nowhere. The tolerance is 1e-9: the price is deterministic. (The test
+// cannot see a route's CTA count, so it cannot tell a rise a wave count explains from one it does
+// not, case by case, and the shares cannot be replaced by a predicate.)
 constexpr Known kKnown[] = {
     {"P1 sms x1.25",
      "rmma within the SM ratio",
      "charge (a): removed alone the group falls from 35.0 % to 2.6 % of the family's cases, with "
      "all "
      "three removed to 0.99 % (issue #690)",
-     {"89", 267608, 764040, 113, 1.30002093448, 0.3431, 0.351, 0, 0},
-     {"120a", 268413, 782520, 113, 1.30002093448, 0.3357, 0.344, 0, 0}},
+     {"89", 267608, 764040, 0x0ULL, 1.30002093448, 0.3431, 0.351, 0, 0},
+     {"120a", 268413, 782520, 0x0ULL, 1.30002093448, 0.3357, 0.344, 0, 0}},
     {"P1 sms x1.25",
      "rmma beyond the SM ratio",
      "charge (c) with (a): removing (c) alone leaves 20 of the 675 cases (x1.336), removing (a) "
      "alone grows the group to 13 156 (x1.90): the two charges change together (issue #690)",
-     {"89", 675, 764040, 113, 1.42889967054, 0.0007, 0.001, 1.4, 1.43},
-     {"120a", 675, 782520, 113, 1.42889967054, 0.0007, 0.001, 1.4, 1.43}},
+     {"89", 675, 764040, 0x0ULL, 1.42889967054, 0.0007, 0.001, 1.4, 1.43},
+     {"120a", 675, 782520, 0x0ULL, 1.42889967054, 0.0007, 0.001, 1.4, 1.43}},
     {"P1 sms x1.25",
      "staged within the SM ratio",
      "charge (a): removed alone the group disappears (issue #690)",
-     {"89", 14448, 33200, 113, 1.25418687982, 0.4233, 0.436, 0, 0},
-     {"120a", 14448, 33200, 113, 1.25418687982, 0.4233, 0.436, 0, 0}},
+     {"89", 14448, 33200, 0x0ULL, 1.25418687982, 0.4233, 0.436, 0, 0},
+     {"120a", 14448, 33200, 0x0ULL, 1.25418687982, 0.4233, 0.436, 0, 0}},
     {"P1 sms x1.25",
      "w4a8 within the SM ratio",
      "charges (a) and (b): removing (b) alone leaves 14.0 % of the family's cases, all three none "
      "(issue #690)",
-     {"89", 21764, 91300, 113, 1.25566364868, 0.2299, 0.239, 0, 0},
-     {"120a", 19828, 83000, 113, 1.25566364868, 0.2304, 0.239, 0, 0}},
+     {"89", 21764, 91300, 0x0ULL, 1.25566364868, 0.2299, 0.239, 0, 0},
+     {"120a", 19828, 83000, 0x0ULL, 1.25566364868, 0.2304, 0.239, 0, 0}},
     {"P1 sms x1.25",
      "w4a8 beyond the SM ratio",
      "charges (a) and (b) together: removing either alone makes the group disappear (issue #690)",
-     {"89", 2254, 91300, 113, 1.52081329893, 0.0224, 0.025, 1.52, 1.53},
-     {"120a", 2074, 83000, 113, 1.52081329893, 0.0227, 0.025, 1.52, 1.53}},
+     {"89", 2254, 91300, 0x0ULL, 1.52081329893, 0.0224, 0.025, 1.52, 1.53},
+     {"120a", 2074, 83000, 0x0ULL, 1.52081329893, 0.0227, 0.025, 1.52, 1.53}},
     {"P1 sms x1.25",
      "i8 within the SM ratio",
      "charge (b): removed alone the group falls from 39.1 % to 0.72 % of the family's cases "
      "(issue #690)",
-     {"89", 1946, 4980, 113, 1.25811579614, 0.3812, 0.391, 0, 0},
-     {"120a", 1946, 4980, 113, 1.25811579614, 0.3812, 0.391, 0, 0}},
+     {"89", 1946, 4980, 0x0ULL, 1.25811579614, 0.3812, 0.391, 0, 0},
+     {"120a", 1946, 4980, 0x0ULL, 1.25811579614, 0.3812, 0.391, 0, 0}},
 };
 
 // ---- Findings ----------------------------------------------------------------------------------
@@ -293,6 +296,30 @@ std::vector<Row> rows_of_table() {
                                 r.bus_bits};
     }
     return rows;
+}
+
+// The identity of the table the waivers were recorded on: FNV-1a (64 bit) over every row the test
+// runs over, in order, its label and every fact of the row (all fields of GpuFactsRow but the
+// sources and the note, which are text), the floating ones printed to 17 digits. A row added,
+// removed, reordered or with any fact edited changes it; what the price law does with the rows
+// does not.
+std::uint64_t table_fingerprint(const std::vector<Row>& rows) {
+    std::ostringstream text;
+    text.precision(17);
+    for (const Row& row : rows) {
+        const GpuFactsRow& r = *row.source;
+        text << row.label << '|' << r.chip << '|' << r.major << '.' << r.minor << '|'
+             << static_cast<int>(r.segment) << '|' << static_cast<int>(r.form) << '|' << r.sms
+             << '|' << r.boost_mhz << '|' << r.boost_min_mhz << '|' << r.bus_bits << '|' << r.gbps
+             << '|' << r.tdp_w << '|' << r.vram_gib << '|' << r.pcie_gen << '|' << r.mma_slow << '|'
+             << r.l2_mib << '|' << r.target << ';';
+    }
+    std::uint64_t h = 14695981039346656037ULL;
+    for (const char c : text.str()) {
+        h ^= static_cast<unsigned char>(c);
+        h *= 1099511628211ULL;
+    }
+    return h;
 }
 
 // ---- Problems ----------------------------------------------------------------------------------
@@ -735,9 +762,8 @@ void property_clock_invariance(const std::vector<Row>& rows) {
 
 // A waived P1 group against what was recorded for it (`Window`): prints its counts, its share, its
 // one-row floors and the "record" line kKnown is re-recorded from; returns 1 where the group
-// fails. `table_rows`: the board rows the test ran over.
-int check_window(const Known& known, const std::string& key, const Group& g,
-                 std::size_t table_rows) {
+// fails. `table`: the fingerprint of the board rows the test ran over (table_fingerprint).
+int check_window(const Known& known, const std::string& key, const Group& g, std::uint64_t table) {
     const std::string family = key.substr(0, key.find(' '));
     const int family_cases   = sms_cases_by_family[family];
     const double share       = family_cases > 0 ? g.count / static_cast<double>(family_cases) : 1.0;
@@ -769,7 +795,8 @@ int check_window(const Known& known, const std::string& key, const Group& g,
     if (ratio_group) { std::cout << ", runner-up row's worst x" << runner_up; }
     const auto precision = std::cout.precision(12);
     std::cout << "\n    record: {\"" << NINFERNO_BUILD_ARCH_LABEL << "\", " << g.count << ", "
-              << family_cases << ", " << table_rows << ", " << g.worst << ", "
+              << family_cases << ", 0x" << std::hex << std::uppercase << table << std::dec
+              << std::nouppercase << "ULL, " << g.worst << ", "
               << std::floor(floor_share * 1e4) / 1e4 << ", " << std::ceil(share * 1e3) / 1e3 << ", "
               << (ratio_group ? std::floor(runner_up * 100) / 100 : 0.0) << ", "
               << (ratio_group ? std::ceil(g.worst * 100) / 100 : 0.0) << "}\n";
@@ -781,13 +808,14 @@ int check_window(const Known& known, const std::string& key, const Group& g,
         return 0;
     }
     const bool same_build = std::string(NINFERNO_BUILD_ARCH_LABEL) == w->build_label;
-    const bool same_table =
-        family_cases == w->family_cases && table_rows == static_cast<std::size_t>(w->table_rows);
+    const bool same_table = table == w->table;
     if (same_build && same_table) {
-        // The recorded table on the recorded build: the price is deterministic, the group exact.
-        std::cout << "    recorded on this build and table: " << w->cases << " cases, worst x"
-                  << w->worst << '\n';
-        if (g.count != w->cases || std::abs(g.worst - w->worst) > w->worst * kResolution) {
+        // The recorded table on the recorded build: the price is deterministic, the group and its
+        // family exact.
+        std::cout << "    recorded on this build and table: " << w->cases << " of "
+                  << w->family_cases << " cases, worst x" << w->worst << '\n';
+        if (g.count != w->cases || family_cases != w->family_cases ||
+            std::abs(g.worst - w->worst) > w->worst * kResolution) {
             std::cout << "    WAIVER MOVED: the table and the build are the recorded ones, so the "
                          "law changed: "
                       << (g.count > w->cases || g.worst > w->worst ? "fix the law (issue #690)"
@@ -800,8 +828,8 @@ int check_window(const Known& known, const std::string& key, const Group& g,
     const bool ratio_checked = w->max_ratio > 0;
     std::cout << "    " << (same_build ? "the table" : "the build")
               << " differs from the recorded one (sm_" << w->build_label << ", " << w->cases
-              << " of " << w->family_cases << " cases, " << w->table_rows << " rows): window share "
-              << 100.0 * w->min_share << " .. " << 100.0 * w->max_share << " %";
+              << " of " << w->family_cases << " cases): window share " << 100.0 * w->min_share
+              << " .. " << 100.0 * w->max_share << " %";
     if (ratio_checked) {
         std::cout << ", worst ratio x" << w->min_ratio << " .. x" << w->max_ratio;
     }
@@ -829,8 +857,10 @@ int check_window(const Known& known, const std::string& key, const Group& g,
 int main() {
     try {
         const std::vector<Row> rows = rows_of_table();
+        const std::uint64_t table   = table_fingerprint(rows);
         std::cout << rows.size() << " board rows of gpu_facts.json (" << gpu_facts_table().size()
-                  << " in the table)\n";
+                  << " in the table), fingerprint 0x" << std::hex << std::uppercase << table
+                  << std::dec << std::nouppercase << '\n';
         std::cout << "build sm_" << NINFERNO_BUILD_ARCH_LABEL << ": NVFP4 and cluster kernels "
                   << (kBuild.nvfp4_kernels ? "compiled" : "not compiled")
                   << ", block shared memory " << kBuild.block_shared_bytes << " B: "
@@ -853,7 +883,7 @@ int main() {
             std::cout << "\n    e.g. " << g.example << '\n';
             if (known) {
                 std::cout << "    cause: " << known->cause << '\n';
-                unexpected += check_window(*known, id.second, g, rows.size());
+                unexpected += check_window(*known, id.second, g, table);
             } else {
                 ++unexpected;
             }
