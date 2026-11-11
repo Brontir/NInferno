@@ -79,6 +79,15 @@ cmake_language(DEFER CALL ninferno_assert_host_only ninferno_gate_atlas_test)
 # (ops/generic/route_cost_constants.h); `--list` prints them. No GPU.
 ninferno_add_test(ninferno_route_cost_constants_test NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_route_cost_constants.cpp")
+set_tests_properties(ninferno_route_cost_constants_test PROPERTIES LABELS host)
+
+# The holdout records of the fitted constants it covers (core/fitted_holdouts.h, the one mechanism;
+# the test's header says which): the tagged constants from the compiled tables, the listed files'
+# definitions, and the untagged constants a sweep found; an Unset record or a wrong total fails.
+# No GPU.
+ninferno_add_test(ninferno_fitted_holdouts_test NEEDS_SOURCE_DIR
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_fitted_holdouts.cpp")
+set_tests_properties(ninferno_fitted_holdouts_test PROPERTIES LABELS host)
 
 # The launch node cost and the launch-like numbers pinned at each use site (#617 B). No GPU.
 ninferno_add_test(ninferno_launch_node_test

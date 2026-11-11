@@ -237,7 +237,8 @@ enum class BankRefusal {
     NativeBuild, // the build runs the format on its native kernels instead (NVFP4 on sm_120a)
     FragCodec,   // fragment order (ggml_frag_v1) without a fragment-order codec for the format
     KOrder,      // a permuted K the stage does not read
-    KGroup,      // K not in whole groups of the stage's loads (R8) or 32-value blocks (W4A8)
+    KGroup,      // K not in whole groups of the stage's loads (R8) or 32-value blocks (W4A8; also
+                 // a W4A8 gate/up's x width)
     Alignment,   // the bank does not start on a 16-byte boundary
     Nvfp4A4,     // NVFP4 under an A4 policy where the build has the W4A4 kernels
 };
@@ -246,7 +247,8 @@ enum class BankRefusal {
 // token limit and the quantized activation's shared memory.
 [[nodiscard]] BankRefusal r8_bank_refusal(const Weight& w);
 // The grouped W4A8 prefill: each stage whose own bank is admitted (MoePlan::w4a8_gate_up,
-// w4a8_down).
+// w4a8_down). `bank` is `weights.gate_up` or `weights.down` (the gate/up is also refused, KGroup,
+// where its x, the router's width, is padded and not whole 32-value blocks).
 [[nodiscard]] BankRefusal w4a8_bank_refusal(const MoeWeights& weights, const Weight& bank);
 // Lanes per row of an R8 warp on this bank (GemmArgs::r8_lanes); an R8 CTA covers
 // rows_per_cta() * 32 / r8_lanes rows.
@@ -305,6 +307,10 @@ void moe_with_plan(const Tensor& x, const MoeWeights& weights, const MoeConfig& 
 // activation (gate/up of an unpadded x), an activation that fits a CTA's shared memory;
 // moe_with_plan refuses an R8 stage that is not.
 [[nodiscard]] bool r8_admits(const MoeWeights& weights, const Weight& bank, std::int32_t tokens);
+// Whether the bank's format keeps a per-block minimum, so that R8's and W4A8's int8 activation
+// carries each block's sum too (40 bytes a 32-value block instead of 36): r8_admits' shared-memory
+// bound and the stage price (moe_cost.h) read this one definition.
+[[nodiscard]] bool moe_format_has_min(QType qtype);
 // Whether a heuristic plan's down stage takes R8 at T: on a build without tensor mma.sync
 // (Volta's register MMA runs on FP32 FMAs) wherever the layer admits it, at T and at the bank's
 // widest R8 call (the same route at every T); never elsewhere.
@@ -493,6 +499,28 @@ struct MoePlanQuery {
 // select_plan with its reason; pure (no kernel runs, no device memory read).
 [[nodiscard]] MoePlanQuery moe_plan_query(const MoeWeights& weights, const MoeConfig& config,
                                           std::int32_t tokens, bool prefill);
+// Whether a call of `tokens` takes Volta's grouped HMMA stages (MoePlan::volta_hmma): the band edge
+// (kMoeVoltaHmmaMinTokens), the build's features, both banks and the geometry. The one predicate
+// select_plan and the stage price ask. Validates the layer (throws as the Op does).
+[[nodiscard]] bool moe_volta_hmma_admitted(const MoeWeights& weights, const MoeConfig& config,
+                                           std::int32_t tokens);
+// Whether an R8 down stage of schedule `down_r8` combines in its epilogue (no shared expert, the
+// row grid within the ticket array): the production predicate; otherwise the separate combine runs.
+// Validates the layer (throws as the Op does).
+[[nodiscard]] bool moe_r8_down_fuses_combine(const MoeWeights& weights, const MoeConfig& config,
+                                             int down_r8);
+// The kernel that computes a call's router logits: the production rule run takes (moe.cpp
+// router_kernel). Validates the layer (throws as the Op does).
+enum class MoeRouterKernel { Simt, VoltaHmma, RegisterMma };
+[[nodiscard]] MoeRouterKernel moe_router_kernel(const MoeWeights& weights, const MoeConfig& config,
+                                                const MoePlan& plan, std::int32_t tokens);
+// Whether the router's CTAs quantize x for an R8 gate/up on this call (GemmArgs::xq): the
+// production rule. Validates the layer (throws as the Op does).
+[[nodiscard]] bool moe_router_quantizes_x(const MoeWeights& weights, const MoeConfig& config,
+                                          const MoePlan& plan, std::int32_t tokens);
+// Whether two plain MXFP4 banks take the block-scaled MMA with MXFP8 activations (route name
+// "w4a8.mx8") where the plan runs the W4A8 tier.
+[[nodiscard]] bool moe_mx8_banks(const MoeWeights& weights);
 [[nodiscard]] bool table_covers(const MoeWeights& weights, const MoeConfig& config,
                                 std::int32_t tokens);
 // Forgets every tuned plan (tests).
@@ -551,6 +579,14 @@ inline constexpr int kMoeW4a8BlockM = 64; // slots per CTA (divides kJobColumns)
 // T=17): a prefill chunk of a family that runs its prefill in the speed profile (Gemma 4), a
 // verify of many rows.
 inline constexpr std::int32_t kMoeW4a8SpeedMinTokens = 64;
+// The decode/prefill band edge: the project-wide width from which a call is in the prefill band
+// (docs/maintainer/environment.md, decisions.md). A CHOSEN value, neither a tile size nor a
+// measured crossover. The prefill profile's wide plan, the prefill W4A8 and Volta's grouped HMMA
+// stages start here.
+inline constexpr std::int32_t kMoeBandEdgeTokens = 17;
+// The narrowest call Volta's grouped HMMA stages take: the band edge. The token condition is part
+// of moe_volta_hmma_admitted, the one predicate both select_plan and the stage price ask.
+inline constexpr std::int32_t kMoeVoltaHmmaMinTokens = kMoeBandEdgeTokens;
 inline constexpr int kMoeW4a8BlockN = 64; // weight tile rows per CTA (32 local rows when gated)
 static_assert(kJobColumns % kMoeW4a8BlockM == 0);
 

@@ -4,7 +4,8 @@
 // prints them, the fitted ones first: the numbers the model still takes from route_tune timings
 // instead of deriving them. The header's own text is read too: every constant it defines must be
 // in the descriptor and every listed one defined, so a new one cannot bypass the checks by being
-// left out. No GPU.
+// left out. The Holdout record of each Fitted constant is in core/fitted_holdouts.h and checked by
+// ninferno_fitted_holdouts_test. No GPU.
 
 #include "ops/generic/route_cost_constants.h"
 
@@ -136,6 +137,15 @@ int main(int argc, char** argv) {
             ++failures;
         }
         fitted += c.from == rc::Provenance::Fitted;
+    }
+    constexpr std::size_t kExpectedFitted = 26;
+    if (fitted != kExpectedFitted) {
+        std::fprintf(stderr,
+                     "%zu Fitted constants found, expected %zu: if one was added or retagged, give "
+                     "it a record in core/fitted_holdouts.h (ninferno_fitted_holdouts_test) and "
+                     "update kExpectedFitted\n",
+                     fitted, kExpectedFitted);
+        ++failures;
     }
     if (argc > 1 && std::string(argv[1]) == "--list") {
         for (auto want : {rc::Provenance::Fitted, rc::Provenance::Counted, rc::Provenance::Fact}) {

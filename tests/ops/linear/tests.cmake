@@ -109,8 +109,8 @@ ninferno_add_op_test(ninferno_route_traffic_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_traffic.cpp"
   LIBRARIES ninferno_linear_test_support)
 
-# A slice of a fused weight is priced, described and routed as a standalone weight of its own
-# shape on every golden board (#640, host only).
+# A slice of a fused weight and a row view are priced, described and routed as a standalone weight
+# of their own shape on every golden board, the R8 verify gate included (#640, #704, host only).
 ninferno_add_op_test(ninferno_slice_price_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_slice_price.cpp"
   LIBRARIES ninferno_linear_test_support)
@@ -140,6 +140,14 @@ ninferno_add_op_test(ninferno_route_classes_test
 ninferno_add_op_test(ninferno_format_traits_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_format_traits.cpp"
   LIBRARIES ninferno_linear_test_support)
+
+# The codec traits rows (ops/generic/codec_traits.h, #615 F3; generic_codec_traits.cu proves them
+# against the codec structs) against the literals r8_fits, w4a8_fits and mmq_plane_bytes carried
+# before, for every QType; no GPU needed.
+ninferno_add_op_test(ninferno_codec_traits_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_codec_traits.cpp"
+  LIBRARIES ninferno_linear_test_support)
+set_tests_properties(ninferno_codec_traits_test PROPERTIES LABELS host)
 
 # The kernel roofline (#613 PR-4): price_routes prices equal the golden table of the formula
 # it replaced (fixed outputs from before the move), and

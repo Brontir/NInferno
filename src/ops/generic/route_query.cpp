@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <stdexcept>
 #include <string>
 
 namespace ninferno::ops::detail::generic {
@@ -45,6 +46,24 @@ void describe_weight(DescribedWeight& out, QType qtype, Epilogue epilogue, std::
     out.weight          = native_weight(out.view, nvfp4 ? 1.0F : 0.0F);
 }
 
+// workspace_free_route with the evidence of the walk that gave the route it hands on: the
+// selection's own where the call keeps its route, the A16 heuristic's where a call without
+// workspace takes that heuristic's route instead (the walk workspace_free_route makes).
+RouteAnswer workspace_free_answer(const RouteAnswer& selected, const Problem& problem,
+                                  const Weight& weight, std::int32_t tokens, bool prefill,
+                                  bool workspace) {
+    const Route kept =
+        workspace_free_route(selected.route, problem, weight, tokens, prefill, workspace);
+    if (kept == selected.route) return selected;
+    // The route is workspace_free_route's own (the run path's), whatever walk it makes; the
+    // evidence is that of the A16 heuristic, which is the walk it makes today.
+    const RouteAnswer heuristic = heuristic_answer(
+        ask_below_profiles(tokens, prefill),
+        Problem{problem.qtype, LinearPolicy::A16Only, problem.n, problem.k, problem.epilogue},
+        weight);
+    return RouteAnswer{kept, heuristic.evidence};
+}
+
 // The engine's call as route_query describes it: `n` rows, K-wide contiguous x unless `ldx` says.
 CallLayout engine_call(std::int32_t n, std::int32_t k, std::int32_t tokens, Epilogue epilogue,
                        std::optional<std::size_t> workspace_free, bool x_aligned16, int ldx,
@@ -60,17 +79,39 @@ CallLayout engine_call(std::int32_t n, std::int32_t k, std::int32_t tokens, Epil
 
 } // namespace
 
-std::optional<Route> route_query(const DeviceClass& device, QType qtype, LinearPolicy policy,
-                                 Epilogue epilogue, std::int32_t n, std::int32_t k,
-                                 std::int32_t tokens, bool prefill, std::int32_t parent_rows,
-                                 std::optional<QuantLayout> layout) {
+std::optional<RouteAnswer> route_answer_query(const DeviceClass& device, QType qtype,
+                                              LinearPolicy policy, Epilogue epilogue,
+                                              std::int32_t n, std::int32_t k, std::int32_t tokens,
+                                              bool prefill, std::int32_t parent_rows,
+                                              std::optional<QuantLayout> layout) {
     if (n <= 0 || k <= 0 || tokens <= 0 || parent_rows < 0) return std::nullopt;
     const ScopedDeviceClass scoped(device);
     DescribedWeight described;
     describe_weight(described, qtype, epilogue, n, k, parent_rows, layout);
     if (!supports(described.weight)) return std::nullopt;
     const Problem problem{qtype, policy, n, k, epilogue};
-    return select_route(problem, described.weight, tokens, prefill);
+    return select_answer(problem, described.weight, tokens, prefill);
+}
+
+std::optional<Route> route_query(const DeviceClass& device, QType qtype, LinearPolicy policy,
+                                 Epilogue epilogue, std::int32_t n, std::int32_t k,
+                                 std::int32_t tokens, bool prefill, std::int32_t parent_rows,
+                                 std::optional<QuantLayout> layout) {
+    const auto answer = route_answer_query(device, qtype, policy, epilogue, n, k, tokens, prefill,
+                                           parent_rows, layout);
+    if (!answer) return std::nullopt;
+    return answer->route;
+}
+
+double described_bytes_per_weight(QType qtype, LinearPolicy policy, Epilogue epilogue,
+                                  std::int32_t n, std::int32_t k, std::int32_t parent_rows,
+                                  std::optional<QuantLayout> layout) {
+    if (n <= 0 || k <= 0 || parent_rows < 0) {
+        throw std::invalid_argument("described_bytes_per_weight: N and K must be positive");
+    }
+    DescribedWeight described;
+    describe_weight(described, qtype, epilogue, n, k, parent_rows, layout);
+    return bytes_per_weight(described.weight, Problem{qtype, policy, n, k, epilogue});
 }
 
 std::optional<ResolvedRoute>
@@ -194,12 +235,16 @@ std::optional<RouteDescription> describe_call(const DeviceClass& device, QType q
     describe_weight(described, qtype, epilogue, n, k, parent_rows);
     if (!supports(described.weight)) return std::nullopt;
     const Problem problem{qtype, policy, n, k, epilogue};
-    const Route asked =
-        workspace_free_route(select_route(problem, described.weight, tokens, prefill), problem,
-                             described.weight, tokens, prefill, workspace_free.has_value());
+    const RouteAnswer answer =
+        workspace_free_answer(select_answer(problem, described.weight, tokens, prefill), problem,
+                              described.weight, tokens, prefill, workspace_free.has_value());
+    const Route asked            = answer.route;
     const ResolvedRoute resolved = resolve_route(
         asked, described.weight, engine_call(n, k, tokens, epilogue, workspace_free, true, 0, 1));
-    return describe_resolved(described, problem, resolved, tokens, workspace_free, with_kernel);
+    RouteDescription out =
+        describe_resolved(described, problem, resolved, tokens, workspace_free, with_kernel);
+    out.evidence = answer.evidence;
+    return out;
 }
 
 std::string describe_text(const RouteDescription& d) {
@@ -236,6 +281,7 @@ std::string describe_text(const RouteDescription& d) {
                " threads=" + std::to_string(k.threads) + " grid=" + std::to_string(k.grid_x) + "x" +
                std::to_string(k.grid_y) + "x" + std::to_string(k.grid_z);
     }
+    if (d.evidence) out += " " + evidence_text(*d.evidence);
     return out;
 }
 

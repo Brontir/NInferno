@@ -40,17 +40,23 @@ KernelFacts facts(int registers, std::size_t static_shared_bytes) {
     return f;
 }
 
+// A board as the query builds it, with the table's facts (synthetic_device_class leaves them
+// empty; the law reads the canonical clock from them, as the other cost models do).
+DeviceClass board(std::uint32_t pci_device_id, int major, int minor, int sms, std::size_t l2_bytes,
+                  std::size_t global_bytes) {
+    DeviceClass d =
+        synthetic_device_class(pci_device_id, major, minor, sms, l2_bytes, global_bytes);
+    d.facts = machine_facts_of(d);
+    return d;
+}
+
 } // namespace
 
 int main() {
-    const DeviceClass rtx5090 =
-        synthetic_device_class(0x2B85, 12, 0, 170, 96 * kMiB, 32ULL * 1024 * kMiB);
-    const DeviceClass rtx4090 =
-        synthetic_device_class(0x2684, 8, 9, 128, 72 * kMiB, 24ULL * 1024 * kMiB);
-    const DeviceClass rtx4060ti =
-        synthetic_device_class(0x2803, 8, 9, 34, 32 * kMiB, 16ULL * 1024 * kMiB);
-    const DeviceClass rtx2080ti =
-        synthetic_device_class(0x1E04, 7, 5, 68, 6 * kMiB, 11ULL * 1024 * kMiB);
+    const DeviceClass rtx5090   = board(0x2B85, 12, 0, 170, 96 * kMiB, 32ULL * 1024 * kMiB);
+    const DeviceClass rtx4090   = board(0x2684, 8, 9, 128, 72 * kMiB, 24ULL * 1024 * kMiB);
+    const DeviceClass rtx4060ti = board(0x2803, 8, 9, 34, 32 * kMiB, 16ULL * 1024 * kMiB);
+    const DeviceClass rtx2080ti = board(0x1E04, 7, 5, 68, 6 * kMiB, 11ULL * 1024 * kMiB);
 
     // Uncalibrated: 256 everywhere, at every geometry; an uninstantiated geometry too.
     for (const DeviceClass* d : {&rtx5090, &rtx4090, &rtx4060ti, &rtx2080ti}) {
@@ -104,6 +110,13 @@ int main() {
         (128.0 / 34.0) * (machine_facts_of(rtx4090).reference_clock_khz /
                           static_cast<double>(machine_facts_of(rtx4060ti).reference_clock_khz));
     expect(ratio > 0.97 * want && ratio < 1.03 * want, "the width composes SMs and clock");
+    // The clock is the canonical one the device class carries (device.facts), as in the other cost
+    // models and the decision fingerprint, not one rebuilt from the raw driver fields.
+    DeviceClass canonical = rtx4090;
+    canonical.facts.reference_clock_khz *= 2;
+    const auto w_canonical = d::text_fused_max_tokens_with_facts(canonical, 32, 2, light, excess);
+    expect(std::abs(static_cast<double>(w_canonical) / w4090 - 2.0) < 0.03,
+           "the law reads device.facts' reference clock (twice the clock, twice the width)");
     // The facts' occupancy is the law's: a register-limited kernel (5 CTAs against 16) and a
     // shared-memory-limited one (4) fuse proportionally narrower.
     const auto w_registers = d::text_fused_max_tokens_with_facts(rtx4090, 32, 2, registers, excess);

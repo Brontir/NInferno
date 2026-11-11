@@ -339,6 +339,8 @@ EXCLUDED = [
     ("src/ops/rmsnorm_rope/*.cpp", "not the linear projection"),
     ("src/ops/softmax_attention/**", "attention, not the linear projection"),
     ("src/ops/moe/moe_tune.cpp", "load-time MoE tuner (times plans); no selector golden reads it"),
+    ("src/ops/moe/moe_cost.cpp", "MoE stage prices and their candidate report (#683): a lower bound "
+                                 "that no plan selects by; only its test and replica read it"),
     ("cmake/Dependencies.cmake", "third-party fetch"), ("cmake/GitCommit.cmake", "version string"),
     ("cmake/Windows.cmake", "Windows toolchain"), ("cmake/windows-utf8.manifest", "Windows manifest"),
     ("cmake/NInfernoTargets.cmake", "compile flags (-lineinfo, archive kind, RDC) and the per-arch source "
