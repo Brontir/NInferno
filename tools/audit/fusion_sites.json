@@ -259,6 +259,10 @@
                     "rmsnorm_rope (one launch)",
                     "2 x rmsnorm + rope"
                 ],
+                "regret_branches": [
+                    "fused",
+                    "decomposed"
+                ],
                 "priced": {
                     "status": "literal",
                     "by":
@@ -451,7 +455,7 @@
                     "function": "launch_overlap"
                 },
                 "rule_today":
-                    "Only a register-MMA or R8 Store launch joins or releases; a release also needs PDL (OverlapRefusal::NoPdl), a join does not; the pre-quantized R8 form refuses all three (OverlapRefusal::PrequantizedR8); prefetch for T <= kPdlPrefetchMaxTokens (16).",
+                    "Only a register-MMA or R8 Store launch joins or releases; a release also needs PDL (OverlapRefusal::NoPdl); a join keeps its flag without PDL, a no-op there (the manifest line says join=no_pdl); the pre-quantized R8 form refuses all three (OverlapRefusal::PrequantizedR8); prefetch for T <= kPdlPrefetchMaxTokens (16).",
                 "alternatives": [
                     "overlap via programmatic dependent launch",
                     "stream order"

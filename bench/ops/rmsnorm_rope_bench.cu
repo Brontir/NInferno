@@ -44,6 +44,9 @@ constexpr int kTextRotaryDim  = 64;
 constexpr float kTextRopeBase = 1.0e7F;
 constexpr float kTextEps      = 1.0e-6F;
 
+// The crossover bench times each route this many passes and keeps the least median.
+constexpr int kMinOfPasses = 3;
+
 enum class Form : std::uint8_t { Pair, Single, Text };
 enum class Route : std::uint8_t { Split, Fused };
 enum class Execution : std::uint8_t { Eager, Graph };
@@ -394,9 +397,9 @@ double text_route_us(const Options& options, Route route, int query_heads, int k
     graph.capture(stream, [&](cudaStream_t s) {
         for (int rep = 0; rep < options.graph_reps; ++rep) one(s);
     });
-    // The least of three medians: a noisy pass (clock ramp, a neighbour) only adds time.
+    // The least of kMinOfPasses medians: a noisy pass (clock ramp, a neighbour) only adds time.
     double best = 0.0;
-    for (int pass = 0; pass < 3; ++pass) {
+    for (int pass = 0; pass < kMinOfPasses; ++pass) {
         const auto timing = bench::measure_graph_prepared([](cudaStream_t) {}, graph, stream,
                                                           options.warmup, options.repeat);
         best              = pass == 0 ? timing.median_us : std::min(best, timing.median_us);
@@ -426,14 +429,24 @@ void run_crossover(const Options& options, cudaStream_t stream) {
     const int sms         = device.sms;
     const double clock_hz = machine_facts_of(device).reference_clock_khz * 1.0e3;
     std::printf("# device=%s generation=%s sms=%d clock_mhz=%.0f dram_gbps=%.1f "
-                "launch_node_us=%s graph_reps=%d\n",
+                "launch_node_us=%s graph_reps=%d min_of=%d\n",
                 device.name.c_str(), generation.c_str(), sms, clock_hz / 1.0e6, bw / 1.0e9,
-                node_l > 0.0 ? std::to_string(node_l * 1.0e6).c_str() : "none", options.graph_reps);
+                node_l > 0.0 ? std::to_string(node_l * 1.0e6).c_str() : "none", options.graph_reps,
+                kMinOfPasses);
     // The resident blocks the law reads (the geometry's committed kernel facts through the
     // occupancy calculator, ops/rmsnorm_rope/launch.h; 0 where the snapshots carry none and the law
     // refuses) against the running GPU's occupancy of the compiled kernel: a mismatch is printed.
     // The implied constants below use the law's value, the live one where no facts are committed.
     std::vector<double> warps_of_geometry;
+    for (const auto& [qh, kh] : options.geometries) {
+        if (ops::rmsnorm_rope_text_heads(qh, kh)) {
+            std::printf("# dispatch_bound %d+%d=%d\n", qh, kh,
+                        ops::rmsnorm_rope_text_fused_max_tokens(device, qh, kh));
+        } else {
+            std::printf("# %d+%d: the fused kernel is not instantiated for this geometry\n", qh,
+                        kh);
+        }
+    }
     for (const auto& [qh, kh] : options.geometries) {
         const auto facts = ops::detail::text_kernel_facts(device, qh, kh);
         const int law_ctas =

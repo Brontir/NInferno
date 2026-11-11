@@ -37,11 +37,16 @@ void require_rope_axes(const Tensor& positions, const RopeConfig& config) {
 // geometry keeps the 256 measured on the RTX 5090, and so does a call with no device to read.
 constexpr std::int32_t kFusedTextQkNormRopeDefaultMaximumTokens = 256;
 
-std::int32_t fused_text_qk_norm_rope_maximum_tokens(std::int32_t query_heads,
-                                                    std::int32_t key_heads) {
+// The width and geometry part of the dispatch: ops::rmsnorm_rope_text_takes_width, the function the
+// fusion-site manifest asks too. With no device to read the default width applies.
+bool fused_text_qk_norm_rope_width(std::int32_t query_heads, std::int32_t key_heads,
+                                   std::int32_t tokens) {
     try {
-        return ops::rmsnorm_rope_text_fused_max_tokens(device_class(), query_heads, key_heads);
-    } catch (const std::exception&) { return kFusedTextQkNormRopeDefaultMaximumTokens; }
+        return ops::rmsnorm_rope_text_takes_width(device_class(), query_heads, key_heads, tokens);
+    } catch (const std::exception&) {
+        return ops::rmsnorm_rope_text_heads(query_heads, key_heads) &&
+               tokens <= kFusedTextQkNormRopeDefaultMaximumTokens;
+    }
 }
 
 // The fused kernel fixes the RMSNorm epsilon (1e-6) and the RoPE frequencies (theta 1e7) in its
@@ -53,13 +58,11 @@ constexpr float kFusedTextRmsEpsilon = 1.0e-6F;
 bool fused_text_qk_norm_rope(const Tensor& positions, const RopeConfig& rope,
                              const AttentionConfig& attention, float rms_norm_eps,
                              std::int32_t tokens) {
-    return !rope.yarn() && positions.ne[1] == 1 &&
-           tokens <= fused_text_qk_norm_rope_maximum_tokens(attention.num_attention_heads,
-                                                            attention.num_key_value_heads) &&
-           rope.rope_theta == kFusedTextRopeTheta && rms_norm_eps == kFusedTextRmsEpsilon &&
-           attention.head_dim == 256 && rope.rotary_dim == 64 &&
-           ops::rmsnorm_rope_text_heads(attention.num_attention_heads,
-                                        attention.num_key_value_heads);
+    return !rope.yarn() && positions.ne[1] == 1 && rope.rope_theta == kFusedTextRopeTheta &&
+           rms_norm_eps == kFusedTextRmsEpsilon && attention.head_dim == 256 &&
+           rope.rotary_dim == 64 &&
+           fused_text_qk_norm_rope_width(attention.num_attention_heads,
+                                         attention.num_key_value_heads, tokens);
 }
 
 } // namespace
