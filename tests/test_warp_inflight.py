@@ -80,6 +80,9 @@ class WarpInflight(unittest.TestCase):
         self.assertEqual(s["variants"]["free"]["chain1"]["linear_to_w"], 32)
         self.assertEqual(s["variants"]["placed"]["chain1"]["linear_to_w"], 48)
         self.assertEqual(s["variants"]["free"]["chain4"]["linear_to_w"], 12)
+        # The reading at the top of the linear region: chain4 at W = 12 holds 90 x 256 / 12 B.
+        self.assertAlmostEqual(s["variants"]["free"]["chain4"]["b_w_at_linear_w"],
+                               P_GBPS * L_NS / 12, delta=0.5)
         self.assertAlmostEqual(s["p_gbps"]["free"], P_GBPS, delta=1e-3)
         self.assertAlmostEqual(s["p_bytes_per_clk"]["placed"], P_GBPS * 1e3 / MHZ, delta=0.01)
         row = next(r for r in rows if r["mode"] == "free" and r["variant"] == "chain2"
@@ -108,6 +111,8 @@ class WarpInflight(unittest.TestCase):
         self.assertIn("dram_tlbwarm_latency_ns_w1", l0["table_source"])
         self.assertEqual(l0["table_card"], isa["card"])
         self.assertFalse(l0["table_is_this_card"])
+        self.assertIn("by construction", l0["own_source"])
+        self.assertIs(run["clocks_waived"], False)
         r = run["rows"][5]
         self.assertAlmostEqual(r["b_w_bytes"], r["gbps"] * L_NS / r["w"], delta=0.1)
         self.assertIsNone(r["b_w_table_bytes"])
@@ -148,7 +153,8 @@ class WarpInflight(unittest.TestCase):
         # A moved clock is never waived; a steady P2 is, with the waiver noted, and only then.
         self.refused(with_clocks(head.format(n=30, lo=405, hi=10251, p="P2"), waived), "moved")
         self.refused(SAMPLE + waived, "noted as waived")
-        wi.parse_run(with_clocks(steady_p2, waived))
+        head, rows = wi.parse_run(with_clocks(steady_p2, waived))
+        self.assertIs(wi.run_of(head, rows, "x.txt", wi.DEFAULT_ISA_TABLE)["clocks_waived"], True)
         self.refused(SAMPLE.replace("span_ns 1762862400000000000 1762862404000000000",
                                     "span_ns 5 4"), "span_ns")
 

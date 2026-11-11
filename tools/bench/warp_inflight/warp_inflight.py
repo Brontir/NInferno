@@ -339,7 +339,9 @@ def isa_l0(cc, table_path):
 
 def own_l0(rows):
     """The run's own L0: the fetch time of one warp alone on one SM with one load a lane in
-    flight (free, k = 1, chain1, W = 1), in ns."""
+    flight (free, k = 1, chain1, W = 1), in ns. That row's b_w is therefore 512 B by
+    construction, no measurement: b_w is read from the linear region at W > 1 (and from the other
+    variants and the placed rows), where the rate is measured against this L0."""
     return next(r["ns_fetch"] for r in rows if (r["mode"], r["k"], r["variant"], r["w"]) == OWN_L0)
 
 
@@ -365,13 +367,15 @@ def derive(rows, l0_ns, table_l0_ns=None):
             vr = sorted((r for r in one if r["variant"] == v), key=lambda r: r["w"])
             if not vr or vr[0]["w"] != 1 or not l0_ns:
                 continue
-            b1, linear = vr[0]["b_w_bytes"], 1
+            b1, linear, at = vr[0]["b_w_bytes"], 1, vr[0]["b_w_bytes"]
             for r in vr:
                 if r["b_w_bytes"] < LINEAR_SHARE * b1:
                     break
-                linear = r["w"]
+                linear, at = r["w"], r["b_w_bytes"]
+            # b_w_at_linear_w: the reading at the top of the linear region (W > 1 where it has
+            # more than one row); free chain1's b_w_w1 is 512 B by construction (own_l0).
             per[v] = {"warp_bytes_in_flight": vr[0]["warp_bytes_in_flight"], "b_w_w1": b1,
-                      "linear_to_w": linear}
+                      "linear_to_w": linear, "b_w_at_linear_w": at}
     return summary
 
 
@@ -383,13 +387,16 @@ NOTE = ("Per-SM DRAM rate against resident warps W, written by `tools/bench/warp
         "carve-out, `placed` 1 or 2 CTAs on each of k chosen SMs held there by shared memory "
         "(shared-largest carve-out). gbps is bytes per ns of one SM (median over the k SMs, "
         "median of three launches); b_w_bytes = gbps x L0 / W with L0 the run's own (its free, "
-        "k = 1, chain1, W = 1 fetch time), b_w_table_bytes the same with the ISA table's "
+        "k = 1, chain1, W = 1 fetch time, so that row's b_w is 512 B by construction and no "
+        "measurement: b_w is read from the linear region at W > 1, the summary's "
+        "b_w_at_linear_w), b_w_table_bytes the same with the ISA table's "
         "dram_tlbwarm_latency_ns_w1 where that row was measured on the run's card (by card name: "
         "the ISA rows carry no PCI id), else null; the summary's P is the largest rate at k = 1. "
         "Free rows at k > 1 sit on SMs the CTA scheduler chose (they may share a TPC or a GPC): "
         "the modes are compared at k = 1. Provenance Measured for every run, with its source "
         "file, card, probe version, nvcc, driver, runtime and the sha256 of the warp_inflight.cu "
-        "it was built from; every run's clocks were steady over its measured span (the notes).")
+        "it was built from; every run's clocks were steady over its measured span (the notes), "
+        "clocks_waived true where that steady clock was below P0 or the rated memory clock.")
 
 
 def run_of(head, rows, source, isa_table):
@@ -406,7 +413,9 @@ def run_of(head, rows, source, isa_table):
                  "runtime": head["runtime"], "arch": head["arch"],
                  "source_sha256": head["source_sha256"], "sass_ldg128": head["sass_ldg128"]},
         "notes": head["notes"],
-        "l0": {"own_ns": own, "own_source": "this run's free, k = 1, chain1, W = 1 ns_fetch",
+        "clocks_waived": any(n.startswith(CLOCK_WAIVED) for n in head["notes"]),
+        "l0": {"own_ns": own, "own_source": "this run's free, k = 1, chain1, W = 1 ns_fetch (so "
+                                            "that row's b_w is 512 B by construction)",
                "table_ns": table, "table_source": why, "table_card": table_card,
                "table_is_this_card": matches},
         "rows": rows,
@@ -564,12 +573,16 @@ def cmd_show(a):
         l0 = run["l0"]
         print(f"{run['card']} ({run['tool']['arch']}, {run['source']}); own L0 {l0['own_ns']} ns "
               f"({l0['own_source']}); table L0 {l0['table_ns']} ns from {l0['table_source']}"
-              f"{'' if l0['table_is_this_card'] else ' (another card: no table b_w)'}")
+              f"{'' if l0['table_is_this_card'] else ' (another card: no table b_w)'}"
+              f"{'; clocks waived' if run['clocks_waived'] else ''}")
+        print("  free chain1 b_w at W=1 is 512 B by construction (its fetch is the own L0); read "
+              "b_w from the linear region at W > 1")
         for mode, p in s["p_gbps"].items():
             print(f"  {mode}: P {p:.2f} GB/s an SM ({s['p_bytes_per_clk'][mode]} B/clk)")
             for v, d in s["variants"].get(mode, {}).items():
                 print(f"    {v:7s} in flight {d['warp_bytes_in_flight']:5d} B a warp: b_w at W=1 "
-                      f"{d['b_w_w1']:7.1f} B, linear to W={d['linear_to_w']}")
+                      f"{d['b_w_w1']:7.1f} B, linear to W={d['linear_to_w']} (b_w there "
+                      f"{d['b_w_at_linear_w']:.1f} B)")
         for r in run["rows"]:
             if r["k"] == 1:
                 print(f"  {r['mode']:6s} {r['variant']:7s} W={r['w']:2d} {r['gbps']:8.3f} GB/s "
