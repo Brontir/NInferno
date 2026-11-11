@@ -17,7 +17,7 @@
 arch 120a
 nvcc 13.4.92
 flags -O3 -DNDEBUG rdc=OFF lineinfo=ON ptx=OFF
-source d8e277b3d135041b6ef5b8fc0fd2475a1da7f31046cad54f54e84d847a1d01d2
+source e428b4d10ddfbd36bf1c8636938d5c1d63adae9b36ec340b3b8d8745c21435f4
 kernels 2696
 columns family decoder warps_m warps_k m_tiles n_tiles cluster epilogue latency sums registers stack local shared loops k_iter mma mma_ones mma_shape ldg ldg_bytes ld ld_bytes ldgsts ldgsts_bytes lds lds_bytes sts sts_bytes local local_bytes shfl int fp uniform other total
 rmma Bf16Decoder 1 4 1 1 1 0 0 0 52 0 0 1536 1 64 4 0 HMMA.16816.F32.BF16 4 2048 2 1024 0 0 0 0 0 0 0 0 0 70 0 11 25 116

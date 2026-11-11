@@ -844,16 +844,16 @@ int check_invariance(const Format& f, Op op, std::int32_t out_rows, std::int32_t
 int check_plane_sums(const Format& f, Op op, std::int32_t out_rows, std::int32_t k, std::int32_t t,
                      generic::Route route, std::uint32_t seed, int& taken) {
     const ops::ScopedPrefillRoutes prefill(true);
-    const std::int32_t rows_n = gated(op) ? 2 * out_rows : out_rows;
-    const HostWeight host     = make_weight(f.qtype, rows_n, k, seed);
-    DeviceWeight device       = upload_weight(host);
+    const std::int32_t rows_n        = gated(op) ? 2 * out_rows : out_rows;
+    const HostWeight host            = make_weight(f.qtype, rows_n, k, seed);
+    DeviceWeight device              = upload_weight(host);
     const generic::Epilogue epilogue = gated(op)       ? generic::Epilogue::SwiGlu
                                        : op == Op::Add ? generic::Epilogue::AddResidual
                                                        : generic::Epilogue::Store;
     const bool takes =
         generic::rmma_plane_taken(route.schedule, device.weight, epilogue, t, out_rows);
     taken += takes ? 1 : 0;
-    const auto activation     = make_linear_activation(k, t, seed + 3U, ActivationCompute::A16);
+    const auto activation = make_linear_activation(k, t, seed + 3U, ActivationCompute::A16);
     DeviceBuffer x(activation.size() * 2);
     x.copy_from_host(activation.data(), x.bytes);
     std::vector<std::uint16_t> residual(static_cast<std::size_t>(out_rows) * t);

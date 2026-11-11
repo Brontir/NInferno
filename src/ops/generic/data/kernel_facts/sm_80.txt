@@ -10,7 +10,7 @@
 arch 80
 nvcc 13.4.92
 flags -O3 -DNDEBUG rdc=ON lineinfo=OFF ptx=OFF
-source d8e277b3d135041b6ef5b8fc0fd2475a1da7f31046cad54f54e84d847a1d01d2
+source e428b4d10ddfbd36bf1c8636938d5c1d63adae9b36ec340b3b8d8745c21435f4
 kernels 2696
 columns family decoder warps_m warps_k m_tiles n_tiles cluster epilogue latency sums registers stack local shared
 rmma Bf16Decoder 1 4 1 1 1 0 0 0 48 0 0 1536

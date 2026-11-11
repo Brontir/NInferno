@@ -181,9 +181,9 @@ template <class Decoder, class Schedule, Epilogue E, RmmaSums Sums = RmmaSums::O
 bool rmma_latency_pays(const GemmArgs& args) {
     static PerDevice<std::array<int, 2>> ctas;
     return rmma_latency_board<Decoder, Schedule, E>() &&
-           rmma_occupancy_kept<Schedule>(ctas, rmma_kernel_facts<Decoder, Schedule, E, true, Sums>(),
-                                         rmma_kernel_facts<Decoder, Schedule, E, false, Sums>(),
-                                         args);
+           rmma_occupancy_kept<Schedule>(
+               ctas, rmma_kernel_facts<Decoder, Schedule, E, true, Sums>(),
+               rmma_kernel_facts<Decoder, Schedule, E, false, Sums>(), args);
 }
 
 // The schedules and decoders with a wide variant (WideOf: the wide-load Q6_K), one token tile.
@@ -289,7 +289,7 @@ void launch_rmma_schedule(const GemmArgs& args, cudaStream_t stream) {
                 if constexpr (kRmmaLatencyVariant<Decoder, Schedule, E>) {
                     if (rmma_latency_launch<Decoder, Schedule, E, RmmaSums::Plane>(args)) {
                         launch_rmma_kernel<Decoder, Schedule, E, true, RmmaSums::Plane>(args,
-                                                                                         stream);
+                                                                                        stream);
                         return;
                     }
                 }

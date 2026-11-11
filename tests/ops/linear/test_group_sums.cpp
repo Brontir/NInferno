@@ -100,7 +100,7 @@ bool admitted_by_rows(const std::string& arch, const std::string& decoder, int e
     for (int i = 0; i < generic::rmma_schedule_count(); ++i) {
         const auto s = generic::rmma_schedule_info(i);
         for (const bool latency : {false, true}) {
-            kf::RmmaKernelKey key{decoder,  s.warps_m, s.warps_k, s.m_tiles, s.n_tiles,
+            kf::RmmaKernelKey key{decoder,   s.warps_m, s.warps_k, s.m_tiles, s.n_tiles,
                                   s.cluster, epilogue,  latency,   2};
             const auto plane = kf::rmma_facts(arch, key);
             key.sums         = 0;
@@ -111,7 +111,7 @@ bool admitted_by_rows(const std::string& arch, const std::string& decoder, int e
             const int threads = 32 * s.warps_m * s.warps_k;
             const auto ctas   = [&](const kf::KernelFacts& f) {
                 return resident_ctas_per_sm(device_class(),
-                                            KernelShape{f.registers, 0, threads, 0});
+                                              KernelShape{f.registers, 0, threads, 0});
             };
             if (plane->static_shared_bytes > ones->static_shared_bytes ||
                 !generic::rmma_plane_rule(plane->spill_bytes(), ones->spill_bytes(), ctas(*plane),
@@ -181,8 +181,8 @@ void host_rules(const std::string& board) {
         const WeightCodec c = generic::codec_of(w);
         for (const generic::Epilogue e : {generic::Epilogue::Store, generic::Epilogue::AddResidual,
                                           generic::Epilogue::SwiGlu}) {
-            const bool expected =
-                tensor && !arch.empty() && admitted_by_rows(arch, decoder_of(q), static_cast<int>(e));
+            const bool expected = tensor && !arch.empty() &&
+                                  admitted_by_rows(arch, decoder_of(q), static_cast<int>(e));
             const std::string at = board + " " + std::string(generic::qtype_name(q)) + " " +
                                    std::to_string(static_cast<int>(e));
             if (expected) {
@@ -199,7 +199,7 @@ void host_rules(const std::string& board) {
                     continue;
                 }
                 const generic::Route r{generic::Family::RegisterMma, static_cast<std::uint8_t>(i)};
-                const std::string ri  = at + " " + generic::route_name(r);
+                const std::string ri = at + " " + generic::route_name(r);
                 const ops::ScopedPrefillRoutes prefill(true);
                 for (const std::int32_t t : {5, 32, 512}) {
                     check(generic::rmma_plane_taken(i, w, e, t, rows) == expected,
@@ -209,23 +209,23 @@ void host_rules(const std::string& board) {
                           ri + ": the price describes the instance with the MMA with ones");
                 }
                 const std::size_t need = generic::rmma_group_sums_bytes(c, 4096, 32);
-                const auto resolved    = generic::resolve_route(
-                    r, w,
-                    generic::CallLayout{.ldx            = 4096,
-                                           .tokens         = 32,
-                                           .rows           = rows,
-                                           .epilogue       = e,
-                                           .workspace_free = need});
+                const auto resolved =
+                    generic::resolve_route(r, w,
+                                           generic::CallLayout{.ldx            = 4096,
+                                                               .tokens         = 32,
+                                                               .rows           = rows,
+                                                               .epilogue       = e,
+                                                               .workspace_free = need});
                 check(resolved.group_sums == expected && resolved.reason == generic::Demotion::None,
                       ri + ": resolve_route takes the plane where the facts admit it");
                 const ops::ScopedPrefillRoutes speed(false);
-                const auto in_speed = generic::resolve_route(
-                    r, w,
-                    generic::CallLayout{.ldx            = 4096,
-                                           .tokens         = 32,
-                                           .rows           = rows,
-                                           .epilogue       = e,
-                                           .workspace_free = need});
+                const auto in_speed =
+                    generic::resolve_route(r, w,
+                                           generic::CallLayout{.ldx            = 4096,
+                                                               .tokens         = 32,
+                                                               .rows           = rows,
+                                                               .epilogue       = e,
+                                                               .workspace_free = need});
                 check(!in_speed.group_sums && in_speed.reason == generic::Demotion::None,
                       ri + ": the speed profile takes no plane and is not demoted");
             }
@@ -249,9 +249,8 @@ void host_rules(const std::string& board) {
                   at + ": a workspace short of the plane: the same route, the MMA with ones, "
                        "demoted where the plane was taken");
             const auto none = resolve(r, 32, std::nullopt);
-            check(!none.group_sums &&
-                      none.reason ==
-                          (expected ? generic::Demotion::GroupSums : generic::Demotion::None),
+            check(!none.group_sums && none.reason == (expected ? generic::Demotion::GroupSums
+                                                               : generic::Demotion::None),
                   at + ": no workspace: the MMA with ones, demoted where the plane was taken");
             // A call demoted before keeps its first reason: R8 given more tokens than it fits
             // and no workspace runs the register MMA, said as R8's demotion.
@@ -279,8 +278,8 @@ void host_rules(const std::string& board) {
                 generic::resolved_route_query(device_class(), q, ops::LinearPolicy::A16Only,
                                               generic::Epilogue::Store, 4096, 4096, 5, need5, true);
             const auto decode5 = generic::resolved_route_query(
-                device_class(), q, ops::LinearPolicy::A16Only, generic::Epilogue::Store, 4096,
-                4096, 5, need5, false);
+                device_class(), q, ops::LinearPolicy::A16Only, generic::Epilogue::Store, 4096, 4096,
+                5, need5, false);
             check(tail && (tail->executed.family != generic::Family::RegisterMma ||
                            tail->group_sums == expected),
                   at + ": a prefill query below 17 tokens resolves with the plane the facts admit");
@@ -296,9 +295,8 @@ void host_rules(const std::string& board) {
     check(!generic::rmma_plane_rule(16, 8, 2, 2), "more spill: the twin");
     check(!generic::rmma_plane_rule(0, 0, 1, 2), "fewer CTAs per SM: the twin");
     check(!generic::rmma_plane_rule(0, 0, 0, 0), "unknown facts: the twin");
-    std::cout << board << " (sm_" << arch
-              << "): the plane admitted for" << (admitted_list.empty() ? " none" : admitted_list)
-              << '\n';
+    std::cout << board << " (sm_" << arch << "): the plane admitted for"
+              << (admitted_list.empty() ? " none" : admitted_list) << '\n';
 }
 
 // The pre-pass on the GPU against the CPU's tree, bit for bit.
@@ -431,8 +429,8 @@ int graph_capture() {
                                        static_cast<std::uint8_t>(schedule)};
                 const std::string label = std::string(generic::qtype_name(q)) + " T " +
                                           std::to_string(tokens) + " " + generic::route_name(r);
-                const bool takes = generic::rmma_plane_taken(schedule, w, generic::Epilogue::Store,
-                                                             tokens, 512);
+                const bool takes =
+                    generic::rmma_plane_taken(schedule, w, generic::Epilogue::Store, tokens, 512);
                 with_plane += takes ? 1 : 0;
                 ++captured;
                 cudaStream_t s = nullptr;
@@ -551,16 +549,17 @@ int gpu_checks() {
                 const auto s = generic::rmma_schedule_info(i);
                 if (!generic::rmma_tile_compiled(generic::codec_of(w), s.m_tiles, s.n_tiles, 4096))
                     continue;
-                const std::string at =
-                    " (" + std::string(generic::qtype_name(q)) + " " +
-                    std::to_string(static_cast<int>(e)) + " " +
-                    generic::route_name({generic::Family::RegisterMma, static_cast<std::uint8_t>(i)}) +
-                    ")";
+                const std::string at = " (" + std::string(generic::qtype_name(q)) + " " +
+                                       std::to_string(static_cast<int>(e)) + " " +
+                                       generic::route_name({generic::Family::RegisterMma,
+                                                            static_cast<std::uint8_t>(i)}) +
+                                       ")";
                 {
                     const ops::ScopedPrefillRoutes speed(false);
                     const int twin  = adds && s.n_tiles >= 4 ? 1 : 0;
                     const auto wide = described(i, 32);
-                    check(wide && *wide == twin, "T = 32 describes the MMA with ones or the adds" + at);
+                    check(wide && *wide == twin,
+                          "T = 32 describes the MMA with ones or the adds" + at);
                     const auto narrow = described(i, 16);
                     check(narrow && *narrow == twin,
                           "T = 16 describes the MMA with ones or the adds" + at);
