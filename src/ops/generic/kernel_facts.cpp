@@ -5,7 +5,6 @@
 
 #include <cctype>
 #include <charconv>
-#include <exception>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -237,16 +236,13 @@ std::string_view build_arch() {
 #endif
 }
 
-std::optional<std::string> sass_arch() {
-    if (const DeviceClass* s = substituted_device_class()) {
-        std::string arch = release_arch(s->major, s->minor);
+std::optional<std::string> sass_arch_of(const DeviceClass& d, bool substituted) {
+    if (substituted) {
+        std::string arch = release_arch(d.major, d.minor);
         if (arch.empty()) return std::nullopt;
         return arch;
     }
-    try {
-        const DeviceClass& d = device_class();
-        if (sass_runs(build_arch(), d.major, d.minor)) return std::string(build_arch());
-    } catch (const std::exception&) {} // no current device: no kernels run
+    if (sass_runs(build_arch(), d.major, d.minor)) return std::string(build_arch());
     return std::nullopt;
 }
 
