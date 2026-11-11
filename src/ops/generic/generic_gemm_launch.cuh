@@ -23,7 +23,7 @@ namespace ninferno::ops::detail::generic {
 // The schedules: index, warps_m, warps_k, m_tiles,
 // n_tiles, cluster (K split over a thread-block cluster of that many CTAs, generic_gemm.cuh).
 // NINFERNO_GENERIC_RMMA_SCHEDULES: ops/generic/generic_schedules.h (one list for the
-// instantiations here and the host table in generic_gemm.cpp).
+// instantiations here and the host table in generic_schedule_tables.h).
 
 template <class Decoder, class Schedule, Epilogue E, bool Latency, bool AddSums = false>
 void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream);

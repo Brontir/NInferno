@@ -179,6 +179,12 @@ if(UNIX)
     COMMAND bash "${PROJECT_SOURCE_DIR}/tools/audit/decision_inputs.sh")
 endif()
 
+# tools/bench/route_table_prune.py: the exit tooling for measured route overrides (#614), on
+# synthetic regret reports, and the tables' evidence_us check (gaps listed in
+# route_evidence_gaps.json, which may only shrink), no GPU.
+add_test(NAME ninferno_route_table_prune_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_route_table_prune.py)
+
 # The shared test tree's link modes on the built binaries (NINFERNO_SHARED_OP_TESTS, a Linux-only
 # option): every test, app and bench as the configure decided, no second copy of a member archive
 # or of the CUDA runtime beside the shared library. No GPU.

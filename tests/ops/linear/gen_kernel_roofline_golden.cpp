@@ -4,6 +4,10 @@
 // outputs and nothing derived from the new code; running this program on the PR's code only
 // shows that the new code still equals the table.
 //
+// The pre-refactor commit is the master the refactor landed on (b3413a6c1), so the table holds the
+// old formula over that tree's facts, #698's Volta per-SM limits among them (a table made at an
+// older base missed them and failed on every V100 row that the thread limit decides).
+//
 // To regenerate: check out the pre-refactor commit named in the .inc header, copy in the two files
 // that expose the selector's price as a query (src/ops/generic/route_query.h and route_query.cpp
 // from the PR branch: priced_routes_query, a pure addition that does not touch the formula) and
