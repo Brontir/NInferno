@@ -205,6 +205,9 @@ NOT_DECIDING = {
     # the configuration choice (product code): the golden test links core and ops only, so nothing here
     # can move a selector golden
     "src/product/choice/choice.cpp",
+    # the drafter pair registry (spec): it reads the board registry to count cards (#692); the golden
+    # test does not link spec, so nothing here can move a selector golden
+    "src/spec/pairs.cpp",
 }
 # Includes that resolve to no tracked file: generated at build time (name -> the generator input,
 # which must be listed) or third-party code.
