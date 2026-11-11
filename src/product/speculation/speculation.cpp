@@ -365,16 +365,17 @@ ServedSpeculation served_of(const spec::Profile& profile, const spec::Choice& pr
     return out;
 }
 
-// spec::facts_load for `runs` as every choice at a one-request gain of `gain`, over `priced`'s
-// measurements (its gains at shallower depths) and joint verify's price.
+// spec::facts_load for `runs` alone at a one-request gain of `gain`, over `priced`'s measurements
+// (its gains at shallower depths) and joint verify's price. `gain` is over every section, so the
+// table checks the overall choice only: copied into the thinking and non-thinking ones it would
+// stand for their own sections' gains at its depth, while their shallower depths took theirs.
 std::vector<spec::LoadBound> facts_load_as(const spec::Profile& priced, const spec::Choice& runs,
                                            double gain) {
-    spec::Profile p = priced;
-    p.overall = p.thinking = p.non_thinking = runs;
-    for (spec::Choice* c : {&p.overall, &p.thinking, &p.non_thinking}) {
-        c->tok_s       = gain;
-        c->plain_tok_s = 1.0;
-    }
+    spec::Profile p       = priced;
+    p.overall             = runs;
+    p.overall.tok_s       = gain;
+    p.overall.plain_tok_s = 1.0;
+    p.thinking = p.non_thinking = spec::Choice{};
     p.served.reset();
     p.fit_fallback.reset();
     return spec::facts_load(p);
@@ -390,10 +391,12 @@ std::vector<spec::LoadBound> facts_load_as(const spec::Profile& priced, const sp
 //     under it the depth that the bounded choices of its drafter (mode) ran there,
 //     min(d, own) == min(d, their deepest); from the first bound where it would run another depth
 //     (a shallower depth under a bound of its parent's depth or deeper), nothing showed it to gain
-//     there: plain decode from that count on. A drafter none of the bounded choices drafts with:
-//     one request speculates, two or more decode plainly (as subject_of_mode). Counts below the
-//     first bound are left unbounded, as for `shown`: a measured table starts at two streams, and a
-//     literal's first bound (stand_in_load's cap) is not a depth's.
+//     there: plain decode from that count on, and the table is a literal (load_basis), its bounds
+//     before the cut `shown`'s. A table kept whole keeps `shown`'s basis: `out` runs every depth
+//     the bounded choices ran under it. A drafter none of the bounded choices drafts with: one
+//     request speculates, two or more decode plainly (as subject_of_mode). Counts below the first
+//     bound are left unbounded, as for `shown`: a measured table starts at two streams, and a
+//     literal's first bound (stand_in_load's cap) is not a depth's. No table stays none.
 void load_for(const spec::Profile& shown, spec::Profile& out, std::optional<double> gain) {
     out.load_basis = shown.load_basis;
     if (shown.load_basis == "facts" && gain) {
@@ -420,6 +423,7 @@ void load_for(const spec::Profile& shown, spec::Profile& out, std::optional<doub
     for (const spec::LoadBound& bound : shown.load) {
         if (bound.depth != 0 && std::min(bound.depth, runs.k) != std::min(bound.depth, deepest)) {
             out.load.push_back(spec::LoadBound{.lanes = bound.lanes, .depth = 0});
+            out.load_basis = "literal";
             return;
         }
         out.load.push_back(bound);
@@ -764,13 +768,17 @@ std::optional<ServedSpeculation> served_head_fallback(const SpeculationSubject& 
     if (!head.found() || head.profile.overall.config.mode != spec::Mode::Mtp) {
         return std::nullopt;
     }
-    // Its load table from the facts where the profile prices the head's configuration (its
-    // one-request gain measured, its joint verify priced: Profile::joint_scale); else the
-    // built-in literal stays, labelled (default_for_builtin_drafter).
+    // Its load table from the facts where the profile's table is derived from them (load_basis
+    // "facts", as load_for derives a shallower depth's and the fit fallback's) and the profile
+    // prices the head's configuration (its one-request gain measured, its joint verify priced:
+    // Profile::joint_scale); else the built-in literal stays, labelled
+    // (default_for_builtin_drafter). A measured or literal table at home is not derived again,
+    // though the lab's record prices its joint verify too: those keep their tables (load_for,
+    // subject_of_mode), so the head's stays the built-in one.
     const spec::Profile& priced = resolved->profile;
     const spec::Choice& runs    = head.profile.overall;
     if (const auto gain = spec::measured_gain(priced, runs.config, std::nullopt);
-        gain && priced.joint_scale.contains(runs.config.label())) {
+        priced.load_basis == "facts" && gain && priced.joint_scale.contains(runs.config.label())) {
         head.profile.load       = facts_load_as(priced, runs, *gain);
         head.profile.load_basis = "facts";
     }

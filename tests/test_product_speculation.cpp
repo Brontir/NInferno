@@ -355,7 +355,8 @@ int main() {
         }
         // (ii) A measured table (or a literal): a bound stays while the shallower depth runs
         // under it the depth the table's choices ran; from a bound of its parent's depth or
-        // deeper nothing showed it to gain, and it decodes plainly from there.
+        // deeper nothing showed it to gain, and it decodes plainly from there. A table so cut is a
+        // literal; one kept whole keeps its basis.
         {
             sp::Profile p;
             p.overall = p.thinking = p.non_thinking = chosen("mtp:3", "mtp", 2.0);
@@ -366,16 +367,16 @@ int main() {
                 return lower ? sp::load_label(lower->load) + "/" + lower->load_basis
                                            : std::string("none");
             };
-            failures += check(shallower_load("2:3,4:2,6:0", "mtp:3") == "2:0/measured",
+            failures += check(shallower_load("2:3,4:2,6:0", "mtp:3") == "2:0/literal",
                               "mtp:2 under a measured 2:3,4:2,6:0: plain from two streams, " +
                                   shallower_load("2:3,4:2,6:0", "mtp:3"));
             failures += check(shallower_load("2:2,4:1", "mtp:3") == "2:2,4:1/measured",
                               "mtp:2 under a measured 2:2,4:1 runs what it showed: " +
                                   shallower_load("2:2,4:1", "mtp:3"));
-            failures += check(shallower_load("2:2,4:1", "mtp:2") == "2:0/measured",
+            failures += check(shallower_load("2:2,4:1", "mtp:2") == "2:0/literal",
                               "mtp:1 under a measured 2:2,4:1: plain from two streams, " +
                                   shallower_load("2:2,4:1", "mtp:2"));
-            failures += check(shallower_load("2:2,5:3", "mtp:3") == "2:2,5:0/measured",
+            failures += check(shallower_load("2:2,5:3", "mtp:3") == "2:2,5:0/literal",
                               "a rising 2:2,5:3 is cut at its first unchecked bound: " +
                                   shallower_load("2:2,5:3", "mtp:3"));
             p.load_basis = "literal";
@@ -416,6 +417,63 @@ int main() {
                                   (fallback ? engine_label(*fallback) + "/" + fallback->load_basis
                                             : std::string("none")));
         }
+        // (iii b) A shallower depth of the fit fallback's drafter (the default drafts with
+        // another): under the fallback's own table, not the default's.
+        {
+            const auto lower_load = [&](const sp::Profile& p, const char* config) {
+                const auto lower = shallower_profile(p, sp::SpecConfig::parse(config), 1.5);
+                return lower ? sp::load_label(lower->load) + "/" + lower->load_basis
+                             : std::string("no profile");
+            };
+            // Measured with DFlash2 (2:3): the MTP fallback's own table is 2:0 (another drafter),
+            // and its shallower mtp:2 runs under it.
+            sp::Profile p;
+            p.overall = p.thinking = p.non_thinking = chosen("dflash2:7", "dflash2", 2.0);
+            p.fit_fallback                          = chosen("mtp:3", "mtp", 1.6);
+            p.load                                  = sp::parse_load("2:3");
+            p.load_basis                            = "measured";
+            failures += check(lower_load(p, "mtp:3") == "2:0/literal",
+                              "the fallback's mtp:2 beside a DFlash2 table measured: " +
+                                  lower_load(p, "mtp:3"));
+            // No table: the fallback and its shallower depth stay unbounded, as the default.
+            p.load.clear();
+            failures +=
+                check(lower_load(p, "mtp:3") == "none/measured",
+                      "no table: the fallback's mtp:2 stays unbounded: " + lower_load(p, "mtp:3"));
+            // From the facts. The fallback mtp:3 at x1.5 loses at two streams (x 0.6), mtp:1 at
+            // x1.2 gains at two and three (x 0.95, x 0.9) and four is unpriced: the fallback's own
+            // table is 2:1,4:0. Its mtp:2 is derived at its own gain: at x1.05 (x 0.9 = 0.945) it
+            // loses, and the table is 2:1,4:0 too (at the fallback's x1.5 it would be 2:2,3:1,4:0).
+            p.load_basis   = "facts";
+            p.measurements = measured({{"mtp:2", 1.0 / 1.05}, {"mtp:1", 1.0 / 1.2}});
+            p.joint_scale  = {
+                {"mtp:3", {{2, 0.6}}}, {"mtp:2", {{2, 0.9}}}, {"mtp:1", {{2, 0.95}, {3, 0.9}}}};
+            p.fit_fallback      = chosen("mtp:3", "mtp", 1.5);
+            p.load              = sp::facts_load(p);
+            const auto fallback = ninferno::product::served_fit_fallback(subject_of(p), false);
+            failures += check(fallback && engine_label(*fallback) == "2:1,4:0",
+                              "the fallback mtp:3's own facts table: " +
+                                  (fallback ? engine_label(*fallback) : std::string("none")));
+            failures += check(lower_load(p, "mtp:3") == "2:1,4:0/facts",
+                              "the fallback's mtp:2 from the facts at its own gain: " +
+                                  lower_load(p, "mtp:3"));
+            // mtp:2 not measured: its gain is unknown, so the fallback's table holds while it runs
+            // the depth the fallback ran under it (depth 1 from two streams), kept whole with its
+            // basis; under the default's table (DFlash2's: another drafter) it would get 2:0.
+            p.measurements = measured({{"mtp:1", 1.0 / 1.2}});
+            failures += check(lower_load(p, "mtp:3") == "2:1,4:0/facts",
+                              "the fallback's mtp:2 without its gain under the fallback's table: " +
+                                  lower_load(p, "mtp:3"));
+            // A fallback table the shallower depth would run deeper under is cut there, a
+            // literal: the fallback mtp:3 at x2 drafts 3 at two streams (x 0.6 = 1.2), then 1
+            // (2:3,3:1,4:0); mtp:2 without its gain would run 2 where the fallback ran 3, which
+            // nothing showed to gain, so 2:0.
+            p.fit_fallback = chosen("mtp:3", "mtp", 2.0);
+            p.load         = sp::facts_load(p);
+            failures += check(lower_load(p, "mtp:3") == "2:0/literal",
+                              "the fallback's mtp:2 without its gain, its table cut: " +
+                                  lower_load(p, "mtp:3"));
+        }
         // (iv) The model's own MTP head: from the facts where the profile prices its mtp:3 (x2,
         // x 0.6 at two streams), else the built-in literal, labelled.
         {
@@ -429,6 +487,18 @@ int main() {
                 head && engine_label(*head) == "2:3,3:0" && head->load_basis == "facts",
                 "the head's table from the facts: " +
                     (head ? engine_label(*head) + "/" + head->load_basis : std::string("none")));
+            // A measured table (a lab record at home, which prices its joint verify too) is not
+            // derived again: the head keeps the built-in table, as load_for keeps a measured one.
+            p.load_basis       = "measured";
+            p.load             = sp::parse_load("2:0");
+            const auto at_home = ninferno::product::served_head_fallback(subject_of(p), false);
+            failures += check(at_home && engine_label(*at_home) == "8:2" &&
+                                  at_home->load_basis == "literal",
+                              "beside a measured table the head keeps the built-in one: " +
+                                  (at_home ? engine_label(*at_home) + "/" + at_home->load_basis
+                                           : std::string("none")));
+            p.load_basis = "facts";
+            p.load.clear();
             p.joint_scale.clear();
             const auto literal = ninferno::product::served_head_fallback(subject_of(p), false);
             failures += check(literal && engine_label(*literal) == "8:2" &&

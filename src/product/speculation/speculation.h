@@ -150,16 +150,18 @@ inline constexpr double kPerRequestMargin = 0.03;
 // refuses the profile's choice with CapacityError (its drafter does not fit the requested context
 // on this device), as a menu whose every entry is the fallback, under a load table of its own
 // (#713): derived from the facts for the fallback where the profile's is, else the profile's
-// table where the fallback's drafter ran the same depth under it, and plain decode from two
-// streams for another drafter. nullopt when the profile has none, or the Engine cannot run it.
-// Never for an explicit --spec.
+// table where the fallback's drafter ran the same depth under it, and, where the profile has a
+// table, plain decode from two streams for another drafter (a profile with none leaves the
+// fallback unbounded, as subject_of_mode). nullopt when the profile has none, or the Engine
+// cannot run it. Never for an explicit --spec.
 [[nodiscard]] std::optional<ServedSpeculation>
 served_fit_fallback(const SpeculationSubject& subject, bool per_request);
 // The model's own MTP head in place of a separate drafter (a start's last step before plain
 // decode, and the pool rule's): the built-in MTP default (as for a model with no profile), with the
 // registry's watchdog floors (spec::raise_foreign_floors). Its load table is derived from the
-// facts where the profile measured and priced the head's configuration, else the built-in
-// literal (load_basis "literal"). nullopt when the profile's choice
+// facts where the profile's table is (load_basis "facts") and the profile measured and priced
+// the head's configuration, else the built-in literal (load_basis "literal"). nullopt when the
+// profile's choice
 // already drafts with MTP, the model carries no MTP head, or the Engine cannot run it.
 [[nodiscard]] std::optional<ServedSpeculation>
 served_head_fallback(const SpeculationSubject& subject, bool per_request);
@@ -228,8 +230,8 @@ pool_rule(const SpeculationSubject& subject, bool per_request, std::uint32_t wit
 // Its load table is checked for the shallower depth (#713): derived again from the facts at its
 // own measured gain where the profile's table is, else the profile's table (the fit fallback's
 // own, for the fallback's drafter) up to the first bound under which the table's choices ran a
-// deeper depth, plain decode from there. None for plain decode, depth 1, or a mode the profile
-// does not run.
+// deeper depth, plain decode from there (a table so cut is a literal). None for plain decode,
+// depth 1, or a mode the profile does not run.
 [[nodiscard]] std::optional<spec::Profile>
 shallower_profile(const spec::Profile& profile, const spec::SpecConfig& config, double floor);
 
