@@ -2520,6 +2520,38 @@ void transferred_resolution(const json& fixture) {
     check(carried.basis == B::Unmeasured && carried.rms == ch::kUnmeasuredCarryDecodeError &&
               !carried.decides,
           "a compute capability with no generation row: the unmeasured carry, not deciding");
+    // Its floor is the lent generation's own band (generation_of: its rows price the board), not
+    // the lender's: cc 13.0 is priced from Blackwell's rows, floor 0.0170, Ada's is 0.0226.
+    check(carried.floor == ch::worth_band(lent) && carried.floor > 0 &&
+              ch::resolution_of(lent, S::Transferred).floor == carried.floor &&
+              ch::resolution_of(lent, S::Own).floor == carried.floor,
+          "a compute capability with no generation row: the lent generation's floor");
+    {
+        // The review's case at cc 13.0: B 2 % slower (ln 0.0198), above the 0.0170 floor and
+        // below Ada's 0.0226: the best worth A stays, as on master.
+        const auto make = [](double seconds, double kld, S basis) {
+            ch::Scored s;
+            s.decision_seconds = seconds;
+            s.accuracy.kld     = kld;
+            s.own_context      = 1000;
+            s.decision_basis   = basis;
+            s.worth            = -std::log(seconds) - 0.3 * kld;
+            return s;
+        };
+        const ch::Resolutions bands{ch::resolution_of(lent, S::Own),
+                                    ch::resolution_of(lent, S::Transferred),
+                                    ch::resolution_of(lent, S::LentGeneration)};
+        const std::vector<ch::Scored> ab{make(1.00, 0.020, S::LentGeneration),
+                                         make(1.020, 0.005, S::LentGeneration)};
+        check(ch::resolve_within_resolution(ab, {0, 1}, 0, bands) == 0,
+              "cc 13.0: a candidate beyond the lent generation's floor does not displace the best");
+    }
+    // A one-card row of kDecodePredictionError would not zero the floor that decides: it falls
+    // back to the lender's row of two or more cards (resolution_of; no such row exists today, the
+    // table is constexpr, so this is held by the code and the check below that every row has two).
+    for (const ch::PredictionError& e : ch::kDecodePredictionError) {
+        check(e.cards >= 2, std::string(e.generation) + ": its own error rests on two cards");
+    }
     // A one-card or assumed band only widens: on every generation and every basis of the estimates
     // compared, never narrower than the Own band they rest on or are carried from (the
     // generation's own error, else the lender's), and only an Own band of two cards decides. A
@@ -2612,6 +2644,12 @@ void resolution_by_pair() {
                                           make(1.04, 0.010, S::Transferred)};
     check(ch::resolve_within_resolution(unequal, {0, 1, 2}, 0, wider) == 1,
           "unequal widths: a dominated pick gives way to the candidate dominating it");
+    // Among several dominators the lowest KLD, then the lowest index (choice.h, DECISIONS 75).
+    const std::vector<ch::Scored> several{make(1.00, 0.020, S::Own), make(1.035, 0.006, S::Own),
+                                          make(1.035, 0.004, S::Own), make(1.03, 0.004, S::Own),
+                                          make(1.04, 0.010, S::Transferred)};
+    check(ch::resolve_within_resolution(several, {0, 1, 2, 3, 4}, 0, wider) == 2,
+          "several dominators: the lowest KLD, then the lowest index");
     // A deciding Transferred band: inside it the more accurate, outside it the best worth.
     const ch::Resolutions deciding{own, {RB::Transferred, 0.0786, true, 0.0226}, lent};
     const std::vector<ch::Scored> carry{make(1.0, 0.02, S::Own), make(1.05, 0.005, S::Transferred)};

@@ -1471,12 +1471,21 @@ Resolution resolution_of(const CardFacts& board, SpeedBasis estimates) noexcept 
     const bool known           = generation_known(board.major, board.minor);
     const std::string_view gen = generation_of(board);
     const PredictionError* own = known ? own_row(gen) : nullptr;
-    // The floor: the Own band of the rows the estimates rest on, or are carried from. A wider
-    // basis is never resolved more finely than that, and never decided beyond it: the floor
-    // decides where its row rests on two or more lab cards.
-    const PredictionError* base = own ? own : own_row(kTransferGeneration);
-    const double floor          = base ? base->rms : 0.0;
-    const double decided_floor  = base && base->cards >= 2 ? base->rms : 0.0;
+    // The floor: the Own band of the rows the estimates rest on (the board's generation's, or on a
+    // compute capability with no generation row the lent generation's, generation_of: its rows
+    // price the board), else of the rows they are carried from (kTransferGeneration's). A wider
+    // basis is never resolved more finely than that, and never decided beyond it. The floor that
+    // decides rests on two or more lab cards: a one-card row of the generation falls back to the
+    // lender's row of two or more, never to 0.
+    const PredictionError* priced   = own_row(gen);
+    const PredictionError* lender   = own_row(kTransferGeneration);
+    const auto two_cards            = [](const PredictionError* e) { return e && e->cards >= 2; };
+    const PredictionError* deciding = two_cards(priced)   ? priced
+                                      : two_cards(lender) ? lender
+                                                          : nullptr;
+    const PredictionError* base     = priced ? priced : lender;
+    const double floor              = base ? base->rms : 0.0;
+    const double decided_floor      = deciding ? deciding->rms : 0.0;
     const Resolution assumed{ResolutionBasis::Unmeasured,
                              std::max(kUnmeasuredCarryDecodeError, floor), false, decided_floor};
     if (!known || estimates == SpeedBasis::LentGeneration) { return assumed; }
@@ -1779,6 +1788,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     const Resolutions bands = {band_of(SpeedBasis::Own), band_of(SpeedBasis::Transferred),
                                band_of(SpeedBasis::LentGeneration)};
     out.resolutions         = bands;
+
     out.chunk_basis                    = chunk_basis_of(model, card, gates);
     out.chunk_by_speed                 = out.chunk_basis == ChunkBasis::Own && !pins.chunk;
     // The enumeration order breaks exact ties (better()): one canonical order of each axis's
@@ -1947,9 +1957,14 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         std::string(kv_cache_storage_name(c.candidate.kv)) + ", activations " +
         activation_name(c.candidate.activations) +
         (out.by_worth
-             ? (resolved ? ": the more accurate one inside the speed estimate's resolution (" +
-                               fixed(100 * c.weighed_at, 1) + " %) of the best worth"
-                         : std::string(": the best worth")) +
+             ? (resolved
+                    ? (std::log(c.decision_seconds / out.scored[anchor].decision_seconds) <=
+                               c.weighed_at + kWorthTie
+                           ? ": the more accurate one inside the speed estimate's resolution (" +
+                                 fixed(100 * c.weighed_at, 1) + " %) of the best worth"
+                           : ": more accurate than and no slower than the pick inside the "
+                             "speed estimate's resolution of the best worth")
+                    : std::string(": the best worth")) +
                    " on the " + std::string(generation_of(card)) + " reference card (" +
                    fixed(c.decision_seconds, 2) + " s on " + request_mix_text(priced) +
                    " there, KLD " + fixed(c.accuracy.kld, 4) + ")" +
@@ -2029,18 +2044,27 @@ std::size_t resolve_within_resolution(const std::vector<Scored>& scored,
             pick = i;
         }
     }
-    // A moved pick is never dominated: a candidate no slower and strictly more accurate than it
-    // takes it (comparisons of unequal widths could otherwise leave it out).
+    // A moved pick is never dominated: among the candidates no slower and strictly more accurate
+    // than it, the one of the lowest KLD, then the lowest index, takes it (comparisons of unequal
+    // widths could otherwise leave it out). Such a pick may lie beyond its own comparison's width
+    // of the anchor; it is no slower than one inside its band.
     for (bool again = pick != anchor; again;) {
-        again = false;
+        again           = false;
+        const Scored& p = scored[pick];
+        std::optional<std::size_t> by;
         for (const std::size_t i : eligible) {
             const Scored& s = scored[i];
-            const Scored& p = scored[pick];
-            if (s.decision_seconds > 0 && s.decision_seconds <= p.decision_seconds &&
-                s.accuracy.kld + kWorthTie < p.accuracy.kld) {
-                pick  = i;
-                again = true;
+            if (!(s.decision_seconds > 0) || s.decision_seconds > p.decision_seconds ||
+                !(s.accuracy.kld + kWorthTie < p.accuracy.kld)) {
+                continue;
             }
+            const bool lower = !by || s.accuracy.kld < scored[*by].accuracy.kld - kWorthTie;
+            const bool tie = by && std::abs(s.accuracy.kld - scored[*by].accuracy.kld) <= kWorthTie;
+            if (lower || (tie && i < *by)) { by = i; }
+        }
+        if (by) {
+            pick  = *by;
+            again = true;
         }
     }
     return pick;
@@ -2062,6 +2086,19 @@ std::vector<Alternative> explain(const Choice& choice) {
                           : ", " + std::string(resolution_basis_name(b.basis)) + ": its " +
                                 fixed(100 * b.rms, 1) +
                                 " % rests on one lab card or is assumed, so the Own floor");
+    };
+    // Why the best worth was passed over: the chosen lies inside the band of their comparison, or
+    // (the dominance guard) beyond it, no slower than a candidate inside it and more accurate.
+    const auto anchor_text = [&](const Scored& a) {
+        const Resolution& b = band_of(a, chosen);
+        const bool inside   = a.decision_seconds > 0 && chosen.decision_seconds > 0 &&
+                            std::log(chosen.decision_seconds / a.decision_seconds) <=
+                                resolution_width(b) + kWorthTie;
+        return inside ? "inside the speed estimate's resolution (" + width_text(b) +
+                            "): the chosen is the more accurate"
+                      : std::string("beyond the speed estimate's resolution (") + width_text(b) +
+                            "), but no slower than a candidate inside it and more accurate: the "
+                            "chosen dominates that one";
     };
     const auto value_of = [&](const Scored& s, Axis axis) -> std::string {
         switch (axis) {
@@ -2127,13 +2164,13 @@ std::vector<Alternative> explain(const Choice& choice) {
                                    ? "the default chunk stands (no measured chunk shares decide here)"
                                    : "the family's default stands (no decision constants for this generation)";
             } else if (choice.resolved_within_resolution && &s == &choice.scored[choice.anchor]) {
-                // The best worth, passed over by the resolution rule for the more accurate one.
+                // The best worth, passed over by the resolution rule for the more accurate one
+                // (the code stays within_resolution where the dominance guard moved the pick
+                // beyond its own comparison's width: the text says so).
                 alt.why_code = "within_resolution";
-                alt.why_not =
-                    "worth " + fixed(s.worth - chosen.worth, 3) +
-                    " above the chosen, inside the speed estimate's resolution (" +
-                    width_text(band_of(s, chosen)) + "): the chosen is the more accurate (KLD " +
-                    fixed(chosen.accuracy.kld, 4) + " against " + fixed(s.accuracy.kld, 4) + ")";
+                alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) + " above the chosen, " +
+                              anchor_text(s) + " (KLD " + fixed(chosen.accuracy.kld, 4) +
+                              " against " + fixed(s.accuracy.kld, 4) + ")";
             } else if (s.worth > chosen.worth + kWorthTie) {
                 // Not the anchor, yet above the moved pick. Inside the band of its comparison with
                 // the anchor (no slower than it by more than that width, #618) the chosen is the
@@ -2172,10 +2209,10 @@ std::vector<Alternative> explain(const Choice& choice) {
                        chosen.worth - s.worth > kWorthTie) {
                 // It loses by less than the estimate's uncertainty about the two's speeds: the
                 // width of their own comparison's band (by the wider of the two bases, #618: a
-                // one-card or assumed band at its Own floor), and no more than their speeds
-                // differ (configurations
-                // that run nearly the same kernels err alike). Indistinguishable within the
-                // estimate; a gap of accuracy beyond their speeds' difference stays a loss.
+                // one-card or assumed band at its Own floor), and no more than their speeds differ
+                // (configurations that run nearly the same kernels err alike). Indistinguishable
+                // within the estimate; a gap of accuracy beyond their speeds' difference stays a
+                // loss.
                 // The tie's slack absorbs the rounding between the worth's and this log's paths:
                 // at equal accuracy the gap is the speed difference exactly.
                 alt.why_code = "within_resolution";
@@ -2215,12 +2252,10 @@ std::vector<Alternative> explain(const Choice& choice) {
             }
             if (alt.value.empty()) { alt.value = value_of(anchor, axis); }
             alt.why_code = "within_resolution";
-            alt.why_not =
-                "worth " + fixed(anchor.worth - chosen.worth, 3) +
-                " above the chosen, inside the speed estimate's resolution (" +
-                width_text(band_of(anchor, chosen)) + "): the chosen is the more accurate (KLD " +
-                fixed(chosen.accuracy.kld, 4) + " against " + fixed(anchor.accuracy.kld, 4) +
-                "); the best worth, which differs on more than this axis";
+            alt.why_not = "worth " + fixed(anchor.worth - chosen.worth, 3) + " above the chosen, " +
+                          anchor_text(anchor) + " (KLD " + fixed(chosen.accuracy.kld, 4) +
+                          " against " + fixed(anchor.accuracy.kld, 4) +
+                          "); the best worth, which differs on more than this axis";
             out.push_back(std::move(alt));
         }
     }
