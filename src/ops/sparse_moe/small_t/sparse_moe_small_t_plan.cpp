@@ -23,6 +23,9 @@ std::size_t sparse_moe_small_t_workspace_bytes(std::int32_t tokens) {
 
 namespace {
 
+// The MTP profile's D3 schedule: one path a warp through this width, nine above ("tune sparse moe
+// verification through t16"; no figures for this edge in the repository).
+constexpr std::int32_t kMtpPaths1MaxTokens = 5;
 
 SparseMoeSmallTPlan measured_plan(std::int32_t tokens, QType routed_gate_up, QType routed_down) {
     if (!sparse_moe_uses_small_t(tokens)) {
@@ -54,8 +57,8 @@ SparseMoeSmallTPlan measured_plan(std::int32_t tokens, QType routed_gate_up, QTy
         return plan;
     }
     if (mtp_profile) {
-        plan.d3_schedule =
-            tokens <= 5 ? SparseMoeSmallTD3Schedule::Paths1 : SparseMoeSmallTD3Schedule::Paths9;
+        plan.d3_schedule = tokens <= kMtpPaths1MaxTokens ? SparseMoeSmallTD3Schedule::Paths1
+                                                         : SparseMoeSmallTD3Schedule::Paths9;
         // Rows4 at every width: the Rows1 interval to T = 8 lost 10..16 % on the RTX 5090 at
         // T = 3..8 (63.5 against 73.7 us at T = 8), 6..12 % on the 4090.
         plan.d4_schedule = SparseMoeSmallTD4Schedule::Rows4;
