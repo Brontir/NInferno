@@ -111,8 +111,8 @@ ninferno_add_op_test(ninferno_route_traffic_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_traffic.cpp"
   LIBRARIES ninferno_linear_test_support)
 
-# A slice of a fused weight is priced, described and routed as a standalone weight of its own
-# shape on every golden board (#640, host only).
+# A slice of a fused weight and a row view are priced, described and routed as a standalone weight
+# of their own shape on every golden board, the R8 verify gate included (#640, #704, host only).
 ninferno_add_op_test(ninferno_slice_price_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_slice_price.cpp"
   LIBRARIES ninferno_linear_test_support)
