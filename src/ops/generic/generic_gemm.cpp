@@ -3092,6 +3092,7 @@ std::string_view overlap_refusal_name(OverlapRefusal why) noexcept {
     return "none";
 }
 
+// FUSION-SITE: pdl_overlap
 LaunchOverlap launch_overlap(const ResolvedRoute& resolved, Epilogue epilogue, int tokens,
                              bool join_asked, bool release_asked, bool pdl) {
     const Family family = resolved.executed.family;
@@ -3227,6 +3228,7 @@ std::optional<double> route_cost_seconds(const Problem& problem, const Weight& w
     return out;
 }
 
+// FUSION-SITE: r8_prequantized
 ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call) {
     ResolvedRoute out{.asked = asked, .executed = asked};
     Route& route      = out.executed;

@@ -162,6 +162,7 @@ bool chain_prefers_fused(std::int32_t n, std::int32_t k, std::int32_t tokens) {
     return fused->requested_bytes <= separate->requested_bytes;
 }
 
+// FUSION-SITE: q8_pair
 bool fused_pair(const Weight& first_weight, const Weight& second_weight, std::int32_t tokens) {
     return fused_domain(first_weight, second_weight) &&
            chain_prefers_fused(first_weight.n, first_weight.k, tokens);
