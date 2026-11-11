@@ -1,6 +1,7 @@
 #include "ops/generic/route_query.h"
 
 #include "core/weight_view.h"
+#include "ninferno/ops/prefill_routes.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_select_internal.h"
 
@@ -80,6 +81,8 @@ resolved_route_query(const DeviceClass& device, QType qtype, LinearPolicy policy
                      std::int32_t parent_rows, bool x_aligned16, int ldx, int segments) {
     if (n <= 0 || k <= 0 || tokens <= 0 || parent_rows < 0) return std::nullopt;
     const ScopedDeviceClass scoped(device);
+    // The call's profile, which its resolution reads too (the group-sums plane: rmma_group_sums).
+    const ops::ScopedPrefillRoutes profile(prefill);
     DescribedWeight described;
     describe_weight(described, qtype, epilogue, n, k, parent_rows);
     if (!supports(described.weight)) return std::nullopt;
@@ -201,6 +204,8 @@ std::optional<RouteDescription> describe_call(const DeviceClass& device, QType q
                                               bool with_kernel) {
     if (n <= 0 || k <= 0 || tokens <= 0 || parent_rows < 0) return std::nullopt;
     const ScopedDeviceClass scoped(device);
+    // The call's profile, which its resolution and kernel read too (the group-sums plane).
+    const ops::ScopedPrefillRoutes profile(prefill);
     DescribedWeight described;
     describe_weight(described, qtype, epilogue, n, k, parent_rows);
     if (!supports(described.weight)) return std::nullopt;

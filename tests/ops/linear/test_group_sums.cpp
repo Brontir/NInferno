@@ -16,6 +16,7 @@
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/kernel_facts.h"
+#include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
 #include "ops/generic/selector_facts.h"
 
@@ -158,6 +159,19 @@ void host_rules() {
               "the plan's workspace holds the plane of the interval's widest call");
         check(generic::demotion_name(generic::Demotion::GroupSums) == "group_sums",
               "the demotion's name");
+        // The pure query resolves in the profile it is asked for, whatever the caller's: a
+        // prefill tail of 5 tokens reads the plane, the same call in the speed profile does not.
+        const std::size_t need5 = generic::rmma_group_sums_bytes(c, 4096, 5);
+        const auto tail =
+            generic::resolved_route_query(device_class(), q, ops::LinearPolicy::A16Only,
+                                          generic::Epilogue::Store, 4096, 4096, 5, need5, true);
+        const auto decode5 =
+            generic::resolved_route_query(device_class(), q, ops::LinearPolicy::A16Only,
+                                          generic::Epilogue::Store, 4096, 4096, 5, need5, false);
+        check(tail && (tail->executed.family != generic::Family::RegisterMma ||
+                       tail->group_sums == tensor),
+              "a prefill query below 17 tokens resolves with the plane");
+        check(decode5 && !decode5->group_sums, "a speed-profile query of 5 tokens takes no plane");
     }
 }
 
