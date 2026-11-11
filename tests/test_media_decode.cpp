@@ -1,5 +1,9 @@
 #include "media/decode/decode.h"
 
+extern "C" {
+#include <libavformat/avformat.h>
+}
+
 #include <array>
 #include <cctype>
 #include <cstdint>
@@ -290,6 +294,14 @@ std::string refusal(const std::vector<std::uint8_t>& bytes) {
     throw std::runtime_error("decoded bytes that are no media");
 }
 
+// The release's FFmpeg (tools/release/ffmpeg.sh) is configured from --disable-everything. A full
+// distribution build holds hundreds of demuxers, and one of them (mp3) claims this noise at a low
+// score, so there the open fails on the claimed container instead.
+bool minimal_ffmpeg() {
+    return std::string_view(avformat_configuration()).find("--disable-everything") !=
+           std::string_view::npos;
+}
+
 // Bytes no demuxer claims are an unsupported container, said plainly; a known container whose
 // data is broken keeps FFmpeg's own reason.
 void test_unknown_container_named() {
@@ -302,7 +314,8 @@ void test_unknown_container_named() {
         byte = static_cast<std::uint8_t>(state >> 24U);
     }
     const std::string unknown = refusal(noise);
-    if (unknown != "media container is not supported") {
+    const bool named          = unknown == "media container is not supported";
+    if (!named && (minimal_ffmpeg() || unknown.rfind("failed to open media: ", 0) != 0)) {
         throw std::runtime_error("noise was refused as '" + unknown + "'");
     }
     std::vector<std::uint8_t> broken_png = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};

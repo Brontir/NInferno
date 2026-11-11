@@ -57,7 +57,8 @@ PARSERS=h264,hevc,vp8,vp9,av1,mpeg4video,mpegvideo,mjpeg,png,webp,gif,bmp
 
 # The build is reused only when everything that shapes it is the same: the pin, the scripts, the
 # options, the compiler and the C library.
-compiler=$("$CC" --version 2> /dev/null | head -n 1 || true)
+# shellcheck disable=SC2086  # CC may be several words (ccache gcc)
+compiler=$($CC --version 2> /dev/null | head -n 1 || true)
 libc=$(getconf GNU_LIBC_VERSION 2> /dev/null || echo unknown)
 want=$(cat "$PIN" "$HERE/ffmpeg.sh" "$HERE/ffmpeg_check.py" | sha256sum | cut -d' ' -f1)
 want="$want no_asm=$NO_ASM dav1d_prefix=$DAV1D_PREFIX cc=$compiler libc=$libc"
@@ -165,11 +166,13 @@ replace these.
 EOF
 python3 "$HERE/ffmpeg_check.py" "$stage/lib" > "$lic/BUILD.txt" ||
   { cat "$lic/BUILD.txt" >&2; echo "ffmpeg.sh: the build is not the LGPL, decoders-only FFmpeg it should be" >&2; exit 1; }
-# Into place: copied next to PREFIX (another file system, maybe), then renamed over it; the stamp
-# comes last, so an interrupted run never leaves a matching stamp on a partial PREFIX.
+# Into place: copied next to PREFIX (another file system, maybe) and stamped once complete, then
+# renamed over it. The rename is atomic, so PREFIX is never partial and never complete without its
+# stamp.
 mkdir -p "$(dirname "$PREFIX")"
+rm -rf "$partial"
 cp -a "$stage" "$partial"
+echo "$want" > "$partial/.ninferno-ffmpeg"
 rm -rf "$PREFIX"  # empty, or an older build of this script
 mv "$partial" "$PREFIX"
-echo "$want" > "$stamp"
 echo "ffmpeg.sh: FFmpeg $FFMPEG_VERSION with dav1d $DAV1D_VERSION -> $PREFIX"

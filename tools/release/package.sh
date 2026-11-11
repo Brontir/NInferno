@@ -140,7 +140,10 @@ if grep -q -- '--disable-x86asm' "$FFMPEG/share/licenses/ffmpeg/BUILD.txt"; then
   echo "package.sh: $FFMPEG was built without assembly (NINFERNO_FFMPEG_NO_ASM), too slow for a release" >&2
   exit 1
 fi
-if LD_LIBRARY_PATH="$FFMPEG/lib" ldd "$FFMPEG/lib/libavcodec.so" | grep -q 'libdav1d'; then
+# Read from the dynamic section (readelf runs nothing of the library, unlike ldd).
+avcodec_dynamic=$(readelf -d "$FFMPEG/lib/libavcodec.so") ||
+  { echo "package.sh: cannot read $FFMPEG/lib/libavcodec.so (readelf, from binutils)" >&2; exit 1; }
+if [[ $avcodec_dynamic =~ NEEDED[^[:cntrl:]]*libdav1d ]]; then
   echo "package.sh: $FFMPEG's libavcodec loads a shared dav1d (NINFERNO_DAV1D_PREFIX), not the pinned one built into it" >&2
   exit 1
 fi

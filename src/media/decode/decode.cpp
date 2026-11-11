@@ -179,9 +179,9 @@ int refuse_nested_open(AVFormatContext*, AVIOContext**, const char*, int, AVDict
 }
 
 // Whether a demuxer this FFmpeg holds claims the bytes, probed as avformat_open_input's last probe
-// does: the first 1 MiB, accepted above AVPROBE_SCORE_RETRY when the input is shorter, at any
-// score when it is not. Run only after an open failed with "invalid data", to tell a container
-// the build leaves out from a broken file of a known one.
+// does: the first 1 MiB, at any score (the probe at the end of the input or at the largest size
+// takes any score above 0; none for no claim or a tie at the top). Run only after an open failed
+// with "invalid data", to tell a container the build leaves out from a broken file of a known one.
 bool container_known(std::span<const std::uint8_t> input) {
     const std::size_t size = std::min<std::size_t>(input.size(), kMiB);
     std::vector<std::uint8_t> padded(size + AVPROBE_PADDING_SIZE, 0);
@@ -190,8 +190,7 @@ bool container_known(std::span<const std::uint8_t> input) {
     probe.buf_size = static_cast<int>(size);
     probe.buf      = padded.data();
     int score      = 0;
-    const bool any = av_probe_input_format3(&probe, 1, &score) != nullptr;
-    return any && score > (input.size() < kMiB ? AVPROBE_SCORE_RETRY : 0);
+    return av_probe_input_format3(&probe, 1, &score) != nullptr;
 }
 
 class Decoder {
