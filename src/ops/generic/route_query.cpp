@@ -137,18 +137,11 @@ RouteDescription describe_resolved(const DescribedWeight& described, const Probl
         out.workspace_bytes = rmma_group_sums_bytes(codec_of(w), problem.k, tokens);
     }
     out.tile = route_tile(ran, problem.epilogue, tokens);
-    // The call's own rows of the weight: a slice of a fused parent reads its share of the payload
-    // (route_traffic takes the payload over the call's n rows as bytes per weight). The share is
-    // proportional to rows: close, not exact, where scales are swizzled or padded to row tiles.
-    Weight call_weight         = w;
-    const std::uint64_t own    = problem.epilogue == Epilogue::SwiGlu
-                                     ? 2ULL * static_cast<std::uint64_t>(problem.n)
-                                     : static_cast<std::uint64_t>(problem.n);
-    const std::uint64_t stored = described.view.shape[0];
-    if (stored > own) call_weight.payload_bytes = w.payload_bytes / stored * own;
-    out.traffic      = route_traffic(ran, call_weight, problem, tokens);
+    // The traffic and the price take the call's share of the described parent themselves
+    // (bytes_per_weight), as the selector does.
+    out.traffic      = route_traffic(ran, w, problem, tokens);
     out.prepared     = prepared_rule(resolved, w);
-    out.cost_seconds = route_cost_seconds(problem, call_weight, ran, tokens);
+    out.cost_seconds = route_cost_seconds(problem, w, ran, tokens);
     if (with_kernel) {
         try {
             out.kernel = route_resources(ran, w, problem.epilogue, tokens, problem.n,

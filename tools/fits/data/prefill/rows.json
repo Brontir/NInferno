@@ -1,6 +1,6 @@
 {
  "cards": {
-  "l4090": {
+  "RTX 4090": {
    "generation": "ada",
    "sms": 128,
    "boost_mhz": 2520,
@@ -8,7 +8,7 @@
    "s8": 2048,
    "dram_gbs": 1008
   },
-  "l4070": {
+  "RTX 4070 Ti": {
    "generation": "ada",
    "sms": 60,
    "boost_mhz": 2610,
@@ -16,7 +16,7 @@
    "s8": 2048,
    "dram_gbs": 504
   },
-  "l5070": {
+  "RTX 5070 Ti": {
    "generation": "gb20x",
    "sms": 70,
    "boost_mhz": 2452,
@@ -24,7 +24,7 @@
    "s8": 2048,
    "dram_gbs": 896
   },
-  "l5090": {
+  "RTX 5090": {
    "generation": "gb20x",
    "sms": 170,
    "boost_mhz": 2407,
@@ -32,7 +32,7 @@
    "s8": 2048,
    "dram_gbs": 1792
   },
-  "l3060": {
+  "RTX 3060": {
    "generation": "ga10x",
    "sms": 28,
    "boost_mhz": 1777,
@@ -40,7 +40,7 @@
    "s8": 2048,
    "dram_gbs": 360
   },
-  "l2080": {
+  "RTX 2080 Ti": {
    "generation": "turing",
    "sms": 68,
    "boost_mhz": 1545,
@@ -48,7 +48,7 @@
    "s8": 2048,
    "dram_gbs": 616
   },
-  "l4060": {
+  "RTX 4060 Ti": {
    "generation": "ada",
    "sms": 34,
    "boost_mhz": 2535,
@@ -56,7 +56,7 @@
    "s8": 2048,
    "dram_gbs": 288
   },
-  "lgv100": {
+  "Quadro GV100": {
    "generation": "volta",
    "sms": 80,
    "boost_mhz": 1627,
@@ -201,490 +201,490 @@
  },
  "rows": [
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 1851,
    "prefill": 6984.0,
    "chunk": 1024
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 7118,
    "prefill": 7284.0,
    "chunk": 1024
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 21158,
    "prefill": 6420.0,
    "chunk": 1024
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 1848,
    "prefill": 11687.0,
    "chunk": 1024
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 7165,
    "prefill": 12772.0,
    "chunk": 1024
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 21365,
    "prefill": 12187.0,
    "chunk": 1024
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "gemma-4-26B-A4B-it-GGUF_UD-Q4_K_XL",
    "n": 1851,
    "prefill": 15909.0,
    "chunk": 2048
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "gemma-4-26B-A4B-it-GGUF_UD-Q4_K_XL",
    "n": 7118,
    "prefill": 16303.0,
    "chunk": 2048
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "gemma-4-26B-A4B-it-GGUF_UD-Q4_K_XL",
    "n": 21158,
    "prefill": 14277.0,
    "chunk": 2048
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "Qwen3.8-27B-GGUF_UD-Q4_K_XL",
    "n": 1888,
    "prefill": 3503.0,
    "chunk": 1024
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "Qwen3.8-27B-GGUF_UD-Q4_K_XL",
    "n": 7205,
    "prefill": 3639.0,
    "chunk": 1024
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "Qwen3.8-27B-GGUF_UD-Q4_K_XL",
    "n": 21405,
    "prefill": 3487.0,
    "chunk": 1024
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "gemma-4-31B-it-GGUF_Q4_K_M",
    "n": 1851,
    "prefill": 2759.0,
    "chunk": 1024
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "gemma-4-31B-it-GGUF_Q4_K_M",
    "n": 7118,
    "prefill": 2847.0,
    "chunk": 1024
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "gemma-4-31B-it-GGUF_Q4_K_M",
    "n": 21158,
    "prefill": 2595.0,
    "chunk": 1024
   },
   {
-   "card": "l4070",
+   "card": "RTX 4070 Ti",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 1851,
    "prefill": 3617.0,
    "chunk": 1024
   },
   {
-   "card": "l4070",
+   "card": "RTX 4070 Ti",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 7118,
    "prefill": 3689.0,
    "chunk": 1024
   },
   {
-   "card": "l4070",
+   "card": "RTX 4070 Ti",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 21158,
    "prefill": 3211.0,
    "chunk": 1024
   },
   {
-   "card": "l4070",
+   "card": "RTX 4070 Ti",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 1848,
    "prefill": 5734.0,
    "chunk": 1024
   },
   {
-   "card": "l4070",
+   "card": "RTX 4070 Ti",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 7165,
    "prefill": 6049.0,
    "chunk": 1024
   },
   {
-   "card": "l4070",
+   "card": "RTX 4070 Ti",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 21365,
    "prefill": 5794.0,
    "chunk": 1024
   },
   {
-   "card": "l5070",
+   "card": "RTX 5070 Ti",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 1851,
    "prefill": 4425.0,
    "chunk": 1024
   },
   {
-   "card": "l5070",
+   "card": "RTX 5070 Ti",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 7118,
    "prefill": 4430.0,
    "chunk": 1024
   },
   {
-   "card": "l5070",
+   "card": "RTX 5070 Ti",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 21158,
    "prefill": 3894.0,
    "chunk": 1024
   },
   {
-   "card": "l5070",
+   "card": "RTX 5070 Ti",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 1848,
    "prefill": 6766.0,
    "chunk": 1024
   },
   {
-   "card": "l5070",
+   "card": "RTX 5070 Ti",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 7165,
    "prefill": 7013.0,
    "chunk": 1024
   },
   {
-   "card": "l5070",
+   "card": "RTX 5070 Ti",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 21365,
    "prefill": 6789.0,
    "chunk": 1024
   },
   {
-   "card": "l5070",
+   "card": "RTX 5070 Ti",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-IQ3_XXS",
    "n": 1846,
    "prefill": 7671.0,
    "chunk": 1024
   },
   {
-   "card": "l5070",
+   "card": "RTX 5070 Ti",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-IQ3_XXS",
    "n": 7163,
    "prefill": 7957.0,
    "chunk": 1024
   },
   {
-   "card": "l5070",
+   "card": "RTX 5070 Ti",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-IQ3_XXS",
    "n": 21363,
    "prefill": 7555.0,
    "chunk": 1024
   },
   {
-   "card": "l5070",
+   "card": "RTX 5070 Ti",
    "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
    "n": 1851,
    "prefill": 7579.0,
    "chunk": 1024
   },
   {
-   "card": "l5070",
+   "card": "RTX 5070 Ti",
    "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
    "n": 7118,
    "prefill": 7645.0,
    "chunk": 1024
   },
   {
-   "card": "l5070",
+   "card": "RTX 5070 Ti",
    "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
    "n": 21158,
    "prefill": 6738.0,
    "chunk": 1024
   },
   {
-   "card": "l3060",
+   "card": "RTX 3060",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 1851,
    "prefill": 1247.0,
    "chunk": 1024
   },
   {
-   "card": "l3060",
+   "card": "RTX 3060",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 7118,
    "prefill": 1231.0,
    "chunk": 1024
   },
   {
-   "card": "l3060",
+   "card": "RTX 3060",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 21158,
    "prefill": 1056.0,
    "chunk": 1024
   },
   {
-   "card": "l3060",
+   "card": "RTX 3060",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 1848,
    "prefill": 2006.0,
    "chunk": 1024
   },
   {
-   "card": "l3060",
+   "card": "RTX 3060",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 7165,
    "prefill": 2073.0,
    "chunk": 1024
   },
   {
-   "card": "l3060",
+   "card": "RTX 3060",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 21365,
    "prefill": 1981.0,
    "chunk": 1024
   },
   {
-   "card": "l2080",
+   "card": "RTX 2080 Ti",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 1851,
    "prefill": 1473.0,
    "chunk": 1024
   },
   {
-   "card": "l2080",
+   "card": "RTX 2080 Ti",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 7118,
    "prefill": 1406.0,
    "chunk": 1024
   },
   {
-   "card": "l2080",
+   "card": "RTX 2080 Ti",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 21158,
    "prefill": 1155.0,
    "chunk": 1024
   },
   {
-   "card": "l2080",
+   "card": "RTX 2080 Ti",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 1848,
    "prefill": 2545.0,
    "chunk": 1024
   },
   {
-   "card": "l2080",
+   "card": "RTX 2080 Ti",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 7165,
    "prefill": 2622.0,
    "chunk": 1024
   },
   {
-   "card": "l2080",
+   "card": "RTX 2080 Ti",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 21365,
    "prefill": 2447.0,
    "chunk": 1024
   },
   {
-   "card": "l5090",
+   "card": "RTX 5090",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 1851,
    "prefill": 9021.0,
    "chunk": 1024
   },
   {
-   "card": "l5090",
+   "card": "RTX 5090",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 7118,
    "prefill": 9120.0,
    "chunk": 1024
   },
   {
-   "card": "l5090",
+   "card": "RTX 5090",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 21158,
    "prefill": 8135.0,
    "chunk": 1024
   },
   {
-   "card": "l5090",
+   "card": "RTX 5090",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 1848,
    "prefill": 14297.0,
    "chunk": 1024
   },
   {
-   "card": "l5090",
+   "card": "RTX 5090",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 7165,
    "prefill": 14888.0,
    "chunk": 1024
   },
   {
-   "card": "l5090",
+   "card": "RTX 5090",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 21365,
    "prefill": 14329.0,
    "chunk": 1024
   },
   {
-   "card": "l5090",
+   "card": "RTX 5090",
    "model": "gemma-4-26B-A4B-it-GGUF_UD-Q4_K_XL",
    "n": 1851,
    "prefill": 20146.0,
    "chunk": 1024
   },
   {
-   "card": "l5090",
+   "card": "RTX 5090",
    "model": "gemma-4-26B-A4B-it-GGUF_UD-Q4_K_XL",
    "n": 7118,
    "prefill": 20182.0,
    "chunk": 1024
   },
   {
-   "card": "l5090",
+   "card": "RTX 5090",
    "model": "gemma-4-26B-A4B-it-GGUF_UD-Q4_K_XL",
    "n": 21158,
    "prefill": 17486.0,
    "chunk": 1024
   },
   {
-   "card": "l4060",
+   "card": "RTX 4060 Ti",
    "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
    "n": 1851,
    "prefill": 4069.0,
    "chunk": 2048
   },
   {
-   "card": "l4060",
+   "card": "RTX 4060 Ti",
    "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
    "n": 7118,
    "prefill": 4015.0,
    "chunk": 2048
   },
   {
-   "card": "l4060",
+   "card": "RTX 4060 Ti",
    "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
    "n": 21158,
    "prefill": 3519.0,
    "chunk": 2048
   },
   {
-   "card": "l4060",
+   "card": "RTX 4060 Ti",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 1851,
    "prefill": 1992.0,
    "chunk": 1024
   },
   {
-   "card": "l4060",
+   "card": "RTX 4060 Ti",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 7118,
    "prefill": 2017.0,
    "chunk": 1024
   },
   {
-   "card": "l4060",
+   "card": "RTX 4060 Ti",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 21158,
    "prefill": 1760.0,
    "chunk": 1024
   },
   {
-   "card": "l4060",
+   "card": "RTX 4060 Ti",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 1848,
    "prefill": 3280.0,
    "chunk": 1024
   },
   {
-   "card": "l4060",
+   "card": "RTX 4060 Ti",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 7165,
    "prefill": 3442.0,
    "chunk": 1024
   },
   {
-   "card": "l4060",
+   "card": "RTX 4060 Ti",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 21365,
    "prefill": 3305.0,
    "chunk": 1024
   },
   {
-   "card": "lgv100",
+   "card": "Quadro GV100",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 1848,
    "prefill": 2950.0,
    "chunk": 1024
   },
   {
-   "card": "lgv100",
+   "card": "Quadro GV100",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 7165,
    "prefill": 3081.0,
    "chunk": 1024
   },
   {
-   "card": "lgv100",
+   "card": "Quadro GV100",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 21365,
    "prefill": 2864.0,
    "chunk": 1024
   },
   {
-   "card": "lgv100",
+   "card": "Quadro GV100",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 1851,
    "prefill": 1476.0,
    "chunk": 1024
   },
   {
-   "card": "lgv100",
+   "card": "Quadro GV100",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 7118,
    "prefill": 1171.0,
    "chunk": 1024
   },
   {
-   "card": "lgv100",
+   "card": "Quadro GV100",
    "model": "gemma-4-12b-it-GGUF_Q4_K_M",
    "n": 21158,
    "prefill": 738.0,
    "chunk": 1024
   },
   {
-   "card": "l2080",
+   "card": "RTX 2080 Ti",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 21365,
    "prefill": 2418.0,
@@ -692,7 +692,7 @@
    "source": "tests/fixtures/choice/speed_measured.json (run_sw.sh 2026-10-23 default)"
   },
   {
-   "card": "l2080",
+   "card": "RTX 2080 Ti",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 21365,
    "prefill": 2373.0,
@@ -700,7 +700,7 @@
    "source": "tests/fixtures/choice/speed_measured.json (run_sw.sh 2026-10-23 state_f32)"
   },
   {
-   "card": "l2080",
+   "card": "RTX 2080 Ti",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 21365,
    "prefill": 2365.0,
@@ -708,7 +708,7 @@
    "source": "tests/fixtures/choice/speed_measured.json (run_sw.sh 2026-10-23 state_bf16)"
   },
   {
-   "card": "l4070",
+   "card": "RTX 4070 Ti",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 21365,
    "prefill": 5707.0,
@@ -716,7 +716,7 @@
    "source": "tests/fixtures/choice/speed_measured.json (run_sw.sh 2026-10-23 default)"
   },
   {
-   "card": "l4070",
+   "card": "RTX 4070 Ti",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 21365,
    "prefill": 5688.0,
@@ -724,7 +724,7 @@
    "source": "tests/fixtures/choice/speed_measured.json (run_sw.sh 2026-10-23 state_f32)"
   },
   {
-   "card": "l4070",
+   "card": "RTX 4070 Ti",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 21365,
    "prefill": 5695.0,
@@ -732,7 +732,7 @@
    "source": "tests/fixtures/choice/speed_measured.json (run_sw.sh 2026-10-23 state_bf16)"
   },
   {
-   "card": "l2080",
+   "card": "RTX 2080 Ti",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 21365,
    "prefill": 2420.0,
@@ -740,7 +740,7 @@
    "source": "tests/fixtures/choice/speed_measured.json (run_calib.sh 2026-10-23 long24k)"
   },
   {
-   "card": "l4070",
+   "card": "RTX 4070 Ti",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 21365,
    "prefill": 5703.0,
@@ -748,7 +748,7 @@
    "source": "tests/fixtures/choice/speed_measured.json (run_calib.sh 2026-10-23 long24k)"
   },
   {
-   "card": "l5070",
+   "card": "RTX 5070 Ti",
    "model": "Qwen3.5-9B-GGUF_Q4_K_M",
    "n": 21365,
    "prefill": 6697.0,
@@ -756,7 +756,7 @@
    "source": "tests/fixtures/choice/speed_measured.json (run_calib.sh 2026-10-23 long24k)"
   },
   {
-   "card": "l5070",
+   "card": "RTX 5070 Ti",
    "model": "Qwen3.8-27B-GGUF_UD-IQ3_XXS",
    "n": 21365,
    "prefill": 2064.0,
@@ -764,7 +764,7 @@
    "source": "tests/fixtures/choice/speed_measured.json (run_calib.sh 2026-10-23 long24k)"
   },
   {
-   "card": "l5070",
+   "card": "RTX 5070 Ti",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-IQ3_XXS",
    "n": 21365,
    "prefill": 7334.0,
@@ -772,7 +772,7 @@
    "source": "tests/fixtures/choice/speed_measured.json (run_calib.sh 2026-10-23 long24k)"
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "Qwen3.8-27B-GGUF_UD-Q4_K_XL",
    "n": 21365,
    "prefill": 3376.0,
@@ -780,7 +780,7 @@
    "source": "tests/fixtures/choice/speed_measured.json (run_calib.sh 2026-10-23 long24k)"
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-Q4_K_M",
    "n": 21365,
    "prefill": 13777.0,
@@ -788,7 +788,7 @@
    "source": "tests/fixtures/choice/speed_measured.json (run_calib.sh 2026-10-23 long24k)"
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "gemma-4-26B-A4B-it-GGUF_UD-Q4_K_M",
    "n": 1752,
    "prefill": 15601.2,
@@ -796,7 +796,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "gemma-4-26B-A4B-it-GGUF_UD-Q4_K_M",
    "n": 7347,
    "prefill": 16133.5,
@@ -804,7 +804,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "gemma-4-26B-A4B-it-GGUF_UD-Q4_K_M",
    "n": 21721,
    "prefill": 14074.8,
@@ -812,7 +812,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S",
    "n": 1785,
    "prefill": 15420.4,
@@ -820,7 +820,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S",
    "n": 7406,
    "prefill": 16307.9,
@@ -828,7 +828,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S",
    "n": 21928,
    "prefill": 15358.2,
@@ -836,7 +836,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-Q4_K_M",
    "n": 1785,
    "prefill": 17441.0,
@@ -844,7 +844,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-Q4_K_M",
    "n": 7406,
    "prefill": 18104.0,
@@ -852,7 +852,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l4090",
+   "card": "RTX 4090",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-Q4_K_M",
    "n": 21928,
    "prefill": 16841.8,
@@ -860,7 +860,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l5090",
+   "card": "RTX 5090",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S",
    "n": 1785,
    "prefill": 16704.1,
@@ -868,7 +868,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l5090",
+   "card": "RTX 5090",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S",
    "n": 7406,
    "prefill": 17071.9,
@@ -876,7 +876,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l5090",
+   "card": "RTX 5090",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S",
    "n": 21928,
    "prefill": 16291.0,
@@ -884,7 +884,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l5090",
+   "card": "RTX 5090",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-Q4_K_M",
    "n": 1785,
    "prefill": 19935.9,
@@ -892,7 +892,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l5090",
+   "card": "RTX 5090",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-Q4_K_M",
    "n": 7406,
    "prefill": 20663.4,
@@ -900,7 +900,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l5090",
+   "card": "RTX 5090",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-Q4_K_M",
    "n": 21928,
    "prefill": 19397.3,
@@ -908,7 +908,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l5070",
+   "card": "RTX 5070 Ti",
    "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
    "n": 1752,
    "prefill": 7523.1,
@@ -916,7 +916,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l5070",
+   "card": "RTX 5070 Ti",
    "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
    "n": 7347,
    "prefill": 7501.2,
@@ -924,7 +924,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l5070",
+   "card": "RTX 5070 Ti",
    "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
    "n": 21721,
    "prefill": 6621.7,
@@ -932,7 +932,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l5070",
+   "card": "RTX 5070 Ti",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-IQ3_XXS",
    "n": 1785,
    "prefill": 7627.0,
@@ -940,7 +940,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l5070",
+   "card": "RTX 5070 Ti",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-IQ3_XXS",
    "n": 7406,
    "prefill": 7815.1,
@@ -948,7 +948,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l5070",
+   "card": "RTX 5070 Ti",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-IQ3_XXS",
    "n": 21928,
    "prefill": 7481.4,
@@ -956,7 +956,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l5070",
+   "card": "RTX 5070 Ti",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S",
    "n": 1785,
    "prefill": 7945.3,
@@ -964,7 +964,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l5070",
+   "card": "RTX 5070 Ti",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S",
    "n": 7406,
    "prefill": 8126.5,
@@ -972,7 +972,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l5070",
+   "card": "RTX 5070 Ti",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S",
    "n": 21928,
    "prefill": 7769.8,
@@ -980,7 +980,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l4060",
+   "card": "RTX 4060 Ti",
    "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
    "n": 1752,
    "prefill": 4009.9,
@@ -988,7 +988,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l4060",
+   "card": "RTX 4060 Ti",
    "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
    "n": 7347,
    "prefill": 3957.7,
@@ -996,7 +996,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "l4060",
+   "card": "RTX 4060 Ti",
    "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
    "n": 21721,
    "prefill": 3444.4,
@@ -1004,7 +1004,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "lgv100",
+   "card": "Quadro GV100",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S",
    "n": 1785,
    "prefill": 754.5,
@@ -1012,7 +1012,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "lgv100",
+   "card": "Quadro GV100",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S",
    "n": 7406,
    "prefill": 763.6,
@@ -1020,7 +1020,7 @@
    "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   },
   {
-   "card": "lgv100",
+   "card": "Quadro GV100",
    "model": "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S",
    "n": 21928,
    "prefill": 762.2,

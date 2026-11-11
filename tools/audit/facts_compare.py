@@ -54,10 +54,17 @@ GIB = 1024 * MIB
 #     1.5 % of the published reference.
 #   BOOST_UNDER 0.03, BOOST_OVER 0.07: chosen window for a vendor's boost (a partner board's
 #     factory overclock, an OEM board under the reference): information, not a failure.
+#     A GeForce row records the reference boost only, so a GeForce board's driver peak ABOVE it
+#     (any amount) is a partner board's factory clock: information, not a failure. A GeForce
+#     board below the reference by more than BOOST_UNDER, or any other row above BOOST_OVER, is
+#     still a mismatch, and so is a laptop above its published boost. (The tool knows no reference-only board class, so no clock above the
+#     reference is held to a ceiling on a GeForce row.)
 #   L2_TOLERANCE 0.01: chosen; the driver's L2 against the marketed figure.
 #   VRAM_HIGH 1.003: chosen; the driver's total cannot exceed the marketed size, 0.3 % is slack
 #     for the marketed figure's rounding.
-#   VRAM_LOW_GEFORCE 0.97: chosen; a GeForce board reports nearly all of its memory.
+#   VRAM_LOW_GEFORCE 0.95: chosen window; a GeForce board reports nearly all of its memory. The
+#     lowest ratio seen is 0.962 (RTX 2080 Ti, 10.581 of 11 GiB: driver-reserved memory), so
+#     0.95 leaves it clean with a little room; it was 0.97 before that recording.
 #   VRAM_LOW_ECC 0.92: derived, with a chosen margin. GDDR ECC on (an A6000, an L40, an A10)
 #     keeps 1/16 of the memory, so at best 15/16 = 0.9375 of the marketed size; 0.92 leaves about
 #     2 % for the driver's own reservation.
@@ -66,7 +73,7 @@ L2_TOLERANCE = 0.01
 MEMORY_CLOCK_TOLERANCE = 0.005
 BOOST_TOLERANCE = 0.015
 BOOST_UNDER, BOOST_OVER = 0.03, 0.07
-VRAM_LOW_ECC, VRAM_LOW_GEFORCE, VRAM_HIGH = 0.92, 0.97, 1.003
+VRAM_LOW_ECC, VRAM_LOW_GEFORCE, VRAM_HIGH = 0.92, 0.95, 1.003
 PERSISTING_LOW = 0.125
 # The engine's thresholds in machine_facts (the row branch), restated for the audit's expected
 # values; tests/test_facts_vs_driver.py reads machine_facts.cpp and fails when one differs.
@@ -395,6 +402,10 @@ def compare_row(q, row, mig_mode):
     elif recorded_has(recorded, "boost_mhz"):
         add("boost_clock_khz", want_boost, boost, "info",
             "the reference clock of a board the table records under the row's id")
+    elif row.get("segment") == "geforce" and not is_laptop(row) and boost > want_boost:
+        add("boost_clock_khz", want_boost, boost, "info",
+            "a partner board's factory clock above the reference boost, which the row does not "
+            "record by design: the engine prices the reference")
     elif want_boost * (1 - BOOST_UNDER) <= boost <= want_boost * (1 + BOOST_OVER):
         add("boost_clock_khz", want_boost, boost, "info",
             "a vendor's boost over or under the reference clock (a factory overclock, an OEM "
@@ -416,9 +427,10 @@ def compare_row(q, row, mig_mode):
 
 
 def engine_snapped_khz(khz):
-    """The engine's llround(snap_to_fact_grid(khz)) for a positive integer kHz (mirrors
-    snap_to_fact_grid and its caller in src/core/machine_facts.cpp): the nearest point of the
-    2^(k/16) grid on the log2 scale, then rounded half away from zero to a whole kHz."""
+    """The engine's llround(snap_to_fact_grid(khz)) for a positive integer kHz up to
+    2,101,467,501 (mirrors snap_to_fact_grid and its caller in src/core/machine_facts.cpp): the
+    nearest point of the 2^(k/16) grid on the log2 scale, then rounded half away from zero to a
+    whole kHz. Above that the grid point is 2^31 and the engine's int wraps; no driver reports it."""
     k = math.floor(16.0 * math.log2(khz) + 0.5)
     return math.floor(2.0 ** (k / 16.0) + 0.5)
 
@@ -465,7 +477,8 @@ def compare_engine(device, row):
             "an id the engine does not know is read from the driver alone")
         return out
     # What the query stored: the row alone where the driver agrees with the row; where a variant,
-    # a slice or a laptop made the engine read the driver, only the bounds of that reading.
+    # a slice or a laptop made the engine read the driver, that reading, exact (the memory clock
+    # and a laptop's clock are computed, not bounded).
     stored_note = "the facts the query stored against the engine's reading of the row"
     add("engine_sku", row["name"], stored["sku"], "match" if stored["sku"] == row["name"] else
         "mismatch", "the table row the engine attached to this id" if stored["sku"] else
@@ -496,11 +509,13 @@ def compare_engine(device, row):
         "set when the engine read the driver's values into the facts")
     bound = "the query read the driver: within the row's bounds"
     if laptop:
-        # The bottom of the range where the row has it, else at most the row's top.
-        ok = stored["reference_clock_khz"] == expect_ref if row.get("boost_min_mhz", 0) > 0 \
-            else 0 < stored["reference_clock_khz"] <= expect_ref
-        add("engine_reference_clock_khz", expect_ref, stored["reference_clock_khz"],
-            "match" if ok else "mismatch", bound)
+        # The bottom of the range where the row has it, else the lower of the row's top and the
+        # driver's clock on the grid (the row's top where the driver's clock is not positive).
+        want_ref = expect_ref
+        if not row.get("boost_min_mhz", 0) > 0 and q["sm_clock_khz"] > 0:
+            want_ref = min(expect_ref, engine_snapped_khz(q["sm_clock_khz"]))
+        add("engine_reference_clock_khz", want_ref, stored["reference_clock_khz"],
+            "match" if stored["reference_clock_khz"] == want_ref else "mismatch", bound)
     else:
         same("engine_reference_clock_khz", alone["reference_clock_khz"],
              stored["reference_clock_khz"], stored_note)

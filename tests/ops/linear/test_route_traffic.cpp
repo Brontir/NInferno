@@ -1,16 +1,19 @@
-// A route's tile and logical traffic (#298, route_tile and route_traffic), host only: each tile is its
-// schedule's declared geometry (SwiGLU halves the output rows of a tile that stages gate and up
+// A route's tile and logical traffic (#298, route_tile and route_traffic), host only: each tile is
+// its schedule's declared geometry (SwiGLU halves the output rows of a tile that stages gate and up
 // rows together), the families priced without a tile have none, and the traffic follows the tile:
 // the whole weight once for every column of CTAs, the whole activation once for every row block in
-// the route's representation, the output once. ggml's kernels have no declared tile.
+// the route's representation, the output once. ggml's kernels have no declared tile. The bytes a
+// weight value takes are the call's share of the weight's rows (bytes_per_weight, #640).
 #include "core/weight.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/generic_select_internal.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <string>
+#include <utility>
 
 namespace g = ninferno::ops::detail::generic;
 using ninferno::ops::LinearPolicy;
@@ -100,6 +103,38 @@ int main() {
               "i8 activation traffic");
     }
     check(!g::route_traffic(g::Route{F::R8Mma, 0}, w, p, 4), "R8 has no traffic description");
+
+    // A whole weight (Weight::n the call's rows, twice them under SwiGLU) or one of no stored rows
+    // keeps payload / (n K) to the bit, so no whole-weight price moves; a slice of a fused parent
+    // takes its rows' share. Complementary to test_slice_price.cpp, which compares a slice with its
+    // own shape through this same helper and so cannot see a factor wrong on both sides (dropping
+    // the SwiGLU `* sets`, flooring the stored rows at 1): only this identity catches those, while
+    // the slice test catches a revert at any one pricing site.
+    for (const auto epilogue : {g::Epilogue::Store, g::Epilogue::SwiGlu}) {
+        const std::int32_t sets = epilogue == g::Epilogue::SwiGlu ? 2 : 1;
+        for (const auto& [n, k] :
+             {std::pair{256, 2048}, std::pair{1024, 4096}, std::pair{6144, 5120},
+              std::pair{17408, 5120}, std::pair{5120, 17408}, std::pair{28672, 8192}}) {
+            const std::int32_t rows = n / sets;
+            const g::Problem q{QType::GGML_Q4_K, LinearPolicy::A16Only, rows, k, epilogue};
+            const std::string at =
+                std::to_string(rows) + "x" + std::to_string(k) + (sets == 2 ? " swiglu" : " store");
+            Weight whole;
+            whole.n             = n;
+            whole.payload_bytes = static_cast<std::uint64_t>(n) * k * 9 / 16 + 777;
+            const double today =
+                static_cast<double>(whole.payload_bytes) / (static_cast<double>(rows) * k);
+            check(g::bytes_per_weight(whole, q) == today, at + ": a whole weight keeps its bpw");
+            Weight unsized = whole;
+            unsized.n      = 0;
+            check(g::bytes_per_weight(unsized, q) == today, at + ": no stored rows keeps its bpw");
+            Weight parent        = whole;
+            parent.n             = 8 * n;
+            parent.payload_bytes = 8 * whole.payload_bytes;
+            check(std::fabs(g::bytes_per_weight(parent, q) - today) <= 1e-12 * today,
+                  at + ": a slice of an 8x parent takes its rows' share");
+        }
+    }
 
     if (failures == 0) std::cout << "route tiles and traffic: all checks passed\n";
     return failures == 0 ? 0 : 1;

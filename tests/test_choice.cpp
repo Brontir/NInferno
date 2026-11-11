@@ -9,6 +9,7 @@
 // CPU.
 
 #include "product/choice/choice.h"
+#include "core/generation.h"
 #include "core/mmq_columns.h"
 #include "product/choice/choice_replay.h"
 
@@ -19,7 +20,9 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #ifndef NINFERNO_SOURCE_DIR
@@ -1906,6 +1909,162 @@ void load_bounds_the_gain(const json& fixture) {
     }
 }
 
+// The joint verify's price scales the gain counted at the streams it is priced for (#303): the
+// bound's one-request gain times R_1 / R_C, below 1 where the round no longer pays (plain decode
+// then wins the drafter axis); streams not priced keep the one-request ceiling, plain decode's 1
+// from its bound on is not scaled.
+void joint_price_scales_the_gain(const json& fixture) {
+    Bench b = nine_b(fixture, "RTX 4090");
+    ch::DrafterOption d{"mtp:4", "mtp", 2.0, 5, "measured"};
+    d.load  = {{.streams = 2, .speedup = 1.5, .depth = 2, .bounded = true}};
+    d.joint = {
+        {.streams = 2, .scale = 0.8}, {.streams = 3, .scale = 0.5}, {.streams = 5, .scale = 0.1}};
+    check(d.speedup_at(1) == 2.0 && std::abs(d.speedup_at(2) - 1.2) < 1e-12 &&
+              std::abs(d.speedup_at(3) - 0.75) < 1e-12 &&
+              std::abs(d.speedup_at(4) - 0.75) < 1e-12 && d.speedup_at(5) == 1.0,
+          "gain by streams: bound x joint scale where priced, the least priced below where not, "
+          "plain from "
+          "its bound");
+    check(!d.joint_priced_at(1) && d.joint_priced_at(2) && d.joint_priced_at(4) &&
+              !d.joint_priced_at(5),
+          "priced at the listed streams below the plain bound");
+    // An unmeasured bound's placeholder gain (1) priced at 2 streams does not hold the measured
+    // bound at 4 streams below its own price.
+    ch::DrafterOption u{"mtp:4", "mtp", 2.0, 8, "measured"};
+    u.load  = {{.streams = 2, .speedup = 1.0, .depth = 1, .bounded = true, .measured = false},
+               {.streams = 4, .speedup = 1.6, .depth = 3, .bounded = true}};
+    u.joint = {{.streams = 2, .scale = 0.9}, {.streams = 4, .scale = 0.8}};
+    check(!u.measured_at(2) && u.measured_at(4) && std::abs(u.speedup_at(4) - 1.28) < 1e-12,
+          "an unmeasured bound's placeholder does not bound a measured gain: " +
+              std::to_string(u.speedup_at(4)));
+    // Nor does the placeholder's own count count its price: the estimate multiplies by 1 there
+    // (measured_at is false), and speedup_at says the same.
+    check(u.speedup_at(2) == 1.0 && !u.joint_priced_at(2) && u.speedup_at(3) == 1.0 &&
+              !u.joint_priced_at(3),
+          "a price at an unmeasured bound's own count is not counted: " +
+              std::to_string(u.speedup_at(2)));
+    // An option nobody measured is not priced at all.
+    ch::DrafterOption nobody{"mtp:4", "mtp", 1.5, 0, "measured"};
+    nobody.measured = false;
+    nobody.joint    = {{.streams = 2, .scale = 0.45}};
+    check(nobody.speedup_at(2) == 1.5 && !nobody.joint_priced_at(2),
+          "an unmeasured option's gain is not priced");
+    // A price above 1 is clamped away: it supplies nothing.
+    ch::DrafterOption over{"mtp:4", "mtp", 2.0, 0, "measured"};
+    over.joint = {{.streams = 2, .scale = 1.05}};
+    check(over.speedup_at(2) == 2.0 && !over.joint_priced_at(2),
+          "a scale above 1 does not raise the gain nor count as a price");
+    // Nor is it held to a larger count: where a bound lifts the gain above one request's, the
+    // scale's product at two streams (1.5 x 1.2) is below the gain at three (2.0), and would be
+    // held there as a price.
+    ch::DrafterOption lifted{"mtp:4", "mtp", 1.5, 0, "measured"};
+    lifted.load  = {{.streams = 3, .speedup = 2.0, .depth = 2, .bounded = true}};
+    lifted.joint = {{.streams = 2, .scale = 1.2}};
+    check(lifted.speedup_at(3) == 2.0 && !lifted.joint_priced_at(3) &&
+              lifted.price_source_at(3).streams == 0,
+          "a scale above 1 is not held to a larger count: " + std::to_string(lifted.speedup_at(3)));
+    // A count whose own bound is unmeasured takes no price from a smaller count: the estimate
+    // counts x1 there (measured_at is false), and a price held from two streams (1.1 x 0.8) would
+    // say x0.88.
+    ch::DrafterOption gap{"mtp:4", "mtp", 1.1, 0, "measured"};
+    gap.load  = {{.streams = 3, .speedup = 1.0, .depth = 1, .bounded = true, .measured = false}};
+    gap.joint = {{.streams = 2, .scale = 0.8}};
+    check(!gap.measured_at(3) && gap.speedup_at(3) == 1.0 && !gap.joint_priced_at(3) &&
+              std::abs(gap.speedup_at(2) - 0.88) < 1e-12 && gap.joint_priced_at(2),
+          "a count whose bound is unmeasured takes no price from a smaller count: " +
+              std::to_string(gap.speedup_at(3)));
+    // The count that supplies the gain, with its own scale (not R_1 / R_C of no count).
+    ch::DrafterOption held{"mtp:4", "mtp", 2.0, 0, "measured"};
+    held.load         = {{.streams = 2, .speedup = 1.5, .depth = 2, .bounded = true},
+                         {.streams = 4, .speedup = 1.2, .depth = 1, .bounded = true}};
+    held.joint        = {{.streams = 2, .scale = 0.5}};
+    const auto source = held.price_source_at(4);
+    check(source.streams == 2 && source.scale == 0.5 && std::abs(source.gain - 0.75) < 1e-12,
+          "the source of a held gain is the count and the scale it is held from");
+    b.model.drafters        = {d};
+    b.model.default_drafter = 1;
+    ch::Candidate with{KvCacheStorage::Int8Group64, KvCacheStorage::BFloat16,
+                       RecurrentStateStorage::FP16, ActivationMode::Fast,
+                       ch::kDefaultChunk,           1};
+    ch::Candidate without = with;
+    without.drafter       = 0;
+    for (const auto& [streams, gain] :
+         std::vector<std::pair<std::uint32_t, double>>{{1, 2.0}, {2, 1.2}, {3, 0.75}, {4, 0.75}}) {
+        const double a =
+            ch::speed_of(b.model, b.card, b.quants[0], with, streams, 4096).decode_per_stream;
+        const double p =
+            ch::speed_of(b.model, b.card, b.quants[0], without, streams, 4096).decode_per_stream;
+        check(p > 0 && std::abs(a / p - gain) < 1e-9,
+              "decode at " + std::to_string(streams) + " streams: x" + std::to_string(gain));
+    }
+}
+
+// The gain is monotone in the streams once the joint verify is priced (#303): mtp:3 priced at two
+// streams (4 rows each, 8 verify rows) below 1, three streams (12 rows) not priced: its gain is
+// no more than two streams', never the one-request 2.0 again.
+void joint_price_keeps_the_gain_monotone() {
+    ch::DrafterOption d{"mtp:3", "mtp", 2.0, 0, "measured"};
+    d.joint = {{.streams = 2, .scale = 0.45}};
+    check(d.speedup_at(1) == 2.0 && std::abs(d.speedup_at(2) - 0.9) < 1e-12 &&
+              d.speedup_at(3) <= d.speedup_at(2) && d.speedup_at(8) <= d.speedup_at(2),
+          "an unpriced count of streams does not climb back above the priced one below it");
+    ch::DrafterOption unpriced{"mtp:3", "mtp", 2.0, 0, "measured"};
+    check(unpriced.speedup_at(3) == 2.0 && !unpriced.joint_priced_at(3),
+          "before any count is priced the one-request gain stands");
+    // A count priced above the least price below it is held there too: 2.0 x 0.5 at two streams,
+    // 2.0 x 0.9 at three, so three streams gain no more than two's 1.0.
+    ch::DrafterOption climbing{"mtp:3", "mtp", 2.0, 0, "measured"};
+    climbing.joint = {{.streams = 2, .scale = 0.5}, {.streams = 3, .scale = 0.9}};
+    check(std::abs(climbing.speedup_at(2) - 1.0) < 1e-12 &&
+              std::abs(climbing.speedup_at(3) - 1.0) < 1e-12 &&
+              std::abs(climbing.speedup_at(4) - 1.0) < 1e-12,
+          "a priced count of streams does not climb above the least price below it");
+}
+
+// The joint verify's scales go through the replay record (#303): written as text and read back, a
+// choice at three streams replays to the same, and the record holds them.
+void joint_price_replays(const json& fixture) {
+    Bench b = nine_b(fixture, "RTX 4090");
+    ch::DrafterOption d{"mtp:3", "mtp", 2.0, 0, "measured"};
+    d.joint                   = {{.streams = 2, .scale = 0.45}};
+    b.model.drafters          = {d};
+    b.model.default_drafter   = 1;
+    const ch::Allowed allowed = ch::allowed_axes(b.model, KvCacheStorage::Int8Group64);
+    ch::Task task;
+    task.concurrency              = 3;
+    const ch::ChoiceRecord record = ch::record_choice(b.model, b.card, b.quants[0], allowed, {},
+                                                      task, oracle(b, 40e9), ch::Gates{true, true});
+    const std::string text        = record.inputs.dump();
+    check(text.find("\"joint\"") != std::string::npos && text.find("0.45") != std::string::npos,
+          "the record holds the joint scales");
+    const ch::Choice again = ch::replay_choice(nlohmann::ordered_json::parse(text));
+    check(ch::choice_summary(again) == ch::choice_summary(record.choice),
+          "a choice with joint scales replays to the same");
+    // A record whose joint scales are not ascending by streams, or not positive, is rejected on
+    // read (speedup_at reads them in order).
+    const auto reads = [&](const nlohmann::ordered_json& joint) {
+        nlohmann::ordered_json bad           = nlohmann::ordered_json::parse(text);
+        bad["model"]["drafters"][0]["joint"] = joint;
+        try {
+            (void)ch::replay_choice(bad);
+            return true;
+        } catch (const std::invalid_argument&) { return false; }
+    };
+    check(reads(nlohmann::ordered_json::array(
+              {{{"streams", 2}, {"scale", 0.5}}, {{"streams", 3}, {"scale", 0.6}}})),
+          "ascending joint scales are read");
+    check(!reads(nlohmann::ordered_json::array(
+              {{{"streams", 3}, {"scale", 0.5}}, {{"streams", 2}, {"scale", 0.6}}})),
+          "joint scales not ascending by streams are rejected");
+    check(!reads(nlohmann::ordered_json::array({{{"streams", 2}, {"scale", 0.0}}})),
+          "a joint scale that is not positive is rejected");
+    // One request's verify is the base the scale is taken against: an entry below two streams is
+    // not a joint price.
+    check(!reads(nlohmann::ordered_json::array({{{"streams", 1}, {"scale", 0.5}}})) &&
+              !reads(nlohmann::ordered_json::array({{{"streams", 0}, {"scale", 0.5}}})),
+          "a joint scale below two streams is rejected");
+}
+
 // The order a manifest lists its drafters in does not decide: two drafters of equal worth tie
 // and the same one wins whichever comes first (#304).
 void drafter_order_does_not_decide(const json& fixture) {
@@ -2004,12 +2163,17 @@ void resolution_labels(const json& fixture) {
                 const double gap   = best.worth - a.scored->worth;
                 if (gap < -1e-9) {
                     // Above the pick only under a pick the resolution rule moved: the best worth
-                    // and the others inside its band are within_resolution, the ones slower than
-                    // it by more than the resolution are outside_resolution; never lower_worth.
+                    // and the others inside the band of their comparison with it (#618: the
+                    // wider basis of the two, at its resolution_width) are within_resolution, the
+                    // ones slower than it by more than that are outside_resolution; never
+                    // lower_worth.
                     const ch::Scored& anchor = c.scored[c.anchor];
-                    const bool inside        = a.scored == &anchor ||
-                                        std::log(a.scored->decision_seconds /
-                                                 anchor.decision_seconds) <= c.resolution + 1e-9;
+                    const double width       = ch::resolution_width(
+                        ch::resolution_for(c.resolutions, ch::widest(anchor.decision_basis,
+                                                                           a.scored->decision_basis)));
+                    const bool inside =
+                        a.scored == &anchor || std::log(a.scored->decision_seconds /
+                                                        anchor.decision_seconds) <= width + 1e-9;
                     check(c.resolved_within_resolution &&
                               a.why_code == (inside ? "within_resolution" : "outside_resolution"),
                           name + " " + a.value + ": a higher worth is " +
@@ -2017,7 +2181,10 @@ void resolution_labels(const json& fixture) {
                     continue;
                 }
                 const double apart = std::abs(std::log(a.scored->decision_seconds / best.decision_seconds));
-                const bool inside  = gap > 1e-9 && gap <= std::min(c.resolution, apart) + 1e-9;
+                // The band of this alternative's own comparison with the chosen (#618).
+                const double width = ch::resolution_width(ch::resolution_for(
+                    c.resolutions, ch::widest(best.decision_basis, a.scored->decision_basis)));
+                const bool inside  = gap > 1e-9 && gap <= std::min(width, apart) + 1e-9;
                 check(inside == (a.why_code == "within_resolution"),
                       name + " " + a.value + ": within_resolution exactly inside the band");
                 (inside ? within : lower) += 1;
@@ -2174,6 +2341,37 @@ void choices_replay(const json& fixture) {
         (void)ch::replay_choice(other);
     } catch (const std::invalid_argument&) { refused = true; }
     check(refused, "a record of another schema is refused");
+    // A record of the schema before typed_resolution (/1) is refused, naming the version it
+    // carries; no default stands in for the gate it lacks.
+    auto old_record      = record.inputs;
+    old_record["schema"] = "ninferno-choice-replay/1";
+    old_record["gates"].erase("typed_resolution");
+    std::string old_message;
+    try {
+        (void)ch::replay_choice(old_record);
+    } catch (const std::invalid_argument& e) { old_message = e.what(); }
+    check(old_message.find("replay/1") != std::string::npos &&
+              old_message.find("replay/2") != std::string::npos,
+          "a schema-1 record is refused with both versions named");
+    auto no_gate = record.inputs;
+    no_gate["gates"].erase("typed_resolution");
+    bool gate_refused = false;
+    try {
+        (void)ch::replay_choice(no_gate);
+    } catch (const std::invalid_argument&) { gate_refused = true; }
+    check(gate_refused, "a current-schema record without typed_resolution is refused");
+    // The gate round-trips at both values, and the replay answers what was recorded.
+    for (const bool typed : {false, true}) {
+        ch::Gates gates{true, true};
+        gates.typed_resolution     = typed;
+        const ch::ChoiceRecord rec = ch::record_choice(b.model, b.card, b.quants[0], allowed, {},
+                                                       {}, oracle(b, 40e9), gates);
+        const auto back            = nlohmann::ordered_json::parse(rec.inputs.dump());
+        check(back.at("gates").at("typed_resolution").get<bool>() == typed,
+              "typed_resolution is written to the record");
+        check(ch::choice_summary(ch::replay_choice(back)) == ch::choice_summary(rec.choice),
+              "a record with typed_resolution replays to the choice it recorded");
+    }
     // Malformed, not wrapped or thrown past the contract: a negative own context, a schema that
     // is no string.
     for (const auto& corrupt : {[&] {
@@ -2345,13 +2543,544 @@ void resolution_rule() {
           "no reference estimate: unchanged");
 }
 
+// The resolution of a Transferred estimate (#618 step 3), derived from decode_measured.json per
+// target generation: the rms of ln(predicted / measured) when the rows of the lender
+// (kTransferGeneration) are carried onto the cards of a generation that states no error of its own
+// (kDecodePredictionError: Ampere, Turing, Volta). Each card is priced as a card of the lender's
+// compute capability with its own bytes rate, SMs and clock; every short-context row (not marked
+// long) counts, the long rows have their own guards in decodes_from_facts. The rows are not pooled.
+// Volta's row also carries the lender's route and ISA pricing (no int8 MMA, HBM2). The constants
+// are checked against it, not fitted.
+void transferred_resolution(const json& fixture) {
+    // The lender's compute capability, from the generation table.
+    int lender_major = 0, lender_minor = 0;
+    for (const ninferno::GenerationRow& row : ninferno::kGenerations) {
+        if (std::string_view(row.name) == ch::kTransferGeneration) {
+            lender_major = row.major, lender_minor = row.minor_lo;
+        }
+    }
+    check(lender_major > 0, "the lender is a generation of the table");
+    std::map<std::string, std::pair<double, int>> by_target;
+    std::map<std::string, std::set<std::string>> cards_of; // the lab cards behind each target
+    for (const json& row : fixture.at("rows")) {
+        if (row.value("long", false)) { continue; }
+        const json& m           = fixture.at("models").at(row.at("model").get<std::string>());
+        const std::string q     = row.at("quant").get<std::string>();
+        const ch::ModelFacts mf = model_at(m, q);
+        ch::CardFacts cf      = card_of(fixture.at("cards").at(row.at("card").get<std::string>()));
+        const std::string gen = std::string(ch::generation_of(cf));
+        if (std::any_of(std::begin(ch::kDecodePredictionError),
+                        std::end(ch::kDecodePredictionError),
+                        [&](const ch::PredictionError& e) { return e.generation == gen; })) {
+            continue; // its own rows state its error
+        }
+        cf.major                 = lender_major,
+        cf.minor                 = lender_minor; // carried: the lender's rows, this board's rates
+        const ch::QuantOption qo = quant_of(q, m.at("quants").at(q));
+        ch::Candidate c;
+        c.kv    = kv_of(row.at("kv").get<std::string>());
+        c.ring  = kv_of(row.at("ring").get<std::string>());
+        c.state = row.at("state").get<std::string>() == "f32" ? RecurrentStateStorage::FP32
+                                                              : RecurrentStateStorage::FP16;
+        const ch::Speed s = ch::speed_of(mf, cf, qo, c, row.at("concurrency").get<std::uint32_t>(),
+                                         row.at("context").get<double>());
+        const double e    = std::log(s.decode_per_stream / row.at("decode").get<double>());
+        auto& g           = by_target[gen];
+        g.first += e * e, ++g.second;
+        cards_of[gen].insert(row.at("card").get<std::string>());
+    }
+    double worst = 0;
+    for (const ch::TransferredError& t : ch::kTransferredDecodeError) {
+        const auto it = by_target.find(std::string(t.target));
+        check(it != by_target.end() && it->second.second == 12,
+              std::string(t.target) + ": 12 carried rows");
+        if (it == by_target.end()) { continue; }
+        const double rms = std::sqrt(it->second.first / it->second.second);
+        std::cout << "  carried " << ch::kTransferGeneration << " -> " << t.target << ": "
+                  << it->second.second << " points, rms " << rms << " (stated " << t.rms << ")\n";
+        check(std::abs(rms - t.rms) < 0.0015,
+              std::string(t.target) +
+                  ": the stated transferred resolution is the carried rows' rms");
+        // Its label: the lab cards it rests on, by count and name (one each today: it never
+        // decides, Resolution::decides). Adding a card's rows to the fixture must relabel the
+        // constant (`cards`, `card`) and recompute its rms; at two cards the row decides.
+        const std::set<std::string>& cards = cards_of[std::string(t.target)];
+        check(t.cards == static_cast<int>(cards.size()) && t.cards == 1 &&
+                  cards.count(std::string(t.card)) == 1,
+              std::string(t.target) + ": the carry's lab cards are labelled");
+        worst = std::max(worst, rms);
+    }
+    check(by_target.size() == std::size(ch::kTransferredDecodeError),
+          "every carried target has a stated row");
+    check(std::abs(worst - ch::kUnmeasuredCarryDecodeError) < 0.0015 &&
+              ch::kUnmeasuredCarryDecodeError == ch::largest_transferred_decode_error(),
+          "the unmeasured carry is the largest measured transfer");
+    // The Own rows' labels: two or more lab cards each (they may decide), named.
+    for (const ch::PredictionError& e : ch::kDecodePredictionError) {
+        int named = 0;
+        for (const auto& [name, unused] : fixture.at("cards").items()) {
+            (void)unused;
+            const bool of_gen =
+                ch::generation_of(card_of(fixture.at("cards").at(name))) == e.generation;
+            named += of_gen && e.card_names.find(name) != std::string_view::npos;
+        }
+        check(e.cards >= 2 && named == e.cards,
+              std::string(e.generation) + ": the own error's lab cards are labelled");
+    }
+    // The basis by board and by the estimates compared (resolution_of, #618): Own estimates on Ada
+    // and Blackwell state their own rows' error and decide; on the other known generations their
+    // carried row (one card: never decides); a Transferred estimate on a generation with its own
+    // error has no measured carry: the assumed worst case; lent estimates the unmeasured carry.
+    const auto carry_of = [](std::string_view gen) {
+        for (const ch::TransferredError& t : ch::kTransferredDecodeError) {
+            if (t.target == gen) { return t.rms; }
+        }
+        return 0.0;
+    };
+    using B = ch::ResolutionBasis;
+    using S = ch::SpeedBasis;
+
+    struct Want {
+        const char* card;
+        S estimates;
+        B basis;
+        bool own_number; // the generation's own error, else its carry or the assumed worst case
+        bool decides;
+    };
+
+    for (const Want& w :
+         std::vector<Want>{{"RTX 4090", S::Own, B::Own, true, true},
+                           {"RTX 5090", S::Own, B::Own, true, true},
+                           {"RTX 4090", S::Transferred, B::Transferred, false, false},
+                           {"RTX 4090", S::LentGeneration, B::Unmeasured, false, false},
+                           {"RTX 3060", S::Own, B::Transferred, false, false},
+                           {"RTX 3060", S::Transferred, B::Transferred, false, false},
+                           {"RTX 2080 Ti", S::Own, B::Transferred, false, false},
+                           {"Quadro GV100", S::Transferred, B::Transferred, false, false}}) {
+        if (!fixture.at("cards").contains(w.card)) { continue; }
+        const ch::CardFacts card   = card_of(fixture.at("cards").at(w.card));
+        const ch::Resolution r     = ch::resolution_of(card, w.estimates);
+        const std::string_view gen = ch::generation_of(card);
+        const double want          = w.own_number               ? ch::worth_band(card)
+                                     : w.basis == B::Unmeasured ? ch::kUnmeasuredCarryDecodeError
+                                     : carry_of(gen) > 0        ? carry_of(gen)
+                                                                : ch::kUnmeasuredCarryDecodeError;
+        check(r.basis == w.basis && r.rms == want && want > 0 && r.decides == w.decides,
+              std::string(w.card) + " " + std::string(ch::speed_basis_name(w.estimates)) +
+                  ": the resolution's basis, width and whether it decides");
+    }
+    ch::CardFacts lent           = card_of(fixture.at("cards").at("RTX 5090"));
+    lent.major                   = 13;
+    lent.minor                   = 0;
+    const ch::Resolution carried = ch::resolution_of(lent, S::LentGeneration);
+    check(carried.basis == B::Unmeasured && carried.rms == ch::kUnmeasuredCarryDecodeError &&
+              !carried.decides,
+          "a compute capability with no generation row: the unmeasured carry, not deciding");
+    // Its floor is the lent generation's own band (generation_of: its rows price the board), not
+    // the lender's: cc 13.0 is priced from Blackwell's rows, floor 0.0170, Ada's is 0.0226.
+    check(carried.floor == ch::worth_band(lent) && carried.floor > 0 &&
+              ch::resolution_of(lent, S::Transferred).floor == carried.floor &&
+              ch::resolution_of(lent, S::Own).floor == carried.floor,
+          "a compute capability with no generation row: the lent generation's floor");
+    {
+        // The review's case at cc 13.0: B 2 % slower (ln 0.0198), above the 0.0170 floor and
+        // below Ada's 0.0226: the best worth A stays, as on master.
+        const auto make = [](double seconds, double kld, S basis) {
+            ch::Scored s;
+            s.decision_seconds = seconds;
+            s.accuracy.kld     = kld;
+            s.own_context      = 1000;
+            s.decision_basis   = basis;
+            s.worth            = -std::log(seconds) - 0.3 * kld;
+            return s;
+        };
+        const ch::Resolutions bands{ch::resolution_of(lent, S::Own),
+                                    ch::resolution_of(lent, S::Transferred),
+                                    ch::resolution_of(lent, S::LentGeneration)};
+        const std::vector<ch::Scored> ab{make(1.00, 0.020, S::LentGeneration),
+                                         make(1.020, 0.005, S::LentGeneration)};
+        check(ch::resolve_within_resolution(ab, {0, 1}, 0, bands) == 0,
+              "cc 13.0: a candidate beyond the lent generation's floor does not displace the best");
+    }
+    // A one-card row of kDecodePredictionError would not zero the floor that decides: it falls
+    // back to the lender's row of two or more cards (resolution_of; no such row exists today, the
+    // table is constexpr, so this is held by the code and the check below that every row has two).
+    for (const ch::PredictionError& e : ch::kDecodePredictionError) {
+        check(e.cards >= 2, std::string(e.generation) + ": its own error rests on two cards");
+    }
+    // A one-card or assumed band only widens: on every generation and every basis of the estimates
+    // compared, never narrower than the Own band they rest on or are carried from (the
+    // generation's own error, else the lender's), and only an Own band of two cards decides. A
+    // comparison rests on its widest estimate (mixed Own and Transferred: the Transferred band;
+    // mixed with a lent estimate: the unmeasured carry).
+    double lender_band = 0;
+    for (const ch::PredictionError& e : ch::kDecodePredictionError) {
+        if (e.generation == ch::kTransferGeneration) { lender_band = e.rms; }
+    }
+    check(lender_band > 0, "the lender states its own error");
+    const auto same = [](const ch::Resolution& a, const ch::Resolution& b) {
+        return a.basis == b.basis && a.rms == b.rms && a.decides == b.decides;
+    };
+    for (const ninferno::GenerationRow& row : ninferno::kGenerations) {
+        ch::CardFacts card = card_of(fixture.at("cards").at("RTX 4090"));
+        card.major = row.major, card.minor = row.minor_lo;
+        const double own           = ch::worth_band(card);
+        const ch::Resolution own_r = ch::resolution_of(card, S::Own);
+        for (const S s : {S::Own, S::Transferred, S::LentGeneration}) {
+            const ch::Resolution r = ch::resolution_of(card, s);
+            check(r.rms >= (own > 0 ? own : lender_band) && r.rms >= own_r.rms,
+                  std::string(row.name) + " " + std::string(ch::speed_basis_name(s)) +
+                      ": the band is never narrower than the Own band");
+            check(!r.decides || (s == S::Own && r.basis == B::Own),
+                  std::string(row.name) + ": only an Own band decides");
+            // Its floor: the Own band it widens (the generation's own, else the lender's, both
+            // of two or more cards), at which a comparison resting on it is resolved, never
+            // beyond; an Own band's floor is itself.
+            check(r.floor == (own > 0 ? own : lender_band) &&
+                      ch::resolution_width(r) == (r.decides ? r.rms : r.floor) &&
+                      ch::resolution_width(r) <= r.rms,
+                  std::string(row.name) + " " + std::string(ch::speed_basis_name(s)) +
+                      ": resolved at its Own floor where it does not decide");
+        }
+        check(same(ch::resolution_of(card, ch::widest(S::Own, S::Transferred)),
+                   ch::resolution_of(card, S::Transferred)) &&
+                  same(ch::resolution_of(card, ch::widest(S::Transferred, S::LentGeneration)),
+                       ch::resolution_of(card, S::LentGeneration)),
+              std::string(row.name) + ": a mixed comparison takes its widest estimate's band");
+    }
+    for (const ch::TransferredError& t : ch::kTransferredDecodeError) {
+        check(t.cards < 2, std::string(t.target) + ": a one-card carry (it does not decide)");
+    }
+}
+
+// The resolution rule weighs a comparison at the band of the two estimates it compares (#618), not
+// at the board's generation's alone: the wider of their bases (resolution_of), at its
+// resolution_width: the full band where it decides, else its Own floor (a one-card or assumed band
+// never widens the decision). Ada's bands: Own 2.26 % deciding; Transferred and lent the assumed
+// carry (54.5 %), not deciding, floor 2.26 %.
+void resolution_by_pair() {
+    const auto make = [](double seconds, double kld, ch::SpeedBasis basis) {
+        ch::Scored s;
+        s.decision_seconds = seconds;
+        s.accuracy.kld     = kld;
+        s.own_context      = 1000;
+        s.decision_basis   = basis;
+        s.worth            = -std::log(seconds) - 0.3 * kld;
+        return s;
+    };
+    using S  = ch::SpeedBasis;
+    using RB = ch::ResolutionBasis;
+    const ch::Resolution own{RB::Own, 0.0226, true, 0.0226};
+    const ch::Resolution assumed{RB::Transferred, ch::kUnmeasuredCarryDecodeError, false, 0.0226};
+    const ch::Resolution lent{RB::Unmeasured, ch::kUnmeasuredCarryDecodeError, false, 0.0226};
+    const ch::Resolutions ada{own, assumed, lent};
+    // A Transferred candidate inside the Own floor is weighed there, as by the one number: the
+    // estimates are indistinguishable at least within it.
+    const std::vector<ch::Scored> floor{make(1.0, 0.02, S::Own), make(1.02, 0.005, S::Transferred),
+                                        make(1.01, 0.01, S::Own), make(1.0, 0.02, S::Transferred),
+                                        make(1.10, 0.001, S::Transferred)};
+    check(ch::resolve_within_resolution(floor, {0, 1, 2}, 0, 0.0226) == 1 &&
+              ch::resolve_within_resolution(floor, {0, 1, 2}, 0, ada) == 1,
+          "a Transferred candidate inside the Own floor: weighed there, as by the one number");
+    check(ch::resolve_within_resolution(floor, {0, 2, 4}, 0, ada) == 2,
+          "a Transferred candidate beyond the floor, inside its own 54 % band: never taken");
+    check(ch::resolve_within_resolution(floor, {3, 1, 2}, 3, ada) == 1,
+          "a Transferred best worth: its comparisons resolved at the floor too");
+    // The review's case (lambda 0.3): A the best worth, C Transferred 0.5 % slower and the most
+    // accurate, P Own 2 % slower and less accurate than C. The pick is C, never the dominated P.
+    const std::vector<ch::Scored> review{
+        make(1.00, 0.020, S::Own), make(1.005, 0.004, S::Transferred), make(1.02, 0.010, S::Own)};
+    check(ch::resolve_within_resolution(review, {0, 1, 2}, 0, ada) == 1,
+          "the faster and more accurate C, not the dominated P");
+    // Comparisons of unequal widths (a hypothetical deciding Transferred band wider than the Own
+    // one): P is inside its wider band, C (Own, faster and more accurate) outside the Own one; the
+    // dominated P is never the pick.
+    const ch::Resolutions wider{own, {RB::Transferred, 0.05, true, 0.0226}, lent};
+    const std::vector<ch::Scored> unequal{make(1.00, 0.020, S::Own), make(1.03, 0.004, S::Own),
+                                          make(1.04, 0.010, S::Transferred)};
+    check(ch::resolve_within_resolution(unequal, {0, 1, 2}, 0, wider) == 1,
+          "unequal widths: a dominated pick gives way to the candidate dominating it");
+    // Among several dominators the lowest KLD, then the lowest index (choice.h, DECISIONS 75).
+    const std::vector<ch::Scored> several{make(1.00, 0.020, S::Own), make(1.035, 0.006, S::Own),
+                                          make(1.035, 0.004, S::Own), make(1.03, 0.004, S::Own),
+                                          make(1.04, 0.010, S::Transferred)};
+    check(ch::resolve_within_resolution(several, {0, 1, 2, 3, 4}, 0, wider) == 2,
+          "several dominators: the lowest KLD, then the lowest index");
+    // A deciding Transferred band: inside it the more accurate, outside it the best worth.
+    const ch::Resolutions deciding{own, {RB::Transferred, 0.0786, true, 0.0226}, lent};
+    const std::vector<ch::Scored> carry{make(1.0, 0.02, S::Own), make(1.05, 0.005, S::Transferred)};
+    check(ch::resolve_within_resolution(carry, {0, 1}, 0, deciding) == 1,
+          "a deciding Transferred band: inside it, the more accurate");
+    check(ch::resolve_within_resolution(carry, {0, 1}, 0, ada) == 0,
+          "a band that does not decide: beyond its floor the best worth stands");
+    // The property: over random sets, the pick is never dominated on both axes (no slower and
+    // strictly more accurate) by another eligible candidate, whatever the bases and bands.
+    std::uint64_t seed = 12345;
+    const auto next    = [&] {
+        seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+        return static_cast<double>(seed >> 11) / static_cast<double>(1ULL << 53);
+    };
+    int dominated = 0, moved = 0;
+    for (int trial = 0; trial < 2000; ++trial) {
+        std::vector<ch::Scored> set;
+        const int n = 2 + static_cast<int>(next() * 6);
+        for (int i = 0; i < n; ++i) {
+            const double u = next();
+            set.push_back(make(1 + 0.06 * next(), 0.02 * next(),
+                               u < 0.5    ? S::Own
+                               : u < 0.85 ? S::Transferred
+                                          : S::LentGeneration));
+        }
+        std::vector<std::size_t> all(set.size());
+        std::size_t best = 0;
+        for (std::size_t i = 0; i < set.size(); ++i) {
+            all[i] = i;
+            if (set[i].worth > set[best].worth) { best = i; }
+        }
+        for (const ch::Resolutions& bands : {ada, wider, deciding}) {
+            const std::size_t pick = ch::resolve_within_resolution(set, all, best, bands);
+            moved += pick != best;
+            for (const ch::Scored& other : set) {
+                dominated += other.decision_seconds <= set[pick].decision_seconds &&
+                             other.accuracy.kld + ch::kWorthTie < set[pick].accuracy.kld;
+            }
+        }
+    }
+    check(dominated == 0 && moved > 0, "the pick is never dominated on both axes");
+}
+
+// The resolution a decision uses is the one of the estimates it compares (#618), not the board's
+// generation's alone. On an Ada board (its own error, a reference card): Q4_K_M at 32K compares
+// Own estimates and Transferred ones (a candidate that reads a row of one Ada card: the exact
+// route's prefill, the BF16-KV prompt kernel); a quantization of WeightClass::Other (an IQ3 mix:
+// its routes not measured) makes every estimate Transferred. A comparison with a Transferred
+// estimate rests on the assumed carry (no carry onto those rows was measured), which does not
+// decide: it is resolved at the Own floor, 2.26 %, as an Own one is, never at 54.5 %. So on Ada
+// the typed rule picks as the one number did; the choice reports the best worth's band and floor.
+// The choice summary (the plan's and the replay's fields) and the replay report the band.
+void resolution_of_compared(const json& fixture) {
+    using S = ch::SpeedBasis;
+    Bench b = nine_b(fixture, "RTX 4090");
+    // The fixture's IQ3_XXS row is Q4_K_M's tables at other bits (a K-quant class); an IQ3 mix
+    // of its own class (WeightClass::Other) as the last.
+    ch::QuantOption other = b.quants[2];
+    other.label           = "IQ3_XXS (Other)";
+    other.weights         = ch::WeightClass::Other;
+    b.quants.push_back(other);
+    const std::size_t iq3         = b.quants.size() - 1;
+    const ch::Allowed allowed     = ch::allowed_axes(b.model, KvCacheStorage::Int8Group64);
+    const ch::Resolution own_band = ch::resolution_of(b.card, S::Own);
+    const ch::Resolution carried  = ch::resolution_of(b.card, S::Transferred);
+    check(own_band.decides && own_band.rms == ch::worth_band(b.card) && !carried.decides &&
+              carried.rms > own_band.rms && carried.floor == own_band.rms,
+          "Ada: the Own band decides, the Transferred one is wider, does not, floors at Own");
+    int own_pairs = 0, carried_pairs = 0, carried_best = 0;
+    for (const std::uint32_t context : {4096U, 32768U, 131072U}) {
+        ch::Task task;
+        task.contexts = {context};
+        for (std::size_t qi = 0; qi < b.quants.size(); ++qi) {
+            const ch::Choice c = ch::choose(b.model, b.card, b.quants[qi], allowed, {}, task,
+                                            oracle(b, 40e9, qi), ch::Gates{true, true});
+            if (!c.chosen) { continue; }
+            const ch::Scored& anchor = c.scored[c.anchor];
+            std::cout << "  resolution of the compared: " << b.quants[qi].label << ' ' << context
+                      << ": best worth " << ch::speed_basis_name(anchor.decision_basis) << ", band "
+                      << ch::resolution_basis_name(c.resolution_basis) << ' ' << c.resolution
+                      << (c.resolution_decides ? "" : " (not deciding)") << ", floor "
+                      << c.resolution_floor << ", held";
+            for (const ch::Scored& s : c.scored) {
+                if (s.variant || !s.fits) { continue; }
+                std::cout << ' ' << kv_cache_storage_name(s.candidate.kv) << '/'
+                          << static_cast<int>(s.candidate.activations) << '='
+                          << ch::speed_basis_name(s.decision_basis);
+                // Every comparison weighed at the Own band: its own where both are Own, the
+                // floor (the same 2.26 %) where either is Transferred.
+                const bool pair_own = anchor.decision_basis == S::Own && s.decision_basis == S::Own;
+                check(s.weighed_at == own_band.rms,
+                      b.quants[qi].label + ": every comparison weighed at the Own band or floor");
+                (pair_own ? own_pairs : carried_pairs) += 1;
+            }
+            std::cout << '\n';
+            // The band reported: the best worth's, with its floor.
+            const ch::Resolution want = ch::resolution_of(b.card, anchor.decision_basis);
+            check(c.resolution_basis == want.basis && c.resolution == want.rms &&
+                      c.resolution_decides == want.decides && c.resolution_floor == want.floor &&
+                      c.by_worth,
+                  b.quants[qi].label +
+                      ": the band of the best worth's estimate, the worth decides");
+            check(!c.resolved_within_resolution ||
+                      std::log(chosen(c).decision_seconds / anchor.decision_seconds) <=
+                          chosen(c).weighed_at + 1e-9,
+                  b.quants[qi].label + ": a moved pick lies inside its comparison's width");
+            // The one number (Gates::typed_resolution closed) picks the same on Ada.
+            ch::Gates old{true, true};
+            old.typed_resolution    = false;
+            const ch::Choice before = ch::choose(b.model, b.card, b.quants[qi], allowed, {}, task,
+                                                 oracle(b, 40e9, qi), old);
+            check(before.chosen && *before.chosen == *c.chosen,
+                  b.quants[qi].label + ": on Ada the typed rule picks as the one number");
+            if (!c.resolution_decides) {
+                carried_best += 1;
+                check(c.why.find("at its own floor") != std::string::npos,
+                      b.quants[qi].label + ": a Transferred best worth, and why");
+            }
+        }
+    }
+    check(own_pairs > 0 && carried_pairs > 0 && carried_best > 0,
+          "Ada: Own and Transferred comparisons both met, and Transferred best worths");
+    // An IQ3 mix: every estimate Transferred, the band not deciding, its floor the Own band.
+    ch::Task task;
+    task.contexts       = {32768};
+    const ch::Choice q3 = ch::choose(b.model, b.card, b.quants[iq3], allowed, {}, task,
+                                     oracle(b, 40e9, iq3), ch::Gates{true, true});
+    bool all_carried    = q3.chosen.has_value();
+    for (const ch::Scored& s : q3.scored) {
+        if (!s.variant && s.fits) {
+            all_carried = all_carried && s.decision_basis == S::Transferred;
+        }
+    }
+    check(all_carried && q3.resolution_basis == ch::ResolutionBasis::Transferred &&
+              q3.resolution == ch::kUnmeasuredCarryDecodeError && !q3.resolution_decides &&
+              q3.resolution_floor == own_band.rms,
+          "Ada IQ3 (Other): every estimate Transferred, the assumed band, not deciding, Own floor");
+    // A pinned KV codec stands whatever the bases (--kv-dtype: Pins::kv).
+    ch::Pins pinned;
+    pinned.kv             = KvCacheStorage::BFloat16;
+    const ch::Choice kept = ch::choose(b.model, b.card, b.quants[0], allowed, pinned, task,
+                                       oracle(b, 40e9, 0), ch::Gates{true, true});
+    check(kept.chosen && chosen(kept).candidate.kv == KvCacheStorage::BFloat16,
+          "a pinned KV codec stands");
+    // The summary (the plan's and the replay's fields) reports the band, whether it decided and
+    // its floor, and the replay of the record answers it.
+    for (const std::size_t qi : {std::size_t{0}, iq3}) {
+        const ch::ChoiceRecord rec =
+            ch::record_choice(b.model, b.card, b.quants[qi], allowed, {}, task, oracle(b, 40e9, qi),
+                              ch::Gates{true, true});
+        const auto summary = ch::choice_summary(rec.choice);
+        check(summary.at("resolution_basis") ==
+                      std::string(ch::resolution_basis_name(rec.choice.resolution_basis)) &&
+                  summary.at("resolution_decides").get<bool>() == rec.choice.resolution_decides &&
+                  summary.at("resolution_floor").get<double>() == rec.choice.resolution_floor &&
+                  summary.at("scored").at(rec.choice.anchor).at("decision_basis") ==
+                      std::string(ch::speed_basis_name(
+                          rec.choice.scored[rec.choice.anchor].decision_basis)),
+              b.quants[qi].label + ": the summary reports the band, whether it decided, its floor");
+        if (qi == iq3) {
+            check(summary.at("resolution_basis") == "transferred" &&
+                      !summary.at("resolution_decides").get<bool>(),
+                  "IQ3 (Other): the summary says transferred, not deciding");
+        }
+        const auto back = nlohmann::ordered_json::parse(rec.inputs.dump());
+        check(ch::choice_summary(ch::replay_choice(back)) == summary,
+              b.quants[qi].label + ": the replay answers the recorded band");
+    }
+}
+
+// What typing the resolution by the estimate's basis changes (#618 step 3, a behaviour change made
+// visible): for every fixture card and bench, the old (the reference generation's one number,
+// Gates::typed_resolution closed) and the new resolution, the candidates each chooses, and whether
+// the choice moves. The worth and its best are unchanged. A comparison resting on a band that does
+// not decide is resolved at its Own floor, so on the fixture no choice moves (asserted), and no
+// pick is dominated on both axes by a candidate it was weighed against; the table is the record.
+void resolution_by_basis(const json& fixture) {
+    // No reference, no estimate: the basis is None, not Own.
+    const Bench none = nine_b(fixture, "RTX 3060");
+    const ch::Choice undecided =
+        ch::choose(none.model, none.card, none.quants[0],
+                   ch::allowed_axes(none.model, KvCacheStorage::Int8Group64), {}, ch::Task{},
+                   oracle(none, 20e9));
+    check(undecided.resolution_basis == ch::ResolutionBasis::None && undecided.resolution == 0,
+          "a board with no reference card: basis none");
+    int total = 0, moved = 0, typed = 0, declined = 0, dominated = 0;
+    std::vector<std::pair<std::string, Bench>> benches;
+    for (const auto& [name, unused] : fixture.at("cards").items()) {
+        (void)unused;
+        benches.emplace_back(name + " Qwen3.5-9B", nine_b(fixture, name));
+        Bench lent_nine =
+            nine_b(fixture, name); // the same board of a compute capability with no row
+        lent_nine.card.major = 13, lent_nine.card.minor = 0;
+        benches.emplace_back(name + " (cc 13.0) Qwen3.5-9B", lent_nine);
+        const json& m35 = fixture.at("models").at("Qwen3.6-35B-A3B");
+        Bench moe{model_of(m35), card_of(fixture.at("cards").at(name)), {}};
+        for (const auto& [qname, qrow] : m35.at("quants").items()) {
+            moe.quants.push_back(quant_of(qname, qrow));
+        }
+        moe.model.drafters        = {{"dflash:7", "dflash", 2.5, 2, "measured"},
+                                     {"mtp:4", "mtp", 1.9, 2, "measured"}};
+        moe.model.default_drafter = 2;
+        benches.emplace_back(name + " Qwen3.6-35B-A3B", moe);
+    }
+    const auto describe = [](const ch::Choice& c) {
+        if (!c.chosen) { return std::string("none"); }
+        const ch::Candidate& k = chosen(c).candidate;
+        return std::string(kv_cache_storage_name(k.kv)) + "/ring" +
+               std::string(kv_cache_storage_name(k.ring)) + "/state" +
+               std::to_string(static_cast<int>(k.state)) + "/act" +
+               std::to_string(static_cast<int>(k.activations)) + "/chunk" +
+               std::to_string(k.chunk) + "/drafter" + std::to_string(k.drafter) + "/context" +
+               std::to_string(c.context);
+    };
+    for (const auto& [label, b] : benches) {
+        const ch::Allowed allowed = ch::allowed_axes(b.model, KvCacheStorage::Int8Group64);
+        for (std::size_t qi = 0; qi < b.quants.size(); ++qi) {
+            for (const std::uint32_t context : {4096U, 32768U, 131072U}) {
+                ch::Task task;
+                task.contexts = {context};
+                ch::Gates old_gates{true, true};
+                old_gates.typed_resolution = false;
+                const ch::Choice before    = ch::choose(b.model, b.card, b.quants[qi], allowed, {},
+                                                        task, oracle(b, 40e9, qi), old_gates);
+                const ch::Choice after =
+                    ch::choose(b.model, b.card, b.quants[qi], allowed, {}, task,
+                               oracle(b, 40e9, qi), ch::Gates{true, true});
+                if (!before.chosen || !after.chosen) { continue; }
+                const bool differs = describe(before) != describe(after);
+                const bool retyped = before.resolution != after.resolution ||
+                                     before.resolution_basis != after.resolution_basis;
+                ++total, moved += differs, typed += retyped;
+                declined += before.by_worth && !after.by_worth;
+                if (differs || retyped) {
+                    std::cout << "  resolution by basis: " << label << ' ' << b.quants[qi].label
+                              << ' ' << context << ": old " << before.resolution << ", new "
+                              << after.resolution << " ("
+                              << ch::resolution_basis_name(after.resolution_basis)
+                              << (after.resolution_decides ? "" : ", not deciding") << "), "
+                              << (differs ? "CHANGED " + describe(before) + " -> " + describe(after)
+                                          : "choice unchanged: " + describe(after))
+                              << '\n';
+                }
+                check(after.resolution_basis != ch::ResolutionBasis::Own ||
+                          after.resolution_decides,
+                      label + ": an Own band decides");
+                check(before.by_worth == after.by_worth && before.anchor == after.anchor,
+                      label + ": the worth and its best are as before (only the rule is typed)");
+                // The pick is never dominated on both axes (no slower on the reference card and
+                // strictly more accurate) by a candidate the rule weighed.
+                for (const ch::Scored& s : after.scored) {
+                    dominated += s.weighed_at > 0 &&
+                                 s.decision_seconds <= chosen(after).decision_seconds &&
+                                 s.accuracy.kld + ch::kWorthTie < chosen(after).accuracy.kld;
+                }
+            }
+        }
+    }
+    std::cout << "resolution by basis: " << total << " choices, " << typed
+              << " with a retyped resolution, " << declined << " no longer by worth, " << moved
+              << " changed, " << dominated << " dominated\n";
+    check(typed > 0 && declined == 0, "some resolutions are retyped, the worth decides as before");
+    check(moved == 0, "resolved at the Own floor, the typing moves no fixture choice");
+    check(dominated == 0, "no pick is dominated by a candidate it was weighed against");
+}
+
 int main() {
     std::ifstream in(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/speed_measured.json");
     const json fixture = json::parse(in);
     reproduces_the_measurements(fixture);
     {
         std::ifstream campaign(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/decode_measured.json");
-        decodes_from_facts(json::parse(campaign));
+        const json decode_rows = json::parse(campaign);
+        decodes_from_facts(decode_rows);
+        transferred_resolution(decode_rows);
         std::ifstream prefills(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/prefill_measured.json");
         const json prefill_rows = json::parse(prefills);
         prefills_by_format(prefill_rows);
@@ -2382,11 +3111,17 @@ int main() {
     weighs_the_drafters(fixture);
     drafter_order_does_not_decide(fixture);
     load_bounds_the_gain(fixture);
+    joint_price_scales_the_gain(fixture);
+    joint_price_keeps_the_gain_monotone();
+    joint_price_replays(fixture);
     axis_order_does_not_decide(fixture);
     board_facts_do_not_decide(fixture);
     choices_replay(fixture);
     resolution_labels(fixture);
     resolution_rule();
+    resolution_by_pair();
+    resolution_of_compared(fixture);
+    resolution_by_basis(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;

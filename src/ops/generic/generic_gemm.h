@@ -767,15 +767,16 @@ struct RouteTile {
                                                   std::int32_t tokens);
 
 // The logical traffic of a call on `route` (#298): the bytes its CTAs request, before any cache
-// serves them, predicted from route_tile. Every token column of CTAs reads the whole weight
-// (payload_bytes over the call's n rows, as the cost model's bpw), every row block of CTAs reads the
-// whole activation (the register MMA's every row warp: no shared memory holds its operands) in the route's representation (A16 bf16: 2 bytes a value; the int8 tiers one
-// byte and their scales: W4A8 36 bytes a 32-value block, 40 with a min's block sums, over K in
-// whole 128-value tiles; I8 an FP32 scale and an int32 sum a 64, over tokens padded to 256),
-// and the output is written once in bf16 (a cluster's K split reduces in distributed shared
-// memory). A prediction, not a counter: the caches serve the re-reads (RTX 5090, Qwen3.5-9B
-// shapes: a 16 x 8 register-MMA tile at T = 512 requested 8 TB/s, past the L2's rate, its
-// activation re-read by every row block from L1), so a hit rate turns it into DRAM bytes.
+// serves them, predicted from route_tile. Every token column of CTAs reads the call's matrix
+// (its share of the weight's rows, as the cost model's bpw: #640), every row block of CTAs reads
+// the whole activation (the register MMA's every row warp: no shared memory holds its operands) in
+// the route's representation (A16 bf16: 2 bytes a value; the int8 tiers one byte and their scales:
+// W4A8 36 bytes a 32-value block, 40 with a min's block sums, over K in whole 128-value tiles; I8
+// an FP32 scale and an int32 sum a 64, over tokens padded to 256), and the output is written once
+// in bf16 (a cluster's K split reduces in distributed shared memory). A prediction, not a counter:
+// the caches serve the re-reads (RTX 5090, Qwen3.5-9B shapes: a 16 x 8 register-MMA tile at T = 512
+// requested 8 TB/s, past the L2's rate, its activation re-read by every row block from L1), so a
+// hit rate turns it into DRAM bytes.
 struct RouteTraffic {
     double weight_bytes     = 0;
     double activation_bytes = 0;
