@@ -160,6 +160,16 @@ inline constexpr Holdout h_decode_model = Holdout::none(
     "estimate slower), worst the RTX 2080 Ti's Q6_K at 2 and 4 rows (+25, +20 %); one aggregate "
     "for the three tables");
 
+// The graph-node launch time t0 (core/cost_constants.h kLaunchNode, one row; its provenance tag
+// route_cost::kLaunchNodeAda): the Ada census's intercept, read by the speculation round cost.
+inline constexpr Holdout h_launch_node = Holdout::none(
+    "the Ada census: Qwen3.5-9B Q4_K_M plain decode on the RTX 4090, 4070 Ti and 4060 Ti, every "
+    "kernel within 2 %: t0 1.5 us without PDL",
+    "the three cards are the fit; a generation without a row reads 0 (launches then only break a "
+    "tie): Ampere and Turing graph gaps were measured (RTX 2080 Ti 0.38 us a kernel, RTX 3060 ~0) "
+    "but no intercept was fitted; gb20x's two cards cannot tell 0.5 from 1.5 us",
+    "core/cost_constants.h at LaunchNode; spec/round_cost.h at LaunchTime");
+
 inline constexpr FittedHoldout kRouteCostHoldouts[] = {
     {kRouteCost, "kRmmaStepCycles", h_a16_refit_flat},
     {kRouteCost, "kRmmaSaturatingWarps", h_a16_refit},
@@ -174,6 +184,7 @@ inline constexpr FittedHoldout kRouteCostHoldouts[] = {
     {kRouteCost, "kStagedTensorFraction", h_a16_refit},
     {kRouteCost, "kTiledTensorFraction", h_a16_refit},
     {kRouteCost, "kMinWarpFill", h_min_warp_fill},
+    {kRouteCost, "kLaunchNodeAda", h_launch_node},
     {kRouteCost, "kQuantLaunchSeconds", h_a8_refit},
     {kRouteCost, "kQuantBytesPerValue", h_a8_refit},
     {kRouteCost, "kW4a8Efficiency", h_a8_refit},
@@ -449,6 +460,15 @@ inline constexpr FittedHoldout kGenerationHoldouts[] = {
          "DECISIONS 74; core/generation.h at mmq_work_tiles",
          "the RTX 3060's mix was predicted before it was measured (-7.8 %, measured -8.2 %, at f "
          "0.43), the RTX 4070 Ti's (-5.9 %, measured -4.4 %)")},
+    {kGeneration, "mmq_launch_law",
+     Holdout::none(
+         "Turing's law (kTuringMmqLaw): tools/bench/mmq_launch_microbench.cu on one RTX 2080 Ti, "
+         "11.11, Q4_K 4096 x 4096 and 4096 x 8192, the medians of two passes; the unit clocks and "
+         "the stream-k ratio are measured, launch_seconds the mean of two nsys fixup times "
+         "(5.0 and 1.6 us), a fitted summary",
+         "one card, carried to the generation as a transfer (DECISIONS 78; no second Turing card "
+         "is measured): nothing left out; the other rows have no law (null: the tile law)",
+         "core/generation.h at kTuringMmqLaw")},
 };
 
 inline constexpr FittedHoldout kSmallTEtaHoldouts[] = {
@@ -474,6 +494,7 @@ inline constexpr FittedHoldout kSmallTEtaHoldouts[] = {
 };
 
 inline constexpr FittedHoldout kSpecHoldouts[] = {
+    {kCostConstants, "kLaunchNode", h_launch_node},
     {kRoundCost, "kLaunchTime",
      Holdout::none(
          "the Ada census: Qwen3.5-9B Q4_K_M plain decode on the RTX 4090, 4070 Ti and 4060 Ti, "

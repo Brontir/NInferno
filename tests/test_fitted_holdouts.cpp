@@ -48,7 +48,7 @@ namespace {
 
 namespace fit = ninferno::fitted;
 
-constexpr std::size_t kExpectedRecords = 103;
+constexpr std::size_t kExpectedRecords = 106;
 
 int failures = 0;
 
@@ -235,8 +235,11 @@ const std::vector<Spec>& specs() {
         {fit::kGeneration,
          Mode::RowFields,
          {"major", "minor_lo", "minor_hi", "name", "s8", "fp32acc_full_rate"}},
-        {fit::kCostConstants, Mode::Definitions, {"kDp4aOpsPerSmClock"}}, // a chip fact
-        {fit::kRoundCost, Mode::Definitions, {"kPricedVerifyRows"}},      // a bound, not a fit
+        {fit::kCostConstants,
+         Mode::Definitions,
+         {"kDp4aOpsPerSmClock",    // a chip fact
+          "launch_node_seconds"}}, // a lookup of kLaunchNode (recorded)
+        {fit::kRoundCost, Mode::Definitions, {"kPricedVerifyRows"}}, // a bound, not a fit
         {fit::kMoeShare, Mode::Definitions, {}},
         {fit::kWave, Mode::Definitions, {"fp8_split_tail"}}, // a rule over its parameters
         // Kernels' own fitted launch constants: only the recorded keys are held to definitions.

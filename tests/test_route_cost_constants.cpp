@@ -125,7 +125,7 @@ int main(int argc, char** argv) {
         }
         fitted += c.from == rc::Provenance::Fitted;
     }
-    constexpr std::size_t kExpectedFitted = 25;
+    constexpr std::size_t kExpectedFitted = 26;
     if (fitted != kExpectedFitted) {
         std::fprintf(stderr,
                      "%zu Fitted constants found, expected %zu: if one was added or retagged, give "
