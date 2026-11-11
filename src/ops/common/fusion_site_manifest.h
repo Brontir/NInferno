@@ -114,6 +114,11 @@ inline bool emit_evaluated(std::string_view id, const SiteQuery& q, SiteLine& ou
         // lifetime.cpp), a no-op there: the call still runs in stream order.
         const generic::OverlapRefusal join =
             overlap.joins() && !pdl ? generic::OverlapRefusal::NoPdl : overlap.join;
+        // Nor does it prefetch for the join's sake: without PDL nothing prefetches.
+        const generic::OverlapRefusal prefetch =
+            overlap.prefetch == generic::OverlapRefusal::Joined && !pdl
+                ? generic::OverlapRefusal::NoPdl
+                : overlap.prefetch;
         const bool overlaps =
             join == generic::OverlapRefusal::None || overlap.releases() || overlap.prefetches();
         out = {std::string(id),
@@ -122,7 +127,7 @@ inline bool emit_evaluated(std::string_view id, const SiteQuery& q, SiteLine& ou
                {{"route", std::string(generic::route_name(*q.route))},
                 {"join", std::string(generic::overlap_refusal_name(join))},
                 {"release", std::string(generic::overlap_refusal_name(overlap.release))},
-                {"prefetch", std::string(generic::overlap_refusal_name(overlap.prefetch))},
+                {"prefetch", std::string(generic::overlap_refusal_name(prefetch))},
                 {"pdl", pdl ? "1" : "0"},
                 {"tokens", tokens}}};
         return true;

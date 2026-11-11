@@ -93,7 +93,7 @@ int main() {
     q.join_asked    = true;
     expect(text("pdl_overlap", q) ==
                "site pdl_overlap decided stream_order route=" + rmma_name +
-                   " join=no_pdl release=not_asked prefetch=joined pdl=0 tokens=4",
+                   " join=no_pdl release=not_asked prefetch=no_pdl pdl=0 tokens=4",
            "no PDL: a join is no overlap");
     q.device = &blackwell;
     expect(text("pdl_overlap", q).find("decided overlap") != std::string::npos &&
