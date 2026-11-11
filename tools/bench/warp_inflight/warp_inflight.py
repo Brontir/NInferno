@@ -126,6 +126,10 @@ def clock_note(samples, span, bus):
 # The warm-up streams until the memory clock has held one value this long (and that value is
 # the highest since the warm-up began), within this bound; the measured span begins after it.
 SETTLE_HOLD_NS = 1_000_000_000
+# A clock below the warm-up's peak counts once it has held this long: a board that touches its
+# top clock and then holds a lower one (a power limit) settles there; a step of a ramp does not
+# hold this long.
+SETTLE_LOWER_HOLD_NS = 3_000_000_000
 SETTLE_TIMEOUT_NS = 10_000_000_000
 SETTLE_HEAD = "warm-up: the memory clock held"
 SETTLE_NOTE = re.compile(SETTLE_HEAD + r" (\d+) MHz for ([\d.]+) s before the measured span "
@@ -153,21 +157,23 @@ PERFORMANCE_PSTATES = ("P0", "P1", "P2")
 def settled(samples, bus, since_ns, hold_ns=SETTLE_HOLD_NS):
     """(memory MHz, ns it has held) once the samples from `since_ns` on end in one memory clock
     held for at least `hold_ns` (first to last sample of that value, all in a performance
-    P-state: the hold begins where both began), the highest clock seen since `since_ns`; None
-    until then (a clock still idle, ramping or dropping has not settled)."""
+    P-state: the hold begins where both began) when it is the highest clock seen since
+    `since_ns`, or for SETTLE_LOWER_HOLD_NS when it is lower; None until then (a clock still
+    idle, ramping or dropping has not settled)."""
     mem = memory_clocks(samples, bus, since_ns)
     if not mem:
         return None
     t_last, value, state = mem[-1]
-    if value != max(v for _, v, _ in mem) or state not in PERFORMANCE_PSTATES:
+    if state not in PERFORMANCE_PSTATES:
         return None
+    need = hold_ns if value == max(v for _, v, _ in mem) else max(hold_ns, SETTLE_LOWER_HOLD_NS)
     # The same clock read in an idle P-state before the GPU went to a performance one is no part
     # of the hold.
     i = len(mem) - 1
     while i > 0 and mem[i - 1][1] == value and mem[i - 1][2] in PERFORMANCE_PSTATES:
         i -= 1
     held = t_last - mem[i][0]
-    return (value, held) if held >= hold_ns else None
+    return (value, held) if held >= need else None
 
 
 def settle_refusal(notes, span_note):
@@ -181,6 +187,9 @@ def settle_refusal(notes, span_note):
         return (f"the warm-up settled at {mine[0].group(1)} MHz, the measured span ran at "
                 f"{m.group(2)} MHz")
     return None
+
+
+ENDED_IN_WARM_UP = "the probe ended before its warm-up settled"
 
 
 def warm_until_settled(probe_lines, clock_rows, send, now_ns, sleep, alive,
@@ -213,7 +222,7 @@ def warm_until_settled(probe_lines, clock_rows, send, now_ns, sleep, alive,
                               f"within {timeout_ns / 1e9:g} s of warm-up ({seen}); nothing "
                               "measured")
         sleep(0.05)
-    return None, "the probe ended before its warm-up settled"
+    return None, ENDED_IN_WARM_UP
 
 
 class Lines:
@@ -668,7 +677,10 @@ def cmd_run(a):
     body = stdout if stdout.endswith("\n") or not stdout else stdout + "\n"
     out = "\n".join(head) + "\n" + body + "\n".join(tail) + "\n"
     refusal = None
-    if settle_why:
+    if settle_why == ENDED_IN_WARM_UP and probe.returncode != 0:
+        # The probe's own error (above, in its output) is the reason, not the settle.
+        refusal = f"the probe exited {probe.returncode} in its warm-up"
+    elif settle_why:
         refusal = settle_why
     elif probe.returncode != 0:
         refusal = f"the probe exited {probe.returncode}"

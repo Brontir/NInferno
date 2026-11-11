@@ -250,9 +250,14 @@ class WarpInflight(unittest.TestCase):
         self.assertIn("held no value for 1 s within 10 s", why)
         self.assertIn("405..10251 MHz", why)
         self.assertLess(at, 10.6)
-        # A clock that dropped from its peak has not settled either.
+        # A clock that dropped from its peak has not settled either, until it held there
+        # SETTLE_LOWER_HOLD_NS (a power-limited board).
+        bus = wi.IP._bus("0:01:00.0")
         self.assertIsNone(wi.settled([r for _, r in self.ramp(t0, [(1000, 10251), (3000, 9501)])],
-                                     wi.IP._bus("0:01:00.0"), t0))
+                                     bus, t0))
+        lower = wi.settled([r for _, r in self.ramp(t0, [(1000, 10251), (4200, 9501)])], bus, t0)
+        self.assertIsNotNone(lower)
+        self.assertEqual(lower[0], 9501)
 
     def test_clock_note_keeps_the_span(self):
         t0 = wi.smi_time_ns("2026/11/11 12:00:00.000")
