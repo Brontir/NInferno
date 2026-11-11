@@ -383,9 +383,10 @@ class Prune(unittest.TestCase):
             rep = report(dict(case(1, 0.0, authority="dense-tune", selected="vec"),
                               board="ad102:128sm"))
             rep["device"] = "ad102:128sm GPU-0"
+            rep["selector_revision"] = "r1"
             report_path = self.write(root, "report.json", rep)
             code, out, _ = self.run_cli([str(report_path), "--dense-tune", str(path), "--class",
-                                         "ad102:128sm", "--apply"])
+                                         "ad102:128sm", "--apply", "--selector-revision", "r1"])
             self.assertEqual(code, 0)
             self.assertIn("T 4..4: no case", out)
             self.assertIn(key, json.loads(path.read_text(encoding="utf-8"))["problems"])
@@ -424,6 +425,7 @@ class Prune(unittest.TestCase):
                                           case(8, 0.3, n=2048)), t["entries"])
             rep["cases"] = [dict(c, board="ad102:128sm") for c in rep["cases"]]
             rep["device"] = "ad102:128sm GPU-0"
+            rep["selector_revision"], rep["build_id"] = "r1", "b1"
             report_path = self.write(root, "report.json", rep)
             path = root / "table.json"
             path.write_text(prune.canonical(t), encoding="utf-8", newline="")
@@ -434,16 +436,44 @@ class Prune(unittest.TestCase):
             self.assertIn("1 of 2 measured entries", out)
             self.assertIn("dry run", out)
             self.assertEqual(path.read_bytes(), before)
-            code, out, _ = self.run_cli([str(report_path), "--table", str(path), "--apply"])
+            code, out, _ = self.run_cli([str(report_path), "--table", str(path), "--apply",
+                                            "--selector-revision", "r1"])
             self.assertEqual(code, 0)
             after = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(after["entries"], [keep, entry(fmt="q8", measured=False)])
             self.assertEqual(list(root.glob("*.tmp")), [])
             # a file not in the canonical form is refused, not reformatted
             path.write_text(json.dumps(t, indent=2), encoding="utf-8")
-            code, _, err = self.run_cli([str(report_path), "--table", str(path), "--apply"])
+            code, _, err = self.run_cli([str(report_path), "--table", str(path), "--apply",
+                                            "--selector-revision", "r1"])
             self.assertEqual(code, 2)
             self.assertIn("canonical", err)
+
+    def test_apply_refuses_a_report_of_another_selector_revision_or_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            t = self.table_of("ad102", 128, self.entry(bands=((1, 16, "a"),)))
+            rep = measured_against(report(case(1, 0.0), case(8, 0.0)), t["entries"])
+            rep["cases"] = [dict(c, board="ad102:128sm") for c in rep["cases"]]
+            rep["device"] = "ad102:128sm GPU-0"
+            rep["selector_revision"], rep["build_id"] = "r1", "b1"
+            report_path = self.write(root, "report.json", rep)
+            path = root / "table.json"
+            path.write_text(prune.canonical(t), encoding="utf-8", newline="")
+            before = path.read_bytes()
+            for extra, needle in (([], "needs --selector-revision"),
+                                  (["--selector-revision", "r2"], "selector_revision is 'r1'"),
+                                  (["--selector-revision", "r1", "--build-id", "b2"],
+                                   "build_id is 'b1'")):
+                code, _, err = self.run_cli([str(report_path), "--table", str(path), "--apply",
+                                             *extra])
+                self.assertEqual(code, 2, extra)
+                self.assertIn(needle, err)
+                self.assertEqual(path.read_bytes(), before)
+            # a dry run needs no revision
+            code, out, _ = self.run_cli([str(report_path), "--table", str(path)])
+            self.assertEqual(code, 0)
+            self.assertIn("dry run", out)
 
     def test_the_other_tables_of_the_directory_decide_the_lending_rules(self):
         with tempfile.TemporaryDirectory() as directory:

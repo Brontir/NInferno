@@ -53,7 +53,7 @@ thresholds describe the same size of effect to within a quarter of a percent, no
 
     route_table_prune.py report.json --table routes/ad102.json [--routes-dir routes]
         [--dense-tune routes/tuner/dense_tune.json --class ad102:128sm] [--resolution 0.05]
-        [--allow-borrowers] [--apply]
+        [--allow-borrowers] [--apply --selector-revision REV [--build-id ID]]
 
 The report must be one board's and name the device it measured (`device`, route_tune's class id
 of every row, which regret_collect.py keeps and selection_regret.py passes on; the board label is
@@ -63,7 +63,9 @@ of the bare chip whose `gpu.board.sms` is N (the RTX 5080's `gb203` is not the 7
 none) equal to the measured device. Default is a dry run: the plan is printed with the board and
 nothing is written. --apply rewrites the files (both or neither: temp files, then renames),
 which must be in the canonical form (json.dumps(indent=1) plus a newline) so that the diff is
-only the deleted entries; otherwise it refuses.
+only the deleted entries; otherwise it refuses. --apply also needs --selector-revision, and
+refuses a report whose selector_revision (and build_id, with --build-id) is another: the report
+timed that selector's ranker, which after a rule change may not be the route that takes over.
 
 Also the evidence check of the tables (evidence_gaps): every measured entry (one with `tuned_on`)
 should record `evidence_us`, rows [T, default us, chosen us], with a gain above the resolution.
@@ -457,6 +459,11 @@ def main(argv=None):
     parser.add_argument("--resolution", type=float, default=RESOLUTION,
                         help="ranker slowdown within which an override earns nothing (0.05)")
     parser.add_argument("--apply", action="store_true", help="write the pruned files (default: dry run)")
+    parser.add_argument("--selector-revision", metavar="REV",
+                        help="the selector revision the pruned tables are for; --apply needs it "
+                             "and refuses a report measured on another (its selector_revision)")
+    parser.add_argument("--build-id", metavar="ID",
+                        help="with --apply: also refuse a report whose build_id differs")
     args = parser.parse_args(argv)
     try:
         if args.gaps:
@@ -484,6 +491,19 @@ def main(argv=None):
                             object_pairs_hook=regret.unique_object)
         if report.get("schema") != "ninferno-selection-regret-report/1":
             raise ValueError("expected a ninferno-selection-regret-report/1 (selection_regret.py output)")
+        # A report timed one selector's ranker: after a change to the ranker rules the route that
+        # takes over a deleted override may be another, never measured. --apply deletes only on a
+        # report of the revision (and build, when given) the caller names.
+        if args.apply:
+            if not args.selector_revision:
+                raise ValueError("--apply needs --selector-revision: the report's rankers are "
+                                 "those of the revision it measured")
+            for flag, field, want in (("--selector-revision", "selector_revision",
+                                       args.selector_revision),
+                                      ("--build-id", "build_id", args.build_id)):
+                if want is not None and report.get(field) != want:
+                    raise ValueError(f"the report's {field} is {report.get(field)!r}, not the "
+                                     f"{flag} {want!r}: measure again on that revision")
         boards = {c["board"] for c in report["cases"]}
         if len(boards) != 1:
             raise ValueError("the report must be one board's, it has " + ", ".join(sorted(boards)))
