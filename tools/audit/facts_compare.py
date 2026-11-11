@@ -427,9 +427,10 @@ def compare_row(q, row, mig_mode):
 
 
 def engine_snapped_khz(khz):
-    """The engine's llround(snap_to_fact_grid(khz)) for a positive integer kHz (mirrors
-    snap_to_fact_grid and its caller in src/core/machine_facts.cpp): the nearest point of the
-    2^(k/16) grid on the log2 scale, then rounded half away from zero to a whole kHz."""
+    """The engine's llround(snap_to_fact_grid(khz)) for a positive integer kHz up to
+    2,101,467,501 (mirrors snap_to_fact_grid and its caller in src/core/machine_facts.cpp): the
+    nearest point of the 2^(k/16) grid on the log2 scale, then rounded half away from zero to a
+    whole kHz. Above that the grid point is 2^31 and the engine's int wraps; no driver reports it."""
     k = math.floor(16.0 * math.log2(khz) + 0.5)
     return math.floor(2.0 ** (k / 16.0) + 0.5)
 
@@ -476,7 +477,8 @@ def compare_engine(device, row):
             "an id the engine does not know is read from the driver alone")
         return out
     # What the query stored: the row alone where the driver agrees with the row; where a variant,
-    # a slice or a laptop made the engine read the driver, only the bounds of that reading.
+    # a slice or a laptop made the engine read the driver, that reading, exact (the memory clock
+    # and a laptop's clock are computed, not bounded).
     stored_note = "the facts the query stored against the engine's reading of the row"
     add("engine_sku", row["name"], stored["sku"], "match" if stored["sku"] == row["name"] else
         "mismatch", "the table row the engine attached to this id" if stored["sku"] else
@@ -507,11 +509,13 @@ def compare_engine(device, row):
         "set when the engine read the driver's values into the facts")
     bound = "the query read the driver: within the row's bounds"
     if laptop:
-        # The bottom of the range where the row has it, else at most the row's top.
-        ok = stored["reference_clock_khz"] == expect_ref if row.get("boost_min_mhz", 0) > 0 \
-            else 0 < stored["reference_clock_khz"] <= expect_ref
-        add("engine_reference_clock_khz", expect_ref, stored["reference_clock_khz"],
-            "match" if ok else "mismatch", bound)
+        # The bottom of the range where the row has it, else the lower of the row's top and the
+        # driver's clock on the grid (the row's top where the driver's clock is not positive).
+        want_ref = expect_ref
+        if not row.get("boost_min_mhz", 0) > 0 and q["sm_clock_khz"] > 0:
+            want_ref = min(expect_ref, engine_snapped_khz(q["sm_clock_khz"]))
+        add("engine_reference_clock_khz", want_ref, stored["reference_clock_khz"],
+            "match" if stored["reference_clock_khz"] == want_ref else "mismatch", bound)
     else:
         same("engine_reference_clock_khz", alone["reference_clock_khz"],
              stored["reference_clock_khz"], stored_note)

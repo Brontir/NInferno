@@ -38,9 +38,10 @@ static_assert(arch_registry::find(7, 0).max_threads_per_sm == 2048);
 static_assert(arch_registry::find(7, 0).max_blocks_per_sm == 32);
 static_assert(arch_registry::find(12, 0).max_blocks_per_sm == 24);
 // The rows from the published figures, no card read (the CUDA programming guide's table and the
-// toolkit's cuda::arch_traits and occupancy calculator): Orin, sm_107, Thor; the rest of
+// toolkit's cuda::arch_traits and occupancy calculator): Orin, sm_107, Thor, GB10; the rest of
 // sm_90..sm_119 keeps 2048 threads and 32 blocks.
 static_assert(arch_registry::find(8, 7).max_blocks_per_sm == 16);
+static_assert(arch_registry::find(12, 1).max_blocks_per_sm == 24);
 static_assert(arch_registry::find(10, 7).max_blocks_per_sm == 16);
 static_assert(arch_registry::find(10, 7).max_threads_per_sm == 1024);
 static_assert(arch_registry::find(11, 0).max_blocks_per_sm == 24);
@@ -189,8 +190,10 @@ void the_synthetic_class_keeps_its_value() {
         if (cc == 120) old.blocks = 24;
         // And to the published figures, no card read (#648: the CUDA programming guide's table,
         // the toolkit's cuda::arch_traits and occupancy calculator): Orin (cc 8.7) holds 16 blocks
-        // a SM, cc 10.7 16 blocks and 1024 threads, Thor (cc 11.0) 24 blocks and 1536 threads.
+        // a SM, cc 10.7 16 blocks and 1024 threads, Thor (cc 11.0) 24 blocks and 1536 threads,
+        // GB10 (cc 12.1) 24 blocks as cc 12.0.
         if (cc == 87) old.blocks = 16;
+        if (cc == 121) old.blocks = 24;
         if (cc == 107) {
             old.blocks  = 16;
             old.threads = 1024;
