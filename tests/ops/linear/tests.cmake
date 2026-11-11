@@ -224,7 +224,7 @@ target_compile_definitions(ninferno_kernel_facts_live_test PRIVATE
 
 # The selector's named authorities (#614): the lists are well formed, on every facts board each
 # answer's evidence is consistent with its kind, and known cases name the authority that answers.
-ninferno_add_op_test(ninferno_route_authorities_test
+ninferno_add_op_test(ninferno_route_authorities_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_authorities.cpp"
   LIBRARIES ninferno_linear_test_support)
 
