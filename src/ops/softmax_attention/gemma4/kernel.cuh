@@ -1039,21 +1039,23 @@ __launch_bounds__(Gemma4Tile<Geo, WR, Bc, Fp8>::Threads, 1) __global__
                                       pa[pk][3], o1.x, o1.y);
                 }
             }
-            return;
-        }
+        } else {
+            // BF16 V (the other branch of VDirect: an `else`, so FP8's instances hold no
+            // unreachable loop, nvcc #128).
 #pragma unroll
-        for (int pk = 0; pk < PVK; ++pk) {
+            for (int pk = 0; pk < PVK; ++pk) {
 #pragma unroll
-            for (int n2 = 0; n2 < PVN / 2; ++n2) {
-                unsigned b0, b1, b2, b3;
-                ldmatrix_x4_t(b0, b1, b2, b3,
-                              base + static_cast<unsigned>(pk * 16 * RowBytes) +
-                                  static_cast<unsigned>(((2 * n2 + v_hi) ^ swz) << 4));
-                mma_bf16_staged(acc[2 * n2][0], acc[2 * n2][1], acc[2 * n2][2], acc[2 * n2][3],
-                                pa[pk][0], pa[pk][1], pa[pk][2], pa[pk][3], b0, b1);
-                mma_bf16_staged(acc[2 * n2 + 1][0], acc[2 * n2 + 1][1], acc[2 * n2 + 1][2],
-                                acc[2 * n2 + 1][3], pa[pk][0], pa[pk][1], pa[pk][2], pa[pk][3],
-                                b2, b3);
+                for (int n2 = 0; n2 < PVN / 2; ++n2) {
+                    unsigned b0, b1, b2, b3;
+                    ldmatrix_x4_t(b0, b1, b2, b3,
+                                  base + static_cast<unsigned>(pk * 16 * RowBytes) +
+                                      static_cast<unsigned>(((2 * n2 + v_hi) ^ swz) << 4));
+                    mma_bf16_staged(acc[2 * n2][0], acc[2 * n2][1], acc[2 * n2][2], acc[2 * n2][3],
+                                    pa[pk][0], pa[pk][1], pa[pk][2], pa[pk][3], b0, b1);
+                    mma_bf16_staged(acc[2 * n2 + 1][0], acc[2 * n2 + 1][1], acc[2 * n2 + 1][2],
+                                    acc[2 * n2 + 1][3], pa[pk][0], pa[pk][1], pa[pk][2], pa[pk][3],
+                                    b2, b3);
+                }
             }
         }
     };
