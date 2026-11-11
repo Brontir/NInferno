@@ -95,7 +95,7 @@ using generic::Epilogue;
 //              Between it and the ceiling the test passes (on the recorded build it prints
 //              "re-record kKnown"); below it, it fails.
 // The window does not bound a change of the law made together with the table change: anything
-// that keeps the share between the floor and the ceiling passes (the room is 1.3 to 2.2 times the
+// that keeps the share between the floor and the ceiling passes (the room is 1.1 to 2.2 times the
 // largest row's cases of the group, the ceiling's rounding included), which is why the counts are
 // re-recorded on every table change, and the exact check then holds again. The worst price ratio
 // the group covers, in the window as [min_ratio, max_ratio]; 0 in both: no ratio check there.
@@ -198,36 +198,36 @@ constexpr Known kKnown[] = {
      "charge (a): removed alone the group falls from 35.0 % to 2.6 % of the family's cases, with "
      "all "
      "three removed to 0.99 % (issue #690)",
-     {"89", 0, 0, 0, 0, 0.341, 0.351, 0, 0},
-     {"120a", 0, 0, 0, 0, 0.3337, 0.344, 0, 0}},
+     {"89", 267608, 764040, 113, 1.30002093448, 0.3431, 0.351, 0, 0},
+     {"120a", 268413, 782520, 113, 1.30002093448, 0.3357, 0.344, 0, 0}},
     {"P1 sms x1.25",
      "rmma beyond the SM ratio",
      "charge (c) with (a): removing (c) alone leaves 20 of the 675 cases (x1.336), removing (a) "
      "alone grows the group to 13 156 (x1.90): the two charges change together (issue #690)",
-     {"89", 0, 0, 0, 0, 0.0007, 0.001, 1.4, 1.43},
-     {"120a", 0, 0, 0, 0, 0.0007, 0.001, 1.4, 1.43}},
+     {"89", 675, 764040, 113, 1.42889967054, 0.0007, 0.001, 1.4, 1.43},
+     {"120a", 675, 782520, 113, 1.42889967054, 0.0007, 0.001, 1.4, 1.43}},
     {"P1 sms x1.25",
      "staged within the SM ratio",
      "charge (a): removed alone the group disappears (issue #690)",
-     {"89", 0, 0, 0, 0, 0.4184, 0.436, 0, 0},
-     {"120a", 0, 0, 0, 0, 0.4184, 0.436, 0, 0}},
+     {"89", 14448, 33200, 113, 1.25418687982, 0.4233, 0.436, 0, 0},
+     {"120a", 14448, 33200, 113, 1.25418687982, 0.4233, 0.436, 0, 0}},
     {"P1 sms x1.25",
      "w4a8 within the SM ratio",
      "charges (a) and (b): removing (b) alone leaves 14.0 % of the family's cases, all three none "
      "(issue #690)",
-     {"89", 0, 0, 0, 0, 0.2282, 0.239, 0, 0},
-     {"120a", 0, 0, 0, 0, 0.2287, 0.239, 0, 0}},
+     {"89", 21764, 91300, 113, 1.25566364868, 0.2299, 0.239, 0, 0},
+     {"120a", 19828, 83000, 113, 1.25566364868, 0.2304, 0.239, 0, 0}},
     {"P1 sms x1.25",
      "w4a8 beyond the SM ratio",
      "charges (a) and (b) together: removing either alone makes the group disappear (issue #690)",
-     {"89", 0, 0, 0, 0, 0.0223, 0.025, 1.52, 1.53},
-     {"120a", 0, 0, 0, 0, 0.0226, 0.025, 1.52, 1.53}},
+     {"89", 2254, 91300, 113, 1.52081329893, 0.0224, 0.025, 1.52, 1.53},
+     {"120a", 2074, 83000, 113, 1.52081329893, 0.0227, 0.025, 1.52, 1.53}},
     {"P1 sms x1.25",
      "i8 within the SM ratio",
      "charge (b): removed alone the group falls from 39.1 % to 0.72 % of the family's cases "
      "(issue #690)",
-     {"89", 0, 0, 0, 0, 0.3781, 0.391, 0, 0},
-     {"120a", 0, 0, 0, 0, 0.3781, 0.391, 0, 0}},
+     {"89", 1946, 4980, 113, 1.25811579614, 0.3812, 0.391, 0, 0},
+     {"120a", 1946, 4980, 113, 1.25811579614, 0.3812, 0.391, 0, 0}},
 };
 
 // ---- Findings ----------------------------------------------------------------------------------
