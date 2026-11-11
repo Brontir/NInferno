@@ -36,16 +36,26 @@ constexpr BoardFrontier kQ4GroupwiseFrontiers[] = {
 static_assert(measured_boards_known(std::span(kQ4GroupwiseFrontiers)));
 
 std::int32_t q4_groupwise_frontier() noexcept {
-    std::int32_t frontier = kSparseMoePrefillQ4Q5Min;
     try {
-        const BoardFrontier* f = nearest_known_measured(
-            std::span(kQ4GroupwiseFrontiers), board_of(device_class()), measured::kCarryDistance);
-        if (f != nullptr) frontier = f->min_tokens;
+        return sparse_moe_q4_groupwise_frontier_answer(board_of(device_class())).min_tokens;
     } catch (...) {}
-    return frontier;
+    return kSparseMoePrefillQ4Q5Min;
 }
 
 } // namespace
+
+SparseMoeFrontierAnswer sparse_moe_q4_groupwise_frontier_answer(const Board& board) noexcept {
+    const auto answer =
+        measured::table_answer(std::span(kQ4GroupwiseFrontiers), board, measured::kCarryDistance);
+    SparseMoeFrontierAnswer out;
+    if (answer.entry != nullptr) {
+        out.min_tokens = answer.entry->min_tokens;
+        out.donor      = answer.entry->board;
+    }
+    out.disposition = answer.disposition;
+    out.distance    = answer.distance;
+    return out;
+}
 
 std::int32_t sparse_moe_prefill_min_tokens(QType routed_gate_up, QType routed_down,
                                            bool prefill_profile) noexcept {

@@ -42,7 +42,7 @@ ninferno_add_test(ninferno_device_image_negative_test
 set_tests_properties(ninferno_device_image_negative_test PROPERTIES SKIP_RETURN_CODE 77)
 
 # The PCI-ID reference table of board facts and machine_facts() (core/machine_facts.h). No GPU.
-ninferno_add_test(ninferno_machine_facts_test
+ninferno_add_test(ninferno_machine_facts_test NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_machine_facts.cpp"
   LIBRARIES ninferno_core)
 # The ISA facts reader (core/isa_facts.h) against src/core/data/isa_facts.json, field by field
