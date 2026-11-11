@@ -9,7 +9,8 @@
 #   sh install.sh --yes                the same without asking (ninferno-update)
 #   sh install.sh --uninstall [--yes]  remove what it installed (asks first unless --yes)
 #   sh install.sh --verify MANIFEST    exit 0 when MANIFEST (MANIFEST.sig beside it) is signed
-#                                      by the release key (ninferno-update asks this)
+#                                      by the release key and names an archive this script
+#                                      installs (ninferno-update asks this)
 #   sh install.sh --gpu-check ID CAP   exit 0 when NInferno supports the GPU of that PCI product
 #                                      id and compute capability, else say why (ninferno-start)
 #   sh install.sh --help               this text
@@ -34,7 +35,12 @@
 set -eu
 MANIFEST_URL=${NINFERNO_UPDATE_URL:-https://ninferno.brontir.com/releases/latest.json}
 HOME_DIR=${NINFERNO_HOME:-$HOME/.local/share/ninferno}
-BIN_DIR=${NINFERNO_BIN:-$HOME/.local/bin}
+# The commands' directory an install here last used (BIN_FILE): an update, a rollback or an
+# uninstall finds it without NINFERNO_BIN given again.
+BIN_FILE=$HOME_DIR/.bin-dir
+recorded_bin=$(sed -n 1p "$BIN_FILE" 2> /dev/null || true)
+BIN_DIR=${NINFERNO_BIN:-${recorded_bin:-$HOME/.local/bin}}
+archive=ninferno-linux-x86_64.tar.gz
 # The oldest glibc the archive runs on: the build machine's (tools/release/package.sh checks it).
 GLIBC_MIN=2.38
 # The release key (tools/release/signing.pub.pem; tests check every copy against it).
@@ -68,6 +74,18 @@ asset_field() {
     index($0, name) { on = 1; next }
     on && index($0, "}") { exit }
     on && index($0, key) { sub(/^[^:]*: *"/, ""); sub(/".*$/, ""); print; exit }' "$3"
+}
+
+# installable MANIFEST: 0 when MANIFEST names this platform's archive with a SHA-256 and an https
+# address (or NINFERNO_ARCHIVE stands in for the download), the install's own checks; else it says
+# why. --verify asks it too, so ninferno-update --check never offers what --yes then refuses.
+installable() {
+  printf '%s' "$(asset_field "$archive" sha256 "$1")" | grep -Eq '^[0-9a-f]{64}$' ||
+    { say "the release manifest names no $archive"; return 1; }
+  [ -n "${NINFERNO_ARCHIVE:-}" ] && return 0
+  case $(asset_field "$archive" url "$1") in https://*) return 0 ;; esac
+  say "the release manifest gives no https address for $archive (a rehearsal without TLS sets NINFERNO_ARCHIVE)"
+  return 1
 }
 
 # no_tensor_cores PCI_ID CAP: 0 when the GPU's chip has no tensor cores, by its PCI product id
@@ -107,6 +125,7 @@ usage() {
   say "  install.sh --yes                the same, without asking on a GPU NInferno does not support"
   say "  install.sh --uninstall [--yes]  remove what it installed from $HOME_DIR and $BIN_DIR"
   say "  install.sh --verify MANIFEST    exit 0 when MANIFEST.sig is the release key's signature"
+  say "                                  and MANIFEST names an archive this script installs"
   say "  install.sh --gpu-check ID CAP   exit 0 when NInferno supports that GPU, else say why"
   say "  install.sh --help               this text"
   say "Through a pipe: curl -fsSL .../install.sh | sh -s -- --uninstall"
@@ -163,6 +182,7 @@ uninstall() {
     if [ -f "$dir/share/ninferno/release.json" ]; then rm -rf "$dir"; fi
   done
   remove_stale_staging
+  rm -f "$BIN_FILE"
   if rmdir "$HOME_DIR" 2> /dev/null; then
     say "NInferno is removed."
   else
@@ -175,6 +195,7 @@ case ${1:-} in
   --verify)
     [ $# = 2 ] && [ -f "$2" ] || die "usage: install.sh --verify MANIFEST"
     verify_manifest "$2" || die "$2 is not signed by the NInferno release key"
+    why=$(installable "$2") || die "$why"
     exit 0 ;;
   --gpu-check)
     [ $# = 3 ] || die "usage: install.sh --gpu-check PCI_DEVICE_ID COMPUTE_CAP"
@@ -252,7 +273,6 @@ major=${driver%%.*}
 [ "$major" -ge "$min_driver" ] ||
   say "WARNING: NVIDIA driver $driver is too old: NInferno needs driver $min_driver or newer and will not start until it is updated (nvidia.com/drivers)."
 
-archive=ninferno-linux-x86_64.tar.gz
 tmp=$(mktemp -d)
 stage=""  # the unpacked release before it is switched in, inside HOME_DIR (a move, not a copy)
 top=""
@@ -280,13 +300,12 @@ else
 fi
 verify_manifest "$tmp/latest.json" ||
   die "the release manifest is not signed by the NInferno release key: nothing installed"
+why=$(installable "$tmp/latest.json") || die "$why"
 sha=$(asset_field "$archive" sha256 "$tmp/latest.json")
 url=$(asset_field "$archive" url "$tmp/latest.json")
-printf '%s' "$sha" | grep -Eq '^[0-9a-f]{64}$' || die "the release manifest names no $archive"
 if [ -n "${NINFERNO_ARCHIVE:-}" ]; then
   cp "$NINFERNO_ARCHIVE" "$tmp/$archive"
 else
-  case $url in https://*) ;; *) die "the release manifest gives no https address for $archive" ;; esac
   say "Downloading $archive ..."
   curl -fL --proto =https --progress-bar -o "$tmp/$archive" "$url" || die "download failed: $url"
 fi
@@ -329,6 +348,7 @@ for exe in "$HOME_DIR/current/bin/"*; do
   case $(basename "$exe") in *-sm[0-9]*) continue ;; esac
   ln -sf "$exe" "$BIN_DIR/$(basename "$exe")"
 done
+printf '%s\n' "$BIN_DIR" > "$BIN_FILE"
 
 say "Installed $top into $HOME_DIR, commands in $BIN_DIR."
 case ":$PATH:" in *":$BIN_DIR:"*) ;; *) say "Add $BIN_DIR to PATH, e.g.: echo 'export PATH=\"$BIN_DIR:\$PATH\"' >> ~/.bashrc" ;; esac
