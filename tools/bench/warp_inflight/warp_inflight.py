@@ -5,6 +5,7 @@ rate (P) read from it: the facts the decode price's per-SM bound min(P, W x b_w 
 (#690, #735).
 
     warp_inflight.py run  --arch 89 [--nvcc nvcc] [--out warp_inflight_89.txt] [--idle-unchecked]
+                          [--clocks-waived]
     warp_inflight.py rows --input warp_inflight_89.txt [--input ...] [--isa-table ...] [--out F]
     warp_inflight.py show --input warp_inflight_89.txt [--isa-table ...]
 
@@ -12,15 +13,19 @@ rate (P) read from it: the facts the decode price's per-SM bound min(P, W x b_w 
 (nvcc -O3 -std=c++17 -arch=sm_<arch>), counts the 16-byte loads of each variant's kernel in the
 build's SASS (cuobjdump), runs it (5 to 15 s, the GPU otherwise idle) and saves its output, headed
 by the source's sha256, the build's -arch and those load counts, and followed by notes of the
-compute processes on the probe's GPU before, during and after the run and of the clocks
-nvidia-smi saw (isa_probe's notes, read by its own code): a run with another process on the GPU is
-no row, and its output goes to <out>.refused. `rows` turns runs into JSON rows with their
-provenance (source file, card, probe version, nvcc, driver, runtime, source hash) and the derived
-b_w and P; `show` prints the summary. No fact is fitted here: b_w = rate(W) x L0 / W is Little's
-law on the measured rate and the ISA table's measured L0, P is the largest measured rate.
+compute processes on the probe's GPU before, during and after the run (isa_probe's notes, read by
+its own code) and of the clocks nvidia-smi saw inside the probe's measured span (its `span_ns`
+line). A run with another process on the GPU, or whose memory clock or P-state moved in the span,
+is no run; nor is one below P0 or under the rated memory clock, unless `--clocks-waived` (a steady
+clock only, said in the run). A refused run's output goes to <out>.refused. `rows` turns runs into
+JSON rows with their provenance (source file, card, probe version, nvcc, driver, runtime, source
+hash) and the derived b_w and P; `show` prints the summary. No fact is fitted here: b_w = rate(W) x
+L0 / W is Little's law on the measured rate and the run's own L0 (its free, k = 1, chain1, W = 1
+fetch), beside the ISA table's L0 where that row is of the same card; P is the largest rate.
 """
 
 import argparse
+import datetime
 import importlib.util
 import json
 import math
@@ -60,7 +65,7 @@ MODES = ("free", "placed")
 COLUMNS = ("mode", "k", "variant", "inflight", "w", "gbps", "gbps_lo", "gbps_hi", "ns_fetch",
            "sm_mhz", "mib")
 HEADER = ("probe", "card", "cc", "sms", "l2_bytes", "mem_clock_khz", "max_warps_per_sm",
-          "smem_per_sm", "driver", "runtime", "nvcc")
+          "smem_per_sm", "driver", "runtime", "nvcc", "span_ns")
 RUN_HEADER = ("source_sha256", "arch", "sass_ldg128")
 COUNTS = ("cc", "sms", "l2_bytes", "max_warps_per_sm", "smem_per_sm", "driver", "runtime")
 PROBE_LINE = re.compile(r'printf\("probe (warp_inflight \d+)\\n"\)')
@@ -72,6 +77,80 @@ REFUSED = ".refused"
 # (a reading of the measured table, not a fitted constant: it decides only the summary's
 # `linear_to_w`, never a value).
 LINEAR_SHARE = 0.9
+# The clocks nvidia-smi saw inside the measured span (`run` samples every 100 ms): at least this
+# many samples, else the span's clocks are not shown.
+CLOCK_PERIOD_MS = 100
+MIN_CLOCK_SAMPLES = 3
+CLOCK_HEAD = "clocks over the measured span"
+CLOCK_NOTE = re.compile(CLOCK_HEAD + r" \((\d+) samples, nvidia-smi every \d+ ms\): memory "
+                        r"(\d+)\.\.(\d+) MHz, SM (\d+)\.\.(\d+) MHz, P-state (\S+)")
+CLOCK_WAIVED = "the clock check was waived (--clocks-waived)"
+# The row whose fetch is the run's own L0: one warp alone on one SM, one load a lane in flight.
+OWN_L0 = ("free", 1, "chain1", 1)
+
+
+def smi_time_ns(text):
+    """An nvidia-smi timestamp (`2026/11/11 14:05:33.123`, the machine's local time) in ns since
+    the epoch, the probe's span_ns clock; None when it does not read as one."""
+    try:
+        t = datetime.datetime.strptime(text.strip(), "%Y/%m/%d %H:%M:%S.%f")
+    except ValueError:
+        return None
+    return int(t.timestamp() * 1e9)
+
+
+def clock_note(samples, span, bus):
+    """The note line of the clocks nvidia-smi saw on the probe's GPU inside the measured span;
+    `samples` are rows (timestamp, bus id, P-state, SM MHz, memory MHz), `span` the probe's
+    (begin, end) in ns since the epoch."""
+    inside = []
+    for s in samples:
+        if len(s) != 5 or bus is None or IP._bus(s[1]) != bus:
+            continue
+        t = smi_time_ns(s[0])
+        if t is not None and span[0] <= t <= span[1] and s[3].isdigit() and s[4].isdigit():
+            inside.append(s)
+    if not inside:
+        return f"note {CLOCK_HEAD}: no nvidia-smi sample of the probe's GPU"
+    mem, sm = sorted(int(s[4]) for s in inside), sorted(int(s[3]) for s in inside)
+    states = "/".join(sorted({s[2] for s in inside}))
+    return (f"note {CLOCK_HEAD} ({len(inside)} samples, nvidia-smi every {CLOCK_PERIOD_MS} ms): "
+            f"memory {mem[0]}..{mem[-1]} MHz, SM {sm[0]}..{sm[-1]} MHz, P-state {states}")
+
+
+def clock_refusal(notes, rated_khz):
+    """(why the run's clocks over its measured span do not show one steady memory clock at P0
+    and the rated memory clock, or None; whether `--clocks-waived` may accept it). A clock or
+    P-state that moved, or too few samples, is never waived; a steady P-state other than P0 or a
+    steady memory clock under the rated one is, and the waiver must then be noted, and only
+    then."""
+    mine = [n for n in notes if n.startswith(CLOCK_HEAD)]
+    waived = any(n.startswith(CLOCK_WAIVED) for n in notes)
+    if len(mine) != 1:
+        return f"{len(mine)} notes of the clocks over the measured span, not one", False
+    m = CLOCK_NOTE.fullmatch(mine[0])
+    if not m:
+        return f"the clocks over the measured span were not read: {mine[0]!r}", False
+    n, mem_lo, mem_hi = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    states = m.group(6)
+    if n < MIN_CLOCK_SAMPLES:
+        return f"{n} clock samples in the measured span, fewer than {MIN_CLOCK_SAMPLES}", False
+    if mem_lo != mem_hi:
+        return f"the memory clock moved in the measured span ({mem_lo}..{mem_hi} MHz)", False
+    if "/" in states:
+        return f"the P-state moved in the measured span ({states})", False
+    soft = []
+    if states != "P0":
+        soft.append(f"P-state {states}, not P0")
+    if rated_khz > 0 and mem_lo * 1000 < rated_khz:
+        soft.append(f"memory clock {mem_lo} MHz, under the rated {rated_khz / 1000:g} MHz")
+    if soft and not waived:
+        return ("; ".join(soft) + " in the measured span; `run --clocks-waived` accepts a steady "
+                "clock and says so in the run"), True
+    if waived and not soft:
+        return ("the clock check is noted as waived, yet the span ran at P0 and the rated "
+                "clock"), False
+    return None, False
 
 
 def inflight_of(variant):
@@ -226,7 +305,13 @@ def parse_run(text):
     missing = sorted(want_points - set(rows))
     if missing:
         raise ValueError(f"rows missing: {missing}")
+    span = head["span_ns"].split()
+    if len(span) != 2 or not all(s.isdigit() for s in span) or int(span[1]) <= int(span[0]):
+        raise ValueError(f"odd span_ns line: {head['span_ns']!r}")
     refusal = IP.idle_refusal(notes)
+    if refusal:
+        raise ValueError(refusal)
+    refusal, _ = clock_refusal(notes, int(head["mem_clock_khz"]))
     if refusal:
         raise ValueError(refusal)
     head["notes"] = notes
@@ -235,29 +320,38 @@ def parse_run(text):
 
 
 def isa_l0(cc, table_path):
-    """(L0 in ns, its source) from the ISA facts table: the architecture's
-    dram_tlbwarm_latency_ns_w1, the L0 of #735's law; (None, why) without one."""
+    """(L0 in ns, its source, the card it was measured on) from the ISA facts table: the
+    architecture's dram_tlbwarm_latency_ns_w1, the L0 of #735's law; (None, why, None) without
+    one."""
     try:
         with open(table_path) as f:
             table = json.load(f)
     except OSError as e:
-        return None, f"no ISA table ({type(e).__name__})"
+        return None, f"no ISA table ({type(e).__name__})", None
     key = IP.arch_key(cc, "")
     row = table.get("arches", {}).get(key)
     fact = (row or {}).get("facts", {}).get("dram_tlbwarm_latency_ns_w1")
     if not fact:
-        return None, f"the ISA table has no sm_{key} row"
+        return None, f"the ISA table has no sm_{key} row", None
     return fact["value"], (f"isa_facts sm_{key} ({row['card']}, {row['source']}) "
-                           "dram_tlbwarm_latency_ns_w1")
+                           "dram_tlbwarm_latency_ns_w1"), row["card"]
 
 
-def derive(rows, l0_ns):
-    """Each row's b_w (bytes a warp keeps in flight, by Little's law on the row's rate and L0)
-    and the summary: per mode and variant at k = 1, b_w at W = 1 and the largest W up to which
-    every row keeps LINEAR_SHARE of it; per mode at k = 1, P (the largest rate) in GB/s and in
-    bytes per SM clock at that row's clock."""
+def own_l0(rows):
+    """The run's own L0: the fetch time of one warp alone on one SM with one load a lane in
+    flight (free, k = 1, chain1, W = 1), in ns."""
+    return next(r["ns_fetch"] for r in rows if (r["mode"], r["k"], r["variant"], r["w"]) == OWN_L0)
+
+
+def derive(rows, l0_ns, table_l0_ns=None):
+    """Each row's b_w (bytes a warp keeps in flight, by Little's law on the row's rate and the
+    run's own L0) and, where given (the ISA row is of the run's card), b_w at the table's L0; and
+    the summary: per mode and variant at k = 1, b_w at W = 1 and the largest W up to which every
+    row keeps LINEAR_SHARE of it; per mode at k = 1, P (the largest rate) in GB/s and in bytes per
+    SM clock at that row's clock."""
     for r in rows:
         r["b_w_bytes"] = round(r["gbps"] * l0_ns / r["w"], 1) if l0_ns else None
+        r["b_w_table_bytes"] = round(r["gbps"] * table_l0_ns / r["w"], 1) if table_l0_ns else None
     summary = {"variants": {}, "p_gbps": {}, "p_bytes_per_clk": {}}
     for mode in MODES:
         one = [r for r in rows if r["mode"] == mode and r["k"] == 1]
@@ -288,15 +382,21 @@ NOTE = ("Per-SM DRAM rate against resident warps W, written by `tools/bench/warp
         "up to 2F); `free` is k CTAs of W <= 32 warps on k distinct SMs with the L1-largest "
         "carve-out, `placed` 1 or 2 CTAs on each of k chosen SMs held there by shared memory "
         "(shared-largest carve-out). gbps is bytes per ns of one SM (median over the k SMs, "
-        "median of three launches); b_w_bytes = gbps x L0 / W with L0 the ISA table's "
-        "dram_tlbwarm_latency_ns_w1 of the architecture; the summary's P is the largest rate at "
-        "k = 1. Provenance Measured for every run, with its source file, card, probe version, "
-        "nvcc, driver, runtime and the sha256 of the warp_inflight.cu it was built from.")
+        "median of three launches); b_w_bytes = gbps x L0 / W with L0 the run's own (its free, "
+        "k = 1, chain1, W = 1 fetch time), b_w_table_bytes the same with the ISA table's "
+        "dram_tlbwarm_latency_ns_w1 where that row was measured on the run's card (by card name: "
+        "the ISA rows carry no PCI id), else null; the summary's P is the largest rate at k = 1. "
+        "Free rows at k > 1 sit on SMs the CTA scheduler chose (they may share a TPC or a GPC): "
+        "the modes are compared at k = 1. Provenance Measured for every run, with its source "
+        "file, card, probe version, nvcc, driver, runtime and the sha256 of the warp_inflight.cu "
+        "it was built from; every run's clocks were steady over its measured span (the notes).")
 
 
 def run_of(head, rows, source, isa_table):
-    l0, why = isa_l0(int(head["cc"]), isa_table)
-    summary = derive(rows, l0)
+    own = own_l0(rows)
+    table, why, table_card = isa_l0(int(head["cc"]), isa_table)
+    matches = table is not None and table_card == head["card"]
+    summary = derive(rows, own, table if matches else None)
     return {
         "provenance": "Measured", "source": source, "card": head["card"],
         "cc": int(head["cc"]), "sms": int(head["sms"]), "l2_bytes": int(head["l2_bytes"]),
@@ -306,7 +406,9 @@ def run_of(head, rows, source, isa_table):
                  "runtime": head["runtime"], "arch": head["arch"],
                  "source_sha256": head["source_sha256"], "sass_ldg128": head["sass_ldg128"]},
         "notes": head["notes"],
-        "l0": {"value_ns": l0, "source": why},
+        "l0": {"own_ns": own, "own_source": "this run's free, k = 1, chain1, W = 1 ns_fetch",
+               "table_ns": table, "table_source": why, "table_card": table_card,
+               "table_is_this_card": matches},
         "rows": rows,
         "summary": summary,
     }
@@ -368,10 +470,10 @@ def cmd_run(a):
         head.append("sass_ldg128 " + " ".join(f"{v}:{loads[v]}" for v in VARIANTS))
         before = IP._compute_apps()
 
-        def sampler(query):
+        def sampler(query, ms):
             try:
                 return subprocess.Popen(
-                    ["nvidia-smi", query, "--format=csv,noheader,nounits", "-lms", "200"],
+                    ["nvidia-smi", query, "--format=csv,noheader,nounits", "-lms", str(ms)],
                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
             except OSError:
                 return None
@@ -384,27 +486,29 @@ def cmd_run(a):
             return [[x.strip() for x in line.split(",")] for line in out.splitlines()
                     if line.count(",") == fields - 1]
 
-        clocks = sampler("--query-gpu=pci.bus_id,pstate,clocks.sm,clocks.mem")
-        apps = sampler("--query-compute-apps=timestamp,gpu_bus_id,pid")
+        clocks = sampler("--query-gpu=timestamp,pci.bus_id,pstate,clocks.sm,clocks.mem",
+                         CLOCK_PERIOD_MS)
+        apps = sampler("--query-compute-apps=timestamp,gpu_bus_id,pid", 200)
         probe = subprocess.Popen([exe], stdout=subprocess.PIPE, text=True)
         stdout, _ = probe.communicate()
-        samples = rows_of(clocks, 4) or []
+        samples = rows_of(clocks, 5) or []
         during = rows_of(apps, 3)
         after = IP._compute_apps()
     m = re.search(r"^note device 0 is the GPU at PCI (\S+)$", stdout, re.M)
     bus = IP._bus(m.group(1)) if m else None
     tail = [IP._apps_note("before", before, bus), IP._apps_note("after", after, bus),
             IP._during_note(during, bus, str(probe.pid))]
-    mine = [s for s in samples if bus is not None and IP._bus(s[0]) == bus]
-    if mine:
-        def span(col):
-            vals = sorted(int(s[col]) for s in mine if s[col].isdigit())
-            return f"{vals[0]}..{vals[-1]}" if vals else "not read"
-        tail.append(f"note nvidia-smi over the run ({len(mine)} samples): memory clock "
-                    f"{span(3)} MHz, SM clock {span(2)} MHz, P-state "
-                    f"{'/'.join(sorted({s[1] for s in mine}))}")
+    # The clocks inside the probe's measured span only: the start (an idle card's P8, the
+    # warm-up) and the end are not the rows' clocks.
+    m = re.search(r"^span_ns (\d+) (\d+)$", stdout, re.M)
+    if m:
+        tail.append(clock_note(samples, (int(m.group(1)), int(m.group(2))), bus))
     else:
-        tail.append("note nvidia-smi over the run: no clock sample of the probe's GPU")
+        tail.append(f"note {CLOCK_HEAD}: the probe printed no span")
+    m = re.search(r"^mem_clock_khz (\d+)$", stdout, re.M)
+    rated = int(m.group(1)) if m else 0
+    if a.clocks_waived and clock_refusal([t[5:] for t in tail], rated)[1]:
+        tail.append("note " + CLOCK_WAIVED)
     if a.idle_unchecked and any(
             n and (n.group(3).startswith("not read") or
                    (n.group(1).startswith("any GPU") and n.group(3).startswith("0")))
@@ -457,8 +561,10 @@ def cmd_show(a):
         return 1
     for run in table["runs"]:
         s = run["summary"]
-        print(f"{run['card']} ({run['tool']['arch']}, {run['source']}); L0 "
-              f"{run['l0']['value_ns']} ns from {run['l0']['source']}")
+        l0 = run["l0"]
+        print(f"{run['card']} ({run['tool']['arch']}, {run['source']}); own L0 {l0['own_ns']} ns "
+              f"({l0['own_source']}); table L0 {l0['table_ns']} ns from {l0['table_source']}"
+              f"{'' if l0['table_is_this_card'] else ' (another card: no table b_w)'}")
         for mode, p in s["p_gbps"].items():
             print(f"  {mode}: P {p:.2f} GB/s an SM ({s['p_bytes_per_clk'][mode]} B/clk)")
             for v, d in s["variants"].get(mode, {}).items():
@@ -467,7 +573,8 @@ def cmd_show(a):
         for r in run["rows"]:
             if r["k"] == 1:
                 print(f"  {r['mode']:6s} {r['variant']:7s} W={r['w']:2d} {r['gbps']:8.3f} GB/s "
-                      f"ns_fetch {r['ns_fetch']:7.1f} b_w {r['b_w_bytes']}")
+                      f"ns_fetch {r['ns_fetch']:7.1f} b_w {r['b_w_bytes']} (table L0: "
+                      f"{r['b_w_table_bytes']})")
     return 0
 
 
@@ -481,6 +588,9 @@ def main():
     r.add_argument("--out", help="the run's output; a refused run's goes to <out>" + REFUSED)
     r.add_argument("--idle-unchecked", action="store_true",
                    help="accept a run whose compute-process list nvidia-smi could not give")
+    r.add_argument("--clocks-waived", action="store_true",
+                   help="accept a steady P-state other than P0 or a steady memory clock under the "
+                   "rated one over the measured span (GeForce runs CUDA at P2), noted in the run")
     r.set_defaults(fn=cmd_run)
     for name, fn in (("rows", cmd_rows), ("show", cmd_show)):
         s = sub.add_parser(name)

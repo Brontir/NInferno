@@ -49,11 +49,15 @@ SAMPLE = (
     "columns " + " ".join(wi.COLUMNS) + "\nnote warm-up: 300 ms of every SM streaming\n"
     "note placed ring4 w48: 1 of 2 CTAs fit an SM (registers), no row\n" +
     "".join(row_line(*p) for p in ROWS) +
-    "selfcheck ok\nend\n"
+    "span_ns 1762862400000000000 1762862404000000000\nselfcheck ok\nend\n"
     "note compute processes on the probe's GPU before the run: 0\n"
     "note compute processes on the probe's GPU after the run: 0\n"
     "note compute processes on the probe's GPU during the run besides the probe (nvidia-smi "
     "every 200 ms): 0\n")
+# The clocks over the measured span: steady, P0, at the rated 10501 MHz.
+CLOCKS = ("note clocks over the measured span (38 samples, nvidia-smi every 100 ms): memory "
+          "10501..10501 MHz, SM 2805..2820 MHz, P-state P0\n")
+SAMPLE += CLOCKS
 
 
 class WarpInflight(unittest.TestCase):
@@ -94,17 +98,74 @@ class WarpInflight(unittest.TestCase):
         self.assertEqual(run["source"], "warp_inflight_89.txt")
         self.assertEqual(run["tool"]["source_sha256"], wi.source_sha256())
         self.assertEqual(run["tool"]["probe"], wi.checked_in_probe())
-        # L0 is the ISA table's measured fact of the architecture, named with its source.
+        # L0 is the run's own fetch time; the ISA table's sm_89 L0 is named beside it, and gives
+        # no b_w, since that row was measured on another card (an RTX 4090).
         with open(wi.DEFAULT_ISA_TABLE) as f:
-            isa = json.load(f)
-        self.assertEqual(run["l0"]["value_ns"],
-                         isa["arches"]["89"]["facts"]["dram_tlbwarm_latency_ns_w1"]["value"])
-        self.assertIn("dram_tlbwarm_latency_ns_w1", run["l0"]["source"])
+            isa = json.load(f)["arches"]["89"]
+        l0 = run["l0"]
+        self.assertEqual(l0["own_ns"], L_NS)
+        self.assertEqual(l0["table_ns"], isa["facts"]["dram_tlbwarm_latency_ns_w1"]["value"])
+        self.assertIn("dram_tlbwarm_latency_ns_w1", l0["table_source"])
+        self.assertEqual(l0["table_card"], isa["card"])
+        self.assertFalse(l0["table_is_this_card"])
+        r = run["rows"][5]
+        self.assertAlmostEqual(r["b_w_bytes"], r["gbps"] * L_NS / r["w"], delta=0.1)
+        self.assertIsNone(r["b_w_table_bytes"])
         json.dumps(table, allow_nan=False)
 
-    def test_no_isa_row_gives_no_b_w(self):
-        l0, why = wi.isa_l0(80, wi.DEFAULT_ISA_TABLE)
+    def test_table_b_w_only_on_the_tables_card(self):
+        with open(wi.DEFAULT_ISA_TABLE) as f:
+            isa = json.load(f)["arches"]["89"]
+        table_l0 = isa["facts"]["dram_tlbwarm_latency_ns_w1"]["value"]
+        self.assertNotEqual(table_l0, L_NS)
+        head, rows = wi.parse_run(SAMPLE.replace("card NVIDIA GeForce RTX 4070 Ti",
+                                                 f"card {isa['card']}"))
+        run = wi.run_of(head, rows, "x.txt", wi.DEFAULT_ISA_TABLE)
+        self.assertTrue(run["l0"]["table_is_this_card"])
+        r = run["rows"][5]
+        self.assertAlmostEqual(r["b_w_bytes"], r["gbps"] * L_NS / r["w"], delta=0.1)
+        self.assertAlmostEqual(r["b_w_table_bytes"], r["gbps"] * table_l0 / r["w"], delta=0.1)
+        # The summary reads the run's own L0, whichever card the table row is of.
+        self.assertAlmostEqual(run["summary"]["variants"]["free"]["chain1"]["b_w_w1"], 512.0,
+                               delta=1.0)
+
+    def test_clocks(self):
+        def with_clocks(note, extra=""):
+            return SAMPLE.replace(CLOCKS, note + extra)
+        head = ("note clocks over the measured span ({n} samples, nvidia-smi every 100 ms): "
+                "memory {lo}..{hi} MHz, SM 2805..2820 MHz, P-state {p}\n")
+        steady_p2 = head.format(n=30, lo=10251, hi=10251, p="P2")
+        waived = "note " + wi.CLOCK_WAIVED + "\n"
+        self.refused(with_clocks(head.format(n=30, lo=405, hi=10501, p="P0")), "memory clock moved")
+        self.refused(with_clocks(head.format(n=30, lo=10501, hi=10501, p="P0/P8")),
+                     "P-state moved")
+        self.refused(with_clocks(head.format(n=2, lo=10501, hi=10501, p="P0")), "2 clock samples")
+        self.refused(with_clocks(steady_p2), "--clocks-waived")
+        self.refused(with_clocks(head.format(n=30, lo=9001, hi=9001, p="P0")), "under the rated")
+        self.refused(with_clocks(""), "0 notes of the clocks")
+        self.refused(with_clocks("note clocks over the measured span: no nvidia-smi sample of "
+                                 "the probe's GPU\n"), "not read")
+        # A moved clock is never waived; a steady P2 is, with the waiver noted, and only then.
+        self.refused(with_clocks(head.format(n=30, lo=405, hi=10251, p="P2"), waived), "moved")
+        self.refused(SAMPLE + waived, "noted as waived")
+        wi.parse_run(with_clocks(steady_p2, waived))
+        self.refused(SAMPLE.replace("span_ns 1762862400000000000 1762862404000000000",
+                                    "span_ns 5 4"), "span_ns")
+
+    def test_clock_note_keeps_the_span(self):
+        t0 = wi.smi_time_ns("2026/11/11 12:00:00.000")
+        rows = [[f"2026/11/11 12:00:0{i}.000", "00000000:01:00.0", "P8" if i in (0, 5) else "P2",
+                 "2805", "405" if i in (0, 5) else "10251"] for i in range(6)]
+        rows.append(["2026/11/11 12:00:02.000", "00000000:02:00.0", "P0", "2805", "9000"])
+        note = wi.clock_note(rows, (t0 + 500_000_000, t0 + 4_500_000_000), wi.IP._bus("0:01:00.0"))
+        self.assertEqual(note, "note clocks over the measured span (4 samples, nvidia-smi every "
+                               "100 ms): memory 10251..10251 MHz, SM 2805..2805 MHz, P-state P2")
+        self.assertEqual(wi.clock_refusal([note[5:]], 10501000)[1], True)
+
+    def test_no_isa_row_gives_no_table_b_w(self):
+        l0, why, card = wi.isa_l0(80, wi.DEFAULT_ISA_TABLE)
         self.assertIsNone(l0)
+        self.assertIsNone(card)
         self.assertIn("sm_80", why)
         _, rows = wi.parse_run(SAMPLE)
         s = wi.derive(rows, None)

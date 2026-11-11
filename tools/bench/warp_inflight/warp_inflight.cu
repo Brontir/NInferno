@@ -33,7 +33,8 @@
 // Two placements of the W warps:
 //   free:   k CTAs of W warps (W <= 32), no shared memory and the L1-largest carve-out; the CTA
 //           scheduler spreads them, and a run whose k CTAs did not land on k distinct SMs (%smid)
-//           is refused.
+//           is refused. Which k SMs is the scheduler's choice: at k > 1 they may share a TPC or a
+//           GPC, unlike the placed SMs, so the two modes are compared at k = 1 only.
 //   placed: c = 1 or 2 CTAs of W / c warps on every SM (W up to the SM's resident warps), sized by
 //           dynamic shared memory so that exactly c fit an SM (the occupancy API says so, and the
 //           CTAs' %smid show it), with the shared-largest carve-out; only the CTAs on k chosen SMs
@@ -49,10 +50,15 @@
 // sm_mhz is clock64 over %globaltimer. A span under 100 us is refused (the timer steps by ~1 us).
 // A placed (variant, W) whose registers fit fewer than c CTAs an SM has no row and says so in a
 // note; every other point of the grid has one.
+//
+// Clocks (probe 2). The measured part is bracketed by a `span_ns <begin> <end>` line in host wall
+// time (system_clock, ns since the epoch): warp_inflight.py keeps the nvidia-smi clock samples
+// inside it and refuses a run whose memory clock or P-state moved there.
 
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -350,7 +356,7 @@ int main() {
     const int cc = p.major * 10 + p.minor;
     char pci[32] = {};
     CHECK(cudaDeviceGetPCIBusId(pci, sizeof pci, 0));
-    std::printf("probe warp_inflight 1\n");
+    std::printf("probe warp_inflight 2\n");
     std::printf("card %s\n", p.name);
     std::printf("cc %d\n", cc);
     std::printf("sms %d\n", p.multiProcessorCount);
@@ -438,6 +444,14 @@ int main() {
 
     const int w_list[] = {1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64};
     const int k_list[] = {1, 2, 4, 8};
+    std::printf("note free k > 1: the CTA scheduler chose the SMs (they may share a TPC or a "
+                "GPC); compare free and placed at k = 1\n");
+    const auto wall_ns = [] {
+        return static_cast<long long>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                          std::chrono::system_clock::now().time_since_epoch())
+                                          .count());
+    };
+    const long long span_begin = wall_ns();
 
     // free: k CTAs of W warps, no shared memory, the L1-largest carve-out.
     for (const Variant& v : kVariants) {
@@ -489,6 +503,7 @@ int main() {
                 pr.row(v, "placed", k, w, c, c * pr.sms, pr.shared_for[c], pr.active);
             }
     }
+    std::printf("span_ns %lld %lld\n", span_begin, wall_ns());
 
     if (g_failures.empty()) {
         std::printf("selfcheck ok\n");
