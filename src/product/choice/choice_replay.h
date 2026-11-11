@@ -21,7 +21,7 @@
 
 namespace ninferno::product::choice {
 
-inline constexpr std::string_view kChoiceReplaySchema = "ninferno-choice-replay/1";
+inline constexpr std::string_view kChoiceReplaySchema = "ninferno-choice-replay/2";
 
 struct ReplayIncomplete : std::runtime_error {
     using std::runtime_error::runtime_error;

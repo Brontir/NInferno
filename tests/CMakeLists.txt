@@ -92,12 +92,22 @@ add_test(NAME ninferno_selection_regret_test
 # tools/bench/regret_collect.py: route sweeps and the production selection into its input, no GPU.
 add_test(NAME ninferno_regret_collect_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_regret_collect.py)
+# tools/bench/mmq_width_grid.py (#524): the measurement against a fake server, the grid and A/B readers' refusals, no GPU.
+add_test(NAME ninferno_mmq_width_grid_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_mmq_width_grid.py)
 # tools/kernel_facts/sass_counts.py and the loop columns of kernel_facts.py (#613): the K loop
 # found from a small SASS text's control flow, its counts, the snapshot round trip and the check's
 # verdicts. No GPU, no CUDA toolkit.
 add_test(NAME ninferno_kernel_facts_sass_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_kernel_facts_sass.py)
 set_tests_properties(ninferno_kernel_facts_sass_test PROPERTIES LABELS host)
+
+# src/core/data/isa_facts.json and tools/bench/isa_probe/isa_probe.py (#613 PR-2): the ISA facts
+# table's schema (every row Measured, every fact present and positive, card and tool named) and the
+# probe output's round trip into a row. No GPU, no CUDA toolkit.
+add_test(NAME ninferno_isa_facts_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_isa_facts.py)
+set_tests_properties(ninferno_isa_facts_test PROPERTIES LABELS host)
 
 # tools/bench/gap_map.py: measured times against the counted DRAM and tensor laws (#619), on
 # synthetic inputs, no GPU.
@@ -132,6 +142,12 @@ set_tests_properties(ninferno_route_table_evidence_test PROPERTIES LABELS host)
 add_test(NAME ninferno_mmq_transfer_audit_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_mmq_transfer_audit.py)
 
+# src/spec/round_cost.h kSmallTEta against tools/fits/round_cost/fit_eta.py's fit of the shipped
+# registry, no GPU.
+add_test(NAME ninferno_round_cost_eta_fit_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_round_cost_eta_fit.py)
+set_tests_properties(ninferno_round_cost_eta_fit_test PROPERTIES LABELS host)
+
 # tools/audit/board_literal_lint.py: no hand-written `ninferno::Board` literal or bare five-number
 # board tuple outside the registry (roadmap #612 step 9), and the tree is clean. What it does not
 # see is listed in the script's docstring. No GPU.
@@ -161,4 +177,13 @@ set_tests_properties(ninferno_file_modes_test PROPERTIES SKIP_RETURN_CODE 77)
 if(UNIX)
   add_test(NAME ninferno_decision_inputs_test
     COMMAND bash "${PROJECT_SOURCE_DIR}/tools/audit/decision_inputs.sh")
+endif()
+
+# The shared test tree's link modes on the built binaries (NINFERNO_SHARED_OP_TESTS, a Linux-only
+# option): every test, app and bench as the configure decided, no second copy of a member archive
+# or of the CUDA runtime beside the shared library. No GPU.
+if(NINFERNO_SHARED_OP_TESTS)
+  add_test(NAME ninferno_link_mode_test
+    COMMAND bash "${PROJECT_SOURCE_DIR}/tools/audit/link_mode.sh" "${CMAKE_BINARY_DIR}")
+  set_tests_properties(ninferno_link_mode_test PROPERTIES LABELS host)
 endif()

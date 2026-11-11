@@ -14,11 +14,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -194,7 +196,7 @@ int main() {
         const auto rtx4070ti = sp::card_rates_of_board(0x2782);
         const auto gv100     = sp::card_rates_of_board(0x1DBA);
         const auto rtx3060   = sp::card_rates_of_board(0x2503);
-        expect(rtx4070ti.generation == "ada" && near(rtx4070ti.kappa(), 0.0106181, 1e-5),
+        expect(rtx4070ti.generation == "ada" && near(rtx4070ti.kappa(), 0.0098217, 1e-5),
                "RTX 4070 Ti: kappa " + std::to_string(rtx4070ti.kappa()));
         // A generation with one lab card has no eta (a constant rests on two cards): no estimate.
         expect(gv100.generation == "volta" && near(gv100.int8_ops_per_s, 512.0 * 80 * 1627e6, 1e-9) &&
@@ -204,7 +206,8 @@ int main() {
         const auto rtx5070ti = sp::card_rates_of_board(0x2C05);
         const auto rtx5090   = sp::card_rates_of_board(0x2B85);
         expect(rtx5070ti.generation == "gb20x" && rtx5070ti.known() && rtx5070ti.eta_cards == 2 &&
-                   rtx5090.known() && near(rtx5090.kappa(), 1792e9 / (0.165 * 2048.0 * 170 * 2407e6), 1e-9),
+                   rtx5090.known() &&
+                   near(rtx5090.kappa(), 1792e9 / (0.160 * 2048.0 * 170 * 2407e6), 1e-9),
                "Blackwell: eta from two lab cards, kappa " + std::to_string(rtx5090.kappa()));
         const auto from_key = sp::card_rates(card("ad104:60sm", "ad104", "sm89", 89, 60, 2610, 504));
         expect(near(from_key.kappa(), rtx4070ti.kappa(), 1e-9), "a GpuKey's rates as the board's");
@@ -221,12 +224,15 @@ int main() {
             const char* config;
             double r4070ti, r_bytes, r_k005;
         };
+
         const Golden golden[] = {
-            {kQ9, "ad104:60sm", "mtp:3", 1.679516, 1.587408, 1.975274},
-            {kQ9, "ad104:60sm", "dflash:7", 1.752298, 1.431237, 2.783223},
-            {"unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm", "dflash:5", 1.873191, 1.660462, 2.564459},
-            {"unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm", "mtp:2", 1.607643, 1.554161, 1.781435},
-            {"ggml-org/gpt-oss-20b-GGUF", "gb203:70sm", "dflash:3", 2.030166, 1.905428, 2.435942},
+            {kQ9, "ad104:60sm", "mtp:3", 1.672812, 1.587408, 1.975274},
+            {kQ9, "ad104:60sm", "dflash:7", 1.728930, 1.431237, 2.783223},
+            {"unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm", "dflash:5", 1.857668, 1.660462,
+             2.564459},
+            {"unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm", "mtp:2", 1.603740, 1.554161,
+             1.781435},
+            {"ggml-org/gpt-oss-20b-GGUF", "gb203:70sm", "dflash:3", 2.021061, 1.905428, 2.435942},
         };
         const double k4070 = sp::card_rates_of_board(0x2782).kappa();
         for (const auto& g : golden) {
@@ -811,6 +817,280 @@ int main() {
         expect(!both_note.empty() && both_note == near_note,
                "the nearest lab board's pair prices a card of its generation: " + both_note);
     }
+    // The load bounds of a pair priced for another card are derived from the round cost on that
+    // card's rates, not from its multiprocessors: at C streams the depth (of those measured, up to
+    // each choice's) that gains most over plain decode, its one-request gain times R_1 / R_C, plain
+    // where none gains, the shallowest of the choices' (one table serves them all), recorded where
+    // the depth falls (a table is clipped to its running minimum). From theory, not read back from
+    // the product's tables: C x (k + 1) verify rows are priced up to kPricedVerifyRows (8), so a
+    // depth-3 round is priced at 2 streams only; a DFlash choice's block (16 rows) is not priced at
+    // 2 streams at all, which holds a profile with one at plain from 2. Gemma's 2:3,3:0 is that
+    // computed result: at 3 streams a depth-3 round is 12 rows (not priced, so plain), and no
+    // other depth the lab measured is both priced there (C x (k + 1) <= 8) and gains over plain
+    // decode; it is a computed result, not a measurement.
+    {
+        const auto no_counts = [](sp::MeasuredPair pair) {
+            for (auto& m : pair.tune.measurements) { m.graph_kernels = m.graph_rounds = 0; }
+            return pair;
+        };
+        const std::string gemma =
+            "unsloth/gemma-4-12b-it-GGUF@fc034cfff751157913579611efad8462ac1be606 Q4_K_M";
+        const sp::GpuKey small = card("ad106:34sm", "ad106", "sm89", 89, 34, 2535, 288);
+        const sp::GpuKey large = card("ad102:128sm", "ad102", "sm89", 89, 128, 2520, 1008);
+        for (const auto& [target, expected] :
+             {std::pair<std::string, const char*>{std::string(kQ9), "2:0"},
+              std::pair<std::string, const char*>{gemma, "2:3,3:0"}}) {
+            // With the registry's kernel counts (the launch term in both rounds) the tables are the
+            // same; without them the scale below is the round cost's own ratio.
+            const auto counted = pair_of(target, "ad104:60sm");
+            for (const sp::GpuKey* rtx : {&small, &large}) {
+                const sp::Profile p = sp::profile_for_target({&counted}, "sm89", {}, rtx);
+                expect(sp::load_label(p.load) == expected, target.substr(0, 24) +
+                                                               " with kernel counts: load " +
+                                                               sp::load_label(p.load));
+            }
+            const auto lab = no_counts(counted);
+            std::vector<sp::Profile> by_card;
+            for (const sp::GpuKey* rtx : {&small, &large}) {
+                sp::Profile p = sp::profile_for_target({&lab}, "sm89", {}, rtx);
+                expect(p.load_basis == "facts" && sp::load_label(p.load) == expected,
+                       target.substr(0, 24) + ": load " + sp::load_label(p.load) + ", expected " +
+                           expected);
+                by_card.push_back(std::move(p));
+            }
+            if (target == gemma) {
+                const sp::Profile& p = by_card[0];
+                // The depth a joint verify is priced at 2 streams for (C x (k + 1) <= 8).
+                auto config = p.overall.config;
+                config.k    = 3;
+                const sp::ProposalRows rows =
+                    config.proposal_head ? lab.tune.proposal_rows : sp::ProposalRows{};
+                double previous = 0;
+                for (std::size_t i = 0; i < 2; ++i) {
+                    const sp::GpuKey& rtx = i == 0 ? small : large;
+                    const auto ratio      = sp::load_gain(*lab.round_facts, config,
+                                                          sp::card_rates(rtx).kappa(), 1.0, 2, rows);
+                    const auto found      = by_card[i].joint_scale.find(config.label());
+                    // The plumbing (this card's rates, the head rows, the depth's table), not
+                    // load_gain's math, which the checks above pin.
+                    expect(ratio && found != by_card[i].joint_scale.end() &&
+                               found->second.contains(2) &&
+                               std::abs(found->second.at(2) - *ratio) < 1e-9,
+                           "R_1 / R_2 of " + config.label() + " on the card's own rates");
+                    if (ratio) {
+                        expect(i == 0 || std::abs(*ratio - previous) > 1e-6,
+                               "the joint verify's price differs between the two cards");
+                        previous = *ratio;
+                    }
+                }
+            }
+        }
+        // The asking card's draft head (SelectOptions::proposal_rows, what its artifact serves):
+        // the joint verify is priced with those rows, for every configuration (a start drafts
+        // through the head whatever the label), not the lab artifact's. Qwen's MTP drafter reads
+        // a head in its round facts (Gemma's does not, so its price does not depend on the rows).
+        const auto qwen = no_counts(pair_of(std::string(kQ9), "ad104:60sm"));
+        sp::SelectOptions with_head;
+        with_head.proposal_rows    = sp::ProposalRows{{{"mtp", 4096}}};
+        const sp::Profile headed   = sp::profile_for_target({&qwen}, "sm89", with_head, &small);
+        const sp::Profile unheaded = sp::profile_for_target({&qwen}, "sm89", {}, &small);
+        std::string compared;
+        for (const auto& [label, by_streams] : headed.joint_scale) {
+            const sp::SpecConfig config = sp::SpecConfig::parse(label);
+            if (config.mode != sp::Mode::Mtp || !by_streams.contains(2)) { continue; }
+            const auto at_head =
+                sp::load_gain(*qwen.round_facts, config, sp::card_rates(small).kappa(), 1.0, 2,
+                              *with_head.proposal_rows);
+            expect(at_head && std::abs(by_streams.at(2) - *at_head) < 1e-9,
+                   "R_1 / R_2 of " + label + " with the asking card's head rows");
+            const auto other = unheaded.joint_scale.find(label);
+            expect(other != unheaded.joint_scale.end() && other->second.contains(2) &&
+                       std::abs(by_streams.at(2) - other->second.at(2)) > 1e-6,
+                   "the head rows change the joint verify's price of " + label);
+            compared = label;
+            break;
+        }
+        expect(!compared.empty(), "an MTP configuration of the Qwen pair is priced at two streams");
+    }
+    // facts_load on its own (synthetic tables): at each count the depth whose gain times
+    // R_1 / R_C is above 1, plain decode where none is (a product of exactly 1 included), and the
+    // table ends at the first plain count.
+    {
+        sp::Profile p;
+        p.overall.config      = sp::SpecConfig::parse("mtp:1");
+        p.overall.tok_s       = 2.0; // a gain of 2 at its own depth
+        p.overall.plain_tok_s = 1.0;
+        const std::string one = p.overall.config.label();
+        p.joint_scale[one]    = {{2, 0.8}, {3, 0.5}, {4, 0.9}};
+        expect(sp::load_label(sp::facts_load(p)) == "2:1,3:0",
+               "2 x 0.5 = 1 at three streams: plain there, not depth 1 (" +
+                   sp::load_label(sp::facts_load(p)) + ")");
+        p.joint_scale[one][3] = 0.51;
+        expect(sp::load_label(sp::facts_load(p)) == "2:1,5:0",
+               "above 1 through four streams, unpriced at five: plain from five (" +
+                   sp::load_label(sp::facts_load(p)) + ")");
+        p.joint_scale.clear();
+        expect(sp::load_label(sp::facts_load(p)) == "2:0", "nothing priced: plain from two");
+    }
+    // The overall default's gain at a shallower depth is over every section, as its own gain is:
+    // mtp:1 doubles the speed of math, code and prose and runs the thinking section at a tenth,
+    // so over the mix it gains 0.2 / 0.195; at R_1 / R_2 = 0.6 the non-thinking sections' gain
+    // (2 x 0.6 = 1.2) would draft at two streams, the overall one (0.615) does not.
+    {
+        sp::Profile p;
+        p.overall.config       = sp::SpecConfig::parse("mtp:2");
+        p.overall.tok_s        = 2.0;
+        p.overall.plain_tok_s  = 1.0;
+        sp::SpecConfig shallow = p.overall.config;
+        shallow.k              = 1;
+        for (const char* family : {"math", "code", "prose", "thinking"}) {
+            const bool thinking = std::string(family) == "thinking";
+            p.measurements.push_back({.family = family, .tokens = 100, .seconds = 1.0});
+            p.measurements.push_back({.config  = shallow,
+                                      .family  = family,
+                                      .tokens  = 100,
+                                      .seconds = thinking ? 10.0 : 0.5});
+        }
+        p.joint_scale[shallow.label()] = {{2, 0.6}};
+        const auto overall             = sp::measured_gain(p, shallow, std::nullopt);
+        const auto non_thinking        = sp::measured_gain(p, shallow, false);
+        expect(overall && std::abs(*overall - 0.2 / 0.195) < 1e-9 && non_thinking &&
+                   std::abs(*non_thinking - 2.0) < 1e-9,
+               "the gain over every section and over the non-thinking ones");
+        expect(sp::load_label(sp::facts_load(p)) == "2:0",
+               "the overall default's shallower depth at its own sections' gain: plain (" +
+                   sp::load_label(sp::facts_load(p)) + ")");
+    }
+    // One bound serves every choice: under it each runs min(bound, its own depth), and every one
+    // must gain there. An overall mtp:3 that gains at depth 3 only (1.2 against 0.84 at depth 1,
+    // depth 2 unpriced) beside a thinking mtp:1 that gains at 1 (1.4): the bound at two streams is
+    // 3 (the thinking choice still runs 1), not the thinking choice's 1, which the overall one
+    // would run at a loss.
+    {
+        sp::Profile p;
+        p.overall.config         = sp::SpecConfig::parse("mtp:3");
+        p.overall.tok_s          = 2.0;
+        p.overall.plain_tok_s    = 1.0;
+        p.thinking.config        = sp::SpecConfig::parse("mtp:1");
+        p.thinking.tok_s         = 2.0;
+        p.thinking.plain_tok_s   = 1.0;
+        const sp::SpecConfig one = p.thinking.config;
+        for (const char* family : {"math", "code", "prose", "thinking"}) {
+            const bool thinking = std::string(family) == "thinking";
+            p.measurements.push_back({.family = family, .tokens = 100, .seconds = 1.0});
+            p.measurements.push_back(
+                {.config = one, .family = family, .tokens = 100, .seconds = thinking ? 0.5 : 0.85});
+        }
+        const auto overall_at_one = sp::measured_gain(p, one, std::nullopt);
+        expect(overall_at_one && std::abs(*overall_at_one - 0.2 / 0.1665) < 1e-9,
+               "the overall default's gain at depth 1 over the mix");
+        p.joint_scale[one.label()]              = {{2, 0.7}};
+        p.joint_scale[p.overall.config.label()] = {{2, 0.6}};
+        expect(sp::load_label(sp::facts_load(p)) == "2:3,3:0",
+               "a bound every choice gains under: 3 at two streams (" +
+                   sp::load_label(sp::facts_load(p)) + ")");
+        // The thinking choice loses at its only depth (2 x 0.45): no bound serves both, plain.
+        p.joint_scale[one.label()] = {{2, 0.45}};
+        expect(sp::load_label(sp::facts_load(p)) == "2:0",
+               "no depth serves every choice: plain (" + sp::load_label(sp::facts_load(p)) + ")");
+        // Leximin, not the least gain alone: a thinking mtp:1 at x1.1 runs depth 1 under a bound
+        // of 1 and of 3 alike (1.1 x 0.95 = 1.045, the least under both), so it does not decide;
+        // the overall default gains more under 3 (2 x 0.6 = 1.2) than under 1 (1.2012 x 0.95 =
+        // 1.141), so the bound is 3, not the shallower of a tie on the least gain.
+        p.thinking.tok_s           = 1.1;
+        p.joint_scale[one.label()] = {{2, 0.95}};
+        expect(sp::load_label(sp::facts_load(p)) == "2:3,3:0",
+               "a choice indifferent to the depth does not decide: 3 (" +
+                   sp::load_label(sp::facts_load(p)) + ")");
+        // The overall default alone, depth 1 best at two streams (1.2012 x 0.95 against
+        // 2 x 0.55) and losing at three (x 0.5), while depth 3 would gain at three (2 x 0.6):
+        // the bound in force at two streams holds, so three streams decode plainly rather than
+        // run depth 1 at a loss under a table that cannot rise again. These R_1 / R_C are
+        // synthetic, chosen for the rule: R_1 / R_3 above R_1 / R_2 (a joint verify of three
+        // streams cheaper per round than of two) is not physical.
+        p.thinking                              = {};
+        p.joint_scale[one.label()]              = {{2, 0.95}, {3, 0.5}};
+        p.joint_scale[p.overall.config.label()] = {{2, 0.55}, {3, 0.6}};
+        expect(sp::load_label(sp::facts_load(p)) == "2:1,3:0",
+               "each count within the bound before: plain from three (" +
+                   sp::load_label(sp::facts_load(p)) + ")");
+    }
+    // The table bounds the choices the Engine runs: the served ones where the profile has them,
+    // and the fit fallback. The profile chose mtp:3 (x2, 2 x 0.6 = 1.2 at two streams) but the
+    // Engine runs mtp:2 (x1.5, 1.5 x 0.6 = 0.9: a loss); depth 1 gains for it (1.2012 x 0.95 over
+    // the mix), so the bound is 1, not the unrunnable choice's 3. A fit fallback mtp:1 at x1.05
+    // (1.05 x 0.95 < 1) loses at every bound, so the table decodes plainly from two streams.
+    {
+        sp::Profile p;
+        p.overall.config      = sp::SpecConfig::parse("mtp:3");
+        p.overall.tok_s       = 2.0;
+        p.overall.plain_tok_s = 1.0;
+        p.thinking = p.non_thinking = p.overall;
+        sp::Choice runs             = p.overall;
+        runs.config.k               = 2;
+        runs.tok_s                  = 1.5;
+        p.served                    = sp::ServedChoices{runs, runs, runs};
+        sp::SpecConfig one          = p.overall.config;
+        one.k                       = 1;
+        for (const char* family : {"math", "code", "prose", "thinking"}) {
+            const bool thinking = std::string(family) == "thinking";
+            p.measurements.push_back({.family = family, .tokens = 100, .seconds = 1.0});
+            p.measurements.push_back(
+                {.config = one, .family = family, .tokens = 100, .seconds = thinking ? 0.5 : 0.85});
+        }
+        p.joint_scale[one.label()]              = {{2, 0.95}};
+        p.joint_scale[runs.config.label()]      = {{2, 0.6}};
+        p.joint_scale[p.overall.config.label()] = {{2, 0.6}};
+        expect(sp::load_label(sp::facts_load(p)) == "2:1,3:0",
+               "the served choice bounds the table: 1, not the unrunnable 3 (" +
+                   sp::load_label(sp::facts_load(p)) + ")");
+        p.served.reset();
+        expect(sp::load_label(sp::facts_load(p)) == "2:3,3:0",
+               "without served choices the profile's own: 3 (" + sp::load_label(sp::facts_load(p)) +
+                   ")");
+        sp::Choice fallback = p.overall;
+        fallback.config     = one;
+        fallback.tok_s      = 1.05;
+        p.fit_fallback      = fallback;
+        expect(sp::load_label(sp::facts_load(p)) == "2:0",
+               "a fit fallback that loses at every bound: plain (" +
+                   sp::load_label(sp::facts_load(p)) + ")");
+    }
+    // A choice entered twice is counted once: a fit fallback equal to the overall choice (the
+    // same configuration over the same sections) does not weigh twice in the leximin order. The
+    // overall mtp:2 gains A1 at depth 1 and 1.3 at 2; the thinking mtp:2 gains 1.9 at 1 and A1 at
+    // 2 (a tie on the least gain, exact: x 0.5). Once each, depth 1 wins on the next gain (1.9
+    // against 1.3); with the overall counted twice, depth 2 would (1.3 against A1).
+    {
+        sp::Profile p;
+        p.overall.config      = sp::SpecConfig::parse("mtp:2");
+        p.overall.tok_s       = 2.6;
+        p.overall.plain_tok_s = 1.0;
+        sp::SpecConfig one    = p.overall.config;
+        one.k                 = 1;
+        for (const char* family : {"math", "code", "prose", "thinking"}) {
+            const bool thinking = std::string(family) == "thinking";
+            p.measurements.push_back({.family = family, .tokens = 100, .seconds = 1.0});
+            p.measurements.push_back(
+                {.config = one, .family = family, .tokens = 100, .seconds = thinking ? 0.5 : 0.8});
+        }
+        p.joint_scale[one.label()]              = {{2, 0.95}};
+        p.joint_scale[p.overall.config.label()] = {{2, 0.5}};
+        const double a1                         = *sp::measured_gain(p, one, std::nullopt) * 0.95;
+        p.thinking                              = p.overall;
+        p.thinking.tok_s                        = a1 / 0.5;
+        expect(sp::load_label(sp::facts_load(p)) == "2:1,3:0",
+               "overall and thinking once each: depth 1 (" + sp::load_label(sp::facts_load(p)) +
+                   ")");
+        p.fit_fallback = p.overall;
+        expect(sp::load_label(sp::facts_load(p)) == "2:1,3:0",
+               "a fit fallback equal to the overall choice counts once: depth 1 (" +
+                   sp::load_label(sp::facts_load(p)) + ")");
+    }
+    // A table is clipped to its running minimum: a depth that rises again is not written.
+    expect(sp::load_label(sp::clipped_load({3, 3, 2, 0})) == "2:3,4:2,5:0", "falls are recorded");
+    expect(sp::load_label(sp::clipped_load({2, 2, 3, 2})) == "2:2", "a rise is clipped, no 4:2");
+    expect(sp::load_label(sp::clipped_load({2, 2, 2, 1, 3})) == "2:2,5:1", "2, 2, 2, 1, 3");
     // The card that measured a pair takes its own measurement, its tune keyed by class id or chip.
     {
         const auto rtx4070ti = card("ad104:60sm", "ad104", "sm89", 89, 60, 2610, 504);

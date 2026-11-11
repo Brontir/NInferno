@@ -1,0 +1,105 @@
+{
+ "devices": [
+  {
+   "index": 0,
+   "pci_bus_id": "0000:01:00.0",
+   "mig_mode": -1,
+   "queried": {
+    "name": "Quadro GV100",
+    "pci_device_id": 7610,
+    "chip": "gv100",
+    "major": 7,
+    "minor": 0,
+    "sms": 80,
+    "l2_bytes": 6291456,
+    "global_bytes": 34066989056,
+    "smem_per_block_optin": 98304,
+    "smem_per_sm": 98304,
+    "max_threads_per_sm": 2048,
+    "max_blocks_per_sm": 32,
+    "registers_per_sm": 65536,
+    "persisting_l2_max_bytes": 0,
+    "memory_bus_bits": 4096,
+    "memory_clock_khz": 850000,
+    "sm_clock_khz": 1627000,
+    "features": {
+     "mma_bf16": true,
+     "mma_bf16_native": false,
+     "mma_tensor": false,
+     "mma_fp8": false,
+     "mma_f8f6f4": false,
+     "mma_mxf4nvf4": false,
+     "tma": false,
+     "pdl": false,
+     "clusters": false,
+     "mma_slow": false
+    }
+   },
+   "synthetic": {
+    "name": "synthetic sm70",
+    "pci_device_id": 7610,
+    "chip": "gv100",
+    "major": 7,
+    "minor": 0,
+    "sms": 80,
+    "l2_bytes": 6291456,
+    "global_bytes": 34066989056,
+    "smem_per_block_optin": 101376,
+    "smem_per_sm": 102400,
+    "max_threads_per_sm": 1536,
+    "max_blocks_per_sm": 32,
+    "registers_per_sm": 65536,
+    "persisting_l2_max_bytes": 4718592,
+    "memory_bus_bits": 0,
+    "memory_clock_khz": 0,
+    "sm_clock_khz": 0,
+    "features": {
+     "mma_bf16": true,
+     "mma_bf16_native": false,
+     "mma_tensor": false,
+     "mma_fp8": false,
+     "mma_f8f6f4": false,
+     "mma_mxf4nvf4": false,
+     "tma": false,
+     "pdl": false,
+     "clusters": false,
+     "mma_slow": false
+    }
+   },
+   "raw": {
+    "reserved_shared_per_block": 0,
+    "shared_per_block_default": 49152,
+    "registers_per_block": 65536,
+    "max_threads_per_block": 1024,
+    "warp_size": 32
+   },
+   "engine_occupancy_limits": {
+    "reserved_shared_per_block": 0,
+    "shared_per_block_default": 49152,
+    "registers_per_block": 65536,
+    "max_threads_per_block": 1024,
+    "warp_size": 32
+   },
+   "engine_table_facts": {
+    "source": 1,
+    "sku": "Quadro GV100",
+    "reference_clock_khz": 1627000,
+    "memory_bus_bits": 4096,
+    "memory_clock_khz": 850000,
+    "l2_mib": 6.0,
+    "mma_slow": false,
+    "driver_read": false
+   },
+   "engine_row_facts": {
+    "source": 1,
+    "sku": "Quadro GV100",
+    "reference_clock_khz": 1627000,
+    "memory_bus_bits": 4096,
+    "memory_clock_khz": 850000,
+    "l2_mib": 6.0,
+    "mma_slow": false,
+    "driver_read": false
+   }
+  }
+ ]
+}
