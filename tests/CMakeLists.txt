@@ -99,6 +99,12 @@ add_test(NAME ninferno_kernel_facts_sass_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_kernel_facts_sass.py)
 set_tests_properties(ninferno_kernel_facts_sass_test PROPERTIES LABELS host)
 
+# tools/bench/regret_bands.py: regret weighted by T band, per board, format and route family
+# (#613), no GPU.
+add_test(NAME ninferno_regret_bands_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_regret_bands.py)
+set_tests_properties(ninferno_regret_bands_test PROPERTIES LABELS host)
+
 # tools/audit/diff_lint.py: broken string literals, duplicated added blocks, removed definitions
 # still called and removed includes still needed, on planted diffs (#611), no GPU.
 add_test(NAME ninferno_diff_lint_test
