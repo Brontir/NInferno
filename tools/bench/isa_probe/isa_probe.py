@@ -80,6 +80,8 @@ def sampler(query, ms):
         return Sampler(query, ms)
     except OSError:
         return None
+
+
 DEFAULT_TABLE = os.path.join(ROOT, "src", "core", "data", "isa_facts.json")
 DEFAULT_INPUTS = os.path.join(ROOT, "src", "core", "data", "isa_probe")
 SCHEMA = 1
