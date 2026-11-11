@@ -190,12 +190,21 @@ FLAGGED = {
     "tuple_trailing_comma": "{8, 6, 82, 6, 936,}",
     "tuple_trailing_comma_multiline": "push({\n    8, 6, 82, 6, 936,\n});",
     "tuple_bool_trailing_comma": "{7, 5, 68, 5.5, 616, true,}",
+    # #711: a table row of qualified constants only, a conversion operator, an attribute in
+    # the declarator (after the name or before it).
+    "table_all_qualified": "Board k[] = {{facts::kMajor, facts::kMinor, facts::kSms, facts::kL2, facts::kBw}};",
+    "conversion_operator": "operator Board() const { return {kMajor, 0, kSms, kL2, kBw}; }",
+    "attribute_after_name": "Board b [[maybe_unused]] {kMajor, 0, kSms, kL2, kBw};",
+    "attribute_before_name": "Board [[maybe_unused]] b {kMajor, 0, kSms, kL2, kBw};",
 }
 
 CLEAN = {
     "declaration": "struct Board {",
     "declaration_body": "struct Board{ int major = 0; };",
     "conversion": "table->board = Board{cc / 10, cc % 10, sms};",
+    "registry_list_qualified": "std::vector<Board> v = {measured::kRtx5090, measured::kRtx4090};",
+    "registry_table_qualified": "const Board k[] = {measured::kRtx5090, measured::kRtx4090};",
+    "conversion_operator_fields": "operator Board() const { return {major, minor, sms}; }",
     "row_fields": "return Board{row->major, row->minor};",
     "name_prefix": "FactsBoard{1, 2}",
     "name_prefix_board": "BoardRow{0x2B85, 12, 0, 170, 96}",
