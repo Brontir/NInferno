@@ -4,8 +4,14 @@
 # Nothing is compiled.
 #
 #   curl -fsSL https://raw.githubusercontent.com/Brontir/NInferno/master/tools/release/install.sh | sh
+#   sh install.sh                      install the newest release
+#   sh install.sh --uninstall [--yes]  remove what it installed (asks first unless --yes)
 #   sh install.sh --verify MANIFEST    exit 0 when MANIFEST (MANIFEST.sig beside it) is signed
 #                                      by the release key (ninferno-update asks this)
+#   sh install.sh --help               this text
+#
+# The release needs x86-64 Linux with glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39 and
+# later): the C library is the system's, and the archive is built against that version.
 #
 # What is installed is what the release manifest (latest.json) names, and the manifest counts only
 # with a valid signature of the release key below: a release server that is broken into cannot
@@ -25,6 +31,8 @@ set -eu
 MANIFEST_URL=${NINFERNO_UPDATE_URL:-https://ninferno.brontir.com/releases/latest.json}
 HOME_DIR=${NINFERNO_HOME:-$HOME/.local/share/ninferno}
 BIN_DIR=${NINFERNO_BIN:-$HOME/.local/bin}
+# The oldest glibc the archive runs on: the build machine's (tools/release/package.sh checks it).
+GLIBC_MIN=2.38
 # The release key (tools/release/signing.pub.pem; tests check every copy against it).
 RELEASE_KEY='-----BEGIN PUBLIC KEY-----
 MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE1R5JganVYknHjhX9nN2fYLqxwe2G
@@ -58,14 +66,98 @@ asset_field() {
     on && index($0, key) { sub(/^[^:]*: *"/, ""); sub(/".*$/, ""); print; exit }' "$3"
 }
 
-if [ "${1:-}" = --verify ]; then
-  [ -f "${2:-}" ] || die "usage: install.sh --verify MANIFEST"
-  verify_manifest "$2" || die "$2 is not signed by the NInferno release key"
-  exit 0
-fi
+usage() {
+  say "NInferno installer for Linux and WSL 2."
+  say "  install.sh                      install the newest release"
+  say "  install.sh --uninstall [--yes]  remove what it installed from $HOME_DIR and $BIN_DIR"
+  say "  install.sh --verify MANIFEST    exit 0 when MANIFEST.sig is the release key's signature"
+  say "  install.sh --help               this text"
+  say "Through a pipe: curl -fsSL .../install.sh | sh -s -- --uninstall"
+}
+
+# Staging directories (HOME_DIR/.install.XXXXXX) carry STAGING_MARK with the PID of the install
+# that made them. remove_stale_staging removes those whose install is gone: the PID is not alive,
+# or the mark is a day old (a PID used again; no install takes that long), or, when the mark holds
+# no PID, six hours old. An unmarked .install.* is not ours, and a live one is another install's
+# (ninferno-ui's Update and a manual run at once): both stay.
+STAGING_MARK=.ninferno-staging
+remove_stale_staging() {
+  for old in "$HOME_DIR"/.install.*; do
+    [ -d "$old" ] && [ ! -L "$old" ] && [ -f "$old/$STAGING_MARK" ] || continue
+    pid=$(head -n 1 "$old/$STAGING_MARK" 2> /dev/null || true)
+    case $pid in
+      '' | *[!0-9]*) age=360 ;;
+      *) if kill -0 "$pid" 2> /dev/null; then age=1440; else age=0; fi ;;
+    esac
+    if [ "$age" = 0 ] || [ -n "$(find "$old/$STAGING_MARK" -mmin +"$age" 2> /dev/null)" ]; then
+      rm -rf "$old"
+    fi
+  done
+}
+
+# uninstall yes|ask: only what install.sh and ninferno-update make, so a custom NINFERNO_HOME
+# (even ~/.local or ~) loses nothing else: the release directories (each holds
+# share/ninferno/release.json), `current` when it is a link to one of them, staging copies left
+# by an install that is gone, and the links in BIN_DIR to a release's bin/. A link may name the home as given or resolved
+# (ninferno-update passes the resolved one). Downloaded models and settings live elsewhere.
+uninstall() {
+  real=$(readlink -f "$HOME_DIR" 2> /dev/null || printf '%s' "$HOME_DIR")
+  [ -d "$HOME_DIR" ] || die "nothing is installed in $HOME_DIR"
+  say "This removes NInferno from $HOME_DIR and its commands from $BIN_DIR (downloaded models stay)."
+  if [ "$1" != yes ]; then
+    printf 'Remove it? [y/N] '
+    { read -r answer < /dev/tty; } 2> /dev/null || die "no terminal to ask: run it with --uninstall --yes"
+    case $answer in [yY]*) ;; *) say "Nothing removed."; exit 0 ;; esac
+  fi
+  for link in "$BIN_DIR"/*; do
+    [ -L "$link" ] || continue
+    case $(readlink "$link") in
+      "$HOME_DIR"/current/bin/* | "$HOME_DIR"/ninferno-*-linux-x86_64*/bin/* | \
+        "$real"/current/bin/* | "$real"/ninferno-*-linux-x86_64*/bin/*) rm -f "$link" ;;
+    esac
+  done
+  if [ -L "$HOME_DIR/current" ]; then
+    case $(readlink "$HOME_DIR/current") in
+      "$HOME_DIR"/ninferno-*-linux-x86_64* | "$real"/ninferno-*-linux-x86_64*) rm -f "$HOME_DIR/current" ;;
+    esac
+  fi
+  for dir in "$HOME_DIR"/ninferno-*-linux-x86_64*; do
+    [ -d "$dir" ] && [ ! -L "$dir" ] || continue
+    if [ -f "$dir/share/ninferno/release.json" ]; then rm -rf "$dir"; fi
+  done
+  remove_stale_staging
+  if rmdir "$HOME_DIR" 2> /dev/null; then
+    say "NInferno is removed."
+  else
+    say "NInferno is removed; $HOME_DIR stays, it holds files NInferno did not put there."
+  fi
+}
+
+case ${1:-} in
+  --verify)
+    [ $# = 2 ] && [ -f "$2" ] || die "usage: install.sh --verify MANIFEST"
+    verify_manifest "$2" || die "$2 is not signed by the NInferno release key"
+    exit 0 ;;
+  -h | --help) [ $# = 1 ] || die "--help takes no arguments"; usage; exit 0 ;;
+  --uninstall)
+    case $#:${2:-} in 1:) uninstall ask ;; 2:--yes | 2:-y) uninstall yes ;; *) die "usage: install.sh --uninstall [--yes]" ;; esac
+    exit 0 ;;
+  '') [ $# = 0 ] || die "unknown argument '' (see --help)" ;;
+  *) die "unknown argument $1 (see --help)" ;;
+esac
 
 [ "$(uname -s)" = Linux ] || die "this installer is for Linux and WSL 2; on Windows run NInferno-Setup.exe"
 [ "$(uname -m)" = x86_64 ] || die "the release builds are for x86-64 Linux"
+# version_at_least HAVE NEED: 0 when the dotted version HAVE is NEED or later.
+version_at_least() {
+  printf '%s\n%s\n' "$1" "$2" | awk -F. 'NR == 1 { for (i = 1; i <= 4; i++) h[i] = $i + 0 }
+    NR == 2 { for (i = 1; i <= 4; i++) { n = $i + 0; if (h[i] != n) exit (h[i] > n) ? 0 : 1 } }'
+}
+# The C library is the system's: an older glibc cannot load the release's binaries.
+glibc=$(getconf GNU_LIBC_VERSION 2> /dev/null | sed -n 's/^glibc \([0-9][0-9.]*\).*/\1/p')
+[ -n "$glibc" ] || die "this system's C library is not glibc; the release needs glibc $GLIBC_MIN or newer"
+version_at_least "$glibc" "$GLIBC_MIN" ||
+  die "glibc $glibc is too old: the release needs glibc $GLIBC_MIN or newer (Ubuntu 24.04, Debian 13, Fedora 39 and later)"
 command -v nvidia-smi > /dev/null 2>&1 ||
   die "nvidia-smi not found: install the NVIDIA driver (on WSL 2, the Windows driver provides it)"
 
@@ -102,7 +194,21 @@ major=${driver%%.*}
 
 archive=ninferno-linux-x86_64.tar.gz
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+stage=""  # the unpacked release before it is switched in, inside HOME_DIR (a move, not a copy)
+top=""
+# A same-version copy moved aside (below) goes back when the new one never got its place.
+cleanup() {
+  if [ -n "$stage" ] && [ -n "$top" ] && { [ -e "$stage/replaced" ] || [ -L "$stage/replaced" ]; } &&
+    [ ! -e "$HOME_DIR/$top" ] && [ ! -L "$HOME_DIR/$top" ]; then
+    mv -T "$stage/replaced" "$HOME_DIR/$top" || true
+  fi
+  rm -rf "$tmp" ${stage:+"$stage"}
+}
+# dash runs no EXIT trap when a signal kills it: a stopped install would leave its staging copy.
+trap cleanup EXIT
+trap 'cleanup; trap - EXIT; exit 129' HUP
+trap 'cleanup; trap - EXIT; exit 130' INT
+trap 'cleanup; trap - EXIT; exit 143' TERM
 if [ -n "${NINFERNO_MANIFEST:-}" ]; then
   cp "$NINFERNO_MANIFEST" "$tmp/latest.json" && cp "$NINFERNO_MANIFEST.sig" "$tmp/latest.json.sig" ||
     die "no $NINFERNO_MANIFEST with its .sig"
@@ -130,18 +236,39 @@ printf '%s  %s\n' "$sha" "$tmp/$archive" | sha256sum -c - > /dev/null 2>&1 ||
 mkdir -p "$HOME_DIR" "$BIN_DIR"
 top=$(tar -tzf "$tmp/$archive" | head -1 | cut -d/ -f1)
 # An unreadable archive lists nothing (sh has no pipefail): never remove the install home itself.
-case $top in "" | . | ..) die "not a NInferno archive: $archive" ;; esac
-rm -rf "${HOME_DIR:?}/$top"
-tar -xzf "$tmp/$archive" -C "$HOME_DIR"
-ln -sfn "$HOME_DIR/$top" "$HOME_DIR/current"
+case $top in "" | . | .. | .install.*) die "not a NInferno archive: $archive" ;; esac
+# Unpacked and run beside the installed versions first: `current` and the commands move only to a
+# release that starts here, so a failed install leaves the one before in place.
+# A staging copy an install killed hard left is up to 3 GB: removed first, when its install is gone.
+remove_stale_staging
+stage=$(mktemp -d "$HOME_DIR/.install.XXXXXX")
+printf '%s\n' "$$" > "$stage/$STAGING_MARK"
+tar -xzf "$tmp/$archive" -C "$stage" || die "cannot unpack $archive: nothing installed"
+if ! version=$("$stage/$top/bin/ninferno-serve" --version 2>&1); then
+  printf '%s\n' "$version" >&2
+  case $version in
+    *GLIBC_*) die "this system's glibc ($glibc) is older than the release needs; nothing installed" ;;
+  esac
+  die "the release cannot run on this machine (see above), so nothing was installed; a newer NVIDIA driver usually fixes it"
+fi
+say "$version"
+if [ -e "$HOME_DIR/current" ] && [ ! -L "$HOME_DIR/current" ]; then
+  die "$HOME_DIR/current is not NInferno's link (a file or directory of its own): move it away or set NINFERNO_HOME; nothing installed"
+fi
+# The switch is two renames: the same version installed again is moved aside into the staging
+# directory (removed on exit) rather than deleted before the new copy is in place, and `current`
+# is made under another name and renamed over the old link (GNU mv -T: no window without it).
+if [ -e "$HOME_DIR/$top" ] || [ -L "$HOME_DIR/$top" ]; then mv "$HOME_DIR/$top" "$stage/replaced"; fi
+# -T: never into a directory another install of this version made meanwhile; that one stands.
+mv -T "$stage/$top" "$HOME_DIR/$top" ||
+  die "another install of $top finished while this one ran; it stays, nothing switched"
+ln -sfn "$HOME_DIR/$top" "$stage/current"
+mv -fT "$stage/current" "$HOME_DIR/current"
 # The commands (the engines, bin/*-sm<tag>, are started by ninferno-serve itself).
 for exe in "$HOME_DIR/current/bin/"*; do
   case $(basename "$exe") in *-sm[0-9]*) continue ;; esac
   ln -sf "$exe" "$BIN_DIR/$(basename "$exe")"
 done
-if ! "$BIN_DIR/ninferno-serve" --version; then
-  die "the installed build cannot run on this machine (see above); a newer NVIDIA driver usually fixes it"
-fi
 
 say "Installed $top into $HOME_DIR, commands in $BIN_DIR."
 case ":$PATH:" in *":$BIN_DIR:"*) ;; *) say "Add $BIN_DIR to PATH, e.g.: echo 'export PATH=\"$BIN_DIR:\$PATH\"' >> ~/.bashrc" ;; esac

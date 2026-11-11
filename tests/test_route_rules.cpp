@@ -869,6 +869,8 @@ const std::vector<NotRule>& not_rules() {
          "the kernel facts file's column header (a file format)"},
         {"kernel_facts.cpp", "kResourceColumnsLength", 1,
          "the length of the resources-only column header (a file format)"},
+        {"rmma_geometry.h", "kTileBytes", 1,
+         "the bytes of one accumulator tile, 4 floats a lane (a layout fact)"},
         {"scratch_lifetime.h", "kMaxScratchUses", 1, "scratch lifetime bookkeeping"},
         {"selector_facts.cpp", "kExactMinor", 2, "a build switch (an 'a' / 'f' target's minor)"},
         {"selector_facts.cpp", "kMinor", 1, "the build architecture's minor (a build switch)"},

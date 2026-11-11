@@ -32,7 +32,7 @@ ctest --test-dir build -R ninferno_sampling_test --output-on-failure
 | `BUILD_TESTING` | `OFF` | Build and register the tests. |
 | `Python3_EXECUTABLE` | CMake's Python 3 | Interpreter for interop and frontend tests (Python 3.11 is the maintained version; the chat-template reference test uses Jinja2). |
 | `NINFERNO_CONVERT_PYTHON` | `Python3_EXECUTABLE` | Interpreter with `torch` (and `transformers` for the oracle) for the converter-parity and Hugging Face oracle tests; they skip without it. |
-| `NINFERNO_SHARED_OP_TESTS` | `OFF` | Link the Op tests against one shared `ninferno_ops` instead of each statically linking it. For test builds only. |
+| `NINFERNO_SHARED_OP_TESTS` | `OFF` | Link every test with device code against one shared library of the CUDA archives (`ninferno_ops_shared`) instead of each statically linking its own copy; the apps link as without it. Linux test trees only; see `docs/maintainer/build-system.md`. |
 
 ## Layout
 

@@ -31,7 +31,9 @@ grid     reads the per-width files of `measure` (label "J<w>"; one file per visi
          (information), the f buckets (one table of picks each, with the sizes that decide each edge),
          the regret per bucket and at f 0.20 (a report), and the verdict of the criteria that were
          fixed before the run (CRITERIA below). The script measures every width twice, 16..128 then
-         128..16, so a drift in time does not line up with J.
+         128..16, so a drift in time does not line up with J. Last, the grid read with the launch
+         law of DECISIONS 78 (THE LAUNCH LAW below): with the tree's constants (no refit) and
+         refitted, the law's pick per size beside the measured best, with each linear's launch mode.
 ab       reads files labelled old/new (the same sizes, the same number of visits at every size, the
          whole mix) and prints the per-size change (medians with the range of the visits) beside the
          predicted range, the mismatch count, and the mix change beside its predicted range (the
@@ -635,6 +637,190 @@ def same_sizes(data: Data, labels: list[str]) -> list[int]:
     return sorted(union)
 
 
+# --- THE LAUNCH LAW (DECISIONS 78) ---------------------------------------------------------------
+# The Turing row's law the tree ranks the widths by (core/mmq_columns.h launch_of / launch_seconds,
+# core/generation.h kTuringMmqLaw; tests/test_mmq_width_grid.py holds these to the tree): a product's
+# time is its longest CTA's units times a unit's cost, plus the stream-k fixup (its partial tiles'
+# bytes at the DRAM rate and one dependent launch) where the launch splits tiles. The `grid` reader
+# prices every cell with it beside the tile law: with the law's constants as they stand (no refit;
+# one C_N per size and one D_r per run fitted as in FIT), and refitted (units by launch mode and the
+# fixup launches free), naming each pick's launch modes.
+# Facts of the board and the model the kit measures (the RTX 2080 Ti's facts row: 68 SMs, a 1545 MHz
+# reference clock, 352 bits at 14 Gbps; Qwen3-8B's linears on the MMQ path, routes/tu102.json and
+# generic_gemm.cpp: gate and up two products, down K 12288; 36 layers):
+LAW_SMS = 68
+LAW_CLOCK_HZ = 1545e6
+LAW_DRAM_BYTES_PER_S = 616e9
+LAW_LINEARS = [(5120, 4096), (1024, 4096), (4096, 4096), (12288, 4096), (12288, 4096), (4096, 12288)]
+LAW_LAYERS = 36
+# kTuringMmqLaw (MEASURED; core/generation.h names the source of each value)
+LAW_UNIT_CLOCKS = {16: 5256.0, 32: 7047.0, 64: 9698.0, 80: 11170.0, 96: 13134.0, 128: 17920.0}
+LAW_STREAM_K_UNIT = 1.18
+LAW_LAUNCH_S = 3.3e-6
+LAW_CELL_TOL = 1.0  # percent, a priori: a cell predicted within this of its median (the run drift is 0-0.9 %)
+
+
+def launch_of(rows: int, k: int, cols: int, j: int, sms: int = LAW_SMS) -> dict:
+    """core/mmq_columns.h launch_of: the launch select_launch makes (a tile a CTA where the last wave is
+    90 % full, else stream-k over min(SMs, units) CTAs; the fixup where the CTAs do not divide the tiles)."""
+    tiles = -(-rows // 128) * -(-cols // j)
+    steps = max(1, -(-k // 256))
+    waves = -(-tiles // sms)
+    if 100 * tiles // (sms * waves) >= 90:
+        return {"tiles": tiles, "blocks": tiles, "units": waves * steps, "split": False, "fixup": False,
+                "partials": 0, "split_tiles": 0}
+    work = tiles * steps
+    blocks = min(sms, work)
+    ends = [b * work // blocks for b in range(1, blocks)]
+    inside = [e for e in ends if e % steps]
+    return {"tiles": tiles, "blocks": blocks, "units": -(-work // blocks), "split": True,
+            "fixup": tiles % blocks != 0, "partials": len(inside), "split_tiles": len({e // steps for e in inside})}
+
+
+def law_seconds(rows: int, k: int, cols: int, j: int) -> float | None:
+    """core/mmq_columns.h launch_seconds with the Turing row's law; None for a width the law has no unit of."""
+    if j not in LAW_UNIT_CLOCKS:
+        return None
+    lo = launch_of(rows, k, cols, j)
+    unit = LAW_UNIT_CLOCKS[j] * (LAW_STREAM_K_UNIT if lo["split"] else 1.0) / LAW_CLOCK_HZ
+    s = lo["units"] * unit
+    if lo["fixup"]:
+        s += (lo["partials"] + 2.0 * lo["split_tiles"]) * 128 * j * 4 / LAW_DRAM_BYTES_PER_S + LAW_LAUNCH_S
+    return s
+
+
+def law_ms(cols: int, j: int) -> float | None:
+    """The model's MMQ linears of one prefill body call at the law (ms), None off the law's widths."""
+    parts = [law_seconds(r, kk, cols, j) for r, kk in LAW_LINEARS]
+    return None if None in parts else 1e3 * LAW_LAYERS * sum(parts)
+
+
+def law_terms_of(cols: int, j: int) -> dict:
+    """The launch law's regressors of a cell over the model's linears: units on the longest CTA by mode
+    (and times J / 128) and the fixup launches; and each linear's launch mode, for the output."""
+    t = {"ut": 0.0, "utj": 0.0, "us": 0.0, "usj": 0.0, "fix": 0.0, "modes": []}
+    for r, kk in LAW_LINEARS:
+        lo = launch_of(r, kk, cols, j)
+        key = "us" if lo["split"] else "ut"
+        t[key] += LAW_LAYERS * lo["units"]
+        t[key + "j"] += LAW_LAYERS * lo["units"] * j / 128
+        t["fix"] += LAW_LAYERS * (1 if lo["fixup"] else 0)
+        t["modes"].append("sk+fix" if lo["fixup"] else ("sk" if lo["split"] else "tile"))
+    return t
+
+
+def _solve(a: list[list[float]], b: list[float]) -> list[float] | None:
+    """Gaussian elimination with partial pivoting; None for a singular system."""
+    n = len(b)
+    m = [row[:] + [b[i]] for i, row in enumerate(a)]
+    top = max((abs(x) for row in a for x in row), default=0.0)
+    for c in range(n):
+        p = max(range(c, n), key=lambda r: abs(m[r][c]))
+        if abs(m[p][c]) <= 1e-12 * max(top, 1e-300):
+            return None
+        m[c], m[p] = m[p], m[c]
+        for r in range(n):
+            if r != c and m[r][c]:
+                f = m[r][c] / m[c][c]
+                for q in range(c, n + 1):
+                    m[r][q] -= f * m[c][q]
+    return [m[i][n] / m[i][i] for i in range(n)]
+
+
+def fit_offsets_and(y: list[float], xs: list[list[float]], w: list[float], size: list, run: list):
+    """Weighted least squares of y = C_N + D_r + sum_i beta_i x_i, one free constant per size and one per
+    run, taken out by alternating weighted centring (fit_law's); returns (betas, residuals) or None."""
+    vecs = [v[:] for v in xs] + [y[:]]
+    for v in vecs:
+        top = 1e-12 * (1 + max(map(abs, v), default=0.0))
+        for _ in range(500):
+            moved = 0.0
+            for key in (run, size):
+                m = _centre([v], w, key)
+                moved = max(moved, max(map(abs, m.values()), default=0.0))
+            if moved <= top:
+                break
+    *ex, ey = vecs
+    if not ex:
+        return [], ey
+    a = [[sum(wi * p * q for wi, p, q in zip(w, xi, xj)) for xj in ex] for xi in ex]
+    b = [sum(wi * p * q for wi, p, q in zip(w, xi, ey)) for xi in ex]
+    beta = _solve(a, b)
+    if beta is None:
+        return None
+    return beta, [e - sum(bi * xi[c] for bi, xi in zip(beta, ex)) for c, e in enumerate(ey)]
+
+
+def launch_law_report(d, data, sizes: list[int], cols: list[int], med: dict, best: dict) -> dict:
+    """The grid read with the launch law (no refit, then refitted) and the launch modes of its picks."""
+    print("\nLAUNCH LAW (DECISIONS 78; core/mmq_columns.h): a product's time = its longest CTA's units x a unit's "
+          f"cost + the stream-k fixup; Qwen3-8B's linears on {LAW_SMS} SMs (the RTX 2080 Ti's modes and constants)")
+    cells, size, run, within = [], [], [], []
+    for j in WIDTHS:
+        for n, c in zip(sizes, cols):
+            for v, fi in zip(d[f"J{j}"][n], data.src[f"J{j}"][n]):
+                cells.append((n, c, j, statistics.median(v)))
+                run.append((j, fi))
+                size.append(n)
+                within.append(MEDIAN_VAR * statistics.variance(v) / len(v) if len(v) > 1 else 0.0)
+    scale = {n: statistics.median(c[3] for c in cells if c[0] == n) for n in sizes}
+    w = [1 / scale[n] ** 2 for n in size]
+    out: dict = {}
+
+    def rms_beyond(idx: list[int], res: list[float], free: int) -> tuple[float, float]:
+        ss = sum(w[i] * e * e for i, e in zip(idx, res))
+        dof = max(len(idx) - len({size[i] for i in idx}) - len({run[i] for i in idx}) + 1 - free, 1)
+        noise = statistics.mean(w[i] * within[i] for i in idx)
+        return (ss / len(idx)) ** 0.5, max(ss / dof - noise, 0.0) ** 0.5
+
+    # 1. no refit: the tree's constants, only the size constants and the run offsets fitted
+    idx = [i for i, c in enumerate(cells) if c[2] in LAW_UNIT_CLOCKS]
+    got = fit_offsets_and([cells[i][3] - law_ms(cells[i][1], cells[i][2]) for i in idx], [],
+                          [w[i] for i in idx], [size[i] for i in idx], [run[i] for i in idx])
+    _, res0 = got
+    rms0, beyond0 = rms_beyond(idx, res0, 0)
+    pred: dict = defaultdict(list)
+    for i, e in zip(idx, res0):
+        pred[cells[i][0], cells[i][2]].append(cells[i][3] - e)
+    off = {key: 100 * (statistics.mean(p) / med[key[1]][key[0]] - 1) for key, p in pred.items()}
+    near = sum(1 for v in off.values() if abs(v) <= LAW_CELL_TOL)
+    print(f"  no refit (the tree's constants; C_N and D_r fitted): residual rms {100 * rms0:.2f} % of the size's "
+          f"time (beyond the request noise {100 * beyond0:.2f} %) over {len(idx)} cells of the six production "
+          f"widths; {near} of {len(off)} size x width medians within {LAW_CELL_TOL:g} %")
+    print("  per size: the law's pick and its launch modes (q+k, v, o, gate, up, down) beside the measured best of "
+          "the six production widths; the cell's prediction against its median")
+    regret = []
+    for n, c in zip(sizes, cols):
+        jl = min(PRODUCTION, key=lambda j: (law_ms(c, j), j))
+        jb = min(PRODUCTION, key=lambda j: med[j][n])
+        loss = 100 * (med[jl][n] / best[n] - 1)
+        regret.append(loss)
+        modes = "/".join(law_terms_of(c, jl)["modes"])
+        print(f"{n:4d} {c:5d}  law J{jl:<4d} {modes:<34s} best J{jb:<4d} {med[jl][n]:8.2f} {best[n]:8.2f} "
+              f"{loss:5.1f}%   cell {off[n, jl]:+.1f} %" + ("  MISMATCH" if loss > TOL else ""))
+    hits = sum(1 for r in regret if r <= 0)
+    print(f"  the law's picks: {hits} of {len(sizes)} sizes at the measured best, mean regret "
+          f"{statistics.mean(regret):.2f} %")
+    out.update(rms=rms0, beyond=beyond0, near=near, cells=len(off), hits=hits, regret=statistics.mean(regret),
+               off=off)
+
+    # 2. refit: units by launch mode (a + b J / 128 each) and the fixup launches free
+    terms = [law_terms_of(c, j) for _, c, j, _ in cells]
+    xs = [[t[key] for t in terms] for key in ("ut", "utj", "us", "usj", "fix")]
+    got = fit_offsets_and([c[3] for c in cells], xs, w, size, run)
+    if got is None:
+        print("  refit: the cells do not determine the law's terms")
+        return out
+    beta, res = got
+    rms, beyond = rms_beyond(list(range(len(cells))), res, len(beta))
+    print(f"  refit (FITTED, a diagnosis, not the tree's constants): a tile-a-CTA unit {1e3 * beta[0]:.2f} + "
+          f"{1e3 * beta[1]:.2f} J/128 us, a stream-k unit {1e3 * beta[2]:.2f} + {1e3 * beta[3]:.2f} J/128 us, "
+          f"{1e3 * beta[4]:.1f} us a fixup launch; residual rms {100 * rms:.2f} % (beyond the request noise "
+          f"{100 * beyond:.2f} %) over {len(cells)} cells, all eight widths")
+    out.update(refit=beta, refit_rms=rms)
+    return out
+
+
 def grid(a: argparse.Namespace) -> None:
     data = load(a.files)
     d = data.d
@@ -844,6 +1030,7 @@ def grid(a: argparse.Namespace) -> None:
         verdict = (f"no verdict on f {ASSUMED_F:.2f}: {why5}; R2 and R3 find no "
                    f"fault with the table at f {ASSUMED_F:.2f}")
     print("  " + verdict)
+    launch_law_report(d, data, sizes, cols, med, best)
 
 
 def pred_range(c: int) -> tuple[float, float] | None:

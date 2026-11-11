@@ -63,6 +63,12 @@ const DeviceFacts& device_facts() {
         f.cc                     = 100 * properties.major + 10 * properties.minor;
         f.sm_count               = properties.multiProcessorCount;
         f.shared_per_block_optin = properties.sharedMemPerBlockOptin;
+        // The board's canonical facts (the PCI-ID table's row), as the host estimate reads them.
+        const MachineFacts& facts = device_class().facts;
+        if (facts.has_roofline()) {
+            f.clock_hz         = facts.reference_clock_hz();
+            f.dram_bytes_per_s = facts.dram_bytes_per_s();
+        }
         return f;
     });
 }

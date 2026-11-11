@@ -11,4 +11,4 @@ add_library(ninferno_artifact STATIC
   views.cpp
 )
 ninferno_internal_includes(ninferno_artifact)
-target_link_libraries(ninferno_artifact PUBLIC ninferno_core ninferno::json)
+target_link_libraries(ninferno_artifact PUBLIC ninferno::core ninferno::json)
