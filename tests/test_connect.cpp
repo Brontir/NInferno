@@ -14,10 +14,10 @@
 //   untrusted certificate, or one for another name, is refused before anything is sent.
 #include "connect/connector.h"
 #include "connect/link.h"
+#include "connect/nghttp2_compat.h"
 #include "connect/stream_buffer.h"
 
 #include <httplib.h>
-#include <nghttp2/nghttp2.h>
 #include <nlohmann/json.hpp>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
@@ -47,6 +47,7 @@
 namespace {
 
 namespace nc = ninferno::connect;
+namespace h2 = ninferno::connect::h2;
 using namespace std::chrono_literals;
 using Clock = std::chrono::steady_clock;
 
@@ -302,24 +303,24 @@ public:
         const nghttp2_nv nva[] = {nv(":method", method), nv(":scheme", kScheme),
                                   nv(":authority", kAuthority), nv(":path", path)};
         if (body.empty()) {
-            const std::int32_t id = nghttp2_submit_request2(session_, nullptr, nva, 4, nullptr, nullptr);
+            const std::int32_t id = h2::submit_request(session_, nullptr, nva, 4, nullptr, nullptr);
             streams_[id];
             return id;
         }
         auto source = std::make_shared<std::pair<std::string, std::size_t>>(body, 0);
-        nghttp2_data_provider2 provider{};
+        h2::DataProvider provider{};
         provider.source.ptr    = source.get();
         provider.read_callback = [](nghttp2_session*, std::int32_t, std::uint8_t* buf,
                                     std::size_t length, std::uint32_t* flags,
-                                    nghttp2_data_source* src, void*) -> nghttp2_ssize {
+                                    nghttp2_data_source* src, void*) -> h2::ssize {
             auto& [text, off] = *static_cast<std::pair<std::string, std::size_t>*>(src->ptr);
             const std::size_t n = std::min(length, text.size() - off);
             std::memcpy(buf, text.data() + off, n);
             off += n;
             if (off == text.size()) { *flags |= NGHTTP2_DATA_FLAG_EOF; }
-            return static_cast<nghttp2_ssize>(n);
+            return static_cast<h2::ssize>(n);
         };
-        const std::int32_t id = nghttp2_submit_request2(session_, nullptr, nva, 4, &provider, nullptr);
+        const std::int32_t id = h2::submit_request(session_, nullptr, nva, 4, &provider, nullptr);
         bodies_[id] = source;
         streams_[id];
         return id;
@@ -334,8 +335,8 @@ public:
         char buffer[16384];
         for (;;) {
             const std::uint8_t* data = nullptr;
-            nghttp2_ssize n          = 0;
-            while ((n = nghttp2_session_mem_send2(session_, &data)) > 0) {
+            h2::ssize n              = 0;
+            while ((n = h2::mem_send(session_, &data)) > 0) {
                 if (!send_all(conn_, std::string_view(reinterpret_cast<const char*>(data),
                                                      static_cast<std::size_t>(n)))) {
                     return done();
@@ -346,8 +347,8 @@ public:
             if (conn_.wait(10)) {
                 const ssize_t got = conn_.recv(buffer, sizeof buffer);
                 if (got <= 0) { return done(); }
-                if (nghttp2_session_mem_recv2(session_, reinterpret_cast<const std::uint8_t*>(buffer),
-                                              static_cast<std::size_t>(got)) < 0) {
+                if (h2::mem_recv(session_, reinterpret_cast<const std::uint8_t*>(buffer),
+                                 static_cast<std::size_t>(got)) < 0) {
                     return done();
                 }
             }

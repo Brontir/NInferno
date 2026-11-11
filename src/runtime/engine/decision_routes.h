@@ -23,6 +23,15 @@
 //          <route>"   ("none": the path does not read such a weight). The runs by width alone,
 //         then those of a verify round of one sequence and of several (ScopedRoundLanes) where
 //         they differ.
+//
+// The route_evidence section (#614, A3) has the same keys and the same shape of line, each run
+// naming the evidence beside the route: "<route> authority=<name> evidence=<kind>[ donor=<board>
+// d=<distance>]" (route_authorities.h evidence_text). Its routes are those of the routes section
+// (both ask route_answer_query, which is deterministic; each section makes its own pass). A
+// lanes clause appears where that round's runs, evidence included, differ from the width-alone
+// runs, so an evidence line can carry one where its routes line has none. It is in the manifest
+// text, not in the fingerprint and not
+// in the manifest's hash (decision_fingerprint.h), so the id of every existing manifest holds.
 
 #include "core/device_class.h"
 #include "ops/generic/generic_gemm.h"
@@ -44,9 +53,18 @@ inline constexpr int kDecisionRouteSeveralLanes    = 4;          // "several lan
 routes_of(const DeviceClass& device, std::span<const ops::detail::generic::SeenProblem> problems,
           std::int32_t prefill_chunk, bool invariant);
 
+// The route_evidence lines of `problems`, as routes_of's with the evidence of each answer.
+[[nodiscard]] DecisionSection
+route_evidence_of(const DeviceClass& device,
+                  std::span<const ops::detail::generic::SeenProblem> problems,
+                  std::int32_t prefill_chunk, bool invariant);
+
 // The lines `recorded` asked again on `device`: each key parsed back into its problem and chunk.
 // A key that does not parse is std::invalid_argument.
 [[nodiscard]] DecisionSection replay_routes(const DeviceClass& device,
                                             const DecisionSection& recorded);
+// The same for a recorded route_evidence section.
+[[nodiscard]] DecisionSection replay_route_evidence(const DeviceClass& device,
+                                                    const DecisionSection& recorded);
 
 } // namespace ninferno::runtime

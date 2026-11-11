@@ -31,8 +31,8 @@ inline constexpr double kDp4aOpsPerSmClock = 512;
 // Provenance (Fact / Counted / Fitted) is recorded in the route cost model's registry:
 // route_cost::kLaunchNodeAda (ops/generic/route_cost_constants.h, listed there). The row is the
 // per-launch t0 fitted from the Ada census, three cards (RTX 4060 Ti, 4070 Ti, 4090), without
-// PDL. Not yet carried: a pdl axis, the compiled-kernel hash and a holdout record (PR #635's
-// Holdout is not on master).
+// PDL; its holdout record is h_launch_node (core/fitted_holdouts.h). Not yet carried: a pdl axis
+// and the compiled-kernel hash.
 struct LaunchNode {
     std::string_view generation;
     double seconds;

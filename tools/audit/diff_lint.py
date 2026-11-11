@@ -643,14 +643,80 @@ COND_LITERAL = re.compile(
     r"(0[xX][0-9A-Fa-f']+|0[bB][01']+|[0-9][0-9']*)(?:[uU](?:ll|LL|[lL])?|(?:ll|LL|[lL])[uU]?)?")
 
 
+def top_level_split(expr, op):
+    """`expr` cut at each `op` (`&&` or `||`) outside parentheses; None where the parentheses do not
+    balance."""
+    parts, depth, start, i = [], 0, 0, 0
+    while i < len(expr):
+        c = expr[i]
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth < 0:
+                return None
+        elif depth == 0 and expr.startswith(op, i):
+            parts.append(expr[start:i])
+            i += len(op)
+            start = i
+            continue
+        i += 1
+    return parts + [expr[start:]] if depth == 0 else None
+
+
+def strip_parens(expr):
+    """`expr` without the parentheses that enclose all of it (`(a) && (b)` keeps its own)."""
+    expr = expr.strip()
+    while expr.startswith("(") and expr.endswith(")"):
+        depth = 0
+        for i, c in enumerate(expr):
+            depth += c == "("
+            depth -= c == ")"
+            if depth == 0 and i < len(expr) - 1:
+                return expr  # the first parenthesis closes before the end
+        expr = expr[1:-1].strip()
+    return expr
+
+
 def cond_literal(rest, cxx=True):
-    """The value of a condition that is one integer literal (any base, digit separators and suffixes
-    allowed, inside any number of parentheses, a trailing comment ignored), else None. `true` and
-    `false` are literals in C++ only (C before C23 reads `true` as an undefined name, 0)."""
+    """The value of a condition the preprocessor decides without a macro: one integer literal (any
+    base, digit separators and suffixes allowed, inside any number of parentheses, a trailing
+    comment ignored), or `&&` and `||` over such terms whose literal operands settle it the way
+    short-circuit evaluation does (`X && 0` and `0 && X` are 0, `X || 1` and `1 || X` are 1, in any
+    order and grouping; #712). Else None: an operand that is not a literal and does not settle it,
+    or any other operator. `true` and `false` are literals in C++ only (C before C23 reads `true` as
+    an undefined name, 0)."""
     rest = re.sub(r"/\*.*?\*/", " ", rest)  # a comment is whitespace to the preprocessor
     rest = re.sub(r"[ \t]*(?://.*|/\*.*)$", "", rest).strip()
-    while rest.startswith("(") and rest.endswith(")"):
-        rest = rest[1:-1].strip()
+    return cond_value(rest, cxx)
+
+
+def has_char_constant(rest):
+    """True when a quote in `rest` opens a character constant: one that does not continue a number
+    (a digit separator: 1'000, 0x1'F), so also a prefixed one (u8'x', L'x')."""
+    for m in re.finditer("'", rest):
+        token = re.search(r"\w*$", rest[:m.start()]).group(0)
+        if not token[:1].isdigit():
+            return True
+    return False
+
+
+def cond_value(rest, cxx):
+    """cond_literal's value of a condition with its comments removed."""
+    rest = strip_parens(rest)
+    # `?:` and the comma bind looser than `||`, and a character constant can hold `&&` or `||`
+    # (`'||1'`): not decided here.
+    if "?" in rest or "," in rest or has_char_constant(rest):
+        return None
+    for op, settles in (("||", 1), ("&&", 0)):
+        parts = top_level_split(rest, op)
+        if parts is None:
+            return None
+        if len(parts) > 1:
+            values = [cond_value(part, cxx) for part in parts]
+            if any(v is not None and int(v != 0) == settles for v in values):
+                return settles
+            return 1 - settles if all(v is not None for v in values) else None
     if cxx and rest in ("false", "true"):  # C++ keywords, valid in #if
         return int(rest == "true")
     m = COND_LITERAL.fullmatch(rest)
