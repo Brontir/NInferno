@@ -85,8 +85,8 @@ at run time. `ninferno_route_rules_test` (`--list` prints the table) holds the t
 
 ## What is not covered
 
-The guard is a text scan, and the list is not every literal comparison in `generic_gemm.cpp` or
-in `route_authorities.cpp` (the authority cascade: `nvfp4_half_l2`, `r8_schedule`,
+The guard is a text scan, and the list is not every literal comparison in `generic_select.cpp`,
+`generic_gemm.cpp` or in `route_authorities.cpp` (the authority cascade: `nvfp4_half_l2`, `r8_schedule`,
 `rmma_narrow_fallback` and the rest). Left out knowingly:
 
 - the comparators at the uses of a named constant: the constant's value is held, but whether a
@@ -102,7 +102,7 @@ in `route_authorities.cpp` (the authority cascade: `nvfp4_half_l2`, `r8_schedule
   it returns) and the token argument it hands to a rule: a change there moves decisions that only
   the selector goldens hold;
 - the format membership of the measured rules: `heuristic_w4a8: 65..127 formats` holds the
-  `tokens < kW4a8WideMinTokens` edge, not the `wide_format` switch in `generic_gemm.cpp` that says
+  `tokens < kW4a8WideMinTokens` edge, not the `wide_format` switch in `generic_select.cpp` that says
   which formats take the wider tile, and the per-format flags in `format_traits.h` (`r8_verify`,
   `mmq_verify`, `light_step`) are not held at all: adding or removing a format in either passes
   the test;
@@ -200,8 +200,8 @@ the first candidate for a derivation or a re-measurement, because nothing can be
 it, and a `Fitted` one is a fit, not a derivation; a `PlacedBetweenMeasured` one is the same
 question about a line nobody measured.
 
-Where the provenance of a rule was found: the comments at its use in `generic_gemm.cpp`,
-`generic_gemm.h` and `route_authorities.cpp` (quoted in the tolerance where they state a margin),
+Where the provenance of a rule was found: the comments at its use in `generic_select.cpp`,
+`generic_gemm.cpp`, `generic_gemm.h` and `route_authorities.cpp` (quoted in the tolerance where they state a margin),
 `decisions.md` 58 for the verify widths, and `deterministic-decisions.md` for the rules that rest
 on few boards (the R8 rule's SM-count edge, placed between the two measured boards, 84 and 170
 SMs). The history before the 0.1.0 squash is not in the repository.

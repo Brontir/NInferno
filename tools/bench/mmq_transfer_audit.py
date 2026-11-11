@@ -13,7 +13,7 @@ Two layers, both from data in the repository; it never selects a route, fits a c
    label picks than on the faster of {mmq, w4a8}, per format and prompt length.
 
 Regimes come from architecture facts only: decode T<=4 (the vec/R8 row range), verify 5..16 (below
-the 17-token prefill the MMQ gate is defined for: generic_gemm.cpp mmq_prefill_wins), wide
+the 17-token prefill the MMQ gate is defined for: generic_select.cpp mmq_prefill_wins), wide
 speed-profile calls T>=17 (a verify or decode of several streams, read from `bands`), and prefill
 T>=17 split by the card's own ridge, T* = int8 ops/s * bytes_per_value / (2 * DRAM bytes/s), with
 the generation's int8 tensor rate (core/generation.h s8), SMs and the reference boost clock

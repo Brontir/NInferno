@@ -19,7 +19,7 @@ using ninferno::WeightCodec;
 
 namespace legacy {
 
-// generic_gemm.cpp codec_of (the throw of its default is a nullopt here).
+// generic_select.cpp codec_of (the throw of its default is a nullopt here).
 std::optional<WeightCodec> codec_of(QType q) {
     switch (q) {
     case QType::BF16:
@@ -101,7 +101,7 @@ std::optional<WeightCodec> codec_of(QType q) {
     }
 }
 
-// generic_gemm.cpp mmq_type.
+// generic_select.cpp mmq_type.
 std::optional<MmqType> mmq_type(QType q) {
     switch (q) {
     case QType::GGML_Q4_K:
