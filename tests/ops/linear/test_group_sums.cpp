@@ -123,6 +123,26 @@ bool admitted_by_rows(const std::string& arch, const std::string& decoder, int e
     return any;
 }
 
+// Whether this build's binary holds a plane instance of the decoder: its own snapshot's rows
+// (kernel_facts::build_arch, the rows ninferno_kernel_facts_test checks against the binary). A
+// substituted board's rows say what its release engine would launch; this binary can launch the
+// plane only where it compiled one (the sm_70 build has none: kRmmaPlaneVariant), so a board
+// substituted on it never reads the plane, whatever its own rows admit.
+bool plane_in_build(const std::string& decoder) {
+    const std::string build(kf::build_arch());
+    for (int i = 0; i < generic::rmma_schedule_count(); ++i) {
+        const auto s = generic::rmma_schedule_info(i);
+        for (const bool latency : {false, true}) {
+            for (const int e : {0, 1, 2}) {
+                const kf::RmmaKernelKey key{decoder,   s.warps_m, s.warps_k, s.m_tiles, s.n_tiles,
+                                            s.cluster, e,         latency,   2};
+                if (kf::rmma_facts(build, key)) return true;
+            }
+        }
+    }
+    return false;
+}
+
 void host_rules(const std::string& board) {
     using C = WeightCodec;
     check(generic::rmma_group_sums_values(C::GgmlQ4K) == 32, "Q4_K groups of 32");
@@ -165,10 +185,13 @@ void host_rules(const std::string& board) {
     }
 
     // rmma_plane_taken and resolve_route against the snapshot rows: one answer per format and
-    // epilogue for every schedule and width; the plane where the call's workspace holds it, else
-    // the MMA with ones said as a demotion; the plan's capacity holds it.
+    // epilogue for every schedule and width, and only where this build compiled the plane; the
+    // plane where the call's workspace holds it, else the MMA with ones said as a demotion; the
+    // plan's capacity holds it.
     const std::string arch = kf::sass_arch().value_or("");
-    void* const payload    = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
+    check(kf::snapshot_header(kf::build_arch()).has_value(),
+          "this build's architecture has a kernel-facts snapshot");
+    void* const payload = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
     std::string admitted_list;
     for (const QType q : {QType::GGML_Q4_K, QType::GGML_Q5_K, QType::GGML_Q2_K, QType::GGML_Q4_1,
                           QType::GGML_Q5_1}) {
@@ -181,7 +204,7 @@ void host_rules(const std::string& board) {
         const WeightCodec c = generic::codec_of(w);
         for (const generic::Epilogue e : {generic::Epilogue::Store, generic::Epilogue::AddResidual,
                                           generic::Epilogue::SwiGlu}) {
-            const bool expected = tensor && !arch.empty() &&
+            const bool expected = tensor && !arch.empty() && plane_in_build(decoder_of(q)) &&
                                   admitted_by_rows(arch, decoder_of(q), static_cast<int>(e));
             const std::string at = board + " " + std::string(generic::qtype_name(q)) + " " +
                                    std::to_string(static_cast<int>(e));
@@ -296,7 +319,11 @@ void host_rules(const std::string& board) {
     check(!generic::rmma_plane_rule(0, 0, 1, 2), "fewer CTAs per SM: the twin");
     check(!generic::rmma_plane_rule(0, 0, 0, 0), "unknown facts: the twin");
     std::cout << board << " (sm_" << arch << "): the plane admitted for"
-              << (admitted_list.empty() ? " none" : admitted_list) << '\n';
+              << (admitted_list.empty() ? " none" : admitted_list)
+              << (plane_in_build(decoder_of(QType::GGML_Q4_K))
+                      ? ""
+                      : " (this sm_" + std::string(kf::build_arch()) + " build has no plane)")
+              << '\n';
 }
 
 // The pre-pass on the GPU against the CPU's tree, bit for bit.

@@ -2483,7 +2483,20 @@ int main() {
                 rmma_routes.push_back(r);
             }
         }
-        const Windows narrow{{0, 5}, {7, 12}, {290, 1}, {0, 17}, {100, 200}, {1, 299}};
+        // Without tensor-core MMA (Volta) the formats of its verify kernels (volta_hmma_codec: the
+        // HMMA kernel and the FP32 GEMV take a call of 1..16 tokens in place of the register
+        // MMA's tiles) keep the profile's promise from 17 tokens only, as prefill_routes.h states;
+        // there the windows below 17 are not checked, and every other format keeps them.
+        const WeightCodec codec = f.qtype == QType::GGML_Q4_K   ? WeightCodec::GgmlQ4K
+                                  : f.qtype == QType::GGML_Q5_K ? WeightCodec::GgmlQ5K
+                                  : f.qtype == QType::GGML_Q2_K ? WeightCodec::GgmlQ2K
+                                  : f.qtype == QType::GGML_Q4_1 ? WeightCodec::GgmlQ41
+                                                                : WeightCodec::GgmlQ51;
+        const bool volta_verify =
+            !device_class().features.mma_tensor && generic::volta_hmma_codec(codec);
+        const Windows narrow =
+            volta_verify ? Windows{{0, 17}, {100, 200}, {1, 299}}
+                         : Windows{{0, 5}, {7, 12}, {290, 1}, {0, 17}, {100, 200}, {1, 299}};
         failures += check_invariance(f, Op::Linear, 136, k, ops::LinearPolicy::A16Only, 79U,
                                      &rmma_routes, true, &narrow);
         failures += check_invariance(f, Op::SwiGlu, 136, k, ops::LinearPolicy::A16Only, 81U,
