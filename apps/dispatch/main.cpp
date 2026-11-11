@@ -297,7 +297,9 @@ int run(const fs::path& engine, char** argv) {
 static bool engine_help_requested(int argc, char** argv) {
     if (argc >= 2) {
         const std::string_view first = argv[1];
-        if (first == "route-tune" || first == "spec-tune" || first == "spec-reselect") { return false; }
+        if (first == "route-tune" || first == "spec-tune" || first == "spec-reselect") {
+            return false;
+        }
     }
     return ninferno::help_requested(argc, argv);
 }
