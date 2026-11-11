@@ -1799,9 +1799,9 @@ measurement.
 **Facts read (cuobjdump of the hooked sm_75 build, nvcc 13.4; CPU only).** Registers / stack bytes of
 `mul_mat_q` at J = 16, 32, 48, 64, 80, 96, 112, 128: Q4_K 128, 195, 246, 254, 250, 255, 255, 255 / 48
 (stack only at 128); Q5_K 140 .. 255, stack at 112 (48) and 128 (56); Q6_K 147 .. 255, stack at 96
-(40), 112 (16), 128 (64). The plan's prediction, 255 registers and a stack from J 80 on, holds for
-Q6_K, not for Q4_K (J 80 250, no stack). sm_86 Q4_K (the same source): 112 .. 248, at most 221 at
-J 128, no stack at any width. SASS counts of Q4_K on sm_75 (static; the kernel holds the unit's loop
+(40), 112 (16), 128 (64). The prediction made beforehand, 255 registers and a stack from J 80 on,
+holds for Q6_K, not for Q4_K (J 80 250, no stack). sm_86 Q4_K (the same source): 112 .. 248, at
+most 221 at J 128, no stack at any width. SASS counts of Q4_K on sm_75 (static; the kernel holds the unit's loop
 twice, with and without the fixup write): IMMA 8 J, I2F 8 J + 19, FFMA 16 J, FMUL 8 J, exactly
 linear in J; LDL / STL 16 / 15 at J 128 only. sm_86: IMMA 2 J (one m16n8k32 where Turing issues four
 m8n8k16), I2F 19 at every J. So no issue count steps between J 64 and J 80.
@@ -1814,7 +1814,7 @@ m8n8k16), I2F 19 at every J. So no issue count steps between J 64 and J 80.
   (48 and 112 included); the same on 32 CTAs (one column tile) 2.90, 3.96, 4.76, 5.50, 6.22, 7.37,
   8.53, 9.87; stream-k on 68 CTAs over one column tile 4.06, 5.04, 6.00, 7.53, 9.05, 10.65, 12.04,
   12.80. Per 16 columns the 64-CTA unit grows 0.8-1.3 us from 32 to 112, then 2.3 us to 128 (the
-  spill); not the step at 80 the plan's grid fit had. The units are about three times the issue
+  spill); not the step at 80 the grid fit had. The units are about three times the issue
   bound of their SASS counts. `unit_clocks` are the 64-CTA ones at the 1545 MHz reference clock;
   `stream_k_unit` 1.18 is the mean ratio of the stream-k unit to them over the six table widths
   (1.10 .. 1.25). Both are MEASURED constants of the generation's row, read on the launches the
@@ -1822,15 +1822,15 @@ m8n8k16), I2F 19 at every J. So no issue count steps between J 64 and J 80.
   is not one).
 - V2, J 128 at 121 columns, 4096 x 4096: stream-k on 68 CTAs with the fixup 129.3 us a call, a tile
   a CTA on 32 CTAs 161.5 us. Kernels apart: the 68-CTA tile kernel 111.3 us, the fixup 17.5 us, the
-  32-CTA kernel 162.6 us; the fixup's launch adds 0.7 us of gap. Predicted by the plan: 8 / 16 of
+  32-CTA kernel 162.6 us; the fixup's launch adds 0.7 us of gap. Predicted beforehand: 8 / 16 of
   the 32-CTA kernel plus 28 us of fixup bytes and a gap; measured: the 8 stream-k units take 111 us,
-  not 81 (a unit on 68 CTAs costs more than on 32), and the fixup 17.5 us, not 28: the plan's 4x the
+  not 81 (a unit on 68 CTAs costs more than on 32), and the fixup 17.5 us, not 28: the prediction's 4x the
   partial bytes (17.4 MB) counted the CTA's own write, which is in the tile kernel; the bytes the
   fixup kernel moves (60 partials read, 32 output tiles read and written: 8.1 MB) take 13.2 us at
   616 GB/s.
 - V3, J 64 at 121 columns: a tile a CTA (64 CTAs) 105.6 us, stream-k forced (68 CTAs, the same 16
   units on the longest CTA) 123.8 us: tile kernel 104.4, stream-k kernel 112.7 (+8 %), its fixup
-  10.3 us (5.9 MB: 9.6 us) and 0.8 us of gap. So the stream-k unit penalty of the plan's fit is real,
+  10.3 us (5.9 MB: 9.6 us) and 0.8 us of gap. So the stream-k unit penalty of the grid fit is real,
   not zero: 8 % at equal units and column tiles, 10-25 % where the stream-k call has one column tile
   and the tile-a-CTA call two (its weight tile is read by two CTAs, the second from the L2: a
   candidate cause, not separated).
@@ -1842,12 +1842,12 @@ The first window's numbers (one pass of 7 x 200 calls, each process from an idle
 **Verification on the grid (V4: the 10.11 run re-read by the kit's reader with the law's constants,
 no refit; one C_N per size and one D_r per run fitted as in its FIT).** The law picks the measured
 best of the six table widths at 20 of 21 sizes, mean regret 0.11 % (miss: 281 columns, J 96 for
-J 80, +2.3 %), against 1.56 % for the tile law at f 0.20 and 13.75 % for the fewest tiles; the plan
-predicted at least 19 and 0.44 %. Residual 2.05 % rms of the size's time over the 252 cells of the
+J 80, +2.3 %), against 1.56 % for the tile law at f 0.20 and 13.75 % for the fewest tiles; predicted
+beforehand: at least 19 and 0.44 %. Residual 2.05 % rms of the size's time over the 252 cells of the
 table widths (2.19 % beyond the request noise; the tile law's two fitted constants left 2.87 and
-3.04 %); 57 of 126 size x width medians within 1 %. Of the plan's 14 key cells, 7 are within
-1 % (25 columns J 64, 105 J 64 and J 128, 121 J 64, 137 J 80, 313 J 128, 377 J 128); the others are
-off by -1.5 .. -3.9 % (121 and 137 J 128, 201 J 128, 313 J 80, 377 J 96, 25 J 32) and +3.4 % (25
+3.04 %); 57 of 126 size x width medians within 1 %. Of the 14 cells predicted beforehand to lie
+within 1 %, 7 are (25 columns J 64, 105 J 64 and J 128, 121 J 64, 137 J 80, 313 J 128, 377
+J 128); the others are off by -1.5 .. -3.9 % (121 and 137 J 128, 201 J 128, 313 J 80, 377 J 96, 25 J 32) and +3.4 % (25
 J 128): the law's units are the microbench's Q4_K at 1.95 GHz, the grid's are Qwen3-8B's Q4_K / Q6_K
 mix in a server run. The refit of the law's form (units by mode, a + b J each, and the fixup
 launches free: a FITTED diagnosis) leaves 1.77 %, so about 1.7 % of structure is in neither law.
@@ -1857,7 +1857,7 @@ Picks of the 4096-row products (`test_choice`): 64 at 97..128 columns, 80 at 129
 **Numerics.** As DECISIONS 74: a different width changes the stream-k split and the sums; the
 logprob check of that note has not been run for the Turing picks.
 
-**Open.** The production A/B (the plan's V5: the law against the fewest tiles, the kit's `ab` with
+**Open.** The production A/B (V5: the law against the fewest tiles, the kit's `ab` with
 `NINFERNO_MMQ_MODE=old|law`); the unit's cost from facts (it is about three times the issue bound
 of its counts: the serialized load phases of a CTA a SM are a latency, not counted here); what makes
 a stream-k unit dearer beyond the 8 % of V3; the 1.7 % of the grid that neither law holds (441
