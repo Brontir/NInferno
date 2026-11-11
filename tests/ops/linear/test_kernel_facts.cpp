@@ -346,9 +346,7 @@ void old_columns_refused() {
     const std::string schedule = " stall_sum sb_waits sb_waits_local outside_total outside_stall "
                                  "outside_waits outside_bar";
     const auto text            = [](const std::string& columns) {
-        return "arch 89
-            kernels 0 columns " + columns + "
-                                         ";
+        return "arch 89\nkernels 0\ncolumns " + columns + "\n";
     };
     expect(kf::snapshot_text_accepted(text(resources + loop + schedule)),
            "the schema 4 columns line is read");
