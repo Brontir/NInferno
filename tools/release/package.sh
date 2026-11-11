@@ -126,10 +126,22 @@ check_selector_facts() {
 # machine's (a distribution's FFmpeg is GPL and brings x264, x265 and xvid): every tree finds it
 # through pkg-config, and lib/ carries it. Built once (a few minutes) and reused while ffmpeg.pin
 # and the script stay the same.
+# The two test-only switches of ffmpeg.sh are refused: a release links the pinned dav1d, built
+# static, and decodes with assembly.
+for switch in NINFERNO_DAV1D_PREFIX NINFERNO_FFMPEG_NO_ASM; do
+  if [ -n "${!switch:-}" ]; then
+    echo "package.sh: $switch is for test builds of ffmpeg.sh; unset it for a release" >&2
+    exit 1
+  fi
+done
 FFMPEG=$(realpath -m "${NINFERNO_FFMPEG_PREFIX:-$BUILD_ROOT/build-release-ffmpeg}")
 bash "$ROOT/tools/release/ffmpeg.sh" "$FFMPEG"
 if grep -q -- '--disable-x86asm' "$FFMPEG/share/licenses/ffmpeg/BUILD.txt"; then
   echo "package.sh: $FFMPEG was built without assembly (NINFERNO_FFMPEG_NO_ASM), too slow for a release" >&2
+  exit 1
+fi
+if LD_LIBRARY_PATH="$FFMPEG/lib" ldd "$FFMPEG/lib/libavcodec.so" | grep -q 'libdav1d'; then
+  echo "package.sh: $FFMPEG's libavcodec loads a shared dav1d (NINFERNO_DAV1D_PREFIX), not the pinned one built into it" >&2
   exit 1
 fi
 export PKG_CONFIG_PATH="$FFMPEG/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"

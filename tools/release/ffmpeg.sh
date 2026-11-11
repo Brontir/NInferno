@@ -9,15 +9,20 @@
 #   share/licenses/ffmpeg/  the licence texts, BUILD.txt (ffmpeg_check.py: the licence each
 #                           library reports, its configure line, its decoders and demuxers), and
 #                           source/ (the two tarballs, this script and ffmpeg.pin)
-# A second run with the same pin, script and options keeps PREFIX as it is.
+# A second run with the same pin, script, options, compiler and C library keeps PREFIX as it is.
+# PREFIX may not contain white space (FFmpeg's configure and Makefiles do not quote paths).
 #
-# Needs a C compiler, make, pkg-config, python3, nasm, and meson with ninja for dav1d.
-# NINFERNO_FFMPEG_ARCHIVE and NINFERNO_DAV1D_ARCHIVE name local copies of the tarballs (an offline
-# build). NINFERNO_DAV1D_PREFIX links an installed dav1d (its lib/pkgconfig/dav1d.pc) instead of
-# building one. NINFERNO_JOBS caps the compile jobs. NINFERNO_FFMPEG_NO_ASM=1 builds without nasm,
-# with slow decoders: for tests only, package.sh refuses such a build.
+# A build needs a C compiler ($CC, default cc), make, pkg-config, xz, python3, nasm, meson and ninja
+# for dav1d, and curl for the downloads. NINFERNO_FFMPEG_ARCHIVE and NINFERNO_DAV1D_ARCHIVE name
+# local copies of the tarballs (an offline build: no curl). NINFERNO_DAV1D_PREFIX links an installed
+# dav1d (its lib/pkgconfig/dav1d.pc) instead of building one, and NINFERNO_FFMPEG_NO_ASM=1 builds
+# without nasm, with slow decoders: both for tests only, package.sh refuses them. NINFERNO_JOBS
+# caps the compile jobs.
 set -euo pipefail
 PREFIX=$(realpath -m "${1:?usage: ffmpeg.sh PREFIX}")
+case $PREFIX in
+  *[[:space:]]*) echo "ffmpeg.sh: the prefix '$PREFIX' contains white space, which FFmpeg's build cannot take; choose another" >&2; exit 1 ;;
+esac
 HERE=$(cd "$(dirname "$0")" && pwd)
 PIN=$HERE/ffmpeg.pin
 read -r _ FFMPEG_VERSION FFMPEG_SHA < <(grep '^ffmpeg ' "$PIN")
@@ -25,53 +30,69 @@ read -r _ DAV1D_VERSION DAV1D_SHA < <(grep '^dav1d ' "$PIN")
 NO_ASM=${NINFERNO_FFMPEG_NO_ASM:-0}
 DAV1D_PREFIX=${NINFERNO_DAV1D_PREFIX:-}
 JOBS=${NINFERNO_JOBS:-$(nproc)}
+CC=${CC:-cc}
 
 # What src/media/decode/decode.cpp needs, nothing more. It hands FFmpeg one in-memory buffer
 # through its own AVIOContext, lets the demuxers probe it, and refuses every nested open (a
 # playlist's segments, a reference to another file): no protocol is needed. A format left out
-# here is one the server refuses ("failed to open media").
+# here is one the server refuses ("media container is not supported").
 #   mov: MP4, MOV, M4V and 3GP (phones, screen recorders, the web), and AVIF images;
 #   matroska: MKV and WebM;
+#   avi, mpegts (.ts, .m2ts, .mts camcorder files), flv: older and broadcast files users still have;
 #   gif: GIF, animated or not;
-#   image_{jpeg,png,webp}_pipe: one JPEG, PNG or WebP image (with GIF, the image formats the
-#   OpenAI and Anthropic APIs document, and the PNG pages the PDF reader renders).
-DEMUXERS=mov,matroska,gif,image_jpeg_pipe,image_png_pipe,image_webp_pipe
+#   image_{jpeg,png,webp,bmp}_pipe: one JPEG, PNG, WebP or BMP image (with GIF, JPEG, PNG and
+#   WebP are the image formats the OpenAI and Anthropic APIs document, and PNG is what the PDF
+#   reader renders pages to).
+DEMUXERS=mov,matroska,avi,mpegts,flv,gif,image_jpeg_pipe,image_png_pipe,image_webp_pipe,image_bmp_pipe
 # The codecs those carry: H.264, HEVC, VP8 and VP9; AV1 through libdav1d (FFmpeg's own av1
 # decoder decodes only with a hardware accelerator, and a release enables none); MPEG-4 Part 2
-# (older phones and cameras; it brings the H.263 decoder with it); Motion JPEG, which decodes
-# JPEG; PNG; WebP (it brings VP8); GIF. No audio decoder: decode.cpp decodes the best video stream
-# and drops every other packet, so a file's sound track is read past, not decoded.
-DECODERS=h264,hevc,vp8,vp9,libdav1d,mpeg4,mjpeg,png,webp,gif
-# The image pipes, and the containers for some streams, split their bytes into frames with these.
-PARSERS=h264,hevc,vp8,vp9,av1,mpeg4video,mjpeg,png,webp,gif
+# (older phones and cameras, AVI; it brings the H.263 decoder with it); MPEG-1 and MPEG-2 video
+# (DVD and broadcast streams in MPEG-TS); Motion JPEG, which decodes JPEG; PNG; WebP (it brings
+# VP8); GIF; BMP. No audio decoder: decode.cpp decodes the best video stream and drops every
+# other packet, so a file's sound track is read past, not decoded.
+DECODERS=h264,hevc,vp8,vp9,libdav1d,mpeg4,mpeg1video,mpeg2video,mjpeg,png,webp,gif,bmp
+# The image pipes, and the containers for some streams, split their bytes into frames with these
+# (mpegvideo is MPEG-1 and MPEG-2 video's).
+PARSERS=h264,hevc,vp8,vp9,av1,mpeg4video,mpegvideo,mjpeg,png,webp,gif,bmp
 
-need() { command -v "$1" > /dev/null || { echo "ffmpeg.sh: $1 is needed ($2)" >&2; exit 1; }; }
-need make "the FFmpeg build"
-need cc "the FFmpeg build"
-need pkg-config "the FFmpeg build finds dav1d"
-need python3 "ffmpeg_check.py"
-need curl "the source downloads"
-[ "$NO_ASM" = 1 ] || need nasm "FFmpeg's and dav1d's x86 assembly; NINFERNO_FFMPEG_NO_ASM=1 builds without, for tests"
-if [ -z "$DAV1D_PREFIX" ]; then
-  need meson "the dav1d build"
-  need ninja "the dav1d build"
-fi
-
-# The build is reused only when everything that shapes it is the same.
+# The build is reused only when everything that shapes it is the same: the pin, the scripts, the
+# options, the compiler and the C library.
+compiler=$("$CC" --version 2> /dev/null | head -n 1 || true)
+libc=$(getconf GNU_LIBC_VERSION 2> /dev/null || echo unknown)
 want=$(cat "$PIN" "$HERE/ffmpeg.sh" "$HERE/ffmpeg_check.py" | sha256sum | cut -d' ' -f1)
-want="$want no_asm=$NO_ASM dav1d_prefix=$DAV1D_PREFIX"
+want="$want no_asm=$NO_ASM dav1d_prefix=$DAV1D_PREFIX cc=$compiler libc=$libc"
 stamp=$PREFIX/.ninferno-ffmpeg
 if [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$want" ]; then
   echo "ffmpeg.sh: $PREFIX already holds FFmpeg $FFMPEG_VERSION"
   exit 0
 fi
 if [ -d "$PREFIX" ] && [ ! -f "$stamp" ] && [ -n "$(ls -A "$PREFIX")" ]; then
-  echo "ffmpeg.sh: $PREFIX is not empty and holds no build of ffmpeg.sh" >&2
+  echo "ffmpeg.sh: $PREFIX is not empty and holds no complete build of ffmpeg.sh" >&2
   exit 1
 fi
 
+# The tools of the steps that run.
+need() { command -v "$1" > /dev/null || { echo "ffmpeg.sh: $1 is needed ($2)" >&2; exit 1; }; }
+need "${CC%% *}" "the FFmpeg build (CC)"
+need make "the FFmpeg build"
+need pkg-config "the FFmpeg build finds dav1d"
+need xz "the source tarballs"
+need python3 "ffmpeg_check.py"
+if [ -z "${NINFERNO_FFMPEG_ARCHIVE:-}" ] || [ -z "${NINFERNO_DAV1D_ARCHIVE:-}" ]; then
+  need curl "the source downloads; NINFERNO_FFMPEG_ARCHIVE and NINFERNO_DAV1D_ARCHIVE name local copies"
+fi
+[ "$NO_ASM" = 1 ] || need nasm "FFmpeg's and dav1d's x86 assembly; NINFERNO_FFMPEG_NO_ASM=1 builds without, for tests"
+if [ -z "$DAV1D_PREFIX" ]; then
+  need meson "the dav1d build"
+  need ninja "the dav1d build"
+fi
+
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+partial=$PREFIX.partial.$$
+trap 'rm -rf "$tmp" "$partial"' EXIT
+case $tmp in
+  *[[:space:]]*) echo "ffmpeg.sh: the temporary directory '$tmp' contains white space; set TMPDIR to another" >&2; exit 1 ;;
+esac
 fetch() { # name version sha256 url local-copy
   local out=$tmp/$1-$2.tar.xz
   if [ -n "$5" ]; then cp "$5" "$out"; else curl -fsSL -o "$out" "$4"; fi
@@ -98,6 +119,7 @@ fi
 
 args=(
   --prefix="$PREFIX" --libdir="$PREFIX/lib" --shlibdir="$PREFIX/lib" --incdir="$PREFIX/include"
+  --cc="$CC"
   --enable-shared --disable-static --enable-pic
   # The licence: LGPL 2.1 or later. configure stops on any component that would need more.
   --disable-gpl --disable-nonfree
@@ -143,8 +165,11 @@ replace these.
 EOF
 python3 "$HERE/ffmpeg_check.py" "$stage/lib" > "$lic/BUILD.txt" ||
   { cat "$lic/BUILD.txt" >&2; echo "ffmpeg.sh: the build is not the LGPL, decoders-only FFmpeg it should be" >&2; exit 1; }
-echo "$want" > "$stage/.ninferno-ffmpeg"
-rm -rf "$PREFIX"  # empty, or an older build of this script
+# Into place: copied next to PREFIX (another file system, maybe), then renamed over it; the stamp
+# comes last, so an interrupted run never leaves a matching stamp on a partial PREFIX.
 mkdir -p "$(dirname "$PREFIX")"
-mv "$stage" "$PREFIX"
+cp -a "$stage" "$partial"
+rm -rf "$PREFIX"  # empty, or an older build of this script
+mv "$partial" "$PREFIX"
+echo "$want" > "$stamp"
 echo "ffmpeg.sh: FFmpeg $FFMPEG_VERSION with dav1d $DAV1D_VERSION -> $PREFIX"
