@@ -406,6 +406,9 @@ int graph_capture() {
             cudaMalloc(&dx, xh.size() * 2);
             cudaMalloc(&dy, ybytes);
             cudaMemcpy(dx, xh.data(), xh.size() * 2, cudaMemcpyHostToDevice);
+            // A pageable H2D may return before its DMA lands, and the launches below run on a
+            // non-blocking stream that does not wait for the legacy stream.
+            cudaDeviceSynchronize();
             Tensor tx(dx, DType::BF16, {1024, tokens});
             Tensor ty(dy, DType::BF16, {512, tokens});
             DeviceArena workspace(std::max<std::size_t>(
