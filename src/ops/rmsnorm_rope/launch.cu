@@ -42,19 +42,23 @@ void launch_text(const Tensor& positions, const Tensor& q_norm_weight, const Ten
 
 } // namespace
 
+// A function template, not a lambda with template parameters: nvcc warns (#445) that those
+// appear in no parameter type.
+template <int QHeads, int KHeads>
+static int text_resident_ctas() {
+    return kernel_resident_ctas_per_sm(
+        reinterpret_cast<const void*>(
+            rmsnorm_rope_d256_text_kernel<QHeads, KHeads, kTextHeadsPerBlock>),
+        kTextHeadsPerBlock * 32, 0);
+}
+
 int text_kernel_resident_ctas(std::int32_t query_heads, std::int32_t key_heads) {
-    const auto of = []<int QHeads, int KHeads>() {
-        return kernel_resident_ctas_per_sm(
-            reinterpret_cast<const void*>(
-                rmsnorm_rope_d256_text_kernel<QHeads, KHeads, kTextHeadsPerBlock>),
-            kTextHeadsPerBlock * 32, 0);
-    };
     // The geometries of rmsnorm_rope_text_launch's dispatch.
-    if (query_heads == 8 && key_heads == 2) return of.template operator()<8, 2>();
-    if (query_heads == 16 && key_heads == 2) return of.template operator()<16, 2>();
-    if (query_heads == 16 && key_heads == 4) return of.template operator()<16, 4>();
-    if (query_heads == 24 && key_heads == 4) return of.template operator()<24, 4>();
-    if (query_heads == 32 && key_heads == 2) return of.template operator()<32, 2>();
+    if (query_heads == 8 && key_heads == 2) return text_resident_ctas<8, 2>();
+    if (query_heads == 16 && key_heads == 2) return text_resident_ctas<16, 2>();
+    if (query_heads == 16 && key_heads == 4) return text_resident_ctas<16, 4>();
+    if (query_heads == 24 && key_heads == 4) return text_resident_ctas<24, 4>();
+    if (query_heads == 32 && key_heads == 2) return text_resident_ctas<32, 2>();
     return 0; // not instantiated
 }
 
