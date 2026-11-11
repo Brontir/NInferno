@@ -331,7 +331,11 @@ EXCLUDED = [
                                     "filter; the selector's NINFERNO_WITHOUT_NVFP4 macro comes from the "
                                     "root CMakeLists.txt (listed), the filter alone cannot move a golden "
                                     "(a base build that stopped filtering would not compile), and a flag "
-                                    "that moves SASS shows in the kernel-facts snapshot test"),
+                                    "that moves SASS shows in the kernel-facts snapshot test; also the "
+                                    "test link mode's redirects (NINFERNO_SHARED_OP_TESTS), which link "
+                                    "the same objects"),
+    ("cmake/SharedTestLibrary.cmake", "test-tree link mode (NINFERNO_SHARED_OP_TESTS): the same objects "
+                                      "in one shared library, -fPIC only; no selector input"),
     ("src/CMakeLists.txt", "target wiring"),
     ("src/*/CMakeLists.txt", "build files of libraries the golden test does not link"),
     ("src/models/**", "model programs: not linked into the golden test"),
