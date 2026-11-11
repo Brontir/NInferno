@@ -141,6 +141,20 @@ ninferno_add_op_test(ninferno_format_traits_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_format_traits.cpp"
   LIBRARIES ninferno_linear_test_support)
 
+# The kernel roofline (#613 PR-4): price_routes prices equal the golden table of the formula
+# it replaced (fixed outputs from before the move), and
+# the selector's priced routes are the roofline's terms (host only).
+ninferno_add_op_test(ninferno_kernel_roofline_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_kernel_roofline.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
+# The generator of that golden table (tests/ops/linear/gen_kernel_roofline_golden.cpp): built so that
+# it keeps compiling, not run by ctest (it is run once, against the code before the move).
+ninferno_add_test(ninferno_gen_kernel_roofline_golden
+  NO_DEFAULT_TEST
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/gen_kernel_roofline_golden.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
 # ops::linear's candidates per call (#306): the owned Q8 kernel's launch and the generic route,
 # one selected as dispatch_linear runs.
 # The activation each generic route prepares and which preparations serve one another (#308).
