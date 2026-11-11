@@ -6,6 +6,8 @@
 #include "models/qwen3_5/program/planning/copy_proposal.h"
 #include "models/qwen3_5/program/planning/speculation_load.h"
 #include "product/speculation/speculation.h"
+#include "spec/pairs.h"
+#include "spec/profile.h"
 #include "spec/registry.h"
 
 #include <nlohmann/json.hpp>
@@ -20,6 +22,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -143,6 +146,136 @@ int main() {
                               same.resolved->profile.load.size() == 1 &&
                               same.resolved->profile.load[0].lanes == 4,
                           "its own mode: kept as it is");
+    }
+    // A load table derived from the facts (Profile::load_basis "facts") is derived again for the
+    // choices one mode's reselection makes: the old table bounded the choices before it.
+    {
+        namespace sp = ninferno::spec;
+        // Seconds per 100 tokens of each configuration on math, code, prose and thinking (plain
+        // decode 1 s on each).
+        const auto measured =
+            [](std::initializer_list<std::pair<const char*, std::vector<double>>> rows) {
+                std::vector<sp::Measurement> out;
+                for (const char* family : {"math", "code", "prose", "thinking"}) {
+                    out.push_back({.family = family, .tokens = 100, .seconds = 1.0});
+                }
+                for (const auto& [label, seconds] : rows) {
+                    std::size_t i = 0;
+                    for (const char* family : {"math", "code", "prose", "thinking"}) {
+                        out.push_back({.config  = sp::SpecConfig::parse(label),
+                                       .family  = family,
+                                       .tokens  = 100,
+                                       .seconds = seconds[i++]});
+                    }
+                }
+                return out;
+            };
+        const auto subject_of = [](const sp::Profile& profile, const char* model_type) {
+            ninferno::product::SpeculationSubject subject;
+            subject.support = sp::engine_support(model_type);
+            ninferno::spec::ResolvedSpeculation resolved;
+            resolved.source  = "test";
+            resolved.profile = profile;
+            subject.resolved = resolved;
+            return subject;
+        };
+        // (i) The same mode: overall and non-thinking mtp:3, thinking dflash:7, table 2:7,3:0.
+        // MTP alone reselects the thinking choice as mtp:2, which loses at two streams
+        // (1.667 x 0.4); every MTP choice gains at depth 1 (x 0.9), so the table is 2:1,3:0.
+        {
+            sp::Profile p;
+            p.measurements = measured({{"mtp:3", {0.4, 0.4, 0.4, 0.9}},
+                                       {"mtp:2", {0.5, 0.5, 0.5, 0.6}},
+                                       {"mtp:1", {0.7, 0.7, 0.7, 0.7}},
+                                       {"dflash:7", {0.95, 0.95, 0.95, 0.3}}});
+            sp::select(p, {.served = sp::engine_support("qwen3_5_text")});
+            p.joint_scale = {{"mtp:1", {{2, 0.9}}},
+                             {"mtp:2", {{2, 0.4}}},
+                             {"mtp:3", {{2, 0.6}}},
+                             {"dflash:7", {{2, 0.8}}}};
+            p.load        = sp::facts_load(p);
+            p.load_basis  = "facts";
+            failures += check(p.overall.config.label() == "mtp:3" &&
+                                  p.thinking.config.label() == "dflash:7" &&
+                                  sp::load_label(p.load) == "2:7,3:0",
+                              "the profile: mtp:3 by default, dflash:7 thinking, table " +
+                                  sp::load_label(p.load));
+            const auto mtp =
+                ninferno::product::subject_of_mode(subject_of(p, "qwen3_5_text"), sp::Mode::Mtp);
+            const sp::Profile& q = mtp.resolved->profile;
+            failures += check(q.thinking.config.label() == "mtp:2" &&
+                                  sp::load_label(q.load) == "2:1,3:0" && q.load_basis == "facts",
+                              "MTP alone: thinking " + q.thinking.config.label() +
+                                  ", the table derived again: " + sp::load_label(q.load));
+        }
+        // (ii) Another mode than the profile's own choice: Gemma 4's Engine runs MTP only, so a
+        // profile choosing dflash:7 serves mtp:3; its table (from the served choice, 2:3,3:0)
+        // stays derived when MTP is chosen, not the flat 2:0 of a table measured with another
+        // drafter.
+        {
+            sp::Profile p;
+            p.measurements =
+                measured({{"mtp:3", {0.4, 0.4, 0.4, 0.5}}, {"dflash:7", {0.2, 0.2, 0.2, 0.2}}});
+            sp::select(p, {.served = sp::engine_support("gemma4_text")});
+            p.joint_scale = {{"mtp:3", {{2, 0.6}}}, {"dflash:7", {{2, 0.8}}}};
+            p.load        = sp::facts_load(p);
+            p.load_basis  = "facts";
+            failures +=
+                check(p.overall.config.label() == "dflash:7" && p.served &&
+                          p.served->overall.config.label() == "mtp:3" &&
+                          sp::load_label(p.load) == "2:3,3:0",
+                      "the profile: dflash:7, served mtp:3, table " + sp::load_label(p.load));
+            const auto mtp =
+                ninferno::product::subject_of_mode(subject_of(p, "gemma4_text"), sp::Mode::Mtp);
+            const sp::Profile& q = mtp.resolved->profile;
+            failures += check(q.overall.config.label() == "mtp:3" &&
+                                  sp::load_label(q.load) == "2:3,3:0" && q.load_basis == "facts",
+                              "MTP chosen: the served choice's derived table stays, " +
+                                  sp::load_label(q.load) + " (" + q.load_basis + ")");
+        }
+    }
+    // Every step that serves a profile carries its table's basis (the plan reports it): the
+    // profile's choice, its fit fallback and a shallower draft alike.
+    {
+        ninferno::product::SpeculationSubject subject;
+        subject.support = ninferno::spec::engine_support("qwen3_5_text");
+        ninferno::spec::ResolvedSpeculation resolved;
+        resolved.source                  = "test";
+        resolved.profile.overall.config  = ninferno::spec::SpecConfig::parse("mtp:3");
+        resolved.profile.overall.drafter = "mtp";
+        resolved.profile.thinking        = resolved.profile.overall;
+        resolved.profile.non_thinking    = resolved.profile.overall;
+        ninferno::spec::Choice fallback  = resolved.profile.overall;
+        fallback.config                  = ninferno::spec::SpecConfig::parse("mtp:1");
+        resolved.profile.fit_fallback    = fallback;
+        resolved.profile.load            = {ninferno::spec::LoadBound{.lanes = 2, .depth = 1}};
+        resolved.profile.load_basis      = "facts";
+        resolved.drafters["mtp"]         = "component:mtp";
+        subject.components               = {"text", "mtp"};
+        subject.resolved                 = resolved;
+        const auto served = ninferno::product::served_speculation(subject, false, false);
+        failures += check(served && served->drafts() && served->load_basis == "facts",
+                          "the profile's choice carries its table's basis");
+        if (served) {
+            using ninferno::product::FallbackStep;
+            // The shallower draft steps down from the fit fallback where there is one (mtp:1 has
+            // nothing shallower), so it is asked of the profile without it (from mtp:3).
+            auto without_fallback = subject;
+            without_fallback.resolved->profile.fit_fallback.reset();
+            for (const FallbackStep wanted : {FallbackStep::FitFallback, FallbackStep::Shallower}) {
+                std::string basis = "unserved";
+                const auto taken  = ninferno::product::fit_fallbacks(
+                    wanted == FallbackStep::Shallower ? without_fallback : subject, *served, false,
+                    [&](const ninferno::product::ServedSpeculation& candidate, FallbackStep at) {
+                        if (at != wanted) { return false; }
+                        basis = candidate.load_basis;
+                        return true;
+                    });
+                failures += check(taken && basis == "facts" && taken->load_basis == "facts",
+                                  std::string(ninferno::product::fallback_step_name(wanted)) +
+                                      " carries the profile's table basis: " + basis);
+            }
+        }
     }
     // Per request, a default that decodes plainly loads the other flag's drafter: those requests
     // speculate, the default's decode plainly (Codex on #117).
