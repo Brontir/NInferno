@@ -306,9 +306,23 @@ measured_boards_known(std::span<const Measured, Extent> measured) noexcept {
 [[nodiscard]] std::vector<std::string> gpu_class_chain(std::string_view chip, int sms,
                                                        std::string_view arch);
 
-// The current device's class, cached per ordinal. Throws std::runtime_error when CUDA cannot
-// report the device or the ordinal is invalid.
-[[nodiscard]] const DeviceClass& device_class();
+// The class of the device this thread runs on, probed once: what device_class() returns where no
+// class is substituted (ScopedDeviceClass). Throws where CUDA cannot report the device. Defined in
+// ninferno_core (device_class.cpp), never in ninferno_core_host.
+[[nodiscard]] const DeviceClass& current_device_class();
+
+// The substitute this thread's device_class() answers (ScopedDeviceClass), or null.
+[[nodiscard]] const DeviceClass* substituted_device_class() noexcept;
+
+// The current device's class: the ScopedDeviceClass substitute of this thread, else the probed
+// class. Throws std::runtime_error when CUDA cannot report the device. Inline, so that the
+// reference to current_device_class() sits in the object that calls device_class():
+// ninferno_core_host keeps no reference into ninferno_core, and nor does any other host archive:
+// the object that calls it (ninferno_ops: kernel_facts_device.cpp) links ninferno_core.
+[[nodiscard]] inline const DeviceClass& device_class() {
+    if (const DeviceClass* substitute = substituted_device_class()) { return *substitute; }
+    return current_device_class();
+}
 [[nodiscard]] const DeviceClass& device_class(int device);
 
 // The identity of ordinal `device`: cudaDeviceGetPCIBusId and cudaGetDeviceProperties' uuid,
@@ -371,9 +385,8 @@ private:
     const std::string* previous_key_;
 };
 
-// The substitute this thread's device_class() answers (ScopedDeviceClass), or null; and its
-// device_class_key, computed once when the substitution began (null without one).
-[[nodiscard]] const DeviceClass* substituted_device_class() noexcept;
+// The substitute this thread's device_class() answers (substituted_device_class, above), or null;
+// and its device_class_key, computed once when the substitution began (null without one).
 [[nodiscard]] const std::string* substituted_device_class_key() noexcept;
 // Whether this thread's device_class() answers a substitute other than the current CUDA device's
 // own class (by content): state measured or loaded on that device (a tuned route, an explicit

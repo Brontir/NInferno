@@ -1,0 +1,105 @@
+{
+ "devices": [
+  {
+   "index": 0,
+   "pci_bus_id": "0000:01:00.0",
+   "mig_mode": -1,
+   "queried": {
+    "name": "NVIDIA GeForce RTX 4070 Ti",
+    "pci_device_id": 10114,
+    "chip": "ad104",
+    "major": 8,
+    "minor": 9,
+    "sms": 60,
+    "l2_bytes": 50331648,
+    "global_bytes": 12528451584,
+    "smem_per_block_optin": 101376,
+    "smem_per_sm": 102400,
+    "max_threads_per_sm": 1536,
+    "max_blocks_per_sm": 24,
+    "registers_per_sm": 65536,
+    "persisting_l2_max_bytes": 34603008,
+    "memory_bus_bits": 192,
+    "memory_clock_khz": 10501000,
+    "sm_clock_khz": 2625000,
+    "features": {
+     "mma_bf16": true,
+     "mma_bf16_native": true,
+     "mma_tensor": true,
+     "mma_fp8": true,
+     "mma_f8f6f4": false,
+     "mma_mxf4nvf4": false,
+     "tma": false,
+     "pdl": false,
+     "clusters": false,
+     "mma_slow": false
+    }
+   },
+   "synthetic": {
+    "name": "synthetic sm89",
+    "pci_device_id": 10114,
+    "chip": "ad104",
+    "major": 8,
+    "minor": 9,
+    "sms": 60,
+    "l2_bytes": 50331648,
+    "global_bytes": 12528451584,
+    "smem_per_block_optin": 101376,
+    "smem_per_sm": 102400,
+    "max_threads_per_sm": 1536,
+    "max_blocks_per_sm": 24,
+    "registers_per_sm": 65536,
+    "persisting_l2_max_bytes": 37748736,
+    "memory_bus_bits": 0,
+    "memory_clock_khz": 0,
+    "sm_clock_khz": 0,
+    "features": {
+     "mma_bf16": true,
+     "mma_bf16_native": true,
+     "mma_tensor": true,
+     "mma_fp8": true,
+     "mma_f8f6f4": false,
+     "mma_mxf4nvf4": false,
+     "tma": false,
+     "pdl": false,
+     "clusters": false,
+     "mma_slow": false
+    }
+   },
+   "raw": {
+    "reserved_shared_per_block": 1024,
+    "shared_per_block_default": 49152,
+    "registers_per_block": 65536,
+    "max_threads_per_block": 1024,
+    "warp_size": 32
+   },
+   "engine_occupancy_limits": {
+    "reserved_shared_per_block": 1024,
+    "shared_per_block_default": 49152,
+    "registers_per_block": 65536,
+    "max_threads_per_block": 1024,
+    "warp_size": 32
+   },
+   "engine_table_facts": {
+    "source": 1,
+    "sku": "GeForce RTX 4070 Ti",
+    "reference_clock_khz": 2610000,
+    "memory_bus_bits": 192,
+    "memory_clock_khz": 10500000,
+    "l2_mib": 48.0,
+    "mma_slow": false,
+    "driver_read": false
+   },
+   "engine_row_facts": {
+    "source": 1,
+    "sku": "GeForce RTX 4070 Ti",
+    "reference_clock_khz": 2610000,
+    "memory_bus_bits": 192,
+    "memory_clock_khz": 10500000,
+    "l2_mib": 48.0,
+    "mma_slow": false,
+    "driver_read": false
+   }
+  }
+ ]
+}

@@ -1,0 +1,111 @@
+diff --git a/src/ops/generic/ggml_mmq/ggml_mmq.cu b/src/ops/generic/ggml_mmq/ggml_mmq.cu
+index 056d414a8..543e2bcfa 100644
+--- a/src/ops/generic/ggml_mmq/ggml_mmq.cu
++++ b/src/ops/generic/ggml_mmq/ggml_mmq.cu
+@@ -252,8 +252,9 @@ void quantize_activation(Type type, const __nv_bfloat16* x, int ldx, int k, int
+ 
+ std::size_t fixup_bound(int columns) {
+     // A stream-k launch holds at most one 128-row tile of the call's column tile per SM.
+-    int j = 16;
+-    while (j < columns && j < 128) j *= 2;
++    // GRID HOOK: the buffer is sized for the widest forced width (J 128) whatever the call's columns
++    int j = 128;
++    (void) columns;
+     return std::size_t(detail::device_facts().sm_count) * j * 128 * sizeof(float);
+ }
+ 
+diff --git a/src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh b/src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh
+index 65ed9a95c..483118fac 100644
+--- a/src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh
++++ b/src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh
+@@ -41,7 +41,7 @@ constexpr bool work_tiles_arch_matches_table() {
+ 
+ static_assert(work_tiles_arch_matches_table());
+ } // namespace ninferno::ops::ggml_mmq::detail
+-#if defined(__CUDA_ARCH__)
++#if 0 // grid hook: every width compiled for every architecture
+ #    define NINFERNO_MMQ_SKIP_SPECIALIZATION(J)                                                    \
+         (((J) == 80 || (J) == 96) &&                                                               \
+          !::ninferno::ops::ggml_mmq::detail::work_tiles_arch(__CUDA_ARCH__))
+@@ -50,12 +50,16 @@ static_assert(work_tiles_arch_matches_table());
+ #include "ggml-cuda/common.cuh"
+ #include "ggml-cuda/mmq.cuh"
+ 
++#include <algorithm>
+ #include <climits>
+ #include <cstddef>
+ #include <cstdint>
++#include <cstdio>
++#include <cstdlib>
+ #include <mutex>
+ #include <stdexcept>
+ #include <string>
++#include <vector>
+ 
+ namespace ninferno::ops::ggml_mmq::detail {
+ 
+@@ -136,12 +140,28 @@ Launch select_launch(int rows, int columns, int k) {
+     // they run (core/mmq_columns.h width_cost; the others rank by the tile count).
+     const mmq_columns::LaunchFacts facts{rows, k, device.sm_count, device.clock_hz,
+                                          device.dram_bytes_per_s};
+-    for (const int J : mmq_columns::tiles(major, minor, format)) {
++    // GRID HOOK (temporary, never merged; tools/bench/run_524_turing_grid.sh applies it):
++    // NINFERNO_MMQ_J=<w> forces one width (16 32 48 64 80 96 112 128); NINFERNO_MMQ_MODE=old|new|law
++    // takes the DECISIONS 69 table (fewest tiles), the work table with NINFERNO_MMQ_F as f (unset: 0.20, the kit assumption),
++    // or the production ranking (unset: the same); NINFERNO_MMQ_BLOCKS=<b> runs stream-k over b CTAs,
++    // NINFERNO_MMQ_TILE_MODE=1|0 a tile a CTA or stream-k over the SMs, NINFERNO_MMQ_PRINT prints the launch.
++    const char* mode        = std::getenv("NINFERNO_MMQ_MODE");
++    const std::string mname = mode ? mode : "";
++    static const int forced = std::getenv("NINFERNO_MMQ_J") ? std::atoi(std::getenv("NINFERNO_MMQ_J")) : 0;
++    static const double fenv = std::getenv("NINFERNO_MMQ_F") ? std::atof(std::getenv("NINFERNO_MMQ_F")) : 0.20;
++    std::vector<int> js;
++    if (forced != 0) js = {forced};
++    else if (mname == "old") js = {16, 32, 64, 128};
++    else if (mname == "new") js = {16, 32, 64, 80, 96, 128};
++    else for (const int J : mmq_columns::tiles(major, minor, format)) js.push_back(J);
++    for (const int J : js) {
+         const ggml_cuda_mmq_config config = ggml_cuda_mmq_get_config(type, J, false, device.cc);
+         if (config.type == GGML_TYPE_COUNT) continue;
+         const std::size_t shared = mmq_get_nbytes_shared(config, device.cc);
+         if (shared > device.shared_per_block_optin) continue;
+-        const double cost = mmq_columns::width_cost(columns, J, major, minor, format, facts);
++        const double cost = mname == "old"   ? mmq_columns::launch_cost(columns, J, false)
++                            : mname == "new" ? mmq_columns::launch_cost(columns, J, true, fenv)
++                                             : mmq_columns::width_cost(columns, J, major, minor, format, facts);
+         if (cost < best_cost) {
+             best_cost     = cost;
+             best.k_vram   = config.K_vram;
+@@ -163,6 +183,20 @@ Launch select_launch(int rows, int columns, int k) {
+         rows, k, columns, best.J, device.sm_count, best.stream_k, best.k_vram, best.I);
+     best.blocks = l.blocks;
+     best.fixup  = l.fixup;
++    static const int fblocks = std::getenv("NINFERNO_MMQ_BLOCKS") ? std::atoi(std::getenv("NINFERNO_MMQ_BLOCKS")) : 0;
++    static const int ftile   = std::getenv("NINFERNO_MMQ_TILE_MODE") ? std::atoi(std::getenv("NINFERNO_MMQ_TILE_MODE")) : -1;
++    if (best.stream_k && (fblocks > 0 || ftile >= 0)) {
++        const int tiles = best.row_tiles * best.column_tiles;
++        const int work  = tiles * std::max(1, (k + best.k_vram - 1) / best.k_vram);
++        if (ftile == 1) best.blocks = tiles;
++        if (ftile == 0) best.blocks = std::min(device.sm_count, work);
++        if (fblocks > 0) best.blocks = std::min(fblocks, work);
++        best.fixup = tiles % best.blocks != 0;
++    }
++    if (std::getenv("NINFERNO_MMQ_PRINT")) {
++        std::fprintf(stderr, "launch J %d tiles %d blocks %d fixup %d\n", best.J,
++                     best.row_tiles * best.column_tiles, best.blocks, int(best.fixup));
++    }
+     return best;
+ }
+ 
+@@ -250,6 +284,12 @@ void product_impl(const Planes& w, int blocks_per_row, int rows, int k, const vo
+     case 32:
+         return launch<type, 32>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
+                                 out_column_stride, f, stream);
++    case 48:
++        return launch<type, 48>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
++                                out_column_stride, f, stream);
++    case 112:
++        return launch<type, 112>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
++                                 out_column_stride, f, stream);
+     case 64:
+         return launch<type, 64>(l, x, planes, blocks_per_row, rows, k, y, columns, out,
+                                 out_column_stride, f, stream);

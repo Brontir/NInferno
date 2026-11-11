@@ -27,6 +27,7 @@
 #include <fstream>
 #include <iostream>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -1478,6 +1479,302 @@ void test_rows_at_choice() {
     }
 }
 
+// B1 under `exact` reads no continuous fact (docs/maintainer/deterministic-decisions.md, principle
+// 2; roadmap #620 step 6, property P8). With --activations exact pinned, the clock, the DRAM
+// bandwidth and the L2 of the card's profile key (the facts the configuration choice prices its
+// estimates on) moved to twice, half and none leave the choice's KV codec, ring, recurrent state,
+// activations, chunk and drafter as they were. The signature also holds what the decision priced:
+// the choice's resolution and, for every scored candidate, its decision seconds and worth at full
+// precision. Those are priced on the generation's reference card, so they must be bit-identical
+// under every move; the winner alone would not show a price that follows the board's clock or
+// bandwidth (every candidate's price scales alike and the winner stays inside the tie band).
+// Over every plan fixture of this file on five generations, at two contexts and one and four
+// streams. Known limits, stated so the counts below are read right: the resolution step
+// (resolve_within_resolution) is not exercised by these baselines (test_resolution_step covers it);
+// only a card that has a
+// reference card (the RTX 4090) has a decision price at all, so only its baselines can move; no L2
+// reader is reached by these fixtures today (the matrix-kernel gate that reads it asks about a
+// dense K-quant layer format, which the fixtures do not carry), so the L2 moves are a guard for a
+// future reader; the dry run's half of the signature (plan_model) does not read the GPU key today
+// and is a constant of the test; the key's SM count and the quantization pick (plan_quants reads
+// the key through choice_card_of) are not among the moves. (The summation class is a function of
+// the activation mode and the route set, not an output of the choice or the dry run: it has no
+// field to compare here.)
+int b1_fits_without_choice = 0, b1_choices = 0, b1_by_worth = 0, b1_chunk_by_speed = 0;
+int b1_drafter_axis = 0, b1_drafter_chosen = 0, b1_drafter_by_worth = 0;
+int b1_with_reference = 0, b1_several_candidates = 0;
+
+std::string b1_signature(const pr::PlanSourceFacts& facts, const pr::DryRunInputs& inputs,
+                         bool count = false) {
+    std::ostringstream out;
+    const pr::PlannedSpeculation planned = pr::plan_model(facts, inputs);
+    const rt::DryRunPlan& plan           = planned.plan;
+    out << "planned " << plan.planned << " fits " << plan.fits << " kv "
+        << ninferno::kv_cache_storage_name(plan.kv_cache) << " state "
+        << ninferno::recurrent_state_storage_name(plan.recurrent) << " ladder "
+        << plan.ladder.size();
+    if (const rt::DryRunRung* r = plan.chosen()) {
+        out << " rung " << plan.rung << " ctx " << r->rung.max_context << " pages "
+            << r->rung.kv_pages << " states " << r->rung.cached_states << " chunk "
+            << r->rung.prefill_chunk;
+    }
+    const auto served = pr::choose_at_weights(facts, inputs, inputs.pins);
+    out << " | choice ";
+    if (count) {
+        // A plan that fits with no choice (no candidate holds every stream's own context) is a
+        // baseline of "none"; those cases are counted and reported, not hidden.
+        if (plan.fits && !(served && served->choice.chosen)) { ++b1_fits_without_choice; }
+        if (served && served->choice.chosen) {
+            ++b1_choices;
+            b1_by_worth += served->choice.by_worth ? 1 : 0;
+            b1_chunk_by_speed += served->choice.chunk_by_speed ? 1 : 0;
+            const auto& chosen = served->choice.scored[*served->choice.chosen].candidate;
+            b1_drafter_chosen += chosen.drafter != 0 ? 1 : 0;
+            b1_drafter_by_worth += served->choice.drafter_by_worth ? 1 : 0;
+            b1_with_reference += served->choice.resolution > 0 ? 1 : 0;
+            int eligible = 0;
+            for (const auto& s : served->choice.scored) { eligible += !s.variant && s.fits; }
+            b1_several_candidates += eligible > 1 ? 1 : 0;
+        }
+        if (inputs.subject != nullptr &&
+            !pr::drafter_axis(*inputs.subject, inputs.ask).options.empty()) {
+            ++b1_drafter_axis;
+        }
+    }
+    if (served && served->choice.chosen) {
+        const auto& c = served->choice.scored[*served->choice.chosen].candidate;
+        out << "kv " << ninferno::kv_cache_storage_name(c.kv) << " ring "
+            << ninferno::kv_cache_storage_name(c.ring) << " state "
+            << ninferno::recurrent_state_storage_name(c.state) << " act "
+            << static_cast<int>(c.activations) << " chunk " << c.chunk << " drafter " << c.drafter;
+        // Which gate decided each axis: a fact reaching a gate shows here even where the default
+        // equals the worth or speed winner.
+        out << " by_worth " << served->choice.by_worth << " chunk_by_speed "
+            << served->choice.chunk_by_speed << " drafter_by_worth "
+            << served->choice.drafter_by_worth;
+        // What the decision priced, bit for bit (hex floats): on the reference card, not the board.
+        out << std::hexfloat << " resolution " << served->choice.resolution;
+        for (const auto& s : served->choice.scored) {
+            out << " [" << s.decision_seconds << ' ' << s.worth << ']';
+        }
+        out << std::defaultfloat;
+    } else {
+        out << "none";
+    }
+    return out.str();
+}
+
+void test_exact_reads_no_continuous_fact() {
+    struct Board {
+        const char* name;
+        std::uint32_t pci;
+        int cc, sms;
+        double vram;
+    };
+
+    // The experts a family's shape carries: the choice sees an MoE only through the shape (experts,
+    // routed expert weights), and its chunk is the fastest of the MoE widths only then.
+    struct Family {
+        const char* name;
+        rt::PlanModelFacts (*make)(std::uint64_t);
+        int experts           = 0;
+        int experts_per_token = 0;
+        double routed_params  = 0;
+    };
+
+    int compared = 0;
+    for (const Board& board :
+         {Board{"RTX 5090", 0x2B85, 120, 170, 32}, Board{"RTX 4090", 0x2684, 89, 128, 24},
+          Board{"RTX 3090", 0x2204, 86, 82, 24}, Board{"RTX 2080 Ti", 0x1E07, 75, 68, 11},
+          Board{"V100", 0x1DB5, 70, 80, 32}}) {
+        rt::PlanDeviceFacts device         = card(board.vram, board.cc);
+        device.pci_device_id               = board.pci;
+        device.sms                         = board.sms;
+        const ninferno::spec::GpuKey stock = pr::gpu_key_of(device);
+        check(stock.sm_clock_khz > 0 && stock.dram_gbps > 0 && stock.l2_bytes > 0,
+              std::string(board.name) + ": the key carries the continuous facts to move");
+        for (const Family& family :
+             {Family{"qwen27b", qwen27b}, Family{"moe35b", moe35b, 256, 8, 32e9},
+              Family{"gemma31b", gemma31b}, Family{"gptoss20b", gptoss20b, 32, 4, 19e9},
+              Family{"nemotron30b", nemotron30b, 128, 6, 28e9}}) {
+            pr::PlanSourceFacts facts;
+            facts.model                      = family.make(9 * kGiB);
+            facts.shape.experts              = family.experts;
+            facts.shape.experts_per_token    = family.experts_per_token;
+            facts.shape.routed_expert_params = family.routed_params;
+            // The Qwen 27B also runs with its drafters on offer (an automatic speculation over a
+            // subject that carries them): the drafter is an axis of the choice only then, and a
+            // fact that leaked into it would move the drafter column of the signature.
+            const bool with_drafters = std::string(family.name) == "qwen27b";
+            // The subject is built once, from the stock key, and shared by every move: this test
+            // pins that the choice among the drafters OFFERED does not move with the key's
+            // continuous facts. It does not claim the speculation profile is independent of the
+            // key: this registry carries no measured pairs, so the profile never reads the key
+            // here, and with measured pairs it may follow the key's clock and bandwidth (a
+            // byte-neutral choice, tier S of deterministic-decisions.md).
+            pr::PlanSourceFacts target     = facts;
+            target.shape.hidden_size       = 5120;
+            target.shape.num_hidden_layers = 64;
+            target.shape.vocab_size        = 248320;
+            target.shape.builtin_mtp       = true;
+            target.shape.active_params     = 27e9;
+            const auto subject_for         = [&](const ninferno::spec::GpuKey& gpu) {
+                return pr::planned_subject(pr::PlannedTarget{.repo  = "unsloth/Qwen3.8-27B-GGUF",
+                                                                     .facts = target,
+                                                                     .gguf  = true,
+                                                                     .with_drafters = true},
+                                                   gpu);
+            };
+            std::optional<pr::SpeculationSubject> subject;
+            if (with_drafters) { subject = subject_for(stock); }
+            for (const bool drafted : {false, true}) {
+                if (drafted && !with_drafters) { continue; }
+                for (const std::uint32_t context : {8192U, 65536U}) {
+                    for (const std::uint32_t streams : {1U, 4U}) {
+                        pr::LaunchAsk launch{.max_context     = context,
+                                             .max_concurrency = streams,
+                                             .spec            = "none",
+                                             .activations     = "exact"};
+                        if (drafted) { launch.spec = "auto"; }
+                        const pr::LaunchPlanOptions o = pr::launch_options(launch);
+                        pr::DryRunInputs inputs;
+                        inputs.device           = device;
+                        inputs.gpu              = stock;
+                        inputs.options          = o.options;
+                        inputs.ask              = o.ask;
+                        inputs.pins.activations = launch.activations_pinned();
+                        if (drafted) { inputs.subject = &*subject; }
+                        const std::string base = b1_signature(facts, inputs, true);
+
+                        struct Move {
+                            const char* what;
+                            double clock, bandwidth, l2;
+                        };
+
+                        // The all-x2 and all-x0.5 moves keep every ratio of the facts, so a price
+                        // that reads only ratios would pass them by construction; the single-fact
+                        // moves and the unknown ones do not.
+                        for (const Move& m :
+                             {Move{"all x2", 2, 2, 2}, Move{"all x0.5", .5, .5, .5},
+                              Move{"clock x2", 2, 1, 1}, Move{"bandwidth x2", 1, 2, 1},
+                              Move{"l2 x2", 1, 1, 2}, Move{"clock x0.5", .5, 1, 1},
+                              Move{"bandwidth x0.5", 1, .5, 1}, Move{"l2 x0.5", 1, 1, .5},
+                              Move{"clock unknown", 0, 1, 1}, Move{"bandwidth unknown", 1, 0, 1},
+                              Move{"l2 unknown", 1, 1, 0}, Move{"all unknown", 0, 0, 0}}) {
+                            pr::DryRunInputs moved = inputs;
+                            moved.gpu.sm_clock_khz = static_cast<int>(stock.sm_clock_khz * m.clock);
+                            moved.gpu.dram_gbps    = stock.dram_gbps * m.bandwidth;
+                            moved.gpu.l2_bytes     = stock.l2_bytes * m.l2;
+                            ++compared;
+                            const std::string got = b1_signature(facts, moved);
+                            check(got == base,
+                                  std::string("B1 under exact moves with the continuous facts (") +
+                                      board.name + " " + family.name + " ctx " +
+                                      std::to_string(context) + " x" + std::to_string(streams) +
+                                      (drafted ? " drafters on offer" : "") + ", " + m.what +
+                                      "): '" + base + "' -> '" + got + "'");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    check(b1_choices > 0 && b1_by_worth > 0,
+          "B1 under exact: the baselines include choices decided by worth");
+    // The two decisions the properties claim are only claimed where a baseline reaches them: a
+    // drafter axis with options (spec automatic, a subject that carries drafters) and an MoE's
+    // chunk picked by speed on the generation's reference card (an MoE shape on Ada).
+    check(b1_drafter_axis > 0, "B1 under exact: some baselines offer the choice a drafter axis");
+    check(b1_drafter_by_worth > 0, "B1 under exact: some baselines decide the drafter by worth");
+    check(b1_with_reference > 0 && b1_several_candidates > 0,
+          "B1 under exact: some baselines price several candidates on a reference card");
+    check(b1_chunk_by_speed > 0, "B1 under exact: some baselines pick an MoE's chunk by speed");
+    std::cout << "B1 under exact: " << compared << " perturbed plans compared against "
+              << b1_choices << " choices (" << b1_by_worth << " by worth, " << b1_chunk_by_speed
+              << " chunk by speed, " << b1_drafter_axis << " with a drafter axis, "
+              << b1_drafter_by_worth << " of them decided by worth, " << b1_drafter_chosen
+              << " drafting, " << b1_with_reference << " priced on a reference card, "
+              << b1_several_candidates << " with more than one eligible candidate; "
+              << b1_fits_without_choice << " plans fit with no choice)\n";
+}
+
+// The resolution step of the choice (resolve_within_resolution, choice.h) on crafted candidates.
+// The B1 baselines above never reach it: of their 23 with a resolution none picks a candidate
+// inside the band, and the board's seconds and the decision's never disagree about it. Here they
+// do. The band is a decision (principle 2): it must be read from the seconds priced on the
+// reference card (decision_seconds), never from the board's own (seconds, an estimate to show). A
+// step that compared the board's seconds fails the first three checks below. Each other check was
+// seen to fail in a scratch build under the mutation it guards: the resolution-0 guard dropped, the
+// first or the last winner taken instead of the most accurate, the band edge excluded, the guard
+// for an unpriced anchor dropped, an unpriced candidate made eligible.
+void test_resolution_step() {
+    namespace ch         = pr::choice;
+    const auto candidate = [](double kld, double seconds, double decision_seconds) {
+        ch::Scored s;
+        s.accuracy.kld     = kld;
+        s.seconds          = seconds;
+        s.decision_seconds = decision_seconds;
+        return s;
+    };
+    constexpr double kBand = 0.05; // the resolution, in worth units (ln of a time ratio)
+    // [0] the anchor; [1] more accurate, inside the band by the decision, far outside by the board;
+    // [2] more accurate still, outside the band by the decision, inside by the board; [3] both more
+    // accurate and faster than the anchor; [4] and [5] inside the band by both, [4] the most
+    // accurate of the three in-band candidates [1] [4] [5], and not the first nor the last of them;
+    // [5] is the fastest of them by the board's seconds, so the accuracy rule is what decides.
+    const std::vector<ch::Scored> scored = {
+        candidate(0.10, 1.0, 1.0),
+        candidate(0.05, std::exp(0.50), std::exp(0.01)),
+        candidate(0.01, std::exp(0.01), std::exp(0.50)),
+        candidate(0.04, std::exp(-0.20), std::exp(-0.20)),
+        candidate(0.03, std::exp(0.02), std::exp(0.02)),
+        candidate(0.06, std::exp(0.015), std::exp(0.015)),
+    };
+    check(
+        ch::resolve_within_resolution(scored, {0, 1}, 0, kBand) == 1,
+        "resolution step: a candidate inside the band by the decision's seconds wins although the "
+        "board's seconds put it outside");
+    check(ch::resolve_within_resolution(scored, {0, 2}, 0, kBand) == 0,
+          "resolution step: a candidate outside the band by the decision's seconds loses although "
+          "the board's seconds put it inside");
+    check(ch::resolve_within_resolution(scored, {0, 1, 2, 4, 5}, 0, kBand) == 4,
+          "resolution step: among the candidates inside the band the winner is the one with the "
+          "lowest KLD (not the first, not the last), and the outside one never is");
+    check(ch::resolve_within_resolution(scored, {0, 1, 2, 3}, 0, 0.0) == 0,
+          "resolution step: a resolution of 0 returns the anchor although a candidate is both more "
+          "accurate and faster");
+    std::vector<ch::Scored> unpriced = scored;
+    unpriced[1].decision_seconds     = 0;
+    check(ch::resolve_within_resolution(unpriced, {0, 1}, 0, kBand) == 0,
+          "resolution step: a candidate without a decision price is not eligible");
+    // A candidate exactly at the edge of the band is inside it: the edge is the logarithm of the
+    // time ratio, kWorthTie above the resolution (the rule's own slack), built to the last bit.
+    const double edge = std::log(2.0);
+    double band_edge  = edge - ch::kWorthTie;
+    for (int i = 0; i < 8 && band_edge + ch::kWorthTie < edge; ++i) {
+        band_edge = std::nextafter(band_edge, 1.0);
+    }
+    for (int i = 0; i < 8 && band_edge + ch::kWorthTie > edge; ++i) {
+        band_edge = std::nextafter(band_edge, 0.0);
+    }
+    check(band_edge + ch::kWorthTie == edge, "resolution step: the band edge was built exactly");
+    const std::vector<ch::Scored> at_edge = {
+        candidate(0.10, 1.0, 1.0), candidate(0.05, 2.0, 2.0), // exactly at the edge
+        candidate(0.05, 2.0 * (1 + 1e-6), 2.0 * (1 + 1e-6)),  // a hair beyond it
+    };
+    check(ch::resolve_within_resolution(at_edge, {0, 1}, 0, band_edge) == 1,
+          "resolution step: a candidate exactly at the band edge is inside the band");
+    check(ch::resolve_within_resolution(at_edge, {0, 2}, 0, band_edge) == 0,
+          "resolution step: a candidate a hair beyond the band edge is outside it");
+    // An anchor without a decision price (0 or not a number) has no band: it stays the pick.
+    for (const double no_price : {0.0, std::nan("")}) {
+        std::vector<ch::Scored> no_anchor = scored;
+        no_anchor[0].decision_seconds     = no_price;
+        check(ch::resolve_within_resolution(no_anchor, {0, 1, 3, 4}, 0, kBand) == 0,
+              "resolution step: an anchor without a decision price stays the pick");
+    }
+}
+
 // One price for a quantization whichever facts carry it (product::quant_option_of): a hub row's
 // GGUF header and a start's artifact (its own drafter bundled, its source label in the
 // provenance) give the same bits and decode bytes, the label from either.
@@ -1840,6 +2137,8 @@ int main() {
     test_speculation_order();
     test_properties();
     test_rows_at_choice();
+    test_exact_reads_no_continuous_fact();
+    test_resolution_step();
     test_quant_option_one_rule();
     test_row_tensor_tables();
     test_cached_quants();

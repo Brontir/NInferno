@@ -17,14 +17,16 @@
 #
 # NINFERNO_ARCHS lists the generations (default "120a 100 90 89 86 80 75 70"); each builds in its own
 # tree (NINFERNO_BUILD_ROOT/build-release-<arch>). Volta needs CUDA 12.8 (CUDA 13 dropped it):
-# NINFERNO_CUDA70=/usr/local/cuda-12.8, else the archive has no Volta engine. NINFERNO_PACKAGE_CLEAN=1
+# NINFERNO_CUDA70 names it (default /usr/local/cuda-12.8 when that exists); with neither,
+# package.sh stops, unless 70 is left out of NINFERNO_ARCHS on purpose. release.json lists the engines built. NINFERNO_PACKAGE_CLEAN=1
 # removes each tree once its engine is copied (six trees at once outgrow a small disk);
 # NINFERNO_PACKAGE_RESUME=1 keeps the engines an interrupted run already put in OUT_DIR; NINFERNO_JOBS
 # caps the compile jobs (nvcc on sm_75's largest kernels needs memory). NINFERNO_VERSION overrides
 # the version (default `git describe`, without a leading v), NINFERNO_CMAKE_ARGS adds configure
 # arguments and NINFERNO_PACKAGE_TARGETS more targets for the first tree. The C library, the
 # dynamic loader and the NVIDIA driver libraries stay the user's; build on the oldest
-# distribution the archive should support (the glibc it needs is the build machine's).
+# distribution the archive should support (the glibc it needs is the build machine's, and it must
+# not be newer than the GLIBC_MIN install.sh checks).
 set -euo pipefail
 OUT=$(realpath -m "${1:-dist}")
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -36,6 +38,26 @@ NAME=ninferno-$VERSION-linux-x86_64
 STAGE=$OUT/$NAME
 ARCHIVE=ninferno-linux-x86_64.tar.gz  # a stable name: releases/latest/download/<name>
 CUDA70=${NINFERNO_CUDA70:-$(ls -d /usr/local/cuda-12.8 2>/dev/null || true)}
+[ -x "$CUDA70/bin/nvcc" ] || CUDA70=""
+# Volta is in every release unless NINFERNO_ARCHS leaves it out: a missing CUDA 12.8 stops here,
+# before hours of building, rather than shipping an archive without its engine. A resumed run may
+# already hold it.
+for arch in $ARCHS; do
+  [ "$arch" = 70 ] && [ -z "$CUDA70" ] || continue
+  # The build loop's own resume condition, for sm_70.
+  if [ "${NINFERNO_PACKAGE_RESUME:-0}" = 1 ] && [ -x "$STAGE/bin/ninferno-serve-sm70" ] &&
+    [ -f "$STAGE/bin/ninferno-serve.dispatch" ]; then continue; fi
+  echo "package.sh: no CUDA 12.8 for the Volta engine (NINFERNO_CUDA70); to build without Volta, leave 70 out of NINFERNO_ARCHS" >&2
+  exit 1
+done
+# The archive needs the build machine's glibc; install.sh lets in GLIBC_MIN and newer.
+GLIBC_BUILD=$(getconf GNU_LIBC_VERSION | sed -n 's/^glibc \([0-9][0-9.]*\).*/\1/p' || true)
+GLIBC_MIN=$(sed -n 's/^GLIBC_MIN=\([0-9.]*\)$/\1/p' "$ROOT/tools/release/install.sh")
+[ -n "$GLIBC_BUILD" ] && [ -n "$GLIBC_MIN" ] || { echo "package.sh: cannot read the build machine's glibc or install.sh's GLIBC_MIN" >&2; exit 1; }
+if [ "$(printf '%s\n%s\n' "$GLIBC_BUILD" "$GLIBC_MIN" | sort -V | tail -n1)" != "$GLIBC_MIN" ]; then
+  echo "package.sh: this machine has glibc $GLIBC_BUILD, newer than the $GLIBC_MIN install.sh checks for (GLIBC_MIN): build on an older distribution, or raise GLIBC_MIN and the README's minimum" >&2
+  exit 1
+fi
 # Checked before hours of building: the run paths below need it.
 command -v patchelf > /dev/null || { echo "package.sh: patchelf is needed (the binaries' run path)" >&2; exit 1; }
 # Every tree but Volta's builds with this nvcc, not the one CMake finds first (/usr/local/cuda can be
@@ -67,8 +89,9 @@ done
 # The kernels an engine compiled against its snapshot: the linked binary read with cuobjdump
 # (tools/kernel_facts/kernel_facts.py check: no GPU), and, where a GPU of the generation is on
 # this machine, the running kernels' attributes against it too (`ninferno-serve selector-facts`,
-# the probe the selector goldens are priced by; exit 2 without such a GPU: the release goes on,
-# the first check having passed). A flag, a source or a compiler build that changed the kernels is
+# the probe the selector goldens are priced by; exit 2 without such a GPU, and the loader's exit 127
+# without the NVIDIA driver, whose libcuda.so.1 the engine links: the release goes on, the first
+# check having passed). A flag, a source or a compiler build that changed the kernels is
 # caught here, not by the toolkit's name.
 check_kernel_facts() {
   local arch=$1 bin=$2 nvcc_bin=$3
@@ -84,9 +107,13 @@ check_kernel_facts_as() {
 }
 check_selector_facts() {
   local arch=$1 bin=$2 out status
-  out=$("$bin" selector-facts) && status=0 || status=$?
+  out=$("$bin" selector-facts 2>&1) && status=0 || status=$?
   if [ "$status" = 2 ]; then
     echo "package.sh: 'ninferno-serve selector-facts' found no GPU that runs the sm_$arch kernels on this machine; the live check was not run" >&2
+    return 0
+  fi
+  if [ "$status" = 127 ] && [[ $out == *"libcuda.so.1: cannot open shared object file"* ]]; then
+    echo "package.sh: no NVIDIA driver on this machine (libcuda.so.1), so no GPU for sm_$arch; the live check was not run" >&2
     return 0
   fi
   [ "$status" = 0 ] || { echo "$out" >&2; echo "package.sh: 'ninferno-serve selector-facts' failed for sm_$arch (exit $status)" >&2; exit 1; }
@@ -94,6 +121,7 @@ check_selector_facts() {
 
 first=""
 engines=""
+built=""  # the engines this archive holds, for release.json
 jobs=()
 [ -n "${NINFERNO_JOBS:-}" ] && jobs=(-j "$NINFERNO_JOBS")
 for arch in $ARCHS; do
@@ -112,11 +140,12 @@ for arch in $ARCHS; do
     if [ "$arch" = 86 ] || [ "$arch" = 120a ]; then check_selector_facts "$arch" "$STAGE/bin/ninferno-serve-sm$arch"; fi
     first=${first:-$STAGE}
     engines+="${engines:+, }{\"tag\": \"$arch\", \"arch\": ${arch//[!0-9]/}, \"specific\": $specific, \"ptx\": $ptx}"
+    built+="${built:+ }$arch"
     continue
   fi
   extra=(-DCMAKE_CUDA_COMPILER="$NVCC")
   if [ "$arch" = 70 ]; then
-    [ -n "$CUDA70" ] || { echo "package.sh: no CUDA 12.8 (NINFERNO_CUDA70): no Volta engine" >&2; continue; }
+    [ -n "$CUDA70" ] || { echo "package.sh: no CUDA 12.8 (NINFERNO_CUDA70) for the Volta engine" >&2; exit 1; }
     extra=(-DCMAKE_CUDA_COMPILER="$CUDA70/bin/nvcc")
   fi
   # Ada's engine carries its PTX too: the driver compiles it, once, for a GPU no engine names.
@@ -150,6 +179,7 @@ for arch in $ARCHS; do
   install -m 0755 -s "$build/apps/ninferno-serve" "$STAGE/bin/ninferno-serve-sm$arch"
   [ "${NINFERNO_PACKAGE_CLEAN:-0}" = 1 ] && rm -rf "$build"
   engines+="${engines:+, }{\"tag\": \"$arch\", \"arch\": ${arch//[!0-9]/}, \"specific\": $specific, \"ptx\": $ptx}"
+  built+="${built:+ }$arch"
 done
 [ -n "$first" ] || { echo "package.sh: no architecture built" >&2; exit 1; }
 mv "$STAGE/bin/ninferno-serve.dispatch" "$STAGE/bin/ninferno-serve"
@@ -204,9 +234,10 @@ install -m 0755 "$ROOT/tools/release/ninferno-update" "$STAGE/bin/ninferno-updat
 install -m 0644 "$ROOT/tools/release/install.sh" "$STAGE/share/ninferno/install.sh"
 python3 "$ROOT/tools/release/recommend.py" --out "$STAGE/share/ninferno/recommend.tsv"
 cp "$ROOT/LICENSE" "$ROOT/NOTICE" "$STAGE/"
-# cuda: the toolkit of every engine but Volta's, which CUDA 12.8 builds.
+# archs: the engines built; cuda: the toolkit of every engine but Volta's, which CUDA 12.8 builds;
+# glibc: the oldest the archive runs on.
 cat > "$STAGE/share/ninferno/release.json" <<JSON
-{"version": "$VERSION", "archs": "$ARCHS", "cuda": "$CUDA",
+{"version": "$VERSION", "archs": "$built", "cuda": "$CUDA", "glibc": "$GLIBC_BUILD",
  "built": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
 JSON
 "$STAGE/bin/ninferno-serve" --version || true
