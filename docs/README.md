@@ -42,6 +42,7 @@ reference; the others own narrower contracts:
 | [GPU facts table](maintainer/gpu-facts.md) | the PCI-ID reference table: fields, the reference clock, how facts are derived, adding a SKU |
 | [Gap map](maintainer/gap-map.md) | measured kernel times against the counted DRAM and tensor laws: what `tools/bench/gap_map.py` computes and what it finds |
 | [Engine architecture](maintainer/engine-architecture.md) | model/config/weight ownership, loading-to-execution flow, requests, scheduling, transactions and graphs |
+| [Making a release](maintainer/release.md) | the pinned build machine (Ubuntu 24.04, CUDA 13.4.92 and 12.8.93), the checklist from the tag to the release server and the GitHub release |
 | [Build system](maintainer/build-system.md) | CMake targets, source ownership, CUDA compilation boundaries, presets and developer configuration |
 | [Artifact container](maintainer/artifact-container.md) | the `.ninferno` directory, objects, logical bindings, uses, resources and file framing |
 | [Numeric formats](maintainer/tensor-formats.md) | represented values, codes and scales, conversion arithmetic |

@@ -31,9 +31,9 @@ namespace ninferno::ops::detail::generic {
 
 inline constexpr int kMaxSegments = 4;
 
-// The widths where the speed profile's heuristic choices change (generic_gemm.cpp, below the route
-// table's bands): the register MMA's stream regime through 32 tokens (through 512 where the BF16
-// MMA is emulated), its 64-row tiles and a tiled codec's or BF16's staged tiles from 33 where
+// The widths where the speed profile's heuristic choices change (generic_select.cpp, below the
+// route table's bands): the register MMA's stream regime through 32 tokens (through 512 where the
+// BF16 MMA is emulated), its 64-row tiles and a tiled codec's or BF16's staged tiles from 33 where
 // they fill the SMs (heuristic_rmma, tiled_speed_pays, staged_speed_route), the staged MMA's
 // fallback from 256, and the W4A8 lookup/K-quant formats their producer-warp and 128x128 tiles
 // from 128 (128x64 from 65, heuristic_w4a8). kSpeedFill: the waves of the SMs a tile's grid
@@ -250,7 +250,7 @@ struct I8ScheduleInfo {
 // Q4_K/Q5_K/Q6_K/Q3_K/Q2_K, MXFP4, u4_g128_zp, q8_g32, and the signed grid values of IQ3_XXS/
 // IQ3_S/IQ2_XXS/IQ2_XS/IQ2_S), and NVFP4 (doubled E2M1 codes) on every build.
 [[nodiscard]] bool w4a8_supports(QType qtype);
-// K the W4A8 tiles take for this format (generic_gemm.cpp).
+// K the W4A8 tiles take for this format (generic_routes.cpp).
 [[nodiscard]] bool w4a8_k_admits(QType qtype, std::int32_t k);
 // Whether a weight format has an R8 (W8A8 decode) codec: q8_g32, MXFP4, the ggml 4/5-bit blocks
 // (Q4_0/Q4_1/Q5_0/Q5_1/IQ4_NL/IQ4_XS), the K-quants Q2_K..Q6_K and the codebook i-quants: the
@@ -834,7 +834,7 @@ struct BuildManifest {
 [[nodiscard]] bool volta_tiled_format(QType qtype);
 
 // The tiled route a call takes on a GPU without tensor mma.sync (Volta), from 17 tokens on, for a
-// format with a tiled codec; nothing elsewhere (generic_gemm.cpp).
+// format with a tiled codec; nothing elsewhere (generic_select.cpp).
 [[nodiscard]] std::optional<Route> volta_tiled_route(const Weight& weight, LinearPolicy policy,
                                                      std::int32_t tokens);
 // The route Volta's own rules give a call before any tuned or tabled one (select_route):

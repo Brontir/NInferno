@@ -234,14 +234,17 @@ const std::vector<Spec>& specs() {
         // (recorded); the tensor core's kind (full-rate FP32-accumulate HMMA) is a chip fact.
         {fit::kGeneration,
          Mode::RowFields,
-         {"major", "minor_lo", "minor_hi", "name", "s8", "fp32acc_full_rate"}},
+         {"major", "minor_lo", "minor_hi", "name", "s8", "fp32acc_full_rate",
+          "fp32_fma"}}, // the FP32 FMA issue rate: the Programming Guide's throughput table
         {fit::kCostConstants,
          Mode::Definitions,
          {"kDp4aOpsPerSmClock",    // a chip fact
           "launch_node_seconds"}}, // a lookup of kLaunchNode (recorded)
         {fit::kRoundCost, Mode::Definitions, {"kPricedVerifyRows"}}, // a bound, not a fit
         {fit::kMoeShare, Mode::Definitions, {}},
-        {fit::kWave, Mode::Definitions, {"fp8_split_tail"}}, // a rule over its parameters
+        {fit::kWave,
+         Mode::Definitions,
+         {"fp8_split_tail", "launch_amortized_tokens"}}, // rules over their parameters
         // Kernels' own fitted launch constants: only the recorded keys are held to definitions.
         {fit::kInt8PromptCost, Mode::RecordedOnly, {}},
         {fit::kRope, Mode::RecordedOnly, {}},
@@ -252,7 +255,7 @@ const std::vector<Spec>& specs() {
         {fit::kGemma4Attention, Mode::RecordedOnly, {}},
         {fit::kQ5LinearAdd, Mode::RecordedOnly, {}},
         {fit::kGdnConv, Mode::RecordedOnly, {}},
-        {fit::kQwenAttention, Mode::RecordedOnly, {}},
+        {fit::kRmsNormRopeBound, Mode::RecordedOnly, {}},
         {fit::kAttnInputPlan, Mode::RecordedOnly, {}},
         {fit::kW4a8, Mode::RecordedOnly, {}},
         {fit::kSparseMoePrefill, Mode::RecordedOnly, {}},
@@ -487,9 +490,18 @@ int main() {
             for (const auto& [name, def] : defined) {
                 if (code_of(def.text).find("Provenance::Fitted") != std::string::npos) ++tagged;
             }
-            if (tags != tagged) {
+            // A pending fit (route_cost::kPendingFits) is tagged Fitted and holds no value yet,
+            // so it has no record: counted from the compiled table.
+            std::size_t pending = 0;
+            for (const auto& p : ninferno::ops::detail::generic::route_cost::kPendingFits) {
+                if (p.from == ninferno::ops::detail::generic::route_cost::Provenance::Fitted) {
+                    ++pending;
+                }
+            }
+            if (tags != tagged + pending) {
                 fail(std::string(spec.file) + ": " + std::to_string(tags) +
-                     " Provenance::Fitted tags but " + std::to_string(tagged) +
+                     " Provenance::Fitted tags but " + std::to_string(tagged) + " + " +
+                     std::to_string(pending) + " pending fits" +
                      " tagged definitions read (a definition the pattern does not see?)");
             }
         }

@@ -141,6 +141,14 @@ ninferno_add_op_test(ninferno_format_traits_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_format_traits.cpp"
   LIBRARIES ninferno_linear_test_support)
 
+# The codec traits rows (ops/generic/codec_traits.h, #615 F3; generic_codec_traits.cu proves them
+# against the codec structs) against the literals r8_fits, w4a8_fits and mmq_plane_bytes carried
+# before, for every QType; no GPU needed.
+ninferno_add_op_test(ninferno_codec_traits_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_codec_traits.cpp"
+  LIBRARIES ninferno_linear_test_support)
+set_tests_properties(ninferno_codec_traits_test PROPERTIES LABELS host)
+
 # The kernel roofline (#613 PR-4): price_routes prices equal the golden table of the formula
 # it replaced (fixed outputs from before the move), and
 # the selector's priced routes are the roofline's terms (host only).
@@ -173,6 +181,12 @@ ninferno_add_op_test(ninferno_selector_golden_test
   LIBRARIES ninferno_linear_test_support)
 target_compile_definitions(ninferno_selector_golden_test PRIVATE
   NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden")
+
+# The selector on the real device with no substituted board: select_route and w4a8_ws_extra return,
+# and the R8 decode table of a board that has one is found (#620). Skips (77) without a GPU.
+ninferno_add_op_test(ninferno_selector_real_device_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_selector_real_device.cpp"
+  LIBRARIES ninferno_linear_test_support)
 
 # The register-MMA kernel's static shared memory as constexpr geometry (ops/generic/rmma_geometry.h,
 # static_asserted by the kernel, with the decoder rows pinned to their decoders) equals every row of

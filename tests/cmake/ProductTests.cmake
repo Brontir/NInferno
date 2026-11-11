@@ -1,6 +1,6 @@
 ninferno_add_test(ninferno_media_decode_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_media_decode.cpp"
-  LIBRARIES ninferno_media_decode)
+  LIBRARIES ninferno_media_decode PkgConfig::FFMPEG)
 
 ninferno_add_test(ninferno_pdf_text_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_pdf_text.cpp"
@@ -129,6 +129,12 @@ set_tests_properties(ninferno_signed_install_test PROPERTIES SKIP_RETURN_CODE 77
 add_test(NAME ninferno_package_checks_test
   COMMAND bash ${PROJECT_SOURCE_DIR}/tests/release/package_checks_test.sh ${PROJECT_SOURCE_DIR})
 set_tests_properties(ninferno_package_checks_test PROPERTIES LABELS host)
+
+# The GitHub release: only the files the signed manifest names, from a tag on origin, never over
+# a release that is there (gh and git are stand-ins).
+add_test(NAME ninferno_github_release_test
+  COMMAND bash ${PROJECT_SOURCE_DIR}/tests/release/github_release_test.sh ${PROJECT_SOURCE_DIR})
+set_tests_properties(ninferno_github_release_test PROPERTIES SKIP_RETURN_CODE 77 LABELS host)
 
 ninferno_add_test(ninferno_tool_maintainer_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_tool_maintainer.cpp"

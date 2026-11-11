@@ -1217,7 +1217,7 @@ struct MoeCall {
     [[nodiscard]] bool prefill_band() const { return prefill && tokens >= kMoeBandEdgeTokens; }
 
     // A prefill call of 17 tokens or more that admits the grouped W4A8 takes it, as a dense W4A8
-    // call does (generic_gemm.cpp select_route): the tables' prefill plans are A16 schedules,
+    // call does (generic_select.cpp select_route): the tables' prefill plans are A16 schedules,
     // measured before the grouped W4A8 was the default, and one would hide it (RTX 5080, gpt-oss
     // MXFP4 experts: the gb203 entry 2950 us at T=1024, the W4A8 2110 us).
     [[nodiscard]] bool w4a8_prefill() const {

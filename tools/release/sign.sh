@@ -13,8 +13,10 @@ PUB=$(cd "$(dirname "$0")" && pwd)/signing.pub.pem
 [ -f "$KEY" ] || { echo "sign.sh: no signing key at $KEY" >&2; exit 1; }
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-openssl dgst -sha256 -sign "$KEY" -out "$tmp/sig.der" "$MANIFEST"
-openssl dgst -sha256 -verify "$PUB" -signature "$tmp/sig.der" "$MANIFEST" > /dev/null ||
+# OpenSSL's own messages only as the reason for sign.sh's.
+openssl dgst -sha256 -sign "$KEY" -out "$tmp/sig.der" "$MANIFEST" 2> "$tmp/err" ||
+  { echo "sign.sh: cannot sign $MANIFEST with $KEY: $(head -n 1 "$tmp/err")" >&2; exit 1; }
+openssl dgst -sha256 -verify "$PUB" -signature "$tmp/sig.der" "$MANIFEST" > /dev/null 2>&1 ||
   { echo "sign.sh: $KEY is not the release key (tools/release/signing.pub.pem)" >&2; exit 1; }
 base64 -w0 "$tmp/sig.der" > "$MANIFEST.sig"
 echo "signed $MANIFEST"

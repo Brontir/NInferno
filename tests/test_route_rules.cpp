@@ -31,10 +31,11 @@
 // threshold written as a bare literal in an expression are found only where a descriptor's literal
 // names them; the scanner reads text, not the preprocessor, so two definitions under #if / #else
 // count as two (and fail for a described name). The selector's sources are generic_gemm.h,
-// generic_gemm.cpp and route_authorities.cpp (the authority cascade and the NVFP4 half-the-L2
-// rule live there): a descriptor of a literal in any of them names its file. Not held by this
-// test: the comparators at uses of a named constant and the order of the three authority arrays
-// (the selector goldens hold the order; docs/maintainer/route-rules.md lists the rest).
+// generic_gemm.cpp, generic_select.cpp (select_route and its heuristics) and route_authorities.cpp
+// (the authority cascade and the NVFP4 half-the-L2 rule live there): a descriptor of a literal in
+// any of them names its file. Not held by this test: the comparators at uses of a named constant
+// and the order of the three authority arrays (the selector goldens hold the order;
+// docs/maintainer/route-rules.md lists the rest).
 // `--list` prints the descriptors, `--unlisted` the guard's findings in kNotRules' form. No GPU.
 
 #include "ops/generic/route_rules.h"
@@ -803,6 +804,8 @@ struct NotRule {
 
 const std::vector<NotRule>& not_rules() {
     static const std::vector<NotRule> v = {
+        {"generic_codec_traits.cu", "kRows", 1,
+         "the table of codec trait rows the launch files instantiate (a registry, no bound)"},
         {"generic_gemm.cuh", "kBlockBytes", 1, "a codec's block size (a layout fact)"},
         {"generic_gemm.cuh", "kGroupBytes", 1, "a codec's group size (a layout fact)"},
         {"generic_gemm.cuh", "kIq1MinusHigh", 1, "an IQ1 codebook offset (a format fact)"},

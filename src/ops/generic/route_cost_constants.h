@@ -14,6 +14,8 @@
 #include "core/cost_constants.h"
 
 #include <array>
+#include <optional>
+#include <stdexcept>
 #include <span>
 #include <cstddef>
 #include <string_view>
@@ -210,5 +212,31 @@ inline constexpr Listed kRouteCostConstants[] = {
     listed(kMmqChainCycles, Kind::Cycles),
     listed(kMmqSliceSeconds, Kind::Seconds),
 };
+
+// A Fitted constant whose calibration measurement is not taken yet: it has no value (a Constant
+// cannot hold "unknown"), and the code that reads it keeps its default while `value` is empty.
+// test_route_cost_constants checks every entry is Fitted and empty; a calibrated one moves into
+// kRouteCostConstants with its Holdout record.
+struct PendingFit {
+    std::string_view name;
+    Provenance from;
+    std::optional<double> value;
+};
+
+inline constexpr PendingFit kPendingFits[] = {
+    // The fused text qk-norm + RoPE's per-warp chain excess over the three separate kernels, in
+    // SM cycles (sm_wave_rules.h launch_amortized_tokens). Calibrated by the crossover bench
+    // (bench/ops/rmsnorm_rope_bench.cu --crossover, #617 G).
+    {"fused_text_excess_cycles", Provenance::Fitted, std::nullopt},
+};
+
+// The pending fit named `name` (a name not in kPendingFits is a bug: the lookup throws, which fails
+// a constant evaluation at compile time).
+constexpr const PendingFit& pending_fit(std::string_view name) {
+    for (const auto& fit : kPendingFits) {
+        if (fit.name == name) return fit;
+    }
+    throw std::logic_error("unknown pending fit");
+}
 
 } // namespace ninferno::ops::detail::generic::route_cost

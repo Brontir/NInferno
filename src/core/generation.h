@@ -219,7 +219,7 @@ struct FittedRouteScales {
                                                  : nullptr;
 }
 
-// The compute capabilities the generic selector's measured rules name (generic_gemm.cpp). A
+// The compute capabilities the generic selector's measured rules name (generic_select.cpp). A
 // generation row spans minors no board of which was measured (12.1, GB10, lies in gb20x's row),
 // so a rule measured on one capability's boards keeps that capability exactly, as written.
 // sm_75 .. sm_79: Turing's tensor cores, no cp.async (ring_swiglu_four_warps).

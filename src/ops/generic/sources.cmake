@@ -37,6 +37,7 @@ target_link_libraries(ninferno_ops PUBLIC ninferno_ops_host)
 
 ninferno_target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/generic_gemm.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_select.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/kernel_facts_device.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_coverage.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_workspace.cpp"
@@ -94,6 +95,7 @@ ninferno_target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/generic_scalar.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_volta_gemv.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_volta_hmma.cu"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_codec_traits.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_w4a8.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_w4a8_ggml32.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_w4a8_superblock.cu"

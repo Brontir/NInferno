@@ -1,6 +1,6 @@
 #pragma once
 
-// The generic path's admission of ggml's matrix and vector kernels (generic_gemm.cpp), which its
+// The generic path's admission of ggml's matrix and vector kernels (generic_select.cpp), which its
 // calls of those kernels (generic_ggml.cpp) share.
 
 #include "ops/generic/generic_gemm.h"
