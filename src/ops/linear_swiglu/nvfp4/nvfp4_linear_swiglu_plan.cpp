@@ -36,6 +36,7 @@ bool nvfp4_verify_exact(std::int32_t tokens) {
     return tokens >= 2 && tokens <= 8 && route_probe_state.quantized_act != 1;
 }
 
+// FUSION-SITE: nvfp4_linear_swiglu
 Nvfp4LinearSwiGluRoute resolve_route(LinearPolicy policy, std::int32_t tokens) {
     if (tokens <= 0) { throw std::invalid_argument("nvfp4 linear_swiglu: T must be positive"); }
     if (!valid_linear_policy(policy)) {

@@ -91,6 +91,7 @@ choice falls back and says why. `choice_constants.h` holds the gates:
 | each `kKldTerms` row's `cards`, `kQuantKldCards` (`accuracy_decides`) | the KV codecs' and the int8 activations' terms (model constants, or a generation's own row), the quantization curve | the quant rule's largest and the family's defaults (automatic KV codec, `--activations fast`) |
 | `KldTerm::family`, `kQuantKldFamily` | the families the switches' terms (Qwen 3.5 dense and MoE; dense decoders: FP8 KV and fast, Qwen3-8B on two Ada cards and a Blackwell one) and the quantization curve (Qwen 3.5 dense) were measured on | another family (Gemma 4, gpt-oss, Nemotron-H) keeps its defaults; a family with switch terms but no curve (Qwen 3.5 MoE, dense decoders) keeps the quant rule's largest |
 | `kMoeChunkTwoCards` | the MoE chunk shares | the default chunk (1024) |
+| `Gates::typed_resolution` (default true), `kDecodePredictionError` (`cards`), `kTransferredDecodeError` (`cards`, `card`) | the resolution of a comparison the resolution rule weighs (the best worth against a candidate), typed by the wider of the two estimates' bases (`resolution_of(board, estimates)`, #618; each candidate's `Scored::decision_basis` on the reference card): `own` where both are Own and the board's generation has a `kDecodePredictionError` row (Ada, Blackwell gb20x); `transferred` where either is Transferred: the generation's `kTransferredDecodeError` row where it has one (ga10x, Turing, Volta: Ada's rows carried onto it), else (a generation with its own error, an estimate on a weight class or a row not measured on two of its cards) the largest measured carry, assumed; `unmeasured`, the same assumed number (`kUnmeasuredCarryDecodeError`, a label, not a bound), for lent estimates (a compute capability with no generation row) and for a known generation with neither row (ga100, Hopper, gb100, Thor). It is never narrower than the Own band its estimates rest on or are carried from. A band decides (`Resolution::decides`) only on a row of two or more lab cards: Ada's own rests on three, gb20x's on two, each carry on one (RTX 3060, RTX 2080 Ti, Quadro GV100: one board's residual, the basis of a `route_rules.h` `ScaledFromOneBoard` rule), the assumed number on none. A comparison whose band does not decide is resolved at its Own floor (`Resolution::floor`, `resolution_width`; `Scored::weighed_at` records the width each candidate was weighed at), never beyond: widening alone would not be conservative (a wider band lets a slower, more accurate candidate displace the best worth, up to 72 % slower at the largest carry), and falling back to the best worth would let a one-card point estimate decide below the floor, within which the estimates are indistinguishable. A moved pick is never dominated on both axes by an eligible candidate. `Choice::resolution` and `resolution_basis` report the best worth's own band, `resolution_decides` whether it decides at full width, `resolution_floor` its floor; the worth still ranks by point estimates. `choose()` sets it only when `reference_of()` finds a reference card (`kReferenceCards` holds Ada only; a compute capability with no generation row is given a lent one). So the served `resolution_basis` is `own` (0.0226) or, where the best worth reads a one-card Ada row or an unmeasured class, `transferred` (0.5447, not deciding: resolved at the 0.0226 floor) on Ada, `unmeasured` on a compute capability with no generation row, and `none` with resolution 0 on every other board, whatever its generation | closed (`false`, a test switch): the one number of the reference card's generation (`worth_band`: its `kDecodePredictionError`, 0 where it has none), basis `own` for a known generation, `transferred` for a lent one, weighing every comparison whatever its estimates rest on |
 
 The switches' terms are per family: Qwen 3.5 MoE (Qwen3.6-35B-A3B) loses 3.4 times dense's KLD
 to INT8 KV (0.0033 against 0.00095) and more to fast (0.0049 against 0.0039), so one family's terms
@@ -177,14 +178,39 @@ multiplies the decode speed while its load table lets the asked streams speculat
 configuration's at the asked streams, the gain is the bounded depth's, one request measured
 (`DrafterOption::load`, `spec::measured_gain`; #303); a depth the profile did not measure (a
 published profile lists only its choice's) counts none, and at such a load the drafter is not
-weighed (`DrafterOption::measured_at`), as for a gain published without its speeds. Under load the gain is a ceiling: the verify of the streams' rows together costs more than
-one request's, and that is not priced yet (the plan's `chosen.drafter_gain` says so). It changes no output (greedy verification), so it has no
-accuracy term: between plain decode and a drafter the worth weighs the drafter's speed against the
-context its memory takes. The drafter is weighed (`Choice::drafter_by_worth`) only where the worth
-decides and every drafter's gain is measured (`DrafterOption::measured`); a profile published
-without its speeds (the `*` profile) would weigh a gain of 1 and lose to plain decode on memory
-alone, so there its choice stands (`why_code` `unmeasured`).
-A faster drafter the asked context leaves out is listed with its gain. `--spec` pins the axis.
+weighed (`DrafterOption::measured_at`), as for a gain published without its speeds. Under load the
+verify of the streams' rows together costs more than one request's, and the round cost prices it
+where a profile carries the price (`Profile::joint_scale`, R_1 / R_C of the depth in force at C
+streams, each the lab's sections averaged as the estimate averages a round; `DrafterOption::joint`,
+`price_source_at`): the gain counted at C streams is the bound's one-request gain times that scale,
+held to the least gain priced at a smaller count (the gain never climbs back as the load grows), and
+an entry whose bound or whose option is unmeasured supplies nothing (the estimate does not count the
+drafter there, and the plan says the same). The plan's `chosen.drafter_gain` names the supplying
+count and its scale, or says the gain is a ceiling. Reach, stated plainly: a count is priced only
+where `streams x (depth + 1) <= spec::kPricedVerifyRows` (8), so depth 3 or less at 2 streams, depth
+1 at 3 or 4 streams, nothing from 5 streams; and none of the registry's measured pairs carries a
+load table, so a registry target's profile speculates for one request only and no `/api/plan` number
+changes for it today (`tests/test_spec_round_cost.cpp` pins this: the day a pair gets a load table
+the scan fails and the plans it prices are looked at). The price is taken at the asking card's own
+lab record where it has one (its board's rates, its facts and launch counts: `generation_median`),
+and only a profile selected at home carries one. With one lab card of the generation, lab cards that
+do not choose alike, a median their choice does not survive, a transfer, or a profile priced by the
+facts, there is no price, and the profile's load table is plain decode from two streams, so there is
+no gain under load to price. A kept median whose cards' load tables differ, or are empty, also
+decodes plainly from two streams; the price it carries is never read. An own record without facts,
+or without rates for its board, carries no price either, so its gain under load is a ceiling. Known
+gaps: (1) a card with no lab record of its own that the facts do not price, and a profile asked with
+no card named, take the price on the record the profile was selected on, which is another card's
+board; (2) nothing holds the price against a measured loaded gain (the round cost test compares the
+profile's scale with the same round costs, `spec::load_gain` and `spec::round_cost`, so it checks
+wiring only); (3) re-selection for another mode keeps no price. It changes no output (greedy
+verification), so it has no accuracy term: between plain decode and a drafter the worth weighs the
+drafter's speed against the context its memory takes. The drafter is weighed
+(`Choice::drafter_by_worth`) only where the worth decides and every drafter's gain is measured
+(`DrafterOption::measured`); a profile published without its speeds (the `*` profile) would weigh a
+gain of 1 and lose to plain decode on memory alone, so there its choice stands (`why_code`
+`unmeasured`). A faster drafter the asked context leaves out is listed with its gain. `--spec` pins
+the axis.
 
 Where the chosen configuration does not fit at the start (a DFlash drafter's workspace, a deeper
 round's graphs), the server, the CLI and the plan without the weights take one order
@@ -208,8 +234,8 @@ own context, decode and prefill speed, KLD, worth, and why it lost:
 |---|---|
 | `no_fit` | it does not hold the asked context per stream |
 | `lower_worth` | it fits and its worth is lower |
-| `outside_resolution` | under a pick moved by the resolution rule: its worth is above the chosen, but it is slower than the best worth by more than the resolution, so the rule does not weigh it (it may even be more accurate) |
-| `within_resolution` | it fits and loses by no more than the estimate's uncertainty about the two: the smaller of the worth's resolution (`Choice::resolution`: the reference card's generation's decode error, `kDecodePredictionError`) and their speed difference (configurations running nearly the same kernels err alike). Indistinguishable within the estimate, the point estimate decides (#301); a gap of accuracy beyond their speeds' difference stays `lower_worth`. The one exception is the best worth itself: when a strictly more accurate candidate lies inside the resolution of it, that one is chosen (DECISIONS 75), and the best worth and any other candidate inside its band are `within_resolution` with a positive `worth_delta`. The best worth is always listed: where it differs from the chosen on several axes, once, under the first, its `value` naming each differing value joined by ` + ` |
+| `outside_resolution` | under a pick moved by the resolution rule: its worth is above the chosen, but it is slower than the best worth by more than the resolution, the width of its own comparison with the best worth (#618: a band that does not decide at its Own floor), so the rule does not weigh it (it may even be more accurate) |
+| `within_resolution` | it fits and loses by no more than the estimate's uncertainty about the two: the smaller of the worth's resolution (`Choice::resolution`, typed by `Choice::resolution_basis`, #618, the band of the best worth's estimate: the board generation's own decode error, `kDecodePredictionError`, basis `own`, where it is Own; else the measured error of carrying Ada's rows onto it, `kTransferredDecodeError`, basis `transferred`; else the largest of those carries, `kUnmeasuredCarryDecodeError`, assumed; see `resolution_of`. A comparison with a Transferred or lent estimate on either side does not decide and is resolved at its Own floor; `explain` labels an alternative by its own comparison's band. `choose()` applies it only where a reference card exists, so today `own` on Ada, `unmeasured` on a compute capability with no generation row, and 0 with basis `none` on every other board; see the gates table) and their speed difference (configurations running nearly the same kernels err alike). Indistinguishable within the estimate, the point estimate decides (#301); a gap of accuracy beyond their speeds' difference stays `lower_worth`. The one exception is the best worth itself: when a strictly more accurate candidate lies inside the resolution of it, that one is chosen (DECISIONS 75), and the best worth and any other candidate inside its band are `within_resolution` with a positive `worth_delta`. The best worth is always listed: where it differs from the chosen on several axes, once, under the first, its `value` naming each differing value joined by ` + ` |
 | `tie_context` | the same worth; the chosen keeps more context per stream |
 | `tie_order` | the same in every respect; the listing's order |
 | `default` | a gate is closed: the family's default (or the default chunk, the profile's drafter) stands |

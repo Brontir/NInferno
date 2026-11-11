@@ -72,6 +72,8 @@ std::size_t ffn_workspace_bytes(const FfnParameters& parameters, std::int32_t fi
     return layout.peak_bytes(1);
 }
 
+// FUSION-SITE: ffn_swiglu_epilogue
+// FUSION-SITE: ffn_down_residual_epilogue
 void ffn(const Tensor& hidden, const FfnParameters& parameters, Tensor& residual,
          const ops::SparseMoeHints& hints, WorkspaceArena& workspace, DeviceExecutionView execution,
          bool mtp) {

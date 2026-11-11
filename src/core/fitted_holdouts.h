@@ -453,29 +453,23 @@ inline constexpr FittedHoldout kGenerationHoldouts[] = {
 
 inline constexpr FittedHoldout kSmallTEtaHoldouts[] = {
     {kRoundCost, "kSmallTEta",
-     Holdout::quoted(
-         "registry spec-tune rounds of Qwen targets, k 4..7, RTX 4070 Ti and RTX 4090 together",
-         "a held-out score of the shipped 0.148 quoted from DECISIONS 53 (each card's rounds "
-         "predicted from the other card's eta, R measured / R facts: RTX 4070 Ti -3..+4 %, RTX "
-         "4090 +1..+9 %); the registry has changed since, so the repository does not reproduce it",
-         "DECISIONS 53 and 56; tools/fits/round_cost/fit_eta.py",
-         "on today's registry fit_eta.py item 1 fits 0.160 in sample over three Ada cards (not the "
-         "shipped 0.148), and item 3 predicts each card from its other cards' eta: RTX 4090 at "
-         "0.162 +1.2 % (rms 2.8 %), 4070 Ti at 0.180 +2.0 % (4.6 %), 4060 Ti at 0.152 -3.9 % (5.6 "
-         "%), a hold-out of the procedure, not of the shipped row; gpt-oss rounds run +16..19 % "
-         "over their facts (round_cost.h header comment)"),
+     Holdout::none(
+         "registry spec-tune rounds of Qwen targets, k 4..7, RTX 4060 Ti, RTX 4070 Ti and RTX 4090",
+         "the shipped 0.160 is fit_eta.py's fit over every card of today's registry (#689), so no "
+         "card is held out of it; item 3 holds each card out of a refit, R measured / R facts: RTX "
+         "4090 +1.2 % (rms 2.8 %), RTX 4070 Ti +2.0 % (4.6 %), RTX 4060 Ti -3.9 % (5.6 %), a "
+         "hold-out of the procedure, not of the shipped row",
+         "tools/fits/round_cost/fit_eta.py; tests/test_round_cost_eta_fit.py",
+         "gpt-oss rounds ran +16..19 % over their facts in older runs (DECISIONS 53)"),
      "ada"},
     {kRoundCost, "kSmallTEta",
-     Holdout::quoted(
-         "registry spec-tune rounds of Qwen targets, k 4..7, RTX 5070 Ti and RTX 5090 together",
-         "a held-out score of the shipped 0.165 quoted from DECISIONS 56 (each card predicted from "
-         "the other card's eta, R measured / R facts: RTX 5070 Ti +4.3 %, rms 8.4 %; RTX 5090 +1.4 "
-         "%, rms 4.4 %); the registry has changed since, so the repository does not reproduce it",
-         "DECISIONS 56; tools/fits/round_cost/fit_eta.py",
-         "on today's registry fit_eta.py item 1 fits 0.160 in sample (not the shipped 0.165), and "
-         "item 3 predicts each card from the other card's eta: RTX 5090 at 0.159 +3.8 % (rms 7.1 "
-         "%), 5070 Ti at 0.163 +3.2 % (8.3 %), a hold-out of the procedure, not of the shipped "
-         "row"),
+     Holdout::none(
+         "registry spec-tune rounds of Qwen targets, k 4..7, RTX 5070 Ti and RTX 5090",
+         "the shipped 0.160 is fit_eta.py's fit over both cards of today's registry (#689), so no "
+         "card is held out of it; item 3 holds each card out of a refit, R measured / R facts: RTX "
+         "5090 +3.8 % (rms 7.1 %), RTX 5070 Ti +3.2 % (8.3 %), a hold-out of the procedure, not of "
+         "the shipped row",
+         "tools/fits/round_cost/fit_eta.py; tests/test_round_cost_eta_fit.py"),
      "gb20x"},
 };
 

@@ -23,12 +23,12 @@
 //
 // Measured against it (docs/maintainer/decisions.md 53, tools/fits/round_cost):
 // Qwen dense within 2 % on average (2-5 % rms), Qwen MoE +1 % (Ada) / +12 % (Blackwell), gpt-oss
-// +7..16 %, at k <= 7 on seven cards of five generations. Where the model does not fit, the estimate
-// is made conservative and says so
-// (round_cost_estimate): the lab card's own measurement of the pair, where it found rounds dearer
-// than their bytes (Gemma 4's verify, Nemotron's MTP, Q8_0 targets, gpt-oss: +10-25 %), scales the estimate
-// up, never down; rounds of more than kPortableDepth drafts (from 12 rows verify kernels change
-// tiles: up to +60 %) are not estimated away from the lab card at all.
+// +7..16 %, at k <= 7 on seven cards of five generations. Where the model does not fit, the
+// estimate is made conservative and says so (round_cost_estimate): the lab card's own measurement
+// of the pair, where it found rounds dearer than their bytes (Gemma 4's verify, Nemotron's MTP,
+// Q8_0 targets, gpt-oss: +10-25 %), scales the estimate up, never down; rounds of more than
+// kPortableDepth drafts (from 12 rows verify kernels change tiles: up to +60 %) are not estimated
+// away from the lab card at all.
 
 #include "core/cost_constants.h"
 #include "spec/moe_routed_share.h"
@@ -49,10 +49,11 @@ namespace ninferno::spec {
 struct GpuKey; // spec/profile.h
 
 // Linears a pass computes alike: `count` matrices of n output rows over k input columns in one
-// published format (tools/spec/round_facts.py: "gguf:Q4_K", "bf16", "nvfp4", "mxfp4", "int4", "fp8",
-// "conv:q8" where the converter re-encodes a drafter's projections), the output head's apart, a
-// routed expert bank's with its experts counted. Facts of the weights' headers: the shapes a verify's
-// routes are asked for (ops/generic/route_query.h); not yet priced (the round's cost is its bytes).
+// published format (tools/spec/round_facts.py: "gguf:Q4_K", "bf16", "nvfp4", "mxfp4", "int4",
+// "fp8", "conv:q8" where the converter re-encodes a drafter's projections), the output head's
+// apart, a routed expert bank's with its experts counted. Facts of the weights' headers: the shapes
+// a verify's routes are asked for (ops/generic/route_query.h); not yet priced (the round's cost is
+// its bytes).
 struct LinearGroup {
     std::string format;
     std::int64_t n     = 0;
@@ -66,12 +67,12 @@ struct LinearGroup {
 
 // One pass's weights: its dense part (read once whatever the rows) and its routed experts.
 struct PassFacts {
-    double bytes         = 0; // dense weights' bytes (layers, output head), as stored
-    double params        = 0; // their parameters
-    double expert_bytes  = 0; // routed experts' bytes (0: dense)
-    double expert_params = 0;
-    std::int32_t experts      = 0; // routed experts per layer (0: dense)
-    std::int32_t experts_used = 0; // experts a token routes to
+    double bytes              = 0; // dense weights' bytes (layers, output head), as stored
+    double params             = 0; // their parameters
+    double expert_bytes       = 0; // routed experts' bytes (0: dense)
+    double expert_params      = 0;
+    std::int32_t experts      = 0;    // routed experts per layer (0: dense)
+    std::int32_t experts_used = 0;    // experts a token routes to
     std::vector<LinearGroup> linears; // its linears (empty: facts written before they were listed)
 
     friend bool operator==(const PassFacts&, const PassFacts&) = default;
@@ -81,7 +82,8 @@ struct PassFacts {
 // and the target's output head as the drafter runs it, apart: per draft over the pass's rows (the
 // target's own MTP layers), or once a round over the k drafted rows only (DFlash: the target's
 // output head scores the drafted positions, not the block's, models/speculation/dflash.cpp). A
-// proposal head reads its rows' share of it (ProposalRows; the head's rows are its head linear's n).
+// proposal head reads its rows' share of it (ProposalRows; the head's rows are its head linear's
+// n).
 struct DraftFacts {
     PassFacts pass;
     std::int32_t rows = 1;
@@ -125,18 +127,24 @@ struct RoundFacts {
 // choose; tools/fits/round_cost/fit_eta.py), as kappa = BW / (eta peak). A generation
 // constant rests on two lab cards of the generation or more (AGENTS.md); each card's rounds are
 // predicted from the generation's other cards' fit before a row is added (fit_eta.py, item 3):
-//   ada    0.148  RTX 4070 Ti and RTX 4090 (each card's rounds predicted from the other's fit:
-//                 R measured / R facts within -3..+4 % and +1..+9 %, DECISIONS 53; gpt-oss +16..19
-//                 %, its runs drafted BF16)
-//   gb20x  0.165  RTX 5070 Ti and RTX 5090 (DECISIONS 56: held out, R within +4.3 % / +1.4 % on
-//                 average; the plan's pick on the other card's pairs is the held-out card's
-//                 measured best or within 1.5 % of it, gpt-oss 4 %; the 5070 Ti's 9B rounds of
-//                 6-8 verify rows cost 7-12 % less than their facts, its speedup predicted low)
+//   ada    0.160  RTX 4060 Ti, RTX 4070 Ti and RTX 4090 (each card's rounds predicted from the
+//                 other two's fit, R measured / R facts on average: -3.9 %, +2.0 %, +1.2 %; the
+//                 plan's pick on another card's pairs is the held-out card's measured best or
+//                 within 2.2 % of it)
+//   gb20x  0.160  RTX 5070 Ti and RTX 5090 (each card's rounds predicted from the other's fit:
+//                 +3.2 % and +3.8 % on average; the plan's pick on the other card's pairs is the
+//                 held-out card's measured best or within 2.7 % of it)
+// The two rows follow the registry's pairs as of #244 (fresh Qwen3.5 9B and Gemma 4 12B pairs and
+// the RTX 4060 Ti's): they were 0.148 (RTX 4070 Ti and RTX 4090) and 0.165 before. DECISIONS 53
+// and 56 hold the older hold-out figures of those rows. fit_eta.py prints the rows, and
+// tests/test_round_cost_eta_fit.py fails when they differ from this table.
 // Each other generation needs a second lab card's registry pairs before it gets a row; until then
 // it has no estimate, and its cards keep the lab-measured profiles (as before the facts). Their
-// one-card fits, for when the second card comes (DECISIONS 53): ga10x 0.197 (RTX 3060), turing
-// 0.099 (RTX 2080 Ti), volta 0.179 (Quadro GV100). The rounds are the registry's after #156 (Gemma
-// 4 assistants and DFlash drafters attached q8): their q8 drafters' block passes are compute-bound
+// one-card fits, for when the second card comes (DECISIONS 53 had ga10x 0.197, turing 0.099, volta
+// 0.179; on the registry as of #244, fit_eta.py prints): ga10x 0.269 (RTX 3060; its table names two
+// boards of the one ga106 chip), turing 0.135 (RTX 2080 Ti; likewise two boards of tu102), volta
+// 0.534 (Quadro GV100). The rounds are the registry's after #156 (Gemma 4
+// assistants and DFlash drafters attached q8): their q8 drafters' block passes are compute-bound
 // enough that eta fell from 0.54 (Ada, BF16 drafters) to 0.15.
 struct SmallTEta {
     std::string_view generation;
@@ -144,7 +152,10 @@ struct SmallTEta {
     std::int32_t cards; // lab cards the row rests on (two or more)
 };
 
-inline constexpr SmallTEta kSmallTEta[] = {{"ada", 0.148, 2}, {"gb20x", 0.165, 2}};
+inline constexpr SmallTEta kSmallTEta[] = {
+    {"ada", 0.160, 3},
+    {"gb20x", 0.160, 2},
+};
 
 // A kernel's launch time inside a graph replay (t0) and the DRAM rate a decode kernel's bytes reach
 // (eta_dram), by generation: a kernel of B bytes takes B / (eta_dram x BW) + t0 (the Ada census,
@@ -165,6 +176,7 @@ struct LaunchTime {
     double seconds;
     double eta_dram;
 };
+
 inline constexpr LaunchTime kLaunchTime[] = {
     {"ada", 1.5e-6, 0.946},
 };
@@ -173,6 +185,7 @@ inline constexpr LaunchTime kLaunchTime[] = {
 struct RoundLaunches {
     double round = 0;
     double step  = 0;
+
     [[nodiscard]] bool known() const noexcept { return round > 0 && step > 0; }
 };
 
@@ -181,10 +194,10 @@ struct CardRates {
     double dram_bytes_per_s = 0;
     double int8_ops_per_s   = 0; // the generation's int8 tensor rate x SMs x reference clock
     std::string generation;      // core/generation.h's row name
-    double eta              = 0; // kSmallTEta's, 0 when the generation has none
-    std::int32_t eta_cards  = 0;
-    double launch_seconds   = 0; // kLaunchTime's, 0 when the generation has none
-    double eta_dram         = 0;
+    double eta             = 0;  // kSmallTEta's, 0 when the generation has none
+    std::int32_t eta_cards = 0;
+    double launch_seconds  = 0; // kLaunchTime's, 0 when the generation has none
+    double eta_dram        = 0;
 
     // A kernel launch's time as the bytes it would read in it (round cost's unit); 0 when unknown.
     [[nodiscard]] double launch_bytes() const noexcept {
@@ -195,6 +208,7 @@ struct CardRates {
     [[nodiscard]] double kappa() const noexcept {
         return eta > 0 && int8_ops_per_s > 0 ? dram_bytes_per_s / (eta * int8_ops_per_s) : 0;
     }
+
     [[nodiscard]] bool known() const noexcept { return kappa() > 0; }
 };
 
@@ -204,8 +218,8 @@ struct CardRates {
                                    double dram_gbps);
 // The rates a GpuKey carries (product::choice_card_of's facts).
 [[nodiscard]] CardRates card_rates(const GpuKey& gpu);
-// A board by its PCI product id (a pair's lab_board): the PCI-ID table's row (core/machine_facts.h).
-// Not known() when the table has no row for it.
+// A board by its PCI product id (a pair's lab_board): the PCI-ID table's row
+// (core/machine_facts.h). Not known() when the table has no row for it.
 [[nodiscard]] CardRates card_rates_of_board(std::uint32_t pci_device_id);
 
 // R(k) above for configuration `config` on a card of `kappa`, the draft head read over the rows
@@ -219,9 +233,9 @@ struct CardRates {
 // launches are one round's either way.
 [[nodiscard]] std::optional<double> round_cost(const RoundFacts& facts, const SpecConfig& config,
                                                double kappa, const ProposalRows& head_rows = {},
-                                               double launch_bytes          = 0,
+                                               double launch_bytes           = 0,
                                                const RoundLaunches& launches = {},
-                                               std::int32_t streams         = 1);
+                                               std::int32_t streams          = 1);
 
 // The plain decode step of `streams` requests decoded together, in bytes-equivalent (the
 // denominator of round_cost at `streams`); its ratio to one request's is the step's price at load.
@@ -245,7 +259,7 @@ inline constexpr std::int32_t kPricedVerifyRows = 8;
 [[nodiscard]] std::optional<double> load_gain(const RoundFacts& facts, const SpecConfig& config,
                                               double kappa, double speedup, std::int32_t streams,
                                               const ProposalRows& head_rows = {},
-                                              double launch_bytes          = 0,
+                                              double launch_bytes           = 0,
                                               const RoundLaunches& launches = {});
 
 } // namespace ninferno::spec
