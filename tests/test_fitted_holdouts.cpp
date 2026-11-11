@@ -219,6 +219,11 @@ const std::vector<Spec>& specs() {
              // derived, not fitted: the rms of the decode fit's own residuals, recomputed by
              // ninferno_choice_test; and the means of the generation's lab cards and the tolerance
              "kDecodePredictionError",
+             // derived, not fitted (#654): the rms of Ada's rows carried onto one lab card of each
+             // older generation, its largest, and that largest as the assumed unmeasured carry
+             "kTransferredDecodeError",
+             "largest_transferred_decode_error",
+             "kUnmeasuredCarryDecodeError",
              "kReferenceCards",
              "kWorthTie",
              // names of an enum's values, no number
