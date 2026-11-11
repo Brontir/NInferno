@@ -41,6 +41,7 @@ import hashlib
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -510,18 +511,63 @@ def cmd_extract(args):
     return 0
 
 
+def elf_section(path, name):
+    """The bytes of an ELF64 file's section `name`, or None (not ELF64, or no such section)."""
+    with open(path, "rb") as f:
+        head = f.read(64)
+        if len(head) < 64 or head[:4] != b"\x7fELF" or head[4] != 2 or head[5] != 1:
+            return None
+        shoff, = struct.unpack_from("<Q", head, 0x28)
+        shentsize, shnum, shstrndx = struct.unpack_from("<HHH", head, 0x3A)
+        if shentsize < 64 or shnum == 0 or shstrndx >= shnum:
+            return None
+
+        def header(i):
+            f.seek(shoff + i * shentsize)
+            raw = f.read(64)
+            if len(raw) < 64:
+                return None
+            sh_name, _, _, _, offset, size = struct.unpack_from("<IIQQQQ", raw)
+            return sh_name, offset, size
+
+        names = header(shstrndx)
+        if names is None:
+            return None
+        f.seek(names[1])
+        table = f.read(names[2])
+        for i in range(shnum):
+            h = header(i)
+            if h is None:
+                return None
+            end = table.find(b"\0", h[0])
+            if end >= 0 and table[h[0]:end] == name.encode():
+                f.seek(h[1])
+                return f.read(h[2])
+    return None
+
+
 def check_key(args):
-    """What a passed check rests on: the binary (or the saved dumps), the snapshot, the nvcc
-    named, the options and this checker's own source. A stamp holding it says the check passed
-    on exactly these."""
+    """What a passed check rests on: the binary's device code (its .nv_fatbin section, the only
+    part cuobjdump reads: stripping the binary or setting its run path leaves it as it was; the
+    whole file where there is none) or the saved dumps, the snapshot, the nvcc named, the options
+    and this checker's own source. A stamp holding it says the check passed on exactly these.
+    None when an input is missing (the check then says what is)."""
     h = hashlib.sha256()
-    for path in (args.binary, args.dump, args.sass_dump, args.expected, __file__,
-                 sass_counts.__file__):
-        h.update(b"\0" + str(bool(path)).encode())
-        if path:
+    try:
+        for path in (args.binary, args.dump, args.sass_dump, args.expected, __file__,
+                     sass_counts.__file__):
+            h.update(b"\0" + str(bool(path)).encode())
+            if not path:
+                continue
+            device = elf_section(path, ".nv_fatbin") if path == args.binary else None
+            if device is not None:
+                h.update(b"nv_fatbin" + device)
+                continue
             with open(path, "rb") as f:
                 for block in iter(lambda: f.read(1 << 20), b""):
                     h.update(block)
+    except OSError:
+        return None
     h.update(repr((args.nvcc, args.no_sass, args.cuda_bin, args.sass_batch)).encode())
     return h.hexdigest()
 
