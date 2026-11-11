@@ -197,7 +197,16 @@ std::optional<MoeStagePrice> price_moe_stage(const MoeStageShape& shape, MoeStag
     }
     }
     out.compute_seconds = rate > 0 ? ops / rate : 0.0;
-    out.seconds         = std::max(out.dram_seconds, out.compute_seconds);
+    // The pre-pass (the W4A8 quantize pass, the pass that widens x) is a kernel of its own,
+    // launched before the grouped MMA on the same stream, so the two run one after the other: the
+    // stage takes the pre-pass's DRAM time plus the MMA kernel's max(its own DRAM time, its
+    // compute). A compute-bound MMA does not hide the pre-pass. Without a compute term the stage
+    // stands at its DRAM time, the pre-pass included.
+    const double prepass_bytes    = out.quantize_bytes + out.widen_bytes;
+    out.prepass_seconds           = prepass_bytes / board.dram_bytes_per_s;
+    const double mma_dram_seconds = (out.bytes - prepass_bytes) / board.dram_bytes_per_s;
+    out.compute_binds             = out.compute_priced && out.compute_seconds > mma_dram_seconds;
+    out.seconds = out.compute_binds ? out.prepass_seconds + out.compute_seconds : out.dram_seconds;
     return out;
 }
 
@@ -395,13 +404,14 @@ std::optional<MoeLayerPrice> moe_layer_price(const MoeWeights& weights, const Mo
     // gate/up then reads those codes.
     const bool router_quantizes = moe_router_quantizes_x(weights, config, plan, tokens);
     MoeLayerPrice out;
-    // One kernel's DRAM and compute seconds into the layer's: max(DRAM, compute) where the compute
-    // is priced, the DRAM figure alone (and the flag with the first reason) where it is not.
-    const auto add = [&](double dram_seconds, double compute_seconds, bool compute_priced,
-                         const std::string& note) {
-        out.seconds += compute_priced ? std::max(dram_seconds, compute_seconds) : dram_seconds;
+    // One priced kernel (a stage, its pre-pass included, or the router) into the layer's: its own
+    // seconds (price_moe_stage's sequential sum for a stage), its DRAM seconds, whether its compute
+    // binds, and the flag with the first reason where its compute is not priced.
+    const auto add = [&](double seconds, double dram_seconds, bool compute_binds,
+                         bool compute_priced, const std::string& note) {
+        out.seconds += seconds;
         out.dram_seconds += dram_seconds;
-        out.compute_binds = out.compute_binds || (compute_priced && compute_seconds > dram_seconds);
+        out.compute_binds = out.compute_binds || compute_binds;
         if (!compute_priced && out.compute_priced) {
             out.compute_priced = false;
             out.compute_note   = note;
@@ -415,7 +425,7 @@ std::optional<MoeLayerPrice> moe_layer_price(const MoeWeights& weights, const Mo
         const auto price = price_moe_stage(
             *shape, (stage == Stage::Down ? routes.down : routes.gate_up).kernel, tokens, board);
         if (!price) return std::nullopt;
-        add(price->dram_seconds, price->compute_seconds, price->compute_priced,
+        add(price->seconds, price->dram_seconds, price->compute_binds, price->compute_priced,
             price->compute_note);
         if (stage == Stage::Down) hidden = shape->rows;
     }
@@ -453,9 +463,15 @@ std::optional<MoeLayerPrice> moe_layer_price(const MoeWeights& weights, const Mo
         if (!rate) return std::nullopt;
         router_rate = *rate;
     }
-    const double router_ops = 2.0 * t * experts * width;
-    add(router_bytes / board.dram_bytes_per_s, router_rate > 0 ? router_ops / router_rate : 0.0,
-        router_rate > 0, "the router: " + router_note);
+    // One kernel with no pre-pass: max(DRAM, compute) where the compute is priced, else its DRAM
+    // time.
+    const double router_ops     = 2.0 * t * experts * width;
+    const double router_dram    = router_bytes / board.dram_bytes_per_s;
+    const bool router_priced    = router_rate > 0;
+    const double router_compute = router_priced ? router_ops / router_rate : 0.0;
+    const bool router_binds     = router_priced && router_compute > router_dram;
+    add(router_binds ? router_compute : router_dram, router_dram, router_binds, router_priced,
+        "the router: " + router_note);
     // The selection (select / select_plan, or the SIMT router's last CTA) reads the logits back,
     // and the optional selection bias and expert scale ([E] FP32 each).
     double extra_bytes = t * experts * kFp32BytesPerValue + optional_bytes(weights.selection_bias) +

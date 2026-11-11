@@ -171,7 +171,9 @@ void law_checks() {
           "its bytes are the touched experts' (+ the small activation and output)");
     const auto wide = moe::price_moe_stage(s, moe::MoeStageKernel::RegisterMma, 4096, board);
     check(wide && wide->compute_seconds > wide->dram_seconds, "a wide stage is compute-bound");
-    check(wide && wide->seconds == wide->compute_seconds, "seconds is the larger term");
+    check(wide && wide->prepass_seconds == 0.0 && wide->compute_binds &&
+              wide->seconds == wide->compute_seconds,
+          "without a pre-pass, seconds is the larger term");
     const auto r8 = moe::price_moe_stage(s, moe::MoeStageKernel::R8, 4096, board);
     check(r8 && !r8->compute_priced && r8->seconds == r8->dram_seconds,
           "R8's work has no term: its price is the DRAM floor, said so");
@@ -284,6 +286,44 @@ void law_checks() {
           "Volta's f16 pass on an unpadded x: reads 1000 BF16 values, writes 1000 f16 values");
     check(volta_pad && close(volta_pad->widen_bytes, 2 * widen_padded),
           "Volta's f16 pass on a padded x: reads 800, writes 1000 values a token, T = 2");
+    // The pre-pass (the W4A8 quantize pass, the widening of x) is a kernel of its own, launched
+    // before the grouped MMA on the same stream: the stage pays its DRAM time on top of the MMA
+    // kernel's max(own DRAM, compute), and a compute-bound MMA does not hide it. At T = 4096 every
+    // expert is touched (1e9 bytes, about 1 ms) while the MMAs take about 6.4 ms: an int8 rate of
+    // 64 (the BF16 one) makes the W4A8 MMA compute-bound too.
+    moe::MoeBoardFacts slow_s8  = board;
+    slow_s8.s8_ops_per_clock_sm = 64.0;
+    const auto w4_bound         = moe::price_moe_stage(s, moe::MoeStageKernel::W4a8, 4096, slow_s8);
+    const double quantize_seconds = 4096 * (1000 * 2.0 + 32 * 40.0) / 1e12;
+    const double w4_bound_compute = 2.0 * 4096 * 10 * 1000 * 1024 / (64.0 * 100 * 2e9);
+    check(w4_bound && w4_bound->compute_priced && w4_bound->compute_binds &&
+              close(w4_bound->prepass_seconds, quantize_seconds) &&
+              close(w4_bound->compute_seconds, w4_bound_compute) &&
+              close(w4_bound->seconds, quantize_seconds + w4_bound_compute),
+          "a compute-bound W4A8 stage pays its quantize pass on top of its MMA's compute");
+    check(w4_bound &&
+              w4_bound->seconds > std::max(w4_bound->dram_seconds, w4_bound->compute_seconds),
+          "a compute-bound stage with a pre-pass costs more than max(DRAM, compute)");
+    // Volta's f16 pass (every call: 1000 BF16 values read, 1000 f16 written a token) and the padded
+    // copy of the register MMA ((800 + 1000) x 2 bytes a token) the same way.
+    const auto volta_bound = moe::price_moe_stage(s, moe::MoeStageKernel::VoltaHmma, 4096, board);
+    const auto rmma_bound =
+        moe::price_moe_stage(padded, moe::MoeStageKernel::RegisterMma, 4096, board);
+    const double volta_widen_seconds = 4096 * volta_one / 1e12;
+    const double rmma_widen_seconds  = 4096 * widen_padded / 1e12;
+    check(volta_bound && volta_bound->compute_binds &&
+              close(volta_bound->prepass_seconds, volta_widen_seconds) &&
+              close(volta_bound->seconds, volta_widen_seconds + volta_bound->compute_seconds),
+          "a compute-bound Volta stage pays its f16 pass on top of its MMA's compute");
+    check(rmma_bound && rmma_bound->compute_binds &&
+              close(rmma_bound->prepass_seconds, rmma_widen_seconds) &&
+              close(rmma_bound->seconds, rmma_widen_seconds + rmma_bound->compute_seconds),
+          "a compute-bound register MMA of a padded x pays its padded copy on top of its compute");
+    // While the MMA is bandwidth-bound the stage is its DRAM time, the pre-pass included; a stage
+    // without a compute term is its DRAM time too (the MXFP8 and lent-row checks below).
+    check(a8_plain && !a8_plain->compute_binds && a8_plain->prepass_seconds > 0.0 &&
+              a8_plain->seconds == a8_plain->dram_seconds,
+          "a bandwidth-bound W4A8 stage is its DRAM time, the quantize pass included");
     // The MXFP8 quantizer writes 32 code bytes and a 4-byte scale a block (36), no sum
     // (launch_moe_mx8_quantize), also for a qtype with a min; the block-scaled MMA reads the same
     // 36 bytes a block.
@@ -354,10 +394,19 @@ void law_checks() {
     std::string why;
     using Status     = moe::MoeCandidate::Status;
     const auto cheap = moe::price_moe_stage(s, moe::MoeStageKernel::RegisterMma, 4096, board);
-    const auto same  = moe::price_moe_stage(s, moe::MoeStageKernel::VoltaHmma, 4096, board);
-    // (Compute binds both at T = 4096: Volta's f16 pass adds DRAM bytes only, below the compute.)
-    check(cheap && same && same->bytes > cheap->bytes &&
-              moe::rank_against_selected(same, cheap, why) == Status::Tied && !why.empty(),
+    // Compute binds both gate/up stages at T = 4096 at the same rate: Volta's is dearer by exactly
+    // its f16 pass, which runs before its MMA.
+    const auto volta_up = moe::price_moe_stage(s, moe::MoeStageKernel::VoltaHmma, 4096, board);
+    check(cheap && volta_up && volta_up->prepass_seconds > 0.0 &&
+              close(volta_up->seconds - cheap->seconds, volta_up->prepass_seconds) &&
+              moe::rank_against_selected(volta_up, cheap, why) == Status::Dominated,
+          "Volta's gate/up is dearer than the register MMA's by its f16 pass");
+    // A down stage has no pre-pass: the two kinds read the same bytes at the same rate.
+    const auto rmma_down =
+        moe::price_moe_stage(down, moe::MoeStageKernel::RegisterMma, 4096, board);
+    const auto same = moe::price_moe_stage(down, moe::MoeStageKernel::VoltaHmma, 4096, board);
+    check(rmma_down && same && rmma_down->compute_binds &&
+              moe::rank_against_selected(same, rmma_down, why) == Status::Tied && !why.empty(),
           "two kinds of equal price are a tie, not one dominated");
     check(cheap && w4 && moe::rank_against_selected(w4, cheap, why) == Status::PricedBelow &&
               moe::rank_against_selected(cheap, w4, why) == Status::Dominated,
@@ -773,6 +822,60 @@ void router_compute_checks() {
     }
 }
 
+// A layer on the W4A8 tier whose MMAs are compute-bound (an int8 rate of 1 op a clock an SM): each
+// stage's quantize pass runs before its MMA and is paid on top of the MMA's compute, and the layer
+// carries each stage's own sequential sum, not max(DRAM, compute) of the stage's totals. The
+// router (the register MMA at T = 32) and the other bytes are added as router_compute_checks does.
+void prepass_layer_checks() {
+    const DeviceClass scoped_class = generic::board_device_class(board_named("rtx4090"));
+    const ScopedDeviceClass scoped(scoped_class);
+    moe::MoeBoardFacts board{1e12, 100, 2e9, 64.0, 2048.0, 128.0};
+    board.s8_ops_per_clock_sm  = 1.0;
+    const std::int32_t experts = 8, top_k = 2, hidden = 2048, inter = 704, tokens = 32;
+    const auto layer =
+        build(QType::Q8_G32_FP16, QType::Q8_G32_FP16, experts, top_k, hidden, inter, false);
+    const ops::MoeWeights& w = layer->weights;
+    moe::MoePlan plan;
+    plan.w4a8_gate_up = plan.w4a8_down = true;
+    check(moe::moe_router_kernel(w, layer->config, plan, tokens) ==
+              moe::MoeRouterKernel::RegisterMma,
+          "the router of a T = 32 call runs on the register MMA");
+    double stages = 0, prepass = 0, larger_terms = 0;
+    for (const moe::Stage stage : {moe::Stage::GateUp, moe::Stage::Down}) {
+        const auto shape = moe::moe_stage_shape(w, layer->config, stage);
+        const auto p     = shape
+                               ? moe::price_moe_stage(*shape, moe::MoeStageKernel::W4a8, tokens, board)
+                               : std::nullopt;
+        check(p && p->compute_priced && p->compute_binds && p->prepass_seconds > 0.0 &&
+                  std::abs(p->seconds - (p->prepass_seconds + p->compute_seconds)) <=
+                      1e-12 * p->seconds,
+              "a compute-bound W4A8 stage is its quantize pass + its MMA's compute");
+        if (!p) continue;
+        stages += p->seconds;
+        prepass += p->prepass_seconds;
+        larger_terms += std::max(p->dram_seconds, p->compute_seconds);
+    }
+    const auto price =
+        moe::moe_layer_price(w, layer->config, plan, ops::MoeEpilogue::Store, tokens, board);
+    check(price && price->compute_priced && price->compute_binds,
+          "a compute-bound W4A8 layer is priced and says its compute binds");
+    if (!price) return;
+    const double t = tokens;
+    const double router_bytes =
+        static_cast<double>(w.router.payload_bytes) + t * hidden * 2 + t * experts * 4;
+    const double router_seconds = std::max(
+        router_bytes / board.dram_bytes_per_s,
+        2.0 * t * experts * hidden / (board.bf16_ops_per_clock_sm * board.sms * board.clock_hz));
+    const double rest = (t * experts * 4 + (t * top_k + t) * hidden * 2) / board.dram_bytes_per_s;
+    const double want = stages + router_seconds + rest;
+    check(std::abs(price->seconds - want) <= 1e-9 * want,
+          "the layer carries each stage's pre-pass + MMA: " + std::to_string(price->seconds) +
+              " vs " + std::to_string(want));
+    check(std::abs(price->seconds - (larger_terms + prepass + router_seconds + rest)) <=
+              1e-9 * want,
+          "the quantize passes are paid on top of the compute-bound stages, not hidden");
+}
+
 // The strict bound by hand. A call of T tokens each picking top-k distinct experts touches at
 // least k experts of each bank (all tokens may pick the same k), so it reads at least k of E
 // experts' weights of the gate/up and of the down bank, the router's weights, and the T rows of x
@@ -1042,7 +1145,7 @@ constexpr std::int32_t kRelu2Hidden = 2688;
 struct Row {
     double predicted, measured;
     bool compute_priced; // every stage had its compute term (else a stage stands at its DRAM floor)
-    bool compute_binds;  // some stage's compute time exceeded its DRAM time
+    bool compute_binds;  // some kernel's compute time exceeded that kernel's own DRAM time
     std::int32_t tokens;
     double strict; // moe_layer_dram_floor_seconds: the bound that holds for any routing
 };
@@ -1177,8 +1280,9 @@ void replica(const std::filesystem::path& routes_dir) {
                     }
                     rows.push_back({price->seconds, chosen_us * 1e-6, price->compute_priced,
                                     price->compute_binds, t, *strict});
-                    // A padded x: the row's ratio with the widening pass and without it (the
-                    // gate/up stage at max(DRAM less the pass, compute)), printed for the reader.
+                    // A padded x: the row's ratio with the widening pass and without it (the pass
+                    // is a kernel before the gate/up's MMA, paid on top of it: the stage less the
+                    // pass), printed for the reader.
                     if (layer->weights.gate_up.k != layer->weights.router.k) {
                         const auto up =
                             moe::moe_stage_shape(layer->weights, layer->config, moe::Stage::GateUp);
@@ -1187,12 +1291,8 @@ void replica(const std::filesystem::path& routes_dir) {
                         const auto up_price =
                             up ? moe::price_moe_stage(*up, up_kind, t, *facts) : std::nullopt;
                         if (up_price) {
-                            const double dram_without =
-                                up_price->dram_seconds -
-                                up_price->widen_bytes / facts->dram_bytes_per_s;
                             const double without =
-                                price->seconds - up_price->seconds +
-                                std::max(dram_without, up_price->compute_seconds);
+                                price->seconds - up_price->widen_bytes / facts->dram_bytes_per_s;
                             std::printf("%-10s padded x %s %s T %d (%s): predicted / measured "
                                         "%.4f, without the widening pass %.4f (%.0f bytes)\n",
                                         source.board, format.c_str(), moe::moe_kernel_name(up_kind),
@@ -1302,6 +1402,7 @@ int main() {
         epilogue_checks();
         bias_checks();
         router_compute_checks();
+        prepass_layer_checks();
         format_min_binding_checks();
         candidate_checks();
         w4a8_admission_checks();

@@ -41,13 +41,17 @@
 // ops per clock per SM, core/generation.h) at the SM count and the reference clock. K is the one
 // the kind's MMAs walk: the bank's K, and on the W4A8 tier the plane's K rounded up to 128 (its
 // last tile's zero tail is multiplied too).
-// seconds = max(DRAM seconds, compute seconds): under uniform routing the bytes and the unit rates
+// The pre-pass of a stage (the W4A8 quantize pass, the pass that widens x) is a kernel of its own,
+// launched before the grouped MMA on the same stream: the two run one after the other, so
+//   seconds = pre-pass bytes / DRAM rate + max(the MMA kernel's own bytes / DRAM rate, compute),
+// which is max(DRAM seconds, compute seconds) for a stage without a pre-pass (a compute-bound MMA
+// does not hide its pre-pass). Under uniform routing the bytes and the unit rates
 // bound the time from below at T = 1, and a measured time is expected to be at least this there
 // (the replica verifies that at T = 1 and against the strict bound at every T,
 // tests/ops/test_moe_cost.cpp). It is a lower bound of the time (measured 1.05x to 4.4x above it),
 // not yet a cost to select by: the absent terms below are larger than the margins between kinds.
-// Where the law has no term it says so instead of guessing, and the price is its DRAM figure alone
-// (`compute_priced` false):
+// Where the law has no term it says so instead of guessing, and the price is its DRAM figure alone,
+// the pre-pass included (`compute_priced` false):
 //   - R8: dp4a issue work (a SIMT instruction count that no law here holds yet);
 //   - the block-scaled MXFP8 MMA of two MXFP4 banks (route "w4a8.mx8"): the generation row has no
 //     rate for it, and the int8 rate is not its rate;
@@ -126,17 +130,25 @@ struct MoeStageShape {
 };
 
 struct MoeStagePrice {
-    double bytes = 0;
+    double bytes = 0; // the stage's, its pre-pass included
     double quantize_bytes =
         0; // of `bytes`: the W4A8 stage's quantize pass (read BF16, write codes)
     // Of `bytes`: the pass that widens x before a gate/up stage (read the router's width, write the
     // bank's K, 2 bytes a value both ways): the padded BF16 copy on the register MMA and R8 where
     // x is padded, Volta's f16 rows always; 0 on a down stage and on W4A8.
-    double widen_bytes     = 0;
-    double dram_seconds    = 0;
-    double compute_seconds = 0;
-    double seconds         = 0; // max of the two
-    bool compute_priced    = true;
+    double widen_bytes  = 0;
+    double dram_seconds = 0; // `bytes` at the DRAM rate, the pre-pass included
+    // Of `dram_seconds`: the pre-pass kernel's (quantize_bytes + widen_bytes at the DRAM rate),
+    // which runs before the MMA kernel and is never hidden under its compute.
+    double prepass_seconds = 0;
+    double compute_seconds = 0; // the MMA kernel's
+    // prepass_seconds + max(the MMA kernel's DRAM seconds, compute_seconds) where the compute is
+    // priced, else dram_seconds; max(dram_seconds, compute_seconds) without a pre-pass.
+    double seconds = 0;
+    // The MMA kernel's compute exceeds its own DRAM time (dram_seconds - prepass_seconds); false
+    // where the compute is not priced.
+    bool compute_binds  = false;
+    bool compute_priced = true;
     // Why `compute_priced` is false (empty where it is true).
     std::string compute_note;
 };
@@ -219,10 +231,12 @@ rank_against_selected(const std::optional<MoeStagePrice>& price,
 // compute term stands at its DRAM floor: `compute_priced` false says the number is a floor in
 // that case, not a full price.
 struct MoeLayerPrice {
-    double seconds      = 0;     // stages' and router's max(DRAM, compute) + the other bytes
+    // The stages' seconds (each its pre-pass + max(MMA DRAM, compute)), the router's max(DRAM,
+    // compute), and the other bytes at the DRAM rate.
+    double seconds      = 0;
     double dram_seconds = 0;     // the same with every kernel at its DRAM time
     bool compute_priced = true;  // every stage and the router have their compute term
-    bool compute_binds  = false; // some kernel's compute time exceeds its DRAM time
+    bool compute_binds  = false; // some MMA kernel's compute exceeds that kernel's own DRAM time
     std::string compute_note;    // the first unpriced kernel's reason
 };
 
