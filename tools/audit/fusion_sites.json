@@ -634,8 +634,7 @@
                 ],
                 "priced": {
                     "status": "literal",
-                    "by":
-                        "token bound 16 is a rule (the decode/verify widths) and a format predicate; the fused kernel's gain was timed in commit a1c5371f5 (#167): Qwen3.5-9B Q4_K_M plain decode at T = 1, nsys node trace, median of 255 steps, predicted against measured per GDN layer, RTX 4090 (+3.6 %), RTX 4070 Ti (+1.8 %), RTX 4060 Ti (+1.0 %)",
+                    "by": "token bound 16 is a rule (the decode/verify widths) and a format predicate; the fused kernel's gain was timed in commit a1c5371f5 (#167): Qwen3.5-9B Q4_K_M plain decode at T = 1, nsys node trace, median of 255 steps, predicted against measured per GDN layer, RTX 4090 (+3.6 %), RTX 4070 Ti (+1.8 %), RTX 4060 Ti (+1.0 %)",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
@@ -703,8 +702,7 @@
                 ],
                 "priced": {
                     "status": "literal",
-                    "by":
-                        "column bounds in the plan (not priced); the >= 17 A8 bound is the A8 quantization rule from facts (segmented_projection.h:11), not a run; card: not recorded, method: not recorded (origin commit 935c44a5b, subject only)",
+                    "by": "column bounds in the plan (not priced); the >= 17 A8 bound is the A8 quantization rule from facts (segmented_projection.h:11), not a run; card: not recorded, method: not recorded (origin commit 935c44a5b, subject only)",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
@@ -737,8 +735,7 @@
                 ],
                 "priced": {
                     "status": "literal",
-                    "by":
-                        "column bounds in the plan (not priced); card: not recorded, method: not recorded (no comment in the plan file names a run)",
+                    "by": "column bounds in the plan (not priced); card: not recorded, method: not recorded (no comment in the plan file names a run)",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
@@ -772,8 +769,7 @@
                 ],
                 "priced": {
                     "status": "literal",
-                    "by":
-                        "column bounds in the plan (not priced); card: not recorded, method: not recorded (origin commit 0ba16ed9c, subject only)",
+                    "by": "column bounds in the plan (not priced); card: not recorded, method: not recorded (origin commit 0ba16ed9c, subject only)",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
@@ -807,8 +803,7 @@
                 ],
                 "priced": {
                     "status": "literal",
-                    "by":
-                        "column bounds in the plan (not priced); the 2..32 materialize rule and the per-chip small-T MMA bands are recorded in q4_q5_gdn_input_plan.cpp: per-layer timing (27B DFlash2 verify at T = 6 on an RTX 5090: 56.8 + 22.0 us a layer; a Volta build, which the plan writes as the V100 (gv100): 864 + 217 us a layer at T = 5; lines 79-83) and ninferno_gdn_input_proj_bench, 27B form, warm graph, on RTX 5090, RTX 4090 and RTX 3090 (lines 89-94, table kMmaMeasured); the one-token rule comes from the RTX 3090 decode census at 19.5K (59.1 + 24.6 us a layer against 55.0 + 17.1) and RTX 4080 SUPER 81.1 against 85.0 us (lines 102-107); the fused case 1, 2, 3, 5, 6 list itself has no recorded source (pre-public commit bdb0b27d6, no body)",
+                    "by": "column bounds in the plan (not priced); the 2..32 materialize rule and the per-chip small-T MMA bands are recorded in q4_q5_gdn_input_plan.cpp: per-layer timing (27B DFlash2 verify at T = 6 on an RTX 5090: 56.8 + 22.0 us a layer; a Volta build, which the plan writes as the V100 (gv100): 864 + 217 us a layer at T = 5; lines 79-83) and ninferno_gdn_input_proj_bench, 27B form, warm graph, on RTX 5090, RTX 4090 and RTX 3090 (lines 89-94, table kMmaMeasured); the one-token rule comes from the RTX 3090 decode census at 19.5K (59.1 + 24.6 us a layer against 55.0 + 17.1) and RTX 4080 SUPER 81.1 against 85.0 us (lines 102-107); the fused case 1, 2, 3, 5, 6 list itself has no recorded source (pre-public commit bdb0b27d6, no body)",
                     "unpriced": "whole site"
                 },
                 "byte_promise": "OwnOrder",
