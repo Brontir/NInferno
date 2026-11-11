@@ -523,6 +523,12 @@ RouteAnswer auto_answer(const Ask& ask, const Problem& problem, const Weight& we
     return answer;
 }
 
+RouteAnswer ranker_answer(const Ask& ask, const Problem& problem, const Weight& weight) {
+    const Ask asked = nvfp4_promoted(ask, problem, weight);
+    if (auto answer = nvfp4_half_l2(asked, problem, weight)) return *answer;
+    return heuristic_answer(asked, problem, weight);
+}
+
 RouteAnswer select_answer(const Problem& problem, const Weight& weight, std::int32_t tokens,
                           bool prefill) {
     const Ask ask = resolve_ask(tokens, prefill);
