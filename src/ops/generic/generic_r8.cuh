@@ -334,7 +334,7 @@ __global__ __launch_bounds__(S::kThreads) void r8_kernel(GemmArgs a, W4a8Activat
 // ---------------------------------------------------------------------------------------------
 
 // NINFERNO_GENERIC_R8_SCHEDULES: ops/generic/generic_schedules.h (one list for the
-// instantiations here and the host table in generic_gemm.cpp).
+// instantiations here and the host table in generic_schedule_tables.h).
 
 template <class C, class S, int NT, Epilogue E, bool kPre = false>
 void r8_launch_tokens(const GemmArgs& args, cudaStream_t stream, W4a8Activation act = {}) {

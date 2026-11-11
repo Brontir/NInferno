@@ -1,9 +1,10 @@
-// The codec traits the kernels export (generic_w4a8.cuh codec_traits<C>, tabled by
+// The codec traits rows (codec_traits.h, proven against the kernels' codec structs by
 // generic_codec_traits.cu) against the literals r8_fits, w4a8_fits and mmq_plane_bytes carried
 // before (#615 F3): for every QType value in a byte's range, the old formula (kept below in
 // `legacy`, verbatim but for comments) and the new read of the traits agree, and so do the two
-// public fit rules on every schedule, K and T. Which codec struct has which constant is a
-// static_assert in generic_codec_traits.cu. Host only.
+// public fit rules on every schedule, K and T (w4a8_fits from the host-only ninferno_ops_host,
+// r8_fits from ninferno_ops). No GPU needed: without one r8_stage_grid says no, and both sides
+// read the same answer.
 #include "ops/common/arch_limits.h"
 #include "ops/generic/codec_traits.h"
 #include "ops/generic/generic_gemm.h"

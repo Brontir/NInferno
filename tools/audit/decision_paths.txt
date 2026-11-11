@@ -80,9 +80,6 @@ src/ops/generic/generic_volta_hmma.cu
 src/ops/generic/generic_volta_cutlass.cu
 src/ops/generic/generic_volta_gemv.cu
 src/ops/generic/ggml_mmq/ggml_vec.cu
-src/ops/generic/generic_codec_traits.cu
-src/ops/generic/generic_w4a8.cuh
-src/ops/generic/generic_w4a8.cu
 src/ops/moe/moe_internal.h
 include/ninferno/ops/linear.h
 include/ninferno/ops/moe.h

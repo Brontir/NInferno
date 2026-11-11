@@ -236,9 +236,9 @@ __host__ __device__ constexpr int w4a8_block_bytes() {
     }
 }
 
-// The codec's constants as the host rules read them (codec_traits.h): one definition, the codec
-// struct's, for the kernel and for r8_fits / w4a8_fits / mmq_plane_bytes. generic_codec_traits.cu
-// tables this for every codec of the launch files.
+// The codec's constants in the shape of the host rules' rows (codec_traits.h, read by r8_fits /
+// w4a8_fits / mmq_plane_bytes): generic_codec_traits.cu static_asserts that each codec struct of
+// the launch files equals its codec's row.
 template <class C>
 constexpr CodecTraits codec_traits() {
     return {.min         = C::kMin,
@@ -1929,7 +1929,7 @@ __global__ __launch_bounds__(S::kThreads + 32 * Producers) void w4a8_ws_kernel(G
 // ---------------------------------------------------------------------------------------------
 
 // NINFERNO_GENERIC_W4A8_SCHEDULES: ops/generic/generic_schedules.h (one list for the
-// instantiations here and the host table in generic_gemm.cpp).
+// instantiations here and the host table in generic_schedule_tables.h).
 
 inline constexpr int kW4a8MaxDynamicSmem = 99 * 1024;
 

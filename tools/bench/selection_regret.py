@@ -140,6 +140,10 @@ def score_case(case):
     for k in ("authority", "evidence"):
         result[k] = name(case[k], k) if k in case else UNKNOWN
     result["t"] = width_of(case)
+    # The route the ranker alone picks, where the run recorded it: its time against the selected's
+    # is what the exit tooling (route_table_prune.py) reads.
+    if "ranker" in case:
+        result["ranker"] = name(case["ranker"], "ranker")
     candidates = case.get("candidates")
     require(isinstance(candidates, list) and candidates, f"{result['id']}: no candidates")
     seen, timings, excluded, unavailable = set(), {}, {}, {}
@@ -190,6 +194,8 @@ def score_case(case):
     # Compare each pass with one fixed best-by-median candidate, not a hindsight winner per pass.
     paired = [timings[selected][p] / timings[best][p] - 1 for p in sorted(passes)]
     require(all(math.isfinite(x) for x in paired), f"{result['id']}: paired ratio overflow")
+    if result.get("ranker") in medians:
+        result["ranker_vs_selected"] = medians[result["ranker"]] / medians[selected] - 1
     result.update(status="complete", best_observed=best, passes=len(passes),
                   median_ms=dict(sorted(medians.items())), regret=ratio - 1,
                   paired_regret_range=[min(paired), max(paired)])
@@ -239,6 +245,10 @@ def evaluate(document, max_regret=None, ridges=None):
     # Compare slowdown factors: subtracting one first can turn 1.1 into a regret just above 0.1.
     violations = [r["id"] for r in rows if r["status"] != "complete" or
                   (max_regret is not None and 1 + r["regret"] > 1 + max_regret)]
+    # The measured device (route_tune's class id and UUID, regret_collect's `device`), passed on:
+    # route_table_prune.py matches it to the table it prunes.
+    if "device" in document:
+        provenance["device"] = name(document["device"], "device")
     return {
         "schema": "ninferno-selection-regret-report/1", **provenance,
         "holdout": holdout, "fit_boards": sorted(fit_boards), "fit_models": sorted(fit_models),

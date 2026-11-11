@@ -170,7 +170,8 @@ newer (570 for a V100).
 run it. It needs no administrator rights, installs the native engine, and adds NInferno to the Start
 menu; it updates itself. [Windows](docs/windows.md) has the details.
 
-**Linux** (or WSL 2):
+**Linux** (or WSL 2): x86-64 with glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39 and
+later); the installer refuses an older one.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Brontir/NInferno/master/tools/release/install.sh | sh
@@ -187,6 +188,10 @@ one at its measured settings (`--list` only lists them, `--multi` takes the sett
 users, `NINFERNO_DEVICE` picks the GPU), and `ninferno-update`, which installs a newer release
 (`--check` only says whether there is one, `--yes` skips the question, `--rollback` returns to the
 one before).
+
+To remove it, run the installer with `--uninstall` (`curl -fsSL .../install.sh | sh -s -- --uninstall`;
+it asks first unless `--yes` is added). It removes the releases and the command links it made;
+downloaded models stay. `--help` lists the options.
 
 ### 2. Run with the GUI
 
