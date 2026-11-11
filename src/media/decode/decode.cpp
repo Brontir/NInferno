@@ -178,6 +178,21 @@ int refuse_nested_open(AVFormatContext*, AVIOContext**, const char*, int, AVDict
     return AVERROR(EPERM);
 }
 
+// Whether a demuxer this FFmpeg holds claims the bytes, probed as avformat_open_input's last probe
+// does: the first 1 MiB, at any score (the probe at the end of the input or at the largest size
+// takes any score above 0; none for no claim or a tie at the top). Run only after an open failed
+// with "invalid data", to tell a container the build leaves out from a broken file of a known one.
+bool container_known(std::span<const std::uint8_t> input) {
+    const std::size_t size = std::min<std::size_t>(input.size(), kMiB);
+    std::vector<std::uint8_t> padded(size + AVPROBE_PADDING_SIZE, 0);
+    std::memcpy(padded.data(), input.data(), size);
+    AVProbeData probe{};
+    probe.buf_size = static_cast<int>(size);
+    probe.buf      = padded.data();
+    int score      = 0;
+    return av_probe_input_format3(&probe, 1, &score) != nullptr;
+}
+
 class Decoder {
 public:
     Decoder(std::span<const std::uint8_t> input, std::uint64_t max_decoded_pixels)
@@ -200,7 +215,12 @@ public:
             AVFormatContext* raw = format_;
             int rc               = avformat_open_input(&raw, nullptr, nullptr, nullptr);
             format_              = raw;
-            if (rc < 0) { throw_invalid_media("failed to open media: " + av_error(rc)); }
+            if (rc < 0) {
+                if (rc == AVERROR_INVALIDDATA && !container_known(input)) {
+                    throw_invalid_media("media container is not supported");
+                }
+                throw_invalid_media("failed to open media: " + av_error(rc));
+            }
             // FFmpeg allocates a frame for the dimensions a header declares before any pixel is
             // decoded (a 16384x16384 PNG of zeros is 2.5 MB compressed and 268 MB decoded), so the
             // budget goes to the decoders the probe opens and to ours; the frame check after

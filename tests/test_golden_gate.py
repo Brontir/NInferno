@@ -164,6 +164,10 @@ NOT_DECIDING = {
     "src/core/tune_timer.cu", "src/core/tune_timer.h", "src/core/units.h",
     "src/core/weight_view.cpp", "src/core/weight_view.h",
     "src/core/cuda_stream.h",  # the cudaStream_t handle type for host-only builds (#675)
+    # rmsnorm_rope's fused-width bound (#661): it reads route_cost_constants.h for its pending fit and
+    # decides the rope fusion of Qwen's text attention, not a linear route; the golden test does not
+    # call it
+    "src/ops/rmsnorm_rope/rmsnorm_rope.cpp",
     # device code reached through the listed ggml_mmq.cu / generic_gemm.cpp: it computes, the
     # selector reads none of its constants
     "src/ops/generic/generic_staged.cuh", "src/ops/generic/generic_tiled.cuh",
