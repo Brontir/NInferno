@@ -32,6 +32,7 @@ function(ninferno_link_ops target scope)
   else()
     target_link_libraries(${target} ${scope} ninferno_ops)
   endif()
+endfunction()
 
 # A member archive a test names (ninferno_core, ninferno_ops, ...: NINFERNO_SHARED_MEMBERS) is linked
 # through its redirect ninferno::<m> (cmake/NInfernoTargets.cmake): the archive in a static test,
