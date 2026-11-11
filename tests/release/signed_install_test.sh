@@ -294,6 +294,71 @@ expect "the updater installs the final release over its rc" 0 "${J[@]}" NINFERNO
 expect "the final release sees no update in its rc" 1 "${J[@]}" NINFERNO_UPDATE_URL="file://$drc/latest.json" \
   "$bin2/ninferno-update" --check
 
+# A custom commands directory given once: updates, rollbacks and the uninstall keep using it (the
+# home records it), with HOME's default left empty. Rollback goes to the newest kept version older
+# than this one, whatever the directories' times (a release directory's time is its build's).
+home7=$work/home-bin; bin7=$work/custom-bin; fakehome=$work/fake-home
+mkdir -p "$fakehome"
+H=(env HOME="$fakehome" NINFERNO_HOME="$home7")
+# Given relative (from $work): recorded as the absolute path.
+expect "0.1.0 into a custom commands directory" 0 "${H[@]}" NINFERNO_BIN="custom-bin" NINFERNO_MANIFEST="$d1/latest.json" \
+  NINFERNO_ARCHIVE="$d1/ninferno-linux-x86_64.tar.gz" sh -c 'cd "$1" && sh "$1/install.sh"' sh "$work"
+[ "$(cat "$home7/.bin-dir")" = "$bin7" ] || fail "the recorded commands directory is '$(cat "$home7/.bin-dir")', not $bin7"
+for d in "$d2" "$d5"; do
+  expect "$(basename "$d") over it without NINFERNO_BIN" 0 "${H[@]}" NINFERNO_MANIFEST="$d/latest.json" \
+    NINFERNO_ARCHIVE="$d/ninferno-linux-x86_64.tar.gz" sh "$work/install.sh"
+done
+[ "$("$bin7/ninferno-serve")" = "ninferno 0.5.0" ] || fail "the custom commands directory does not run 0.5.0"
+[ ! -e "$fakehome/.local/bin" ] || fail "an install without NINFERNO_BIN linked into HOME's default"
+touch -d '2000-01-01' "$home7/ninferno-0.2.0-linux-x86_64" "$home7/ninferno-0.5.0-linux-x86_64"
+touch "$home7/ninferno-0.1.0-linux-x86_64"
+# A kept directory with no version is neither a rollback target nor removed.
+mkdir -p "$home7/ninferno-x-linux-x86_64/share/ninferno"
+echo '{}' > "$home7/ninferno-x-linux-x86_64/share/ninferno/release.json"
+# The commands directory was removed meanwhile: rollback makes it again.
+rm -rf "$bin7"
+expect "rollback by version" 0 "${H[@]}" "$home7/current/bin/ninferno-update" --rollback
+[ "$("$bin7/ninferno-serve")" = "ninferno 0.2.0" ] || fail "rollback from 0.5.0 did not go to 0.2.0"
+expect "an update after the rollback" 0 "${H[@]}" NINFERNO_UPDATE_URL="file://$d6/latest.json" \
+  NINFERNO_ARCHIVE="$d6/ninferno-linux-x86_64.tar.gz" "$bin7/ninferno-update" --yes
+[ "$("$bin7/ninferno-serve")" = "ninferno 0.6.0" ] || fail "the update after the rollback did not link 0.6.0"
+kept=$(cd "$home7" && ls -d ninferno-*-linux-x86_64 | grep -v '^ninferno-x-' | tr '\n' ' ')
+[ -d "$home7/ninferno-x-linux-x86_64" ] || fail "the update removed a kept directory with no version"
+rm -rf "$home7/ninferno-x-linux-x86_64"
+# 0.5.0 for --rollback, 0.2.0 the update ran from; 0.1.0 goes.
+[ "$kept" = "ninferno-0.2.0-linux-x86_64 ninferno-0.5.0-linux-x86_64 ninferno-0.6.0-linux-x86_64 " ] ||
+  fail "after the update the home keeps '$kept', not 0.2.0, 0.5.0 and 0.6.0"
+[ ! -e "$fakehome/.local/bin" ] || fail "an update or rollback linked into HOME's default"
+expect "uninstall from the recorded commands directory" 0 "${H[@]}" sh "$work/install.sh" --uninstall --yes
+[ -z "$(ls -A "$bin7")" ] || fail "the uninstall left links in the custom commands directory: $(ls "$bin7")"
+[ ! -e "$home7" ] || fail "the uninstall left the home: $(ls -A "$home7")"
+
+# --check offers only what --yes installs: a signed manifest with no https address for the
+# archive is refused by both (a rehearsal without TLS gives the archive as a file).
+dh=$work/dist-http
+mkdir -p "$dh"
+cp "$d6/ninferno-linux-x86_64.tar.gz" "$d6/ninferno-linux-x86_64.tar.gz.sha256" "$dh/"
+python3 "$REPO/tools/release/manifest.py" --version 0.6.0 --base "http://releases.invalid/v0.6.0" "$dh" > "$dh/latest.json"
+sign "$dh/latest.json"
+expect "--check refuses an archive without https" 1 "${J[@]}" NINFERNO_UPDATE_URL="file://$dh/latest.json" \
+  "$bin2/ninferno-update" --check
+said "gives no https address for ninferno-linux-x86_64.tar.gz"
+! grep -q "is available" "$work/out.txt" || fail "--check offered a release --yes refuses"
+expect "--check with the archive given as a file" 0 "${J[@]}" NINFERNO_UPDATE_URL="file://$dh/latest.json" \
+  NINFERNO_ARCHIVE="$d6/ninferno-linux-x86_64.tar.gz" "$bin2/ninferno-update" --check
+
+# sign.sh says why it does not sign, without OpenSSL's raw output.
+cp "$d1/latest.json" "$work/to-sign.json"
+expect "sign.sh with a key that is not the release key" 1 bash "$REPO/tools/release/sign.sh" \
+  "$work/to-sign.json" "$work/key.pem"
+said "is not the release key"
+[ "$(wc -l < "$work/out.txt")" = 1 ] || { fail "sign.sh printed more than its own line"; sed 's/^/  /' "$work/out.txt"; }
+[ ! -e "$work/to-sign.json.sig" ] || fail "sign.sh wrote a signature with the wrong key"
+echo "not a key" > "$work/not-a-key.pem"
+expect "sign.sh with a file that is no key" 1 bash "$REPO/tools/release/sign.sh" "$work/to-sign.json" "$work/not-a-key.pem"
+said "sign.sh: cannot sign"
+[ "$(wc -l < "$work/out.txt")" = 1 ] || { fail "sign.sh printed more than its own line"; sed 's/^/  /' "$work/out.txt"; }
+
 # Uninstall: what install.sh placed goes, nothing else; it asks unless --yes.
 ln -s /bin/true "$bin/not-ninferno"
 echo keep > "$bin/notes.txt"
