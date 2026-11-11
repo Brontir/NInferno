@@ -11,7 +11,9 @@
 #include "core/measured_disposition.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <limits>
+#include <optional>
 #include <span>
 
 namespace ninferno::measured {
@@ -30,10 +32,46 @@ inline constexpr Board kRtx3090      = board_registry::board(0x2204);
 inline constexpr Board kA10          = board_registry::board(0x2236);
 inline constexpr Board kA100Sxm40    = board_registry::board(0x20B0);
 inline constexpr Board kRtx2080Ti    = board_registry::board(0x1E07);
-// Conflict between tables: the row spells the V100 SXM2's 4096-bit HBM2 at 1.754 Gbps, 898.048
-// GB/s; the route and R8 tables and the gates were measured under, and board_distance has always
-// read, the published 900 GB/s. Kept at 900 so every distance is as before.
-inline constexpr Board kV100Sxm2 = board_registry::board(0x1DB5, 900);
+
+// The recorded conflicts between a registry row and the bandwidth the data keyed by that board was
+// measured under (board_registry::board's override), in one place: the measured constants below
+// and every table that names its board by PCI id (board_of_pci) read them.
+struct DramConflict {
+    std::uint32_t pci_device_id;
+    double dram_gbps;
+};
+
+inline constexpr DramConflict kDramConflicts[] = {
+    // The row spells the V100 SXM2's 4096-bit HBM2 at 1.754 Gbps, 898.048 GB/s; the route and R8
+    // tables and the gates were measured under, and board_distance has always read, the published
+    // 900 GB/s. Kept at 900 so every distance is as before.
+    {0x1DB5, 900},
+};
+
+// The bandwidth a conflict records for a PCI id; 0 (none) for every other id.
+[[nodiscard]] constexpr double conflict_dram_gbps(std::uint32_t pci_device_id) noexcept {
+    for (const DramConflict& c : kDramConflicts) {
+        if (c.pci_device_id == pci_device_id) { return c.dram_gbps; }
+    }
+    return 0;
+}
+
+// The board data recorded by its PCI id was measured on (a route table's gpu.pci_id, an R8 decode
+// table's row): the registry's row with its recorded conflict. An id the registry lacks is a
+// compile error in a constant expression, as board_registry::board.
+[[nodiscard]] constexpr Board board_of_pci(std::uint32_t pci_device_id) {
+    return board_registry::board(pci_device_id, conflict_dram_gbps(pci_device_id));
+}
+
+// board_of_pci for an id read at run time (a route table's gpu.pci_id); nullopt where the registry
+// has no row for it.
+[[nodiscard]] constexpr std::optional<Board>
+find_board_of_pci(std::uint32_t pci_device_id) noexcept {
+    if (board_registry::find(pci_device_id) == nullptr) { return std::nullopt; }
+    return board_of_pci(pci_device_id);
+}
+
+inline constexpr Board kV100Sxm2 = board_of_pci(0x1DB5);
 
 // Pins, checked in every translation unit that includes this header: a change of a gpu_facts.json
 // row that moves a measured board's figures fails every product build, not only the test.

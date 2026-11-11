@@ -5,6 +5,7 @@
 // not have, duplicates) and tolerance of keys no consumer reads. Every shipped routes/*.json must
 // pass the same validation.
 #include "core/device_class.h"
+#include "core/measured_boards.h"
 #include "core/sha256.h"
 #include "ninferno/ops/route_table.h"
 #include "ops/common/shape_routes.h"
@@ -473,6 +474,71 @@ int main(int argc, char** argv) {
                           "an R8 band beyond T = 8 is refused");
         failures += check(!loads("moe_r8_fp8", r8_entry("fp8", 4)),
                           "an R8 band on a format without the R8 kernel is refused");
+        (void)ninferno::ops::load_route_table(write_file("good", good));
+    }
+
+    // The board a table was measured on is named by its PCI id (gpu.pci_id) and read from the
+    // registry (#612 step 9): the writer records the id, and the facts only for a board the
+    // registry lacks; the reader takes the registry's row over any facts the file spells, and a
+    // file's facts where the registry has no row for its id.
+    {
+        const std::string entry =
+            R"({"format": "q8", "compute": "a16", "epilogue": "store", "n": 4096, "k": 1024,
+                "bands": [[1, 16777216, "rmma.m1.n1.w1x8"]]})";
+        const auto boarded = [&](const std::string& fields) {
+            return "{\"schema\": \"ninferno-route-table/1\", \"gpu\": {\"class\": \"" + gpu +
+                   "\", \"name\": \"test\"" + fields + "}, \"entries\": [" + entry + "]}";
+        };
+        const auto distance = [&](const std::string& name, const std::string& fields) {
+            (void)ninferno::ops::load_route_table(write_file(name, boarded(fields)));
+            const auto answer = generic::table_route_answer(q8, 1, false);
+            return answer ? answer->distance : -1.0;
+        };
+        const auto loads_board = [&](const std::string& name, const std::string& fields) {
+            try {
+                (void)ninferno::ops::load_route_table(write_file(name, boarded(fields)));
+            } catch (const std::runtime_error&) { return false; }
+            return true;
+        };
+        char hex[11];
+        std::snprintf(hex, sizeof(hex), "0x%04x", static_cast<unsigned>(device.pci_device_id));
+        const std::string id      = hex;
+        const auto own            = ninferno::measured::find_board_of_pci(device.pci_device_id);
+        const std::string written = generic::write_route_table(gpu, device.name, {});
+        const std::string cc      = std::to_string(device.compute_capability());
+        const std::string figures =
+            ", \"board\": {\"cc\": " + cc + ", \"sms\": " + std::to_string(device.sms) + "}";
+        const double figures_apart = distance("pci_figures_only", figures);
+        failures += check(figures_apart >= 0, "a table with facts and no id reads them");
+        if (device.pci_device_id != 0) {
+            failures += check(written.find("\"pci_id\": \"" + id + "\"") != std::string::npos,
+                              "the writer records the device's PCI id: " + written);
+        }
+        if (own) {
+            failures += check(written.find("\"board\"") == std::string::npos,
+                              "a registry board's facts are not written: " + written);
+            const double apart = ninferno::board_distance(ninferno::board_of(device), *own);
+            failures += check(distance("pci_own", ", \"pci_id\": \"" + id + "\"") == apart,
+                              "a table's id reads the registry's row of it");
+            failures += check(distance("pci_over_figures", ", \"pci_id\": \"" + id +
+                                                               "\", \"board\": {\"cc\": " + cc +
+                                                               ", \"sms\": 1}") == apart,
+                              "the registry's row of the id wins over the file's facts");
+        } else {
+            failures += check(written.find("\"board\"") != std::string::npos,
+                              "a board the registry lacks keeps its facts: " + written);
+        }
+        failures +=
+            check(!ninferno::measured::find_board_of_pci(0xFFFF), "0xffff is no registry id");
+        failures +=
+            check(distance("pci_unknown", ", \"pci_id\": \"0xffff\"" + figures) == figures_apart,
+                  "an id the registry lacks reads the file's facts");
+        int bad_files = 0;
+        for (const char* bad : {"\"2782\"", "\"0x27g2\"", "\"0x278200\"", "\"\"", "10114"}) {
+            failures += check(!loads_board("pci_bad_" + std::to_string(++bad_files),
+                                           std::string(", \"pci_id\": ") + bad),
+                              std::string("a malformed gpu.pci_id is refused: ") + bad);
+        }
         (void)ninferno::ops::load_route_table(write_file("good", good));
     }
 

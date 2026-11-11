@@ -537,6 +537,11 @@ class Prune(unittest.TestCase):
         self.assertTrue(prune.board_matches_table("ad104:58sm", self.table_of("ad104", 58)))
         self.assertFalse(prune.board_matches_table("ga102:72sm", self.table_of("ga102", 82)))
         self.assertFalse(prune.board_matches_table("ga106", bare84))
+        # A table names its board by PCI id (gpu.pci_id): the registry row's SMs, over any facts.
+        by_id = table()
+        by_id["gpu"] = {"class": "gb203", "name": "x", "pci_id": "0x2c02", "board": {"sms": 70}}
+        self.assertTrue(prune.board_matches_table("gb203:84sm", by_id))
+        self.assertFalse(prune.board_matches_table("gb203:70sm", by_id))
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             table_path = self.write(root, "gb203.json", bare84)

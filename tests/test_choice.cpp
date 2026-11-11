@@ -11,6 +11,7 @@
 #include "product/choice/choice.h"
 #include "core/device_class.h"
 #include "core/machine_facts.h"
+#include "core/measured_boards.h"
 #include "core/generation.h"
 #include "core/mmq_columns.h"
 #include "product/choice/choice_replay.h"
@@ -124,6 +125,20 @@ using ninferno::ActivationMode;
 using ninferno::KvCacheStorage;
 using ninferno::RecurrentStateStorage;
 using nlohmann::json;
+
+// A fixture card by its PCI id (#612 step 9): the compute capability, SMs and DRAM rate the
+// measured data keyed by the board reads (core/measured_boards.h board_of_pci: the registry row,
+// with its recorded conflict) and the row's reference clock (its published boost), the fields these
+// fixtures price with. The L2 and FP4 stay unset, as the fixtures always had them.
+ch::CardFacts board_card(std::uint32_t pci_device_id) {
+    const ninferno::Board b                       = ninferno::measured::board_of_pci(pci_device_id);
+    const ninferno::board_registry::BoardRow* row = ninferno::board_registry::find(pci_device_id);
+    return {.major            = b.major,
+            .minor            = b.minor,
+            .sms              = b.sms,
+            .clock_hz         = row->boost_mhz * 1e6,
+            .dram_bytes_per_s = b.dram_gbps * 1e9};
+}
 
 int failures = 0;
 
@@ -960,7 +975,7 @@ void decides_by_generation(const json& fixture) {
     }
     const Bench t = nine_b(fixture, "RTX 2080 Ti");
     check(!ch::reference_of(t.card), "Turing has no reference card");
-    ch::CardFacts volta{7, 0, 80, 1.53e9, 900e9, false};
+    ch::CardFacts volta = board_card(0x1DB5);
     ch::Candidate c;
     const ch::Speed v = ch::speed_of(t.model, volta, t.quants[0], c, 1, 2048);
     check(v.decode_per_stream > 0 && std::isfinite(v.decode_per_stream) && v.prefill > 0,
@@ -1374,14 +1389,14 @@ void prices_moe_prefill_tiles() {
     m.linears.push_back({2048, 512, 40, false});
     m.linears.push_back({1024, 2048, 320, true});
     m.linears.push_back({2048, 512, 320, true});
-    ch::CardFacts rtx4090{.major = 8, .minor = 9, .sms = 128, .clock_hz = 2.52e9, .dram_bytes_per_s = 1008e9};
+    ch::CardFacts rtx4090 = board_card(0x2684);
     ch::QuantOption q;
     q.expert_banks = ch::ExpertBanks::Int8;
     q.rest_weights = ch::WeightClass::Q8; // UD-Q4_K_M's linears beside the experts: Q8_0
     const double t = ch::prefill_linears_seconds(m, rtx4090, q, 1819);
     std::cout << "MoE prefill tiles, Qwen3.6 UD-Q4_K_M RTX 4090 1819 tokens: " << t * 1e3 << " ms against 86.4\n";
     check(std::abs(t / 0.0864 - 1) < 0.12, "an MoE's prefill linears by their tiles within 12 % of the census");
-    ch::CardFacts v100{.major = 7, .minor = 0, .sms = 84, .clock_hz = 1.62e9, .dram_bytes_per_s = 870e9};
+    ch::CardFacts v100 = board_card(0x1DB5);
     check(ch::prefill_linears_seconds(m, v100, q, 1819) == 0, "no int8 tile row on Volta: unknown");
     q.expert_banks = ch::ExpertBanks::Unknown;
     check(ch::prefill_linears_seconds(m, rtx4090, q, 1819) == 0, "unknown banks: unknown");
@@ -1407,12 +1422,10 @@ void prices_dense_prefill_tiles() {
         ch::CardFacts card;
         double ms;
     };
+
     const Census rows[] = {
-        {{.major = 8, .minor = 6, .sms = 28, .clock_hz = 1.777e9, .dram_bytes_per_s = 360e9}, 767.4},
-        {{.major = 8, .minor = 9, .sms = 34, .clock_hz = 2.535e9, .dram_bytes_per_s = 288e9}, 440.4},
-        {{.major = 8, .minor = 9, .sms = 60, .clock_hz = 2.61e9, .dram_bytes_per_s = 504e9}, 245.9},
-        {{.major = 8, .minor = 9, .sms = 128, .clock_hz = 2.52e9, .dram_bytes_per_s = 1008e9}, 127.4},
-        {{.major = 12, .minor = 0, .sms = 70, .clock_hz = 2.452e9, .dram_bytes_per_s = 896e9}, 212.0},
+        {board_card(0x2504), 767.4}, {board_card(0x2805), 440.4}, {board_card(0x2782), 245.9},
+        {board_card(0x2684), 127.4}, {board_card(0x2C05), 212.0},
     };
     double worst = 0;
     for (const Census& r : rows) {
@@ -1429,9 +1442,10 @@ void prices_dense_prefill_tiles() {
         ch::CardFacts card;
         double us;
     };
+
     const Lone lone[] = {
-        {rows[0].card, 39.3}, {rows[1].card, 28.4}, {rows[2].card, 26.1}, {rows[3].card, 27.5}, {rows[4].card, 25.5},
-        {{.major = 12, .minor = 0, .sms = 170, .clock_hz = 2.407e9, .dram_bytes_per_s = 1792e9}, 27.1},
+        {rows[0].card, 39.3}, {rows[1].card, 28.4}, {rows[2].card, 26.1},
+        {rows[3].card, 27.5}, {rows[4].card, 25.5}, {board_card(0x2B85), 27.1},
     };
     double lone_worst = 0;
     for (const Lone& l : lone) {
@@ -1448,7 +1462,8 @@ void prices_dense_prefill_tiles() {
     {
         ch::QuantOption q6 = q;
         q6.label           = "Q6_K";
-        const ch::CardFacts ti{.major = 8, .minor = 9, .sms = 34, .clock_hz = 2.535e9, .dram_bytes_per_s = 288e15};
+        ch::CardFacts ti    = board_card(0x2805);
+        ti.dram_bytes_per_s = 288e15; // out of reach: the tiles alone
         const auto call = [&](double n, double k, bool gated) {
             ch::ModelFacts one = m;
             one.linears        = {{n, k, 1, false, gated}};
@@ -1460,7 +1475,7 @@ void prices_dense_prefill_tiles() {
         // Volta (DECISIONS 70): the Quadro GV100's CUTLASS route, a 7K prompt's linears in 1024-token
         // chunks against the census's GEMM, decode, cast and epilogue (Q8_0 1842 ms, Q6_K 1882).
         {
-            const ch::CardFacts gv100{.major = 7, .minor = 0, .sms = 80, .clock_hz = 1.627e9, .dram_bytes_per_s = 870e9};
+            const ch::CardFacts gv100 = board_card(0x1DBA);
             ch::ModelFacts qwen = m;
             qwen.hidden         = 4096;
             qwen.linears        = {{10240, 4096, 8}, {4096, 4096, 8}, {12288, 4096, 24}, {4096, 4096, 24},
@@ -1492,7 +1507,7 @@ void prices_dense_prefill_tiles() {
         // Where MMQ does not pay: the RTX 5070 Ti's producer-warp Q6_K tiles, the gate and up's 1024-token
         // call (384 x 8 tiles in 44 rounds of its 70 SMs: the census's 2131.1 us); a call under 128
         // tokens keeps the share.
-        const ch::CardFacts r5070{.major = 12, .minor = 0, .sms = 70, .clock_hz = 2.452e9, .dram_bytes_per_s = 896e9};
+        const ch::CardFacts r5070 = board_card(0x2C05);
         ch::ModelFacts gate_up = m;
         gate_up.linears        = {{24576, 4096, 1, false, true}};
         const double ws        = ch::prefill_linears_seconds(gate_up, r5070, q6, 1024) * 1e6 / 2131.1 - 1;
@@ -1517,14 +1532,11 @@ void prices_prefill_small_kernels() {
         ch::CardFacts card;
         double ms;
     };
+
     const Census rows[] = {
-        {{.major = 8, .minor = 6, .sms = 28, .clock_hz = 1.777e9, .dram_bytes_per_s = 360e9}, 63.8},
-        {{.major = 8, .minor = 9, .sms = 34, .clock_hz = 2.535e9, .dram_bytes_per_s = 288e9}, 35.3},
-        {{.major = 8, .minor = 9, .sms = 60, .clock_hz = 2.61e9, .dram_bytes_per_s = 504e9}, 21.6},
-        {{.major = 8, .minor = 9, .sms = 128, .clock_hz = 2.52e9, .dram_bytes_per_s = 1008e9}, 11.5},
-        {{.major = 12, .minor = 0, .sms = 70, .clock_hz = 2.452e9, .dram_bytes_per_s = 896e9}, 14.1},
-        {{.major = 12, .minor = 0, .sms = 170, .clock_hz = 2.407e9, .dram_bytes_per_s = 1792e9}, 7.9},
-        {{.major = 7, .minor = 5, .sms = 68, .clock_hz = 1.545e9, .dram_bytes_per_s = 616e9}, 76.9},
+        {board_card(0x2504), 63.8}, {board_card(0x2805), 35.3}, {board_card(0x2782), 21.6},
+        {board_card(0x2684), 11.5}, {board_card(0x2C05), 14.1}, {board_card(0x2B85), 7.9},
+        {board_card(0x1E07), 76.9},
     };
     double worst = 0;
     for (const Census& r : rows) {
@@ -1533,7 +1545,7 @@ void prices_prefill_small_kernels() {
         std::cout << "prefill small kernels, " << r.card.sms << " SMs: " << t * 1e3 << " ms against " << r.ms << "\n";
     }
     check(worst < 0.25, "a prefill's small kernels by the scan's clocks and the rest's bytes within a quarter");
-    const ch::CardFacts v100{.major = 7, .minor = 0, .sms = 80, .clock_hz = 1.53e9, .dram_bytes_per_s = 900e9};
+    const ch::CardFacts v100 = board_card(0x1DB5);
     check(ch::prefill_small_seconds(m, v100, 1819) > 0, "Volta's small kernels: the GV100's census (DECISIONS 70)");
 }
 
@@ -1604,18 +1616,14 @@ void prices_attention_tiles() {
         ch::CardFacts card;
         std::vector<double> us; // chunk i of 1024 tokens after i x 1024
     };
+
     const Series series[] = {
-        {{.major = 12, .minor = 0, .sms = 170, .clock_hz = 2.407e9, .dram_bytes_per_s = 1792e9},
-         {89.3, 154.7, 221.4, 285.5, 350.9, 414.2, 480.3}},
-        {{.major = 8, .minor = 9, .sms = 34, .clock_hz = 2.535e9, .dram_bytes_per_s = 288e9},
-         {272.4, 580.9, 890.2, 1231.7, 1528.9, 1821.7, 2152.4}},
-        {{.major = 8, .minor = 6, .sms = 28, .clock_hz = 1.777e9, .dram_bytes_per_s = 360e9},
-         {566.2, 1110.8, 1646.7, 2190.3, 2734.7, 3275.4, 3833.7}},
-        {{.major = 12, .minor = 0, .sms = 70, .clock_hz = 2.452e9, .dram_bytes_per_s = 896e9},
-         {109.5, 236.5, 362.2, 486.4, 611.5, 735.3, 860.2}},
+        {board_card(0x2B85), {89.3, 154.7, 221.4, 285.5, 350.9, 414.2, 480.3}},
+        {board_card(0x2805), {272.4, 580.9, 890.2, 1231.7, 1528.9, 1821.7, 2152.4}},
+        {board_card(0x2504), {566.2, 1110.8, 1646.7, 2190.3, 2734.7, 3275.4, 3833.7}},
+        {board_card(0x2C05), {109.5, 236.5, 362.2, 486.4, 611.5, 735.3, 860.2}},
         // The RTX 4070 Ti: 60 SMs, its first two 64-row slots as half-height CTAs.
-        {{.major = 8, .minor = 9, .sms = 60, .clock_hz = 2.61e9, .dram_bytes_per_s = 504e9},
-         {174.1, 368.9, 560.4, 751.4, 946.8, 1133.5, 1354.6}},
+        {board_card(0x2782), {174.1, 368.9, 560.4, 751.4, 946.8, 1133.5, 1354.6}},
     };
     double worst = 0;
     for (const Series& s : series) {
@@ -1730,19 +1738,20 @@ void prices_gemma_attention_tiles(const json& fixture) {
         ch::CardFacts card;
         std::vector<double> sliding, full; // a layer's us, chunk i after i x 1024
     };
+
     const Series series[] = {
-        {{.major = 8, .minor = 9, .sms = 34, .clock_hz = 2.535e9, .dram_bytes_per_s = 288e9},
+        {board_card(0x2805),
          {300.3, 610.7, 620.2, 609.8, 611.2, 610.0},
          {812.9, 2403.9, 4062.3, 5596.3, 7259.1, 8854.9}},
-        {{.major = 12, .minor = 0, .sms = 170, .clock_hz = 2.407e9, .dram_bytes_per_s = 1792e9},
+        {board_card(0x2B85),
          {83.0, 141.7, 142.6, 143.4, 143.3, 143.9},
          {154.0, 492.4, 735.8, 1052.7, 1282.6, 1605.3}},
         // The RTX 2080 Ti (Turing's row, read on it).
-        {{.major = 7, .minor = 5, .sms = 68, .clock_hz = 1.545e9, .dram_bytes_per_s = 616e9},
+        {board_card(0x1E07),
          {745.3, 1143.0, 1142.5, 1137.9, 1135.9, 1134.9},
          {1387.0, 4448.4, 7658.4, 10789.3, 13900.7, 17006.3}},
         // The Quadro GV100 (Volta's row, read on it).
-        {{.major = 7, .minor = 0, .sms = 80, .clock_hz = 1.627e9, .dram_bytes_per_s = 870e9},
+        {board_card(0x1DBA),
          {974.1, 1568.3, 1525.7, 1522.6, 1508.6, 1524.7},
          {1666.7, 5241.9, 8712.2, 12284.3, 15746.2, 19391.7}},
     };
@@ -2483,9 +2492,10 @@ void prices_r8_issue() {
         double us; // route-tune's fastest R8 schedule
         double within;
     };
+
     const Census rows[] = {
-        {{.major = 8, .minor = 6, .sms = 82, .clock_hz = 1.695e9, .dram_bytes_per_s = 936e9}, 37.9, 0.10},
-        {{.major = 8, .minor = 6, .sms = 28, .clock_hz = 1.777e9, .dram_bytes_per_s = 360e9}, 100.9, 0.10},
+        {board_card(0x2204), 37.9, 0.10},
+        {board_card(0x2504), 100.9, 0.10},
     };
     for (const Census& r : rows) {
         const std::string_view gen = ch::generation_of(r.card);
@@ -2514,9 +2524,9 @@ void prices_r8_issue() {
         check(rated && f.bits > 1 && f.bits < 4 && f.warp_inst_per_kib > 0, "an R8 issue row of a rated generation");
     }
     const ch::CardFacts unrated[] = {
-        {.major = 8, .minor = 9, .sms = 128, .clock_hz = 2.52e9, .dram_bytes_per_s = 1008e9},
-        {.major = 12, .minor = 0, .sms = 70, .clock_hz = 2.45e9, .dram_bytes_per_s = 896e9},
-        {.major = 7, .minor = 5, .sms = 68, .clock_hz = 1.545e9, .dram_bytes_per_s = 616e9},
+        board_card(0x2684),
+        board_card(0x2C05),
+        board_card(0x1E07),
     };
     for (const ch::CardFacts& card : unrated) {
         check(step(card, "ggml_iq2_xxs", 1, ActivationMode::Fast) == step(card, "", 1, ActivationMode::Fast),
@@ -3393,7 +3403,31 @@ void resolution_by_basis(const json& fixture) {
     check(dominated == 0, "no pick is dominated by a candidate it was weighed against");
 }
 
+// The fixtures' cards are the registry rows of the boards they were measured on (board_card, by
+// PCI id): a card's facts in the JSON (which the fit scripts read too) may not drift from the row.
+void fixture_cards_are_registry_rows(const json& doc, const std::string& what) {
+    const std::map<std::string, std::uint32_t> pci = {
+        {"RTX 4060 Ti", 0x2805}, {"RTX 4070 Ti", 0x2782}, {"RTX 4090", 0x2684},
+        {"RTX 3060", 0x2504},    {"RTX 2080 Ti", 0x1E07}, {"RTX 5070 Ti", 0x2C05},
+        {"RTX 5090", 0x2B85},    {"Quadro GV100", 0x1DBA}};
+    const auto same = [](double a, double b) { return std::abs(a - b) <= 1e-9 * std::abs(b); };
+    for (const auto& [name, card] : doc.at("cards").items()) {
+        const auto id = pci.find(name);
+        check(id != pci.end(), what + ": card " + name + " has a PCI id here");
+        if (id == pci.end()) { continue; }
+        const ch::CardFacts c = card_of(card), row = board_card(id->second);
+        check(c.major == row.major && c.minor == row.minor && c.sms == row.sms &&
+                  same(c.clock_hz, row.clock_hz) && same(c.dram_bytes_per_s, row.dram_bytes_per_s),
+              what + ": card " + name + " is its registry row");
+    }
+}
+
 int main() {
+    for (const char* name : {"speed_measured", "decode_measured", "prefill_measured"}) {
+        std::ifstream cards(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/" + name +
+                            ".json");
+        fixture_cards_are_registry_rows(json::parse(cards), name);
+    }
     std::ifstream in(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/speed_measured.json");
     const json fixture = json::parse(in);
     reproduces_the_measurements(fixture);

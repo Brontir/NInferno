@@ -143,12 +143,22 @@ def load_cards(routes_dir, gen_rows, facts):
     cards = {}
     for path in sorted(Path(routes_dir).glob("*.json")):
         doc = json.loads(path.read_text(encoding="utf-8"))
-        if "board" not in doc["gpu"]:
-            print(f"warning: {path.name}: no gpu.board, card skipped", file=sys.stderr)
+        # The table's board by its PCI id (gpu.pci_id), as route_table.cpp reads it: the
+        # registry row (without the recorded bandwidth conflicts of core/measured_boards.h, none of
+        # them a paired card's); a table of a board the registry lacks records gpu.board instead.
+        row = next((g for g in facts["gpus"] if "pci_id" in doc["gpu"]
+                    and int(g["id"], 16) == int(doc["gpu"]["pci_id"], 16)), None)
+        if row is not None:
+            board = {"cc": row["cc"], "sms": row["sms"], "l2_mib": row.get("l2_mib", 0),
+                     "dram_gbps": row["bus_bits"] * row["gbps"] / 8.0}
+        elif "board" in doc["gpu"]:
+            board = dict(doc["gpu"]["board"])
+        else:
+            print(f"warning: {path.name}: no gpu.pci_id the registry has and no gpu.board, card "
+                  "skipped", file=sys.stderr)
             continue
-        board = dict(doc["gpu"]["board"])
         gen = generation_of(gen_rows, board["cc"])
-        clock = boost_mhz(facts, board)
+        clock = row["boost_mhz"] if row is not None else boost_mhz(facts, board)
         if clock is None:
             print(f"warning: {path.name}: no gpu_facts.json row matches board {board}; "
                   "its ridge is unknown", file=sys.stderr)

@@ -5297,12 +5297,7 @@
  "gpu": {
   "class": "ad104",
   "name": "NVIDIA L4",
-  "board": {
-   "cc": 89,
-   "sms": 58,
-   "l2_mib": 48,
-   "dram_gbps": 300
-  }
+  "pci_id": "0x27b8"
  },
  "schema": "ninferno-route-table/1"
 }

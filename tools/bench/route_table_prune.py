@@ -352,16 +352,33 @@ def class_sms(class_id):
     return int(found[1]) if found else None
 
 
+GPU_FACTS = Path(__file__).resolve().parents[2] / "src" / "core" / "data" / "gpu_facts.json"
+
+
+def table_sms(table):
+    """The SM count of the board a table was measured on: the gpu_facts.json row of its gpu.pci_id,
+    as route_table.cpp reads it, else its gpu.board.sms (a board the registry lacks); None when
+    neither names one."""
+    gpu = table.get("gpu", {})
+    if "pci_id" in gpu:
+        pci = int(gpu["pci_id"], 16)
+        rows = json.loads(GPU_FACTS.read_text(encoding="utf-8"))["gpus"]
+        row = next((r for r in rows if int(r["id"], 16) == pci), None)
+        if row is not None:
+            return row["sms"]
+    return gpu.get("board", {}).get("sms")
+
+
 def board_matches_table(board, table):
     """The report's board names the table's board: equal class ids, or a full `chip:Nsm` id for a
-    table of the bare chip whose gpu.board.sms is N. A bare chip names no SM count, so it never
-    matches a table of a full class id, nor a different board of the chip."""
+    table of the bare chip whose board (table_sms) has N SMs. A bare chip names no SM count, so it
+    never matches a table of a full class id, nor a different board of the chip."""
     table_class = table.get("gpu", {}).get("class", "")
     if board == table_class:
         return True
     sms = class_sms(board)
     return (":" not in table_class and sms is not None and chip_of(board) == table_class and
-            sms == table.get("gpu", {}).get("board", {}).get("sms"))
+            sms == table_sms(table))
 
 
 def canonical(doc):
@@ -523,7 +540,7 @@ def main(argv=None):
                 raise ValueError(f"{args.table}: no gpu.class")
             if not board_matches_table(measured, table_doc):
                 raise ValueError(f"the report measured {measured}, which is not the table's board "
-                                 f"(class {table_class}, {table_doc['gpu'].get('board', {}).get('sms')} SMs)")
+                                 f"(class {table_class}, {table_sms(table_doc)} SMs)")
         if args.device_class:
             if class_sms(args.device_class) is None:
                 raise ValueError(f"--class {args.device_class} is not a full class id (chip:Nsm): "

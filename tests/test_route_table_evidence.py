@@ -34,10 +34,19 @@ def load_tables():
             for p in sorted((ROOT / "routes").glob("*.json"))}
 
 
+def registry_sms():
+    """{PCI id: SMs} of src/core/data/gpu_facts.json, the registry a table's gpu.pci_id names."""
+    rows = json.loads((ROOT / "src/core/data/gpu_facts.json").read_text(encoding="utf-8"))["gpus"]
+    return {int(r["id"], 16): r["sms"] for r in rows}
+
+
 def board_keys(table):
     gpu = table["gpu"]
     keys = {gpu["class"]}
-    sms = (gpu.get("board") or {}).get("sms")
+    # The board it was measured on: the registry row of its PCI id, as route_table.cpp reads it,
+    # else the facts a table of a board the registry lacks records.
+    sms = registry_sms().get(int(gpu["pci_id"], 16)) if "pci_id" in gpu else None
+    sms = sms or (gpu.get("board") or {}).get("sms")
     if sms and ":" not in gpu["class"]:
         keys.add("%s:%dsm" % (gpu["class"], sms))
     return keys

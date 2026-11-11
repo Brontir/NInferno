@@ -7249,12 +7249,7 @@
   }
  ],
  "gpu": {
-  "board": {
-   "cc": 89,
-   "dram_gbps": 288.0,
-   "l2_mib": 32.0,
-   "sms": 34
-  },
+  "pci_id": "0x2805",
   "class": "ad106",
   "name": "NVIDIA GeForce RTX 4060 Ti"
  },
