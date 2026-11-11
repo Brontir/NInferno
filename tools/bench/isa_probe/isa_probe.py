@@ -266,6 +266,12 @@ def parse_run(text):
             raise ValueError(refusal)
     if "source_sha256" in head and not SHA256.fullmatch(head["source_sha256"]):
         raise ValueError(f"odd source_sha256 line: {head['source_sha256']!r}")
+    # A run of the checked-in version is a run of the checked-in source: an edited isa_probe.cu
+    # that kept its version is another method, and its row is refused here, before `merge`.
+    if "source_sha256" in head and owed == int(checked_in_probe().split()[1]) and \
+            head["source_sha256"] != source_sha256():
+        raise ValueError(f"source_sha256 {head['source_sha256']} is not the checked-in "
+                         f"isa_probe.cu's ({source_sha256()}): a changed probe bumps its version")
     shape = head["shape"].split()
     if len(shape) != 2 or not shape[1].isdigit():
         raise ValueError(f"odd shape line: {head['shape']!r}")
