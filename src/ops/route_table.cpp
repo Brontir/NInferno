@@ -988,9 +988,8 @@ std::string write_route_table(const std::string& gpu_class, const std::string& g
     try {
         const DeviceClass& device = device_class();
         const Board b             = board_of(device);
-        const bool row_board =
-            board_registry::find(device.pci_device_id) != nullptr &&
-            row_board_facts(b, board_registry::board(device.pci_device_id));
+        const bool row_board      = board_registry::find(device.pci_device_id) != nullptr &&
+                               row_board_facts(b, board_registry::board(device.pci_device_id));
         if (row_board) {
             root["gpu"]["pci_id"] = pci_id_text(device.pci_device_id);
         } else {
