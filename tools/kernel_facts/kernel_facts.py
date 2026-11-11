@@ -513,14 +513,30 @@ def cmd_extract(args):
 
 def elf_section(path, name):
     """The bytes of an ELF64 file's section `name`, or None (not ELF64, or no such section)."""
+    found = elf_sections(path, lambda n: n == name.encode())
+    return found[0][1] if found else None
+
+
+def device_code(path):
+    """Every fatbin section of an ELF64 binary, name and bytes in file order: .nv_fatbin (the
+    linked image) and, under separable compilation, any __nv_relfatbin the objects left; not
+    .nvFatBinSegment, which holds the images' addresses. None when there is none."""
+    found = elf_sections(path, lambda n: b"fatbin" in n.lower() and n != b".nvFatBinSegment")
+    return b"".join(n + b"\0" + d for n, d in found) if found else None
+
+
+def elf_sections(path, wanted):
+    """[(name, bytes)] of an ELF64 file's sections whose name `wanted` takes, in file order; []
+    when the file is not little-endian ELF64."""
+    out = []
     with open(path, "rb") as f:
         head = f.read(64)
         if len(head) < 64 or head[:4] != b"\x7fELF" or head[4] != 2 or head[5] != 1:
-            return None
+            return out
         shoff, = struct.unpack_from("<Q", head, 0x28)
         shentsize, shnum, shstrndx = struct.unpack_from("<HHH", head, 0x3A)
         if shentsize < 64 or shnum == 0 or shstrndx >= shnum:
-            return None
+            return out
 
         def header(i):
             f.seek(shoff + i * shentsize)
@@ -532,24 +548,24 @@ def elf_section(path, name):
 
         names = header(shstrndx)
         if names is None:
-            return None
+            return out
         f.seek(names[1])
         table = f.read(names[2])
         for i in range(shnum):
             h = header(i)
             if h is None:
-                return None
+                return []
             end = table.find(b"\0", h[0])
-            if end >= 0 and table[h[0]:end] == name.encode():
+            if end >= 0 and wanted(table[h[0]:end]):
                 f.seek(h[1])
-                return f.read(h[2])
-    return None
+                out.append((table[h[0]:end], f.read(h[2])))
+    return out
 
 
 def check_key(args):
-    """What a passed check rests on: the binary's device code (its .nv_fatbin section, the only
-    part cuobjdump reads: stripping the binary or setting its run path leaves it as it was; the
-    whole file where there is none) or the saved dumps, the snapshot, the nvcc named, the options
+    """What a passed check rests on: the binary's device code (its fatbin sections, device_code:
+    the part cuobjdump reads, which stripping the binary or setting its run path leaves as it
+    was; the whole file where there is none) or the saved dumps, the snapshot, the nvcc named, the options
     and this checker's own source. A stamp holding it says the check passed on exactly these.
     None when an input is missing (the check then says what is)."""
     h = hashlib.sha256()
@@ -559,9 +575,9 @@ def check_key(args):
             h.update(b"\0" + str(bool(path)).encode())
             if not path:
                 continue
-            device = elf_section(path, ".nv_fatbin") if path == args.binary else None
+            device = device_code(path) if path == args.binary else None
             if device is not None:
-                h.update(b"nv_fatbin" + device)
+                h.update(b"device code\0" + device)
                 continue
             with open(path, "rb") as f:
                 for block in iter(lambda: f.read(1 << 20), b""):

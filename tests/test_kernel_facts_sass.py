@@ -704,6 +704,13 @@ class StampKey(unittest.TestCase):
             self.assertEqual(self.key(root, built), self.key(root, stripped))
             other = elf64([(".text", b"code" * 8), (".nv_fatbin", b"fatbin imagf")])
             self.assertNotEqual(self.key(root, built), self.key(root, other))
+            # A relocatable image the objects left counts too; the images' addresses do not.
+            rel = elf64([(".nv_fatbin", fat), ("__nv_relfatbin", b"object image")])
+            rel2 = elf64([(".nv_fatbin", fat), ("__nv_relfatbin", b"object imagf")])
+            self.assertNotEqual(self.key(root, rel), self.key(root, rel2))
+            moved = elf64([(".nv_fatbin", fat), (".nvFatBinSegment", b"addresses 1")])
+            moved2 = elf64([(".nv_fatbin", fat), (".nvFatBinSegment", b"addresses 2")])
+            self.assertEqual(self.key(root, moved), self.key(root, moved2))
             # Not ELF: the whole file.
             (root / "t").write_bytes(b"not an elf")
             self.assertIsNone(kernel_facts.elf_section(root / "t", ".nv_fatbin"))
