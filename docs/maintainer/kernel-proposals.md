@@ -13,8 +13,8 @@ the measurements then said.
 2. **Law.** The counted law that explains the current kernel's time in that regime: which term
    binds (DRAM bytes, tensor-pipe cycles, issue, latency, launch), counted from the kernel-facts
    snapshots (`src/ops/generic/data/kernel_facts/`) and the chip facts
-   (`src/core/data/gpu_facts.json`, `src/core/data/isa_facts.json`). A gap no counted law explains yet is no proposal yet: the entry
-   records the law that is missing, and the variant waits for it.
+   (`src/core/data/gpu_facts.json`, `src/core/data/isa_facts.json`). A gap no counted law explains
+   yet is no proposal yet: the entry records the law that is missing, and the variant waits for it.
 3. **Prediction, frozen.** The variant's time per regime cell, from the same facts. Write it as a
    range with its sources, before the micro-bench or A/B, and do not change it after a run.
 4. **Acceptance and refutation, frozen.** These are fixed before the A/B:
@@ -66,8 +66,8 @@ prediction so far.
   are those codec_traits marks `min` (Q4_K, Q5_K, Q4_1, Q5_1) or `half_min` (Q2_K).
 - Law: the ones-MMA doubles an m1 tile's tensor work: 16.7 against 8.4 cycles per counted MMA on
   the RTX 5090 (#501).
-- Variant: a plane of T x K/G FP32 sums (G the format's group: 32, and 16 for Q2_K), written once per call by an activation pass (as the W4A8
-  quantizer is). Every tile reads the plane in place of the ones-MMA, which keeps one summation
+- Variant: a plane of T x K/G FP32 sums (G the format's group: 32, and 16 for Q2_K), written once
+  per call by an activation pass (as the W4A8 quantizer is). Every tile reads the plane in place of the ones-MMA, which keeps one summation
   order at every T and tile.
 - Prediction (frozen in #709's body before any run):
   - prefill, narrow tiles at T 24-191: −5..−30 % by board;
@@ -84,8 +84,8 @@ prediction so far.
 
 ### B. Blackwell MoE expert kernel at 4-8 rows (#619 step 11)
 - Regime: the routed experts on GB20x at 4 and 8 rows. They run at 0.74 and 0.63 of the DRAM-bound
-  speed, against Ada's 0.91 and 0.81 (DECISIONS 65). The 5070 Ti IQ3_XXS estimate is 7-13 % slow at 2-6
-  rows.
+  speed, against Ada's 0.91 and 0.81 (DECISIONS 65). The 5070 Ti IQ3_XXS estimate is 7-13 % slow
+  at 2-6 rows.
 - Law: none yet. The gap map lists MoE under "No law yet". The loss may come from the expert grid
   or from the GB20x tensor rate rather than from the kernel.
 - Prototype: `moe_bench` (`r8vs.sh`) and nsys on the 5090 and 5070 Ti at C = 4 and 8.
