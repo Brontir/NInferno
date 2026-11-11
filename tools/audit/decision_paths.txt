@@ -1,0 +1,132 @@
+# Files whose change can move a selector golden (tests/ops/linear/selector_golden): the route
+# selector, its cost model, the route tables, the device facts and the files those are built from.
+# The golden test links the core and ops libraries only: product code (src/product/**, for example
+# the configuration choice) cannot move it and is not listed. The MoE plan goldens
+# (tests/ops/moe_plan_golden) are a second family: golden_gate.py does not read them, and the MoE
+# decision code is not listed.
+# Used by tools/audit/golden_gate.py (CI: a change here with no golden change needs the
+# `goldens-equal` label). One glob per line; `*` stays in one path segment, `**` crosses
+# directories. A pattern that matches no file today is allowed (a planned location).
+src/ops/generic/generic_select_internal.h
+src/ops/generic/generic_cost.cpp
+src/ops/generic/route_cost_constants.h
+src/ops/generic/route_query.*
+src/ops/generic/route_table.h
+src/ops/generic/route_tune_tool.*
+src/ops/generic/selector_facts.*
+src/ops/generic/generic_gemm.cpp
+src/ops/generic/generic_gemm.h
+src/ops/generic/generic_gemm_internal.h
+src/ops/generic/generic_ggml.cpp
+src/ops/generic/generic_ggml_internal.h
+src/ops/generic/generic_schedules.h
+src/ops/generic/generic_tune.cpp
+src/ops/generic/generic_coverage.cpp
+src/ops/generic/generic_workspace.cpp
+src/ops/generic/r8_decode_table.h
+src/ops/generic/format_traits.h
+src/ops/generic/*route_authorities*
+src/ops/generic/*kernel_roofline*
+src/ops/route_table.cpp
+include/ninferno/ops/route_table.h
+include/ninferno/ops/prefill_routes.h
+routes/**
+src/core/data/gpu_facts.json
+src/core/device_class.*
+src/core/device_class_host.*
+src/core/arch_registry.h
+src/core/generation.*
+src/ops/generic/data/kernel_facts/**
+# headers the selector sources compile in (checked by tests/test_golden_gate.py: every file in
+# their include closure is listed here or named there as not deciding)
+src/core/mmq_columns.h
+src/core/measured_boards.h
+src/core/board_registry.h
+src/core/device_identity.h
+src/core/machine_facts.h
+src/ops/common/arch_limits.h
+src/ops/common/native_nvfp4.h
+src/ops/common/route_compute.h
+src/ops/common/route_probe.h
+src/ops/common/shape_routes.*
+src/ops/route_pins.*
+src/ops/generic/ggml_mmq/ggml_mmq.h
+src/ops/linear/nvfp4/nvfp4_a4_plan.h
+src/ops/linear/nvfp4/nvfp4_geometry.h
+src/ops/linear/nvfp4/nvfp4_layout.h
+# types, layouts and constants the selector reads: format tables (weight.h), workspace layout
+# (layout.*), cost constants, kernel-side tile and block facts, policy enums
+src/core/weight.h
+src/core/format_facts.*
+src/core/layout.*
+src/core/dtype.*
+src/core/cost_constants.h
+src/core/machine_facts.cpp
+src/core/ggml_frag.*
+src/core/pdl.cuh
+src/core/arch_family.cuh
+src/ops/generic/random_weight.h
+src/ops/generic/ggml_mmq/ggml_mmq.cu
+src/ops/generic/ggml_mmq/ggml_mmq_internal.cuh
+# device files that also define host functions the selector calls (tiled_supports, tiled_fits,
+# staged_fits, volta_hmma_takes, volta_cutlass_workspace_bytes, vec_supported, ...).
+# tests/test_golden_gate.py finds such a function by name wherever it is defined, so a new one in
+# another .cu file fails by name. If those functions move into src/ops/generic/*.cpp files (the
+# globs below list them), these lines may stay: a literal line is only checked to name a file.
+src/ops/generic/generic_tiled.cu
+src/ops/generic/generic_staged.cu
+src/ops/generic/generic_volta_hmma.cu
+src/ops/generic/generic_volta_cutlass.cu
+src/ops/generic/generic_volta_gemv.cu
+src/ops/generic/ggml_mmq/ggml_vec.cu
+src/ops/moe/moe_internal.h
+include/ninferno/ops/linear.h
+include/ninferno/ops/moe.h
+include/ninferno/option_enums.h
+include/ninferno/types.h
+# generated inputs: the board rows and the embedded facts table are built from these
+cmake/BoardRegistry.cmake
+cmake/EmbedText.cmake
+src/core/CMakeLists.txt
+src/core/embedded_gpu_facts.h.in
+# which kernel-facts snapshots are embedded (sources.cmake lists the sm_*.txt, the .in turns them
+# into ops/generic/embedded_kernel_facts.h) and which sources and kernels the selector's library
+# is built from; the root file defines the build architecture and feature macros that pick the
+# device class features and the golden build set
+src/ops/generic/sources.cmake
+src/ops/generic/embedded_kernel_facts.h.in
+src/ops/generic/ggml_mmq/sources.cmake
+CMakeLists.txt
+# sets NINFERNO_DEFAULT_ROUTE_DIR on route_table.cpp: the golden test reads its routes through
+# route_table_dir(), which returns that define when no routes directory sits beside the executable
+src/ops/basic_sources.cmake
+# the golden producer, what it builds weights with, and its target (source, support library and
+# NINFERNO_SELECTOR_GOLDEN_DIR are set in tests.cmake)
+tests/ops/linear/tests.cmake
+# what every test target is built with: ninferno_add_test / ninferno_add_op_test (sources,
+# compile definitions, libraries, oracle compile options), ninferno_link_ops (which ops
+# implementation the test links: archive or shared library). The files that include it only wire
+# targets in (tests/test_golden_gate.py checks the include chain still reaches the producer)
+tests/cmake/NInfernoTests.cmake
+tests/ops/linear/test_selector_golden.cpp
+tests/ops/quantized_weight.h
+# the implementation behind include/ninferno/ops/prefill_routes.h
+src/ops/prefill_routes.cpp
+# the gate itself: changing it changes what counts as a decision change
+tools/audit/decision_paths.txt
+tools/audit/golden_gate.py
+tools/audit/golden_diff.py
+tests/test_golden_diff.py
+.github/workflows/golden-gate.yml
+# sources that read the selector's own headers (found by the reverse check in tests/test_golden_gate.py)
+src/ops/generic/*.cpp
+src/runtime/engine/decision_routes.cpp
+src/ops/generic/*.h
+src/ops/weight_input.cpp
+include/ninferno/ops/weight_input.h
+include/ninferno/ops/segmented_projection.h
+src/runtime/engine/decision_*
+src/artifact/formats.*
+src/convert/ggml_tables.inc
+src/artifact/layouts.*
+tests/test_golden_gate.py

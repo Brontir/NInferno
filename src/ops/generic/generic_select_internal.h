@@ -191,6 +191,16 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
                   const PricedRoute& take);
 std::optional<Route> cost_route(const Problem& problem, const Weight& weight, std::int32_t tokens);
 
+// The bytes a weight value of the call's matrix takes, as price_routes, a8_candidates and
+// route_traffic read them (#640): the payload over the weight's own stored rows (Weight::n), so a
+// slice of a fused parent (segmented_projection: the whole parent with the call's rows in
+// Problem::n) reads its share of the parent's bytes, not the parent's. Under SwiGLU each output
+// row reads its gate and its up row: the value holds both (x2). A weight of no more rows than the
+// call reads (a whole weight; a row view, whose payload_bytes is its parent's) keeps
+// payload_bytes / (n K), to the bit. The share is proportional to rows: exact where the layout
+// stores rows whole, within a 128-row scale tile for NVFP4 and the FP8 128x128 scales.
+double bytes_per_weight(const Weight& weight, const Problem& problem);
+
 // The weight-side admission of the A8 and A4 tiles and of R8 (generic_gemm.cpp; their refusals
 // name the reason).
 bool allows_w4a8(const Weight& w, LinearPolicy policy);
