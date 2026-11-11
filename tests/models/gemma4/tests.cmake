@@ -61,7 +61,8 @@ else()
   set(ninferno_linker_wraps FALSE)
 endif()
 if(ninferno_linker_wraps)
-  ninferno_add_test(ninferno_gemma4_narrowed_chunk_real_test LABELS real gpu
+  # STATIC_LINK: a wrap reaches no call made inside the shared test library.
+  ninferno_add_test(ninferno_gemma4_narrowed_chunk_real_test LABELS real gpu STATIC_LINK
     SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_engine_narrowed_chunk_real.cpp"
     LIBRARIES ninferno_engine ninferno::cudart)
   target_link_options(ninferno_gemma4_narrowed_chunk_real_test PRIVATE

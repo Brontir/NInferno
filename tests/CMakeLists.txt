@@ -110,6 +110,13 @@ add_test(NAME ninferno_kernel_facts_sass_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_kernel_facts_sass.py)
 ninferno_label_tests(ninferno_kernel_facts_sass_test LABELS host)
 
+# src/core/data/isa_facts.json and tools/bench/isa_probe/isa_probe.py (#613 PR-2): the ISA facts
+# table's schema (every row Measured, every fact present and positive, card and tool named) and the
+# probe output's round trip into a row. No GPU, no CUDA toolkit.
+add_test(NAME ninferno_isa_facts_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_isa_facts.py)
+set_tests_properties(ninferno_isa_facts_test PROPERTIES LABELS host)
+
 # tools/bench/gap_map.py: measured times against the counted DRAM and tensor laws (#619), on
 # synthetic inputs, no GPU.
 add_test(NAME ninferno_gap_map_test
@@ -193,4 +200,20 @@ if(UNIX)
   set_tests_properties(ninferno_ctest_labels_test PROPERTIES
     ENVIRONMENT "CTEST=${CMAKE_CTEST_COMMAND};PYTHON=${Python3_EXECUTABLE}")
   ninferno_label_tests(ninferno_ctest_labels_test LABELS host)
+endif()
+
+# tools/bench/route_table_prune.py: the exit tooling for measured route overrides (#614), on
+# synthetic regret reports, and the tables' evidence_us check (gaps listed in
+# route_evidence_gaps.json, which may only shrink), no GPU.
+add_test(NAME ninferno_route_table_prune_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_route_table_prune.py)
+ninferno_label_tests(ninferno_route_table_prune_test LABELS host)
+
+# The shared test tree's link modes on the built binaries (NINFERNO_SHARED_OP_TESTS, a Linux-only
+# option): every test, app and bench as the configure decided, no second copy of a member archive
+# or of the CUDA runtime beside the shared library. No GPU.
+if(NINFERNO_SHARED_OP_TESTS)
+  add_test(NAME ninferno_link_mode_test
+    COMMAND bash "${PROJECT_SOURCE_DIR}/tools/audit/link_mode.sh" "${CMAKE_BINARY_DIR}")
+  set_tests_properties(ninferno_link_mode_test PROPERTIES LABELS host)
 endif()

@@ -163,6 +163,7 @@ NOT_DECIDING = {
     "src/core/sys.cpp", "src/core/sys.h", "src/core/tensor.cpp", "src/core/tensor.h",
     "src/core/tune_timer.cu", "src/core/tune_timer.h", "src/core/units.h",
     "src/core/weight_view.cpp", "src/core/weight_view.h",
+    "src/core/cuda_stream.h",  # the cudaStream_t handle type for host-only builds (#675)
     # device code reached through the listed ggml_mmq.cu / generic_gemm.cpp: it computes, the
     # selector reads none of its constants
     "src/ops/generic/generic_staged.cuh", "src/ops/generic/generic_tiled.cuh",
@@ -205,6 +206,9 @@ NOT_DECIDING = {
     # the configuration choice (product code): the golden test links core and ops only, so nothing here
     # can move a selector golden
     "src/product/choice/choice.cpp",
+    # the drafter pair registry (spec): it reads the board registry to count cards (#692); the golden
+    # test does not link spec, so nothing here can move a selector golden
+    "src/spec/pairs.cpp",
 }
 # Includes that resolve to no tracked file: generated at build time (name -> the generator input,
 # which must be listed) or third-party code.
@@ -308,6 +312,12 @@ EXCLUDED = [
     ("src/core/host_memory.cpp", "host memory"), ("src/core/host_worker_pool.cpp", "host threads"),
     ("src/core/decode_graph.cpp", "CUDA graph capture"), ("src/core/debug_poison.cpp", "debug"),
     ("src/core/gdn_replay_records.cpp", "state records"),
+    # the ISA facts (#668): today only tests/test_isa_facts.cpp reads them; the price that reads them
+    # moves these lines to decision_paths.txt
+    ("src/core/isa_facts.cpp", "ISA facts reader, no selector caller yet"),
+    ("src/core/embedded_isa_facts.h.in", "ISA facts embedding, no selector caller yet"),
+    ("src/core/data/isa_facts.json", "ISA facts rows, no selector caller yet"),
+    ("src/core/data/isa_probe/*", "raw ISA probe output the rows were read from"),
     ("src/core/device_traits.cpp", "reads the driver (display, WDDM) for the plan, not the selector"),
     ("src/core/gate_atlas.cpp", "audit table that calls the gate; the gate's rule is in a listed header"),
     ("src/core/kernel_occupancy.cpp", "occupancy for launch code and the kernel-facts test; the selector "
@@ -331,7 +341,11 @@ EXCLUDED = [
                                     "filter; the selector's NINFERNO_WITHOUT_NVFP4 macro comes from the "
                                     "root CMakeLists.txt (listed), the filter alone cannot move a golden "
                                     "(a base build that stopped filtering would not compile), and a flag "
-                                    "that moves SASS shows in the kernel-facts snapshot test"),
+                                    "that moves SASS shows in the kernel-facts snapshot test; also the "
+                                    "test link mode's redirects (NINFERNO_SHARED_OP_TESTS), which link "
+                                    "the same objects"),
+    ("cmake/SharedTestLibrary.cmake", "test-tree link mode (NINFERNO_SHARED_OP_TESTS): the same objects "
+                                      "in one shared library, -fPIC only; no selector input"),
     ("src/CMakeLists.txt", "target wiring"),
     ("src/*/CMakeLists.txt", "build files of libraries the golden test does not link"),
     ("src/models/**", "model programs: not linked into the golden test"),

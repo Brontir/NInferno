@@ -2,7 +2,9 @@ ninferno_add_test(ninferno_artifact_reader_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_reader.cpp"
   LIBRARIES ninferno_artifact)
 
-ninferno_add_test(ninferno_artifact_materialization_test LABELS gpu
+# STATIC_LINK: the wraps below rewrite the calls of the objects linked into this executable only,
+# never those made inside the shared test library.
+ninferno_add_test(ninferno_artifact_materialization_test LABELS gpu STATIC_LINK
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_materialization.cpp" "${CMAKE_CURRENT_LIST_DIR}/materialization_cuda_errors.cpp"
   LIBRARIES ninferno_artifact)
 
