@@ -1851,3 +1851,24 @@ tuner's source; used as the bound on one median step, and a difference of exactl
 verdict). Two passes are two samples, not a confidence range: a cell within a few microseconds of
 zero (12288 x 4096 at T = 4, 15360 x 3840 at T = 2 on the old files) needs more passes before it is
 read as a verdict.
+
+## 77. Small-T eta re-read from the fit of the shipped registry: ada 0.160, gb20x 0.160 (#688, 10.11, fitted)
+
+54 and 56 recorded ada 0.148 and gb20x 0.165. `tools/fits/round_cost/fit_eta.py` on the shipped
+registry now fits ada 0.160 (64 rounds on three cards: RTX 4070 Ti, RTX 4090, RTX 4060 Ti) and gb20x
+0.160 (30 rounds on RTX 5070 Ti and RTX 5090); the rows of `kSmallTEta` were not re-read when the
+registry grew. Both values stay fitted constants: no fact derivation has been found (54).
+
+**Decision.** The rows are the tool's fit at 3 decimals, and `tests/test_round_cost_eta_fit.py`
+fails when the shipped registry and the rows disagree, so a registry refresh re-reads them.
+
+Leave one card out: ada 0.152 .. 0.180 (without the RTX 4070 Ti, which carries 48 of the 64
+rounds), gb20x 0.159 .. 0.163. The hold-out in the header comment: ada -3.9 / +2.0 / +1.2 %, gb20x
++3.2 / +3.8 %. The third decimal is a near-tie of the 1 % grid, and the fit is sensitive: every Ada
+measurement scaled by 1.005 or 0.995 moves it to 0.154 or 0.167.
+
+What moves: over every board of `gpu_facts.json` and every registry target with round facts
+(about 10 400 chosen pairs), 53 picks on 33 boards change. The mode (MTP or DFlash) never changes;
+the depth does (Ada deeper, Blackwell shallower), and 4 cases switch speculation on or off where a
+section's speed-up sits near 1.0 (L40 and L40S with an IQ3_M MoE target, an AD107 board with
+gpt-oss-20b, RTX 5060 with a Gemma 4 MTP target).

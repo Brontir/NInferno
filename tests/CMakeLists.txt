@@ -132,6 +132,12 @@ set_tests_properties(ninferno_route_table_evidence_test PROPERTIES LABELS host)
 add_test(NAME ninferno_mmq_transfer_audit_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_mmq_transfer_audit.py)
 
+# src/spec/round_cost.h kSmallTEta against tools/fits/round_cost/fit_eta.py's fit of the shipped
+# registry, no GPU.
+add_test(NAME ninferno_round_cost_eta_fit_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_round_cost_eta_fit.py)
+set_tests_properties(ninferno_round_cost_eta_fit_test PROPERTIES LABELS host)
+
 # tools/audit/board_literal_lint.py: no hand-written `ninferno::Board` literal or bare five-number
 # board tuple outside the registry (roadmap #612 step 9), and the tree is clean. What it does not
 # see is listed in the script's docstring. No GPU.
