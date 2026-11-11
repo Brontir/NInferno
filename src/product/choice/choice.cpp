@@ -1075,6 +1075,10 @@ struct Int8PromptLayout {
     int slots = 0;
 };
 
+// The layout and the CTA cost read the kernel's one half-CTA figure (int8/prompt_fast_cost.h).
+static_assert(kAttentionHalfCta == ::ninferno::ops::kInt8PromptHalfCtaPercent / 100.0,
+              "the estimate's half-CTA share is the INT8 prompt kernel's");
+
 // The makespan the kernel weighs a layout by, in hundredths of a 128-row CTA (int8_prompt_fast_makespan).
 long long int8_prompt_makespan(int wide, int narrow, int sms) {
     std::vector<long long> free(static_cast<std::size_t>(sms), 100LL * (wide / sms));
@@ -1082,7 +1086,7 @@ long long int8_prompt_makespan(int wide, int narrow, int sms) {
     long long end = *std::max_element(free.begin(), free.end());
     for (int i = 0; i < narrow; ++i) {
         const auto sm = std::min_element(free.begin(), free.end());
-        *sm += 72;
+        *sm += ::ninferno::ops::kInt8PromptHalfCtaPercent;
         end = std::max(end, *sm);
     }
     return end;
@@ -1100,7 +1104,8 @@ Int8PromptLayout int8_prompt_layout(int width, int heads, int sms) {
             best.slots = slots;
         }
     }
-    if (72LL * up(up(width, 64) * heads, sms) <= best_cost) { return {true, 0}; }
+    const long long half = ::ninferno::ops::kInt8PromptHalfCtaPercent;
+    if (half * up(up(width, 64) * heads, sms) <= best_cost) { return {true, 0}; }
     return best;
 }
 
