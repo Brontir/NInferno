@@ -1,7 +1,8 @@
 // The route cost model (refactor B1): price_routes prices every admitted route of a call of 17
 // tokens or more by the roofline of its tiles on the device's facts (the A16 tiles through
 // kernel_roofline.h, the A8 ones in a8_candidates), cost_route takes the cheapest. Its constants
-// and their provenance: route_cost_constants.h.
+// and their provenance: route_cost_constants.h. A slice of a fused parent is priced by its own
+// rows (bytes_per_weight).
 #include "core/mmq_columns.h"
 #include "core/device_class.h"
 #include "core/generation.h"
@@ -22,8 +23,16 @@
 
 namespace ninferno::ops::detail::generic {
 
+double bytes_per_weight(const Weight& weight, const Problem& problem) {
+    const double sets = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
+    // The rows the payload holds: the weight's own, never fewer than the call reads.
+    const double stored = std::max(static_cast<double>(weight.n), sets * problem.n);
+    return static_cast<double>(weight.payload_bytes) / (stored * problem.k) * sets;
+}
+
 namespace {
 
+// FUSION-SITE: activation_quantizer_launch
 template <class Offer>
 void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t tokens,
                    const DeviceClass& d, const Offer& offer) {
@@ -42,7 +51,7 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
     const double bw      = d.facts.dram_bytes_per_s();
     const double sms     = d.sms;
     const double n = problem.n, k = problem.k, t = tokens;
-    const double bpw     = static_cast<double>(weight.payload_bytes) / (n * k);
+    const double bpw     = bytes_per_weight(weight, problem);
     const double peak_sm = g.s8 * clk;
     const double scale   = fitted->w4a8_eff;
     const double bw_sm   = bw / sms;
@@ -228,11 +237,11 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
     const kr::ChipFacts chip  = kr::chip_facts_of(d);
     const kr::Calibration cal = kr::calibration_of(d.major, d.minor);
     const double n = problem.n, k = problem.k;
-    // SwiGLU: the weight has 2 n rows (gate and up), every output row multiplies both; `bpw` is the
-    // payload over the n output rows, so the bytes of a CTA stay rows x K x bpw.
+    // SwiGLU: every output row multiplies its gate and its up row; `bpw` (bytes_per_weight) holds
+    // both rows' bytes, so the bytes of a CTA stay rows x K x bpw.
     const kr::Call call{n, k, static_cast<double>(tokens),
                         problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0,
-                        static_cast<double>(weight.payload_bytes) / (n * k)};
+                        bytes_per_weight(weight, problem)};
     // The register-MMA heavy-decoder terms (the L2 bytes, the real occupancy from the kernel's
     // registers, the spill bytes, the 8-warp fill) are verified for the decoders with
     // per-sub-block scales (the K-quants and the codebook i-quants, has_subblock_scales) on the
