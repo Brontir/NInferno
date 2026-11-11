@@ -10,6 +10,15 @@
 namespace ninferno::ops::detail {
 namespace {
 constexpr int kGroupedPrefillMaxWidth = 256;
+// NINFERNO-SPECIAL(geometry:16/2): the 128-row prefill tiles, measured only for Qwen3.5 group 8,
+// from this width and with at least this many keys before the call's first column (and the width
+// a multiple of the 128-row tile, coverage).
+constexpr int kTiled128MinWidth    = 1024;
+constexpr int kTiled128MinPastKeys = 8192;
+// Small-query partitions: half the device's SMs a tile (upstream tuned 85 CTAs per tile on the
+// RTX 5090, 170 SMs), at most six waves.
+constexpr int kLongCtaSmDivisor   = 2;
+constexpr int kSmallQueryMaxWaves = 6;
 } // namespace
 
 Bf16KvCausalPlan make_bf16_kv_causal_plan(int heads, int kv_heads, int width, int batch,
@@ -22,8 +31,8 @@ Bf16KvCausalPlan make_bf16_kv_causal_plan(int heads, int kv_heads, int width, in
     const bool invariant = invariant_routes_active();
     if (width > kGroupedPrefillMaxWidth && !invariant) {
         // NINFERNO-SPECIAL(geometry:16/2): 128-row tiles measured only for Qwen3.5 group 8.
-        const auto instance = heads == 16 && kv_heads == 2 && width >= 1024 && width % 128 == 0 &&
-                                      visible - width >= 8192
+        const auto instance = heads == 16 && kv_heads == 2 && width >= kTiled128MinWidth &&
+                                      width % 128 == 0 && visible - width >= kTiled128MinPastKeys
                                   ? Bf16KvInstance::Tiled128
                                   : Bf16KvInstance::Tiled64;
         return {instance, {}, heads, kv_heads, width, batch, envelope, width};
@@ -45,7 +54,8 @@ Bf16KvCausalPlan make_bf16_kv_causal_plan(int heads, int kv_heads, int width, in
     // Small-query partitions may use up to six waves; wider prefill targets two. Upstream tuned
     // 85 CTAs per tile on the RTX 5090 (170 SMs); half the device's SMs keeps the waves.
     const int long_ctas = width <= 128 / group && (many_memory_tiles || multiple_query_tiles)
-                              ? std::clamp(sms / 2 * independent_tiles, 2 * sms, 6 * sms)
+                              ? std::clamp(sms / kLongCtaSmDivisor * independent_tiles, 2 * sms,
+                                           kSmallQueryMaxWaves * sms)
                               : 2 * sms;
     Bf16KvPartition partition{1, causal_partition_target(2 * sms, independent_tiles),
                               causal_partition_target(long_ctas, independent_tiles),

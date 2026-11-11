@@ -14,7 +14,10 @@
 //     tagged Provenance::Fitted), choice_constants.h (every definition), core/generation.h (every
 //     field of the row, and every field its own kind table names `fitted` or `preference` has a
 //     record), core/cost_constants.h, spec/round_cost.h, spec/moe_routed_share.h and
-//     ops/common/sm_wave_rules.h (every definition);
+//     ops/common/sm_wave_rules.h (every definition), and the plans of #718 whose definitions are
+//     all fitted or listed (the dynamic conv prepare, the Q4/Q5 GDN and attention inputs: every
+//     definition at the left margin);
+//   - every record's file is one specs() reads, so no record goes unchecked;
 //   - the tags are read from the compiled tables, not only from the text: every entry of
 //     route_cost::kRouteCostConstants whose `from` is Provenance::Fitted has a record whose
 //     definition carries its name, and every record there names a Fitted entry; every row of
@@ -48,7 +51,7 @@ namespace {
 
 namespace fit = ninferno::fitted;
 
-constexpr std::size_t kExpectedRecords = 106;
+constexpr std::size_t kExpectedRecords = 152;
 
 int failures = 0;
 
@@ -266,6 +269,24 @@ const std::vector<Spec>& specs() {
         {fit::kCapturePlanner, Mode::RecordedOnly, {}},
         {fit::kMoeInternal, Mode::RecordedOnly, {}},
         {fit::kQ4LinearSwiglu, Mode::RecordedOnly, {}},
+        // The plans' measured thresholds and per-chip band tables (#718). Deny by default where
+        // every definition is a fit or listed here; the others hold their recorded keys only.
+        {fit::kDynamicConvPrepare, Mode::Definitions, {}},
+        {fit::kQ4Q5GdnInput,
+         Mode::Definitions,
+         {"kRoutes",               // the column routes: each tile covers its width (12, 32, 64)
+          "kMeasured",             // which chip takes which bands (recorded tables)
+          "kMmaMeasured",          // the same for the small-T MMA bands
+          "kT1MmaMeasured",        // the same for the one-token bands
+          "kT1MmaFallbackBands"}}, // off where not measured to win: a default, not a fit
+        {fit::kQ4Q5AttnInput, Mode::Definitions, {"kMeasured"}}, // chip -> recorded table
+        {fit::kBf16CausalPlan, Mode::RecordedOnly, {}},
+        {fit::kInt8CausalPlan, Mode::RecordedOnly, {}},
+        {fit::kNvfp4AttnInput, Mode::RecordedOnly, {}},
+        {fit::kNvfp4LinearAdd, Mode::RecordedOnly, {}},
+        {fit::kNvfp4LinearSwiglu, Mode::RecordedOnly, {}},
+        {fit::kFp8LinearAdd, Mode::RecordedOnly, {}},
+        {fit::kSparseMoeSmallT, Mode::RecordedOnly, {}},
     };
     return all;
 }
@@ -413,6 +434,19 @@ int main() {
             } else if (read_file(m.str()).empty()) {
                 fail(name + ": Checked, but its script " + m.str() + " is not in the repository");
             }
+        }
+    }
+
+    // Every record's file is read below (route_rules.h through its compiled table,
+    // check_compiled_tags): a record of a file missing from specs() would never be held to a
+    // definition.
+    for (const auto* r : records) {
+        const bool read = r->file == fit::kRouteRules ||
+                          std::any_of(specs().begin(), specs().end(),
+                                      [&](const Spec& spec) { return spec.file == r->file; });
+        if (!read) {
+            fail(std::string(r->constant) + ": recorded in " + std::string(r->file) +
+                 ", a file specs() does not read (add it)");
         }
     }
 
