@@ -642,15 +642,21 @@ int run_column_tiles() {
                 }
             }
         }
-        for (int columns = 1; columns <= 512; ++columns) {
-            const int picked =
-                ninferno::mmq_columns::pick(columns, d.major, d.minor, format, widest);
-            const int taken  = ninferno::ops::ggml_mmq::column_tile(type, 4096, columns, 4096);
-            ++checked;
-            if (taken != picked && failures++ < 10) {
-                std::cerr << "column tile: type " << static_cast<int>(type) << " columns "
-                          << columns << " takes " << taken << ", the table picks " << picked
-                          << '\n';
+        // The 4096- and 12288-row grids of a dense model's linears (Qwen3-8B's o and gate: on 68
+        // SMs one launch mode or the other by the width, which the launch law prices).
+        for (const int rows : {4096, 12288}) {
+            const ninferno::mmq_columns::LaunchFacts facts{
+                rows, 4096, d.sms, d.facts.reference_clock_hz(), d.facts.dram_bytes_per_s()};
+            for (int columns = 1; columns <= 512; ++columns) {
+                const int picked =
+                    ninferno::mmq_columns::pick(columns, d.major, d.minor, format, widest, facts);
+                const int taken = ninferno::ops::ggml_mmq::column_tile(type, rows, columns, 4096);
+                ++checked;
+                if (taken != picked && failures++ < 10) {
+                    std::cerr << "column tile: type " << static_cast<int>(type) << " rows " << rows
+                              << " columns " << columns << " takes " << taken
+                              << ", the table picks " << picked << '\n';
+                }
             }
         }
     }
