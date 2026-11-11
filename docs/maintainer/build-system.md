@@ -164,7 +164,9 @@ it. `NINFERNO_SHARED_OP_TESTS=ON` (Linux, `BUILD_TESTING=ON`) puts the member ar
 `ninferno_core_host`, `ninferno_core`, `ninferno_ops`, `ninferno_nvfp4_non_rdc` and
 `ninferno_ggml_mmq` whole into one shared library, `ninferno_ops_shared`
 (`cmake/SharedTestLibrary.cmake`), and every test with device code links it and the shared CUDA
-runtime instead.
+runtime instead. On `120a` (CUDA 13.4) this took a full test tree from 107 GB to 14 GB (the tests
+from 97 GB to 2.9 GB, the library 1.1 GB once) at the same build time, which compilation
+dominates either way.
 
 - Every library outside the members links a member by its redirect, `ninferno::core`,
   `ninferno::ops`, ... (`cmake/NInfernoTargets.cmake`). Without the option a redirect is an alias of
