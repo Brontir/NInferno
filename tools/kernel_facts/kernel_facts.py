@@ -9,7 +9,7 @@ on every machine, whatever nvcc or driver.
 
     kernel_facts.py extract --binary BIN --arch 89 --nvcc 13.4.92 [--flags TEXT]
                             [--source-root DIR] [-o FILE]
-    kernel_facts.py check   --binary BIN --expected FILE [--nvcc VER]
+    kernel_facts.py check   --binary BIN --expected FILE [--nvcc VER] [--stamp FILE]
     kernel_facts.py hash    --source-root DIR
 
 `extract` writes the snapshot (stdout without -o). `check` extracts the same from BIN and compares
@@ -510,7 +510,44 @@ def cmd_extract(args):
     return 0
 
 
+def check_key(args):
+    """What a passed check rests on: the binary (or the saved dumps), the snapshot, the nvcc
+    named, the options and this checker's own source. A stamp holding it says the check passed
+    on exactly these."""
+    h = hashlib.sha256()
+    for path in (args.binary, args.dump, args.sass_dump, args.expected, __file__,
+                 sass_counts.__file__):
+        h.update(b"\0" + str(bool(path)).encode())
+        if path:
+            with open(path, "rb") as f:
+                for block in iter(lambda: f.read(1 << 20), b""):
+                    h.update(block)
+    h.update(repr((args.nvcc, args.no_sass, args.cuda_bin, args.sass_batch)).encode())
+    return h.hexdigest()
+
+
 def cmd_check(args):
+    # --stamp: a resumed release run re-checks every engine it already packed (minutes each);
+    # one checked before on exactly these inputs passes again without the SASS pass.
+    key = check_key(args) if args.stamp else None
+    if key:
+        try:
+            with open(args.stamp) as f:
+                if f.read().strip() == key:
+                    print(f"kernel_facts: {args.binary or args.dump} unchanged since it equalled "
+                          f"{args.expected} ({args.stamp})")
+                    return 0
+        except OSError:
+            pass
+    status = check_once(args)
+    if key and status == 0:
+        os.makedirs(os.path.dirname(os.path.abspath(args.stamp)), exist_ok=True)
+        with open(args.stamp, "w") as f:
+            f.write(key + "\n")
+    return status
+
+
+def check_once(args):
     if not os.path.exists(args.expected):
         print(f"kernel_facts: no snapshot {args.expected} for this build architecture: generate "
               "it with\n  python3 tools/kernel_facts/kernel_facts.py extract --binary "
@@ -595,6 +632,8 @@ def main(argv=None):
     c = sub.choices["check"]
     c.add_argument("--expected", required=True, help="the committed snapshot")
     c.add_argument("--show", type=int, default=40, help="differing kernels to list")
+    c.add_argument("--stamp", help="a file recording a passed check: a check on the same inputs "
+                                   "passes again without extracting (written on a pass)")
     h = sub.add_parser("hash", help="print the source hash of a tree (the header's `source`)")
     h.add_argument("--source-root", required=True)
     args = parser.parse_args(argv)

@@ -528,6 +528,34 @@ class Check(unittest.TestCase):
                           for l in text.splitlines()]
         self.assertEqual(self.run_check("\n".join(resources_only) + "\n"), 0)
 
+    def test_stamp(self):
+        stamp = self.root / "stamps" / "sm_89"
+        text = self.expected_text()
+        self.assertEqual(self.run_check(text, extra=["--stamp", str(stamp)]), 0)
+        self.assertTrue(stamp.is_file())
+        # The same inputs pass again without extracting anything.
+        saved = kernel_facts.extract_rows
+
+        def no_extract(*args, **kwargs):
+            raise AssertionError("extracted although the stamp holds")
+
+        kernel_facts.extract_rows = no_extract
+        try:
+            self.assertEqual(self.run_check(text, extra=["--stamp", str(stamp)]), 0)
+        finally:
+            kernel_facts.extract_rows = saved
+
+        def bump(rows):
+            rows[Snapshot.KEY][4].mma += 1
+
+        # Another snapshot (or nvcc) is another check: it runs, fails, and the stamp stays the
+        # old pass's, so the next run checks again.
+        before = stamp.read_text()
+        self.assertEqual(self.run_check(self.expected_text(bump), extra=["--stamp", str(stamp)]), 1)
+        self.assertEqual(stamp.read_text(), before)
+        self.assertEqual(self.run_check(text, nvcc="13.0.1", extra=["--stamp", str(stamp)]), 77)
+        self.assertEqual(stamp.read_text(), before)
+
     def older_schema(self, text, extra=()):
         """`text` (schema 4) rewritten as schema 2, or as schema 3 with `extra` loop columns."""
         n = len(kernel_facts.ROW_HEAD) + len(sc.LOOP_COLUMNS)
