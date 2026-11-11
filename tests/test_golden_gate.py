@@ -308,6 +308,12 @@ EXCLUDED = [
     ("src/core/host_memory.cpp", "host memory"), ("src/core/host_worker_pool.cpp", "host threads"),
     ("src/core/decode_graph.cpp", "CUDA graph capture"), ("src/core/debug_poison.cpp", "debug"),
     ("src/core/gdn_replay_records.cpp", "state records"),
+    # the ISA facts (#668): today only tests/test_isa_facts.cpp reads them; the price that reads them
+    # moves these lines to decision_paths.txt
+    ("src/core/isa_facts.cpp", "ISA facts reader, no selector caller yet"),
+    ("src/core/embedded_isa_facts.h.in", "ISA facts embedding, no selector caller yet"),
+    ("src/core/data/isa_facts.json", "ISA facts rows, no selector caller yet"),
+    ("src/core/data/isa_probe/*", "raw ISA probe output the rows were read from"),
     ("src/core/device_traits.cpp", "reads the driver (display, WDDM) for the plan, not the selector"),
     ("src/core/gate_atlas.cpp", "audit table that calls the gate; the gate's rule is in a listed header"),
     ("src/core/kernel_occupancy.cpp", "occupancy for launch code and the kernel-facts test; the selector "
