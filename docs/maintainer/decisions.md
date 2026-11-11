@@ -1861,5 +1861,10 @@ logprob check of that note has not been run for the Turing picks.
 `NINFERNO_MMQ_MODE=old|law`); the unit's cost from facts (it is about three times the issue bound
 of its counts: the serialized load phases of a CTA a SM are a latency, not counted here); what makes
 a stream-k unit dearer beyond the 8 % of V3; the 1.7 % of the grid that neither law holds (441
-columns J 80, 505 columns J 128, the J 16 cells); other Turing boards (the constants are the RTX
-2080 Ti's, carried by the row).
+columns J 80, 505 columns J 128, the J 16 cells); a second Turing card. The constants are one
+card's, the RTX 2080 Ti's (the lab's one Turing card), carried by the generation row to every
+Turing board as a transfer, as `kMmqTileCost`'s Turing row and GB20x's `mmq_tile_fixed` (the RTX
+5090's) are; a constant fitted on two cards of a generation is the standard (AGENTS.md) and this
+row does not meet it. What depends on the board is taken from its facts: the launch mode and the
+fixup follow its SM count and DRAM rate (`launch_of`, `fixup_bytes`); the measured part is the
+unit's cost on the SM (the same TU10x SM on every Turing board).
