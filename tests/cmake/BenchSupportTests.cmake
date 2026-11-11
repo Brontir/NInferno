@@ -1,4 +1,4 @@
-ninferno_add_test(ninferno_bench_support_test
+ninferno_add_test(ninferno_bench_support_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_ninferno_bench_support.cpp"
           ${PROJECT_SOURCE_DIR}/bench/inference/ninferno_bench_support.cpp
   NEEDS_SOURCE_DIR
@@ -19,3 +19,4 @@ target_include_directories(ninferno_context_cost_measure_test PRIVATE
   ${PROJECT_SOURCE_DIR}/bench/context_cost)
 
 add_test(NAME ninferno_context_cost_measure_test COMMAND ninferno_context_cost_measure_test)
+ninferno_label_tests(ninferno_context_cost_measure_test LABELS host)

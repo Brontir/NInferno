@@ -1,15 +1,15 @@
-ninferno_add_test(ninferno_convert_numerics_test
+ninferno_add_test(ninferno_convert_numerics_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_numerics.cpp"
   LIBRARIES ninferno_convert)
 
-ninferno_add_test(ninferno_convert_ggml_quants_test
+ninferno_add_test(ninferno_convert_ggml_quants_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_ggml_quants.cpp"
   LIBRARIES ninferno_convert)
 target_compile_options(ninferno_convert_ggml_quants_test PRIVATE -ffp-contract=off)
 
 # ggml_frag_v1: the maps, row round trips, the auto rule and --relayout (in place, resumed,
 # --out). With GGUF paths as arguments it also round-trips real routed-expert rows.
-ninferno_add_test(ninferno_convert_ggml_frag_test
+ninferno_add_test(ninferno_convert_ggml_frag_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_ggml_frag.cpp"
   LIBRARIES ninferno_convert)
 
@@ -18,10 +18,11 @@ ninferno_add_test(ninferno_convert_ggml_frag_test
 add_test(NAME ninferno_convert_relayout_flags_test
   COMMAND $<TARGET_FILE:ninferno-convert> --relayout auto --target-artifact missing.ninferno
     --recipe dense_q8)
+ninferno_label_tests(ninferno_convert_relayout_flags_test LABELS host)
 set_tests_properties(ninferno_convert_relayout_flags_test PROPERTIES
   PASS_REGULAR_EXPRESSION "--relayout takes only --target-artifact, --out, --max-file-bytes and --quiet, not --recipe")
 
-ninferno_add_test(ninferno_convert_gguf_test
+ninferno_add_test(ninferno_convert_gguf_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_gguf.cpp"
   LIBRARIES ninferno_convert)
 
@@ -32,46 +33,49 @@ set(NINFERNO_CONVERT_PYTHON "${Python3_EXECUTABLE}" CACHE FILEPATH
 add_test(NAME ninferno_convert_python_parity_test
   COMMAND ${NINFERNO_CONVERT_PYTHON} -B "${CMAKE_CURRENT_LIST_DIR}/synthetic_gemma4.py"
     $<TARGET_FILE:ninferno-convert> "${PROJECT_SOURCE_DIR}")
+ninferno_label_tests(ninferno_convert_python_parity_test LABELS host)
 set_tests_properties(ninferno_convert_python_parity_test PROPERTIES SKIP_RETURN_CODE 77)
 
 add_test(NAME ninferno_convert_qwen_parity_test
   COMMAND ${NINFERNO_CONVERT_PYTHON} -B "${CMAKE_CURRENT_LIST_DIR}/synthetic_qwen3_5.py"
     $<TARGET_FILE:ninferno-convert> "${PROJECT_SOURCE_DIR}")
+ninferno_label_tests(ninferno_convert_qwen_parity_test LABELS host)
 set_tests_properties(ninferno_convert_qwen_parity_test PROPERTIES SKIP_RETURN_CODE 77)
 
-ninferno_add_test(ninferno_convert_checkpoint_index_test
+ninferno_add_test(ninferno_convert_checkpoint_index_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_checkpoint_index.cpp"
   LIBRARIES ninferno_convert)
 
 # The content digests convert() seals into the directory (src/convert/writer.h) and the source
 # identity they key (artifact/source_identity.h); the Python writer seals the same. CPU, no torch.
-ninferno_add_test(ninferno_convert_content_digests_test
+ninferno_add_test(ninferno_convert_content_digests_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_content_digests.cpp"
   LIBRARIES ninferno_convert)
 add_test(NAME ninferno_convert_content_digests_interop_test
   COMMAND ${Python3_EXECUTABLE} -B "${CMAKE_CURRENT_LIST_DIR}/content_digests_interop.py"
     $<TARGET_FILE:ninferno_convert_content_digests_test>)
+ninferno_label_tests(ninferno_convert_content_digests_interop_test LABELS host)
 
 # Which Hub cache entry a conversion is (#553): content options key the kept conversion, default
 # then option and option then default. CPU, no hub.
-ninferno_add_test(ninferno_convert_acquire_options_key_test
+ninferno_add_test(ninferno_convert_acquire_options_key_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_acquire_options_key.cpp"
   LIBRARIES ninferno_convert)
 
 # The writer's hidden temporaries (#552): swept when stale, kept when live, removed on SIGINT/SIGTERM.
 # POSIX only (fork, kill, sigaction).
 if(NOT WIN32)
-  ninferno_add_test(ninferno_convert_writer_temporaries_test
+  ninferno_add_test(ninferno_convert_writer_temporaries_test LABELS host
     SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_writer_temporaries.cpp"
     LIBRARIES ninferno_convert)
 endif()
 
-ninferno_add_test(ninferno_convert_consume_test
+ninferno_add_test(ninferno_convert_consume_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_consume.cpp"
   LIBRARIES ninferno_convert)
 
 # Which cached artifacts conversion revisions 4 to 7 convert again (convert/cache.h cache_current).
-ninferno_add_test(ninferno_convert_cache_revision_test
+ninferno_add_test(ninferno_convert_cache_revision_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_cache_revision.cpp"
   LIBRARIES ninferno_convert)
 
@@ -80,6 +84,7 @@ ninferno_add_test(ninferno_convert_cache_revision_test
 add_test(NAME ninferno_convert_gemma4_properties_test
   COMMAND ${NINFERNO_CONVERT_PYTHON} -B "${CMAKE_CURRENT_LIST_DIR}/gemma4_properties.py"
     $<TARGET_FILE:ninferno-convert> "${PROJECT_SOURCE_DIR}")
+ninferno_label_tests(ninferno_convert_gemma4_properties_test LABELS host)
 set_tests_properties(ninferno_convert_gemma4_properties_test PROPERTIES SKIP_RETURN_CODE 77)
 
 # NVFP4 scales through the converter: fused q/k/v and gate/up with differing divisors, stacked
@@ -87,6 +92,7 @@ set_tests_properties(ninferno_convert_gemma4_properties_test PROPERTIES SKIP_RET
 add_test(NAME ninferno_convert_scales_test
   COMMAND ${NINFERNO_CONVERT_PYTHON} -B "${CMAKE_CURRENT_LIST_DIR}/synthetic_scales.py"
     $<TARGET_FILE:ninferno-convert> "${PROJECT_SOURCE_DIR}")
+ninferno_label_tests(ninferno_convert_scales_test LABELS host)
 set_tests_properties(ninferno_convert_scales_test PROPERTIES SKIP_RETURN_CODE 77)
 
 # Converted NVFP4 artifacts (fused and stacked planes) uploaded into a 0xFF-poisoned arena
@@ -95,6 +101,7 @@ add_test(NAME ninferno_artifact_poisoned_upload_test
   COMMAND ${NINFERNO_CONVERT_PYTHON} -B "${PROJECT_SOURCE_DIR}/tests/artifact/poisoned_upload.py"
     $<TARGET_FILE:ninferno-convert> $<TARGET_FILE:ninferno_artifact_materialization_test>
     "${PROJECT_SOURCE_DIR}")
+ninferno_label_tests(ninferno_artifact_poisoned_upload_test LABELS gpu)
 set_tests_properties(ninferno_artifact_poisoned_upload_test PROPERTIES SKIP_RETURN_CODE 77)
 
 # Quantized or not is decided by the tensors: recipe choice without --recipe against checkpoints
@@ -102,11 +109,13 @@ set_tests_properties(ninferno_artifact_poisoned_upload_test PROPERTIES SKIP_RETU
 add_test(NAME ninferno_convert_detection_test
   COMMAND ${NINFERNO_CONVERT_PYTHON} -B "${CMAKE_CURRENT_LIST_DIR}/synthetic_detection.py"
     $<TARGET_FILE:ninferno-convert> "${PROJECT_SOURCE_DIR}")
+ninferno_label_tests(ninferno_convert_detection_test LABELS host)
 set_tests_properties(ninferno_convert_detection_test PROPERTIES SKIP_RETURN_CODE 77)
 
 add_test(NAME ninferno_convert_formats_test
   COMMAND ${NINFERNO_CONVERT_PYTHON} -B "${CMAKE_CURRENT_LIST_DIR}/synthetic_formats.py"
     $<TARGET_FILE:ninferno-convert> "${PROJECT_SOURCE_DIR}")
+ninferno_label_tests(ninferno_convert_formats_test LABELS host)
 set_tests_properties(ninferno_convert_formats_test PROPERTIES SKIP_RETURN_CODE 77)
 
 # A tied output head is one copy of the embedding table (dense and Qwen3.5 adapters); a scaled
@@ -114,6 +123,7 @@ set_tests_properties(ninferno_convert_formats_test PROPERTIES SKIP_RETURN_CODE 7
 add_test(NAME ninferno_convert_tied_head_test
   COMMAND ${NINFERNO_CONVERT_PYTHON} -B "${CMAKE_CURRENT_LIST_DIR}/synthetic_tied.py"
     $<TARGET_FILE:ninferno-convert> "${PROJECT_SOURCE_DIR}")
+ninferno_label_tests(ninferno_convert_tied_head_test LABELS host)
 set_tests_properties(ninferno_convert_tied_head_test PROPERTIES SKIP_RETURN_CODE 77)
 
 # Published NVFP4 without calibrated activations (W4A16, ModelOpt MIXED MLPs) through dense_published:
@@ -121,6 +131,7 @@ set_tests_properties(ninferno_convert_tied_head_test PROPERTIES SKIP_RETURN_CODE
 add_test(NAME ninferno_convert_w4a16_test
   COMMAND ${NINFERNO_CONVERT_PYTHON} -B "${CMAKE_CURRENT_LIST_DIR}/synthetic_w4a16.py"
     $<TARGET_FILE:ninferno-convert> "${PROJECT_SOURCE_DIR}")
+ninferno_label_tests(ninferno_convert_w4a16_test LABELS host)
 set_tests_properties(ninferno_convert_w4a16_test PROPERTIES SKIP_RETURN_CODE 77)
 
 # The GGUF reader and ggml decoders against llama.cpp's gguf-py (its writer, reader and numpy
@@ -131,6 +142,7 @@ target_link_libraries(ninferno_gguf_dump PRIVATE ninferno_convert)
 add_test(NAME ninferno_convert_gguf_pyref_test
   COMMAND ${NINFERNO_CONVERT_PYTHON} -B "${CMAKE_CURRENT_LIST_DIR}/gguf_pyref.py"
     $<TARGET_FILE:ninferno_gguf_dump>)
+ninferno_label_tests(ninferno_convert_gguf_pyref_test LABELS host)
 set_tests_properties(ninferno_convert_gguf_pyref_test PROPERTIES SKIP_RETURN_CODE 77)
 
 # GGUF checkpoints (written with gguf-py as llama.cpp's converter writes them) against their
@@ -138,6 +150,7 @@ set_tests_properties(ninferno_convert_gguf_pyref_test PROPERTIES SKIP_RETURN_COD
 add_test(NAME ninferno_convert_gguf_synthetic_test
   COMMAND ${NINFERNO_CONVERT_PYTHON} -B "${CMAKE_CURRENT_LIST_DIR}/synthetic_gguf.py"
     $<TARGET_FILE:ninferno-convert> "${PROJECT_SOURCE_DIR}")
+ninferno_label_tests(ninferno_convert_gguf_synthetic_test LABELS host)
 set_tests_properties(ninferno_convert_gguf_synthetic_test PROPERTIES SKIP_RETURN_CODE 77)
 
 # llama.cpp's dflash GGUF with DFlash2's convolutions and selector (a Qwen3.5 target's dflash2
@@ -145,6 +158,7 @@ set_tests_properties(ninferno_convert_gguf_synthetic_test PROPERTIES SKIP_RETURN
 add_test(NAME ninferno_convert_gguf_dflash2_test
   COMMAND ${NINFERNO_CONVERT_PYTHON} -B "${CMAKE_CURRENT_LIST_DIR}/synthetic_dflash2_gguf.py"
     $<TARGET_FILE:ninferno-convert> "${PROJECT_SOURCE_DIR}")
+ninferno_label_tests(ninferno_convert_gguf_dflash2_test LABELS host)
 set_tests_properties(ninferno_convert_gguf_dflash2_test PROPERTIES SKIP_RETURN_CODE 77)
 
 # ninferno-convert --fetch against a local stand-in hub: ranges, resume, stalls, digests, auth; and
@@ -155,12 +169,14 @@ target_link_libraries(fetch_head_probe PRIVATE ninferno_convert)
 add_test(NAME ninferno_convert_fetch_test
   COMMAND ${NINFERNO_CONVERT_PYTHON} -B "${CMAKE_CURRENT_LIST_DIR}/fetch_test.py"
     $<TARGET_FILE:ninferno-convert> "${PROJECT_SOURCE_DIR}" $<TARGET_FILE:fetch_head_probe>)
+ninferno_label_tests(ninferno_convert_fetch_test LABELS host)
 
 # ninferno-convert attaching the drafters a model declares or the registry names (stand-in hub,
 # synthetic Gemma-shaped checkpoints; skipped without torch).
 add_test(NAME ninferno_convert_drafters_test
   COMMAND ${NINFERNO_CONVERT_PYTHON} -B "${CMAKE_CURRENT_LIST_DIR}/drafters_test.py"
     $<TARGET_FILE:ninferno-convert> "${PROJECT_SOURCE_DIR}")
+ninferno_label_tests(ninferno_convert_drafters_test LABELS host)
 set_tests_properties(ninferno_convert_drafters_test PROPERTIES SKIP_RETURN_CODE 77)
 
 # The drafter plan without a hub: GGUF drafters without num_target_layers, lineage by geometry,
@@ -169,6 +185,7 @@ add_executable(ninferno_convert_drafter_plan_test "${CMAKE_CURRENT_LIST_DIR}/tes
 ninferno_test_includes(ninferno_convert_drafter_plan_test)
 target_link_libraries(ninferno_convert_drafter_plan_test PRIVATE ninferno_convert)
 add_test(NAME ninferno_convert_drafter_plan_test COMMAND ninferno_convert_drafter_plan_test)
+ninferno_label_tests(ninferno_convert_drafter_plan_test LABELS host)
 
 # Whether the engine runs a model, from what a repository shows before a download: each rule.
 add_executable(ninferno_convert_model_support_test "${CMAKE_CURRENT_LIST_DIR}/test_model_support.cpp")
@@ -176,6 +193,7 @@ ninferno_test_includes(ninferno_convert_model_support_test)
 target_link_libraries(ninferno_convert_model_support_test PRIVATE ninferno_convert)
 add_test(NAME ninferno_convert_model_support_test
   COMMAND ninferno_convert_model_support_test "${PROJECT_SOURCE_DIR}")
+ninferno_label_tests(ninferno_convert_model_support_test LABELS host)
 
 # The dense decoder adapter: rotary tables bit-exact with transformers, resolved conventions.
 add_executable(ninferno_convert_dense_config_test "${CMAKE_CURRENT_LIST_DIR}/test_dense_config.cpp")
@@ -183,12 +201,14 @@ ninferno_test_includes(ninferno_convert_dense_config_test)
 target_link_libraries(ninferno_convert_dense_config_test PRIVATE ninferno_convert)
 add_test(NAME ninferno_convert_dense_config_test
   COMMAND ninferno_convert_dense_config_test "${CMAKE_CURRENT_LIST_DIR}/fixtures/dense_rope.json")
+ninferno_label_tests(ninferno_convert_dense_config_test LABELS host)
 
 # Gemma 4 as published (gemma4_published): NVFP4 projections and expert banks imported, the table,
 # head, router and every other tensor BF16; no q8/q6 object.
 add_test(NAME ninferno_convert_gemma4_published_test
   COMMAND ${NINFERNO_CONVERT_PYTHON} -B "${CMAKE_CURRENT_LIST_DIR}/synthetic_gemma4_published.py"
     $<TARGET_FILE:ninferno-convert> "${PROJECT_SOURCE_DIR}")
+ninferno_label_tests(ninferno_convert_gemma4_published_test LABELS host)
 set_tests_properties(ninferno_convert_gemma4_published_test PROPERTIES SKIP_RETURN_CODE 77)
 
 # The NemotronH MTP drafter sidecar (a nemotron_h_moe GGUF that carries only the folded NextN
@@ -196,6 +216,7 @@ set_tests_properties(ninferno_convert_gemma4_published_test PROPERTIES SKIP_RETU
 add_test(NAME ninferno_convert_nemotron_mtp_test
   COMMAND ${NINFERNO_CONVERT_PYTHON} -B "${CMAKE_CURRENT_LIST_DIR}/synthetic_nemotron_mtp.py"
     $<TARGET_FILE:ninferno-convert> "${PROJECT_SOURCE_DIR}")
+ninferno_label_tests(ninferno_convert_nemotron_mtp_test LABELS host)
 set_tests_properties(ninferno_convert_nemotron_mtp_test PROPERTIES SKIP_RETURN_CODE 77)
 
 # A NemotronH trunk GGUF that carries its MTP block after the trunk (unsloth's block_count 53):
@@ -203,6 +224,7 @@ set_tests_properties(ninferno_convert_nemotron_mtp_test PROPERTIES SKIP_RETURN_C
 add_test(NAME ninferno_convert_nemotron_trunk_test
   COMMAND ${NINFERNO_CONVERT_PYTHON} -B "${CMAKE_CURRENT_LIST_DIR}/synthetic_nemotron_trunk.py"
     $<TARGET_FILE:ninferno-convert> "${PROJECT_SOURCE_DIR}")
+ninferno_label_tests(ninferno_convert_nemotron_trunk_test LABELS host)
 set_tests_properties(ninferno_convert_nemotron_trunk_test PROPERTIES SKIP_RETURN_CODE 77)
 
 # A published NVFP4 output head (ModelOpt's lm_head of nvidia/Muse-Glimmer-30B-NVFP4) whose rows
@@ -210,4 +232,5 @@ set_tests_properties(ninferno_convert_nemotron_trunk_test PROPERTIES SKIP_RETURN
 add_test(NAME ninferno_convert_nvfp4_head_test
   COMMAND ${NINFERNO_CONVERT_PYTHON} -B "${CMAKE_CURRENT_LIST_DIR}/synthetic_nvfp4_head.py"
     $<TARGET_FILE:ninferno-convert> "${PROJECT_SOURCE_DIR}")
+ninferno_label_tests(ninferno_convert_nvfp4_head_test LABELS host)
 set_tests_properties(ninferno_convert_nvfp4_head_test PROPERTIES SKIP_RETURN_CODE 77)

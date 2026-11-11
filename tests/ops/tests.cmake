@@ -46,15 +46,19 @@ ninferno_add_op_test(ninferno_moe_test
   LIBRARIES ninferno_ops
   NO_DEFAULT_TEST)
 add_test(NAME ninferno_moe_test COMMAND ninferno_moe_test --part layers)
+ninferno_label_tests(ninferno_moe_test LABELS gpu slow)
 set(ninferno_moe_runs ninferno_moe_test)
 foreach(share 0 1 2)
   add_test(NAME ninferno_moe_random${share}_test COMMAND ninferno_moe_test --part random${share})
+  ninferno_label_tests(ninferno_moe_random${share}_test LABELS gpu)
   list(APPEND ninferno_moe_runs ninferno_moe_random${share}_test)
 endforeach()
 # MXFP4 banks on the block-scaled MMA with MXFP8 activations (sm_120a default; skips elsewhere).
 add_test(NAME ninferno_moe_mx8_test COMMAND ninferno_moe_test --part mx8)
+ninferno_label_tests(ninferno_moe_mx8_test LABELS gpu)
 # The int8 W4A8 of MXFP4 banks, which sm_120a builds otherwise leave for the block-scaled MMA.
 add_test(NAME ninferno_moe_int8_test COMMAND ninferno_moe_test --part int8)
+ninferno_label_tests(ninferno_moe_int8_test LABELS gpu)
 list(APPEND ninferno_moe_runs ninferno_moe_mx8_test ninferno_moe_int8_test)
 set_tests_properties(${ninferno_moe_runs} PROPERTIES SKIP_RETURN_CODE 77)
 
@@ -92,13 +96,13 @@ ninferno_add_op_test(ninferno_mma_fragments_test
 
 # The SM-count launch rules (ops/common/sm_wave_rules.h): the RTX 5090's decisions unchanged at
 # 170 SMs, the other boards' answers printed and pinned. No GPU.
-ninferno_add_test(ninferno_sm_wave_rules_test
+ninferno_add_test(ninferno_sm_wave_rules_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_sm_wave_rules.cpp"
   LIBRARIES ninferno_core)
 
 # Whole-chain pricing and selection of a projection chain's fusion alternatives (#310,
 # ops/common/projection_chain.h): lowest seconds, then fewer launches, then canonical order. No GPU.
-ninferno_add_test(ninferno_projection_chain_test
+ninferno_add_test(ninferno_projection_chain_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_projection_chain.cpp"
   LIBRARIES ninferno_core)
 
@@ -132,14 +136,17 @@ ninferno_add_op_test(ninferno_softmax_attention_test
 # process on the RTX 5090 host, past the timeout, and the runs are independent.
 add_test(NAME ninferno_softmax_attention_test
   COMMAND ninferno_softmax_attention_test --other-only)
+ninferno_label_tests(ninferno_softmax_attention_test LABELS gpu slow)
 set(ninferno_softmax_attention_runs ninferno_softmax_attention_test)
 foreach(kv bf16 int8 fp8 nvfp4 k8v4)
   add_test(NAME ninferno_softmax_attention_${kv}_test
     COMMAND ninferno_softmax_attention_test --kv-dtype ${kv})
+  ninferno_label_tests(ninferno_softmax_attention_${kv}_test LABELS gpu slow)
   list(APPEND ninferno_softmax_attention_runs ninferno_softmax_attention_${kv}_test)
 endforeach()
 add_test(NAME ninferno_softmax_attention_unwritten_test
   COMMAND ninferno_softmax_attention_test --unwritten-only)
+ninferno_label_tests(ninferno_softmax_attention_unwritten_test LABELS gpu slow)
 list(APPEND ninferno_softmax_attention_runs ninferno_softmax_attention_unwritten_test)
 set_tests_properties(${ninferno_softmax_attention_runs} PROPERTIES SKIP_RETURN_CODE 77)
 
@@ -156,19 +163,21 @@ ninferno_add_op_test(ninferno_rmsnorm_rope_test
   LIBRARIES ninferno_ops)
 
 # The fused text qk-norm + RoPE's width bound on substituted boards (#617 G). No GPU.
-ninferno_add_op_test(ninferno_rmsnorm_rope_bound_test
+ninferno_add_op_test(ninferno_rmsnorm_rope_bound_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_rmsnorm_rope_bound.cpp"
   LIBRARIES ninferno_ops)
 
-ninferno_add_op_test(ninferno_context_kv_materialize_test
+ninferno_add_op_test(ninferno_context_kv_materialize_test LABELS gpu slow
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_context_kv_materialize.cpp"
   LIBRARIES ninferno_ops)
 
 add_test(NAME ninferno_kv_cache_append_nvfp4_test
   COMMAND ninferno_kv_cache_append_test --nvfp4-only)
+ninferno_label_tests(ninferno_kv_cache_append_nvfp4_test LABELS gpu)
 
 add_test(NAME ninferno_kv_cache_append_k8v4_test
   COMMAND ninferno_kv_cache_append_test --k8v4-only)
+ninferno_label_tests(ninferno_kv_cache_append_k8v4_test LABELS gpu)
 
 set_tests_properties(
   ninferno_kv_cache_append_nvfp4_test
@@ -203,6 +212,7 @@ add_test(NAME ninferno_pdl_sass_audit_test
     --build "${PROJECT_BINARY_DIR}" --source "${PROJECT_SOURCE_DIR}"
     --allow "${PROJECT_SOURCE_DIR}/tools/pdl_prewait_loads.txt"
     --cuobjdump "${NINFERNO_CUDA_BIN}/cuobjdump")
+ninferno_label_tests(ninferno_pdl_sass_audit_test LABELS host slow)
 set_tests_properties(ninferno_pdl_sass_audit_test PROPERTIES SKIP_RETURN_CODE 77)
 add_library(ninferno_pdl_audit_sabotage OBJECT "${CMAKE_CURRENT_LIST_DIR}/pdl_audit_sabotage.cu")
 ninferno_test_includes(ninferno_pdl_audit_sabotage)
@@ -211,11 +221,12 @@ add_test(NAME ninferno_pdl_sass_audit_sabotage_test
     --objects $<TARGET_OBJECTS:ninferno_pdl_audit_sabotage>
     --allow "${CMAKE_CURRENT_LIST_DIR}/pdl_audit_sabotage_allow.txt"
     --expect "pdl_audit_hoisted_consumer:0" --cuobjdump "${NINFERNO_CUDA_BIN}/cuobjdump")
+ninferno_label_tests(ninferno_pdl_sass_audit_sabotage_test LABELS host)
 set_tests_properties(ninferno_pdl_sass_audit_sabotage_test PROPERTIES SKIP_RETURN_CODE 77)
 
 # The generic MoE op's plans on the substituted boards of the selector goldens (#616): host only,
 # against moe_plan_golden/<build set>/<board>.txt; --update rewrites them.
-ninferno_add_op_test(ninferno_moe_plan_golden_test
+ninferno_add_op_test(ninferno_moe_plan_golden_test LABELS host golden
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_moe_plan_golden.cpp"
   LIBRARIES ninferno_ops)
 target_compile_definitions(ninferno_moe_plan_golden_test PRIVATE
@@ -224,7 +235,7 @@ target_compile_definitions(ninferno_moe_plan_golden_test PRIVATE
 # The MoE stage price (ops/moe/moe_cost.h, #616 step 4): the bytes law and roofline on small cases,
 # the candidates of a layer, and the replica against the sweeps in routes/*.json (predicted against
 # measured per board). Host only; changes no route.
-ninferno_add_op_test(ninferno_moe_cost_test
+ninferno_add_op_test(ninferno_moe_cost_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_moe_cost.cpp"
   LIBRARIES ninferno_ops ninferno::json)
 target_compile_definitions(ninferno_moe_cost_test PRIVATE
@@ -299,21 +310,21 @@ include("${CMAKE_CURRENT_LIST_DIR}/linear_swiglu/tests.cmake")
 
 # The causal cache attention's one admitted domain (#312): each refusal named with its kind, the
 # plans and the workspace query agreeing at the boundaries for every KV storage. No GPU.
-ninferno_add_op_test(ninferno_causal_admission_test
+ninferno_add_op_test(ninferno_causal_admission_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/softmax_attention/test_causal_admission.cpp"
   LIBRARIES ninferno_ops)
 
 # The position-aligned KV splits of the invariant route profile (CausalKvPartition): a host replica
 # of the aligned grouped kernel's split walk gives every token its decode's partials under any
 # prompt chunking; prints the split plan per SM count. No GPU.
-ninferno_add_test(ninferno_causal_position_partition_test
+ninferno_add_test(ninferno_causal_position_partition_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/softmax_attention/test_causal_position_partition.cpp"
   LIBRARIES ninferno::cudart)
 
 # What the measured value tables' answers rest on (#616 step 3): the MoE class A8 route and the
 # sparse MoE Q4 groupwise frontier per SKU of the reference table, as Measured, Carried, Incomplete
 # or None (host only), against table_dispositions/dispositions.txt; --update rewrites it.
-ninferno_add_op_test(ninferno_table_dispositions_test
+ninferno_add_op_test(ninferno_table_dispositions_test LABELS host golden
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_table_dispositions.cpp"
   LIBRARIES ninferno_ops)
 target_compile_definitions(ninferno_table_dispositions_test PRIVATE
