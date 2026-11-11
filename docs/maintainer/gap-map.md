@@ -3,7 +3,8 @@
 `tools/bench/gap_map.py` puts every measured kernel time the repository already commits next to the
 time a counted law allows, and prints the ratio. It is step 1 of the kernel roadmap (#619, decision
 K4): the map names a *regime*; a kernel is built only when a counted law explains the current
-kernel's time there. It needs no GPU and only the standard library.
+kernel's time there ([kernel proposals](kernel-proposals.md) holds what is proposed for a regime).
+It needs no GPU and only the standard library.
 
 ```bash
 python tools/bench/gap_map.py                       # Markdown to stdout
