@@ -65,9 +65,9 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
     // The DRAM time of a tile grid (kernel_roofline.h dram_time, issue #690): the shared bus or the
     // busiest SM's rounds at the rate its own warps reach, with the shared-largest carve-out (the
     // A8 tiles stage through shared memory); on an architecture without an SM rate row the legacy
-    // law, the busiest SM's share of the bus under a fleet-wide fill. b_w: the cp.async ring keeps
-    // stages - 1 K steps of the CTA's weight rows in flight while it multiplies one, over its
-    // warps.
+    // law, the busiest SM's share of the bus under a fleet-wide fill. b_w: the I8 tiles' cp.async
+    // ring keeps stages - 1 K steps of the CTA's weight rows in flight while it multiplies one,
+    // over its warps; the W4A8 tiles load one K step through registers (below).
     namespace kr             = kernel_roofline;
     const kr::ChipFacts chip = kr::chip_facts_of(d);
     const bool legacy        = kr::legacy_dram(chip);
@@ -113,10 +113,15 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             // The fill reads the busy SM's own warps (no fleet-wide factor) and slows the MMA only.
             const double fill =
                 std::clamp(std::min(q, occ) * threads / 32, route_cost::kMinWarpFill.value(), 1.0);
-            const double in_flight =
-                (stages - 1.0) * rows_o * route_cost::kW4a8StepK.value() * bpw / (threads / 32);
+            // The weights come through registers (W4a8Weights: one buffer, the next K step loaded
+            // while the current one is stored or multiplied), so one K step of the CTA's rows is in
+            // flight whatever the stages, over the warps that load it: every warp of the classic
+            // tile, the producer warps of the ws tile (generic_w4a8.cuh w4a8_kernel and
+            // w4a8_ws_kernel). The ring's stages hold decoded data in shared memory, not loads.
+            const double load_warps = s.producers > 0 ? s.producers : threads / 32;
+            const double in_flight  = rows_o * route_cost::kW4a8StepK.value() * bpw / load_warps;
             const double mem =
-                kr::dram_time(chip, ctas, occ, threads / 32, rows_o * k * bpw, in_flight, true);
+                kr::dram_time(chip, ctas, occ, load_warps, rows_o * k * bpw, in_flight, true);
             offer(r, quant(t) + std::max(mem, mma / eff / fill) + chain);
         }
     }
