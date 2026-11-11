@@ -321,7 +321,7 @@ ninferno_add_op_test(ninferno_route_pin_selector_test
 # the Volta boards hold its tiled rows, which the stub, answering false, never takes; the device
 # test above covers that tree.
 if(NOT (NINFERNO_BUILD_ARCH STREQUAL "70" AND NINFERNO_VOLTA_CUTLASS))
-  ninferno_add_test(ninferno_selector_golden_host_test
+  ninferno_add_test(ninferno_selector_golden_host_test LABELS host golden slow
     SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_selector_golden.cpp"
     LIBRARIES ninferno_ops_host)
   target_sources(ninferno_selector_golden_host_test PRIVATE
