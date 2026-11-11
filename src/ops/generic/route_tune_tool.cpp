@@ -435,7 +435,12 @@ int route_tune_main(int argc, char** argv) {
                     // where the model prices no such route or the route is no register MMA.
                     const generic::Problem gp{p.qtype, policy, p.n, p.k, p.epilogue};
                     if (const auto s = generic::route_cost_seconds(gp, w.weight, r, t)) {
+                        // 17 digits round-trip a double: two routes the model prices equally
+                        // (cost_route keeps the first offered) read equal here, and two it
+                        // prices apart do not, which six digits would not keep.
+                        const auto digits = routes_csv.precision(17);
                         routes_csv << *s * 1e6;
+                        routes_csv.precision(digits);
                     }
                     routes_csv << ',';
                     const auto res = r.family == generic::Family::RegisterMma
@@ -603,7 +608,20 @@ int route_tune_main(int argc, char** argv) {
                 std::vector<std::pair<std::int32_t, generic::Route>> width_winners;
                 for (const auto t : band_points) {
                     const generic::Ask band_ask = generic::ask_below_profiles(t, true);
-                    const double base   = time_route(*entry.prefill, t);
+                    // The routes the profile filter admits are timed in `routes` order with the
+                    // prefill route in its place: a pass writes the rows of one family in the
+                    // order the cost model offers them (cost_route keeps the first offered on an
+                    // equal price), which a reader of the CSV takes to break a model tie. The pick
+                    // below reads these timings back and times nothing new.
+                    double base = 0;
+                    for (const auto r : routes) {
+                        if (r == *entry.prefill) {
+                            base = time_route(r, t);
+                        } else if (tabled(r) &&
+                                   generic::profile_admits_as(r, band_ask, *entry.prefill)) {
+                            time_route(r, t);
+                        }
+                    }
                     double best         = base;
                     generic::Route pick = *entry.prefill;
                     for (const auto r : routes) {
