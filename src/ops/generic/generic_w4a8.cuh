@@ -1920,12 +1920,11 @@ __global__ __launch_bounds__(S::kThreads + 32 * Producers) void w4a8_ws_kernel(G
     w4a8_store_tile<S, E>(a, acc, block_row, token_begin, warp_m, warp_n, lane);
 }
 
-
 // ---------------------------------------------------------------------------------------------
-// Launch. The schedules' last field is the producer warps: 0 for w4a8_kernel, else w4a8_ws_kernel with that many producers
-// and a ring of three stages in the 99 KiB of dynamic shared memory a block may have. The
-// producer-warp tile is compiled only for the codecs the picker gives it (w4a8_ws_compiled; route
-// admission refuses the others: w4a8_ws_supports, generic_gemm.cpp).
+// Launch. The schedules' last field is the producer warps: 0 for w4a8_kernel, else w4a8_ws_kernel
+// with that many producers and a ring of three stages in the 99 KiB of dynamic shared memory a
+// block may have. The producer-warp tile is compiled only for the codecs the picker gives it
+// (w4a8_ws_compiled; route admission refuses the others: w4a8_ws_supports, generic_select.cpp).
 // ---------------------------------------------------------------------------------------------
 
 // NINFERNO_GENERIC_W4A8_SCHEDULES: ops/generic/generic_schedules.h (one list for the
@@ -1935,7 +1934,7 @@ inline constexpr int kW4a8MaxDynamicSmem = 99 * 1024;
 
 // The codecs w4a8_ws_kernel is compiled for: IQ3_XXS, IQ2_S, Q4_K, Q6_K, Q4_0, IQ4_XS, IQ2_XS
 // and IQ2_XXS (keep in step
-// with w4a8_ws_supports, generic_gemm.cpp).
+// with w4a8_ws_supports, generic_select.cpp).
 template <class C>
 constexpr bool w4a8_ws_compiled() {
     return std::is_same_v<C, W4a8Iq3Xxs> || std::is_same_v<C, W4a8Iq2S> ||

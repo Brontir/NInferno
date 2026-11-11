@@ -171,7 +171,7 @@ newer (570 for a V100).
 run it. It needs no administrator rights, installs the native engine, and adds NInferno to the Start
 menu; it updates itself. [Windows](docs/windows.md) has the details.
 
-**Linux** (or WSL 2): x86-64 with glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39 and
+**Linux** (or WSL 2): x86-64 with glibc 2.39 or newer (Ubuntu 24.04, Debian 13, Fedora 40 and
 later); the installer refuses an older one. It needs `openssl`, and `curl` for its downloads
 (Ubuntu and Debian: `sudo apt install curl openssl`; an offline install with `NINFERNO_MANIFEST` and
 `NINFERNO_ARCHIVE` downloads nothing).
@@ -184,7 +184,9 @@ The installer checks your GPUs, then installs only what the release manifest nam
 valid signature of the release key it carries ([how releases are signed](tools/release/server/README.md#signing)).
 To read it before running it, download [`install.sh`](tools/release/install.sh) and run it with `sh`. It unpacks the release into
 `~/.local/share/ninferno` and links the commands into `~/.local/bin`; `NINFERNO_HOME` and
-`NINFERNO_BIN` change those, `NINFERNO_UPDATE_URL` names another manifest (still checked),
+`NINFERNO_BIN` change those (the commands directory is remembered: later updates, rollbacks and
+the uninstall use it without `NINFERNO_BIN` set again), `NINFERNO_UPDATE_URL` names another
+manifest (still checked),
 `NINFERNO_MANIFEST=FILE` reads a manifest already downloaded (with `FILE.sig` beside it), and
 `NINFERNO_ARCHIVE=FILE` installs an archive you already have instead of downloading it. The archive
 is checked against the signed manifest all the same: it has to be the one the manifest names, so a
@@ -193,7 +195,7 @@ build of your own is not installed this way. Besides `ninferno-ui` and
 one at its measured settings (`--list` only lists them, `--multi` takes the setting for several
 users, `NINFERNO_DEVICE` picks the GPU), and `ninferno-update`, which installs a newer release
 (`--check` only says whether there is one, `--yes` skips the question, `--rollback` returns to the
-one before).
+newest kept version older than the installed one).
 
 To remove it, run the installer with `--uninstall` (`curl -fsSL .../install.sh | sh -s -- --uninstall`;
 it asks first unless `--yes` is added). It removes the releases and the command links it made;

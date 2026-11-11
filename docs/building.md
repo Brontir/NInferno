@@ -62,7 +62,7 @@ tables, the drafter rankings, the page's chat window and the model list `ninfern
 It needs `patchelf` (it points the bundled libraries' run path at their own directory) and network
 access (PDFium, the FFmpeg and dav1d sources and the chat page are downloaded). The archive
 needs the build machine's glibc, so `package.sh` stops when that is newer than the `GLIBC_MIN`
-that `install.sh` checks (2.38, Ubuntu 24.04). `tools/release/install.sh` downloads the archive
+that `install.sh` checks (2.39: the [release build machine](maintainer/release.md) runs Ubuntu 24.04). `tools/release/install.sh` downloads the archive
 for the GPU it finds; `NINFERNO_ARCHIVE=FILE` skips the download, but the file is still checked
 against the signed manifest (`NINFERNO_MANIFEST` names one already downloaded), so it installs only
 the archive that manifest names, not a local build.

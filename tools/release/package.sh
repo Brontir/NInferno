@@ -61,6 +61,26 @@ if [ "$(printf '%s\n%s\n' "$GLIBC_BUILD" "$GLIBC_MIN" | sort -V | tail -n1)" != 
   echo "package.sh: this machine has glibc $GLIBC_BUILD, newer than the $GLIBC_MIN install.sh checks for (GLIBC_MIN): build on an older distribution, or raise GLIBC_MIN and the README's minimum" >&2
   exit 1
 fi
+# A CUDA 12.8 copied from a distribution with glibc 2.41 or newer carries that distribution's patch
+# of crt/math_functions.h: sinpi, cospi and rsqrt declared noexcept (true), as glibc 2.41's math.h
+# declares them. Against an older glibc the declarations clash and the Volta tree stops compiling
+# hours in. NVIDIA's own package (docs/maintainer/release.md) has no such patch.
+build70=no
+for arch in $ARCHS; do
+  [ "$arch" = 70 ] || continue
+  # A resumed run that holds the engine builds no Volta tree (the build loop's condition).
+  if [ "${NINFERNO_PACKAGE_RESUME:-0}" = 1 ] && [ -x "$STAGE/bin/ninferno-serve-sm70" ] &&
+    [ -f "$STAGE/bin/ninferno-serve.dispatch" ]; then continue; fi
+  build70=yes
+done
+if [ -n "$CUDA70" ] && [ "$build70" = yes ]; then
+  math=$CUDA70/targets/x86_64-linux/include/crt/math_functions.h
+  if [ -f "$math" ] && grep -Eq 'sinpi\(double x\) noexcept' "$math" &&
+    [ "$(printf '%s\n%s\n' "$GLIBC_BUILD" 2.41 | sort -V | head -n1)" != 2.41 ]; then
+    echo "package.sh: $math declares sinpi noexcept (a copy from a system with glibc 2.41 or newer), which does not compile against this machine's glibc $GLIBC_BUILD: install CUDA 12.8 from NVIDIA's apt repository (docs/maintainer/release.md)" >&2
+    exit 1
+  fi
+fi
 # Checked before hours of building: the run paths below need it.
 command -v patchelf > /dev/null || { echo "package.sh: patchelf is needed (the binaries' run path)" >&2; exit 1; }
 # Every tree but Volta's builds with this nvcc, not the one CMake finds first (/usr/local/cuda can be

@@ -52,7 +52,7 @@ inline constexpr std::string_view kInt8PromptCost =
 inline constexpr std::string_view kGemma4Attention = "src/ops/softmax_attention/gemma4/launch.cu";
 inline constexpr std::string_view kQ5LinearAdd     = "src/ops/linear_add/q5/q5_linear_add_plan.cpp";
 inline constexpr std::string_view kGdnConv         = "src/ops/gdn_input_proj/gdn_projected_conv.cu";
-inline constexpr std::string_view kQwenAttention   = "src/models/qwen3_5/execution/attention.cpp";
+inline constexpr std::string_view kRmsNormRopeBound = "src/ops/rmsnorm_rope/rmsnorm_rope.cpp";
 inline constexpr std::string_view kAttnInputPlan =
     "src/ops/attn_input_proj/bf16/bf16_attn_input_plan.h";
 inline constexpr std::string_view kW4a8 = "src/ops/generic/generic_w4a8.cuh";
@@ -73,7 +73,7 @@ inline constexpr std::string_view kMoePrefill =
     "src/ops/sparse_moe/prefill/sparse_moe_prefill_kernels.cu";
 inline constexpr std::string_view kGdnGating =
     "src/ops/gdn_gating_proj/bf16/bf16_gdn_gating_proj_plan.cpp";
-inline constexpr std::string_view kRmsNormRope = "src/ops/rmsnorm_rope/launch.cu";
+inline constexpr std::string_view kRmsNormRope = "src/ops/rmsnorm_rope/launch.h";
 
 // --- route_cost_constants.h: the A16 / A8 refits and the per-generation modelling constants ---
 // The A16 tiles: one leave-one-board-out refit of the model's constants.
@@ -617,7 +617,7 @@ inline constexpr FittedHoldout kKernelHoldouts[] = {
      Holdout::none("one sm_120a board: the optimum at three heads a block, the plateau flat from "
                    "two to nine",
                    "one board: none left out; every board takes the value",
-                   "rmsnorm_rope/launch.cu at kTextHeadsPerBlock")},
+                   "rmsnorm_rope/launch.h at kTextHeadsPerBlock")},
     {kGemma4Attention, "kDecodeMaxWarpRowsD128",
      Holdout::none("Gemma 4 drafter decode at T = 16, 32K keys: four warp rows 2-5 % faster than "
                    "two on the 64-head drafter, equal on the 32-head one, eight no faster",
@@ -651,11 +651,13 @@ inline constexpr FittedHoldout kKernelHoldouts[] = {
                    "one board and one width: the rule (wide_blocks < SMs -> 64 threads) extends "
                    "it to every width and geometry unmeasured",
                    "gdn_projected_conv.cu at launch")},
-    {kQwenAttention, "kFusedTextQkNormRopeMaximumTokens",
+    // The fused text qk-norm + RoPE's default bound, kept while the law's excess is uncalibrated
+    // (route_cost::kPendingFits fused_text_excess_cycles, #617 G).
+    {kRmsNormRopeBound, "kFusedTextDefaultMaximumTokens",
      Holdout::none("the RTX 5090: the fused form wins by 22 to 52 % through 256 tokens and loses "
                    "by up to 22 % at 1024; the bound a doubling below the crossover",
                    "one board: none left out; every board takes the bound",
-                   "qwen3_5/execution/attention.cpp at kFusedTextQkNormRopeMaximumTokens")},
+                   "rmsnorm_rope/rmsnorm_rope.cpp at kFusedTextDefaultMaximumTokens")},
     {kAttnInputPlan, "kBf16AttnInputSmallTMinTokens",
      Holdout::none("the attention epilogue's own measured crossover (with "
                    "kBf16AttnInputSmallTMaxTokens)",

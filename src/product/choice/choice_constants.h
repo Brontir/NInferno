@@ -561,14 +561,15 @@ inline constexpr MmqIqStep kMmqIqStep[] = {
     {"ada", "ggml_iq1_s", 44.4, 1},
 };
 // Where MMQ does not pay (measured::kMmqPrefillPays: the RTX 5070 Ti as the 5060 Ti) a dense
-// K-quant prefills on the W4A8 tiles (generic_gemm.cpp: Q4_K and Q6_K the producer-warp 128 x 64
-// tile on Blackwell, w4a8_ws_wins; Q5_K the classic 128 x 64): a tile is 128 tokens x 64 weight rows
-// (a gated pair's 32 gate and 32 up rows) over the whole K, one CTA a SM (86-92 KiB, 61 KiB with 256
-// threads), a call's grid ceil(N / 64) x ceil(t / 128) tiles in rounds of SMs, the activations'
-// quantization and the epilogue the small kernels'. Read on the RTX 5070 Ti's census of Qwen3.5 9B's
-// Q4_K_M, Q4_K_S, Q5_K_M and Q6_K at 7K tokens (the calls by format and grid, as MMQ's), c0 within
-// a few K step: Q4_K 23, Q5_K 28, Q6_K 29.5 SM-clocks a K step (the K-4096 and K-12288 calls agree
-// within 2 %) — a 128 x 128 MMQ tile's on the RTX 5090 per element (45.5 = 2 x 22.75 for Q4_K).
+// K-quant prefills on the W4A8 tiles (generic_select.cpp: Q4_K and Q6_K the producer-warp 128 x 64
+// tile on Blackwell, w4a8_ws_wins; Q5_K the classic 128 x 64): a tile is 128 tokens x 64 weight
+// rows (a gated pair's 32 gate and 32 up rows) over the whole K, one CTA a SM (86-92 KiB, 61 KiB
+// with 256 threads), a call's grid ceil(N / 64) x ceil(t / 128) tiles in rounds of SMs, the
+// activations' quantization and the epilogue the small kernels'. Read on the RTX 5070 Ti's census
+// of Qwen3.5 9B's Q4_K_M, Q4_K_S, Q5_K_M and Q6_K at 7K tokens (the calls by format and grid, as
+// MMQ's), c0 within a few K step: Q4_K 23, Q5_K 28, Q6_K 29.5 SM-clocks a K step (the K-4096 and
+// K-12288 calls agree within 2 %) — a 128 x 128 MMQ tile's on the RTX 5090 per element (45.5 = 2
+// x 22.75 for Q4_K).
 inline constexpr MmqTileCost kW4a8KquantCost[] = {{"gb20x", 0, 23, 28, 29.5, 37.4, 20.2, 1}};
 inline constexpr double kW4a8KquantTokens = 128;
 inline constexpr double kW4a8KquantRows   = 64;
@@ -579,7 +580,9 @@ inline constexpr double kW4a8KquantRows   = 64;
 inline constexpr double kW4a8Q3kTile     = 64;
 inline constexpr double kW4a8Q3kResident = 2;
 inline constexpr double kMmqSliceTokens = 512; // generic_ggml_internal.h kMmqPrefillSlice
-inline constexpr double kMmqMinTokens   = 17;  // generic_gemm.cpp: MMQ from the prefill band (vector / R8 below)
+inline constexpr double kMmqMinTokens =
+    17; // the prefill band's first token (generic_select.cpp: MMQ from the band; not the op's own
+        // kMmqMinTokens, 5, the verify-width floor in generic_gemm.h)
 inline constexpr double kMmqTile        = 128;
 // Beside the tiles, every grid quantizes its input to q8_1 (a 16-bit element read, 1.125 bytes
 // written: a gated pair's two grids each, the census's quantize calls one a grid) and the epilogue
@@ -634,7 +637,7 @@ struct VoltaPrefillCost {
 inline constexpr VoltaPrefillCost kVoltaPrefillCost{52.4, 0.69, 0.99, 1.11, 0.94, 1};
 inline constexpr double kVoltaChunkBytes = 4096.0 * 17408 * 2; // generic_volta_cutlass.cu kChunkWeightBytes
 // A tiled format's call (Q8_0, Q4_K, Q5_K: their own tile beside the copy) takes the copy from this
-// many tokens, or at any width on a board of this much DRAM (generic_gemm.cpp volta_copy_pays); a
+// many tokens, or at any width on a board of this much DRAM (generic_select.cpp volta_copy_pays); a
 // shorter call on a slower board runs the tile, not read: the share prices it.
 inline constexpr double kVoltaCutlassMinTokens = 17; // volta_cutlass_takes: the prefill band
 inline constexpr double kVoltaCopyMinTokens   = 256;   // kVoltaTileMaxTokens

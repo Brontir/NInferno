@@ -1,6 +1,6 @@
 #pragma once
 
-// Helpers of the generic path's route selection (generic_gemm.cpp) that its other files share.
+// Helpers of the generic path's route selection (generic_select.cpp) that its other files share.
 
 #include "core/device_class.h"
 #include "core/measured_boards.h"
@@ -107,7 +107,7 @@ struct R8TableHit {
 std::optional<R8TableHit> tuned_r8(const Problem& p);
 
 // The route selection's rules and fixed routes, which route_authorities.cpp asks in order
-// (generic_gemm.cpp holds the bodies and their measurements).
+// (generic_select.cpp holds the bodies and their measurements).
 // Whether a call of T tokens takes R8 (decode, T <= kR8DecodeTokens, and the activation fits; the
 // verify widths by the call's own rows; r8_call_refusal, generic_gemm.h, names why not).
 bool r8_call(const Problem& problem, const Weight& w, std::int32_t tokens);
@@ -177,7 +177,7 @@ struct ActivationPlanes {
 
 ActivationPlanes activation_planes(Route route, std::int32_t k, std::int32_t tokens);
 
-// Shared by the selection and the workspace queries (generic_gemm.cpp).
+// Shared by the selection and the workspace queries (generic_select.cpp).
 std::int32_t vec_max_tokens();
 bool volta_tiled_qtype(QType qtype);
 bool volta_cutlass_qtype(QType qtype);
@@ -204,8 +204,8 @@ std::optional<Route> cost_route(const Problem& problem, const Weight& weight, st
 // scale tile for NVFP4 and the FP8 128x128 scales.
 double bytes_per_weight(const Weight& weight, const Problem& problem);
 
-// The weight-side admission of the A8 and A4 tiles and of R8 (generic_gemm.cpp; their refusals
-// name the reason).
+// The weight-side admission of the A8 and A4 tiles and of R8 (generic_select.cpp, generic_gemm.cpp;
+// their refusals name the reason).
 bool allows_w4a8(const Weight& w, LinearPolicy policy);
 bool allows_i8(const Weight& w, LinearPolicy policy);
 bool allows_w4a4(const Weight& w, LinearPolicy policy);
