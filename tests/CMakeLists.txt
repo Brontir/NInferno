@@ -102,6 +102,13 @@ add_test(NAME ninferno_kernel_facts_sass_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_kernel_facts_sass.py)
 set_tests_properties(ninferno_kernel_facts_sass_test PROPERTIES LABELS host)
 
+# src/core/data/isa_facts.json and tools/bench/isa_probe/isa_probe.py (#613 PR-2): the ISA facts
+# table's schema (every row Measured, every fact present and positive, card and tool named) and the
+# probe output's round trip into a row. No GPU, no CUDA toolkit.
+add_test(NAME ninferno_isa_facts_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_isa_facts.py)
+set_tests_properties(ninferno_isa_facts_test PROPERTIES LABELS host)
+
 # tools/bench/gap_map.py: measured times against the counted DRAM and tensor laws (#619), on
 # synthetic inputs, no GPU.
 add_test(NAME ninferno_gap_map_test
