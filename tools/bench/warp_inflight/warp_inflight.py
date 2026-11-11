@@ -152,20 +152,20 @@ PERFORMANCE_PSTATES = ("P0", "P1", "P2")
 
 def settled(samples, bus, since_ns, hold_ns=SETTLE_HOLD_NS):
     """(memory MHz, ns it has held) once the samples from `since_ns` on end in one memory clock
-    held for at least `hold_ns` (first to last sample of that value) in a performance P-state,
-    the highest clock seen since `since_ns`; None until then (a clock still idle, ramping or
-    dropping has not settled)."""
+    held for at least `hold_ns` (first to last sample of that value, all in a performance
+    P-state: the hold begins where both began), the highest clock seen since `since_ns`; None
+    until then (a clock still idle, ramping or dropping has not settled)."""
     mem = memory_clocks(samples, bus, since_ns)
     if not mem:
         return None
-    t_last, value, _ = mem[-1]
-    if value != max(v for _, v, _ in mem):
+    t_last, value, state = mem[-1]
+    if value != max(v for _, v, _ in mem) or state not in PERFORMANCE_PSTATES:
         return None
+    # The same clock read in an idle P-state before the GPU went to a performance one is no part
+    # of the hold.
     i = len(mem) - 1
-    while i > 0 and mem[i - 1][1] == value:
+    while i > 0 and mem[i - 1][1] == value and mem[i - 1][2] in PERFORMANCE_PSTATES:
         i -= 1
-    if any(p not in PERFORMANCE_PSTATES for _, _, p in mem[i:]):
-        return None
     held = t_last - mem[i][0]
     return (value, held) if held >= hold_ns else None
 

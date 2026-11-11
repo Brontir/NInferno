@@ -224,6 +224,22 @@ class WarpInflight(unittest.TestCase):
         wi.parse_run(SAMPLE.replace(SETTLE.format(mhz=10501), note.replace("10251", "10501") +
                                     "\n"))
 
+    def test_hold_begins_in_a_performance_pstate(self):
+        t0 = wi.smi_time_ns("2026/11/11 12:00:00.000")
+        bus = wi.IP._bus("0:01:00.0")
+        # The memory clock reads 10251 MHz in P8 for 2 s, then the same value in P2: the hold
+        # counts from the P2 rows only.
+        rows = [r for _, r in self.ramp(t0, [(4000, 10251)])]
+        for r in rows[:20]:
+            r[2] = "P8"
+        self.assertIsNone(wi.settled(rows[:25], bus, t0))  # 0.4 s in P2
+        s = wi.settled(rows, bus, t0)
+        self.assertIsNotNone(s)
+        self.assertEqual(s[0], 10251)
+        self.assertAlmostEqual(s[1] / 1e9, 1.9, places=6)
+        # Still in P8 at the end: not settled, whatever the hold.
+        self.assertIsNone(wi.settled(rows[:20], bus, t0))
+
     def test_warm_up_refuses_a_clock_that_never_settles(self):
         t0 = wi.smi_time_ns("2026/11/11 12:00:00.000")
         # 405 and 10251 alternating every 0.5 s: never 1 s at one value.
