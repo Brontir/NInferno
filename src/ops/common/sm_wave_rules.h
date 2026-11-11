@@ -72,9 +72,11 @@ constexpr bool grid_passes_wave(std::int32_t tokens, int sms, int row_tiles, int
 // input is unknown or `excess_cycles` is not calibrated: the caller then keeps its own default. A
 // call wider than a graph is captured for (a prefill chunk run eagerly) pays the eager launch,
 // dearer than the node: T* is understated there.
-constexpr std::optional<std::int32_t>
-launch_amortized_tokens(int saved_launches, double launch_seconds, int sms, int warps_per_sm,
-                        double sm_clock_hz, double heads_per_token, double excess_cycles) {
+using AmortizedTokens = std::optional<std::int32_t>;
+
+constexpr AmortizedTokens launch_amortized_tokens(int saved_launches, double launch_seconds,
+                                                  int sms, int warps_per_sm, double sm_clock_hz,
+                                                  double heads_per_token, double excess_cycles) {
     if (saved_launches <= 0 || !(launch_seconds > 0.0) || sms <= 0 || warps_per_sm <= 0 ||
         !(sm_clock_hz > 0.0) || !(heads_per_token > 0.0) || !(excess_cycles > 0.0)) {
         return std::nullopt;
