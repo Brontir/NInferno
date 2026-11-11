@@ -39,15 +39,17 @@ struct SharedVocabulary {
 class CompiledConstraint {
 public:
     CompiledConstraint(xgrammar::CompiledGrammar compiled,
-                       std::shared_ptr<const SharedVocabulary> shared, bool visible, bool free_rows)
+                       std::shared_ptr<const SharedVocabulary> shared, bool visible, bool free_rows,
+                       bool header)
         : grammar(std::move(compiled)), vocabulary(std::move(shared)),
-          special_tokens_visible(visible), free_grammar(free_rows),
+          special_tokens_visible(visible), free_grammar(free_rows), reads_answer_header(header),
           memory_bytes(grammar.MemorySizeBytes()) {}
 
     xgrammar::CompiledGrammar grammar;
     std::shared_ptr<const SharedVocabulary> vocabulary;
     bool special_tokens_visible = false;
     bool free_grammar           = false; // declares_free_grammar() of its spec
+    bool reads_answer_header    = false; // OutputConstraintSpec::reads_answer_header
     std::size_t memory_bytes    = 0;
 };
 
@@ -182,6 +184,7 @@ std::string cache_key(const OutputConstraintSpec& spec) {
     key.push_back(spec.follows_reasoning ? 'r' : 'n');
     key.push_back(spec.special_tokens_visible ? 'v' : 'h');
     key.push_back(spec.engine_rendered ? 'e' : 'u');
+    key.push_back(spec.reads_answer_header ? 'a' : 't');
     key.push_back('\0');
     key += spec.definition;
     if (!spec.answer_schema.empty()) {
@@ -314,6 +317,10 @@ bool declares_free_grammar(const OutputConstraintSpec& spec) {
 
 bool declares_free_grammar(const CompiledConstraint& compiled) noexcept {
     return compiled.free_grammar;
+}
+
+bool reads_answer_header(const CompiledConstraint& compiled) noexcept {
+    return compiled.reads_answer_header;
 }
 
 std::size_t memory_bytes(const CompiledConstraint& compiled) noexcept {
@@ -598,7 +605,8 @@ struct ConstraintCompiler::Impl : std::enable_shared_from_this<ConstraintCompile
         // during compilation.
         reject_warnings();
         return std::make_shared<const CompiledConstraint>(
-            std::move(*compiled), shared, spec.special_tokens_visible, declares_free_grammar(spec));
+            std::move(*compiled), shared, spec.special_tokens_visible, declares_free_grammar(spec),
+            spec.reads_answer_header);
     }
 };
 

@@ -6,6 +6,8 @@
 // loaders read the planes, mmq-load-tiles.cuh). The ggml headers define CUDA_CHECK and friends, so
 // only this directory's translation units include them; everything here is raw pointers.
 
+#include "core/format_facts.h"
+
 #include <cuda_bf16.h>
 #include <cuda_runtime.h>
 
@@ -14,26 +16,8 @@
 
 namespace ninferno::ops::ggml_mmq {
 
-enum class Type : std::uint8_t {
-    Q4_K,
-    Q5_K,
-    Q6_K,
-    IQ4_XS,
-    IQ3_XXS,
-    IQ3_S,
-    Q4_0,
-    Q4_1,
-    Q5_0,
-    Q5_1,
-    IQ4_NL,
-    Q2_K,
-    Q3_K,
-    IQ2_XXS,
-    IQ2_XS,
-    IQ2_S,
-    IQ1_S,
-    IQ1_M // the vector kernel only (matrix_supported)
-};
+// Which loader reads a format is a format fact (core/format_facts.h, FormatFacts::mmq).
+using Type = ::ninferno::MmqType;
 
 // Whether ggml's matrix kernel reads the format (every Type but IQ1_M).
 [[nodiscard]] constexpr bool matrix_supported(Type type) { return type != Type::IQ1_M; }

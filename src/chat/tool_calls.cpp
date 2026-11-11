@@ -2508,50 +2508,46 @@ public:
             });
     }
 
-    // The output of a turn whose calls are refused: free text, but no header that addresses a
-    // message (#578). The prompt ends at "<|start|>assistant", so the output begins with the
-    // header: either "<|channel|>analysis|final<|message|>" exactly (a recipient, a
-    // "commentary" channel or a <|constrain|> after the channel name has no place in it), or text
-    // that does not begin with a recipient (whitespace, then "to=", or "<|"). Past that, the
-    // excludes close the headers a later message could address (a commentary channel, a space
-    // after a channel name or after the role, <|constrain|>). The prose of the final message and
-    // the analysis stay free (" to" and "commentary" are words).
+    // The output of a turn whose calls are refused (#578): at most one analysis message, then
+    // the final message, nothing else. The prompt ends at "<|start|>assistant", so the output
+    // begins with a channel, and the tag spells every header the output writes
+    // (OutputConstraintSpec::reads_answer_header):
+    //   "<|channel|>analysis<|message|>" ... "<|start|>assistant<|channel|>final<|message|>" text
+    //   "<|channel|>final<|message|>" text
+    // The analysis text and its <|end|> are not the tag's: the constraint gate steps over the
+    // reasoning section the model opens, unconstrained, and the tag goes on after it. So after
+    // the role only <|channel|> follows, after <|channel|> only "analysis" or "final" (no
+    // "commentary", no " to=" recipient, no <|constrain|>), then only <|message|>; nothing parse()
+    // could read as a call can be written. A second analysis is refused: the output presentation
+    // opens the reasoning only at the output's start, so its text would reach the content. The
+    // final text holds no harmony markup, so it ends at <|return|> (a stop) or the token cap
+    // (<|end|> would open another message). The prose is free (" to", "to=3" and "commentary"
+    // are words).
     [[nodiscard]] std::string refusal_structural_tag() const override {
-        const auto text = [] {
-            return OrderedJson{
-                {"type", "any_text"},
-                {"excludes",
-                 OrderedJson::array(
-                     {"<|channel|>commentary", "<|channel|>analysis ", "<|channel|>analysis\n",
-                      "<|channel|>analysis\t", "<|channel|>final ", "<|channel|>final\n",
-                      "<|channel|>final\t", "<|start|>assistant ", "<|start|>assistant\n",
-                      "<|start|>assistant\t", "<|constrain|>"})}};
-        };
-        const auto sequence = [](std::initializer_list<OrderedJson> elements) {
-            return OrderedJson{{"type", "sequence"}, {"elements", OrderedJson(elements)}};
-        };
         const auto literal = [](std::string_view value) {
             return OrderedJson{{"type", "const_string"}, {"value", std::string(value)}};
         };
-        const OrderedJson header = sequence(
-            {literal("<|channel|>"),
-             OrderedJson{{"type", "or"},
-                         {"elements", OrderedJson::array({literal("analysis"), literal("final")})}},
-             literal(kMessage), text()});
-        const OrderedJson plain =
-            sequence({OrderedJson{{"type", "regex"},
-                                  {"pattern",
-                                   "[ \\t\\r\\n]*([^ \\t\\r\\n<t]|t[^o<]|to[^=<]|(t|to)?<[^|<])"}},
-                      text()});
-        // An answer that is empty, only whitespace, or that whitespace and then only a prefix
-        // `plain` needs one more byte to tell from "to=" or a structural token ("t", "to", "<",
-        // "t<", "to<"), here whole, with nothing after it.
-        const OrderedJson prefix_only =
-            OrderedJson{{"type", "regex"}, {"pattern", "[ \\t\\r\\n]*((t|to)?<|t|to)?"}};
+        const auto final_text = [&literal](std::string_view header) {
+            return OrderedJson{
+                {"type", "sequence"},
+                {"elements", OrderedJson::array(
+                                 {literal(header),
+                                  OrderedJson{{"type", "any_text"},
+                                              {"excludes", OrderedJson::array(
+                                                               {"<|start|>", "<|end|>",
+                                                                "<|channel|>", "<|message|>",
+                                                                "<|constrain|>", "<|call|>"})}}})}};
+        };
+        const std::string final_header = "<|channel|>final" + std::string(kMessage);
+        const OrderedJson after_analysis{
+            {"type", "sequence"},
+            {"elements", OrderedJson::array({literal("<|channel|>analysis" + std::string(kMessage)),
+                                             final_text(std::string(kOpen) + final_header)})}};
         return OrderedJson{
             {"type", "structural_tag"},
             {"format", OrderedJson{{"type", "or"},
-                                   {"elements", OrderedJson::array({header, plain, prefix_only})}}}}
+                                   {"elements", OrderedJson::array(
+                                                    {after_analysis, final_text(final_header)})}}}}
             .dump();
     }
     [[nodiscard]] std::string structural_tag(std::span<const ToolCallConstraintTool> tools,

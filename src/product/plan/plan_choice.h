@@ -33,8 +33,10 @@ namespace ninferno::product {
 // mode the subject's profile chose or measured and its Engine runs. A profile with measurements
 // (a lab pair's, a local tune's) chooses each mode again over that mode's measurements alone; one
 // without offers its own choice. Each option carries the served speculation a start of it runs
-// (served_speculation over the profile of that mode), its gain the profile's choice for the
-// server's thinking flag, and the streams from which its load table decodes plainly.
+// (served_speculation over the profile of that mode); its gain, load gains and joint price are
+// those of the choice that start runs for the server's thinking flag (the profile's served choice
+// where the Engine cannot run its own: served_choices), and the streams from which its load
+// table decodes plainly.
 struct DrafterAxis {
     std::vector<choice::DrafterOption> options;
     std::vector<ServedSpeculation> served;

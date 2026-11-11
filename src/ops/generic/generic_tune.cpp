@@ -58,6 +58,7 @@
 #include "ops/common/native_nvfp4.h"
 #include "ops/common/route_probe.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/route_authorities.h"
 #include "ops/generic/route_table.h"
 
 #include <cuda_bf16.h>
@@ -100,6 +101,9 @@ constexpr int kReps      = 5;
 inline constexpr std::array<std::int32_t, 9> kPrefillBandTokens = {17,  32,  64,   127, 128,
                                                                    256, 512, 1024, 2048};
 inline constexpr std::size_t kPrefillBands                      = kPrefillBandTokens.size();
+// The first band is the prefill band's lower edge: the selection, the workspace plan and the tuner
+// read one boundary.
+static_assert(kPrefillBandTokens.front() == kPrefillBandMinTokens);
 
 std::size_t prefill_band(std::int32_t tokens) {
     for (std::size_t b = 0; b < kPrefillBands; ++b) {
@@ -296,7 +300,8 @@ std::vector<Route> prefill_candidates(Route base, const Weight& weight, LinearPo
         for (int i = 0; i < staged_schedule_count(); ++i) {
             routes.push_back({Family::StagedMma, static_cast<std::uint8_t>(i)});
         }
-        std::erase_if(routes, [&](Route r) { return !same_summation(base, r); });
+        const Ask prefill = ask_below_profiles(17, true);
+        std::erase_if(routes, [&](Route r) { return !profile_admits_as(r, prefill, base); });
     }
     std::erase_if(routes, [&](Route r) { return !route_admits(r, weight, policy); });
     return routes;

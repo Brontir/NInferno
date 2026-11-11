@@ -480,8 +480,9 @@ std::size_t prefill_a8_workspace_bytes(const Problem& problem, std::int32_t min_
     // NVFP4 under a policy with A8 and without W4A4 (owned_prefill_w4a8): the W4A8 planes of its
     // calls of 17 tokens or more, which the shape's own plan does not run.
     if (nvfp4_prefill_a8_policy(problem.qtype, problem.policy)) {
-        if (max_tokens < 17) return 0;
-        return workspace_capacity_bytes(problem, nullptr, std::max(min_tokens, 17), max_tokens);
+        if (max_tokens < kPrefillBandMinTokens) return 0;
+        return workspace_capacity_bytes(problem, nullptr,
+                                        std::max(min_tokens, kPrefillBandMinTokens), max_tokens);
     }
     const LinearPolicy a8_policy = prefill_a8_policy(problem.qtype, problem.policy);
     if (!prefill_a8_format(problem.qtype) || !allows_a8(a8_policy) ||
@@ -705,7 +706,7 @@ std::optional<RouteTraffic> route_traffic(Route route, const Weight& weight,
     // activation slice itself (the shared-memory tiles stage it once for the CTA).
     const double x_readers =
         route.family == Family::RegisterMma ? rmma_schedule_info(route.schedule).warps_m : 1.0;
-    const double bpw = static_cast<double>(weight.payload_bytes) / (n * k);
+    const double bpw = bytes_per_weight(weight, problem);
     return RouteTraffic{n * k * bpw * weight_reads,
                         x_t * x_k * x_bytes * cdiv(n, tile->out_rows) * x_readers, n * t * 2.0};
 }
@@ -929,6 +930,8 @@ std::string_view demotion_name(Demotion demotion) noexcept {
     case Demotion::GgmlLayout: return "ggml_layout";
     case Demotion::GgmlWorkspace: return "ggml_workspace";
     case Demotion::Workspace: return "workspace";
+    case Demotion::VoltaCopy:
+        return "volta_copy";
     }
     return "none";
 }
@@ -947,6 +950,7 @@ std::string_view overlap_refusal_name(OverlapRefusal why) noexcept {
     return "none";
 }
 
+// FUSION-SITE: pdl_overlap
 LaunchOverlap launch_overlap(const ResolvedRoute& resolved, Epilogue epilogue, int tokens,
                              bool join_asked, bool release_asked, bool pdl) {
     const Family family = resolved.executed.family;
@@ -1021,11 +1025,11 @@ R8Coverage r8_coverage(const Problem& problem, const Weight& w, std::int32_t tok
 
 std::vector<FamilyAlternative> family_alternatives(const Problem& problem, const Weight& w,
                                                    std::int32_t tokens, bool prefill) {
-    const bool band = prefill && tokens >= 17;
+    const bool band = prefill && tokens >= kPrefillBandMinTokens;
     // The calls heuristic_route prices (cost_route): 17 tokens or more outside the prefill profile,
     // NVFP4 apart. The times are cost_route's own, so a priced alternative compares as it would.
     std::vector<std::pair<Route, double>> priced;
-    if (!band && tokens >= 17 && problem.qtype != QType::NVFP4) {
+    if (!band && tokens >= kPrefillBandMinTokens && problem.qtype != QType::NVFP4) {
         price_routes(problem, w, tokens,
                      [&](Route r, double time) { priced.emplace_back(r, time); });
     }
@@ -1082,6 +1086,7 @@ std::optional<double> route_cost_seconds(const Problem& problem, const Weight& w
     return out;
 }
 
+// FUSION-SITE: r8_prequantized
 ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call) {
     ResolvedRoute out{.asked = asked, .executed = asked};
     Route& route      = out.executed;
@@ -1498,11 +1503,17 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
         // The prefill band on Volta (kVoltaCutlassMinTokens): a CUTLASS-only format has no tile of
         // its own (V100, gpt-oss BF16 attention at T = 79 ran scalar, 7.3 ms a call, 360 -> 140
         // tok/s), and a tiled one's grid seldom fills the SMs' waves (volta_copy_pays).
-        if (workspace != nullptr && volta_cutlass_runs(volta_cutlass_only(codec), args.tokens) &&
-            launch_volta_cutlass(codec, call.epilogue, args, *workspace, stream)) {
-            return;
+        {
+            const auto cutlass_free = workspace_free(workspace);
+            if (volta_cutlass_call_runs(codec, call.rows, w.k, args.tokens,
+                                        call.epilogue == Epilogue::SwiGlu, cutlass_free) &&
+                launch_volta_cutlass(codec, call.epilogue, args, *workspace, *cutlass_free,
+                                     stream)) {
+                return;
+            }
         }
-        // A call the decoded copy does not fit runs scalar: a demotion (other bytes and speed).
+        // A call the decoded copy does not fit runs scalar: a demotion (other bytes and speed);
+        // volta_tiled_runs_scalar says it for a description.
         if (volta_cutlass_only(codec)) {
             note_demotion(route, Route{Family::Scalar, 0}, call.rows, args.tokens, w.k,
                           aligned_to(args.x, 16), args.ldx,
