@@ -56,8 +56,10 @@ tables, the drafter rankings, the page's chat window and the model list `ninfern
 It needs `patchelf` (it points the bundled libraries' run path at their own directory) and network
 access (PDFium and the chat page are downloaded). The archive needs the build machine's glibc, so
 `package.sh` stops when that is newer than the `GLIBC_MIN` that `install.sh` checks (2.38, Ubuntu
-24.04). `tools/release/install.sh` installs such an
-archive (`NINFERNO_ARCHIVE=FILE`) or downloads the one for the GPU it finds.
+24.04). `tools/release/install.sh` downloads the archive for the GPU it finds; `NINFERNO_ARCHIVE=FILE`
+skips the download, but the file is still checked against the signed manifest (`NINFERNO_MANIFEST`
+names one already downloaded), so it installs only the archive that manifest names, not a local
+build.
 
 The release toolkit is pinned to its patch level (the `nvcc` line of
 `src/ops/generic/data/kernel_facts/sm_<arch>.txt`), because on sm_86 and sm_120 the selector's
