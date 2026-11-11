@@ -99,6 +99,9 @@ add_test(NAME ninferno_regret_collect_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_regret_collect.py)
 ninferno_label_tests(ninferno_regret_collect_test LABELS host)
 
+# tools/bench/mmq_width_grid.py (#524): the measurement against a fake server, the grid and A/B readers' refusals, no GPU.
+add_test(NAME ninferno_mmq_width_grid_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_mmq_width_grid.py)
 # tools/kernel_facts/sass_counts.py and the loop columns of kernel_facts.py (#613): the K loop
 # found from a small SASS text's control flow, its counts, the snapshot round trip and the check's
 # verdicts. No GPU, no CUDA toolkit.
@@ -139,6 +142,12 @@ ninferno_label_tests(ninferno_route_table_evidence_test LABELS host)
 add_test(NAME ninferno_mmq_transfer_audit_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_mmq_transfer_audit.py)
 ninferno_label_tests(ninferno_mmq_transfer_audit_test LABELS host)
+
+# src/spec/round_cost.h kSmallTEta against tools/fits/round_cost/fit_eta.py's fit of the shipped
+# registry, no GPU.
+add_test(NAME ninferno_round_cost_eta_fit_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_round_cost_eta_fit.py)
+set_tests_properties(ninferno_round_cost_eta_fit_test PROPERTIES LABELS host)
 
 # tools/audit/board_literal_lint.py: no hand-written `ninferno::Board` literal or bare five-number
 # board tuple outside the registry (roadmap #612 step 9), and the tree is clean. What it does not
