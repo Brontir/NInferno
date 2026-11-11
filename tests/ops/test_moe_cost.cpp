@@ -510,8 +510,9 @@ double logical_bytes(const Weight& w) {
            static_cast<double>(std::max<std::int64_t>(w.padded_shape[1], w.k));
 }
 
-// The bytes by hand of one layer call: `gate_up_int8` the router's CTAs quantize x (40 bytes a
-// 32-value block of the plane at K rounded up to 128) and the R8 gate/up reads those codes. The
+// The bytes by hand of one layer call: `gate_up_int8` the router's CTAs quantize x (read x again,
+// write 40 bytes a 32-value block of the plane at K rounded up to 128) and the R8 gate/up reads
+// those codes. The
 // combine (the separate kernel or the R8 down stage's fused tail: the same bytes) always counts.
 double layer_bytes_by_hand(const ops::MoeWeights& w, std::int32_t experts, std::int32_t top_k,
                            std::int32_t tokens, bool relu2, bool gate_up_int8) {
@@ -534,6 +535,9 @@ double layer_bytes_by_hand(const ops::MoeWeights& w, std::int32_t experts, std::
     if (gate_up_int8) {
         const double ld = std::ceil(static_cast<double>(w.router.k) / 128) * 128;
         bytes += t * ld / 32 * 40; // the router's CTAs write codes, scales and sums
+        // ... after loading the T BF16 rows of x again (args.xq, apart from the MMA's args.x),
+        // in whole 32-value blocks: T x H x 2 bytes for an H of whole blocks.
+        bytes += t * std::ceil(static_cast<double>(w.router.k) / 32) * 32 * 2;
     }
     bytes += (t * top_k + t) * hidden_rows * 2; // the combine
     return bytes;
@@ -607,6 +611,16 @@ void layer_checks() {
         check(r8_price && matches(r8_price->dram_seconds * board.dram_bytes_per_s,
                                   layer_bytes_by_hand(w, experts, top_k, 2, relu2, true)),
               "an R8 layer's bytes by hand: codes for the gate/up, the fused combine" + tag);
+        // The router's CTAs quantize x on this call, and their quantize tasks load its T = 2 BF16
+        // rows a second time (args.xq, apart from the router MMA's args.x): 2 x 2048 x 2 = 8192
+        // bytes on top of the codes they write (2 x 2048 / 32 x 40 = 5120 bytes).
+        check(moe::moe_router_quantizes_x(w, layer->config, r8, 2),
+              "the router's CTAs quantize x for the R8 gate/up at T = 2" + tag);
+        check(r8_price && std::abs(r8_price->dram_seconds * board.dram_bytes_per_s -
+                                   (layer_bytes_by_hand(w, experts, top_k, 2, relu2, false) -
+                                    2 * 2048 * 2 + 2 * 2048 * 36.0 / 32.0 + 8192 + 5120)) <=
+                              1e-9 * r8_price->dram_seconds * board.dram_bytes_per_s,
+              "the router's quantizer reads x again: 8192 bytes at T = 2, H = 2048" + tag);
 
         // Mixed: R8 gate/up and a register MMA down stage (10 of the 75 replayed rows): the combine
         // is separate, the layer is unpriced because of its R8 stage.

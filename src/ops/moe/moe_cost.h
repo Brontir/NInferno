@@ -222,7 +222,8 @@ rank_against_selected(const std::optional<MoeStagePrice>& price,
 
 // The layer's price on a plan: its two grouped stages (each stage's kernel from stage_routes); the
 // router kernel (moe_router_kernel), priced as a stage is: its bytes (its weights, x, its bias,
-// the FP32 logits, and the codes of x where its CTAs quantize it for an R8 gate/up) against its
+// the FP32 logits, and where its CTAs quantize x for an R8 gate/up their second read of x and the
+// codes they write) against its
 // 2 x T x E x H operations on the BF16 MMA, or on the FP32 FMAs for the SIMT router; the
 // selection's reads (the logits, the optional selection bias and expert scale); the combine
 // (reads T x k x H BF16, writes T x H: the separate kernel and an R8 down stage's fused tail move

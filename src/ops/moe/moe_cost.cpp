@@ -431,9 +431,9 @@ std::optional<MoeLayerPrice> moe_layer_price(const MoeWeights& weights, const Mo
     }
     // The router kernel (run, step 1; moe_router_kernel): its weights, the T rows of x, its bias
     // (args.bias, added to each logit), the FP32 logits it writes; where it quantizes x for an R8
-    // gate/up its CTAs also write the codes, scales and sums of each row's plane at K rounded up to
-    // 128 (quantize_x_task over T x xq_ld / 32 blocks, 40 bytes a block, the blocks past K
-    // zero).
+    // gate/up its CTAs also load the BF16 rows of x a second time and write the codes, scales and
+    // sums of each row's plane at K rounded up to 128 (quantize_x_task over T x xq_ld / 32 blocks,
+    // 40 bytes a block, the blocks past K zero).
     const double t       = tokens;
     const double experts = static_cast<double>(weights.router.n);
     const double width   = static_cast<double>(weights.router.k);
@@ -441,6 +441,10 @@ std::optional<MoeLayerPrice> moe_layer_price(const MoeWeights& weights, const Mo
                           t * width * kBf16BytesPerValue + optional_bytes(weights.router_bias) +
                           t * experts * kFp32BytesPerValue;
     if (router_quantizes) {
+        // The quantize tasks read x through GemmArgs::xq (moe_gemm.cuh, moe_router_simt.cu), apart
+        // from the MMA's read through args.x: each block that starts below the width is loaded
+        // whole, so T x the width in whole 32-value blocks, BF16.
+        router_bytes += t * std::ceil(width / kQuantizeBlock) * kQuantizeBlock * kBf16BytesPerValue;
         router_bytes += t * (moe_w4a8_ld(static_cast<std::int32_t>(width)) / kQuantizeBlock) *
                         kQuantizedBlockBytes;
     }

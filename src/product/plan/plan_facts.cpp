@@ -498,8 +498,9 @@ std::string format_of_ggml(std::uint32_t type) {
 // which a zero-padded bank's K exceeds, and the bank's K for a down bank), in fragment order only
 // the formats ggml_frag_w4a8 names, and prefills it on int8 activations, unless another bank of
 // its layer is A16-only (the layer's expert policy is then A16); any other bank runs the 16-bit
-// register MMA; a layer of MXFP4 banks is its own route. The trunk takes the route of the most of
-// its banks' bytes. The banks' 16-bit and float tensors (biases) do not decide.
+// register MMA; a layer of MXFP4 banks is its own route for its banks in whole blocks (the same
+// rule), A16 for the others. The trunk takes the route of the most of its banks' bytes. The banks'
+// 16-bit and float tensors (biases) do not decide.
 class ExpertRoutes {
 public:
     void add(const std::string& layer, const std::string& format, const std::string& layout,
@@ -517,11 +518,12 @@ public:
             l.mxfp4 = l.mxfp4 && q == QType::MXFP4;
             const bool a8 = convert::kept_block_policy(q) == artifact::ActivationPolicy::AllowA8;
             l.a8          = l.a8 && a8;
-            if (moe_w4a8_whole_blocks(static_cast<std::int64_t>(k),
-                                      static_cast<std::int64_t>(x_width)) &&
-                a8 && (!frag || ggml_frag_w4a8(q))) {
-                l.int8_bytes += bytes;
-            }
+            const bool whole = moe_w4a8_whole_blocks(static_cast<std::int64_t>(k),
+                                                     static_cast<std::int64_t>(x_width));
+            if (whole && a8 && (!frag || ggml_frag_w4a8(q))) { l.int8_bytes += bytes; }
+            // An MXFP4 bank takes its layer's MXFP4 route (the int8 tier or the block-scaled MMA)
+            // only in whole blocks too: the op refuses it otherwise (KGroup) and runs it A16.
+            if (whole && q == QType::MXFP4) { l.mxfp4_bytes += bytes; }
         } catch (const std::exception&) { l.known = false; }
     }
     [[nodiscard]] runtime::ExpertPrefill route() const {
@@ -533,7 +535,9 @@ public:
             if (!l.known) {
                 at(runtime::ExpertPrefill::Unknown) += l.bytes;
             } else if (l.mxfp4) {
-                at(runtime::ExpertPrefill::Mxfp4) += l.bytes;
+                // A bank the op refuses for its blocks (w4a8_bank_refusal KGroup) runs A16.
+                at(runtime::ExpertPrefill::Mxfp4) += l.mxfp4_bytes;
+                at(runtime::ExpertPrefill::A16) += l.bytes - l.mxfp4_bytes;
             } else {
                 // One A16-only bank makes the layer's expert policy A16 (ops/moe moe_policy).
                 const std::uint64_t int8 = l.a8 ? l.int8_bytes : 0;
@@ -549,6 +553,7 @@ public:
 private:
     struct Layer {
         std::uint64_t bytes = 0, int8_bytes = 0;
+        std::uint64_t mxfp4_bytes = 0; // of an MXFP4 layer: its banks in whole blocks
         bool known = true, mxfp4 = true, a8 = true;
     };
     std::map<std::string, Layer> layers_;

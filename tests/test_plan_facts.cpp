@@ -215,6 +215,21 @@ int gguf_qwen35() {
             check(route == (hidden % 32 == 0 ? rt::ExpertPrefill::Int8 : rt::ExpertPrefill::A16),
                   "a gate/up bank over a padded x of " + std::to_string(hidden) +
                       " values: the op's W4A8 block rule");
+        // The same layer of MXFP4 banks: the op refuses the gate/up bank there too (KGroup) and
+        // runs it A16, so the gate/up's bytes, the most, make the layer A16, not MXFP4; in whole
+        // blocks both banks take the MXFP4 route.
+        GgufFile padded_mx                            = file;
+        padded_mx.metadata["qwen35.embedding_length"] = hidden;
+        padded_mx.tensors.push_back(tensor("blk.0.ffn_gate_exps.weight", {1024, 512, 64},
+                                           ninferno::convert::ggml::MXFP4, 300));
+        padded_mx.tensors.push_back(tensor("blk.0.ffn_down_exps.weight",
+                                           {512, static_cast<std::uint64_t>(hidden), 64},
+                                           ninferno::convert::ggml::MXFP4, 100));
+        const auto mx_route = pr::plan_facts_of_gguf(padded_mx, 999999).model.expert_prefill;
+        failures += check(
+            mx_route == (hidden % 32 == 0 ? rt::ExpertPrefill::Mxfp4 : rt::ExpertPrefill::A16),
+            "MXFP4 banks over a padded x of " + std::to_string(hidden) +
+                " values: the op's block rule");
     }
     failures += check(pr::plan_facts_of_gguf(file, 999999).model.expert_prefill == rt::ExpertPrefill::Unknown,
                       "a dense model: no route");
