@@ -1,3 +1,4 @@
+ninferno_directory_warnings()
 add_library(ninferno_runtime_support STATIC
   contract/token_mask_staging.cpp
   engine/admission_policy.cpp

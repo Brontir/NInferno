@@ -295,3 +295,12 @@ ninferno_add_op_test(ninferno_causal_admission_test
 ninferno_add_test(ninferno_causal_position_partition_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/softmax_attention/test_causal_position_partition.cpp"
   LIBRARIES ninferno::cudart)
+
+# What the measured value tables' answers rest on (#616 step 3): the MoE class A8 route and the
+# sparse MoE Q4 groupwise frontier per SKU of the reference table, as Measured, Carried, Incomplete
+# or None (host only), against table_dispositions/dispositions.txt; --update rewrites it.
+ninferno_add_op_test(ninferno_table_dispositions_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_table_dispositions.cpp"
+  LIBRARIES ninferno_ops)
+target_compile_definitions(ninferno_table_dispositions_test PRIVATE
+  NINFERNO_TABLE_DISPOSITIONS_DIR="${CMAKE_CURRENT_LIST_DIR}/table_dispositions")
