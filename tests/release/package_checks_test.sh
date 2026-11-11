@@ -70,6 +70,11 @@ said "declares sinpi noexcept" "a noexcept-patched CUDA 12.8"
 expect "the same CUDA 12.8 without Volta goes on" 1 "${P[@]}" NINFERNO_CUDA70="$c128" NINFERNO_ARCHS="89" \
   bash "$REPO/tools/release/package.sh" "$work/dist"
 not_said "noexcept" "a noexcept-patched CUDA 12.8 without Volta"
+# A resumed run that holds the Volta engine (staged above) builds no Volta tree: it goes on.
+expect "a resumed run with the Volta engine and a patched CUDA 12.8 goes on" 1 "${P[@]}" NINFERNO_CUDA70="$c128" \
+  NINFERNO_ARCHS="89 70" NINFERNO_PACKAGE_RESUME=1 bash "$REPO/tools/release/package.sh" "$work/dist"
+not_said "noexcept" "a resumed run with the Volta engine"
+said "nvcc not found" "a resumed run with the Volta engine"
 echo 'extern __DEVICE_FUNCTIONS_DECL__ __device_builtin__ double                 sinpi(double x);' > "$math"
 expect "NVIDIA's CUDA 12.8 goes on" 1 "${P[@]}" NINFERNO_CUDA70="$c128" NINFERNO_ARCHS="89 70" \
   bash "$REPO/tools/release/package.sh" "$work/dist"

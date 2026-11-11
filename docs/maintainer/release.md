@@ -9,7 +9,7 @@ release server, and the Windows files are also attached to the GitHub release:
 | `ninferno-wsl-rootfs.tar.gz` | `tools/release/windows/make_rootfs.sh` | the Linux build machine (root) |
 | `NInferno-Setup.exe` | `tools/release/windows/build.sh` | the Linux build machine (mingw-w64) |
 | `ninferno-windows-x86_64.zip` | `tools/release/windows/package-native.ps1` | a Windows machine |
-| `install.sh` | a copy of `tools/release/install.sh` at the tag | either |
+| `install.sh` | `tools/release/package.sh` (a copy of `tools/release/install.sh` at the tag) | the Linux build machine |
 
 ## The Linux build machine
 
@@ -36,8 +36,9 @@ sudo apt install cuda-toolkit-13-4 cuda-toolkit-12-8
 /usr/local/cuda-12.8/bin/nvcc --version   # V12.8.93
 ```
 
-Beside them: the build dependencies [building](../building.md) lists, `patchelf` (`package.sh`)
-and `g++-mingw-w64-x86-64-posix` (`windows/build.sh`). If the meta package has moved on to a newer patch, pin the compiler package:
+Beside them: the build dependencies [building](../building.md) lists, `patchelf` (`package.sh`),
+`g++-mingw-w64-x86-64-posix` (`windows/build.sh`), and `gh` and `openssl`
+(`github_release.sh`). If the meta package has moved on to a newer patch, pin the compiler package:
 `sudo apt install cuda-nvcc-13-4=13.4.92-1`.
 
 **Never copy a toolkit from another machine.** A CUDA 12.8 taken from a distribution with glibc
@@ -63,32 +64,38 @@ for Volta: `-Cuda70`), CMake, Ninja and vcpkg; `package-native.ps1`'s header has
 3. **Tag.** Push the tag: `git tag -a v<VERSION> -m "NInferno <VERSION>" && git push origin v<VERSION>`.
    Everything below is built from a checkout of that tag.
 4. **The Linux archive.** On the Linux build machine:
-   `NINFERNO_VERSION=<VERSION> NINFERNO_PACKAGE_CLEAN=1 tools/release/package.sh dist`. It builds
-   every generation and checks each engine against its kernel-facts
-   snapshot. Where a GPU of a generation is present, it also checks the running kernels.
+   `CUDACXX=/usr/local/cuda-13.4/bin/nvcc NINFERNO_VERSION=<VERSION> NINFERNO_PACKAGE_CLEAN=1 tools/release/package.sh dist`.
+   It builds every generation and checks each engine against its kernel-facts snapshot. Where a
+   GPU of a generation is present, it also checks the running kernels. It also writes `install.sh`
+   and its `.sha256` into `dist/`.
 5. **The WSL distribution.** `sudo tools/release/windows/make_rootfs.sh dist`.
 6. **The installer.** `tools/release/windows/build.sh <VERSION> dist`.
 7. **The Windows archive.** On the Windows machine:
-   `tools\release\windows\package-native.ps1 -Version <VERSION> -OutDir dist`. Copy
+   `tools\release\windows\package-native.ps1 -Version <VERSION> -OutDir dist -Cuda70 "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8"`.
+   Without `-Cuda70` the zip has no Volta engine; the script only warns. Copy
    `ninferno-windows-x86_64.zip` and its `.sha256` into the Linux machine's `dist/`.
-8. **`install.sh`.** `cp tools/release/install.sh dist/ && (cd dist && sha256sum install.sh > install.sh.sha256)`.
-9. **Publish to the release server.**
-   `tools/release/server/publish.sh <VERSION> dist --notes https://github.com/Brontir/NInferno/releases/tag/v<VERSION>`.
-   - On a machine without the release key, it writes `dist/latest.json` and stops.
-   - Sign that file where the key is: `tools/release/sign.sh dist/latest.json`. Then run
-     `publish.sh` again; it uploads the files, checks them on the server, and switches
+8. **Publish to the release server.**
+   `tools/release/server/publish.sh <VERSION> dist --notes https://github.com/Brontir/NInferno/blob/v<VERSION>/docs/release-notes/v<VERSION>.md`.
+   The notes link is the notes file at the tag, so it works from the moment clients see the update
+   (the GitHub release page stays a draft until step 9).
+   - On a machine without the release key, it writes `dist/latest.json` and stops. Take that
+     file to the machine that holds the key, sign it there (`tools/release/sign.sh latest.json`),
+     and put the `latest.json.sig` it writes back beside `dist/latest.json`.
+   - Run `publish.sh` again: it uploads the files, checks them on the server, and switches
      `latest.json` last ([server/README.md](../../tools/release/server/README.md)).
-10. **The GitHub release.** `tools/release/github_release.sh <VERSION> dist`.
-    - It checks the three Windows files against their `.sha256` and against the signed
-      `latest.json`, and checks that the tag is on origin.
-    - It makes a draft release with the notes and the three Windows files plus their `.sha256`.
-    - Look the draft over, then publish it: `gh release edit v<VERSION> --draft=false`.
-    - A version with a label (0.2.0-rc1) is marked a pre-release.
-11. **Check both destinations on clean machines.**
+9. **The GitHub release.** `tools/release/github_release.sh <VERSION> dist` (`gh` signed in with
+   write access to the repository).
+   - It checks `latest.json`'s signature against the release key, the three Windows files against
+     their `.sha256` and against that manifest, and that the tag is on origin.
+   - It makes a draft release with the notes and the three Windows files plus their `.sha256`.
+   - Look the draft over, then publish it: `gh release edit v<VERSION> --draft=false`.
+   - A version with a label (0.2.0-rc1) is marked a pre-release.
+10. **Check both destinations on clean machines.**
     - Linux: `curl -fsSL https://raw.githubusercontent.com/Brontir/NInferno/master/tools/release/install.sh | sh`
       installs `<VERSION>`, and `ninferno-update --check` on the release before says it is available.
     - Windows: the GitHub release's `NInferno-Setup.exe` installs it.
 
-A published version is never changed: both the release server and the GitHub release refuse to
-replace one. To fix a release, make a new version. For a broken or unsafe release, also pass
-`--min-version` to `publish.sh`.
+A published version is never changed; to fix a release, make a new version. For a broken or unsafe
+release, also pass `--min-version` to `publish.sh`. `github_release.sh` refuses a release that is
+already there. `publish.sh` refuses only the version `latest` already points at: run again for an
+older version, it switches `latest` back to that one.

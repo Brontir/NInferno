@@ -65,7 +65,15 @@ fi
 # of crt/math_functions.h: sinpi, cospi and rsqrt declared noexcept (true), as glibc 2.41's math.h
 # declares them. Against an older glibc the declarations clash and the Volta tree stops compiling
 # hours in. NVIDIA's own package (docs/maintainer/release.md) has no such patch.
-if [ -n "$CUDA70" ] && case " $ARCHS " in *" 70 "*) true ;; *) false ;; esac; then
+build70=no
+for arch in $ARCHS; do
+  [ "$arch" = 70 ] || continue
+  # A resumed run that holds the engine builds no Volta tree (the build loop's condition).
+  if [ "${NINFERNO_PACKAGE_RESUME:-0}" = 1 ] && [ -x "$STAGE/bin/ninferno-serve-sm70" ] &&
+    [ -f "$STAGE/bin/ninferno-serve.dispatch" ]; then continue; fi
+  build70=yes
+done
+if [ -n "$CUDA70" ] && [ "$build70" = yes ]; then
   math=$CUDA70/targets/x86_64-linux/include/crt/math_functions.h
   if [ -f "$math" ] && grep -Eq 'sinpi\(double x\) noexcept' "$math" &&
     [ "$(printf '%s\n%s\n' "$GLIBC_BUILD" 2.41 | sort -V | head -n1)" != 2.41 ]; then
