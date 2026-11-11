@@ -68,6 +68,10 @@ struct ServedSpeculation {
     // Set when the profile's choice did not fit the requested context on this device and its fit
     // fallback runs instead: why (the Engine's refusal). Logged as a warning.
     std::string fit_fallback;
+    // Where engine.load comes from: the served profile's spec::Profile::load_basis (measured,
+    // facts, literal; "" where unsaid), whichever step serves it (the profile's choice, its fit
+    // fallback, a shallower draft, the model's MTP head).
+    std::string load_basis;
     // Whether it drafts: false for a profile whose choice is plain decode (kept for its source,
     // basis and notes; every start and plan decodes it plainly, with no fallback to try).
     [[nodiscard]] bool drafts() const noexcept { return menu.mode != spec::Mode::None; }

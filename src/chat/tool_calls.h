@@ -149,7 +149,8 @@ public:
 
     // tool_choice none: a structural tag that keeps the model from the header of a call, where
     // the syntax has one that plain-text bans cannot reach (a call that is a message of its own,
-    // harmony). Empty: the syntax needs none.
+    // harmony). It spells the output's headers from its first token, so it is compiled with
+    // OutputConstraintSpec::reads_answer_header. Empty: the syntax needs none.
     [[nodiscard]] virtual std::string refusal_structural_tag() const { return {}; }
 };
 
