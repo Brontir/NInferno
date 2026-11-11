@@ -18,8 +18,8 @@ its own code), of its warm-up (the probe streams on every SM until nvidia-smi ha
 clock for 1 s in a performance P-state, at most 10 s, else the run is refused), and of the
 clocks nvidia-smi saw inside the probe's measured span (its `span_ns` line), which must be the
 settled one. A run with another process on the GPU, or whose memory clock or P-state moved in the
-span, is no run; nor is one below P0 or under the rated memory clock, unless `--clocks-waived` (a steady
-clock only, said in the run). A refused run's output goes to <out>.refused. `rows` turns runs into
+span, is no run; nor is one below P0 or under the rated memory clock, unless `--clocks-waived` (a
+steady clock only, said in the run). A refused run's output goes to <out>.refused. `rows` turns runs into
 JSON rows with their provenance (source file, card, probe version, nvcc, driver, runtime, source
 hash) and the derived b_w and P; `show` prints the summary. No fact is fitted here: b_w = rate(W) x
 L0 / W is Little's law on the measured rate and the run's own L0 (its free, k = 1, chain1, W = 1
