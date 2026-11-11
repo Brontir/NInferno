@@ -74,6 +74,7 @@ def row_of(pci_id, **change):
 # llround(snap_to_fact_grid(x)) of src/core/machine_facts.cpp, worked out by hand from
 # 2^(round(16 log2 x) / 16): the clock the engine writes for a driver reading of x kHz.
 SNAP_9_000_000 = 9_147_842
+SNAP_1_800_000 = 1_763_488  # a laptop's driver boost clock, 1 800 000 kHz, on the grid
 SNAP_10_001_000 = 9_975_792  # the RTX 4070 GDDR6 board's driver reading, 10 001 000 kHz
 
 
@@ -203,20 +204,27 @@ class Compare(unittest.TestCase):
 
     def test_boost_windows(self):
         # Within 1.5 % a match; a partner board up to 7 % over and an OEM one up to 3 % under are
-        # information; anything farther is a wrong row.
-        for ratio, want in ((1.014, "match"), (0.986, "match"), (1.016, "info"), (0.984, "info"),
-                            (1.069, "info"), (1.071, "mismatch"), (0.971, "info"),
-                            (0.969, "mismatch")):
+        # information; anything farther is a wrong row. A GeForce row records the reference
+        # boost only, so a driver clock of any height above it is a partner board's (info); a
+        # non-GeForce row keeps the 7 % ceiling; below the window is a mismatch on both.
+        pro = row_of(0x2684, segment="pro")
+        for ratio, row, want in ((1.014, None, "match"), (0.986, None, "match"),
+                                 (1.016, None, "info"), (0.984, None, "info"),
+                                 (1.069, None, "info"), (1.10, None, "info"),
+                                 (1.20, None, "info"), (0.971, None, "info"),
+                                 (0.969, None, "mismatch"), (1.069, pro, "info"),
+                                 (1.071, pro, "mismatch"), (0.969, pro, "mismatch")):
             d = device_4090()
             d["queried"]["sm_clock_khz"] = int(2_520_000 * ratio)
-            self.assertEqual(statuses(d)[("table", "boost_clock_khz")], want, ratio)
+            self.assertEqual(statuses(d, row or "table")[("table", "boost_clock_khz")], want,
+                             (ratio, row and "pro"))
 
     def test_vram_windows(self):
         # GDDR ECC keeps 1/16 on a professional board; a GeForce board reports nearly all.
         pro = row_of(0x2684, segment="pro")
         for gib_share, row, want in ((0.928, pro, "match"), (0.91, pro, "mismatch"),
                                      (0.928, None, "mismatch"), (0.98, None, "match"),
-                                     (0.96, None, "mismatch")):
+                                     (0.96, None, "match"), (0.94, None, "mismatch")):
             d = device_4090()
             d["queried"]["global_bytes"] = int(24 * GIB * gib_share)
             self.assertEqual(statuses(d, row or "table")[("table", "vram_gib")], want, gib_share)
@@ -339,8 +347,8 @@ class Compare(unittest.TestCase):
         # driver's bus and clock are information, the engine reads them (source 2).
         d = device_4090()
         d["queried"].update(memory_bus_bits=256, memory_clock_khz=9_000_000)
-        d["engine_table_facts"].update(source=2, memory_bus_bits=256, memory_clock_khz=SNAP_9_000_000,
-                                       driver_read=True)
+        d["engine_table_facts"].update(source=2, memory_bus_bits=256,
+                                       memory_clock_khz=SNAP_9_000_000, driver_read=True)
         row = row_of(0x2684, variants=[{"bus_bits": 256, "gbps": 18.0}])
         s = no_mismatch(self, statuses(d, row))
         self.assertEqual(s[("table", "engine_memory_bus_bits")], "match")
@@ -442,7 +450,8 @@ class Compare(unittest.TestCase):
         slow_row = row_of(0x2684, variants=[{"gbps": 18.0}])
         slow = device_4090()
         slow["queried"]["memory_clock_khz"] = 9_000_000
-        slow["engine_table_facts"].update(memory_clock_khz=SNAP_9_000_000, source=2, driver_read=True)
+        slow["engine_table_facts"].update(memory_clock_khz=SNAP_9_000_000, source=2,
+                                          driver_read=True)
         self.assertEqual(self.driver_read_of(slow, slow_row), "match")
         slow["engine_table_facts"]["driver_read"] = False
         self.assertEqual(self.driver_read_of(slow, slow_row), "mismatch")
@@ -484,13 +493,29 @@ class Compare(unittest.TestCase):
         row = row_of(0x2C18)
         del row["boost_min_mhz"]
         d = device_laptop()
-        d["engine_table_facts"].update(driver_read=True, reference_clock_khz=1_800_000)
+        d["engine_table_facts"].update(driver_read=True, reference_clock_khz=SNAP_1_800_000)
         d["engine_row_facts"].update(driver_read=True, reference_clock_khz=2_160_000)
         s = statuses(d, row)
         self.assertEqual(s[("table", "engine_driver_read")], "match")
         self.assertEqual(s[("table", "engine_row_driver_read")], "match")
         d["engine_row_facts"]["driver_read"] = False
         self.assertEqual(statuses(d, row)[("table", "engine_row_driver_read")], "mismatch")
+
+    def test_a_laptop_without_a_range_is_priced_at_the_lower_of_its_top_and_the_drivers_clock(self):
+        row = row_of(0x2C18)
+        del row["boost_min_mhz"]
+        top = row["boost_mhz"] * 1000
+        for sm_khz, want in ((1_800_000, SNAP_1_800_000), (3_000_000, top), (0, top),
+                             (-1, top)):
+            d = device_laptop()
+            d["queried"]["sm_clock_khz"] = sm_khz
+            d["engine_table_facts"].update(driver_read=True, reference_clock_khz=want)
+            d["engine_row_facts"].update(driver_read=True, reference_clock_khz=top)
+            key = ("table", "engine_reference_clock_khz")
+            self.assertEqual(statuses(d, row)[key], "match", sm_khz)
+            for wrong in (1, want - 1, want + 1):  # a stored 1 passed the old loose bound
+                d["engine_table_facts"]["reference_clock_khz"] = wrong
+                self.assertEqual(statuses(d, row)[key], "mismatch", (sm_khz, wrong))
 
     def test_source_of_a_slice_is_extrapolated(self):
         sliced = device_a100()
@@ -1013,6 +1038,22 @@ class EngineRule(unittest.TestCase):
                       "(driver.sms <= 0 || driver.sms == row->sms);", text)
         self.assertIn("if (row->boost_min_mhz > 0) {", text)
 
+    def test_the_grid_is_the_engines(self):
+        # engine_snapped_khz is a port of the engine's grid. Both are checked against one fixture
+        # of hand-worked points (tests/fixtures/facts/grid_points.txt): the engine's test
+        # (tests/test_machine_facts.cpp) checks snap_to_fact_grid against it, this test checks the
+        # port. A grid changed in the engine fails the engine's test until the fixture changes, and
+        # then the port fails here.
+        text = (ROOT / "tests" / "fixtures" / "facts" / "grid_points.txt").read_text(encoding="utf-8")
+        points = []
+        for line in text.splitlines():
+            if line and not line.startswith("#"):
+                driver_khz, stored_khz = line.split()
+                points.append((int(driver_khz), int(stored_khz)))
+        self.assertGreaterEqual(len(points), 20)
+        for driver_khz, stored_khz in points:
+            self.assertEqual(facts_compare.engine_snapped_khz(driver_khz), stored_khz, driver_khz)
+
     def test_every_engine_field_follows_the_engine_over_a_grid_of_driver_values(self):
         no_range = row_of(0x2C18)
         del no_range["boost_min_mhz"]
@@ -1291,6 +1332,60 @@ class RecordedProbe(unittest.TestCase):
         done = subprocess.run([sys.executable, "-B", TOOL, "--probe-json", str(RECORDED_PROBE)],
                               capture_output=True, text=True)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+
+
+RECORDINGS = ROOT / "tests" / "data" / "facts_probe"
+# Mismatches a recording still holds, by field (#612 step 2). Every other recording compares with
+# none. The Quadro GV100 file was recorded before the synthetic Volta class stopped overriding the
+# architecture row (#698): its "synthetic" block is the old one, so these four fields differ from
+# the driver. They go when that card is probed again with a build that has #698; remove the entry
+# then.
+EXPECTED_MISMATCHES = {
+    "quadro_gv100": {("arch", "smem_per_block_optin"), ("arch", "smem_per_sm"),
+                     ("arch", "max_threads_per_sm"),
+                     ("arch", "synthetic_smem_optin_plus_reserved_is_per_sm")},
+}
+
+
+def recorded_mismatches(path):
+    """(source, field) of every mismatch the audit finds in one recording, by the CLI."""
+    done = subprocess.run([sys.executable, "-B", TOOL, "--probe-json", str(path)],
+                          capture_output=True, text=True)
+    summary = json.loads(done.stdout[done.stdout.index("\n{") + 1:])
+    found = {(m["source"], m["field"]) for dev in summary["devices"] for m in dev["mismatches"]}
+    return done, found
+
+
+@unittest.skipUnless(RECORDINGS.is_dir(), "no per-card recordings")
+class RecordedProbes(unittest.TestCase):
+    """One real ninferno-facts-probe output per lab card, recorded on that card."""
+
+    def test_every_recording_is_valid_and_only_the_named_mismatches_remain(self):
+        files = sorted(RECORDINGS.glob("*.json"))
+        self.assertTrue(files)
+        for path in files:
+            with self.subTest(card=path.stem):
+                done, found = recorded_mismatches(path)
+                self.assertIn(done.returncode, (0, 1), done.stdout + done.stderr)
+                self.assertEqual(found, EXPECTED_MISMATCHES.get(path.stem, set()), done.stdout)
+                self.assertEqual(done.returncode, 1 if found else 0)
+
+    def test_a_clock_or_memory_below_the_window_still_fails_on_a_recording(self):
+        # The RTX 3090 and RTX 2080 Ti compare clean (a partner board's clock, a driver-reserved
+        # slice of memory); a board below the reference clock window or short of memory does not.
+        for card, change in (("rtx3090", {"sm_clock_khz": 1_600_000}),
+                             ("rtx2080ti", {"sm_clock_khz": 1_400_000}),
+                             ("rtx2080ti", {"global_bytes": int(11 * GIB * 0.94)})):
+            with self.subTest(card=card, change=change):
+                recording = json.loads((RECORDINGS / f"{card}.json").read_text(encoding="utf-8"))
+                recording["devices"][0]["queried"].update(change)
+                with tempfile.TemporaryDirectory() as tmp:
+                    path = Path(tmp) / "changed.json"
+                    path.write_text(json.dumps(recording), encoding="utf-8")
+                    done, found = recorded_mismatches(path)
+                self.assertEqual(done.returncode, 1, done.stdout)
+                self.assertTrue(found & {("table", "boost_clock_khz"), ("table", "vram_gib")},
+                                found)
 
 
 if __name__ == "__main__":

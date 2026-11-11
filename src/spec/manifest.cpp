@@ -77,7 +77,9 @@ bool take_published(const Json& profiles, const Json& published, const GpuKey& g
     try {
         p = profile_from_published(published);
         if (const auto* from = select_load_fallback(profiles, published)) {
-            p.load                  = profile_from_published(*from).load;
+            const Profile source    = profile_from_published(*from);
+            p.load                  = source.load;
+            p.load_basis            = source.load_basis;
             const auto cls          = from->value("gpu_class", std::string());
             const auto others       = from->value("applies_to", Json::array());
             const std::string whose = cls == "*"
@@ -103,7 +105,8 @@ bool take_published(const Json& profiles, const Json& published, const GpuKey& g
                                 "GPU, plain from " +
                                 std::to_string(capped.back().lanes) + " rows on this one's " +
                                 std::to_string(gpu.sms) + " multiprocessors");
-            p.load = capped;
+            p.load       = capped;
+            p.load_basis = "literal";
         }
     }
     return true;
@@ -759,7 +762,8 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
                 Profile p;
                 if (published != nullptr && take_published(profiles, *published, gpu, scratch, p) &&
                     !p.load.empty() && p.overall.config.mode == out.profile.overall.config.mode) {
-                    out.profile.load = std::move(p.load);
+                    out.profile.load       = std::move(p.load);
+                    out.profile.load_basis = p.load_basis;
                     out.notes.push_back("load bounds " + load_label(out.profile.load) + " from " +
                                         published_source(origin, *published) +
                                         ": the local tune measured none");

@@ -2605,7 +2605,7 @@ std::optional<RouteTraffic> route_traffic(Route route, const Weight& weight,
     // activation slice itself (the shared-memory tiles stage it once for the CTA).
     const double x_readers =
         route.family == Family::RegisterMma ? rmma_schedule_info(route.schedule).warps_m : 1.0;
-    const double bpw = static_cast<double>(weight.payload_bytes) / (n * k);
+    const double bpw = bytes_per_weight(weight, problem);
     return RouteTraffic{n * k * bpw * weight_reads,
                         x_t * x_k * x_bytes * cdiv(n, tile->out_rows) * x_readers, n * t * 2.0};
 }
@@ -3092,6 +3092,7 @@ std::string_view overlap_refusal_name(OverlapRefusal why) noexcept {
     return "none";
 }
 
+// FUSION-SITE: pdl_overlap
 LaunchOverlap launch_overlap(const ResolvedRoute& resolved, Epilogue epilogue, int tokens,
                              bool join_asked, bool release_asked, bool pdl) {
     const Family family = resolved.executed.family;
@@ -3227,6 +3228,7 @@ std::optional<double> route_cost_seconds(const Problem& problem, const Weight& w
     return out;
 }
 
+// FUSION-SITE: r8_prequantized
 ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call) {
     ResolvedRoute out{.asked = asked, .executed = asked};
     Route& route      = out.executed;
