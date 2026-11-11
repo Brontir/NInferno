@@ -528,6 +528,41 @@ class Check(unittest.TestCase):
                           for l in text.splitlines()]
         self.assertEqual(self.run_check("\n".join(resources_only) + "\n"), 0)
 
+    def test_stamp(self):
+        stamp = self.root / "stamps" / "sm_89"
+        text = self.expected_text()
+        self.assertEqual(self.run_check(text, extra=["--stamp", str(stamp)]), 0)
+        self.assertTrue(stamp.is_file())
+        # The same inputs pass again without extracting anything.
+        saved = kernel_facts.extract_rows
+
+        def no_extract(*args, **kwargs):
+            raise AssertionError("extracted although the stamp holds")
+
+        kernel_facts.extract_rows = no_extract
+        try:
+            self.assertEqual(self.run_check(text, extra=["--stamp", str(stamp)]), 0)
+        finally:
+            kernel_facts.extract_rows = saved
+
+        def bump(rows):
+            rows[Snapshot.KEY][4].mma += 1
+
+        # Another snapshot (or nvcc) is another check: it runs, fails, and the stamp stays the
+        # old pass's, so the next run checks again.
+        before = stamp.read_text()
+        self.assertEqual(self.run_check(self.expected_text(bump), extra=["--stamp", str(stamp)]), 1)
+        self.assertEqual(stamp.read_text(), before)
+        self.assertEqual(self.run_check(text, nvcc="13.0.1", extra=["--stamp", str(stamp)]), 77)
+        self.assertEqual(stamp.read_text(), before)
+
+    def test_stamp_without_inputs(self):
+        # A missing snapshot is said as without a stamp, not a traceback.
+        argv = ["check", "--dump", str(self.root / "usage.txt"), "--no-sass", "--expected",
+                str(self.root / "none.txt"), "--stamp", str(self.root / "stamp")]
+        self.assertEqual(kernel_facts.main(argv), 1)
+        self.assertFalse((self.root / "stamp").exists())
+
     def older_schema(self, text, extra=()):
         """`text` (schema 4) rewritten as schema 2, or as schema 3 with `extra` loop columns."""
         n = len(kernel_facts.ROW_HEAD) + len(sc.LOOP_COLUMNS)
@@ -611,6 +646,75 @@ class CommittedSnapshots(unittest.TestCase):
                 self.assertLessEqual(c.sb_waits_local, c.sb_waits, f"{path.name} {key}")
                 self.assertEqual(c.schedule_problems(), [], f"{path.name} {key}")
         print(f"committed snapshots: {len(files)} files, {scheduled} kernels with a schedule")
+
+
+def elf64(sections):
+    """A minimal little-endian ELF64 file: the header, the sections' bytes, then the section
+    header table (a null section, `sections` as (name, bytes), and .shstrtab)."""
+    import struct
+    names = b"\0" + b"".join(n.encode() + b"\0" for n, _ in sections) + b".shstrtab\0"
+    body, offsets, at = b"", [], 64
+    for _, data in sections:
+        offsets.append(at + len(body))
+        body += data
+    names_at = at + len(body)
+    body += names
+    shoff = at + len(body)
+    headers = [bytes(64)]
+    name_at = 1
+    for (n, data), offset in zip(sections, offsets):
+        headers.append(struct.pack("<IIQQQQIIQQ", name_at, 1, 0, 0, offset, len(data), 0, 0, 1, 0))
+        name_at += len(n) + 1
+    headers.append(struct.pack("<IIQQQQIIQQ", name_at, 3, 0, 0, names_at, len(names), 0, 0, 1, 0))
+    head = b"\x7fELF" + bytes([2, 1, 1]) + bytes(9)
+    head += struct.pack("<HHIQQQIHHHHHH", 2, 62, 1, 0, 0, shoff, 0, 64, 0, 0, 64, len(headers),
+                        len(headers) - 1)
+    return head + body + b"".join(headers)
+
+
+class StampKey(unittest.TestCase):
+    """The stamp's key reads a binary's device code (.nv_fatbin): stripping it or setting its run
+    path leaves the key; other device code changes it."""
+
+    def key(self, root, data):
+        binary = root / "engine"
+        binary.write_bytes(data)
+        expected = root / "expected.txt"
+        expected.write_text("snapshot\n")
+
+        class Args:
+            pass
+
+        a = Args()
+        a.binary, a.dump, a.sass_dump, a.expected = str(binary), None, None, str(expected)
+        a.nvcc, a.no_sass, a.cuda_bin, a.sass_batch = "13.4.92", False, None, 64
+        return kernel_facts.check_key(a)
+
+    def test_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fat = b"fatbin image"
+            built = elf64([(".text", b"code" * 8), (".symtab", b"symbols"), (".nv_fatbin", fat)])
+            (root / "e").write_bytes(built)
+            self.assertEqual(kernel_facts.elf_section(root / "e", ".nv_fatbin"), fat)
+            self.assertIsNone(kernel_facts.elf_section(root / "e", ".nv_missing"))
+            # Stripped (no .symtab) and with another run path (other .dynamic bytes): same key.
+            stripped = elf64([(".text", b"code" * 8), (".dynamic", b"rpath=$ORIGIN/../lib"),
+                              (".nv_fatbin", fat)])
+            self.assertEqual(self.key(root, built), self.key(root, stripped))
+            other = elf64([(".text", b"code" * 8), (".nv_fatbin", b"fatbin imagf")])
+            self.assertNotEqual(self.key(root, built), self.key(root, other))
+            # A relocatable image the objects left counts too; the images' addresses do not.
+            rel = elf64([(".nv_fatbin", fat), ("__nv_relfatbin", b"object image")])
+            rel2 = elf64([(".nv_fatbin", fat), ("__nv_relfatbin", b"object imagf")])
+            self.assertNotEqual(self.key(root, rel), self.key(root, rel2))
+            moved = elf64([(".nv_fatbin", fat), (".nvFatBinSegment", b"addresses 1")])
+            moved2 = elf64([(".nv_fatbin", fat), (".nvFatBinSegment", b"addresses 2")])
+            self.assertEqual(self.key(root, moved), self.key(root, moved2))
+            # Not ELF: the whole file.
+            (root / "t").write_bytes(b"not an elf")
+            self.assertIsNone(kernel_facts.elf_section(root / "t", ".nv_fatbin"))
+            self.assertNotEqual(self.key(root, b"text a"), self.key(root, b"text b"))
 
 
 if __name__ == "__main__":
