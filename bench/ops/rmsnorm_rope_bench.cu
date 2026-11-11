@@ -55,10 +55,10 @@ struct Options {
     Execution execution = Execution::Graph;
     std::vector<int> batches{1, 2, 3, 4, 5, 6, 7, 8};
     std::vector<int> tokens{1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 128, 1024, 2048};
-    int warmup   = 20;
-    int repeat   = 200;
-    bool profile = false;
-    Route route  = Route::Fused;
+    int warmup     = 20;
+    int repeat     = 200;
+    bool profile   = false;
+    Route route    = Route::Fused;
     bool crossover = false;
     std::vector<std::pair<int, int>> geometries{{32, 2}, {16, 4}};
     int graph_reps = 32;
@@ -479,7 +479,9 @@ void run_crossover(const Options& options, cudaStream_t stream) {
         }
         if (diff.front() > 0.0) { crossover = 0.0; } // fused already loses at the narrowest
         const double bytes_token = (qh + kh) * 256.0 * 2.0 * 2.0;
-        const double heads       = qh + kh;
+        // the launched warp slots a token, as the dispatch's law prices them (rmsnorm_rope.cpp)
+        const int per_block = ops::detail::kTextHeadsPerBlock;
+        const double heads = static_cast<double>((qh + kh + per_block - 1) / per_block * per_block);
         // The slope difference of the two widest points (seconds a token) and the launch from the
         // narrowest: fused - split at T0 is -2 L + T0 x delta, so L = (-diff0 + T0 x delta) / 2.
         double delta   = 0.0;

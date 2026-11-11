@@ -65,8 +65,14 @@ int main() {
     expect(ratio > 0.97 * want && ratio < 1.03 * want, "the width composes SMs and clock");
     const auto narrow = d::text_fused_max_tokens_with_excess(rtx4090, 16, 4, excess);
     const auto wide   = d::text_fused_max_tokens_with_excess(rtx4090, 32, 2, excess);
-    expect(narrow > wide && std::abs(static_cast<double>(narrow) / wide - 34.0 / 20.0) < 0.03,
-           "per geometry: the width composes the heads a token (16+4 over 32+2 is 34/20)");
+    // A token's launched warp slots: 3 x ceil((Q + K) / 3), 36 for 32+2 and 21 for 16+4.
+    expect(narrow > wide && std::abs(static_cast<double>(narrow) / wide - 36.0 / 21.0) < 0.03,
+           "per geometry: the width composes the launched heads a token (16+4 over 32+2 is 36/21)");
+    // 8+2 launches four CTAs of three warps a token: 12 slots, not 10 (the last two warps idle).
+    const auto ten    = d::text_fused_max_tokens_with_excess(rtx4090, 8, 2, excess);
+    const auto twelve = d::text_fused_max_tokens_with_excess(rtx4090, 16, 2, excess);
+    expect(ten > 0 && std::abs(static_cast<double>(ten) / twelve - 18.0 / 12.0) < 0.03,
+           "a partial head group's idle warps are priced (8+2 takes 12 slots, 16+2 takes 18)");
     expect(d::text_fused_max_tokens_with_excess(rtx5090, 32, 2, excess) == 0 &&
                d::text_fused_max_tokens_with_excess(rtx2080ti, 32, 2, excess) == 0,
            "a generation without a launch node answers 0");

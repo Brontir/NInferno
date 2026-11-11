@@ -129,9 +129,13 @@ std::int32_t text_fused_max_tokens_with_excess(const DeviceClass& device, std::i
         ninferno::ops::detail::sm_rules::resident_ctas_per_sm(
             device.max_blocks_per_sm, device.max_threads_per_sm, kTextHeadsPerBlock * 32) *
         kTextHeadsPerBlock;
+    // A token launches ceil((Q + K) / 3) CTAs of three warps (launch.cu); the idle warps of a last,
+    // partial group hold their CTA's slot all the same, so a token takes the launched warp slots.
+    const int launched_heads = (query_heads + key_heads + kTextHeadsPerBlock - 1) /
+                               kTextHeadsPerBlock * kTextHeadsPerBlock;
     return ninferno::ops::detail::sm_rules::launch_amortized_tokens(
         2, launch, device.sms, warps_per_sm, machine_facts_of(device).reference_clock_khz * 1.0e3,
-        query_heads + key_heads, excess_cycles);
+        launched_heads, excess_cycles);
 }
 
 } // namespace detail
