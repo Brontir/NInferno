@@ -207,6 +207,21 @@ struct Profile {
     // The bounds on its choices' depths under decode load (spec-tune --load), for every choice.
     // Empty: unbounded.
     std::vector<LoadBound> load;
+    // Where `load` comes from: "measured" (spec-tune --load, at home), "facts" (derived from the
+    // round cost on this card, profile_for_target), "literal" (a flat plain decode from 2 streams
+    // where a pair is transferred, or stand_in_load's ceil(SMs / 10) on a published profile of
+    // another GPU: neither has facts to derive it from); "" where unsaid.
+    // Not written to a profile file.
+    std::string load_basis;
+    // What the requests decoded together do to a round's price (#303), by configuration label and
+    // number of streams: R_1(k) / R_C(k), the one-stream round's price over the joint verify's
+    // (spec::load_gain at a gain of 1), for the depths 1..k of each choice, served, portable and
+    // fit-fallback choice and of every measured configuration (a reselection picks among those),
+    // where the round cost prices them (within spec::kPricedVerifyRows). Filled where the pair's
+    // facts and the lab board's rates are known (profile_for_target at home); not written to a
+    // profile file, so an empty table says only that nobody priced it: the one-request gain then
+    // stands as a ceiling.
+    std::map<std::string, std::map<std::int32_t, double>> joint_scale;
     // The longest prompt its choices speculate on (SpeculativeOptions::context_limit), measured
     // where rounds stop paying at long context. 0: every length.
     std::uint32_t context_limit = 0;
@@ -268,12 +283,12 @@ void write_json_file(const std::filesystem::path& path, const nlohmann::json& do
 [[nodiscard]] double per_request_gain(const Profile& profile, bool thinking_default);
 
 // The gain of `config` over plain decode on the profile's measurements of the sections a request
-// of `thinking` runs (the thinking section, or math, code and prose: as select groups them), each
-// weighted by its share of the mix: plain decode's cost over the configuration's, one request at a
-// time, over the sections plain decode measured. nullopt when the configuration is not measured on
-// one of them, or none is.
+// of `thinking` runs (the thinking section, or math, code and prose; every section for nullopt, the
+// overall default's: as select groups them), each weighted by its share of the mix: plain decode's
+// cost over the configuration's, one request at a time, over the sections plain decode measured.
+// nullopt when the configuration is not measured on one of them, or none is.
 [[nodiscard]] std::optional<double> measured_gain(const Profile& profile, const SpecConfig& config,
-                                                  bool thinking);
+                                                  std::optional<bool> thinking);
 
 // ---------------------------------------------------------------------------------------------
 // Published profiles: the "profiles" list of a registry model entry or a bundle declaration, one

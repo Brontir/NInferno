@@ -76,6 +76,7 @@ bool q4_linear_swiglu_admits(const Q4LinearSwiGluProblem& problem) noexcept {
     return supported_shape(problem) && problem.cols >= 1;
 }
 
+// FUSION-SITE: q4_linear_swiglu
 Q4LinearSwiGluPlan q4_linear_swiglu_resolve_plan(const Q4LinearSwiGluProblem& problem) {
     if (!q4_linear_swiglu_admits(problem)) {
         throw std::invalid_argument(

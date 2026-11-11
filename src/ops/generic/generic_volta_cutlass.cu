@@ -262,13 +262,14 @@ std::size_t volta_cutlass_chunk_bytes(std::int32_t n, std::int32_t k, std::int32
 }
 
 bool launch_volta_cutlass(WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
-                          WorkspaceArena& workspace, cudaStream_t stream) {
+                          WorkspaceArena& workspace, std::size_t free_bytes, cudaStream_t stream) {
     if ((args.k % 8) != 0 || args.tokens <= 0 || args.rows <= 0) return false;
     const bool swiglu = epilogue == Epilogue::SwiGlu;
-    // The chunk that fits the caller's workspace (fitting_chunk_rows).
-    const std::int32_t needed = swiglu ? 2 * round_up(args.rows, 8) : round_up(args.rows, 8);
-    const std::int32_t weight_rows =
-        fitting_chunk_rows(args.k, args.tokens, needed, workspace.capacity() - workspace.used());
+    // The chunk that fits `free_bytes` (fitting_chunk_rows): the figure the caller's gate
+    // (volta_cutlass_call_runs) and volta_cutlass_chunk_bytes size with, so one rule sizes all
+    // three.
+    const std::int32_t needed      = swiglu ? 2 * round_up(args.rows, 8) : round_up(args.rows, 8);
+    const std::int32_t weight_rows = fitting_chunk_rows(args.k, args.tokens, needed, free_bytes);
     if (weight_rows == 0) return false;
     const std::int32_t step = swiglu ? weight_rows / 2 : weight_rows;
     // Store and AddResidual into one BF16 output write it from the GEMM's epilogue: every chunk's
@@ -349,7 +350,8 @@ std::size_t volta_cutlass_chunk_bytes(std::int32_t, std::int32_t, std::int32_t, 
     return 0;
 }
 
-bool launch_volta_cutlass(WeightCodec, Epilogue, const GemmArgs&, WorkspaceArena&, cudaStream_t) {
+bool launch_volta_cutlass(WeightCodec, Epilogue, const GemmArgs&, WorkspaceArena&, std::size_t,
+                          cudaStream_t) {
     return false;
 }
 
