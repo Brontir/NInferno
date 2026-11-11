@@ -53,6 +53,15 @@ route_answer_query(const DeviceClass& device, QType qtype, LinearPolicy policy, 
                    std::int32_t n, std::int32_t k, std::int32_t tokens, bool prefill = false,
                    std::int32_t parent_rows = 0, std::optional<QuantLayout> layout = std::nullopt);
 
+// The bytes a weight value of such a call takes (bytes_per_weight) on the weight route_query
+// describes for it: what the decision manifest's replay of a recorded call prices (#704). A row
+// view's live price (Weight::priced_bytes) is this, to the bit. Throws std::invalid_argument for a
+// non-positive N or K, a negative `parent_rows` or a shape the layout cannot hold.
+[[nodiscard]] double described_bytes_per_weight(QType qtype, LinearPolicy policy, Epilogue epilogue,
+                                                std::int32_t n, std::int32_t k,
+                                                std::int32_t parent_rows          = 0,
+                                                std::optional<QuantLayout> layout = std::nullopt);
+
 // The route such a call selects and the one it runs on (#298): route_query's choice as run() hands
 // it on (workspace_free_route: no workspace, no quantized family that needs one), resolved as
 // run_route resolves it for a call of `layout` (its alignment, stride, segments and the workspace

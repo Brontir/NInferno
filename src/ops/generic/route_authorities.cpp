@@ -72,7 +72,7 @@ std::optional<RouteAnswer> route_probe(const Ask& ask, const Problem& problem,
                                            heuristic_w4a4(problem.n, ask.tokens, prefill_band))};
         if (route_admits(r, weight, problem.policy)) return by_pin(r, "route-probe");
     }
-    if (forced == 1 && r8_call(weight, problem.policy, ask.tokens)) {
+    if (forced == 1 && r8_call(problem, weight, ask.tokens)) {
         const Route r{Family::R8Mma, static_cast<std::uint8_t>(heuristic_r8(problem, ask.tokens))};
         if (route_admits(r, weight, problem.policy)) return by_pin(r, "route-probe");
     }
@@ -180,7 +180,7 @@ bool a8_wide_call(const Ask& ask, const Problem& problem, const Weight& weight) 
 
 bool a8_call(const Ask& ask, const Problem& problem, const Weight& weight) {
     return a8_wide_call(ask, problem, weight) || vec_rule(weight, problem.policy, ask.tokens) ||
-           r8_call(weight, problem.policy, ask.tokens) ||
+           r8_call(problem, weight, ask.tokens) ||
            mmq_verify_rule(weight, problem.policy, problem.n, ask.tokens, ask.lanes);
 }
 
@@ -222,7 +222,7 @@ std::optional<RouteAnswer> dense_tune_entry(const Ask& ask, const Problem& probl
     if (a8_wide_call(ask, problem, weight)) return std::nullopt;
     const auto dense = tuned_dense_route(problem, ask.tokens);
     if (!dense || !route_admits(*dense, weight, problem.policy)) return std::nullopt;
-    const bool r8 = r8_call(weight, problem.policy, ask.tokens);
+    const bool r8 = r8_call(problem, weight, ask.tokens);
     if (dense->family == Family::R8Mma) {
         if (!(r8 || r8_verify_tunable(weight, problem.policy, ask.tokens))) return std::nullopt;
     } else if (!(vec_rule(weight, problem.policy, ask.tokens) || !r8)) {
@@ -297,7 +297,7 @@ std::optional<RouteAnswer> cost_model(const Ask& ask, const Problem& problem,
 // R8 rules (r8_rules_route), asked only when the table does not answer.
 std::optional<RouteAnswer> r8_schedule(const Ask& ask, const Problem& problem,
                                        const Weight& weight) {
-    if (!r8_call(weight, problem.policy, ask.tokens)) return std::nullopt;
+    if (!r8_call(problem, weight, ask.tokens)) return std::nullopt;
     // The rules' schedule is computed only when the T=1 table does not answer.
     const auto hit = ask.tokens == 1 ? tuned_r8(problem) : std::nullopt;
     RouteAnswer answer =

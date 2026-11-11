@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <stdexcept>
 #include <string>
 
 namespace ninferno::ops::detail::generic {
@@ -100,6 +101,17 @@ std::optional<Route> route_query(const DeviceClass& device, QType qtype, LinearP
                                            parent_rows, layout);
     if (!answer) return std::nullopt;
     return answer->route;
+}
+
+double described_bytes_per_weight(QType qtype, LinearPolicy policy, Epilogue epilogue,
+                                  std::int32_t n, std::int32_t k, std::int32_t parent_rows,
+                                  std::optional<QuantLayout> layout) {
+    if (n <= 0 || k <= 0 || parent_rows < 0) {
+        throw std::invalid_argument("described_bytes_per_weight: N and K must be positive");
+    }
+    DescribedWeight described;
+    describe_weight(described, qtype, epilogue, n, k, parent_rows, layout);
+    return bytes_per_weight(described.weight, Problem{qtype, policy, n, k, epilogue});
 }
 
 std::optional<ResolvedRoute>
