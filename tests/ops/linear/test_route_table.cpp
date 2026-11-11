@@ -284,6 +284,12 @@ int shipped_boards() {
         failures += check(stock.find("\"pci_id\": \"0x2504\"") != std::string::npos &&
                               stock.find("\"board\"") == std::string::npos,
                           "the 12 GB RTX 3060 is named by its id: " + stock);
+        // The A100 PCIe 80GB's bandwidth differs from its row's in the last bit
+        // (measured::row_board_facts): it is named by its id all the same.
+        const std::string a100 = written_on(substitute(0x20B5));
+        failures += check(a100.find("\"pci_id\": \"0x20b5\"") != std::string::npos &&
+                              a100.find("\"board\"") == std::string::npos,
+                          "the A100 PCIe 80GB is named by its id: " + a100);
         ninferno::DeviceClass narrow = substitute(0x2504);
         narrow.memory_bus_bits       = 128;
         narrow.facts                 = ninferno::machine_facts_of(narrow);
@@ -637,7 +643,7 @@ int main(int argc, char** argv) {
         const double figures_apart = distance("pci_figures_only", figures);
         failures += check(figures_apart >= 0, "a table with facts and no id reads them");
         // The id alone where the device is its id's registry row; the facts and no id otherwise.
-        const bool row_board = own && ninferno::measured::same_board_facts(
+        const bool row_board = own && ninferno::measured::row_board_facts(
                                           ninferno::board_of(device),
                                           ninferno::board_registry::board(device.pci_device_id));
         failures +=

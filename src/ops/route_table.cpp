@@ -958,23 +958,6 @@ bool table_claims(const Problem& problem, std::int32_t tokens, bool prefill) {
 
 std::optional<Board> route_table_board(const std::string& path) { return parse_table(path)->board; }
 
-namespace {
-
-// The device's board against its id's registry row. The DRAM bandwidth reaches the two sides by
-// different arithmetic (board_of from the clock on the 2 MHz grid, the row from bus * rate / 8),
-// which can differ in the last bit (the H100 NVL, the A100 PCIe 80GB, the A30), so it and the L2
-// are compared to a part in 10^4, as tools/r8_decode_table.py does; a twin on other memory differs
-// by several percent (the RTX 4070 with GDDR6: 20 against 21 Gbps).
-bool row_board_facts(const Board& a, const Board& b) {
-    const auto close = [](double x, double y) {
-        return std::abs(x - y) <= 1e-4 * std::max(std::abs(x), std::abs(y));
-    };
-    return a.major == b.major && a.minor == b.minor && a.sms == b.sms &&
-           close(a.l2_mib, b.l2_mib) && close(a.dram_gbps, b.dram_gbps) && a.mma_slow == b.mma_slow;
-}
-
-} // namespace
-
 std::string write_route_table(const std::string& gpu_class, const std::string& gpu_name,
                               const std::vector<RouteEntry>& entries) {
     Json root;
@@ -988,8 +971,9 @@ std::string write_route_table(const std::string& gpu_class, const std::string& g
     try {
         const DeviceClass& device = device_class();
         const Board b             = board_of(device);
-        const bool row_board      = board_registry::find(device.pci_device_id) != nullptr &&
-                               row_board_facts(b, board_registry::board(device.pci_device_id));
+        const bool row_board =
+            board_registry::find(device.pci_device_id) != nullptr &&
+            measured::row_board_facts(b, board_registry::board(device.pci_device_id));
         if (row_board) {
             root["gpu"]["pci_id"] = pci_id_text(device.pci_device_id);
         } else {

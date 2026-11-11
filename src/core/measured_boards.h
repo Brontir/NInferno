@@ -80,6 +80,22 @@ constexpr bool same_board_facts(const Board& a, const Board& b) {
            a.dram_gbps == b.dram_gbps && a.mma_slow == b.mma_slow;
 }
 
+// A device's board against its id's registry row: where they agree, a route table names the board
+// by its id (route_table.cpp write_route_table; the shipped-boards test asks the same). The DRAM
+// bandwidth reaches the two sides by different arithmetic (board_of from the clock on the 2 MHz
+// grid, the row from bus * rate / 8), which differs in the last bit on four rows (the A100 PCIe
+// 80GB, the H100 NVL, the A30, the A800 PCIe 80GB), so it and the L2 are compared to a part in
+// 10^4; a twin on other memory differs by percents (the RTX 4070 with GDDR6: 20 against 21 Gbps).
+// A row that gives no L2 (0) agrees only with a device that reports none, so a real card of such a
+// row (the H100 NVL, the A30) is written by its facts until its row gives the L2.
+constexpr bool row_board_facts(const Board& a, const Board& b) {
+    const auto close = [](double x, double y) {
+        return (x > y ? x - y : y - x) <= 1e-4 * (x > y ? x : y);
+    };
+    return a.major == b.major && a.minor == b.minor && a.sms == b.sms &&
+           close(a.l2_mib, b.l2_mib) && close(a.dram_gbps, b.dram_gbps) && a.mma_slow == b.mma_slow;
+}
+
 // The literals the measured boards carried before the registry (major, minor, SMs, L2 MiB, DRAM
 // GB/s): the value every derived distance and gate was computed from.
 static_assert(same_board_facts(measured::kRtx5090, Board{12, 0, 170, 96, 1792}));
