@@ -42,7 +42,7 @@ ninferno_add_test(ninferno_device_image_negative_test
 set_tests_properties(ninferno_device_image_negative_test PROPERTIES SKIP_RETURN_CODE 77)
 
 # The PCI-ID reference table of board facts and machine_facts() (core/machine_facts.h). No GPU.
-ninferno_add_test(ninferno_machine_facts_test
+ninferno_add_test(ninferno_machine_facts_test NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_machine_facts.cpp"
   LIBRARIES ninferno_core)
 # The constexpr board registry (core/board_registry.h) against the reference table, and the
@@ -63,7 +63,9 @@ ninferno_add_test(ninferno_arch_registry_test
 # it. No GPU.
 ninferno_add_test(ninferno_gate_atlas_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_gate_atlas.cpp"
-  LIBRARIES ninferno_core)
+  LIBRARIES ninferno_core_host ninferno::json)
+# Host-only: no CUDA runtime in its link closure (#620 step 11).
+cmake_language(DEFER CALL ninferno_assert_host_only ninferno_gate_atlas_test)
 
 # The route cost model's constants, each tagged fact / counted / fitted
 # (ops/generic/route_cost_constants.h); `--list` prints them. No GPU.

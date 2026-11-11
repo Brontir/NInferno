@@ -8,7 +8,9 @@
 
 #include "core/board_registry.h"
 #include "core/device_class.h"
+#include "core/measured_disposition.h"
 
+#include <cstddef>
 #include <limits>
 #include <span>
 
@@ -60,6 +62,9 @@ static_assert(same_board_facts(measured::kV100Sxm2, Board{7, 0, 80, 6, 900}));
 // the A10, an RTX 5070 Ti 0.57 from the 5080), not to the next class of card: the RTX 4090's R8
 // decode entries on the 4080 SUPER (1.2) won 41 and lost 30, to -22 %. A board farther from every
 // measured one keeps the unmeasured default.
+// The value is CHOSEN, not measured or derived: the examples above sit below it and the one
+// measured loss (1.2) above it, and nothing measured places the 1.0 between them (route_rules.h
+// lists it with Basis::Unknown).
 inline constexpr double kCarryDistance = 1.0;
 
 // A choice measured on one board: whether it paid there.
@@ -70,18 +75,15 @@ struct Gate {
 
 // What a measured gate's answer for a board rests on (#373): the donor (the nearest measured board
 // within the gate's distance; null: none), how far it is, what the distance could not compare, the
-// answer, and how the evidence applies. Measured: the board itself (distance 0, every quantity
-// known: the board's facts are a measured board's). Carried: within kCarryDistance, every quantity compared. Transferred: farther, the
-// gate's own rule carrying it (the MMQ gate's: at any distance). Incomplete: a quantity unknown on
-// either side, so the distance can understate the difference. None: no donor (the unmeasured
-// default). The answer is the legacy rule's, but for one case: a gate bounded by a distance does
-// not take an Incomplete donor's answer (the unmeasured default instead), since the quantity it
-// could not compare may be what puts the donor out of reach. So a missing fact never promotes a
-// transfer the full facts would refuse (conservatively: also when the known quantities alone
-// would reach); a gate that carries at any distance (the MMQ gate's) admits regardless of the
-// quantities, and keeps its answer.
+// answer, and how the evidence applies (Disposition, core/measured_disposition.h: the one
+// vocabulary of the gates and of the value tables below). The answer is the legacy rule's, but for
+// one case: a gate bounded by a distance does not take an Incomplete donor's answer (the
+// unmeasured default instead), since the quantity it could not compare may be what puts the donor
+// out of reach. So a missing fact never promotes a transfer the full facts would refuse
+// (conservatively: also when the known quantities alone would reach); a gate that carries at any
+// distance (the MMQ gate's) admits regardless of the quantities, and keeps its answer.
 struct GateAnswer {
-    enum class Disposition { Measured, Carried, Transferred, Incomplete, None };
+    using Disposition = measured::Disposition;
     const Gate* donor = nullptr;
     double distance   = 0;
     BoardUnknowns unknown;
@@ -89,14 +91,7 @@ struct GateAnswer {
     Disposition disposition = Disposition::None;
 };
 [[nodiscard]] constexpr const char* gate_disposition_name(GateAnswer::Disposition d) noexcept {
-    switch (d) {
-    case GateAnswer::Disposition::Measured: return "measured";
-    case GateAnswer::Disposition::Carried: return "carried";
-    case GateAnswer::Disposition::Transferred: return "transferred";
-    case GateAnswer::Disposition::Incomplete: return "incomplete";
-    case GateAnswer::Disposition::None: return "none";
-    }
-    return "none";
+    return disposition_name(d);
 }
 [[nodiscard]] inline GateAnswer gate_answer(std::span<const Gate> gates, const Board& board,
                                             double max_distance) noexcept {
@@ -154,6 +149,44 @@ inline constexpr Gate kMmqPrefillPays[] = {
     } catch (...) {
         return false;
     }
+}
+
+// What a measured VALUE table's answer for a board rests on (#616 step 3): the tables that carry a
+// measured value (a schedule, a token frontier) by board distance, not a yes/no gate, in the gates'
+// vocabulary (Disposition). Measured: the board's facts are a table row's (distance 0, every
+// quantity known). Carried: a measured board within the table's distance answers. Incomplete: no
+// entry with every quantity known is within the distance, but the nearest entry by plain distance
+// is, with a quantity unknown on either side (L2 or bandwidth), so it may be near in the facts that
+// were left out; the value is the default, as gate_answer's bounded gate takes it. None: no entry
+// is within the distance, and the value is the table's declared default (a literal, its provenance
+// named by the table's owner). The donor is chosen exactly as the lookups choose it
+// (nearest_known_measured), so the disposition never disagrees with the answer. Where every entry
+// knows its facts (both tables assert measured_boards_known), an unknown is the board's own, no
+// entry is complete for it, and the answer is Incomplete or None. Only a table with an incomplete
+// entry could give Measured or Carried from a complete entry while a nearer entry is Incomplete.
+template <class Entry>
+struct TableAnswer {
+    const Entry* entry      = nullptr; // the donor's entry, null on Incomplete and None
+    double distance         = 0;       // board_distance to the donor (0 without one)
+    Disposition disposition = Disposition::None;
+};
+
+// `table`'s answer for `board` within `max_distance`; an entry needs a `board` member.
+template <class Entry, std::size_t Extent>
+[[nodiscard]] TableAnswer<Entry> table_answer(std::span<const Entry, Extent> table,
+                                              const Board& board, double max_distance) noexcept {
+    TableAnswer<Entry> out;
+    out.entry = nearest_known_measured(table, board, max_distance);
+    if (out.entry != nullptr) {
+        out.distance    = board_distance(board, out.entry->board);
+        out.disposition = out.distance == 0 ? Disposition::Measured : Disposition::Carried;
+        return out;
+    }
+    const Entry* plain = nearest_measured(table, board, max_distance);
+    if (plain != nullptr && board_unknowns(board, plain->board).any()) {
+        out.disposition = Disposition::Incomplete;
+    }
+    return out;
 }
 
 } // namespace ninferno::measured
