@@ -112,6 +112,7 @@ void MtpRound::draft(const std::int32_t* position, const std::int32_t* token,
     }
 }
 
+// FUSION-SITE: gemma4_drafter_geglu
 void DrafterPass::step(DeviceArena& work_, const Tensor& tokens, const Tensor& hidden_in,
                        const Tensor& qpos, const Tensor& kpos, const ops::Gemma4KvLayer& sliding,
                        const ops::Gemma4KvLayer& full, ops::Gemma4AttentionEnvelope envelope,

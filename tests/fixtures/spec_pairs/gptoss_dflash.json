@@ -20,7 +20,7 @@
   "drafters": [
    {
     "acceptance": 0.517742599894074,
-    "artifact": "/root/hfab/hub/models--z-lab--gpt-oss-20b-DFlash/ninferno/d53f6551543204c859e8bbaaddbd15d11b447af9/gpt-oss-20b-DFlash.dflash_published.ninferno",
+    "artifact": "/root/.cache/huggingface/hub/models--z-lab--gpt-oss-20b-DFlash/ninferno/d53f6551543204c859e8bbaaddbd15d11b447af9/gpt-oss-20b-DFlash.dflash_published.ninferno",
     "artifact_id": "14df363a99cd4a378ee4fe9e9324796e",
     "best_speedup": 1.4456242701549664,
     "kind": "dflash",
