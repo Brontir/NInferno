@@ -234,7 +234,8 @@ const std::vector<Spec>& specs() {
         // (recorded); the tensor core's kind (full-rate FP32-accumulate HMMA) is a chip fact.
         {fit::kGeneration,
          Mode::RowFields,
-         {"major", "minor_lo", "minor_hi", "name", "s8", "fp32acc_full_rate"}},
+         {"major", "minor_lo", "minor_hi", "name", "s8", "fp32acc_full_rate",
+          "fp32_fma"}}, // the FP32 FMA issue rate: the Programming Guide's throughput table
         {fit::kCostConstants,
          Mode::Definitions,
          {"kDp4aOpsPerSmClock",    // a chip fact
