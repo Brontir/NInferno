@@ -97,8 +97,13 @@ DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk
         // The gain of the default thinking flag's choice. Per request with that choice plain
         // and the other flag's drafting (served_speculation seeds the menu with it), the gain
         // is only the other flag's requests': not weighed, so the profile's choice stands.
-        const spec::Choice& own   = spec::pick(p, ask.thinking);
-        const spec::Choice& other = spec::pick(p, !ask.thinking);
+        // The choice is the one the Engine runs (served_choices, as served_speculation picks it):
+        // where the profile's default is one the Engine cannot run, the served choice's speeds,
+        // depth and joint price describe the option, never the rejected default's; a served
+        // choice published without its speeds is not measured.
+        const spec::Profile runs  = served_choices(p);
+        const spec::Choice& own   = spec::pick(runs, ask.thinking);
+        const spec::Choice& other = spec::pick(runs, !ask.thinking);
         const bool split = per_request && !own.config.enabled() && other.config.enabled();
         const spec::Choice& c = split ? other : own;
         choice::DrafterOption option;
@@ -127,6 +132,36 @@ DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk
                                    .depth    = static_cast<std::uint32_t>(depth),
                                    .bounded  = depth < c.config.k,
                                    .measured = gain.has_value()});
+        }
+        // The joint verify's price (#303): at C streams the profile runs the depth its load table
+        // bounds (the configuration's below the first bound), and a round of C x (depth + 1) rows
+        // costs more than one request's, R_1 / R_C of it, where the round cost prices it. A
+        // DFlash bound's draft width (LoadBound::width) is not read: the facts price the drafter's
+        // whole block (load_gain refuses it past the priced rows), the widest it can run.
+        // A round of C streams at depth k verifies C x (k + 1) rows, at least 2 per stream, so no
+        // count above kPricedVerifyRows / 2 is priced at any depth (load_gain refuses it). A gain
+        // nobody measured (option.measured false) is not priced: the estimate does not count it.
+        for (std::int32_t streams = 2; option.measured && streams <= spec::kPricedVerifyRows / 2;
+             ++streams) {
+            if (option.plain_from_streams != 0 &&
+                static_cast<std::uint32_t>(streams) >= option.plain_from_streams) {
+                break;
+            }
+            // The last bound at or below these streams, as the load table above reads it.
+            std::int32_t depth = c.config.k;
+            for (const spec::LoadBound& bound : p.load) {
+                if (bound.lanes > streams) { break; }
+                depth = std::min(bound.depth, c.config.k);
+            }
+            spec::SpecConfig at = c.config;
+            at.k                = depth;
+            const auto priced   = p.joint_scale.find(at.label());
+            if (depth < 1 || priced == p.joint_scale.end()) { continue; }
+            const auto scale = priced->second.find(streams);
+            if (scale != priced->second.end()) {
+                option.joint.push_back(
+                    {.streams = static_cast<std::uint32_t>(streams), .scale = scale->second});
+            }
         }
         out.options.push_back(std::move(option));
         out.served.push_back(*served);
@@ -738,8 +773,8 @@ Json choice_json(const ServedChoice& served) {
                                 served.drafter_options[s.candidate.drafter - 1].measured_at(
                                     served.task.concurrency);
     // The drafter's gain one request measured and the gain counted at the task's concurrency (the
-    // depth its load table bounds there; #303). A ceiling under load: the verify of the streams'
-    // rows together is not priced.
+    // depth its load table bounds there, scaled by the joint verify's price where the round cost
+    // prices it; #303). Otherwise a ceiling under load.
     if (s.candidate.drafter > 0 && s.candidate.drafter <= served.drafter_options.size()) {
         const choice::DrafterOption& d = served.drafter_options[s.candidate.drafter - 1];
         const std::uint32_t streams    = served.task.concurrency;
@@ -757,7 +792,34 @@ Json choice_json(const ServedChoice& served) {
             gain["bounded_depth"]  = in_force->depth;
             gain["depth_measured"] = in_force->measured;
         }
-        if (!plain && streams > 1) {
+        // Where a joint price supplies the gain the estimate counts
+        // (DrafterOption::price_source_at, the one hold rule): none where the drafter is not
+        // counted at these streams.
+        const choice::DrafterOption::PriceSource source = d.price_source_at(streams);
+        if (!plain && streams > 1 && d.measured_at(streams) && source.streams != 0) {
+            // The one-request gain at the depth this load drafts times R_1 / R_C, the round cost's
+            // price of the streams' rows verified together (spec/round_cost.h), at the count that
+            // supplies the gain: this count's own price, or a smaller count's it is held to.
+            gain["joint_verify_scale"] = round_to(source.scale, 3);
+            const bool priced_here     = std::any_of(
+                d.joint.begin(), d.joint.end(),
+                [&](const choice::DrafterOption::JointScale& j) { return j.streams == streams; });
+            if (source.streams == streams) {
+                gain["note"] = "the one-request gain at the depth this load drafts, priced for the "
+                               "streams' rows verified together (the round cost's R_1 / R_C); the "
+                               "requests' attention and state bytes are not in it";
+            } else {
+                gain["joint_priced_at_streams"] = source.streams;
+                gain["note"] = "the one-request gain at the depth this load drafts, held from the "
+                               "price at " +
+                               std::to_string(source.streams) +
+                               " streams (the round cost's R_1 / R_C there; the joint verify at "
+                               "this count is " +
+                               (priced_here ? "priced no lower" : "not priced") +
+                               "), the gain not climbing with load; the requests' attention and "
+                               "state bytes are not in it";
+            }
+        } else if (!plain && streams > 1) {
             gain["note"] = "a ceiling: one request's gain at the depth this load drafts; the verify "
                            "of the streams' rows together is not priced";
         }

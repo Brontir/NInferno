@@ -29,7 +29,7 @@ def main():
     rows = [r for r in F.rows_of_registry() if F.fitted(r)]
     by = collections.defaultdict(list)
     for r in rows:
-        by[r["board"]["name"]].append(r)
+        by[r["board"]["card"]].append(r)
     print("| card | rounds | eta | dp4a share | fixed ms a round per pair and mode: k -> ms |")
     print("|---|---|---|---|---|")
     growth, below = [], []

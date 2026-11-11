@@ -305,6 +305,7 @@ std::size_t causal_softmax_attention_workspace_capacity_bytes(
                                            envelope, execution.multiprocessor_count);
 }
 
+// FUSION-SITE: kv_write_attention
 void causal_softmax_attention(const Tensor& q, const Tensor& k, const Tensor& v,
                               const Tensor& positions, const Tensor& valid_columns,
                               const Tensor& kv_table_rows, AttentionHeadGeometry geometry,

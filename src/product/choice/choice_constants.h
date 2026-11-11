@@ -278,7 +278,7 @@ inline constexpr R8IssueRate kR8IssueRate[] = {
 // of the DRAM rate (C = 1: kDramEta; linear in log2 C between points; beyond the last, the last's):
 // the MoE step rows of speed_measured.json (the server's windows of exactly C rows, eight different
 // tasks) less every other term of the step, the mean over the generation's cards and quantizations
-// (lab/speed_model/fit_moe_decode.py). A generation without rows takes Ada's (transferred).
+// (tools/fits/speed_model/fit_moe_decode.py). A generation without rows takes Ada's (transferred).
 struct MoeRoutedEta {
     std::string_view generation;
     double rows;
@@ -360,8 +360,8 @@ constexpr double largest_transferred_decode_error() noexcept {
 // over one-card rows; it never decides (resolution_of).
 inline constexpr double kUnmeasuredCarryDecodeError = largest_transferred_decode_error();
 
-// kDp4aOpsPerSmClock (a generation without an int8 MMA decodes its int8 route at it, choice.cpp
-// decode_int8_peak): core/cost_constants.h, a chip fact shared with spec/round_cost.h.
+// kDp4aOpsPerSmClock (a generation without an int8 MMA decodes its int8 route at it,
+// spec/round_cost.cpp): core/cost_constants.h, a chip fact.
 
 // A row per generation (core/generation.h's names) and kind; a generation without its own row
 // takes kTransferGeneration's, marked as a transfer (its prefill: a generation's with the same BF16

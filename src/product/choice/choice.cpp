@@ -32,14 +32,6 @@ double peak(const CardFacts& card, Route route) noexcept {
     return card.sms * card.clock_hz * rate;
 }
 
-// A decode step's int8 compute rate: the int8 MMA's; a generation without one (Volta) takes its
-// prefill through the tiled f16 MMA (peak) but decodes on dp4a, 4 int8 multiply-adds a lane each
-// clock on its 64 lanes per SM: 512 operations a SM-clock.
-double decode_int8_peak(const CardFacts& card) noexcept {
-    const GenerationRow& row = generation_row(card.major, card.minor);
-    return row.s8 > 0 ? peak(card, Route::Int8) : card.sms * card.clock_hz * kDp4aOpsPerSmClock;
-}
-
 // The generation's own row of a per-generation table, else kTransferGeneration's (`transferred`).
 template <class Row, std::size_t N>
 const Row* generation_row_of(const Row (&rows)[N], std::string_view generation, bool& transferred) noexcept {

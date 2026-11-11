@@ -1746,3 +1746,131 @@ than the resolution slower; the chunk and the drafter carry no KLD term and neve
 
 Regret against recorded measurements: `tools/bench/selection_regret.py` and `regret_collect.py`
 (held-out observed regret). Left: run them over the stands' route sweeps for the moved picks.
+
+## 76. The vector kernel's T = 4 loss on Ampere: an instruction count orders the cards but does not reproduce the size; the gated pairs stay on the band (#521, 09.11, analysis; gated pair not measured)
+
+**Decision.** No route change and no rule. #560's bounded twin took the part of the loss that has a
+counted saving; by elimination the rest is expected in the gated gate/up launches, but that is not
+measured: the issue's data has no gated-shape row. A rule would move calls nobody timed, and the
+only gated-shape timings at hand (earlier tuner files, below) say the sign depends on the shape, so
+the candidate rule is not supported as stated. The measurement that is missing is a kit,
+`tools/bench/run_521_gateup.sh`, not run on a card yet.
+
+**Where the numbers come from.** The measured numbers of this entry (the gains and losses, the 47 %,
+the end-to-end +1.6 % and +2.8 %, the per-T slopes) and the SASS count "105 + 37 T" are the ones
+recorded in the text of issue #521. They are not committed as rows: no route-tune table, fixture or
+log holding them is in the repository, and the SASS count has no tool output here either. They have
+no reproduction path in the repository; the kit above measures only the missing gated-pair timings
+(two shapes, T = 2..4). The ratios and rho below are computed from
+`src/core/data/gpu_facts.json`: ratio = SMs x boost GHz / (gbps x bus bits / 8) and rho = 37 / (1152
+x 4 x ratio). Reading of the constants, which reproduces the table's rho: 1152 is the bytes of one
+2048-weight Q4_K slice (2048 x 4.5 bits / 8) and 4 the warp instructions an SM issues per clock
+(four schedulers), so rho is the added instruction time per T as a share of the DRAM time of the
+same slice. The instruction count 37 per T is the sm_86 / sm_89 one.
+
+**Candidate cause.** The vector kernel's slice loop is 105 + 37 T warp instructions per 2048 weights
+(SASS, sm_86 and sm_89 alike; no other architecture was counted); 16 T of them are dp4a, which the
+issue puts on the half-rate INT pipe (not verified here); the register MMA's loop has no T term. If
+the instruction cost per weight is the same on every GA10x/AD10x card, what differs is the DRAM time
+it hides behind: per T the kernel adds rho of the DRAM time. This is a candidate, not an established
+cause.
+
+| card | SMs x GHz / (GB/s) | rho per T | a16 gain, T = 4, pre-#560 | against measurement |
+|---|---|---|---|---|
+| RTX 3060 | 0.138 | 5.8 % | +5.4..6.9 % | same order; not the same quantity |
+| RTX 3090 | 0.148 | 5.4 % | +4.6..7.9 % | same order; not the same quantity |
+| RTX 5060 Ti | 0.207 | 3.9 % | +0.9..1.9 % | 2 to 4 times too high (see below) |
+| RTX 4090 | 0.320 | 2.5 % | -1.3..-2.3 % (vector wins) | wrong sign: gain predicted, loss seen |
+
+What the table shows. "Same order; not the same quantity": rho is a per-T kernel increment, the
+measured column an end-to-end gain at C = 4 that included the CTA-residency step (below), so the
+rows compare a term with a level. Ordered by the ratio the four cards come in the order of the
+measured gains (3060 and 3090 high and not separated, 5060 Ti low, 4090 negative), so the count
+ranks them. It does not reproduce the size: the 5060 Ti is predicted two to four times above what
+was measured. rho is positive for every card, so it predicts no sign by itself; on the 4090 the
+measurement is the opposite sign. The sign comes from the crossover with the register MMA and from
+the CTA-residency term (below), which are in issue #521 and not in this entry. The 5060 Ti row
+applies the sm_86 / sm_89 instruction count to an sm_120 card, which was not counted.
+
+The per-T slope: the measured slope is 1.41 times the count on the 3090 (2.7 us measured / 1.92 us
+counted) and 1.33 or 1.21 times on the 4090 (1.1 or 1.0 us measured / 0.83 us counted), with rho
+from the registry ratios above (an earlier version said "1.4-1.6 times on both"; that came from
+older, wrong ratios). So the model under-predicts the slope by 41 % on the 3090 and by 33 or 21 % on
+the 4090. An account made after the measurements, and untested: counting the 16 T dp4a as double (53
+per T instead of 37) gives 2.75 us on the 3090 (measured 2.7) and 1.18 us on the 4090 (measured 1.1
+or 1.0). It is not used in rho, and it should be checked on a card not yet looked at before anyone
+relies on it. These are mismatches: the model is wrong there until a term explains them; nothing
+here smooths them.
+
+A second term, CTA residency (85 registers: 5 CTAs of 128 threads per SM against 7 at 72), explained
+the 3090's jump at T = 4 and was taken in #560 for the plain non-gated instance. On the 3060 the
+end-to-end prediction before the measurement was +5..6 % at C = 4; after #560 it measured +2.8 % on
+Gemma 4 12B and +1.6 % on Qwen3.5-9B: a miss by about two on the first (5..6 / 2.8 = 1.8-2.1) and
+three to four on the second (5..6 / 1.6 = 3.1-3.8). An account made afterwards, 47 % of Gemma's
+decode parameters x 6 % = 2.8 %, gives the first figure; it is not a prediction, and it does not
+give the second model's 1.6 % (its share of the twinned shapes was not split per shape).
+
+**Open.** The gated launches (about half the weight bytes) keep the unbounded instance; a bound
+there costs registers (110 for 3 columns) or spills. The candidate rule was "T <= 3 for a gated pair
+where SMs x clk / BW is under a threshold". It is a candidate, not adopted, and the data at hand do
+not support it as stated. Its threshold lies between two measured cards (3090 loses at 0.148, 5060
+Ti ties at 0.207), so it is anywhere in that bracket, and the bracket holds the RTX 2080 Ti 0.171,
+3070 0.177, 5070 0.179 and 5070 Ti 0.192 among others. Both boards that lose are Ampere and both
+that do not are Ada or Blackwell, so on four cards the ratio and the generation cannot be told
+apart.
+
+Earlier route-tune files for the RTX 3060 (route files of 08.11, rows labelled a8; the build and
+provenance were not verified, and they hold no twin rows for these shapes) time the gated vector
+launch and the register-MMA schedules, so gated against the best register-MMA schedule can be read
+over 8 files:
+
+| shape (n x k) | T = 2 | T = 3 | T = 4 |
+|---|---|---|---|
+| 12288 x 4096 | -4.7..-5.7 % | -3.9..-4.2 % | -0.9..-1.8 % (gated wins throughout) |
+| 15360 x 3840 | +0.5..+0.9 % (about one tick) | +2.9..+3.4 % | +4.4..+6.2 % (gated loses from T = 3) |
+
+(gated / register MMA - 1; the tuner's r8 schedule is faster than both at T = 2 on both shapes.)
+
+What these files can carry. The tuner's event timer ticks at 1.024 us (source:
+`src/ops/generic/route_tune_tool.cpp`, comment at the sample loop) and a decode-width median is
+divided by the number of weight copies (3 on these shapes' swiglu rows), so one median moves in
+steps of 0.34 us, and a gated-minus-register-MMA difference of about one tick (1.024 us) or less is
+not a result. In microseconds the differences over the 8 files are: 12288 x 4096 -8.9 .. -10.6
+(T = 2), -7.2 .. -7.9 (T = 3), -1.7 .. -3.4 (T = 4); 15360 x 3840 +1.0 .. +1.8 (T = 2), +6.1 ..
++7.2 (T = 3), +9.2 .. +13.0 (T = 4). So the T = 2 sign of 15360 x 3840 is not supported: three of
+the eight files differ by exactly one tick and a fourth by 1.045 us. The T = 4 cell of 12288 x 4096
+(1.7 us at the least) is under two ticks, so its sign is weakly supported. What stands: at T = 3 and
+T = 4 the two shapes have opposite signs, by 1.7 us or more in every file. The table's earlier
+note, "gated loses from T = 2", is withdrawn: on 15360 x 3840 gated loses from T = 3, and at
+T = 2 the difference is at the timer's resolution. These files are 8 runs, not paired passes, and
+their build and provenance were not verified. A single per-card ratio with a cut at T <= 3 fits
+neither shape in the same way: the sign depends on the shape. The candidate needs a shape term, and
+no rule is adopted here; the kit prints the shapes side by side on a known build and its criterion is a verdict pattern per shape, not a threshold.
+Nothing is fitted to these files.
+
+What the candidate would move, over all 113 rows of the registry (`gpu_facts.json`): at 0.17 it is
+57 rows, about half the registry, of which two boards were measured (the RTX 3060 and 3090); the
+other 55 would be moved on the strength of a ratio alone. By family: 19 GA10x (cc 86: RTX 3050,
+3060, 3060 Ti, 3070 Ti, 3080, 3080 Ti, 3090, 3090 Ti and the laptop 3060 rows, A2, RTX A4000,
+A5000), 13 Turing (GTX 1650 / 1660 variants, T400 / T600 / T1000, RTX 2060 / 2070 / 2060 SUPER /
+2070 SUPER), 8 GA100 (A30, A100, A800), 7 Hopper (H100, H200, H800), 6 Volta (V100, GV100), 3
+consumer Blackwell (RTX 5060 and the 5080 Laptop rows) and 1 data-center Blackwell (B200); 8 of the
+57 rows are `target: false` (the 7 Hopper and B200). Across the bracket the count runs from 42 rows
+(a threshold just above the 3090) to 76 (just below the 5060 Ti). The instruction count was taken on
+sm_86 and sm_89 only, so the domain of any such rule is GA10x (cc 86) until another generation is
+counted and measured; the 38 rows of other families under 0.17 are outside what any number here
+supports.
+
+Whether the gated pair at T = 4 is better as two non-gated launches or as the register MMA is
+untimed. Next: the kit on the 3060 (both shapes, T = 2, 3, 4) before any code, with a 3090 and a
+4090 or 5060 Ti as controls. Its limit: for gate and up of one format production runs one gated
+launch (`ggml_vec_gated_pair`; StoreF32 then GateProduct is the mixed-format path only), so the
+two-launch alternative has no production sequence to time. The kit prints 2 x a single launch as an
+estimate of it: expected high by about one activation quantisation, and it omits the FP32 plane
+write and read of the real two-launch form. Its verdicts name which alternative carries a result
+(`alt(rmma)` is measured, `alt(twin)` rests on the estimate). The kit's verdict floor is the timer's
+raw tick, 1.024 us (observed on the consumer boards and GV100 and recorded in a comment of the
+tuner's source; used as the bound on one median step, and a difference of exactly one tick gets no
+verdict). Two passes are two samples, not a confidence range: a cell within a few microseconds of
+zero (12288 x 4096 at T = 4, 15360 x 3840 at T = 2 on the old files) needs more passes before it is
+read as a verdict.
