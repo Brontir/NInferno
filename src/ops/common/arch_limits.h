@@ -15,13 +15,13 @@ namespace ninferno::ops {
 
 // The dynamic shared memory one block may opt into, by the build's architecture
 // (NINFERNO_BUILD_ARCH, CMakeLists.txt): Volta (7.0, 7.2) 96 KiB, Turing (7.5) 64 KiB, GA100 and
-// Orin (8.0, 8.7) 163 KiB, everything else the 99 KiB of GA10x Ampere, Ada and consumer Blackwell
-// (101376 B opt-in). Most tiles are tuned within 99 KiB; the ones above it (deeper pipelines for a
-// tensor core that outruns its 99 KiB stages) are admitted only where the block holds them. One
+// Orin (8.0, 8.7) 163 KiB, Hopper, datacenter Blackwell and Thor (9.0 to 11.x) 227 KiB, everything
+// else the 99 KiB of GA10x Ampere, Ada and consumer Blackwell (101376 B opt-in). Most tiles are
+// tuned within 99 KiB; the ones above it (deeper pipelines for a tensor core that outruns its
+// 99 KiB stages) are admitted only where the block holds them, and have run on GA100 only. One
 // tree compiles one architecture, so the value holds for host and device code alike. The figures
 // are the build columns of the archs table (core/arch_registry.h, generated from
-// core/data/gpu_facts.json); sm_90 and above keep 99 KiB here, below the device, until a measured
-// change raises them.
+// core/data/gpu_facts.json).
 inline constexpr std::size_t shared_bytes_per_block_for_arch(int arch) {
     return arch_registry::find(arch).build_smem_per_block_optin;
 }
@@ -34,8 +34,9 @@ inline constexpr std::size_t kMaxSharedBytesPerBlock =
 #endif
 
 // The shared memory of one SM, which its resident blocks share (CUDA programming guide, compute
-// capabilities table): Volta 96 KiB, Turing 64 KiB, GA100 and Orin 164 KiB, GA10x Ampere, Ada and
-// consumer Blackwell 100 KiB. From sm_80 the driver reserves 1 KiB of it per resident block.
+// capabilities table): Volta 96 KiB, Turing 64 KiB, GA100 and Orin 164 KiB, 9.0 to 11.x 228 KiB,
+// GA10x Ampere, Ada and consumer Blackwell 100 KiB. From sm_80 the driver reserves 1 KiB of it per
+// resident block.
 inline constexpr std::size_t shared_bytes_per_sm_for_arch(int arch) {
     return arch_registry::find(arch).build_smem_per_sm;
 }
