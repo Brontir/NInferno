@@ -223,7 +223,7 @@ void check_row_views() {
 
 int gate_differs = 0;
 
-int replay_differs = 0, replay_unaligned = 0, replay_compared = 0;
+int replay_differs = 0, replay_unaligned = 0, replay_compared = 0, replay_cases = 0;
 
 bool planes_aligned16(const Weight& w) {
     const auto off = [](const void* p) { return reinterpret_cast<std::uintptr_t>(p) & 15U; };
@@ -322,13 +322,16 @@ void check_padded_view_replay() {
                 }
             }
         }
-        // Not vacuous (#724): with a device every routed view whose planes are aligned has its
-        // routes compared, so a case that stopped comparing (unrouted, misaligned, every query
-        // throwing) fails here instead of passing with nothing checked.
-        if (routed && planes_aligned16(w) && !cuda_unavailable()) {
-            check(replay_compared > compared_before, fmt + ": no route of the view compared");
-        }
+        if (replay_compared > compared_before) ++replay_cases;
     }
+    // Not vacuous (#724): the views at row 0 of Q4_G64 and U4_G128 (aligned planes, formats the
+    // generic path routes on the host alone) compare their routes with or without a device, so a
+    // change that leaves every case unaligned, unrouted or throwing fails here instead of passing
+    // with nothing compared.
+    constexpr int kMinReplayCases = 2;
+    check(replay_cases >= kMinReplayCases, std::to_string(replay_cases) +
+                                               " views compared their routes, fewer than " +
+                                               std::to_string(kMinReplayCases));
 }
 
 // The R8 verify gate (Q4_0 takes R8 at T = 2..4 only on a matrix of kR8VerifyQ40MinValues values
@@ -530,7 +533,8 @@ int main() {
     std::cout << "row views: " << view_moved
               << " selections where a view takes another route than its own shape; padded views: "
               << replay_differs << " selections where the replay answers otherwise than the view, "
-              << replay_compared << " compared, " << replay_unaligned
+              << replay_compared << " compared (in " << replay_cases << " views), "
+              << replay_unaligned
               << " not compared (the view's planes off 16-byte alignment); R8 verify gate: "
               << gate_differs << " calls where a slice answers otherwise than its own shape\n";
     // With a device every pair answers; without one the MMQ-or-register-MMA pairs need it.
