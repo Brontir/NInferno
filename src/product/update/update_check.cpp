@@ -66,6 +66,13 @@ size_t append(char* data, size_t size, size_t count, void* out) {
     return size * count;
 }
 
+// The server's answer, not 200 (a status, unlike a network failure, is the server's word).
+struct HttpStatus : std::runtime_error {
+    long status;
+
+    explicit HttpStatus(long s) : std::runtime_error("HTTP " + std::to_string(s)), status(s) {}
+};
+
 std::string fetch(const std::string& url, const std::string& current, std::chrono::seconds timeout) {
     static const bool initialized = curl_global_init(CURL_GLOBAL_DEFAULT) == CURLE_OK;
     if (!initialized) { throw std::runtime_error("curl cannot start"); }
@@ -87,7 +94,7 @@ std::string fetch(const std::string& url, const std::string& current, std::chron
     curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &status);
     curl_easy_cleanup(handle);
     if (code != CURLE_OK) { throw std::runtime_error(curl_easy_strerror(code)); }
-    if (status != 200) { throw std::runtime_error("HTTP " + std::to_string(status)); }
+    if (status != 200) { throw HttpStatus(status); }
     return body;
 }
 
@@ -272,8 +279,12 @@ std::optional<Release> check(const CheckOptions& options) {
         std::string signature;
         try {
             signature = fetch(url + ".sig", options.current, options.timeout);
-        } catch (const std::exception&) {
-            say("has no signature (" + url + ".sig)");
+        } catch (const HttpStatus& answer) {
+            // Only a server that says the file is not there (S3 and CloudFront say 403); a 5xx or
+            // a dropped connection between the two reads is no news.
+            if (answer.status == 404 || answer.status == 403 || answer.status == 410) {
+                say("has no signature (" + url + ".sig)");
+            }
             return std::nullopt;
         }
         if (!verify_signature(text, signature, key)) {

@@ -183,6 +183,11 @@ void test_check() {
     server.Get("/unsigned.json", [&](const httplib::Request&, httplib::Response& res) {
         res.set_content(body, "application/json");
     });
+    server.Get("/flaky.json", [&](const httplib::Request&, httplib::Response& res) {
+        res.set_content(body, "application/json");
+    });
+    server.Get("/flaky.json.sig",
+               [&](const httplib::Request&, httplib::Response& res) { res.status = 503; });
     const int port = server.bind_to_any_port("127.0.0.1");
     std::thread thread([&] { server.listen_after_bind(); });
     server.wait_until_ready();
@@ -240,7 +245,10 @@ void test_check() {
     signature          = sign(body);
     options.max_age    = std::chrono::seconds(0);
     check(!check(options), "signed by another key: no release");
-    check(refusals.size() == 2, "signed by another key: refused out loud");
+    check(refusals.size() == 2 &&
+              refusals.back().find("is not signed by the NInferno release key") !=
+                  std::string::npos,
+          "signed by another key: refused out loud");
     options.public_key = kTestPublic;
     options.max_age    = std::chrono::hours(24);
 
@@ -249,6 +257,11 @@ void test_check() {
     check(!check(options), "a manifest without a signature: no release");
     check(refusals.size() == 3 && refusals.back().find("has no signature") != std::string::npos,
           "a manifest without a signature: refused out loud");
+
+    options.manifest_url = "http://127.0.0.1:" + std::to_string(port) + "/flaky.json";
+    options.cache_file   = dir / "flaky.json";
+    check(!check(options), "a signature the server fails to give (503): no release");
+    check(refusals.size() == 3, "a signature the server fails to give (503): no refusal (no news)");
 
     options.manifest_url = "http://127.0.0.1:" + std::to_string(port) + "/missing.json";
     options.cache_file   = dir / "other.json";
