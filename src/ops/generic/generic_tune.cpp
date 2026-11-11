@@ -387,8 +387,8 @@ Tuned time_problem(const Problem& problem, const Call& model_call, cudaStream_t 
     entry = Json{{"routes", Json::object()}, {"us", Json::object()}};
     // The decode widths are timed as the speed profile runs them, whatever profile the eager call
     // that tunes them is in (a min-term register-MMA tile of four or more token tiles adds its
-    // group sums there, rmma_add_sums, and no call reads the group-sums plane below
-    // kPrefillBandMinTokens, rmma_group_sums); the prefill bands below scope their own.
+    // group sums there, rmma_add_sums, and no call reads the group-sums plane, rmma_group_sums);
+    // the prefill bands below scope their own.
     const ScopedPrefillRoutes speed_profile(false);
     for (std::int32_t t = 1; t <= t_max; ++t) {
         const auto name  = std::to_string(t);

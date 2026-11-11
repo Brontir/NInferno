@@ -677,6 +677,9 @@ struct KernelResources {
     // The register-MMA kernel variant the launch took: its latency form (rmma_latency_pays), or
     // neither form (the wide decoder or the plain kernel, told apart by the registers).
     bool latency_variant = false;
+    // The min-term sums the register-MMA instance takes (RmmaSums, generic_gemm.cuh: 0 the MMA
+    // with ones, 1 the FP32 adds, 2 the group-sums plane).
+    int sums = 0;
 };
 
 // The compiled facts the cost model read for one register-MMA schedule of one format (#556): what
@@ -914,16 +917,24 @@ struct BuildManifest {
 // the floats of a token's row, K's groups rounded up to whole 128-value K steps (the kernel loads
 // a step's groups as 16-byte words; the pre-pass writes the groups past K as zero).
 // rmma_group_sums_bytes: the plane's workspace for `tokens` tokens (256-aligned, as run_route
-// allocates it; 0 for a format without a min term). rmma_group_sums: whether a call of `tokens`
-// takes the plane, given the workspace: a min-term format on tensor-core MMA, outside the
-// invariant profile (whose bytes are the MMA with ones at every width), at every width in the
-// prefill profile (one order for all its routes and widths) and from kPrefillBandMinTokens in the
-// speed profile (below, a pre-pass launch per call costs more than the MMA with ones it saves).
+// allocates it; 0 for a format without a min term). rmma_group_sums: whether the profile reads
+// the plane for the format: a min-term format on tensor-core MMA, in the prefill profile only, at
+// every width (one order for all its routes and widths). Not in the invariant profile (its bytes
+// are the MMA with ones at every width), and not yet in the speed profile: the price describes
+// the instances with the MMA with ones and the adds (rmma_resources) and has no term for the
+// plane's work or its pre-pass launch, so the speed profile keeps them until the price has.
+// rmma_plane_taken: whether a call that rmma_group_sums admits launches the plane's instance on
+// this device (rmma_plane_admitted, generic_gemm_launch.cuh: the format and epilogue's every
+// plane instance keeps the spill and the CTAs per SM of its twin with the MMA with ones, from the
+// committed kernel facts; false without facts and on a build without the plane's instance);
+// described, not launched. resolve_route reads both.
 [[nodiscard]] int rmma_group_sums_values(WeightCodec codec) noexcept;
 [[nodiscard]] std::int32_t rmma_group_sums_ld(std::int32_t k, int values) noexcept;
 [[nodiscard]] std::size_t rmma_group_sums_bytes(WeightCodec codec, std::int32_t k,
                                                 std::int32_t tokens);
-[[nodiscard]] bool rmma_group_sums(WeightCodec codec, std::int32_t tokens);
+[[nodiscard]] bool rmma_group_sums(WeightCodec codec);
+[[nodiscard]] bool rmma_plane_taken(int schedule, const Weight& weight, Epilogue epilogue,
+                                    std::int32_t tokens, std::int32_t rows = 0);
 // Family::GgmlMmq's workspace for a call of `plane_rows` weight rows (SwiGlu: gate and up) and T
 // tokens: the q8_1 activation, the FP32 plane and the stream-k fixup bound.
 // Whether ggml's matrix kernel (Family::GgmlMmq) reads the format.

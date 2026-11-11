@@ -693,9 +693,10 @@ bool rmma_compiled(QType qtype, int schedule, std::int32_t k = 0) {
 // across call sizes and starts. Op::Add adds into a residual that every call starts from (the
 // window's columns of one residual).
 // `windows` (offset, tokens) replace the default ones and `wide` the reference call's width: the
-// prefill profile's min-term register MMA reads the group-sums plane at every width (#619), so its
-// calls below 17 tokens join the wide call's bytes, and outside the profiles each width band keeps
-// its own order (the plane from 17 tokens, below it the MMA with ones or the adds).
+// prefill profile's min-term register MMA sums one way at every width (all its tiles from the
+// group-sums plane where the device's facts admit it, #619, else all with the MMA with ones), so
+// its calls below 17 tokens join the wide call's bytes, and outside the profiles each width band
+// keeps its own order (the MMA with ones, or the adds in a tile of four or more token tiles).
 using Windows = std::vector<std::pair<std::int32_t, std::int32_t>>;
 
 int check_invariance(const Format& f, Op op, std::int32_t out_rows, std::int32_t k,
@@ -832,18 +833,26 @@ int check_invariance(const Format& f, Op op, std::int32_t out_rows, std::int32_t
     return failures;
 }
 
-// The group-sums plane's kernel instance (#619) of a min-term format's `route` against the same
-// route without the plane (run_route given no workspace: the MMA with ones, or the adds where the
-// speed profile takes them, said as a demotion), both against the FP64 oracle of the sampled rows:
-// the plane's largest error is not above the other's by more than one BF16 unit in the last place
-// of the largest output (the two differ in the rounding of the sums only), every output is
-// written, and the call with the plane's workspace is not demoted.
+// The group-sums plane's kernel instance (#619) of a min-term format's `route` in the prefill
+// profile (the only one that reads it) against the same route without the plane (run_route given
+// no workspace: the MMA with ones, said as a demotion), both against the FP64 oracle of the
+// sampled rows: the plane's largest error is not above the other's by more than one BF16 unit in
+// the last place of the largest output (the two differ in the rounding of the sums only), every
+// output is written, and the call with the plane's workspace is not demoted. Where the device's
+// facts do not admit the plane (rmma_plane_taken) both calls run the MMA with ones and neither is
+// demoted. `taken` counts the calls that read the plane.
 int check_plane_sums(const Format& f, Op op, std::int32_t out_rows, std::int32_t k, std::int32_t t,
-                     generic::Route route, std::uint32_t seed) {
-    const ops::ScopedPrefillRoutes speed(false);
+                     generic::Route route, std::uint32_t seed, int& taken) {
+    const ops::ScopedPrefillRoutes prefill(true);
     const std::int32_t rows_n = gated(op) ? 2 * out_rows : out_rows;
     const HostWeight host     = make_weight(f.qtype, rows_n, k, seed);
     DeviceWeight device       = upload_weight(host);
+    const generic::Epilogue epilogue = gated(op)       ? generic::Epilogue::SwiGlu
+                                       : op == Op::Add ? generic::Epilogue::AddResidual
+                                                       : generic::Epilogue::Store;
+    const bool takes =
+        generic::rmma_plane_taken(route.schedule, device.weight, epilogue, t, out_rows);
+    taken += takes ? 1 : 0;
     const auto activation     = make_linear_activation(k, t, seed + 3U, ActivationCompute::A16);
     DeviceBuffer x(activation.size() * 2);
     x.copy_from_host(activation.data(), x.bytes);
@@ -872,9 +881,7 @@ int check_plane_sums(const Format& f, Op op, std::int32_t out_rows, std::int32_t
         call.weight                   = &device.weight;
         call.rows                     = out_rows;
         call.up_offset                = gated(op) ? out_rows : 0;
-        call.epilogue                 = gated(op)       ? generic::Epilogue::SwiGlu
-                                        : op == Op::Add ? generic::Epilogue::AddResidual
-                                                        : generic::Epilogue::Store;
+        call.epilogue                 = epilogue;
         call.out[0]                   = &tout;
         call.segment_rows[0]          = out_rows;
         const std::uint64_t demotions = generic::route_demotion_count();
@@ -882,7 +889,7 @@ int check_plane_sums(const Format& f, Op op, std::int32_t out_rows, std::int32_t
         cuda_check(cudaDeviceSynchronize(), "run");
         bits                        = download_bf16(out.p, residual.size());
         const std::uint64_t demoted = generic::route_demotion_count() - demotions;
-        if (demoted != (plane ? 0U : 1U)) {
+        if (demoted != (plane || !takes ? 0U : 1U)) {
             std::cerr << label
                       << (plane ? ": the plane's call was demoted\n"
                                 : ": the call without workspace was not demoted\n");
@@ -892,6 +899,10 @@ int check_plane_sums(const Format& f, Op op, std::int32_t out_rows, std::int32_t
     };
     std::vector<std::uint16_t> with_plane, without;
     if (!run(true, with_plane) || !run(false, without)) return 1;
+    if (!takes && with_plane != without) {
+        std::cerr << label << ": without the plane the workspace changed the bytes\n";
+        return 1;
+    }
     const auto rows                       = pick_rows(out_rows, 40);
     std::vector<std::int32_t> source_rows = rows;
     if (gated(op))
@@ -2449,12 +2460,12 @@ int main() {
         failures += check_invariance(f, Op::Linear, n, k, ops::LinearPolicy::A16Only, 41U);
         failures += check_invariance(f, Op::SwiGlu, n, k, ops::LinearPolicy::A16Only, 43U);
     }
-    // The min-term formats' register MMA reads the group-sums plane (#619): in the prefill profile
-    // at every width, so a call below 17 tokens (a prefill's last chunk) gives a token the wide
-    // call's bytes on every admitted route; outside the profiles from 17 tokens, where each route
-    // still gives a token the same bytes at every call size and start (the plane), and below 17
-    // in a band of its own (the MMA with ones, or the adds in a tile of four or more token tiles,
-    // rmma_add_sums), as route_is_token_invariant claims for the profiles it is asked about.
+    // The min-term formats' register MMA in the prefill profile sums one way at every width (the
+    // group-sums plane where the device's facts admit it, #619, else the MMA with ones), so a call
+    // below 17 tokens (a prefill's last chunk) gives a token the wide call's bytes on every
+    // admitted route; outside the profiles each route still gives a token the same bytes at every
+    // call size and start in each width band (the MMA with ones, or the adds in a tile of four or
+    // more token tiles, rmma_add_sums), as route_is_token_invariant claims.
     const auto min_term = [](const Format& f) {
         return f.qtype == QType::GGML_Q4_K || f.qtype == QType::GGML_Q5_K ||
                f.qtype == QType::GGML_Q2_K || f.qtype == QType::GGML_Q4_1 ||
@@ -2486,8 +2497,9 @@ int main() {
                                          &one, false, &decode, 16);
         }
     }
-    // The plane's instance against the MMA with ones (or the adds) of the same route, for every
-    // min-term format, compiled schedule and epilogue (check_plane_sums).
+    // The plane's instance against the MMA with ones of the same route, for every min-term format,
+    // compiled schedule and epilogue (check_plane_sums), at prefill widths below and above 17.
+    int plane_calls = 0, plane_taken = 0;
     for (const Format& f : kFormats) {
         if (!on_build(f) || !min_term(f)) continue;
         // A K of whole 128-value steps and, for the 32-value block formats, one whose last step
@@ -2499,13 +2511,18 @@ int main() {
                 if (!rmma_compiled(f.qtype, i, k)) continue;
                 const generic::Route r{generic::Family::RegisterMma, static_cast<std::uint8_t>(i)};
                 for (const Op op : {Op::Linear, Op::Add, Op::SwiGlu}) {
-                    for (const std::int32_t t : {17, 24, 32, 64}) {
+                    for (const std::int32_t t : {5, 17, 24, 32, 64}) {
                         if (op != Op::Linear && (t == 17 || t == 32)) continue;
-                        failures += check_plane_sums(f, op, 136, k, t, r, 91U + i);
+                        failures += check_plane_sums(f, op, 136, k, t, r, 91U + i, plane_taken);
+                        ++plane_calls;
                     }
                 }
             }
         }
+    }
+    if (plane_calls > 0) {
+        std::cout << "group-sums plane: " << plane_taken << " of " << plane_calls
+                  << " prefill calls read it, each within one BF16 ulp of the MMA with ones\n";
     }
     // BF16 at a K the staged schedules admit: they join the register-MMA routes' bytes.
     failures += check_invariance(bf16, Op::Linear, 136, 1088, ops::LinearPolicy::A16Only, 59U);

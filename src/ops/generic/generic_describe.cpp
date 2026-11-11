@@ -42,8 +42,13 @@ ScopedKernelDescribe::ScopedKernelDescribe(KernelResources& out) noexcept : prev
 }
 ScopedKernelDescribe::~ScopedKernelDescribe() { t_describe = previous_; }
 
-std::optional<KernelResources> rmma_resources(int schedule, const Weight& w, Epilogue epilogue,
-                                              std::int32_t tokens, std::int32_t rows) {
+namespace {
+
+// rmma_resources' launch, described: `plane` gives the call a group-sums plane (a stand-in, never
+// read; the described launch takes only its presence), as run_route does where resolve_route
+// takes one.
+std::optional<KernelResources> rmma_described(int schedule, const Weight& w, Epilogue epilogue,
+                                              std::int32_t tokens, std::int32_t rows, bool plane) {
     if (schedule < 0 || schedule >= rmma_schedule_count() || !rmma_schedule_launchable(schedule) ||
         tokens < 1 || !supports(w)) {
         return std::nullopt;
@@ -59,11 +64,8 @@ std::optional<KernelResources> rmma_resources(int schedule, const Weight& w, Epi
     args.ldx      = w.k;
     args.lane_local = invariant_routes_active() ? 0 : 1;
     args.add_sums   = rmma_add_sums() ? 1 : 0;
-    // The instance the engine's call runs: it has the workspace for the group-sums plane
-    // (workspace_capacity_bytes), so a call that takes it (rmma_group_sums) reads it. Never read:
-    // the described launch takes only its presence.
     static const float plane_stand_in = 0.0F;
-    if (rmma_group_sums(codec, tokens)) {
+    if (plane) {
         args.group_sums        = &plane_stand_in;
         args.group_sums_values = rmma_group_sums_values(codec);
         args.group_sums_ld     = rmma_group_sums_ld(w.k, args.group_sums_values);
@@ -81,6 +83,21 @@ std::optional<KernelResources> rmma_resources(int schedule, const Weight& w, Epi
     launch_rmma_codec(codec, schedule, epilogue, args, nullptr);
     if (out.threads == 0) return std::nullopt; // nothing described: no register-MMA launch ran
     return out;
+}
+
+} // namespace
+
+// The price's instance: the MMA with ones or the adds, whether or not the call reads the
+// group-sums plane (rmma_group_sums: the price has no term for the plane yet).
+std::optional<KernelResources> rmma_resources(int schedule, const Weight& w, Epilogue epilogue,
+                                              std::int32_t tokens, std::int32_t rows) {
+    return rmma_described(schedule, w, epilogue, tokens, rows, false);
+}
+
+bool rmma_plane_taken(int schedule, const Weight& w, Epilogue epilogue, std::int32_t tokens,
+                      std::int32_t rows) {
+    const auto plane = rmma_described(schedule, w, epilogue, tokens, rows, true);
+    return plane && plane->sums == 2; // RmmaSums::Plane
 }
 
 std::optional<R8Resources> r8_resources(int schedule, const Weight& w, Epilogue epilogue,

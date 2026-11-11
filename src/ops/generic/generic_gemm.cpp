@@ -1433,6 +1433,12 @@ bool rmma_wide_rule(double bytes_per_sm_cycle, int compute_capability, bool occu
            wide_local_bytes <= plain_local_bytes + kRmmaWideSpillSlack;
 }
 
+bool rmma_plane_rule(std::size_t plane_local_bytes, std::size_t twin_local_bytes, int plane_ctas,
+                     int twin_ctas) noexcept {
+    return plane_ctas > 0 && twin_ctas > 0 && plane_ctas >= twin_ctas &&
+           plane_local_bytes <= twin_local_bytes;
+}
+
 bool operator==(Route a, Route b) { return a.family == b.family && a.schedule == b.schedule; }
 
 int rmma_schedule_count() { return static_cast<int>(kRmmaSchedules.size()); }
@@ -2379,10 +2385,9 @@ bool rmma_add_sums() {
            !prefill_routes_active();
 }
 
-bool rmma_group_sums(WeightCodec codec, std::int32_t tokens) {
+bool rmma_group_sums(WeightCodec codec) {
     return rmma_group_sums_values(codec) > 0 && current_features().mma_tensor &&
-           !invariant_routes_active() &&
-           (prefill_routes_active() || tokens >= kPrefillBandMinTokens);
+           !invariant_routes_active() && prefill_routes_active();
 }
 
 bool route_is_token_invariant(Route route) {
@@ -2413,11 +2418,11 @@ bool route_is_token_invariant(Route route) {
 SummationOrder summation_order(Route route) {
     // The orders of the prefill and invariant profiles, where its users act (the prefill route's
     // bands, in the route tables, route-tune and auto_route): there no register-MMA tile adds its
-    // min-term sums in FP32 (rmma_add_sums), and the prefill profile's take them from the call's
-    // plane at every width (rmma_group_sums, one order whatever the tile), so the WarpsK == 1 tiles
-    // of every width and the staged MMA (no min-term format) sum alike. Outside them the speed
-    // profile's min-term tiles take the plane from kPrefillBandMinTokens and below it the MMA with
-    // ones, or the adds in a tile of four or more token tiles: one order per width band.
+    // min-term sums in FP32 (rmma_add_sums), and the prefill profile's tiles take them all from
+    // the call's plane or all with the MMA with ones (rmma_group_sums and the device's facts,
+    // rmma_plane_admitted: one answer for every tile and width of a format and epilogue), so the
+    // WarpsK == 1 tiles of every width and the staged MMA (no min-term format) sum alike. Outside
+    // them the tiles of four or more token tiles do not.
     if ((route.family == Family::RegisterMma && route.schedule < rmma_schedule_count() &&
          rmma_schedule_info(route.schedule).warps_k == 1 &&
          !rmma_sums_lane_local(route.schedule)) ||
@@ -3360,14 +3365,17 @@ ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call
         out.ggml_fallback = route.family != Family::GgmlVec;
     }
     // A min-term register-MMA call reads its group sums from a plane in its workspace where it
-    // takes one (rmma_group_sums); without room for it the same route runs the MMA with ones
-    // (other bytes: a demotion, counted and said by run_route). The K the register kernel
-    // cannot step runs scalar at the launch, and so does Volta: neither reads a plane.
+    // takes one (rmma_group_sums, and the instance the launch takes: rmma_plane_taken); without
+    // room for it the same route runs the MMA with ones (other bytes: a demotion, counted and
+    // said by run_route, unless the call was demoted before: the first reason stands). The K the
+    // register kernel cannot step runs scalar at the launch, and so does Volta: neither reads a
+    // plane.
     if (route.family == Family::RegisterMma && (w.k % k_multiple(codec_of(w))) == 0 &&
-        rmma_group_sums(codec_of(w), call.tokens)) {
+        rmma_group_sums(codec_of(w)) &&
+        rmma_plane_taken(route.schedule, w, call.epilogue, call.tokens, call.rows)) {
         if (free_for(rmma_group_sums_bytes(codec_of(w), w.k, call.tokens))) {
             out.group_sums = true;
-        } else {
+        } else if (out.reason == Demotion::None) {
             out.reason = Demotion::GroupSums;
         }
     }

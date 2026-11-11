@@ -184,6 +184,15 @@ inline constexpr std::size_t kRmmaWideSpillSlack = 16;
 [[nodiscard]] bool rmma_wide_rule(double bytes_per_sm_cycle, int compute_capability, bool occupancy,
                                   std::size_t wide_local_bytes, std::size_t plain_local_bytes);
 
+// rmma_plane_choice's rule on its inputs (#619): the group-sums plane's instance replaces its twin
+// (the adds or the MMA with ones the call launches without it) only where its committed facts
+// spill no more bytes a thread and hold at least as many CTAs per SM (the same occupancy). The
+// plane removes the MMA with ones' work; it is not priced yet (the cost model describes the twin),
+// so it must not cost the kernel local-memory traffic or residency it does not have. Unknown facts
+// (a CTA count of 0) keep the twin.
+[[nodiscard]] bool rmma_plane_rule(std::size_t plane_local_bytes, std::size_t twin_local_bytes,
+                                   int plane_ctas, int twin_ctas) noexcept;
+
 // Volta's warp-per-row GEMV of the ggml Q4_K / Q5_K / Q6_K, Q8 G32 and BF16 formats at T <= 4
 // (generic_volta_gemv.cu), in place of a lane-local register-MMA call.
 bool volta_gemv_takes(WeightCodec codec, const GemmArgs& args);

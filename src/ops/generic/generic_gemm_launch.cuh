@@ -175,13 +175,15 @@ bool rmma_latency_board() {
     });
 }
 
-template <class Decoder, class Schedule, Epilogue E>
+// The facts and occupancy are those of the sums instance the call launches (`Sums`: the MMA with
+// ones, or the group-sums plane's, whose registers differ).
+template <class Decoder, class Schedule, Epilogue E, RmmaSums Sums = RmmaSums::OnesMma>
 bool rmma_latency_pays(const GemmArgs& args) {
     static PerDevice<std::array<int, 2>> ctas;
     return rmma_latency_board<Decoder, Schedule, E>() &&
-           rmma_occupancy_kept<Schedule>(
-               ctas, rmma_kernel_facts<Decoder, Schedule, E, true, RmmaSums::OnesMma>(),
-               rmma_kernel_facts<Decoder, Schedule, E, false, RmmaSums::OnesMma>(), args);
+           rmma_occupancy_kept<Schedule>(ctas, rmma_kernel_facts<Decoder, Schedule, E, true, Sums>(),
+                                         rmma_kernel_facts<Decoder, Schedule, E, false, Sums>(),
+                                         args);
 }
 
 // The schedules and decoders with a wide variant (WideOf: the wide-load Q6_K), one token tile.
@@ -209,23 +211,73 @@ bool rmma_wide_pays(const GemmArgs& args) {
     return rmma_occupancy_kept<Schedule>(ctas, wide, plain, args);
 }
 
-// Whether the call launches the latency variant (kRmmaLatencyVariant schedules only). The choice
-// reads the device's facts and occupancy of the instances with the MMA with ones, whichever sums
-// the call takes, so the group-sums plane moves no variant choice; where the read fails this
-// launch takes the plain kernel (master's), and the next one asks again.
-template <class Decoder, class Schedule, Epilogue E>
+// Whether the call launches the latency variant of its sums instance (kRmmaLatencyVariant
+// schedules only), from that instance's facts and occupancy (rmma_latency_pays); where the read
+// fails this launch takes the plain kernel (master's), and the next one asks again.
+template <class Decoder, class Schedule, Epilogue E, RmmaSums Sums = RmmaSums::OnesMma>
 bool rmma_latency_launch(const GemmArgs& args) {
     try {
-        return rmma_latency_pays<Decoder, Schedule, E>(args);
+        return rmma_latency_pays<Decoder, Schedule, E, Sums>(args);
     } catch (const std::exception&) {}
     return false;
+}
+
+// Whether one plane instance keeps its twin's resources (rmma_plane_rule): the instance with the
+// MMA with ones of the same schedule and form, its committed facts against the plane's. The
+// CTAs per SM are the registers' and threads' (no shared memory: the plane's static shared
+// memory may not exceed the twin's, so at any dynamic shared memory the plane holds as many).
+// An instance without both facts does not keep them.
+template <class Decoder, class Schedule, Epilogue E, bool Latency>
+bool rmma_plane_keeps() {
+    const auto& plane = rmma_kernel_facts<Decoder, Schedule, E, Latency, RmmaSums::Plane>();
+    const auto& ones  = rmma_kernel_facts<Decoder, Schedule, E, Latency, RmmaSums::OnesMma>();
+    if (!plane || !ones) return false;
+    const auto ctas = [](const kernel_facts::KernelFacts& f) {
+        return resident_ctas_per_sm(device_class(),
+                                    KernelShape{f.registers, 0, Schedule::kThreads, 0});
+    };
+    return plane->static_shared_bytes <= ones->static_shared_bytes &&
+           rmma_plane_rule(plane->spill_bytes(), ones->spill_bytes(), ctas(*plane), ctas(*ones));
+}
+
+// Whether this device's facts admit the group-sums plane for the format and epilogue (#619): only
+// where every register-MMA instance the call can launch, each schedule compiled for the decoder
+// in its plain and (kRmmaLatencyVariant) latency form, keeps its twin's resources. One answer for
+// all schedules and widths: the prefill profile, the only one that reads the plane, gives a token
+// the same bytes whatever the call's size, so its route tables' tiles must all sum the same way
+// (summation_order), all from the plane or all with the MMA with ones. Read once per device; a
+// read that fails admits none.
+template <class Decoder, Epilogue E>
+bool rmma_plane_admitted() {
+    if constexpr (!kRmmaPlaneVariant<Decoder>) {
+        return false;
+    } else {
+        static PerDevice<bool> admitted;
+        return admitted.get([](int) {
+            try {
+                bool keeps = true;
+#define NINFERNO_GENERIC_CASE(I, WM, WK, MT, NT, C)                                                \
+    if constexpr (rmma_compiled<Decoder, MT, NT>) {                                                \
+        using S = RmmaSchedule<WM, WK, MT, NT, C>;                                                 \
+        keeps   = keeps && rmma_plane_keeps<Decoder, S, E, false>();                               \
+        if constexpr (kRmmaLatencyVariant<Decoder, S, E>) {                                        \
+            keeps = keeps && rmma_plane_keeps<Decoder, S, E, true>();                              \
+        }                                                                                          \
+    }
+                NINFERNO_GENERIC_RMMA_SCHEDULES(NINFERNO_GENERIC_CASE)
+#undef NINFERNO_GENERIC_CASE
+                return keeps;
+            } catch (const std::exception&) { return false; }
+        });
+    }
 }
 
 template <class Decoder, class Schedule, Epilogue E>
 void launch_rmma_schedule(const GemmArgs& args, cudaStream_t stream) {
     if constexpr (kRmmaPlaneVariant<Decoder>) {
-        // The call's plane (run_route: rmma_group_sums), in place of the MMA with ones and of the
-        // adds, in the latency form where the call would take that.
+        // The call's plane (run_route: resolve_route's group_sums), in place of the MMA with ones
+        // where the device's facts admit it (rmma_plane_admitted; elsewhere the plane is not
+        // read), in the latency form where the plane's own instances pay it.
         if (args.group_sums != nullptr) {
             constexpr int kGroup = 4 * Decoder::kRun / SplitsOf<Decoder>::value;
             if (args.group_sums_values != kGroup ||
@@ -233,14 +285,17 @@ void launch_rmma_schedule(const GemmArgs& args, cudaStream_t stream) {
                 throw std::invalid_argument(
                     "generic linear: the group-sums plane does not match the format's groups");
             }
-            if constexpr (kRmmaLatencyVariant<Decoder, Schedule, E>) {
-                if (rmma_latency_launch<Decoder, Schedule, E>(args)) {
-                    launch_rmma_kernel<Decoder, Schedule, E, true, RmmaSums::Plane>(args, stream);
-                    return;
+            if (rmma_plane_admitted<Decoder, E>()) {
+                if constexpr (kRmmaLatencyVariant<Decoder, Schedule, E>) {
+                    if (rmma_latency_launch<Decoder, Schedule, E, RmmaSums::Plane>(args)) {
+                        launch_rmma_kernel<Decoder, Schedule, E, true, RmmaSums::Plane>(args,
+                                                                                         stream);
+                        return;
+                    }
                 }
+                launch_rmma_kernel<Decoder, Schedule, E, false, RmmaSums::Plane>(args, stream);
+                return;
             }
-            launch_rmma_kernel<Decoder, Schedule, E, false, RmmaSums::Plane>(args, stream);
-            return;
         }
     }
     if constexpr (kRmmaAddVariant<Decoder, Schedule>) {
@@ -290,6 +345,7 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
         if (!facts) return;
         describe_kernel(*described, *facts, dim3(grid.x, grid.y, Schedule::kCluster),
                         Schedule::kThreads, smem, Latency);
+        described->sums = static_cast<int>(Sums);
         return;
     }
     if (Schedule::kCluster == 1 &&
