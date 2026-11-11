@@ -57,10 +57,19 @@ Qwen/Qwen3.6-27B and Qwen/Qwen3.8-27B (Apache 2.0).
 The evaluation texts under eval/corpora (Wikipedia, PG-19, WikiText and others) keep their own
 licenses, listed in eval/corpora/perplexity-1m/THIRD_PARTY_NOTICES.md.
 
-Release archives also carry the shared libraries their binaries load (FFmpeg, curl, OpenSSL and
-their dependencies on Linux; the vcpkg-built DLLs and the Visual C++ runtime on Windows), each
-with its copyright file in share/licenses/<package>. Their sources are those of the distribution
-or vcpkg port they were built from.
+Release archives also carry the shared libraries their binaries load (curl, OpenSSL and their
+dependencies on Linux; the vcpkg-built DLLs, FFmpeg's among them, and the Visual C++ runtime on
+Windows), each with its copyright file in share/licenses/<package>. Their sources are those of the
+distribution or vcpkg port they were built from.
+
+FFmpeg (https://ffmpeg.org), with dav1d (https://code.videolan.org/videolan/dav1d) linked into
+libavcodec, is shipped in Linux release archives as libavcodec, libavformat, libavutil and
+libswscale. tools/release/ffmpeg.sh builds it from the source tarballs tools/release/ffmpeg.pin
+names, with decoders and demuxers only and no GPL or nonfree part. FFmpeg is under the GNU Lesser
+General Public License 2.1 or later, dav1d under the BSD 2-Clause license. The archive's
+share/licenses/ffmpeg holds the licence texts, the build's configure line and its decoders
+(BUILD.txt), and the unmodified source tarballs with the scripts that built them; the libraries are
+linked dynamically, so a rebuild of them can replace them.
 
 pdfium (https://pdfium.googlesource.com/pdfium), as built by bblanchon/pdfium-binaries
 (https://github.com/bblanchon/pdfium-binaries), is shipped in release archives and loaded at run

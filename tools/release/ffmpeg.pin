@@ -1,0 +1,8 @@
+# The FFmpeg a Linux release carries (built by ffmpeg.sh, LGPL, decoders only) and the AV1
+# decoder it links: name, version, the source tarball's SHA-256.
+# FFmpeg: https://ffmpeg.org/releases/ffmpeg-<version>.tar.xz (signed with the FFmpeg release key,
+# https://ffmpeg.org/download.html#release-verification).
+# dav1d: https://downloads.videolan.org/pub/videolan/dav1d/<version>/dav1d-<version>.tar.xz (the
+# SHA-256 equals the .sha256 file published beside it).
+ffmpeg 9.0.2 8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
+dav1d 1.5.4 686616b7c69eb88d44459391ab25cac13b6647a3b288835c5784e71c1514a5c5
