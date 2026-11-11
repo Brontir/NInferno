@@ -178,6 +178,13 @@ Options parse_options(int argc, char** argv) {
                             (options.form == Form::Single && options.tokens.size() != 1))) {
         usage("--profile requires one selected extent");
     }
+    // The crossover scan and the slopes read adjacent widths as increasing: an unsorted list
+    // would bracket the wrong sign change, and a repeated last width divides by zero.
+    if (options.crossover &&
+        std::adjacent_find(options.tokens.begin(), options.tokens.end(),
+                           [](int a, int b) { return b <= a; }) != options.tokens.end()) {
+        usage("--crossover requires --tokens in strictly increasing order");
+    }
     return options;
 }
 
@@ -461,10 +468,12 @@ void run_crossover(const Options& options, cudaStream_t stream) {
         double crossover = -1.0; // -1: the fused route wins at every width measured
         for (std::size_t i = 1; i < ts.size(); ++i) {
             if (diff[i - 1] <= 0.0 && diff[i] > 0.0) {
-                const double t0 = std::log(static_cast<double>(ts[i - 1]));
-                const double t1 = std::log(static_cast<double>(ts[i]));
+                // The model is affine in T (fused - split = -2 L + T x delta), so the zero is
+                // interpolated in tokens, not in log T.
+                const double t0 = static_cast<double>(ts[i - 1]);
+                const double t1 = static_cast<double>(ts[i]);
                 const double w  = -diff[i - 1] / (diff[i] - diff[i - 1]);
-                crossover       = std::exp(t0 + w * (t1 - t0));
+                crossover       = t0 + w * (t1 - t0);
                 break;
             }
         }
