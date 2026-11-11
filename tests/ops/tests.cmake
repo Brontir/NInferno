@@ -155,6 +155,11 @@ ninferno_add_op_test(ninferno_rmsnorm_rope_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_rmsnorm_rope.cpp"
   LIBRARIES ninferno_ops)
 
+# The fused text qk-norm + RoPE's width bound on substituted boards (#617 G). No GPU.
+ninferno_add_op_test(ninferno_rmsnorm_rope_bound_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_rmsnorm_rope_bound.cpp"
+  LIBRARIES ninferno_ops)
+
 ninferno_add_op_test(ninferno_context_kv_materialize_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_context_kv_materialize.cpp"
   LIBRARIES ninferno_ops)
@@ -215,6 +220,15 @@ ninferno_add_op_test(ninferno_moe_plan_golden_test
   LIBRARIES ninferno_ops)
 target_compile_definitions(ninferno_moe_plan_golden_test PRIVATE
   NINFERNO_MOE_PLAN_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/moe_plan_golden")
+
+# The MoE stage price (ops/moe/moe_cost.h, #616 step 4): the bytes law and roofline on small cases,
+# the candidates of a layer, and the replica against the sweeps in routes/*.json (predicted against
+# measured per board). Host only; changes no route.
+ninferno_add_op_test(ninferno_moe_cost_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_moe_cost.cpp"
+  LIBRARIES ninferno_ops ninferno::json)
+target_compile_definitions(ninferno_moe_cost_test PRIVATE
+  NINFERNO_ROUTES_DIR="${PROJECT_SOURCE_DIR}/routes")
 
 # The Qwen3.5 and Gemma 4 warp top-8 selections against FP64: negative logits, exact ties at
 # rank 8, equal logits, tiny weights, renormalisation.

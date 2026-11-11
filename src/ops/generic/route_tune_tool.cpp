@@ -202,8 +202,7 @@ int route_tune_main(int argc, char** argv) {
         if (opt.count("--selected-out")) {
             selected_csv.open(opt["--selected-out"]);
             if (!selected_csv) throw std::runtime_error("cannot open " + opt["--selected-out"]);
-            selected_csv << "format,compute,epilogue,n,k,T,asked,selected,select_ns,run,device,"
-                            "pci_device_id,authority,evidence,ranker\n";
+            selected_csv << generic::kSelectedCsvHeader << '\n';
             // The selection reads the release's dense tuner entries as the engine's does: the
             // tuner on, in mode Off (read the release's routes/tuner/dense_tune.json, time and
             // write nothing; the user's own tuning cache is not read either).
@@ -606,8 +605,7 @@ int route_tune_main(int argc, char** argv) {
                                  << ',' << t << ',' << generic::route_name(asked) << ','
                                  << generic::route_name(ran) << ',' << select_ns << ',' << run_id
                                  << ',' << device_id << ',' << pci_id << ','
-                                 << answer.evidence.source << ','
-                                 << generic::evidence_kind_name(answer.evidence.kind) << ','
+                                 << generic::evidence_columns(answer.evidence) << ','
                                  << generic::route_name(ranker) << '\n';
                 }
                 std::printf("%s %s %s n=%d k=%d T=%d best=%s %.2f us\n",
