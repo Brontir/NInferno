@@ -1,0 +1,28 @@
+# Driver clock readings (kHz) and the whole kHz the engine stores for each: the nearest point of
+# the 2^(k/16) grid on the log2 scale, k = floor(16 log2 x + 1/2), then 2^(k/16) rounded half up,
+# worked out by hand in exact arithmetic. Real boards' clocks, then the integers either side of six
+# grid midpoints. Read by tests/test_machine_facts.cpp (the engine's snap_to_fact_grid) and by
+# tests/test_facts_vs_driver.py (the audit's port engine_snapped_khz).
+# driver_khz stored_khz
+1 1
+2 2
+100000 101070
+1500000 1482910
+2475000 2493948
+9000000 9147842
+9001000 9147842
+10001000 9975792
+10501000 10417458
+14001000 14107901
+21001000 20834917
+450525 440872
+450526 460391
+2548558 2493948
+2548559 2604365
+9762031 9552851
+9762032 9975792
+10194233 9975792
+10194234 10417458
+34289178 33554432
+34289179 35040014
+2101467501 2056437387

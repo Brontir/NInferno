@@ -587,6 +587,12 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
         }
         r.load                 = bounds_of(r.engine.load);
         r.load_basis           = r.load.empty() ? "none" : "measured";
+        // The basis of the table in force: the served step's (the profile's choice, its fit
+        // fallback, a shallower draft or the MTP head: each serves a profile's table and carries
+        // its spec::Profile::load_basis).
+        if (!r.load.empty() && served && !served->load_basis.empty()) {
+            r.load_basis = served->load_basis;
+        }
         r.depth_at_concurrency = depth_at(r.engine, concurrency);
     }
     return out;

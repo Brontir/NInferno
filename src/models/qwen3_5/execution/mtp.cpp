@@ -22,6 +22,7 @@ std::size_t rows_linear_bytes(const LinearParameters& p, std::int32_t first, std
 // A format alone is not enough: the Op is registered for two geometries (the 27B's [14336,5120]
 // and the 35B-A3B's [9216,2048]), so an MoE layer stored in BF16, NVFP4 or FP8 (nvidia's and
 // RedHatAI's NVFP4 releases keep the MTP layer BF16) also takes the generic linear.
+// FUSION-SITE: attn_input_proj
 bool fused(const MtpProjectionParameters& parameters, const AttentionConfig& config) {
     if (parameters.rows) { return false; }
     return ops::attn_input_proj_fused_supported(

@@ -143,6 +143,7 @@ Q4Q5GdnInputPlan q4_q5_gdn_input_resolve_plan(const Q4Q5GdnInputProblem& problem
     throw std::logic_error("Q4/Q5 GDN input: admitted problem has no covering route");
 }
 
+// FUSION-SITE: gdn_conv_q4_q5
 Q4Q5GdnInputConvPlan q4_q5_gdn_input_conv_resolve_plan(const Q4Q5GdnInputProblem& problem,
                                                        std::int32_t batch_size) {
     if (!q4_q5_gdn_input_admits(problem) || batch_size <= 0 || batch_size > 8) {
