@@ -80,38 +80,40 @@ ninferno_add_op_test(ninferno_linear_scale_domain_test
 
 add_test(NAME ninferno_route_table_malformed_default_test
   COMMAND ninferno_route_table_test --malformed-default)
+ninferno_label_tests(ninferno_route_table_malformed_default_test LABELS gpu)
 set_tests_properties(ninferno_route_table_malformed_default_test PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME ninferno_route_table_similar_default_test
   COMMAND ninferno_route_table_test --similar-default)
+ninferno_label_tests(ninferno_route_table_similar_default_test LABELS gpu)
 set_tests_properties(ninferno_route_table_similar_default_test PROPERTIES SKIP_RETURN_CODE 77)
 
 # The generic projection path: random and awkward shapes in every format, every op and route,
 # against an FP64 reference GEMM, plus the token invariance of the prefill-admissible routes.
-ninferno_add_op_test(ninferno_linear_generic_test
+ninferno_add_op_test(ninferno_linear_generic_test LABELS gpu slow
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_generic_linear.cpp"
   LIBRARIES ninferno_linear_test_support)
 
 # A generic launch's overlap with its neighbours (#309): join, release and prefetch with the
 # reason each is refused, as run_route applies them (host only).
-ninferno_add_op_test(ninferno_launch_overlap_test
+ninferno_add_op_test(ninferno_launch_overlap_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_launch_overlap.cpp"
   LIBRARIES ninferno_linear_test_support)
 
 # Scratch read lifetimes of generic launches (#309): which launch reads or writes which workspace
 # region until when, and that no launch starting under its predecessor takes a region it still
 # uses (host only).
-ninferno_add_op_test(ninferno_scratch_lifetime_test
+ninferno_add_op_test(ninferno_scratch_lifetime_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_scratch_lifetime.cpp"
   LIBRARIES ninferno_linear_test_support)
 
 # A route's tile and logical traffic (#298): the schedules' declared geometry (host only).
-ninferno_add_op_test(ninferno_route_traffic_test
+ninferno_add_op_test(ninferno_route_traffic_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_traffic.cpp"
   LIBRARIES ninferno_linear_test_support)
 
 # A slice of a fused weight and a row view are priced, described and routed as a standalone weight
 # of their own shape on every golden board, the R8 verify gate included (#640, #704, host only).
-ninferno_add_op_test(ninferno_slice_price_test
+ninferno_add_op_test(ninferno_slice_price_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_slice_price.cpp"
   LIBRARIES ninferno_linear_test_support)
 
@@ -132,12 +134,12 @@ set_tests_properties(ninferno_route_description_volta_test PROPERTIES SKIP_RETUR
 
 # Route selection on the GPU classes this machine lacks (substituted DeviceClass, one process
 # per board): every choice admitted, no feature the board lacks, its own route table.
-ninferno_add_op_test(ninferno_route_classes_test
+ninferno_add_op_test(ninferno_route_classes_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_classes.cpp"
   LIBRARIES ninferno_linear_test_support)
 
 # The format traits table against the predicates it replaced, for every QType.
-ninferno_add_op_test(ninferno_format_traits_test
+ninferno_add_op_test(ninferno_format_traits_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_format_traits.cpp"
   LIBRARIES ninferno_linear_test_support)
 
@@ -166,7 +168,7 @@ ninferno_add_test(ninferno_gen_kernel_roofline_golden
 # ops::linear's candidates per call (#306): the owned Q8 kernel's launch and the generic route,
 # one selected as dispatch_linear runs.
 # The activation each generic route prepares and which preparations serve one another (#308).
-ninferno_add_op_test(ninferno_prepared_rules_test
+ninferno_add_op_test(ninferno_prepared_rules_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_prepared_rules.cpp"
   LIBRARIES ninferno_linear_test_support)
 
@@ -176,7 +178,7 @@ ninferno_add_op_test(ninferno_linear_candidates_test
 
 # The generic path's choices on thirteen substituted boards against selector_golden/<board>.txt:
 # a selector change shows line by line; a refactor must leave every file as it was.
-ninferno_add_op_test(ninferno_selector_golden_test
+ninferno_add_op_test(ninferno_selector_golden_test LABELS gpu golden slow
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_selector_golden.cpp"
   LIBRARIES ninferno_linear_test_support)
 target_compile_definitions(ninferno_selector_golden_test PRIVATE
@@ -191,9 +193,8 @@ ninferno_add_op_test(ninferno_selector_real_device_test
 # The register-MMA kernel's static shared memory as constexpr geometry (ops/generic/rmma_geometry.h,
 # static_asserted by the kernel, with the decoder rows pinned to their decoders) equals every row of
 # every kernel-facts snapshot (#612 step 5); a plain host test: header only, no GPU, no library.
-ninferno_add_test(ninferno_rmma_geometry_test NEEDS_SOURCE_DIR
+ninferno_add_test(ninferno_rmma_geometry_test LABELS host NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_rmma_geometry.cpp")
-set_tests_properties(ninferno_rmma_geometry_test PROPERTIES LABELS host)
 # The full build's architectures (the NVFP4 kernels, so the cluster hand-over): the one list of
 # CMakeLists.txt, comma-joined, not parsed from its text.
 target_compile_definitions(ninferno_rmma_geometry_test PRIVATE
@@ -205,7 +206,12 @@ target_compile_definitions(ninferno_rmma_geometry_test PRIVATE
 #   cuobjdump (tools/kernel_facts/kernel_facts.py), equal the committed snapshot of its
 #   architecture; no GPU. Skips (77) where this nvcc is not the snapshot's (ptxas then allocates
 #   other registers by construction; the price reads the snapshot either way). A mismatch names
-#   the kernels and the command that regenerates the file.
+#   the kernels and the command that regenerates the file. Where the snapshot carries loop counts
+#   and the nvcc is its own, the check disassembles every register-MMA kernel (about 2400), which
+#   takes minutes (560 s in one sm_120a build); a snapshot without loop counts (sm_70, sm_80,
+#   sm_90, sm_100) is compared in seconds, and another nvcc skips. The label is slow in every
+#   build, so `ctest -L host -LE slow` leaves it out even where it would be quick: a label that
+#   depended on the snapshot would make the fast set differ between builds.
 # - ninferno_kernel_facts_lookup_test: every snapshot parses, the release engine of each lab
 #   capability is found, and every facts-priced golden board's price reads facts; no GPU.
 # - ninferno_kernel_facts_live_test: on a GPU that runs this build's SASS, the running kernels'
@@ -231,6 +237,7 @@ add_test(NAME ninferno_kernel_facts_test
   COMMAND ${Python3_EXECUTABLE} -B ${PROJECT_SOURCE_DIR}/tools/kernel_facts/kernel_facts.py check
     --binary ${ninferno_kernel_facts_binary} --expected ${ninferno_kernel_facts_snapshot}
     --nvcc ${CMAKE_CUDA_COMPILER_VERSION} --cuda-bin ${ninferno_cuda_bin})
+ninferno_label_tests(ninferno_kernel_facts_test LABELS host slow)
 set_tests_properties(ninferno_kernel_facts_test PROPERTIES SKIP_RETURN_CODE 77)
 # `ninja ninferno_kernel_facts_update`: the snapshot of this build's architecture rewritten from
 # its binary into the source tree (then regenerate the selector goldens that move with it).
@@ -243,7 +250,7 @@ add_custom_target(ninferno_kernel_facts_update
   DEPENDS ninferno_selector_golden_test
   VERBATIM)
 
-ninferno_add_op_test(ninferno_kernel_facts_lookup_test
+ninferno_add_op_test(ninferno_kernel_facts_lookup_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_kernel_facts.cpp"
   LIBRARIES ninferno_linear_test_support)
 
@@ -255,14 +262,14 @@ target_compile_definitions(ninferno_kernel_facts_live_test PRIVATE
 
 # The selector's named authorities (#614): the lists are well formed, on every facts board each
 # answer's evidence is consistent with its kind, and known cases name the authority that answers.
-ninferno_add_op_test(ninferno_route_authorities_test
+ninferno_add_op_test(ninferno_route_authorities_test LABELS host
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_authorities.cpp"
   LIBRARIES ninferno_linear_test_support)
 
 # The route catalogue (#614): for every (family, schedule) the summation order, token invariance,
 # activation class and workspace need agree, profile_admits says what they say, and every
 # routes/*.json passes the filter. No GPU.
-ninferno_add_op_test(ninferno_route_catalogue_test NEEDS_SOURCE_DIR
+ninferno_add_op_test(ninferno_route_catalogue_test LABELS host NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_catalogue.cpp"
   LIBRARIES ninferno_linear_test_support ninferno::json)
 

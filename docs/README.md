@@ -41,6 +41,7 @@ reference; the others own narrower contracts:
 | [Configuration choice](maintainer/configuration-choice.md) | the KV codec, activations and quantization the engine picks when left automatic: memory, speed and accuracy from facts, the trade, what a decision reads, the explanation |
 | [GPU facts table](maintainer/gpu-facts.md) | the PCI-ID reference table: fields, the reference clock, how facts are derived, adding a SKU |
 | [Gap map](maintainer/gap-map.md) | measured kernel times against the counted DRAM and tensor laws: what `tools/bench/gap_map.py` computes and what it finds |
+| [Kernel proposals](maintainer/kernel-proposals.md) | the register of proposed kernels: regime, counted law, the prediction frozen before the build, the A/B and the decision |
 | [Engine architecture](maintainer/engine-architecture.md) | model/config/weight ownership, loading-to-execution flow, requests, scheduling, transactions and graphs |
 | [Making a release](maintainer/release.md) | the pinned build machine (Ubuntu 24.04, CUDA 13.4.92 and 12.8.93), the checklist from the tag to the release server and the GitHub release |
 | [Build system](maintainer/build-system.md) | CMake targets, source ownership, CUDA compilation boundaries, presets and developer configuration |
