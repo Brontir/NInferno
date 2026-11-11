@@ -370,10 +370,17 @@ int run(const Options& o) {
         std::printf("sm rate facts: %s sm_%d%d (core/sm_rate_facts.h): the legacy DRAM law\n",
                     row ? "another card refutes the row of" : "no row for", d.major, d.minor);
     } else {
+        // b_w_max is a cap only where the probe saw a warp saturate; elsewhere the counted bytes
+        // stand (no cap).
         std::printf("sm rate facts (core/sm_rate_facts.h): L0 %.1f ns, P %.2f B/clk free, %.2f "
-                    "B/clk placed, b_w_max %.0f B\n",
+                    "B/clk placed, ",
                     *chip.dram_latency_s * 1e9, *chip.sm_dram_bytes_per_clock_free,
-                    *chip.sm_dram_bytes_per_clock_placed, *chip.sm_max_warp_bytes);
+                    *chip.sm_dram_bytes_per_clock_placed);
+        if (chip.sm_max_warp_bytes) {
+            std::printf("b_w_max %.0f B\n", *chip.sm_max_warp_bytes);
+        } else {
+            std::printf("no b_w cap (no warp saturated in the probe)\n");
+        }
     }
     std::printf("call %s %dx%d T=%d %s: payload %llu bytes, %.4f bytes/value, sets %.0f; "
                 "register-MMA terms: %s; a16 scale %.2f\n",

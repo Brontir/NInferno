@@ -1053,10 +1053,11 @@ def main():
     m.add_argument("--input", required=True)
     m.add_argument("--inputs", default=DEFAULT_INPUTS)
     m.add_argument("--table", default=DEFAULT_TABLE)
-    m.add_argument("--transfer", action="store_true",
-                   help="another card of the architecture: a transfer check of its row")
-    m.add_argument("--new-reference", action="store_true",
-                   help="replace the architecture's reference run with another card's")
+    how = m.add_mutually_exclusive_group()
+    how.add_argument("--transfer", action="store_true",
+                     help="another card of the architecture: a transfer check of its row")
+    how.add_argument("--new-reference", action="store_true",
+                     help="replace the architecture's reference run with another card's")
     m.set_defaults(fn=cmd_merge)
     g = sub.add_parser("regenerate")
     g.add_argument("--inputs", default=DEFAULT_INPUTS)
