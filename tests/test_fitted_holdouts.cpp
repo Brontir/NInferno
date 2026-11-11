@@ -67,7 +67,7 @@ std::string read_file(std::string_view relative) {
 // The text without its comments: a `//` to the end of its line, and a `/* ... */` block (its
 // newlines kept, so a line stays a line). A tag or a definition inside a comment is neither. String
 // and character literals are copied as they are, so a "//" or "/*" inside one is not a comment. As
-// g++ -fpreprocessed reads them: a raw string R"d(...)d" is one literal to its closing delimiter
+// the compiler reads them (g++ -E): a raw string R"d(...)d" is one literal to its closing delimiter
 // (newlines, quotes and comment markers inside it included), a ' between the digits of a number is
 // a digit separator, not a character literal, and a line comment that ends in a backslash goes on
 // to the next line (whose newline is kept).
@@ -79,6 +79,13 @@ std::string code_of(const std::string& text) {
     const auto token_start = [&](std::size_t at) {
         while (at > 0 && (word(text[at - 1]) || text[at - 1] == '\'' || text[at - 1] == '.')) --at;
         return at;
+    };
+    // A number starts with a digit, or with a point and a digit (.5).
+    const auto digit = [&](std::size_t at) {
+        return at < text.size() && std::isdigit(static_cast<unsigned char>(text[at])) != 0;
+    };
+    const auto number_start = [&](std::size_t at) {
+        return digit(at) || (text[at] == '.' && digit(at + 1));
     };
     std::string out;
     out.reserve(text.size());
@@ -101,9 +108,8 @@ std::string code_of(const std::string& text) {
                 }
             }
         }
-        if (c == '\'' && i > 0 && word(text[i - 1]) &&
-            std::isdigit(static_cast<unsigned char>(text[token_start(i)])) != 0) {
-            out += c; // a digit separator: 1'000, 0xFF'FF
+        if (c == '\'' && i > 0 && word(text[i - 1]) && number_start(token_start(i))) {
+            out += c; // a digit separator: 1'000, 0xFF'FF, .5'0
             ++i;
         } else if (c == '"' || c == '\'') {
             const std::size_t start = i++;
@@ -422,7 +428,7 @@ void check_comment_stripping() {
     if (!indented.count("kIndented")) fail("definitions_of (RecordedOnly): missed kIndented");
     if (margin.count("kIndented")) fail("definitions_of (Definitions): read an indented line");
 
-    // The four edge cases of #715, as g++ -fpreprocessed reads them: a raw string is one literal
+    // The four edge cases of #715, as the compiler reads them (g++ -E): a raw string is one literal
     // (newlines, quotes and comment markers inside it included), a digit separator is no character
     // literal, and a line comment ending in a backslash goes on to the next line.
     const std::string edges     = "constexpr auto kRaw = R\"x(a\n"
@@ -434,6 +440,7 @@ void check_comment_stripping() {
                                   "constexpr int kSep = 1'000; // constexpr int kSepHidden = 9;\n"
                                   "constexpr int kHexSep = 0xFF'FF; // constexpr int kHexHidden = 9;\n"
                                   "constexpr char kChar = 'a'; // constexpr int kCharHidden = 9;\n"
+                                  "constexpr double kDot = .5'0; // constexpr int kDotHidden = 9;\n"
                                   "// a comment that goes on \\\n"
                                   "constexpr int kContinued = 10;\n"
                                   "constexpr int kAfterContinued = 11;\n";
@@ -444,10 +451,11 @@ void check_comment_stripping() {
     }
     const auto edge_defs = definitions_of(edge_code, Mode::Definitions);
     for (const char* seen : {"kRaw", "kAfterRaw", "kQuote", "kAfterQuote", "kSep", "kHexSep",
-                             "kChar", "kAfterContinued"}) {
+                             "kChar", "kDot", "kAfterContinued"}) {
         if (!edge_defs.count(seen)) fail(std::string("code_of edge cases: missed ") + seen);
     }
-    for (const char* hidden : {"kSepHidden", "kHexHidden", "kCharHidden", "kContinued"}) {
+    for (const char* hidden :
+         {"kSepHidden", "kHexHidden", "kCharHidden", "kDotHidden", "kContinued"}) {
         if (edge_defs.count(hidden)) {
             fail(std::string("code_of edge cases: read ") + hidden + " inside a comment");
         }
