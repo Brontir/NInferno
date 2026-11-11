@@ -9,4 +9,4 @@ add_library(ninferno_media_pdf STATIC
   pdf/pdf_text.cpp
 )
 ninferno_internal_includes(ninferno_media_pdf)
-target_link_libraries(ninferno_media_pdf PRIVATE ninferno_core ${CMAKE_DL_LIBS})
+target_link_libraries(ninferno_media_pdf PRIVATE ninferno::core ${CMAKE_DL_LIBS})
