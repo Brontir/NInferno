@@ -163,6 +163,7 @@ NOT_DECIDING = {
     "src/core/sys.cpp", "src/core/sys.h", "src/core/tensor.cpp", "src/core/tensor.h",
     "src/core/tune_timer.cu", "src/core/tune_timer.h", "src/core/units.h",
     "src/core/weight_view.cpp", "src/core/weight_view.h",
+    "src/core/cuda_stream.h",  # the cudaStream_t handle type for host-only builds (#675)
     # device code reached through the listed ggml_mmq.cu / generic_gemm.cpp: it computes, the
     # selector reads none of its constants
     "src/ops/generic/generic_staged.cuh", "src/ops/generic/generic_tiled.cuh",
@@ -334,6 +335,8 @@ EXCLUDED = [
     ("src/ops/rmsnorm_rope/*.cpp", "not the linear projection"),
     ("src/ops/softmax_attention/**", "attention, not the linear projection"),
     ("src/ops/moe/moe_tune.cpp", "load-time MoE tuner (times plans); no selector golden reads it"),
+    ("src/ops/moe/moe_cost.cpp", "MoE stage prices and their candidate report (#683): a lower bound "
+                                 "that no plan selects by; only its test and replica read it"),
     ("cmake/Dependencies.cmake", "third-party fetch"), ("cmake/GitCommit.cmake", "version string"),
     ("cmake/Windows.cmake", "Windows toolchain"), ("cmake/windows-utf8.manifest", "Windows manifest"),
     ("cmake/NInfernoTargets.cmake", "compile flags (-lineinfo, archive kind, RDC) and the per-arch source "

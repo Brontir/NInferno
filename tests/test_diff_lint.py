@@ -736,6 +736,33 @@ class MaskAndLiteralFixes(unittest.TestCase):
         self.assertEqual(lits("t.cpp", "#if 1\nconst char* s = \"oops\n;\n#endif\n"), [2])
         self.assertEqual(lits("t.cpp", "#if 0 || X\nconst char* s = \"oops\n;\n#endif\n"), [2])
 
+    def test_short_circuit_constant_conditions_are_decided(self):
+        # #712: a literal operand that settles `&&` or `||` decides the group, in any order and grouping
+        for cond in ("defined(FEATURE) && 0", "0 && X", "(X && 0)", "(X) && (0)", "(0 || X) && 0",
+                     "X && (Y && 0) // old", "defined(A) &&\\\n 0"):
+            with self.subTest(cond=cond):
+                self.assertEqual(dl.cond_literal(cond.replace("\\\n", "")), 0)
+                self.assertEqual(lits("t.cpp", f"#if {cond}\ndon't\n#endif\nint i;\n"), [])
+                self.assertEqual(lits("t.cpp", f"#if {cond}\nit's\n#else\nconst char* s = \"oops\n;\n#endif\n"),
+                                 [4 + cond.count("\n")])
+        for cond in ("X || 1", "1 || X", "((1)) || X", "1 || (X && Y)"):
+            with self.subTest(cond=cond):
+                self.assertEqual(dl.cond_literal(cond), 1)
+                self.assertEqual(lits("t.cpp", f"#if {cond}\nint a;\n#else\ndon't\n#endif\nint b;\n"), [])
+        # an operand that does not settle it, or another operator, leaves the group code
+        for cond in ("X || 0", "X && 1", "defined(A) && (B || 0)", "X ? 0 : 0", "!0 && X", "(X && 0"):
+            with self.subTest(cond=cond):
+                self.assertIsNone(dl.cond_literal(cond))
+                self.assertEqual(lits("t.cpp", f"#if {cond}\nconst char* s = \"oops\n;\n#endif\n"), [2])
+        # the comma binds looser than `||`, and a character constant may hold the operators
+        for cond in ("1 || 0, 0", "0 == '||1'", "'a' && 0", "0 == u8'||1'", "0 == L'&&0'"):
+            with self.subTest(cond=cond):
+                self.assertIsNone(dl.cond_literal(cond))
+        # a digit separator is not a character constant
+        for cond, value in (("1'000 || X", 1), ("0x1'F || X", 1), ("1'000'000 && 0", 0)):
+            with self.subTest(cond=cond):
+                self.assertEqual(dl.cond_literal(cond), value)
+
     def test_a_comment_opener_split_by_a_line_continuation_is_a_comment(self):
         # translation phase 2 joins `/\` + newline + `/` into `//` before comments are recognised
         self.assertEqual(lits("t.cpp", "int a; /\\\n/ don't close this\nint b;\n"), [])

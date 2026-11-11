@@ -261,98 +261,23 @@ bool device_has_kernel_image(int device) {
     return slot.image;
 }
 
-namespace {
-thread_local const DeviceClass* t_substitute       = nullptr;
-thread_local const std::string* t_substitute_key   = nullptr;
-} // namespace
 
-ScopedDeviceClass::ScopedDeviceClass(DeviceClass substitute)
-    : substitute_(std::move(substitute)), key_(device_class_key(substitute_)),
-      previous_(t_substitute), previous_key_(t_substitute_key) {
-    t_substitute     = &substitute_;
-    t_substitute_key = &key_;
-}
-
-ScopedDeviceClass::~ScopedDeviceClass() {
-    t_substitute     = previous_;
-    t_substitute_key = previous_key_;
-}
-
-const DeviceClass* substituted_device_class() noexcept { return t_substitute; }
-
-const std::string* substituted_device_class_key() noexcept { return t_substitute_key; }
 
 bool substituted_foreign_class() noexcept {
-    if (t_substitute_key == nullptr) return false;
+    const std::string* substituted_key = substituted_device_class_key();
+    if (substituted_key == nullptr) return false;
     int device = 0;
     if (cudaGetDevice(&device) != cudaSuccess) {
         (void)cudaGetLastError();
         return true;
     }
     try {
-        return device_class_key(device_class(device)) != *t_substitute_key;
+        return device_class_key(device_class(device)) != *substituted_key;
     } catch (const std::exception&) {
         return true;
     }
 }
 
-std::string device_class_key(const DeviceClass& d) {
-    const auto& f = d.features;
-    const auto& m = d.facts;
-    std::string key;
-    const auto add = [&](const auto& v) {
-        key += std::to_string(v);
-        key += ',';
-    };
-    key += d.chip + ',' + m.sku + ',';
-    for (const auto v : {d.major, d.minor, d.sms, d.max_threads_per_sm, d.max_blocks_per_sm,
-                         d.registers_per_sm, d.memory_bus_bits, d.memory_clock_khz, d.sm_clock_khz,
-                         m.reference_clock_khz, m.memory_bus_bits, m.memory_clock_khz, m.tdp_w,
-                         m.pcie_gen, static_cast<int>(m.source), static_cast<int>(m.segment),
-                         static_cast<int>(m.form)}) {
-        add(v);
-    }
-    for (const auto v : {d.l2_bytes, d.smem_per_block_optin, d.smem_per_sm, d.global_bytes,
-                         d.persisting_l2_max_bytes}) {
-        add(v);
-    }
-    add(d.pci_device_id);
-    add(m.vram_gib);
-    add(m.share);
-    for (const bool b : {d.chip_from_pci, f.mma_bf16, f.mma_bf16_native, f.mma_tensor, f.mma_fp8,
-                         f.mma_f8f6f4, f.mma_mxf4nvf4, f.tma, f.pdl, f.clusters, f.mma_slow,
-                         m.mma_slow, m.driver_read}) {
-        key += b ? '1' : '0';
-    }
-    return key;
-}
-
-DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int minor, int sms,
-                                   std::size_t l2_bytes, std::size_t global_bytes) {
-    DeviceClass d;
-    d.major         = major;
-    d.minor         = minor;
-    d.sms           = sms;
-    d.l2_bytes      = l2_bytes;
-    d.global_bytes  = global_bytes;
-    d.name          = "synthetic " + gpu_arch_id(major, minor);
-    d.pci_device_id = pci_device_id;
-    d.chip          = gpu_chip(pci_device_id, major, minor, sms);
-    d.chip_from_pci = gpu_chip_by_pci(pci_device_id, major, minor);
-    d.features      = device_features_for(major, minor);
-    // board_mma_slow as the query sets it (the table's row, else the chip's); `facts` itself stays
-    // empty until a test asks for it.
-    d.features.mma_slow = board_mma_slow(machine_facts_of(d), major, minor, d.chip);
-    // The architecture's limits: the archs table of gpu_facts.json (core/arch_registry.h).
-    const arch_registry::ArchRow& arch = arch_registry::find(major, minor);
-    d.smem_per_block_optin             = arch.smem_per_block_optin;
-    d.smem_per_sm                      = arch.smem_per_sm;
-    d.max_threads_per_sm               = arch.max_threads_per_sm;
-    d.max_blocks_per_sm                = arch.max_blocks_per_sm;
-    d.registers_per_sm                 = arch.registers_per_sm;
-    d.persisting_l2_max_bytes = l2_bytes * 3 / 4;
-    return d;
-}
 
 DeviceIdentity query_device_identity(int device) {
     char bus_id[32] = {};
@@ -432,12 +357,6 @@ std::string visible_devices_note(int device, const DeviceSelector& selector) {
 
 const DeviceIdentity& device_identity() { return device_class().identity; }
 
-const DeviceClass& device_class() {
-    if (t_substitute != nullptr) { return *t_substitute; }
-    int device = 0;
-    check(cudaGetDevice(&device), "cudaGetDevice", -1);
-    return device_class(device);
-}
 
 int kernel_resident_ctas_per_sm(const void* kernel, int threads,
                                 std::size_t dynamic_shared_bytes) {
@@ -515,6 +434,13 @@ void require_device_support(const DeviceClass& device, const DeviceFeatures& req
         throw std::runtime_error(std::string(consumer) + " cannot run on " + device.name + " (" +
                                  device.id() + "): missing " + missing);
     }
+}
+
+// The device this thread runs on, for device_class() where no class is substituted.
+const DeviceClass& current_device_class() {
+    int device = 0;
+    check(cudaGetDevice(&device), "cudaGetDevice", -1);
+    return device_class(device);
 }
 
 } // namespace ninferno

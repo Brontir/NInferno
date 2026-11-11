@@ -2,6 +2,7 @@
 ninferno_target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/moe.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/moe_tune.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/moe_cost.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/moe_route.cu"
   "${CMAKE_CURRENT_LIST_DIR}/moe_router_simt.cu"
   "${CMAKE_CURRENT_LIST_DIR}/moe_gemm_bf16.cu"

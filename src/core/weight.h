@@ -92,6 +92,12 @@ struct Weight {
 
     // RowGroupZpOrdered: K int32 input-column indices (see the layout); null for every other.
     const void* k_order = nullptr;
+
+    // The bytes a standalone weight of this weight's n x k takes as the converter lays it out, its
+    // planes' padding included: a row view's (native_weight of part of a parent, `payload_bytes`
+    // staying the parent's whole). 0: `payload_bytes`, a weight whose payload is its own. The cost
+    // model prices a weight by these (#704), as the decision manifest's replay of its shape does.
+    std::uint64_t priced_bytes = 0;
 };
 
 } // namespace ninferno
