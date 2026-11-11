@@ -14,9 +14,11 @@ rate (P) read from it: the facts the decode price's per-SM bound min(P, W x b_w 
 build's SASS (cuobjdump), runs it (5 to 15 s, the GPU otherwise idle) and saves its output, headed
 by the source's sha256, the build's -arch and those load counts, and followed by notes of the
 compute processes on the probe's GPU before, during and after the run (isa_probe's notes, read by
-its own code) and of the clocks nvidia-smi saw inside the probe's measured span (its `span_ns`
-line). A run with another process on the GPU, or whose memory clock or P-state moved in the span,
-is no run; nor is one below P0 or under the rated memory clock, unless `--clocks-waived` (a steady
+its own code), of its warm-up (the probe streams on every SM until nvidia-smi has shown one memory
+clock for 1 s in a performance P-state, at most 10 s, else the run is refused), and of the
+clocks nvidia-smi saw inside the probe's measured span (its `span_ns` line), which must be the
+settled one. A run with another process on the GPU, or whose memory clock or P-state moved in the
+span, is no run; nor is one below P0 or under the rated memory clock, unless `--clocks-waived` (a steady
 clock only, said in the run). A refused run's output goes to <out>.refused. `rows` turns runs into
 JSON rows with their provenance (source file, card, probe version, nvcc, driver, runtime, source
 hash) and the derived b_w and P; `show` prints the summary. No fact is fitted here: b_w = rate(W) x
@@ -34,6 +36,8 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
@@ -116,6 +120,116 @@ def clock_note(samples, span, bus):
     states = "/".join(sorted({s[2] for s in inside}))
     return (f"note {CLOCK_HEAD} ({len(inside)} samples, nvidia-smi every {CLOCK_PERIOD_MS} ms): "
             f"memory {mem[0]}..{mem[-1]} MHz, SM {sm[0]}..{sm[-1]} MHz, P-state {states}")
+
+
+# The warm-up streams until the memory clock has held one value this long (and that value is
+# the highest since the warm-up began), within this bound; the measured span begins after it.
+SETTLE_HOLD_NS = 1_000_000_000
+SETTLE_TIMEOUT_NS = 10_000_000_000
+SETTLE_HEAD = "warm-up: the memory clock held"
+SETTLE_NOTE = re.compile(SETTLE_HEAD + r" (\d+) MHz for ([\d.]+) s before the measured span "
+                         r"\(settled ([\d.]+) s into the warm-up\)")
+
+
+def memory_clocks(samples, bus, since_ns):
+    """[(ns since the epoch, memory MHz, P-state)] of the probe's GPU in nvidia-smi rows
+    (timestamp, bus id, P-state, SM MHz, memory MHz) from `since_ns` on, in order."""
+    out = []
+    for s in samples:
+        if len(s) != 5 or bus is None or IP._bus(s[1]) != bus or not s[4].isdigit():
+            continue
+        t = smi_time_ns(s[0])
+        if t is not None and t >= since_ns:
+            out.append((t, int(s[4]), s[2]))
+    return out
+
+
+# The performance P-states (NVIDIA: P0 the highest, P2 where GeForce runs CUDA); P5 and up are
+# the idle and power-saving states, whose memory clock is no run's.
+PERFORMANCE_PSTATES = ("P0", "P1", "P2")
+
+
+def settled(samples, bus, since_ns, hold_ns=SETTLE_HOLD_NS):
+    """(memory MHz, ns it has held) once the samples from `since_ns` on end in one memory clock
+    held for at least `hold_ns` (first to last sample of that value) in a performance P-state,
+    the highest clock seen since `since_ns`; None until then (a clock still idle, ramping or
+    dropping has not settled)."""
+    mem = memory_clocks(samples, bus, since_ns)
+    if not mem:
+        return None
+    t_last, value, _ = mem[-1]
+    if value != max(v for _, v, _ in mem):
+        return None
+    i = len(mem) - 1
+    while i > 0 and mem[i - 1][1] == value:
+        i -= 1
+    if any(p not in PERFORMANCE_PSTATES for _, _, p in mem[i:]):
+        return None
+    held = t_last - mem[i][0]
+    return (value, held) if held >= hold_ns else None
+
+
+def settle_refusal(notes, span_note):
+    """Why the run shows no memory clock settled before its measured span (or one other than the
+    span's own), or None."""
+    mine = [SETTLE_NOTE.fullmatch(n) for n in notes if n.startswith(SETTLE_HEAD)]
+    if len(mine) != 1 or not mine[0]:
+        return "no note of a memory clock settled before the measured span (warm-up)"
+    m = CLOCK_NOTE.fullmatch(span_note or "")
+    if m and m.group(2) != mine[0].group(1):
+        return (f"the warm-up settled at {mine[0].group(1)} MHz, the measured span ran at "
+                f"{m.group(2)} MHz")
+    return None
+
+
+def warm_until_settled(probe_lines, clock_rows, send, now_ns, sleep, alive,
+                       timeout_ns=SETTLE_TIMEOUT_NS):
+    """Hold the probe in its warm-up until the memory clock has settled: once the probe has
+    printed `note warm-up: begins` (and its GPU's bus id), poll the nvidia-smi rows
+    (`clock_rows()`) and `send("go")` when settled() holds, or `send("stop")` when it has not
+    within `timeout_ns`. Returns (the settle note, None) or (None, why there is none)."""
+    begun, bus = None, None
+    while alive():
+        lines = list(probe_lines())
+        if begun is None and "note warm-up: begins" in lines:
+            begun = now_ns()
+            for line in lines:
+                m = re.fullmatch(r"note device 0 is the GPU at PCI (\S+)", line)
+                if m:
+                    bus = IP._bus(m.group(1))
+        if begun is not None:
+            s = settled(clock_rows(), bus, begun)
+            if s:
+                send("go")
+                return (f"note {SETTLE_HEAD} {s[0]} MHz for {s[1] / 1e9:.1f} s before the "
+                        f"measured span (settled {(now_ns() - begun) / 1e9:.1f} s into the "
+                        "warm-up)"), None
+            if now_ns() - begun > timeout_ns:
+                send("stop")
+                mem = [v for _, v, _ in memory_clocks(clock_rows(), bus, begun)]
+                seen = f"it read {min(mem)}..{max(mem)} MHz" if mem else "no nvidia-smi sample"
+                return None, (f"the memory clock held no value for {SETTLE_HOLD_NS / 1e9:g} s "
+                              f"within {timeout_ns / 1e9:g} s of warm-up ({seen}); nothing "
+                              "measured")
+        sleep(0.05)
+    return None, "the probe ended before its warm-up settled"
+
+
+class Lines:
+    """The lines of a text stream, read on a thread of their own as they come."""
+
+    def __init__(self, stream):
+        self.lines = []
+        self.thread = threading.Thread(target=self._read, args=(stream,), daemon=True)
+        self.thread.start()
+
+    def _read(self, stream):
+        for line in iter(stream.readline, ""):
+            self.lines.append(line.rstrip("\n"))
+
+    def rows(self, fields):
+        return [[x.strip() for x in line.split(",")] for line in list(self.lines)
+                if line.count(",") == fields - 1]
 
 
 def clock_refusal(notes, rated_khz):
@@ -314,6 +428,10 @@ def parse_run(text):
     refusal, _ = clock_refusal(notes, int(head["mem_clock_khz"]))
     if refusal:
         raise ValueError(refusal)
+    # From probe 3 the measured span begins only once the warm-up's memory clock settled.
+    refusal = settle_refusal(notes, next((n for n in notes if n.startswith(CLOCK_HEAD)), None))
+    if refusal:
+        raise ValueError(refusal)
     head["notes"] = notes
     return head, [rows[k] for k in sorted(rows, key=lambda k: (MODES.index(k[0]), k[1],
                                                               list(VARIANTS).index(k[2]), k[3]))]
@@ -497,16 +615,39 @@ def cmd_run(a):
 
         clocks = sampler("--query-gpu=timestamp,pci.bus_id,pstate,clocks.sm,clocks.mem",
                          CLOCK_PERIOD_MS)
+        clock_lines = Lines(clocks.stdout) if clocks else None
         apps = sampler("--query-compute-apps=timestamp,gpu_bus_id,pid", 200)
-        probe = subprocess.Popen([exe], stdout=subprocess.PIPE, text=True)
-        stdout, _ = probe.communicate()
-        samples = rows_of(clocks, 5) or []
+        # The probe streams in its warm-up until told the memory clock has settled.
+        probe = subprocess.Popen([exe, "--wait-go"], stdin=subprocess.PIPE,
+                                 stdout=subprocess.PIPE, text=True)
+        probe_lines = Lines(probe.stdout)
+
+        def send(word):
+            try:
+                probe.stdin.write(word + "\n")
+                probe.stdin.flush()
+            except OSError:
+                pass
+
+        settle_note, settle_why = warm_until_settled(
+            lambda: probe_lines.lines, lambda: clock_lines.rows(5) if clock_lines else [], send,
+            time.time_ns, time.sleep, lambda: probe.poll() is None)
+        probe.wait()
+        probe_lines.thread.join()
+        stdout = "".join(line + "\n" for line in probe_lines.lines)
+        if clocks is not None:
+            clocks.terminate()
+            clocks.wait()
+            clock_lines.thread.join()
+        samples = clock_lines.rows(5) if clock_lines else []
         during = rows_of(apps, 3)
         after = IP._compute_apps()
     m = re.search(r"^note device 0 is the GPU at PCI (\S+)$", stdout, re.M)
     bus = IP._bus(m.group(1)) if m else None
     tail = [IP._apps_note("before", before, bus), IP._apps_note("after", after, bus),
             IP._during_note(during, bus, str(probe.pid))]
+    if settle_note:
+        tail.append(settle_note)
     # The clocks inside the probe's measured span only: the start (an idle card's P8, the
     # warm-up) and the end are not the rows' clocks.
     m = re.search(r"^span_ns (\d+) (\d+)$", stdout, re.M)
@@ -526,7 +667,9 @@ def cmd_run(a):
     body = stdout if stdout.endswith("\n") or not stdout else stdout + "\n"
     out = "\n".join(head) + "\n" + body + "\n".join(tail) + "\n"
     refusal = None
-    if probe.returncode != 0:
+    if settle_why:
+        refusal = settle_why
+    elif probe.returncode != 0:
         refusal = f"the probe exited {probe.returncode}"
     else:
         try:
