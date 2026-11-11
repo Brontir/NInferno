@@ -1,6 +1,8 @@
 # ggml's integer tensor-core matrix kernel (third_party/ggml-quants) for the generic path's ggml
-# block formats at speculative-verify widths (generic_gemm.cpp, Family::GgmlMmq). Its own archive:
-# the ggml headers define CUDA_CHECK and friends, so no other NInferno unit may see them.
+# block formats at speculative-verify widths (Family::GgmlMmq; admitted by generic_select.cpp,
+# launched by generic_ggml.cpp for a gated pair and by generic_gemm.cpp for a single projection).
+# Its own archive: the ggml headers define CUDA_CHECK and friends, so no other NInferno unit may
+# see them.
 set(NINFERNO_GGML_QUANTS_ROOT "${PROJECT_SOURCE_DIR}/third_party/ggml-quants")
 add_library(ninferno_ggml_mmq STATIC
   "${CMAKE_CURRENT_LIST_DIR}/ggml_mmq.cu"
@@ -27,7 +29,9 @@ target_include_directories(ninferno_ggml_mmq PRIVATE
   "${NINFERNO_GGML_QUANTS_ROOT}/include"
   "${NINFERNO_GGML_QUANTS_ROOT}/src"
   # NInferno's own headers after ggml's (the matrix kernel's programmatic launch, core/pdl.cuh).
-  "${CMAKE_CURRENT_LIST_DIR}/../../..")
+  "${CMAKE_CURRENT_LIST_DIR}/../../.."
+  # The generated rows of core/arch_registry.h, which core/mmq_columns.h includes.
+  "${PROJECT_BINARY_DIR}/src/core/generated_public")
 # Its matrix kernels call no cuBLAS (the vendored headers leave it out under this macro).
 target_compile_definitions(ninferno_ggml_mmq PRIVATE NINFERNO_GGML_NO_CUBLAS)
 ninferno_cuda_non_rdc_archive(ninferno_ggml_mmq)

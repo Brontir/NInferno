@@ -312,14 +312,15 @@ measured_boards_known(std::span<const Measured, Extent> measured) noexcept {
 // the host-only stub, never in ninferno_core_host.
 [[nodiscard]] const DeviceClass& current_device_class();
 
+// The substitute this thread's device_class() answers (ScopedDeviceClass), or null.
 [[nodiscard]] const DeviceClass* substituted_device_class() noexcept;
 
 // The current device's class: the ScopedDeviceClass substitute of this thread, else the probed
 // class. Throws std::runtime_error when CUDA cannot report the device. Inline, so that the
 // reference to current_device_class() sits in the object that calls device_class():
-// ninferno_core_host keeps no reference into ninferno_core. A host archive whose objects call it
-// (ninferno_ops_host's kernel_facts.cpp) still needs ninferno_core, or the host-only stub, after
-// it on the link line.
+// ninferno_core_host keeps no reference into ninferno_core. The selector's objects in
+// ninferno_ops_host call it: ninferno_ops holds the same objects and links ninferno_core, and a
+// host-only test adds the stub (device_class_nodevice.cpp) to its own sources.
 [[nodiscard]] inline const DeviceClass& device_class() {
     if (const DeviceClass* substitute = substituted_device_class()) { return *substitute; }
     return current_device_class();
@@ -385,9 +386,8 @@ private:
     const std::string* previous_key_;
 };
 
-// The substitute this thread's device_class() answers (ScopedDeviceClass), or null; and its
-// device_class_key, computed once when the substitution began (null without one).
-[[nodiscard]] const DeviceClass* substituted_device_class() noexcept;
+// The substitute this thread's device_class() answers (substituted_device_class, above), or null;
+// and its device_class_key, computed once when the substitution began (null without one).
 [[nodiscard]] const std::string* substituted_device_class_key() noexcept;
 // Whether this thread's device_class() answers a substitute other than the current CUDA device's
 // own class (by content): state measured or loaded on that device (a tuned route, an explicit

@@ -17,7 +17,7 @@ namespace {
 // and up together), tokens, warps_m, warps_n, stages. 9 (64 KiB) runs two CTAs per SM where an SM
 // holds 128 KiB; 10-12 (144-160 KiB) exist only where one block holds them (GA100 and Orin).
 // NINFERNO_GENERIC_STAGED_SCHEDULES: ops/generic/generic_schedules.h (one list for the
-// instantiations here and the host table in generic_gemm.cpp).
+// instantiations here and the host table in generic_schedule_tables.h).
 
 // generic_shared_bytes.h's table of the staged layouts (staged_fits reads it with no CUDA header),
 // held equal to the layouts' own sizes.

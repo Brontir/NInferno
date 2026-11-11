@@ -65,9 +65,25 @@ ninferno_add_test(ninferno_spec_dspine_test NEEDS_SOURCE_DIR
 add_test(NAME ninferno_registry_add_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_registry_add.py)
 
+# tools/dev/qc.sh: the dyndep early-stop pattern is a real regex.
+add_test(NAME ninferno_qc_sh_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_qc_sh.py)
+
 # tools/kit/validate.py: the user measurement kit's rejection rules and verdicts, no GPU.
 add_test(NAME ninferno_kit_validate_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_kit_validate.py)
+
+# tools/audit/fusion_sites.json against the FUSION-SITE markers in the code: a fusion site missing from
+# the registry, or an entry whose site is gone, fails (#617 step A), no GPU.
+add_test(NAME ninferno_fusion_sites_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_fusion_sites.py)
+set_tests_properties(ninferno_fusion_sites_test PROPERTIES LABELS host)
+
+# The facts-vs-driver comparison (tools/audit/facts_vs_driver.py) on canned driver output (#612
+# step 2), no GPU.
+add_test(NAME ninferno_facts_vs_driver_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_facts_vs_driver.py)
+set_tests_properties(ninferno_facts_vs_driver_test PROPERTIES LABELS host)
 
 # tools/bench/selection_regret.py: the offline selection regret's statuses, holdouts and exit codes
 # (#301), no GPU.
@@ -83,13 +99,55 @@ add_test(NAME ninferno_kernel_facts_sass_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_kernel_facts_sass.py)
 set_tests_properties(ninferno_kernel_facts_sass_test PROPERTIES LABELS host)
 
+# tools/bench/gap_map.py: measured times against the counted DRAM and tensor laws (#619), on
+# synthetic inputs, no GPU.
+add_test(NAME ninferno_gap_map_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_gap_map.py)
+set_tests_properties(ninferno_gap_map_test PROPERTIES LABELS host)
+
+# tools/bench/regret_bands.py: regret weighted by T band, per board, format and route family
+# (#613), no GPU.
+add_test(NAME ninferno_regret_bands_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_regret_bands.py)
+set_tests_properties(ninferno_regret_bands_test PROPERTIES LABELS host)
+
+# tools/audit/diff_lint.py: broken string literals, duplicated added blocks, removed definitions
+# still called and removed includes still needed, on planted diffs (#611), no GPU.
+add_test(NAME ninferno_diff_lint_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_diff_lint.py)
+set_tests_properties(ninferno_diff_lint_test PROPERTIES LABELS host)
+
+# tools/audit/affected_arches.py: a diff to the arches and stands to test, synthetic diffs, no GPU
+# (#611).
+add_test(NAME ninferno_affected_arches_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_affected_arches.py)
+set_tests_properties(ninferno_affected_arches_test PROPERTIES LABELS host)
+
 # routes/*.json: evidence_us / tuned_on provenance (#634), no GPU.
 add_test(NAME ninferno_route_table_evidence_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_route_table_evidence.py)
 set_tests_properties(ninferno_route_table_evidence_test PROPERTIES LABELS host)
+
 # tools/bench/mmq_transfer_audit.py: same-generation MMQ transfer by workload regime (#373), no GPU.
 add_test(NAME ninferno_mmq_transfer_audit_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_mmq_transfer_audit.py)
+
+# tools/audit/board_literal_lint.py: no hand-written `ninferno::Board` literal or bare five-number
+# board tuple outside the registry (roadmap #612 step 9), and the tree is clean. What it does not
+# see is listed in the script's docstring. No GPU.
+add_test(NAME ninferno_board_literal_lint_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_board_literal_lint.py)
+set_tests_properties(ninferno_board_literal_lint_test PROPERTIES LABELS host)
+
+# tools/audit/golden_diff.py: the compact summary of a selector golden change (#620), no GPU.
+add_test(NAME ninferno_golden_diff_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_golden_diff.py)
+set_tests_properties(ninferno_golden_diff_test PROPERTIES LABELS host)
+
+# tools/audit/golden_gate.py: the CI gate on decision-path diffs without a golden change (#620), no GPU.
+add_test(NAME ninferno_golden_gate_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_golden_gate.py)
+set_tests_properties(ninferno_golden_gate_test PROPERTIES LABELS host)
 
 # Repository hygiene, no GPU: only scripts (a #! first line) may be committed executable.
 add_test(NAME ninferno_file_modes_test

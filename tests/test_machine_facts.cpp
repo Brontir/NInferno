@@ -11,7 +11,10 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -270,6 +273,24 @@ void grid() {
             expect(snap_to_fact_grid(hi) == std::exp2((k + 1) / 16.0), "above a midpoint snaps up");
         }
     }
+
+    // The hand-worked grid points shared with the audit's port (tests/test_facts_vs_driver.py):
+    // tests/fixtures/facts/grid_points.txt, one "driver_khz stored_khz" pair a line.
+    std::ifstream points(std::filesystem::path(NINFERNO_SOURCE_DIR) /
+                         "tests/fixtures/facts/grid_points.txt");
+    expect(points.good(), "the grid points fixture is readable");
+    int read_points = 0;
+    for (std::string line; std::getline(points, line);) {
+        if (line.empty() || line[0] == '#') { continue; }
+        std::istringstream fields(line);
+        long long driver_khz = 0, stored_khz = 0;
+        expect(static_cast<bool>(fields >> driver_khz >> stored_khz),
+               "a grid point parses: " + line);
+        expect(std::llround(snap_to_fact_grid(static_cast<double>(driver_khz))) == stored_khz,
+               "grid point of " + std::to_string(driver_khz) + " kHz");
+        ++read_points;
+    }
+    expect(read_points >= 20, "the fixture holds the grid points");
     double last = 0;
     for (double x = 1000; x < 4e6; x *= 1.003) {
         const double s = snap_to_fact_grid(x);

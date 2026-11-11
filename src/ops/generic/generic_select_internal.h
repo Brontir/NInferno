@@ -59,7 +59,18 @@ bool volta_cutlass_only(WeightCodec codec);
 // Whether a TiledMma call of `tokens` runs on the decoded copy (and so needs its workspace): a
 // CUTLASS-only format's (`only`: it has no tile of its own) from the prefill band's 17 tokens, a
 // tiled format's where the copy pays.
+// (Reads the current device class, like volta_cutlass_only: not a device argument.)
 bool volta_cutlass_runs(bool only, std::int32_t tokens);
+
+// A TiledMma call that runs CUTLASS over the decoded copy: the band takes it, the build has the
+// kernel and `workspace_free` holds a chunk. run_route and the route description both ask it.
+bool volta_cutlass_call_runs(WeightCodec codec, std::int32_t n, std::int32_t k, std::int32_t tokens,
+                             bool swiglu, std::optional<std::size_t> workspace_free);
+
+// A TiledMma call of a CUTLASS-only format that volta_cutlass_call_runs refuses: run_route runs the
+// scalar kernel and notes a demotion (Demotion::VoltaCopy).
+bool volta_tiled_runs_scalar(WeightCodec codec, std::int32_t n, std::int32_t k, std::int32_t tokens,
+                             bool swiglu, std::optional<std::size_t> workspace_free);
 
 // GemmArgs::add_sums: outside the invariant and prefill profiles, whose calls keep one summation
 // order at every T (a call there may change width from one chunk or round to the next), a tensor-core
@@ -182,6 +193,16 @@ using PricedRoute = std::function<void(Route, double)>;
 bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tokens,
                   const PricedRoute& take);
 std::optional<Route> cost_route(const Problem& problem, const Weight& weight, std::int32_t tokens);
+
+// The bytes a weight value of the call's matrix takes, as price_routes, a8_candidates and
+// route_traffic read them (#640): the payload over the weight's own stored rows (Weight::n), so a
+// slice of a fused parent (segmented_projection: the whole parent with the call's rows in
+// Problem::n) reads its share of the parent's bytes, not the parent's. Under SwiGLU each output
+// row reads its gate and its up row: the value holds both (x2). A weight of no more rows than the
+// call reads (a whole weight; a row view, whose payload_bytes is its parent's) keeps
+// payload_bytes / (n K), to the bit. The share is proportional to rows: exact where the layout
+// stores rows whole, within a 128-row scale tile for NVFP4 and the FP8 128x128 scales.
+double bytes_per_weight(const Weight& weight, const Problem& problem);
 
 // The weight-side admission of the A8 and A4 tiles and of R8 (generic_select.cpp, generic_gemm.cpp;
 // their refusals name the reason).

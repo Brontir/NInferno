@@ -165,9 +165,19 @@ json model_json(const ModelFacts& m) {
             load.push_back({{"streams", g.streams}, {"speedup", g.speedup}, {"depth", g.depth},
                             {"bounded", g.bounded}, {"measured", g.measured}});
         }
-        drafters.push_back({{"label", d.label}, {"drafter", d.drafter}, {"speedup", d.speedup},
-                            {"plain_from_streams", d.plain_from_streams}, {"basis", d.basis},
-                            {"measured", d.measured}, {"load", std::move(load)}});
+        json drafter = {{"label", d.label},       {"drafter", d.drafter},
+                        {"speedup", d.speedup},   {"plain_from_streams", d.plain_from_streams},
+                        {"basis", d.basis},       {"measured", d.measured},
+                        {"load", std::move(load)}};
+        // Written only when priced (#303): a record without it replays as before.
+        if (!d.joint.empty()) {
+            json joint = json::array();
+            for (const auto& j : d.joint) {
+                joint.push_back({{"streams", j.streams}, {"scale", j.scale}});
+            }
+            drafter["joint"] = std::move(joint);
+        }
+        drafters.push_back(std::move(drafter));
     }
     return json{
         {"family", m.family},
@@ -260,6 +270,25 @@ ModelFacts model_of(const json& j) {
             read(gain.bounded, g.at("bounded"));
             read(gain.measured, g.at("measured"));
             o.load.push_back(gain);
+        }
+        if (d.contains("joint")) {
+            for (const auto& j : array_at(d, "joint")) {
+                DrafterOption::JointScale scale;
+                read(scale.streams, j.at("streams"));
+                read(scale.scale, j.at("scale"));
+                // Rejected, not sorted: price_source_at reads the table in ascending order of
+                // streams (a stored record is written ascending), and a scale is a positive ratio.
+                // A joint verify is of two streams or more: one request's verify is the base the
+                // scale is taken against, so an entry below two streams is not a price.
+                if (!(scale.scale > 0) || scale.streams < 2 ||
+                    (!o.joint.empty() && o.joint.back().streams >= scale.streams)) {
+                    throw std::invalid_argument(
+                        "a joint verify scale must be positive, of two streams or more, streams "
+                        "ascending: " +
+                        j.dump());
+                }
+                o.joint.push_back(scale);
+            }
         }
         m.drafters.push_back(std::move(o));
     }
@@ -482,6 +511,7 @@ json choice_summary(const Choice& c) {
                 {"context", c.context},
                 {"by_worth", c.by_worth},
                 {"chunk_by_speed", c.chunk_by_speed},
+                {"chunk_basis", std::string(chunk_basis_name(c.chunk_basis))},
                 {"drafter_by_worth", c.drafter_by_worth},
                 {"resolution", c.resolution},
                 {"why", c.why}};

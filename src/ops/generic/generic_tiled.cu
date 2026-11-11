@@ -17,7 +17,7 @@ namespace {
 // The schedules: block_m (tokens), block_n (rows),
 // warps_m, warps_n, stages (lowered where a codec's tiles would not fit).
 // NINFERNO_GENERIC_TILED_SCHEDULES: ops/generic/generic_schedules.h (one list for the
-// instantiations here and the host table in generic_gemm.cpp).
+// instantiations here and the host table in generic_schedule_tables.h).
 
 template <class S, class C, Epilogue E>
 void launch_schedule(const GemmArgs& args, cudaStream_t stream) {

@@ -21,6 +21,10 @@
 #include <string_view>
 #include <vector>
 
+namespace ninferno {
+struct DeviceClass;
+}
+
 namespace ninferno::ops::detail::generic::kernel_facts {
 
 struct RmmaKernelKey {
@@ -109,6 +113,11 @@ struct SnapshotHeader {
 // or higher minor for a plain one). nullopt where the device would run PTX the driver compiled,
 // or there is no device: the price is then by threads alone and no variant pays.
 [[nodiscard]] std::optional<std::string> sass_arch();
+
+// The host part of sass_arch(), which reads no device: the label for board `d`, given whether `d`
+// is a substituted class (ScopedDeviceClass) or the current CUDA device's own. sass_arch() is this
+// over the class it finds (kernel_facts_device.cpp), through the device_class() seam.
+[[nodiscard]] std::optional<std::string> sass_arch_of(const DeviceClass& d, bool substituted);
 
 // This build's architecture label (CMAKE_CUDA_ARCHITECTURES: "120a", "89").
 [[nodiscard]] std::string_view build_arch();

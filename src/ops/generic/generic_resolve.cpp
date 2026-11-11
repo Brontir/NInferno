@@ -235,6 +235,8 @@ std::string_view demotion_name(Demotion demotion) noexcept {
         return "ggml_workspace";
     case Demotion::Workspace:
         return "workspace";
+    case Demotion::VoltaCopy:
+        return "volta_copy";
     }
     return "none";
 }
@@ -251,6 +253,7 @@ Route workspace_free_route(Route selected, const Problem& problem, const Weight&
     return selected;
 }
 
+// FUSION-SITE: r8_prequantized
 ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call) {
     ResolvedRoute out{.asked = asked, .executed = asked};
     Route& route      = out.executed;

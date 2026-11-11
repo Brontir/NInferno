@@ -31,6 +31,7 @@ std::size_t selector_facts_probe(const FactsBoard& board) {
 
     constexpr Shape kShapes[]        = {{1024, 4096}, {4096, 4096}, {17408, 5120}, {5120, 17408}};
     constexpr std::int32_t kTokens[] = {17, 32, 64, 128, 256, 1024};
+    static_assert(kTokens[0] == kPrefillBandMinTokens); // the grid starts at the band's edge
     const DeviceClass device         = board_device_class(board);
     std::vector<RmmaFactRead> reads;
     {

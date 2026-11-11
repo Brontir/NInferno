@@ -385,7 +385,7 @@ std::optional<RouteTraffic> route_traffic(Route route, const Weight& weight, con
     // activation slice itself (the shared-memory tiles stage it once for the CTA).
     const double x_readers =
         route.family == Family::RegisterMma ? rmma_schedule_info(route.schedule).warps_m : 1.0;
-    const double bpw = static_cast<double>(weight.payload_bytes) / (n * k);
+    const double bpw = bytes_per_weight(weight, problem);
     return RouteTraffic{n * k * bpw * weight_reads,
                         x_t * x_k * x_bytes * cdiv(n, tile->out_rows) * x_readers, n * t * 2.0};
 }
