@@ -498,11 +498,9 @@ inline constexpr FittedHoldout kSpecHoldouts[] = {
     {kRoundCost, "kLaunchTime",
      Holdout::none(
          "the Ada census: Qwen3.5-9B Q4_K_M plain decode on the RTX 4090, 4070 Ti and 4060 Ti, "
-         "every kernel within 2 %: t0 1.5 us without PDL, eta_dram 0.946",
-         "the three cards are the fit; no generation without a row is priced by it (Ampere and "
-         "Turing graph gaps were measured, RTX 2080 Ti 0.38 us a kernel, RTX 3060 ~0, but no "
-         "intercept was fitted; gb20x's two cards cannot tell 0.5 from 1.5 us)",
-         "choice_constants.h and round_cost.h at LaunchTime")},
+         "every kernel within 2 %: eta_dram 0.946 (the census's t0 is kLaunchNode's record)",
+         "the three cards are the fit; no generation without a row is priced by it",
+         "spec/round_cost.h at LaunchTime")},
     {kMoeShare, "kMoeRoutedShare",
      Holdout::none(
          "the drafter registry's speculation floors (decisions.md 53: the round cost's B(r)): rows "
