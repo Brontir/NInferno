@@ -163,6 +163,7 @@ NOT_DECIDING = {
     "src/core/sys.cpp", "src/core/sys.h", "src/core/tensor.cpp", "src/core/tensor.h",
     "src/core/tune_timer.cu", "src/core/tune_timer.h", "src/core/units.h",
     "src/core/weight_view.cpp", "src/core/weight_view.h",
+    "src/core/cuda_stream.h",  # the cudaStream_t handle type for host-only builds (#675)
     # device code reached through the listed ggml_mmq.cu / generic_gemm.cpp: it computes, the
     # selector reads none of its constants
     "src/ops/generic/generic_staged.cuh", "src/ops/generic/generic_tiled.cuh",
