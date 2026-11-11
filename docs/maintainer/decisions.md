@@ -1960,8 +1960,8 @@ m8n8k16), I2F 19 at every J. So no issue count steps between J 64 and J 80.
 **Measured (the microbench `tools/bench/mmq_launch_microbench.cu` against the hooked build, RTX
 2080 Ti at 1.93-1.97 GHz, the medians of two passes of 9 x 1000 back-to-back calls, pass to pass
 0.8 % median, 2.9 % at most; nsys for the kernels apart).**
-- The unit by width (the time of 16 more units, k 4096 -> 8192, us): a tile a CTA on 64 CTAs (two
-  column tiles of a 4096-row product) 3.40, 4.56, 5.36, 6.28, 7.23, 8.50, 9.30, 11.60 at J 16 .. 128
+- The unit by width (the time of one unit: 16 more units, k 4096 -> 8192, over 16, us): a tile a
+  CTA on 64 CTAs (two column tiles of a 4096-row product) 3.40, 4.56, 5.36, 6.28, 7.23, 8.50, 9.30, 11.60 at J 16 .. 128
   (48 and 112 included); the same on 32 CTAs (one column tile) 2.90, 3.96, 4.76, 5.50, 6.22, 7.37,
   8.53, 9.87; stream-k on 68 CTAs over one column tile 4.06, 5.04, 6.00, 7.53, 9.05, 10.65, 12.04,
   12.80. Per 16 columns the 64-CTA unit grows 0.8-1.3 us from 32 to 112, then 2.3 us to 128 (the
@@ -2012,7 +2012,9 @@ logprob check of that note has not been run for the Turing picks.
 `NINFERNO_MMQ_MODE=old|law`); the unit's cost from facts (it is about three times the issue bound
 of its counts: the serialized load phases of a CTA a SM are a latency, not counted here); what makes
 a stream-k unit dearer beyond the 8 % of V3; the 1.7 % of the grid that neither law holds (441
-columns J 80, 505 columns J 128, the J 16 cells); a second Turing card. The constants are one
+columns J 80, 505 columns J 128, the J 16 cells); a second Turing card; Q6_K's own unit
+(it takes Q4_K's measured u(J), though Q6_K spills from J 96 and Q4_K only at J 128: a format
+transfer, not measured). The constants are one
 card's, the RTX 2080 Ti's (the lab's one Turing card), carried by the generation row to every
 Turing board as a transfer, as `kMmqTileCost`'s Turing row and GB20x's `mmq_tile_fixed` (the RTX
 5090's) are; a constant fitted on two cards of a generation is the standard (AGENTS.md) and this
