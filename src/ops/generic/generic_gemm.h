@@ -753,6 +753,12 @@ struct RouteTile {
 [[nodiscard]] std::optional<RouteTile> route_tile(Route route, Epilogue epilogue,
                                                   std::int32_t tokens);
 
+// Whether price_routes prices this A16 route on a device (generic_cost.cpp), a pricing rule and
+// not admission (route_admits): every route, except where the BF16 MMA is emulated (Turing,
+// Volta), which gets no pipelined tile (tiled, staged) and no 8-tile register-MMA token strip.
+// The selector's price and the price tool (price_tool.cpp) read this one predicate.
+[[nodiscard]] bool a16_route_priced(Route route, bool bf16_mma_native);
+
 // The logical traffic of a call on `route` (#298): the bytes its CTAs request, before any cache
 // serves them, predicted from route_tile. Every token column of CTAs reads the call's matrix
 // (its share of the weight's rows, as the cost model's bpw: #640), every row block of CTAs reads

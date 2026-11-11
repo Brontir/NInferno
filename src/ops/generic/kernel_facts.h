@@ -43,6 +43,26 @@ struct RmmaKernelKey {
 // width), not unique memory traffic. Facts for the price's terms (kernel_roofline.h): mma and
 // mma_shape feed the tensor-pipe term, the loads the LSU and spill terms, int_alu and fp_alu the
 // issue term. Nothing reads them yet.
+//
+// The static schedule (schema 4, #613 PR-C): read off the control code ptxas writes into every
+// sm_70+ instruction (bits 41-57 of its high word: the stall count, the scoreboards it sets and
+// the ones it waits on; sass_counts.py names the public sources of the layout). Over the counted
+// iteration: the stall counts summed (the clocks one warp alone takes to issue it when no
+// scoreboard holds it; at least one per instruction), the instructions waiting on a scoreboard
+// and of them those waiting on a local load (a spill reload); outside the K loop, the code a
+// warp runs once (prologue, first fetch, split-K reduce, epilogue): every instruction the entry
+// reaches beyond the loop, their stall sum, scoreboard waits and CTA barriers. Static counts,
+// clocks of no card: the card's latencies are its own facts.
+struct StaticSchedule {
+    int stall_sum      = 0;
+    int sb_waits       = 0;
+    int sb_waits_local = 0;
+    int outside_total  = 0;
+    int outside_stall  = 0;
+    int outside_waits  = 0;
+    int outside_bar    = 0;
+};
+
 struct LoopCounts {
     int loops  = 0; // candidate K loops found: 1 normally; 0 none (every count is 0); 2+ ambiguous
     int k_iter = 0; // K values per warp per iteration from the weight MMAs; 0 unknown
@@ -67,6 +87,7 @@ struct LoopCounts {
     int uniform              = 0; // uniform-datapath instructions
     int other                = 0; // branches, barriers, convergence, constant loads, NOP
     int total                = 0;
+    std::optional<StaticSchedule> schedule; // every row of a snapshot with a loop
 };
 
 struct KernelFacts {
@@ -74,7 +95,7 @@ struct KernelFacts {
     std::size_t stack_bytes         = 0; // per thread: the stack frame (spills and stack arrays)
     std::size_t local_bytes         = 0; // per thread: other local memory
     std::size_t static_shared_bytes = 0; // per CTA
-    std::optional<LoopCounts> loop;      // schema 2 snapshots; nullopt in a resources-only one
+    std::optional<LoopCounts> loop;      // schema 4 snapshots; nullopt in a resources-only one
 
     // Per thread: every local-memory byte (the driver's localSizeBytes), the one spill measure
     // the price, the wide rule and the live check all read.
@@ -90,6 +111,11 @@ struct SnapshotHeader {
     std::size_t kernels = 0;
 };
 
+// Whether this reader accepts a snapshot's text: schema 4 (loop counts and schedule) or the
+// resources-only schema 1. Any other columns line, the loop without a schedule (schema 2) among
+// them, is refused, as tools/kernel_facts/kernel_facts.py refuses it.
+[[nodiscard]] bool snapshot_text_accepted(std::string_view text);
+
 // The build architecture labels with a committed snapshot, in file order.
 [[nodiscard]] std::vector<std::string_view> snapshot_archs();
 // The header of a label's snapshot; nullopt where none is committed.
@@ -98,6 +124,9 @@ struct SnapshotHeader {
 // snapshot holds no such kernel (the build then prices by threads alone).
 [[nodiscard]] std::optional<KernelFacts> rmma_facts(std::string_view arch,
                                                     const RmmaKernelKey& key);
+// Every kernel's facts of a label's snapshot, in no particular order (empty where none is
+// committed): for checks over all rows.
+[[nodiscard]] std::vector<KernelFacts> rmma_rows(std::string_view arch);
 
 // The label of the release engine whose SASS a board of this compute capability runs, by the
 // dispatcher's rule over the committed snapshots (apps/dispatch): an architecture-specific

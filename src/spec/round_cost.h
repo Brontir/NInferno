@@ -125,16 +125,23 @@ struct RoundFacts {
 // choose; tools/fits/round_cost/fit_eta.py), as kappa = BW / (eta peak). A generation
 // constant rests on two lab cards of the generation or more (AGENTS.md); each card's rounds are
 // predicted from the generation's other cards' fit before a row is added (fit_eta.py, item 3):
-//   ada    0.148  RTX 4070 Ti and RTX 4090 (each card's rounds predicted from the other's fit:
-//                 hard50 within -3..+4 % and +1..+9 %; gpt-oss +16..19 %, its runs drafted BF16)
-//   gb20x  0.165  RTX 5070 Ti and RTX 5090 (DECISIONS 56: held out, R within +4.3 % / +1.4 % on
-//                 average; the plan's pick on the other card's pairs is the held-out card's
-//                 measured best or within 1.5 % of it, gpt-oss 4 %; the 5070 Ti's 9B rounds of
-//                 6-8 verify rows cost 7-12 % less than their facts, its speedup predicted low)
+//   ada    0.160  RTX 4060 Ti, RTX 4070 Ti and RTX 4090 (each card's rounds predicted from the
+//                 other two's fit, R measured / R facts on average: -3.9 %, +2.0 %, +1.2 %; the
+//                 plan's pick on another card's pairs is the held-out card's measured best or
+//                 within 2.2 % of it)
+//   gb20x  0.160  RTX 5070 Ti and RTX 5090 (each card's rounds predicted from the other's fit:
+//                 +3.2 % and +3.8 % on average; the plan's pick on the other card's pairs is the
+//                 held-out card's measured best or within 2.7 % of it)
+// The two rows follow the registry's pairs as of #244 (fresh Qwen3.5 9B and Gemma 4 12B pairs and
+// the RTX 4060 Ti's): they were 0.148 (RTX 4070 Ti and RTX 4090) and 0.165 before. DECISIONS 53
+// and 56 hold the older hold-out figures of those rows. fit_eta.py prints the rows, and
+// tests/test_round_cost_eta_fit.py fails when they differ from this table.
 // Each other generation needs a second lab card's registry pairs before it gets a row; until then
 // it has no estimate, and its cards keep the lab-measured profiles (as before the facts). Their
-// one-card fits, for when the second card comes (DECISIONS 53): ga10x 0.197 (RTX 3060), turing
-// 0.099 (RTX 2080 Ti), volta 0.179 (Quadro GV100). The rounds are the registry's after #156 (Gemma 4
+// one-card fits, for when the second card comes (DECISIONS 53 had ga10x 0.197, turing 0.099, volta
+// 0.179; on the registry as of #244, fit_eta.py prints): ga10x 0.269 (RTX 3060; its table names two
+// boards of the one ga106 chip), turing 0.135 (RTX 2080 Ti; likewise two boards of tu102), volta
+// 0.534 (Quadro GV100). The rounds are the registry's after #156 (Gemma 4
 // assistants and DFlash drafters attached q8): their q8 drafters' block passes are compute-bound
 // enough that eta fell from 0.54 (Ada, BF16 drafters) to 0.15.
 struct SmallTEta {
@@ -142,15 +149,17 @@ struct SmallTEta {
     double eta;
     std::int32_t cards; // lab cards the row rests on (two or more)
 };
+
 inline constexpr SmallTEta kSmallTEta[] = {
-    {"ada", 0.148, 2},
-    {"gb20x", 0.165, 2},
+    {"ada", 0.160, 3},
+    {"gb20x", 0.160, 2},
 };
 
-// A kernel's launch time inside a graph replay (t0) and the DRAM rate a decode kernel's bytes reach
+// A kernel's launch time inside a graph replay (t0: ninferno::launch_node_seconds, the one launch
+// constant) and the DRAM rate a decode kernel's bytes reach
 // (eta_dram), by generation: a kernel of B bytes takes B / (eta_dram x BW) + t0 (the Ada census,
 // Qwen3.5-9B Q4_K_M plain decode on the RTX 4090, 4070 Ti and 4060 Ti, every kernel within 2 %:
-// t0 1.5 us without PDL, eta_dram 0.946). A round pays
+// t0 as launch_node_seconds("ada") without PDL, eta_dram 0.946). A round pays
 // t0 for each kernel its graphs launch (Measurement::graph_kernels, counted from the captured
 // graphs), a plain step for each of its own: R(k) adds them, in bytes at eta_dram x BW (the
 // bytes term's convention; kappa converts operations at the full BW, ~5 % apart, immaterial here).
@@ -159,15 +168,15 @@ inline constexpr SmallTEta kSmallTEta[] = {
 // their graph gaps were measured (RTX 2080 Ti 0.38 us a kernel, RTX 3060 ~0) but no intercept was
 // fitted, and each has one lab card (a generation constant rests on two, as kSmallTEta does).
 // gb20x has none either: PDL chains its launches (t0 about 0.5 us), but no intercept was fitted
-// there, and its two lab cards' counted spec-tunes (RTX 5070 Ti, 5090) cannot tell 0.5 from
-// 1.5 us (R within +-1.5 % either way, the verify routes dominating the residuals).
+// there, and its two lab cards' counted spec-tunes (RTX 5070 Ti, 5090) cannot tell 0.5 us from
+// the Ada node (R within +-1.5 % either way, the verify routes dominating the residuals).
 struct LaunchTime {
     std::string_view generation;
-    double seconds;
     double eta_dram;
 };
+
 inline constexpr LaunchTime kLaunchTime[] = {
-    {"ada", 1.5e-6, 0.946},
+    {"ada", 0.946},
 };
 
 // The kernels a round's graphs launch and a plain step's (0: not counted, no launch term).
@@ -184,7 +193,7 @@ struct CardRates {
     std::string generation;      // core/generation.h's row name
     double eta              = 0; // kSmallTEta's, 0 when the generation has none
     std::int32_t eta_cards  = 0;
-    double launch_seconds   = 0; // kLaunchTime's, 0 when the generation has none
+    double launch_seconds   = 0; // launch_node_seconds's, 0 when the generation has none
     double eta_dram         = 0;
 
     // A kernel launch's time as the bytes it would read in it (round cost's unit); 0 when unknown.

@@ -2,7 +2,7 @@ add_library(ninferno_linear_test_support STATIC
   "${CMAKE_CURRENT_LIST_DIR}/linear_test_common.cpp")
 ninferno_test_includes(ninferno_linear_test_support)
 ninferno_op_oracle_options(ninferno_linear_test_support)
-ninferno_link_ops(ninferno_linear_test_support PUBLIC)
+target_link_libraries(ninferno_linear_test_support PUBLIC ninferno::ops)
 
 ninferno_add_op_test(ninferno_linear_q4_a16_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_q4_a16.cpp"
@@ -141,6 +141,20 @@ ninferno_add_op_test(ninferno_format_traits_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_format_traits.cpp"
   LIBRARIES ninferno_linear_test_support)
 
+# The kernel roofline (#613 PR-4): price_routes prices equal the golden table of the formula
+# it replaced (fixed outputs from before the move), and
+# the selector's priced routes are the roofline's terms (host only).
+ninferno_add_op_test(ninferno_kernel_roofline_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_kernel_roofline.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
+# The generator of that golden table (tests/ops/linear/gen_kernel_roofline_golden.cpp): built so that
+# it keeps compiling, not run by ctest (it is run once, against the code before the move).
+ninferno_add_test(ninferno_gen_kernel_roofline_golden
+  NO_DEFAULT_TEST
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/gen_kernel_roofline_golden.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
 # ops::linear's candidates per call (#306): the owned Q8 kernel's launch and the generic route,
 # one selected as dispatch_linear runs.
 # The activation each generic route prepares and which preparations serve one another (#308).
@@ -165,6 +179,17 @@ target_compile_definitions(ninferno_selector_golden_test PRIVATE
 ninferno_add_op_test(ninferno_selector_real_device_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_selector_real_device.cpp"
   LIBRARIES ninferno_linear_test_support)
+
+# The register-MMA kernel's static shared memory as constexpr geometry (ops/generic/rmma_geometry.h,
+# static_asserted by the kernel, with the decoder rows pinned to their decoders) equals every row of
+# every kernel-facts snapshot (#612 step 5); a plain host test: header only, no GPU, no library.
+ninferno_add_test(ninferno_rmma_geometry_test NEEDS_SOURCE_DIR
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_rmma_geometry.cpp")
+set_tests_properties(ninferno_rmma_geometry_test PROPERTIES LABELS host)
+# The full build's architectures (the NVFP4 kernels, so the cluster hand-over): the one list of
+# CMakeLists.txt, comma-joined, not parsed from its text.
+target_compile_definitions(ninferno_rmma_geometry_test PRIVATE
+  NINFERNO_FULL_CUDA_ARCHS="$<JOIN:${NINFERNO_FULL_CUDA_ARCHS},$<COMMA>>")
 
 # The kernel-facts snapshots the register-MMA price reads (ops/generic/kernel_facts.h, #612).
 # Three checks, from the data inwards:
