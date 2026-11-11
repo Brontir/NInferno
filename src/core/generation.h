@@ -90,16 +90,17 @@ struct MmqLaunchLaw {
     double launch_seconds = 0.0;
 };
 
-// Turing: MEASURED on the RTX 2080 Ti (68 SMs; tools/bench/mmq_launch_microbench.cu, 11.11, Q4_K,
-// 4096 x 4096 and 4096 x 8192 products, the medians of two passes of 9 x 1000 calls; DECISIONS 77).
-// unit_clocks: the time of 16 more units in a launch of a tile a CTA on 64 CTAs (two column tiles,
-// the 4096-row products' launch from 65 columns on), 3.40 4.56 6.28 7.23 8.50 11.60 us, at the
-// 1545 MHz reference clock. stream_k_unit: the same on 68 stream-k CTAs over one column tile, the
-// mean ratio over the six widths, 1.18 (1.10 .. 1.25). launch_seconds: nsys, the fixup kernel's
-// time beyond its bytes at 616 GB/s and the launch gap it adds, 5.0 us (J 128) and 1.6 us (J 64 at
-// 121 columns), their mean. Not derived: the SASS issue counts of a unit are linear in J (IMMA 4 J,
-// I2F 4 J + 10 a thread on sm_75), the measured unit about three times their issue bound (2.8 at
-// J 128 to 3.5 at J 16, at the 1.95 GHz the board ran).
+// Turing: MEASURED on one card, the RTX 2080 Ti (68 SMs), and carried to the generation as a
+// transfer: no second Turing card is measured (DECISIONS 77). tools/bench/mmq_launch_microbench.cu,
+// 11.11, Q4_K, 4096 x 4096 and 4096 x 8192 products, the medians of two passes of 9 x 1000 calls.
+// unit_clocks: the time of 16 more units in a launch of a tile a CTA on 64 CTAs (two
+// column tiles, the 4096-row products' launch from 65 columns on), 3.40 4.56 6.28 7.23 8.50 11.60
+// us, at the 1545 MHz reference clock. stream_k_unit: the same on 68 stream-k CTAs over one column
+// tile, the mean ratio over the six widths, 1.18 (1.10 .. 1.25). launch_seconds: nsys, the fixup
+// kernel's time beyond its bytes at 616 GB/s and the launch gap it adds, 5.0 us (J 128) and 1.6 us
+// (J 64 at 121 columns), their mean. Not derived: the SASS issue counts of a unit are linear in J
+// (IMMA 4 J, I2F 4 J + 10 a thread on sm_75), the measured unit about three times their issue bound
+// (2.8 at J 128 to 3.5 at J 16, at the 1.95 GHz the board ran).
 inline constexpr MmqLaunchLaw kTuringMmqLaw{{5256, 7047, 9698, 11170, 13134, 17920}, 1.18, 3.3e-6};
 
 struct GenerationRow {
