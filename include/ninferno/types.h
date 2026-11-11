@@ -2002,6 +2002,9 @@ struct LoadSummary {
     // and verify widths and the prefill chunk (the "routes" section, manifest only): replayable from
     // its own lines and the board's class (src/runtime/engine/decision_routes.h).
     std::string decision_routes;
+    // The same lines with the authority and the evidence of each answer (the "route_evidence"
+    // section, #614): text only, in neither the fingerprint nor the manifest's hash.
+    std::string decision_route_evidence;
     // The artifact's id (16 bytes, lowercase hex), as the load read it: drawn at random per
     // conversion, so it names the file (observed), not what it computes.
     std::string artifact_id;

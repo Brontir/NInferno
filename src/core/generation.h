@@ -13,6 +13,10 @@
 //         parts 2048; where the BF16 MMA is emulated (Turing's f16 k8 pairs, Volta's FP32 FMAs,
 //         DeviceFeatures::mma_bf16_native false) the fitted aggregate 1536.
 //   s8    the int8 MMA, 0 where the card has none (Volta, whose build composes it from dp4a).
+//   fp32_fma  not a tensor rate: the FP32 fused multiply-adds an SM issues per clock (the CUDA C++
+//         Programming Guide's arithmetic instruction throughput table, "32-bit floating-point
+//         add, multiply, multiply-add"): 64 on Volta, Turing and GA100, 128 on GA10x, Ada, Hopper
+//         and the Blackwell generations. A rate (lent as bf16 and s8 are).
 // fp32acc_full_rate: FP32-accumulate HMMA at the tensor core's full rate (sm_80, sm_90,
 // sm_100/103), where int8 activations gain less than their quantization pass costs; the GeForce,
 // workstation and inference parts (sm_75, sm_86, sm_89, sm_110, sm_120/121) run it at half rate,
@@ -22,7 +26,8 @@
 //   w4a8_eff_scale  the W4A8 tiles' fraction of the consumer fit's efficiency (A100 0.46)
 //   a16_cost_scale  the A16 model's factor against the A8 one (1.11; A100 1.64: with
 //                   the busy-SM fill it moves 0.89 -> 1.11, which also prices the dequant of the
-//                   K-quant and codebook formats the A16 side pays: 5070 Ti ISTA T 17..32 1.20 -> 1.04)
+//                   K-quant and codebook formats the A16 side pays: 5070 Ti ISTA T 17..32 1.20
+//                   -> 1.04)
 //   mmq_candidate   ggml's matrix kernel is a cost-model candidate (not on the full-rate row,
 //                   where its microbenchmark win and the 24K prefill A/B, -15 %, disagree)
 //   attention_chain the Gemma 4 chained prefill attention tile runs near the plain tile's speed in
@@ -45,8 +50,11 @@
 //                   3090, 0.05-0.15 on the RTX 5090; DECISIONS 74), a generation with a higher
 //                   MMA rate (ga100: s8 4096) has a smaller part in J and a larger fixed share, so
 //                   fewer widths pay. A generation joins by its own grid: Ada did (0.20, the RTX
-//                   4070 Ti and 4090); Turing was not run over the widths and keeps the fewest
-//                   tiles. A measured preference, not carried by a lent row.
+//                   4070 Ti and 4090). Turing joined by its grid (the RTX 2080 Ti, DECISIONS 78)
+//                   with a launch law instead of a fixed share (mmq_launch_law): on its 68 SMs the
+//                   width decides whether a launch runs a tile a CTA or stream-k with a fixup,
+//                   which the tile count does not see. A measured preference, not carried by a
+//                   lent row.
 
 //
 // What a lent row carries (#300): generation_row answers every compute capability, lending the
@@ -54,13 +62,14 @@
 // the device's capability, which is not in this table, its fields are of four kinds, and only the
 // rates are lent:
 //   capability   what the device can execute: not in this table (DeviceFeatures, the query)
-//   rate         bf16, s8: the analytic tensor rate a cost model ranks routes with (lent: an
-//                assumed rate, the ranking said to rest on it)
+//   rate         bf16, s8 (the analytic tensor rate a cost model ranks routes with), fp32_fma
+//                (lent: an assumed rate, the ranking said to rest on it)
 //   kind         fp32acc_full_rate: which measured kind of tensor core the generation is; a lent
 //                row has none (fp32acc_full_rate_of: nullopt), and what rests on the kind (int8
 //                prefill pays, i8 replaces the q4a8 kernels, board distances) is not carried
-//   fitted       w4a8_eff_scale, a16_cost_scale: route_tune fits of the boards above; not carried
-//                (fitted_route_scales: nullopt), the comparisons they price not made
+//   fitted       w4a8_eff_scale, a16_cost_scale, mmq_tile_fixed: route_tune fits of the boards
+//                above (mmq_tile_fixed: DECISIONS 74's grids); not carried (fitted_route_scales:
+//                nullopt, the comparisons they price not made; mmq_tile_fixed_of: 0.43)
 //   preference   mmq_candidate, attention_chain, mmq_work_tiles: a measured A/B; not carried
 //                (mmq_candidate_measured, attention_chain_measured)
 // A generation newer than the table therefore runs the routes every board runs (A16 prefill, the
@@ -71,6 +80,37 @@
 
 namespace ninferno {
 
+// The launch law of ggml's matrix kernel, for a generation whose column tiles are priced by the
+// launch they run (core/mmq_columns.h launch_seconds; DECISIONS 78) instead of their tile count. A
+// launch takes its longest CTA's units times a unit's cost (a unit: one 128-row x J-column tile
+// over 256 K values), plus, where it splits tiles (stream-k with a fixup), the fixup's bytes at the
+// DRAM rate and one dependent launch.
+//   unit_clocks     a unit's SM-clocks at the board's reference clock, in a launch of a tile a CTA,
+//                   by J = 16, 32, 64, 80, 96, 128 (core/mmq_columns.h kTilesWork)
+//   stream_k_unit   a stream-k CTA's unit against a tile-a-CTA one at the same J
+//   launch_seconds  what the fixup costs beyond its bytes at the DRAM rate: its kernel's fixed time
+//                   and its dependent launch (a generation without PDL)
+struct MmqLaunchLaw {
+    double unit_clocks[6] = {};
+    double stream_k_unit  = 1.0;
+    double launch_seconds = 0.0;
+};
+
+// Turing: MEASURED on one card, the RTX 2080 Ti (68 SMs), and carried to the generation as a
+// transfer: no second Turing card is measured (DECISIONS 78). tools/bench/mmq_launch_microbench.cu,
+// 11.11, Q4_K, 4096 x 4096 and 4096 x 8192 products, the medians of two passes of 9 x 1000 calls.
+// unit_clocks: the time of one unit (16 more units, k 4096 -> 8192, over 16) in a launch of a
+// tile a CTA on 64 CTAs (two column tiles, the 4096-row products' launch from 65 columns on),
+// 3.40 4.56 6.28 7.23 8.50 11.60 us, at the 1545 MHz reference clock. stream_k_unit: the same on
+// 68 stream-k CTAs over one column tile, the mean ratio over the six widths, 1.18 (1.10 .. 1.25).
+// launch_seconds: nsys, the fixup kernel's time beyond its bytes at 616 GB/s and the launch gap it
+// adds, 5.0 us (J 128) and 1.6 us (J 64 at 121 columns), their mean: one number for a 3x spread,
+// so a fitted summary of two measurements (it does not decide the 121-column flip, 126 against
+// 100 us). Not derived: the SASS issue counts of a unit are linear in J
+// (IMMA 4 J, I2F 4 J + 10 a thread on sm_75), the measured unit about three times their issue bound
+// (2.8 at J 128 to 3.5 at J 16, at the 1.95 GHz the board ran).
+inline constexpr MmqLaunchLaw kTuringMmqLaw{{5256, 7047, 9698, 11170, 13134, 17920}, 1.18, 3.3e-6};
+
 struct GenerationRow {
     int major    = 0;
     int minor_lo = 0;
@@ -78,6 +118,7 @@ struct GenerationRow {
     const char* name = "";
     double bf16  = 0;
     double s8    = 0;
+    double fp32_fma        = 0; // FP32 fused multiply-adds an SM issues per clock (see above)
     bool fp32acc_full_rate = false;
     double w4a8_eff_scale  = 1.0;
     double a16_cost_scale  = 1.0;
@@ -85,19 +126,23 @@ struct GenerationRow {
     bool attention_chain   = false;
     bool mmq_work_tiles    = false;
     double mmq_tile_fixed  = 0.43; // with mmq_work_tiles: the fixed share of a column tile's step
+    // With mmq_work_tiles: the launch law that prices the widths instead of mmq_tile_fixed (null:
+    // the tile law, ceil(columns / J) x step_share(J, mmq_tile_fixed)).
+    const MmqLaunchLaw* mmq_launch_law = nullptr;
 };
 
 inline constexpr GenerationRow kGenerations[] = {
-    //  major minor     name       bf16    s8      full   w4a8  a16   mmq    chain
-    {7, 0, 4, "volta", 1536.0, 0.0, false, 1.0, 1.11, true},
-    {7, 5, 9, "turing", 1536.0, 2048.0, false, 1.0, 1.11, true},
-    {8, 0, 0, "ga100", 2048.0, 4096.0, true, 0.46, 1.64, false},
-    {8, 1, 8, "ga10x", 512.0, 2048.0, false, 1.0, 1.11, true, false, true, 0.20},
-    {8, 9, 9, "ada", 512.0, 2048.0, false, 1.0, 1.11, true, false, true, 0.20},
-    {9, 0, 9, "hopper", 2048.0, 4096.0, true, 0.46, 1.64, false},
-    {10, 0, 9, "gb100", 2048.0, 4096.0, true, 0.46, 1.64, false},
-    {11, 0, 9, "thor", 512.0, 2048.0, false, 1.0, 1.11, true},
-    {12, 0, 9, "gb20x", 512.0, 2048.0, false, 1.0, 1.11, true, true, true, 0.10},
+    //  major minor     name       bf16    s8     fp32   full   w4a8  a16   mmq    chain
+    {7, 0, 4, "volta", 1536.0, 0.0, 64.0, false, 1.0, 1.11, true},
+    {7, 5, 9, "turing", 1536.0, 2048.0, 64.0, false, 1.0, 1.11, true, false, true, 0.43,
+     &kTuringMmqLaw},
+    {8, 0, 0, "ga100", 2048.0, 4096.0, 64.0, true, 0.46, 1.64, false},
+    {8, 1, 8, "ga10x", 512.0, 2048.0, 128.0, false, 1.0, 1.11, true, false, true, 0.20},
+    {8, 9, 9, "ada", 512.0, 2048.0, 128.0, false, 1.0, 1.11, true, false, true, 0.20},
+    {9, 0, 9, "hopper", 2048.0, 4096.0, 128.0, true, 0.46, 1.64, false},
+    {10, 0, 9, "gb100", 2048.0, 4096.0, 128.0, true, 0.46, 1.64, false},
+    {11, 0, 9, "thor", 512.0, 2048.0, 128.0, false, 1.0, 1.11, true},
+    {12, 0, 9, "gb20x", 512.0, 2048.0, 128.0, false, 1.0, 1.11, true, true, true, 0.10},
 };
 
 // Whether the table has a row of its own for compute capability major.minor (generation_row lends
@@ -165,6 +210,13 @@ struct FittedRouteScales {
 [[nodiscard]] constexpr double mmq_tile_fixed_of(int major, int minor) noexcept {
     return mmq_work_tiles_measured(major, minor) ? generation_row(major, minor).mmq_tile_fixed
                                                  : 0.43;
+}
+
+// The launch law the widths are priced by on that generation (mmq_launch_law), null where it takes
+// the tile law or keeps the fewest tiles: only on a generation of the table's own.
+[[nodiscard]] constexpr const MmqLaunchLaw* mmq_launch_law_of(int major, int minor) noexcept {
+    return mmq_work_tiles_measured(major, minor) ? generation_row(major, minor).mmq_launch_law
+                                                 : nullptr;
 }
 
 // The compute capabilities the generic selector's measured rules name (generic_select.cpp). A

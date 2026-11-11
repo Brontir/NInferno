@@ -2,7 +2,7 @@ add_library(ninferno_linear_test_support STATIC
   "${CMAKE_CURRENT_LIST_DIR}/linear_test_common.cpp")
 ninferno_test_includes(ninferno_linear_test_support)
 ninferno_op_oracle_options(ninferno_linear_test_support)
-ninferno_link_ops(ninferno_linear_test_support PUBLIC)
+target_link_libraries(ninferno_linear_test_support PUBLIC ninferno::ops)
 
 ninferno_add_op_test(ninferno_linear_q4_a16_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_q4_a16.cpp"
@@ -109,8 +109,8 @@ ninferno_add_op_test(ninferno_route_traffic_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_traffic.cpp"
   LIBRARIES ninferno_linear_test_support)
 
-# A slice of a fused weight is priced, described and routed as a standalone weight of its own
-# shape on every golden board (#640, host only).
+# A slice of a fused weight and a row view are priced, described and routed as a standalone weight
+# of their own shape on every golden board, the R8 verify gate included (#640, #704, host only).
 ninferno_add_op_test(ninferno_slice_price_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_slice_price.cpp"
   LIBRARIES ninferno_linear_test_support)
@@ -139,6 +139,28 @@ ninferno_add_op_test(ninferno_route_classes_test
 # The format traits table against the predicates it replaced, for every QType.
 ninferno_add_op_test(ninferno_format_traits_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_format_traits.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
+# The codec traits rows (ops/generic/codec_traits.h, #615 F3; generic_codec_traits.cu proves them
+# against the codec structs) against the literals r8_fits, w4a8_fits and mmq_plane_bytes carried
+# before, for every QType; no GPU needed.
+ninferno_add_op_test(ninferno_codec_traits_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_codec_traits.cpp"
+  LIBRARIES ninferno_linear_test_support)
+set_tests_properties(ninferno_codec_traits_test PROPERTIES LABELS host)
+
+# The kernel roofline (#613 PR-4): price_routes prices equal the golden table of the formula
+# it replaced (fixed outputs from before the move), and
+# the selector's priced routes are the roofline's terms (host only).
+ninferno_add_op_test(ninferno_kernel_roofline_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_kernel_roofline.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
+# The generator of that golden table (tests/ops/linear/gen_kernel_roofline_golden.cpp): built so that
+# it keeps compiling, not run by ctest (it is run once, against the code before the move).
+ninferno_add_test(ninferno_gen_kernel_roofline_golden
+  NO_DEFAULT_TEST
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/gen_kernel_roofline_golden.cpp"
   LIBRARIES ninferno_linear_test_support)
 
 # ops::linear's candidates per call (#306): the owned Q8 kernel's launch and the generic route,
@@ -174,6 +196,17 @@ ninferno_add_op_test(ninferno_rmma_describe_test
 ninferno_add_op_test(ninferno_selector_real_device_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_selector_real_device.cpp"
   LIBRARIES ninferno_linear_test_support)
+
+# The register-MMA kernel's static shared memory as constexpr geometry (ops/generic/rmma_geometry.h,
+# static_asserted by the kernel, with the decoder rows pinned to their decoders) equals every row of
+# every kernel-facts snapshot (#612 step 5); a plain host test: header only, no GPU, no library.
+ninferno_add_test(ninferno_rmma_geometry_test NEEDS_SOURCE_DIR
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_rmma_geometry.cpp")
+set_tests_properties(ninferno_rmma_geometry_test PROPERTIES LABELS host)
+# The full build's architectures (the NVFP4 kernels, so the cluster hand-over): the one list of
+# CMakeLists.txt, comma-joined, not parsed from its text.
+target_compile_definitions(ninferno_rmma_geometry_test PRIVATE
+  NINFERNO_FULL_CUDA_ARCHS="$<JOIN:${NINFERNO_FULL_CUDA_ARCHS},$<COMMA>>")
 
 # The kernel-facts snapshots the register-MMA price reads (ops/generic/kernel_facts.h, #612).
 # Three checks, from the data inwards:

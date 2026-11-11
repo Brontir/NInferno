@@ -7,6 +7,7 @@
 #include "core/measured_boards.h"
 #include "core/ggml_frag.h"
 #include "core/layout.h"
+#include "core/moe_w4a8_blocks.h"
 #include "ninferno/ops/prefill_routes.h"
 #include "ninferno/ops/route_table.h"
 #include "ops/common/math.h"
@@ -362,7 +363,7 @@ MoePlan invariant_plan(const Geometry& g, std::int32_t tokens) {
 
 MoePlan plan_for(const Geometry& g, std::int32_t tokens, bool prefill) {
     MoePlan p;
-    const bool wide = (prefill && tokens >= 17) || tokens >= 64;
+    const bool wide = (prefill && tokens >= kMoeBandEdgeTokens) || tokens >= 64;
     if (wide) {
         p.router_schedule = p.gate_up_schedule = p.down_schedule = kPrefillSchedule;
         p.job_columns = kJobColumns;
@@ -389,6 +390,26 @@ struct Workspace {
 // FUSION-SITE: moe_router_quantize_x
 bool router_quantizes_x(const Geometry& g, const MoePlan& p, std::int32_t tokens) {
     return p.gate_up_r8 >= 0 && !p.w4a8() && g.input == g.hidden && tokens <= kR8Tokens;
+}
+
+// The kernel that computes a call's router logits (run, step 1). The SIMT router: a BF16 router
+// at decode and verify widths outside the invariant profile (whose router streams with the K split
+// of every width) and outside a token-invariant plan (the prefill schedule); the choice does not
+// depend on the hidden size: a token's logits are the same at every T <= kRouterSimtMaxTokens.
+// Volta's HMMA plan takes a BF16 router on the tensor cores too (the register MMA there runs on
+// the emulation: gpt-oss-20b prefill, 9.3 % of the V100's GPU time, 572 us a 1024-token chunk),
+// where the router does not quantize x; anything else runs on the register MMA.
+MoeRouterKernel router_kernel(const MoeWeights& w, const Geometry& g, const MoePlan& p,
+                              std::int32_t tokens) {
+    const bool bf16 = generic::codec_of(w.router) == generic::WeightCodec::Bf16;
+    if (tokens <= kRouterSimtMaxTokens && bf16 && !invariant_routes_active() &&
+        p.router_schedule != kPrefillSchedule) {
+        return MoeRouterKernel::Simt;
+    }
+    if (p.volta_hmma && !router_quantizes_x(g, p, tokens) && bf16 && g.hidden % 64 == 0) {
+        return MoeRouterKernel::VoltaHmma;
+    }
+    return MoeRouterKernel::RegisterMma;
 }
 
 template <class Arena>
@@ -545,7 +566,7 @@ bool w4a8_bank_admitted(const MoeWeights& w) {
     return with_w4a8(MoePlan{}, w, true).w4a8();
 }
 
-// Whether a call of T >= 17 takes Volta's grouped HMMA stages (MoePlan::volta_hmma): a build
+// Whether a layer takes Volta's grouped HMMA stages (MoePlan::volta_hmma) from T = 17: a build
 // without mma.sync, both banks of a format with an f16 A fragment (Q4_K in either layout),
 // K a multiple of the format's step, and x rows of whole 4-value groups at 8-byte alignment.
 bool volta_hmma_admitted(const MoeWeights& w, const Geometry& g) {
@@ -561,6 +582,12 @@ bool volta_hmma_admitted(const MoeWeights& w, const Geometry& g) {
     };
     return admits(w.gate_up) && admits(w.down) && g.input % 4 == 0 && g.hidden % 4 == 0 &&
            g.inter % 4 == 0;
+}
+
+// The call-level predicate: the band edge on top of the layer's admission. The workspace bound and
+// the plan check ask volta_hmma_admitted (any width); a call asks this.
+bool volta_hmma_admitted_at(const MoeWeights& w, const Geometry& g, std::int32_t tokens) {
+    return tokens >= kMoeVoltaHmmaMinTokens && volta_hmma_admitted(w, g);
 }
 
 // Whether the heuristic prefill plan takes the grouped W4A8 where the banks admit it: on by
@@ -628,6 +655,14 @@ std::size_t shared_planes_bytes(const MoeWeights& w, std::int32_t min_tokens,
 }
 
 } // namespace
+
+bool moe_volta_hmma_admitted(const MoeWeights& weights, const MoeConfig& config,
+                             std::int32_t tokens) {
+    return volta_hmma_admitted_at(weights, validate(weights, config), tokens);
+}
+
+bool moe_mx8_banks(const MoeWeights& weights) { return mx8_banks(weights); }
+
 } // namespace detail::moe
 
 std::size_t moe_workspace_bytes(const MoeWeights& weights, const MoeConfig& config,
@@ -683,7 +718,13 @@ namespace detail::moe {
 BankRefusal w4a8_bank_refusal(const MoeWeights& w, const Weight& b) {
     if (!allows_a8(w.expert_policy)) { return BankRefusal::Policy; }
     if (!generic::w4a8_supports(b.qtype)) { return BankRefusal::Format; }
-    if (b.k % 32 != 0) { return BankRefusal::KGroup; }
+    // The bank's K and the activation the stage quantizes in whole 32-value blocks
+    // (core/moe_w4a8_blocks.h, the rule product/plan reads too): the gate/up stage quantizes x at
+    // the router's width (run: launch_moe_w4a8_quantize / launch_moe_mx8_quantize with k =
+    // g.hidden), the down stage the intermediate at its own K. Callers pass a bank of `w`.
+    if (!moe_w4a8_whole_blocks(b.k, &b == &w.gate_up ? w.router.k : b.k)) {
+        return BankRefusal::KGroup;
+    }
     if (b.qtype == QType::NVFP4 && !generic::nvfp4_prefill_a8_policy(b.qtype, w.expert_policy)) {
         return BankRefusal::Nvfp4A4;
     }
@@ -762,6 +803,11 @@ std::int32_t r8_token_limit(const Weight& bank) {
                                                                 : limit;
 }
 
+bool moe_format_has_min(QType q) {
+    return q == QType::GGML_Q4_1 || q == QType::GGML_Q5_1 || q == QType::GGML_Q4_K ||
+           q == QType::GGML_Q5_K;
+}
+
 bool r8_admits(const MoeWeights& w, const Weight& bank, std::int32_t tokens) {
     if (!allows_a8(w.expert_policy) || tokens < 1 || tokens > r8_token_limit(bank) ||
         !r8_expert_supports(bank)) {
@@ -777,9 +823,7 @@ bool r8_admits(const MoeWeights& w, const Weight& bank, std::int32_t tokens) {
     // 4915).
     std::int64_t slots = 1;
     while (slots < tokens) { slots *= 2; }
-    const auto q    = bank.qtype;
-    const bool sums = q == QType::GGML_Q4_1 || q == QType::GGML_Q5_1 || q == QType::GGML_Q4_K ||
-                      q == QType::GGML_Q5_K;
+    const bool sums = moe_format_has_min(bank.qtype);
     return slots * (static_cast<std::int64_t>(bank.k) / 32) * (sums ? 40 : 36) <=
            kStaticSharedBytesPerBlock;
 }
@@ -1034,7 +1078,7 @@ struct MoeCall {
     // moe() call, leaves the lookups the evidence needs out.
     bool want_evidence = false;
 
-    [[nodiscard]] bool prefill_band() const { return prefill && tokens >= 17; }
+    [[nodiscard]] bool prefill_band() const { return prefill && tokens >= kMoeBandEdgeTokens; }
 
     // A prefill call of 17 tokens or more that admits the grouped W4A8 takes it, as a dense W4A8
     // call does (generic_select.cpp select_route): the tables' prefill plans are A16 schedules,
@@ -1197,7 +1241,7 @@ std::optional<MoeAnswer> table_authority(const MoeCall& c) {
 // Volta from T = 17, under a band of no route table: its own tensor cores (the int8 tier and the
 // register MMA run emulated there).
 std::optional<MoeAnswer> volta_authority(const MoeCall& c) {
-    if (c.tokens < 17 || !volta_hmma_admitted(c.weights, c.g)) { return std::nullopt; }
+    if (!volta_hmma_admitted_at(c.weights, c.g, c.tokens)) { return std::nullopt; }
     MoePlan v    = plan_for(c.g, c.tokens, true);
     v.volta_hmma = true;
     return MoeAnswer{v, MoeAuthority::VoltaHmma, by_rule("volta-hmma")};
@@ -1348,6 +1392,14 @@ SharedBranch& shared_branch() {
 // The R8 down stage combines in its epilogue; set_fused_combine(false) keeps the separate combine
 // kernel, which the test compares it with in one process (read at every call).
 bool fused_combine_enabled() { return g_fused_combine.load(std::memory_order_relaxed); }
+
+// Whether an R8 down stage of this layer can combine in its epilogue: not with a shared expert (its
+// branch joins after the down stage), and only while the row grid fits the ticket array.
+bool r8_down_fuses_combine(const MoeWeights& w, const Geometry& g, int down_r8) {
+    if (g.shared) { return false; }
+    const int rows = r8_schedule_info(down_r8).rows_per_cta() * (32 / r8_lanes(w.down));
+    return blocks(g.hidden, rows) <= kCombineTickets;
+}
 
 CombineArgs combine_args(const Workspace& ws, const Geometry& g, const MoeConfig& c,
                          MoeEpilogue epilogue, Tensor& out, std::int32_t t, bool pdl) {
@@ -1511,13 +1563,9 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         plan.job_count    = static_cast<int*>(ws.job_count.data);
         plan.job_total    = static_cast<int*>(ws.job_total.data);
     }
-    // The SIMT router: a BF16 router at decode and verify widths outside the invariant profile
-    // (whose router streams with the K split of every width) and outside a token-invariant plan
-    // (the prefill schedule). The choice does not depend on the hidden size: a token's logits are
-    // the same at every T <= kRouterSimtMaxTokens.
-    const bool router_simt = t <= kRouterSimtMaxTokens &&
-                             generic::codec_of(w.router) == generic::WeightCodec::Bf16 &&
-                             !invariant_routes_active() && p.router_schedule != kPrefillSchedule;
+    // The router's kernel (router_kernel, the rule the layer price reads too).
+    const MoeRouterKernel router = router_kernel(w, g, p, t);
+    const bool router_simt       = router == MoeRouterKernel::Simt;
     // Programmatic dependent launches (decode chain): each kernel below waits for the previous one
     // before its first load; a copy or a quantizer between two stages keeps the plain launch.
     const bool pdl = device_class().features.pdl && c.pdl;
@@ -1552,12 +1600,7 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
             args.xq_lanes  = r8_lanes(w.gate_up);
             args.xq_group  = r8_x_group(w.gate_up);
         }
-        // Volta's HMMA plan takes a BF16 router on the tensor cores too: the register MMA there
-        // runs on the emulation (gpt-oss-20b prefill: 9.3 % of the V100's GPU time, 572 us a
-        // 1024-token chunk).
-        const bool router_hmma = p.volta_hmma && !router_simt && args.xq == nullptr &&
-                                 generic::codec_of(w.router) == generic::WeightCodec::Bf16 &&
-                                 g.hidden % 64 == 0;
+        const bool router_hmma = router == MoeRouterKernel::VoltaHmma;
         if (router_simt) {
             launch_router_simt(args, stream, route_in_router ? &select : nullptr, &plan);
         } else if (router_hmma) {
@@ -1709,8 +1752,8 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         } else if (p.down_r8 >= 0) {
             args.r8_lanes  = r8_lanes(w.down);
             const int rows = r8_schedule_info(p.down_r8).rows_per_cta() * (32 / args.r8_lanes);
-            if (!g.shared && branch == nullptr && fused_combine_enabled() &&
-                blocks(g.hidden, rows) <= kCombineTickets) {
+            if (branch == nullptr && fused_combine_enabled() &&
+                r8_down_fuses_combine(w, g, p.down_r8)) {
                 args.combine_tickets = combine_tickets();
                 args.combine         = combine_args(ws, g, c, epilogue, out, t, false);
                 fused_combine        = true;
@@ -1743,6 +1786,20 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
 
 } // namespace
 
+bool moe_r8_down_fuses_combine(const MoeWeights& weights, const MoeConfig& config, int down_r8) {
+    return r8_down_fuses_combine(weights, validate(weights, config), down_r8);
+}
+
+MoeRouterKernel moe_router_kernel(const MoeWeights& weights, const MoeConfig& config,
+                                  const MoePlan& plan, std::int32_t tokens) {
+    return router_kernel(weights, validate(weights, config), plan, tokens);
+}
+
+bool moe_router_quantizes_x(const MoeWeights& weights, const MoeConfig& config, const MoePlan& plan,
+                            std::int32_t tokens) {
+    return router_quantizes_x(validate(weights, config), plan, tokens);
+}
+
 void set_mx8(bool enabled) { g_mx8.store(enabled, std::memory_order_relaxed); }
 
 void set_fused_combine(bool enabled) { g_fused_combine.store(enabled, std::memory_order_relaxed); }
@@ -1765,8 +1822,8 @@ void moe(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
     // 214 us against the register MMA's 1535 at T = 5). R8 sums a token the same way at every T,
     // so a column's bytes are those of plain decode.
     const std::int32_t r8_tokens = detail::moe::r8_token_limit(w.gate_up);
-    if (!build_features().mma_tensor && t > r8_tokens && t <= 16 && !prefill_routes_active() &&
-        !invariant_routes_active() &&
+    if (!build_features().mma_tensor && t > r8_tokens && t < detail::moe::kMoeBandEdgeTokens &&
+        !prefill_routes_active() && !invariant_routes_active() &&
         detail::moe::select_plan(w, c, r8_tokens, false).gate_up_r8 >= 0) {
         for (std::int32_t begin = 0; begin < t; begin += r8_tokens) {
             const std::int32_t n = std::min(r8_tokens, t - begin);

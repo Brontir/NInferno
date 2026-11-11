@@ -254,7 +254,7 @@
                     "function": "fused_text_qk_norm_rope"
                 },
                 "rule_today":
-                    "rmsnorm_rope when tokens <= kFusedTextQkNormRopeMaximumTokens (256), theta 1e7, eps 1e-6, head_dim 256, rotary 64, no YaRN, one position axis; else two rmsnorms + rope. Both branches are the same arithmetic bit for bit.",
+                    "rmsnorm_rope when tokens <= ops::rmsnorm_rope_text_fused_max_tokens (the launch-amortisation law of #661; 256, kFusedTextQkNormRopeDefaultMaximumTokens, until its excess and the kernel facts are committed), theta 1e7, eps 1e-6, head_dim 256, rotary 64, no YaRN, one position axis; else two rmsnorms + rope. Both branches are the same arithmetic bit for bit.",
                 "alternatives": [
                     "rmsnorm_rope (one launch)",
                     "2 x rmsnorm + rope"
@@ -269,7 +269,7 @@
                 "one_card_literal": true,
                 "evidence": [
                     "#617 analysis, section 1 and step G",
-                    "comment above kFusedTextQkNormRopeMaximumTokens"
+                    "comment above kFusedTextQkNormRopeDefaultMaximumTokens"
                 ],
                 "invariant_pin": "none needed (Equal)",
                 "parity_test": "tests/ops/test_rmsnorm_rope.cpp",

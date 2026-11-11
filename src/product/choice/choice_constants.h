@@ -52,6 +52,7 @@
 
 #include "core/cost_constants.h"
 #include "ninferno/types.h"
+#include "ops/softmax_attention/dense/causal_cache/int8/prompt_fast_cost.h"
 
 #include <cstdint>
 #include <string_view>
@@ -150,19 +151,21 @@ inline constexpr DecodeLaunches kDecodeLaunches[] = {
     {"qwen3_5_text", WeightClass::IQ4, 32, 161, {167, 295, 167}, 1, 7}, // RTX 4060 Ti's census
 };
 
-// What a kernel costs a step beyond its bytes, by generation: the census's measured residual, one row,
-// the three models (decode_census.json): a weight-reading kernel's time less its weights at kDramEta,
-// a small one's less the state and KV bytes it reads, the mean over every kernel of the class. Where
-// the census explains it: Ada's plain R8 projections 1.5 us of launch and ramp plus the graph's
-// 0.29 us gap (the median 1.9-2.2 us); the SwiGLU and residual epilogues 2.2-6 us and the Q8_0 R8 on
-// the 4090 3.5 us raise the mean to 2.35; its norms 1.7-1.9 us (four times their bytes), the attention
-// at a short context 6.6. Blackwell's PDL hides the plain projections' launch (0.2 us median: their
-// weights are read during the norm) but not the epilogues', and its small kernels carry the prefetch.
-// Turing: a weight-reading kernel 7.2-11.2 us beyond its bytes (the three models' means), one card. A row of one card prices only its own boards'
-// estimate (marked transferred; no decision reads it: the choice prices on a reference card's
-// generation; DECISIONS 60); a generation without a row takes Ada's (transferred). Ampere (RTX 3060,
-// one card): a weight-reading kernel 3.1-5.8 us, no PDL, no Ada L2. Volta (Quadro GV100, one card):
-// its own row, a weight-reading kernel's from Q8_0 alone (its K-quants: kWeightSmRate, DECISIONS 72).
+// What a kernel costs a step beyond its bytes, by generation: the census's measured residual, one
+// row, the three models (decode_census.json): a weight-reading kernel's time less its weights at
+// kDramEta, a small one's less the state and KV bytes it reads, the mean over every kernel of the
+// class. Where the census explains it: Ada's plain R8 projections 1.5 us
+// (launch_node_seconds("ada"): the same t0 sits in this residual; not yet split) of launch and ramp
+// plus the graph's 0.29 us gap (the median 1.9-2.2 us); the SwiGLU and residual epilogues 2.2-6 us
+// and the Q8_0 R8 on the 4090 3.5 us raise the mean to 2.35; its norms 1.7-1.9 us (four times their
+// bytes), the attention at a short context 6.6. Blackwell's PDL hides the plain projections' launch
+// (0.2 us median: their weights are read during the norm) but not the epilogues', and its small
+// kernels carry the prefetch. Turing: a weight-reading kernel 7.2-11.2 us beyond its bytes (the
+// three models' means), one card. A row of one card prices only its own boards' estimate (marked
+// transferred; no decision reads it: the choice prices on a reference card's generation; DECISIONS
+// 60); a generation without a row takes Ada's (transferred). Ampere (RTX 3060, one card): a
+// weight-reading kernel 3.1-5.8 us, no PDL, no Ada L2. Volta (Quadro GV100, one card): its own row,
+// a weight-reading kernel's from Q8_0 alone (its K-quants: kWeightSmRate, DECISIONS 72).
 struct KernelCost {
     std::string_view generation;
     double gemv;  // seconds a weight-reading kernel beyond its bytes
@@ -293,14 +296,72 @@ inline constexpr MoeRoutedEta kMoeRoutedEta[] = {
 };
 
 // The model's measured error on a generation's dense decode estimate: the rms of ln(predicted /
-// measured) over decode_measured.json's rows of the generation's cards under the rows above (derived,
-// not tuned: ninferno_choice_test recomputes it). Two quantizations whose worths (-ln T - lambda KLD)
-// differ by less are a tie: the lower KLD wins (DECISIONS 60).
+// measured) over decode_measured.json's rows of the generation's cards under the rows above
+// (derived, not tuned: ninferno_choice_test recomputes it). Two quantizations whose worths (-ln T -
+// lambda KLD) differ by less are a tie: the lower KLD wins (DECISIONS 60). `cards`: the lab cards
+// whose rows it is the rms over; a decision's resolution decides only on two or more
+// (resolution_of), the rule every lab constant that decides follows (AGENTS.md).
 struct PredictionError {
     std::string_view generation;
     double rms;
+    int cards;
+    std::string_view card_names;
 };
-inline constexpr PredictionError kDecodePredictionError[] = {{"ada", 0.0226}, {"gb20x", 0.0170}};
+
+inline constexpr PredictionError kDecodePredictionError[] = {
+    {"ada", 0.0226, 3, "RTX 4060 Ti, RTX 4070 Ti, RTX 4090"},
+    {"gb20x", 0.0170, 2, "RTX 5070 Ti, RTX 5090"}};
+
+// The resolution of a decision on a generation with no kDecodePredictionError row (#618 step 3),
+// by the direction of the carry: lender kTransferGeneration, target the board's generation. Derived
+// from decode_measured.json: the rms of ln(predicted / measured) over every short-context row (not
+// marked long) of the target's cards, priced as if the card were of kTransferGeneration (its rows,
+// the board's own bytes rate, SMs and clock). Volta's row also carries Ada's route and ISA pricing
+// (no int8 MMA, HBM2), which is part of its error. ninferno_choice_test recomputes each row
+// (transferred_resolution); they are never pooled into one mean.
+//
+// The measurement: plain decode per stream, the server's timings, 1/2/4/8 streams decoding 256
+// tokens each from short prompts (--spec none --no-prefix-reuse), Qwen3.5-9B Q4_K_M and Q8_0 and
+// Gemma 4 12B Q4_K_M, master f68eca34 (2026-10-31; the Quadro GV100's points cool, DECISIONS 72):
+// 12 points of ONE lab card per target (`cards`, `card`). Its basis is that of a
+// route_rules.h Basis::ScaledFromOneBoard rule: one board's measured residual stands for its
+// generation's other boards, no second board was measured. So no row here decides: a one-card
+// resolution only widens the band (resolution_of takes it no narrower than the Own band its
+// estimates are carried from) and never widens a decision: a comparison that rests on it is
+// resolved at that Own floor only (Resolution::decides and floor, resolve_within_resolution).
+// Widening alone would not be conservative: a wider band lets a slower, more accurate candidate
+// displace the best worth. Nor would falling back to the best worth: the estimates are
+// indistinguishable at least within the Own floor, and a pick below it would rest on a one-card
+// point estimate. A row decides once it rests on two cards of the target.
+struct TransferredError {
+    std::string_view target;
+    double rms;
+    int cards;
+    std::string_view card;
+};
+
+inline constexpr TransferredError kTransferredDecodeError[] = {
+    {"ga10x", 0.0786, 1, "RTX 3060"},
+    {"turing", 0.2151, 1, "RTX 2080 Ti"},
+    {"volta", 0.5447, 1, "Quadro GV100"}};
+
+// The largest of the measured carries above.
+constexpr double largest_transferred_decode_error() noexcept {
+    double largest = 0;
+    for (const TransferredError& e : kTransferredDecodeError) {
+        largest = e.rms > largest ? e.rms : largest;
+    }
+    return largest;
+}
+
+// An assumed worst case: the largest measured carry (all of them Ada onto older generations). No
+// measured row bounds a carry onto a newer architecture or below Volta (Pascal); it is a label, not
+// a bound. A board whose compute capability has no generation row (rows lent forward) takes it, and
+// so do the known generations with no row of their own (ga100, hopper, gb100, thor), and a
+// generation with its own error whose compared estimates are Transferred (a weight class or a row
+// measured on fewer than two of its cards: no carry onto those was measured). Basis: an assumption
+// over one-card rows; it never decides (resolution_of).
+inline constexpr double kUnmeasuredCarryDecodeError = largest_transferred_decode_error();
 
 // kDp4aOpsPerSmClock (a generation without an int8 MMA decodes its int8 route at it,
 // spec/round_cost.cpp): core/cost_constants.h, a chip fact.
@@ -443,7 +504,10 @@ inline constexpr TileCost kTileCost[] = {
 // Ada: RTX 4070 Ti and 4090, GB20x: RTX 5090) 16, 32, 64, 80, 96 or 128 with the least work. A J-column tile's K step is
 // mmq_columns::step_share(J, mmq_tile_fixed) = f + (1 - f) J / 128 of a 128-column one: f = 0.43
 // (the RTX 4060 Ti's 64-column Q4_K tiles: 0.716) where the row has none of its own, 0.20 on GA10x
-// and Ada, 0.10 on GB20x (DECISIONS 74).
+// and Ada, 0.10 on GB20x (DECISIONS 74). On Turing (the RTX 2080 Ti's grid, DECISIONS 78) the
+// same widths take the launch they run: the longest CTA's units at the 128-column K step x the
+// law's unit share (mmq_columns::unit_share), and where the launch splits tiles the fixup's bytes
+// and its launch (the c1 above stay the census's).
 // clang-format on
 struct MmqTileCost {
     std::string_view generation;
@@ -605,7 +669,9 @@ struct AttentionTileCost {
 };
 inline constexpr AttentionTileCost kAttentionTileCost[] = {
     {"ada", 328, 188, 2}, {"ga10x", 378, 190, 1}, {"gb20x", 195, 152, 2, 20800}};
-inline constexpr double kAttentionHalfCta = 0.72; // a 64-row CTA against a 128-row one
+// A 64-row CTA against a 128-row one: the kernel's own figure, from its one definition
+// (int8/prompt_fast_cost.h, which int8_prompt_fast_layout reads too).
+inline constexpr double kAttentionHalfCta = ::ninferno::ops::kInt8PromptHalfCtaPercent / 100.0;
 // The FP8-KV prompt kernel (ops/softmax_attention common/mxfp8_tiled_mma.cuh, `--kv-dtype fp8`, a
 // call wider than kFp8AttentionTiledMinWidth): a CTA of 128 query rows of one head and one split of
 // the call's keys (99 KiB, one a SM), the grid row tiles x heads x splits in launch order. The

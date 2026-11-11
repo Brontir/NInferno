@@ -1,6 +1,6 @@
 ninferno_add_test(ninferno_media_decode_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_media_decode.cpp"
-  LIBRARIES ninferno_media_decode)
+  LIBRARIES ninferno_media_decode PkgConfig::FFMPEG)
 
 ninferno_add_test(ninferno_pdf_text_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_pdf_text.cpp"
@@ -119,10 +119,16 @@ ninferno_add_test(ninferno_update_check_test
 target_include_directories(ninferno_update_check_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(ninferno_update_check_test PRIVATE NINFERNO_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
-# The installer and the updater act only on a release manifest the release key signed.
+# The installer and the updater act only on a release manifest the release key signed, never
+# switch in a release that does not start, and order versions as update_check.cpp does.
 add_test(NAME ninferno_signed_install_test
   COMMAND bash ${PROJECT_SOURCE_DIR}/tests/release/signed_install_test.sh ${PROJECT_SOURCE_DIR})
-set_tests_properties(ninferno_signed_install_test PROPERTIES SKIP_RETURN_CODE 77)
+set_tests_properties(ninferno_signed_install_test PROPERTIES SKIP_RETURN_CODE 77 LABELS host)
+# The release packer's checks before it builds (Volta's toolkit, glibc) and its reading of the
+# live kernel check's exit (no NVIDIA driver = no GPU). Nothing is built.
+add_test(NAME ninferno_package_checks_test
+  COMMAND bash ${PROJECT_SOURCE_DIR}/tests/release/package_checks_test.sh ${PROJECT_SOURCE_DIR})
+set_tests_properties(ninferno_package_checks_test PROPERTIES LABELS host)
 
 ninferno_add_test(ninferno_tool_maintainer_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_tool_maintainer.cpp"
@@ -172,11 +178,12 @@ target_include_directories(ninferno_plan_bytes_test PRIVATE ${PROJECT_SOURCE_DIR
 # The configuration choice: the speed model reproduces the stand measurements its constants were
 # fitted on (tests/fixtures/choice/speed_measured.json), and the rule picks, keeps the pins and
 # explains. CPU.
-ninferno_add_test(ninferno_choice_test
+ninferno_add_test(ninferno_choice_test STATIC_LINK
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_choice.cpp"
   LIBRARIES ninferno_product_choice ninferno_core_host ninferno::json)
 target_include_directories(ninferno_choice_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
-# Host-only: no CUDA runtime in its link closure (#620 step 11); the device of a build without one
+# Host-only: no CUDA runtime in its link closure (#620 step 11), so the static archive of
+# ninferno_core_host in the shared test tree too (STATIC_LINK); the device of a build without one
 # is the stub that throws (src/core/device_class_nodevice.cpp).
 target_sources(ninferno_choice_test PRIVATE ${PROJECT_SOURCE_DIR}/src/core/device_class_nodevice.cpp
   ${PROJECT_SOURCE_DIR}/src/core/per_device_nodevice.cpp)

@@ -3,6 +3,11 @@ ninferno_embed_text(${CMAKE_CURRENT_SOURCE_DIR}/data/gpu_facts.json NINFERNO_FAC
   NINFERNO_GPU_FACTS_JSON)
 configure_file(embedded_gpu_facts.h.in
   ${CMAKE_CURRENT_BINARY_DIR}/generated/core/embedded_gpu_facts.h @ONLY)
+# The ISA facts per architecture (isa_facts.cpp), the probe's table compiled in the same way.
+ninferno_embed_text(${CMAKE_CURRENT_SOURCE_DIR}/data/isa_facts.json NINFERNO_ISA
+  NINFERNO_ISA_FACTS_JSON)
+configure_file(embedded_isa_facts.h.in
+  ${CMAKE_CURRENT_BINARY_DIR}/generated/core/embedded_isa_facts.h @ONLY)
 # The same table as constexpr rows (core/board_registry.h), for the data that is keyed by a board
 # at compile time (core/measured_boards.h). The directory is public: the header reaches every
 # target that includes it.
@@ -22,6 +27,7 @@ add_library(ninferno_core_host STATIC
   dtype.cpp
   device_class_host.cpp
   machine_facts.cpp
+  isa_facts.cpp
   gate_atlas.cpp
   layout.cpp
   weight_view.cpp

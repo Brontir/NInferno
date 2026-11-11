@@ -69,6 +69,7 @@ ninferno_target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/generic_tune.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/route_tune_tool.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/selector_facts.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/price_tool.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_i8.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_gemm_bf16.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_gemm_fp8.cu"
@@ -113,6 +114,7 @@ ninferno_target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/generic_scalar.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_volta_gemv.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_volta_hmma.cu"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_codec_traits.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_w4a8.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_w4a8_ggml32.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_w4a8_superblock.cu"
@@ -136,6 +138,17 @@ set_source_files_properties("${CMAKE_CURRENT_LIST_DIR}/build_manifest.cpp"
   TARGET_DIRECTORY ninferno_ops
   PROPERTIES COMPILE_DEFINITIONS
     "NINFERNO_CUDA_COMPILER=\"${CMAKE_CUDA_COMPILER_ID} ${CMAKE_CUDA_COMPILER_VERSION}\";NINFERNO_CXX_COMPILER=\"${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}\";NINFERNO_MANIFEST_CUDA_ARCHITECTURES=\"${ninferno_manifest_archs}\"")
+
+# The files that compute the kernel roofline's price on the host (kernel_roofline.h: the selector's
+# generic_cost.cpp and the price tool): no multiply-add is fused there, so the price is the same
+# bits on every host and build set, which the golden test (test_kernel_roofline.cpp) compares
+# exactly. (The baseline x86-64 target has no FMA; this keeps it so under -march or on aarch64.)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  set_property(SOURCE "${CMAKE_CURRENT_LIST_DIR}/generic_cost.cpp"
+                      "${CMAKE_CURRENT_LIST_DIR}/price_tool.cpp"
+    TARGET_DIRECTORY ninferno_ops
+    APPEND PROPERTY COMPILE_OPTIONS "-ffp-contract=off")
+endif()
 
 # CUTLASS's headers for the Volta prefill GEMM, on the sm_70 tree alone (CMakeLists.txt).
 if(NINFERNO_CUTLASS_INCLUDE)

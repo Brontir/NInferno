@@ -73,6 +73,22 @@ ninferno_add_op_test(ninferno_decision_routes_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_decision_routes.cpp"
   LIBRARIES ninferno_engine ninferno_runtime_support ninferno_ops ninferno_core)
 
+# The decision manifest's route_evidence section (#614, A3): the lines of the routes section with
+# the authority and evidence of each answer, asked of the same deterministic selector, in no hash.
+# CPU, substituted boards.
+ninferno_add_test(ninferno_decision_route_evidence_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_decision_route_evidence.cpp"
+  LIBRARIES ninferno_engine ninferno_runtime_support ninferno_ops ninferno_core)
+
+# Property tests of the selector's decisions over the rows of gpu_facts.json (roadmap #620 step 6):
+# labels and non-fact fields move no route, the driver's clocks move none, and the price does not
+# rise with the bandwidth (it does rise with the SM count in a third of the cases: waived and
+# recorded in the test, issue #690). Substituted boards, no GPU needed.
+ninferno_add_op_test(ninferno_decision_properties_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_decision_properties.cpp"
+  LIBRARIES ninferno_ops ninferno_core)
+set_tests_properties(ninferno_decision_properties_test PROPERTIES LABELS host)
+
 ninferno_add_test(ninferno_process_options_lease_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_process_options_lease.cpp"
   LIBRARIES ninferno_runtime_support)

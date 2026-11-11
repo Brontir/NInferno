@@ -34,14 +34,32 @@ function(ninferno_link_ops target scope)
   endif()
 endfunction()
 
+# A member archive a test names (ninferno_core, ninferno_ops, ...: NINFERNO_SHARED_MEMBERS) is linked
+# through its redirect ninferno::<m> (cmake/NInfernoTargets.cmake): the archive in a static test,
+# the shared test library in a shared one. Writes the mapped list to `out`.
+function(ninferno_test_libraries out)
+  set(libs "")
+  foreach(lib IN LISTS ARGN)
+    if(lib MATCHES "^ninferno_(.+)$" AND CMAKE_MATCH_1 IN_LIST NINFERNO_SHARED_MEMBERS)
+      set(lib "ninferno::${CMAKE_MATCH_1}")
+    endif()
+    list(APPEND libs "${lib}")
+  endforeach()
+  set(${out} ${libs} PARENT_SCOPE)
+endfunction()
+
+# STATIC_LINK: the test keeps the product's static link in the shared test tree
+# (NINFERNO_SHARED_OP_TESTS); give the reason where it is declared. Every other test with device
+# code takes the shared library (ninferno_decide_link_modes).
 function(ninferno_add_test name)
-  cmake_parse_arguments(PARSE_ARGV 1 arg "NEEDS_SOURCE_DIR;NO_DEFAULT_TEST" "" "SOURCES;LIBRARIES")
+  cmake_parse_arguments(PARSE_ARGV 1 arg "NEEDS_SOURCE_DIR;NO_DEFAULT_TEST;STATIC_LINK" ""
+    "SOURCES;LIBRARIES")
   add_executable(${name} ${arg_SOURCES})
   ninferno_test_includes(${name})
-  if(arg_LIBRARIES STREQUAL "ninferno_ops")
-    ninferno_link_ops(${name} PRIVATE)
-  else()
-    target_link_libraries(${name} PRIVATE ${arg_LIBRARIES})
+  ninferno_test_libraries(libs ${arg_LIBRARIES})
+  target_link_libraries(${name} PRIVATE ${libs})
+  if(arg_STATIC_LINK)
+    set_target_properties(${name} PROPERTIES NINFERNO_STATIC_LINK ON)
   endif()
   if(arg_NEEDS_SOURCE_DIR)
     target_compile_definitions(${name} PRIVATE

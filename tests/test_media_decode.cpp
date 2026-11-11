@@ -1,5 +1,9 @@
 #include "media/decode/decode.h"
 
+extern "C" {
+#include <libavformat/avformat.h>
+}
+
 #include <array>
 #include <cctype>
 #include <cstdint>
@@ -278,6 +282,50 @@ void test_decoder_releases_probe_buffers() {
     }
 }
 
+std::string refusal(const std::vector<std::uint8_t>& bytes) {
+    try {
+        (void)ninferno::media::decode::decode_image(bytes, {});
+    } catch (const ninferno::media::decode::Error& error) {
+        if (error.kind() != ninferno::media::decode::ErrorKind::InvalidInput) {
+            throw std::runtime_error(std::string("refused as over budget: ") + error.what());
+        }
+        return error.what();
+    }
+    throw std::runtime_error("decoded bytes that are no media");
+}
+
+// The release's FFmpeg (tools/release/ffmpeg.sh) is configured from --disable-everything. A full
+// distribution build holds hundreds of demuxers, and one of them (mp3) claims this noise at a low
+// score, so there the open fails on the claimed container instead.
+bool minimal_ffmpeg() {
+    return std::string_view(avformat_configuration()).find("--disable-everything") !=
+           std::string_view::npos;
+}
+
+// Bytes no demuxer claims are an unsupported container, said plainly; a known container whose
+// data is broken keeps FFmpeg's own reason.
+void test_unknown_container_named() {
+    std::vector<std::uint8_t> noise(4096);
+    std::uint32_t state = 0x9e3779b9U;
+    for (std::uint8_t& byte : noise) {
+        state ^= state << 13U;
+        state ^= state >> 17U;
+        state ^= state << 5U;
+        byte = static_cast<std::uint8_t>(state >> 24U);
+    }
+    const std::string unknown = refusal(noise);
+    const bool named          = unknown == "media container is not supported";
+    if (!named && (minimal_ffmpeg() || unknown.rfind("failed to open media: ", 0) != 0)) {
+        throw std::runtime_error("noise was refused as '" + unknown + "'");
+    }
+    std::vector<std::uint8_t> broken_png = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
+    broken_png.insert(broken_png.end(), noise.begin(), noise.begin() + 256);
+    const std::string broken = refusal(broken_png);
+    if (broken == "media container is not supported") {
+        throw std::runtime_error("a broken PNG was refused as an unsupported container");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -285,6 +333,7 @@ int main() {
         test_issue_20_unaligned_jpeg();
         test_pixel_bomb_refused_before_allocation();
         test_decoder_releases_probe_buffers();
+        test_unknown_container_named();
         std::cout << "ok\n";
         return 0;
     } catch (const std::exception& error) {
