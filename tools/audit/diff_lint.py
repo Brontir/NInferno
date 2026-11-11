@@ -694,7 +694,9 @@ def cond_literal(rest, cxx=True):
 def cond_value(rest, cxx):
     """cond_literal's value of a condition with its comments removed."""
     rest = strip_parens(rest)
-    if "?" in rest:  # `?:` binds looser than `||`: not decided here
+    # `?:` and the comma bind looser than `||`, and a character constant can hold `&&` or `||`
+    # (`'||1'`): not decided here. A quote after a hex digit is a digit separator (1'000).
+    if "?" in rest or "," in rest or re.search(r"(?<![0-9A-Fa-f])'", rest):
         return None
     for op, settles in (("||", 1), ("&&", 0)):
         parts = top_level_split(rest, op)
