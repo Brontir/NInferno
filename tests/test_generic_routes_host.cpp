@@ -82,6 +82,12 @@ int main() {
           "no residency or no SMs: no variant");
     check(!gen::rmma_wide_rule(0.0, 89, true, 0, 0), "no DRAM rate: not wide");
     check(!gen::rmma_wide_rule(1e9, 89, true, 0, 0), "a rate above the wide threshold: not wide");
+    // The group-sums plane against its twin: no more spill, at least as many CTAs an SM.
+    check(gen::rmma_plane_rule(8, 8, 2, 2) && gen::rmma_plane_rule(0, 8, 3, 2),
+          "the plane when it spills no more and keeps the residency");
+    check(!gen::rmma_plane_rule(16, 8, 2, 2) && !gen::rmma_plane_rule(0, 0, 1, 2) &&
+              !gen::rmma_plane_rule(0, 0, 0, 0),
+          "the twin on more spill, fewer CTAs or unknown facts");
 
     // Every committed kernel-facts snapshot is readable.
     const auto archs = kf::snapshot_archs();
