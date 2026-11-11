@@ -137,7 +137,9 @@ if [ "$mode" = ask ]; then
 fi
 
 say "Installing NInferno $latest ..."
-NINFERNO_MANIFEST=$tmp/latest.json NINFERNO_HOME=$home sh "$installer"
+# --yes: the GPU was accepted when NInferno was first installed here (install.sh asks on one it
+# does not support); this installer is the one released with this script, so it takes --yes.
+NINFERNO_MANIFEST=$tmp/latest.json NINFERNO_HOME=$home sh "$installer" --yes
 
 # Keep the new version and the one before it (running models may still use it).
 ls -1dt "$home"/ninferno-*-linux-x86_64* 2>/dev/null | tail -n +3 | while read -r old; do

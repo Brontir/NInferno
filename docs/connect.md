@@ -45,9 +45,10 @@ ninferno-connect --router https://router.example:7443 --key-file worker.key
 SIGINT or SIGTERM sends each router a GOAWAY. The running answers then finish and the program
 exits. It exits with 3 when every router refused the key.
 
-`ninferno-connect` is built where pkg-config finds libnghttp2 1.60 or later and CMake finds
-OpenSSL 3, which on Debian and Ubuntu means `libnghttp2-dev` and `libssl-dev`. It is not built on
-Windows. Without those libraries the tree builds as before, just without this program.
+`ninferno-connect` is built where pkg-config finds libnghttp2 1.59 or later (Ubuntu 24.04 has
+1.59) and CMake finds OpenSSL 3, which on Debian and Ubuntu means `libnghttp2-dev` and
+`libssl-dev`. It is not built on Windows. Without those libraries the tree builds as before, just
+without this program.
 
 ## The protocol (for a router)
 

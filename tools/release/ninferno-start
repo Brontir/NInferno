@@ -18,10 +18,17 @@ die() { echo "ninferno-start: $*" >&2; exit 1; }
 [ -r "$DATA" ] || die "no model list at $DATA; reinstall NInferno"
 command -v nvidia-smi > /dev/null || die "nvidia-smi not found: install the NVIDIA driver first"
 
-IFS=, read -r gpu_name cap vram_mib < <(nvidia-smi -i "$DEVICE" \
-  --query-gpu=name,compute_cap,memory.total --format=csv,noheader,nounits | sed 's/, */,/g')
+IFS=, read -r gpu_name cap vram_mib pci < <(nvidia-smi -i "$DEVICE" \
+  --query-gpu=name,compute_cap,memory.total,pci.device_id --format=csv,noheader,nounits |
+  sed 's/, */,/g')
 sm=${cap/./}  # 8.9 -> 89, 12.0 -> 120
 vram_gb=$(( (vram_mib + 512) / 1024 ))
+# A GPU NInferno does not support (older than 7.0, or a chip without tensor cores such as the
+# GTX 16 series) has no settings here: the installer's own check by the chip's facts says why.
+[ -r "$HERE/share/ninferno/install.sh" ] || die "no installer at $HERE/share/ninferno; reinstall NInferno"
+if ! why=$(sh "$HERE/share/ninferno/install.sh" --gpu-check "$pci" "$cap" 2>&1); then
+  die "$gpu_name is not supported: $why"
+fi
 
 # The measured GPU to take the numbers from: this one by name, else the same architecture
 # closest in memory (smaller first: what fits there fits here).
