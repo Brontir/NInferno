@@ -15,7 +15,7 @@
 #                                      id and compute capability, else say why (ninferno-start)
 #   sh install.sh --help               this text
 #
-# The release needs x86-64 Linux with glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39 and
+# The release needs x86-64 Linux with glibc 2.39 or newer (Ubuntu 24.04, Debian 13, Fedora 40 and
 # later): the C library is the system's, and the archive is built against that version.
 #
 # What is installed is what the release manifest (latest.json) names, and the manifest counts only
@@ -42,7 +42,7 @@ recorded_bin=$(sed -n 1p "$BIN_FILE" 2> /dev/null || true)
 BIN_DIR=${NINFERNO_BIN:-${recorded_bin:-$HOME/.local/bin}}
 archive=ninferno-linux-x86_64.tar.gz
 # The oldest glibc the archive runs on: the build machine's (tools/release/package.sh checks it).
-GLIBC_MIN=2.38
+GLIBC_MIN=2.39
 # The release key (tools/release/signing.pub.pem; tests check every copy against it).
 RELEASE_KEY='-----BEGIN PUBLIC KEY-----
 MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE1R5JganVYknHjhX9nN2fYLqxwe2G
@@ -221,7 +221,7 @@ version_at_least() {
 glibc=$(getconf GNU_LIBC_VERSION 2> /dev/null | sed -n 's/^glibc \([0-9][0-9.]*\).*/\1/p')
 [ -n "$glibc" ] || die "this system's C library is not glibc; the release needs glibc $GLIBC_MIN or newer"
 version_at_least "$glibc" "$GLIBC_MIN" ||
-  die "glibc $glibc is too old: the release needs glibc $GLIBC_MIN or newer (Ubuntu 24.04, Debian 13, Fedora 39 and later)"
+  die "glibc $glibc is too old: the release needs glibc $GLIBC_MIN or newer (Ubuntu 24.04, Debian 13, Fedora 40 and later)"
 command -v nvidia-smi > /dev/null 2>&1 ||
   die "nvidia-smi not found: install the NVIDIA driver (on WSL 2, the Windows driver provides it)"
 

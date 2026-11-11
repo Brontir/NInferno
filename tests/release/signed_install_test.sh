@@ -135,7 +135,7 @@ expect "an extra argument is refused" 1 "${I[@]}" sh "$work/install.sh" --help -
 # glibc: refused before anything is downloaded.
 expect "an old glibc is refused" 1 "${I[@]}" FAKE_GLIBC=2.35 NINFERNO_MANIFEST="$d1/latest.json" \
   NINFERNO_ARCHIVE="$d1/ninferno-linux-x86_64.tar.gz" sh "$work/install.sh"
-said "glibc 2.35 is too old: the release needs glibc 2.38"
+said "glibc 2.35 is too old: the release needs glibc 2.39"
 expect "a system without glibc is refused" 1 "${I[@]}" FAKE_GLIBC=none NINFERNO_MANIFEST="$d1/latest.json" \
   NINFERNO_ARCHIVE="$d1/ninferno-linux-x86_64.tar.gz" sh "$work/install.sh"
 said "not glibc"
@@ -153,7 +153,7 @@ expect "a release that does not start is not installed" 1 "${I[@]}" NINFERNO_MAN
 # A killed install's leftover: marked with the PID of an install that is gone.
 sh -c 'exit 0' & dead=$!; wait "$dead"
 mkdir -p "$home/.install.stale" && echo x > "$home/.install.stale/big" && echo "$dead" > "$home/.install.stale/.ninferno-staging"
-expect "the signed release installs (glibc 2.38 is enough)" 0 "${I[@]}" FAKE_GLIBC=2.38 NINFERNO_MANIFEST="$d1/latest.json" \
+expect "the signed release installs (glibc 2.39 is enough)" 0 "${I[@]}" FAKE_GLIBC=2.39 NINFERNO_MANIFEST="$d1/latest.json" \
   NINFERNO_ARCHIVE="$d1/ninferno-linux-x86_64.tar.gz" sh "$work/install.sh"
 serves "install 0.1.0" 0.1.0
 
