@@ -141,6 +141,14 @@ ninferno_add_op_test(ninferno_format_traits_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_format_traits.cpp"
   LIBRARIES ninferno_linear_test_support)
 
+# The codec traits rows (ops/generic/codec_traits.h, #615 F3; generic_codec_traits.cu proves them
+# against the codec structs) against the literals r8_fits, w4a8_fits and mmq_plane_bytes carried
+# before, for every QType; no GPU needed.
+ninferno_add_op_test(ninferno_codec_traits_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_codec_traits.cpp"
+  LIBRARIES ninferno_linear_test_support)
+set_tests_properties(ninferno_codec_traits_test PROPERTIES LABELS host)
+
 # The kernel roofline (#613 PR-4): price_routes prices equal the golden table of the formula
 # it replaced (fixed outputs from before the move), and
 # the selector's priced routes are the roofline's terms (host only).
