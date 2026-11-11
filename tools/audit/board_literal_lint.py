@@ -385,7 +385,8 @@ def type_name(table):
 
 # An attribute (`[[maybe_unused]]`), which may stand before or after a declarator's name.
 # Its arguments may hold one level of brackets (`[[gnu::aligned(sizeof(v[0]))]]`).
-ATTR = r"\[\[(?:[^\[\]]|\[[^\[\]]*\])*\]\]\s*"
+ATTR_CORE = r"\[\[(?:[^\[\]]|\[[^\[\]]*\])*\]\]"
+ATTR = ATTR_CORE + r"\s*"
 
 
 def typed_pattern(table):
@@ -417,7 +418,7 @@ def returns(table):
     # way only: `&&?` could split it many ways, and a run with no `{` after it took exponential time.
     paren = r"\s*\((?:[^()]|\([^()]*\))*\)"
     quals = (r"(?:(?:(?:const|volatile|override|final|mutable|constexpr)\b|noexcept\b(?:%s)?|"
-             r"throw%s|&&|&(?!&)|\[\[[^\]]*\]\])\s*)*" % (paren, paren))
+             r"throw%s|&&|&(?!&)|%s)\s*)*" % (paren, paren, ATTR_CORE))
     head = (ty + r"(?!\s*::)\s*(?:const\b\s*)?[&*]*\s*(?:\w+\s*(?:%s)?\s*::\s*)*" % TARGS + FNAME +
             r"\s*\((?:(?!(?<!\w)requires\b)[^;{}]|\{[^;{}]*\})*\)\s*" + quals +
             r"(?:\{|requires\b(?P<req1>))")

@@ -197,6 +197,7 @@ FLAGGED = {
     "attribute_after_name": "Board b [[maybe_unused]] {kMajor, 0, kSms, kL2, kBw};",
     "attribute_before_name": "Board [[maybe_unused]] b {kMajor, 0, kSms, kL2, kBw};",
     "std_array_triple_brace_qualified": "std::array<Board, 1> a = {{{facts::kMajor, facts::kMinor, facts::kSms, facts::kL2, facts::kBw}}};",
+    "conversion_attribute_with_brackets": "operator Board() const [[gnu::aligned(sizeof(v[0]))]] { return {facts::kMajor, facts::kMinor, facts::kSms, facts::kL2, facts::kBw}; }",
     "attribute_with_brackets": "Board b [[gnu::aligned(sizeof(v[0]))]] {facts::kMajor, facts::kMinor, facts::kSms, facts::kL2, facts::kBw};",
 }
 
