@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace ninferno::ops::detail::generic {
 
@@ -42,6 +43,15 @@ namespace ninferno::ops::detail::generic {
                                                std::int32_t n, std::int32_t k, std::int32_t tokens,
                                                bool prefill = false, std::int32_t parent_rows = 0,
                                                std::optional<QuantLayout> layout = std::nullopt);
+
+// The bytes a weight value of such a call takes (bytes_per_weight) on the weight route_query
+// describes for it: what the decision manifest's replay of a recorded call prices (#704). A row
+// view's live price (Weight::priced_bytes) is this, to the bit. Throws std::invalid_argument for a
+// non-positive N or K, a negative `parent_rows` or a shape the layout cannot hold.
+[[nodiscard]] double described_bytes_per_weight(QType qtype, LinearPolicy policy, Epilogue epilogue,
+                                                std::int32_t n, std::int32_t k,
+                                                std::int32_t parent_rows          = 0,
+                                                std::optional<QuantLayout> layout = std::nullopt);
 
 // The route such a call selects and the one it runs on (#298): route_query's choice as run() hands
 // it on (workspace_free_route: no workspace, no quantized family that needs one), resolved as
@@ -105,5 +115,36 @@ describe_call(const DeviceClass& device, QType qtype, LinearPolicy policy, Epilo
 // output_bytes=<b>] [prepared=<rep>] [cost_us=<t>] [regs=<r> local=<b> smem=<static>+<dynamic>
 // threads=<t> grid=<x>x<y>x<z>]".
 [[nodiscard]] std::string describe_text(const RouteDescription& description);
+
+// The selector's cost model as a pure query (price_routes, generic_cost.cpp): every route it
+// offers for such a call on `device`, with its time in seconds (the A16 scale applied), in the
+// order it offers them. Empty where the facts have no roofline, the generic path does not read
+// such a weight, or the width is not priced. It prices any width it is given: the selector reads
+// these prices (cost_route) only from 17 tokens and never for NVFP4, and picks by rule elsewhere,
+// so outside that domain they are the formula's figures, not the selector's choice (the CPU
+// replica says so). What the CPU replica (`ninferno-serve price`) and the kernel-roofline test
+// compare the roofline's terms against.
+struct PricedRouteQuery {
+    Route route;
+    double seconds = 0;
+};
+
+[[nodiscard]] std::vector<PricedRouteQuery>
+priced_routes_query(const DeviceClass& device, QType qtype, LinearPolicy policy, Epilogue epilogue,
+                    std::int32_t n, std::int32_t k, std::int32_t tokens);
+
+// Whether the selector admits `route` for such a call on `device`: route_admits on the described
+// weight (every refusal of the family's rule: not compiled, format, codec tile, resource,
+// instruction, alignment, extent), as describe_route decides before it describes. The one rule
+// the price tool and its test read; false where the generic path does not read such a weight.
+[[nodiscard]] bool route_admitted_query(const DeviceClass& device, Route route, QType qtype,
+                                        LinearPolicy policy, Epilogue epilogue, std::int32_t n,
+                                        std::int32_t k);
+
+// The payload bytes of the weight such a call is described with (the converter's layout of the
+// stored matrix: 2 n rows under SwiGLU, `parent_rows` where the call reads a slice): the bytes per
+// value the cost model prices by are these over n x k.
+[[nodiscard]] std::uint64_t described_weight_bytes(QType qtype, Epilogue epilogue, std::int32_t n,
+                                                   std::int32_t k, std::int32_t parent_rows = 0);
 
 } // namespace ninferno::ops::detail::generic

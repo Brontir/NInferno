@@ -5,7 +5,6 @@
 
 #include <cctype>
 #include <charconv>
-#include <exception>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -22,14 +21,19 @@ struct Snapshot {
     std::unordered_map<std::string, KernelFacts> rows; // by row_key
 };
 
-// The columns of a schema 2 snapshot (tools/kernel_facts/kernel_facts.py COLUMNS), the order
-// parse() reads the loop's counts in.
+// The columns of a schema 4 snapshot (tools/kernel_facts/kernel_facts.py COLUMNS), the order
+// parse() reads the loop's counts and the static schedule in.
 constexpr std::string_view kColumns =
     "family decoder warps_m warps_k m_tiles n_tiles cluster epilogue latency sums registers "
     "stack local shared loops k_iter mma mma_ones mma_shape ldg ldg_bytes ld ld_bytes ldgsts "
-    "ldgsts_bytes lds lds_bytes sts sts_bytes local local_bytes shfl int fp uniform other total";
-// The length of the resources-only (schema 1) columns line: kColumns up to "shared".
+    "ldgsts_bytes lds lds_bytes sts sts_bytes local local_bytes shfl int fp uniform other total "
+    "stall_sum sb_waits sb_waits_local outside_total outside_stall outside_waits outside_bar";
+// The length of the one shorter columns line kColumns begins with: the resources alone (schema 1,
+// up to "shared"). The older loop-without-schedule columns (schema 2) are refused.
 constexpr std::size_t kResourceColumnsLength = kColumns.find(" loops ");
+
+// What a snapshot's rows carry past the resources, by its columns line.
+enum class Columns { Resources, Schedule };
 
 // One string per key: the row's spelling without the family column.
 std::string row_key(const RmmaKernelKey& k) {
@@ -47,7 +51,7 @@ std::string row_key(const RmmaKernelKey& k) {
 // <shared>`). A malformed line is a build error of the data, not a runtime condition: it throws.
 Snapshot parse(std::string_view text) {
     Snapshot s;
-    std::optional<bool> with_loops; // what the columns line, read before any row, promises
+    std::optional<Columns> columns; // what the columns line, read before any row, promises
     std::istringstream in{std::string(text)};
     for (std::string line; std::getline(in, line);) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
@@ -56,7 +60,7 @@ Snapshot parse(std::string_view text) {
         std::string first;
         fields >> first;
         if (first == "rmma") {
-            if (!with_loops) {
+            if (!columns) {
                 throw std::runtime_error("kernel facts: a row before the columns line: " + line);
             }
             RmmaKernelKey k;
@@ -66,15 +70,23 @@ Snapshot parse(std::string_view text) {
                 k.epilogue >> latency >> k.sums >> f.registers >> f.stack_bytes >> f.local_bytes >>
                 f.static_shared_bytes;
             if (!fields) throw std::runtime_error("kernel facts: malformed row: " + line);
-            // Schema 2: the K loop's counts follow (tools/kernel_facts/sass_counts.py COLUMNS),
-            // on every row of a file whose columns line names them and on none of another's.
-            if (*with_loops) {
+            // Schema 4: the K loop's counts follow (tools/kernel_facts/sass_counts.py COLUMNS),
+            // then the static schedule, on every row of a file whose columns line names them and
+            // on none of a resources-only one's.
+            if (*columns != Columns::Resources) {
                 LoopCounts l;
                 fields >> l.loops >> l.k_iter >> l.mma >> l.mma_ones >> l.mma_shape >> l.ldg >>
                     l.ldg_bytes >> l.ld >> l.ld_bytes >> l.ldgsts >> l.ldgsts_bytes >> l.lds >>
                     l.lds_bytes >> l.sts >> l.sts_bytes >> l.local >> l.local_bytes >> l.shfl >>
                     l.int_alu >> l.fp_alu >> l.uniform >> l.other >> l.total;
                 if (!fields) throw std::runtime_error("kernel facts: malformed loop: " + line);
+                StaticSchedule d;
+                fields >> d.stall_sum >> d.sb_waits >> d.sb_waits_local >> d.outside_total >>
+                    d.outside_stall >> d.outside_waits >> d.outside_bar;
+                if (!fields) {
+                    throw std::runtime_error("kernel facts: malformed schedule: " + line);
+                }
+                l.schedule = d;
                 f.loop = std::move(l);
             }
             if (fields >> std::ws; !fields.eof()) {
@@ -97,11 +109,11 @@ Snapshot parse(std::string_view text) {
             else if (first == "kernels")
                 s.header.kernels = std::stoul(rest);
             else if (first == "columns") {
-                // The columns are read by position: the file spells either list exactly.
+                // The columns are read by position: the file spells one of the lists exactly.
                 if (rest == kColumns)
-                    with_loops = true;
+                    columns = Columns::Schedule;
                 else if (rest == kColumns.substr(0, kResourceColumnsLength))
-                    with_loops = false;
+                    columns = Columns::Resources;
                 else
                     throw std::runtime_error("kernel facts: unexpected columns: " + rest);
             }
@@ -156,6 +168,13 @@ bool sass_runs(std::string_view label, int major, int minor) {
 
 } // namespace
 
+bool snapshot_text_accepted(std::string_view text) {
+    try {
+        (void)parse(text);
+        return true;
+    } catch (const std::runtime_error&) { return false; }
+}
+
 std::vector<std::string_view> snapshot_archs() {
     std::vector<std::string_view> v;
     for (const auto& s : snapshots()) v.push_back(s->header.arch);
@@ -174,6 +193,15 @@ std::optional<KernelFacts> rmma_facts(std::string_view arch, const RmmaKernelKey
     const auto it = s->rows.find(row_key(key));
     if (it == s->rows.end()) return std::nullopt;
     return it->second;
+}
+
+std::vector<KernelFacts> rmma_rows(std::string_view arch) {
+    std::vector<KernelFacts> v;
+    if (const Snapshot* s = find(arch)) {
+        v.reserve(s->rows.size());
+        for (const auto& [key, facts] : s->rows) v.push_back(facts);
+    }
+    return v;
 }
 
 std::string release_arch(int major, int minor) {
@@ -207,16 +235,13 @@ std::string_view build_arch() {
 #endif
 }
 
-std::optional<std::string> sass_arch() {
-    if (const DeviceClass* s = substituted_device_class()) {
-        std::string arch = release_arch(s->major, s->minor);
+std::optional<std::string> sass_arch_of(const DeviceClass& d, bool substituted) {
+    if (substituted) {
+        std::string arch = release_arch(d.major, d.minor);
         if (arch.empty()) return std::nullopt;
         return arch;
     }
-    try {
-        const DeviceClass& d = device_class();
-        if (sass_runs(build_arch(), d.major, d.minor)) return std::string(build_arch());
-    } catch (const std::exception&) {} // no current device: no kernels run
+    if (sass_runs(build_arch(), d.major, d.minor)) return std::string(build_arch());
     return std::nullopt;
 }
 

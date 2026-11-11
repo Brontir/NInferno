@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <stdexcept>
 #include <string>
 
 namespace ninferno::ops::detail::generic {
@@ -72,6 +73,17 @@ std::optional<Route> route_query(const DeviceClass& device, QType qtype, LinearP
     if (!supports(described.weight)) return std::nullopt;
     const Problem problem{qtype, policy, n, k, epilogue};
     return select_route(problem, described.weight, tokens, prefill);
+}
+
+double described_bytes_per_weight(QType qtype, LinearPolicy policy, Epilogue epilogue,
+                                  std::int32_t n, std::int32_t k, std::int32_t parent_rows,
+                                  std::optional<QuantLayout> layout) {
+    if (n <= 0 || k <= 0 || parent_rows < 0) {
+        throw std::invalid_argument("described_bytes_per_weight: N and K must be positive");
+    }
+    DescribedWeight described;
+    describe_weight(described, qtype, epilogue, n, k, parent_rows, layout);
+    return bytes_per_weight(described.weight, Problem{qtype, policy, n, k, epilogue});
 }
 
 std::optional<ResolvedRoute>
@@ -246,6 +258,38 @@ std::string describe_text(const RouteDescription& d) {
                std::to_string(k.grid_y) + "x" + std::to_string(k.grid_z);
     }
     return out;
+}
+
+std::vector<PricedRouteQuery> priced_routes_query(const DeviceClass& device, QType qtype,
+                                                  LinearPolicy policy, Epilogue epilogue,
+                                                  std::int32_t n, std::int32_t k,
+                                                  std::int32_t tokens) {
+    std::vector<PricedRouteQuery> out;
+    if (n <= 0 || k <= 0 || tokens <= 0) return out;
+    const ScopedDeviceClass scoped(device);
+    DescribedWeight described;
+    describe_weight(described, qtype, epilogue, n, k, 0);
+    if (!supports(described.weight)) return out;
+    const Problem problem{qtype, policy, n, k, epilogue};
+    price_routes(problem, described.weight, tokens,
+                 [&](Route r, double seconds) { out.push_back({r, seconds}); });
+    return out;
+}
+
+bool route_admitted_query(const DeviceClass& device, Route route, QType qtype, LinearPolicy policy,
+                          Epilogue epilogue, std::int32_t n, std::int32_t k) {
+    if (n <= 0 || k <= 0) return false;
+    const ScopedDeviceClass scoped(device);
+    DescribedWeight described;
+    describe_weight(described, qtype, epilogue, n, k, 0);
+    return supports(described.weight) && route_admits(route, described.weight, policy);
+}
+
+std::uint64_t described_weight_bytes(QType qtype, Epilogue epilogue, std::int32_t n, std::int32_t k,
+                                     std::int32_t parent_rows) {
+    DescribedWeight described;
+    describe_weight(described, qtype, epilogue, n, k, parent_rows);
+    return described.weight.payload_bytes;
 }
 
 } // namespace ninferno::ops::detail::generic
