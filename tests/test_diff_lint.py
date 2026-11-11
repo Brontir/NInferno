@@ -755,11 +755,13 @@ class MaskAndLiteralFixes(unittest.TestCase):
                 self.assertIsNone(dl.cond_literal(cond))
                 self.assertEqual(lits("t.cpp", f"#if {cond}\nconst char* s = \"oops\n;\n#endif\n"), [2])
         # the comma binds looser than `||`, and a character constant may hold the operators
-        for cond in ("1 || 0, 0", "0 == '||1'", "'a' && 0"):
+        for cond in ("1 || 0, 0", "0 == '||1'", "'a' && 0", "0 == u8'||1'", "0 == L'&&0'"):
             with self.subTest(cond=cond):
                 self.assertIsNone(dl.cond_literal(cond))
         # a digit separator is not a character constant
-        self.assertEqual(dl.cond_literal("1'000 || X"), 1)
+        for cond, value in (("1'000 || X", 1), ("0x1'F || X", 1), ("1'000'000 && 0", 0)):
+            with self.subTest(cond=cond):
+                self.assertEqual(dl.cond_literal(cond), value)
 
     def test_a_comment_opener_split_by_a_line_continuation_is_a_comment(self):
         # translation phase 2 joins `/\` + newline + `/` into `//` before comments are recognised

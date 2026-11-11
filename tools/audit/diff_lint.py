@@ -691,12 +691,22 @@ def cond_literal(rest, cxx=True):
     return cond_value(rest, cxx)
 
 
+def has_char_constant(rest):
+    """True when a quote in `rest` opens a character constant: one that does not continue a number
+    (a digit separator: 1'000, 0x1'F), so also a prefixed one (u8'x', L'x')."""
+    for m in re.finditer("'", rest):
+        token = re.search(r"\w*$", rest[:m.start()]).group(0)
+        if not token[:1].isdigit():
+            return True
+    return False
+
+
 def cond_value(rest, cxx):
     """cond_literal's value of a condition with its comments removed."""
     rest = strip_parens(rest)
     # `?:` and the comma bind looser than `||`, and a character constant can hold `&&` or `||`
-    # (`'||1'`): not decided here. A quote after a hex digit is a digit separator (1'000).
-    if "?" in rest or "," in rest or re.search(r"(?<![0-9A-Fa-f])'", rest):
+    # (`'||1'`): not decided here.
+    if "?" in rest or "," in rest or has_char_constant(rest):
         return None
     for op, settles in (("||", 1), ("&&", 0)):
         parts = top_level_split(rest, op)
