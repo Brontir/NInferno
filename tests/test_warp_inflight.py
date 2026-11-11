@@ -247,7 +247,7 @@ class WarpInflight(unittest.TestCase):
         note, why, sent, at = self.warm(self.ramp(t0, steps), t0)
         self.assertIsNone(note)
         self.assertEqual(sent, ["stop"])
-        self.assertIn("held no value for 1 s within 10 s", why)
+        self.assertIn("did not settle (its peak held 1 s, or a lower clock 3 s) within 10 s", why)
         self.assertIn("405..10251 MHz", why)
         self.assertLess(at, 10.6)
         # A clock that dropped from its peak has not settled either, until it held there

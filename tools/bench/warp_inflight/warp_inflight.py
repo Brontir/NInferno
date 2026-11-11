@@ -218,8 +218,9 @@ def warm_until_settled(probe_lines, clock_rows, send, now_ns, sleep, alive,
                 send("stop")
                 mem = [v for _, v, _ in memory_clocks(clock_rows(), bus, begun)]
                 seen = f"it read {min(mem)}..{max(mem)} MHz" if mem else "no nvidia-smi sample"
-                return None, (f"the memory clock held no value for {SETTLE_HOLD_NS / 1e9:g} s "
-                              f"within {timeout_ns / 1e9:g} s of warm-up ({seen}); nothing "
+                return None, (f"the memory clock did not settle (its peak held "
+                              f"{SETTLE_HOLD_NS / 1e9:g} s, or a lower clock "
+                              f"{SETTLE_LOWER_HOLD_NS / 1e9:g} s) within {timeout_ns / 1e9:g} s of warm-up ({seen}); nothing "
                               "measured")
         sleep(0.05)
     return None, ENDED_IN_WARM_UP
