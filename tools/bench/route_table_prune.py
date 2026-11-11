@@ -58,7 +58,8 @@ thresholds describe the same size of effect to within a quarter of a percent, no
 The report must be one board's and name the device it measured (`device`, route_tune's class id
 of every row, which regret_collect.py keeps and selection_regret.py passes on; the board label is
 free text). That device must be the table's class: equal ids, or a full `chip:Nsm` id for a table
-of the bare chip whose `gpu.board.sms` is N (the RTX 5080's `gb203` is not the 70-SM
+of the bare chip whose board has N SMs (table_sms: its `gpu.pci_id`'s registry row, else
+`gpu.board.sms`; the RTX 5080's `gb203` is not the 70-SM
 `gb203:70sm`). --class must be a full class id (the dense keys carry it whole: a bare chip matches
 none) equal to the measured device. Default is a dry run: the plan is printed with the board and
 nothing is written. --apply rewrites the files (both or neither: temp files, then renames),
@@ -361,6 +362,8 @@ def table_sms(table):
     neither names one."""
     gpu = table.get("gpu", {})
     if "pci_id" in gpu:
+        if not re.fullmatch(r"0[xX][0-9A-Fa-f]{4}", str(gpu["pci_id"])):  # as route_table.cpp
+            raise ValueError(f"gpu.pci_id {gpu['pci_id']!r} is not a PCI product id")
         pci = int(gpu["pci_id"], 16)
         rows = json.loads(GPU_FACTS.read_text(encoding="utf-8"))["gpus"]
         row = next((r for r in rows if int(r["id"], 16) == pci), None)

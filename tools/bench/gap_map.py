@@ -122,6 +122,10 @@ def board_from_pci(facts: dict, pci_id: str | None) -> dict | None:
     an id the table lacks."""
     if not pci_id:
         return None
+    if not re.fullmatch(r"0[xX][0-9A-Fa-f]{4}", str(pci_id)):  # refused as route_table.cpp does
+        raise ValueError(f"gpu.pci_id {pci_id!r} is not a PCI product id")
+    # The row's own figures: core/measured_boards.h kDramConflicts (the V100 SXM2 read at 900
+    # GB/s, not 898.048) is not applied, as board_from_facts never did; no law row depends on it.
     for g in facts["gpus"]:
         if int(g["id"], 16) == int(pci_id, 16):
             return {"name": g["name"], "cc": g["cc"], "sms": g["sms"], "boost_mhz": g["boost_mhz"],

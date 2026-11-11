@@ -15,10 +15,12 @@
 #include "ops/op_tester.h"
 #include "support/temp_dir.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <iostream>
 #include <regex>
 #include <sstream>
@@ -172,7 +174,128 @@ int similar_default() {
     return failures == 0 ? 0 : 1;
 }
 
+// The board of every shipped table, read on a substitute of the board its gpu.pci_id names (no
+// GPU): the table is that board's own, at distance 0, but where a recorded conflict
+// (core/measured_boards.h kDramConflicts) keeps the figures it was measured under; an id that
+// is not its class's board is refused. A shipped id mistyped into another valid board, or
+// another chip's, fails here.
+int shipped_boards() {
+    namespace measured       = ninferno::measured;
+    namespace board_registry = ninferno::board_registry;
+    const auto substitute    = [](std::uint32_t id) {
+        const board_registry::BoardRow* row = board_registry::find(id);
+        ninferno::DeviceClass d =
+            ninferno::synthetic_device_class(id, row->major, row->minor, row->sms,
+                                                static_cast<std::size_t>(row->l2_mib * (1 << 20)), 0);
+        d.facts = ninferno::machine_facts_of(d);
+        return d;
+    };
+    int failures = 0;
+    ninferno::ops::set_route_table_dir("");
+    const std::string shipped = ninferno::ops::route_table_dir();
+    const std::regex pci_re("\"pci_id\": \"(0x[0-9a-f]{4})\"");
+    int files = 0;
+    for (const auto& f : std::filesystem::directory_iterator(ninferno::path_from_utf8(shipped))) {
+        if (f.path().extension() != ".json") continue;
+        ++files;
+        std::ifstream in(f.path());
+        const std::string text((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        std::smatch m;
+        const std::string name = f.path().filename().string();
+        if (!std::regex_search(text, m, pci_re)) {
+            failures += check(false, name + " names its board by gpu.pci_id");
+            continue;
+        }
+        const auto id = static_cast<std::uint32_t>(std::stoul(m[1].str(), nullptr, 16));
+        if (board_registry::find(id) == nullptr) {
+            failures += check(false, name + ": " + m[1].str() + " is a registry id");
+            continue;
+        }
+        // The id's registry row is the card the table names (gpu.name, the driver's name, which
+        // omits the suffix of a memory size, "Lite Hash Rate" or "Rev. A"): a typo into another
+        // product fails, the RTX 4090 D's id for the RTX 4090 included. A table named by its chip
+        // alone names no card.
+        const auto normal = [](std::string s) {
+            if (s.rfind("NVIDIA ", 0) == 0) s.erase(0, 7);
+            std::replace(s.begin(), s.end(), '-', ' ');
+            return s;
+        };
+        std::smatch named;
+        const std::regex name_re("\"class\": \"([^\"]*)\",\\s*\"name\": \"([^\"]*)\"");
+        const ninferno::DeviceClass on = substitute(id);
+        if (std::regex_search(text, named, name_re) &&
+            named[2].str() != named[1].str().substr(0, named[1].str().find(':'))) {
+            const std::string row = normal(on.facts.sku), card = normal(named[2].str());
+            const std::regex omitted(R"( ([0-9]+GB|Lite Hash Rate|Rev\. A))");
+            failures += check(row.rfind(card, 0) == 0 &&
+                                  (row.size() == card.size() ||
+                                   std::regex_match(row.substr(card.size()), omitted)),
+                              name + ": " + m[1].str() + " (" + on.facts.sku + ") is the " +
+                                  named[2].str() + " the table names");
+        }
+        const ninferno::ScopedDeviceClass scoped(on);
+        try {
+            const auto board          = generic::route_table_board(utf8_path(f.path()));
+            const ninferno::Board own = ninferno::board_of(ninferno::device_class());
+            const double d            = board ? ninferno::board_distance(own, *board) : -1.0;
+            const bool conflict       = measured::conflict_dram_gbps(id) != 0;
+            const double expected =
+                conflict ? ninferno::board_distance(own, measured::board_of_pci(id)) : 0.0;
+            std::cout << name << ": " << m[1].str() << " on " << ninferno::device_class().id()
+                      << ", distance " << d << (conflict ? " (recorded conflict)" : "") << '\n';
+            failures += check(board && d == expected && (!conflict || d > 0),
+                              name + " is measured on the board of its id");
+        } catch (const std::exception& e) {
+            failures += check(false, name + " refused on the board of its id: " + e.what());
+        }
+    }
+    failures += check(files > 0, "shipped tables found in " + shipped);
+    // An id that names another board than the class's is refused: another chip, or the chip's
+    // board with other SMs than a chip:Nsm class names.
+    const ninferno::ScopedDeviceClass scoped(substitute(0x2782));
+    const auto refused_as = [&](const std::string& name, const std::string& cls, const char* id) {
+        const std::string path = write_file(
+            name, "{\"schema\": \"ninferno-route-table/1\", \"gpu\": {\"class\": \"" + cls +
+                      "\", \"name\": \"test\", \"pci_id\": \"" + id + "\"}, \"entries\": []}");
+        try {
+            (void)generic::route_table_board(path);
+        } catch (const std::runtime_error&) { return true; }
+        return false;
+    };
+    failures += check(!refused_as("id_own", "ad104:60sm", "0x2782"), "the class's own board loads");
+    failures += check(!refused_as("id_chip", "ad104", "0x27b8"), "a board of the bare chip loads");
+    failures += check(refused_as("id_other_chip", "ad104:60sm", "0x2684"),
+                      "an id of another chip is refused");
+    failures += check(refused_as("id_other_sms", "ad104:60sm", "0x27b8"),
+                      "an id of the chip's board with other SMs is refused");
+    // The writer names a board by its id only where the board is its id's row: the 8 GB RTX 3060
+    // shares the 12 GB board's id on a 128-bit bus (core/machine_facts.cpp prices it at the
+    // driver's), so its table records its facts and no id, which would read back as 360 GB/s.
+    {
+        const auto written_on = [&](ninferno::DeviceClass d) {
+            const ninferno::ScopedDeviceClass on(std::move(d));
+            return generic::write_route_table(ninferno::device_class().id(), "test", {});
+        };
+        const std::string stock = written_on(substitute(0x2504));
+        failures += check(stock.find("\"pci_id\": \"0x2504\"") != std::string::npos &&
+                              stock.find("\"board\"") == std::string::npos,
+                          "the 12 GB RTX 3060 is named by its id: " + stock);
+        ninferno::DeviceClass narrow = substitute(0x2504);
+        narrow.memory_bus_bits       = 128;
+        narrow.facts                 = ninferno::machine_facts_of(narrow);
+        const std::string twin       = written_on(narrow);
+        failures += check(twin.find("\"pci_id\"") == std::string::npos &&
+                              twin.find("\"dram_gbps\": 240") != std::string::npos,
+                          "the 8 GB RTX 3060 records its own facts, not the id: " + twin);
+    }
+    std::cout << files << " shipped tables; " << (failures == 0 ? "OK" : "FAIL")
+              << " route_table shipped boards\n";
+    return failures == 0 ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string(argv[1]) == "--shipped-boards") { return shipped_boards(); }
     if (ninferno::test::cuda_unavailable()) {
         std::cout << "SKIP: no usable CUDA device\n";
         return 77;
@@ -510,13 +633,15 @@ int main(int argc, char** argv) {
             ", \"board\": {\"cc\": " + cc + ", \"sms\": " + std::to_string(device.sms) + "}";
         const double figures_apart = distance("pci_figures_only", figures);
         failures += check(figures_apart >= 0, "a table with facts and no id reads them");
-        if (device.pci_device_id != 0) {
-            failures += check(written.find("\"pci_id\": \"" + id + "\"") != std::string::npos,
-                              "the writer records the device's PCI id: " + written);
-        }
+        // The id alone where the device is its id's registry row; the facts and no id otherwise.
+        const bool row_board = own && ninferno::measured::same_board_facts(
+                                          ninferno::board_of(device),
+                                          ninferno::board_registry::board(device.pci_device_id));
+        failures +=
+            check((written.find("\"pci_id\": \"" + id + "\"") != std::string::npos) == row_board &&
+                      (written.find("\"board\"") != std::string::npos) == !row_board,
+                  "the writer records the id of a row board, else its facts: " + written);
         if (own) {
-            failures += check(written.find("\"board\"") == std::string::npos,
-                              "a registry board's facts are not written: " + written);
             const double apart = ninferno::board_distance(ninferno::board_of(device), *own);
             failures += check(distance("pci_own", ", \"pci_id\": \"" + id + "\"") == apart,
                               "a table's id reads the registry's row of it");
@@ -524,9 +649,6 @@ int main(int argc, char** argv) {
                                                                "\", \"board\": {\"cc\": " + cc +
                                                                ", \"sms\": 1}") == apart,
                               "the registry's row of the id wins over the file's facts");
-        } else {
-            failures += check(written.find("\"board\"") != std::string::npos,
-                              "a board the registry lacks keeps its facts: " + written);
         }
         failures +=
             check(!ninferno::measured::find_board_of_pci(0xFFFF), "0xffff is no registry id");

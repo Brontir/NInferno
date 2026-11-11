@@ -768,6 +768,7 @@ void vec_launch_grid(const VecArgs& args, int groups, int slots, cudaStream_t st
                         dim3(blocks), dim3(kVecWarps * 32), 0);
         return;
     }
+    refuse_substituted_launch();
     check(pdl::launch_dependent({dim3(blocks), dim3(kVecWarps * 32), 0, stream},
                                 vec_kernel<type, T, KS, Gated, Bounded>, args),
           "vector product launch");

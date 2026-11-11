@@ -144,8 +144,12 @@ def load_cards(routes_dir, gen_rows, facts):
     for path in sorted(Path(routes_dir).glob("*.json")):
         doc = json.loads(path.read_text(encoding="utf-8"))
         # The table's board by its PCI id (gpu.pci_id), as route_table.cpp reads it: the
-        # registry row (without the recorded bandwidth conflicts of core/measured_boards.h, none of
-        # them a paired card's); a table of a board the registry lacks records gpu.board instead.
+        # registry row, without core/measured_boards.h kDramConflicts (the V100 SXM2's 900 GB/s):
+        # no paired card and no committed figure of the audit is a conflict's board. A table of a
+        # board the registry lacks records gpu.board instead.
+        pci = doc["gpu"].get("pci_id")
+        if pci is not None and not re.fullmatch(r"0[xX][0-9A-Fa-f]{4}", str(pci)):
+            raise ValueError(f"{path.name}: gpu.pci_id {pci!r} is not a PCI product id")
         row = next((g for g in facts["gpus"] if "pci_id" in doc["gpu"]
                     and int(g["id"], 16) == int(doc["gpu"]["pci_id"], 16)), None)
         if row is not None:

@@ -91,7 +91,8 @@ struct Table {
     std::unordered_map<std::uint64_t, RouteEntry> generic;                // bands / prefill
     std::unordered_map<std::uint64_t, std::vector<RouteAsBand>> route_as; // shape-owned tables
     RouteTableStatus status;
-    std::optional<Board> board; // the board it was measured on (gpu.board), when recorded
+    // The board it was measured on (gpu.pci_id's registry row, else gpu.board), when recorded.
+    std::optional<Board> board;
     // table_distance when it was installed for this device (TableAnswer::distance).
     double distance = std::numeric_limits<double>::infinity();
 };
@@ -337,6 +338,23 @@ std::shared_ptr<Table> parse_table(const std::string& path) {
                                          "\" is not a PCI product id (0x and four hex digits)");
             }
             table->board = measured::find_board_of_pci(*value);
+            // The id must name a board of the table's class: a mistyped id that is another valid
+            // board (0x2783 for 0x2782) or another chip's is refused, not read as that board.
+            if (table->board) {
+                const Board& b    = *table->board;
+                const auto& cls   = table->status.gpu_class;
+                const auto colon  = cls.find(':');
+                const auto chip   = cls.substr(0, colon);
+                const auto arch   = "sm" + std::to_string(b.major) + std::to_string(b.minor);
+                const auto row    = gpu_chip(*value, b.major, b.minor, b.sms);
+                const bool sms_ok = colon == std::string::npos ||
+                                    cls.substr(colon + 1) == std::to_string(b.sms) + "sm";
+                if ((chip != "*" && chip != arch && chip != row) || !sms_ok) {
+                    throw std::runtime_error("route table: " + path + ": gpu.pci_id " + id +
+                                             " is a " + row + " board with " +
+                                             std::to_string(b.sms) + " SMs, not of class " + cls);
+                }
+            }
         }
         if (!table->board && gpu.contains("board")) {
             const Json& b    = gpu.at("board");
@@ -938,19 +956,27 @@ bool table_claims(const Problem& problem, std::int32_t tokens, bool prefill) {
     return table_route(problem, tokens, prefill).has_value();
 }
 
+std::optional<Board> route_table_board(const std::string& path) { return parse_table(path)->board; }
+
 std::string write_route_table(const std::string& gpu_class, const std::string& gpu_name,
                               const std::vector<RouteEntry>& entries) {
     Json root;
     root["schema"] = "ninferno-route-table/1";
     root["gpu"]    = {{"class", gpu_class}, {"name", gpu_name}};
     // The board it is measured on, which the default lookup ranks tables by: its PCI id, whose
-    // facts the reader takes from the registry; the facts themselves only for a board the registry
-    // lacks (an id it has no row for, or none read).
+    // facts the reader takes from the registry, where the board is its id's row. Otherwise the
+    // facts themselves and no id: a board the registry lacks (an id it has no row for, or none
+    // read), and one that shares its id with a variant on other memory (core/machine_facts.cpp:
+    // the 8 GB RTX 3060 on 128 bits, the RTX 4070 with GDDR6), whose id would read back as the row.
     try {
         const DeviceClass& device = device_class();
-        if (device.pci_device_id != 0) root["gpu"]["pci_id"] = pci_id_text(device.pci_device_id);
-        if (!measured::find_board_of_pci(device.pci_device_id)) {
-            const Board b        = board_of(device);
+        const Board b             = board_of(device);
+        const bool row_board =
+            board_registry::find(device.pci_device_id) != nullptr &&
+            measured::same_board_facts(b, board_registry::board(device.pci_device_id));
+        if (row_board) {
+            root["gpu"]["pci_id"] = pci_id_text(device.pci_device_id);
+        } else {
             root["gpu"]["board"] = {{"cc", b.major * 10 + b.minor},
                                     {"sms", b.sms},
                                     {"l2_mib", b.l2_mib},

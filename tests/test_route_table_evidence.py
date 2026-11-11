@@ -21,6 +21,7 @@ that branches on the SM count (src/ops/linear/nvfp4/shapes/n2048_k5376.cu, selec
 grid waves) can break that across a wave threshold, which this lint cannot see.
 """
 import json
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -45,6 +46,8 @@ def board_keys(table):
     keys = {gpu["class"]}
     # The board it was measured on: the registry row of its PCI id, as route_table.cpp reads it,
     # else the facts a table of a board the registry lacks records.
+    if "pci_id" in gpu and not re.fullmatch(r"0[xX][0-9A-Fa-f]{4}", str(gpu["pci_id"])):
+        raise ValueError(f"gpu.pci_id {gpu['pci_id']!r} is not a PCI product id")
     sms = registry_sms().get(int(gpu["pci_id"], 16)) if "pci_id" in gpu else None
     sms = sms or (gpu.get("board") or {}).get("sms")
     if sms and ":" not in gpu["class"]:

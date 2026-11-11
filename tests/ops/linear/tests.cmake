@@ -84,6 +84,11 @@ set_tests_properties(ninferno_route_table_malformed_default_test PROPERTIES SKIP
 add_test(NAME ninferno_route_table_similar_default_test
   COMMAND ninferno_route_table_test --similar-default)
 set_tests_properties(ninferno_route_table_similar_default_test PROPERTIES SKIP_RETURN_CODE 77)
+# Every shipped table's gpu.pci_id is the board of its class, read on that board (substituted, no
+# GPU): the table is its own, at distance 0 but for a recorded conflict (#612 step 9).
+add_test(NAME ninferno_route_table_shipped_boards_test
+  COMMAND ninferno_route_table_test --shipped-boards)
+set_tests_properties(ninferno_route_table_shipped_boards_test PROPERTIES LABELS host)
 
 # The generic projection path: random and awkward shapes in every format, every op and route,
 # against an FP64 reference GEMM, plus the token invariance of the prefill-admissible routes.

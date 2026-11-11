@@ -68,15 +68,24 @@ GPU_FACTS = Path(__file__).resolve().parents[2] / "src" / "core" / "data" / "gpu
 EPILOGUES = {"store": "Store", "swiglu": "SwiGlu"}
 
 
+# The facts each sweep's board line printed, by PCI id: checked against the id's registry row.
+printed = {}
+
+
 def pci_text(pci_id):
     """A PCI product id as the header spells it: "0x" and four upper-case hex digits."""
+    if not re.fullmatch(r"0[xX][0-9A-Fa-f]{4}", pci_id):
+        sys.exit(f"{pci_id!r} is not a PCI product id (0x and four hex digits)")
     return "0x%04X" % int(pci_id, 16)
 
 
-def registry_ids():
-    """The PCI ids of src/core/data/gpu_facts.json, the rows measured::board_of_pci reads."""
+def registry_rows():
+    """{PCI id: (cc, SMs, L2 MiB, DRAM GB/s)} of src/core/data/gpu_facts.json, the rows
+    measured::board_of_pci reads (without its recorded conflicts, which the bench's printed
+    figures, the device's, do not carry either)."""
     rows = json.loads(GPU_FACTS.read_text(encoding="utf-8"))["gpus"]
-    return {pci_text(r["id"]) for r in rows}
+    return {pci_text(r["id"]): (r["cc"], r["sms"], float(r.get("l2_mib", 0)),
+                                r["bus_bits"] * r["gbps"] / 8.0) for r in rows}
 
 
 def read_run(path, gpu):
@@ -85,8 +94,12 @@ def read_run(path, gpu):
     for line in open(path, errors="replace", encoding="utf-8"):
         m = BOARD.match(line)
         if m:
-            # The board's PCI id; a bench before it printed one gives None (the facts it printed
-            # are not copied: the header reads them from the registry by id).
+            # The board's PCI id; a bench before it printed one gives None. The facts it printed
+            # are not copied (the header reads them from the registry by id), only checked
+            # against the id's row (main).
+            if m.group(5):
+                cc, sms, l2, bw = m.groups()[:4]
+                printed[pci_text(m.group(5))] = (int(cc), int(sms), float(l2), float(bw))
             board = pci_text(m.group(5)) if m.group(5) else None
             continue
         if line.strip() == "done":
@@ -220,10 +233,21 @@ def main():
         if board is None:
             sys.exit(f"{gpu}: the --merge header records no board")
         tables.append((gpu, 0, list(entries.items()), board))
-    known = registry_ids()
+    known = registry_rows()
     for gpu, _, _, board in tables:
         if board not in known:
             sys.exit(f"{gpu}: PCI id {board} has no row in {GPU_FACTS}; add the board's row first")
+        # A board that shares its id with a variant on other memory (core/machine_facts.cpp: the
+        # 8 GB RTX 3060 on 128 bits, the RTX 4070 with GDDR6) is not its id's row: its id would
+        # read back as the row's facts.
+        cc, sms, l2, bw = known[board]
+        seen = printed.get(board)
+        if seen and (seen[0] != cc or seen[1] != sms or abs(seen[2] - l2) > 1e-3 * max(l2, 1)
+                     or abs(seen[3] - bw) > 1e-4 * bw):
+            sys.exit(f"{gpu}: the sweeps' board (cc {seen[0]}, {seen[1]} SMs, L2 {seen[2]:g} MiB, "
+                     f"{seen[3]:g} GB/s) is not the row of its PCI id {board} (cc {cc}, {sms} SMs, "
+                     f"L2 {l2:g} MiB, {bw:g} GB/s): a variant under the id, which the table "
+                     "cannot name")
     tables.sort(key=lambda t: t[0])
     order = {"Store": 0, "SwiGlu": 1}
     for _, _, rows, _ in tables:
