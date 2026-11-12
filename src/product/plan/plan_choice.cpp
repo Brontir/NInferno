@@ -430,8 +430,8 @@ choice::QuantOption quant_option_of(const PlanSourceFacts& facts, const std::str
     quant.expert_banks_int8    = static_cast<choice::ExpertBanks>(facts.model.expert_prefill_int8);
     quant.expert_banks_assumed = facts.model.expert_prefill_assumed;
     quant.rest_weights         = weight_class_of(facts.shape.rest_layer_formats, label);
-    // The weight class: the file's own layers' formats where known (with_weights clears another
-    // quantization's; the vocabulary's apart), else the label (a hub row).
+    // The weight class: the file's own layers' formats where known (a hub row's from its own
+    // table only: row_facts; the vocabulary's apart), else the label (a row not read).
     quant.weights = weight_class_of(facts.shape.layer_formats, label);
     // The routes of the encodings the file holds (its weight_formats): NVFP4's where it holds
     // NVFP4, an int8 route where any format may take 8-bit activations (a8_input). A spelling the
@@ -445,11 +445,11 @@ choice::QuantOption quant_option_of(const PlanSourceFacts& facts, const std::str
         a8                           = a8 || !q || a8_input(*q);
     }
     quant.int8_route = formats.empty() || a8;
-    // A quantization named by its listing's label (a hub row: the facts' header may be another
-    // row's) takes its routes from the formats the label names (choice::label_formats; none
-    // named: an int8 route); an artifact's recorded source keeps the routes of the encodings it
-    // holds (its weight_formats, read above).
-    if (!asked.empty()) {
+    // A quantization named by its listing's label whose formats were not read (a hub row without
+    // its own table: row_facts gives it none of another file's) takes its routes from the formats
+    // the label names (choice::label_formats; none named: an int8 route); one whose header was
+    // read, and an artifact's recorded source, keep the routes of the encodings they hold (#811).
+    if (!asked.empty() && formats.empty()) {
         const std::optional<std::set<QType>> named = choice::label_formats(label);
         quant.nvfp4                                = named && named->count(QType::NVFP4) > 0;
         quant.int8_route = !named || std::any_of(named->begin(), named->end(), a8_input);

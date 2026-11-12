@@ -20,6 +20,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace ninferno {
@@ -66,6 +67,20 @@ struct StaticSchedule {
     int outside_bar    = 0;
 };
 
+// The pipe counts of the same iteration (#785; tools/kernel_facts/sass_counts.py PIPE_FIELDS):
+// the instructions the classes above lump together but that issue to different pipes, by base
+// opcode. Carried by the section families' rows (ggml's matrix kernel, the W4A8 tiles), never by
+// the register-MMA ones. Data for the launch laws of #785; nothing prices with them yet.
+struct PipeCounts {
+    int i2f  = 0; // I2F: int-to-float on the multi-function path (Turing's)
+    int i2fp = 0; // I2FP: int-to-float on the ALU (sm_86 on)
+    int ffma = 0; // FFMA, FFMA32I
+    int fmul = 0; // FMUL, FMUL32I
+    int fadd = 0; // FADD, FADD32I
+    int imad = 0; // every IMAD form (IMAD.MOV, IMAD.WIDE ...)
+    int bar  = 0; // CTA barriers: BAR.SYNC, BAR.ARV, BAR.RED
+};
+
 struct LoopCounts {
     int loops  = 0; // candidate K loops found: 1 normally; 0 none (every count is 0); 2+ ambiguous
     int k_iter = 0; // K values per warp per iteration from the weight MMAs; 0 unknown
@@ -91,6 +106,7 @@ struct LoopCounts {
     int other                = 0; // branches, barriers, convergence, constant loads, NOP
     int total                = 0;
     std::optional<StaticSchedule> schedule; // every row of a snapshot with a loop
+    std::optional<PipeCounts> pipes;        // every loop row of a section family
 };
 
 struct KernelFacts {
@@ -115,9 +131,53 @@ struct SnapshotHeader {
 };
 
 // Whether this reader accepts a snapshot's text: schema 4 (loop counts and schedule) or the
-// resources-only schema 1. Any other columns line, the loop without a schedule (schema 2) among
-// them, is refused, as tools/kernel_facts/kernel_facts.py refuses it.
+// resources-only schema 1, then any sections (kSectionFamilies) with their own columns. Any other
+// columns line, the loop without a schedule (schema 2) among them, is refused, as
+// tools/kernel_facts/kernel_facts.py refuses it.
 [[nodiscard]] bool snapshot_text_accepted(std::string_view text);
+
+// The section families (#785): after its register-MMA rows a snapshot holds a section per
+// further kernel family, each with its own nvcc, kernel count and columns (the key, the resources,
+// the loop's counts and schedule, the pipe counts). Facts only: no price or rule reads them yet.
+//   "mmq"   ggml's matrix kernel mul_mat_q<type, J, fallback, prec>: one iteration of its loop
+//           is one unit, a 128-row x J-column tile over 256 K values; key "type J fallback prec"
+//           with the ggml_type and ggml_prec values ("12 32 0 30": Q4_K, J 32)
+//   "w4a8"  the W4A8 tiles, w4a8_kernel and the producer-warp w4a8_ws_kernel: one iteration is
+//           a 128-value K tile; key "codec block_m block_n warps_m warps_n epilogue flavor stages
+//           producers" ("W4a8Q45K<4> 32 128 2 4 0 1 0 0")
+inline constexpr std::string_view kSectionFamilies[] = {"mmq", "w4a8"};
+
+struct MmqKernelKey {
+    int type      = 0; // the ggml_type value: 12 Q4_K, 13 Q5_K, 14 Q6_K
+    int J         = 0; // the column tile
+    bool fallback = false;
+    int prec      = 30; // the ggml_prec value: 30 GGML_PREC_Q8, the activation ggml_mmq quantizes
+};
+
+struct W4a8KernelKey {
+    std::string codec; // canonical type name: "W4a8Q45K<4>", "W4a8Q6K"
+    int block_m = 0, block_n = 0, warps_m = 0, warps_n = 0;
+    int epilogue  = 0; // Epilogue as an integer
+    int flavor    = 0; // w4a8_kernel's Flavor; 0 for the producer-warp tile
+    int stages    = 0; // the producer-warp tile's ring; 0 for w4a8_kernel
+    int producers = 0;
+};
+
+// One section of a label's snapshot: the nvcc its rows were read under and their count; nullopt
+// where the label has no snapshot or the snapshot no such section.
+struct SectionHeader {
+    std::string nvcc;
+    std::size_t kernels = 0;
+};
+
+[[nodiscard]] std::optional<SectionHeader> section_header(std::string_view arch,
+                                                          std::string_view family);
+// Every row of a section as (its key as the file spells it, its facts), in key order.
+[[nodiscard]] std::vector<std::pair<std::string, KernelFacts>>
+section_rows(std::string_view arch, std::string_view family);
+[[nodiscard]] std::optional<KernelFacts> mmq_facts(std::string_view arch, const MmqKernelKey& key);
+[[nodiscard]] std::optional<KernelFacts> w4a8_facts(std::string_view arch,
+                                                    const W4a8KernelKey& key);
 
 // The build architecture labels with a committed snapshot, in file order.
 [[nodiscard]] std::vector<std::string_view> snapshot_archs();

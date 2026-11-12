@@ -13,9 +13,12 @@
 // - the arenas the plan's features ask for are sized, the others are 0, and the widest is the
 //   capacity (no Vision region: qwen3_5_workspace_plan adds it);
 // - a plan whose features read a part the view does not carry is refused.
-// The capacity queries answer for a substituted board (the RTX 5090, the RTX 4060 Ti).
+// The capacity queries answer for a substituted board (the RTX 5090, the RTX 4060 Ti), and for
+// every target board of gpu_facts.json with every CUDA device hidden from the process (#615 W4:
+// a device read the substitute does not answer throws), the same in either board order.
 
 #include "core/device_class.h"
+#include "core/machine_facts.h"
 #include "core/weight_view.h"
 #include "models/qwen3_5/config.h"
 #include "models/qwen3_5/execution/parameter_types.h"
@@ -25,6 +28,8 @@
 #include "models/qwen3_5/program/planning/workspace_plan.h"
 #include "ninferno/ops/moe.h"
 #include "ninferno/ops/weight_input.h"
+#include "support/named_board.h"
+#include "support/no_device.h"
 
 #include <algorithm>
 #include <array>
@@ -453,9 +458,72 @@ void run(const Case& k) {
     }
 }
 
+// The start's plan of a case on `device` (substituted): its forms prepared and planned there.
+std::string plan_on(const Case& k, const DeviceClass& device) {
+    const ScopedDeviceClass substitute(device);
+    const qwen::Config config = k.config();
+    const auto plan           = plan_of(config, k.options, device.sms);
+    const bool mtp            = plan.features.mtp();
+    Forms prepared(config, k.layout, std::uintptr_t{1} << 40);
+    const ex::TextParameters text = prepared.text();
+    std::optional<ex::MtpParameters> start_mtp;
+    std::optional<ex::ProposalParameters> start_proposal;
+    if (mtp) { start_mtp = prepared.mtp(); }
+    if (mtp && plan.proposal_head == ProposalHead::Optimized) {
+        start_proposal = prepared.proposal(32768);
+    }
+    const auto p = detail::build_workspace_plan(
+        detail::workspace_inputs(config, static_cast<std::int32_t>(config.text.vocab_size), text,
+                                 start_mtp, start_proposal, std::nullopt),
+        plan);
+    check(p.capacity > 0, k.name + " on " + device.name + ": an arena is sized");
+    return forms(text) + ": " + bytes(p);
+}
+
+// Every target board of gpu_facts.json (#615 W4), with every CUDA device hidden (main): the forms
+// and the capacity queries answer for the substituted class, so a device read it does not answer
+// throws; and each board's plans are the same whichever boards were planned before (no cache
+// keeps the first board's answer).
+void every_board(const std::vector<Case>& cases) {
+    std::vector<DeviceClass> boards;
+    for (const GpuFactsRow& row : gpu_facts_table()) {
+        if (!row.target) { continue; }
+        // The class the plan reads for the named board; the name (never read by a decision, not
+        // in device_class_key) only names it in the messages.
+        DeviceClass d = named_board_class(named_board_facts(row));
+        d.name        = row.name;
+        boards.push_back(std::move(d));
+    }
+    check(boards.size() >= 50, "the registry has its target boards");
+    const auto plans = [&](const DeviceClass& d) {
+        std::vector<std::string> out;
+        for (const Case& k : cases) {
+            try {
+                out.push_back(plan_on(k, d));
+            } catch (const std::exception& error) {
+                check(false, k.name + " on " + d.name + ": " + error.what());
+                out.push_back(std::string("threw: ") + error.what());
+            }
+        }
+        return out;
+    };
+    std::vector<std::vector<std::string>> forward;
+    for (const DeviceClass& d : boards) { forward.push_back(plans(d)); }
+    for (std::size_t i = boards.size(); i-- > 0;) {
+        check(plans(boards[i]) == forward[i],
+              boards[i].name + ": the same plans after the other boards");
+    }
+    std::cout << boards.size() << " boards x " << cases.size() << " cases planned\n";
+}
+
 } // namespace
 
 int main() {
+    if (!hide_cuda_devices()) {
+        std::cerr << "FAIL: a CUDA device is visible to the test (run it with "
+                     "CUDA_VISIBLE_DEVICES=-1)\n";
+        return 1;
+    }
     try {
         const DeviceClass rtx5090   = board(0x2B85, 12, 0, 170, 96);
         const DeviceClass rtx4060ti = board(0x2805, 8, 9, 34, 32);
@@ -492,6 +560,7 @@ int main() {
              "segmented/segmented/segmented/generic moe"},
         };
         for (const Case& k : cases) { run(k); }
+        every_board(cases);
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
         return 1;

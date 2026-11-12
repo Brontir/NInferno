@@ -1196,7 +1196,61 @@ void test_proposal_bytes_per_quant() {
         pr::PlanSourceFacts dense_part  = part;
         dense_part.model.expert_prefill = dense_part.model.expert_prefill_int8 =
             rt::ExpertPrefill::Unknown;
-        check(!pr::gguf_tensor_table(dense_part), "a split part with no prefill route: no table");
+        dense_part.shape.weight_formats.clear();
+        dense_part.shape.layer_formats.clear();
+        dense_part.shape.rest_layer_formats.clear();
+        check(!pr::gguf_tensor_table(dense_part),
+              "a split part with no prefill route and no formats: no table");
+        // The weight formats likewise (#811): the row's own table's, never the shape's at equal
+        // bytes; a row without its table has none (its label names them).
+        pr::PlanSourceFacts formatted      = routed;
+        formatted.shape.weight_formats     = {"bf16", "ggml_q8_0", "mxfp4"};
+        formatted.shape.layer_formats      = {"bf16", "ggml_q8_0", "mxfp4"};
+        formatted.shape.rest_layer_formats = {"bf16", "ggml_q8_0"};
+        pr::QuantRow unread_row            = same_bytes;
+        unread_row.listing.table.reset();
+        const auto unread_shape = pr::row_facts(formatted, unread_row).shape;
+        check(unread_shape.weight_formats.empty() && unread_shape.layer_formats.empty() &&
+                  unread_shape.rest_layer_formats.empty(),
+              "a row of the shape's bytes without its table: no formats of the shape's");
+        pr::QuantRow formats_row                      = same_bytes;
+        formats_row.listing.table->weight_formats     = {"bf16", "ggml_q4_k", "ggml_q6_k"};
+        formats_row.listing.table->layer_formats      = {"ggml_q4_k", "ggml_q6_k"};
+        formats_row.listing.table->rest_layer_formats = {"ggml_q6_k"};
+        const auto own_shape                          = pr::row_facts(formatted, formats_row).shape;
+        check(own_shape.weight_formats ==
+                      std::vector<std::string>{"bf16", "ggml_q4_k", "ggml_q6_k"} &&
+                  own_shape.layer_formats == std::vector<std::string>{"ggml_q4_k", "ggml_q6_k"} &&
+                  own_shape.rest_layer_formats == std::vector<std::string>{"ggml_q6_k"},
+              "a row of the shape's bytes with its table: its own three format lists");
+        // A head read's table carries them; a split part's head the formats of the tensors it
+        // lists (a sample of its file's), with or without a prefill route.
+        pr::PlanSourceFacts read_formats = formatted;
+        read_formats.model.weight_basis  = rt::WeightBasis::GgufTensors;
+        const auto formats_table         = pr::gguf_tensor_table(read_formats);
+        check(formats_table && formats_table->weight_formats == formatted.shape.weight_formats &&
+                  formats_table->layer_formats == formatted.shape.layer_formats &&
+                  formats_table->rest_layer_formats == formatted.shape.rest_layer_formats,
+              "a head read's table keeps its three format lists");
+        pr::PlanSourceFacts formats_part = part;
+        formats_part.shape               = formatted.shape;
+        const auto formats_part_table    = pr::gguf_tensor_table(formats_part);
+        check(formats_part_table && formats_part_table->tensor_bytes == 0 &&
+                  formats_part_table->weight_formats == formatted.shape.weight_formats &&
+                  formats_part_table->rest_layer_formats == formatted.shape.rest_layer_formats,
+              "a split part's head: the formats of its tensors");
+        pr::PlanSourceFacts dense_formats = dense_part;
+        dense_formats.shape               = formatted.shape;
+        const auto dense_table            = pr::gguf_tensor_table(dense_formats);
+        check(dense_table && dense_table->tensor_bytes == 0 &&
+                  dense_table->expert_prefill == rt::ExpertPrefill::Unknown &&
+                  !dense_table->expert_prefill_assumed &&
+                  dense_table->layer_formats == formatted.shape.layer_formats,
+              "a dense split part: a table of its formats alone, no route, not assumed");
+        pr::QuantRow dense_row  = part_row;
+        dense_row.listing.table = dense_table;
+        check(pr::row_facts(routed, dense_row).shape.layer_formats == formatted.shape.layer_formats,
+              "a split row: its own part's formats");
     }
     // The 9B's verify as the converter reads it (the embedding out): the rows its conversions
     // logged (147,456 with DFlash, 57,344 for MTP alone), from the whole tensor table.
