@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 
 namespace ninferno::ops::detail::sm_rules {
 
@@ -67,20 +68,22 @@ constexpr bool grid_passes_wave(std::int32_t tokens, int sms, int row_tiles, int
 // constant), so the pair that tells them apart is a board whose DRAM rate per SM differs: an L4
 // against an RTX 4060 Ti (1.37 against 1.04), or boards of other generations with the launch
 // measured on each (bench/ops/rmsnorm_rope_bench.cu --crossover prints both implied constants).
-// Floor of T*, no rounding to a grid. 0 where an input is unknown or `excess_cycles` is not
-// calibrated: the caller then keeps its own default. A call wider than a graph is captured for
-// (a prefill chunk run eagerly) pays the eager launch, dearer than the node: T* is understated
-// there.
-constexpr std::int32_t launch_amortized_tokens(int saved_launches, double launch_seconds, int sms,
-                                               int warps_per_sm, double sm_clock_hz,
-                                               double heads_per_token, double excess_cycles) {
+// Floor of T*, no rounding to a grid; 0 (a T* below one token) is "never fuse". nullopt where an
+// input is unknown or `excess_cycles` is not calibrated: the caller then keeps its own default. A
+// call wider than a graph is captured for (a prefill chunk run eagerly) pays the eager launch,
+// dearer than the node: T* is understated there.
+using AmortizedTokens = std::optional<std::int32_t>;
+
+constexpr AmortizedTokens launch_amortized_tokens(int saved_launches, double launch_seconds,
+                                                  int sms, int warps_per_sm, double sm_clock_hz,
+                                                  double heads_per_token, double excess_cycles) {
     if (saved_launches <= 0 || !(launch_seconds > 0.0) || sms <= 0 || warps_per_sm <= 0 ||
         !(sm_clock_hz > 0.0) || !(heads_per_token > 0.0) || !(excess_cycles > 0.0)) {
-        return 0;
+        return std::nullopt;
     }
     const double tokens = saved_launches * launch_seconds * sms * warps_per_sm * sm_clock_hz /
                           (excess_cycles * heads_per_token);
-    return tokens >= 1.0e9 ? 1000000000 : static_cast<std::int32_t>(tokens);
+    return tokens >= 1.0e9 ? std::int32_t{1000000000} : static_cast<std::int32_t>(tokens);
 }
 
 } // namespace ninferno::ops::detail::sm_rules

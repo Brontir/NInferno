@@ -934,6 +934,8 @@ std::string_view demotion_name(Demotion demotion) noexcept {
     case Demotion::Workspace: return "workspace";
     case Demotion::VoltaCopy:
         return "volta_copy";
+    case Demotion::KStep:
+        return "k_step";
     }
     return "none";
 }
@@ -1130,6 +1132,12 @@ ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call
         demote(x16 ? Route{Family::RegisterMma, static_cast<std::uint8_t>(rmma_index(4, 1, 1, 8))}
                    : Route{Family::Scalar, 0},
                Demotion::Alignment);
+    }
+    // K off the register kernel's step runs the scalar kernel (other bytes and speed). The
+    // selector, the tuner and route-tune never ask it (rmma_refusal refuses the K, #693); a route
+    // asked past route_admits is resolved here, so the run and its description read one rule.
+    if (route.family == Family::RegisterMma && (w.k % k_multiple(codec_of(w))) != 0) {
+        demote(Route{Family::Scalar, 0}, Demotion::KStep);
     }
     // The A16 route a call the quantized families cannot take runs.
     const auto a16 = [&] {
@@ -1482,22 +1490,14 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
         launch_scalar(codec, call.epilogue, args, stream);
         return;
     case Family::RegisterMma:
-        if ((w.k % k_multiple(codec)) != 0) {
-            // K off the register kernel's step runs scalar: a demotion (other bytes and speed).
-            note_demotion(route, Route{Family::Scalar, 0}, call.rows, args.tokens, w.k,
-                          aligned_to(args.x, 16), args.ldx,
-                          workspace != nullptr ? workspace->capacity() : 0);
-            launch_scalar(codec, call.epilogue, args, stream);
-            return;
-        }
+        // K is on the kernel's step here: resolve_route took a call off it to Scalar (KStep).
         args.lane_local = invariant_routes_active() ? 0 : 1;
         args.add_sums   = rmma_add_sums() ? 1 : 0;
         if (!current_features().mma_tensor && volta_hmma_takes(codec, args)) {
             launch_volta_hmma(codec, call.epilogue, args, stream);
             return;
         }
-        if (!current_features().mma_tensor && volta_gemv_takes(codec, args) &&
-            (args.ldx % 8) == 0 && (reinterpret_cast<std::uintptr_t>(args.x) % 16) == 0) {
+        if (!current_features().mma_tensor && volta_gemv_takes(codec, args)) {
             launch_volta_gemv(codec, call.epilogue, args, stream);
             return;
         }

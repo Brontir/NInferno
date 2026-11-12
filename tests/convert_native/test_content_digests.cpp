@@ -372,7 +372,8 @@ int resume_test(const fs::path& dir) {
     {
         const int fd = ::open(partial.c_str(), O_WRONLY);
         const char x = 'X';
-        (void)::pwrite(fd, &x, 1, 40); // inside the directory, before the digests
+        // inside the directory, before the digests
+        [[maybe_unused]] const ssize_t wrote = ::pwrite(fd, &x, 1, 40);
         ::close(fd);
     }
     bool refused = false;

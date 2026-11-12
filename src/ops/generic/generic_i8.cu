@@ -46,6 +46,7 @@ struct I8Tile {
     static constexpr int kN          = 64 * WN; // weight rows per CTA
     static constexpr int kStages     = Stages;
     static constexpr int kThreads    = 32 * WT * WN;
+    static_assert(kThreads % 32 == 0); // whole warps; also keeps nvcc #177 quiet
     static constexpr int kHigh       = Bits == 4 ? 0 : Bits == 5 ? 8 : 16; // high-plane bytes a group
     static constexpr int kAStage     = kT * 64;    // int8 activation, one group per token
     static constexpr int kBStage     = kN * 32;    // low nibbles, 32 bytes per row and group
