@@ -1,0 +1,1855 @@
+{
+ "board": "rtx5090",
+ "card": "RTX 5090",
+ "measure": "NVIDIA GeForce RTX 5090, 3090 MHz, 575.00 W",
+ "model_bands": {
+  "bands": {
+   "batch129": [
+    129,
+    null
+   ],
+   "decode": [
+    1,
+    8
+   ],
+   "narrow": [
+    17,
+    32
+   ],
+   "verify": [
+    9,
+    16
+   ],
+   "wide": [
+    33,
+    128
+   ]
+  },
+  "by_board": {
+   "rtx5090": {
+    "batch129": {
+     "best_ms": 13.760188,
+     "cases": 30,
+     "cases_over_5pct": 3,
+     "geomean_regret": 0.009474660244550126,
+     "selected_ms": 13.926006000000001,
+     "skipped": 0,
+     "tokens": 9600,
+     "weighted_regret": 0.012050562099878315,
+     "worst_regret": 0.11111111111111138
+    },
+    "decode": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 80,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "narrow": {
+     "best_ms": 1.8626559999999999,
+     "cases": 20,
+     "cases_over_5pct": 6,
+     "geomean_regret": 0.08063934689179586,
+     "selected_ms": 1.900544,
+     "skipped": 0,
+     "tokens": 560,
+     "weighted_regret": 0.02034084661902158,
+     "worst_regret": 0.4999999999999998
+    },
+    "verify": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 20,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "wide": {
+     "best_ms": 5.87635,
+     "cases": 40,
+     "cases_over_5pct": 4,
+     "geomean_regret": 0.01782118801604149,
+     "selected_ms": 5.902236,
+     "skipped": 0,
+     "tokens": 3360,
+     "weighted_regret": 0.004405115420286432,
+     "worst_regret": 0.38124999999999987
+    }
+   }
+  },
+  "by_family": {
+   "(no pick)": {
+    "decode": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 80,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "verify": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 20,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    }
+   },
+   "ggml_mmq": {
+    "batch129": {
+     "best_ms": 13.216412,
+     "cases": 23,
+     "cases_over_5pct": 1,
+     "geomean_regret": 0.002838334211342053,
+     "selected_ms": 13.368918,
+     "skipped": 0,
+     "tokens": 7680,
+     "weighted_regret": 0.01153913785375349,
+     "worst_regret": 0.05754149571946954
+    },
+    "narrow": {
+     "best_ms": 1.7254399999999999,
+     "cases": 12,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.0004095850906120635,
+     "selected_ms": 1.728512,
+     "skipped": 0,
+     "tokens": 336,
+     "weighted_regret": 0.0017804154302671904,
+     "worst_regret": 0.0049261083743843415
+    },
+    "wide": {
+     "best_ms": 5.60803,
+     "cases": 34,
+     "cases_over_5pct": 3,
+     "geomean_regret": 0.01553856197754011,
+     "selected_ms": 5.6298200000000005,
+     "skipped": 0,
+     "tokens": 2800,
+     "weighted_regret": 0.0038854998992516876,
+     "worst_regret": 0.38124999999999987
+    }
+   },
+   "rmma": {
+    "narrow": {
+     "best_ms": 0.137216,
+     "cases": 8,
+     "cases_over_5pct": 6,
+     "geomean_regret": 0.21320774742947424,
+     "selected_ms": 0.172032,
+     "skipped": 0,
+     "tokens": 224,
+     "weighted_regret": 0.25373134328358193,
+     "worst_regret": 0.4999999999999998
+    },
+    "wide": {
+     "best_ms": 0.04710399999999999,
+     "cases": 3,
+     "cases_over_5pct": 1,
+     "geomean_regret": 0.04551591714942038,
+     "selected_ms": 0.049151999999999994,
+     "skipped": 0,
+     "tokens": 208,
+     "weighted_regret": 0.04347826086956519,
+     "worst_regret": 0.1428571428571428
+    }
+   },
+   "w4a8ws": {
+    "batch129": {
+     "best_ms": 0.543776,
+     "cases": 7,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.031590499527815785,
+     "selected_ms": 0.557088,
+     "skipped": 0,
+     "tokens": 1920,
+     "weighted_regret": 0.024480668510563186,
+     "worst_regret": 0.11111111111111138
+    },
+    "wide": {
+     "best_ms": 0.221216,
+     "cases": 3,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.01639635681485352,
+     "selected_ms": 0.223264,
+     "skipped": 0,
+     "tokens": 352,
+     "weighted_regret": 0.009257919861131114,
+     "worst_regret": 0.050000000000000044
+    }
+   }
+  },
+  "by_format": {
+   "q4k": {
+    "batch129": {
+     "best_ms": 2.848896,
+     "cases": 21,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.010865984149387886,
+     "selected_ms": 2.864224,
+     "skipped": 0,
+     "tokens": 6720,
+     "weighted_regret": 0.00538032978388836,
+     "worst_regret": 0.11111111111111138
+    },
+    "decode": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 56,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "narrow": {
+     "best_ms": 0.48128,
+     "cases": 14,
+     "cases_over_5pct": 4,
+     "geomean_regret": 0.06944880005339327,
+     "selected_ms": 0.50176,
+     "skipped": 0,
+     "tokens": 392,
+     "weighted_regret": 0.042553191489361764,
+     "worst_regret": 0.3333333333333335
+    },
+    "verify": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 14,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "wide": {
+     "best_ms": 1.476192,
+     "cases": 28,
+     "cases_over_5pct": 3,
+     "geomean_regret": 0.020291298676105463,
+     "selected_ms": 1.490144,
+     "skipped": 0,
+     "tokens": 2352,
+     "weighted_regret": 0.009451345082482465,
+     "worst_regret": 0.38124999999999987
+    }
+   },
+   "q6k": {
+    "batch129": {
+     "best_ms": 10.911292,
+     "cases": 9,
+     "cases_over_5pct": 1,
+     "geomean_regret": 0.00623568036651867,
+     "selected_ms": 11.061782000000001,
+     "skipped": 0,
+     "tokens": 2880,
+     "weighted_regret": 0.013792133873788748,
+     "worst_regret": 0.05754149571946954
+    },
+    "decode": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 24,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "narrow": {
+     "best_ms": 1.381376,
+     "cases": 6,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.10720811637505911,
+     "selected_ms": 1.398784,
+     "skipped": 0,
+     "tokens": 168,
+     "weighted_regret": 0.012601927353595332,
+     "worst_regret": 0.4999999999999998
+    },
+    "verify": {
+     "best_ms": 0.0,
+     "cases": 0,
+     "cases_over_5pct": 0,
+     "geomean_regret": null,
+     "selected_ms": 0.0,
+     "skipped": 6,
+     "tokens": 0,
+     "weighted_regret": null,
+     "worst_regret": null
+    },
+    "wide": {
+     "best_ms": 4.400158,
+     "cases": 12,
+     "cases_over_5pct": 1,
+     "geomean_regret": 0.012080827412333628,
+     "selected_ms": 4.412092,
+     "skipped": 0,
+     "tokens": 1008,
+     "weighted_regret": 0.002712175335522149,
+     "worst_regret": 0.14967105263157876
+    }
+   }
+  },
+  "cases_skipped": 100,
+  "legacy_qualification": "full ctest of master 752bae56 on sm_120a (RTX 5070 Ti board, same build set): 401/401 passed",
+  "metric": "sum(selected time) / sum(best observed time) - 1 per group and band",
+  "overall": {
+   "batch129": {
+    "best_ms": 13.760188,
+    "cases": 30,
+    "cases_over_5pct": 3,
+    "geomean_regret": 0.009474660244550126,
+    "selected_ms": 13.926006000000001,
+    "skipped": 0,
+    "tokens": 9600,
+    "weighted_regret": 0.012050562099878315,
+    "worst_regret": 0.11111111111111138
+   },
+   "decode": {
+    "best_ms": 0.0,
+    "cases": 0,
+    "cases_over_5pct": 0,
+    "geomean_regret": null,
+    "selected_ms": 0.0,
+    "skipped": 80,
+    "tokens": 0,
+    "weighted_regret": null,
+    "worst_regret": null
+   },
+   "narrow": {
+    "best_ms": 1.8626559999999999,
+    "cases": 20,
+    "cases_over_5pct": 6,
+    "geomean_regret": 0.08063934689179586,
+    "selected_ms": 1.900544,
+    "skipped": 0,
+    "tokens": 560,
+    "weighted_regret": 0.02034084661902158,
+    "worst_regret": 0.4999999999999998
+   },
+   "verify": {
+    "best_ms": 0.0,
+    "cases": 0,
+    "cases_over_5pct": 0,
+    "geomean_regret": null,
+    "selected_ms": 0.0,
+    "skipped": 20,
+    "tokens": 0,
+    "weighted_regret": null,
+    "worst_regret": null
+   },
+   "wide": {
+    "best_ms": 5.87635,
+    "cases": 40,
+    "cases_over_5pct": 4,
+    "geomean_regret": 0.01782118801604149,
+    "selected_ms": 5.902236,
+    "skipped": 0,
+    "tokens": 3360,
+    "weighted_regret": 0.004405115420286432,
+    "worst_regret": 0.38124999999999987
+   }
+  },
+  "prefill_profile_rows_excluded": 404,
+  "schema": "ninferno-regret-bands/1",
+  "skipped_cases": [
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n1024.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n3840.k15360.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k3840.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n4096.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.store.n8192.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n12288.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q4k",
+    "id": "q4k.a8.swiglu.n15360.k3840.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n248320.k4096.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n3840.k3840.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T1",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 1
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T2",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 2
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T3",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 3
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T4",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 4
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T5",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 5
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T6",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 6
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T7",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 7
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T8",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 8
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T12",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 12
+   },
+   {
+    "board": "rtx5090",
+    "family": "(no pick)",
+    "format": "q6k",
+    "id": "q6k.a8.store.n4096.k12288.T16",
+    "reason": "the model ranks only from T 17",
+    "selected": null,
+    "t": 16
+   }
+  ]
+ },
+ "regret_report": {
+  "build_id": "a5-f24d0079-rtx5090",
+  "by_board": {
+   "rtx5090": {
+    "cases": 190,
+    "geomean_slowdown": 1.0489220428678945,
+    "max_regret": 0.9737255782618457,
+    "median_regret": 0.0,
+    "p95_regret": 0.3333333333333335,
+    "scored_cases": 190,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 190
+    }
+   }
+  },
+  "by_board_regime_authority": [
+   {
+    "authority": "r8-rules",
+    "board": "rtx5090",
+    "cases": 10,
+    "evidence": {
+     "ranker": 10
+    },
+    "geomean_slowdown": 1.0240992815157177,
+    "max_regret": 0.13847171532846692,
+    "median_regret": 0.0,
+    "p95_regret": 0.13847171532846692,
+    "regime": "decode T<=4",
+    "ridge_t": 131.52535714285713,
+    "scored_cases": 10,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 10
+    }
+   },
+   {
+    "authority": "vec-rule",
+    "board": "rtx5090",
+    "cases": 30,
+    "evidence": {
+     "ranker": 30
+    },
+    "geomean_slowdown": 1.1625568037317215,
+    "max_regret": 0.9737255782618457,
+    "median_regret": 0.10436509248898695,
+    "p95_regret": 0.5306214689265536,
+    "regime": "decode T<=4",
+    "ridge_t": 131.52535714285713,
+    "scored_cases": 30,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 30
+    }
+   },
+   {
+    "authority": "rmma-rule",
+    "board": "rtx5090",
+    "cases": 30,
+    "evidence": {
+     "ranker": 30
+    },
+    "geomean_slowdown": 1.0606156512254181,
+    "max_regret": 0.36274414062500004,
+    "median_regret": 0.0,
+    "p95_regret": 0.2694082965041278,
+    "regime": "verify T5-16",
+    "ridge_t": 131.52535714285713,
+    "scored_cases": 30,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 30
+    }
+   },
+   {
+    "authority": "route-table",
+    "board": "rtx5090",
+    "cases": 30,
+    "evidence": {
+     "borrowed": 6,
+     "measured": 24
+    },
+    "geomean_slowdown": 1.0004057668217694,
+    "max_regret": 0.004081632653061273,
+    "median_regret": 0.0,
+    "p95_regret": 0.00406504065040636,
+    "regime": "verify T5-16",
+    "ridge_t": 131.52535714285713,
+    "scored_cases": 30,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 30
+    }
+   },
+   {
+    "authority": "cost-model",
+    "board": "rtx5090",
+    "cases": 60,
+    "evidence": {
+     "ranker": 60
+    },
+    "geomean_slowdown": 1.0383439825247252,
+    "max_regret": 0.4999999999999998,
+    "median_regret": 0.0,
+    "p95_regret": 0.3333333333333335,
+    "regime": "T>=17 below ridge",
+    "ridge_t": 131.52535714285713,
+    "scored_cases": 60,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 60
+    }
+   },
+   {
+    "authority": "cost-model",
+    "board": "rtx5090",
+    "cases": 30,
+    "evidence": {
+     "ranker": 30
+    },
+    "geomean_slowdown": 1.0094746602445501,
+    "max_regret": 0.11111111111111138,
+    "median_regret": 0.0,
+    "p95_regret": 0.05754149571946954,
+    "regime": "T>=17 above ridge",
+    "ridge_t": 131.52535714285713,
+    "scored_cases": 30,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 30
+    }
+   }
+  ],
+  "by_model": {
+   "qwen3.5-9b+gemma4-12b-dense": {
+    "cases": 190,
+    "geomean_slowdown": 1.0489220428678945,
+    "max_regret": 0.9737255782618457,
+    "median_regret": 0.0,
+    "p95_regret": 0.3333333333333335,
+    "scored_cases": 190,
+    "single_pass_cases": 0,
+    "statuses": {
+     "complete": 190
+    }
+   }
+  },
+  "device": "gb202:170sm",
+  "fit_boards": [],
+  "fit_models": [],
+  "holdout": "board",
+  "input_sha256": "902cf0fa703ca79abcb2f5be2f00064f723d9e955f5ac04cebf0ce9bb1f6daeb",
+  "max_regret": null,
+  "passed": true,
+  "schema": "ninferno-selection-regret-report/1",
+  "scope": "best observed qualified candidate in the supplied inventory; not a global optimum",
+  "selector_revision": "f24d0079",
+  "summary": {
+   "cases": 190,
+   "geomean_slowdown": 1.0489220428678945,
+   "max_regret": 0.9737255782618457,
+   "median_regret": 0.0,
+   "p95_regret": 0.3333333333333335,
+   "scored_cases": 190,
+   "single_pass_cases": 0,
+   "statuses": {
+    "complete": 190
+   }
+  }
+ },
+ "selected_bands": {
+  "bands": {
+   "batch129": [
+    129,
+    null
+   ],
+   "decode": [
+    1,
+    8
+   ],
+   "narrow": [
+    17,
+    32
+   ],
+   "verify": [
+    9,
+    16
+   ],
+   "wide": [
+    33,
+    128
+   ]
+  },
+  "by_board": {
+   "rtx5090": {
+    "batch129": {
+     "best_ms": 13.760188,
+     "cases": 30,
+     "cases_over_5pct": 3,
+     "geomean_regret": 0.009474660244550126,
+     "selected_ms": 13.926006000000001,
+     "skipped": 0,
+     "tokens": 9600,
+     "weighted_regret": 0.012050562099878315,
+     "worst_regret": 0.11111111111111138
+    },
+    "decode": {
+     "best_ms": 5.53546062,
+     "cases": 80,
+     "cases_over_5pct": 22,
+     "geomean_regret": 0.061424593045459996,
+     "selected_ms": 5.70529581,
+     "skipped": 0,
+     "tokens": 360,
+     "weighted_regret": 0.030681311214892037,
+     "worst_regret": 0.9737255782618457
+    },
+    "narrow": {
+     "best_ms": 1.8626559999999999,
+     "cases": 20,
+     "cases_over_5pct": 6,
+     "geomean_regret": 0.08063934689179586,
+     "selected_ms": 1.900544,
+     "skipped": 0,
+     "tokens": 560,
+     "weighted_regret": 0.02034084661902158,
+     "worst_regret": 0.4999999999999998
+    },
+    "verify": {
+     "best_ms": 1.5177946,
+     "cases": 20,
+     "cases_over_5pct": 10,
+     "geomean_regret": 0.09228771058180407,
+     "selected_ms": 1.5513935,
+     "skipped": 0,
+     "tokens": 280,
+     "weighted_regret": 0.022136658016835842,
+     "worst_regret": 0.36274414062500004
+    },
+    "wide": {
+     "best_ms": 5.87635,
+     "cases": 40,
+     "cases_over_5pct": 4,
+     "geomean_regret": 0.01782118801604149,
+     "selected_ms": 5.902236,
+     "skipped": 0,
+     "tokens": 3360,
+     "weighted_regret": 0.004405115420286432,
+     "worst_regret": 0.38124999999999987
+    }
+   }
+  },
+  "by_family": {
+   "ggml_mmq": {
+    "batch129": {
+     "best_ms": 13.216412,
+     "cases": 23,
+     "cases_over_5pct": 1,
+     "geomean_regret": 0.002838334211342053,
+     "selected_ms": 13.368918,
+     "skipped": 0,
+     "tokens": 7680,
+     "weighted_regret": 0.01153913785375349,
+     "worst_regret": 0.05754149571946954
+    },
+    "narrow": {
+     "best_ms": 1.7254399999999999,
+     "cases": 12,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.0004095850906120635,
+     "selected_ms": 1.728512,
+     "skipped": 0,
+     "tokens": 336,
+     "weighted_regret": 0.0017804154302671904,
+     "worst_regret": 0.0049261083743843415
+    },
+    "verify": {
+     "best_ms": 0.27639199999999997,
+     "cases": 6,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.0,
+     "selected_ms": 0.27639199999999997,
+     "skipped": 0,
+     "tokens": 84,
+     "weighted_regret": 0.0,
+     "worst_regret": 0.0
+    },
+    "wide": {
+     "best_ms": 5.60803,
+     "cases": 34,
+     "cases_over_5pct": 3,
+     "geomean_regret": 0.01553856197754011,
+     "selected_ms": 5.6298200000000005,
+     "skipped": 0,
+     "tokens": 2800,
+     "weighted_regret": 0.0038854998992516876,
+     "worst_regret": 0.38124999999999987
+    }
+   },
+   "ggml_vec": {
+    "decode": {
+     "best_ms": 2.05088241,
+     "cases": 30,
+     "cases_over_5pct": 20,
+     "geomean_regret": 0.16255680373172154,
+     "selected_ms": 2.21101938,
+     "skipped": 0,
+     "tokens": 90,
+     "weighted_regret": 0.07808198520752851,
+     "worst_regret": 0.9737255782618457
+    }
+   },
+   "r8": {
+    "decode": {
+     "best_ms": 0.666192,
+     "cases": 10,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.02409928151571772,
+     "selected_ms": 0.66974622,
+     "skipped": 0,
+     "tokens": 10,
+     "weighted_regret": 0.00533512861157126,
+     "worst_regret": 0.13847171532846692
+    }
+   },
+   "rmma": {
+    "decode": {
+     "best_ms": 2.81838621,
+     "cases": 40,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.0003043096833066361,
+     "selected_ms": 2.8245302100000003,
+     "skipped": 0,
+     "tokens": 260,
+     "weighted_regret": 0.002179970927405517,
+     "worst_regret": 0.004081632653061273
+    },
+    "narrow": {
+     "best_ms": 0.137216,
+     "cases": 8,
+     "cases_over_5pct": 6,
+     "geomean_regret": 0.21320774742947424,
+     "selected_ms": 0.172032,
+     "skipped": 0,
+     "tokens": 224,
+     "weighted_regret": 0.25373134328358193,
+     "worst_regret": 0.4999999999999998
+    },
+    "verify": {
+     "best_ms": 1.2414026,
+     "cases": 14,
+     "cases_over_5pct": 10,
+     "geomean_regret": 0.13440259306636548,
+     "selected_ms": 1.2750015000000001,
+     "skipped": 0,
+     "tokens": 196,
+     "weighted_regret": 0.02706527278096571,
+     "worst_regret": 0.36274414062500004
+    },
+    "wide": {
+     "best_ms": 0.04710399999999999,
+     "cases": 3,
+     "cases_over_5pct": 1,
+     "geomean_regret": 0.04551591714942038,
+     "selected_ms": 0.049151999999999994,
+     "skipped": 0,
+     "tokens": 208,
+     "weighted_regret": 0.04347826086956519,
+     "worst_regret": 0.1428571428571428
+    }
+   },
+   "w4a8ws": {
+    "batch129": {
+     "best_ms": 0.543776,
+     "cases": 7,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.031590499527815785,
+     "selected_ms": 0.557088,
+     "skipped": 0,
+     "tokens": 1920,
+     "weighted_regret": 0.024480668510563186,
+     "worst_regret": 0.11111111111111138
+    },
+    "wide": {
+     "best_ms": 0.221216,
+     "cases": 3,
+     "cases_over_5pct": 0,
+     "geomean_regret": 0.01639635681485352,
+     "selected_ms": 0.223264,
+     "skipped": 0,
+     "tokens": 352,
+     "weighted_regret": 0.009257919861131114,
+     "worst_regret": 0.050000000000000044
+    }
+   }
+  },
+  "by_format": {
+   "q4k": {
+    "batch129": {
+     "best_ms": 2.848896,
+     "cases": 21,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.010865984149387886,
+     "selected_ms": 2.864224,
+     "skipped": 0,
+     "tokens": 6720,
+     "weighted_regret": 0.00538032978388836,
+     "worst_regret": 0.11111111111111138
+    },
+    "decode": {
+     "best_ms": 1.2273025,
+     "cases": 56,
+     "cases_over_5pct": 11,
+     "geomean_regret": 0.050914175976809695,
+     "selected_ms": 1.25261254,
+     "skipped": 0,
+     "tokens": 252,
+     "weighted_regret": 0.02062249526909632,
+     "worst_regret": 0.9737255782618457
+    },
+    "narrow": {
+     "best_ms": 0.48128,
+     "cases": 14,
+     "cases_over_5pct": 4,
+     "geomean_regret": 0.06944880005339327,
+     "selected_ms": 0.50176,
+     "skipped": 0,
+     "tokens": 392,
+     "weighted_regret": 0.042553191489361764,
+     "worst_regret": 0.3333333333333335
+    },
+    "verify": {
+     "best_ms": 0.3748141,
+     "cases": 14,
+     "cases_over_5pct": 6,
+     "geomean_regret": 0.07294950183249549,
+     "selected_ms": 0.3915799,
+     "skipped": 0,
+     "tokens": 196,
+     "weighted_regret": 0.04473097463515918,
+     "worst_regret": 0.2694082965041278
+    },
+    "wide": {
+     "best_ms": 1.476192,
+     "cases": 28,
+     "cases_over_5pct": 3,
+     "geomean_regret": 0.020291298676105463,
+     "selected_ms": 1.490144,
+     "skipped": 0,
+     "tokens": 2352,
+     "weighted_regret": 0.009451345082482465,
+     "worst_regret": 0.38124999999999987
+    }
+   },
+   "q6k": {
+    "batch129": {
+     "best_ms": 10.911292,
+     "cases": 9,
+     "cases_over_5pct": 1,
+     "geomean_regret": 0.00623568036651867,
+     "selected_ms": 11.061782000000001,
+     "skipped": 0,
+     "tokens": 2880,
+     "weighted_regret": 0.013792133873788748,
+     "worst_regret": 0.05754149571946954
+    },
+    "decode": {
+     "best_ms": 4.30815812,
+     "cases": 24,
+     "cases_over_5pct": 11,
+     "geomean_regret": 0.08635950615050647,
+     "selected_ms": 4.4526832700000005,
+     "skipped": 0,
+     "tokens": 108,
+     "weighted_regret": 0.033546853660979536,
+     "worst_regret": 0.4853159756035057
+    },
+    "narrow": {
+     "best_ms": 1.381376,
+     "cases": 6,
+     "cases_over_5pct": 2,
+     "geomean_regret": 0.10720811637505911,
+     "selected_ms": 1.398784,
+     "skipped": 0,
+     "tokens": 168,
+     "weighted_regret": 0.012601927353595332,
+     "worst_regret": 0.4999999999999998
+    },
+    "verify": {
+     "best_ms": 1.1429805,
+     "cases": 6,
+     "cases_over_5pct": 4,
+     "geomean_regret": 0.13877650665501307,
+     "selected_ms": 1.1598136000000001,
+     "skipped": 0,
+     "tokens": 84,
+     "weighted_regret": 0.014727372864191679,
+     "worst_regret": 0.36274414062500004
+    },
+    "wide": {
+     "best_ms": 4.400158,
+     "cases": 12,
+     "cases_over_5pct": 1,
+     "geomean_regret": 0.012080827412333628,
+     "selected_ms": 4.412092,
+     "skipped": 0,
+     "tokens": 1008,
+     "weighted_regret": 0.002712175335522149,
+     "worst_regret": 0.14967105263157876
+    }
+   }
+  },
+  "cases_skipped": 0,
+  "legacy_qualification": "full ctest of master 752bae56 on sm_120a (RTX 5070 Ti board, same build set): 401/401 passed",
+  "metric": "sum(selected time) / sum(best observed time) - 1 per group and band",
+  "overall": {
+   "batch129": {
+    "best_ms": 13.760188,
+    "cases": 30,
+    "cases_over_5pct": 3,
+    "geomean_regret": 0.009474660244550126,
+    "selected_ms": 13.926006000000001,
+    "skipped": 0,
+    "tokens": 9600,
+    "weighted_regret": 0.012050562099878315,
+    "worst_regret": 0.11111111111111138
+   },
+   "decode": {
+    "best_ms": 5.53546062,
+    "cases": 80,
+    "cases_over_5pct": 22,
+    "geomean_regret": 0.061424593045459996,
+    "selected_ms": 5.70529581,
+    "skipped": 0,
+    "tokens": 360,
+    "weighted_regret": 0.030681311214892037,
+    "worst_regret": 0.9737255782618457
+   },
+   "narrow": {
+    "best_ms": 1.8626559999999999,
+    "cases": 20,
+    "cases_over_5pct": 6,
+    "geomean_regret": 0.08063934689179586,
+    "selected_ms": 1.900544,
+    "skipped": 0,
+    "tokens": 560,
+    "weighted_regret": 0.02034084661902158,
+    "worst_regret": 0.4999999999999998
+   },
+   "verify": {
+    "best_ms": 1.5177946,
+    "cases": 20,
+    "cases_over_5pct": 10,
+    "geomean_regret": 0.09228771058180407,
+    "selected_ms": 1.5513935,
+    "skipped": 0,
+    "tokens": 280,
+    "weighted_regret": 0.022136658016835842,
+    "worst_regret": 0.36274414062500004
+   },
+   "wide": {
+    "best_ms": 5.87635,
+    "cases": 40,
+    "cases_over_5pct": 4,
+    "geomean_regret": 0.01782118801604149,
+    "selected_ms": 5.902236,
+    "skipped": 0,
+    "tokens": 3360,
+    "weighted_regret": 0.004405115420286432,
+    "worst_regret": 0.38124999999999987
+   }
+  },
+  "prefill_profile_rows_excluded": 404,
+  "schema": "ninferno-regret-bands/1",
+  "skipped_cases": []
+ },
+ "source_sha": "f24d0079613133f8e19f9bcc40b9357c761292b9",
+ "sweep": "ninferno_route_tune --a8-candidates 1 --samples 7, three passes (#614 A5)"
+}
