@@ -993,17 +993,20 @@ class LaunchLaw(Base):
         self.assertNotIn("126 of 126", out)
 
     # --- the A/B of the production ranking (old against law) ---------------------------------------------
-    def law_arm_files(self, C=40.0, same=False, extra_ms=0.0, k=7, visits=3, labels=("old", "law")):
-        """Rounds of old / law whose times follow the law exactly: C + the model's MMQ linears at the
-        fewest tiles (old) or at each linear's law pick (law); `same`: the law arm runs the old widths;
-        `extra_ms`: added to every law-arm request (a gain the law does not predict, or a loss)."""
+    def law_arm_files(self, C=40.0, same=False, extra_ms=0.0, k=7, visits=3, labels=("old", "law"),
+                      grows=0.0):
+        """Rounds of old / law whose times follow the law exactly: C + grows x N + the model's MMQ
+        linears at the fewest tiles (old) or at each linear's law pick (law); `same`: the law arm runs
+        the old widths; `extra_ms`: added to every law-arm request (a gain the law does not predict,
+        or a loss); `grows`: a width-independent part that grows with the prompt (the old times then
+        differ by size, so the mix's prediction must be weighted as its measurement is)."""
         files = []
         for v in range(visits):
             for lab in labels:
                 rows = []
                 for n in g.AB_SIZES:
                     _, ms_old, ms_new = g.law_production(n - k)
-                    t = C + (ms_old if lab == "old" or same else ms_new + extra_ms)
+                    t = C + grows * n + (ms_old if lab == "old" or same else ms_new + extra_ms)
                     rows.append(row(lab, n, [t] * 4, k=k))
                 files.append(self.write(f"ab_{v}_{lab}.jsonl", rows))
         return files
@@ -1040,6 +1043,25 @@ class LaunchLaw(Base):
         rc, out, err = self.run_main("ab", *self.law_arm_files(extra_ms=1.5))
         self.assertEqual(rc, 0, err)
         self.assertIn("R4 (law): not met", out)
+
+    def test_ab_on_the_law_arm_weights_the_predicted_mix_like_the_measured_one(self):
+        # old times that grow with N: the measured mix change is a change of means, so the law's
+        # predicted change must be its mean ms over the old mean; with the law exact the two agree
+        # (an unweighted mean of the per-size changes would not)
+        rc, out, err = self.run_main("ab", *self.law_arm_files(grows=1.0))
+        self.assertEqual(rc, 0, err)
+        m = re.search(r"mix \[[^]]*\]: old [0-9.]+ law [0-9.]+ ms ([-+][0-9.]+) %.*predicted ([-+][0-9.]+) %",
+                      out)
+        self.assertIsNotNone(m, out)
+        self.assertEqual(m.group(1), m.group(2))
+        self.assertIn("R4 (law): not met", out)
+
+    def test_ab_on_the_law_arm_past_the_band(self):
+        # 3 ms over a mix of about 120 ms is about 2.5 pp: past the a priori 2 pp, so R4 (law) is met
+        rc, out, err = self.run_main("ab", *self.law_arm_files(extra_ms=3.0))
+        self.assertEqual(rc, 0, err)
+        self.assertIn("R4 (law): MET (refutes the law on this card)", out)
+        self.assertIn(" OFF", out)
 
     def test_ab_mixing_new_and_law_is_refused(self):
         files = self.law_arm_files(labels=("old", "law", "new"))
