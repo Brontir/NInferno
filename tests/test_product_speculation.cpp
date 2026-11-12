@@ -491,7 +491,7 @@ int main() {
             p.measurements                          = measured({{"mtp:2", 1.0 / 1.2}});
             p.joint_scale                           = {{"mtp:2", {{2, 0.95}, {3, 0.9}}}};
             p.load                                  = sp::parse_load("2:3");
-            p.load_basis        = "facts";
+            p.load_basis                            = "facts";
             const auto fallback = ninferno::product::served_fit_fallback(subject_of(p), false);
             failures += check(fallback && engine_label(*fallback) == "2:0" &&
                                   fallback->load_basis == "literal",
