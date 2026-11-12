@@ -18,8 +18,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: decisions-${{ github.event.pull_request.number || github.ref }}
-  # A newer push to a PR replaces its run; every master commit keeps its own result and cache.
+  # A newer push to a PR replaces its run. A master push is its own group (its sha), so a merge
+  # batch runs every commit: a group holds one running and one pending run, and a newer pending
+  # run would cancel the older one whatever cancel-in-progress says.
+  group: decisions-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -44,10 +46,12 @@ jobs:
             libcurl4-openssl-dev libssl-dev
       - name: CUDA 12.8 compiler and headers (for CMake's language check; no device code is built)
         run: |
-          wget -q --tries=3 https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+          wget -q --tries=5 --waitretry=5 --retry-connrefused \
+            --retry-on-http-error=429,500,502,503,504 \
+            https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
           sudo dpkg -i cuda-keyring_1.1-1_all.deb
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends cuda-nvcc-12-8 cuda-cudart-dev-12-8 \
+          sudo apt-get -o Acquire::Retries=3 update -q
+          sudo apt-get -o Acquire::Retries=3 install -y -q --no-install-recommends cuda-nvcc-12-8 cuda-cudart-dev-12-8 \
             cuda-driver-dev-12-8 cuda-nvtx-12-8
           echo /usr/local/cuda-12.8/bin >> "$GITHUB_PATH"
       - name: ccache
