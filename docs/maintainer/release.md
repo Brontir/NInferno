@@ -61,8 +61,10 @@ for Volta: `-Cuda70`), CMake, Ninja and vcpkg; `package-native.ps1`'s header has
    `ctest` on master at the commit you will tag, on at least one stand. A batch of PRs that are
    each green can still break master together. The stands build sm_70, sm_75, sm_86, sm_89 and
    sm_120a, and each checks its own kernel-facts snapshot. For the other release architectures
-   run `tools/dev/kernel_facts_archs.sh` on a build machine with CUDA 13.4.92 (`KFA_BRANCH`
-   names the branch, master by default). It builds sm_80, sm_90 and sm_100 with the release flags
+   run `tools/dev/kernel_facts_archs.sh` on a build machine with CUDA 13.4.92: from a work
+   directory (`KFA_ROOT`, default the current one) with `KFA_REPO` naming a checkout of this
+   repository (`KFA_BRANCH` the branch, master by default), or `KFA_SOURCE=.` to check a source
+   tree as it is. It builds sm_80, sm_90 and sm_100 with the release flags
    and checks each against its snapshot, without a GPU. Run it nightly too, and on a PR that
    changes `src/ops/**/*.cu*`, so that a stale snapshot shows before `package.sh` stops on it
    (#758).
