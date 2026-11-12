@@ -13,8 +13,10 @@
 #include "spec/registry.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <exception>
 #include <set>
+#include <string>
 #include <utility>
 
 namespace ninferno::product {
@@ -85,6 +87,17 @@ std::uint32_t pool_contexts_of(const runtime::DryRunPlan& plan, const EngineOpti
     }
     return static_cast<std::uint32_t>(static_cast<std::uint64_t>(chosen->rung.kv_pages) *
                                       runtime::kAutomaticContextGrain / chosen->rung.max_context);
+}
+
+// The pool as the pool rule reads it: its whole contexts (pool_contexts_of), its KV tokens, pages
+// of one grain each, and the asked context (none where pool_contexts_of has none).
+PoolSize pool_size_of(const runtime::DryRunPlan& plan, const EngineOptions& options) {
+    const std::uint32_t contexts = pool_contexts_of(plan, options);
+    if (contexts == 0) { return {}; }
+    return {.contexts = contexts,
+            .tokens   = static_cast<std::uint64_t>(plan.chosen()->rung.kv_pages) *
+                      runtime::kAutomaticContextGrain,
+            .context = static_cast<std::uint32_t>(plan.chosen()->rung.max_context)};
 }
 
 std::string label_of(const SpeculativeOptions& speculative) {
@@ -511,8 +524,8 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
                 serve(plain, std::move(p));
             }
             // The pool rule (pool_rule): a drafter that leaves the automatic pool fewer whole
-            // contexts than C while plain decode holds more gives way (to the MTP head when it
-            // keeps four fifths of plain decode's contexts).
+            // contexts than C while plain decode holds more gives way (to the MTP head where its
+            // pool prices at least plain decode's over the benchmark's mix).
             if (served && built) {
                 const std::uint32_t with_drafter = pool_contexts_of(out.plan, options);
                 std::optional<runtime::DryRunPlan> plain_plan, head_plan;
@@ -520,16 +533,16 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
                     *subject, per_request, with_drafter, concurrency,
                     [&] {
                         plain_plan = plan_of(SpeculativeOptions{});
-                        return pool_contexts_of(*plain_plan, options);
+                        return pool_size_of(*plain_plan, options);
                     },
-                    [&](const ServedSpeculation& head) -> std::optional<std::uint32_t> {
+                    [&](const ServedSpeculation& head) -> std::optional<PoolSize> {
                         const SpeculativeOptions sp = with_given(head);
                         head_plan                   = plan_of(sp);
                         step("pool_head", sp, *head_plan,
                              "the drafter leaves " + std::to_string(with_drafter) + " of " +
                                  std::to_string(concurrency) + " whole contexts");
                         if (!head_plan->fits) { return std::nullopt; }
-                        return pool_contexts_of(*head_plan, options);
+                        return pool_size_of(*head_plan, options);
                     });
                 if (pool.keep == PoolKeep::Head) {
                     for (auto& s : r.fallbacks) { s.served = false; }
@@ -538,9 +551,15 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
                 } else if (pool.keep == PoolKeep::Plain) {
                     for (auto& s : r.fallbacks) { s.served = false; }
                     const SpeculativeOptions plain;
-                    step("pool_plain", plain, *plain_plan,
-                         "plain decode holds " + std::to_string(pool.plain) +
-                             " whole contexts against " + std::to_string(with_drafter));
+                    std::string why = "plain decode holds " + std::to_string(pool.plain) +
+                                      " whole contexts against " + std::to_string(with_drafter);
+                    if (pool.head_price) {
+                        char price[32];
+                        std::snprintf(price, sizeof price, "%.3f", *pool.head_price);
+                        why += "; the MTP head's pool decodes the benchmark's mix at x" +
+                               std::string(price) + " of plain decode's";
+                    }
+                    step("pool_plain", plain, *plain_plan, why);
                     served.reset();
                     serve(plain, std::move(*plain_plan));
                 }

@@ -1,8 +1,10 @@
 // The generic path's workspace (refactor B1): the planes a quantized activation takes from the
 // caller's arena (activation_planes, the one description run_route allocates by), a route's bytes
-// (route_workspace_bytes), and the capacity a caller reserves for a token interval
+// (route_workspace_bytes), the register MMA's group-sums plane (rmma_group_sums_bytes, #619), and
+// the capacity a caller reserves for a token interval
 // (workspace_capacity_bytes, volta_prefill_workspace_bytes). Declared in generic_gemm.h and
 // generic_select_internal.h.
+#include "core/format_facts.h"
 #include "core/layout.h"
 #include "ops/common/route_probe.h"
 #include "ops/generic/format_traits.h"
@@ -80,6 +82,37 @@ std::size_t executed_workspace_bytes(Route route, bool r8_prequantized, std::int
     default:
         return route_workspace_bytes(route, k, tokens);
     }
+}
+
+int rmma_group_sums_values(WeightCodec codec) noexcept {
+    switch (codec) {
+    case WeightCodec::GgmlQ4K:
+    case WeightCodec::GgmlQ5K:
+    case WeightCodec::GgmlQ41:
+    case WeightCodec::GgmlQ51:
+        return 32;
+    case WeightCodec::GgmlQ2K:
+        return 16;
+    default:
+        return 0;
+    }
+}
+
+std::int32_t rmma_group_sums_ld(std::int32_t k, int values) noexcept {
+    if (values <= 0) return 0;
+    // Whole 128-value K steps (every min-term decoder's: 4 x kRun 32), 128 / values groups each.
+    return (k + 127) / 128 * (128 / values);
+}
+
+std::size_t rmma_group_sums_bytes(WeightCodec codec, std::int32_t k, std::int32_t tokens) {
+    const int values = rmma_group_sums_values(codec);
+    if (values == 0 || tokens <= 0) return 0;
+    WorkspaceLayoutBuilder layout;
+    (void)layout.alloc_bytes(static_cast<std::size_t>(tokens) *
+                                 static_cast<std::size_t>(rmma_group_sums_ld(k, values)) *
+                                 sizeof(float),
+                             256);
+    return layout.peak_bytes(1);
 }
 
 std::size_t volta_prefill_workspace_bytes(QType qtype, std::int32_t rows, std::int32_t k,
@@ -177,6 +210,14 @@ std::size_t workspace_capacity_bytes(const Problem& problem, const Weight* weigh
                                             problem.epilogue == Epilogue::SwiGlu)
             : 0;
     mmq = std::max(mmq, volta);
+    // The register MMA's group-sums plane of a min-term format (rmma_group_sums): at any width of
+    // the interval, since a prefill profile's last chunk takes it below kPrefillBandMinTokens too.
+    // Tensor-core MMA only (Volta's build adds its sums), and only where the plane is on (off by
+    // default, group_sums_plane_enabled): no call reads it otherwise.
+    if (const auto codec = format_facts(problem.qtype).codec;
+        codec && group_sums_plane_enabled() && current_features().mma_tensor) {
+        mmq = std::max(mmq, rmma_group_sums_bytes(*codec, problem.k, max_tokens));
+    }
     if (!a8 && !r8_verify) return with_gather(mmq);
     const std::size_t i8 =
         format_traits(problem.qtype).qx_g64

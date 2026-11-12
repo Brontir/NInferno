@@ -239,6 +239,8 @@ std::string_view demotion_name(Demotion demotion) noexcept {
         return "volta_copy";
     case Demotion::KStep:
         return "k_step";
+    case Demotion::GroupSums:
+        return "group_sums";
     }
     return "none";
 }
@@ -362,6 +364,22 @@ ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call
             demote(a16(), Demotion::GgmlWorkspace);
         }
         out.ggml_fallback = route.family != Family::GgmlVec;
+    }
+    // A min-term register-MMA call reads its group sums from a plane in its workspace where it
+    // takes one (rmma_group_sums, and the instance the launch takes: rmma_plane_taken); without
+    // room for it the same route runs the MMA with ones (other bytes: a demotion, counted and
+    // said by run_route, unless the call was demoted before: the first reason stands). The K the
+    // register kernel cannot step runs scalar at the launch, and so does Volta: neither reads a
+    // plane. The plane is off by default (rmma_group_sums), which answers before the launch's
+    // description is asked.
+    if (route.family == Family::RegisterMma && (w.k % k_multiple(codec_of(w))) == 0 &&
+        rmma_group_sums(codec_of(w)) &&
+        rmma_plane_taken(route.schedule, w, call.epilogue, call.tokens, call.rows)) {
+        if (free_for(rmma_group_sums_bytes(codec_of(w), w.k, call.tokens))) {
+            out.group_sums = true;
+        } else if (out.reason == Demotion::None) {
+            out.reason = Demotion::GroupSums;
+        }
     }
     return out;
 }

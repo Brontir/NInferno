@@ -70,7 +70,7 @@ void ones_share_on_the_snapshots() {
                 for (const Schedule& s : kSchedules) {
                     for (int epilogue = 0; epilogue < 3; ++epilogue) {
                         for (const bool latency : {false, true}) {
-                            for (const bool add_sums : {false, true}) {
+                            for (const int sums : {0, 1, 2}) { // RmmaSums: ones, adds, plane
                                 kf::RmmaKernelKey key;
                                 key.decoder      = decoder;
                                 key.warps_m      = s.warps_m;
@@ -80,7 +80,7 @@ void ones_share_on_the_snapshots() {
                                 key.cluster      = s.cluster;
                                 key.epilogue     = epilogue;
                                 key.latency      = latency;
-                                key.add_sums     = add_sums;
+                                key.sums         = sums;
                                 const auto facts = kf::rmma_facts(arch, key);
                                 if (!facts || !facts->loop) continue;
                                 const kf::LoopCounts& l = *facts->loop;
@@ -90,15 +90,18 @@ void ones_share_on_the_snapshots() {
                                     std::to_string(s.warps_k) + " m" + std::to_string(s.m_tiles) +
                                     " n" + std::to_string(s.n_tiles) + " e" +
                                     std::to_string(epilogue) + (latency ? " latency" : "") +
-                                    (add_sums ? " add_sums" : "");
+                                    (sums == 1   ? " adds"
+                                     : sums == 2 ? " plane"
+                                                 : "");
                                 ++checked;
                                 expect(rc::usable(l), what + ": counts not usable");
                                 const int sets = epilogue == 2 ? 2 : 1;
                                 // The FP32 adds replace the MMA with ones where the call asks
-                                // (add_sums) on BF16 operands; Turing's f16 operands never add
+                                // (sums 1) on BF16 operands; Turing's f16 operands never add
                                 // (mma_step: F16Of), so its add-sums instances keep the MMA. The
-                                // counts say so; #598's rule did not.
-                                const bool adds = add_sums && arch != "75";
+                                // counts say so; #598's rule did not. The group-sums plane (sums
+                                // 2) reads the pre-summed sums instead, on every architecture.
+                                const bool adds = (sums == 1 && arch != "75") || sums == 2;
                                 const double expect_share =
                                     min_term && !adds
                                         ? (sets * s.m_tiles + 1.0) / (sets * s.m_tiles)

@@ -93,9 +93,9 @@ struct Calibration {
     // The register-MMA law (#613 PR-7a): false, the fitted spill (spill_accesses_per_step and
     // l1_bytes_per_sm_clock above) and price_register_mma's weight-only tensor term
     // (2 x rows x sets x cols x kc over the tensor rate); true, the terms counted from the
-    // kernel's K loop (RegisterMmaKernel::loop) where it
-    // carries a usable one, its spill waits at l1_hit_latency_cycles. The binary's law is
-    // route_cost::kRmmaCountedLaw; price_routes takes rmma_counted_law() (a test's override).
+    // kernel's K loop (RegisterMmaKernel::loop) where it carries a usable one, its spill waits at
+    // l1_hit_latency_cycles. The binary's law is route_cost::kRmmaCountedLaw; price_routes takes
+    // rmma_counted_law() (a test's override).
     bool rmma_counted_law        = route_cost::kRmmaCountedLaw;
     double l1_hit_latency_cycles = route_cost::kL1HitLatencyCycles.value();
     // Pipelined tiles (tiled, staged).

@@ -101,16 +101,17 @@ def load_snapshot(repo, arch):
 
 
 def find_instance(snap, fmt, sched, epilogue, registers, local_bytes):
-    """The snapshot instance (plain, latency or add-sums; the wide decoder for Q6_K) whose
-    registers and spill equal what route_tune described; the plain one where none does (the
-    sweep's build was another commit)."""
+    """The snapshot instance (plain, latency, add-sums or group-sums plane: the `sums` column;
+    the wide decoder for Q6_K) whose registers and spill equal what route_tune described; the
+    plain one where none does (the sweep's build was another commit). Ties go to the plain form,
+    then the adds, then the plane (the sweeps predate it)."""
     mt, nt, wm, wk, c = sched
     cands = []
     for dec in DECODERS[fmt]:
         cands += snap.get((dec, wm, wk, mt, nt, c, epilogue), [])
     if not cands:
         return None, "noinst"
-    order = lambda i: (i["latency"], i["add_sums"], i["decoder"] != DECODERS[fmt][0])
+    order = lambda i: (i["latency"], i["sums"], i["decoder"] != DECODERS[fmt][0])
     exact = sorted((i for i in cands if i["registers"] == registers and
                     i["stack"] + i["local_mem"] == local_bytes), key=order)
     if exact:

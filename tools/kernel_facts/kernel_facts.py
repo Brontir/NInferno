@@ -29,7 +29,9 @@ an engine's 2400 kernels, 1.5 GB of memory) and keeps only their loops; --sass-d
 
 A kernel's key: the decoder type, the schedule's template arguments (warps_m, warps_k, m_tiles,
 n_tiles, cluster: the entries of NINFERNO_GENERIC_RMMA_SCHEDULES, generic_schedules.h), the
-epilogue, and the latency and add-sums variants, as they stand in the demangled symbol; the
+epilogue, the latency variant and where the min-term sums come from (`sums`: rmma_kernel's
+RmmaSums, 0 the MMA with ones, 1 FP32 adds, 2 the pre-summed plane; a binary from before it
+spells the adds as a bool, read as 0 / 1), as they stand in the demangled symbol; the
 engine builds the same key from the template arguments it launches (generic_gemm_launch.cuh),
 so nothing is retyped. Names are written in the canonical form of both sides: the namespace
 `ninferno::ops::detail::generic::` dropped, no spaces, integer template arguments bare and bools
@@ -54,7 +56,7 @@ NAMESPACE = "ninferno::ops::detail::generic::"
 FAMILY = "rmma"
 RESOURCE_COLUMNS = ("registers", "stack", "local", "shared")
 KEY_COLUMNS = ("decoder", "warps_m", "warps_k", "m_tiles", "n_tiles", "cluster", "epilogue",
-               "latency", "add_sums")
+               "latency", "sums")
 ROW_HEAD = ("family",) + KEY_COLUMNS + RESOURCE_COLUMNS
 COLUMNS = " ".join(ROW_HEAD + sass_counts.COLUMNS)
 # The columns line of every snapshot `check` reads, and the loop fields its rows carry: schema 1
@@ -190,6 +192,15 @@ def as_bool(arg):
     raise ValueError(arg)
 
 
+def as_sums(arg):
+    """rmma_kernel's RmmaSums argument as the key's integer (a bool before #619: the adds)."""
+    if arg in ("true", "false"):
+        return as_bool(arg)
+    if re.fullmatch(r"[0-2]", arg):
+        return int(arg)
+    raise ValueError(arg)
+
+
 def rmma_key(demangled):
     """The key of an rmma_kernel instance from its demangled name, or None for other symbols."""
     head = "void " + NAMESPACE + "rmma_kernel<"
@@ -205,12 +216,12 @@ def rmma_key(demangled):
     args = [canonical(a) for a in split_top_level(demangled[len(head):end - 1])]
     if len(args) != 5:
         fail(f"unexpected rmma_kernel arguments in {demangled}")
-    decoder, schedule, epilogue, latency, add_sums = args
+    decoder, schedule, epilogue, latency, sums = args
     m = re.fullmatch(r"RmmaSchedule<(\d+),(\d+),(\d+),(\d+),(\d+)>", schedule)
     if not m or not re.fullmatch(r"\d+", epilogue):
         fail(f"unexpected rmma_kernel schedule or epilogue in {demangled}")
     return (decoder, *(int(v) for v in m.groups()), int(epilogue), as_bool(latency),
-            as_bool(add_sums))
+            as_sums(sums))
 
 
 def key_tiles(key):

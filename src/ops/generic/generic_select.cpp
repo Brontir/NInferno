@@ -1574,8 +1574,11 @@ bool route_is_token_invariant(Route route) {
 SummationOrder summation_order(Route route) {
     // The orders of the prefill and invariant profiles, where its users act (the prefill route's
     // bands, in the route tables, route-tune and auto_route): there no register-MMA tile adds its
-    // min-term sums in FP32 (rmma_add_sums), so the WarpsK == 1 tiles of every width and the staged
-    // MMA sum alike. Outside them the tiles of four or more token tiles do not.
+    // min-term sums in FP32 (rmma_add_sums), and the prefill profile's tiles take them all from
+    // the call's plane or all with the MMA with ones (rmma_group_sums and the device's facts,
+    // rmma_plane_admitted: one answer for every tile and width of a format and epilogue), so the
+    // WarpsK == 1 tiles of every width and the staged MMA (no min-term format) sum alike. Outside
+    // them the tiles of four or more token tiles do not.
     if ((route.family == Family::RegisterMma && route.schedule < rmma_schedule_count() &&
          rmma_schedule_info(route.schedule).warps_k == 1 &&
          !rmma_sums_lane_local(route.schedule)) ||

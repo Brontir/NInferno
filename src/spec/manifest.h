@@ -99,6 +99,12 @@ struct ResolvedSpeculation {
     // configuration choice to weigh every drafter (product::subject_of_mode). Empty for a local
     // tune and where the profile drafts with every kind carried.
     std::vector<ResolvedSpeculation> other_kinds;
+    // An other kind resolved beside a published profile from this model's own lab pair (#777):
+    // it prices the model's MTP head in the pool rule (product::head_priced_profile) and the head
+    // fallback's load table, and nothing else. It is no drafter option (product::drafter_axis) and
+    // no mode a server switches to (product::subject_of_mode): a published profile's choices stay
+    // its own.
+    bool pricing_only = false;
 
     [[nodiscard]] bool found() const noexcept { return !source.empty(); }
 };
