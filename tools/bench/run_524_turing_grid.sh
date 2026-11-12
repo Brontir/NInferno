@@ -86,9 +86,9 @@
 # tiles) and =new (work table at F_AB), counterbalanced by round (old new, new old, old new), 4
 # requests a size per visit; its table shows the spread of the visits and the predicted range beside
 # each change. The hook also takes NINFERNO_MMQ_MODE=law (the production ranking: on Turing the
-# launch law of DECISIONS 78, which an unset mode takes too) and the launch knobs of
-# tools/bench/mmq_launch_microbench.cu (NINFERNO_MMQ_BLOCKS, NINFERNO_MMQ_TILE_MODE,
-# NINFERNO_MMQ_PRINT); the grid's reader prices every cell with the launch law beside the tile law. One result file per visit (grid_J<w>_v<1|2>.jsonl, ab_<round>_<mode>.jsonl): a
+# launch law of DECISIONS 78, which an unset mode takes too) and the launch knobs the first
+# tools/bench/mmq_launch_microbench.cu read (NINFERNO_MMQ_BLOCKS, NINFERNO_MMQ_TILE_MODE,
+# NINFERNO_MMQ_PRINT; the microbench now forces its launches itself, #785); the grid's reader prices every cell with the launch law beside the tile law. One result file per visit (grid_J<w>_v<1|2>.jsonl, ab_<round>_<mode>.jsonl): a
 # directory that already holds result files is refused so that no earlier run mixes in; use a new OUT
 # for a new run.
 #
