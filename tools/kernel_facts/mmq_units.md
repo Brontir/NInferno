@@ -37,7 +37,8 @@ checks:
 Against 13.2.86, the MMQ units below moved by under 2 %. The largest move is the GB20x Q6_K J 128
 stall sum, 1.6 % lower. The W4A8 tile moved more on sm_100 and sm_120a. On GB20x, the Q4_K stall sum
 is 8.6 % lower, so the Q5_K and Q6_K stall ratios against it rise to 1.16 and 1.19 (were 1.01 and
-1.07). Turing to Hopper are within 1 %. A 13.4.92 build now compares the sections in full.
+1.07). Turing to Hopper are within about 1 % (the largest, Turing Q5_K, +1.1 %). A 13.4.92 build now
+compares the sections in full.
 
 The Turing rows agree with the counts DECISIONS 78 read from a 13.4 build. Q4_K has 195
 registers at J 32 and a 48-byte stack at J 128. Per copy of the loop there are 4 J IMMA.8816,
