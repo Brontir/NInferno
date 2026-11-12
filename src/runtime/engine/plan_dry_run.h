@@ -224,6 +224,7 @@ struct PlanLinear {
 // two formats) is one kind with empty formats (and Unknown policy): the query is not asked for it,
 // and its bytes are priced as an unknown route.
 enum class PlanExpertPolicy : std::uint8_t { Unknown, A16Only, AllowA8, AllowA4 };
+
 struct PlanExpertLayers {
     std::string gate_up_format, down_format;
     std::string gate_up_layout, down_layout;

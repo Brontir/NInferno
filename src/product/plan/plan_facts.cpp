@@ -514,6 +514,7 @@ public:
         bool kept = false;
         std::optional<artifact::ActivationPolicy> recorded;
     };
+
     // `down`: the layer's down bank (else its gate, up or fused gate/up bank).
     void add(const std::string& layer, bool down, const std::string& format,
              const std::string& layout, std::uint64_t k, std::uint64_t x_width, std::uint64_t bytes,

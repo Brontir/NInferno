@@ -216,8 +216,8 @@ void check_query(const DeviceClass& device, const moe::MoeLayerShape& shape,
         // moe()'s split reads the thread's profiles: the prefill one as the query sets it (the
         // invariant one the caller's loop holds).
         const ops::ScopedPrefillRoutes routes(prefill);
-        const std::int32_t split = moe::moe_split_tokens(weights, config, t);
-        const std::int32_t call  = split > 0 ? split : t;
+        const std::int32_t split    = moe::moe_split_tokens(weights, config, t);
+        const std::int32_t call     = split > 0 ? split : t;
         const moe::MoePlanQuery p   = moe::moe_plan_query(weights, config, call, prefill);
         const moe::MoeStageRoutes s = moe::stage_routes(weights, p.plan);
         want = moe::plan_name(p.plan) + " " + moe::authority_name(p.authority) + " " +
