@@ -366,6 +366,10 @@ def fit(derived, tolerance=DEFAULT_TOLERANCE):
     if len(derived) < 2:
         raise ValueError("a generation's row takes two or more cards (AGENTS.md: a constant fitted "
                          "on two or more cards of a generation)")
+    names = [d["card"] for d in derived]
+    if len(set(names)) != len(names):
+        raise ValueError("a card is given more than once (" + ", ".join(names) + "): a generation's "
+                         "row takes two or more different cards, each predicted from the others")
     gens = {d["generation"] for d in derived}
     if len(gens) != 1 or None in gens:
         raise ValueError("the cards are not of one work-table generation: " +
@@ -394,12 +398,14 @@ def fit(derived, tolerance=DEFAULT_TOLERANCE):
                       ", ".join(f"{d['card']} {d['clock_ratio']:.3f}" for d in derived) +
                       "): a unit transferred at the reference clock carries that difference")
     generation = gens.pop()
+    missing = sorted({j for d in derived for j in d["missing_widths"]})
     return {"schema": LAW_SCHEMA, "generation": generation,
             "name": GENERATIONS[generation][2], "format": derived[0]["format"],
             "cards": [d["card"] for d in derived], "law": law, "tolerance": tolerance,
             "holdout": holdout, "worst_error": worst,
-            "within_tolerance": all(v <= tolerance for v in worst.values()),
-            "missing_widths": sorted({j for d in derived for j in d["missing_widths"]}),
+            # A width no card measured has no holdout row: the fit is not within tolerance there.
+            "within_tolerance": not missing and all(v <= tolerance for v in worst.values()),
+            "missing_widths": missing,
             "clock_ratios": {d["card"]: d["clock_ratio"] for d in derived},
             "clock_note": clock_note, "derived": derived}
 
@@ -445,8 +451,10 @@ def generation_laws(path=GENERATION_H):
 
 def check(derived, law, tolerance=DEFAULT_TOLERANCE):
     rows = rows_of(predict(law, derived), tolerance)
-    return {"card": derived["card"], "rows": rows,
-            "within_tolerance": not any(r["outside"] for r in rows)}
+    # A width the card did not measure is a constant of the law left unchecked.
+    missing = sorted(derived["missing_widths"])
+    return {"card": derived["card"], "rows": rows, "missing_widths": missing,
+            "within_tolerance": not missing and not any(r["outside"] for r in rows)}
 
 
 # --- printing ---
@@ -696,6 +704,8 @@ def cmd_check(a):
     r = check(d, laws[a.law], a.tolerance)
     print(f"\n{d['card']} against {a.law}:")
     print_rows(r["rows"])
+    if r["missing_widths"]:
+        print(f"  widths not measured: {r['missing_widths']} (their units are left unchecked)")
     print(f"  {'within' if r['within_tolerance'] else 'NOT within'} the tolerance "
           f"{a.tolerance * 100:.0f} %")
     return 0 if r["within_tolerance"] else 4

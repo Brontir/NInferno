@@ -168,6 +168,10 @@ class Derive(unittest.TestCase):
         d = ml.derive(doc)
         self.assertEqual(d["missing_widths"], [80])
         self.assertIsNone(ml.cpp_row("kX", d["law"]))
+        # Neither a fit nor a check passes with a width left unmeasured.
+        self.assertFalse(ml.fit([d, ml.derive(card_doc(CARD_B))])["within_tolerance"])
+        self.assertTrue(ml.check(ml.derive(card_doc(CARD_A)), LAW)["within_tolerance"])
+        self.assertFalse(ml.check(d, LAW)["within_tolerance"])
 
 
     def test_fixup_from_the_kernel_alone(self):
@@ -268,6 +272,8 @@ class Fit(unittest.TestCase):
     def test_refuses_one_card_and_mixed_generations(self):
         with self.assertRaises(ValueError):
             ml.fit([ml.derive(card_doc(CARD_A))])
+        with self.assertRaises(ValueError):  # one card given twice is not a second card
+            ml.fit([ml.derive(card_doc(CARD_A)), ml.derive(card_doc(CARD_A))])
         ga10x = dict(CARD_B, name="Card C", cc="8.6")
         with self.assertRaises(ValueError):
             ml.fit([ml.derive(card_doc(CARD_A)), ml.derive(card_doc(ga10x))])
